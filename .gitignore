@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
+# Node
+node_modules/
+dist/
+.vite/
+*.tsbuildinfo
+
+# Go
+collector/collector
+collector/collector.exe
+collector/mapcheck
+collector/mapcheck.exe
+vendor/
+
+# Env / secrets — never commit
+.env
+.env.local
+*.pem
+*.key
+!deploy/.env.example
+
+# Editors
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Runtime
+*.log
+data/

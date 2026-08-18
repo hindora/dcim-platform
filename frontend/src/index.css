@@ -1,0 +1,141 @@
+/* Design tokens. No raw hex at call sites: every colour is named by role, so a
+   theme change is edited here rather than hunted across components.
+
+   Dark is the default because control rooms are dark. */
+
+:root {
+  --bg: #0e1116;
+  --bg-raised: #161b22;
+  --bg-inset: #0b0e13;
+  --border: #262c36;
+  --border-strong: #3a424f;
+
+  --text: #e6edf3;
+  --text-muted: #9198a1;
+  --text-faint: #656c76;
+
+  --accent: #3b82f6;
+  --accent-dim: #1e40af;
+
+  /* Status. Never used alone to convey state: every status also carries a
+     glyph or text, because colour alone fails for colour-blind operators and
+     in a printed runbook. */
+  --ok: #2ea043;
+  --warn: #d29922;
+  --major: #db6d28;
+  --critical: #f85149;
+  --unknown: #6e7681;
+
+  --radius: 6px;
+  --mono: ui-monospace, "SFMono-Regular", "Cascadia Code", Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) {
+    --bg: #ffffff;
+    --bg-raised: #f6f8fa;
+    --bg-inset: #eef1f4;
+    --border: #d0d7de;
+    --border-strong: #afb8c1;
+    --text: #1f2328;
+    --text-muted: #59636e;
+    --text-faint: #818b98;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.app { display: grid; grid-template-columns: 220px 1fr; min-height: 100vh; }
+
+.sidebar {
+  background: var(--bg-raised);
+  border-right: 1px solid var(--border);
+  padding: 16px 0;
+}
+.sidebar h1 { font-size: 15px; margin: 0 16px 16px; letter-spacing: .02em; }
+.sidebar nav a {
+  display: block; padding: 7px 16px; color: var(--text-muted);
+}
+.sidebar nav a.active { color: var(--text); background: var(--bg-inset);
+  border-left: 2px solid var(--accent); padding-left: 14px; }
+.sidebar .section {
+  padding: 14px 16px 4px; font-size: 11px; text-transform: uppercase;
+  letter-spacing: .06em; color: var(--text-faint);
+}
+
+main { padding: 20px 24px; overflow-x: auto; }
+h2 { margin: 0 0 4px; font-size: 20px; }
+.subtitle { color: var(--text-muted); margin: 0 0 18px; }
+
+.tiles { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); }
+.tile {
+  background: var(--bg-raised); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 14px;
+}
+.tile .label { color: var(--text-muted); font-size: 12px; }
+.tile .value { font-size: 26px; font-variant-numeric: tabular-nums; margin-top: 2px; }
+.tile .detail { color: var(--text-faint); font-size: 12px; margin-top: 4px; }
+
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); }
+th { color: var(--text-muted); font-weight: 500; font-size: 12px;
+     text-transform: uppercase; letter-spacing: .04em; }
+tbody tr:hover { background: var(--bg-raised); }
+td.num { text-align: right; font-variant-numeric: tabular-nums; font-family: var(--mono); }
+code, .mono { font-family: var(--mono); font-size: 12px; }
+
+.chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 1px 8px; border-radius: 10px; font-size: 12px;
+  border: 1px solid var(--border-strong); color: var(--text-muted);
+}
+.chip .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.chip.ok       { color: var(--ok); }
+.chip.warn     { color: var(--warn); }
+.chip.major    { color: var(--major); }
+.chip.critical { color: var(--critical); }
+.chip.unknown  { color: var(--unknown); }
+
+.toolbar { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+input, select, button {
+  background: var(--bg-inset); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 6px 9px; font: inherit;
+}
+button { cursor: pointer; }
+button:hover { border-color: var(--border-strong); }
+button.primary { background: var(--accent-dim); border-color: var(--accent); }
+
+.banner {
+  background: var(--bg-raised); border: 1px solid var(--critical);
+  border-left-width: 3px; border-radius: var(--radius);
+  padding: 10px 14px; margin-bottom: 16px; color: var(--text);
+}
+.muted { color: var(--text-muted); }
+.stack { display: grid; gap: 16px; }
+.kv { display: grid; grid-template-columns: 160px 1fr; gap: 6px 12px; font-size: 13px; }
+.kv dt { color: var(--text-muted); }
+.kv dd { margin: 0; }
+
+.login {
+  max-width: 320px; margin: 12vh auto; background: var(--bg-raised);
+  border: 1px solid var(--border); border-radius: var(--radius); padding: 22px;
+}
+.login h1 { margin: 0 0 4px; font-size: 18px; }
+.login label { display: block; margin: 12px 0 4px; color: var(--text-muted); font-size: 12px; }
+.login input { width: 100%; }
+.login button { width: 100%; margin-top: 16px; }
+.error { color: var(--critical); font-size: 13px; margin-top: 10px; }

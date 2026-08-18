@@ -1,0 +1,361 @@
+# Canonical metric registry.
+#
+# The dictionary that makes "canonical telemetry" mean something. Loaded into
+# the `metric` table by migration, and code-generated into Go constants, Python
+# definitions and TypeScript types. A metric key not in this file is a HARD
+# validation failure in the collector, not a silently-passed string.
+#
+# Naming rules (docs/06-metric-registry.md section 1):
+#   1. snake_case, no protocol names in the key
+#   2. names WHAT is measured, never how it was read
+#   3. ONE unit per key, forever - adapters convert
+#   4. multi-instance uses `instance`, never a key suffix
+#   5. counters and derived rates are SEPARATE keys
+#   6. binary points end in _state or _alarm
+#
+# Fields:
+#   aggregation   how a continuous aggregate rolls this up OVER TIME
+#                 (spatial roll-up is an analytics decision, not this)
+#   hot           mirrored into device_state.metrics for the rack/dashboard views
+#   rate_of       this gauge is the derived rate of the named counter
+#
+# Phase 1 scope: universal, compute, network, environment. Power and cooling
+# groups arrive with their adapters in phase 3.
+
+version: 1
+
+metrics:
+
+  # ---------------------------------------------------------------- universal
+  - key: sys_uptime
+    display_name: System Uptime
+    unit: s
+    value_type: counter
+    aggregation: last
+    min_valid: 0
+    stale_after_s: 300
+    group: system
+    device_types: []
+    description: Agent uptime. A decrease means the agent restarted and all counters reset.
+
+  - key: reachable
+    display_name: Reachable
+    unit: bool
+    value_type: bool
+    aggregation: last
+    stale_after_s: 300
+    hot: true
+    group: system
+    device_types: []
+    description: Derived from endpoint communication state, not read from the device.
+
+  - key: poll_latency
+    display_name: Poll Latency
+    unit: ms
+    value_type: gauge
+    aggregation: avg
+    min_valid: 0
+    max_valid: 60000
+    stale_after_s: 300
+    group: system
+    device_types: []
+    description: Collector-measured round trip for one poll of one endpoint.
+
+  # ------------------------------------------------------------------ compute
+  - key: cpu_utilization
+    display_name: CPU Utilization
+    unit: pct
+    value_type: gauge
+    aggregation: avg
+    min_valid: 0
+    max_valid: 100
+    stale_after_s: 120
+    hot: true
+    group: compute
+    device_types: [server, switch, router, firewall, load_balancer]
+
+  - key: cpu_temperature
+    display_name: CPU Temperature
+    unit: C
+    value_type: gauge
+    aggregation: max
+    min_valid: -20
+    max_valid: 130
+    stale_after_s: 120
+    hot: true
+    group: thermal
+    device_types: [server]
+    description: Package temperature of a CPU socket. instance = socket id.
+
+  - key: memory_utilization
+    display_name: Memory Utilization
+    unit: pct
+    value_type: gauge
+    aggregation: avg
+    min_valid: 0
+    max_valid: 100
+    stale_after_s: 120
+    hot: true
+    group: compute
+    device_types: [server, switch, router, firewall, load_balancer]
+
+  - key: memory_used
+    display_name: Memory Used
+    unit: B
+    value_type: gauge
+    aggregation: avg
+    min_valid: 0
+    stale_after_s: 120
+    group: compute
+    device_types: [server]
+
+  - key: memory_total
+    display_name: Memory Total
+    unit: B
+    value_type: gauge
+    aggregation: last
+    min_valid: 0
+    stale_after_s: 3600
+    group: compute
+    device_types: [server]
+
+  - key: disk_utilization
+    display_name: Disk Utilization
+    unit: pct
+    value_type: gauge
+    aggregation: max
+    min_valid: 0
+    max_valid: 100
+    stale_after_s: 300
+    group: compute
+    device_types: [server]
+    description: instance = mount point or storage index.
+
+  - key: disk_used
+    display_name: Disk Used
+    unit: B
+    value_type: gauge
+    aggregation: avg
+    min_valid: 0
+    stale_after_s: 300
+    group: compute
+    device_types: [server]
+
+  - key: disk_total
+    display_name: Disk Total
+    unit: B
+    value_type: gauge
+    aggregation: last
+    min_valid: 0
+    stale_after_s: 3600
+    group: compute
+    device_types: [server]
+
+  - key: inlet_temperature
+    display_name: Inlet Temperature
+    unit: C
+    value_type: gauge
+    aggregation: max
+    min_valid: -20
+    max_valid: 80
+    stale_after_s: 120
+    hot: true
+    group: thermal
+    device_types: [server, switch, router, sensor]
+
+  - key: exhaust_temperature
+    display_name: Exhaust Temperature
+    unit: C
+    value_type: gauge
+    aggregation: max
+    min_valid: -20
+    max_valid: 100
+    stale_after_s: 120
+    group: thermal
+    device_types: [server]
+
+  - key: power_draw
+    display_name: Power Draw
+    unit: W
+    value_type: gauge
+    aggregation: avg
+    min_valid: 0
+    max_valid: 50000
+    stale_after_s: 120
+    hot: true
+    group: power
+    device_types: [server, switch, router, firewall, load_balancer, pdu, cdu, crah]
+
+  # ------------------------------------------------------------------ network
+  - key: if_admin_state
+    display_name: Interface Admin State
+    unit: bool
+    value_type: bool
+    aggregation: last
+    stale_after_s: 300
+    group: interfaces
+    device_types: [switch, router, server, firewall, load_balancer, oob_switch]
+
+  - key: if_oper_state
+    display_name: Interface Oper State
+    unit: bool
+    value_type: bool
+    aggregation: last
+    stale_after_s: 300
+    hot: false
+    group: interfaces
+    device_types: [switch, router, server, firewall, load_balancer, oob_switch]
+    description: instance = ifIndex. gNMI reports by name; normalise to ifIndex at ingest.
+
+  - key: if_speed
+    display_name: Interface Speed
+    unit: bps
+    value_type: gauge
+    aggregation: last
+    min_valid: 0
+    stale_after_s: 3600
+    group: interfaces
+    device_types: [switch, router, server, firewall, load_balancer, oob_switch]
+
+  - key: if_in_octets
+    display_name: Interface In Octets
+    unit: B
+    value_type: counter
+    aggregation: last
+    min_valid: 0
+    stale_after_s: 300
+    group: interfaces
+    device_types: [switch, router, server, firewall, load_balancer, oob_switch]
+
+  - key: if_out_octets
+    display_name: Interface Out Octets
+    unit: B
+    value_type: counter
+    aggregation: last
+    min_valid: 0
+    stale_after_s: 300
+    group: interfaces
+    device_types: [switch, router, server, firewall, load_balancer, oob_switch]
+
+  - key: if_in_bps
+    display_name: Interface In Throughput
+    unit: bps
+    value_type: gauge
+    aggregation: avg
+    min_valid: 0
+    stale_after_s: 300
+    rate_of: if_in_octets
+    rate_scale: 8
+    group: interfaces
+    device_types: [switch, router, server, firewall, load_balancer, oob_switch]
+    description: Derived at ingest from if_in_octets. Octets/s x 8 = bits/s.
+
+  - key: if_out_bps
+    display_name: Interface Out Throughput
+    unit: bps
+    value_type: gauge
+    aggregation: avg
+    min_valid: 0
+    stale_after_s: 300
+    rate_of: if_out_octets
+    rate_scale: 8
+    group: interfaces
+    device_types: [switch, router, server, firewall, load_balancer, oob_switch]
+
+  - key: if_in_errors
+    display_name: Interface In Errors
+    unit: count
+    value_type: counter
+    aggregation: last
+    min_valid: 0
+    stale_after_s: 300
+    group: interfaces
+    device_types: [switch, router, server, firewall, load_balancer, oob_switch]
+
+  - key: if_out_errors
+    display_name: Interface Out Errors
+    unit: count
+    value_type: counter
+    aggregation: last
+    min_valid: 0
+    stale_after_s: 300
+    group: interfaces
+    device_types: [switch, router, server, firewall, load_balancer, oob_switch]
+
+  - key: if_in_discards
+    display_name: Interface In Discards
+    unit: count
+    value_type: counter
+    aggregation: last
+    min_valid: 0
+    stale_after_s: 300
+    group: interfaces
+    device_types: [switch, router, server, firewall, load_balancer, oob_switch]
+
+  - key: if_out_discards
+    display_name: Interface Out Discards
+    unit: count
+    value_type: counter
+    aggregation: last
+    min_valid: 0
+    stale_after_s: 300
+    group: interfaces
+    device_types: [switch, router, server, firewall, load_balancer, oob_switch]
+
+  - key: if_in_error_rate
+    display_name: Interface In Error Rate
+    unit: count_per_s
+    value_type: gauge
+    aggregation: avg
+    min_valid: 0
+    stale_after_s: 300
+    rate_of: if_in_errors
+    group: interfaces
+    device_types: [switch, router, server, firewall, load_balancer, oob_switch]
+
+  # -------------------------------------------------------------- environment
+  - key: ambient_temperature
+    display_name: Ambient Temperature
+    unit: C
+    value_type: gauge
+    aggregation: max
+    min_valid: -40
+    max_valid: 90
+    stale_after_s: 120
+    hot: true
+    group: environment
+    device_types: [sensor]
+
+  - key: relative_humidity
+    display_name: Relative Humidity
+    unit: pct
+    value_type: gauge
+    aggregation: avg
+    min_valid: 0
+    max_valid: 100
+    stale_after_s: 120
+    hot: true
+    group: environment
+    device_types: [sensor]
+
+  - key: dew_point
+    display_name: Dew Point
+    unit: C
+    value_type: gauge
+    aggregation: avg
+    min_valid: -40
+    max_valid: 60
+    stale_after_s: 120
+    group: environment
+    device_types: [sensor]
+
+  - key: airflow
+    display_name: Airflow
+    unit: pct
+    value_type: gauge
+    aggregation: avg
+    min_valid: 0
+    max_valid: 100
+    stale_after_s: 120
+    group: environment
+    device_types: [sensor, crah]

@@ -1,0 +1,69 @@
+# Collector process configuration.
+#
+# Note what is ABSENT: any device. The DCIM database is the source of truth for
+# what exists and this process pulls its work list from
+# /api/v1/collector/assignments. A file-based device list goes stale within
+# minutes of a fleet change.
+
+collector:
+  id: col-1
+
+dcim:
+  base_url: http://localhost:8000
+  # The token is read from this environment variable. Never put a literal
+  # secret in this file.
+  token_env: DCIM_COLLECTOR_TOKEN
+  assignment_path: /api/v1/collector/assignments
+  assignment_interval: 30s
+  request_timeout: 15s
+
+redis:
+  url_env: DCIM_REDIS_URL
+  url: redis://localhost:6379/0
+  streams:
+    telemetry:     {name: telemetry.v1,     maxlen: 2000000}
+    events:        {name: events.v1,        maxlen: 500000}
+    endpointstate: {name: endpointstate.v1, maxlen: 200000}
+    heartbeat:     {name: collectorhb.v1,   maxlen: 10000}
+
+publisher:
+  max_batch: 500
+  max_delay: 200ms
+  # Bounded fallback when Redis is unreachable. Telemetry is shed from the
+  # oldest end; events are never shed.
+  ring_capacity: 50000
+
+workers:
+  pool_size: 128
+  queue_multiplier: 8
+
+protocols:
+  snmp:
+    enabled: true
+    max_concurrent: 256
+    # Per HOST, not per endpoint: a server has two SNMP agents and a gateway
+    # fronts several field devices.
+    per_host: 4
+    timeout: 3s
+    retries: 2
+    max_repetitions: 25
+
+health:
+  # One failure is DEGRADED. OFFLINE needs this many consecutive failures AND
+  # more than two intervals since the last success.
+  offline_threshold: 3
+
+mappings:
+  dir: ../contracts/mappings
+
+observability:
+  log_level: info
+  log_format: json
+  metrics_listen: "0.0.0.0:9100"
+  health_listen: "0.0.0.0:9101"
+  heartbeat_every: 10s
+
+limits:
+  # One socket per Redfish BMC and per gNMI stream; fd exhaustion is the real
+  # scaling wall, not CPU.
+  max_open_files: 65536

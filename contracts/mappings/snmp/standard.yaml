@@ -1,0 +1,155 @@
+# Standard-MIB SNMP mappings: RFC1213 / SNMPv2-MIB, IF-MIB, HOST-RESOURCES-MIB.
+#
+# Mappings are DATA, not code. Adding an OID must not require a collector
+# release. `python contracts/mapcheck.py` validates every `metric:` here against
+# contracts/metrics/registry.yaml and fails CI on a typo.
+#
+# Structure
+#   profiles[]           a named group, selected per endpoint by poll profile
+#     scalars[]          single GET of a fully-qualified instance OID
+#     tables[]           GETBULK walk of column OIDs; the OID suffix is the index
+#       columns[]        column OID -> metric
+#       derived[]        metric computed from two columns of the same row
+#       row_filter       keep only rows whose filter column matches
+#       aggregate        collapse all rows into one device-scoped sample
+#       instance_from    column whose value becomes `instance` (default: OID index)
+#
+# Transforms: scale, offset, map, enum_true.
+
+version: 1
+
+profiles:
+
+  # ------------------------------------------------------------------ system
+  - name: system
+    scalars:
+      - oid: 1.3.6.1.2.1.1.3.0          # sysUpTime, TimeTicks (centiseconds)
+        metric: sys_uptime
+        value_type: counter
+        counter_bits: 32
+        transform: {scale: 0.01}
+        # Read in the same cycle as the counters: a decrease means the agent
+        # restarted and every counter reset. See docs/08 section 1.4.
+
+  # -------------------------------------------------------------- interfaces
+  - name: interfaces
+    tables:
+      - name: if_table
+        index_oid: 1.3.6.1.2.1.2.2.1.1          # ifIndex; the OID suffix IS the instance
+        columns:
+          - oid: 1.3.6.1.2.1.2.2.1.7            # ifAdminStatus
+            metric: if_admin_state
+            value_type: bool
+            transform: {enum_true: [1]}
+          - oid: 1.3.6.1.2.1.2.2.1.8            # ifOperStatus
+            metric: if_oper_state
+            value_type: bool
+            transform: {enum_true: [1]}
+          - oid: 1.3.6.1.2.1.2.2.1.13           # ifInDiscards
+            metric: if_in_discards
+            value_type: counter
+            counter_bits: 32
+          - oid: 1.3.6.1.2.1.2.2.1.14           # ifInErrors
+            metric: if_in_errors
+            value_type: counter
+            counter_bits: 32
+          - oid: 1.3.6.1.2.1.2.2.1.19           # ifOutDiscards
+            metric: if_out_discards
+            value_type: counter
+            counter_bits: 32
+          - oid: 1.3.6.1.2.1.2.2.1.20           # ifOutErrors
+            metric: if_out_errors
+            value_type: counter
+            counter_bits: 32
+
+      - name: if_x_table
+        index_oid: 1.3.6.1.2.1.31.1.1.1.1       # ifName
+        columns:
+          - oid: 1.3.6.1.2.1.31.1.1.1.6         # ifHCInOctets
+            metric: if_in_octets
+            value_type: counter
+            counter_bits: 64
+          - oid: 1.3.6.1.2.1.31.1.1.1.10        # ifHCOutOctets
+            metric: if_out_octets
+            value_type: counter
+            counter_bits: 64
+          - oid: 1.3.6.1.2.1.31.1.1.1.15        # ifHighSpeed, Mbps
+            metric: if_speed
+            value_type: gauge
+            transform: {scale: 1000000}
+
+  # ---------------------------------------------------------- host resources
+  - name: host_resources
+    tables:
+      # hrProcessorLoad is one row per core. The device-scoped metric is their
+      # mean, which is what an operator means by "CPU". Per-core detail is not
+      # worth the cardinality at DCIM altitude.
+      - name: hr_processor
+        columns:
+          - oid: 1.3.6.1.2.1.25.3.3.1.2         # hrProcessorLoad, percent
+            metric: cpu_utilization
+            value_type: gauge
+        aggregate: avg
+
+      # hrStorage carries RAM and disks in one table, distinguished by
+      # hrStorageType. Filter, then scale by hrStorageAllocationUnits - the
+      # size/used columns are in ALLOCATION UNITS, not bytes. Missing that
+      # scaling is the classic HOST-RESOURCES bug.
+      - name: hr_storage_ram
+        row_filter: {oid: 1.3.6.1.2.1.25.2.3.1.2, equals: 1.3.6.1.2.1.25.2.1.2}   # hrStorageRam
+        columns:
+          - oid: 1.3.6.1.2.1.25.2.3.1.5         # hrStorageSize
+            metric: memory_total
+            value_type: gauge
+            scale_by_column: 1.3.6.1.2.1.25.2.3.1.4      # hrStorageAllocationUnits
+          - oid: 1.3.6.1.2.1.25.2.3.1.6         # hrStorageUsed
+            metric: memory_used
+            value_type: gauge
+            scale_by_column: 1.3.6.1.2.1.25.2.3.1.4
+        derived:
+          - metric: memory_utilization
+            value_type: gauge
+            numerator: 1.3.6.1.2.1.25.2.3.1.6
+            denominator: 1.3.6.1.2.1.25.2.3.1.5
+            transform: {scale: 100}
+        aggregate: max        # one RAM row in practice; max is safe if a device reports several
+
+      - name: hr_storage_disk
+        row_filter: {oid: 1.3.6.1.2.1.25.2.3.1.2, equals: 1.3.6.1.2.1.25.2.1.4}   # hrStorageFixedDisk
+        instance_from: 1.3.6.1.2.1.25.2.3.1.3   # hrStorageDescr, e.g. "/" or "C:\\"
+        columns:
+          - oid: 1.3.6.1.2.1.25.2.3.1.5
+            metric: disk_total
+            value_type: gauge
+            scale_by_column: 1.3.6.1.2.1.25.2.3.1.4
+          - oid: 1.3.6.1.2.1.25.2.3.1.6
+            metric: disk_used
+            value_type: gauge
+            scale_by_column: 1.3.6.1.2.1.25.2.3.1.4
+        derived:
+          - metric: disk_utilization
+            value_type: gauge
+            numerator: 1.3.6.1.2.1.25.2.3.1.6
+            denominator: 1.3.6.1.2.1.25.2.3.1.5
+            transform: {scale: 100}
+
+  # ------------------------------------------------------------- environment
+  # ENTITY-SENSOR-MIB. entPhySensorValue must be scaled by entPhySensorScale
+  # and entPhySensorPrecision; the simulator emits temperature and humidity
+  # rows here for environmental probes.
+  - name: entity_sensors
+    tables:
+      - name: ent_sensor_temp
+        row_filter: {oid: 1.3.6.1.2.1.99.1.1.1.1, equals_int: 8}    # entPhySensorType celsius
+        columns:
+          - oid: 1.3.6.1.2.1.99.1.1.1.4         # entPhySensorValue
+            metric: ambient_temperature
+            value_type: gauge
+            precision_from: 1.3.6.1.2.1.99.1.1.1.3               # entPhySensorPrecision
+      - name: ent_sensor_humidity
+        row_filter: {oid: 1.3.6.1.2.1.99.1.1.1.1, equals_int: 9}    # percentRH
+        columns:
+          - oid: 1.3.6.1.2.1.99.1.1.1.4
+            metric: relative_humidity
+            value_type: gauge
+            precision_from: 1.3.6.1.2.1.99.1.1.1.3

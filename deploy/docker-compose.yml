@@ -1,0 +1,101 @@
+# Development stack.
+#
+# The collector uses host networking on Linux because it must bind udp/162 for
+# traps and source BACnet from a routable address. On Docker Desktop, host
+# networking is not available: run the collector on the host with
+# `go run ./cmd/collector` instead, and leave this service out with
+# `--scale collector=0`.
+
+name: dcim
+
+services:
+  postgres:
+    image: timescale/timescaledb-ha:pg16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-dcim}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}
+      POSTGRES_DB: ${POSTGRES_DB:-dcim}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/home/postgres/pgdata/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-dcim} -d ${POSTGRES_DB:-dcim}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    # The stream holds telemetry and the counter baselines; an unprotected
+    # Redis is a full compromise of the monitoring plane.
+    command: >
+      redis-server --appendonly yes
+      --requirepass ${REDIS_PASSWORD:?set REDIS_PASSWORD in deploy/.env}
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    environment: &backend_env
+      DCIM_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-dcim}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-dcim}
+      DCIM_REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      DCIM_JWT_SECRET: ${DCIM_JWT_SECRET:?set DCIM_JWT_SECRET in deploy/.env}
+      DCIM_COLLECTOR_TOKEN: ${DCIM_COLLECTOR_TOKEN:?set DCIM_COLLECTOR_TOKEN in deploy/.env}
+      DCIM_CREDENTIAL_KEY: ${DCIM_CREDENTIAL_KEY:?set DCIM_CREDENTIAL_KEY in deploy/.env}
+      DCIM_ADMIN_PASSWORD: ${DCIM_ADMIN_PASSWORD:?set DCIM_ADMIN_PASSWORD in deploy/.env}
+      DCIM_SIMULATOR_BASE_URL: ${DCIM_SIMULATOR_BASE_URL:-http://host.docker.internal:8001}
+      DCIM_SIMULATOR_PASSWORD: ${DCIM_SIMULATOR_PASSWORD:-}
+      DCIM_ENVIRONMENT: development
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  ingest:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    command: python -m app.ingest.worker
+    environment: *backend_env
+    # Run at least two so a dead worker's pending entries are reclaimed
+    # promptly by the other.
+    deploy:
+      replicas: 2
+    depends_on:
+      api: {condition: service_started}
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+
+  ui:
+    image: node:20-alpine
+    working_dir: /app
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    environment:
+      VITE_API_PROXY: http://api:8000
+    ports:
+      - "5173:5173"
+    volumes:
+      - ../frontend:/app
+      - /app/node_modules
+    depends_on:
+      - api
+
+volumes:
+  pgdata:
+  redisdata:

@@ -1,0 +1,128 @@
+# Canonical telemetry contract, version 1.
+#
+# This file is the SINGLE SOURCE OF TRUTH for the collector <-> DCIM message
+# shapes. `contracts/codegen.py` generates from it:
+#
+#   collector/pkg/models/messages_gen.go        Go structs + msgpack tags
+#   backend/app/contracts/messages_gen.py       Python dataclasses + codec
+#   contracts/proto/dcim/telemetry/v1/*.proto   protobuf IDL (future transport)
+#
+# Wire format today is msgpack maps keyed by FIELD NAME. Unknown keys are
+# ignored on decode, which gives the same forward compatibility protobuf tags
+# would. The `tag` values below exist so the .proto emitted alongside stays
+# stable when the transport moves to protobuf.
+#
+# Versioning rules: see docs/05-telemetry-contract.md section 6.
+#   allowed in v1  - add an optional field with a NEW tag
+#   requires v2    - remove/renumber a field, change a type, change a meaning
+
+version: 1
+package: dcim.telemetry.v1
+
+enums:
+  Protocol:
+    values: [UNSPECIFIED, SNMP, SNMP_TRAP, GNMI, BACNET, REDFISH, MODBUS, SFLOW]
+  ValueType:
+    values: [UNSPECIFIED, GAUGE, COUNTER, DELTA, BOOL, TEXT]
+  Quality:
+    values: [UNSPECIFIED, GOOD, STALE, SUSPECT, BAD, NO_DATA]
+  Severity:
+    values: [UNSPECIFIED, CLEAR, INFO, WARNING, MINOR, MAJOR, CRITICAL]
+  CommStatus:
+    values: [UNSPECIFIED, ONLINE, DEGRADED, OFFLINE, UNKNOWN, DISABLED]
+
+messages:
+
+  Telemetry:
+    doc: One observation of one metric on one instance of one device.
+    fields:
+      - {name: endpoint_id,     tag: 1,  type: string, doc: "DCIM device_endpoint.id - the authoritative identity"}
+      - {name: device_id,       tag: 2,  type: string, doc: "DCIM device.id, carried so ingest needs no join"}
+      - {name: metric,          tag: 3,  type: string, doc: "canonical metric key from the registry"}
+      - {name: instance,        tag: 4,  type: string, doc: "ifIndex / sensor id / phase / object instance; empty = device-scoped"}
+      - {name: value_type,      tag: 5,  type: enum:ValueType}
+      - {name: double_value,    tag: 6,  type: double}
+      - {name: uint_value,      tag: 7,  type: uint64, doc: "counters - full 64-bit, no float precision loss"}
+      - {name: bool_value,      tag: 8,  type: bool}
+      - {name: text_value,      tag: 9,  type: string}
+      - {name: unit,            tag: 10, type: string}
+      - {name: observed_at,     tag: 11, type: timestamp, doc: "device/protocol time where available"}
+      - {name: collected_at,    tag: 12, type: timestamp, doc: "collector wall clock"}
+      - {name: source_protocol, tag: 13, type: enum:Protocol}
+      - {name: quality,         tag: 14, type: enum:Quality}
+      - {name: counter_reset,   tag: 15, type: bool,   doc: "true => discard the delta across this sample"}
+      - {name: counter_bits,    tag: 16, type: uint32, doc: "32 or 64, for wrap arithmetic"}
+      - {name: metadata,        tag: 20, type: "map<string,string>", doc: "protocol provenance, DEBUG ONLY - never branch on it"}
+
+  TelemetryBatch:
+    doc: What actually goes on the wire; per-sample framing is wasteful.
+    fields:
+      - {name: collector_id,   tag: 1, type: string}
+      - {name: samples,        tag: 2, type: repeated:Telemetry}
+      - {name: sent_at,        tag: 3, type: timestamp}
+      - {name: schema_version, tag: 4, type: uint32}
+      - {name: trace_id,       tag: 5, type: string}
+
+  Event:
+    doc: A discrete state-change notification - SNMP trap, Redfish event, BACnet COV.
+    fields:
+      - {name: endpoint_id,     tag: 1,  type: string}
+      - {name: device_id,       tag: 2,  type: string, doc: "empty if the source could not be resolved"}
+      - {name: source_ip,       tag: 3,  type: string, doc: "always populated - the fallback identity"}
+      - {name: event_type,      tag: 4,  type: string, doc: "canonical, e.g. link_down"}
+      - {name: instance,        tag: 5,  type: string}
+      - {name: severity,        tag: 6,  type: enum:Severity}
+      - {name: is_clear,        tag: 7,  type: bool, doc: "true => clears the alarm with the same key"}
+      - {name: message,         tag: 8,  type: string}
+      - {name: observed_at,     tag: 9,  type: timestamp}
+      - {name: collected_at,    tag: 10, type: timestamp}
+      - {name: source_protocol, tag: 11, type: enum:Protocol}
+      - {name: varbinds,        tag: 12, type: "map<string,string>"}
+      - {name: raw_identifier,  tag: 13, type: string, doc: "trap OID / Redfish MessageId / BACnet object ref"}
+      - {name: dedup_key,       tag: 14, type: string}
+
+  EventBatch:
+    fields:
+      - {name: collector_id,   tag: 1, type: string}
+      - {name: events,         tag: 2, type: repeated:Event}
+      - {name: sent_at,        tag: 3, type: timestamp}
+      - {name: schema_version, tag: 4, type: uint32}
+      - {name: trace_id,       tag: 5, type: string}
+
+  EndpointState:
+    doc: Published ON CHANGE ONLY, never every poll.
+    fields:
+      - {name: endpoint_id,          tag: 1,  type: string}
+      - {name: device_id,            tag: 2,  type: string}
+      - {name: collector_id,         tag: 3,  type: string}
+      - {name: status,               tag: 4,  type: enum:CommStatus}
+      - {name: last_success,         tag: 5,  type: timestamp}
+      - {name: last_failure,         tag: 6,  type: timestamp}
+      - {name: consecutive_failures, tag: 7,  type: uint32}
+      - {name: last_error,           tag: 8,  type: string}
+      - {name: last_error_class,     tag: 9,  type: string, doc: "timeout|auth|refused|decode|unreachable|protocol"}
+      - {name: latency_ms,           tag: 10, type: uint32}
+      - {name: changed_at,           tag: 11, type: timestamp}
+
+  CollectorHeartbeat:
+    fields:
+      - {name: collector_id,       tag: 1,  type: string}
+      - {name: version,            tag: 2,  type: string}
+      - {name: hostname,           tag: 3,  type: string}
+      - {name: started_at,         tag: 4,  type: timestamp}
+      - {name: sent_at,            tag: 5,  type: timestamp}
+      - {name: endpoints_owned,    tag: 6,  type: uint32}
+      - {name: endpoints_online,   tag: 7,  type: uint32}
+      - {name: polls_total,        tag: 8,  type: uint64}
+      - {name: polls_failed,       tag: 9,  type: uint64}
+      - {name: traps_received,     tag: 10, type: uint64}
+      - {name: events_received,    tag: 11, type: uint64}
+      - {name: queue_depth,        tag: 12, type: uint32}
+      - {name: active_streams,     tag: 13, type: uint32}
+      - {name: assignment_version, tag: 14, type: uint32}
+
+streams:
+  telemetry:     {name: telemetry.v1,     message: TelemetryBatch,     maxlen: 2000000}
+  events:        {name: events.v1,        message: EventBatch,         maxlen: 500000}
+  endpointstate: {name: endpointstate.v1, message: EndpointState,      maxlen: 200000}
+  heartbeat:     {name: collectorhb.v1,   message: CollectorHeartbeat, maxlen: 10000}
