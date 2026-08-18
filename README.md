@@ -59,36 +59,38 @@ Full design: [`docs/`](docs/) — start with `docs/README.md`.
 
 ## Quick start
 
+The collector must run where it can see the devices. In this deployment the
+simulated device IPs are bound inside WSL, so a collector started from Windows
+cannot reach them no matter how it is configured. Run the whole stack inside
+WSL and point it at Docker on Windows - WSL reaches published ports over
+127.0.0.1 under mirrored networking.
+
 ```bash
-# 1. contracts → generated code (pure Python, no protoc needed)
-make generate
+# in WSL, on the WSL filesystem (NOT /mnt/c - DrvFs makes pip and npm crawl)
+git clone https://github.com/hindora/dcim-platform.git ~/dcim-platform
+cd ~/dcim-platform
 
-# 2. infrastructure
-cp deploy/.env.example deploy/.env      # then edit the secrets
-docker compose -f deploy/docker-compose.yml up -d postgres redis
+cp deploy/.env.example deploy/.env    # then fill in the secrets
+make setup                            # venv, python deps, npm deps, collector
+make up                               # postgres + redis in Docker
+make dev                              # api + ingest + collector + ui
+```
 
-# 3. backend
-cd backend
-python -m venv .venv && . .venv/Scripts/activate    # Windows
-pip install -e ".[dev]"
-alembic upgrade head
-uvicorn app.main:app --reload --port 8000
+If the machine already holds data, `deploy/.env` must carry the **same**
+`DCIM_CREDENTIAL_KEY` that encrypted the stored device credentials - a new key
+cannot decrypt them.
 
-# 4. seed inventory from the simulator
-python -m app.importer.cli --base-url http://127.0.0.1:8001 \
-                           --username admin --password admin1234
+Seed the inventory once the API is up:
 
-# 5. ingest worker (separate shell)
-python -m app.ingest.worker
-
-# 6. collector (separate shell)
-cd collector && go run ./cmd/collector --config configs/collector.yaml
-
-# 7. frontend
-cd frontend && npm install && npm run dev
+```bash
+make seed     # or: python -m app.importer.cli --file <topology-export.json>
 ```
 
 API docs at <http://localhost:8000/docs>, UI at <http://localhost:5173>.
+
+Individual components: `make dev-api`, `make dev-ingest`, `make dev-collector`,
+`make dev-ui`. Run exactly one ingest worker in development: two in the same
+consumer group split batches between them, which looks like data going missing.
 
 ## Make targets
 

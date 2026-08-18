@@ -43,4 +43,6 @@ Thumbs.db
 *.log
 data/
 collector/collector-linux
+collector/bin/
 collector/probe
+var/

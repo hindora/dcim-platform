@@ -1,19 +1,26 @@
-.PHONY: help generate check-generated mapcheck backend-install backend-test \
-        backend-lint collector-build collector-test frontend-install \
-        frontend-build lint test up down seed
+.PHONY: help setup generate check-generated mapcheck backend-test backend-lint \
+        collector-build collector-test frontend-build lint test up down logs \
+        dev dev-api dev-ingest dev-collector dev-ui seed
 
-PY ?= backend/.venv/Scripts/python.exe   # on Linux/macOS: backend/.venv/bin/python
+# Prefer the POSIX venv layout; fall back to the Windows one.
+PY := $(shell if [ -x backend/.venv/bin/python ]; then echo backend/.venv/bin/python; \
+              else echo backend/.venv/Scripts/python.exe; fi)
+COMPOSE := docker compose -f deploy/docker-compose.yml --env-file deploy/.env
 
 help:
-	@echo "generate         regenerate Go/Python/TS code from contracts/"
-	@echo "check-generated  fail if generated code is stale (CI gate)"
-	@echo "mapcheck         validate protocol mappings against the metric registry"
-	@echo "backend-test     pytest"
-	@echo "collector-test   go vet + go test"
-	@echo "frontend-build   typecheck + vite build"
-	@echo "test             everything"
-	@echo "up / down        docker compose dev stack"
+	@echo "setup            one-time: venv, python deps, npm deps, collector build"
+	@echo "up / down        postgres + redis in Docker"
+	@echo "dev              api + ingest + collector + ui (run this inside WSL)"
+	@echo "dev-api          just the API          dev-ingest    just the ingest worker"
+	@echo "dev-collector    just the collector    dev-ui        just the frontend"
 	@echo "seed             import inventory from the simulator"
+	@echo "test             every gate: contracts, backend, collector, frontend"
+	@echo "lint             ruff + go vet + gofmt + tsc"
+
+# ----------------------------------------------------------------- setup
+
+setup:
+	./scripts/setup.sh
 
 generate:
 	$(PY) contracts/codegen.py
@@ -24,8 +31,38 @@ check-generated:
 mapcheck:
 	$(PY) contracts/mapcheck.py
 
-backend-install:
-	cd backend && python -m venv .venv && $(PY) -m pip install -e ".[dev]"
+# ------------------------------------------------------------- datastores
+
+up:
+	$(COMPOSE) up -d postgres redis
+
+down:
+	$(COMPOSE) down
+
+logs:
+	$(COMPOSE) logs -f --tail=100
+
+# --------------------------------------------------------------- running
+
+dev:
+	./scripts/dev.sh
+
+dev-api:
+	./scripts/dev.sh api
+
+dev-ingest:
+	./scripts/dev.sh ingest
+
+dev-collector:
+	./scripts/dev.sh collector
+
+dev-ui:
+	./scripts/dev.sh ui
+
+seed:
+	cd backend && ../$(PY) -m app.importer.cli
+
+# ----------------------------------------------------------------- checks
 
 backend-test:
 	cd backend && ../$(PY) -m pytest -q
@@ -37,25 +74,13 @@ collector-build:
 	cd collector && go mod tidy && go build ./...
 
 collector-test:
-	cd collector && go vet ./... && go test ./...
-
-frontend-install:
-	cd frontend && npm install
+	cd collector && gofmt -l . && go vet ./... && go test ./...
 
 frontend-build:
-	cd frontend && npm run build
+	npm --prefix frontend run build
 
 lint: backend-lint
-	cd collector && go vet ./...
-	cd frontend && npm run typecheck
+	cd collector && gofmt -l . && go vet ./...
+	npm --prefix frontend run typecheck
 
 test: check-generated mapcheck backend-test collector-test frontend-build
-
-up:
-	docker compose -f deploy/docker-compose.yml up -d
-
-down:
-	docker compose -f deploy/docker-compose.yml down
-
-seed:
-	cd backend && ../$(PY) -m app.importer.cli
