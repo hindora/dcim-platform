@@ -157,7 +157,9 @@ fi
 
 say "running: ${labels[*]}"
 say "API  http://127.0.0.1:${API_PORT:-8000}/docs"
-want ui && say "UI   http://127.0.0.1:5173"
+# `want ui && say ...` would abort the script under `set -e` whenever the UI
+# was not selected, because the compound statement returns non-zero.
+if want ui; then say "UI   http://127.0.0.1:5173"; fi
 say "Ctrl-C to stop"
 
 wait
