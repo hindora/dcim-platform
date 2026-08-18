@@ -246,8 +246,11 @@ class IngestWorker:
             log.warning("dropped samples with unknown metrics",
                         metrics=sorted(unknown_metrics)[:10],
                         count=len(unknown_metrics))
-        log.debug("telemetry ingested", samples=len(sample_rows),
-                  bools=len(bool_rows), devices=len(hot))
+        # Batch-level counts at INFO: one line per consumed batch is cheap, and
+        # without it "the numbers are not moving" is unanswerable.
+        log.info("telemetry ingested", received=len(samples),
+                 numeric=len(sample_rows), bools=len(bool_rows),
+                 devices=len(hot), skipped=len(samples) - len(sample_rows) - len(bool_rows))
 
     def _note_hot(self, hot: dict, frames: dict, device_id: str, metric: str,
                   value, observed: datetime, quality: str) -> None:

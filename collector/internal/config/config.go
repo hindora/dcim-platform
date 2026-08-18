@@ -89,6 +89,9 @@ type ProtocolCfg struct {
 	Timeout        time.Duration `yaml:"timeout"`
 	Retries        int           `yaml:"retries"`
 	MaxRepetitions int           `yaml:"max_repetitions"`
+	// AcceptAnySourceReply tolerates an agent whose reply source address
+	// differs from the address polled - normal for wildcard-bound agents.
+	AcceptAnySourceReply bool `yaml:"accept_any_source_reply"`
 }
 
 // Token returns the DCIM API token, read from the environment. It is never
@@ -132,6 +135,7 @@ func Default() *Config {
 	c.Protocols.SNMP = ProtocolCfg{
 		Enabled: true, MaxConcurrent: 256, PerHost: 4,
 		Timeout: 3 * time.Second, Retries: 2, MaxRepetitions: 25,
+		AcceptAnySourceReply: true,
 	}
 	c.Health.OfflineThreshold = 3
 	c.Mappings.Dir = "../contracts/mappings"

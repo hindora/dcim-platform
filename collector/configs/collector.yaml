@@ -42,12 +42,21 @@ workers:
 protocols:
   snmp:
     enabled: true
-    max_concurrent: 256
+    # Tuned for a single snmpsim process serving the whole fleet from one
+    # wildcard socket. Each server poll is ~20 SNMP operations (one GET plus a
+    # BulkWalk per table column), so 894 endpoints is ~18k operations a cycle;
+    # 256 in flight simply queues behind one responder and everything times
+    # out. Real gear answers per-device and tolerates far more fan-out.
+    max_concurrent: 48
     # Per HOST, not per endpoint: a server has two SNMP agents and a gateway
     # fronts several field devices.
-    per_host: 4
-    timeout: 3s
+    per_host: 2
+    timeout: 6s
     retries: 2
+    # An agent bound to a wildcard socket replies from whichever source
+    # address the kernel picks, not necessarily the one polled. gosnmp's
+    # connected UDP socket drops those replies and every poll times out.
+    accept_any_source_reply: true
     max_repetitions: 25
 
 health:

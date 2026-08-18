@@ -87,6 +87,14 @@ METRICS: dict[str, MetricDef] = {
         group="compute", rate_of=None, rate_scale=1.0,
         device_types=("server",),
     ),
+    "memory_available": MetricDef(
+        key="memory_available", display_name="Memory Available", unit="B",
+        value_type="gauge", aggregation="avg",
+        min_valid=0, max_valid=None,
+        stale_after_s=120, hot=False,
+        group="compute", rate_of=None, rate_scale=1.0,
+        device_types=("server",),
+    ),
     "disk_utilization": MetricDef(
         key="disk_utilization", display_name="Disk Utilization", unit="pct",
         value_type="gauge", aggregation="max",

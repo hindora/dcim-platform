@@ -31,6 +31,7 @@ const (
 	MetricMemoryUtilization  = "memory_utilization"
 	MetricMemoryUsed         = "memory_used"
 	MetricMemoryTotal        = "memory_total"
+	MetricMemoryAvailable    = "memory_available"
 	MetricDiskUtilization    = "disk_utilization"
 	MetricDiskUsed           = "disk_used"
 	MetricDiskTotal          = "disk_total"
@@ -118,6 +119,14 @@ var MetricDefs = map[string]MetricDef{
 		MinValid: 0, HasMin: true,
 		MaxValid: 0, HasMax: false,
 		StaleAfterS: 3600, Hot: false,
+		Group: "compute", RateOf: "", RateScale: 1,
+	},
+	"memory_available": {
+		Key: "memory_available", DisplayName: "Memory Available", Unit: "B",
+		ValueType: "gauge", Aggregation: "avg",
+		MinValid: 0, HasMin: true,
+		MaxValid: 0, HasMax: false,
+		StaleAfterS: 120, Hot: false,
 		Group: "compute", RateOf: "", RateScale: 1,
 	},
 	"disk_utilization": {
@@ -300,7 +309,7 @@ var MetricDefs = map[string]MetricDef{
 
 // MetricGroups maps a poll-profile group name to its metric keys.
 var MetricGroups = map[string][]string{
-	"compute":     {"cpu_utilization", "memory_utilization", "memory_used", "memory_total", "disk_utilization", "disk_used", "disk_total"},
+	"compute":     {"cpu_utilization", "memory_utilization", "memory_used", "memory_total", "memory_available", "disk_utilization", "disk_used", "disk_total"},
 	"environment": {"ambient_temperature", "relative_humidity", "dew_point", "airflow"},
 	"interfaces":  {"if_admin_state", "if_oper_state", "if_speed", "if_in_octets", "if_out_octets", "if_in_bps", "if_out_bps", "if_in_errors", "if_out_errors", "if_in_discards", "if_out_discards", "if_in_error_rate"},
 	"power":       {"power_draw"},

@@ -69,7 +69,8 @@ async def fetch_topology(base_url: str, username: str, password: str,
                          timeout: float = 60.0) -> dict:
     """Log in to the simulator API and pull the full topology export."""
     async with httpx.AsyncClient(base_url=base_url.rstrip("/"), timeout=timeout) as client:
-        r = await client.post("/api/login",
+        # The simulator mounts its auth router under /api + /auth.
+        r = await client.post("/api/auth/login",
                               json={"username": username, "password": password})
         r.raise_for_status()
         token = r.json()["token"]

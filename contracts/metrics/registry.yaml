@@ -119,6 +119,17 @@ metrics:
     group: compute
     device_types: [server]
 
+  - key: memory_available
+    display_name: Memory Available
+    unit: B
+    value_type: gauge
+    aggregation: avg
+    min_valid: 0
+    stale_after_s: 120
+    group: compute
+    device_types: [server]
+    description: UCD-SNMP memAvailReal. memory_used is derived from this and memory_total.
+
   - key: disk_utilization
     display_name: Disk Utilization
     unit: pct

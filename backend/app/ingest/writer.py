@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -53,34 +54,37 @@ class HotUpdate:
 
 
 async def _raw_asyncpg(session: AsyncSession):
-    """The underlying asyncpg connection, for COPY."""
+    """The underlying asyncpg connection, for driver-level batch statements."""
     conn = await session.connection()
     raw = await conn.get_raw_connection()
     return raw.driver_connection
 
 
 async def copy_samples(session: AsyncSession, rows: list[SampleRow]) -> int:
+    """Insert numeric samples, discarding duplicates.
+
+    This deliberately does NOT use COPY. COPY cannot express ON CONFLICT, so it
+    needs a staging table, and staging through a TEMP table under SQLAlchemy's
+    asyncpg wrapper silently staged zero rows - the INSERT reported "INSERT 0 0"
+    while the batch looked healthy from the outside. A wrong number is worse
+    than a slower one.
+
+    asyncpg's executemany pipelines the statements, so this is still a single
+    round trip's worth of work per batch, and the primary key gives us the
+    idempotency that at-least-once delivery requires.
+    """
     if not rows:
         return 0
     pg = await _raw_asyncpg(session)
-    await pg.execute("""
-        CREATE TEMP TABLE IF NOT EXISTS _incoming_sample (
-            ts timestamptz, device_id uuid, metric_id smallint,
-            instance text, value double precision, quality text
-        ) ON COMMIT DROP
-    """)
-    await pg.execute("TRUNCATE _incoming_sample")
-    await pg.copy_records_to_table(
-        "_incoming_sample",
-        records=[(r.ts, r.device_id, r.metric_id, r.instance, r.value, r.quality)
-                 for r in rows],
-        columns=["ts", "device_id", "metric_id", "instance", "value", "quality"],
-    )
-    await pg.execute("""
+    await pg.executemany(
+        """
         INSERT INTO telemetry_sample (ts, device_id, metric_id, instance, value, quality)
-        SELECT ts, device_id, metric_id, instance, value, quality FROM _incoming_sample
+        VALUES ($1, $2, $3, $4, $5, $6)
         ON CONFLICT DO NOTHING
-    """)
+        """,
+        [(r.ts, UUID(r.device_id) if isinstance(r.device_id, str) else r.device_id,
+          r.metric_id, r.instance, r.value, r.quality) for r in rows],
+    )
     return len(rows)
 
 

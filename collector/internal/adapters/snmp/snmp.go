@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"net"
 	"strconv"
 	"strings"
 	"sync"
@@ -38,19 +39,22 @@ type Adapter struct {
 	log            *slog.Logger
 	mets           *obs.Metrics
 	maxRepetitions int
+	// Accept a reply from any source address; see anySourceConn.
+	anySourceReply bool
 
 	mu         sync.Mutex
 	lastUptime map[string]float64 // endpoint id -> last sysUpTime in seconds
 }
 
 func New(maps *mapping.Registry, log *slog.Logger, mets *obs.Metrics,
-	maxRepetitions int) *Adapter {
+	maxRepetitions int, anySourceReply bool) *Adapter {
 	if maxRepetitions <= 0 {
 		maxRepetitions = 25
 	}
 	return &Adapter{
 		maps: maps, log: log, mets: mets,
 		maxRepetitions: maxRepetitions,
+		anySourceReply: anySourceReply,
 		lastUptime:     make(map[string]float64),
 	}
 }
@@ -63,6 +67,46 @@ func (a *Adapter) Forget(endpointID string) {
 	a.mu.Lock()
 	delete(a.lastUptime, endpointID)
 	a.mu.Unlock()
+}
+
+// anySourceConn presents an UNCONNECTED UDP socket as a net.Conn: it writes to
+// a fixed peer but accepts a datagram from any source address.
+//
+// This exists because an agent bound to a wildcard socket replies from an
+// address that need not match the one we dialled. A connected socket drops
+// those replies in the kernel, so every poll times out even though the agent
+// answered. net-snmp has always used an unconnected socket for this reason.
+type anySourceConn struct {
+	pc     net.PacketConn
+	remote net.Addr
+}
+
+func (c *anySourceConn) Read(b []byte) (int, error)  { n, _, err := c.pc.ReadFrom(b); return n, err }
+func (c *anySourceConn) Write(b []byte) (int, error) { return c.pc.WriteTo(b, c.remote) }
+func (c *anySourceConn) Close() error                { return c.pc.Close() }
+func (c *anySourceConn) LocalAddr() net.Addr         { return c.pc.LocalAddr() }
+func (c *anySourceConn) RemoteAddr() net.Addr        { return c.remote }
+
+func (c *anySourceConn) SetDeadline(t time.Time) error      { return c.pc.SetDeadline(t) }
+func (c *anySourceConn) SetReadDeadline(t time.Time) error  { return c.pc.SetReadDeadline(t) }
+func (c *anySourceConn) SetWriteDeadline(t time.Time) error { return c.pc.SetWriteDeadline(t) }
+
+// useAnySourceSocket swaps the connected socket gosnmp created for an
+// unconnected one. Connect() is still called first so gosnmp initialises the
+// rest of its state.
+func useAnySourceSocket(client *g.GoSNMP, address string, port int) error {
+	pc, err := net.ListenPacket("udp", ":0")
+	if err != nil {
+		return err
+	}
+	remote, err := net.ResolveUDPAddr("udp", fmt.Sprintf("%s:%d", address, port))
+	if err != nil {
+		_ = pc.Close()
+		return err
+	}
+	_ = client.Conn.Close()
+	client.Conn = &anySourceConn{pc: pc, remote: remote}
+	return nil
 }
 
 func (a *Adapter) Poll(ctx context.Context, ep *models.Endpoint) (*models.PollOutcome, error) {
@@ -94,6 +138,11 @@ func (a *Adapter) Poll(ctx context.Context, ep *models.Endpoint) (*models.PollOu
 	started := time.Now()
 	if err := client.Connect(); err != nil {
 		return nil, fmt.Errorf("%w: %v", models.ErrUnreachable, err)
+	}
+	if a.anySourceReply {
+		if err := useAnySourceSocket(client, ep.Address, port); err != nil {
+			return nil, fmt.Errorf("%w: %v", models.ErrUnreachable, err)
+		}
 	}
 	defer client.Conn.Close()
 
@@ -213,6 +262,15 @@ func (a *Adapter) collectScalars(client *g.GoSNMP, profile *mapping.Profile,
 		}
 		oids = append(oids, s.OID)
 	}
+	// Derived scalars need their operands fetched even when no plain scalar
+	// maps them.
+	for _, d := range profile.DerivedScalars {
+		for _, o := range []string{d.Numerator, d.Denominator, d.MultiplyBy} {
+			if o != "" && !contains(oids, o) {
+				oids = append(oids, o)
+			}
+		}
+	}
 	if len(oids) == 0 {
 		return
 	}
@@ -246,6 +304,63 @@ func (a *Adapter) collectScalars(client *g.GoSNMP, profile *mapping.Profile,
 			outcome.Samples = append(outcome.Samples, sample)
 		}
 	}
+
+	for _, d := range profile.DerivedScalars {
+		num, okN := toFloat(valueOf(byOID, d.Numerator))
+		den, okD := toFloat(valueOf(byOID, d.Denominator))
+		if !okN || !okD || den == 0 {
+			outcome.Misses = append(outcome.Misses,
+				models.Miss{Metric: d.Metric, Reason: models.MissNoSuchObject})
+			continue
+		}
+		value := num / den
+		if d.OneMinus {
+			value = 1 - value
+		}
+		if d.MultiplyBy != "" {
+			factor, ok := toFloat(valueOf(byOID, d.MultiplyBy))
+			if !ok {
+				continue
+			}
+			value *= factor
+		}
+		value = d.Transform.Apply(value)
+
+		def, ok := models.ValidateMetric(d.Metric)
+		if !ok {
+			continue
+		}
+		outcome.Samples = append(outcome.Samples, models.Telemetry{
+			EndpointID:     ep.ID,
+			DeviceID:       ep.DeviceID,
+			Metric:         d.Metric,
+			ValueType:      models.ValueTypeGauge,
+			DoubleValue:    value,
+			Unit:           def.Unit,
+			ObservedAt:     now,
+			CollectedAt:    now,
+			SourceProtocol: models.ProtocolSNMP,
+			Quality:        quality(def, value),
+			Metadata:       map[string]string{"oid": d.Numerator + "/" + d.Denominator},
+		})
+	}
+}
+
+func contains(list []string, want string) bool {
+	for _, v := range list {
+		if v == want {
+			return true
+		}
+	}
+	return false
+}
+
+func valueOf(byOID map[string]g.SnmpPDU, oid string) any {
+	pdu, ok := byOID[oid]
+	if !ok || pdu.Type == g.NoSuchObject || pdu.Type == g.NoSuchInstance {
+		return nil
+	}
+	return pdu.Value
 }
 
 func (a *Adapter) collectTables(client *g.GoSNMP, profile *mapping.Profile,
@@ -277,20 +392,47 @@ func (a *Adapter) collectTables(client *g.GoSNMP, profile *mapping.Profile,
 			wanted[table.InstanceFrom] = true
 		}
 
+		// ONE walk for the whole table. Every column of a table shares a
+		// subtree, so walking each column separately multiplies the request
+		// count for identical data - which is exactly what swamps an agent
+		// plane served by a single process.
+		wantedList := make([]string, 0, len(wanted))
+		for oid := range wanted {
+			wantedList = append(wantedList, oid)
+		}
+		// Collapse to one walk only when every column is a direct child of the
+		// same node - i.e. they really are columns of ONE table. Columns from
+		// two different tables share only a short prefix, and walking that
+		// would drag in half the MIB.
+		roots := walkRoots(wantedList)
+
 		// rows[index][columnOID] = value
 		rows := map[string]map[string]any{}
-		for oid := range wanted {
-			pdus, err := client.BulkWalkAll(oid)
+		var pdus []g.SnmpPDU
+		walkFailed := false
+		for _, root := range roots {
+			got, err := client.BulkWalkAll(root)
 			if err != nil {
 				// Record it as a miss, not just a counter: the poll-level error
 				// classification reads these to tell "silent" from "garbled".
 				outcome.Misses = append(outcome.Misses,
 					models.Miss{Metric: table.Name, Reason: models.MissTimeout})
 				a.mets.MissesTotal.WithLabelValues("snmp", models.MissTimeout).Inc()
-				continue
+				walkFailed = true
+				break
 			}
-			for _, pdu := range pdus {
-				name := strings.TrimPrefix(pdu.Name, ".")
+			pdus = append(pdus, got...)
+		}
+		if walkFailed {
+			continue
+		}
+		for _, pdu := range pdus {
+			name := strings.TrimPrefix(pdu.Name, ".")
+			for _, oid := range wantedList {
+				// The trailing dot matters: column .1 must not swallow .15.
+				if !strings.HasPrefix(name, oid+".") && name != oid {
+					continue
+				}
 				index := strings.TrimPrefix(strings.TrimPrefix(name, oid), ".")
 				if index == "" {
 					index = "0"
@@ -301,6 +443,7 @@ func (a *Adapter) collectTables(client *g.GoSNMP, profile *mapping.Profile,
 					rows[index] = row
 				}
 				row[oid] = pdu.Value
+				break
 			}
 		}
 
@@ -414,6 +557,55 @@ func (a *Adapter) collectTables(client *g.GoSNMP, profile *mapping.Profile,
 			}
 		}
 	}
+}
+
+// walkRoots decides what to walk for a set of column OIDs.
+//
+// If every column is a direct child of one node they are columns of a single
+// table and one walk covers them all - the whole point of walking a table
+// rather than each column. Otherwise the shared prefix is too broad to be safe
+// (columns of two different tables share only 1.3.6.1.2.1, which is all of
+// mib-2), so each column is walked on its own.
+func walkRoots(oids []string) []string {
+	if len(oids) == 0 {
+		return nil
+	}
+	if len(oids) == 1 {
+		return []string{strings.TrimPrefix(oids[0], ".")}
+	}
+	root := commonOIDPrefix(oids)
+	if root == "" {
+		return oids
+	}
+	depth := len(strings.Split(root, "."))
+	for _, oid := range oids {
+		if len(strings.Split(strings.TrimPrefix(oid, "."), ".")) != depth+1 {
+			return oids // not siblings: walk each column separately
+		}
+	}
+	return []string{root}
+}
+
+// commonOIDPrefix returns the longest dotted prefix shared by every OID, which
+// is the subtree a single walk has to cover.
+func commonOIDPrefix(oids []string) string {
+	if len(oids) == 0 {
+		return ""
+	}
+	parts := strings.Split(strings.TrimPrefix(oids[0], "."), ".")
+	for _, oid := range oids[1:] {
+		other := strings.Split(strings.TrimPrefix(oid, "."), ".")
+		n := len(parts)
+		if len(other) < n {
+			n = len(other)
+		}
+		i := 0
+		for i < n && parts[i] == other[i] {
+			i++
+		}
+		parts = parts[:i]
+	}
+	return strings.Join(parts, ".")
 }
 
 // sample builds one canonical Telemetry from a raw PDU value.

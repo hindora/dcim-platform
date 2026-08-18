@@ -9,6 +9,7 @@ export type MetricKey =
   | 'memory_utilization'
   | 'memory_used'
   | 'memory_total'
+  | 'memory_available'
   | 'disk_utilization'
   | 'disk_used'
   | 'disk_total'
@@ -117,6 +118,15 @@ export const METRICS: Record<MetricKey, MetricDef> = {
     minValid: 0,
     maxValid: null,
     staleAfterS: 3600, hot: false,
+    group: 'compute',
+  },
+  'memory_available': {
+    key: 'memory_available', displayName: 'Memory Available'.replace(/^'|'$/g, ''),
+    unit: 'B', valueType: 'gauge',
+    aggregation: 'avg',
+    minValid: 0,
+    maxValid: null,
+    staleAfterS: 120, hot: false,
     group: 'compute',
   },
   'disk_utilization': {

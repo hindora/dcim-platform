@@ -156,7 +156,7 @@ func TestTransformApplyAndBool(t *testing.T) {
 func TestEmptyCommunityIsAnAuthErrorNotADefault(t *testing.T) {
 	// With a wildcard-listener agent plane an empty community is a guaranteed
 	// silent drop, so it must fail loudly rather than fall back to "public".
-	a := New(nil, nil, nil, 25)
+	a := New(nil, nil, nil, 25, true)
 	ep := &models.Endpoint{ID: "ep-1", Protocol: "snmp", Address: "10.0.0.1"}
 
 	_, err := a.Poll(nil, ep) //nolint:staticcheck // nil ctx never reached

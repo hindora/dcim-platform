@@ -1,12 +1,29 @@
-# Standard-MIB SNMP mappings: RFC1213 / SNMPv2-MIB, IF-MIB, HOST-RESOURCES-MIB.
+# Standard-MIB SNMP mappings: SNMPv2-MIB, IF-MIB, HOST-RESOURCES-MIB, UCD-SNMP-MIB.
 #
-# Mappings are DATA, not code. Adding an OID must not require a collector
-# release. `python contracts/mapcheck.py` validates every `metric:` here against
-# contracts/metrics/registry.yaml and fails CI on a typo.
+# Mappings are DATA. Adding an OID must not require a collector release, and
+# `python contracts/mapcheck.py` validates every `metric:` here against
+# contracts/metrics/registry.yaml so a typo fails CI rather than silently
+# dropping a metric.
+#
+# WHAT THIS DEVICE PLANE ACTUALLY SERVES
+# Probed directly with snmpget/snmpwalk before writing this file, because
+# mapping an OID the agents do not carry produces a metric that is always
+# missing and nobody notices for a week:
+#
+#   present   sysUpTime, ifAdminStatus, ifOperStatus, ifSpeed, ifHighSpeed,
+#             hrProcessorLoad, UCD memTotalReal / memAvailReal
+#   ABSENT    ifInOctets/.16, ifHCInOctets/.10 (no octet counters at all),
+#             ifInErrors/Discards, the whole hrStorage table
+#
+# The interface counters are absent from SNMP by design in this plane - they
+# live in the gNMI datasets (openconfig counters), which is the phase 3
+# adapter. The registry keeps if_in_octets and friends because real gear and
+# gNMI do serve them; they are simply not mapped to SNMP here.
 #
 # Structure
 #   profiles[]           a named group, selected per endpoint by poll profile
 #     scalars[]          single GET of a fully-qualified instance OID
+#     derived_scalars[]  a metric computed from two scalar OIDs
 #     tables[]           GETBULK walk of column OIDs; the OID suffix is the index
 #       columns[]        column OID -> metric
 #       derived[]        metric computed from two columns of the same row
@@ -45,38 +62,21 @@ profiles:
             metric: if_oper_state
             value_type: bool
             transform: {enum_true: [1]}
-          - oid: 1.3.6.1.2.1.2.2.1.13           # ifInDiscards
-            metric: if_in_discards
-            value_type: counter
-            counter_bits: 32
-          - oid: 1.3.6.1.2.1.2.2.1.14           # ifInErrors
-            metric: if_in_errors
-            value_type: counter
-            counter_bits: 32
-          - oid: 1.3.6.1.2.1.2.2.1.19           # ifOutDiscards
-            metric: if_out_discards
-            value_type: counter
-            counter_bits: 32
-          - oid: 1.3.6.1.2.1.2.2.1.20           # ifOutErrors
-            metric: if_out_errors
-            value_type: counter
-            counter_bits: 32
 
+      # ifXTable is a SEPARATE MIB table and needs its own entry: columns from
+      # two tables share only 1.3.6.1.2.1, so combining them would walk the
+      # whole of mib-2 instead of one table.
       - name: if_x_table
-        index_oid: 1.3.6.1.2.1.31.1.1.1.1       # ifName
+        index_oid: 1.3.6.1.2.1.31.1.1.1.1         # ifName
         columns:
-          - oid: 1.3.6.1.2.1.31.1.1.1.6         # ifHCInOctets
-            metric: if_in_octets
-            value_type: counter
-            counter_bits: 64
-          - oid: 1.3.6.1.2.1.31.1.1.1.10        # ifHCOutOctets
-            metric: if_out_octets
-            value_type: counter
-            counter_bits: 64
-          - oid: 1.3.6.1.2.1.31.1.1.1.15        # ifHighSpeed, Mbps
+          - oid: 1.3.6.1.2.1.31.1.1.1.15          # ifHighSpeed, Mbps
             metric: if_speed
             value_type: gauge
             transform: {scale: 1000000}
+            # ifHighSpeed, not ifSpeed (.5): ifSpeed is a 32-bit bits/s gauge
+            # that saturates at 4294967295 for any link of 4.29 Gbps or more,
+            # so a 10G port reports the same number as a 40G one. Observed
+            # directly on this fleet before switching.
 
   # ---------------------------------------------------------- host resources
   - name: host_resources
@@ -91,61 +91,46 @@ profiles:
             value_type: gauge
         aggregate: avg
 
-      # hrStorage carries RAM and disks in one table, distinguished by
-      # hrStorageType. Filter, then scale by hrStorageAllocationUnits - the
-      # size/used columns are in ALLOCATION UNITS, not bytes. Missing that
-      # scaling is the classic HOST-RESOURCES bug.
-      - name: hr_storage_ram
-        row_filter: {oid: 1.3.6.1.2.1.25.2.3.1.2, equals: 1.3.6.1.2.1.25.2.1.2}   # hrStorageRam
-        columns:
-          - oid: 1.3.6.1.2.1.25.2.3.1.5         # hrStorageSize
-            metric: memory_total
-            value_type: gauge
-            scale_by_column: 1.3.6.1.2.1.25.2.3.1.4      # hrStorageAllocationUnits
-          - oid: 1.3.6.1.2.1.25.2.3.1.6         # hrStorageUsed
-            metric: memory_used
-            value_type: gauge
-            scale_by_column: 1.3.6.1.2.1.25.2.3.1.4
-        derived:
-          - metric: memory_utilization
-            value_type: gauge
-            numerator: 1.3.6.1.2.1.25.2.3.1.6
-            denominator: 1.3.6.1.2.1.25.2.3.1.5
-            transform: {scale: 100}
-        aggregate: max        # one RAM row in practice; max is safe if a device reports several
+    # UCD-SNMP memory rather than hrStorage: this plane serves the former and
+    # not the latter. UCD reports kilobytes, hence the 1024 scale.
+    scalars:
+      - oid: 1.3.6.1.4.1.2021.4.5.0             # memTotalReal, kB
+        metric: memory_total
+        value_type: gauge
+        transform: {scale: 1024}
+      - oid: 1.3.6.1.4.1.2021.4.6.0             # memAvailReal, kB
+        metric: memory_available
+        value_type: gauge
+        transform: {scale: 1024}
 
-      - name: hr_storage_disk
-        row_filter: {oid: 1.3.6.1.2.1.25.2.3.1.2, equals: 1.3.6.1.2.1.25.2.1.4}   # hrStorageFixedDisk
-        instance_from: 1.3.6.1.2.1.25.2.3.1.3   # hrStorageDescr, e.g. "/" or "C:\\"
-        columns:
-          - oid: 1.3.6.1.2.1.25.2.3.1.5
-            metric: disk_total
-            value_type: gauge
-            scale_by_column: 1.3.6.1.2.1.25.2.3.1.4
-          - oid: 1.3.6.1.2.1.25.2.3.1.6
-            metric: disk_used
-            value_type: gauge
-            scale_by_column: 1.3.6.1.2.1.25.2.3.1.4
-        derived:
-          - metric: disk_utilization
-            value_type: gauge
-            numerator: 1.3.6.1.2.1.25.2.3.1.6
-            denominator: 1.3.6.1.2.1.25.2.3.1.5
-            transform: {scale: 100}
+    derived_scalars:
+      # used = total - available, so the numerator is the available fraction
+      # subtracted from one.
+      - metric: memory_used
+        value_type: gauge
+        numerator: 1.3.6.1.4.1.2021.4.6.0
+        denominator: 1.3.6.1.4.1.2021.4.5.0
+        one_minus: true
+        multiply_by: 1.3.6.1.4.1.2021.4.5.0     # (1 - avail/total) * total
+        transform: {scale: 1024}
+      - metric: memory_utilization
+        value_type: gauge
+        numerator: 1.3.6.1.4.1.2021.4.6.0
+        denominator: 1.3.6.1.4.1.2021.4.5.0
+        one_minus: true
+        transform: {scale: 100}
 
   # ------------------------------------------------------------- environment
-  # ENTITY-SENSOR-MIB. entPhySensorValue must be scaled by entPhySensorScale
-  # and entPhySensorPrecision; the simulator emits temperature and humidity
-  # rows here for environmental probes.
+  # ENTITY-SENSOR-MIB. entPhySensorValue is scaled by entPhySensorPrecision.
   - name: entity_sensors
     tables:
       - name: ent_sensor_temp
-        row_filter: {oid: 1.3.6.1.2.1.99.1.1.1.1, equals_int: 8}    # entPhySensorType celsius
+        row_filter: {oid: 1.3.6.1.2.1.99.1.1.1.1, equals_int: 8}    # celsius
         columns:
           - oid: 1.3.6.1.2.1.99.1.1.1.4         # entPhySensorValue
             metric: ambient_temperature
             value_type: gauge
-            precision_from: 1.3.6.1.2.1.99.1.1.1.3               # entPhySensorPrecision
+            precision_from: 1.3.6.1.2.1.99.1.1.1.3
       - name: ent_sensor_humidity
         row_filter: {oid: 1.3.6.1.2.1.99.1.1.1.1, equals_int: 9}    # percentRH
         columns:

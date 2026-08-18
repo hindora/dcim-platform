@@ -69,7 +69,8 @@ func New(cfg *config.Config, version string) (*App, error) {
 	}
 
 	if cfg.Protocols.SNMP.Enabled {
-		a.snmp = snmp.New(maps, log, mets, cfg.Protocols.SNMP.MaxRepetitions)
+		a.snmp = snmp.New(maps, log, mets, cfg.Protocols.SNMP.MaxRepetitions,
+			cfg.Protocols.SNMP.AcceptAnySourceReply)
 		a.adapters["snmp"] = a.snmp
 	}
 	if len(a.adapters) == 0 {

@@ -42,3 +42,5 @@ Thumbs.db
 # Runtime
 *.log
 data/
+collector/collector-linux
+collector/probe

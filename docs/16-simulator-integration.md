@@ -130,7 +130,7 @@ design rationale for finding A2:
 ## 3. The topology export — the inventory seed
 
 ```
-POST /api/login  {"username":"admin","password":"admin1234"}
+POST /api/auth/login  {"username":"admin","password":"admin1234"}
      → {"token": "...", "expires_in": ..., "username": ..., "role": ...}
 GET  /api/topology/export      Authorization: Bearer <token>
 ```

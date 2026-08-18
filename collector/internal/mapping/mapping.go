@@ -58,6 +58,22 @@ type Table struct {
 	Aggregate string `yaml:"aggregate"`
 }
 
+// DerivedScalar computes a metric from two scalar OIDs. It exists because
+// several MIBs report a total and a remainder rather than the quantity an
+// operator actually wants: UCD gives memTotalReal and memAvailReal, never
+// "memory used".
+type DerivedScalar struct {
+	Metric      string `yaml:"metric"`
+	ValueType   string `yaml:"value_type"`
+	Numerator   string `yaml:"numerator"`
+	Denominator string `yaml:"denominator"`
+	// OneMinus turns a remaining-fraction into a consumed-fraction.
+	OneMinus bool `yaml:"one_minus"`
+	// MultiplyBy scales the fraction back into absolute units.
+	MultiplyBy string     `yaml:"multiply_by"`
+	Transform  *Transform `yaml:"transform"`
+}
+
 type Scalar struct {
 	OID         string     `yaml:"oid"`
 	Metric      string     `yaml:"metric"`
@@ -67,9 +83,10 @@ type Scalar struct {
 }
 
 type Profile struct {
-	Name    string   `yaml:"name"`
-	Scalars []Scalar `yaml:"scalars"`
-	Tables  []Table  `yaml:"tables"`
+	Name           string          `yaml:"name"`
+	Scalars        []Scalar        `yaml:"scalars"`
+	DerivedScalars []DerivedScalar `yaml:"derived_scalars"`
+	Tables         []Table         `yaml:"tables"`
 }
 
 type file struct {
@@ -130,6 +147,11 @@ func validate(p *Profile) error {
 	}
 	for _, s := range p.Scalars {
 		if err := check(s.Metric, s.ValueType); err != nil {
+			return err
+		}
+	}
+	for _, d := range p.DerivedScalars {
+		if err := check(d.Metric, d.ValueType); err != nil {
 			return err
 		}
 	}
