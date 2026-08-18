@@ -23,36 +23,36 @@ type MetricDef struct {
 }
 
 const (
-	MetricSysUptime = "sys_uptime"
-	MetricReachable = "reachable"
-	MetricPollLatency = "poll_latency"
-	MetricCPUUtilization = "cpu_utilization"
-	MetricCPUTemperature = "cpu_temperature"
-	MetricMemoryUtilization = "memory_utilization"
-	MetricMemoryUsed = "memory_used"
-	MetricMemoryTotal = "memory_total"
-	MetricDiskUtilization = "disk_utilization"
-	MetricDiskUsed = "disk_used"
-	MetricDiskTotal = "disk_total"
-	MetricInletTemperature = "inlet_temperature"
+	MetricSysUptime          = "sys_uptime"
+	MetricReachable          = "reachable"
+	MetricPollLatency        = "poll_latency"
+	MetricCPUUtilization     = "cpu_utilization"
+	MetricCPUTemperature     = "cpu_temperature"
+	MetricMemoryUtilization  = "memory_utilization"
+	MetricMemoryUsed         = "memory_used"
+	MetricMemoryTotal        = "memory_total"
+	MetricDiskUtilization    = "disk_utilization"
+	MetricDiskUsed           = "disk_used"
+	MetricDiskTotal          = "disk_total"
+	MetricInletTemperature   = "inlet_temperature"
 	MetricExhaustTemperature = "exhaust_temperature"
-	MetricPowerDraw = "power_draw"
-	MetricIfAdminState = "if_admin_state"
-	MetricIfOperState = "if_oper_state"
-	MetricIfSpeed = "if_speed"
-	MetricIfInOctets = "if_in_octets"
-	MetricIfOutOctets = "if_out_octets"
-	MetricIfInBps = "if_in_bps"
-	MetricIfOutBps = "if_out_bps"
-	MetricIfInErrors = "if_in_errors"
-	MetricIfOutErrors = "if_out_errors"
-	MetricIfInDiscards = "if_in_discards"
-	MetricIfOutDiscards = "if_out_discards"
-	MetricIfInErrorRate = "if_in_error_rate"
+	MetricPowerDraw          = "power_draw"
+	MetricIfAdminState       = "if_admin_state"
+	MetricIfOperState        = "if_oper_state"
+	MetricIfSpeed            = "if_speed"
+	MetricIfInOctets         = "if_in_octets"
+	MetricIfOutOctets        = "if_out_octets"
+	MetricIfInBps            = "if_in_bps"
+	MetricIfOutBps           = "if_out_bps"
+	MetricIfInErrors         = "if_in_errors"
+	MetricIfOutErrors        = "if_out_errors"
+	MetricIfInDiscards       = "if_in_discards"
+	MetricIfOutDiscards      = "if_out_discards"
+	MetricIfInErrorRate      = "if_in_error_rate"
 	MetricAmbientTemperature = "ambient_temperature"
-	MetricRelativeHumidity = "relative_humidity"
-	MetricDewPoint = "dew_point"
-	MetricAirflow = "airflow"
+	MetricRelativeHumidity   = "relative_humidity"
+	MetricDewPoint           = "dew_point"
+	MetricAirflow            = "airflow"
 )
 
 var MetricDefs = map[string]MetricDef{
@@ -300,10 +300,10 @@ var MetricDefs = map[string]MetricDef{
 
 // MetricGroups maps a poll-profile group name to its metric keys.
 var MetricGroups = map[string][]string{
-	"compute": {"cpu_utilization", "memory_utilization", "memory_used", "memory_total", "disk_utilization", "disk_used", "disk_total"},
+	"compute":     {"cpu_utilization", "memory_utilization", "memory_used", "memory_total", "disk_utilization", "disk_used", "disk_total"},
 	"environment": {"ambient_temperature", "relative_humidity", "dew_point", "airflow"},
-	"interfaces": {"if_admin_state", "if_oper_state", "if_speed", "if_in_octets", "if_out_octets", "if_in_bps", "if_out_bps", "if_in_errors", "if_out_errors", "if_in_discards", "if_out_discards", "if_in_error_rate"},
-	"power": {"power_draw"},
-	"system": {"sys_uptime", "reachable", "poll_latency"},
-	"thermal": {"cpu_temperature", "inlet_temperature", "exhaust_temperature"},
+	"interfaces":  {"if_admin_state", "if_oper_state", "if_speed", "if_in_octets", "if_out_octets", "if_in_bps", "if_out_bps", "if_in_errors", "if_out_errors", "if_in_discards", "if_out_discards", "if_in_error_rate"},
+	"power":       {"power_draw"},
+	"system":      {"sys_uptime", "reachable", "poll_latency"},
+	"thermal":     {"cpu_temperature", "inlet_temperature", "exhaust_temperature"},
 }

@@ -17,10 +17,10 @@ import (
 )
 
 type Transform struct {
-	Scale     *float64 `yaml:"scale"`
-	Offset    *float64 `yaml:"offset"`
-	EnumTrue  []int64  `yaml:"enum_true"`
-	ValueMap  map[string]string `yaml:"map"`
+	Scale    *float64          `yaml:"scale"`
+	Offset   *float64          `yaml:"offset"`
+	EnumTrue []int64           `yaml:"enum_true"`
+	ValueMap map[string]string `yaml:"map"`
 }
 
 type Column struct {

@@ -54,6 +54,59 @@ def camel(name: str) -> str:
     return "".join(INITIALISMS.get(p.lower(), p.capitalize()) for p in name.split("_"))
 
 
+def align(rows: list[list[str]], indent: str = "	") -> list[str]:
+    """Pad columns so the output is gofmt-clean without running gofmt.
+
+    gofmt aligns runs of consecutive similar lines into columns. Reproducing
+    that here keeps the generator toolchain-free (the whole point of writing it
+    in Python) while still emitting code a Go reviewer would accept.
+    """
+    if not rows:
+        return []
+    width = max(len(r) for r in rows)
+    padded = [r + [""] * (width - len(r)) for r in rows]
+    widths = [max(len(r[c]) for r in padded) for c in range(width)]
+    out = []
+    for r in padded:
+        cells = [r[c].ljust(widths[c]) for c in range(width - 1)]
+        cells.append(r[-1])
+        out.append((indent + " ".join(cells)).rstrip())
+    return out
+
+
+def align_struct(rows: list[list[str]]) -> list[str]:
+    """Render struct fields as [name, type, tag, comment], gofmt-style.
+
+    Name and type align across the whole struct, but the trailing-comment
+    column aligns only across a RUN of consecutive commented lines - a field
+    without a comment breaks the run. That is gofmt's actual rule, and
+    reproducing it is what keeps generated code out of `gofmt -l`.
+    """
+    if not rows:
+        return []
+    w_name = max(len(r[0]) for r in rows)
+    w_type = max(len(r[1]) for r in rows)
+
+    out: list[str] = []
+    i = 0
+    while i < len(rows):
+        if not rows[i][3]:
+            r = rows[i]
+            out.append(f"\t{r[0].ljust(w_name)} {r[1].ljust(w_type)} {r[2]}")
+            i += 1
+            continue
+        run = []
+        while i < len(rows) and rows[i][3]:
+            run.append(rows[i])
+            i += 1
+        w_tag = max(len(r[2]) for r in run)
+        for r in run:
+            out.append(
+                f"\t{r[0].ljust(w_name)} {r[1].ljust(w_type)} "
+                f"{r[2].ljust(w_tag)} {r[3]}")
+    return out
+
+
 def load(path: Path) -> dict:
     with path.open(encoding="utf-8") as fh:
         return yaml.safe_load(fh)
@@ -122,8 +175,8 @@ def gen_go_messages(schema: dict) -> str:
         out.append(f"type {ename} int32")
         out.append("")
         out.append("const (")
-        for i, v in enumerate(edef["values"]):
-            out.append(f"\t{ename}{camel(v)} {ename} = {i}")
+        out += align([[f"{ename}{camel(v)}", ename, f"= {i}"]
+                      for i, v in enumerate(edef["values"])])
         out.append(")")
         out.append("")
         out.append(f"var {ename.lower()}Names = map[{ename}]string{{")
@@ -143,23 +196,25 @@ def gen_go_messages(schema: dict) -> str:
         if mdef.get("doc"):
             out.append(f"// {mname} - {mdef['doc']}")
         out.append(f"type {mname} struct {{")
+        rows = []
         for f in mdef["fields"]:
             tag = f'`msgpack:"{f["name"]},omitempty" json:"{f["name"]},omitempty"`'
-            comment = f"  // {f['doc']}" if f.get("doc") else ""
-            out.append(f"\t{camel(f['name'])} {go_type(f['type'])} {tag}{comment}")
+            comment = f"// {f['doc']}" if f.get("doc") else ""
+            rows.append([camel(f["name"]), go_type(f["type"]), tag, comment])
+        out += align_struct(rows)
         out.append("}")
         out.append("")
 
     st = schema["streams"]
     out.append("// Stream names and caps, from contracts/schema/messages_v1.yaml.")
     out.append("const (")
-    for key, s in st.items():
-        out.append(f'\tStream{camel(key)} = "{s["name"]}"')
+    out += align([[f"Stream{camel(key)}", f'= "{cfg["name"]}"']
+                  for key, cfg in st.items()])
     out.append(")")
     out.append("")
     out.append("var StreamMaxLen = map[string]int64{")
-    for s in st.values():
-        out.append(f'\t"{s["name"]}": {s["maxlen"]},')
+    out += align([[f'"{cfg["name"]}":', f'{cfg["maxlen"]},']
+                  for cfg in st.values()])
     out.append("}")
     out.append("")
     out.append(f"const SchemaVersion = {schema['version']}")
@@ -325,24 +380,18 @@ def gen_go_metrics(reg: dict) -> str:
     out = [BANNER, "", "package models", "",
            "// Canonical metric registry, generated from contracts/metrics/registry.yaml.",
            "// A metric key absent from MetricDefs is a hard validation failure at emit time.",
-           "", "type MetricDef struct {",
-           "\tKey         string",
-           "\tDisplayName string",
-           "\tUnit        string",
-           "\tValueType   string",
-           "\tAggregation string",
-           "\tMinValid    float64",
-           "\tMaxValid    float64",
-           "\tHasMin      bool",
-           "\tHasMax      bool",
-           "\tStaleAfterS int",
-           "\tHot         bool",
-           "\tGroup       string",
-           "\tRateOf      string",
-           "\tRateScale   float64",
-           "}", "", "const ("]
-    for m in reg["metrics"]:
-        out.append(f'\tMetric{camel(m["key"])} = "{m["key"]}"')
+           "", "type MetricDef struct {"]
+    out += align([
+        ["Key", "string"], ["DisplayName", "string"], ["Unit", "string"],
+        ["ValueType", "string"], ["Aggregation", "string"],
+        ["MinValid", "float64"], ["MaxValid", "float64"],
+        ["HasMin", "bool"], ["HasMax", "bool"], ["StaleAfterS", "int"],
+        ["Hot", "bool"], ["Group", "string"], ["RateOf", "string"],
+        ["RateScale", "float64"],
+    ])
+    out += ["}", "", "const ("]
+    out += align([[f'Metric{camel(m["key"])}', f'= "{m["key"]}"']
+                  for m in reg["metrics"]])
     out.append(")")
     out.append("")
     out.append("var MetricDefs = map[string]MetricDef{")
@@ -365,9 +414,8 @@ def gen_go_metrics(reg: dict) -> str:
     for m in reg["metrics"]:
         groups.setdefault(m.get("group", "other"), []).append(m["key"])
     out.append("var MetricGroups = map[string][]string{")
-    for g, keys in sorted(groups.items()):
-        joined = ", ".join(f'"{k}"' for k in keys)
-        out.append(f'\t"{g}": {{{joined}}},')
+    out += align([[f'"{g}":', "{" + ", ".join(f'"{k}"' for k in keys) + "},"]
+                  for g, keys in sorted(groups.items())])
     out.append("}")
     out.append("")
     return "\n".join(out)

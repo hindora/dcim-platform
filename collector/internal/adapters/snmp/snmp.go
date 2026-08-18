@@ -39,7 +39,7 @@ type Adapter struct {
 	mets           *obs.Metrics
 	maxRepetitions int
 
-	mu        sync.Mutex
+	mu         sync.Mutex
 	lastUptime map[string]float64 // endpoint id -> last sysUpTime in seconds
 }
 
@@ -55,9 +55,9 @@ func New(maps *mapping.Registry, log *slog.Logger, mets *obs.Metrics,
 	}
 }
 
-func (a *Adapter) Protocol() string                   { return "snmp" }
-func (a *Adapter) Init(_ context.Context) error       { return nil }
-func (a *Adapter) Close(_ context.Context) error      { return nil }
+func (a *Adapter) Protocol() string              { return "snmp" }
+func (a *Adapter) Init(_ context.Context) error  { return nil }
+func (a *Adapter) Close(_ context.Context) error { return nil }
 
 func (a *Adapter) Forget(endpointID string) {
 	a.mu.Lock()

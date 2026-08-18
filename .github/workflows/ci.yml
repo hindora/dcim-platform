@@ -60,6 +60,9 @@ jobs:
       - name: go.mod is tidy
         run: git diff --exit-code go.mod go.sum
         working-directory: collector
+      - name: gofmt
+        run: test -z "$(gofmt -l .)"
+        working-directory: collector
       - run: go vet ./...
         working-directory: collector
       - run: go build ./...

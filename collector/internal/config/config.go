@@ -65,10 +65,10 @@ type Config struct {
 	} `yaml:"mappings"`
 
 	Observability struct {
-		LogLevel       string `yaml:"log_level"`
-		LogFormat      string `yaml:"log_format"`
-		MetricsListen  string `yaml:"metrics_listen"`
-		HealthListen   string `yaml:"health_listen"`
+		LogLevel       string        `yaml:"log_level"`
+		LogFormat      string        `yaml:"log_format"`
+		MetricsListen  string        `yaml:"metrics_listen"`
+		HealthListen   string        `yaml:"health_listen"`
 		HeartbeatEvery time.Duration `yaml:"heartbeat_every"`
 	} `yaml:"observability"`
 

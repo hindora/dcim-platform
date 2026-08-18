@@ -17,11 +17,17 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 type Metrics struct {
+	// Metrics register on their OWN registry rather than the global default:
+	// promauto's package-level helpers panic on a second registration, which
+	// makes anything that constructs Metrics untestable.
+	Registry *prometheus.Registry
+
 	PollsTotal    *prometheus.CounterVec
 	PollDuration  *prometheus.HistogramVec
 	PollsSkipped  *prometheus.CounterVec
@@ -42,7 +48,14 @@ type Metrics struct {
 }
 
 func NewMetrics() *Metrics {
+	reg := prometheus.NewRegistry()
+	reg.MustRegister(collectors.NewGoCollector())
+	reg.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
+	promauto := promauto.With(reg)
+
 	return &Metrics{
+		Registry: reg,
+
 		PollsTotal: promauto.NewCounterVec(prometheus.CounterOpts{
 			Name: "dcim_collector_polls_total",
 			Help: "Polls by protocol, device type and result.",
@@ -171,10 +184,11 @@ func (r *Readiness) Snapshot() (bool, map[string]bool) {
 
 // Serve starts the metrics and health listeners. Both shut down with ctx.
 func Serve(ctx context.Context, metricsAddr, healthAddr string, ready *Readiness,
-	log *slog.Logger) {
+	mets *Metrics, log *slog.Logger) {
 
 	metricsMux := http.NewServeMux()
-	metricsMux.Handle("/metrics", promhttp.Handler())
+	metricsMux.Handle("/metrics", promhttp.HandlerFor(mets.Registry,
+		promhttp.HandlerOpts{}))
 	metricsSrv := &http.Server{Addr: metricsAddr, Handler: metricsMux,
 		ReadHeaderTimeout: 5 * time.Second}
 

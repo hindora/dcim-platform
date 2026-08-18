@@ -95,7 +95,7 @@ func New(cfg *config.Config, version string) (*App, error) {
 
 func (a *App) Run(ctx context.Context) error {
 	obs.Serve(ctx, a.cfg.Observability.MetricsListen,
-		a.cfg.Observability.HealthListen, a.ready, a.log)
+		a.cfg.Observability.HealthListen, a.ready, a.mets, a.log)
 
 	if err := a.rdb.Ping(ctx).Err(); err != nil {
 		// Not fatal: the publisher buffers and the collector still polls. A
