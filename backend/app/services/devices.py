@@ -125,17 +125,22 @@ async def rack_elevation(session: AsyncSession, rack_id: str) -> RackElevation |
 
     positions: list[ElevationSlot] = []
     occupied: list[tuple[int, int]] = []
+    zero_u: list[ElevationDevice] = []
+
     for d in devices:
-        occupied.append((d.get("u_start"), d.get("u_height") or 1))
+        entry = ElevationDevice(
+            id=d["id"], name=d["name"], device_type=d["device_type"],
+            status=d["status"], health=d["health"], max_severity=d["max_severity"],
+            power_w=_f(d.get("power_w")), inlet_temp_c=_f(d.get("inlet_temp_c")),
+            cpu_util_pct=_f(d.get("cpu_util_pct")),
+        )
+        if d.get("u_start") is None:
+            zero_u.append(entry)
+            continue
+        occupied.append((d["u_start"], d.get("u_height") or 1))
         positions.append(ElevationSlot(
-            u_start=d.get("u_start") or 0, u_height=d.get("u_height") or 1,
-            facing=d.get("facing"), free=False,
-            device=ElevationDevice(
-                id=d["id"], name=d["name"], device_type=d["device_type"],
-                status=d["status"], health=d["health"], max_severity=d["max_severity"],
-                power_w=_f(d.get("power_w")), inlet_temp_c=_f(d.get("inlet_temp_c")),
-                cpu_util_pct=_f(d.get("cpu_util_pct")),
-            )))
+            u_start=d["u_start"], u_height=d.get("u_height") or 1,
+            facing=d.get("facing"), free=False, device=entry))
 
     blocks = rack_repo.compute_free_blocks(u_height, occupied)
     for b in blocks:
@@ -146,4 +151,5 @@ async def rack_elevation(session: AsyncSession, rack_id: str) -> RackElevation |
     return RackElevation(
         rack=_rack_summary(rack), positions=positions,
         free_blocks=[FreeBlock(**b) for b in blocks],
+        zero_u_devices=zero_u,
     )

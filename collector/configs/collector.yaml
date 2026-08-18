@@ -9,7 +9,7 @@ collector:
   id: col-1
 
 dcim:
-  base_url: http://localhost:8000
+  base_url: http://127.0.0.1:8000
   # The token is read from this environment variable. Never put a literal
   # secret in this file.
   token_env: DCIM_COLLECTOR_TOKEN
@@ -19,7 +19,9 @@ dcim:
 
 redis:
   url_env: DCIM_REDIS_URL
-  url: redis://localhost:6379/0
+  # 127.0.0.1, not localhost: on Windows localhost prefers ::1 and a
+  # Docker-published port answers there unreliably.
+  url: redis://127.0.0.1:6379/0
   streams:
     telemetry:     {name: telemetry.v1,     maxlen: 2000000}
     events:        {name: events.v1,        maxlen: 500000}

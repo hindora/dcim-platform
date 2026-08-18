@@ -113,13 +113,13 @@ func Load(path string) (*Config, error) {
 func Default() *Config {
 	c := &Config{}
 	c.Collector.ID = "col-1"
-	c.DCIM.BaseURL = "http://localhost:8000"
+	c.DCIM.BaseURL = "http://127.0.0.1:8000"
 	c.DCIM.TokenEnv = "DCIM_COLLECTOR_TOKEN"
 	c.DCIM.AssignmentPath = "/api/v1/collector/assignments"
 	c.DCIM.AssignmentInterval = 30 * time.Second
 	c.DCIM.RequestTimeout = 15 * time.Second
 	c.Redis.URLEnv = "DCIM_REDIS_URL"
-	c.Redis.URL = "redis://localhost:6379/0"
+	c.Redis.URL = "redis://127.0.0.1:6379/0"
 	c.Redis.Streams.Telemetry = StreamCfg{Name: "telemetry.v1", MaxLen: 2000000}
 	c.Redis.Streams.Events = StreamCfg{Name: "events.v1", MaxLen: 500000}
 	c.Redis.Streams.EndpointState = StreamCfg{Name: "endpointstate.v1", MaxLen: 200000}

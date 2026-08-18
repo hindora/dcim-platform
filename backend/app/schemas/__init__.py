@@ -160,6 +160,10 @@ class RackElevation(BaseModel):
     rack: RackSummary
     positions: list[ElevationSlot]
     free_blocks: list[FreeBlock]
+    # Devices in the rack that occupy no rack unit: vertically mounted PDUs,
+    # rail-strapped probes. Rendering them inside the U grid would imply a
+    # position they do not have.
+    zero_u_devices: list[ElevationDevice] = Field(default_factory=list)
 
 
 # --------------------------------------------------------------- telemetry

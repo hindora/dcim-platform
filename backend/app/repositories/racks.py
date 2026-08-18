@@ -26,7 +26,8 @@ _RACK_SUMMARY = """
            END                                                        AS load_pct,
            max(ds.inlet_temp_c)                                       AS max_inlet_c,
            COALESCE(max(ds.max_severity)::text, 'CLEAR')              AS max_severity,
-           r.u_height - COALESCE(sum(d.u_height), 0)                  AS free_u
+           r.u_height - COALESCE(sum(d.u_height)
+                                 FILTER (WHERE d.u_start IS NOT NULL), 0) AS free_u
     FROM rack r
     JOIN rack_row rr      ON rr.id = r.row_id
     JOIN room rm          ON rm.id = rr.room_id
@@ -35,7 +36,10 @@ _RACK_SUMMARY = """
     LEFT JOIN device_state ds ON ds.device_id = d.id
 """
 
-_GROUP_BY = " GROUP BY r.id, rr.name, rm.id, rm.name, dc.code"
+# rr.ordinal and r.ordinal are grouped as well as selected: they drive the
+# ORDER BY, and Postgres requires every ordered column to be grouped or
+# aggregated.
+_GROUP_BY = " GROUP BY r.id, rr.name, rr.ordinal, rm.id, rm.name, dc.code"
 
 
 async def list_racks(session: AsyncSession, *, room_id: str | None = None,

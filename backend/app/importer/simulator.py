@@ -247,7 +247,13 @@ class TopologyImporter:
             row_id = self._row.get((room_id, f"R{dev['rack_row']}"))
             if row_id:
                 rack_id = self._rack.get((row_id, f"R{dev['rack_row']}-{int(dev['rack_num']):02d}"))
-            u_start = dev.get("rack_unit")
+            # rack_unit 0 means the device is IN the rack but occupies no rack
+            # unit. That is the normal case for a vertically mounted rack PDU
+            # and for a probe strapped to a rail - both are genuinely zero-U.
+            # Storing it as U0 would make every such device collide with its
+            # neighbours under the rack-unit exclusion constraint.
+            raw_u = dev.get("rack_unit")
+            u_start = raw_u if isinstance(raw_u, int) and raw_u > 0 else None
 
         device_id = await self._scalar("""
             INSERT INTO device (external_id, name, device_type, model_id, vendor_id,

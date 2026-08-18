@@ -124,11 +124,34 @@ func (a *Adapter) Poll(ctx context.Context, ep *models.Endpoint) (*models.PollOu
 
 	if len(outcome.Samples) == 0 {
 		// Reachable but silent is a real and distinct fault; do not report it
-		// as a success with nothing to show.
-		return outcome, fmt.Errorf("%w: no metrics returned", models.ErrDecode)
+		// as a success with nothing to show. Which fault it is matters: an
+		// operator chasing "decode" on a device that is simply not answering
+		// looks in entirely the wrong place.
+		return outcome, emptyPollError(outcome.Misses, ep)
 	}
 	a.mets.SamplesTotal.WithLabelValues("snmp").Add(float64(len(outcome.Samples)))
 	return outcome, nil
+}
+
+// emptyPollError explains WHY a poll produced nothing.
+//
+// Every miss being a timeout means the device never answered - that is an
+// unreachable/timeout condition, and reporting it as a decode failure sends an
+// operator hunting a MIB problem on a box that is simply off the network. A
+// mixture means something did answer and we could not use it, which is a
+// genuine decode fault.
+func emptyPollError(misses []models.Miss, ep *models.Endpoint) error {
+	if len(misses) == 0 {
+		return fmt.Errorf("%w: no metrics returned and nothing reported missing",
+			models.ErrDecode)
+	}
+	for _, m := range misses {
+		if m.Reason != models.MissTimeout {
+			return fmt.Errorf("%w: no usable metrics from %s (%d misses)",
+				models.ErrDecode, ep.Address, len(misses))
+		}
+	}
+	return fmt.Errorf("%w: no response from %s", models.ErrTimeout, ep.Address)
 }
 
 // checkUptime returns true when the agent appears to have restarted.
@@ -259,6 +282,10 @@ func (a *Adapter) collectTables(client *g.GoSNMP, profile *mapping.Profile,
 		for oid := range wanted {
 			pdus, err := client.BulkWalkAll(oid)
 			if err != nil {
+				// Record it as a miss, not just a counter: the poll-level error
+				// classification reads these to tell "silent" from "garbled".
+				outcome.Misses = append(outcome.Misses,
+					models.Miss{Metric: table.Name, Reason: models.MissTimeout})
 				a.mets.MissesTotal.WithLabelValues("snmp", models.MissTimeout).Inc()
 				continue
 			}

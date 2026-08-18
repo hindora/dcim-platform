@@ -28,12 +28,15 @@ class Settings(BaseSettings):
     service_name: str = "dcim-backend"
 
     # --- datastores ---------------------------------------------------------
-    database_url: str = "postgresql+asyncpg://dcim:dcim@localhost:5432/dcim"
+    # 127.0.0.1 rather than localhost on purpose: on Windows, localhost resolves
+    # to ::1 first and a Docker-published port answers there unreliably, which
+    # surfaces as a connection timeout rather than a refusal.
+    database_url: str = "postgresql+asyncpg://dcim:dcim@127.0.0.1:5432/dcim"
     db_pool_size: int = 10
     db_max_overflow: int = 20
     db_echo: bool = False
 
-    redis_url: str = "redis://localhost:6379/0"
+    redis_url: str = "redis://127.0.0.1:6379/0"
 
     # --- security -----------------------------------------------------------
     jwt_secret: SecretStr
