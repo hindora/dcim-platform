@@ -84,11 +84,29 @@ wait_port "$DB_HOST" "$DB_PORT" "PostgreSQL"
 wait_port "$REDIS_HOST" "$REDIS_PORT" "Redis"
 say "datastores reachable"
 
+port_free() {
+  ! timeout 1 bash -c "</dev/tcp/127.0.0.1/$1" 2>/dev/null
+}
+
+# A component that cannot bind its port dies quietly while something else keeps
+# answering there, which is far more confusing than refusing to start.
+if want api && ! port_free "${API_PORT:-8000}"; then
+  die "port ${API_PORT:-8000} is already in use - stop the other API first"
+fi
+if want ui && ! port_free 5173; then
+  die "port 5173 is already in use - stop the other dev server first"
+fi
+
 if want collector; then
   # A collector that cannot see the device plane will start happily and time
   # out on every poll, which reads as "all devices down" rather than as a
   # misplaced process. Say so up front.
-  if ! ip -4 -o addr show 2>/dev/null | grep -qE '10\.(50|51|52)\.'; then
+  # `ip` lives in /usr/sbin, which is absent from PATH in a non-login shell -
+  # so calling it bare made this check silently fail and warn on a host where
+  # the devices were in fact reachable.
+  IP_BIN="$(command -v ip || true)"
+  [[ -n "$IP_BIN" ]] || IP_BIN=/usr/sbin/ip
+  if [[ ! -x "$IP_BIN" ]] || ! "$IP_BIN" -4 -o addr show 2>/dev/null        | grep -qE '10\.(50|51|52)\.'; then
     warn "no 10.50/10.51/10.52 addresses on this host: the collector will not
        reach the simulated devices. Run this inside WSL, where they are bound."
   fi
