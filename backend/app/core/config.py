@@ -85,8 +85,13 @@ class Settings(BaseSettings):
 
     @property
     def sync_database_url(self) -> str:
-        """Alembic runs synchronously; strip the asyncpg driver."""
-        return self.database_url.replace("+asyncpg", "")
+        """Alembic runs synchronously, so swap asyncpg for psycopg (v3).
+
+        Stripping the driver entirely would leave a bare ``postgresql://`` URL,
+        which SQLAlchemy resolves to psycopg2 - a package this project does not
+        depend on, producing a ModuleNotFoundError only when migrations run.
+        """
+        return self.database_url.replace("+asyncpg", "+psycopg")
 
 
 @lru_cache

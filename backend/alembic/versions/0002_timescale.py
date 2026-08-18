@@ -5,17 +5,17 @@ Revises: 0001
 
 Notes
 -----
-Continuous aggregates cannot be created inside a transaction block, so this
-migration commits the surrounding transaction first and then issues DDL in
-autocommit. That is why the statements below are deliberately idempotent
-(IF NOT EXISTS / catalog guards): a failure part-way cannot be rolled back.
+Continuous aggregates cannot be created inside a transaction block, so that DDL
+runs inside ``autocommit_block()`` - Alembic's supported escape hatch, rather
+than issuing a raw COMMIT and hoping the driver cooperates. Statements in that
+block are deliberately idempotent (IF NOT EXISTS / if_not_exists => TRUE),
+because a failure part-way through it cannot be rolled back.
 
 Hierarchical continuous aggregates (5m built from 1m) need TimescaleDB 2.9+.
 """
 
 from __future__ import annotations
 
-import sqlalchemy as sa
 from alembic import op
 
 revision = "0002"
@@ -29,6 +29,35 @@ TELEMETRY_TABLES = (
     ("telemetry_sample", "double precision", "1 day"),
     ("telemetry_bool", "boolean", "7 days"),
     ("telemetry_text", "text", "7 days"),
+)
+
+CONTINUOUS_AGGREGATES = (
+    # (view, source, bucket width, value expressions)
+    ("telemetry_1m", "telemetry_sample", "1 minute", """
+               avg(value)      AS avg_value,
+               min(value)      AS min_value,
+               max(value)      AS max_value,
+               last(value, ts) AS last_value,
+               count(*)        AS sample_count"""),
+    ("telemetry_5m", "telemetry_1m", "5 minutes", """
+               avg(avg_value)           AS avg_value,
+               min(min_value)           AS min_value,
+               max(max_value)           AS max_value,
+               last(last_value, bucket) AS last_value,
+               sum(sample_count)        AS sample_count"""),
+    ("telemetry_1h", "telemetry_5m", "1 hour", """
+               avg(avg_value)           AS avg_value,
+               min(min_value)           AS min_value,
+               max(max_value)           AS max_value,
+               last(last_value, bucket) AS last_value,
+               sum(sample_count)        AS sample_count"""),
+)
+
+# (view, start_offset, end_offset, schedule_interval)
+REFRESH_POLICIES = (
+    ("telemetry_1m", "3 hours", "1 minute", "1 minute"),
+    ("telemetry_5m", "1 day", "5 minutes", "5 minutes"),
+    ("telemetry_1h", "7 days", "1 hour", "30 minutes"),
 )
 
 
@@ -47,8 +76,9 @@ def upgrade() -> None:
                 PRIMARY KEY (device_id, metric_id, instance, ts)
             )
         """)
-        # The primary key doubles as the idempotency guarantee for at-least-once
-        # delivery: a redelivered batch conflicts and is discarded.
+        # The primary key doubles as the idempotency guarantee for
+        # at-least-once delivery: a redelivered batch conflicts and is
+        # discarded rather than duplicating a sample.
         op.execute(
             f"SELECT create_hypertable('{table}', 'ts', "
             f"chunk_time_interval => INTERVAL '{chunk}', if_not_exists => TRUE)")
@@ -87,77 +117,39 @@ def upgrade() -> None:
     # ---------------------------------------------------------------------
     # Continuous aggregates. Without these a 30-day chart reads raw samples.
     # ---------------------------------------------------------------------
-    conn = op.get_bind()
-    conn.execute(sa.text("COMMIT"))
+    with op.get_context().autocommit_block():
+        for view, source, width, values in CONTINUOUS_AGGREGATES:
+            bucket_col = "ts" if source == "telemetry_sample" else "bucket"
+            group_by = ("bucket" if bucket_col == "ts" else "1")
+            op.execute(f"""
+                CREATE MATERIALIZED VIEW IF NOT EXISTS {view}
+                WITH (timescaledb.continuous) AS
+                SELECT time_bucket('{width}', {bucket_col}) AS bucket,
+                       device_id, metric_id, instance,{values}
+                FROM {source}
+                GROUP BY {group_by}, device_id, metric_id, instance
+                WITH NO DATA
+            """)
 
-    conn.execute(sa.text("""
-        CREATE MATERIALIZED VIEW IF NOT EXISTS telemetry_1m
-        WITH (timescaledb.continuous) AS
-        SELECT time_bucket('1 minute', ts) AS bucket,
-               device_id, metric_id, instance,
-               avg(value)      AS avg_value,
-               min(value)      AS min_value,
-               max(value)      AS max_value,
-               last(value, ts) AS last_value,
-               count(*)        AS sample_count
-        FROM telemetry_sample
-        GROUP BY bucket, device_id, metric_id, instance
-        WITH NO DATA
-    """))
+        for view, start, end, sched in REFRESH_POLICIES:
+            op.execute(f"""
+                SELECT add_continuous_aggregate_policy('{view}',
+                    start_offset      => INTERVAL '{start}',
+                    end_offset        => INTERVAL '{end}',
+                    schedule_interval => INTERVAL '{sched}',
+                    if_not_exists     => TRUE)
+            """)
 
-    conn.execute(sa.text("""
-        CREATE MATERIALIZED VIEW IF NOT EXISTS telemetry_5m
-        WITH (timescaledb.continuous) AS
-        SELECT time_bucket('5 minutes', bucket) AS bucket,
-               device_id, metric_id, instance,
-               avg(avg_value)       AS avg_value,
-               min(min_value)       AS min_value,
-               max(max_value)       AS max_value,
-               last(last_value, bucket) AS last_value,
-               sum(sample_count)    AS sample_count
-        FROM telemetry_1m
-        GROUP BY 1, device_id, metric_id, instance
-        WITH NO DATA
-    """))
-
-    conn.execute(sa.text("""
-        CREATE MATERIALIZED VIEW IF NOT EXISTS telemetry_1h
-        WITH (timescaledb.continuous) AS
-        SELECT time_bucket('1 hour', bucket) AS bucket,
-               device_id, metric_id, instance,
-               avg(avg_value)       AS avg_value,
-               min(min_value)       AS min_value,
-               max(max_value)       AS max_value,
-               last(last_value, bucket) AS last_value,
-               sum(sample_count)    AS sample_count
-        FROM telemetry_5m
-        GROUP BY 1, device_id, metric_id, instance
-        WITH NO DATA
-    """))
-
-    for view, start, end, sched in (
-        ("telemetry_1m", "3 hours", "1 minute", "1 minute"),
-        ("telemetry_5m", "1 day", "5 minutes", "5 minutes"),
-        ("telemetry_1h", "7 days", "1 hour", "30 minutes"),
-    ):
-        conn.execute(sa.text(f"""
-            SELECT add_continuous_aggregate_policy('{view}',
-                start_offset      => INTERVAL '{start}',
-                end_offset        => INTERVAL '{end}',
-                schedule_interval => INTERVAL '{sched}',
-                if_not_exists     => TRUE)
-        """))
-
-    # 1h is deliberately kept forever: it is what capacity trending needs and
-    # it is tiny.
-    conn.execute(sa.text("SELECT add_retention_policy('telemetry_1m', INTERVAL '1 year')"))
-    conn.execute(sa.text("SELECT add_retention_policy('telemetry_5m', INTERVAL '2 years')"))
+        # 1h is deliberately kept forever: it is what capacity trending needs
+        # and it is tiny.
+        op.execute("SELECT add_retention_policy('telemetry_1m', INTERVAL '1 year')")
+        op.execute("SELECT add_retention_policy('telemetry_5m', INTERVAL '2 years')")
 
 
 def downgrade() -> None:
-    conn = op.get_bind()
-    conn.execute(sa.text("COMMIT"))
-    for view in ("telemetry_1h", "telemetry_5m", "telemetry_1m"):
-        conn.execute(sa.text(f"DROP MATERIALIZED VIEW IF EXISTS {view}"))
+    # Drop order matters: 1h is built from 5m, which is built from 1m.
+    with op.get_context().autocommit_block():
+        for view in ("telemetry_1h", "telemetry_5m", "telemetry_1m"):
+            op.execute(f"DROP MATERIALIZED VIEW IF EXISTS {view}")
     for table in ("poll_result", "telemetry_text", "telemetry_bool", "telemetry_sample"):
-        conn.execute(sa.text(f"DROP TABLE IF EXISTS {table}"))
+        op.execute(f"DROP TABLE IF EXISTS {table}")
