@@ -163,9 +163,20 @@ func objectTypeName(t uint16) string {
 // NPDU says which device on the trunk it is. Getting this wrong is how an
 // integration ends up seeing one device where there are eighteen.
 type Address struct {
-	IP  string
-	Net uint16 // 0 = local network, no routing
-	MAC []byte // MS/TP MAC, only meaningful with Net != 0
+	IP   string
+	Port int    // 0 means the registered BACnet port, 47808
+	Net  uint16 // 0 = local network, no routing
+	MAC  []byte // MS/TP MAC, only meaningful with Net != 0
+}
+
+// UDPPort is the port to send to. A second BACnet device on one host has to
+// move off 47808, and 47809-47823 are commonly used for exactly that, so the
+// port cannot be assumed.
+func (a Address) UDPPort() int {
+	if a.Port == 0 {
+		return 47808
+	}
+	return a.Port
 }
 
 // Routed reports whether this address sits behind a router.
@@ -454,6 +465,9 @@ const (
 	kindReject
 	kindAbort
 	kindUnconfirmed
+	// kindConfirmed is an inbound confirmed REQUEST. The client receives these
+	// too: a ConfirmedCOVNotification is a request the device makes of us.
+	kindConfirmed
 )
 
 type apdu struct {
@@ -470,6 +484,21 @@ func parseAPDU(b []byte) (apdu, error) {
 		return a, ErrShort
 	}
 	switch (b[0] >> 4) & 0x0F {
+	case pduConfirmedRequest:
+		// byte 0 flags | byte 1 max-segs/max-apdu | byte 2 invoke id |
+		// [sequence + window when segmented] | service choice
+		if len(b) < 4 {
+			return a, ErrShort
+		}
+		pos := 3
+		if b[0]&0x08 != 0 {
+			pos += 2
+		}
+		if pos >= len(b) {
+			return a, ErrShort
+		}
+		a = apdu{Kind: kindConfirmed, InvokeID: b[2], Service: b[pos],
+			Payload: b[pos+1:]}
 	case pduComplexAck:
 		if len(b) < 3 {
 			return a, ErrShort

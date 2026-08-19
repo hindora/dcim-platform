@@ -60,6 +60,39 @@ const (
 	MetricRelativeHumidity   = "relative_humidity"
 	MetricDewPoint           = "dew_point"
 	MetricAirflow            = "airflow"
+	MetricWaterSupplyTemp    = "water_supply_temp"
+	MetricWaterReturnTemp    = "water_return_temp"
+	MetricWaterSetpointTemp  = "water_setpoint_temp"
+	MetricWaterFlow          = "water_flow"
+	MetricWaterPressure      = "water_pressure"
+	MetricWaterDiffPressure  = "water_diff_pressure"
+	MetricValvePositionPct   = "valve_position_pct"
+	MetricCompressorLoadPct  = "compressor_load_pct"
+	MetricCoolingCapacity    = "cooling_capacity"
+	MetricCoolingOutputPct   = "cooling_output_pct"
+	MetricThermalLoad        = "thermal_load"
+	MetricCop                = "cop"
+	MetricApproachTemp       = "approach_temp"
+	MetricSupplyAirTemp      = "supply_air_temp"
+	MetricReturnAirTemp      = "return_air_temp"
+	MetricAirSetpointTemp    = "air_setpoint_temp"
+	MetricFilterDiffPressure = "filter_diff_pressure"
+	MetricBasinLevelPct      = "basin_level_pct"
+	MetricMakeupWaterFlow    = "makeup_water_flow"
+	MetricVibration          = "vibration"
+	MetricMotorTemp          = "motor_temp"
+	MetricVfdFrequency       = "vfd_frequency"
+	MetricPumpSpeedPct       = "pump_speed_pct"
+	MetricRunHours           = "run_hours"
+	MetricEquipmentState     = "equipment_state"
+	MetricAlarmState         = "alarm_state"
+	MetricVoltageLn          = "voltage_ln"
+	MetricCurrent            = "current"
+	MetricLineFrequency      = "line_frequency"
+	MetricPowerFactor        = "power_factor"
+	MetricVoltageThdPct      = "voltage_thd_pct"
+	MetricCurrentThdPct      = "current_thd_pct"
+	MetricHarmonicCurrentPct = "harmonic_current_pct"
 )
 
 var MetricDefs = map[string]MetricDef{
@@ -359,14 +392,279 @@ var MetricDefs = map[string]MetricDef{
 		StaleAfterS: 120, Hot: false,
 		Group: "environment", RateOf: "", RateScale: 1,
 	},
+	"water_supply_temp": {
+		Key: "water_supply_temp", DisplayName: "Water Supply Temperature", Unit: "C",
+		ValueType: "gauge", Aggregation: "avg",
+		MinValid: -20, HasMin: true,
+		MaxValid: 120, HasMax: true,
+		StaleAfterS: 300, Hot: true,
+		Group: "cooling", RateOf: "", RateScale: 1,
+	},
+	"water_return_temp": {
+		Key: "water_return_temp", DisplayName: "Water Return Temperature", Unit: "C",
+		ValueType: "gauge", Aggregation: "avg",
+		MinValid: -20, HasMin: true,
+		MaxValid: 120, HasMax: true,
+		StaleAfterS: 300, Hot: false,
+		Group: "cooling", RateOf: "", RateScale: 1,
+	},
+	"water_setpoint_temp": {
+		Key: "water_setpoint_temp", DisplayName: "Water Setpoint", Unit: "C",
+		ValueType: "gauge", Aggregation: "last",
+		MinValid: -20, HasMin: true,
+		MaxValid: 120, HasMax: true,
+		StaleAfterS: 900, Hot: false,
+		Group: "cooling", RateOf: "", RateScale: 1,
+	},
+	"water_flow": {
+		Key: "water_flow", DisplayName: "Water Flow", Unit: "L/s",
+		ValueType: "gauge", Aggregation: "avg",
+		MinValid: 0, HasMin: true,
+		MaxValid: 0, HasMax: false,
+		StaleAfterS: 300, Hot: false,
+		Group: "cooling", RateOf: "", RateScale: 1,
+	},
+	"water_pressure": {
+		Key: "water_pressure", DisplayName: "Water Pressure", Unit: "kPa",
+		ValueType: "gauge", Aggregation: "avg",
+		MinValid: 0, HasMin: true,
+		MaxValid: 0, HasMax: false,
+		StaleAfterS: 300, Hot: false,
+		Group: "cooling", RateOf: "", RateScale: 1,
+	},
+	"water_diff_pressure": {
+		Key: "water_diff_pressure", DisplayName: "Differential Pressure", Unit: "kPa",
+		ValueType: "gauge", Aggregation: "avg",
+		MinValid: 0, HasMin: false,
+		MaxValid: 0, HasMax: false,
+		StaleAfterS: 300, Hot: false,
+		Group: "cooling", RateOf: "", RateScale: 1,
+	},
+	"valve_position_pct": {
+		Key: "valve_position_pct", DisplayName: "Valve Position", Unit: "pct",
+		ValueType: "gauge", Aggregation: "avg",
+		MinValid: 0, HasMin: true,
+		MaxValid: 100, HasMax: true,
+		StaleAfterS: 300, Hot: false,
+		Group: "cooling", RateOf: "", RateScale: 1,
+	},
+	"compressor_load_pct": {
+		Key: "compressor_load_pct", DisplayName: "Compressor Load", Unit: "pct",
+		ValueType: "gauge", Aggregation: "avg",
+		MinValid: 0, HasMin: true,
+		MaxValid: 100, HasMax: true,
+		StaleAfterS: 300, Hot: true,
+		Group: "cooling", RateOf: "", RateScale: 1,
+	},
+	"cooling_capacity": {
+		Key: "cooling_capacity", DisplayName: "Cooling Capacity", Unit: "W",
+		ValueType: "gauge", Aggregation: "avg",
+		MinValid: 0, HasMin: true,
+		MaxValid: 0, HasMax: false,
+		StaleAfterS: 300, Hot: false,
+		Group: "cooling", RateOf: "", RateScale: 1,
+	},
+	"cooling_output_pct": {
+		Key: "cooling_output_pct", DisplayName: "Cooling Output", Unit: "pct",
+		ValueType: "gauge", Aggregation: "avg",
+		MinValid: 0, HasMin: true,
+		MaxValid: 100, HasMax: true,
+		StaleAfterS: 300, Hot: false,
+		Group: "cooling", RateOf: "", RateScale: 1,
+	},
+	"thermal_load": {
+		Key: "thermal_load", DisplayName: "Thermal Load", Unit: "W",
+		ValueType: "gauge", Aggregation: "avg",
+		MinValid: 0, HasMin: true,
+		MaxValid: 0, HasMax: false,
+		StaleAfterS: 300, Hot: false,
+		Group: "cooling", RateOf: "", RateScale: 1,
+	},
+	"cop": {
+		Key: "cop", DisplayName: "Coefficient of Performance", Unit: "ratio",
+		ValueType: "gauge", Aggregation: "avg",
+		MinValid: 0, HasMin: true,
+		MaxValid: 20, HasMax: true,
+		StaleAfterS: 300, Hot: false,
+		Group: "cooling", RateOf: "", RateScale: 1,
+	},
+	"approach_temp": {
+		Key: "approach_temp", DisplayName: "Approach Temperature", Unit: "K",
+		ValueType: "gauge", Aggregation: "avg",
+		MinValid: 0, HasMin: false,
+		MaxValid: 0, HasMax: false,
+		StaleAfterS: 300, Hot: false,
+		Group: "cooling", RateOf: "", RateScale: 1,
+	},
+	"supply_air_temp": {
+		Key: "supply_air_temp", DisplayName: "Supply Air Temperature", Unit: "C",
+		ValueType: "gauge", Aggregation: "avg",
+		MinValid: -20, HasMin: true,
+		MaxValid: 80, HasMax: true,
+		StaleAfterS: 300, Hot: true,
+		Group: "cooling", RateOf: "", RateScale: 1,
+	},
+	"return_air_temp": {
+		Key: "return_air_temp", DisplayName: "Return Air Temperature", Unit: "C",
+		ValueType: "gauge", Aggregation: "avg",
+		MinValid: -20, HasMin: true,
+		MaxValid: 80, HasMax: true,
+		StaleAfterS: 300, Hot: false,
+		Group: "cooling", RateOf: "", RateScale: 1,
+	},
+	"air_setpoint_temp": {
+		Key: "air_setpoint_temp", DisplayName: "Air Setpoint", Unit: "C",
+		ValueType: "gauge", Aggregation: "last",
+		MinValid: -20, HasMin: true,
+		MaxValid: 80, HasMax: true,
+		StaleAfterS: 900, Hot: false,
+		Group: "cooling", RateOf: "", RateScale: 1,
+	},
+	"filter_diff_pressure": {
+		Key: "filter_diff_pressure", DisplayName: "Filter Differential Pressure", Unit: "kPa",
+		ValueType: "gauge", Aggregation: "avg",
+		MinValid: 0, HasMin: true,
+		MaxValid: 0, HasMax: false,
+		StaleAfterS: 600, Hot: false,
+		Group: "cooling", RateOf: "", RateScale: 1,
+	},
+	"basin_level_pct": {
+		Key: "basin_level_pct", DisplayName: "Basin Level", Unit: "pct",
+		ValueType: "gauge", Aggregation: "avg",
+		MinValid: 0, HasMin: true,
+		MaxValid: 100, HasMax: true,
+		StaleAfterS: 600, Hot: false,
+		Group: "cooling", RateOf: "", RateScale: 1,
+	},
+	"makeup_water_flow": {
+		Key: "makeup_water_flow", DisplayName: "Makeup Water Flow", Unit: "L/s",
+		ValueType: "gauge", Aggregation: "avg",
+		MinValid: 0, HasMin: true,
+		MaxValid: 0, HasMax: false,
+		StaleAfterS: 600, Hot: false,
+		Group: "cooling", RateOf: "", RateScale: 1,
+	},
+	"vibration": {
+		Key: "vibration", DisplayName: "Vibration", Unit: "mm/s",
+		ValueType: "gauge", Aggregation: "avg",
+		MinValid: 0, HasMin: true,
+		MaxValid: 0, HasMax: false,
+		StaleAfterS: 600, Hot: false,
+		Group: "cooling", RateOf: "", RateScale: 1,
+	},
+	"motor_temp": {
+		Key: "motor_temp", DisplayName: "Motor Temperature", Unit: "C",
+		ValueType: "gauge", Aggregation: "avg",
+		MinValid: -20, HasMin: true,
+		MaxValid: 200, HasMax: true,
+		StaleAfterS: 300, Hot: false,
+		Group: "cooling", RateOf: "", RateScale: 1,
+	},
+	"vfd_frequency": {
+		Key: "vfd_frequency", DisplayName: "VFD Output Frequency", Unit: "Hz",
+		ValueType: "gauge", Aggregation: "avg",
+		MinValid: 0, HasMin: true,
+		MaxValid: 200, HasMax: true,
+		StaleAfterS: 300, Hot: false,
+		Group: "cooling", RateOf: "", RateScale: 1,
+	},
+	"pump_speed_pct": {
+		Key: "pump_speed_pct", DisplayName: "Pump Speed", Unit: "pct",
+		ValueType: "gauge", Aggregation: "avg",
+		MinValid: 0, HasMin: true,
+		MaxValid: 100, HasMax: true,
+		StaleAfterS: 300, Hot: false,
+		Group: "cooling", RateOf: "", RateScale: 1,
+	},
+	"run_hours": {
+		Key: "run_hours", DisplayName: "Run Hours", Unit: "h",
+		ValueType: "counter", Aggregation: "last",
+		MinValid: 0, HasMin: true,
+		MaxValid: 0, HasMax: false,
+		StaleAfterS: 3600, Hot: false,
+		Group: "cooling", RateOf: "", RateScale: 1,
+	},
+	"equipment_state": {
+		Key: "equipment_state", DisplayName: "Equipment State", Unit: "bool",
+		ValueType: "bool", Aggregation: "last",
+		MinValid: 0, HasMin: false,
+		MaxValid: 0, HasMax: false,
+		StaleAfterS: 300, Hot: true,
+		Group: "cooling", RateOf: "", RateScale: 1,
+	},
+	"alarm_state": {
+		Key: "alarm_state", DisplayName: "Alarm State", Unit: "bool",
+		ValueType: "bool", Aggregation: "max",
+		MinValid: 0, HasMin: false,
+		MaxValid: 0, HasMax: false,
+		StaleAfterS: 300, Hot: true,
+		Group: "cooling", RateOf: "", RateScale: 1,
+	},
+	"voltage_ln": {
+		Key: "voltage_ln", DisplayName: "Line-to-Neutral Voltage", Unit: "V",
+		ValueType: "gauge", Aggregation: "avg",
+		MinValid: 0, HasMin: true,
+		MaxValid: 600, HasMax: true,
+		StaleAfterS: 300, Hot: false,
+		Group: "power", RateOf: "", RateScale: 1,
+	},
+	"current": {
+		Key: "current", DisplayName: "Current", Unit: "A",
+		ValueType: "gauge", Aggregation: "avg",
+		MinValid: 0, HasMin: true,
+		MaxValid: 0, HasMax: false,
+		StaleAfterS: 300, Hot: true,
+		Group: "power", RateOf: "", RateScale: 1,
+	},
+	"line_frequency": {
+		Key: "line_frequency", DisplayName: "Line Frequency", Unit: "Hz",
+		ValueType: "gauge", Aggregation: "avg",
+		MinValid: 0, HasMin: true,
+		MaxValid: 100, HasMax: true,
+		StaleAfterS: 300, Hot: false,
+		Group: "power", RateOf: "", RateScale: 1,
+	},
+	"power_factor": {
+		Key: "power_factor", DisplayName: "Power Factor", Unit: "ratio",
+		ValueType: "gauge", Aggregation: "avg",
+		MinValid: 0, HasMin: true,
+		MaxValid: 1, HasMax: true,
+		StaleAfterS: 300, Hot: false,
+		Group: "power", RateOf: "", RateScale: 1,
+	},
+	"voltage_thd_pct": {
+		Key: "voltage_thd_pct", DisplayName: "Voltage THD", Unit: "pct",
+		ValueType: "gauge", Aggregation: "avg",
+		MinValid: 0, HasMin: true,
+		MaxValid: 0, HasMax: false,
+		StaleAfterS: 600, Hot: false,
+		Group: "power", RateOf: "", RateScale: 1,
+	},
+	"current_thd_pct": {
+		Key: "current_thd_pct", DisplayName: "Current THD", Unit: "pct",
+		ValueType: "gauge", Aggregation: "avg",
+		MinValid: 0, HasMin: true,
+		MaxValid: 0, HasMax: false,
+		StaleAfterS: 600, Hot: false,
+		Group: "power", RateOf: "", RateScale: 1,
+	},
+	"harmonic_current_pct": {
+		Key: "harmonic_current_pct", DisplayName: "Harmonic Current", Unit: "pct",
+		ValueType: "gauge", Aggregation: "avg",
+		MinValid: 0, HasMin: true,
+		MaxValid: 0, HasMax: false,
+		StaleAfterS: 600, Hot: false,
+		Group: "power", RateOf: "", RateScale: 1,
+	},
 }
 
 // MetricGroups maps a poll-profile group name to its metric keys.
 var MetricGroups = map[string][]string{
 	"compute":     {"cpu_utilization", "memory_utilization", "memory_used", "memory_total", "memory_available", "disk_utilization", "disk_used", "disk_total"},
+	"cooling":     {"water_supply_temp", "water_return_temp", "water_setpoint_temp", "water_flow", "water_pressure", "water_diff_pressure", "valve_position_pct", "compressor_load_pct", "cooling_capacity", "cooling_output_pct", "thermal_load", "cop", "approach_temp", "supply_air_temp", "return_air_temp", "air_setpoint_temp", "filter_diff_pressure", "basin_level_pct", "makeup_water_flow", "vibration", "motor_temp", "vfd_frequency", "pump_speed_pct", "run_hours", "equipment_state", "alarm_state"},
 	"environment": {"ambient_temperature", "relative_humidity", "dew_point", "airflow"},
 	"interfaces":  {"if_admin_state", "if_oper_state", "if_speed", "if_in_octets", "if_out_octets", "if_in_bps", "if_out_bps", "if_in_errors", "if_out_errors", "if_in_discards", "if_out_discards", "if_in_error_rate"},
-	"power":       {"power_draw", "psu_input_voltage", "psu_output_power", "psu_state", "energy_consumed"},
+	"power":       {"power_draw", "psu_input_voltage", "psu_output_power", "psu_state", "energy_consumed", "voltage_ln", "current", "line_frequency", "power_factor", "voltage_thd_pct", "current_thd_pct", "harmonic_current_pct"},
 	"system":      {"sys_uptime", "reachable", "poll_latency"},
 	"thermal":     {"cpu_temperature", "inlet_temperature", "exhaust_temperature", "fan_speed", "fan_speed_pct"},
 }

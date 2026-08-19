@@ -438,3 +438,398 @@ metrics:
     stale_after_s: 120
     group: environment
     device_types: [sensor, crah]
+
+  # ------------------------------------------------------------------ cooling
+  #
+  # Arrives with the BACnet adapter (phase 3.3). Hydronic points carry the LOOP
+  # in `instance` - CHW, COND, TCS - rather than exploding into a key per loop:
+  # a chiller measures supply temperature on two loops at once, and one key
+  # with an instance is how the same physical quantity stays comparable across
+  # chillers, pumps and CDUs.
+
+  - key: water_supply_temp
+    display_name: Water Supply Temperature
+    unit: C
+    value_type: gauge
+    aggregation: avg
+    min_valid: -20
+    max_valid: 120
+    stale_after_s: 300
+    hot: true
+    group: cooling
+    device_types: [chiller, cdu, crah, pump]
+    description: Leaving water temperature. instance names the loop (CHW, COND, TCS).
+
+  - key: water_return_temp
+    display_name: Water Return Temperature
+    unit: C
+    value_type: gauge
+    aggregation: avg
+    min_valid: -20
+    max_valid: 120
+    stale_after_s: 300
+    group: cooling
+    device_types: [chiller, cdu, crah, pump]
+    description: Entering water temperature. instance names the loop.
+
+  - key: water_setpoint_temp
+    display_name: Water Setpoint
+    unit: C
+    value_type: gauge
+    aggregation: last
+    min_valid: -20
+    max_valid: 120
+    stale_after_s: 900
+    group: cooling
+    device_types: [chiller, cdu]
+    description: Commanded leaving-water temperature. A persistent gap against water_supply_temp is the plant losing capacity.
+
+  - key: water_flow
+    display_name: Water Flow
+    unit: L/s
+    value_type: gauge
+    aggregation: avg
+    min_valid: 0
+    stale_after_s: 300
+    group: cooling
+    device_types: [chiller, cdu, pump, cooling_tower]
+    description: Volumetric flow. instance names the loop.
+
+  - key: water_pressure
+    display_name: Water Pressure
+    unit: kPa
+    value_type: gauge
+    aggregation: avg
+    min_valid: 0
+    stale_after_s: 300
+    group: cooling
+    device_types: [chiller, cdu, pump]
+    description: Gauge pressure. instance names the tap (EVAP, COND, DISCHARGE, SUCTION, TCS).
+
+  - key: water_diff_pressure
+    display_name: Differential Pressure
+    unit: kPa
+    value_type: gauge
+    aggregation: avg
+    stale_after_s: 300
+    group: cooling
+    device_types: [pump, cdu]
+    description: Pressure across a pump or a filter. instance names the element.
+
+  - key: valve_position_pct
+    display_name: Valve Position
+    unit: pct
+    value_type: gauge
+    aggregation: avg
+    min_valid: 0
+    max_valid: 100
+    stale_after_s: 300
+    group: cooling
+    device_types: [valve, crah, cdu]
+    description: Commanded or measured opening. instance names the valve when a device has more than one.
+
+  - key: compressor_load_pct
+    display_name: Compressor Load
+    unit: pct
+    value_type: gauge
+    aggregation: avg
+    min_valid: 0
+    max_valid: 100
+    stale_after_s: 300
+    hot: true
+    group: cooling
+    device_types: [chiller]
+    description: Percentage of full load. Sustained 100 percent with a rising supply temperature is a chiller that has run out of capacity.
+
+  - key: cooling_capacity
+    display_name: Cooling Capacity
+    unit: W
+    value_type: gauge
+    aggregation: avg
+    min_valid: 0
+    stale_after_s: 300
+    group: cooling
+    device_types: [chiller]
+    description: Thermal capacity delivered, in watts. The percentage form is a separate key, cooling_output_pct.
+
+  - key: cooling_output_pct
+    display_name: Cooling Output
+    unit: pct
+    value_type: gauge
+    aggregation: avg
+    min_valid: 0
+    max_valid: 100
+    stale_after_s: 300
+    group: cooling
+    device_types: [crah]
+    description: Percentage of rated capacity in use. Separate from cooling_capacity because one key may carry only one unit.
+
+  - key: thermal_load
+    display_name: Thermal Load
+    unit: W
+    value_type: gauge
+    aggregation: avg
+    min_valid: 0
+    stale_after_s: 300
+    group: cooling
+    device_types: [cdu]
+    description: Heat rejected into the facility loop. Not electrical draw, which is power_draw.
+
+  - key: cop
+    display_name: Coefficient of Performance
+    unit: ratio
+    value_type: gauge
+    aggregation: avg
+    min_valid: 0
+    max_valid: 20
+    stale_after_s: 300
+    group: cooling
+    device_types: [chiller]
+    description: Cooling delivered per unit of electrical input.
+
+  - key: approach_temp
+    display_name: Approach Temperature
+    unit: K
+    value_type: gauge
+    aggregation: avg
+    stale_after_s: 300
+    group: cooling
+    device_types: [cdu, cooling_tower]
+    description: A temperature DIFFERENCE in kelvin, not a temperature in celsius. A widening approach is the standard fouling signature.
+
+  - key: supply_air_temp
+    display_name: Supply Air Temperature
+    unit: C
+    value_type: gauge
+    aggregation: avg
+    min_valid: -20
+    max_valid: 80
+    stale_after_s: 300
+    hot: true
+    group: cooling
+    device_types: [crah]
+    description: Discharge air. A high discharge means the unit has lost the ability to cool.
+
+  - key: return_air_temp
+    display_name: Return Air Temperature
+    unit: C
+    value_type: gauge
+    aggregation: avg
+    min_valid: -20
+    max_valid: 80
+    stale_after_s: 300
+    group: cooling
+    device_types: [crah]
+    description: Entering air. A high return means the unit is holding setpoint and the hot aisle feeding it is too hot - a load symptom, not a unit fault.
+
+  - key: air_setpoint_temp
+    display_name: Air Setpoint
+    unit: C
+    value_type: gauge
+    aggregation: last
+    min_valid: -20
+    max_valid: 80
+    stale_after_s: 900
+    group: cooling
+    device_types: [crah]
+    description: Commanded supply-air temperature.
+
+  - key: filter_diff_pressure
+    display_name: Filter Differential Pressure
+    unit: kPa
+    value_type: gauge
+    aggregation: avg
+    min_valid: 0
+    stale_after_s: 600
+    group: cooling
+    device_types: [cdu, crah]
+    description: Pressure drop across the filter. Rising over weeks is the maintenance signal.
+
+  - key: basin_level_pct
+    display_name: Basin Level
+    unit: pct
+    value_type: gauge
+    aggregation: avg
+    min_valid: 0
+    max_valid: 100
+    stale_after_s: 600
+    group: cooling
+    device_types: [cooling_tower]
+    description: Cooling-tower basin water level.
+
+  - key: makeup_water_flow
+    display_name: Makeup Water Flow
+    unit: L/s
+    value_type: gauge
+    aggregation: avg
+    min_valid: 0
+    stale_after_s: 600
+    group: cooling
+    device_types: [cooling_tower]
+    description: Makeup water into the basin. Devices commonly report litres per minute; adapters convert.
+
+  - key: vibration
+    display_name: Vibration
+    unit: mm/s
+    value_type: gauge
+    aggregation: avg
+    min_valid: 0
+    stale_after_s: 600
+    group: cooling
+    device_types: [cooling_tower, pump]
+    description: RMS velocity. The leading indicator of bearing wear.
+
+  - key: motor_temp
+    display_name: Motor Temperature
+    unit: C
+    value_type: gauge
+    aggregation: avg
+    min_valid: -20
+    max_valid: 200
+    stale_after_s: 300
+    group: cooling
+    device_types: [pump, valve]
+    description: Motor or actuator winding temperature.
+
+  - key: vfd_frequency
+    display_name: VFD Output Frequency
+    unit: Hz
+    value_type: gauge
+    aggregation: avg
+    min_valid: 0
+    max_valid: 200
+    stale_after_s: 300
+    group: cooling
+    device_types: [pump]
+    description: Drive output frequency. Read with pump_speed_pct it separates a commanded slow-down from a drive fault.
+
+  - key: pump_speed_pct
+    display_name: Pump Speed
+    unit: pct
+    value_type: gauge
+    aggregation: avg
+    min_valid: 0
+    max_valid: 100
+    stale_after_s: 300
+    group: cooling
+    device_types: [pump, cdu]
+    description: Commanded speed as a percentage.
+
+  - key: run_hours
+    display_name: Run Hours
+    unit: h
+    value_type: counter
+    aggregation: last
+    min_valid: 0
+    stale_after_s: 3600
+    group: cooling
+    device_types: [chiller, pump, cooling_tower, cdu, crah]
+    description: Lifetime running hours. A counter that stops advancing on a machine reporting itself as running is the machine lying.
+
+  - key: equipment_state
+    display_name: Equipment State
+    unit: bool
+    value_type: bool
+    aggregation: last
+    stale_after_s: 300
+    hot: true
+    group: cooling
+    device_types: [chiller, pump, cooling_tower, cdu, crah, valve]
+    description: Running or stopped. instance carries the point name, so a device with several status points keeps them distinct.
+
+  - key: alarm_state
+    display_name: Alarm State
+    unit: bool
+    value_type: bool
+    aggregation: max
+    stale_after_s: 300
+    hot: true
+    group: cooling
+    device_types: [chiller, pump, cooling_tower, cdu, crah, valve, ev2]
+    description: One alarm point. instance carries the vendor alarm name - a key per vendor alarm would make the registry unmaintainable and the UI incomparable across makes.
+
+  # -------------------------------------------------------------------- power
+  #
+  # Arrives with the BACnet and Modbus adapters. Phase and branch-circuit
+  # multiplicity is carried in instance (A/B/C, Ckt01..Ckt42).
+
+  - key: voltage_ln
+    display_name: Line-to-Neutral Voltage
+    unit: V
+    value_type: gauge
+    aggregation: avg
+    min_valid: 0
+    max_valid: 600
+    stale_after_s: 300
+    group: power
+    device_types: [ev2, pdu, rpp, ups]
+    description: Phase-to-neutral voltage. instance is the phase.
+
+  - key: current
+    display_name: Current
+    unit: A
+    value_type: gauge
+    aggregation: avg
+    min_valid: 0
+    stale_after_s: 300
+    hot: true
+    group: power
+    device_types: [ev2, pdu, rpp, ups]
+    description: RMS current. instance is the phase or the branch circuit.
+
+  - key: line_frequency
+    display_name: Line Frequency
+    unit: Hz
+    value_type: gauge
+    aggregation: avg
+    min_valid: 0
+    max_valid: 100
+    stale_after_s: 300
+    group: power
+    device_types: [ev2, pdu, ups, generator]
+    description: Mains frequency.
+
+  - key: power_factor
+    display_name: Power Factor
+    unit: ratio
+    value_type: gauge
+    aggregation: avg
+    min_valid: 0
+    max_valid: 1
+    stale_after_s: 300
+    group: power
+    device_types: [ev2, pdu, rpp]
+    description: True power factor. instance is the phase or circuit.
+
+  - key: voltage_thd_pct
+    display_name: Voltage THD
+    unit: pct
+    value_type: gauge
+    aggregation: avg
+    min_valid: 0
+    stale_after_s: 600
+    group: power
+    device_types: [ev2]
+    description: Total harmonic distortion of the voltage waveform. The IEEE-519 quantity, and the one a power-quality alarm is written against.
+
+  - key: current_thd_pct
+    display_name: Current THD
+    unit: pct
+    value_type: gauge
+    aggregation: avg
+    min_valid: 0
+    stale_after_s: 600
+    group: power
+    device_types: [ev2]
+    description: Total harmonic distortion of the current waveform. Naturally high at light load, so a diagnostic rather than an alarm source.
+
+  - key: harmonic_current_pct
+    display_name: Harmonic Current
+    unit: pct
+    value_type: gauge
+    aggregation: avg
+    min_valid: 0
+    stale_after_s: 600
+    group: power
+    device_types: [ev2]
+    description: One harmonic order as a percentage of the fundamental. instance is the order (3, 5, 7, 9).

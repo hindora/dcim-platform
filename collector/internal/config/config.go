@@ -57,6 +57,7 @@ type Config struct {
 		SNMPTrap     TrapCfg         `yaml:"snmp_trap"`
 		Redfish      ProtocolCfg     `yaml:"redfish"`
 		RedfishEvent RedfishEventCfg `yaml:"redfish_event"`
+		BACnet       BACnetCfg       `yaml:"bacnet"`
 	} `yaml:"protocols"`
 
 	Health struct {
@@ -114,6 +115,27 @@ type RedfishEventCfg struct {
 	Workers            int           `yaml:"workers"`
 	RateLimitPerMinute int           `yaml:"rate_limit_per_minute"`
 	ReconcileEvery     time.Duration `yaml:"reconcile_every"`
+}
+
+// BACnetCfg configures the BACnet/IP client.
+//
+// BACnet has no per-endpoint socket: one UDP socket serves every device,
+// because Who-Is, I-Am and COV notifications arrive unsolicited and a
+// per-device socket would receive none of them.
+type BACnetCfg struct {
+	Enabled bool `yaml:"enabled"`
+	// LocalPort 0 asks the kernel for an ephemeral port. Replies come back to
+	// the source of the request, so 47808 is only needed to receive
+	// broadcasts - and on a host already running something that speaks
+	// BACnet, binding it fails.
+	LocalPort     int           `yaml:"local_port"`
+	MaxConcurrent int           `yaml:"max_concurrent"`
+	PerHost       int           `yaml:"per_host"`
+	Timeout       time.Duration `yaml:"timeout"`
+	Retries       int           `yaml:"retries"`
+	// Objects per ReadPropertyMultiple. Sized well under a 1476-byte APDU: an
+	// oversized request comes back as an abort, not a short answer.
+	BatchSize int `yaml:"batch_size"`
 }
 
 type ProtocolCfg struct {
@@ -184,6 +206,10 @@ func Default() *Config {
 	c.Protocols.RedfishEvent = RedfishEventCfg{
 		Enabled: false, Listen: "0.0.0.0:9143", Workers: 4,
 		RateLimitPerMinute: 120, ReconcileEvery: 10 * time.Minute,
+	}
+	c.Protocols.BACnet = BACnetCfg{
+		Enabled: false, LocalPort: 0, MaxConcurrent: 24, PerHost: 1,
+		Timeout: 3 * time.Second, Retries: 2, BatchSize: 16,
 	}
 	c.Health.OfflineThreshold = 3
 	c.Mappings.Dir = "../contracts/mappings"

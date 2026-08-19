@@ -38,6 +38,39 @@ export type MetricKey =
   | 'relative_humidity'
   | 'dew_point'
   | 'airflow'
+  | 'water_supply_temp'
+  | 'water_return_temp'
+  | 'water_setpoint_temp'
+  | 'water_flow'
+  | 'water_pressure'
+  | 'water_diff_pressure'
+  | 'valve_position_pct'
+  | 'compressor_load_pct'
+  | 'cooling_capacity'
+  | 'cooling_output_pct'
+  | 'thermal_load'
+  | 'cop'
+  | 'approach_temp'
+  | 'supply_air_temp'
+  | 'return_air_temp'
+  | 'air_setpoint_temp'
+  | 'filter_diff_pressure'
+  | 'basin_level_pct'
+  | 'makeup_water_flow'
+  | 'vibration'
+  | 'motor_temp'
+  | 'vfd_frequency'
+  | 'pump_speed_pct'
+  | 'run_hours'
+  | 'equipment_state'
+  | 'alarm_state'
+  | 'voltage_ln'
+  | 'current'
+  | 'line_frequency'
+  | 'power_factor'
+  | 'voltage_thd_pct'
+  | 'current_thd_pct'
+  | 'harmonic_current_pct'
   ;
 
 export interface MetricDef {
@@ -386,6 +419,303 @@ export const METRICS: Record<MetricKey, MetricDef> = {
     maxValid: 100,
     staleAfterS: 120, hot: false,
     group: 'environment',
+  },
+  'water_supply_temp': {
+    key: 'water_supply_temp', displayName: 'Water Supply Temperature'.replace(/^'|'$/g, ''),
+    unit: 'C', valueType: 'gauge',
+    aggregation: 'avg',
+    minValid: -20,
+    maxValid: 120,
+    staleAfterS: 300, hot: true,
+    group: 'cooling',
+  },
+  'water_return_temp': {
+    key: 'water_return_temp', displayName: 'Water Return Temperature'.replace(/^'|'$/g, ''),
+    unit: 'C', valueType: 'gauge',
+    aggregation: 'avg',
+    minValid: -20,
+    maxValid: 120,
+    staleAfterS: 300, hot: false,
+    group: 'cooling',
+  },
+  'water_setpoint_temp': {
+    key: 'water_setpoint_temp', displayName: 'Water Setpoint'.replace(/^'|'$/g, ''),
+    unit: 'C', valueType: 'gauge',
+    aggregation: 'last',
+    minValid: -20,
+    maxValid: 120,
+    staleAfterS: 900, hot: false,
+    group: 'cooling',
+  },
+  'water_flow': {
+    key: 'water_flow', displayName: 'Water Flow'.replace(/^'|'$/g, ''),
+    unit: 'L/s', valueType: 'gauge',
+    aggregation: 'avg',
+    minValid: 0,
+    maxValid: null,
+    staleAfterS: 300, hot: false,
+    group: 'cooling',
+  },
+  'water_pressure': {
+    key: 'water_pressure', displayName: 'Water Pressure'.replace(/^'|'$/g, ''),
+    unit: 'kPa', valueType: 'gauge',
+    aggregation: 'avg',
+    minValid: 0,
+    maxValid: null,
+    staleAfterS: 300, hot: false,
+    group: 'cooling',
+  },
+  'water_diff_pressure': {
+    key: 'water_diff_pressure', displayName: 'Differential Pressure'.replace(/^'|'$/g, ''),
+    unit: 'kPa', valueType: 'gauge',
+    aggregation: 'avg',
+    minValid: null,
+    maxValid: null,
+    staleAfterS: 300, hot: false,
+    group: 'cooling',
+  },
+  'valve_position_pct': {
+    key: 'valve_position_pct', displayName: 'Valve Position'.replace(/^'|'$/g, ''),
+    unit: 'pct', valueType: 'gauge',
+    aggregation: 'avg',
+    minValid: 0,
+    maxValid: 100,
+    staleAfterS: 300, hot: false,
+    group: 'cooling',
+  },
+  'compressor_load_pct': {
+    key: 'compressor_load_pct', displayName: 'Compressor Load'.replace(/^'|'$/g, ''),
+    unit: 'pct', valueType: 'gauge',
+    aggregation: 'avg',
+    minValid: 0,
+    maxValid: 100,
+    staleAfterS: 300, hot: true,
+    group: 'cooling',
+  },
+  'cooling_capacity': {
+    key: 'cooling_capacity', displayName: 'Cooling Capacity'.replace(/^'|'$/g, ''),
+    unit: 'W', valueType: 'gauge',
+    aggregation: 'avg',
+    minValid: 0,
+    maxValid: null,
+    staleAfterS: 300, hot: false,
+    group: 'cooling',
+  },
+  'cooling_output_pct': {
+    key: 'cooling_output_pct', displayName: 'Cooling Output'.replace(/^'|'$/g, ''),
+    unit: 'pct', valueType: 'gauge',
+    aggregation: 'avg',
+    minValid: 0,
+    maxValid: 100,
+    staleAfterS: 300, hot: false,
+    group: 'cooling',
+  },
+  'thermal_load': {
+    key: 'thermal_load', displayName: 'Thermal Load'.replace(/^'|'$/g, ''),
+    unit: 'W', valueType: 'gauge',
+    aggregation: 'avg',
+    minValid: 0,
+    maxValid: null,
+    staleAfterS: 300, hot: false,
+    group: 'cooling',
+  },
+  'cop': {
+    key: 'cop', displayName: 'Coefficient of Performance'.replace(/^'|'$/g, ''),
+    unit: 'ratio', valueType: 'gauge',
+    aggregation: 'avg',
+    minValid: 0,
+    maxValid: 20,
+    staleAfterS: 300, hot: false,
+    group: 'cooling',
+  },
+  'approach_temp': {
+    key: 'approach_temp', displayName: 'Approach Temperature'.replace(/^'|'$/g, ''),
+    unit: 'K', valueType: 'gauge',
+    aggregation: 'avg',
+    minValid: null,
+    maxValid: null,
+    staleAfterS: 300, hot: false,
+    group: 'cooling',
+  },
+  'supply_air_temp': {
+    key: 'supply_air_temp', displayName: 'Supply Air Temperature'.replace(/^'|'$/g, ''),
+    unit: 'C', valueType: 'gauge',
+    aggregation: 'avg',
+    minValid: -20,
+    maxValid: 80,
+    staleAfterS: 300, hot: true,
+    group: 'cooling',
+  },
+  'return_air_temp': {
+    key: 'return_air_temp', displayName: 'Return Air Temperature'.replace(/^'|'$/g, ''),
+    unit: 'C', valueType: 'gauge',
+    aggregation: 'avg',
+    minValid: -20,
+    maxValid: 80,
+    staleAfterS: 300, hot: false,
+    group: 'cooling',
+  },
+  'air_setpoint_temp': {
+    key: 'air_setpoint_temp', displayName: 'Air Setpoint'.replace(/^'|'$/g, ''),
+    unit: 'C', valueType: 'gauge',
+    aggregation: 'last',
+    minValid: -20,
+    maxValid: 80,
+    staleAfterS: 900, hot: false,
+    group: 'cooling',
+  },
+  'filter_diff_pressure': {
+    key: 'filter_diff_pressure', displayName: 'Filter Differential Pressure'.replace(/^'|'$/g, ''),
+    unit: 'kPa', valueType: 'gauge',
+    aggregation: 'avg',
+    minValid: 0,
+    maxValid: null,
+    staleAfterS: 600, hot: false,
+    group: 'cooling',
+  },
+  'basin_level_pct': {
+    key: 'basin_level_pct', displayName: 'Basin Level'.replace(/^'|'$/g, ''),
+    unit: 'pct', valueType: 'gauge',
+    aggregation: 'avg',
+    minValid: 0,
+    maxValid: 100,
+    staleAfterS: 600, hot: false,
+    group: 'cooling',
+  },
+  'makeup_water_flow': {
+    key: 'makeup_water_flow', displayName: 'Makeup Water Flow'.replace(/^'|'$/g, ''),
+    unit: 'L/s', valueType: 'gauge',
+    aggregation: 'avg',
+    minValid: 0,
+    maxValid: null,
+    staleAfterS: 600, hot: false,
+    group: 'cooling',
+  },
+  'vibration': {
+    key: 'vibration', displayName: 'Vibration'.replace(/^'|'$/g, ''),
+    unit: 'mm/s', valueType: 'gauge',
+    aggregation: 'avg',
+    minValid: 0,
+    maxValid: null,
+    staleAfterS: 600, hot: false,
+    group: 'cooling',
+  },
+  'motor_temp': {
+    key: 'motor_temp', displayName: 'Motor Temperature'.replace(/^'|'$/g, ''),
+    unit: 'C', valueType: 'gauge',
+    aggregation: 'avg',
+    minValid: -20,
+    maxValid: 200,
+    staleAfterS: 300, hot: false,
+    group: 'cooling',
+  },
+  'vfd_frequency': {
+    key: 'vfd_frequency', displayName: 'VFD Output Frequency'.replace(/^'|'$/g, ''),
+    unit: 'Hz', valueType: 'gauge',
+    aggregation: 'avg',
+    minValid: 0,
+    maxValid: 200,
+    staleAfterS: 300, hot: false,
+    group: 'cooling',
+  },
+  'pump_speed_pct': {
+    key: 'pump_speed_pct', displayName: 'Pump Speed'.replace(/^'|'$/g, ''),
+    unit: 'pct', valueType: 'gauge',
+    aggregation: 'avg',
+    minValid: 0,
+    maxValid: 100,
+    staleAfterS: 300, hot: false,
+    group: 'cooling',
+  },
+  'run_hours': {
+    key: 'run_hours', displayName: 'Run Hours'.replace(/^'|'$/g, ''),
+    unit: 'h', valueType: 'counter',
+    aggregation: 'last',
+    minValid: 0,
+    maxValid: null,
+    staleAfterS: 3600, hot: false,
+    group: 'cooling',
+  },
+  'equipment_state': {
+    key: 'equipment_state', displayName: 'Equipment State'.replace(/^'|'$/g, ''),
+    unit: 'bool', valueType: 'bool',
+    aggregation: 'last',
+    minValid: null,
+    maxValid: null,
+    staleAfterS: 300, hot: true,
+    group: 'cooling',
+  },
+  'alarm_state': {
+    key: 'alarm_state', displayName: 'Alarm State'.replace(/^'|'$/g, ''),
+    unit: 'bool', valueType: 'bool',
+    aggregation: 'max',
+    minValid: null,
+    maxValid: null,
+    staleAfterS: 300, hot: true,
+    group: 'cooling',
+  },
+  'voltage_ln': {
+    key: 'voltage_ln', displayName: 'Line-to-Neutral Voltage'.replace(/^'|'$/g, ''),
+    unit: 'V', valueType: 'gauge',
+    aggregation: 'avg',
+    minValid: 0,
+    maxValid: 600,
+    staleAfterS: 300, hot: false,
+    group: 'power',
+  },
+  'current': {
+    key: 'current', displayName: 'Current'.replace(/^'|'$/g, ''),
+    unit: 'A', valueType: 'gauge',
+    aggregation: 'avg',
+    minValid: 0,
+    maxValid: null,
+    staleAfterS: 300, hot: true,
+    group: 'power',
+  },
+  'line_frequency': {
+    key: 'line_frequency', displayName: 'Line Frequency'.replace(/^'|'$/g, ''),
+    unit: 'Hz', valueType: 'gauge',
+    aggregation: 'avg',
+    minValid: 0,
+    maxValid: 100,
+    staleAfterS: 300, hot: false,
+    group: 'power',
+  },
+  'power_factor': {
+    key: 'power_factor', displayName: 'Power Factor'.replace(/^'|'$/g, ''),
+    unit: 'ratio', valueType: 'gauge',
+    aggregation: 'avg',
+    minValid: 0,
+    maxValid: 1,
+    staleAfterS: 300, hot: false,
+    group: 'power',
+  },
+  'voltage_thd_pct': {
+    key: 'voltage_thd_pct', displayName: 'Voltage THD'.replace(/^'|'$/g, ''),
+    unit: 'pct', valueType: 'gauge',
+    aggregation: 'avg',
+    minValid: 0,
+    maxValid: null,
+    staleAfterS: 600, hot: false,
+    group: 'power',
+  },
+  'current_thd_pct': {
+    key: 'current_thd_pct', displayName: 'Current THD'.replace(/^'|'$/g, ''),
+    unit: 'pct', valueType: 'gauge',
+    aggregation: 'avg',
+    minValid: 0,
+    maxValid: null,
+    staleAfterS: 600, hot: false,
+    group: 'power',
+  },
+  'harmonic_current_pct': {
+    key: 'harmonic_current_pct', displayName: 'Harmonic Current'.replace(/^'|'$/g, ''),
+    unit: 'pct', valueType: 'gauge',
+    aggregation: 'avg',
+    minValid: 0,
+    maxValid: null,
+    staleAfterS: 600, hot: false,
+    group: 'power',
   },
 };
 

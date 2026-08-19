@@ -10,6 +10,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/hari/dcim-platform/collector/internal/adapters/bacnet"
 	"github.com/hari/dcim-platform/collector/internal/adapters/redfish"
 	"github.com/hari/dcim-platform/collector/internal/adapters/snmp"
 	"github.com/hari/dcim-platform/collector/internal/assign"
@@ -36,6 +37,7 @@ type App struct {
 	snmp     *snmp.Adapter
 	redfish  *redfish.Adapter
 	rfEvents *redfish.EventReceiver
+	bacnet   *bacnet.Adapter
 	traps    *snmp.TrapReceiver
 	resolver *assign.Resolver
 	adapters map[string]models.Adapter
@@ -89,6 +91,21 @@ func New(cfg *config.Config, version string) (*App, error) {
 		log.Info("redfish adapter enabled")
 	}
 
+	if cfg.Protocols.BACnet.Enabled {
+		bnMaps, err := mapping.LoadBACnet(cfg.Mappings.Dir)
+		if err != nil {
+			return nil, fmt.Errorf("load bacnet mappings: %w", err)
+		}
+		client := bacnet.NewClient(cfg.Protocols.BACnet.LocalPort,
+			cfg.Protocols.BACnet.Timeout, cfg.Protocols.BACnet.Retries, log)
+		a.bacnet = bacnet.New(bnMaps, client, log, mets,
+			cfg.Protocols.BACnet.BatchSize)
+		a.adapters["bacnet"] = a.bacnet
+		log.Info("bacnet adapter enabled",
+			"device_types", len(bnMaps.DeviceTypes),
+			"batch_size", cfg.Protocols.BACnet.BatchSize)
+	}
+
 	a.resolver = assign.NewResolver()
 
 	if cfg.Protocols.RedfishEvent.Enabled {
@@ -133,10 +150,14 @@ func New(cfg *config.Config, version string) (*App, error) {
 		ProtoLimits: map[string]int{
 			"snmp":    cfg.Protocols.SNMP.MaxConcurrent,
 			"redfish": cfg.Protocols.Redfish.MaxConcurrent,
+			"bacnet":  cfg.Protocols.BACnet.MaxConcurrent,
 		},
 		PerHostLimits: map[string]int{
 			"snmp":    cfg.Protocols.SNMP.PerHost,
 			"redfish": cfg.Protocols.Redfish.PerHost,
+			// Per HOST, not per device: an MS/TP router fronts a whole trunk,
+			// and hammering it in parallel is how a trunk saturates.
+			"bacnet": cfg.Protocols.BACnet.PerHost,
 		},
 	}, a.poll, log, mets)
 
@@ -307,6 +328,9 @@ func (a *App) applyDiff(diff assign.Diff) {
 		a.tracker.Forget(ep.ID)
 		if a.snmp != nil {
 			a.snmp.Forget(ep.ID)
+		}
+		if a.bacnet != nil {
+			a.bacnet.Forget(ep.ID)
 		}
 		if a.redfish != nil {
 			a.redfish.Forget(ep.ID)

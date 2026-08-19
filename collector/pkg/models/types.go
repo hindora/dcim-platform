@@ -80,10 +80,15 @@ type Miss struct {
 
 // Miss reasons.
 const (
-	MissNoSuchObject = "no_such_object"
-	MissTimeout      = "timeout"
-	MissDecode       = "decode"
-	MissUnsupported  = "not_supported"
+	MissNoSuchObject  = "no_such_object"
+	MissTimeout       = "timeout"
+	MissDecode        = "decode"
+	MissUnsupported   = "not_supported"
+	MissProtocolError = "protocol_error"
+	// MissShed is OUR back-pressure, not the device's fault. Kept distinct so
+	// a collector that ran out of capacity is never diagnosed as a controller
+	// that stopped answering.
+	MissShed = "shed"
 )
 
 type PollOutcome struct {
@@ -103,6 +108,10 @@ const (
 	ErrClassUnreachable = "unreachable"
 	ErrClassDecode      = "decode"
 	ErrClassProtocol    = "protocol"
+	// ErrClassConfig is OUR mistake: a missing device instance, an unmapped
+	// device type. Retrying cannot fix it and reporting it as unreachable
+	// sends someone to check cabling for a missing field in the inventory.
+	ErrClassConfig = "config"
 )
 
 var (
@@ -114,6 +123,8 @@ var (
 	// an HTTP 500 from a BMC, say. Distinct from a decode failure because the
 	// device answered coherently; it just said no.
 	ErrProtocolStatus = errors.New("protocol error")
+	// ErrConfig is an endpoint the collector cannot poll as configured.
+	ErrConfig = errors.New("endpoint misconfigured")
 )
 
 // ClassifyError maps an adapter error onto a health error class.
@@ -129,6 +140,8 @@ func ClassifyError(err error) string {
 		return ErrClassUnreachable
 	case errors.Is(err, ErrDecode):
 		return ErrClassDecode
+	case errors.Is(err, ErrConfig):
+		return ErrClassConfig
 	case errors.Is(err, ErrProtocolStatus):
 		return ErrClassProtocol
 	default:

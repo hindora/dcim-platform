@@ -1,0 +1,172 @@
+# BACnet point mapping.
+#
+# Points are matched by OBJECT NAME, never by instance number.
+#
+# That is not a stylistic preference. Instance numbers in a BMS are assigned in
+# the order the integrator added the points, so inserting one alarm renumbers
+# everything after it. The simulator's own source carries the same warning next
+# to its object trees ("appended LAST so existing BI instances do not move"),
+# which is exactly the convention real integrators follow because they know the
+# numbers are fragile. A mapping keyed on instance survives until the first
+# firmware update or point addition, and then silently relabels a condenser
+# probe as an evaporator probe. Nothing errors; the numbers just become wrong.
+#
+# So the adapter discovers each device once - object-list, then object-name for
+# every object - and matches the NAMES here. Discovery is cached; the poll is
+# a ReadPropertyMultiple over the points that matched.
+#
+# ONLY MAPPED POINTS ARE POLLED. An EV2 panel exposes 233 objects; reading all
+# of them every 30 seconds is how a BACnet integration takes a controller down.
+# A point that is not here is discovered, logged once, and left alone.
+version: 1
+
+# The property read for a value. Present-value is the only one polled: units
+# and object-name are read at discovery and cached, because they do not change
+# between polls and re-reading them triples the poll cost.
+poll_property: present_value
+
+# Binary points come back as an ENUMERATED 0/1, not a boolean or a real.
+binary:
+  active_value: 1
+
+# Loop names recognised in a point name prefix. The matched prefix becomes the
+# metric instance, which is what lets one water_supply_temp key carry both the
+# chilled-water and condenser circuits of the same chiller.
+loops:
+  CHW: CHW
+  Cond: COND
+  TCS: TCS
+  Facility_CHW: FACILITY_CHW
+
+device_types:
+
+  # --------------------------------------------------------------- chiller
+  chiller:
+    points:
+      - { name: CHW_Supply_Temp,  metric: water_supply_temp,   instance: CHW }
+      - { name: CHW_Return_Temp,  metric: water_return_temp,   instance: CHW }
+      - { name: CHW_Setpoint,     metric: water_setpoint_temp, instance: CHW }
+      - { name: CHW_Flow,         metric: water_flow,          instance: CHW }
+      - { name: Cond_Supply_Temp, metric: water_supply_temp,   instance: COND }
+      - { name: Cond_Return_Temp, metric: water_return_temp,   instance: COND }
+      - { name: Compressor_Load,  metric: compressor_load_pct }
+      # kW on the wire, watts in the registry. One unit per key, forever.
+      - { name: Active_Power,     metric: power_draw,      scale: 1000 }
+      - { name: Cooling_Capacity, metric: cooling_capacity, scale: 1000 }
+      - { name: COP,              metric: cop }
+      - { name: Evap_Pressure,    metric: water_pressure, instance: EVAP }
+      - { name: Cond_Pressure,    metric: water_pressure, instance: COND }
+      - { name: Run_Hours,        metric: run_hours }
+      - { name: Chiller_Running,  metric: equipment_state, instance: Chiller_Running }
+      # Every alarm point lands on alarm_state with its own name as the
+      # instance. A metric key per vendor alarm would make the registry
+      # unmaintainable and two makes of chiller incomparable.
+      - { name: "Alarm_*",        metric: alarm_state, instance_from: name }
+
+  # ------------------------------------------------------------------ pump
+  pump:
+    points:
+      - { name: Speed,              metric: pump_speed_pct }
+      - { name: Flow,               metric: water_flow }
+      - { name: Discharge_Pressure, metric: water_pressure, instance: DISCHARGE }
+      - { name: Suction_Pressure,   metric: water_pressure, instance: SUCTION }
+      - { name: Diff_Pressure,      metric: water_diff_pressure, instance: PUMP }
+      - { name: Motor_Power,        metric: power_draw, scale: 1000 }
+      - { name: Motor_Temp,         metric: motor_temp }
+      - { name: VFD_Frequency,      metric: vfd_frequency }
+      - { name: Run_Hours,          metric: run_hours }
+      - { name: Run_Status,         metric: equipment_state, instance: Run_Status }
+      - { name: "Alarm_*",          metric: alarm_state, instance_from: name }
+
+  # --------------------------------------------------------- cooling tower
+  cooling_tower:
+    points:
+      - { name: Fan_Speed,      metric: fan_speed_pct }
+      - { name: Basin_Temp,     metric: water_supply_temp, instance: BASIN }
+      - { name: Cond_Water_In,  metric: water_return_temp, instance: COND }
+      - { name: Cond_Water_Out, metric: water_supply_temp, instance: COND }
+      - { name: Fan_Power,      metric: power_draw, scale: 1000 }
+      - { name: Basin_Level,    metric: basin_level_pct }
+      # L/min on the wire, L/s in the registry.
+      - { name: Makeup_Flow,    metric: makeup_water_flow, scale: 0.0166667 }
+      - { name: Vibration,      metric: vibration }
+      - { name: Run_Hours,      metric: run_hours }
+      - { name: Fan_Status,     metric: equipment_state, instance: Fan_Status }
+      - { name: "Alarm_*",      metric: alarm_state, instance_from: name }
+
+  # ----------------------------------------------------------------- valve
+  valve:
+    points:
+      - { name: Position,           metric: valve_position_pct, instance: MEASURED }
+      - { name: Commanded_Position, metric: valve_position_pct, instance: COMMANDED }
+      - { name: Actuator_Temp,      metric: motor_temp }
+      - { name: Status_Modulating,  metric: equipment_state, instance: Status_Modulating }
+      - { name: "Alarm_*",          metric: alarm_state, instance_from: name }
+
+  # ------------------------------------------------------------------- cdu
+  cdu:
+    points:
+      - { name: TCS_Supply_Temp,    metric: water_supply_temp,   instance: TCS }
+      - { name: TCS_Return_Temp,    metric: water_return_temp,   instance: TCS }
+      - { name: TCS_Setpoint,       metric: water_setpoint_temp, instance: TCS }
+      - { name: TCS_Flow,           metric: water_flow,          instance: TCS }
+      - { name: Facility_CHW_Valve, metric: valve_position_pct,  instance: FACILITY_CHW }
+      - { name: Facility_CHW_Flow,  metric: water_flow,          instance: FACILITY_CHW }
+      - { name: TCS_Loop_Pressure,  metric: water_pressure,      instance: TCS }
+      - { name: Heat_Load,          metric: thermal_load, scale: 1000 }
+      - { name: Pump_Power,         metric: power_draw,   scale: 1000 }
+      - { name: Pump_Speed,         metric: pump_speed_pct }
+      - { name: Approach_Temp,      metric: approach_temp }
+      - { name: Filter_DP,          metric: filter_diff_pressure }
+      - { name: Run_Hours,          metric: run_hours }
+      - { name: Unit_Running,       metric: equipment_state, instance: Unit_Running }
+      - { name: "Alarm_*",          metric: alarm_state, instance_from: name }
+
+  # ------------------------------------------------------------------ crah
+  crah:
+    points:
+      - { name: Supply_Air_Temp,  metric: supply_air_temp }
+      - { name: Return_Air_Temp,  metric: return_air_temp }
+      - { name: Setpoint,         metric: air_setpoint_temp }
+      - { name: Fan_Speed,        metric: fan_speed_pct }
+      - { name: CHW_Valve,        metric: valve_position_pct, instance: CHW }
+      # Percent here, watts on a chiller. Two keys, because one key may carry
+      # only one unit however similar the point names look.
+      - { name: Cooling_Capacity, metric: cooling_output_pct }
+      - { name: Supply_Humidity,  metric: relative_humidity }
+      - { name: Airflow,          metric: airflow }
+      - { name: Fan_Power,        metric: power_draw, scale: 1000 }
+      - { name: Run_Hours,        metric: run_hours }
+      - { name: Unit_Running,     metric: equipment_state, instance: Unit_Running }
+      - { name: Filter_Dirty,     metric: alarm_state, instance: Filter_Dirty }
+      - { name: "Alarm_*",        metric: alarm_state, instance_from: name }
+
+  # ------------------------------------------------------- EV2 power panel
+  #
+  # A branch-circuit monitor. Panel totals and per-circuit points are polled;
+  # the harmonic detail is polled at a slower profile because it is a
+  # power-quality diagnostic, not an operational signal.
+  ev2:
+    points:
+      - { name: Panel_Total_kW,  metric: power_draw, scale: 1000 }
+      - { name: Panel_Total_kWh, metric: energy_consumed }
+      - { name: Voltage_PhA,     metric: voltage_ln, instance: A }
+      - { name: Voltage_PhB,     metric: voltage_ln, instance: B }
+      - { name: Voltage_PhC,     metric: voltage_ln, instance: C }
+      - { name: Current_PhA,     metric: current, instance: A }
+      - { name: Current_PhB,     metric: current, instance: B }
+      - { name: Current_PhC,     metric: current, instance: C }
+      - { name: Line_Frequency,  metric: line_frequency }
+      - { name: Panel_PF,        metric: power_factor, instance: PANEL }
+      - { name: Voltage_THD,     metric: voltage_thd_pct }
+      - { name: Current_THD,     metric: current_thd_pct }
+      # Harmonic_3_Current -> harmonic_current_pct{instance=3}
+      - { name: "Harmonic_*_Current", metric: harmonic_current_pct,
+          instance_from: name_token, token_index: 1 }
+      # Per-circuit points: Ckt07_kW -> power_draw{instance=Ckt07}.
+      - { name: "Ckt*_Current", metric: current,         instance_from: name_prefix }
+      - { name: "Ckt*_kW",      metric: power_draw,      instance_from: name_prefix, scale: 1000 }
+      - { name: "Ckt*_kWh",     metric: energy_consumed, instance_from: name_prefix }
+      - { name: "Ckt*_PF",      metric: power_factor,    instance_from: name_prefix }
+      - { name: "Ckt*_THD",     metric: current_thd_pct, instance_from: name_prefix }
+      - { name: "Alarm_*",      metric: alarm_state, instance_from: name }

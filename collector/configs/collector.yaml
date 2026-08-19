@@ -93,6 +93,25 @@ protocols:
     # which new subscriptions fail and events simply stop.
     reconcile_every: 10m
 
+  # BACnet/IP for mechanical and electrical plant. One UDP socket serves every
+  # device - Who-Is, I-Am and COV notifications arrive unsolicited, and a
+  # per-device socket would receive none of them.
+  bacnet:
+    enabled: false
+    # 0 asks the kernel for an ephemeral port. Replies come back to the source
+    # of the request, so 47808 is only needed to receive broadcasts - and it is
+    # usually already held by whatever else on the host speaks BACnet.
+    local_port: 0
+    max_concurrent: 24
+    # Per HOST, not per device: an MS/TP router fronts a whole trunk of field
+    # devices, and polling them in parallel through it saturates the trunk.
+    per_host: 1
+    timeout: 3s
+    retries: 2
+    # Objects per ReadPropertyMultiple. Well under a 1476-byte APDU, because an
+    # oversized request comes back as an abort rather than a short answer.
+    batch_size: 16
+
   snmp_trap:
     enabled: true
     # 1162, not the well-known 162, because binding below 1024 needs root or
