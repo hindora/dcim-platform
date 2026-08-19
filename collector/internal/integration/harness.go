@@ -288,6 +288,26 @@ func (s *Sim) SNMPEndpoint(t *testing.T, d Device, role string) *models.Endpoint
 	if port == 0 {
 		port = 161
 	}
+	// The metric groups are what select which tables are walked, and an empty
+	// list means "system" alone - one scalar and nothing else. They are part
+	// of the endpoint's identity here for the same reason they are a column on
+	// poll_profile: which OIDs a device is worth asking for depends on what it
+	// is, and asking a PDU for host resources is a walk that returns nothing.
+	groups := []string{"system", "interfaces"}
+	switch d.DeviceType {
+	case "server":
+		if role == "bmc" {
+			groups = []string{"system"}
+		} else {
+			groups = []string{"system", "interfaces", "host_resources"}
+		}
+	case "sensor":
+		groups = []string{"system", "entity_sensors"}
+	case "pdu", "ups", "rpp", "generator", "ats", "switchgear", "mcc", "mpp",
+		"utility_feed", "energy_monitor":
+		groups = []string{"system"}
+	}
+
 	return &models.Endpoint{
 		ID: "itest-snmp-" + role + "-" + addr, DeviceID: d.ID, DeviceType: d.DeviceType,
 		Protocol: "snmp", Address: addr, Port: port, Role: role,
@@ -298,7 +318,9 @@ func (s *Sim) SNMPEndpoint(t *testing.T, d Device, role string) *models.Endpoint
 			Kind: "snmp_v2c",
 			Data: map[string]any{"community": addr},
 		},
-		Poll: models.PollProfile{IntervalS: 30, TimeoutMs: 6000},
+		Poll: models.PollProfile{
+			IntervalS: 30, TimeoutMs: 6000, MetricGroups: groups,
+		},
 	}
 }
 
