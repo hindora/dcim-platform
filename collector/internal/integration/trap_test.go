@@ -206,12 +206,15 @@ func TestClearTrapSetsIsClear(t *testing.T) {
 		t.Fatalf("trap injection returned HTTP %d", code)
 	}
 
+	// Wait for a CLEAR specifically. Matching on the event type alone made
+	// this test depend on nothing else having injected a link trap recently -
+	// the plane has one trap destination, so a leftover assert from another
+	// test arrives on the same socket and would be the first match.
 	e := sink.waitFor(t, 15*time.Second, func(e models.Event) bool {
-		return e.EventType == "link_down" || e.EventType == "link_up"
+		return e.IsClear
 	})
-	if !e.IsClear {
-		t.Fatalf("linkUp arrived as %s with is_clear=false; the alarm it "+
-			"resolves would stay open", e.EventType)
+	if e.EventType != "link_down" && e.EventType != "link_up" {
+		t.Fatalf("the clear that arrived was %s, not a link event", e.EventType)
 	}
 	if e.Severity != models.SeverityClear {
 		t.Errorf("severity %v, want CLEAR", e.Severity)

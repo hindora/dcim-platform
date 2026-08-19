@@ -164,8 +164,11 @@ func TestRedfishSubscriptionAndTestEvent(t *testing.T) {
 		t.Fatalf("reconcile %s: %v", dev.MgmtIP, err)
 	}
 	t.Logf("reconcile on %s: created %d, deleted %d stale", dev.MgmtIP, created, deleted)
-	if created != 1 {
-		t.Fatalf("expected to create one subscription, created %d", created)
+	// What matters is the END STATE, not which call produced it: reconciliation
+	// is idempotent, and a subscription left by an earlier run is exactly the
+	// case it exists to handle.
+	if created+deleted == 0 && !subscriptionExists(t, sim, dest) {
+		t.Fatal("reconcile neither created a subscription nor found one")
 	}
 
 	// Clean up whatever we put on the BMC, whichever way this ends.
@@ -196,6 +199,10 @@ func TestRedfishSubscriptionAndTestEvent(t *testing.T) {
 	}
 	if created2 != 0 {
 		t.Errorf("a second reconcile created %d more subscriptions", created2)
+	}
+	if n := countSubscriptions(t, sim, dest); n != 1 {
+		t.Errorf("%d subscriptions point at %s; a duplicate delivers every "+
+			"event twice and the copy is indistinguishable from a repeat", n, dest)
 	}
 
 	if code := sim.Post(t, "/api/redfish/test-event", map[string]any{
@@ -306,4 +313,25 @@ func TestRedfishReconciliationRemovesStaleSubscriptions(t *testing.T) {
 		}
 	}
 	t.Logf("reconcile removed %d stale, created %d", deleted, created)
+}
+
+func countSubscriptions(t *testing.T, sim *Sim, destination string) int {
+	t.Helper()
+	var subs struct {
+		Subscriptions []struct {
+			Destination string `json:"destination"`
+		} `json:"subscriptions"`
+	}
+	sim.Get(t, "/api/redfish/subscriptions", &subs)
+	n := 0
+	for _, s := range subs.Subscriptions {
+		if s.Destination == destination {
+			n++
+		}
+	}
+	return n
+}
+
+func subscriptionExists(t *testing.T, sim *Sim, destination string) bool {
+	return countSubscriptions(t, sim, destination) > 0
 }
