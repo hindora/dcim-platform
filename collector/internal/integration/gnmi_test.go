@@ -173,8 +173,12 @@ func TestGNMIAndSNMPAgreeOnInterfaceNames(t *testing.T) {
 		t.Fatalf("snmp poll: %v", err)
 	}
 
-	gnmiPorts := instanceSet(gnmiOut, "if_in_octets")
-	snmpPorts := instanceSet(snmpOut, "if_in_octets")
+	// if_speed, because it comes from ifXTable which is indexed by ifNAME -
+	// the same identity openconfig uses. ifTable is indexed by ifIndex and
+	// yields numbers, which converge on the same port only after the ingest
+	// worker resolves them against inventory.
+	gnmiPorts := instanceSet(gnmiOut, "if_speed")
+	snmpPorts := instanceSet(snmpOut, "if_speed")
 	if len(gnmiPorts) == 0 || len(snmpPorts) == 0 {
 		t.Fatalf("one plane reported no interfaces (gnmi %d, snmp %d)",
 			len(gnmiPorts), len(snmpPorts))
