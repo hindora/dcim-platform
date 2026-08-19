@@ -126,26 +126,53 @@ func (m *RedfishMap) MatchTemperature(name string) (RedfishEntry, bool) {
 	return RedfishEntry{}, false
 }
 
-// globMatch supports the leading/trailing '*' forms the mapping uses. A full
-// glob engine would be more than these patterns need and more to get wrong.
+// globMatch matches a case-insensitive pattern where '*' stands for any run of
+// characters, in any position.
+//
+// An earlier version handled only a leading or trailing '*', which meant a
+// pattern with one in the MIDDLE - "Ckt*_Current", "Harmonic_*_Current" -
+// matched nothing at all. Nothing errored: the points were simply discovered,
+// counted as unmapped, and never polled, so a 42-circuit panel silently
+// yielded its seven panel totals and none of its branch circuits. Anchoring
+// every segment in order is what makes a mid-pattern wildcard behave.
 func globMatch(pattern, s string) bool {
 	if pattern == "" || pattern == "*" {
 		return true
 	}
-	pre := strings.HasPrefix(pattern, "*")
-	suf := strings.HasSuffix(pattern, "*")
-	core := strings.Trim(pattern, "*")
-	ls, lc := strings.ToLower(s), strings.ToLower(core)
-	switch {
-	case pre && suf:
-		return strings.Contains(ls, lc)
-	case pre:
-		return strings.HasSuffix(ls, lc)
-	case suf:
-		return strings.HasPrefix(ls, lc)
-	default:
-		return strings.EqualFold(s, core)
+	ls := strings.ToLower(s)
+	segments := strings.Split(strings.ToLower(pattern), "*")
+
+	if len(segments) == 1 {
+		return ls == segments[0]
 	}
+	// A pattern not starting with '*' must match at the very beginning, and
+	// one not ending with '*' must reach the very end.
+	if segments[0] != "" {
+		if !strings.HasPrefix(ls, segments[0]) {
+			return false
+		}
+		ls = ls[len(segments[0]):]
+	}
+	last := segments[len(segments)-1]
+	middle := segments[1 : len(segments)-1]
+	if last != "" {
+		if !strings.HasSuffix(ls, last) {
+			return false
+		}
+		ls = ls[:len(ls)-len(last)]
+	}
+	// Remaining segments must appear in order, without overlapping.
+	for _, seg := range middle {
+		if seg == "" {
+			continue
+		}
+		i := strings.Index(ls, seg)
+		if i < 0 {
+			return false
+		}
+		ls = ls[i+len(seg):]
+	}
+	return true
 }
 
 // GlobMatchForTest exposes the pattern matcher to the adapter's tests without
