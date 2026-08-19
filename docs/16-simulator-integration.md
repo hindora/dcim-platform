@@ -458,6 +458,7 @@ pump 9 AI / 3 BI, cooling tower 9 AI / 3 BI, valve 3 AI / 2 BI.
 | 28 | gNMI listens on each device's OWN address on **50051** - 46 listeners on 46 device IPs | the per-device `gnmi_port` in the topology export says 57400 on every device and nothing listens there; the controller's own port is authoritative |
 | 29 | `system/state/uptime` carries CENTISECONDS, the same units SNMP's sysUpTime returns, and is not a standard openconfig leaf | without the 0.01 scale the gNMI and SNMP planes disagree by a factor of a hundred for one device |
 | 30 | A STREAM subscription re-sends the full snapshot each interval; there is no ON_CHANGE | every notification carries every mapped subtree, so a client that offers each notification to all its mappings publishes each counter once per update unless it deduplicates |
+| 31 | This plane's SNMP ifName and openconfig `name` happen to be identical strings, so the two planes already agree on interface identity | it makes the double-series problem invisible here. Real gear does not oblige - an agent reporting Gi0/0 against openconfig's GigabitEthernet0/0, or indexing by ifIndex, produces two series per port - so normalisation is applied regardless and tested against gear that abbreviates |
 
 ---
 
