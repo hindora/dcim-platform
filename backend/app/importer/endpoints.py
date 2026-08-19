@@ -38,6 +38,15 @@ BACNET_TYPES = frozenset({"chiller", "pump", "cooling_tower", "valve", "crah",
 
 NETWORK_TYPES = frozenset({"switch", "router", "firewall", "load_balancer", "oob_switch"})
 
+# Device types that speak gNMI. Narrower than NETWORK_TYPES on purpose: gNMI is
+# a fabric feature. Switches and routers from Arista, Cisco, Juniper and Nokia
+# ship it; firewalls and load balancers expose vendor APIs instead, and console
+# or OOB switches usually speak SNMP and nothing else. The plane agrees - it
+# serves 46 targets, every one a switch or a router - and creating endpoints
+# for the other 52 produced 52 permanently reconnecting sessions whose only
+# message was that nothing was listening.
+GNMI_TYPES = frozenset({"switch", "router"})
+
 # Device types with a native Modbus/TCP server. Mirrors MODBUS_MAPS in
 # core/modbus_register_map.py. CRAH, CDU, PDU and RPP are deliberately absent:
 # their cards really do speak Modbus, but the same values already arrive over
@@ -181,7 +190,7 @@ def derive_endpoints(
         ))
 
     # ------------------------------------------------------------------ gNMI
-    if "gnmi" in include_protocols and dtype in NETWORK_TYPES:
+    if "gnmi" in include_protocols and dtype in GNMI_TYPES:
         target = dev.get("mgmt_ip") or dev.get("ip_address")
         if target:
             out.append(EndpointSpec(

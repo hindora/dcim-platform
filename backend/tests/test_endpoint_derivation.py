@@ -172,3 +172,25 @@ def test_redfish_tls_verification_is_per_endpoint(sim_server_device):
 def test_phase_1_default_creates_snmp_only(sim_server_device):
     eps = derive_endpoints(sim_server_device)
     assert {e.protocol for e in eps} == {"snmp"}
+
+
+def test_gnmi_is_only_for_fabric_devices():
+    """gNMI is a fabric feature, not something every network box speaks.
+
+    Switches and routers ship it; firewalls and load balancers expose vendor
+    APIs instead, and console or OOB switches usually speak SNMP and nothing
+    else. The plane agrees - 46 targets, every one a switch or a router - and
+    creating endpoints for the rest produced permanently reconnecting sessions
+    whose only message was that nothing was listening.
+    """
+    for dtype in ("firewall", "load_balancer", "oob_switch"):
+        dev = {"id": "x", "device_type": dtype, "name": f"{dtype}-1",
+               "mgmt_ip": "10.51.13.12"}
+        eps = derive_endpoints(dev, include_protocols=frozenset({"gnmi"}))
+        assert eps == [], f"{dtype} should not get a gNMI endpoint"
+
+    for dtype in ("switch", "router"):
+        dev = {"id": "x", "device_type": dtype, "name": f"{dtype}-1",
+               "mgmt_ip": "10.51.13.10"}
+        eps = derive_endpoints(dev, include_protocols=frozenset({"gnmi"}))
+        assert len(eps) == 1, f"{dtype} should get a gNMI endpoint"
