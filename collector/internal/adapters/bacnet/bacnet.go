@@ -348,8 +348,11 @@ func (a *Adapter) profileFor(ctx context.Context, ep *models.Endpoint,
 	a.discovery[ep.ID] = p
 	a.mu.Unlock()
 
+	// The instance from the profile, not the one passed in: when it was
+	// discovered by Who-Is the argument is still zero, and logging that says
+	// the collector is polling device 0 when it is not.
 	a.log.Info("bacnet device discovered", "endpoint", ep.ID,
-		"address", addr.IP, "device_instance", instance,
+		"address", addr.IP, "device_instance", p.deviceObj.Instance,
 		"device_type", ep.DeviceType, "mapped_points", len(p.points),
 		"unmapped_objects", p.unmapped)
 	return p, nil

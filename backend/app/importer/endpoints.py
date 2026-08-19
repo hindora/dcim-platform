@@ -102,6 +102,7 @@ def derive_endpoints(
     gnmi_server_host: str = "127.0.0.1",
     redfish_username: str = "admin",
     redfish_password: str = "password",
+    redfish_scheme: str = "http",
 ) -> list[EndpointSpec]:
     """Return the protocol endpoints implied by one simulator device record.
 
@@ -138,9 +139,13 @@ def derive_endpoints(
         out.append(EndpointSpec(
             protocol="redfish", role="bmc", address=dev["mgmt_ip"], port=8443,
             poll_profile="redfish-60s",
-            # Self-signed in the simulator. Per-endpoint, so pointing at real
-            # hardware is a data change rather than a code change.
-            addressing={"base": "/redfish/v1", "verify_tls": False},
+            # The simulator serves Redfish as PLAIN HTTP on 8443, despite the
+            # port. Real BMCs speak TLS, so the adapter defaults to https and
+            # never downgrades on its own - a silent fallback would put the BMC
+            # password on the wire in clear. Declaring the scheme here keeps
+            # pointing at real hardware a data change rather than a code one.
+            addressing={"base": "/redfish/v1", "scheme": redfish_scheme,
+                        "verify_tls": False},
             credential_kind="http_basic",
             credential_payload={"username": redfish_username, "password": redfish_password},
             credential_name=f"redfish-{dev['mgmt_ip']}",

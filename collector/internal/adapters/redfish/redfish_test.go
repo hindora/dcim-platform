@@ -319,3 +319,53 @@ func TestGlobMatch(t *testing.T) {
 }
 
 var _ = json.Marshal
+
+// The simulator serves Redfish as plain HTTP on 8443 despite the port, so the
+// scheme has to be per-endpoint data rather than a constant.
+func TestPlainHTTPSchemeIsHonoured(t *testing.T) {
+	srv := httptest.NewServer((&fakeBMC{}).handler())
+	defer srv.Close()
+
+	ep := endpointFor(t, &httptest.Server{
+		URL: strings.Replace(srv.URL, "http://", "https://", 1)})
+	ep.Addressing["scheme"] = "http"
+
+	out, err := newAdapter(t).Poll(context.Background(), ep)
+	if err != nil {
+		t.Fatalf("poll over http: %v", err)
+	}
+	if len(out.Samples) == 0 {
+		t.Fatal("no samples over http")
+	}
+}
+
+// A TLS endpoint must NOT silently fall back to plaintext when the handshake
+// fails: the session request carries the BMC password, and an attacker who can
+// answer the port could force the downgrade.
+func TestNoSilentDowngradeToHTTP(t *testing.T) {
+	srv := httptest.NewServer((&fakeBMC{}).handler()) // plaintext server
+	defer srv.Close()
+
+	// Addressed as https, which is the default.
+	ep := endpointFor(t, &httptest.Server{
+		URL: strings.Replace(srv.URL, "http://", "https://", 1)})
+
+	if _, err := newAdapter(t).Poll(context.Background(), ep); err == nil {
+		t.Fatal("an https endpoint answered by a plaintext server must fail")
+	}
+}
+
+func TestUnsupportedSchemeIsConfig(t *testing.T) {
+	srv := httptest.NewTLSServer((&fakeBMC{}).handler())
+	defer srv.Close()
+	ep := endpointFor(t, srv)
+	ep.Addressing["scheme"] = "ftp"
+
+	_, err := newAdapter(t).Poll(context.Background(), ep)
+	if err == nil {
+		t.Fatal("accepted an unsupported scheme")
+	}
+	if class := models.ClassifyError(err); class != models.ErrClassConfig {
+		t.Fatalf("error class %q, want config", class)
+	}
+}

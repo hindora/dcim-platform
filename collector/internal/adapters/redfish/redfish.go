@@ -49,6 +49,7 @@ type session struct {
 	power      string
 	system     string
 	base       string
+	scheme     string
 	verifyTLS  bool
 }
 
@@ -151,13 +152,25 @@ func (a *Adapter) ensureSession(ctx context.Context, ep *models.Endpoint) (*sess
 
 	base := "/redfish/v1"
 	verify := true
+	// https by default, because a real BMC speaks TLS and the session request
+	// carries the credential. There is deliberately NO automatic fallback to
+	// http when the handshake fails: a downgrade would put the BMC password on
+	// the wire in clear, and an attacker who can answer the port can force it.
+	// A plaintext service must be declared, not discovered.
+	scheme := "https"
 	if v, ok := ep.Addressing["base"].(string); ok && v != "" {
 		base = v
 	}
 	if v, ok := ep.Addressing["verify_tls"].(bool); ok {
 		verify = v
 	}
-	s = &session{base: base, verifyTLS: verify}
+	if v, ok := ep.Addressing["scheme"].(string); ok && v != "" {
+		scheme = strings.ToLower(v)
+	}
+	if scheme != "http" && scheme != "https" {
+		return nil, fmt.Errorf("%w: unsupported redfish scheme %q", models.ErrConfig, scheme)
+	}
+	s = &session{base: base, scheme: scheme, verifyTLS: verify}
 
 	if err := a.authenticate(ctx, ep, s); err != nil {
 		return nil, err
@@ -261,12 +274,16 @@ func linkOf(body map[string]any, key string) string {
 	return ""
 }
 
-func (a *Adapter) url(ep *models.Endpoint, _ *session, path string) string {
+func (a *Adapter) url(ep *models.Endpoint, s *session, path string) string {
 	port := ep.Port
 	if port == 0 {
 		port = 443
 	}
-	return fmt.Sprintf("https://%s:%d%s", ep.Address, port, path)
+	scheme := s.scheme
+	if scheme == "" {
+		scheme = "https"
+	}
+	return fmt.Sprintf("%s://%s:%d%s", scheme, ep.Address, port, path)
 }
 
 func (a *Adapter) get(ctx context.Context, ep *models.Endpoint, s *session,

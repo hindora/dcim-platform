@@ -17,7 +17,7 @@ Verified against the working tree on **2026-08-18**, topology fixture
 | SNMP trap | UDP | 162 (configurable receiver) | outbound to the configured receiver | source IP + community |
 | gNMI | TCP/gRPC | 57400 (insecure) | `[::]` | `prefix.target` = the device's gNMI IP |
 | BACnet/IP | UDP | 47808 (`0xBAC0`) | per device IP | BACnet device instance; MS/TP via `(network, MAC)` behind a router IP |
-| Redfish | TCP/HTTPS | 8443 | per BMC IP | the BMC IP; basic/session auth |
+| Redfish | TCP/HTTP (not TLS) | 8443 | per BMC IP | the BMC IP; basic/session auth |
 | Modbus/TCP | TCP | 502 | per device IP | unit id (1 for native, N behind a gateway) |
 | sFlow | UDP | 6343 | outbound to a collector | agent IP |
 | Simulator REST API | TCP/HTTP | 8001 | dual-stack `::` with `V6ONLY=0` | — |
@@ -438,7 +438,7 @@ pump 9 AI / 3 BI, cooling tower 9 AI / 3 BI, valve 3 AI / 2 BI.
 | 8 | Clear traps are distinct OIDs, not the raise OID | alarms never clear |
 | 9 | Power/cooling edges have `src_iface = null` | an importer defaulting to 0 invents port 0 links |
 | 10 | Edge direction comes from `src_node`/`dst_node` | power flow reversed on some edges |
-| 11 | Redfish is self-signed on 8443 | TLS verification must be per-endpoint, not global |
+| 11 | Redfish on 8443 is PLAIN HTTP, not TLS (verified against the running plane) | an adapter that assumes https by port number gets `wrong version number` and reports every BMC unreachable; the scheme must be per-endpoint data, and must never be guessed by falling back - a downgrade would put the BMC password on the wire in clear |
 | 12 | Utility feed meter is Modbus-only | no site energy, therefore no PUE |
 | 13 | The export's telemetry fields are a snapshot | importing them creates permanently stale state |
 | 14 | Fleet lifecycle changes inventory at runtime | a static device list goes stale within minutes |
