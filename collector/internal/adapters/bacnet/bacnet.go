@@ -36,6 +36,8 @@ type Adapter struct {
 	// Objects per RPM request. Kept well under a 1476-byte APDU: an
 	// oversized request comes back as an abort, not a short answer.
 	batchSize int
+	// How often slow points are read, in poll cycles.
+	slowEvery int
 
 	mu        sync.Mutex
 	discovery map[string]*deviceProfile
@@ -47,6 +49,11 @@ type deviceProfile struct {
 	points    []discoveredPoint
 	unmapped  int
 	at        time.Time
+	// cycle counts polls of this device, so slow points can be read on every
+	// nth one. Held per device rather than globally: two devices discovered
+	// at different times should not synchronise their slow reads into one
+	// spike every nth cycle.
+	cycle uint64
 }
 
 type discoveredPoint struct {
@@ -56,6 +63,7 @@ type discoveredPoint struct {
 	instance string
 	scale    float64
 	binary   bool
+	slow     bool
 }
 
 func New(maps *mapping.BACnetMap, client *Client, log *slog.Logger,
@@ -63,9 +71,13 @@ func New(maps *mapping.BACnetMap, client *Client, log *slog.Logger,
 	if batchSize <= 0 {
 		batchSize = 16
 	}
+	slowEvery := maps.SlowEvery
+	if slowEvery < 1 {
+		slowEvery = 1
+	}
 	return &Adapter{
 		client: client, maps: maps, log: log, mets: mets,
-		batchSize: batchSize,
+		batchSize: batchSize, slowEvery: slowEvery,
 		discovery: make(map[string]*deviceProfile),
 	}
 }
@@ -163,12 +175,18 @@ func (a *Adapter) Poll(ctx context.Context, ep *models.Endpoint) (*models.PollOu
 	now := models.NowMicros()
 	timeouts, other := 0, 0
 
-	for start := 0; start < len(profile.points); start += a.batchSize {
+	a.mu.Lock()
+	profile.cycle++
+	cycle := profile.cycle
+	a.mu.Unlock()
+	due := a.duePoints(profile.points, cycle)
+
+	for start := 0; start < len(due); start += a.batchSize {
 		end := start + a.batchSize
-		if end > len(profile.points) {
-			end = len(profile.points)
+		if end > len(due) {
+			end = len(due)
 		}
-		batch := profile.points[start:end]
+		batch := due[start:end]
 
 		specs := make([]ReadSpec, 0, len(batch))
 		for _, p := range batch {
@@ -201,6 +219,27 @@ func (a *Adapter) Poll(ctx context.Context, ep *models.Endpoint) (*models.PollOu
 	}
 	a.mets.SamplesTotal.WithLabelValues("bacnet").Add(float64(len(outcome.Samples)))
 	return outcome, nil
+}
+
+// duePoints selects what to read this cycle. Slow points are read on the first
+// cycle and every slowEvery-th one after it - the first cycle included, so a
+// newly discovered device is never missing an accumulator until its sixth poll.
+func (a *Adapter) duePoints(points []discoveredPoint, cycle uint64) []discoveredPoint {
+	every := uint64(a.slowEvery)
+	if every <= 1 {
+		return points
+	}
+	slowDue := cycle == 1 || cycle%every == 0
+	if slowDue {
+		return points
+	}
+	out := make([]discoveredPoint, 0, len(points))
+	for _, p := range points {
+		if !p.slow {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // collect turns RPM results into samples, matching each result back to the
@@ -413,6 +452,7 @@ func (a *Adapter) discover(ctx context.Context, ep *models.Endpoint,
 				metric:   point.Metric,
 				instance: point.InstanceFor(name),
 				scale:    point.Scale,
+				slow:     point.Slow,
 				binary:   r.Object.Type == ObjBinaryInput || r.Object.Type == ObjBinaryValue,
 			})
 		}

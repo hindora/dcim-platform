@@ -25,6 +25,15 @@ version: 1
 # between polls and re-reading them triples the poll cost.
 poll_property: present_value
 
+# Points marked `slow: true` are read once every `slow_every` cycles instead of
+# every cycle. Energy accumulators and harmonic diagnostics move far more
+# slowly than the poll interval, and reading all 233 points of a 42-circuit
+# panel every 30 seconds - across 24 panels - is load the controller gains
+# nothing from. The device itself agrees: its own COV thresholds for these
+# points are 300 s for accumulators and 120 s for distortion, against 60 s for
+# operational signals.
+slow_every: 6
+
 # Binary points come back as an ENUMERATED 0/1, not a boolean or a real.
 binary:
   active_value: 1
@@ -56,7 +65,7 @@ device_types:
       - { name: COP,              metric: cop }
       - { name: Evap_Pressure,    metric: water_pressure, instance: EVAP }
       - { name: Cond_Pressure,    metric: water_pressure, instance: COND }
-      - { name: Run_Hours,        metric: run_hours }
+      - { name: Run_Hours,        metric: run_hours, slow: true }
       - { name: Chiller_Running,  metric: equipment_state, instance: Chiller_Running }
       # Every alarm point lands on alarm_state with its own name as the
       # instance. A metric key per vendor alarm would make the registry
@@ -74,7 +83,7 @@ device_types:
       - { name: Motor_Power,        metric: power_draw, scale: 1000 }
       - { name: Motor_Temp,         metric: motor_temp }
       - { name: VFD_Frequency,      metric: vfd_frequency }
-      - { name: Run_Hours,          metric: run_hours }
+      - { name: Run_Hours,          metric: run_hours, slow: true }
       - { name: Run_Status,         metric: equipment_state, instance: Run_Status }
       - { name: "Alarm_*",          metric: alarm_state, instance_from: name }
 
@@ -90,7 +99,7 @@ device_types:
       # L/min on the wire, L/s in the registry.
       - { name: Makeup_Flow,    metric: makeup_water_flow, scale: 0.0166667 }
       - { name: Vibration,      metric: vibration }
-      - { name: Run_Hours,      metric: run_hours }
+      - { name: Run_Hours,      metric: run_hours, slow: true }
       - { name: Fan_Status,     metric: equipment_state, instance: Fan_Status }
       - { name: "Alarm_*",      metric: alarm_state, instance_from: name }
 
@@ -118,7 +127,7 @@ device_types:
       - { name: Pump_Speed,         metric: pump_speed_pct }
       - { name: Approach_Temp,      metric: approach_temp }
       - { name: Filter_DP,          metric: filter_diff_pressure }
-      - { name: Run_Hours,          metric: run_hours }
+      - { name: Run_Hours,          metric: run_hours, slow: true }
       - { name: Unit_Running,       metric: equipment_state, instance: Unit_Running }
       - { name: "Alarm_*",          metric: alarm_state, instance_from: name }
 
@@ -136,7 +145,7 @@ device_types:
       - { name: Supply_Humidity,  metric: relative_humidity }
       - { name: Airflow,          metric: airflow }
       - { name: Fan_Power,        metric: power_draw, scale: 1000 }
-      - { name: Run_Hours,        metric: run_hours }
+      - { name: Run_Hours,        metric: run_hours, slow: true }
       - { name: Unit_Running,     metric: equipment_state, instance: Unit_Running }
       - { name: Filter_Dirty,     metric: alarm_state, instance: Filter_Dirty }
       - { name: "Alarm_*",        metric: alarm_state, instance_from: name }
@@ -150,7 +159,7 @@ device_types:
   energy_monitor:
     points:
       - { name: Panel_Total_kW,  metric: power_draw, scale: 1000 }
-      - { name: Panel_Total_kWh, metric: energy_consumed }
+      - { name: Panel_Total_kWh, metric: energy_consumed, slow: true }
       - { name: Voltage_PhA,     metric: voltage_ln, instance: A }
       - { name: Voltage_PhB,     metric: voltage_ln, instance: B }
       - { name: Voltage_PhC,     metric: voltage_ln, instance: C }
@@ -159,15 +168,15 @@ device_types:
       - { name: Current_PhC,     metric: current, instance: C }
       - { name: Line_Frequency,  metric: line_frequency }
       - { name: Panel_PF,        metric: power_factor, instance: PANEL }
-      - { name: Voltage_THD,     metric: voltage_thd_pct }
-      - { name: Current_THD,     metric: current_thd_pct }
+      - { name: Voltage_THD,     metric: voltage_thd_pct, slow: true }
+      - { name: Current_THD,     metric: current_thd_pct, slow: true }
       # Harmonic_3_Current -> harmonic_current_pct{instance=3}
       - { name: "Harmonic_*_Current", metric: harmonic_current_pct,
-          instance_from: name_token, token_index: 1 }
+          instance_from: name_token, token_index: 1, slow: true }
       # Per-circuit points: Ckt07_kW -> power_draw{instance=Ckt07}.
       - { name: "Ckt*_Current", metric: current,         instance_from: name_prefix }
       - { name: "Ckt*_kW",      metric: power_draw,      instance_from: name_prefix, scale: 1000 }
-      - { name: "Ckt*_kWh",     metric: energy_consumed, instance_from: name_prefix }
+      - { name: "Ckt*_kWh",     metric: energy_consumed, instance_from: name_prefix, slow: true }
       - { name: "Ckt*_PF",      metric: power_factor,    instance_from: name_prefix }
-      - { name: "Ckt*_THD",     metric: current_thd_pct, instance_from: name_prefix }
+      - { name: "Ckt*_THD",     metric: current_thd_pct, instance_from: name_prefix, slow: true }
       - { name: "Alarm_*",      metric: alarm_state, instance_from: name }

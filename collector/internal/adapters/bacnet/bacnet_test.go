@@ -778,3 +778,50 @@ func TestInvokeIDPoolIsBounded(t *testing.T) {
 		t.Fatalf("in flight %d, want 256", c.InFlight())
 	}
 }
+
+// Slow points are read on the first cycle and every slowEvery-th one after.
+//
+// Energy accumulators and harmonic diagnostics move far more slowly than the
+// poll interval; reading all 233 points of a 42-circuit panel every 30 seconds
+// across 24 panels is load the controller gains nothing from. The first cycle
+// is included so a newly discovered device is not missing its accumulators
+// until its sixth poll.
+func TestSlowPointsAreReadOnACadence(t *testing.T) {
+	points := []discoveredPoint{
+		{name: "Current_PhA", metric: "current"},
+		{name: "Panel_Total_kW", metric: "power_draw"},
+		{name: "Panel_Total_kWh", metric: "energy_consumed", slow: true},
+		{name: "Voltage_THD", metric: "voltage_thd_pct", slow: true},
+	}
+	a := &Adapter{slowEvery: 6}
+
+	if got := len(a.duePoints(points, 1)); got != 4 {
+		t.Fatalf("first cycle read %d points, want all 4", got)
+	}
+	for _, cycle := range []uint64{2, 3, 4, 5, 7, 8} {
+		due := a.duePoints(points, cycle)
+		if len(due) != 2 {
+			t.Fatalf("cycle %d read %d points, want 2 fast ones", cycle, len(due))
+		}
+		for _, p := range due {
+			if p.slow {
+				t.Fatalf("cycle %d read slow point %s", cycle, p.name)
+			}
+		}
+	}
+	if got := len(a.duePoints(points, 6)); got != 4 {
+		t.Fatalf("cycle 6 read %d points, want all 4", got)
+	}
+	if got := len(a.duePoints(points, 12)); got != 4 {
+		t.Fatalf("cycle 12 read %d points, want all 4", got)
+	}
+
+	// slowEvery of 1 disables the cadence entirely rather than reading
+	// nothing: a mapping without the field must behave as it did before.
+	plain := &Adapter{slowEvery: 1}
+	for _, cycle := range []uint64{1, 2, 3} {
+		if got := len(plain.duePoints(points, cycle)); got != 4 {
+			t.Fatalf("with slowEvery=1, cycle %d read %d points", cycle, got)
+		}
+	}
+}

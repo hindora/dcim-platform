@@ -31,6 +31,11 @@ type BACnetPoint struct {
 	TokenIndex   int    `yaml:"token_index"`
 	// Scale converts the device's unit to the registry's. kW -> W is 1000.
 	Scale float64 `yaml:"scale"`
+	// Slow marks a point read once every SlowEvery cycles. Energy
+	// accumulators and harmonic diagnostics move far more slowly than the poll
+	// interval, and reading all 233 points of a 42-circuit panel every cycle
+	// is load the controller gains nothing from.
+	Slow bool `yaml:"slow"`
 }
 
 type BACnetDeviceType struct {
@@ -40,6 +45,7 @@ type BACnetDeviceType struct {
 type BACnetMap struct {
 	Version      int    `yaml:"version"`
 	PollProperty string `yaml:"poll_property"`
+	SlowEvery    int    `yaml:"slow_every"`
 	Binary       struct {
 		ActiveValue float64 `yaml:"active_value"`
 	} `yaml:"binary"`
@@ -57,6 +63,10 @@ func LoadBACnet(dir string) (*BACnetMap, error) {
 	var m BACnetMap
 	if err := yaml.Unmarshal(raw, &m); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+
+	if m.SlowEvery < 1 {
+		m.SlowEvery = 1
 	}
 
 	// A metric the registry does not define would be dropped at emit time, so
