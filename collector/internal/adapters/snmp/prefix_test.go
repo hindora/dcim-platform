@@ -1,6 +1,9 @@
 package snmp
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+)
 
 func TestCommonOIDPrefix(t *testing.T) {
 	cases := []struct {
@@ -40,14 +43,30 @@ func TestCommonOIDPrefixDoesNotOverReach(t *testing.T) {
 }
 
 func TestWalkRootsCollapsesOnlyRealTableColumns(t *testing.T) {
-	// Siblings of one table: a single walk.
+	// A FEW sibling columns are walked individually. Collapsing trades round
+	// trips for bytes, and that is a bad trade when the mapping reads 6 of a
+	// table's 22 columns: the collapsed walk drags back the other 16 from a
+	// responder serving the whole fleet from one process.
 	got := walkRoots([]string{"1.3.6.1.2.1.2.2.1.7", "1.3.6.1.2.1.2.2.1.8"})
+	if len(got) != 2 {
+		t.Fatalf("two columns gave %v, want them walked separately", got)
+	}
+
+	// MANY sibling columns are worth one walk: at that point most of the
+	// table is wanted and the extra round trips cost more than the extra
+	// bytes.
+	wide := make([]string, 0, wholeTableColumnRatio+1)
+	for i := 1; i <= wholeTableColumnRatio+1; i++ {
+		wide = append(wide, fmt.Sprintf("1.3.6.1.2.1.2.2.1.%d", i))
+	}
+	got = walkRoots(wide)
 	if len(got) != 1 || got[0] != "1.3.6.1.2.1.2.2.1" {
-		t.Fatalf("sibling columns gave %v, want one table root", got)
+		t.Fatalf("%d sibling columns gave %v, want one table root", len(wide), got)
 	}
 
 	// Columns from two different tables share only 1.3.6.1.2.1. Collapsing
-	// those would walk the whole of mib-2, so they must stay separate.
+	// those would walk the whole of mib-2, so they must stay separate however
+	// many there are.
 	mixed := []string{"1.3.6.1.2.1.2.2.1.7", "1.3.6.1.2.1.31.1.1.1.15"}
 	got = walkRoots(mixed)
 	if len(got) != 2 {

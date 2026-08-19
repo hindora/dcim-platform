@@ -574,6 +574,20 @@ func (a *Adapter) collectTables(client *g.GoSNMP, profile *mapping.Profile,
 // rather than each column. Otherwise the shared prefix is too broad to be safe
 // (columns of two different tables share only 1.3.6.1.2.1, which is all of
 // mib-2), so each column is walked on its own.
+// wholeTableColumnRatio is the share of a table's columns that has to be wanted
+// before collapsing to a single subtree walk pays for itself.
+//
+// Collapsing trades round trips for bytes: one walk of a whole table is fewer
+// requests but drags back every column, wanted or not. That is a good trade
+// when most columns are wanted and a bad one when few are - ifTable has 22
+// columns and the mapping reads 6, so the collapsed walk fetches nearly four
+// times the varbinds it needs from a responder that serves the entire fleet
+// from one process.
+//
+// The breadth of a table is not knowable before walking it, so this is a
+// judgement rather than a measurement: below the threshold, walk the columns.
+const wholeTableColumnRatio = 8
+
 func walkRoots(oids []string) []string {
 	if len(oids) == 0 {
 		return nil
@@ -590,6 +604,12 @@ func walkRoots(oids []string) []string {
 		if len(strings.Split(strings.TrimPrefix(oid, "."), ".")) != depth+1 {
 			return oids // not siblings: walk each column separately
 		}
+	}
+	if len(oids) < wholeTableColumnRatio {
+		// Few columns wanted. Walking them individually is both fewer
+		// varbinds AND, at a typical max-repetitions of 25 over a 65-row
+		// table, fewer requests than one walk of everything.
+		return oids
 	}
 	return []string{root}
 }
