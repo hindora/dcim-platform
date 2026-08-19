@@ -38,6 +38,33 @@ BACNET_TYPES = frozenset({"chiller", "pump", "cooling_tower", "valve", "crah",
 
 NETWORK_TYPES = frozenset({"switch", "router", "firewall", "load_balancer", "oob_switch"})
 
+# Device types with a native Modbus/TCP server. Mirrors MODBUS_MAPS in
+# core/modbus_register_map.py. CRAH, CDU, PDU and RPP are deliberately absent:
+# their cards really do speak Modbus, but the same values already arrive over
+# SNMP and BACnet, and a third rendering of identical numbers is maintenance
+# without signal.
+MODBUS_NATIVE_TYPES = frozenset({
+    "utility_feed", "switchgear", "mcc", "mpp", "generator", "ats", "ups",
+})
+
+# Plant header probes, by the prefix of their name. Mirrors _PROBE_ROLES in
+# core/device_state_store.py, which derives the same role the same way - the
+# instrument's identity is in its tag, exactly as it is on a real drawing.
+PROBE_ROLE_BY_PREFIX = {
+    "CHWS": "chw_supply",
+    "CHWR": "chw_return",
+    "CWS": "cw_supply",
+    "CWR": "cw_return",
+    "CTB": "ct_basin",
+    "FLOW": "chw_flow",
+}
+
+
+def _probe_role(dev: dict) -> str | None:
+    """The plant header point a transmitter measures, from its tag."""
+    name = str(dev.get("name") or "")
+    return PROBE_ROLE_BY_PREFIX.get(name.split("-")[0].upper())
+
 # Default poll profile per device type, by protocol.
 SNMP_PROFILE_BY_TYPE = {
     "server": "snmp-server-30s",
@@ -197,25 +224,46 @@ def derive_endpoints(
     # ---------------------------------------------------------------- Modbus
     if "modbus" in include_protocols:
         role = dev.get("modbus_role") or ""
-        if role == "server":
+        if role == "rtu_slave" and dev.get("modbus_gateway_ip"):
+            # A field instrument on an RS-485 trunk owns no address: the
+            # gateway IP carries the request and the unit id says which
+            # device on the trunk answers.
+            addressing: dict[str, Any] = {"unit_id": dev.get("modbus_unit_id")}
+            probe = _probe_role(dev)
+            if probe:
+                # A transmitter publishes one nameless process value; what it
+                # MEANS comes from where it is installed. Without this the
+                # adapter cannot even tell an RTD from a flow meter, since
+                # both are device_type "sensor".
+                addressing["probe_role"] = probe
+            out.append(EndpointSpec(
+                protocol="modbus", role="field_device",
+                address=dev["modbus_gateway_ip"], port=502,
+                poll_profile="modbus-30s",
+                addressing=addressing,
+                via_address=dev["modbus_gateway_ip"]))
+        elif role == "gateway":
+            # The gateway itself is not a meter. It is recorded so the RTU
+            # slaves have something to hang `via_endpoint_id` from, and so an
+            # unreachable trunk is attributable to the box in front of it.
+            addr = dev.get("mgmt_ip") or dev.get("ip_address")
+            if addr:
+                out.append(EndpointSpec(
+                    protocol="modbus", role="gateway", address=addr, port=502,
+                    poll_profile="modbus-30s", addressing={"unit_id": 0},
+                    enabled=False))
+        elif dtype in MODBUS_NATIVE_TYPES:
+            # Electrical gear speaks Modbus/TCP directly. The export carries no
+            # modbus_role for these - a role is only set for the serial trunk -
+            # so keying on the role alone created endpoints for the twelve
+            # transmitters and none of the thirty meters, switchgear, gensets,
+            # transfer switches and UPS that carry the site's electrical
+            # telemetry.
             addr = dev.get("mgmt_ip") or dev.get("ip_address")
             if addr:
                 out.append(EndpointSpec(
                     protocol="modbus", role="native_card", address=addr, port=502,
                     poll_profile="modbus-30s",
                     addressing={"unit_id": dev.get("modbus_unit_id") or 1}))
-        elif role == "gateway":
-            addr = dev.get("mgmt_ip") or dev.get("ip_address")
-            if addr:
-                out.append(EndpointSpec(
-                    protocol="modbus", role="gateway", address=addr, port=502,
-                    poll_profile="modbus-30s", addressing={"unit_id": 0}))
-        elif role == "rtu_slave" and dev.get("modbus_gateway_ip"):
-            out.append(EndpointSpec(
-                protocol="modbus", role="field_device",
-                address=dev["modbus_gateway_ip"], port=502,
-                poll_profile="modbus-30s",
-                addressing={"unit_id": dev.get("modbus_unit_id")},
-                via_address=dev["modbus_gateway_ip"]))
 
     return out

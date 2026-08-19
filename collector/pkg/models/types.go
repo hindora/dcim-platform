@@ -85,6 +85,10 @@ const (
 	MissDecode        = "decode"
 	MissUnsupported   = "not_supported"
 	MissProtocolError = "protocol_error"
+	// MissNotReady is the device saying its own measurement is not valid yet.
+	// Distinct from an absent point: the register exists and the device is
+	// telling us not to trust it.
+	MissNotReady = "not_ready"
 	// MissShed is OUR back-pressure, not the device's fault. Kept distinct so
 	// a collector that ran out of capacity is never diagnosed as a controller
 	// that stopped answering.
@@ -112,6 +116,11 @@ const (
 	// device type. Retrying cannot fix it and reporting it as unreachable
 	// sends someone to check cabling for a missing field in the inventory.
 	ErrClassConfig = "config"
+	// ErrClassNotReady is a device that answered and reported its own data as
+	// invalid. It is reachable and it is not lying; it simply has nothing to
+	// give yet. Calling that unreachable raises an outage for a meter that has
+	// just been powered up.
+	ErrClassNotReady = "not_ready"
 )
 
 var (
@@ -125,6 +134,8 @@ var (
 	ErrProtocolStatus = errors.New("protocol error")
 	// ErrConfig is an endpoint the collector cannot poll as configured.
 	ErrConfig = errors.New("endpoint misconfigured")
+	// ErrNotReady is a device reporting its own measurements as invalid.
+	ErrNotReady = errors.New("device data not valid")
 )
 
 // ClassifyError maps an adapter error onto a health error class.
@@ -140,6 +151,8 @@ func ClassifyError(err error) string {
 		return ErrClassUnreachable
 	case errors.Is(err, ErrDecode):
 		return ErrClassDecode
+	case errors.Is(err, ErrNotReady):
+		return ErrClassNotReady
 	case errors.Is(err, ErrConfig):
 		return ErrClassConfig
 	case errors.Is(err, ErrProtocolStatus):

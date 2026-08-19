@@ -1,0 +1,227 @@
+# Modbus register templates. GENERATED - edit gen_modbus_templates.py.
+#
+# Modbus has no discovery. Nothing on the wire says what address 0x0020
+# means, what scale applies, or which way round a 32-bit value is stored,
+# so a template per model is the entire integration - exactly as it is on
+# a real site.
+#
+# Keyed by MAP ID, which FC43 (Read Device Identification) serves back, so
+# the adapter can check at first contact that the template it is about to
+# decode with belongs to the device answering. Pointing the wrong template
+# at a device does not fail: it returns numbers.
+#
+# scale  divides the raw register to give the VENDOR's unit
+# factor multiplies the vendor's unit to give the REGISTRY's unit
+#
+# word_order is per template because it is per vendor. Decoding an Eaton
+# map with Schneider word order yields energy off by a factor of 65536,
+# which is the most common Modbus integration bug there is.
+version: 1
+
+templates:
+
+  SIM-ASCO7000-v1:
+    vendor: "ASCO Power Technologies"
+    product: "7000 Series ATS"
+    word_order: big
+    device_types: [ats]
+    points:
+      - { space: input, addr: 0x0000, name: Normal_Voltage, dtype: u16, scale: 10, metric: voltage_ll, instance: NORMAL }
+      - { space: input, addr: 0x0001, name: Emergency_Voltage, dtype: u16, scale: 10, metric: voltage_ll, instance: EMERGENCY }
+      - { space: input, addr: 0x0002, name: Active_Frequency, dtype: u16, scale: 10, metric: line_frequency, instance: ACTIVE }
+      - { space: input, addr: 0x0003, name: Normal_Frequency, dtype: u16, scale: 10, metric: line_frequency, instance: NORMAL }
+      - { space: input, addr: 0x0004, name: Emergency_Frequency, dtype: u16, scale: 10, metric: line_frequency, instance: EMERGENCY }
+      - { space: input, addr: 0x0030, name: Transfer_Count, dtype: u32, metric: transfer_count }
+      - { space: input, addr: 0x0032, name: Time_On_Emergency, dtype: u32, metric: time_on_emergency }
+      - { space: holding, addr: 0x0100, name: Switch_Position, dtype: u16, metric: operating_mode, enum: { 0: "none", 1: "normal", 2: "emergency" } }
+      - { space: discrete, addr: 0x0000, name: Normal_Available, metric: equipment_state, instance: Normal_Available }
+      - { space: discrete, addr: 0x0001, name: Emergency_Available, metric: equipment_state, instance: Emergency_Available }
+      - { space: discrete, addr: 0x0002, name: On_Emergency, metric: equipment_state, instance: On_Emergency }
+      - { space: discrete, addr: 0x0003, name: Not_In_Auto, metric: alarm_state, instance: Not_In_Auto }
+      - { space: discrete, addr: 0x0004, name: Fail_To_Transfer, metric: alarm_state, instance: Fail_To_Transfer }
+      - { space: discrete, addr: 0x0005, name: Data_Valid, role: validity }
+
+  SIM-EMCP42-v1:
+    vendor: "Caterpillar"
+    product: "EMCP 4.2"
+    word_order: big
+    device_types: [generator]
+    points:
+      - { space: input, addr: 0x0000, name: Genset_Load_Percent, dtype: u16, scale: 10, metric: load_pct }
+      - { space: input, addr: 0x0001, name: Fuel_Level, dtype: u16, scale: 10, metric: fuel_level_pct }
+      - { space: input, addr: 0x0002, name: Start_Attempts, dtype: u16, metric: start_attempts }
+      - { space: input, addr: 0x0020, name: Active_Power, dtype: s32, metric: power_draw, factor: 1000 }
+      - { space: input, addr: 0x0030, name: Total_Run_Hours, dtype: u32, scale: 10, metric: run_hours }
+      - { space: input, addr: 0x0032, name: Current_Run_Minutes, dtype: u32, metric: current_run_time, factor: 60 }
+      - { space: holding, addr: 0x0100, name: Engine_State, dtype: u16, metric: operating_mode, enum: { 1: "standby", 2: "running", 3: "fault", 4: "cranking", 5: "cooldown" } }
+      - { space: discrete, addr: 0x0000, name: Engine_Running, metric: equipment_state, instance: Engine_Running }
+      - { space: discrete, addr: 0x0001, name: Alarm_Low_Fuel, metric: alarm_state, instance: Alarm_Low_Fuel }
+      - { space: discrete, addr: 0x0002, name: Alarm_Low_Coolant, metric: alarm_state, instance: Alarm_Low_Coolant }
+      - { space: discrete, addr: 0x0003, name: Alarm_High_Temp, metric: alarm_state, instance: Alarm_High_Temp }
+      - { space: discrete, addr: 0x0004, name: Alarm_Transfer, metric: alarm_state, instance: Alarm_Transfer }
+      - { space: discrete, addr: 0x0005, name: Battery_Fault, metric: alarm_state, instance: Battery_Fault }
+      - { space: discrete, addr: 0x0006, name: Data_Valid, role: validity }
+
+  SIM-EATON-PXM-MCC-v1:
+    vendor: "Eaton"
+    product: "Freedom 2100 metered main"
+    word_order: swap
+    device_types: [mcc]
+    points:
+      - { space: input, addr: 0x0000, name: Voltage_LL_Avg, dtype: u16, scale: 10, metric: voltage_ll, instance: AVG }
+      - { space: input, addr: 0x0001, name: Current_Avg, dtype: u16, metric: current, instance: AVG }
+      - { space: input, addr: 0x0002, name: Frequency, dtype: u16, scale: 10, metric: line_frequency }
+      - { space: input, addr: 0x0003, name: Power_Factor, dtype: s16, scale: 100, metric: power_factor }
+      - { space: input, addr: 0x0004, name: Load_Percent, dtype: u16, scale: 10, metric: load_pct }
+      - { space: input, addr: 0x0010, name: Voltage_A_N, dtype: u16, scale: 10, metric: voltage_ln, instance: A }
+      - { space: input, addr: 0x0011, name: Voltage_B_N, dtype: u16, scale: 10, metric: voltage_ln, instance: B }
+      - { space: input, addr: 0x0012, name: Voltage_C_N, dtype: u16, scale: 10, metric: voltage_ln, instance: C }
+      - { space: input, addr: 0x0013, name: Current_A, dtype: u16, metric: current, instance: A }
+      - { space: input, addr: 0x0014, name: Current_B, dtype: u16, metric: current, instance: B }
+      - { space: input, addr: 0x0015, name: Current_C, dtype: u16, metric: current, instance: C }
+      - { space: input, addr: 0x0020, name: Active_Power, dtype: s32, metric: power_draw, factor: 1000 }
+      - { space: input, addr: 0x0022, name: Reactive_Power, dtype: s32, metric: reactive_power, factor: 1000 }
+      - { space: input, addr: 0x0024, name: Apparent_Power, dtype: u32, metric: apparent_power, factor: 1000 }
+      - { space: input, addr: 0x0026, name: Voltage_Imbalance, dtype: u16, scale: 10, metric: phase_imbalance_pct }
+      - { space: input, addr: 0x0030, name: Energy_Delivered, dtype: u32, scale: 10, metric: energy_consumed }
+      - { space: discrete, addr: 0x0000, name: Bus_Energized, metric: equipment_state, instance: Bus_Energized }
+      - { space: discrete, addr: 0x0001, name: Tie_Closed, metric: equipment_state, instance: Tie_Closed }
+      - { space: discrete, addr: 0x0002, name: Source_Tie, metric: equipment_state, instance: Source_Tie }
+      - { space: discrete, addr: 0x0003, name: Data_Valid, role: validity }
+
+  SIM-PM5000-v1:
+    vendor: "Schneider Electric"
+    product: "PowerLogic PM5000"
+    word_order: big
+    device_types: [mpp]
+    points:
+      - { space: input, addr: 0x0000, name: Voltage_LL_Avg, dtype: u16, scale: 10, metric: voltage_ll, instance: AVG }
+      - { space: input, addr: 0x0001, name: Current_Avg, dtype: u16, metric: current, instance: AVG }
+      - { space: input, addr: 0x0002, name: Frequency, dtype: u16, scale: 10, metric: line_frequency }
+      - { space: input, addr: 0x0003, name: Power_Factor, dtype: s16, scale: 100, metric: power_factor }
+      - { space: input, addr: 0x0004, name: Load_Percent, dtype: u16, scale: 10, metric: load_pct }
+      - { space: input, addr: 0x0010, name: Voltage_A_N, dtype: u16, scale: 10, metric: voltage_ln, instance: A }
+      - { space: input, addr: 0x0011, name: Voltage_B_N, dtype: u16, scale: 10, metric: voltage_ln, instance: B }
+      - { space: input, addr: 0x0012, name: Voltage_C_N, dtype: u16, scale: 10, metric: voltage_ln, instance: C }
+      - { space: input, addr: 0x0013, name: Current_A, dtype: u16, metric: current, instance: A }
+      - { space: input, addr: 0x0014, name: Current_B, dtype: u16, metric: current, instance: B }
+      - { space: input, addr: 0x0015, name: Current_C, dtype: u16, metric: current, instance: C }
+      - { space: input, addr: 0x0020, name: Active_Power, dtype: s32, metric: power_draw, factor: 1000 }
+      - { space: input, addr: 0x0022, name: Reactive_Power, dtype: s32, metric: reactive_power, factor: 1000 }
+      - { space: input, addr: 0x0024, name: Apparent_Power, dtype: u32, metric: apparent_power, factor: 1000 }
+      - { space: input, addr: 0x0026, name: Voltage_Imbalance, dtype: u16, scale: 10, metric: phase_imbalance_pct }
+      - { space: input, addr: 0x0030, name: Energy_Delivered, dtype: u32, scale: 10, metric: energy_consumed }
+      - { space: discrete, addr: 0x0000, name: Panel_Energized, metric: equipment_state, instance: Panel_Energized }
+      - { space: discrete, addr: 0x0001, name: Data_Valid, role: validity }
+
+  SIM-EATON-PXG-MAGNUM-v1:
+    vendor: "Eaton"
+    product: "Magnum DS / Digitrip via Power Xpert Gateway"
+    word_order: swap
+    device_types: [switchgear]
+    points:
+      - { space: input, addr: 0x0000, name: Voltage_LL_Avg, dtype: u16, scale: 10, metric: voltage_ll, instance: AVG }
+      - { space: input, addr: 0x0001, name: Current_Avg, dtype: u16, metric: current, instance: AVG }
+      - { space: input, addr: 0x0002, name: Frequency, dtype: u16, scale: 10, metric: line_frequency }
+      - { space: input, addr: 0x0003, name: Power_Factor, dtype: s16, scale: 100, metric: power_factor }
+      - { space: input, addr: 0x0004, name: Load_Percent, dtype: u16, scale: 10, metric: load_pct }
+      - { space: input, addr: 0x0010, name: Voltage_A_N, dtype: u16, scale: 10, metric: voltage_ln, instance: A }
+      - { space: input, addr: 0x0011, name: Voltage_B_N, dtype: u16, scale: 10, metric: voltage_ln, instance: B }
+      - { space: input, addr: 0x0012, name: Voltage_C_N, dtype: u16, scale: 10, metric: voltage_ln, instance: C }
+      - { space: input, addr: 0x0013, name: Current_A, dtype: u16, metric: current, instance: A }
+      - { space: input, addr: 0x0014, name: Current_B, dtype: u16, metric: current, instance: B }
+      - { space: input, addr: 0x0015, name: Current_C, dtype: u16, metric: current, instance: C }
+      - { space: input, addr: 0x0020, name: Active_Power, dtype: s32, metric: power_draw, factor: 1000 }
+      - { space: input, addr: 0x0022, name: Reactive_Power, dtype: s32, metric: reactive_power, factor: 1000 }
+      - { space: input, addr: 0x0024, name: Apparent_Power, dtype: u32, metric: apparent_power, factor: 1000 }
+      - { space: input, addr: 0x0026, name: Voltage_Imbalance, dtype: u16, scale: 10, metric: phase_imbalance_pct }
+      - { space: input, addr: 0x0030, name: Energy_Delivered, dtype: u32, scale: 10, metric: energy_consumed }
+      - { space: discrete, addr: 0x0000, name: Bus_Energized, metric: equipment_state, instance: Bus_Energized }
+      - { space: discrete, addr: 0x0001, name: Breaker_Closed, metric: equipment_state, instance: Breaker_Closed }
+      - { space: discrete, addr: 0x0002, name: Source_Generator, metric: equipment_state, instance: Source_Generator }
+      - { space: discrete, addr: 0x0003, name: Data_Valid, role: validity }
+
+  SIM-ISUNITY-EXL-v1:
+    vendor: "Vertiv"
+    product: "Liebert EXL S1 (IS-UNITY-DP)"
+    word_order: big
+    device_types: [ups]
+    points:
+      - { space: input, addr: 0x0000, name: Input_Voltage, dtype: u16, scale: 10, metric: voltage_ll, instance: INPUT }
+      - { space: input, addr: 0x0001, name: Input_Frequency, dtype: u16, scale: 10, metric: line_frequency, instance: INPUT }
+      - { space: input, addr: 0x0002, name: Output_Load, dtype: u16, scale: 10, metric: load_pct, instance: OUTPUT }
+      - { space: input, addr: 0x0003, name: Battery_Health, dtype: u16, scale: 10, metric: battery_health_pct }
+      - { space: input, addr: 0x0004, name: Battery_Runtime, dtype: u16, metric: battery_runtime, factor: 60 }
+      - { space: input, addr: 0x0020, name: Output_Power, dtype: s32, metric: power_draw, instance: OUTPUT, factor: 1000 }
+      - { space: input, addr: 0x0030, name: Energy_Delivered, dtype: u32, scale: 10, metric: energy_consumed }
+      - { space: holding, addr: 0x0100, name: Operating_Mode, dtype: u16, metric: operating_mode, enum: { 1: "online", 2: "battery", 3: "bypass", 4: "eco", 5: "standby" } }
+      - { space: discrete, addr: 0x0000, name: On_Battery, metric: equipment_state, instance: On_Battery }
+      - { space: discrete, addr: 0x0001, name: Low_Battery, metric: alarm_state, instance: Low_Battery }
+      - { space: discrete, addr: 0x0002, name: Battery_Fault, metric: alarm_state, instance: Battery_Fault }
+      - { space: discrete, addr: 0x0003, name: Bypass_Active, metric: equipment_state, instance: Bypass_Active }
+      - { space: discrete, addr: 0x0004, name: Fan_Fault, metric: alarm_state, instance: Fan_Fault }
+      - { space: discrete, addr: 0x0005, name: Charger_Fault, metric: alarm_state, instance: Charger_Fault }
+      - { space: discrete, addr: 0x0006, name: Rectifier_Fault, metric: alarm_state, instance: Rectifier_Fault }
+      - { space: discrete, addr: 0x0007, name: Phase_Fault, metric: alarm_state, instance: Phase_Fault }
+      - { space: discrete, addr: 0x0008, name: Data_Valid, role: validity }
+
+  SIM-ION9000-v1:
+    vendor: "Schneider Electric"
+    product: "PowerLogic ION9000"
+    word_order: big
+    device_types: [utility_feed]
+    points:
+      - { space: input, addr: 0x0000, name: Voltage_LL_Avg, dtype: f32, metric: voltage_ll, instance: AVG }
+      - { space: input, addr: 0x0002, name: Current_Avg, dtype: f32, metric: current, instance: AVG }
+      - { space: input, addr: 0x0004, name: Frequency, dtype: f32, metric: line_frequency }
+      - { space: input, addr: 0x0006, name: Power_Factor, dtype: f32, metric: power_factor }
+      - { space: input, addr: 0x0010, name: Voltage_A_N, dtype: f32, metric: voltage_ln, instance: A }
+      - { space: input, addr: 0x0012, name: Voltage_B_N, dtype: f32, metric: voltage_ln, instance: B }
+      - { space: input, addr: 0x0014, name: Voltage_C_N, dtype: f32, metric: voltage_ln, instance: C }
+      - { space: input, addr: 0x0016, name: Current_A, dtype: f32, metric: current, instance: A }
+      - { space: input, addr: 0x0018, name: Current_B, dtype: f32, metric: current, instance: B }
+      - { space: input, addr: 0x001A, name: Current_C, dtype: f32, metric: current, instance: C }
+      - { space: input, addr: 0x0020, name: Active_Power, dtype: f32, metric: power_draw, factor: 1000 }
+      - { space: input, addr: 0x0022, name: Reactive_Power, dtype: f32, metric: reactive_power, factor: 1000 }
+      - { space: input, addr: 0x0024, name: Apparent_Power, dtype: f32, metric: apparent_power, factor: 1000 }
+      - { space: input, addr: 0x0026, name: Voltage_Imbalance, dtype: f32, metric: phase_imbalance_pct }
+      - { space: input, addr: 0x0028, name: THD_Voltage, dtype: f32, metric: voltage_thd_pct }
+      - { space: input, addr: 0x002A, name: THD_Current, dtype: f32, metric: current_thd_pct }
+      - { space: input, addr: 0x002C, name: Demand_Peak_kW, dtype: f32, metric: demand_peak_power, factor: 1000 }
+      - { space: input, addr: 0x0030, name: Energy_Delivered, dtype: f32, metric: energy_consumed }
+      - { space: discrete, addr: 0x0000, name: Service_Healthy, metric: equipment_state, instance: Service_Healthy }
+      - { space: discrete, addr: 0x0001, name: Data_Valid, role: validity }
+
+  SIM-MAGFLOW-TX-v1:
+    vendor: "Generic"
+    product: "Magnetic Flow Meter"
+    word_order: big
+    device_types: [sensor]
+    # A transmitter publishes one nameless process value; what it MEANS
+    # comes from where it is installed. The probe role carried on the
+    # endpoint selects the metric, which is how a field instrument
+    # actually works.
+    probe_roles:
+      chw_flow: { metric: water_flow, instance: CHW }
+    points:
+      - { space: input, addr: 0x0000, name: Flow_Rate, dtype: u16, scale: 100, role: process_value }
+      - { space: discrete, addr: 0x0000, name: Reading_Valid, role: validity }
+
+  SIM-RTD-TX-v1:
+    vendor: "Generic"
+    product: "RTD Temperature Transmitter"
+    word_order: big
+    device_types: [sensor]
+    # A transmitter publishes one nameless process value; what it MEANS
+    # comes from where it is installed. The probe role carried on the
+    # endpoint selects the metric, which is how a field instrument
+    # actually works.
+    probe_roles:
+      chw_return: { metric: water_return_temp, instance: CHW }
+      chw_supply: { metric: water_supply_temp, instance: CHW }
+      ct_basin: { metric: water_supply_temp, instance: BASIN }
+      cw_return: { metric: water_return_temp, instance: COND }
+      cw_supply: { metric: water_supply_temp, instance: COND }
+    points:
+      - { space: input, addr: 0x0000, name: Process_Value, dtype: s16, scale: 10, role: process_value }
+      - { space: discrete, addr: 0x0000, name: Reading_Valid, role: validity }

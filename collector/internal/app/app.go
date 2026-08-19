@@ -11,6 +11,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/hari/dcim-platform/collector/internal/adapters/bacnet"
+	"github.com/hari/dcim-platform/collector/internal/adapters/modbus"
 	"github.com/hari/dcim-platform/collector/internal/adapters/redfish"
 	"github.com/hari/dcim-platform/collector/internal/adapters/snmp"
 	"github.com/hari/dcim-platform/collector/internal/assign"
@@ -38,6 +39,7 @@ type App struct {
 	redfish  *redfish.Adapter
 	rfEvents *redfish.EventReceiver
 	bacnet   *bacnet.Adapter
+	modbus   *modbus.Adapter
 	traps    *snmp.TrapReceiver
 	resolver *assign.Resolver
 	adapters map[string]models.Adapter
@@ -106,6 +108,18 @@ func New(cfg *config.Config, version string) (*App, error) {
 			"batch_size", cfg.Protocols.BACnet.BatchSize)
 	}
 
+	if cfg.Protocols.Modbus.Enabled {
+		mbMaps, err := mapping.LoadModbus(cfg.Mappings.Dir)
+		if err != nil {
+			return nil, fmt.Errorf("load modbus templates: %w", err)
+		}
+		client := modbus.NewClient(cfg.Protocols.Modbus.Timeout,
+			cfg.Protocols.Modbus.Retries, log)
+		a.modbus = modbus.New(mbMaps, client, log, mets)
+		a.adapters["modbus"] = a.modbus
+		log.Info("modbus adapter enabled", "templates", len(mbMaps.Templates))
+	}
+
 	a.resolver = assign.NewResolver()
 
 	if cfg.Protocols.RedfishEvent.Enabled {
@@ -151,6 +165,7 @@ func New(cfg *config.Config, version string) (*App, error) {
 			"snmp":    cfg.Protocols.SNMP.MaxConcurrent,
 			"redfish": cfg.Protocols.Redfish.MaxConcurrent,
 			"bacnet":  cfg.Protocols.BACnet.MaxConcurrent,
+			"modbus":  cfg.Protocols.Modbus.MaxConcurrent,
 		},
 		PerHostLimits: map[string]int{
 			"snmp":    cfg.Protocols.SNMP.PerHost,
@@ -158,6 +173,10 @@ func New(cfg *config.Config, version string) (*App, error) {
 			// Per HOST, not per device: an MS/TP router fronts a whole trunk,
 			// and hammering it in parallel is how a trunk saturates.
 			"bacnet": cfg.Protocols.BACnet.PerHost,
+			// Same reasoning, more strictly: a Modbus serial gateway forwards
+			// one RS-485 transaction at a time, so parallel requests only
+			// queue inside the gateway where the collector cannot see them.
+			"modbus": cfg.Protocols.Modbus.PerHost,
 		},
 	}, a.poll, log, mets)
 
@@ -331,6 +350,9 @@ func (a *App) applyDiff(diff assign.Diff) {
 		}
 		if a.bacnet != nil {
 			a.bacnet.Forget(ep.ID)
+		}
+		if a.modbus != nil {
+			a.modbus.Forget(ep.ID)
 		}
 		if a.redfish != nil {
 			a.redfish.Forget(ep.ID)

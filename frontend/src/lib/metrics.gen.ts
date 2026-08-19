@@ -71,6 +71,20 @@ export type MetricKey =
   | 'voltage_thd_pct'
   | 'current_thd_pct'
   | 'harmonic_current_pct'
+  | 'voltage_ll'
+  | 'reactive_power'
+  | 'apparent_power'
+  | 'load_pct'
+  | 'phase_imbalance_pct'
+  | 'demand_peak_power'
+  | 'battery_runtime'
+  | 'battery_health_pct'
+  | 'fuel_level_pct'
+  | 'current_run_time'
+  | 'start_attempts'
+  | 'transfer_count'
+  | 'time_on_emergency'
+  | 'operating_mode'
   ;
 
 export interface MetricDef {
@@ -715,6 +729,132 @@ export const METRICS: Record<MetricKey, MetricDef> = {
     minValid: 0,
     maxValid: null,
     staleAfterS: 600, hot: false,
+    group: 'power',
+  },
+  'voltage_ll': {
+    key: 'voltage_ll', displayName: 'Line-to-Line Voltage'.replace(/^'|'$/g, ''),
+    unit: 'V', valueType: 'gauge',
+    aggregation: 'avg',
+    minValid: 0,
+    maxValid: 1000,
+    staleAfterS: 300, hot: true,
+    group: 'power',
+  },
+  'reactive_power': {
+    key: 'reactive_power', displayName: 'Reactive Power'.replace(/^'|'$/g, ''),
+    unit: 'VAR', valueType: 'gauge',
+    aggregation: 'avg',
+    minValid: null,
+    maxValid: null,
+    staleAfterS: 300, hot: false,
+    group: 'power',
+  },
+  'apparent_power': {
+    key: 'apparent_power', displayName: 'Apparent Power'.replace(/^'|'$/g, ''),
+    unit: 'VA', valueType: 'gauge',
+    aggregation: 'avg',
+    minValid: 0,
+    maxValid: null,
+    staleAfterS: 300, hot: false,
+    group: 'power',
+  },
+  'load_pct': {
+    key: 'load_pct', displayName: 'Load'.replace(/^'|'$/g, ''),
+    unit: 'pct', valueType: 'gauge',
+    aggregation: 'avg',
+    minValid: 0,
+    maxValid: null,
+    staleAfterS: 300, hot: true,
+    group: 'power',
+  },
+  'phase_imbalance_pct': {
+    key: 'phase_imbalance_pct', displayName: 'Voltage Imbalance'.replace(/^'|'$/g, ''),
+    unit: 'pct', valueType: 'gauge',
+    aggregation: 'max',
+    minValid: 0,
+    maxValid: null,
+    staleAfterS: 300, hot: false,
+    group: 'power',
+  },
+  'demand_peak_power': {
+    key: 'demand_peak_power', displayName: 'Peak Demand'.replace(/^'|'$/g, ''),
+    unit: 'W', valueType: 'gauge',
+    aggregation: 'max',
+    minValid: 0,
+    maxValid: null,
+    staleAfterS: 900, hot: false,
+    group: 'power',
+  },
+  'battery_runtime': {
+    key: 'battery_runtime', displayName: 'Battery Runtime'.replace(/^'|'$/g, ''),
+    unit: 's', valueType: 'gauge',
+    aggregation: 'min',
+    minValid: 0,
+    maxValid: null,
+    staleAfterS: 300, hot: true,
+    group: 'power',
+  },
+  'battery_health_pct': {
+    key: 'battery_health_pct', displayName: 'Battery Health'.replace(/^'|'$/g, ''),
+    unit: 'pct', valueType: 'gauge',
+    aggregation: 'min',
+    minValid: 0,
+    maxValid: 100,
+    staleAfterS: 900, hot: false,
+    group: 'power',
+  },
+  'fuel_level_pct': {
+    key: 'fuel_level_pct', displayName: 'Fuel Level'.replace(/^'|'$/g, ''),
+    unit: 'pct', valueType: 'gauge',
+    aggregation: 'min',
+    minValid: 0,
+    maxValid: 100,
+    staleAfterS: 900, hot: true,
+    group: 'power',
+  },
+  'current_run_time': {
+    key: 'current_run_time', displayName: 'Current Run Time'.replace(/^'|'$/g, ''),
+    unit: 's', valueType: 'gauge',
+    aggregation: 'last',
+    minValid: 0,
+    maxValid: null,
+    staleAfterS: 300, hot: false,
+    group: 'power',
+  },
+  'start_attempts': {
+    key: 'start_attempts', displayName: 'Start Attempts'.replace(/^'|'$/g, ''),
+    unit: 'count', valueType: 'counter',
+    aggregation: 'last',
+    minValid: 0,
+    maxValid: null,
+    staleAfterS: 3600, hot: false,
+    group: 'power',
+  },
+  'transfer_count': {
+    key: 'transfer_count', displayName: 'Transfer Count'.replace(/^'|'$/g, ''),
+    unit: 'count', valueType: 'counter',
+    aggregation: 'last',
+    minValid: 0,
+    maxValid: null,
+    staleAfterS: 3600, hot: false,
+    group: 'power',
+  },
+  'time_on_emergency': {
+    key: 'time_on_emergency', displayName: 'Time on Emergency'.replace(/^'|'$/g, ''),
+    unit: 's', valueType: 'counter',
+    aggregation: 'last',
+    minValid: 0,
+    maxValid: null,
+    staleAfterS: 3600, hot: false,
+    group: 'power',
+  },
+  'operating_mode': {
+    key: 'operating_mode', displayName: 'Operating Mode'.replace(/^'|'$/g, ''),
+    unit: 'text', valueType: 'text',
+    aggregation: 'last',
+    minValid: null,
+    maxValid: null,
+    staleAfterS: 300, hot: true,
     group: 'power',
   },
 };

@@ -88,8 +88,49 @@ def test_modbus_rtu_slave_is_reached_through_its_gateway():
     eps = derive_endpoints(transmitter, include_protocols=frozenset({"modbus"}))
     assert len(eps) == 1
     assert eps[0].address == "10.52.11.70"
-    assert eps[0].addressing == {"unit_id": 7}
     assert eps[0].via_address == "10.52.11.70"
+    # The unit id says WHICH device on the trunk; the probe role says what it
+    # measures. Both are required: a transmitter publishes one nameless
+    # process value, and device_type "sensor" covers an RTD and a flow meter
+    # alike, so without the role the adapter cannot even pick a register map.
+    assert eps[0].addressing == {"unit_id": 7, "probe_role": "chw_supply"}
+
+
+def test_native_modbus_gear_gets_an_endpoint_without_a_role():
+    """The export sets modbus_role only for the serial trunk.
+
+    Keying on the role alone created endpoints for the twelve transmitters and
+    none of the thirty meters, switchgear, gensets, transfer switches and UPS
+    that carry the site's electrical telemetry - and nothing failed, because a
+    device with no endpoint is simply never polled.
+    """
+    meter = {
+        "id": "cc33", "device_type": "utility_feed", "name": "UTIL1-DC1-UR",
+        "mgmt_ip": "10.52.14.47",
+    }
+    eps = derive_endpoints(meter, include_protocols=frozenset({"modbus"}))
+    assert len(eps) == 1
+    assert eps[0].role == "native_card"
+    assert eps[0].address == "10.52.14.47"
+    assert eps[0].port == 502
+    assert eps[0].addressing == {"unit_id": 1}
+
+
+def test_modbus_gateway_is_recorded_but_not_polled():
+    """A serial gateway is not a meter.
+
+    It is recorded so the RTU slaves have something to hang via_endpoint_id
+    from, and so an unreachable trunk is attributable to the box in front of
+    it - but polling it would read registers it does not have.
+    """
+    gw = {
+        "id": "dd44", "device_type": "modbus_gateway", "name": "MBGW1-DC1-CP",
+        "modbus_role": "gateway", "mgmt_ip": "10.52.14.19",
+    }
+    eps = derive_endpoints(gw, include_protocols=frozenset({"modbus"}))
+    assert len(eps) == 1
+    assert eps[0].role == "gateway"
+    assert eps[0].enabled is False
 
 
 def test_gnmi_target_is_the_device_but_address_is_the_server(sim_switch_device):

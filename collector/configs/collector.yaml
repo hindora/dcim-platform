@@ -112,6 +112,21 @@ protocols:
     # oversized request comes back as an abort rather than a short answer.
     batch_size: 16
 
+  # Modbus/TCP for electrical gear and field instruments.
+  modbus:
+    enabled: false
+    max_concurrent: 24
+    # Per HOST, and it must stay 1 for anything behind a serial gateway: the
+    # gateway forwards one RS-485 transaction at a time, so parallel requests
+    # only queue inside it where the collector cannot see the delay. An
+    # eighteen-slave trunk genuinely cannot be polled in under a couple of
+    # seconds, and pretending otherwise just moves the queue.
+    per_host: 1
+    timeout: 3s
+    # Transport failures only. A device that answered with an exception
+    # answered; repeating the request produces the same exception.
+    retries: 1
+
   snmp_trap:
     enabled: true
     # 1162, not the well-known 162, because binding below 1024 needs root or

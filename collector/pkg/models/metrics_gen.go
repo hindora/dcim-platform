@@ -93,6 +93,20 @@ const (
 	MetricVoltageThdPct      = "voltage_thd_pct"
 	MetricCurrentThdPct      = "current_thd_pct"
 	MetricHarmonicCurrentPct = "harmonic_current_pct"
+	MetricVoltageLl          = "voltage_ll"
+	MetricReactivePower      = "reactive_power"
+	MetricApparentPower      = "apparent_power"
+	MetricLoadPct            = "load_pct"
+	MetricPhaseImbalancePct  = "phase_imbalance_pct"
+	MetricDemandPeakPower    = "demand_peak_power"
+	MetricBatteryRuntime     = "battery_runtime"
+	MetricBatteryHealthPct   = "battery_health_pct"
+	MetricFuelLevelPct       = "fuel_level_pct"
+	MetricCurrentRunTime     = "current_run_time"
+	MetricStartAttempts      = "start_attempts"
+	MetricTransferCount      = "transfer_count"
+	MetricTimeOnEmergency    = "time_on_emergency"
+	MetricOperatingMode      = "operating_mode"
 )
 
 var MetricDefs = map[string]MetricDef{
@@ -656,6 +670,118 @@ var MetricDefs = map[string]MetricDef{
 		StaleAfterS: 600, Hot: false,
 		Group: "power", RateOf: "", RateScale: 1,
 	},
+	"voltage_ll": {
+		Key: "voltage_ll", DisplayName: "Line-to-Line Voltage", Unit: "V",
+		ValueType: "gauge", Aggregation: "avg",
+		MinValid: 0, HasMin: true,
+		MaxValid: 1000, HasMax: true,
+		StaleAfterS: 300, Hot: true,
+		Group: "power", RateOf: "", RateScale: 1,
+	},
+	"reactive_power": {
+		Key: "reactive_power", DisplayName: "Reactive Power", Unit: "VAR",
+		ValueType: "gauge", Aggregation: "avg",
+		MinValid: 0, HasMin: false,
+		MaxValid: 0, HasMax: false,
+		StaleAfterS: 300, Hot: false,
+		Group: "power", RateOf: "", RateScale: 1,
+	},
+	"apparent_power": {
+		Key: "apparent_power", DisplayName: "Apparent Power", Unit: "VA",
+		ValueType: "gauge", Aggregation: "avg",
+		MinValid: 0, HasMin: true,
+		MaxValid: 0, HasMax: false,
+		StaleAfterS: 300, Hot: false,
+		Group: "power", RateOf: "", RateScale: 1,
+	},
+	"load_pct": {
+		Key: "load_pct", DisplayName: "Load", Unit: "pct",
+		ValueType: "gauge", Aggregation: "avg",
+		MinValid: 0, HasMin: true,
+		MaxValid: 0, HasMax: false,
+		StaleAfterS: 300, Hot: true,
+		Group: "power", RateOf: "", RateScale: 1,
+	},
+	"phase_imbalance_pct": {
+		Key: "phase_imbalance_pct", DisplayName: "Voltage Imbalance", Unit: "pct",
+		ValueType: "gauge", Aggregation: "max",
+		MinValid: 0, HasMin: true,
+		MaxValid: 0, HasMax: false,
+		StaleAfterS: 300, Hot: false,
+		Group: "power", RateOf: "", RateScale: 1,
+	},
+	"demand_peak_power": {
+		Key: "demand_peak_power", DisplayName: "Peak Demand", Unit: "W",
+		ValueType: "gauge", Aggregation: "max",
+		MinValid: 0, HasMin: true,
+		MaxValid: 0, HasMax: false,
+		StaleAfterS: 900, Hot: false,
+		Group: "power", RateOf: "", RateScale: 1,
+	},
+	"battery_runtime": {
+		Key: "battery_runtime", DisplayName: "Battery Runtime", Unit: "s",
+		ValueType: "gauge", Aggregation: "min",
+		MinValid: 0, HasMin: true,
+		MaxValid: 0, HasMax: false,
+		StaleAfterS: 300, Hot: true,
+		Group: "power", RateOf: "", RateScale: 1,
+	},
+	"battery_health_pct": {
+		Key: "battery_health_pct", DisplayName: "Battery Health", Unit: "pct",
+		ValueType: "gauge", Aggregation: "min",
+		MinValid: 0, HasMin: true,
+		MaxValid: 100, HasMax: true,
+		StaleAfterS: 900, Hot: false,
+		Group: "power", RateOf: "", RateScale: 1,
+	},
+	"fuel_level_pct": {
+		Key: "fuel_level_pct", DisplayName: "Fuel Level", Unit: "pct",
+		ValueType: "gauge", Aggregation: "min",
+		MinValid: 0, HasMin: true,
+		MaxValid: 100, HasMax: true,
+		StaleAfterS: 900, Hot: true,
+		Group: "power", RateOf: "", RateScale: 1,
+	},
+	"current_run_time": {
+		Key: "current_run_time", DisplayName: "Current Run Time", Unit: "s",
+		ValueType: "gauge", Aggregation: "last",
+		MinValid: 0, HasMin: true,
+		MaxValid: 0, HasMax: false,
+		StaleAfterS: 300, Hot: false,
+		Group: "power", RateOf: "", RateScale: 1,
+	},
+	"start_attempts": {
+		Key: "start_attempts", DisplayName: "Start Attempts", Unit: "count",
+		ValueType: "counter", Aggregation: "last",
+		MinValid: 0, HasMin: true,
+		MaxValid: 0, HasMax: false,
+		StaleAfterS: 3600, Hot: false,
+		Group: "power", RateOf: "", RateScale: 1,
+	},
+	"transfer_count": {
+		Key: "transfer_count", DisplayName: "Transfer Count", Unit: "count",
+		ValueType: "counter", Aggregation: "last",
+		MinValid: 0, HasMin: true,
+		MaxValid: 0, HasMax: false,
+		StaleAfterS: 3600, Hot: false,
+		Group: "power", RateOf: "", RateScale: 1,
+	},
+	"time_on_emergency": {
+		Key: "time_on_emergency", DisplayName: "Time on Emergency", Unit: "s",
+		ValueType: "counter", Aggregation: "last",
+		MinValid: 0, HasMin: true,
+		MaxValid: 0, HasMax: false,
+		StaleAfterS: 3600, Hot: false,
+		Group: "power", RateOf: "", RateScale: 1,
+	},
+	"operating_mode": {
+		Key: "operating_mode", DisplayName: "Operating Mode", Unit: "text",
+		ValueType: "text", Aggregation: "last",
+		MinValid: 0, HasMin: false,
+		MaxValid: 0, HasMax: false,
+		StaleAfterS: 300, Hot: true,
+		Group: "power", RateOf: "", RateScale: 1,
+	},
 }
 
 // MetricGroups maps a poll-profile group name to its metric keys.
@@ -664,7 +790,7 @@ var MetricGroups = map[string][]string{
 	"cooling":     {"water_supply_temp", "water_return_temp", "water_setpoint_temp", "water_flow", "water_pressure", "water_diff_pressure", "valve_position_pct", "compressor_load_pct", "cooling_capacity", "cooling_output_pct", "thermal_load", "cop", "approach_temp", "supply_air_temp", "return_air_temp", "air_setpoint_temp", "filter_diff_pressure", "basin_level_pct", "makeup_water_flow", "vibration", "motor_temp", "vfd_frequency", "pump_speed_pct", "run_hours", "equipment_state", "alarm_state"},
 	"environment": {"ambient_temperature", "relative_humidity", "dew_point", "airflow"},
 	"interfaces":  {"if_admin_state", "if_oper_state", "if_speed", "if_in_octets", "if_out_octets", "if_in_bps", "if_out_bps", "if_in_errors", "if_out_errors", "if_in_discards", "if_out_discards", "if_in_error_rate"},
-	"power":       {"power_draw", "psu_input_voltage", "psu_output_power", "psu_state", "energy_consumed", "voltage_ln", "current", "line_frequency", "power_factor", "voltage_thd_pct", "current_thd_pct", "harmonic_current_pct"},
+	"power":       {"power_draw", "psu_input_voltage", "psu_output_power", "psu_state", "energy_consumed", "voltage_ln", "current", "line_frequency", "power_factor", "voltage_thd_pct", "current_thd_pct", "harmonic_current_pct", "voltage_ll", "reactive_power", "apparent_power", "load_pct", "phase_imbalance_pct", "demand_peak_power", "battery_runtime", "battery_health_pct", "fuel_level_pct", "current_run_time", "start_attempts", "transfer_count", "time_on_emergency", "operating_mode"},
 	"system":      {"sys_uptime", "reachable", "poll_latency"},
 	"thermal":     {"cpu_temperature", "inlet_temperature", "exhaust_temperature", "fan_speed", "fan_speed_pct"},
 }

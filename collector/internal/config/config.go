@@ -58,6 +58,7 @@ type Config struct {
 		Redfish      ProtocolCfg     `yaml:"redfish"`
 		RedfishEvent RedfishEventCfg `yaml:"redfish_event"`
 		BACnet       BACnetCfg       `yaml:"bacnet"`
+		Modbus       ProtocolCfg     `yaml:"modbus"`
 	} `yaml:"protocols"`
 
 	Health struct {
@@ -210,6 +211,10 @@ func Default() *Config {
 	c.Protocols.BACnet = BACnetCfg{
 		Enabled: false, LocalPort: 0, MaxConcurrent: 24, PerHost: 1,
 		Timeout: 3 * time.Second, Retries: 2, BatchSize: 16,
+	}
+	c.Protocols.Modbus = ProtocolCfg{
+		Enabled: false, MaxConcurrent: 24, PerHost: 1,
+		Timeout: 3 * time.Second, Retries: 1,
 	}
 	c.Health.OfflineThreshold = 3
 	c.Mappings.Dir = "../contracts/mappings"

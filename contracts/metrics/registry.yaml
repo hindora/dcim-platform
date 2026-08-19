@@ -833,3 +833,170 @@ metrics:
     group: power
     device_types: [energy_monitor]
     description: One harmonic order as a percentage of the fundamental. instance is the order (3, 5, 7, 9).
+
+  # ------------------------------------------------- power (Modbus, phase 3.5)
+  #
+  # Electrical switchgear, meters, gensets, transfer switches and UPS. Phase
+  # multiplicity stays in instance (A/B/C); so does the SOURCE on gear that
+  # measures more than one (NORMAL/EMERGENCY on a transfer switch,
+  # INPUT/OUTPUT on a UPS).
+
+  - key: voltage_ll
+    display_name: Line-to-Line Voltage
+    unit: V
+    value_type: gauge
+    aggregation: avg
+    min_valid: 0
+    max_valid: 1000
+    stale_after_s: 300
+    hot: true
+    group: power
+    device_types: [utility_feed, switchgear, mcc, mpp, ats, ups, generator]
+    description: Phase-to-phase voltage. instance names the source when a device measures more than one (NORMAL, EMERGENCY, INPUT).
+
+  - key: reactive_power
+    display_name: Reactive Power
+    unit: VAR
+    value_type: gauge
+    aggregation: avg
+    stale_after_s: 300
+    group: power
+    device_types: [utility_feed, switchgear, mcc, mpp]
+    description: Signed, because reactive power has a direction. Watts and VAR are separate keys, never one key with a units column.
+
+  - key: apparent_power
+    display_name: Apparent Power
+    unit: VA
+    value_type: gauge
+    aggregation: avg
+    min_valid: 0
+    stale_after_s: 300
+    group: power
+    device_types: [utility_feed, switchgear, mcc, mpp]
+    description: Apparent power. With power_draw it gives the power factor a meter may not publish directly.
+
+  - key: load_pct
+    display_name: Load
+    unit: pct
+    value_type: gauge
+    aggregation: avg
+    min_valid: 0
+    stale_after_s: 300
+    hot: true
+    group: power
+    device_types: [switchgear, mcc, mpp, generator, ups]
+    description: Load as a percentage of the device rating. The number capacity planning is actually written against, and the device knows its own nameplate where the DCIM may not.
+
+  - key: phase_imbalance_pct
+    display_name: Voltage Imbalance
+    unit: pct
+    value_type: gauge
+    aggregation: max
+    min_valid: 0
+    stale_after_s: 300
+    group: power
+    device_types: [utility_feed, switchgear, mcc, mpp]
+    description: Spread between phase voltages. Sustained imbalance above about 2 percent overheats three-phase motors, so it is an alarm source rather than a curiosity.
+
+  - key: demand_peak_power
+    display_name: Peak Demand
+    unit: W
+    value_type: gauge
+    aggregation: max
+    min_valid: 0
+    stale_after_s: 900
+    group: power
+    device_types: [utility_feed]
+    description: Peak demand held by the meter. Billing uses it, so it is read from the meter rather than recomputed from samples the collector may have missed.
+
+  - key: battery_runtime
+    display_name: Battery Runtime
+    unit: s
+    value_type: gauge
+    aggregation: min
+    min_valid: 0
+    stale_after_s: 300
+    hot: true
+    group: power
+    device_types: [ups]
+    description: Estimated runtime left on battery. Seconds, because one unit per key - devices publish minutes and adapters convert.
+
+  - key: battery_health_pct
+    display_name: Battery Health
+    unit: pct
+    value_type: gauge
+    aggregation: min
+    min_valid: 0
+    max_valid: 100
+    stale_after_s: 900
+    group: power
+    device_types: [ups]
+    description: Remaining battery capacity against nameplate. Degrades over years, so it trends rather than alarms.
+
+  - key: fuel_level_pct
+    display_name: Fuel Level
+    unit: pct
+    value_type: gauge
+    aggregation: min
+    min_valid: 0
+    max_valid: 100
+    stale_after_s: 900
+    hot: true
+    group: power
+    device_types: [generator]
+    description: Day-tank level. Read with run time it answers the only question that matters during an outage - how long the generator can keep going.
+
+  - key: current_run_time
+    display_name: Current Run Time
+    unit: s
+    value_type: gauge
+    aggregation: last
+    min_valid: 0
+    stale_after_s: 300
+    group: power
+    device_types: [generator]
+    description: Duration of the CURRENT run, which resets to zero on each start. A gauge, not a counter - see run_hours for the lifetime accumulator.
+
+  - key: start_attempts
+    display_name: Start Attempts
+    unit: count
+    value_type: counter
+    aggregation: last
+    min_valid: 0
+    stale_after_s: 3600
+    group: power
+    device_types: [generator]
+    description: Lifetime start attempts. Rising without run_hours rising is a genset that is failing to start.
+
+  - key: transfer_count
+    display_name: Transfer Count
+    unit: count
+    value_type: counter
+    aggregation: last
+    min_valid: 0
+    stale_after_s: 3600
+    group: power
+    device_types: [ats]
+    description: Lifetime transfers. Each one is a mechanical operation with a finite life, so it is a maintenance signal as well as an event count.
+
+  - key: time_on_emergency
+    display_name: Time on Emergency
+    unit: s
+    value_type: counter
+    aggregation: last
+    min_valid: 0
+    stale_after_s: 3600
+    group: power
+    device_types: [ats]
+    description: Lifetime seconds fed from the emergency source.
+
+  - key: operating_mode
+    display_name: Operating Mode
+    unit: text
+    value_type: text
+    aggregation: last
+    stale_after_s: 300
+    hot: true
+    group: power
+    device_types: [ups, ats, generator]
+    description: The device's own state word - online/battery/bypass, normal/emergency, standby/running/cranking. Text rather than a set of booleans because these states are mutually exclusive and the device already publishes exactly one.
