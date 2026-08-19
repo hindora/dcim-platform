@@ -22,10 +22,15 @@ redis:
   # 127.0.0.1, not localhost: on Windows localhost prefers ::1 and a
   # Docker-published port answers there unreliably.
   url: redis://127.0.0.1:6379/0
+  # These mirror contracts/schema/messages_v1.yaml, which explains the sizing.
+  # Short version: maxlen counts entries but memory is what runs out, a
+  # telemetry entry is a ~49 KB batch, and the old 2,000,000 was a stream of
+  # tens of GB on a 3.7 GB host - Redis was OOM-killed twice before the trim
+  # ever fired. Do not raise telemetry without raising Redis's maxmemory first.
   streams:
-    telemetry:     {name: telemetry.v1,     maxlen: 2000000}
-    events:        {name: events.v1,        maxlen: 500000}
-    endpointstate: {name: endpointstate.v1, maxlen: 200000}
+    telemetry:     {name: telemetry.v1,     maxlen: 8000}
+    events:        {name: events.v1,        maxlen: 200000}
+    endpointstate: {name: endpointstate.v1, maxlen: 100000}
     heartbeat:     {name: collectorhb.v1,   maxlen: 10000}
 
 publisher:
