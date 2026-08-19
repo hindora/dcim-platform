@@ -78,10 +78,10 @@ Order chosen by value-per-effort and by risk.
 
 | # | Deliverable | Notes |
 |---|---|---|
-| 3.1 | **Redfish poller** (3 days) | biggest metric yield per device; 310 servers |
-| 3.2 | **Redfish EventService** subscribe + receiver + reconciliation (3 days) | halves BMC load, cuts alarm latency |
-| 3.3 | **BACnet/IP client** (6–8 days) | the schedule risk. Who-Is/I-Am, ReadProperty, ReadPropertyMultiple first; COV after. Timebox at 8 days — if the encoding work overruns, switch to the BACpypes3 side-process fallback and keep the contract identical. |
-| 3.4 | BACnet MS/TP routed addressing (2 days) | required for valves and pump cards |
+| 3.1 | DONE - **Redfish poller** (3 days) | biggest metric yield per device; 310 servers |
+| 3.2 | DONE - **Redfish EventService** subscribe + receiver + reconciliation (3 days) | halves BMC load, cuts alarm latency |
+| 3.3 | DONE - **BACnet/IP client** (6-8 days) | the schedule risk. Who-Is/I-Am, ReadProperty, ReadPropertyMultiple first; COV after. Timebox at 8 days — if the encoding work overruns, switch to the BACpypes3 side-process fallback and keep the contract identical. |
+| 3.4 | DONE - BACnet MS/TP routed addressing + directed Who-Is identification (2 days) | required for valves and pump cards |
 | 3.5 | **Modbus/TCP** (3 days) | utility meter is the PUE numerator; gateway unit-id fan-out |
 | 3.6 | **gNMI** poller + STREAM (4 days) | interface counters at higher fidelity than SNMP |
 | 3.7 | Interface identity normalisation (gNMI name ↔ SNMP ifIndex) (1 day) | otherwise one interface produces two series |
@@ -170,7 +170,7 @@ Enabled by, not blocking, the above:
 
 | Risk | Impact | Mitigation |
 |---|---|---|
-| **BACnet in Go** | Phase 3 slips | Timebox 3.3 at 8 days; BACpypes3 side-process fallback publishes the same contract, so nothing else changes |
+| **BACnet in Go** | Phase 3 slips | RESOLVED: written in Go, no fallback needed. The codec is pinned against the device side by vectors generated from `core.bacnet_object_model`, which is what made it tractable - the risk was never the encoding, it was having no independent way to tell a wrong frame from a right one |
 | Contract churn after Phase 1 | rework across both planes | Phase 1 exists specifically to shake this out before four more adapters depend on it |
 | Timescale query performance | slow charts | CAGGs in Phase 1 (1.6), not deferred |
 | Alarm noise | the product becomes unusable and gets ignored | dwell + hysteresis in 2.3, correlation in 4.2, and the rule-test endpoint in 2.5 before any rule ships |

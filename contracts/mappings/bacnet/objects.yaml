@@ -143,10 +143,11 @@ device_types:
 
   # ------------------------------------------------------- EV2 power panel
   #
-  # A branch-circuit monitor. Panel totals and per-circuit points are polled;
-  # the harmonic detail is polled at a slower profile because it is a
-  # power-quality diagnostic, not an operational signal.
-  ev2:
+  # A branch-circuit monitor. Keyed on the inventory device type
+  # (energy_monitor), not the product name: the mapping is looked up by what
+  # the DCIM calls the device, and a key nothing matches polls nothing while
+  # looking perfectly correct in review.
+  energy_monitor:
     points:
       - { name: Panel_Total_kW,  metric: power_draw, scale: 1000 }
       - { name: Panel_Total_kWh, metric: energy_consumed }

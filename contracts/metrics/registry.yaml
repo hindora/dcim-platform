@@ -745,7 +745,7 @@ metrics:
     stale_after_s: 300
     hot: true
     group: cooling
-    device_types: [chiller, pump, cooling_tower, cdu, crah, valve, ev2]
+    device_types: [chiller, pump, cooling_tower, cdu, crah, valve, energy_monitor]
     description: One alarm point. instance carries the vendor alarm name - a key per vendor alarm would make the registry unmaintainable and the UI incomparable across makes.
 
   # -------------------------------------------------------------------- power
@@ -762,7 +762,7 @@ metrics:
     max_valid: 600
     stale_after_s: 300
     group: power
-    device_types: [ev2, pdu, rpp, ups]
+    device_types: [energy_monitor, pdu, rpp, ups]
     description: Phase-to-neutral voltage. instance is the phase.
 
   - key: current
@@ -774,7 +774,7 @@ metrics:
     stale_after_s: 300
     hot: true
     group: power
-    device_types: [ev2, pdu, rpp, ups]
+    device_types: [energy_monitor, pdu, rpp, ups]
     description: RMS current. instance is the phase or the branch circuit.
 
   - key: line_frequency
@@ -786,7 +786,7 @@ metrics:
     max_valid: 100
     stale_after_s: 300
     group: power
-    device_types: [ev2, pdu, ups, generator]
+    device_types: [energy_monitor, pdu, ups, generator]
     description: Mains frequency.
 
   - key: power_factor
@@ -798,7 +798,7 @@ metrics:
     max_valid: 1
     stale_after_s: 300
     group: power
-    device_types: [ev2, pdu, rpp]
+    device_types: [energy_monitor, pdu, rpp]
     description: True power factor. instance is the phase or circuit.
 
   - key: voltage_thd_pct
@@ -809,7 +809,7 @@ metrics:
     min_valid: 0
     stale_after_s: 600
     group: power
-    device_types: [ev2]
+    device_types: [energy_monitor]
     description: Total harmonic distortion of the voltage waveform. The IEEE-519 quantity, and the one a power-quality alarm is written against.
 
   - key: current_thd_pct
@@ -820,7 +820,7 @@ metrics:
     min_valid: 0
     stale_after_s: 600
     group: power
-    device_types: [ev2]
+    device_types: [energy_monitor]
     description: Total harmonic distortion of the current waveform. Naturally high at light load, so a diagnostic rather than an alarm source.
 
   - key: harmonic_current_pct
@@ -831,5 +831,5 @@ metrics:
     min_valid: 0
     stale_after_s: 600
     group: power
-    device_types: [ev2]
+    device_types: [energy_monitor]
     description: One harmonic order as a percentage of the fundamental. instance is the order (3, 5, 7, 9).

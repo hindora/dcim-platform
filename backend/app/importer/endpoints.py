@@ -31,7 +31,10 @@ from typing import Any
 # core/snmprec_generator.py::_NO_SNMP_TYPES
 NO_SNMP_TYPES = frozenset({"rpp", "chiller", "pump", "cooling_tower", "valve"})
 
-BACNET_TYPES = frozenset({"chiller", "pump", "cooling_tower", "valve", "crah", "cdu"})
+# energy_monitor is the Verdigris EV2 branch-circuit panel, which is a
+# BACnet/IP device like the mechanical plant.
+BACNET_TYPES = frozenset({"chiller", "pump", "cooling_tower", "valve", "crah",
+                          "cdu", "energy_monitor"})
 
 NETWORK_TYPES = frozenset({"switch", "router", "firewall", "load_balancer", "oob_switch"})
 
@@ -165,7 +168,12 @@ def derive_endpoints(
                 protocol="bacnet", role="field_device",
                 address=dev["mstp_router_ip"], port=47808,
                 poll_profile="bacnet-10s",
-                addressing={"network": dev.get("mstp_net"), "mac": dev.get("mstp_mac")},
+                # No device_instance: the controller assigns it in
+                # commissioning order, so the adapter asks with a directed
+                # Who-Is rather than assuming a formula. A device on a trunk
+                # has no IP of its own, so (network, mac) is its address.
+                addressing={"network": dev.get("mstp_net"),
+                            "mac": dev.get("mstp_mac")},
                 via_address=dev["mstp_router_ip"],
             ))
         else:
@@ -174,9 +182,11 @@ def derive_endpoints(
                 out.append(EndpointSpec(
                     protocol="bacnet", role="native_card", address=addr, port=47808,
                     poll_profile="bacnet-10s",
-                    # The controller assigns the device instance; discover it with
-                    # a directed Who-Is rather than assuming a formula.
-                    addressing={"instance": dev.get("bacnet_instance")},
+                    # The controller assigns the device instance; the adapter
+                    # discovers it with a directed Who-Is rather than assuming
+                    # a formula. Carried here only when the export knows it.
+                    addressing=({"device_instance": dev["bacnet_instance"]}
+                                if dev.get("bacnet_instance") else {}),
                 ))
 
     # ---------------------------------------------------------------- Modbus

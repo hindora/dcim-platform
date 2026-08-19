@@ -525,7 +525,7 @@ METRICS: dict[str, MetricDef] = {
         min_valid=None, max_valid=None,
         stale_after_s=300, hot=True,
         group="cooling", rate_of=None, rate_scale=1.0,
-        device_types=("chiller", "pump", "cooling_tower", "cdu", "crah", "valve", "ev2",),
+        device_types=("chiller", "pump", "cooling_tower", "cdu", "crah", "valve", "energy_monitor",),
     ),
     "voltage_ln": MetricDef(
         key="voltage_ln", display_name="Line-to-Neutral Voltage", unit="V",
@@ -533,7 +533,7 @@ METRICS: dict[str, MetricDef] = {
         min_valid=0, max_valid=600,
         stale_after_s=300, hot=False,
         group="power", rate_of=None, rate_scale=1.0,
-        device_types=("ev2", "pdu", "rpp", "ups",),
+        device_types=("energy_monitor", "pdu", "rpp", "ups",),
     ),
     "current": MetricDef(
         key="current", display_name="Current", unit="A",
@@ -541,7 +541,7 @@ METRICS: dict[str, MetricDef] = {
         min_valid=0, max_valid=None,
         stale_after_s=300, hot=True,
         group="power", rate_of=None, rate_scale=1.0,
-        device_types=("ev2", "pdu", "rpp", "ups",),
+        device_types=("energy_monitor", "pdu", "rpp", "ups",),
     ),
     "line_frequency": MetricDef(
         key="line_frequency", display_name="Line Frequency", unit="Hz",
@@ -549,7 +549,7 @@ METRICS: dict[str, MetricDef] = {
         min_valid=0, max_valid=100,
         stale_after_s=300, hot=False,
         group="power", rate_of=None, rate_scale=1.0,
-        device_types=("ev2", "pdu", "ups", "generator",),
+        device_types=("energy_monitor", "pdu", "ups", "generator",),
     ),
     "power_factor": MetricDef(
         key="power_factor", display_name="Power Factor", unit="ratio",
@@ -557,7 +557,7 @@ METRICS: dict[str, MetricDef] = {
         min_valid=0, max_valid=1,
         stale_after_s=300, hot=False,
         group="power", rate_of=None, rate_scale=1.0,
-        device_types=("ev2", "pdu", "rpp",),
+        device_types=("energy_monitor", "pdu", "rpp",),
     ),
     "voltage_thd_pct": MetricDef(
         key="voltage_thd_pct", display_name="Voltage THD", unit="pct",
@@ -565,7 +565,7 @@ METRICS: dict[str, MetricDef] = {
         min_valid=0, max_valid=None,
         stale_after_s=600, hot=False,
         group="power", rate_of=None, rate_scale=1.0,
-        device_types=("ev2",),
+        device_types=("energy_monitor",),
     ),
     "current_thd_pct": MetricDef(
         key="current_thd_pct", display_name="Current THD", unit="pct",
@@ -573,7 +573,7 @@ METRICS: dict[str, MetricDef] = {
         min_valid=0, max_valid=None,
         stale_after_s=600, hot=False,
         group="power", rate_of=None, rate_scale=1.0,
-        device_types=("ev2",),
+        device_types=("energy_monitor",),
     ),
     "harmonic_current_pct": MetricDef(
         key="harmonic_current_pct", display_name="Harmonic Current", unit="pct",
@@ -581,7 +581,7 @@ METRICS: dict[str, MetricDef] = {
         min_valid=0, max_valid=None,
         stale_after_s=600, hot=False,
         group="power", rate_of=None, rate_scale=1.0,
-        device_types=("ev2",),
+        device_types=("energy_monitor",),
     ),
 }
 

@@ -104,21 +104,21 @@ func addressOf(ep *models.Endpoint) (Address, uint32, error) {
 		}
 	}
 	var instance uint32
-	if v, ok := ep.Addressing["device_instance"]; ok {
-		if n, ok := toInt(v); ok {
-			instance = uint32(n)
+	for _, key := range []string{"device_instance", "instance"} {
+		if v, ok := ep.Addressing[key]; ok {
+			if n, ok := toInt(v); ok && n > 0 {
+				instance = uint32(n)
+				break
+			}
 		}
 	}
 	if addr.IP == "" {
 		return addr, 0, fmt.Errorf("%w: endpoint has no address", models.ErrConfig)
 	}
-	if instance == 0 {
-		// Without the device instance there is nothing to read the object-list
-		// from. BACnet identity is the instance number, not the IP, and
-		// guessing it would read a neighbour's points.
-		return addr, 0, fmt.Errorf("%w: addressing.device_instance is required",
-			models.ErrConfig)
-	}
+	// A zero instance is not an error: it means the inventory does not know
+	// the device instance, and the adapter asks the device with a directed
+	// Who-Is. Instances are assigned by the integrator in commissioning
+	// order, so there is no formula to fall back on.
 	return addr, instance, nil
 }
 
@@ -331,12 +331,25 @@ func (a *Adapter) discover(ctx context.Context, ep *models.Endpoint,
 		return nil, fmt.Errorf("%w: no bacnet mapping for device type %q",
 			models.ErrConfig, ep.DeviceType)
 	}
+
+	if instance == 0 {
+		// Ask the device who it is. This is also the liveness check: a
+		// controller that will not answer Who-Is has nothing to poll.
+		obj, err := a.client.Identify(ctx, addr)
+		if err != nil {
+			return nil, classify(fmt.Errorf("identify %s: %w", addr.IP, err))
+		}
+		instance = obj.Instance
+		a.log.Info("bacnet device identified", "endpoint", ep.ID,
+			"address", addr.IP, "device_instance", instance)
+	}
 	deviceObj := ObjectID{Type: ObjDevice, Instance: instance}
 
 	// Element 0 of an array property is its length.
 	vals, err := a.client.ReadPropertyIndex(ctx, addr, deviceObj, PropObjectList, 0)
 	if err != nil {
-		return nil, fmt.Errorf("read object-list length from %s: %w", addr.IP, err)
+		return nil, classify(fmt.Errorf("read object-list length from %s: %w",
+			addr.IP, err))
 	}
 	if len(vals) == 0 {
 		return nil, fmt.Errorf("%w: empty object-list length", ErrUnexpected)
@@ -352,7 +365,8 @@ func (a *Adapter) discover(ctx context.Context, ep *models.Endpoint,
 		vals, err := a.client.ReadPropertyIndex(ctx, addr, deviceObj,
 			PropObjectList, uint32(i))
 		if err != nil {
-			return nil, fmt.Errorf("read object-list[%d] from %s: %w", i, addr.IP, err)
+			return nil, classify(fmt.Errorf("read object-list[%d] from %s: %w",
+				i, addr.IP, err))
 		}
 		if len(vals) == 0 || vals[0].Kind != tagObjectID {
 			continue
@@ -379,7 +393,8 @@ func (a *Adapter) discover(ctx context.Context, ep *models.Endpoint,
 		}
 		results, err := a.client.ReadPropertyMultiple(ctx, addr, specs)
 		if err != nil {
-			return nil, fmt.Errorf("read object names from %s: %w", addr.IP, err)
+			return nil, classify(fmt.Errorf("read object names from %s: %w",
+				addr.IP, err))
 		}
 		for _, r := range results {
 			if r.Err != nil || len(r.Values) == 0 {
@@ -403,6 +418,32 @@ func (a *Adapter) discover(ctx context.Context, ep *models.Endpoint,
 		}
 	}
 	return profile, nil
+}
+
+// classify translates a transport error into the health tracker's vocabulary.
+//
+// The package sentinels are BACnet's; the tracker only understands the model's.
+// Without this translation every failure during discovery - including a device
+// that simply did not answer - arrives as a generic protocol error, and a dead
+// controller reads as a broken decoder.
+func classify(err error) error {
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, ErrTimeout):
+		return fmt.Errorf("%w: %v", models.ErrTimeout, err)
+	case errors.Is(err, ErrNoInvokeID):
+		// Our own back-pressure. Reported as unreachable would send someone
+		// to the plant room for a collector that ran out of capacity.
+		return fmt.Errorf("%w: %v", models.ErrConfig, err)
+	case errors.Is(err, ErrShort), errors.Is(err, ErrUnexpected), errors.Is(err, ErrNotBACnet):
+		return fmt.Errorf("%w: %v", models.ErrDecode, err)
+	}
+	var ae *APDUError
+	if errors.As(err, &ae) {
+		return fmt.Errorf("%w: %v", models.ErrProtocolStatus, err)
+	}
+	return err
 }
 
 // --------------------------------------------------------- error shaping

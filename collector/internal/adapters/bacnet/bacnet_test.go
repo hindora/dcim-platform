@@ -24,8 +24,10 @@ import (
 // codec_test.go. Without that anchor a fake built on our own encoder would
 // prove nothing.
 type fakeDevice struct {
-	conn    *net.UDPConn
-	objects []fakeObject
+	conn     *net.UDPConn
+	objects  []fakeObject
+	instance uint32
+	mute     bool // answers everything except Who-Is
 
 	mu       sync.Mutex
 	reads    int  // ReadProperty requests served
@@ -55,7 +57,8 @@ func newFakeDevice(t *testing.T, objects []fakeObject) *fakeDevice {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	d := &fakeDevice{conn: conn, objects: objects, done: make(chan struct{})}
+	d := &fakeDevice{conn: conn, objects: objects, instance: 40007,
+		done: make(chan struct{})}
 	go d.serve()
 	t.Cleanup(func() {
 		close(d.done)
@@ -119,6 +122,15 @@ func (d *fakeDevice) handle(raw []byte) []byte {
 	if err != nil {
 		return nil
 	}
+	if a.Kind == kindUnconfirmed && a.Service == svcWhoIs {
+		d.mu.Lock()
+		mute := d.mute
+		d.mu.Unlock()
+		if mute {
+			return nil
+		}
+		return d.wrap(d.iAm())
+	}
 	switch a.Service {
 	case svcReadProperty:
 		d.mu.Lock()
@@ -150,6 +162,18 @@ func (d *fakeDevice) wrap(apdu []byte) []byte {
 	length := 4 + len(npdu)
 	out := []byte{bvllType, bvlcOriginalUnicast, byte(length >> 8), byte(length)}
 	return append(out, npdu...)
+}
+
+// iAm is how a device announces the identity BACnet actually uses. The
+// instance is assigned by the integrator, so it cannot be derived from the IP.
+func (d *fakeDevice) iAm() []byte {
+	e := &encoder{}
+	e.raw(pduUnconfirmedRequest<<4, svcIAm)
+	e.tagged(tagObjectID, false, oidWord(ObjectID{ObjDevice, d.instance}))
+	e.appUint(1476)
+	e.tagged(tagEnumerated, false, []byte{3}) // no-segmentation
+	e.appUint(999)
+	return e.bytes()
 }
 
 func (d *fakeDevice) readProperty(a apdu) []byte {
@@ -575,20 +599,83 @@ func TestSilentDeviceReportsTimeout(t *testing.T) {
 	}
 }
 
-// A missing device instance is OUR mistake, and retrying cannot fix it.
-// Reporting it as unreachable sends someone to check cabling.
-func TestMissingDeviceInstanceIsConfig(t *testing.T) {
+// An unknown device instance is DISCOVERED, not configured.
+//
+// The instance is BACnet identity and it is not derivable from the IP: the
+// integrator assigns it in commissioning order, and a device on an MS/TP trunk
+// has no IP at all. A directed Who-Is is what a BMS tool does against a known
+// address, and it avoids the broadcast storm of a global one.
+func TestUnknownDeviceInstanceIsDiscovered(t *testing.T) {
 	d := newFakeDevice(t, chillerObjects())
+	d.instance = 40023
+	a := newAdapter(t, 8)
+	ep := endpointFor(d, "chiller")
+	ep.Addressing = map[string]any{} // nothing known but the address
+
+	out, err := a.Poll(context.Background(), ep)
+	if err != nil {
+		t.Fatalf("poll: %v", err)
+	}
+	if _, ok := collect(out)["water_supply_temp{CHW}"]; !ok {
+		t.Fatal("no telemetry after identifying the device")
+	}
+	a.mu.Lock()
+	got := a.discovery[ep.ID].deviceObj.Instance
+	a.mu.Unlock()
+	if got != 40023 {
+		t.Fatalf("identified instance %d, want 40023", got)
+	}
+}
+
+// A controller that will not answer Who-Is is UNREACHABLE, not misconfigured.
+// Classifying it as a protocol fault would send someone to debug a decoder for
+// a device that is simply off.
+func TestDeviceThatWillNotIdentifyIsATimeout(t *testing.T) {
+	d := newFakeDevice(t, chillerObjects())
+	d.mute = true
 	a := newAdapter(t, 8)
 	ep := endpointFor(d, "chiller")
 	ep.Addressing = map[string]any{}
 
 	_, err := a.Poll(context.Background(), ep)
 	if err == nil {
-		t.Fatal("polled an endpoint with no device instance")
+		t.Fatal("polled a device that never identified itself")
 	}
-	if class := models.ClassifyError(err); class != models.ErrClassConfig {
-		t.Fatalf("error class %q, want config", class)
+	if class := models.ClassifyError(err); class != models.ErrClassTimeout {
+		t.Fatalf("error class %q, want timeout", class)
+	}
+}
+
+// The importer writes device_instance; older rows carry instance. Both are
+// accepted, because an endpoint's addressing is a data contract and renaming a
+// key silently would strand every row written before the change.
+func TestLegacyInstanceKeyIsAccepted(t *testing.T) {
+	d := newFakeDevice(t, chillerObjects())
+	a := newAdapter(t, 8)
+	ep := endpointFor(d, "chiller")
+	ep.Addressing = map[string]any{"instance": 40001}
+
+	if _, err := a.Poll(context.Background(), ep); err != nil {
+		t.Fatalf("poll: %v", err)
+	}
+}
+
+// A device silent from the very first poll must read as a timeout too. Before
+// this was classified at the boundary, the discovery path reported a generic
+// protocol error and a dead controller looked like a broken decoder.
+func TestSilentBeforeDiscoveryIsATimeout(t *testing.T) {
+	d := newFakeDevice(t, chillerObjects())
+	d.mu.Lock()
+	d.silent = true
+	d.mu.Unlock()
+	a := newAdapter(t, 8)
+
+	_, err := a.Poll(context.Background(), endpointFor(d, "chiller"))
+	if err == nil {
+		t.Fatal("polled a silent device without error")
+	}
+	if class := models.ClassifyError(err); class != models.ErrClassTimeout {
+		t.Fatalf("error class %q, want timeout", class)
 	}
 }
 

@@ -34,6 +34,10 @@ type Client struct {
 	mu      sync.Mutex
 	pending map[byte]*call
 	free    []byte
+	// Waiters for an I-Am, keyed by the address that was asked. An
+	// unconfirmed service carries no invoke id, so the source address is the
+	// only thing that ties a reply to a request.
+	identifying map[string][]chan ObjectID
 
 	// Unsolicited traffic (I-Am, COV notifications) goes here.
 	OnUnsolicited func(src Address, a apdu)
@@ -71,6 +75,7 @@ func NewClient(port int, timeout time.Duration, retries int, log *slog.Logger) *
 	c := &Client{
 		port: port, timeout: timeout, retries: retries, log: log,
 		pending: make(map[byte]*call), closed: make(chan struct{}),
+		identifying: make(map[string][]chan ObjectID),
 	}
 	c.free = make([]byte, 0, 256)
 	for i := 0; i < 256; i++ {
@@ -151,6 +156,10 @@ func (c *Client) dispatch(data []byte, from *net.UDPAddr) {
 	src := Address{IP: from.IP.String(), Net: info.SrcNet, MAC: info.SrcMAC}
 
 	if a.Kind == kindUnconfirmed {
+		if a.Service == svcIAm {
+			c.deliverIAm(src, a)
+			return
+		}
 		if c.OnUnsolicited != nil {
 			c.OnUnsolicited(src, a)
 		}
@@ -197,6 +206,91 @@ func sameDevice(want, got Address) bool {
 		}
 	}
 	return true
+}
+
+// addressKey identifies a responder. For a routed device the IP belongs to the
+// router, so the network and MAC are what separate it from its neighbours.
+func addressKey(a Address) string {
+	if a.Routed() {
+		return fmt.Sprintf("%s|%d|%x", a.IP, a.Net, a.MAC)
+	}
+	return a.IP
+}
+
+func (c *Client) deliverIAm(src Address, a apdu) {
+	obj, _, _, err := parseIAm(a.Payload)
+	if err != nil {
+		c.log.Debug("undecodable i-am", "src", src.IP, "error", err)
+		return
+	}
+	key := addressKey(src)
+	c.mu.Lock()
+	waiters := c.identifying[key]
+	delete(c.identifying, key)
+	c.mu.Unlock()
+	for _, ch := range waiters {
+		select {
+		case ch <- obj:
+		default:
+		}
+	}
+}
+
+// Identify asks one device who it is, with a DIRECTED Who-Is.
+//
+// The device instance is BACnet identity, and it is not derivable from the IP:
+// controllers are numbered by the integrator, in commissioning order, and a
+// device on an MS/TP trunk has no IP at all. Asking is the only correct
+// answer. A directed Who-Is is what every BMS discovery tool does against a
+// known address, and it avoids the broadcast storm of a global one.
+func (c *Client) Identify(ctx context.Context, dest Address) (ObjectID, error) {
+	ch := make(chan ObjectID, 1)
+	key := addressKey(dest)
+
+	c.mu.Lock()
+	c.identifying[key] = append(c.identifying[key], ch)
+	c.mu.Unlock()
+	defer func() {
+		c.mu.Lock()
+		remaining := c.identifying[key][:0]
+		for _, w := range c.identifying[key] {
+			if w != ch {
+				remaining = append(remaining, w)
+			}
+		}
+		if len(remaining) == 0 {
+			delete(c.identifying, key)
+		} else {
+			c.identifying[key] = remaining
+		}
+		c.mu.Unlock()
+	}()
+
+	udp := &net.UDPAddr{IP: net.ParseIP(dest.IP), Port: dest.UDPPort()}
+	if udp.IP == nil {
+		return ObjectID{}, fmt.Errorf("bacnet: bad address %q", dest.IP)
+	}
+	pkt := frame(whoIsRequest(0, 0, false), dest, false, false)
+
+	for attempt := 0; attempt <= c.retries; attempt++ {
+		if _, err := c.conn.WriteToUDP(pkt, udp); err != nil {
+			return ObjectID{}, fmt.Errorf("bacnet who-is to %s: %w", dest.IP, err)
+		}
+		timer := time.NewTimer(c.timeout)
+		select {
+		case obj := <-ch:
+			timer.Stop()
+			return obj, nil
+		case <-timer.C:
+		case <-ctx.Done():
+			timer.Stop()
+			return ObjectID{}, ctx.Err()
+		case <-c.closed:
+			timer.Stop()
+			return ObjectID{}, net.ErrClosed
+		}
+	}
+	return ObjectID{}, fmt.Errorf("%w: no i-am from %s", ErrTimeout, dest.IP)
 }
 
 func (c *Client) takeInvokeID() (byte, error) {
