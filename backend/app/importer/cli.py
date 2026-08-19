@@ -48,7 +48,8 @@ async def _run(args: argparse.Namespace) -> int:
         importer = TopologyImporter(
             session,
             include_protocols=protocols,
-            gnmi_server_host=args.gnmi_host or settings.gnmi_server_host,
+            gnmi_gateway=args.gnmi_gateway,
+            gnmi_port=args.gnmi_port,
             collector_id=args.collector_id,
         )
         report = await importer.run(topology)
@@ -77,7 +78,14 @@ def main() -> int:
                          "Only create endpoints for protocols an adapter "
                          "implements: one for a protocol nothing polls sits "
                          "permanently UNKNOWN and reads as a broken device.")
-    ap.add_argument("--gnmi-host", default=None)
+    ap.add_argument("--gnmi-gateway", default=None,
+                    help="dial this shared gNMI gateway instead of each device, "
+                         "selecting the device with prefix.target. Leave unset "
+                         "when every device serves gNMI on its own address.")
+    ap.add_argument("--gnmi-port", type=int, default=50051,
+                    help="port the gNMI server listens on. Not read from the "
+                         "device record: the export carries 57400 on every "
+                         "device while the listeners are on 50051.")
     ap.add_argument("--collector-id", default=None,
                     help="assign the created endpoints to this collector shard")
     ap.add_argument("--log-level", default="INFO")

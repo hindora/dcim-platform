@@ -126,10 +126,11 @@ def derive_endpoints(
     dev: dict,
     *,
     include_protocols: frozenset[str] = frozenset({"snmp"}),
-    gnmi_server_host: str = "127.0.0.1",
+    gnmi_gateway: str | None = None,
     redfish_username: str = "admin",
     redfish_password: str = "password",
     redfish_scheme: str = "http",
+    gnmi_port: int = 50051,
 ) -> list[EndpointSpec]:
     """Return the protocol endpoints implied by one simulator device record.
 
@@ -185,11 +186,28 @@ def derive_endpoints(
         if target:
             out.append(EndpointSpec(
                 protocol="gnmi", role="native_card",
-                # One gRPC server serves every target; the device is selected by
-                # prefix.target, not by the destination address.
-                address=gnmi_server_host,
-                port=int(dev.get("gnmi_port") or 57400),
+                # Each device serves gNMI on ITS OWN address, which is how real
+                # gear works and what this plane actually does - 46 listeners on
+                # 46 device IPs, verified with ss. An earlier version dialled a
+                # single shared server and selected the device with
+                # prefix.target; that shape exists (a collector-facing gNMI
+                # gateway) but is not what is in front of us, and every endpoint
+                # would have pointed at a port nothing was listening on.
+                # A deployment that fronts its devices with a shared gNMI
+                # gateway dials the gateway and selects the device with
+                # prefix.target. That shape is real and supported; it is just
+                # not what this plane does.
+                address=(gnmi_gateway or target),
+                # The per-device gnmi_port in the export is NOT what the
+                # controller binds: every device carries 57400 while the
+                # listeners are on 50051 (verified with ss against the running
+                # plane). The port the server actually listens on is the
+                # authoritative one, so it comes from configuration here
+                # rather than from a device field that nothing updates.
+                port=gnmi_port,
                 poll_profile="gnmi-stream",
+                # The target is still sent: gear that fronts several devices
+                # needs it, and gear that serves only itself ignores it.
                 addressing={"target": target, "insecure": True},
             ))
 

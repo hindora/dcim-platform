@@ -83,11 +83,13 @@ async def fetch_topology(base_url: str, username: str, password: str,
 class TopologyImporter:
     def __init__(self, session: AsyncSession, *,
                  include_protocols: frozenset[str] = frozenset({"snmp"}),
-                 gnmi_server_host: str = "127.0.0.1",
+                 gnmi_gateway: str | None = None,
+                 gnmi_port: int = 50051,
                  collector_id: str | None = None) -> None:
         self.s = session
         self.include_protocols = include_protocols
-        self.gnmi_server_host = gnmi_server_host
+        self.gnmi_gateway = gnmi_gateway
+        self.gnmi_port = gnmi_port
         self.collector_id = collector_id
         self.report = ImportReport()
 
@@ -417,7 +419,8 @@ class TopologyImporter:
         if not device_id:
             return
         specs = derive_endpoints(dev, include_protocols=self.include_protocols,
-                                 gnmi_server_host=self.gnmi_server_host)
+                                 gnmi_gateway=self.gnmi_gateway,
+                                 gnmi_port=self.gnmi_port)
         for spec in specs:
             profile_id = self._profiles.get(spec.poll_profile)
             if profile_id is None:
@@ -457,7 +460,8 @@ class TopologyImporter:
             if not device_id:
                 continue
             for spec in derive_endpoints(dev, include_protocols=self.include_protocols,
-                                         gnmi_server_host=self.gnmi_server_host):
+                                         gnmi_gateway=self.gnmi_gateway,
+                                 gnmi_port=self.gnmi_port):
                 if not spec.via_address:
                     continue
                 parent = self._endpoint_by_addr.get((spec.protocol, spec.via_address))

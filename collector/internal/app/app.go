@@ -11,6 +11,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/hari/dcim-platform/collector/internal/adapters/bacnet"
+	"github.com/hari/dcim-platform/collector/internal/adapters/gnmi"
 	"github.com/hari/dcim-platform/collector/internal/adapters/modbus"
 	"github.com/hari/dcim-platform/collector/internal/adapters/redfish"
 	"github.com/hari/dcim-platform/collector/internal/adapters/snmp"
@@ -40,9 +41,15 @@ type App struct {
 	rfEvents *redfish.EventReceiver
 	bacnet   *bacnet.Adapter
 	modbus   *modbus.Adapter
-	traps    *snmp.TrapReceiver
-	resolver *assign.Resolver
-	adapters map[string]models.Adapter
+	gnmi     *gnmi.Adapter
+	gnmiSubs *gnmi.Subscriber
+	// The context streams live under. Held on the App because assignment
+	// changes arrive on a callback that has no context of its own, and a
+	// stream has to outlive the change that started it.
+	streamCtx context.Context
+	traps     *snmp.TrapReceiver
+	resolver  *assign.Resolver
+	adapters  map[string]models.Adapter
 
 	startedAt time.Time
 	pollsOK   uint64
@@ -120,6 +127,25 @@ func New(cfg *config.Config, version string) (*App, error) {
 		log.Info("modbus adapter enabled", "templates", len(mbMaps.Templates))
 	}
 
+	if cfg.Protocols.GNMI.Enabled {
+		gnMaps, err := mapping.LoadGNMI(cfg.Mappings.Dir)
+		if err != nil {
+			return nil, fmt.Errorf("load gnmi mappings: %w", err)
+		}
+		pool := gnmi.NewConnPool(cfg.Protocols.GNMI.Timeout, log)
+		a.gnmi = gnmi.New(gnMaps, pool, log, mets)
+		a.adapters["gnmi"] = a.gnmi
+		if cfg.Protocols.GNMI.Stream {
+			a.gnmiSubs = gnmi.NewSubscriber(a.gnmi, pool, gnMaps, pub, tracker,
+				log, mets, cfg.Protocols.GNMI.StreamGraceFactor)
+			if cfg.Protocols.GNMI.GraceWindow > 0 {
+				a.gnmiSubs.SetGraceWindow(cfg.Protocols.GNMI.GraceWindow)
+			}
+		}
+		log.Info("gnmi adapter enabled", "subscriptions", len(gnMaps.Subscriptions),
+			"stream", cfg.Protocols.GNMI.Stream)
+	}
+
 	a.resolver = assign.NewResolver()
 
 	if cfg.Protocols.RedfishEvent.Enabled {
@@ -166,6 +192,7 @@ func New(cfg *config.Config, version string) (*App, error) {
 			"redfish": cfg.Protocols.Redfish.MaxConcurrent,
 			"bacnet":  cfg.Protocols.BACnet.MaxConcurrent,
 			"modbus":  cfg.Protocols.Modbus.MaxConcurrent,
+			"gnmi":    cfg.Protocols.GNMI.MaxConcurrent,
 		},
 		PerHostLimits: map[string]int{
 			"snmp":    cfg.Protocols.SNMP.PerHost,
@@ -177,6 +204,7 @@ func New(cfg *config.Config, version string) (*App, error) {
 			// one RS-485 transaction at a time, so parallel requests only
 			// queue inside the gateway where the collector cannot see them.
 			"modbus": cfg.Protocols.Modbus.PerHost,
+			"gnmi":   cfg.Protocols.GNMI.PerHost,
 		},
 	}, a.poll, log, mets)
 
@@ -249,6 +277,11 @@ func (a *App) Run(ctx context.Context) error {
 			a.assign.Endpoints)
 	}
 
+	if a.gnmiSubs != nil {
+		a.streamCtx = ctx
+		a.gnmiSubs.Manage(ctx, a.assign.Endpoints())
+	}
+
 	a.sched.Start(ctx)
 	go a.heartbeatLoop(ctx)
 	go a.gaugeLoop(ctx)
@@ -264,6 +297,9 @@ func (a *App) Run(ctx context.Context) error {
 	// Wait for in-flight polls, then let the publisher flush. Order matters:
 	// flushing first would drop whatever those polls produce.
 	done := make(chan struct{})
+	if a.gnmiSubs != nil {
+		a.gnmiSubs.Stop()
+	}
 	go func() { a.sched.Wait(); close(done) }()
 	select {
 	case <-done:
@@ -325,10 +361,24 @@ func (a *App) poll(ctx context.Context, ep *models.Endpoint) {
 	}
 }
 
+// streamed reports an endpoint the gNMI subscriber owns rather than the
+// scheduler: a zero interval with push enabled, which is what the gnmi-stream
+// poll profile means.
+func (a *App) streamed(ep *models.Endpoint) bool {
+	return a.gnmiSubs != nil && gnmi.StreamOnly(ep)
+}
+
 func (a *App) applyDiff(diff assign.Diff) {
 	// The resolver turns a trap's source address into a device, so it has to
 	// track the full assignment rather than the diff.
 	a.resolver.Replace(a.assign.Endpoints())
+	if a.gnmiSubs != nil && a.streamCtx != nil {
+		// The subscriber diffs the full assignment itself: a stream is a
+		// long-lived session keyed on the endpoint, not something to start and
+		// stop from a delta. Before Run has set the context there is nothing
+		// to attach a session to, and Run performs the first Manage itself.
+		a.gnmiSubs.Manage(a.streamCtx, a.assign.Endpoints())
+	}
 
 	for _, ep := range diff.Added {
 		if _, ok := a.adapters[ep.Protocol]; !ok {
@@ -336,10 +386,21 @@ func (a *App) applyDiff(diff assign.Diff) {
 			// an error - it is a phase that has not landed yet.
 			continue
 		}
+		if a.streamed(ep) {
+			// Handed to the subscriber below. Scheduling it as well would
+			// collect the same device twice by two different mechanisms, and
+			// the duplicate samples are indistinguishable from real ones.
+			continue
+		}
 		a.tracker.Register(ep)
 		a.sched.Add(ep)
 	}
 	for _, ep := range diff.Changed {
+		if a.streamed(ep) {
+			// A profile change can turn a polled endpoint into a streamed one.
+			a.sched.Remove(ep.ID)
+			continue
+		}
 		a.sched.Add(ep)
 	}
 	for _, ep := range diff.Removed {
@@ -353,6 +414,9 @@ func (a *App) applyDiff(diff assign.Diff) {
 		}
 		if a.modbus != nil {
 			a.modbus.Forget(ep.ID)
+		}
+		if a.gnmi != nil {
+			a.gnmi.Forget(ep.ID)
 		}
 		if a.redfish != nil {
 			a.redfish.Forget(ep.ID)

@@ -85,6 +85,7 @@ export type MetricKey =
   | 'transfer_count'
   | 'time_on_emergency'
   | 'operating_mode'
+  | 'component_temperature'
   ;
 
 export interface MetricDef {
@@ -856,6 +857,15 @@ export const METRICS: Record<MetricKey, MetricDef> = {
     maxValid: null,
     staleAfterS: 300, hot: true,
     group: 'power',
+  },
+  'component_temperature': {
+    key: 'component_temperature', displayName: 'Component Temperature'.replace(/^'|'$/g, ''),
+    unit: 'C', valueType: 'gauge',
+    aggregation: 'avg',
+    minValid: -20,
+    maxValid: 150,
+    staleAfterS: 300, hot: false,
+    group: 'thermal',
   },
 };
 

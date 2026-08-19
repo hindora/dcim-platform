@@ -695,6 +695,14 @@ METRICS: dict[str, MetricDef] = {
         group="power", rate_of=None, rate_scale=1.0,
         device_types=("ups", "ats", "generator",),
     ),
+    "component_temperature": MetricDef(
+        key="component_temperature", display_name="Component Temperature", unit="C",
+        value_type="gauge", aggregation="avg",
+        min_valid=-20, max_valid=150,
+        stale_after_s=300, hot=False,
+        group="thermal", rate_of=None, rate_scale=1.0,
+        device_types=("switch", "router", "firewall", "load_balancer", "oob_switch",),
+    ),
 }
 
 HOT_METRICS = tuple(k for k, m in METRICS.items() if m.hot)

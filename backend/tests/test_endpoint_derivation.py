@@ -133,15 +133,32 @@ def test_modbus_gateway_is_recorded_but_not_polled():
     assert eps[0].enabled is False
 
 
-def test_gnmi_target_is_the_device_but_address_is_the_server(sim_switch_device):
-    """One gRPC server serves every target; selection is prefix.target."""
+def test_gnmi_is_dialled_at_the_device_itself(sim_switch_device):
+    """Each device serves gNMI on its own address.
+
+    That is how real gear works and what this plane does - 46 listeners on 46
+    device IPs. An earlier version dialled one shared server and selected the
+    device with prefix.target; that shape exists (a collector-facing gNMI
+    gateway) but is not what is in front of us, and every endpoint would have
+    pointed at a port nothing was listening on.
+
+    The target is still sent, because gear that fronts several devices needs
+    it and gear that serves only itself ignores it.
+    """
     eps = derive_endpoints(sim_switch_device,
                            include_protocols=frozenset({"gnmi"}),
-                           gnmi_server_host="192.0.2.10")
+                           )
     assert len(eps) == 1
-    assert eps[0].address == "192.0.2.10"
+    assert eps[0].address == "10.51.11.2"
     assert eps[0].addressing["target"] == "10.51.11.2"
-    assert eps[0].port == 57400
+    # NOT the device's own gnmi_port field, which says 57400 on every device
+    # while the listeners are on 50051. The port the server actually binds is
+    # the authoritative one.
+    assert sim_switch_device["gnmi_port"] == 57400
+    assert eps[0].port == 50051
+    assert derive_endpoints(sim_switch_device,
+                            include_protocols=frozenset({"gnmi"}),
+                            gnmi_port=9339)[0].port == 9339
 
 
 def test_redfish_tls_verification_is_per_endpoint(sim_server_device):

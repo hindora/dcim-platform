@@ -1009,3 +1009,22 @@ metrics:
     group: power
     device_types: [ups, ats, generator]
     description: The device's own state word - online/battery/bypass, normal/emergency, standby/running/cranking. Text rather than a set of booleans because these states are mutually exclusive and the device already publishes exactly one.
+
+  # ---------------------------------------------------- platform (gNMI, 3.6)
+
+  - key: component_temperature
+    display_name: Component Temperature
+    unit: C
+    value_type: gauge
+    aggregation: avg
+    min_valid: -20
+    max_valid: 150
+    stale_after_s: 300
+    group: thermal
+    device_types: [switch, router, firewall, load_balancer, oob_switch]
+    description: >-
+      A temperature sensor on a named hardware component, from
+      openconfig-platform. instance is the component (CHASSIS, LINECARD, a
+      transceiver). A CPU component maps to cpu_temperature instead, because
+      that is the same physical quantity a server reports and splitting it by
+      protocol would make the fleet impossible to chart in one view.

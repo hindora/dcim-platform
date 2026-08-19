@@ -59,6 +59,7 @@ type Config struct {
 		RedfishEvent RedfishEventCfg `yaml:"redfish_event"`
 		BACnet       BACnetCfg       `yaml:"bacnet"`
 		Modbus       ProtocolCfg     `yaml:"modbus"`
+		GNMI         GNMICfg         `yaml:"gnmi"`
 	} `yaml:"protocols"`
 
 	Health struct {
@@ -139,6 +140,28 @@ type BACnetCfg struct {
 	BatchSize int `yaml:"batch_size"`
 }
 
+// GNMICfg configures the gNMI client.
+//
+// Two collection modes share one connection pool: Get for endpoints the
+// scheduler polls, and Subscribe for endpoints whose poll profile says the
+// device pushes instead (interval 0, push enabled - the gnmi-stream profile).
+type GNMICfg struct {
+	Enabled       bool          `yaml:"enabled"`
+	MaxConcurrent int           `yaml:"max_concurrent"`
+	PerHost       int           `yaml:"per_host"`
+	Timeout       time.Duration `yaml:"timeout"`
+	// Stream turns on the Subscribe path. Without it, push-profile endpoints
+	// are simply not collected - which is visible as an endpoint that never
+	// reports, rather than as silently missing data.
+	Stream bool `yaml:"stream"`
+	// A stream that is connected and silent looks exactly like one that has
+	// died. Silence past this multiple of the requested sample interval fails
+	// the session.
+	StreamGraceFactor float64 `yaml:"stream_grace_factor"`
+	// GraceWindow overrides the interval-derived window with a fixed one.
+	GraceWindow time.Duration `yaml:"stream_grace_window"`
+}
+
 type ProtocolCfg struct {
 	Enabled        bool          `yaml:"enabled"`
 	MaxConcurrent  int           `yaml:"max_concurrent"`
@@ -215,6 +238,10 @@ func Default() *Config {
 	c.Protocols.Modbus = ProtocolCfg{
 		Enabled: false, MaxConcurrent: 24, PerHost: 1,
 		Timeout: 3 * time.Second, Retries: 1,
+	}
+	c.Protocols.GNMI = GNMICfg{
+		Enabled: false, MaxConcurrent: 16, PerHost: 2,
+		Timeout: 10 * time.Second, Stream: true, StreamGraceFactor: 3,
 	}
 	c.Health.OfflineThreshold = 3
 	c.Mappings.Dir = "../contracts/mappings"

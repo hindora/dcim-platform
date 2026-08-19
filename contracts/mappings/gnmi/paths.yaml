@@ -1,0 +1,95 @@
+# gNMI subscriptions and the leaves extracted from them.
+#
+# gNMI is a tree, not a table. A subscription names a SUBTREE and the device
+# returns everything under it, so the mapping has two halves: which subtrees to
+# ask for, and which leaves inside them are telemetry.
+#
+# ENCODING IS JSON_IETF, which matters more than it sounds. RFC 7951 requires
+# 64-bit integers to be encoded as JSON STRINGS, because JSON numbers are
+# doubles and would lose precision above 2^53. So an interface counter arrives
+# as "18446744073709551615", not as a number, and a decoder that assumes
+# numbers silently drops every counter on the device. The adapter accepts both.
+#
+# PATHS ARE MATCHED WITHOUT MODULE PREFIXES. RFC 7951 names a key
+# "openconfig-interfaces:interfaces" at a module boundary and "interfaces"
+# elsewhere, and vendors differ on where they consider the boundary to be.
+# Matching on the local name is what makes one mapping work across Arista,
+# Cisco and Juniper.
+version: 1
+encoding: json_ietf
+
+subscriptions:
+
+  # ------------------------------------------------------------ interfaces
+  # The reason gNMI exists here. An SNMP walk of ifXTable on a 48-port switch
+  # is dozens of round trips against the agent's CPU; one gNMI subscription
+  # delivers the same counters on a schedule the device controls.
+  - name: interfaces
+    path: /interfaces
+    sample_interval: 30s
+    # The leaves belong to each LIST ENTRY, not to the subtree root: every one
+    # of them is per interface, and the interface name is the instance.
+    list:
+      at: interface
+      key: name
+      leaves:
+        # Counters. Strings on the wire - see the note on RFC 7951 above.
+        - { at: state/counters/in-octets,        metric: if_in_octets }
+        - { at: state/counters/out-octets,       metric: if_out_octets }
+        - { at: state/counters/in-errors,        metric: if_in_errors }
+        - { at: state/counters/out-errors,       metric: if_out_errors }
+        - { at: state/counters/in-discards,      metric: if_in_discards }
+        - { at: state/counters/out-discards,     metric: if_out_discards }
+        # Status. UP/DOWN as text, not the SNMP integers.
+        - { at: state/oper-status,  metric: if_oper_state,
+            enum: { UP: 1, DOWN: 0, TESTING: 0, UNKNOWN: 0, NOT_PRESENT: 0 } }
+        - { at: state/admin-status, metric: if_admin_state,
+            enum: { UP: 1, DOWN: 0, TESTING: 0 } }
+        # Speed is an ENUM here, not a number. SNMP's ifHighSpeed gives
+        # megabits; openconfig gives a symbolic rate, and the registry stores
+        # bits per second, so both adapters converge on one unit from
+        # different shapes.
+        - { at: ethernet/state/port-speed, metric: if_speed,
+            enum: { SPEED_10MB: 10000000, SPEED_100MB: 100000000,
+                    SPEED_1GB: 1000000000, SPEED_2500MB: 2500000000,
+                    SPEED_5GB: 5000000000, SPEED_10GB: 10000000000,
+                    SPEED_25GB: 25000000000, SPEED_40GB: 40000000000,
+                    SPEED_50GB: 50000000000, SPEED_100GB: 100000000000,
+                    SPEED_200GB: 200000000000, SPEED_400GB: 400000000000 } }
+
+  # ---------------------------------------------------------------- system
+  - name: system
+    path: /system
+    sample_interval: 60s
+    leaves:
+      # NOT a standard openconfig leaf, and it carries CENTISECONDS - the same
+      # value SNMP's sysUpTime returns. Without the scale the two planes
+      # disagree by a factor of a hundred for the same device, which reads as
+      # a device that has been up for a year.
+      - { at: state/uptime, metric: sys_uptime, scale: 0.01 }
+      - { at: memory/state/physical, metric: memory_total }
+      - { at: memory/state/reserved, metric: memory_used }
+      - { at: memory/state/free,     metric: memory_available }
+      - { at: memory/state/utilized, metric: memory_utilization }
+    lists:
+      # A device with one CPU reports index ALL; a multi-CPU device reports
+      # each. The index is the instance either way.
+      - at: cpus/cpu
+        key: index
+        leaves:
+          - { at: state/total/instant, metric: cpu_utilization }
+
+  # ------------------------------------------------------------ components
+  - name: components
+    path: /components
+    sample_interval: 60s
+    list:
+      at: component
+      key: name
+      leaves:
+        - { at: state/temperature/instant, metric: component_temperature }
+    # Per-component overrides. A CPU component's temperature is the same
+    # physical quantity a server publishes over Redfish, so it lands on the
+    # same key; anything else keeps its component name as the instance.
+    entries:
+      CPU: { metric: cpu_temperature, instance: CPU }
