@@ -85,7 +85,7 @@ Order chosen by value-per-effort and by risk.
 | 3.5 | DONE - **Modbus/TCP** (3 days) | utility meter is the PUE numerator; gateway unit-id fan-out |
 | 3.6 | DONE - **gNMI** poller + STREAM (4 days) | interface counters at higher fidelity than SNMP |
 | 3.7 | DONE - Interface identity normalisation (gNMI name ↔ SNMP ifIndex) (1 day) | otherwise one interface produces two series |
-| 3.8 | Per-protocol integration tests | the table in `14-testing-strategy.md` §3 |
+| 3.8 | DONE - Per-protocol integration tests | the table in `14-testing-strategy.md` §3 |
 
 **Phase gate:** every device type in the simulator reports at least its primary
 metrics; `SELECT device_type, count(DISTINCT metric_id) FROM ...` shows no
