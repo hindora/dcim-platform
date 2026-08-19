@@ -303,11 +303,25 @@ func (a *Adapter) sample(ep *models.Endpoint, p discoveredPoint, value float64,
 
 	def, _ := models.ValidateMetric(p.metric)
 	vt := models.ValueTypeGauge
+	var uintValue uint64
 	switch def.ValueType {
 	case "bool":
 		vt = models.ValueTypeBool
 	case "counter":
 		vt = models.ValueTypeCounter
+		// A counter's value travels in UintValue - that is the field the
+		// ingest worker stores and derives rates from. Setting only
+		// DoubleValue leaves it reading zero, which is how run_hours and
+		// energy_consumed arrived in the database as a flat 0.00 while the
+		// device was reporting 25000.9 hours.
+		//
+		// BACnet accumulators are REALs, so the fraction is lost here. That is
+		// tolerable because these points are read on the slow cadence: over
+		// minutes rather than seconds, every accumulator advances by more than
+		// one whole unit, which is what rate derivation needs.
+		if value > 0 {
+			uintValue = uint64(value + 0.5)
+		}
 	}
 	return models.Telemetry{
 		EndpointID:     ep.ID,
@@ -316,6 +330,7 @@ func (a *Adapter) sample(ep *models.Endpoint, p discoveredPoint, value float64,
 		Instance:       p.instance,
 		ValueType:      vt,
 		DoubleValue:    value,
+		UintValue:      uintValue,
 		Unit:           def.Unit,
 		ObservedAt:     now,
 		CollectedAt:    now,

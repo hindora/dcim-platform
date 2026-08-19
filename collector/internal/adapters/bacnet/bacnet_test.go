@@ -825,3 +825,42 @@ func TestSlowPointsAreReadOnACadence(t *testing.T) {
 		}
 	}
 }
+
+// A counter's value travels in UintValue - that is the field the ingest worker
+// stores and derives rates from. Setting only DoubleValue is silent: the
+// samples arrive, the endpoint reports healthy, and every accumulator reads a
+// flat zero in the database while the device reports 25000 hours.
+func TestCounterMetricsCarryUintValue(t *testing.T) {
+	objects := []fakeObject{
+		{id: ObjectID{ObjAnalogInput, 13}, name: "Run_Hours", value: 25000.891},
+		{id: ObjectID{ObjAnalogInput, 1}, name: "CHW_Supply_Temp", value: 7.2},
+	}
+	d := newFakeDevice(t, objects)
+	a := newAdapter(t, 8)
+
+	out, err := a.Poll(context.Background(), endpointFor(d, "chiller"))
+	if err != nil {
+		t.Fatalf("poll: %v", err)
+	}
+	got := collect(out)
+
+	hours, ok := got["run_hours"]
+	if !ok {
+		t.Fatal("run_hours missing")
+	}
+	if hours.ValueType != models.ValueTypeCounter {
+		t.Fatalf("run_hours value type %v, want counter", hours.ValueType)
+	}
+	if hours.UintValue != 25001 {
+		t.Fatalf("run_hours uint value %d, want 25001", hours.UintValue)
+	}
+	if hours.DoubleValue < 25000 {
+		t.Errorf("the float value was lost: %v", hours.DoubleValue)
+	}
+
+	// A gauge must not acquire one.
+	temp := got["water_supply_temp{CHW}"]
+	if temp.UintValue != 0 {
+		t.Errorf("gauge carried a uint value: %d", temp.UintValue)
+	}
+}
