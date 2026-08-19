@@ -8,7 +8,7 @@ Durations assume one experienced full-stack engineer. Scale accordingly.
 
 ---
 
-## Phase 0 — Foundations (1 week)
+## Phase 0 — Foundations (1 week) — DELIVERED
 
 | # | Deliverable | Exit criterion |
 |---|---|---|
@@ -24,7 +24,7 @@ they are cheap now and expensive later.
 
 ---
 
-## Phase 1 — The vertical slice (2 weeks)
+## Phase 1 — The vertical slice (2 weeks) — DELIVERED
 
 One protocol, one metric family, all the way to a pixel.
 
@@ -45,7 +45,7 @@ one poll interval, with no manual step. Do not start Phase 2 until this holds.
 
 ---
 
-## Phase 2 — Events and alarms (2 weeks)
+## Phase 2 — Events and alarms (2 weeks) — DELIVERED
 
 | # | Deliverable | Exit criterion |
 |---|---|---|
@@ -59,6 +59,16 @@ one poll interval, with no manual step. Do not start Phase 2 until this holds.
 
 **Phase gate:** trap → alarm → browser in under 2 seconds; a clear trap clears the
 same alarm.
+
+> **Met.** Verified with real vendor OIDs on the wire: an APC `rPDUOverload`
+> (318.0.276) becomes a CRITICAL `pdu_load_critical` alarm and arrives on a
+> subscribed WebSocket; `rPDUNearOverloadCleared` (318.0.275) clears it. Source
+> attribution fell back to the community string when the source address did not
+> match, which is the path that matters for a wildcard-bound agent plane.
+>
+> Not yet built from this phase: 2.5's rule-test endpoint (rules are listed and
+> can be enabled/disabled, but there is no "how often would this have fired"
+> preview) and the alarm drawer's history timeline.
 
 ---
 
