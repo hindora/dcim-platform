@@ -95,6 +95,15 @@ profiles:
         # becomes a series - see internal/normalize.
         kind: interface
         index_oid: 1.3.6.1.2.1.31.1.1.1.1         # ifName
+        # Key these rows by the ifName VALUE, not by the row's OID suffix.
+        # index_oid only says which column to enumerate rows from; without
+        # instance_from the instance is the suffix, which is ifIndex - so
+        # ifXTable counters came back as "43" while gNMI reported
+        # "GigabitEthernet0/43" for the same port, and one port became two
+        # series. ifTable cannot do this (it has no ifName column), so its
+        # rows stay ifIndex-keyed and the ingest worker resolves them against
+        # inventory.
+        instance_from: 1.3.6.1.2.1.31.1.1.1.1
         columns:
           # The traffic counters, and the reason anyone polls an interface at
           # all. HIGH-CAPACITY (64-bit) versions, not ifInOctets/.10: a 32-bit
