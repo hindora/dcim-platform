@@ -20,6 +20,7 @@ from app.api.v1 import api_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
 from app.db.session import dispose_engine
+from app.websocket.hub import ConnectionHub, set_hub
 
 log = get_logger("api")
 
@@ -29,7 +30,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     configure_logging(service=settings.service_name)
     log.info("api starting", version=__version__, environment=settings.environment)
+
+    # One hub per process, with a single Redis pattern subscription behind it.
+    from redis.asyncio import Redis
+
+    redis = Redis.from_url(settings.redis_url)
+    hub = ConnectionHub(redis, coalesce_ms=settings.ws_coalesce_ms,
+                        max_topics=settings.ws_max_topics)
+    await hub.start()
+    set_hub(hub)
+
     yield
+
+    await hub.stop()
+    set_hub(None)
+    await redis.aclose()
     await dispose_engine()
     log.info("api stopped")
 

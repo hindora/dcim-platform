@@ -52,6 +52,23 @@ class Fanout:
         await self._publish(f"device:{device_id}", frame)
         await self._publish("dashboard", frame)
 
+    async def alarm(self, kind: str, alarm: dict[str, Any]) -> None:
+        """Alarms are never coalesced: they are rare and latency matters.
+
+        A critical alarm has to reach the browser in well under a second, which
+        is the whole reason the WebSocket exists rather than a poll loop.
+        """
+        frame = {"event": kind, "alarm": alarm}
+        await self._publish("alarms", frame)
+        severity = alarm.get("severity")
+        if severity in ("CRITICAL", "MAJOR"):
+            await self._publish("alarms:critical", frame)
+        if alarm.get("device_id"):
+            await self._publish(f"device:{alarm['device_id']}", frame)
+
+    async def event(self, item: dict[str, Any]) -> None:
+        await self._publish("events", {"event": "event_created", "item": item})
+
     async def collector_status(self, collector_id: str, status: str,
                                detail: str | None = None) -> None:
         await self._publish("collectors", {

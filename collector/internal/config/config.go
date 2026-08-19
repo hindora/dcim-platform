@@ -53,7 +53,8 @@ type Config struct {
 	} `yaml:"workers"`
 
 	Protocols struct {
-		SNMP ProtocolCfg `yaml:"snmp"`
+		SNMP     ProtocolCfg `yaml:"snmp"`
+		SNMPTrap TrapCfg     `yaml:"snmp_trap"`
 	} `yaml:"protocols"`
 
 	Health struct {
@@ -80,6 +81,18 @@ type Config struct {
 type StreamCfg struct {
 	Name   string `yaml:"name"`
 	MaxLen int64  `yaml:"maxlen"`
+}
+
+// TrapCfg configures the inbound trap path, which is deliberately separate
+// from polling: a trap reports a state change and carries no value, so it must
+// never be fed through the telemetry pipeline.
+type TrapCfg struct {
+	Enabled bool   `yaml:"enabled"`
+	Listen  string `yaml:"listen"`
+	Workers int    `yaml:"workers"`
+	// Per-source ceiling. One flapping interface must not be able to fill the
+	// stream or the disk.
+	RateLimitPerMinute int `yaml:"rate_limit_per_minute"`
 }
 
 type ProtocolCfg struct {
@@ -136,6 +149,10 @@ func Default() *Config {
 		Enabled: true, MaxConcurrent: 256, PerHost: 4,
 		Timeout: 3 * time.Second, Retries: 2, MaxRepetitions: 25,
 		AcceptAnySourceReply: true,
+	}
+	c.Protocols.SNMPTrap = TrapCfg{
+		Enabled: true, Listen: "0.0.0.0:162", Workers: 8,
+		RateLimitPerMinute: 100,
 	}
 	c.Health.OfflineThreshold = 3
 	c.Mappings.Dir = "../contracts/mappings"

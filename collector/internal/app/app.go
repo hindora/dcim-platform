@@ -33,6 +33,8 @@ type App struct {
 	assign  *assign.Client
 
 	snmp     *snmp.Adapter
+	traps    *snmp.TrapReceiver
+	resolver *assign.Resolver
 	adapters map[string]models.Adapter
 
 	startedAt time.Time
@@ -72,6 +74,18 @@ func New(cfg *config.Config, version string) (*App, error) {
 		a.snmp = snmp.New(maps, log, mets, cfg.Protocols.SNMP.MaxRepetitions,
 			cfg.Protocols.SNMP.AcceptAnySourceReply)
 		a.adapters["snmp"] = a.snmp
+	}
+
+	a.resolver = assign.NewResolver()
+	if cfg.Protocols.SNMPTrap.Enabled {
+		trapTable, err := mapping.LoadTraps(cfg.Mappings.Dir)
+		if err != nil {
+			return nil, fmt.Errorf("load trap mappings: %w", err)
+		}
+		log.Info("trap mappings loaded", "wire_oids", trapTable.Len())
+		a.traps = snmp.NewTrapReceiver(trapTable, a.resolver, pub, log, mets,
+			cfg.Protocols.SNMPTrap.Listen, cfg.Protocols.SNMPTrap.Workers,
+			cfg.Protocols.SNMPTrap.RateLimitPerMinute)
 	}
 	if len(a.adapters) == 0 {
 		return nil, fmt.Errorf("no protocol adapters enabled")
@@ -117,6 +131,17 @@ func (a *App) Run(ctx context.Context) error {
 
 	go a.pub.Run(ctx)
 
+	if a.traps != nil {
+		go func() {
+			// A trap listener that cannot bind must not take the collector
+			// down: polling still works, and the operator needs to see which
+			// half is broken.
+			if err := a.traps.Listen(ctx); err != nil {
+				a.log.Error("trap receiver stopped", "error", err)
+			}
+		}()
+	}
+
 	// First assignment is fetched synchronously: starting with an empty work
 	// list and filling it a tick later makes the startup logs lie.
 	if err := a.assign.Refresh(ctx); err != nil {
@@ -124,6 +149,7 @@ func (a *App) Run(ctx context.Context) error {
 		a.tracker.SetSelfDegraded(true)
 	} else {
 		a.ready.SetAssignment(true)
+		a.resolver.Replace(a.assign.Endpoints())
 		a.log.Info("initial assignment", "endpoints", a.assign.Count())
 	}
 	go a.assign.Run(ctx)
@@ -205,6 +231,10 @@ func (a *App) poll(ctx context.Context, ep *models.Endpoint) {
 }
 
 func (a *App) applyDiff(diff assign.Diff) {
+	// The resolver turns a trap's source address into a device, so it has to
+	// track the full assignment rather than the diff.
+	a.resolver.Replace(a.assign.Endpoints())
+
 	for _, ep := range diff.Added {
 		if _, ok := a.adapters[ep.Protocol]; !ok {
 			// An endpoint for a protocol this build does not implement is not

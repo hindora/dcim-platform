@@ -134,6 +134,50 @@ export interface DashboardSummary {
   as_of: string;
 }
 
+export interface Alarm {
+  id: string;
+  device_id: string;
+  device_name: string;
+  device_type: string;
+  alarm_type: string;
+  instance: string;
+  severity: string;
+  state: string;
+  message: string;
+  metric_key?: string | null;
+  trigger_value?: number | null;
+  threshold?: number | null;
+  source: string;
+  first_seen: string;
+  last_seen: string;
+  occurrence_count: number;
+  is_symptom: boolean;
+  datacenter_code?: string | null;
+  room_name?: string | null;
+  rack_name?: string | null;
+}
+
+export interface AlarmSummary {
+  active: number;
+  critical: number;
+  major: number;
+  warning: number;
+  acknowledged: number;
+  suppressed_symptoms: number;
+}
+
+export interface EventItem {
+  id: number;
+  ts: string;
+  device_id?: string | null;
+  device_name?: string | null;
+  source_ip?: string | null;
+  event_type: string;
+  source: string;
+  severity: string;
+  message: string;
+}
+
 export interface Page<T> {
   items: T[];
   next_cursor?: string | null;
@@ -170,4 +214,33 @@ export const api = {
   },
 
   collectors: () => request<{ items: unknown[] }>('/collector/instances'),
+
+  alarms: (params: Record<string, string | undefined> = {}) => {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) if (v) q.set(k, v);
+    const qs = q.toString();
+    return request<{ items: Alarm[] }>(`/alarms${qs ? `?${qs}` : ''}`);
+  },
+
+  alarmSummary: () => request<AlarmSummary>('/alarms/summary'),
+
+  acknowledgeAlarm: (id: string) =>
+    request<{ ok: boolean }>(`/alarms/${id}/acknowledge`, {
+      method: 'POST', body: JSON.stringify({}),
+    }),
+
+  clearAlarm: (id: string) =>
+    request<{ ok: boolean }>(`/alarms/${id}/clear`, { method: 'POST', body: '{}' }),
+
+  events: (params: Record<string, string | undefined> = {}) => {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) if (v) q.set(k, v);
+    const qs = q.toString();
+    return request<{ items: EventItem[] }>(`/events${qs ? `?${qs}` : ''}`);
+  },
+
+  wsTicket: () =>
+    request<{ ticket: string; expires_in: number }>('/ws/ticket', {
+      method: 'POST', body: '{}',
+    }),
 };

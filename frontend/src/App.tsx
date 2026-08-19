@@ -1,9 +1,11 @@
 import { useState } from 'react';
 import { NavLink, Navigate, Route, Routes } from 'react-router-dom';
 import { api, getToken, setToken } from './api/client';
+import { AlarmList } from './features/alarms/AlarmList';
 import { Dashboard } from './features/dashboard/Dashboard';
 import { DeviceDetail } from './features/devices/DeviceDetail';
 import { DeviceList } from './features/devices/DeviceList';
+import { useSocketStatus } from './ws/useSocket';
 
 function Login({ onDone }: { onDone: () => void }) {
   const [username, setUsername] = useState('admin');
@@ -51,6 +53,8 @@ function Sidebar({ onSignOut }: { onSignOut: () => void }) {
         <NavLink to="/" end>Dashboard</NavLink>
         <div className="section">Infrastructure</div>
         <NavLink to="/devices">Devices</NavLink>
+        <div className="section">Monitoring</div>
+        <NavLink to="/alarms">Alarms</NavLink>
       </nav>
       <div className="section">Session</div>
       <nav>
@@ -59,6 +63,18 @@ function Sidebar({ onSignOut }: { onSignOut: () => void }) {
         <a href="#" onClick={(e) => { e.preventDefault(); onSignOut(); }}>Sign out</a>
       </nav>
     </aside>
+  );
+}
+
+/** Silence is not an acceptable indication that the live feed has died. */
+function LiveBanner() {
+  const status = useSocketStatus();
+  if (status === 'open') return null;
+  return (
+    <div className="banner">
+      Live updates {status}. Values on this page may be stale until the
+      connection is restored.
+    </div>
   );
 }
 
@@ -71,10 +87,12 @@ export default function App() {
     <div className="app">
       <Sidebar onSignOut={() => { setToken(null); setAuthed(false); }} />
       <main>
+        <LiveBanner />
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/devices" element={<DeviceList />} />
           <Route path="/devices/:id" element={<DeviceDetail />} />
+          <Route path="/alarms" element={<AlarmList />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>

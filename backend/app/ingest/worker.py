@@ -26,10 +26,13 @@ import msgpack
 from redis.asyncio import Redis
 from sqlalchemy import text
 
+from app.alarms.service import AlarmService, event_row
 from app.contracts.messages_gen import (
     CollectorHeartbeat,
     EndpointState,
+    EventBatch,
     Quality,
+    Severity,
     Stream,
     TelemetryBatch,
     ValueType,
@@ -42,10 +45,12 @@ from app.db.session import dispose_engine, unit_of_work
 from app.ingest import rates, writer
 from app.ingest.enrich import InventoryCache
 from app.ingest.fanout import Fanout
+from app.repositories import alarms as repo_alarms
 
 log = get_logger("ingest")
 
 _QUALITY_NAMES = {int(q): q.name.lower() for q in Quality}
+_SEVERITY_NAMES = {int(s): s.name for s in Severity}
 _COMM_STATUS = {1: "ONLINE", 2: "DEGRADED", 3: "OFFLINE", 4: "UNKNOWN", 5: "DISABLED"}
 
 # Hot metrics that have a dedicated column on device_state.
@@ -64,6 +69,7 @@ class IngestWorker:
         self.redis: Redis = Redis.from_url(self.settings.redis_url)
         self.cache = InventoryCache()
         self.fanout = Fanout(self.redis)
+        self.alarms = AlarmService(self.redis)
         self._stop = asyncio.Event()
 
     # ------------------------------------------------------------- lifecycle
@@ -91,7 +97,8 @@ class IngestWorker:
         self._stop.set()
 
     async def _ensure_groups(self) -> None:
-        for stream in (Stream.TELEMETRY, Stream.ENDPOINTSTATE, Stream.HEARTBEAT):
+        for stream in (Stream.TELEMETRY, Stream.EVENTS, Stream.ENDPOINTSTATE,
+                       Stream.HEARTBEAT):
             try:
                 await self.redis.xgroup_create(stream, self.settings.ingest_group,
                                                id="0", mkstream=True)
@@ -111,7 +118,8 @@ class IngestWorker:
 
         entries = await self.redis.xreadgroup(
             self.settings.ingest_group, self.consumer,
-            {Stream.TELEMETRY: ">", Stream.ENDPOINTSTATE: ">", Stream.HEARTBEAT: ">"},
+            {Stream.TELEMETRY: ">", Stream.EVENTS: ">",
+             Stream.ENDPOINTSTATE: ">", Stream.HEARTBEAT: ">"},
             count=self.settings.ingest_batch_size,
             block=self.settings.ingest_block_ms,
         )
@@ -125,6 +133,8 @@ class IngestWorker:
 
             if name == Stream.TELEMETRY:
                 await self._handle_telemetry(payloads)
+            elif name == Stream.EVENTS:
+                await self._handle_events(payloads)
             elif name == Stream.ENDPOINTSTATE:
                 await self._handle_endpoint_state(payloads)
             elif name == Stream.HEARTBEAT:
@@ -134,7 +144,8 @@ class IngestWorker:
 
     async def _reclaim_stale(self) -> None:
         """Take over entries a dead worker never acked."""
-        for stream in (Stream.TELEMETRY, Stream.ENDPOINTSTATE, Stream.HEARTBEAT):
+        for stream in (Stream.TELEMETRY, Stream.EVENTS, Stream.ENDPOINTSTATE,
+                       Stream.HEARTBEAT):
             with contextlib.suppress(Exception):
                 await self.redis.xautoclaim(
                     stream, self.settings.ingest_group, self.consumer,
@@ -152,6 +163,11 @@ class IngestWorker:
 
         sample_rows: list[writer.SampleRow] = []
         bool_rows: list[writer.BoolRow] = []
+        # Gauge samples the threshold rules get to see. Counters are excluded:
+        # a rule on a raw counter would compare an ever-growing number against a
+        # fixed limit and fire once, forever.
+        rule_inputs: list[dict] = []
+        alarm_actions = []
         hot: dict[str, writer.HotUpdate] = {}
         ws_frames: dict[str, dict] = {}
         unknown_metrics: set[str] = set()
@@ -231,14 +247,22 @@ class IngestWorker:
                     instance=s.instance, value=value, quality=quality))
                 self._note_hot(hot, ws_frames, s.device_id, s.metric, value,
                                observed, quality)
+                rule_inputs.append({
+                    "device_id": s.device_id, "device_type": ctx.device_type,
+                    "metric": s.metric, "instance": s.instance, "value": value,
+                    "observed_at": observed, "endpoint_id": s.endpoint_id,
+                })
 
             await writer.copy_samples(session, sample_rows)
             await writer.insert_bools(session, bool_rows)
             await writer.upsert_device_state(session, list(hot.values()))
+            alarm_actions = await self.alarms.evaluate_samples(session, rule_inputs)
 
         # after commit
         await self._store_baselines(baseline_writes)
         await self.fanout.telemetry(ws_frames)
+        for action in alarm_actions:
+            await self.fanout.alarm(action.kind, action.alarm)
 
         if unknown_metrics:
             # The collector validates against the registry at emit time, so this
@@ -268,7 +292,79 @@ class IngestWorker:
         frames.setdefault(device_id, {})[metric] = {
             "v": value, "u": METRICS[metric].unit, "q": quality}
 
+    async def _handle_events(self, payloads: list[dict]) -> None:
+        """Persist events, then drive the alarm lifecycle from them.
+
+        The event row is written whatever happens, including for a trap whose
+        source resolved to no device: dropping those is how an outage becomes
+        "the DCIM never saw it".
+        """
+        events = []
+        for raw in payloads:
+            batch = EventBatch.from_dict(raw)
+            events.extend(batch.events)
+        if not events:
+            return
+
+        fresh = [e for e in events if await self._claim_event(e.dedup_key)]
+        if not fresh:
+            log.debug("all events in batch were duplicates", count=len(events))
+            return
+
+        rows, actions = [], []
+        async with unit_of_work() as session:
+            await self.alarms.ensure_rules(session)
+            for e in fresh:
+                observed = ts_to_dt(e.observed_at) or datetime.now(UTC)
+                clears = [c for c in (e.varbinds.get("_clears") or "").split(",") if c]
+                payload = {
+                    "device_id": e.device_id or None,
+                    "endpoint_id": e.endpoint_id or None,
+                    "source_ip": e.source_ip or None,
+                    "event_type": e.event_type,
+                    "instance": e.instance,
+                    "severity": _SEVERITY_NAMES.get(e.severity, "INFO"),
+                    "is_clear": bool(e.is_clear),
+                    "clears": clears,
+                    "message": e.message,
+                    "observed_at": observed,
+                    "source": "snmp_trap",
+                    "varbinds": dict(e.varbinds),
+                    "dedup_key": e.dedup_key,
+                }
+                rows.append(event_row(payload))
+                action = await self.alarms.handle_event(session, payload)
+                if action:
+                    actions.append(action)
+            await repo_alarms.insert_events(session, rows)
+
+        for action in actions:
+            await self.fanout.alarm(action.kind, action.alarm)
+        for row in rows:
+            await self.fanout.event({
+                "event_type": row["event_type"], "severity": row["severity"],
+                "message": row["message"], "device_id": row["device_id"],
+                "source_ip": row["source_ip"],
+                "ts": row["ts"].isoformat() if row["ts"] else None,
+            })
+        log.info("events ingested", received=len(events), fresh=len(fresh),
+                 alarms=len(actions))
+
+    async def _claim_event(self, dedup_key: str) -> bool:
+        """True the first time a dedup key is seen.
+
+        At-least-once delivery means a redelivered trap would otherwise bump an
+        alarm's occurrence count and re-notify. Redis rather than a database
+        constraint, because a hypertable's unique index must include the
+        partition column and so cannot deduplicate across time.
+        """
+        if not dedup_key:
+            return True
+        return bool(await self.redis.set(f"dcim:ev:{dedup_key}", "1",
+                                         nx=True, ex=86400))
+
     async def _handle_endpoint_state(self, payloads: list[dict]) -> None:
+        comm_actions = []
         async with unit_of_work() as session:
             for raw in payloads:
                 st = EndpointState.from_dict(raw)
@@ -284,8 +380,23 @@ class IngestWorker:
                     "collector_id": st.collector_id or None,
                     "last_seen": ts_to_dt(st.changed_at),
                 })
-                await self.fanout.device_status(
-                    st.device_id, _COMM_STATUS.get(st.status, "UNKNOWN"), None)
+
+                status = _COMM_STATUS.get(st.status, "UNKNOWN")
+                await self.fanout.device_status(st.device_id, status, None)
+
+                ctx = self.cache.devices.get(st.device_id)
+                ep = self.cache.endpoints.get(st.endpoint_id)
+                if ctx is not None and ep is not None:
+                    action = await self.alarms.handle_endpoint_state(
+                        session, device_id=st.device_id,
+                        endpoint_id=st.endpoint_id, status=status,
+                        protocol=ep.protocol, device_name=ctx.name,
+                        last_error=st.last_error or None)
+                    if action:
+                        comm_actions.append(action)
+
+        for action in comm_actions:
+            await self.fanout.alarm(action.kind, action.alarm)
 
     async def _handle_heartbeat(self, payloads: list[dict]) -> None:
         async with unit_of_work() as session:

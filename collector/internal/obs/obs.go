@@ -36,6 +36,7 @@ type Metrics struct {
 	MissesTotal   *prometheus.CounterVec
 	Endpoints     *prometheus.GaugeVec
 	FailuresTotal *prometheus.CounterVec
+	TrapsTotal    *prometheus.CounterVec
 
 	PublishQueueDepth prometheus.Gauge
 	PublishBatchSize  prometheus.Histogram
@@ -96,6 +97,13 @@ func NewMetrics() *Metrics {
 			Name: "dcim_collector_endpoint_failures_total",
 			Help: "Endpoint failures by error class.",
 		}, []string{"protocol", "error_class"}),
+
+		// Labelled by RESULT, never by source device: a trap storm from one
+		// device would otherwise explode the label set.
+		TrapsTotal: promauto.NewCounterVec(prometheus.CounterOpts{
+			Name: "dcim_collector_traps_received_total",
+			Help: "SNMP traps received, by outcome.",
+		}, []string{"result"}),
 
 		PublishQueueDepth: promauto.NewGauge(prometheus.GaugeOpts{
 			Name: "dcim_collector_publish_queue_depth",

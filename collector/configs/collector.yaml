@@ -59,6 +59,23 @@ protocols:
     accept_any_source_reply: true
     max_repetitions: 25
 
+  snmp_trap:
+    enabled: true
+    # 1162, not the well-known 162, because binding below 1024 needs root or
+    # CAP_NET_BIND_SERVICE and the collector should not run privileged just to
+    # receive traps. In production grant the capability and use 162:
+    #   sudo setcap 'cap_net_bind_service=+ep' ./bin/collector
+    #
+    # Whichever port is used, the device plane must be TOLD about it - the
+    # simulator defaults to 127.0.0.1:162 and points nowhere useful otherwise:
+    #   POST /api/snmp/trap-receiver {"ip": "<collector>", "port": 1162}
+    # Without that step no trap arrives and the alarm path looks broken when it
+    # is merely unaddressed.
+    listen: "0.0.0.0:1162"
+    workers: 8
+    # Per source. A flapping interface must not fill the stream or the disk.
+    rate_limit_per_minute: 100
+
 health:
   # One failure is DEGRADED. OFFLINE needs this many consecutive failures AND
   # more than two intervals since the last success.
