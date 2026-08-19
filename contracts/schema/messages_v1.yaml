@@ -122,7 +122,13 @@ messages:
       - {name: assignment_version, tag: 14, type: uint32}
 
 streams:
-  telemetry:     {name: telemetry.v1,     message: TelemetryBatch,     maxlen: 2000000}
-  events:        {name: events.v1,        message: EventBatch,         maxlen: 500000}
-  endpointstate: {name: endpointstate.v1, message: EndpointState,      maxlen: 200000}
+  # maxlen is an entry count, but memory is what runs out, so these are sized
+  # from measured entry size. A TelemetryBatch entry measured 28 KB in
+  # practice; the previous cap of 2,000,000 described a 57 GB stream, so Redis
+  # was OOM-killed at ~2 GB and the trim never fired. 20k is ~570 MB and about
+  # an hour of buffer - enough to ride out an ingest restart, which is what the
+  # backlog is for. The other three average ~300 bytes and stay generous.
+  telemetry:     {name: telemetry.v1,     message: TelemetryBatch,     maxlen: 20000}
+  events:        {name: events.v1,        message: EventBatch,         maxlen: 200000}
+  endpointstate: {name: endpointstate.v1, message: EndpointState,      maxlen: 100000}
   heartbeat:     {name: collectorhb.v1,   message: CollectorHeartbeat, maxlen: 10000}

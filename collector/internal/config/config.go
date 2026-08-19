@@ -203,9 +203,22 @@ func Default() *Config {
 	c.DCIM.RequestTimeout = 15 * time.Second
 	c.Redis.URLEnv = "DCIM_REDIS_URL"
 	c.Redis.URL = "redis://127.0.0.1:6379/0"
-	c.Redis.Streams.Telemetry = StreamCfg{Name: "telemetry.v1", MaxLen: 2000000}
-	c.Redis.Streams.Events = StreamCfg{Name: "events.v1", MaxLen: 500000}
-	c.Redis.Streams.EndpointState = StreamCfg{Name: "endpointstate.v1", MaxLen: 200000}
+	// These caps are entry counts, but the thing that actually runs out is
+	// memory, so they are derived from measured entry SIZE rather than picked
+	// as round numbers. A telemetry entry is a batch of samples and measured
+	// 28 KB on this fleet; at the old cap of 2,000,000 the stream's own
+	// steady state was ~57 GB, so Redis was OOM-killed at ~2 GB every day or
+	// so and the trim never once fired. XACK does not shorten a stream - only
+	// the cap does - so the cap is the whole budget.
+	//
+	// 20k telemetry entries is ~570 MB worst case and roughly an hour of
+	// buffer at the observed publish rate, which is what the backlog is for:
+	// riding out an ingest worker restart, not archiving.
+	c.Redis.Streams.Telemetry = StreamCfg{Name: "telemetry.v1", MaxLen: 20000}
+	// The other three are small (~300 bytes an entry), so their counts can
+	// stay generous: 100k endpoint states is ~30 MB.
+	c.Redis.Streams.Events = StreamCfg{Name: "events.v1", MaxLen: 200000}
+	c.Redis.Streams.EndpointState = StreamCfg{Name: "endpointstate.v1", MaxLen: 100000}
 	c.Redis.Streams.Heartbeat = StreamCfg{Name: "collectorhb.v1", MaxLen: 10000}
 	c.Publisher.MaxBatch = 500
 	c.Publisher.MaxDelay = 200 * time.Millisecond

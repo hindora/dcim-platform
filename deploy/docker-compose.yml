@@ -29,8 +29,17 @@ services:
     image: redis:7-alpine
     # The stream holds telemetry and the counter baselines; an unprotected
     # Redis is a full compromise of the monitoring plane.
+    # maxmemory is a seatbelt, not a tuning knob. Without it Redis grows until
+    # the host kernel SIGKILLs it (exit 137), which loses the dataset and costs
+    # a long AOF replay on restart. With noeviction it instead refuses the XADD,
+    # the collector logs a publish failure and retries, and the pipeline
+    # degrades to gaps in telemetry while the API and Postgres stay up. Do not
+    # switch this to an eviction policy: allkeys-lru would silently discard
+    # unconsumed telemetry and the counter baselines that rate calculation
+    # depends on, turning a loud failure into wrong data.
     command: >
       redis-server --appendonly yes
+      --maxmemory 1gb --maxmemory-policy noeviction
       --requirepass ${REDIS_PASSWORD:?set REDIS_PASSWORD in deploy/.env}
     ports:
       - "6379:6379"
