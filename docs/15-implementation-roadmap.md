@@ -83,7 +83,7 @@ Order chosen by value-per-effort and by risk.
 | 3.3 | DONE - **BACnet/IP client** (6-8 days) | the schedule risk. Who-Is/I-Am, ReadProperty, ReadPropertyMultiple first; COV after. Timebox at 8 days — if the encoding work overruns, switch to the BACpypes3 side-process fallback and keep the contract identical. |
 | 3.4 | DONE - BACnet MS/TP routed addressing + directed Who-Is identification (2 days) | required for valves and pump cards |
 | 3.5 | DONE - **Modbus/TCP** (3 days) | utility meter is the PUE numerator; gateway unit-id fan-out |
-| 3.6 | **gNMI** poller + STREAM (4 days) | interface counters at higher fidelity than SNMP |
+| 3.6 | DONE - **gNMI** poller + STREAM (4 days) | interface counters at higher fidelity than SNMP |
 | 3.7 | Interface identity normalisation (gNMI name ↔ SNMP ifIndex) (1 day) | otherwise one interface produces two series |
 | 3.8 | Per-protocol integration tests | the table in `14-testing-strategy.md` §3 |
 

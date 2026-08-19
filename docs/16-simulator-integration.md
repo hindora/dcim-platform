@@ -453,6 +453,11 @@ pump 9 AI / 3 BI, cooling tower 9 AI / 3 BI, valve 3 AI / 2 BI.
 | 23 | Modbus maps are sparse and a read crossing an unimplemented address is refused in its entirety | a blind span across a gap loses every point either side of it, so reads must be planned into contiguous blocks |
 | 24 | The Eaton maps are word-SWAPPED; the Schneider ones are not | decoding one with the other's word order returns energy off by a factor of 65536, and the number charts perfectly well |
 | 25 | Every map carries a validity discrete, and FC43 serves the map id in the revision slot | the validity bit is the only thing distinguishing "0 W" from "not sampled yet"; the map id is the only way to check a template belongs to the device answering |
+| 26 | `proto/gnmi.proto` declares `go_package = openconfig/gnmi` but is NOT wire-compatible with it. `TypedValue.json_ietf_val` is field **13**, where the standard says 11 and assigns 13 to `proto_bytes` | a conformant client reads the JSON as opaque protobuf and decodes nothing at all, with no error anywhere - the Get succeeds and returns zero leaves |
+| 27 | `GetRequest.path` is field **3**, where the standard says 2 (and `type`/`encoding` are 5/6 against 3/5) | the server never sees the requested path and answers with the ENTIRE document for every request, so a client that assumes the response was scoped to what it asked for finds nothing |
+| 28 | gNMI listens on each device's OWN address on **50051** - 46 listeners on 46 device IPs | the per-device `gnmi_port` in the topology export says 57400 on every device and nothing listens there; the controller's own port is authoritative |
+| 29 | `system/state/uptime` carries CENTISECONDS, the same units SNMP's sysUpTime returns, and is not a standard openconfig leaf | without the 0.01 scale the gNMI and SNMP planes disagree by a factor of a hundred for one device |
+| 30 | A STREAM subscription re-sends the full snapshot each interval; there is no ON_CHANGE | every notification carries every mapped subtree, so a client that offers each notification to all its mappings publishes each counter once per update unless it deduplicates |
 
 ---
 

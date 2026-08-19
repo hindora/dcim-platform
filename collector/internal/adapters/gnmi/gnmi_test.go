@@ -811,3 +811,45 @@ func TestJSONInProtoBytesIsAccepted(t *testing.T) {
 		t.Error("binary protobuf bytes were decoded as JSON")
 	}
 }
+
+// A notification is offered to every subscription mapping, because nothing in
+// it says which subscription produced it. When a peer answers with the whole
+// document that means all three mappings match the same tree, and without
+// deduplication one interface counter would be published three times per
+// notification - indistinguishable from three real samples.
+func TestWholeDocumentDeliveryDoesNotDuplicate(t *testing.T) {
+	a := newAdapter(t)
+	sink := &captureSink{}
+	sub := newSubscriber(t, a, sink)
+
+	raw, err := json.Marshal(defaultDoc())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// One notification carrying the whole document three times, once per
+	// requested path - exactly what a peer that never read the request paths
+	// sends back.
+	n := &gpb.Notification{Timestamp: time.Now().UnixNano()}
+	for i := 0; i < 3; i++ {
+		n.Update = append(n.Update, &gpb.Update{
+			Path: &gpb.Path{},
+			Val:  &gpb.TypedValue{Value: &gpb.TypedValue_JsonIetfVal{JsonIetfVal: raw}},
+		})
+	}
+
+	ep := &models.Endpoint{ID: "ep-dup", DeviceID: "dev-1", Protocol: "gnmi"}
+	sub.deliver(context.Background(), ep, n, true)
+
+	seen := map[string]int{}
+	for _, s := range sink.all() {
+		seen[s.Metric+"|"+s.Instance]++
+	}
+	for key, n := range seen {
+		if n != 1 {
+			t.Fatalf("%s was published %d times from one notification", key, n)
+		}
+	}
+	if len(seen) == 0 {
+		t.Fatal("nothing was published")
+	}
+}

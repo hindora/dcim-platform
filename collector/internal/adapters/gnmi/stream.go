@@ -324,12 +324,21 @@ func (s *Subscriber) deliver(ctx context.Context, ep *models.Endpoint,
 	if len(outcome.Samples) == 0 {
 		return
 	}
-	if err := s.sink.Telemetry(ctx, outcome.Samples); err != nil {
+
+	// Deduplicate. When a peer answers with the whole document - one update
+	// per requested path, each carrying everything - all three mappings match
+	// the same tree, and the same interface counter would be published once
+	// per update. Three identical samples one microsecond apart are
+	// indistinguishable from three real ones, and a counter published three
+	// times is a rate computed three times.
+	samples := dedupe(outcome.Samples)
+
+	if err := s.sink.Telemetry(ctx, samples); err != nil {
 		s.log.Warn("gnmi stream publish failed", "endpoint", ep.ID, "error", err)
 		return
 	}
 	s.mets.SamplesTotal.WithLabelValues("gnmi_stream").
-		Add(float64(len(outcome.Samples)))
+		Add(float64(len(samples)))
 	if synced {
 		// Latency is meaningless on a push, so it is reported as zero rather
 		// than as a made-up number: the device chose when to send.
@@ -343,6 +352,26 @@ func (s *Subscriber) SetGraceWindow(d time.Duration) {
 	s.mu.Lock()
 	s.graceWindow = d
 	s.mu.Unlock()
+}
+
+// dedupe keeps one sample per metric and instance, the last decoded winning.
+// Order is preserved so a batch still reads in the order the tree was walked.
+func dedupe(in []models.Telemetry) []models.Telemetry {
+	if len(in) < 2 {
+		return in
+	}
+	index := make(map[string]int, len(in))
+	out := make([]models.Telemetry, 0, len(in))
+	for _, s := range in {
+		key := s.Metric + "" + s.Instance
+		if at, seen := index[key]; seen {
+			out[at] = s
+			continue
+		}
+		index[key] = len(out)
+		out = append(out, s)
+	}
+	return out
 }
 
 // Sessions reports how many streams are running.
