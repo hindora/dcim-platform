@@ -12,7 +12,10 @@ process while ingest runs in another.
 from __future__ import annotations
 
 import json
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Any
+from uuid import UUID
 
 from redis.asyncio import Redis
 
@@ -21,6 +24,27 @@ from app.core.logging import get_logger
 log = get_logger(__name__)
 
 CHANNEL_PREFIX = "dcim:ws:"
+
+
+def _encode(value: Any) -> Any:
+    """JSON fallback for the types SQL hands back.
+
+    Rows carry datetimes, Decimals and UUIDs; json.dumps refuses all three. The
+    fan-out swallows its own errors so a publish failure cannot break ingest,
+    which meant an unserialisable field silently dropped every frame while the
+    alarm itself persisted - visible on a page refresh but never live.
+    """
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, UUID):
+        return str(value)
+    return str(value)
+
+
+def _dumps(frame: dict[str, Any]) -> str:
+    return json.dumps(frame, default=_encode)
 
 
 def channel(topic: str) -> str:
@@ -39,7 +63,7 @@ class Fanout:
         for device_id, metrics in by_device.items():
             frame = {"event": "telemetry_update", "device_id": device_id,
                      "metrics": metrics}
-            pipe.publish(channel(f"device:{device_id}"), json.dumps(frame))
+            pipe.publish(channel(f"device:{device_id}"), _dumps(frame))
         try:
             await pipe.execute()
         except Exception as exc:
@@ -77,6 +101,6 @@ class Fanout:
 
     async def _publish(self, topic: str, frame: dict) -> None:
         try:
-            await self._redis.publish(channel(topic), json.dumps(frame))
+            await self._redis.publish(channel(topic), _dumps(frame))
         except Exception as exc:
             log.warning("ws fanout failed", topic=topic, error=str(exc))
