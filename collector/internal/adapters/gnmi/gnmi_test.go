@@ -741,3 +741,73 @@ func TestSingleEntryListIsAccepted(t *testing.T) {
 		t.Fatalf("got %v", entries)
 	}
 }
+
+// A peer that returns the WHOLE document rather than the requested subtree is
+// still usable, provided the leaves are located rather than assumed. The
+// simulator does exactly this, because its own .proto numbers GetRequest.path
+// as field 3 where the standard says 2, so it never sees the path at all.
+func TestWholeDocumentResponseIsStillDecoded(t *testing.T) {
+	a := newAdapter(t)
+	ep := &models.Endpoint{ID: "ep-doc", DeviceID: "dev-1", Protocol: "gnmi"}
+	out := &models.PollOutcome{}
+
+	var sub mapping.GNMISubscription
+	for _, s := range a.maps.Subscriptions {
+		if s.Name == "interfaces" {
+			sub = s
+		}
+	}
+	// The document root, not the /interfaces subtree.
+	a.walk(ep, sub, defaultDoc(), out, models.NowMicros())
+
+	got := collect(out)
+	if s, ok := got["if_in_octets{Ethernet1}"]; !ok || s.UintValue == 0 {
+		t.Fatalf("counters not found in a whole-document response: %v", keysOf(got))
+	}
+	if s, ok := got["if_speed{Ethernet2}"]; !ok || s.DoubleValue != 25e9 {
+		t.Errorf("speed %v (present=%v)", s.DoubleValue, ok)
+	}
+}
+
+// The scoped shape - what a conformant device returns - must keep working.
+func TestScopedSubtreeResponseIsStillDecoded(t *testing.T) {
+	a := newAdapter(t)
+	ep := &models.Endpoint{ID: "ep-scoped", DeviceID: "dev-1", Protocol: "gnmi"}
+	out := &models.PollOutcome{}
+
+	var sub mapping.GNMISubscription
+	for _, s := range a.maps.Subscriptions {
+		if s.Name == "interfaces" {
+			sub = s
+		}
+	}
+	doc := defaultDoc()
+	subtree := doc["openconfig-interfaces:interfaces"]
+	a.walk(ep, sub, subtree, out, models.NowMicros())
+
+	if _, ok := collect(out)["if_in_octets{Ethernet1}"]; !ok {
+		t.Fatal("counters not found in a scoped subtree response")
+	}
+}
+
+// A peer whose .proto numbers json_ietf_val as 13 puts its JSON in the field
+// the standard assigns to proto_bytes. Attempting a JSON parse there is safe:
+// real protobuf bytes do not parse as a JSON object.
+func TestJSONInProtoBytesIsAccepted(t *testing.T) {
+	raw := []byte(`{"interface":[{"name":"Ethernet9"}]}`)
+	node, ok := decodeValue(&gpb.TypedValue{
+		Value: &gpb.TypedValue_ProtoBytes{ProtoBytes: raw}})
+	if !ok {
+		t.Fatal("JSON in proto_bytes was rejected")
+	}
+	list, ok := mapping.Descend(node, "interface")
+	if !ok || len(mapping.AsList(list)) != 1 {
+		t.Fatalf("decoded tree is wrong: %v", node)
+	}
+
+	// Genuine protobuf bytes must NOT be mistaken for JSON.
+	if _, ok := decodeValue(&gpb.TypedValue{
+		Value: &gpb.TypedValue_ProtoBytes{ProtoBytes: []byte{0x08, 0x96, 0x01}}}); ok {
+		t.Error("binary protobuf bytes were decoded as JSON")
+	}
+}

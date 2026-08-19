@@ -204,6 +204,17 @@ func (a *Adapter) collect(ep *models.Endpoint, sub mapping.GNMISubscription,
 func (a *Adapter) walk(ep *models.Endpoint, sub mapping.GNMISubscription, node any,
 	outcome *models.PollOutcome, observed int64) {
 
+	// A conformant device answers a request for /interfaces with the subtree
+	// UNDER it, so the mapping paths are already relative to `node`. A device
+	// that returns more than was asked for - the whole document, say, because
+	// it did not read the request path - is still perfectly usable, provided
+	// the leaves are located rather than assumed. Descending the
+	// subscription's own path first costs one map lookup and makes both
+	// shapes work.
+	if scoped, ok := mapping.Descend(node, sub.Path); ok {
+		node = scoped
+	}
+
 	for _, leaf := range sub.Leaves {
 		if v, ok := mapping.Descend(node, leaf.At); ok {
 			if f, ok := toFloat(v, leaf); ok {
@@ -277,6 +288,18 @@ func decodeValue(tv *gpb.TypedValue) (any, bool) {
 	case *gpb.TypedValue_JsonVal:
 		var out any
 		if err := json.Unmarshal(v.JsonVal, &out); err != nil {
+			return nil, false
+		}
+		return out, true
+	case *gpb.TypedValue_ProtoBytes:
+		// Officially this field carries protobuf-encoded bytes. It is decoded
+		// as JSON here because a peer whose own .proto numbers json_ietf_val
+		// as 13 - the field the standard assigns to proto_bytes - puts its
+		// JSON here, and there is no way to tell from the wire which one
+		// wrote it. Attempting a JSON parse is safe: real protobuf bytes do
+		// not parse as a JSON object, and anything that does IS JSON.
+		var out any
+		if err := json.Unmarshal(v.ProtoBytes, &out); err != nil {
 			return nil, false
 		}
 		return out, true
