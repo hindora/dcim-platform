@@ -245,7 +245,9 @@ func TestResolverMapsAddressesToDevices(t *testing.T) {
 // OIDs, and the day the dataset is corrected the counters appear.
 func TestSNMPInterfaceCountersAreNotServed(t *testing.T) {
 	sim := RequireSimulator(t)
-	dev := sim.DeviceOfType(t, "switch")
+	// A SERVER, because switches serve no ifXTable at all on this plane
+	// (gotcha 34) and that would confuse a missing table with missing columns.
+	dev := sim.DeviceOfType(t, "server")
 
 	out, err := snmpAdapter(t).Poll(Ctx(t, 30*time.Second),
 		sim.SNMPEndpoint(t, dev, "os_agent"))
@@ -266,12 +268,12 @@ func TestSNMPInterfaceCountersAreNotServed(t *testing.T) {
 			"assertion", counters)
 		return
 	}
-	// Interfaces themselves ARE served, which is what makes the gap specific
-	// rather than a device that simply has no ports.
+	// The ifXTable itself IS served here, which is what makes the gap specific
+	// to the columns rather than to the table.
 	ports := instanceSet(out, "if_speed")
 	if len(ports) == 0 {
-		t.Fatalf("%s reports no interfaces at all, which is a different "+
-			"problem from the missing counters", dev.Name)
+		t.Skipf("%s serves no ifXTable at all, so the missing counters cannot "+
+			"be distinguished from a missing table - see gotcha 34", dev.Name)
 	}
 	t.Skipf("this plane serves %d interfaces on %s but none of the 6 traffic "+
 		"counters: snmprec type tags 44/41 should be 70/65 (Counter64/Counter32)",
