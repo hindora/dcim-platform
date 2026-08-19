@@ -34,7 +34,11 @@ CHANNEL_PREFIX = "dcim:ws:"
 COALESCED_EVENTS = {"telemetry_update"}
 
 
-@dataclass
+# eq=False keeps the default identity hash: sessions live in sets keyed by
+# topic, and a dataclass's generated __eq__ sets __hash__ to None, which makes
+# them unhashable. Two connections are never "equal" anyway - they are distinct
+# sockets even for the same user.
+@dataclass(eq=False)
 class Session:
     id: str
     ws: WebSocket
