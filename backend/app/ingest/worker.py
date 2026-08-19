@@ -163,6 +163,7 @@ class IngestWorker:
 
         sample_rows: list[writer.SampleRow] = []
         bool_rows: list[writer.BoolRow] = []
+        text_rows: list[writer.TextRow] = []
         # Gauge samples the threshold rules get to see. Counters are excluded:
         # a rule on a raw counter would compare an ever-growing number against a
         # fixed limit and fire once, forever.
@@ -199,6 +200,18 @@ class IngestWorker:
                 observed = ts_to_dt(s.observed_at) or ts_to_dt(s.collected_at) \
                     or datetime.now(UTC)
                 quality = _QUALITY_NAMES.get(s.quality, "good")
+
+                if s.value_type == int(ValueType.TEXT):
+                    # A state word, not a number. Falling through to the gauge
+                    # branch stored float(double_value) - which is 0 for every
+                    # text sample - so a UPS running on battery was recorded as
+                    # the number zero in a table of measurements.
+                    text_rows.append(writer.TextRow(
+                        ts=observed, device_id=s.device_id, metric_id=metric_id,
+                        instance=s.instance, value=s.text_value, quality=quality))
+                    self._note_hot(hot, ws_frames, s.device_id, s.metric,
+                                   s.text_value, observed, quality)
+                    continue
 
                 if s.value_type == int(ValueType.BOOL):
                     bool_rows.append(writer.BoolRow(
@@ -255,6 +268,7 @@ class IngestWorker:
 
             await writer.copy_samples(session, sample_rows)
             await writer.insert_bools(session, bool_rows)
+            await writer.insert_texts(session, text_rows)
             await writer.upsert_device_state(session, list(hot.values()))
             alarm_actions = await self.alarms.evaluate_samples(session, rule_inputs)
 
@@ -274,7 +288,9 @@ class IngestWorker:
         # without it "the numbers are not moving" is unanswerable.
         log.info("telemetry ingested", received=len(samples),
                  numeric=len(sample_rows), bools=len(bool_rows),
-                 devices=len(hot), skipped=len(samples) - len(sample_rows) - len(bool_rows))
+                 texts=len(text_rows), devices=len(hot),
+                 skipped=len(samples) - len(sample_rows) - len(bool_rows)
+                 - len(text_rows))
 
     def _note_hot(self, hot: dict, frames: dict, device_id: str, metric: str,
                   value, observed: datetime, quality: str) -> None:

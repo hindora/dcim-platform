@@ -43,6 +43,16 @@ class BoolRow:
 
 
 @dataclass(slots=True)
+class TextRow:
+    ts: datetime
+    device_id: str
+    metric_id: int
+    instance: str
+    value: str
+    quality: str
+
+
+@dataclass(slots=True)
 class HotUpdate:
     device_id: str
     last_seen: datetime
@@ -96,6 +106,27 @@ async def insert_bools(session: AsyncSession, rows: list[BoolRow]) -> int:
     await session.execute(
         text("""
             INSERT INTO telemetry_bool (ts, device_id, metric_id, instance, value, quality)
+            VALUES (:ts, CAST(:device_id AS uuid), :metric_id, :instance, :value, :quality)
+            ON CONFLICT DO NOTHING
+        """),
+        [{"ts": r.ts, "device_id": r.device_id, "metric_id": r.metric_id,
+          "instance": r.instance, "value": r.value, "quality": r.quality} for r in rows],
+    )
+    return len(rows)
+
+
+async def insert_texts(session: AsyncSession, rows: list[TextRow]) -> int:
+    """State words - a UPS operating mode, a transfer switch position.
+
+    These belong in their own table rather than as a number in
+    telemetry_sample: "battery" is not a measurement, and encoding it as 2
+    invites someone to average it.
+    """
+    if not rows:
+        return 0
+    await session.execute(
+        text("""
+            INSERT INTO telemetry_text (ts, device_id, metric_id, instance, value, quality)
             VALUES (:ts, CAST(:device_id AS uuid), :metric_id, :instance, :value, :quality)
             ON CONFLICT DO NOTHING
         """),
