@@ -7,6 +7,8 @@ failure this test suite exists to prevent.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from app.importer.endpoints import (
     NO_SNMP_TYPES,
     bmc_address,
@@ -194,3 +196,43 @@ def test_gnmi_is_only_for_fabric_devices():
                "mgmt_ip": "10.51.13.10"}
         eps = derive_endpoints(dev, include_protocols=frozenset({"gnmi"}))
         assert len(eps) == 1, f"{dtype} should get a gNMI endpoint"
+
+
+# --- assignment ETag ---------------------------------------------------------
+
+def _assignment(interval_s: int = 30, timeout_ms: int = 3000,
+                metric_groups: list[str] | None = None):
+    from app.schemas import (Assignment, AssignmentEndpoint, AssignmentPoll)
+    return Assignment(
+        version=1, generated_at=datetime(2026, 8, 19, tzinfo=UTC),
+        collector_id="c1",
+        endpoints=[AssignmentEndpoint(
+            id="e1", device_id="d1", device_name="sw1", device_type="switch",
+            protocol="snmp", role="os_agent", address="10.50.1.1", port=161,
+            addressing={},
+            poll=AssignmentPoll(
+                interval_s=interval_s, timeout_ms=timeout_ms, retries=2,
+                metric_groups=metric_groups or ["system", "interfaces"],
+                push_enabled=False),
+        )])
+
+
+def test_etag_changes_when_a_poll_profile_changes():
+    """A profile edit must invalidate the ETag.
+
+    interval_s is served from poll_profile, which the endpoint rows only
+    reference, so the assignment version (built from device_endpoint.updated_at)
+    does not move when a profile is edited. If the ETag ignored the poll fields
+    too, every collector would answer its own If-None-Match with a 304 and keep
+    polling at the old interval until an unrelated endpoint edit or a restart -
+    a config change that silently does nothing.
+    """
+    from app.services.collector import etag_for
+
+    base = etag_for(_assignment(interval_s=30))
+    assert etag_for(_assignment(interval_s=120)) != base, \
+        "raising the interval left the ETag unchanged; collectors would 304"
+    assert etag_for(_assignment(timeout_ms=9000)) != base
+    assert etag_for(_assignment(metric_groups=["system"])) != base
+    # Same content, same ETag - otherwise every refresh re-downloads.
+    assert etag_for(_assignment(interval_s=30)) == base

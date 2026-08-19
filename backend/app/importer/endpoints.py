@@ -76,15 +76,15 @@ def _probe_role(dev: dict) -> str | None:
 
 # Default poll profile per device type, by protocol.
 SNMP_PROFILE_BY_TYPE = {
-    "server": "snmp-server-30s",
-    "switch": "snmp-network-30s",
-    "router": "snmp-network-30s",
-    "firewall": "snmp-network-30s",
-    "load_balancer": "snmp-network-30s",
-    "oob_switch": "snmp-network-30s",
+    "server": "snmp-server-120s",
+    "switch": "snmp-network-120s",
+    "router": "snmp-network-120s",
+    "firewall": "snmp-network-120s",
+    "load_balancer": "snmp-network-120s",
+    "oob_switch": "snmp-network-120s",
     "sensor": "snmp-sensor-10s",
 }
-DEFAULT_SNMP_PROFILE = "snmp-power-30s"
+DEFAULT_SNMP_PROFILE = "snmp-power-120s"
 
 
 @dataclass(slots=True)
@@ -167,7 +167,7 @@ def derive_endpoints(
         if bmc and bmc != addr:
             out.append(EndpointSpec(
                 protocol="snmp", role="bmc", address=bmc, port=161,
-                poll_profile="snmp-bmc-60s",
+                poll_profile="snmp-bmc-120s",
                 **_snmp_credential(bmc),
             ))
 

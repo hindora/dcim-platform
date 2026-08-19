@@ -74,13 +74,27 @@ async def build_assignment(session: AsyncSession, collector_id: str,
 
 
 def etag_for(assignment: Assignment) -> str:
-    """Weak ETag over the version plus the endpoint id set.
+    """Weak ETag over the version plus the served content of each endpoint.
 
     Including the id set means a device removed from the fleet changes the ETag
     even if no timestamp moved.
+
+    The poll settings are in here for a sharper reason. ``version`` is derived
+    from ``device_endpoint.updated_at``, but ``interval_s`` and friends come
+    from ``poll_profile``, which the endpoint rows only reference. Editing a
+    profile - raising an interval across a whole class of devices, say - changes
+    what this endpoint serves without touching a single endpoint row, so a
+    version-only ETag answers 304 and every collector keeps polling at the old
+    interval until something unrelated is edited or the process restarts.
+    Digesting the poll fields makes the ETag track the body, which is what an
+    ETag is for.
     """
     digest = hashlib.sha256()
     digest.update(str(assignment.version).encode())
     for e in assignment.endpoints:
         digest.update(e.id.encode())
+        digest.update(f"|{e.address}|{e.port}|{e.poll.interval_s}"
+                      f"|{e.poll.timeout_ms}|{e.poll.retries}"
+                      f"|{e.poll.push_enabled}|{','.join(e.poll.metric_groups)}"
+                      .encode())
     return f'W/"{digest.hexdigest()[:32]}"'
