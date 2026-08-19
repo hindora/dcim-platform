@@ -138,10 +138,10 @@ METRICS: dict[str, MetricDef] = {
     "power_draw": MetricDef(
         key="power_draw", display_name="Power Draw", unit="W",
         value_type="gauge", aggregation="avg",
-        min_valid=0, max_valid=50000,
+        min_valid=0, max_valid=20000000,
         stale_after_s=120, hot=True,
         group="power", rate_of=None, rate_scale=1.0,
-        device_types=("server", "switch", "router", "firewall", "load_balancer", "pdu", "cdu", "crah",),
+        device_types=("server", "switch", "router", "firewall", "load_balancer", "pdu", "cdu", "crah", "utility_feed", "switchgear", "mcc", "mpp", "generator", "ups", "energy_monitor", "chiller", "pump", "cooling_tower",),
     ),
     "fan_speed": MetricDef(
         key="fan_speed", display_name="Fan Speed", unit="rpm",

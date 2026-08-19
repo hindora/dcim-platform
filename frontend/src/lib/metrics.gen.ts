@@ -232,7 +232,7 @@ export const METRICS: Record<MetricKey, MetricDef> = {
     unit: 'W', valueType: 'gauge',
     aggregation: 'avg',
     minValid: 0,
-    maxValid: 50000,
+    maxValid: 20000000,
     staleAfterS: 120, hot: true,
     group: 'power',
   },

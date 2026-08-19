@@ -191,11 +191,20 @@ metrics:
     value_type: gauge
     aggregation: avg
     min_valid: 0
-    max_valid: 50000
+    # 20 MW, not the 50 kW this carried while only servers reported it. The
+    # same key now carries a utility feed and switchgear, and a real feed at
+    # 166 kW was being flagged suspect against a server-scale ceiling.
+    #
+    # The bound still does its job. It exists to catch decode errors of orders
+    # of magnitude - a word-order mistake multiplies by 65536, so even a 400 W
+    # server misread that way lands at 26 MW and is still caught.
+    max_valid: 20000000
     stale_after_s: 120
     hot: true
     group: power
-    device_types: [server, switch, router, firewall, load_balancer, pdu, cdu, crah]
+    device_types: [server, switch, router, firewall, load_balancer, pdu, cdu,
+                   crah, utility_feed, switchgear, mcc, mpp, generator, ups,
+                   energy_monitor, chiller, pump, cooling_tower]
 
   - key: fan_speed
     display_name: Fan Speed

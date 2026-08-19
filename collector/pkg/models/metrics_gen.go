@@ -226,7 +226,7 @@ var MetricDefs = map[string]MetricDef{
 		Key: "power_draw", DisplayName: "Power Draw", Unit: "W",
 		ValueType: "gauge", Aggregation: "avg",
 		MinValid: 0, HasMin: true,
-		MaxValid: 50000, HasMax: true,
+		MaxValid: 2e+07, HasMax: true,
 		StaleAfterS: 120, Hot: true,
 		Group: "power", RateOf: "", RateScale: 1,
 	},
