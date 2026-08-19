@@ -176,14 +176,33 @@ func TestSNMPSweepFitsInsideOneInterval(t *testing.T) {
 	wg.Wait()
 	elapsed := time.Since(started)
 
-	t.Logf("%d endpoints in %s (%d ok, %d failed)", len(eps),
-		elapsed.Round(time.Millisecond), ok, failed)
-	if elapsed > 30*time.Second {
-		t.Errorf("sweep of %d endpoints took %s, longer than the 30 s interval",
-			len(eps), elapsed)
-	}
 	if ok == 0 {
 		t.Fatal("the whole sweep failed")
+	}
+
+	// What matters is not this sample's wall clock but what it implies for the
+	// whole fleet at the shipped concurrency. Expressing it that way makes the
+	// test meaningful at any sample size, and gives a number to act on rather
+	// than a pass or a fail.
+	perEndpoint := elapsed / time.Duration(len(eps))
+	fleet := 0
+	for _, d := range devices {
+		if d.MgmtIP != "" || d.IPAddress != "" {
+			fleet++
+		}
+	}
+	projected := time.Duration(fleet) * perEndpoint
+	t.Logf("%d endpoints in %s at 48 concurrent (%d ok, %d failed)",
+		len(eps), elapsed.Round(time.Millisecond), ok, failed)
+	t.Logf("%s per endpoint; %d pollable devices projects to %s per sweep",
+		perEndpoint.Round(time.Millisecond), fleet, projected.Round(time.Second))
+
+	if projected > 30*time.Second {
+		t.Errorf("a full sweep projects to %s against a 30 s interval, so the "+
+			"collector runs permanently behind and every value it publishes is "+
+			"older than it claims. Either the interval is wrong for this plane "+
+			"or the SNMP responder is the bottleneck - see docs/16",
+			projected.Round(time.Second))
 	}
 }
 
