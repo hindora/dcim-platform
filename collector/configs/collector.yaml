@@ -69,6 +69,30 @@ protocols:
     timeout: 8s
     retries: 1
 
+  # Pushed Redfish events. Off by default because `advertise` has no safe
+  # default - see below.
+  redfish_event:
+    enabled: false
+    listen: "0.0.0.0:9143"
+    # host:port the BMCs are told to POST to. REQUIRED, and it must be an
+    # address reachable FROM the management network. The collector cannot work
+    # this out itself: on a multi-homed host a wrong guess creates the
+    # subscriptions successfully and then delivers nothing, with no error at
+    # either end.
+    advertise: ""
+    # TLS on the DESTINATION url, not on the listener. Leave it off unless the
+    # BMCs trust the receiver's certificate: firmware that cannot verify it
+    # drops every event silently. The simulator posts with urllib, which
+    # verifies by default, so a self-signed https destination loses everything.
+    tls: false
+    workers: 4
+    rate_limit_per_minute: 120
+    # Subscriptions are reconciled, not created once. A BMC reset drops every
+    # subscription silently, and orphans pointing at a previous collector
+    # address accumulate until the per-BMC cap (often 8-20) is reached, after
+    # which new subscriptions fail and events simply stop.
+    reconcile_every: 10m
+
   snmp_trap:
     enabled: true
     # 1162, not the well-known 162, because binding below 1024 needs root or

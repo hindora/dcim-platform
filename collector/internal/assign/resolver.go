@@ -17,12 +17,14 @@ type Resolver struct {
 	mu       sync.RWMutex
 	byAddr   map[string]*models.Endpoint
 	byCommun map[string]*models.Endpoint
+	byID     map[string]*models.Endpoint
 }
 
 func NewResolver() *Resolver {
 	return &Resolver{
 		byAddr:   make(map[string]*models.Endpoint),
 		byCommun: make(map[string]*models.Endpoint),
+		byID:     make(map[string]*models.Endpoint),
 	}
 }
 
@@ -30,7 +32,9 @@ func NewResolver() *Resolver {
 func (r *Resolver) Replace(endpoints []*models.Endpoint) {
 	byAddr := make(map[string]*models.Endpoint, len(endpoints))
 	byCommun := make(map[string]*models.Endpoint, len(endpoints))
+	byID := make(map[string]*models.Endpoint, len(endpoints))
 	for _, ep := range endpoints {
+		byID[ep.ID] = ep
 		if ep.Address != "" {
 			// First writer wins: a device with several endpoints on one address
 			// (an OS agent and a BMC never share one) should resolve to the
@@ -49,7 +53,7 @@ func (r *Resolver) Replace(endpoints []*models.Endpoint) {
 		}
 	}
 	r.mu.Lock()
-	r.byAddr, r.byCommun = byAddr, byCommun
+	r.byAddr, r.byCommun, r.byID = byAddr, byCommun, byID
 	r.mu.Unlock()
 }
 
@@ -68,6 +72,22 @@ func (r *Resolver) Resolve(sourceIP, community string) (*models.Endpoint, bool) 
 		}
 	}
 	return nil, false
+}
+
+// ResolveID looks an endpoint up by its id.
+//
+// A Redfish subscription carries the endpoint id in its Context, which is a
+// far better identity than the source address: the BMC may deliver from a
+// different interface than it is polled on, and behind NAT the source address
+// is not the BMC's at all.
+func (r *Resolver) ResolveID(id string) (*models.Endpoint, bool) {
+	if id == "" {
+		return nil, false
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	ep, ok := r.byID[id]
+	return ep, ok
 }
 
 func (r *Resolver) Len() int {

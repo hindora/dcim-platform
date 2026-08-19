@@ -1,0 +1,104 @@
+# Redfish event classification.
+#
+# Two lookups, in this order:
+#
+#   1. message_ids - an exact MessageId from a DMTF registry. This is the
+#      correct discriminator and the only one that is stable across firmware.
+#
+#   2. patterns    - matched against the Message TEXT. Needed because a great
+#      deal of firmware (the simulator included) emits one generic OEM
+#      MessageId such as "Simulator.1.0.Alert" for every condition and puts
+#      the actual meaning in the text. Without this fallback every BMC event
+#      would collapse onto a single alarm key.
+#
+# CLEARS. A clearing event arrives as Severity "OK" with the asserting
+# message's label followed by " cleared". The label is stripped and
+# re-matched, so a clear lands on the SAME event_type as the assert - which
+# is what makes it resolve the alarm instead of opening a second one.
+#
+# Warning and Critical bands are SEPARATE event types on purpose. The BMC
+# tracks conditions by label, so a CPU crossing 85 then 90 clears
+# "temperature high" and asserts "temperature critical". Folding both onto one
+# type would leave the warning alarm open forever.
+version: 1
+
+# Redfish Severity -> canonical severity.
+severity_map:
+  OK: CLEAR
+  Ok: CLEAR
+  Warning: WARNING
+  Critical: CRITICAL
+  Fatal: CRITICAL
+
+# Text appended to a label when a condition clears.
+clear_suffix: " cleared"
+
+message_ids:
+  "Alert.1.0.TemperatureAbove":                { event_type: temperature_alert,  severity: MAJOR }
+  "Alert.1.0.TemperatureNormal":               { event_type: temperature_alert,  severity: CLEAR, is_clear: true }
+  "ResourceEvent.1.0.ResourceErrorsDetected":  { event_type: hardware_error,     severity: MAJOR }
+  "ResourceEvent.1.0.ResourceErrorsCorrected": { event_type: hardware_error,     severity: CLEAR, is_clear: true }
+  "ResourceEvent.1.0.ResourceStatusChangedCritical": { event_type: hardware_error, severity: CRITICAL }
+  "Base.1.0.ResourceChanged":                  { event_type: resource_changed,   severity: INFO }
+
+patterns:
+  # --- thermal -----------------------------------------------------------
+  - match: "CPU temperature critical*"
+    event_type: cpu_temp_critical
+    severity: CRITICAL
+  - match: "CPU temperature high*"
+    event_type: cpu_temp_high
+    severity: WARNING
+  - match: "Inlet temperature critical*"
+    event_type: inlet_temp_critical
+    severity: CRITICAL
+  - match: "Inlet temperature high*"
+    event_type: inlet_temp_high
+    severity: WARNING
+
+  # --- fans. The instance is the fan name, so one failed fan does not
+  #     suppress the alarm for the next one on the same chassis.
+  - match: "Fan failed*"
+    event_type: fan_failure
+    severity: CRITICAL
+    instance_from: first_word_after_colon
+  - match: "Fan speed low*"
+    event_type: fan_speed_low
+    severity: WARNING
+    instance_from: first_word_after_colon
+  - match: "Fan over-speed*"
+    event_type: fan_over_speed
+    severity: WARNING
+    instance_from: first_word_after_colon
+
+  # --- capacity ----------------------------------------------------------
+  - match: "Memory utilization high*"
+    event_type: memory_high_usage
+    severity: WARNING
+  - match: "Disk utilization high*"
+    event_type: disk_high_usage
+    severity: WARNING
+
+  # --- lifecycle. INFO, not an alarm: these are facts about the BMC, and
+  #     raising an alarm on every reboot buries the ones that matter.
+  - match: "System powered on*"
+    event_type: server_power_on
+    severity: INFO
+  - match: "System powered off*"
+    event_type: server_power_off
+    severity: INFO
+  - match: "BMC initialized*"
+    event_type: device_restarted
+    severity: INFO
+  - match: "BMC reset*"
+    event_type: device_restarted
+    severity: WARNING
+  - match: "Test event*"
+    event_type: test_event
+    severity: INFO
+
+# Anything that matches neither lookup becomes this, never a drop. A gap in
+# the mapping has to be visible in the UI, not invisible in a counter.
+unknown:
+  event_type: unknown_event
+  severity: INFO

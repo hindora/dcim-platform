@@ -443,6 +443,11 @@ pump 9 AI / 3 BI, cooling tower 9 AI / 3 BI, valve 3 AI / 2 BI.
 | 13 | The export's telemetry fields are a snapshot | importing them creates permanently stale state |
 | 14 | Fleet lifecycle changes inventory at runtime | a static device list goes stale within minutes |
 | 15 | The simulator's own SNMP port is a UI setting; the API default is 161 | probes against 1611 or 161 mismatch and look like a dead agent |
+| 16 | BMC event delivery is a plain `urllib` POST, 3 s timeout, no retry | a slow receiver, or an `https` destination whose certificate the poster cannot verify, loses every event with no error at either end |
+| 17 | Every simulated BMC event carries the same MessageId (`Simulator.1.0.Alert` / `.StatusChange`) | classifying on MessageId alone collapses all BMC events onto one alarm key; the condition is in the message TEXT |
+| 18 | A clear arrives as Severity `OK` with the text `"<label> cleared"` | matching only the raised text leaves every alarm open forever |
+| 19 | The warning and critical bands are different labels (`temperature high` vs `temperature critical`) | folding them onto one event type leaves the warning alarm open after the critical one asserts |
+| 20 | A BMC reset drops every subscription silently, and there is a per-BMC subscription cap | subscribe-once means events stop with no symptom; reconcile on an interval |
 
 ---
 

@@ -35,6 +35,7 @@ type App struct {
 
 	snmp     *snmp.Adapter
 	redfish  *redfish.Adapter
+	rfEvents *redfish.EventReceiver
 	traps    *snmp.TrapReceiver
 	resolver *assign.Resolver
 	adapters map[string]models.Adapter
@@ -89,6 +90,29 @@ func New(cfg *config.Config, version string) (*App, error) {
 	}
 
 	a.resolver = assign.NewResolver()
+
+	if cfg.Protocols.RedfishEvent.Enabled {
+		if a.redfish == nil {
+			return nil, fmt.Errorf("redfish_event needs the redfish adapter enabled")
+		}
+		if cfg.Protocols.RedfishEvent.Advertise == "" {
+			return nil, fmt.Errorf("redfish_event.advertise is required: the " +
+				"collector cannot guess which of its addresses the BMCs can reach")
+		}
+		evMaps, err := mapping.LoadRedfishEvents(cfg.Mappings.Dir)
+		if err != nil {
+			return nil, fmt.Errorf("load redfish event mappings: %w", err)
+		}
+		dest := redfish.DefaultDestination(cfg.Protocols.RedfishEvent.Advertise,
+			cfg.Protocols.RedfishEvent.TLS)
+		a.rfEvents = redfish.NewEventReceiver(a.redfish, evMaps, a.resolver, pub,
+			log, mets, cfg.Protocols.RedfishEvent.Listen, dest,
+			cfg.Protocols.RedfishEvent.Workers,
+			cfg.Protocols.RedfishEvent.RateLimitPerMinute)
+		log.Info("redfish event receiver enabled", "destination", dest,
+			"message_ids", len(evMaps.MessageIDs), "patterns", len(evMaps.Patterns))
+	}
+
 	if cfg.Protocols.SNMPTrap.Enabled {
 		trapTable, err := mapping.LoadTraps(cfg.Mappings.Dir)
 		if err != nil {
@@ -156,6 +180,16 @@ func (a *App) Run(ctx context.Context) error {
 		}()
 	}
 
+	if a.rfEvents != nil {
+		go func() {
+			// Same rule as the trap listener: a receiver that cannot bind
+			// must not take polling down with it.
+			if err := a.rfEvents.Listen(ctx); err != nil {
+				a.log.Error("redfish event receiver stopped", "error", err)
+			}
+		}()
+	}
+
 	// First assignment is fetched synchronously: starting with an empty work
 	// list and filling it a tick later makes the startup logs lie.
 	if err := a.assign.Refresh(ctx); err != nil {
@@ -167,6 +201,13 @@ func (a *App) Run(ctx context.Context) error {
 		a.log.Info("initial assignment", "endpoints", a.assign.Count())
 	}
 	go a.assign.Run(ctx)
+
+	if a.rfEvents != nil {
+		// Reconciliation runs AFTER the first assignment, so the very first
+		// pass sees the real endpoint list rather than subscribing to nothing.
+		go a.rfEvents.RunReconciler(ctx, a.cfg.Protocols.RedfishEvent.ReconcileEvery,
+			a.assign.Endpoints)
+	}
 
 	a.sched.Start(ctx)
 	go a.heartbeatLoop(ctx)

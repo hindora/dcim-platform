@@ -3,6 +3,7 @@ package models
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -161,4 +162,28 @@ func NowMicros() int64 { return time.Now().UTC().UnixMicro() }
 func ValidateMetric(key string) (MetricDef, bool) {
 	d, ok := MetricDefs[key]
 	return d, ok
+}
+
+// ParseSeverity turns a canonical severity NAME into its value.
+//
+// Every mapping file names severities as text, so this is the one place that
+// text becomes a value. An unrecognised name is reported rather than silently
+// becoming UNSPECIFIED, which would sort below INFO and hide the event.
+func ParseSeverity(name string) (Severity, bool) {
+	switch strings.ToUpper(strings.TrimSpace(name)) {
+	case "CLEAR":
+		return SeverityClear, true
+	case "INFO":
+		return SeverityInfo, true
+	case "WARNING":
+		return SeverityWarning, true
+	case "MINOR":
+		return SeverityMinor, true
+	case "MAJOR":
+		return SeverityMajor, true
+	case "CRITICAL", "FATAL":
+		return SeverityCritical, true
+	default:
+		return SeverityUnspecified, false
+	}
 }

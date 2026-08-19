@@ -53,9 +53,10 @@ type Config struct {
 	} `yaml:"workers"`
 
 	Protocols struct {
-		SNMP     ProtocolCfg `yaml:"snmp"`
-		SNMPTrap TrapCfg     `yaml:"snmp_trap"`
-		Redfish  ProtocolCfg `yaml:"redfish"`
+		SNMP         ProtocolCfg     `yaml:"snmp"`
+		SNMPTrap     TrapCfg         `yaml:"snmp_trap"`
+		Redfish      ProtocolCfg     `yaml:"redfish"`
+		RedfishEvent RedfishEventCfg `yaml:"redfish_event"`
 	} `yaml:"protocols"`
 
 	Health struct {
@@ -94,6 +95,25 @@ type TrapCfg struct {
 	// Per-source ceiling. One flapping interface must not be able to fill the
 	// stream or the disk.
 	RateLimitPerMinute int `yaml:"rate_limit_per_minute"`
+}
+
+// RedfishEventCfg configures the inbound Redfish event path.
+//
+// Advertise has no default and must be set explicitly. The collector cannot
+// work out which of its own addresses a BMC on a management VLAN can reach -
+// on a multi-homed host, guessing wrong means the subscriptions are created
+// successfully and then deliver nothing, with no error on either side.
+type RedfishEventCfg struct {
+	Enabled bool   `yaml:"enabled"`
+	Listen  string `yaml:"listen"`
+	// host:port the BMCs are told to POST to.
+	Advertise string `yaml:"advertise"`
+	// TLS on the DESTINATION url, not the listener. Off by default: firmware
+	// that cannot verify the receiver's certificate drops events silently.
+	TLS                bool          `yaml:"tls"`
+	Workers            int           `yaml:"workers"`
+	RateLimitPerMinute int           `yaml:"rate_limit_per_minute"`
+	ReconcileEvery     time.Duration `yaml:"reconcile_every"`
 }
 
 type ProtocolCfg struct {
@@ -160,6 +180,10 @@ func Default() *Config {
 	c.Protocols.SNMPTrap = TrapCfg{
 		Enabled: true, Listen: "0.0.0.0:162", Workers: 8,
 		RateLimitPerMinute: 100,
+	}
+	c.Protocols.RedfishEvent = RedfishEventCfg{
+		Enabled: false, Listen: "0.0.0.0:9143", Workers: 4,
+		RateLimitPerMinute: 120, ReconcileEvery: 10 * time.Minute,
 	}
 	c.Health.OfflineThreshold = 3
 	c.Mappings.Dir = "../contracts/mappings"
