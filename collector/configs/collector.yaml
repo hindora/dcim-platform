@@ -59,6 +59,16 @@ protocols:
     accept_any_source_reply: true
     max_repetitions: 25
 
+  redfish:
+    enabled: true
+    # HTTPS per BMC: the handshake, not the payload, is the cost. Connections
+    # are pooled and kept alive, and one request at a time per host because a
+    # BMC serialises them regardless.
+    max_concurrent: 32
+    per_host: 1
+    timeout: 8s
+    retries: 1
+
   snmp_trap:
     enabled: true
     # 1162, not the well-known 162, because binding below 1024 needs root or

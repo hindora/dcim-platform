@@ -55,6 +55,7 @@ type Config struct {
 	Protocols struct {
 		SNMP     ProtocolCfg `yaml:"snmp"`
 		SNMPTrap TrapCfg     `yaml:"snmp_trap"`
+		Redfish  ProtocolCfg `yaml:"redfish"`
 	} `yaml:"protocols"`
 
 	Health struct {
@@ -149,6 +150,12 @@ func Default() *Config {
 		Enabled: true, MaxConcurrent: 256, PerHost: 4,
 		Timeout: 3 * time.Second, Retries: 2, MaxRepetitions: 25,
 		AcceptAnySourceReply: true,
+	}
+	c.Protocols.Redfish = ProtocolCfg{
+		// per_host 1: a BMC serialises requests anyway, and hammering one is
+		// how a poll cycle turns into a queue of TLS handshakes.
+		Enabled: true, MaxConcurrent: 32, PerHost: 1,
+		Timeout: 8 * time.Second, Retries: 1,
 	}
 	c.Protocols.SNMPTrap = TrapCfg{
 		Enabled: true, Listen: "0.0.0.0:162", Workers: 8,

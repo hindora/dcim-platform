@@ -72,9 +72,11 @@ def main() -> int:
     ap.add_argument("--username", default=None)
     ap.add_argument("--password", default=None,
                     help="prefer DCIM_SIMULATOR_PASSWORD over passing this on a command line")
-    ap.add_argument("--protocols", default="snmp",
-                    help="comma-separated protocols to create endpoints for "
-                         "(phase 1 ships the SNMP adapter only)")
+    ap.add_argument("--protocols", default="snmp,redfish",
+                    help="comma-separated protocols to create endpoints for. "
+                         "Only create endpoints for protocols an adapter "
+                         "implements: one for a protocol nothing polls sits "
+                         "permanently UNKNOWN and reads as a broken device.")
     ap.add_argument("--gnmi-host", default=None)
     ap.add_argument("--collector-id", default=None,
                     help="assign the created endpoints to this collector shard")

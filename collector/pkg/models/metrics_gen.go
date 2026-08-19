@@ -38,6 +38,12 @@ const (
 	MetricInletTemperature   = "inlet_temperature"
 	MetricExhaustTemperature = "exhaust_temperature"
 	MetricPowerDraw          = "power_draw"
+	MetricFanSpeed           = "fan_speed"
+	MetricFanSpeedPct        = "fan_speed_pct"
+	MetricPSUInputVoltage    = "psu_input_voltage"
+	MetricPSUOutputPower     = "psu_output_power"
+	MetricPSUState           = "psu_state"
+	MetricEnergyConsumed     = "energy_consumed"
 	MetricIfAdminState       = "if_admin_state"
 	MetricIfOperState        = "if_oper_state"
 	MetricIfSpeed            = "if_speed"
@@ -177,6 +183,54 @@ var MetricDefs = map[string]MetricDef{
 		StaleAfterS: 120, Hot: true,
 		Group: "power", RateOf: "", RateScale: 1,
 	},
+	"fan_speed": {
+		Key: "fan_speed", DisplayName: "Fan Speed", Unit: "rpm",
+		ValueType: "gauge", Aggregation: "avg",
+		MinValid: 0, HasMin: true,
+		MaxValid: 30000, HasMax: true,
+		StaleAfterS: 120, Hot: false,
+		Group: "thermal", RateOf: "", RateScale: 1,
+	},
+	"fan_speed_pct": {
+		Key: "fan_speed_pct", DisplayName: "Fan Speed Percent", Unit: "pct",
+		ValueType: "gauge", Aggregation: "avg",
+		MinValid: 0, HasMin: true,
+		MaxValid: 100, HasMax: true,
+		StaleAfterS: 120, Hot: false,
+		Group: "thermal", RateOf: "", RateScale: 1,
+	},
+	"psu_input_voltage": {
+		Key: "psu_input_voltage", DisplayName: "PSU Input Voltage", Unit: "V",
+		ValueType: "gauge", Aggregation: "avg",
+		MinValid: 0, HasMin: true,
+		MaxValid: 600, HasMax: true,
+		StaleAfterS: 120, Hot: false,
+		Group: "power", RateOf: "", RateScale: 1,
+	},
+	"psu_output_power": {
+		Key: "psu_output_power", DisplayName: "PSU Output Power", Unit: "W",
+		ValueType: "gauge", Aggregation: "avg",
+		MinValid: 0, HasMin: true,
+		MaxValid: 5000, HasMax: true,
+		StaleAfterS: 120, Hot: false,
+		Group: "power", RateOf: "", RateScale: 1,
+	},
+	"psu_state": {
+		Key: "psu_state", DisplayName: "PSU State", Unit: "bool",
+		ValueType: "bool", Aggregation: "last",
+		MinValid: 0, HasMin: false,
+		MaxValid: 0, HasMax: false,
+		StaleAfterS: 300, Hot: false,
+		Group: "power", RateOf: "", RateScale: 1,
+	},
+	"energy_consumed": {
+		Key: "energy_consumed", DisplayName: "Energy Consumed", Unit: "kWh",
+		ValueType: "counter", Aggregation: "last",
+		MinValid: 0, HasMin: true,
+		MaxValid: 0, HasMax: false,
+		StaleAfterS: 600, Hot: false,
+		Group: "power", RateOf: "", RateScale: 1,
+	},
 	"if_admin_state": {
 		Key: "if_admin_state", DisplayName: "Interface Admin State", Unit: "bool",
 		ValueType: "bool", Aggregation: "last",
@@ -312,7 +366,7 @@ var MetricGroups = map[string][]string{
 	"compute":     {"cpu_utilization", "memory_utilization", "memory_used", "memory_total", "memory_available", "disk_utilization", "disk_used", "disk_total"},
 	"environment": {"ambient_temperature", "relative_humidity", "dew_point", "airflow"},
 	"interfaces":  {"if_admin_state", "if_oper_state", "if_speed", "if_in_octets", "if_out_octets", "if_in_bps", "if_out_bps", "if_in_errors", "if_out_errors", "if_in_discards", "if_out_discards", "if_in_error_rate"},
-	"power":       {"power_draw"},
+	"power":       {"power_draw", "psu_input_voltage", "psu_output_power", "psu_state", "energy_consumed"},
 	"system":      {"sys_uptime", "reachable", "poll_latency"},
-	"thermal":     {"cpu_temperature", "inlet_temperature", "exhaust_temperature"},
+	"thermal":     {"cpu_temperature", "inlet_temperature", "exhaust_temperature", "fan_speed", "fan_speed_pct"},
 }

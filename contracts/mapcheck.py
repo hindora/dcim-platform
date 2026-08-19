@@ -29,11 +29,17 @@ def load(p: Path) -> dict:
         return yaml.safe_load(fh)
 
 
+# Keys that name a metric. Redfish picks between an rpm and a percent metric
+# from the sensor's own units, so it carries two.
+METRIC_KEYS = ("metric", "metric_rpm", "metric_pct")
+
+
 def walk_metric_refs(node, path: str = ""):
     """Yield (metric_key, value_type|None, where) for every mapping entry."""
     if isinstance(node, dict):
-        if "metric" in node and isinstance(node["metric"], str):
-            yield node["metric"], node.get("value_type"), path
+        for key in METRIC_KEYS:
+            if key in node and isinstance(node[key], str):
+                yield node[key], node.get("value_type"), f"{path}.{key}"
         for k, v in node.items():
             yield from walk_metric_refs(v, f"{path}.{k}")
     elif isinstance(node, list):

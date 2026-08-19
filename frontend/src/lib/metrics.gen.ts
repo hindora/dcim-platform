@@ -16,6 +16,12 @@ export type MetricKey =
   | 'inlet_temperature'
   | 'exhaust_temperature'
   | 'power_draw'
+  | 'fan_speed'
+  | 'fan_speed_pct'
+  | 'psu_input_voltage'
+  | 'psu_output_power'
+  | 'psu_state'
+  | 'energy_consumed'
   | 'if_admin_state'
   | 'if_oper_state'
   | 'if_speed'
@@ -181,6 +187,60 @@ export const METRICS: Record<MetricKey, MetricDef> = {
     minValid: 0,
     maxValid: 50000,
     staleAfterS: 120, hot: true,
+    group: 'power',
+  },
+  'fan_speed': {
+    key: 'fan_speed', displayName: 'Fan Speed'.replace(/^'|'$/g, ''),
+    unit: 'rpm', valueType: 'gauge',
+    aggregation: 'avg',
+    minValid: 0,
+    maxValid: 30000,
+    staleAfterS: 120, hot: false,
+    group: 'thermal',
+  },
+  'fan_speed_pct': {
+    key: 'fan_speed_pct', displayName: 'Fan Speed Percent'.replace(/^'|'$/g, ''),
+    unit: 'pct', valueType: 'gauge',
+    aggregation: 'avg',
+    minValid: 0,
+    maxValid: 100,
+    staleAfterS: 120, hot: false,
+    group: 'thermal',
+  },
+  'psu_input_voltage': {
+    key: 'psu_input_voltage', displayName: 'PSU Input Voltage'.replace(/^'|'$/g, ''),
+    unit: 'V', valueType: 'gauge',
+    aggregation: 'avg',
+    minValid: 0,
+    maxValid: 600,
+    staleAfterS: 120, hot: false,
+    group: 'power',
+  },
+  'psu_output_power': {
+    key: 'psu_output_power', displayName: 'PSU Output Power'.replace(/^'|'$/g, ''),
+    unit: 'W', valueType: 'gauge',
+    aggregation: 'avg',
+    minValid: 0,
+    maxValid: 5000,
+    staleAfterS: 120, hot: false,
+    group: 'power',
+  },
+  'psu_state': {
+    key: 'psu_state', displayName: 'PSU State'.replace(/^'|'$/g, ''),
+    unit: 'bool', valueType: 'bool',
+    aggregation: 'last',
+    minValid: null,
+    maxValid: null,
+    staleAfterS: 300, hot: false,
+    group: 'power',
+  },
+  'energy_consumed': {
+    key: 'energy_consumed', displayName: 'Energy Consumed'.replace(/^'|'$/g, ''),
+    unit: 'kWh', valueType: 'counter',
+    aggregation: 'last',
+    minValid: 0,
+    maxValid: null,
+    staleAfterS: 600, hot: false,
     group: 'power',
   },
   'if_admin_state': {

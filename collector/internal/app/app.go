@@ -10,6 +10,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/hari/dcim-platform/collector/internal/adapters/redfish"
 	"github.com/hari/dcim-platform/collector/internal/adapters/snmp"
 	"github.com/hari/dcim-platform/collector/internal/assign"
 	"github.com/hari/dcim-platform/collector/internal/config"
@@ -33,6 +34,7 @@ type App struct {
 	assign  *assign.Client
 
 	snmp     *snmp.Adapter
+	redfish  *redfish.Adapter
 	traps    *snmp.TrapReceiver
 	resolver *assign.Resolver
 	adapters map[string]models.Adapter
@@ -76,6 +78,16 @@ func New(cfg *config.Config, version string) (*App, error) {
 		a.adapters["snmp"] = a.snmp
 	}
 
+	if cfg.Protocols.Redfish.Enabled {
+		rfMaps, err := mapping.LoadRedfish(cfg.Mappings.Dir)
+		if err != nil {
+			return nil, fmt.Errorf("load redfish mappings: %w", err)
+		}
+		a.redfish = redfish.New(rfMaps, log, mets)
+		a.adapters["redfish"] = a.redfish
+		log.Info("redfish adapter enabled")
+	}
+
 	a.resolver = assign.NewResolver()
 	if cfg.Protocols.SNMPTrap.Enabled {
 		trapTable, err := mapping.LoadTraps(cfg.Mappings.Dir)
@@ -95,10 +107,12 @@ func New(cfg *config.Config, version string) (*App, error) {
 		Workers:   cfg.Workers.PoolSize,
 		QueueSize: cfg.Workers.PoolSize * cfg.Workers.QueueMultiplier,
 		ProtoLimits: map[string]int{
-			"snmp": cfg.Protocols.SNMP.MaxConcurrent,
+			"snmp":    cfg.Protocols.SNMP.MaxConcurrent,
+			"redfish": cfg.Protocols.Redfish.MaxConcurrent,
 		},
 		PerHostLimits: map[string]int{
-			"snmp": cfg.Protocols.SNMP.PerHost,
+			"snmp":    cfg.Protocols.SNMP.PerHost,
+			"redfish": cfg.Protocols.Redfish.PerHost,
 		},
 	}, a.poll, log, mets)
 
@@ -252,6 +266,9 @@ func (a *App) applyDiff(diff assign.Diff) {
 		a.tracker.Forget(ep.ID)
 		if a.snmp != nil {
 			a.snmp.Forget(ep.ID)
+		}
+		if a.redfish != nil {
+			a.redfish.Forget(ep.ID)
 		}
 	}
 }

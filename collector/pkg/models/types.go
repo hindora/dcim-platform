@@ -109,6 +109,10 @@ var (
 	ErrAuth        = errors.New("authentication failed")
 	ErrUnreachable = errors.New("unreachable")
 	ErrDecode      = errors.New("decode failed")
+	// ErrProtocolStatus is a well-formed reply the protocol layer refuses -
+	// an HTTP 500 from a BMC, say. Distinct from a decode failure because the
+	// device answered coherently; it just said no.
+	ErrProtocolStatus = errors.New("protocol error")
 )
 
 // ClassifyError maps an adapter error onto a health error class.
@@ -124,6 +128,8 @@ func ClassifyError(err error) string {
 		return ErrClassUnreachable
 	case errors.Is(err, ErrDecode):
 		return ErrClassDecode
+	case errors.Is(err, ErrProtocolStatus):
+		return ErrClassProtocol
 	default:
 		return ErrClassProtocol
 	}
