@@ -1,0 +1,221 @@
+{
+  "generated_from": "simulator core.bacnet_object_model",
+  "vectors": [
+    {
+      "name": "read_property_present_value_real",
+      "frame": "810a0017010030070c0c0000000419553e4441b400003f",
+      "want": {
+        "kind": "read_property",
+        "object_type": 0,
+        "instance": 4,
+        "property": 85,
+        "values": [
+          {
+            "kind": "real",
+            "num": 22.5
+          }
+        ]
+      }
+    },
+    {
+      "name": "read_property_object_name",
+      "frame": "810a0024010030080c0c00000004194d3e751000537570706c795f4169725f54656d703f",
+      "want": {
+        "kind": "read_property",
+        "object_type": 0,
+        "instance": 4,
+        "property": 77,
+        "values": [
+          {
+            "kind": "charstring",
+            "text": "Supply_Air_Temp"
+          }
+        ]
+      }
+    },
+    {
+      "name": "read_property_binary_present_value",
+      "frame": "810a0014010030090c0c00c0000119553e91013f",
+      "want": {
+        "kind": "read_property",
+        "object_type": 3,
+        "instance": 1,
+        "property": 85,
+        "values": [
+          {
+            "kind": "enumerated",
+            "num": 1.0
+          }
+        ]
+      }
+    },
+    {
+      "name": "read_property_status_flags_in_alarm",
+      "frame": "810a00150100300a0c0c00000004196f3e8204803f",
+      "want": {
+        "kind": "read_property",
+        "object_type": 0,
+        "instance": 4,
+        "property": 111,
+        "values": [
+          {
+            "kind": "bitstring",
+            "bits": 8
+          }
+        ]
+      }
+    },
+    {
+      "name": "read_property_object_list_count",
+      "frame": "810a00160100300b0c0c02009c41194c29003e210e3f",
+      "want": {
+        "kind": "read_property",
+        "object_type": 8,
+        "instance": 40001,
+        "property": 76,
+        "values": [
+          {
+            "kind": "unsigned",
+            "num": 14.0
+          }
+        ]
+      }
+    },
+    {
+      "name": "read_property_object_list_whole",
+      "frame": "810a00260100300c0c0c02009c41194c3ec402009c41c400000001c400000002c400c000013f",
+      "want": {
+        "kind": "read_property",
+        "object_type": 8,
+        "instance": 40001,
+        "property": 76,
+        "values": [
+          {
+            "kind": "objectid",
+            "object_type": 8,
+            "instance": 40001
+          },
+          {
+            "kind": "objectid",
+            "object_type": 0,
+            "instance": 1
+          },
+          {
+            "kind": "objectid",
+            "object_type": 0,
+            "instance": 2
+          },
+          {
+            "kind": "objectid",
+            "object_type": 3,
+            "instance": 1
+          }
+        ]
+      }
+    },
+    {
+      "name": "rpm_mixed_values_and_error",
+      "frame": "810a00530100300d0e0c000000011e2e09554e4440e666664f2f2e094d4e7510004348575f537570706c795f54656d704f2f1f0c000000631e2e09555e9101911f5f2f1f0c00c000021e2e09554e91004f2f1f",
+      "want": {
+        "kind": "rpm",
+        "results": [
+          {
+            "object_type": 0,
+            "instance": 1,
+            "property": 85,
+            "values": [
+              {
+                "kind": "real",
+                "num": 7.2
+              }
+            ]
+          },
+          {
+            "object_type": 0,
+            "instance": 1,
+            "property": 77,
+            "values": [
+              {
+                "kind": "charstring",
+                "text": "CHW_Supply_Temp"
+              }
+            ]
+          },
+          {
+            "object_type": 0,
+            "instance": 99,
+            "property": 85,
+            "error": {
+              "class": 1,
+              "code": 31
+            }
+          },
+          {
+            "object_type": 3,
+            "instance": 2,
+            "property": 85,
+            "values": [
+              {
+                "kind": "enumerated",
+                "num": 0.0
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "error_unknown_object",
+      "frame": "810a000d0100500e0c9101911f",
+      "want": {
+        "kind": "error",
+        "class": 1,
+        "code": 31
+      }
+    },
+    {
+      "name": "reject_invalid_tag",
+      "frame": "810a00090100600f05",
+      "want": {
+        "kind": "reject",
+        "reason": 5
+      }
+    },
+    {
+      "name": "abort_buffer_overflow",
+      "frame": "810a00090100701001",
+      "want": {
+        "kind": "abort",
+        "reason": 1
+      }
+    },
+    {
+      "name": "i_am",
+      "frame": "810b001501001000c402009c472205c491032203e7",
+      "want": {
+        "kind": "i_am",
+        "instance": 40007,
+        "max_apdu": 1476,
+        "vendor": 999
+      }
+    },
+    {
+      "name": "routed_read_property_from_mstp",
+      "frame": "810a001b010807d1010c30110c0c0000000219553e44427600003f",
+      "want": {
+        "kind": "read_property",
+        "object_type": 0,
+        "instance": 2,
+        "property": 85,
+        "values": [
+          {
+            "kind": "real",
+            "num": 61.5
+          }
+        ],
+        "src_net": 2001,
+        "src_mac": "0c"
+      }
+    }
+  ]
+}

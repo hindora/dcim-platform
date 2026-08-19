@@ -1,0 +1,131 @@
+{
+  "decoded_by": "simulator core.bacnet_object_model",
+  "requests": [
+    {
+      "name": "read_present_value",
+      "type": "confirmed",
+      "service": 12,
+      "invoke_id": 1,
+      "dnet": -1,
+      "dadr": "",
+      "object_type": 0,
+      "instance": 4,
+      "property": 85,
+      "array_index": -1
+    },
+    {
+      "name": "read_object_name",
+      "type": "confirmed",
+      "service": 12,
+      "invoke_id": 2,
+      "dnet": -1,
+      "dadr": "",
+      "object_type": 0,
+      "instance": 4,
+      "property": 77,
+      "array_index": -1
+    },
+    {
+      "name": "read_object_list_count",
+      "type": "confirmed",
+      "service": 12,
+      "invoke_id": 3,
+      "dnet": -1,
+      "dadr": "",
+      "object_type": 8,
+      "instance": 40001,
+      "property": 76,
+      "array_index": 0
+    },
+    {
+      "name": "read_object_list_element",
+      "type": "confirmed",
+      "service": 12,
+      "invoke_id": 4,
+      "dnet": -1,
+      "dadr": "",
+      "object_type": 8,
+      "instance": 40001,
+      "property": 76,
+      "array_index": 7
+    },
+    {
+      "name": "rpm_three_objects",
+      "type": "confirmed",
+      "service": 14,
+      "invoke_id": 5,
+      "dnet": -1,
+      "dadr": "",
+      "items": [
+        {
+          "object_type": 0,
+          "instance": 1,
+          "properties": [
+            85,
+            77
+          ]
+        },
+        {
+          "object_type": 0,
+          "instance": 2,
+          "properties": [
+            85
+          ]
+        },
+        {
+          "object_type": 3,
+          "instance": 3,
+          "properties": [
+            85,
+            111
+          ]
+        }
+      ]
+    },
+    {
+      "name": "who_is_global",
+      "type": "unconfirmed",
+      "service": 8,
+      "invoke_id": -1,
+      "dnet": -1,
+      "dadr": "",
+      "low": -1,
+      "high": -1
+    },
+    {
+      "name": "who_is_ranged",
+      "type": "unconfirmed",
+      "service": 8,
+      "invoke_id": -1,
+      "dnet": -1,
+      "dadr": "",
+      "low": 40001,
+      "high": 40099
+    },
+    {
+      "name": "subscribe_cov",
+      "type": "confirmed",
+      "service": 5,
+      "invoke_id": 6,
+      "dnet": -1,
+      "dadr": "",
+      "process_id": 77,
+      "object_type": 0,
+      "instance": 1,
+      "confirmed": false,
+      "lifetime": 600
+    },
+    {
+      "name": "routed_read_present_value",
+      "type": "confirmed",
+      "service": 12,
+      "invoke_id": 7,
+      "dnet": 2001,
+      "dadr": "0c",
+      "object_type": 0,
+      "instance": 2,
+      "property": 85,
+      "array_index": -1
+    }
+  ]
+}

@@ -1,0 +1,40 @@
+{
+  "requests": [
+    {
+      "name": "read_present_value",
+      "frame": "810a001101040005010c0c000000041955"
+    },
+    {
+      "name": "read_object_name",
+      "frame": "810a001101040005020c0c00000004194d"
+    },
+    {
+      "name": "read_object_list_count",
+      "frame": "810a001301040005030c0c02009c41194c2900"
+    },
+    {
+      "name": "read_object_list_element",
+      "frame": "810a001301040005040c0c02009c41194c2907"
+    },
+    {
+      "name": "rpm_three_objects",
+      "frame": "810a002901040005050e0c000000011e0955094d1f0c000000021e09551f0c00c000031e0955096f1f"
+    },
+    {
+      "name": "who_is_global",
+      "frame": "810b000801001008"
+    },
+    {
+      "name": "who_is_ranged",
+      "frame": "810b000e010010080a9c411a9ca3"
+    },
+    {
+      "name": "subscribe_cov",
+      "frame": "810a0016010400050605094d1c0000000129003a0258"
+    },
+    {
+      "name": "routed_read_present_value",
+      "frame": "810a0016012407d1010cff0005070c0c000000021955"
+    }
+  ]
+}
