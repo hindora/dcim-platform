@@ -216,7 +216,7 @@ class Stream:
 
 
 STREAM_MAXLEN = {
-    "telemetry.v1": 20000,
+    "telemetry.v1": 8000,
     "events.v1": 200000,
     "endpointstate.v1": 100000,
     "collectorhb.v1": 10000,

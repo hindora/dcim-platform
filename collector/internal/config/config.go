@@ -204,17 +204,19 @@ func Default() *Config {
 	c.Redis.URLEnv = "DCIM_REDIS_URL"
 	c.Redis.URL = "redis://127.0.0.1:6379/0"
 	// These caps are entry counts, but the thing that actually runs out is
-	// memory, so they are derived from measured entry SIZE rather than picked
-	// as round numbers. A telemetry entry is a batch of samples and measured
-	// 28 KB on this fleet; at the old cap of 2,000,000 the stream's own
-	// steady state was ~57 GB, so Redis was OOM-killed at ~2 GB every day or
-	// so and the trim never once fired. XACK does not shorten a stream - only
-	// the cap does - so the cap is the whole budget.
+	// memory, so they are derived from measured entry SIZE against a measured
+	// memory budget - see contracts/schema/messages_v1.yaml, which is the
+	// source of truth this mirrors.
 	//
-	// 20k telemetry entries is ~570 MB worst case and roughly an hour of
-	// buffer at the observed publish rate, which is what the backlog is for:
-	// riding out an ingest worker restart, not archiving.
-	c.Redis.Streams.Telemetry = StreamCfg{Name: "telemetry.v1", MaxLen: 20000}
+	// A telemetry entry is a batch of samples: 28 KB averaged over a day, 49 KB
+	// for recent traffic. The old cap of 2,000,000 described a stream of tens of
+	// GB on a 3.7 GB host, so Redis was OOM-killed at ~2 GB and the trim never
+	// once fired. XACK does not shorten a stream - only the cap does - so the
+	// cap is the whole memory budget.
+	//
+	// 8000 entries is ~400 MB inside Redis's 1 GB ceiling, and ~55 minutes of
+	// buffer at the observed 2.4 entries a second.
+	c.Redis.Streams.Telemetry = StreamCfg{Name: "telemetry.v1", MaxLen: 8000}
 	// The other three are small (~300 bytes an entry), so their counts can
 	// stay generous: 100k endpoint states is ~30 MB.
 	c.Redis.Streams.Events = StreamCfg{Name: "events.v1", MaxLen: 200000}

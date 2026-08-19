@@ -123,12 +123,20 @@ messages:
 
 streams:
   # maxlen is an entry count, but memory is what runs out, so these are sized
-  # from measured entry size. A TelemetryBatch entry measured 28 KB in
-  # practice; the previous cap of 2,000,000 described a 57 GB stream, so Redis
-  # was OOM-killed at ~2 GB and the trim never fired. 20k is ~570 MB and about
-  # an hour of buffer - enough to ride out an ingest restart, which is what the
-  # backlog is for. The other three average ~300 bytes and stay generous.
-  telemetry:     {name: telemetry.v1,     message: TelemetryBatch,     maxlen: 20000}
+  # from measured entry size against a measured memory budget. A TelemetryBatch
+  # entry is a whole batch and measured 28 KB averaged over a day, 49 KB for
+  # recent traffic; the previous cap of 2,000,000 described a stream of tens of
+  # GB, so Redis was OOM-killed at ~2 GB and the trim never once fired.
+  #
+  # The host VM has 3.7 GB, so Redis is held to 1 GB (see deploy/docker-
+  # compose.yml) and telemetry gets ~400 MB of that: 8000 entries at the 49 KB
+  # worst case. At the observed 2.4 entries a second that is ~55 minutes of
+  # buffer, which is the point of the backlog - riding out an ingest worker
+  # restart, not archiving. Raising this without raising maxmemory first just
+  # moves the failure back to the OOM killer.
+  #
+  # The other three average ~300 bytes an entry and stay generous.
+  telemetry:     {name: telemetry.v1,     message: TelemetryBatch,     maxlen: 8000}
   events:        {name: events.v1,        message: EventBatch,         maxlen: 200000}
   endpointstate: {name: endpointstate.v1, message: EndpointState,      maxlen: 100000}
   heartbeat:     {name: collectorhb.v1,   message: CollectorHeartbeat, maxlen: 10000}
