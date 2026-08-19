@@ -183,17 +183,7 @@ func TestGNMIAndSNMPAgreeOnInterfaceNames(t *testing.T) {
 		t.Fatalf("gNMI reported no interfaces for %s", dev.Name)
 	}
 	if len(snmpPorts) == 0 {
-		// SNMP's name-indexed table is ifXTable, and this plane serves none of
-		// it for switches (gotcha 34). The ifTable metrics ARE collected, but
-		// they are keyed by ifIndex and only converge on the same port after
-		// the ingest worker resolves them against inventory - which is a
-		// backend concern, tested there.
-		if states := instanceSet(snmpOut, "if_oper_state"); len(states) > 0 {
-			t.Skipf("SNMP served %d ports by ifIndex and no ifXTable for %s, "+
-				"so there is no name-keyed SNMP series to compare - see gotcha 34",
-				len(states), dev.Name)
-		}
-		t.Fatalf("SNMP reported no interfaces at all for %s", dev.Name)
+		t.Fatalf("SNMP reported no name-keyed interfaces for %s", dev.Name)
 	}
 
 	var onlyGNMI, onlySNMP []string
