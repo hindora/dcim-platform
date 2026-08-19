@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -211,22 +212,28 @@ func TestRedfishSubscriptionAndTestEvent(t *testing.T) {
 		t.Fatalf("test event returned HTTP %d", code)
 	}
 
+	// Wait for THIS event, not merely the first to arrive. Creating a
+	// subscription makes the BMC log one of its own ("Event subscription
+	// created -> ..."), which is delivered to the subscriber that caused it -
+	// so the first event on the socket is housekeeping, not the test.
 	deadline := time.Now().Add(20 * time.Second)
 	var got models.Event
-	for time.Now().Before(deadline) {
+	for time.Now().Before(deadline) && got.EventType == "" {
 		for _, e := range sink.all() {
-			if e.EventType != "" {
+			if strings.Contains(e.Message, "CPU temperature critical") {
 				got = e
 				break
 			}
 		}
-		if got.EventType != "" {
-			break
-		}
 		time.Sleep(100 * time.Millisecond)
 	}
 	if got.EventType == "" {
-		t.Fatalf("no event arrived at %s within 20 s", dest)
+		var seen []string
+		for _, e := range sink.all() {
+			seen = append(seen, e.EventType+":"+e.Message)
+		}
+		t.Fatalf("the test event never arrived at %s within 20 s; received %v",
+			dest, seen)
 	}
 
 	if got.EventType != "cpu_temp_critical" {
