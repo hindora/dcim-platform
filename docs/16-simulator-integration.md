@@ -448,6 +448,11 @@ pump 9 AI / 3 BI, cooling tower 9 AI / 3 BI, valve 3 AI / 2 BI.
 | 18 | A clear arrives as Severity `OK` with the text `"<label> cleared"` | matching only the raised text leaves every alarm open forever |
 | 19 | The warning and critical bands are different labels (`temperature high` vs `temperature critical`) | folding them onto one event type leaves the warning alarm open after the critical one asserts |
 | 20 | A BMC reset drops every subscription silently, and there is a per-BMC subscription cap | subscribe-once means events stop with no symptom; reconcile on an interval |
+| 21 | The topology export sets `modbus_role` only for the RS-485 trunk; the thirty native-TCP electrical devices carry none | keying endpoint creation on the role alone creates endpoints for twelve transmitters and no meters at all, and nothing fails - a device with no endpoint is simply never polled |
+| 22 | An RTD and a magnetic flow meter are both `device_type: sensor` | the register template cannot be chosen from the device type; the probe role (from the name prefix, CHWS/CHWR/CWS/CWR/CTB/FLOW) is what distinguishes them |
+| 23 | Modbus maps are sparse and a read crossing an unimplemented address is refused in its entirety | a blind span across a gap loses every point either side of it, so reads must be planned into contiguous blocks |
+| 24 | The Eaton maps are word-SWAPPED; the Schneider ones are not | decoding one with the other's word order returns energy off by a factor of 65536, and the number charts perfectly well |
+| 25 | Every map carries a validity discrete, and FC43 serves the map id in the revision slot | the validity bit is the only thing distinguishing "0 W" from "not sampled yet"; the map id is the only way to check a template belongs to the device answering |
 
 ---
 
