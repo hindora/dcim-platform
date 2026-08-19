@@ -258,3 +258,42 @@ func TestSNMPInterfaceCountersAreNotServed(t *testing.T) {
 		"counters: snmprec type tags 44/41 should be 70/65 (Counter64/Counter32)",
 		len(ports), dev.Name)
 }
+
+// A big switch is where an SNMP walk gets expensive: 65 ports times several
+// columns is thousands of varbinds, and the walk has to finish inside the
+// endpoint's timeout or the whole table is lost rather than truncated.
+//
+// This test measures rather than assumes. It fails only if the table cannot be
+// read at all with a generous timeout, because that is a different fault from
+// being slow.
+func TestSNMPSwitchInterfaceTableIsPollable(t *testing.T) {
+	sim := RequireSimulator(t)
+	dev := sim.DeviceOfType(t, "switch")
+	ep := sim.SNMPEndpoint(t, dev, "os_agent")
+	ep.Poll.TimeoutMs = 20000
+
+	started := time.Now()
+	out, err := snmpAdapter(t).Poll(Ctx(t, 90*time.Second), ep)
+	elapsed := time.Since(started)
+	if err != nil {
+		t.Fatalf("poll %s (%s): %v", dev.Name, elapsed.Round(time.Millisecond), err)
+	}
+
+	ports := instanceSet(out, "if_oper_state")
+	speeds := instanceSet(out, "if_speed")
+	t.Logf("%s in %s: %d samples, %d metrics, %d ports by state, %d by speed",
+		dev.Name, elapsed.Round(time.Millisecond), len(out.Samples),
+		len(MetricNames(out)), len(ports), len(speeds))
+	for _, m := range out.Misses {
+		t.Logf("  MISS %s (%s)", m.Metric, m.Reason)
+	}
+
+	if len(ports) == 0 && len(speeds) == 0 {
+		t.Fatalf("%s served no interface rows at all in %s", dev.Name,
+			elapsed.Round(time.Millisecond))
+	}
+	if elapsed > 20*time.Second {
+		t.Errorf("one switch took %s, which does not fit a 30 s interval "+
+			"once the fleet is polled together", elapsed.Round(time.Millisecond))
+	}
+}
