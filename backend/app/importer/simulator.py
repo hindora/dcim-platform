@@ -56,6 +56,7 @@ class ImportReport:
     psus: int = 0
     connections: int = 0
     endpoints: int = 0
+    retired_endpoints: int = 0
     credentials: int = 0
     decommissioned: int = 0
     skipped_device_types: dict[str, int] = field(default_factory=dict)
@@ -421,6 +422,7 @@ class TopologyImporter:
         specs = derive_endpoints(dev, include_protocols=self.include_protocols,
                                  gnmi_gateway=self.gnmi_gateway,
                                  gnmi_port=self.gnmi_port)
+        keep: list[str] = []
         for spec in specs:
             profile_id = self._profiles.get(spec.poll_profile)
             if profile_id is None:
@@ -452,6 +454,36 @@ class TopologyImporter:
             if spec.address:
                 self._endpoint_by_addr.setdefault((spec.protocol, spec.address), endpoint_id)
             self.report.endpoints += 1
+            keep.append(endpoint_id)
+
+        await self._retire_undesired_endpoints(device_id, keep)
+
+    async def _retire_undesired_endpoints(self, device_id: str,
+                                          keep: list[str]) -> None:
+        """Disable endpoints this device no longer implies.
+
+        Without this the importer only ever adds. Narrowing which device types
+        speak a protocol, or a device changing type, leaves the old endpoints
+        enabled and polled forever - which is how 52 firewalls and console
+        switches ended up holding gNMI sessions against servers that were never
+        listening.
+
+        Disabled, never deleted: poll results and alarms reference the row, and
+        an endpoint that comes back should come back with its history.
+        """
+        if not self.include_protocols:
+            return
+        result = await self.s.execute(text("""
+            UPDATE device_endpoint
+               SET enabled = false, updated_at = now()
+             WHERE device_id = CAST(:dev AS uuid)
+               AND protocol = ANY(CAST(:protos AS protocol_t[]))
+               AND enabled
+               AND NOT (id = ANY(CAST(:keep AS uuid[])))
+        """), {"dev": device_id, "protos": list(self.include_protocols),
+               "keep": keep})
+        if result.rowcount:
+            self.report.retired_endpoints += result.rowcount
 
     async def _resolve_via_links(self, devices: list[dict]) -> None:
         """Link field devices to the gateway/router endpoint they are reached through."""
