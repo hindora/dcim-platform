@@ -54,6 +54,11 @@ type Table struct {
 	Derived      []Derived  `yaml:"derived"`
 	RowFilter    *RowFilter `yaml:"row_filter"`
 	InstanceFrom string     `yaml:"instance_from"`
+	// Kind marks a table whose instance is a kind of identity the platform
+	// knows how to normalise. "interface" is the only one so far: a port has
+	// several names depending on who is asked, and every plane has to settle
+	// on one before the data lands.
+	Kind string `yaml:"kind"`
 	// avg|max|min|sum - collapse every row into one device-scoped sample.
 	Aggregate string `yaml:"aggregate"`
 }

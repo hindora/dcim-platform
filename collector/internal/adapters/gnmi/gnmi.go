@@ -30,6 +30,7 @@ import (
 	gpb "github.com/openconfig/gnmi/proto/gnmi"
 
 	"github.com/hari/dcim-platform/collector/internal/mapping"
+	"github.com/hari/dcim-platform/collector/internal/normalize"
 	"github.com/hari/dcim-platform/collector/internal/obs"
 	"github.com/hari/dcim-platform/collector/pkg/models"
 )
@@ -240,6 +241,12 @@ func (a *Adapter) walk(ep *models.Endpoint, sub mapping.GNMISubscription, node a
 				key = fmt.Sprint(raw)
 			} else if v, ok := mapping.Descend(entry, list.Key); ok {
 				key = fmt.Sprint(v)
+			}
+			if list.Kind == "interface" {
+				// Same normalisation the SNMP adapter applies, so the two
+				// planes name one port identically before anything downstream
+				// has to reconcile them.
+				key = normalize.InterfaceName(key)
 			}
 			for _, leaf := range list.Leaves {
 				v, ok := mapping.Descend(entry, leaf.At)

@@ -36,8 +36,11 @@ func (l GNMILeaf) Value(v float64) float64 {
 
 // GNMIList is a keyed list inside a subtree, such as the interface list.
 type GNMIList struct {
-	At     string     `yaml:"at"`
-	Key    string     `yaml:"key"`
+	At  string `yaml:"at"`
+	Key string `yaml:"key"`
+	// Kind marks a list whose key is an identity the platform normalises.
+	// See the SNMP Table.Kind for why.
+	Kind   string     `yaml:"kind"`
 	Leaves []GNMILeaf `yaml:"leaves"`
 }
 

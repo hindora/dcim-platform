@@ -32,6 +32,9 @@ subscriptions:
     list:
       at: interface
       key: name
+      # Normalised to the same form the SNMP plane produces, so one port is
+      # one series however it was collected.
+      kind: interface
       leaves:
         # Counters. Strings on the wire - see the note on RFC 7951 above.
         - { at: state/counters/in-octets,        metric: if_in_octets }

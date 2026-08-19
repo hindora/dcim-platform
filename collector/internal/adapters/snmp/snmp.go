@@ -28,6 +28,7 @@ import (
 	g "github.com/gosnmp/gosnmp"
 
 	"github.com/hari/dcim-platform/collector/internal/mapping"
+	"github.com/hari/dcim-platform/collector/internal/normalize"
 	"github.com/hari/dcim-platform/collector/internal/obs"
 	"github.com/hari/dcim-platform/collector/pkg/models"
 )
@@ -460,6 +461,13 @@ func (a *Adapter) collectTables(client *g.GoSNMP, profile *mapping.Profile,
 				if v, ok := row[table.InstanceFrom]; ok {
 					instance = toString(v)
 				}
+			}
+			if table.Kind == "interface" {
+				// One port, one name. An agent reporting Gi0/0 and a gNMI
+				// target reporting GigabitEthernet0/0 are describing the same
+				// cable, and emitting both verbatim makes two series of which
+				// neither is the port's traffic.
+				instance = normalize.InterfaceName(instance)
 			}
 
 			for _, c := range table.Columns {

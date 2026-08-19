@@ -19,6 +19,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
+from app.ingest.interfaces import InterfaceIndex
 
 log = get_logger(__name__)
 
@@ -55,6 +56,8 @@ class InventoryCache:
     endpoints: dict[str, EndpointContext] = field(default_factory=dict)
     metric_ids: dict[str, int] = field(default_factory=dict)
     hot_metrics: frozenset[str] = frozenset()
+    # device_id -> every way that device's ports can be named.
+    interfaces: dict[str, InterfaceIndex] = field(default_factory=dict)
     loaded_at: float = 0.0
     _misses: int = 0
 
@@ -95,9 +98,22 @@ class InventoryCache:
         self.metric_ids = {r["key"]: r["id"] for r in mets}
         self.hot_metrics = frozenset(r["key"] for r in mets if r["is_hot"])
 
+        # Interface identity. A port has a different name depending on which
+        # plane is asked, and inventory is the authority on what it is called.
+        ifaces = (await session.execute(text("""
+            SELECT device_id::text AS device_id, name, if_index
+            FROM interface
+            ORDER BY device_id, if_index
+        """))).mappings().all()
+        by_device: dict[str, list[tuple[str, int | None]]] = {}
+        for r in ifaces:
+            by_device.setdefault(r["device_id"], []).append((r["name"], r["if_index"]))
+        self.interfaces = {d: InterfaceIndex(rows) for d, rows in by_device.items()}
+
         self.loaded_at = time.monotonic()
         log.info("inventory cache refreshed", devices=len(self.devices),
-                 endpoints=len(self.endpoints), metrics=len(self.metric_ids))
+                 endpoints=len(self.endpoints), metrics=len(self.metric_ids),
+                 interfaces=sum(len(i) for i in self.interfaces.values()))
 
     async def device(self, device_id: str, session: AsyncSession) -> DeviceContext | None:
         ctx = self.devices.get(device_id)
@@ -115,3 +131,10 @@ class InventoryCache:
 
     def metric_id(self, key: str) -> int | None:
         return self.metric_ids.get(key)
+
+    def canonical_interface(self, device_id: str, instance: str) -> str | None:
+        """Inventory's name for a port, whatever the plane called it."""
+        index = self.interfaces.get(device_id)
+        if index is None:
+            return None
+        return index.resolve(instance)

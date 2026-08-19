@@ -172,6 +172,7 @@ class IngestWorker:
         hot: dict[str, writer.HotUpdate] = {}
         ws_frames: dict[str, dict] = {}
         unknown_metrics: set[str] = set()
+        unresolved_interfaces: set[str] = set()
 
         # Counter baselines live in Redis so a worker restart does not lose them
         # and a decommissioned endpoint expires by itself.
@@ -196,6 +197,22 @@ class IngestWorker:
                 ctx = await self.cache.device(s.device_id, session)
                 if ctx is None:
                     continue  # already logged and counted by the cache
+
+                if definition.group == "interfaces" and s.instance:
+                    # One port, one series. The collector has already expanded
+                    # short forms, but only inventory knows what the port is
+                    # actually called - and an agent indexing by ifIndex sends
+                    # a bare number that means nothing on its own.
+                    #
+                    # An instance that does not resolve is kept, not dropped: a
+                    # port inventory has not caught up with is still carrying
+                    # traffic, and losing it would hide exactly the interface
+                    # someone just patched.
+                    canonical = self.cache.canonical_interface(s.device_id, s.instance)
+                    if canonical is None:
+                        unresolved_interfaces.add(f"{ctx.name}:{s.instance}")
+                    elif canonical != s.instance:
+                        s.instance = canonical
 
                 observed = ts_to_dt(s.observed_at) or ts_to_dt(s.collected_at) \
                     or datetime.now(UTC)
@@ -284,11 +301,20 @@ class IngestWorker:
             log.warning("dropped samples with unknown metrics",
                         metrics=sorted(unknown_metrics)[:10],
                         count=len(unknown_metrics))
+        if unresolved_interfaces:
+            # Kept, not dropped - but worth saying. A port inventory does not
+            # know about is either newly patched, or a name one plane reports
+            # in a form nothing here recognises, and the second case is how a
+            # single port silently becomes two series.
+            log.warning("interface instances not found in inventory",
+                        examples=sorted(unresolved_interfaces)[:10],
+                        count=len(unresolved_interfaces))
         # Batch-level counts at INFO: one line per consumed batch is cheap, and
         # without it "the numbers are not moving" is unanswerable.
         log.info("telemetry ingested", received=len(samples),
                  numeric=len(sample_rows), bools=len(bool_rows),
                  texts=len(text_rows), devices=len(hot),
+                 unresolved_interfaces=len(unresolved_interfaces),
                  skipped=len(samples) - len(sample_rows) - len(bool_rows)
                  - len(text_rows))
 
