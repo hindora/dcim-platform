@@ -304,9 +304,17 @@ func (a *Adapter) sample(ep *models.Endpoint, p discoveredPoint, value float64,
 	def, _ := models.ValidateMetric(p.metric)
 	vt := models.ValueTypeGauge
 	var uintValue uint64
+	var boolValue bool
 	switch def.ValueType {
 	case "bool":
 		vt = models.ValueTypeBool
+		// The same mistake as the counter case below, made twice: the ingest
+		// worker reads bool_value and nothing else, so setting only
+		// DoubleValue left EVERY BACnet binary point in the database reading
+		// false. Ten thousand samples across chillers, CRAHs, CDUs, pumps and
+		// cooling towers, none of them ever true, while the plant reported
+		// Chiller_Running = 1. Every other adapter already set this field.
+		boolValue = value != 0
 	case "counter":
 		vt = models.ValueTypeCounter
 		// A counter's value travels in UintValue - that is the field the
@@ -331,6 +339,7 @@ func (a *Adapter) sample(ep *models.Endpoint, p discoveredPoint, value float64,
 		ValueType:      vt,
 		DoubleValue:    value,
 		UintValue:      uintValue,
+		BoolValue:      boolValue,
 		Unit:           def.Unit,
 		ObservedAt:     now,
 		CollectedAt:    now,
