@@ -202,7 +202,8 @@ type EventBatch struct {
 	TraceID       string  `msgpack:"trace_id,omitempty" json:"trace_id,omitempty"`
 }
 
-// EndpointState - Published ON CHANGE ONLY, never every poll.
+// EndpointState - Published immediately on every status change, and periodically for endpoints whose status has NOT changed. The periodic copy exists because liveness is a property of the poll, not of the data: with change-only publishing, 894 healthy endpoints sat with last_success eleven hours old while polling perfectly, and poll_count was never written at all. is_refresh separates the two - a refresh updates the liveness columns and counters and nothing else, so it must not raise alarms, re-derive device status, or push a websocket update.
+
 type EndpointState struct {
 	EndpointID          string     `msgpack:"endpoint_id,omitempty" json:"endpoint_id,omitempty"`
 	DeviceID            string     `msgpack:"device_id,omitempty" json:"device_id,omitempty"`
@@ -215,6 +216,12 @@ type EndpointState struct {
 	LastErrorClass      string     `msgpack:"last_error_class,omitempty" json:"last_error_class,omitempty"` // timeout|auth|refused|decode|unreachable|protocol
 	LatencyMs           uint32     `msgpack:"latency_ms,omitempty" json:"latency_ms,omitempty"`
 	ChangedAt           int64      `msgpack:"changed_at,omitempty" json:"changed_at,omitempty"`
+	IsRefresh           bool       `msgpack:"is_refresh,omitempty" json:"is_refresh,omitempty"` // true => liveness only, status did not change
+	LastSeen            int64      `msgpack:"last_seen,omitempty" json:"last_seen,omitempty"`   // last poll attempt, success or not
+	PollCount           uint64     `msgpack:"poll_count,omitempty" json:"poll_count,omitempty"`
+	FailCount           uint64     `msgpack:"fail_count,omitempty" json:"fail_count,omitempty"`
+	TimeoutCount        uint64     `msgpack:"timeout_count,omitempty" json:"timeout_count,omitempty"`
+	AuthFailCount       uint64     `msgpack:"auth_fail_count,omitempty" json:"auth_fail_count,omitempty"`
 }
 
 type CollectorHeartbeat struct {

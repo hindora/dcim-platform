@@ -410,9 +410,10 @@ class IngestWorker:
         async with unit_of_work() as session:
             for raw in payloads:
                 st = EndpointState.from_dict(raw)
+                status = _COMM_STATUS.get(st.status, "UNKNOWN")
                 await writer.apply_endpoint_state(session, {
                     "endpoint_id": st.endpoint_id,
-                    "status": _COMM_STATUS.get(st.status, "UNKNOWN"),
+                    "status": status,
                     "last_success": ts_to_dt(st.last_success),
                     "last_failure": ts_to_dt(st.last_failure),
                     "consecutive_failures": st.consecutive_failures,
@@ -420,10 +421,25 @@ class IngestWorker:
                     "last_error_class": st.last_error_class or None,
                     "latency_ms": st.latency_ms or None,
                     "collector_id": st.collector_id or None,
-                    "last_seen": ts_to_dt(st.changed_at),
+                    # last_seen is the poll attempt, not the transition time.
+                    # Older collectors do not send it, so fall back to
+                    # changed_at rather than writing NULL over a good value.
+                    "last_seen": ts_to_dt(st.last_seen or st.changed_at),
+                    "poll_count": st.poll_count,
+                    "fail_count": st.fail_count,
+                    "timeout_count": st.timeout_count,
+                    "auth_fail_count": st.auth_fail_count,
+                    "is_refresh": st.is_refresh,
                 })
 
-                status = _COMM_STATUS.get(st.status, "UNKNOWN")
+                # A refresh means the status did NOT change. Broadcasting it
+                # would push a websocket update per endpoint per minute to
+                # every connected browser, and re-running the alarm engine on
+                # an unchanged status is at best wasted work and at worst a
+                # re-notification of an alarm the operator already saw.
+                if st.is_refresh:
+                    continue
+
                 await self.fanout.device_status(st.device_id, status, None)
 
                 ctx = self.cache.devices.get(st.device_id)

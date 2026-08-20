@@ -61,7 +61,7 @@ func TestGNMIStreamDeliversWithoutPolling(t *testing.T) {
 	a, pool, maps := gnmiParts(t)
 
 	sink := &streamSink{}
-	tracker := health.NewTracker(3, "col-itest", sink, TestLogger(), TestMetrics())
+	tracker := health.NewTracker(3, "col-itest", sink, TestLogger(), TestMetrics(), 0)
 	sub := gnmi.NewSubscriber(a, pool, maps, sink, tracker, TestLogger(),
 		TestMetrics(), 3)
 
@@ -114,7 +114,7 @@ func TestGNMIStreamReconnectsAfterItIsDropped(t *testing.T) {
 	a, pool, maps := gnmiParts(t)
 
 	sink := &streamSink{}
-	tracker := health.NewTracker(3, "col-itest", sink, TestLogger(), TestMetrics())
+	tracker := health.NewTracker(3, "col-itest", sink, TestLogger(), TestMetrics(), 0)
 	sub := gnmi.NewSubscriber(a, pool, maps, sink, tracker, TestLogger(),
 		TestMetrics(), 3)
 

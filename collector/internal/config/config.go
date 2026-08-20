@@ -64,6 +64,10 @@ type Config struct {
 
 	Health struct {
 		OfflineThreshold int `yaml:"offline_threshold"`
+		// How often an endpoint whose status has NOT changed republishes its
+		// liveness row. Zero uses the default. Effective freshness is
+		// max(pollInterval, this).
+		RefreshInterval time.Duration `yaml:"refresh_interval"`
 	} `yaml:"health"`
 
 	Mappings struct {
@@ -259,6 +263,11 @@ func Default() *Config {
 		Timeout: 10 * time.Second, Stream: true, StreamGraceFactor: 3,
 	}
 	c.Health.OfflineThreshold = 3
+	// 60 s bounds how stale endpoint_state can get without making the write
+	// rate interesting: 1386 endpoints refreshing at most once a minute is
+	// ~15 rows a second, and the slower-polled ones report at their own
+	// interval rather than this one.
+	c.Health.RefreshInterval = 60 * time.Second
 	c.Mappings.Dir = "../contracts/mappings"
 	c.Observability.LogLevel = "info"
 	c.Observability.LogFormat = "json"

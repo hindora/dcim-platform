@@ -112,7 +112,8 @@ message EventBatch {
   string trace_id = 5;
 }
 
-// Published ON CHANGE ONLY, never every poll.
+// Published immediately on every status change, and periodically for endpoints whose status has NOT changed. The periodic copy exists because liveness is a property of the poll, not of the data: with change-only publishing, 894 healthy endpoints sat with last_success eleven hours old while polling perfectly, and poll_count was never written at all. is_refresh separates the two - a refresh updates the liveness columns and counters and nothing else, so it must not raise alarms, re-derive device status, or push a websocket update.
+
 message EndpointState {
   string endpoint_id = 1;
   string device_id = 2;
@@ -125,6 +126,12 @@ message EndpointState {
   string last_error_class = 9;  // timeout|auth|refused|decode|unreachable|protocol
   uint32 latency_ms = 10;
   google.protobuf.Timestamp changed_at = 11;
+  bool is_refresh = 12;  // true => liveness only, status did not change
+  google.protobuf.Timestamp last_seen = 13;  // last poll attempt, success or not
+  uint64 poll_count = 14;
+  uint64 fail_count = 15;
+  uint64 timeout_count = 16;
+  uint64 auth_fail_count = 17;
 }
 
 message CollectorHeartbeat {

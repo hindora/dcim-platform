@@ -174,7 +174,8 @@ class EventBatch(_Msg):
 
 @dataclass(slots=True)
 class EndpointState(_Msg):
-    """Published ON CHANGE ONLY, never every poll."""
+    """Published immediately on every status change, and periodically for endpoints whose status has NOT changed. The periodic copy exists because liveness is a property of the poll, not of the data: with change-only publishing, 894 healthy endpoints sat with last_success eleven hours old while polling perfectly, and poll_count was never written at all. is_refresh separates the two - a refresh updates the liveness columns and counters and nothing else, so it must not raise alarms, re-derive device status, or push a websocket update.
+"""
     endpoint_id: str = ""
     device_id: str = ""
     collector_id: str = ""
@@ -186,6 +187,12 @@ class EndpointState(_Msg):
     last_error_class: str = ""
     latency_ms: int = 0
     changed_at: int = 0
+    is_refresh: bool = False
+    last_seen: int = 0
+    poll_count: int = 0
+    fail_count: int = 0
+    timeout_count: int = 0
+    auth_fail_count: int = 0
 
 
 @dataclass(slots=True)

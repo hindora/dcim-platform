@@ -614,7 +614,7 @@ func TestStreamOnlyRecognisesThePushProfile(t *testing.T) {
 
 func newSubscriber(t *testing.T, a *Adapter, sink models.Sink) *Subscriber {
 	t.Helper()
-	tracker := health.NewTracker(3, "col-test", sink, testLogger(), obs.NewMetrics())
+	tracker := health.NewTracker(3, "col-test", sink, testLogger(), obs.NewMetrics(), 0)
 	return NewSubscriber(a, a.conns, loadMaps(t), sink, tracker, testLogger(),
 		obs.NewMetrics(), 3)
 }

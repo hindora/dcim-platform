@@ -188,36 +188,68 @@ async def record_poll_results(session: AsyncSession, rows: list[dict]) -> int:
     return len(rows)
 
 
+_UPSERT_ENDPOINT_STATE = text("""
+    INSERT INTO endpoint_state (endpoint_id, status, last_success, last_failure,
+                                consecutive_failures, last_error, last_error_class,
+                                last_latency_ms, collector_id, last_seen,
+                                poll_count, fail_count, timeout_count,
+                                auth_fail_count, updated_at)
+    VALUES (CAST(:endpoint_id AS uuid), CAST(:status AS comm_status_t),
+            :last_success, :last_failure, :consecutive_failures,
+            :last_error, :last_error_class, :latency_ms, :collector_id,
+            :last_seen, :poll_count, :fail_count, :timeout_count,
+            :auth_fail_count, now())
+    ON CONFLICT (endpoint_id) DO UPDATE SET
+        status               = EXCLUDED.status,
+        last_success         = COALESCE(EXCLUDED.last_success, endpoint_state.last_success),
+        last_failure         = COALESCE(EXCLUDED.last_failure, endpoint_state.last_failure),
+        consecutive_failures = EXCLUDED.consecutive_failures,
+        last_error           = EXCLUDED.last_error,
+        last_error_class     = EXCLUDED.last_error_class,
+        last_latency_ms      = EXCLUDED.last_latency_ms,
+        collector_id         = EXCLUDED.collector_id,
+        last_seen            = GREATEST(endpoint_state.last_seen, EXCLUDED.last_seen),
+        -- The collector's counters are cumulative per process, so they reset
+        -- to zero when it restarts. GREATEST keeps the stored total from
+        -- walking backwards on every collector deploy.
+        poll_count           = GREATEST(endpoint_state.poll_count, EXCLUDED.poll_count),
+        fail_count           = GREATEST(endpoint_state.fail_count, EXCLUDED.fail_count),
+        timeout_count        = GREATEST(endpoint_state.timeout_count, EXCLUDED.timeout_count),
+        auth_fail_count      = GREATEST(endpoint_state.auth_fail_count, EXCLUDED.auth_fail_count),
+        updated_at           = now()
+""")
+
+# A refresh carries no status change, so device status cannot have moved. It
+# still has to touch device_state.last_seen, or the device rolls up as stale
+# for exactly the reason endpoint_state did.
+_TOUCH_DEVICE_SEEN = text("""
+    UPDATE device_state SET last_seen = GREATEST(device_state.last_seen, :last_seen),
+                            updated_at = now()
+     WHERE device_id = (SELECT device_id FROM device_endpoint
+                         WHERE id = CAST(:endpoint_id AS uuid))
+""")
+
+
 async def apply_endpoint_state(session: AsyncSession, s: dict) -> None:
-    """Persist a communication-state transition and re-derive device status.
+    """Persist communication state and, on a real transition, re-derive device status.
 
     Device status is the best of its endpoints: a server whose BMC is
     unreachable but whose OS agent answers is DEGRADED, not OFFLINE. Reporting
     it as OFFLINE would send an operator to a machine that is running fine.
+
+    ``is_refresh`` marks a periodic liveness update rather than a transition.
+    Those skip the rollup below: it is an aggregate over every endpoint of the
+    device, and running it for all 1386 endpoints once a minute would be
+    thousands of pointless aggregates an hour to recompute a status that by
+    definition did not change.
     """
-    await session.execute(
-        text("""
-            INSERT INTO endpoint_state (endpoint_id, status, last_success, last_failure,
-                                        consecutive_failures, last_error, last_error_class,
-                                        last_latency_ms, collector_id, last_seen, updated_at)
-            VALUES (CAST(:endpoint_id AS uuid), CAST(:status AS comm_status_t),
-                    :last_success, :last_failure, :consecutive_failures,
-                    :last_error, :last_error_class, :latency_ms, :collector_id,
-                    :last_seen, now())
-            ON CONFLICT (endpoint_id) DO UPDATE SET
-                status               = EXCLUDED.status,
-                last_success         = COALESCE(EXCLUDED.last_success, endpoint_state.last_success),
-                last_failure         = COALESCE(EXCLUDED.last_failure, endpoint_state.last_failure),
-                consecutive_failures = EXCLUDED.consecutive_failures,
-                last_error           = EXCLUDED.last_error,
-                last_error_class     = EXCLUDED.last_error_class,
-                last_latency_ms      = EXCLUDED.last_latency_ms,
-                collector_id         = EXCLUDED.collector_id,
-                last_seen            = GREATEST(endpoint_state.last_seen, EXCLUDED.last_seen),
-                updated_at           = now()
-        """),
-        s,
-    )
+    await session.execute(_UPSERT_ENDPOINT_STATE, s)
+
+    if s.get("is_refresh"):
+        await session.execute(_TOUCH_DEVICE_SEEN,
+                              {"endpoint_id": s["endpoint_id"],
+                               "last_seen": s["last_seen"]})
+        return
     await session.execute(
         text("""
             WITH agg AS (

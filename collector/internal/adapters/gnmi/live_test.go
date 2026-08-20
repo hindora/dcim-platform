@@ -124,7 +124,7 @@ func TestLiveStream(t *testing.T) {
 
 	a := newAdapter(t)
 	sink := &captureSink{}
-	tracker := health.NewTracker(3, "col-live", sink, testLogger(), obs.NewMetrics())
+	tracker := health.NewTracker(3, "col-live", sink, testLogger(), obs.NewMetrics(), 0)
 	sub := NewSubscriber(a, a.conns, loadMaps(t), sink, tracker, testLogger(),
 		obs.NewMetrics(), 3)
 

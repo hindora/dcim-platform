@@ -90,7 +90,15 @@ messages:
       - {name: trace_id,       tag: 5, type: string}
 
   EndpointState:
-    doc: Published ON CHANGE ONLY, never every poll.
+    doc: >
+      Published immediately on every status change, and periodically for
+      endpoints whose status has NOT changed. The periodic copy exists because
+      liveness is a property of the poll, not of the data: with change-only
+      publishing, 894 healthy endpoints sat with last_success eleven hours old
+      while polling perfectly, and poll_count was never written at all.
+      is_refresh separates the two - a refresh updates the liveness columns and
+      counters and nothing else, so it must not raise alarms, re-derive device
+      status, or push a websocket update.
     fields:
       - {name: endpoint_id,          tag: 1,  type: string}
       - {name: device_id,            tag: 2,  type: string}
@@ -103,6 +111,12 @@ messages:
       - {name: last_error_class,     tag: 9,  type: string, doc: "timeout|auth|refused|decode|unreachable|protocol"}
       - {name: latency_ms,           tag: 10, type: uint32}
       - {name: changed_at,           tag: 11, type: timestamp}
+      - {name: is_refresh,           tag: 12, type: bool, doc: "true => liveness only, status did not change"}
+      - {name: last_seen,            tag: 13, type: timestamp, doc: "last poll attempt, success or not"}
+      - {name: poll_count,           tag: 14, type: uint64}
+      - {name: fail_count,           tag: 15, type: uint64}
+      - {name: timeout_count,        tag: 16, type: uint64}
+      - {name: auth_fail_count,      tag: 17, type: uint64}
 
   CollectorHeartbeat:
     fields:

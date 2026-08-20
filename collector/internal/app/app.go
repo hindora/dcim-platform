@@ -75,7 +75,7 @@ func New(cfg *config.Config, version string) (*App, error) {
 
 	pub := publish.New(rdb, cfg, log, mets)
 	tracker := health.NewTracker(cfg.Health.OfflineThreshold, cfg.Collector.ID,
-		pub, log, mets)
+		pub, log, mets, cfg.Health.RefreshInterval)
 
 	a := &App{
 		cfg: cfg, log: log, mets: mets, ready: &obs.Readiness{},

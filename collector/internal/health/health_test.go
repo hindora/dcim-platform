@@ -36,7 +36,7 @@ func newTracker(t *testing.T, threshold int) (*Tracker, *fakeSink) {
 	t.Helper()
 	sink := &fakeSink{}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return NewTracker(threshold, "col-test", sink, log, obs.NewMetrics()), sink
+	return NewTracker(threshold, "col-test", sink, log, obs.NewMetrics(), 0), sink
 }
 
 func endpoint() *models.Endpoint {
@@ -202,5 +202,113 @@ func TestIntervalDefaultsWhenProfileIsEmpty(t *testing.T) {
 	tr.mu.RUnlock()
 	if got != 30*time.Second {
 		t.Fatalf("interval = %v, want the 30s default", got)
+	}
+}
+
+func newTrackerRefresh(t *testing.T, refresh time.Duration) (*Tracker, *fakeSink) {
+	t.Helper()
+	sink := &fakeSink{}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	return NewTracker(3, "col-test", sink, log, obs.NewMetrics(), refresh), sink
+}
+
+// Steady-state polling must keep refreshing the stored row. With change-only
+// publishing, 894 healthy endpoints sat at last_success eleven hours old while
+// polling perfectly - the UI would have shown a live fleet as long dead.
+func TestSteadyStateRepublishesLivenessAsRefresh(t *testing.T) {
+	tr, sink := newTrackerRefresh(t, 50*time.Millisecond)
+	ep := endpoint()
+
+	tr.Success(ep, 5) // first success: a real transition, UNKNOWN -> ONLINE
+	if got := len(sink.published()); got != 1 {
+		t.Fatalf("first success published %d messages, want 1", got)
+	}
+	if sink.published()[0].IsRefresh {
+		t.Error("the initial transition was marked as a refresh")
+	}
+
+	// Inside the interval: no further writes, or a 10 s BACnet poll would
+	// write the same row six times a minute.
+	tr.Success(ep, 5)
+	if got := len(sink.published()); got != 1 {
+		t.Fatalf("published %d messages within the refresh interval, want 1", got)
+	}
+
+	time.Sleep(60 * time.Millisecond)
+	tr.Success(ep, 7)
+
+	msgs := sink.published()
+	if len(msgs) != 2 {
+		t.Fatalf("published %d messages after the interval elapsed, want 2", len(msgs))
+	}
+	last := msgs[1]
+	if !last.IsRefresh {
+		t.Error("the periodic republish is not marked is_refresh; the worker " +
+			"would treat it as a transition and re-run alarms and fanout")
+	}
+	if last.Status != models.CommStatusOnline {
+		t.Errorf("refresh carries status %v, want ONLINE", last.Status)
+	}
+	if last.LastSeen == 0 || last.LastSuccess == 0 {
+		t.Errorf("refresh carries last_seen=%d last_success=%d, want both set",
+			last.LastSeen, last.LastSuccess)
+	}
+	if last.PollCount != 3 {
+		t.Errorf("poll_count = %d after three polls, want 3", last.PollCount)
+	}
+}
+
+// last_seen counts attempts and last_success only the ones that worked. An
+// endpoint timing out for an hour is still being seen, and the two columns
+// exist precisely to tell those apart.
+func TestFailureCountersSeparateSeenFromSucceeded(t *testing.T) {
+	tr, sink := newTrackerRefresh(t, time.Hour) // never refresh; only transitions
+	ep := endpoint()
+
+	tr.Success(ep, 3)
+	// The sentinel, not a message that happens to read "timeout":
+	// ClassifyError matches on errors.Is, so a bare string is class "".
+	tr.Failure(ep, models.ErrTimeout)
+
+	msgs := sink.published()
+	last := msgs[len(msgs)-1]
+	if last.PollCount != 2 {
+		t.Errorf("poll_count = %d, want 2 (one success, one failure)", last.PollCount)
+	}
+	if last.FailCount != 1 {
+		t.Errorf("fail_count = %d, want 1", last.FailCount)
+	}
+	if last.TimeoutCount != 1 {
+		t.Errorf("timeout_count = %d, want 1 for a classified timeout", last.TimeoutCount)
+	}
+	if last.AuthFailCount != 0 {
+		t.Errorf("auth_fail_count = %d, want 0", last.AuthFailCount)
+	}
+	if last.LastSuccess == 0 {
+		t.Error("last_success was cleared by a later failure; it must hold the " +
+			"last time the endpoint actually answered")
+	}
+	if last.LastSeen < last.LastSuccess {
+		t.Error("last_seen is older than last_success; the failed attempt " +
+			"should still count as having seen the endpoint")
+	}
+}
+
+// A status change must never be throttled, however recently we refreshed.
+func TestTransitionPublishesEvenInsideTheRefreshWindow(t *testing.T) {
+	tr, sink := newTrackerRefresh(t, time.Hour)
+	ep := endpoint()
+
+	tr.Success(ep, 1)
+	before := len(sink.published())
+	tr.Failure(ep, errors.New("timeout")) // ONLINE -> DEGRADED
+
+	msgs := sink.published()
+	if len(msgs) != before+1 {
+		t.Fatalf("a transition inside the refresh window published %d messages, want %d",
+			len(msgs)-before, 1)
+	}
+	if msgs[len(msgs)-1].IsRefresh {
+		t.Error("a real status change was marked is_refresh")
 	}
 }
