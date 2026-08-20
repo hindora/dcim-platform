@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.logging import get_logger
 from app.core.security import encrypt_secret
 from app.importer.endpoints import EndpointSpec, derive_endpoints
+from app.importer.redundancy import recompute_power_sides
 
 log = get_logger("importer")
 
@@ -59,6 +60,9 @@ class ImportReport:
     retired_endpoints: int = 0
     credentials: int = 0
     decommissioned: int = 0
+    # Outcome of the post-import A/B derivation: how many device pairs got a
+    # side, and how many devices are shared between both paths.
+    redundancy: dict[str, Any] = field(default_factory=dict)
     skipped_device_types: dict[str, int] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
 
@@ -138,6 +142,10 @@ class TopologyImporter:
         for dev in devices:
             await self._upsert_endpoints(dev)
         await self._resolve_via_links(devices)
+
+        # After the edges, never during: a conductor's side depends on where
+        # the whole tree diverges, which is not knowable one edge at a time.
+        self.report.redundancy = await recompute_power_sides(self.s)
 
         log.info("import complete", **self.report.as_dict())
         return self.report
@@ -409,7 +417,8 @@ class TopologyImporter:
         """), {"layer": layer, "link_type": _link_type(layer),
                "a": a_id, "at": a_type, "aid": a_term,
                "b": b_id, "bt": b_type, "bid": b_term,
-               "side": _redundancy_side(edge),
+               # Filled in by recompute_power_sides once every edge exists.
+               "side": None,
                "oper": "down" if edge.get("broken") else "unknown"})
         self.report.connections += 1
 
@@ -612,22 +621,6 @@ def _u_height(dev: dict) -> int:
 def _link_type(layer: str) -> str:
     return {"production": "ethernet", "management": "ethernet", "power": "cord",
             "cooling": "hydronic", "fieldbus": "serial"}.get(layer, "unknown")
-
-
-def _redundancy_side(edge: dict) -> str | None:
-    """A/B side from the feeding PDU's name, e.g. PDUA-... / PDUB-...
-
-    Without a side you cannot answer the only question that matters during a
-    power event: is this load still fed from the other path?
-    """
-    supply = (edge.get("supply_node") or "")
-    if isinstance(supply, str):
-        upper = supply.upper()
-        if "PDUA" in upper or "RPPA" in upper:
-            return "A"
-        if "PDUB" in upper or "RPPB" in upper:
-            return "B"
-    return None
 
 
 def _speed_bps(iface: dict) -> int | None:
