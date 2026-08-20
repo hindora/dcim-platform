@@ -7,6 +7,7 @@ import {
   type EndpointSummary,
 } from '../../api/client';
 import { StatusChip } from '../../components/StatusChip';
+import { DeviceHistory } from './DeviceHistory';
 import { formatMetric, metricLabel, relativeTime } from '../../lib/format';
 
 export function DeviceDetail() {
@@ -139,6 +140,11 @@ export function DeviceDetail() {
           </table>
         )}
       </section>
+
+      {/* Charted from the same metric keys the device is actually reporting,
+          so a device with no telemetry gets an explanation rather than an
+          empty axis. */}
+      <DeviceHistory deviceId={id} metrics={Object.keys(metrics)} />
 
       <p><Link to="/devices">← All devices</Link></p>
     </div>

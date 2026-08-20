@@ -16,12 +16,24 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 MAX_POINTS = 10_000
 
-# (max window, table, bucket column, value expression by aggregate)
-_ROUTES = [
-    (timedelta(hours=6), "telemetry_sample", "ts", None),
-    (timedelta(days=7), "telemetry_1m", "bucket", "1m"),
-    (timedelta(days=90), "telemetry_5m", "bucket", "5m"),
-    (None, "telemetry_1h", "bucket", "1h"),
+# Two different limits, deliberately not one constant doing both jobs.
+#
+# PER_SERIES drives the bucket choice: how many points one line on a chart
+# should have. ROWS is the hard cap on what a single request may return across
+# every series, which protects the database and the browser and has to scale
+# with the number of series asked for - a seven-metric chart legitimately wants
+# seven times the rows of a one-metric chart.
+MAX_POINTS_PER_SERIES = 2500
+MAX_ROWS = 10_000
+
+# (bucket duration, table, bucket column, label), finest first. The raw table
+# is not in here: it is reachable only by asking for interval=raw, because its
+# density depends on the poll interval and is not something to route to by
+# accident.
+_BUCKETS = [
+    (timedelta(minutes=1), "telemetry_1m", "bucket", "1m"),
+    (timedelta(minutes=5), "telemetry_5m", "bucket", "5m"),
+    (timedelta(hours=1), "telemetry_1h", "bucket", "1h"),
 ]
 
 _AGG_COLUMN = {"avg": "avg_value", "min": "min_value",
@@ -30,16 +42,27 @@ _AGG_COLUMN = {"avg": "avg_value", "min": "min_value",
 
 def choose_source(start: datetime, end: datetime,
                   interval: str = "auto") -> tuple[str, str, str]:
-    """Return (table, bucket_column, interval_label)."""
+    """Return (table, bucket_column, interval_label).
+
+    Chosen by how many points the window would produce, not by how long the
+    window is. Routing on window length alone gives wildly different answers
+    for the same cost: a 7-day window at 1-minute buckets is 10,080 points per
+    series, which is both slow to ship and unreadable once drawn, while a
+    30-day window at 5 minutes is 8,640. Targeting a point budget instead
+    lands on 1m for a day, 5m for a week and 1h for a month, which is what a
+    chart actually wants.
+    """
     if interval == "raw":
         return "telemetry_sample", "ts", "raw"
     if interval in ("1m", "5m", "1h"):
         return f"telemetry_{interval}", "bucket", interval
 
-    window = end - start
-    for limit, table, col, label in _ROUTES:
-        if limit is None or window <= limit:
-            return table, col, (label or "raw")
+    window = max(end - start, timedelta(seconds=1))
+    for bucket, table, col, label in _BUCKETS:
+        if window / bucket <= MAX_POINTS_PER_SERIES:
+            return table, col, label
+    # Nothing coarser exists. 1h over a very long window is still the right
+    # answer; the caller gets more points than the budget rather than an error.
     return "telemetry_1h", "bucket", "1h"
 
 
@@ -57,8 +80,12 @@ async def history(
     table, bucket_col, label = choose_source(start, end, interval)
     value_expr = "value" if table == "telemetry_sample" else _AGG_COLUMN.get(agg, "avg_value")
 
+    # Scale the cap with the number of series requested, then bound it, so a
+    # normal multi-metric chart is never truncated but a pathological request
+    # still cannot pull the table into memory.
+    row_cap = min(MAX_ROWS, MAX_POINTS_PER_SERIES * max(1, len(metrics)))
     params: dict[str, Any] = {"device_id": device_id, "metrics": metrics,
-                              "start": start, "end": end, "limit": MAX_POINTS + 1}
+                              "start": start, "end": end, "limit": row_cap + 1}
     instance_clause = ""
     if instance is not None:
         instance_clause = " AND t.instance = :instance"
@@ -74,13 +101,17 @@ async def history(
           AND m.key = ANY(:metrics)
           AND t.{bucket_col} >= :start AND t.{bucket_col} < :end
           {instance_clause}
-        ORDER BY t.{bucket_col}
+        -- Newest first for the cap, so a request that does not fit keeps the
+        -- END of the window. A chart missing "now" is useless; one missing its
+        -- oldest hour is merely shorter.
+        ORDER BY t.{bucket_col} DESC
         LIMIT :limit
     """), params)).mappings().all()
 
-    truncated = len(rows) > MAX_POINTS
+    truncated = len(rows) > row_cap
     if truncated:
-        rows = rows[:MAX_POINTS]
+        rows = rows[:row_cap]
+    rows = list(reversed(rows))     # back into chart order
 
     series: dict[tuple[str, str], dict[str, Any]] = {}
     for r in rows:

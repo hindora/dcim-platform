@@ -342,6 +342,24 @@ export interface TopologyGraph {
   edge_count: number;
 }
 
+
+export interface Series {
+  metric: string;
+  instance: string;
+  unit: string;
+  /** [epoch_ms, value] pairs. */
+  points: number[][];
+}
+
+export interface HistoryOut {
+  device_id: string;
+  /** The bucket actually used - 1m, 5m, 1h or raw. Shown to the reader,
+   *  because an averaged hour and a raw sample are not the same claim. */
+  interval: string;
+  source: string;
+  series: Series[];
+}
+
 export const api = {
   login: (username: string, password: string) =>
     request<{ token: string; expires_in: number; username: string; role: string }>(
@@ -363,6 +381,12 @@ export const api = {
   deviceState: (id: string) => request<DeviceState>(`/devices/${id}/state`),
 
   rooms: () => request<{ items: RoomSummary[] }>('/rooms'),
+
+  history: (deviceId: string, metrics: string[], startIso: string, endIso: string) => {
+    const q = new URLSearchParams({ start: startIso, end: endIso });
+    for (const m of metrics) q.append('metric', m);
+    return request<HistoryOut>(`/devices/${deviceId}/history?${q.toString()}`);
+  },
 
   topology: (layer: string, scope: string, depth: number) =>
     request<TopologyGraph>(

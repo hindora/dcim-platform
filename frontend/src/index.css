@@ -258,3 +258,19 @@ button.primary { background: var(--accent-dim); border-color: var(--accent); }
 .topo-edge.side-a { stroke: #3b82f6; }
 .topo-edge.side-b { stroke: #a855f7; }
 .topo-edge.down { stroke: var(--critical); stroke-dasharray: 4 3; }
+
+/* --- charts -------------------------------------------------------------- */
+
+.chart-figure { margin: 0 0 1.5rem; }
+.chart-figure figcaption { font-size: 0.85rem; margin-bottom: 0.35rem; }
+.chart { width: 100%; max-width: 45rem; height: auto;
+         background: var(--bg-inset); border: 1px solid var(--border);
+         border-radius: var(--radius); }
+.chart-grid { stroke: var(--border); stroke-width: 1; }
+.chart-line { fill: none; stroke-width: 1.5; stroke-linejoin: round;
+              stroke-linecap: round; }
+.chart-tick-y { font-size: 10px; fill: var(--text-muted); text-anchor: end;
+                dominant-baseline: middle; font-family: var(--mono); }
+.chart-tick-x { font-size: 10px; fill: var(--text-muted);
+                font-family: var(--mono); }
+.chart-unit { font-size: 10px; fill: var(--text-faint); font-family: var(--sans); }
