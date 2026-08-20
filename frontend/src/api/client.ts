@@ -193,6 +193,56 @@ export interface Page<T> {
 
 // ------------------------------------------------------------- endpoints
 
+
+export interface RackSummary {
+  id: string;
+  name: string;
+  row_name?: string | null;
+  room_id?: string | null;
+  room_name?: string | null;
+  datacenter_code?: string | null;
+  u_height: number;
+  device_count: number;
+  online_count: number;
+  offline_count: number;
+  load_kw?: number | null;
+  rated_power_kw?: number | null;
+  load_pct?: number | null;
+  max_inlet_c?: number | null;
+  max_severity: string;
+  free_u?: number | null;
+}
+
+export interface ElevationDevice {
+  id: string;
+  name: string;
+  device_type: string;
+  status: string;
+  health: string;
+  max_severity: string;
+  power_w?: number | null;
+  inlet_temp_c?: number | null;
+  cpu_util_pct?: number | null;
+}
+
+export interface ElevationSlot {
+  u_start: number;
+  u_height: number;
+  /** Mount side. Null here: the source models rack orientation, not per-device
+   *  mounting, and inventing a side would be worse than leaving it blank. */
+  facing?: string | null;
+  free: boolean;
+  device?: ElevationDevice | null;
+}
+
+export interface RackElevation {
+  rack: RackSummary;
+  positions: ElevationSlot[];
+  free_blocks: { u_start: number; u_height: number }[];
+  /** Vertically mounted PDUs and strapped-on probes: real, but at no U. */
+  zero_u_devices: ElevationDevice[];
+}
+
 export const api = {
   login: (username: string, password: string) =>
     request<{ token: string; expires_in: number; username: string; role: string }>(
@@ -213,11 +263,14 @@ export const api = {
 
   deviceState: (id: string) => request<DeviceState>(`/devices/${id}/state`),
 
+  rackElevation: (id: string) =>
+    request<RackElevation>(`/racks/${id}/elevation`),
+
   racks: (params: Record<string, string | undefined> = {}) => {
     const q = new URLSearchParams();
     for (const [k, v] of Object.entries(params)) if (v) q.set(k, v);
     const qs = q.toString();
-    return request<{ items: unknown[] }>(`/racks${qs ? `?${qs}` : ''}`);
+    return request<{ items: RackSummary[] }>(`/racks${qs ? `?${qs}` : ''}`);
   },
 
   collectors: () => request<{ items: unknown[] }>('/collector/instances'),

@@ -4,6 +4,8 @@ import { api, getToken, setToken } from './api/client';
 import { AlarmList } from './features/alarms/AlarmList';
 import { Dashboard } from './features/dashboard/Dashboard';
 import { DeviceDetail } from './features/devices/DeviceDetail';
+import { RackElevationView } from './features/racks/RackElevation';
+import { RackList } from './features/racks/RackList';
 import { DeviceList } from './features/devices/DeviceList';
 import { useSocketStatus } from './ws/useSocket';
 
@@ -53,6 +55,7 @@ function Sidebar({ onSignOut }: { onSignOut: () => void }) {
         <NavLink to="/" end>Dashboard</NavLink>
         <div className="section">Infrastructure</div>
         <NavLink to="/devices">Devices</NavLink>
+        <NavLink to="/racks">Racks</NavLink>
         <div className="section">Monitoring</div>
         <NavLink to="/alarms">Alarms</NavLink>
       </nav>
@@ -92,6 +95,8 @@ export default function App() {
           <Route path="/" element={<Dashboard />} />
           <Route path="/devices" element={<DeviceList />} />
           <Route path="/devices/:id" element={<DeviceDetail />} />
+          <Route path="/racks" element={<RackList />} />
+          <Route path="/racks/:id" element={<RackElevationView />} />
           <Route path="/alarms" element={<AlarmList />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

@@ -295,7 +295,13 @@ class TopologyImporter:
             RETURNING id::text
         """, ext=ext, name=dev.get("name") or ext, dtype=dtype,
             model=model_id, vendor=vendor_id, room=room_id, rack=rack_id,
-            u_start=u_start, u_height=_u_height(dev), facing=dev.get("rack_facing"),
+            # NOT rack_facing. That is the rack's orientation in the hall
+            # ('N' faces lower y, 'S' faces higher y) and says nothing about
+            # which side of the rack a device is mounted on. Copying it here
+            # made every elevation slot claim a mount side of "N", which a
+            # front/rear rack view would read as a real answer. The source
+            # models no per-device mount side, so the honest value is nothing.
+            u_start=u_start, u_height=_u_height(dev), facing=None,
             fx=position.get("x") if position else dev.get("floor_x"),
             fy=position.get("y") if position else dev.get("floor_y"),
             pip=dev.get("ip_address") or None, mip=dev.get("mgmt_ip") or None,

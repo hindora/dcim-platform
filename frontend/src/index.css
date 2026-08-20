@@ -142,3 +142,56 @@ button.primary { background: var(--accent-dim); border-color: var(--accent); }
 .login input { width: 100%; }
 .login button { width: 100%; margin-top: 16px; }
 .error { color: var(--critical); font-size: 13px; margin-top: 10px; }
+
+/* --- rack elevation ------------------------------------------------------ */
+
+.rack-head { display: flex; flex-wrap: wrap; gap: 1.5rem;
+             justify-content: space-between; align-items: flex-start; }
+.rack-stats { display: flex; flex-wrap: wrap; gap: 1.5rem; margin: 0; }
+.rack-stats div { display: flex; flex-direction: column; }
+.rack-stats dt { font-size: 0.75rem; color: var(--text-muted);
+                 text-transform: uppercase; letter-spacing: 0.04em; }
+.rack-stats dd { margin: 0; font-variant-numeric: tabular-nums; }
+
+.overlay-picker { display: flex; gap: 0.25rem; }
+.overlay-picker button { background: var(--bg-raised); color: var(--text-muted);
+                         border: 1px solid var(--border); border-radius: 4px;
+                         padding: 0.3rem 0.75rem; cursor: pointer; font: inherit;
+                         font-size: 0.85rem; }
+.overlay-picker button.active { color: var(--text); border-color: var(--accent); }
+
+/* The rack itself. Slot height is driven by --u so a 4 U CDU is four times a
+   1 U server: the point of an elevation is that the proportions are real. */
+.rack { display: flex; flex-direction: column; gap: 2px;
+        border: 1px solid var(--border); border-radius: 6px; padding: 6px;
+        background: var(--bg-raised); max-width: 46rem; }
+.rack-slot { display: grid; grid-template-columns: 4.5rem 1fr auto;
+             align-items: center; gap: 0.75rem; padding: 0 0.5rem;
+             min-height: calc(var(--u, 1) * 1.6rem);
+             border-radius: 3px; text-decoration: none; color: var(--text);
+             border-left: 3px solid transparent; }
+.rack-slot .u-label { color: var(--text-muted); font-size: 0.75rem;
+                      font-family: var(--mono); }
+.rack-slot .rack-name { font-family: var(--mono); font-size: 0.85rem;
+                        overflow: hidden; text-overflow: ellipsis;
+                        white-space: nowrap; }
+.rack-slot.free { background: repeating-linear-gradient(
+                    45deg, transparent, transparent 6px,
+                    var(--border) 6px, var(--border) 7px);
+                  opacity: 0.5; font-size: 0.8rem; }
+.rack-slot.filled { background: var(--bg); }
+.rack-slot.filled:hover { border-left-color: var(--accent); }
+
+/* Status overlay: colour carries severity, and the chip carries the word. */
+.sev-ok      { border-left-color: var(--ok); }
+.sev-warn    { border-left-color: var(--warn); }
+.sev-major   { border-left-color: var(--critical); }
+.sev-offline { border-left-color: var(--critical); opacity: 0.75; }
+
+/* Measurement overlays shade the block by --fill (0..1). A device with no
+   reading gets --fill: 0 and stays unpainted rather than looking like a zero. */
+.sev-none { background:
+  color-mix(in srgb, var(--accent) calc(var(--fill, 0) * 55%), var(--bg)); }
+
+.zero-u { list-style: none; padding: 0; display: flex; flex-direction: column;
+          gap: 0.35rem; }
