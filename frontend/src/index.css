@@ -125,6 +125,9 @@ button.primary { background: var(--accent-dim); border-color: var(--accent); }
   padding: 10px 14px; margin-bottom: 16px; color: var(--text);
 }
 .muted { color: var(--text-muted); }
+/* Standalone warning text. .chip.warn colours a chip; this colours a run of
+   text inside a cell, such as the failed-poll count beside a poll total. */
+.warn { color: var(--warn); }
 .stack { display: grid; gap: 16px; }
 .kv { display: grid; grid-template-columns: 160px 1fr; gap: 6px 12px; font-size: 13px; }
 .kv dt { color: var(--text-muted); }

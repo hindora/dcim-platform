@@ -85,11 +85,18 @@ export interface EndpointSummary {
   credential_hint?: string | null;
   poll_interval_s?: number | null;
   status: string;
+  /** Every poll attempt. Fresh here with a stale last_success = polling and failing. */
+  last_seen?: string | null;
   last_success?: string | null;
   last_error?: string | null;
   last_error_class?: string | null;
   consecutive_failures: number;
   last_latency_ms?: number | null;
+  /** Lifetime totals, not a recent window - the collector resets on restart. */
+  poll_count: number;
+  fail_count: number;
+  timeout_count: number;
+  auth_fail_count: number;
 }
 
 export interface DeviceDetail extends DeviceSummary {

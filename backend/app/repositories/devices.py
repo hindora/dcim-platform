@@ -142,9 +142,17 @@ async def list_endpoints(session: AsyncSession, device_id: str) -> list[dict[str
                c.secret_hint AS credential_hint,
                p.interval_s AS poll_interval_s,
                COALESCE(es.status::text, 'UNKNOWN') AS status,
-               es.last_success, es.last_error, es.last_error_class,
+               es.last_seen, es.last_success, es.last_error, es.last_error_class,
                COALESCE(es.consecutive_failures, 0) AS consecutive_failures,
-               es.last_latency_ms
+               es.last_latency_ms,
+               -- Cumulative since the row was first written. The collector
+               -- resets its own counters on restart and the writer keeps the
+               -- stored value monotonic, so these are lifetime totals, not a
+               -- recent window - the UI has to say so.
+               COALESCE(es.poll_count, 0) AS poll_count,
+               COALESCE(es.fail_count, 0) AS fail_count,
+               COALESCE(es.timeout_count, 0) AS timeout_count,
+               COALESCE(es.auth_fail_count, 0) AS auth_fail_count
         FROM device_endpoint e
         LEFT JOIN credential c     ON c.id = e.credential_id
         JOIN poll_profile p        ON p.id = e.poll_profile_id

@@ -72,11 +72,20 @@ class EndpointSummary(BaseModel):
     credential_hint: str | None = None      # never the secret itself
     poll_interval_s: int | None = None
     status: str = "UNKNOWN"
+    # last_seen is every poll ATTEMPT, last_success only the ones that worked.
+    # Fresh last_seen with a stale last_success is an endpoint being polled and
+    # failing, which reads very differently from one nothing is polling at all.
+    last_seen: datetime | None = None
     last_success: datetime | None = None
     last_error: str | None = None
     last_error_class: str | None = None
     consecutive_failures: int = 0
     last_latency_ms: int | None = None
+    # Lifetime totals, not a recent window; see the repository query.
+    poll_count: int = 0
+    fail_count: int = 0
+    timeout_count: int = 0
+    auth_fail_count: int = 0
 
 
 class DeviceDetail(DeviceSummary):
