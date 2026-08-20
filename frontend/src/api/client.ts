@@ -243,6 +243,62 @@ export interface RackElevation {
   zero_u_devices: ElevationDevice[];
 }
 
+
+export interface RoomExtent { width_m: number; depth_m: number; derived: boolean }
+
+export interface FloorRack {
+  id: string;
+  name: string;
+  row_name?: string | null;
+  x: number;
+  y: number;
+  /** 'N' faces lower y, 'S' faces higher y. */
+  facing?: string | null;
+  device_count: number;
+  offline_count: number;
+  load_kw?: number | null;
+  max_inlet_c?: number | null;
+  max_severity: string;
+  free_u?: number | null;
+}
+
+export interface FloorEquipment {
+  id: string;
+  name: string;
+  device_type: string;
+  status: string;
+  max_severity: string;
+  power_w?: number | null;
+}
+
+export interface FloorAisle {
+  y_start: number;
+  y_end: number;
+  kind: 'cold' | 'hot' | 'unknown';
+  label?: string | null;
+  rows: string[];
+}
+
+export interface FloorPlan {
+  room_id: string;
+  room_name: string;
+  datacenter_code?: string | null;
+  extent: RoomExtent;
+  rack_w_m: number;
+  rack_d_m: number;
+  racks: FloorRack[];
+  /** In the room, but with no coordinate to draw it at. */
+  unpositioned_equipment: FloorEquipment[];
+  aisles: FloorAisle[];
+}
+
+export interface RoomSummary {
+  id: string;
+  name: string;
+  datacenter_code?: string | null;
+  datacenter_id?: string | null;
+}
+
 export const api = {
   login: (username: string, password: string) =>
     request<{ token: string; expires_in: number; username: string; role: string }>(
@@ -262,6 +318,10 @@ export const api = {
   device: (id: string) => request<DeviceDetail>(`/devices/${id}`),
 
   deviceState: (id: string) => request<DeviceState>(`/devices/${id}/state`),
+
+  rooms: () => request<{ items: RoomSummary[] }>('/rooms'),
+
+  floorplan: (roomId: string) => request<FloorPlan>(`/rooms/${roomId}/floorplan`),
 
   rackElevation: (id: string) =>
     request<RackElevation>(`/racks/${id}/elevation`),

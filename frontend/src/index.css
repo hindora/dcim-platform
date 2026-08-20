@@ -195,3 +195,40 @@ button.primary { background: var(--accent-dim); border-color: var(--accent); }
 
 .zero-u { list-style: none; padding: 0; display: flex; flex-direction: column;
           gap: 0.35rem; }
+
+/* --- floor plan ---------------------------------------------------------- */
+
+.floor-controls { display: flex; gap: 1.5rem; align-items: center;
+                  flex-wrap: wrap; }
+.floor-controls select { background: var(--bg-raised); color: var(--text);
+                         border: 1px solid var(--border); border-radius: 4px;
+                         padding: 0.3rem 0.5rem; font: inherit; }
+
+.floor-wrap { overflow-x: auto; }
+/* Drawn in metres: 1 user unit = 1 m, so the plan is to scale and a 0.6 m rack
+   is half the width of a 1.2 m one. */
+.floorplan { width: 100%; max-width: 52rem; height: auto;
+             background: var(--bg-inset); border-radius: var(--radius); }
+
+/* Dashed: the source has no room dimensions, so this outline is the extent of
+   the equipment plus a margin, not a surveyed wall. */
+.floor-outline { fill: none; stroke: var(--border-strong); stroke-width: 0.03;
+                 stroke-dasharray: 0.15 0.1; }
+
+.aisle { opacity: 0.22; }
+.aisle-cold { fill: #3b82f6; }
+.aisle-hot { fill: #f85149; }
+.aisle-unknown { fill: var(--unknown); }
+.aisle-label { font-size: 0.17px; fill: var(--text-muted);
+               font-family: var(--sans); dominant-baseline: middle; }
+
+.floor-rack { stroke: var(--bg); stroke-width: 0.02; }
+.floor-rack-hit { cursor: pointer; }
+.floor-rack-hit:hover .floor-rack,
+.floor-rack-hit:focus-visible .floor-rack { stroke: var(--text);
+                                            stroke-width: 0.04; }
+/* The intake side. Which way a rack points decides which aisle it breathes. */
+.floor-front { fill: var(--text); opacity: 0.65; }
+.rack-tag { font-size: 0.16px; fill: var(--text); font-family: var(--mono);
+            text-anchor: middle; dominant-baseline: middle;
+            pointer-events: none; }

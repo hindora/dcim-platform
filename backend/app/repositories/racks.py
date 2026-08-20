@@ -154,3 +154,44 @@ def compute_free_blocks(u_height: int, occupied: list[tuple[int, int]]) -> list[
     if run_start is not None:
         blocks.append({"u_start": run_start, "u_height": u_height + 1 - run_start})
     return sorted(blocks, key=lambda b: -b["u_height"])
+
+
+_FLOORPLAN_RACKS = _RACK_SUMMARY.replace(
+    "SELECT r.id::text, r.name, r.u_height, r.rated_power_kw,",
+    "SELECT r.id::text, r.name, r.u_height, r.rated_power_kw,\n"
+    "           r.floor_x, r.floor_y, r.facing,\n"
+    "           rr.ordinal AS row_ordinal, rr.cold_aisle, rr.hot_aisle,",
+) + """
+     WHERE rm.id = CAST(:room_id AS uuid) AND r.floor_x IS NOT NULL
+""" + _GROUP_BY + ", r.floor_x, r.floor_y, r.facing, rr.cold_aisle, rr.hot_aisle"
+
+
+async def floorplan_racks(session: AsyncSession, room_id: str) -> list[dict[str, Any]]:
+    rows = (await session.execute(text(_FLOORPLAN_RACKS),
+                                  {"room_id": room_id})).mappings().all()
+    return [dict(r) for r in rows]
+
+
+async def floorplan_equipment(session: AsyncSession,
+                              room_id: str) -> list[dict[str, Any]]:
+    """Floor-standing plant in the room.
+
+    The source carries no room coordinate for it - only a position in its
+    fleet-wide canvas diagram, which is pixels, not metres - so this returns
+    what is in the room without pretending to know where it stands. CRAH units
+    especially: a floor plan that omitted them entirely would show the load and
+    hide what cools it.
+    """
+    rows = (await session.execute(text("""
+        SELECT d.id::text, d.name, d.device_type::text AS device_type,
+               COALESCE(ds.status::text, 'UNKNOWN')     AS status,
+               COALESCE(ds.max_severity::text, 'CLEAR') AS max_severity,
+               ds.power_w, ds.inlet_temp_c
+          FROM device d
+          LEFT JOIN device_state ds ON ds.device_id = d.id
+         WHERE d.room_id = CAST(:room_id AS uuid)
+           AND d.rack_id IS NULL
+           AND d.lifecycle <> 'decommissioned'
+         ORDER BY d.device_type, d.name
+    """), {"room_id": room_id})).mappings().all()
+    return [dict(r) for r in rows]

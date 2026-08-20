@@ -302,8 +302,17 @@ class TopologyImporter:
             # front/rear rack view would read as a real answer. The source
             # models no per-device mount side, so the honest value is nothing.
             u_start=u_start, u_height=_u_height(dev), facing=None,
-            fx=position.get("x") if position else dev.get("floor_x"),
-            fy=position.get("y") if position else dev.get("floor_y"),
+            # floor_x/floor_y are metres within the room - the source documents
+            # floor_x as "rack centre x within the room (m)". `position` is
+            # something else entirely: pixel coordinates in the simulator's
+            # fleet-wide canvas diagram, spanning 0-8920 across every room and
+            # both datacenters. Preferring it filled a metre-typed column with
+            # pixels, so floor-standing plant landed kilometres outside its own
+            # room and a floor plan drawn from it was nonsense. Rack-mounted
+            # gear is placed by its rack anyway; plant simply has no room
+            # coordinate in the source, and null says that honestly.
+            fx=dev.get("floor_x"),
+            fy=dev.get("floor_y"),
             pip=dev.get("ip_address") or None, mip=dev.get("mgmt_ip") or None,
             attrs=_json({"mgmt_vlan": dev.get("mgmt_vlan"),
                          "power_draw_w": dev.get("power_draw_w"),

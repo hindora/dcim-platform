@@ -15,13 +15,19 @@ from app.schemas import (
     ElevationDevice,
     ElevationSlot,
     EndpointSummary,
+    FloorAisle,
+    FloorEquipment,
+    FloorPlan,
+    FloorRack,
     FreeBlock,
     InterfaceOut,
     LocationRef,
     MetricValue,
     RackElevation,
     RackSummary,
+    RoomExtent,
 )
+from app.services import floorplan
 
 
 def _location(row: dict[str, Any]) -> LocationRef:
@@ -152,4 +158,42 @@ async def rack_elevation(session: AsyncSession, rack_id: str) -> RackElevation |
         rack=_rack_summary(rack), positions=positions,
         free_blocks=[FreeBlock(**b) for b in blocks],
         zero_u_devices=zero_u,
+    )
+
+
+async def room_floorplan(session: AsyncSession, room_id: str) -> FloorPlan | None:
+    """Everything needed to draw one room, in a single request."""
+    racks = await rack_repo.floorplan_racks(session, room_id)
+    equipment = await rack_repo.floorplan_equipment(session, room_id)
+    if not racks and not equipment:
+        return None
+
+    # Racks only. They are the sole things with a real room coordinate.
+    points = [(float(r["floor_x"]), float(r["floor_y"])) for r in racks]
+
+    first = racks[0] if racks else None
+    return FloorPlan(
+        room_id=room_id,
+        room_name=(first or {}).get("room_name") or "",
+        datacenter_code=(first or {}).get("datacenter_code"),
+        extent=RoomExtent(**floorplan.room_extent(points)),
+        rack_w_m=floorplan.RACK_W, rack_d_m=floorplan.RACK_D,
+        racks=[FloorRack(
+            id=r["id"], name=r["name"], row_name=r.get("row_name"),
+            x=float(r["floor_x"]), y=float(r["floor_y"]), facing=r.get("facing"),
+            device_count=r.get("device_count") or 0,
+            offline_count=r.get("offline_count") or 0,
+            load_kw=_f(r.get("load_kw")), max_inlet_c=_f(r.get("max_inlet_c")),
+            max_severity=r.get("max_severity") or "CLEAR",
+            free_u=r.get("free_u"),
+        ) for r in racks],
+        unpositioned_equipment=[FloorEquipment(
+            id=e["id"], name=e["name"], device_type=e["device_type"],
+            status=e.get("status") or "UNKNOWN",
+            max_severity=e.get("max_severity") or "CLEAR",
+            power_w=_f(e.get("power_w")),
+        ) for e in equipment],
+        aisles=[FloorAisle(y_start=a.y_start, y_end=a.y_end, kind=a.kind,
+                           label=a.label, rows=a.rows)
+                for a in floorplan.derive_aisles(racks)],
     )

@@ -153,6 +153,73 @@ class TopologyOut(BaseModel):
     edge_count: int = 0
 
 
+class RoomExtent(BaseModel):
+    width_m: float = 0.0
+    depth_m: float = 0.0
+    # True when the outline was inferred from equipment positions because the
+    # source carries no room dimensions. The UI says so rather than drawing a
+    # wall the data does not support.
+    derived: bool = True
+
+
+class FloorRack(BaseModel):
+    id: str
+    name: str
+    row_name: str | None = None
+    x: float
+    y: float
+    # 'N' faces lower y, 'S' faces higher y - the rack's orientation in the
+    # hall, which is what makes an aisle cold or hot.
+    facing: str | None = None
+    device_count: int = 0
+    offline_count: int = 0
+    load_kw: float | None = None
+    max_inlet_c: float | None = None
+    max_severity: str = "CLEAR"
+    free_u: int | None = None
+
+
+class FloorEquipment(BaseModel):
+    """Plant in the room, listed rather than placed.
+
+    It carries no x/y because the source has none for it: the only position it
+    has is a pixel coordinate in a fleet-wide canvas diagram, and drawing that
+    on a metre-scale room plan puts a CRAH kilometres outside its own room.
+    """
+
+    id: str
+    name: str
+    device_type: str
+    status: str = "UNKNOWN"
+    max_severity: str = "CLEAR"
+    power_w: float | None = None
+
+
+class FloorAisle(BaseModel):
+    y_start: float
+    y_end: float
+    # cold | hot | unknown. Unknown is honest: a row whose racks disagree on
+    # orientation has no single front, and a mislabelled aisle sends someone
+    # looking for a hot spot on the wrong side of a row.
+    kind: str
+    label: str | None = None
+    rows: list[str] = Field(default_factory=list)
+
+
+class FloorPlan(BaseModel):
+    room_id: str
+    room_name: str
+    datacenter_code: str | None = None
+    extent: RoomExtent
+    # Assumed standard cabinet footprint in metres; not stored per rack.
+    rack_w_m: float = 0.6
+    rack_d_m: float = 1.2
+    racks: list[FloorRack] = Field(default_factory=list)
+    # In the room, but with no coordinate to draw it at.
+    unpositioned_equipment: list[FloorEquipment] = Field(default_factory=list)
+    aisles: list[FloorAisle] = Field(default_factory=list)
+
+
 class ImpactNode(BaseModel):
     id: str
     name: str

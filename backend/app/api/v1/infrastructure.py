@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.security import Principal, current_principal
 from app.db.session import get_session
 from app.repositories import racks as repo
-from app.schemas import RackElevation, RackSummary
+from app.schemas import FloorPlan, RackElevation, RackSummary
 from app.services import devices as service
 
 router = APIRouter(tags=["infrastructure"])
@@ -64,3 +64,17 @@ async def rack_elevation(
     if elevation is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "rack not found")
     return elevation
+
+
+@router.get("/rooms/{room_id}/floorplan", response_model=FloorPlan,
+            summary="Room floor plan with rack positions and aisles")
+async def room_floorplan(
+    room_id: str,
+    session: AsyncSession = Depends(get_session),
+    _: Principal = Depends(current_principal),
+) -> FloorPlan:
+    plan = await service.room_floorplan(session, room_id)
+    if plan is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND,
+                            "room not found, or nothing in it is positioned")
+    return plan
