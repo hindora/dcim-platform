@@ -202,7 +202,7 @@ def test_gnmi_is_only_for_fabric_devices():
 
 def _assignment(interval_s: int = 30, timeout_ms: int = 3000,
                 metric_groups: list[str] | None = None):
-    from app.schemas import (Assignment, AssignmentEndpoint, AssignmentPoll)
+    from app.schemas import Assignment, AssignmentEndpoint, AssignmentPoll
     return Assignment(
         version=1, generated_at=datetime(2026, 8, 19, tzinfo=UTC),
         collector_id="c1",
