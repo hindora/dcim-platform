@@ -24,6 +24,8 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.layers import UPSTREAM_COL
+
 # Scope anchors. Each returns a set of device ids to seed the walk from.
 #
 # The location chain is device -> rack -> rack_row -> room -> datacenter, with
@@ -221,3 +223,42 @@ async def graph_version(session: AsyncSession) -> str:
           FROM connection
     """))).first()
     return f"{row.n}:{row.newest}:{row.down}"
+
+
+async def layer_edges(session: AsyncSession, layer: str) -> list[dict[str, Any]]:
+    """Every edge on one layer, normalised so up/down are the real direction.
+
+    Whole-layer rather than a bounded walk: impact analysis has to know whether
+    a path from a SOURCE survives, and that is a global question. The largest
+    layer here is 7560 rows, which is cheaper to fetch once than to answer with
+    a recursive query per candidate device.
+    """
+    up_col, down_col = UPSTREAM_COL[layer]
+    rows = (await session.execute(text(f"""
+        SELECT c.{up_col}::text   AS up,
+               c.{down_col}::text AS down,
+               c.redundancy_side
+          FROM connection c
+         WHERE c.layer = CAST(:layer AS layer_t)
+           AND c.admin_state = 'enabled'
+    """), {"layer": layer})).mappings().all()
+    return [dict(r) for r in rows]
+
+
+async def devices_brief(session: AsyncSession,
+                        ids: list[str]) -> dict[str, dict[str, Any]]:
+    """Just enough about each device to render an impact list."""
+    if not ids:
+        return {}
+    rows = (await session.execute(text("""
+        SELECT d.id::text AS id, d.name, d.device_type::text AS device_type,
+               COALESCE(ds.status::text, 'UNKNOWN') AS status,
+               rm.name AS room_name, r.name AS rack_name
+          FROM device d
+          LEFT JOIN device_state ds ON ds.device_id = d.id
+          LEFT JOIN rack r          ON r.id = d.rack_id
+          LEFT JOIN rack_row rr     ON rr.id = r.row_id
+          LEFT JOIN room rm         ON rm.id = COALESCE(rr.room_id, d.room_id)
+         WHERE d.id = ANY(CAST(:ids AS uuid[]))
+    """), {"ids": ids})).mappings().all()
+    return {r["id"]: dict(r) for r in rows}

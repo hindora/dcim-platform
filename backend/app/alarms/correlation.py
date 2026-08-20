@@ -25,6 +25,7 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.layers import UPSTREAM_COL
 from app.core.logging import get_logger
 
 log = get_logger("alarms.correlation")
@@ -40,20 +41,11 @@ SUPPRESSIBLE_TYPES = frozenset({"endpoint_unreachable", "telemetry_stale"})
 # other change.
 ROOT_TYPES = ("endpoint_unreachable",)
 
-# Which end of a connection is UPSTREAM, per layer. This is NOT uniform, and
-# assuming it is produces a correlation engine that silently explains nothing:
-#
-#   management: device -> OOB switch      (a=device,  b=switch)
-#   fieldbus:   gateway -> field device   (a=gateway, b=device)
-#   power:      feeder  -> load           (a=feeder,  b=load)
-#
-# Management runs the opposite way to the other two because the managed device
-# is the one holding the cable end, while a gateway or a PDU owns the trunk.
-_UPSTREAM_COL = {
-    "management": ("b_device_id", "a_device_id"),
-    "fieldbus": ("a_device_id", "b_device_id"),
-    "power": ("a_device_id", "b_device_id"),
-}
+# Which end of a connection is upstream is NOT uniform across layers, and
+# assuming it is produces a correlation engine that silently explains nothing -
+# the traversal walks away from the cause instead of towards it. The map lives
+# in app.core.layers because impact analysis needs the same fact.
+_UPSTREAM_COL = UPSTREAM_COL
 
 # Cheapest and most common explanation first. Power is last because it is the
 # only one that can be vetoed by redundancy.

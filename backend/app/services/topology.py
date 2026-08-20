@@ -17,7 +17,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.repositories import topology as repo
-from app.schemas import LocationRef, Termination, TopologyEdge, TopologyNode, TopologyOut
+from app.schemas import (
+    ImpactLayerOut,
+    ImpactNode,
+    ImpactOut,
+    LocationRef,
+    Termination,
+    TopologyEdge,
+    TopologyNode,
+    TopologyOut,
+)
+from app.services import impact
 
 log = get_logger("topology")
 
@@ -220,3 +230,55 @@ async def _cache_set(key: str, value: TopologyOut) -> None:
         await _client().set(key, value.model_dump_json(), ex=CACHE_TTL_S)
     except Exception as exc:
         log.warning("topology cache write failed", error=str(exc))
+
+
+async def get_impact(session: AsyncSession, device_id: str) -> ImpactOut:
+    """What would stop working if this device were removed.
+
+    Every layer is evaluated, but only layers where the device actually has
+    dependents are returned - a server appears on the power and network layers
+    and has no downstream on either, and listing three empty sections says
+    nothing.
+    """
+    try:
+        uuid.UUID(device_id)
+    except ValueError:
+        raise TopologyError(f"device id {device_id!r} is not a UUID") from None
+
+    subject = (await repo.devices_brief(session, [device_id])).get(device_id)
+    if subject is None:
+        raise TopologyError(f"no device {device_id}")
+
+    results: list[impact.LayerImpact] = []
+    for layer in impact.LAYERS:
+        graph = impact.Graph()
+        for e in await repo.layer_edges(session, layer):
+            graph.add(e["up"], e["down"], e.get("redundancy_side"))
+        if device_id not in graph.nodes:
+            continue
+        outcome = impact.analyse(graph, device_id, layer)
+        if outcome.dependents:
+            results.append(outcome)
+
+    wanted: set[str] = set()
+    for r in results:
+        wanted |= r.cut_off | r.degraded
+    brief = await repo.devices_brief(session, sorted(wanted))
+
+    def nodes(ids: set[str]) -> list[ImpactNode]:
+        found = [ImpactNode(**brief[i]) for i in ids if i in brief]
+        return sorted(found, key=lambda n: (n.device_type, n.name))
+
+    layers = [
+        ImpactLayerOut(layer=r.layer, effect=r.effect, dependents=len(r.dependents),
+                       cut_off=nodes(r.cut_off), degraded=nodes(r.degraded))
+        for r in results
+    ]
+    all_cut = set().union(*(r.cut_off for r in results)) if results else set()
+    all_deg = set().union(*(r.degraded for r in results)) if results else set()
+
+    log.info("impact analysed", device=subject["name"],
+             layers=[r.layer for r in results],
+             cut_off=len(all_cut), degraded=len(all_deg))
+    return ImpactOut(device=ImpactNode(**subject), layers=layers,
+                     total_cut_off=len(all_cut), total_degraded=len(all_deg))

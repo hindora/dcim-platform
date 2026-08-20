@@ -153,6 +153,37 @@ class TopologyOut(BaseModel):
     edge_count: int = 0
 
 
+class ImpactNode(BaseModel):
+    id: str
+    name: str
+    device_type: str
+    status: str = "UNKNOWN"
+    room_name: str | None = None
+    rack_name: str | None = None
+
+
+class ImpactLayerOut(BaseModel):
+    layer: str
+    # Plain words, because "cut_off" means something different per layer:
+    # losing power is not the same class of event as losing monitoring.
+    effect: str
+    dependents: int = 0
+    # Devices with no surviving path from any source once the candidate is
+    # removed. On the power layer this is the answer to "what goes dark".
+    cut_off: list[ImpactNode] = Field(default_factory=list)
+    # Still served, but by fewer distinct redundancy sides than before. Power
+    # only - no other layer here has a labelled second path.
+    degraded: list[ImpactNode] = Field(default_factory=list)
+
+
+class ImpactOut(BaseModel):
+    device: ImpactNode
+    layers: list[ImpactLayerOut] = Field(default_factory=list)
+    # Totals across layers, deduplicated by device.
+    total_cut_off: int = 0
+    total_degraded: int = 0
+
+
 class DeviceStateOut(BaseModel):
     device_id: str
     status: str
