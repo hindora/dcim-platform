@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.security import Principal, current_principal
 from app.db.session import get_session
 from app.services import pue as pue_service
+from app.services import thermal as thermal_service
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
@@ -69,3 +71,30 @@ async def pue_series(
         "buckets": len(points),
         "mean": round(sum(usable) / len(usable), 3) if usable else None,
     }
+
+
+@router.get("/thermal", summary="Rack ΔT, hot spots, and CRAH supply vs return")
+async def thermal(
+    # Typed as UUID so a malformed id is rejected at the edge with a 422.
+    # As a plain str it reached the CAST in SQL and came back a 500, which
+    # reads as "the server broke" rather than "you sent a bad id".
+    room_id: UUID,
+    minutes: int = Query(15, ge=1, le=240,
+                         description="How long a condition must hold to count"),
+    session: AsyncSession = Depends(get_session),
+    _: Principal = Depends(current_principal),
+) -> dict[str, Any]:
+    """Two different findings, deliberately kept apart.
+
+    ``hot_spots`` are racks hot RELATIVE to the room - a local airflow problem.
+    ``thermal_event`` is the room drifting up as a whole, which the relative
+    test cannot see and which points at plant or capacity instead. A CRAH is
+    classified by whether its SUPPLY or its RETURN is high, because those send
+    an engineer to opposite ends of the building.
+    """
+    view = await thermal_service.room_view(session, str(room_id), minutes=minutes)
+    if view.get("name") is None:
+        # A well-formed id for a room that does not exist. Returning 200 with
+        # an empty room says "this room is fine" about a room that is not there.
+        raise HTTPException(status_code=404, detail="room not found")
+    return view
