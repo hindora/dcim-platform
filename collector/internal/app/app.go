@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/hari/dcim-platform/collector/internal/adapters/snmp"
 	"github.com/hari/dcim-platform/collector/internal/assign"
 	"github.com/hari/dcim-platform/collector/internal/config"
+	"github.com/hari/dcim-platform/collector/internal/discovery"
 	"github.com/hari/dcim-platform/collector/internal/health"
 	"github.com/hari/dcim-platform/collector/internal/mapping"
 	"github.com/hari/dcim-platform/collector/internal/obs"
@@ -269,6 +271,19 @@ func (a *App) Run(ctx context.Context) error {
 		a.log.Info("initial assignment", "endpoints", a.assign.Count())
 	}
 	go a.assign.Run(ctx)
+
+	// Discovery is opt-in per run: nothing sweeps unless an operator queues a
+	// run, so this goroutine is idle until there is work.
+	if a.cfg.Protocols.SNMP.Enabled {
+		go (&discovery.Runner{
+			BaseURL:  a.cfg.DCIM.BaseURL,
+			Token:    a.cfg.Token,
+			Interval: a.cfg.DCIM.AssignmentInterval,
+			Sweeper:  discovery.New(a.log, discovery.PerAddressCommunity, 0),
+			HTTP:     &http.Client{Timeout: a.cfg.DCIM.RequestTimeout},
+			Log:      a.log,
+		}).Run(ctx)
+	}
 
 	if a.rfEvents != nil {
 		// Reconciliation runs AFTER the first assignment, so the very first

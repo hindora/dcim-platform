@@ -92,10 +92,16 @@ func (c *anySourceConn) SetDeadline(t time.Time) error      { return c.pc.SetDea
 func (c *anySourceConn) SetReadDeadline(t time.Time) error  { return c.pc.SetReadDeadline(t) }
 func (c *anySourceConn) SetWriteDeadline(t time.Time) error { return c.pc.SetWriteDeadline(t) }
 
-// useAnySourceSocket swaps the connected socket gosnmp created for an
+// UseAnySourceSocket swaps the connected socket gosnmp created for an
 // unconnected one. Connect() is still called first so gosnmp initialises the
 // rest of its state.
-func useAnySourceSocket(client *g.GoSNMP, address string, port int) error {
+//
+// Exported because discovery needs the identical behaviour: an agent bound to
+// a wildcard socket replies from whichever source address the kernel picks,
+// and a connected UDP socket silently drops those replies. Two copies of that
+// subtlety would drift, and the failure mode is "everything times out" rather
+// than anything that points at the cause.
+func UseAnySourceSocket(client *g.GoSNMP, address string, port int) error {
 	pc, err := net.ListenPacket("udp", ":0")
 	if err != nil {
 		return err
@@ -141,7 +147,7 @@ func (a *Adapter) Poll(ctx context.Context, ep *models.Endpoint) (*models.PollOu
 		return nil, fmt.Errorf("%w: %v", models.ErrUnreachable, err)
 	}
 	if a.anySourceReply {
-		if err := useAnySourceSocket(client, ep.Address, port); err != nil {
+		if err := UseAnySourceSocket(client, ep.Address, port); err != nil {
 			return nil, fmt.Errorf("%w: %v", models.ErrUnreachable, err)
 		}
 	}
