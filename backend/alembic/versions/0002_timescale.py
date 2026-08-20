@@ -147,6 +147,34 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # Remove the policy jobs BEFORE dropping anything they act on.
+    #
+    # This migration installs eight background jobs - one compression policy,
+    # six retention policies and three continuous-aggregate refreshes. They are
+    # run by TimescaleDB's scheduler, which knows nothing about a migration in
+    # progress. If a retention or refresh job happens to fire against a
+    # hypertable while the downgrade is dropping it, both touch the same
+    # catalog tuples and Postgres aborts with "tuple concurrently deleted".
+    #
+    # It fails perhaps one run in four, which is worse than failing always: it
+    # reads as an unrelated flake and gets re-run rather than fixed.
+    #
+    # User-created policies get job ids from 1000 up; TimescaleDB's own
+    # internal telemetry job sits below that and must be left alone.
+    op.execute("""
+        DO $$
+        DECLARE j RECORD;
+        BEGIN
+            IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'timescaledb') THEN
+                FOR j IN SELECT job_id FROM timescaledb_information.jobs
+                          WHERE job_id >= 1000
+                LOOP
+                    PERFORM delete_job(j.job_id);
+                END LOOP;
+            END IF;
+        END $$;
+    """)
+
     # Drop order matters: 1h is built from 5m, which is built from 1m.
     with op.get_context().autocommit_block():
         for view in ("telemetry_1h", "telemetry_5m", "telemetry_1m"):
