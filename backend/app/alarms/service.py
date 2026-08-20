@@ -17,6 +17,7 @@ from typing import Any
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.alarms import correlation
 from app.alarms.engine import (
     AlarmKey,
     Candidate,
@@ -231,11 +232,21 @@ class AlarmService:
                 instance=endpoint_id, at=now, by="system")
             if not cleared:
                 return None
+            released_devices: list[str] = []
             for row in cleared:
                 await repo.record_history(session, alarm_id=row["id"],
                                           device_id=device_id, action="cleared",
                                           severity=row["severity"], actor="system")
-            await repo.refresh_device_alarm_state(session, [device_id])
+                # This alarm may have been explaining others. They stay broken
+                # after it clears, so they have to become visible again.
+                for sym in await correlation.release_symptoms(session, row["id"]):
+                    released_devices.append(sym["device_id"])
+                    await repo.record_history(
+                        session, alarm_id=sym["id"], device_id=sym["device_id"],
+                        action="released", severity=sym["severity"],
+                        actor="system", detail={"root": row["id"]})
+            await repo.refresh_device_alarm_state(
+                session, [device_id, *released_devices])
             return AlarmAction("alarm_cleared", cleared[0])
 
         if status != "OFFLINE":
@@ -258,6 +269,21 @@ class AlarmService:
         await repo.record_history(session, alarm_id=alarm["id"], device_id=device_id,
                                   action="raised", severity=alarm["severity"],
                                   actor="system")
+
+        # An unreachable device is the commonest symptom there is: the thing
+        # carrying the poll may be what actually failed.
+        root = await correlation.correlate(
+            session, alarm_id=alarm["id"], device_id=device_id,
+            alarm_type="endpoint_unreachable")
+        if root:
+            alarm["is_symptom"] = True
+            alarm["root_cause_alarm_id"] = root["id"]
+            await repo.record_history(
+                session, alarm_id=alarm["id"], device_id=device_id,
+                action="suppressed", severity=alarm["severity"], actor="system",
+                detail={"root": root["id"], "layer": root["layer"],
+                        "root_device": root["device_name"]})
+
         await repo.refresh_device_alarm_state(session, [device_id])
         return AlarmAction("alarm_created", alarm)
 
@@ -278,6 +304,22 @@ class AlarmService:
             action="raised" if alarm["change"] == "created" else alarm["change"],
             severity=alarm["severity"], actor="system",
             detail={"value": c.value, "threshold": c.threshold})
+
+        # Cheap for the common case: correlate() returns immediately for any
+        # type that is not a "cannot see it" alarm, before touching the
+        # database, so a temperature threshold pays nothing for this.
+        root = await correlation.correlate(
+            session, alarm_id=alarm["id"], device_id=c.key.device_id,
+            alarm_type=c.key.alarm_type)
+        if root:
+            alarm["is_symptom"] = True
+            alarm["root_cause_alarm_id"] = root["id"]
+            await repo.record_history(
+                session, alarm_id=alarm["id"], device_id=c.key.device_id,
+                action="suppressed", severity=alarm["severity"], actor="system",
+                detail={"root": root["id"], "layer": root["layer"],
+                        "root_device": root["device_name"]})
+
         return AlarmAction(
             "alarm_created" if alarm["change"] == "created" else "alarm_updated",
             alarm)
@@ -293,6 +335,11 @@ class AlarmService:
             await repo.record_history(session, alarm_id=row["id"],
                                       device_id=c.key.device_id, action="cleared",
                                       severity=row["severity"], actor=c.by)
+            for sym in await correlation.release_symptoms(session, row["id"]):
+                await repo.record_history(
+                    session, alarm_id=sym["id"], device_id=sym["device_id"],
+                    action="released", severity=sym["severity"], actor=c.by,
+                    detail={"root": row["id"]})
         return AlarmAction("alarm_cleared", cleared[0])
 
 
