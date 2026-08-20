@@ -299,6 +299,49 @@ export interface RoomSummary {
   datacenter_id?: string | null;
 }
 
+
+export interface Termination { type: string; id?: string | null; label?: string | null }
+
+export interface TopologyNode {
+  id: string;
+  name: string;
+  device_type: string;
+  status: string;
+  max_severity: string;
+  /** Hops from the scope anchor. 0 means it was in the requested scope itself
+   *  rather than pulled in by traversal. */
+  depth: number;
+  location: {
+    datacenter_code?: string | null;
+    room_name?: string | null;
+    rack_name?: string | null;
+  };
+  metrics: Record<string, number>;
+}
+
+export interface TopologyEdge {
+  id: string;
+  source: string;
+  target: string;
+  layer: string;
+  link_type?: string | null;
+  redundancy_side?: string | null;
+  oper_state: string;
+  a_termination: Termination;
+  b_termination: Termination;
+}
+
+export interface TopologyGraph {
+  layer: string;
+  scope: string;
+  depth: number;
+  nodes: TopologyNode[];
+  edges: TopologyEdge[];
+  truncated: boolean;
+  node_count: number;
+  edge_count: number;
+}
+
 export const api = {
   login: (username: string, password: string) =>
     request<{ token: string; expires_in: number; username: string; role: string }>(
@@ -320,6 +363,10 @@ export const api = {
   deviceState: (id: string) => request<DeviceState>(`/devices/${id}/state`),
 
   rooms: () => request<{ items: RoomSummary[] }>('/rooms'),
+
+  topology: (layer: string, scope: string, depth: number) =>
+    request<TopologyGraph>(
+      `/topology?layer=${encodeURIComponent(layer)}&scope=${encodeURIComponent(scope)}&depth=${depth}`),
 
   floorplan: (roomId: string) => request<FloorPlan>(`/rooms/${roomId}/floorplan`),
 

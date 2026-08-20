@@ -232,3 +232,29 @@ button.primary { background: var(--accent-dim); border-color: var(--accent); }
 .rack-tag { font-size: 0.16px; fill: var(--text); font-family: var(--mono);
             text-anchor: middle; dominant-baseline: middle;
             pointer-events: none; }
+
+/* --- topology ------------------------------------------------------------ */
+
+.topo-wrap { overflow: auto; max-height: 75vh; border: 1px solid var(--border);
+             border-radius: var(--radius); background: var(--bg-inset); }
+.topo { width: 100%; min-width: 40rem; height: auto; display: block; }
+
+.topo-box { fill: var(--bg-raised); stroke: var(--border-strong);
+            stroke-width: 1; }
+/* Pulled in from outside the requested scope: present because something in the
+   scope depends on it, not because it lives there. */
+.topo-box.outside { stroke-dasharray: 4 3; opacity: 0.75; }
+.topo-node { cursor: pointer; }
+.topo-node:hover .topo-box,
+.topo-node:focus-visible .topo-box { stroke: var(--accent); }
+
+.topo-name { font-size: 10px; fill: var(--text); font-family: var(--mono); }
+.topo-type { font-size: 9px; fill: var(--text-muted); font-family: var(--sans); }
+
+.topo-edge { fill: none; stroke: var(--border-strong); }
+/* A and B are the two distribution paths. Colouring them is the whole point of
+   deriving redundancy_side: you can see at a glance whether a load is fed from
+   both. */
+.topo-edge.side-a { stroke: #3b82f6; }
+.topo-edge.side-b { stroke: #a855f7; }
+.topo-edge.down { stroke: var(--critical); stroke-dasharray: 4 3; }
