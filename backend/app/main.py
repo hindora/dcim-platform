@@ -20,12 +20,15 @@ from app.api.v1 import api_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
 from app.db.session import dispose_engine
+from app.services import topology as topology_service
 from app.websocket.hub import ConnectionHub, set_hub
 
 log = get_logger("api")
 
 
 @asynccontextmanager
+
+
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     configure_logging(service=settings.service_name)
@@ -44,6 +47,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     await hub.stop()
     set_hub(None)
+    await topology_service.close_cache()
     await redis.aclose()
     await dispose_engine()
     log.info("api stopped")

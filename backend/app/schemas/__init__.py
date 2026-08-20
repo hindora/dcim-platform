@@ -99,6 +99,60 @@ class DeviceDetail(DeviceSummary):
     endpoints: list[EndpointSummary] = Field(default_factory=list)
 
 
+class Termination(BaseModel):
+    """Which physical port an edge lands on.
+
+    ``type`` is 'none' for gear cabled without port-level detail, which is a
+    real state and not an error - plenty of plant is recorded as connected
+    without anyone tracing the individual conductor.
+    """
+
+    type: str = "none"
+    id: str | None = None
+    label: str | None = None
+
+
+class TopologyNode(BaseModel):
+    id: str
+    name: str
+    device_type: str
+    status: str = "UNKNOWN"
+    max_severity: str = "CLEAR"
+    # Hops from the scope anchor. 0 means the node was in the requested scope
+    # itself rather than pulled in by traversal, which is how a client tells
+    # "my room" from "the switchgear that feeds it".
+    depth: int = 0
+    location: LocationRef = Field(default_factory=LocationRef)
+    metrics: dict[str, float] = Field(default_factory=dict)
+
+
+class TopologyEdge(BaseModel):
+    id: str
+    source: str
+    target: str
+    layer: str
+    link_type: str | None = None
+    # 'A' or 'B' for power and cooling paths; None on layers where the concept
+    # does not apply, and also None wherever the importer has not derived it.
+    redundancy_side: str | None = None
+    oper_state: str = "unknown"
+    a_termination: Termination = Field(default_factory=Termination)
+    b_termination: Termination = Field(default_factory=Termination)
+
+
+class TopologyOut(BaseModel):
+    layer: str
+    scope: str
+    depth: int
+    nodes: list[TopologyNode] = Field(default_factory=list)
+    edges: list[TopologyEdge] = Field(default_factory=list)
+    # True when the node cap was hit. The client should narrow the scope
+    # rather than assume it is looking at the whole graph.
+    truncated: bool = False
+    node_count: int = 0
+    edge_count: int = 0
+
+
 class DeviceStateOut(BaseModel):
     device_id: str
     status: str
