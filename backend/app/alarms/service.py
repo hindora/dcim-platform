@@ -17,7 +17,7 @@ from typing import Any
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.alarms import correlation
+from app.alarms import correlation, staleness
 from app.alarms.engine import (
     AlarmKey,
     Candidate,
@@ -341,6 +341,73 @@ class AlarmService:
                     action="released", severity=sym["severity"], actor=c.by,
                     detail={"root": row["id"]})
         return AlarmAction("alarm_cleared", cleared[0])
+
+
+
+    async def sweep_staleness(self, session: AsyncSession) -> list[AlarmAction]:
+        """Raise or clear telemetry_stale across the fleet.
+
+        A sweep rather than an event handler, because the condition is the
+        ABSENCE of data. Nothing arrives to trigger it - that is the whole
+        point - so something has to go and look.
+        """
+        await self.ensure_rules(session)
+        rule = next((r for r in self._rules
+                     if r.alarm_type == staleness.ALARM_TYPE), None)
+        severity = rule.severity if rule else "WARNING"
+        now = datetime.now(UTC)
+
+        silent = await staleness.find_silent(session)
+        silent_ids = {r["endpoint_id"] for r in silent}
+        actions: list[AlarmAction] = []
+        touched: set[str] = set()
+
+        for row in silent:
+            alarm = await repo.raise_alarm(
+                session, device_id=row["device_id"],
+                alarm_type=staleness.ALARM_TYPE, instance=row["endpoint_id"],
+                severity=severity, message=staleness.message(row),
+                source="staleness", observed_at=now,
+                endpoint_id=row["endpoint_id"],
+                rule_id=rule.id if rule else None)
+            if alarm is None or alarm["change"] == "touched":
+                continue
+            touched.add(row["device_id"])
+            await repo.record_history(
+                session, alarm_id=alarm["id"], device_id=row["device_id"],
+                action="raised", severity=alarm["severity"], actor="system",
+                detail={"silent_s": row["silent_s"], "grace_s": row["grace_s"]})
+
+            # Not correlated, on purpose. Every endpoint in this list is
+            # polling successfully, so no upstream visibility failure explains
+            # its silence - and folding it under one would hide the fault.
+            actions.append(AlarmAction("alarm_created", alarm))
+
+        # Clear the ones that started talking again. Scoped to alarms this
+        # sweep raised, so it cannot clear anything else.
+        open_stale = await repo.open_alarms_of_type(session, staleness.ALARM_TYPE)
+        for row in open_stale:
+            if row["instance"] in silent_ids:
+                continue
+            cleared = await repo.clear_alarms(
+                session, device_id=row["device_id"],
+                alarm_types=[staleness.ALARM_TYPE], instance=row["instance"],
+                at=now, by="system")
+            for c in cleared:
+                touched.add(row["device_id"])
+                await repo.record_history(
+                    session, alarm_id=c["id"], device_id=row["device_id"],
+                    action="cleared", severity=c["severity"], actor="system")
+                for sym in await correlation.release_symptoms(session, c["id"]):
+                    touched.add(sym["device_id"])
+                actions.append(AlarmAction("alarm_cleared", c))
+
+        if touched:
+            await repo.refresh_device_alarm_state(session, sorted(touched))
+        if actions:
+            log.info("staleness sweep", silent=len(silent), changes=len(actions))
+        return actions
+
 
 
 def event_row(ev: dict[str, Any]) -> dict[str, Any]:

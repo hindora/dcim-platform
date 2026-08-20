@@ -277,3 +277,28 @@ async def apply_endpoint_state(session: AsyncSession, s: dict) -> None:
         """),
         {"endpoint_id": s["endpoint_id"]},
     )
+
+
+async def touch_endpoint_telemetry(session: AsyncSession,
+                                   seen: dict[str, datetime]) -> int:
+    """Record that these endpoints produced telemetry, and when.
+
+    Endpoint-keyed rather than device-keyed on purpose. A server has an OS
+    agent and a BMC; if the BMC goes silent while the OS agent keeps reporting,
+    anything keyed by device still looks perfectly fresh and the failure is
+    invisible. This is the column that makes "reachable but silent" detectable
+    per endpoint.
+
+    GREATEST, because batches can arrive slightly out of order and the newest
+    observation must not be walked backwards by a straggler.
+    """
+    if not seen:
+        return 0
+    rows = [{"id": eid, "ts": ts} for eid, ts in seen.items()]
+    await session.execute(text("""
+        UPDATE endpoint_state
+           SET last_telemetry_at = GREATEST(
+                   COALESCE(last_telemetry_at, :ts), :ts)
+         WHERE endpoint_id = CAST(:id AS uuid)
+    """), rows)
+    return len(rows)

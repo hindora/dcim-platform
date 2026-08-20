@@ -310,3 +310,19 @@ async def list_events(session: AsyncSession, *, device_id: str | None = None,
         ORDER BY e.ts DESC LIMIT :limit
     """), params)).mappings().all()
     return [dict(r) for r in rows]
+
+
+async def open_alarms_of_type(session: AsyncSession,
+                              alarm_type: str) -> list[dict[str, Any]]:
+    """Open alarms of one type, for a sweep that needs to clear what recovered.
+
+    Scoped to the type so a sweep can only ever clear alarms it is responsible
+    for raising.
+    """
+    rows = (await session.execute(text("""
+        SELECT id::text, device_id::text AS device_id, instance,
+               severity::text AS severity
+          FROM alarm
+         WHERE alarm_type = :alarm_type AND state <> 'CLEARED'
+    """), {"alarm_type": alarm_type})).mappings().all()
+    return [dict(r) for r in rows]

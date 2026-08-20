@@ -33,7 +33,15 @@ log = get_logger("alarms.correlation")
 # Only alarms that mean "I cannot see it" are suppressible. A high temperature
 # or a failed PSU on a device behind a dead switch is still a real condition
 # about that device and must never be folded away.
-SUPPRESSIBLE_TYPES = frozenset({"endpoint_unreachable", "telemetry_stale"})
+#
+# telemetry_stale is deliberately NOT in here, though it looks like it belongs.
+# It is raised only for endpoints whose poll is currently SUCCEEDING - that is
+# the definition of reachable-but-silent - so an upstream "cannot see it" root
+# cannot explain it. Suppressing it anyway produced exactly the wrong answer in
+# testing: an endpoint polling happily 287 seconds ago was folded under an
+# unreachable OOB switch, hiding the one condition the staleness sweep exists
+# to surface.
+SUPPRESSIBLE_TYPES = frozenset({"endpoint_unreachable"})
 
 # What counts as a root on an upstream device. Today the fleet's only
 # infrastructure-failure alarm is endpoint_unreachable; a dedicated pdu_tripped

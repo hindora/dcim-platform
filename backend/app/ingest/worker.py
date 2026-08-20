@@ -20,6 +20,7 @@ import json
 import os
 import signal
 import socket
+import time
 from datetime import UTC, datetime
 
 import msgpack
@@ -49,6 +50,11 @@ from app.repositories import alarms as repo_alarms
 
 log = get_logger("ingest")
 
+# How often to look for endpoints that answer but say nothing. Well under
+# the smallest grace period, so an endpoint crosses its threshold and is
+# alarmed within about a minute of doing so.
+STALENESS_SWEEP_S = 60.0
+
 _QUALITY_NAMES = {int(q): q.name.lower() for q in Quality}
 _SEVERITY_NAMES = {int(s): s.name for s in Severity}
 _COMM_STATUS = {1: "ONLINE", 2: "DEGRADED", 3: "OFFLINE", 4: "UNKNOWN", 5: "DISABLED"}
@@ -66,6 +72,8 @@ class IngestWorker:
     def __init__(self, consumer_name: str | None = None) -> None:
         self.settings = get_settings()
         self.consumer = consumer_name or f"{socket.gethostname()}-{os.getpid()}"
+        # -inf so the first tick sweeps immediately rather than after a minute.
+        self._last_staleness_sweep = float("-inf")
         self.redis: Redis = Redis.from_url(self.settings.redis_url)
         self.cache = InventoryCache()
         self.fanout = Fanout(self.redis)
@@ -114,6 +122,8 @@ class IngestWorker:
             async with unit_of_work() as session:
                 await self.cache.refresh(session)
 
+        await self._maybe_sweep_staleness()
+
         await self._reclaim_stale()
 
         entries = await self.redis.xreadgroup(
@@ -141,6 +151,26 @@ class IngestWorker:
                 await self._handle_heartbeat(payloads)
 
             await self.redis.xack(name, self.settings.ingest_group, *ids)
+
+    async def _maybe_sweep_staleness(self) -> None:
+        """Look for endpoints that answer but deliver nothing.
+
+        On a timer rather than in the message path: the condition is the
+        absence of messages, so nothing will ever arrive to prompt the check.
+        """
+        now = time.monotonic()
+        if now - self._last_staleness_sweep < STALENESS_SWEEP_S:
+            return
+        self._last_staleness_sweep = now
+        try:
+            async with unit_of_work() as session:
+                actions = await self.alarms.sweep_staleness(session)
+            for action in actions:
+                await self.fanout.alarm(action.kind, action.alarm)
+        except Exception as exc:
+            # A failed sweep must not stop telemetry ingestion; it runs again
+            # on the next interval.
+            log.error("staleness sweep failed", error=str(exc), exc_info=True)
 
     async def _reclaim_stale(self) -> None:
         """Take over entries a dead worker never acked."""
@@ -173,6 +203,8 @@ class IngestWorker:
         ws_frames: dict[str, dict] = {}
         unknown_metrics: set[str] = set()
         unresolved_interfaces: set[str] = set()
+        # endpoint id -> newest observation in this batch.
+        produced: dict[str, datetime] = {}
 
         # Counter baselines live in Redis so a worker restart does not lose them
         # and a decommissioned endpoint expires by itself.
@@ -282,11 +314,19 @@ class IngestWorker:
                     "metric": s.metric, "instance": s.instance, "value": value,
                     "observed_at": observed, "endpoint_id": s.endpoint_id,
                 })
+                if s.endpoint_id:
+                    prev = produced.get(s.endpoint_id)
+                    if prev is None or observed > prev:
+                        produced[s.endpoint_id] = observed
 
             await writer.copy_samples(session, sample_rows)
             await writer.insert_bools(session, bool_rows)
             await writer.insert_texts(session, text_rows)
             await writer.upsert_device_state(session, list(hot.values()))
+            # Which endpoints actually produced something, and when. Staleness
+            # detection reads this against the endpoint's poll success to tell
+            # "reachable and reporting" from "reachable and silent".
+            await writer.touch_endpoint_telemetry(session, produced)
             alarm_actions = await self.alarms.evaluate_samples(session, rule_inputs)
 
         # after commit

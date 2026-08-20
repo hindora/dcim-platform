@@ -53,7 +53,18 @@ def test_an_undetermined_path_does_not_count_as_redundancy():
 
 def test_only_cannot_see_it_alarms_are_suppressible():
     assert "endpoint_unreachable" in c.SUPPRESSIBLE_TYPES
-    assert "telemetry_stale" in c.SUPPRESSIBLE_TYPES
+
+
+def test_staleness_is_not_suppressible_even_though_it_looks_like_it_should_be():
+    """It is raised only for endpoints that ARE reachable.
+
+    telemetry_stale means "the poll succeeds and returns nothing", so an
+    upstream visibility failure cannot be its cause. Suppressing it anyway did
+    the wrong thing in testing: an endpoint that had polled successfully 287
+    seconds earlier was folded under an unreachable OOB switch, hiding the one
+    condition the staleness sweep exists to surface.
+    """
+    assert "telemetry_stale" not in c.SUPPRESSIBLE_TYPES
 
 
 def test_real_device_conditions_are_never_suppressible():
