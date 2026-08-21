@@ -11,6 +11,8 @@ from redis.asyncio import Redis
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.alarms import platform as platform_rules
+from app.alarms import platform_monitor
 from app.core.config import Settings, get_settings
 from app.core.metrics_gen import METRICS
 from app.core.security import Principal, current_principal, issue_token
@@ -94,17 +96,55 @@ async def ready(response: Response,
 
     # A backend that is up but far behind on ingest is not ready, and nothing
     # else in the system will say so.
+    #
+    # The lookback window this used to carry made it lie in the one case that
+    # matters: with `WHERE ts > now() - interval '1 hour'`, an outage longer
+    # than an hour empties the window, max(ts) comes back NULL, and the check
+    # read null and passed. The longer the pipeline had been dead, the
+    # healthier it looked. It is unbounded now, so the number grows instead of
+    # disappearing, and a table with no rows at all is its own answer.
     try:
-        lag = (await session.execute(text("""
-            SELECT extract(epoch FROM (now() - max(ts)))
-            FROM telemetry_sample WHERE ts > now() - interval '1 hour'
-        """))).scalar()
-        checks["ingest_lag_seconds"] = float(lag) if lag is not None else None
-        if lag is not None and float(lag) > 300:
-            checks["ingest"] = "lagging"
+        row = (await session.execute(text("""
+            SELECT extract(epoch FROM (now() - max(ts))) AS age_s,
+                   count(*) > 0 AS present
+            FROM telemetry_sample
+        """))).mappings().first()
+        age = row["age_s"] if row else None
+        present = bool(row["present"]) if row else False
+        checks["telemetry_age_seconds"] = float(age) if age is not None else None
+        checks["telemetry_present"] = present
+        if not present:
+            checks["ingest"] = "no telemetry has ever been written"
+            ok = False
+        elif age is not None and float(age) > 300:
+            checks["ingest"] = "stalled"
             ok = False
     except Exception as exc:
-        checks["ingest_lag_seconds"] = f"error: {exc}"
+        checks["telemetry_age_seconds"] = f"error: {exc}"
+
+    # Pipeline latency, second-hand from the worker's heartbeat. Distinct from
+    # the freshness above: freshness is bounded by the poll interval even in
+    # perfect health, while this is publish-to-commit and lives under a second.
+    try:
+        redis2 = Redis.from_url(settings.redis_url)
+        try:
+            hb = await platform_monitor.read_heartbeat(redis2)
+        finally:
+            await redis2.aclose()
+        # Reported, not fatal on its own. Fresh telemetry proves a worker is
+        # running whatever its build reports, and failing readiness for a
+        # heartbeat this instance cannot see would pull a healthy API out of
+        # the load balancer during a rolling worker upgrade. When ingestion has
+        # genuinely stopped, the telemetry check above has already failed.
+        if hb is None:
+            checks["ingest_worker"] = "no heartbeat (see telemetry_age_seconds)"
+        else:
+            checks["ingest_worker_age_seconds"] = round(hb["age_s"], 1)
+            checks["ingest_lag_seconds"] = hb.get("lag_s")
+            if hb["age_s"] > platform_rules.WORKER_STALE_S:
+                checks["ingest_worker"] = "stale"
+    except Exception as exc:
+        checks["ingest_worker"] = f"error: {exc}"
 
     if not ok:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE

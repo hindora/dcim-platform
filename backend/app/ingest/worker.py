@@ -27,6 +27,7 @@ import msgpack
 from redis.asyncio import Redis
 from sqlalchemy import text
 
+from app.alarms import platform_monitor
 from app.alarms.service import AlarmService, event_row
 from app.contracts.messages_gen import (
     CollectorHeartbeat,
@@ -39,6 +40,7 @@ from app.contracts.messages_gen import (
     ValueType,
     ts_to_dt,
 )
+from app.core import metrics
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
 from app.core.metrics_gen import METRICS
@@ -54,6 +56,10 @@ log = get_logger("ingest")
 # the smallest grace period, so an endpoint crosses its threshold and is
 # alarmed within about a minute of doing so.
 STALENESS_SWEEP_S = 60.0
+
+# How often the platform evaluates its own health. Frequent enough that a dead
+# collector is noticed inside a minute, rare enough that it is not a load.
+PLATFORM_CHECK_S = 30.0
 
 _QUALITY_NAMES = {int(q): q.name.lower() for q in Quality}
 _SEVERITY_NAMES = {int(s): s.name for s in Severity}
@@ -74,6 +80,13 @@ class IngestWorker:
         self.consumer = consumer_name or f"{socket.gethostname()}-{os.getpid()}"
         # -inf so the first tick sweeps immediately rather than after a minute.
         self._last_staleness_sweep = float("-inf")
+        self._last_platform_check = float("-inf")
+        # Pipeline latency measured on the last telemetry batch. None until a
+        # batch has actually been seen - an idle worker has no lag to report,
+        # and reporting zero would be a claim it cannot support.
+        self._last_lag_s: float | None = None
+        self._batches = 0
+        self._samples = 0
         self.redis: Redis = Redis.from_url(self.settings.redis_url)
         self.cache = InventoryCache()
         self.fanout = Fanout(self.redis)
@@ -124,6 +137,10 @@ class IngestWorker:
 
         await self._maybe_sweep_staleness()
 
+        # Before the early return below: the worker is alive whether or not
+        # anything arrived, and an idle pipeline must not look like a dead one.
+        await self._heartbeat_and_monitor()
+
         await self._reclaim_stale()
 
         entries = await self.redis.xreadgroup(
@@ -141,7 +158,12 @@ class IngestWorker:
             ids = [mid for mid, _ in messages]
             payloads = [msgpack.unpackb(fields[b"p"], raw=False) for _, fields in messages]
 
+            metrics.ingest_messages.labels(stream=name, result="consumed").inc(
+                len(payloads))
+
             if name == Stream.TELEMETRY:
+                self._measure_lag(payloads)
+                self._trace(payloads, name)
                 await self._handle_telemetry(payloads)
             elif name == Stream.EVENTS:
                 await self._handle_events(payloads)
@@ -151,6 +173,86 @@ class IngestWorker:
                 await self._handle_heartbeat(payloads)
 
             await self.redis.xack(name, self.settings.ingest_group, *ids)
+
+    def _trace(self, payloads: list[dict], stream: str) -> None:
+        """Carry the batch's trace id into this stage's logs.
+
+        The contract has carried ``trace_id`` on every batch since the schema
+        was written and nothing has ever read or set it. Logging it here closes
+        the consuming half: once a batch arrives with an id, the write, the
+        alarm evaluation and the websocket publish that follow it can all be
+        found by that id, which is what turns "why did this alarm take forty
+        seconds to appear" into a query rather than a hypothesis.
+
+        The producing half is not done: the Go collector still sends an empty
+        trace_id, so in practice this logs nothing today. It is written to the
+        W3C shape so that an OpenTelemetry exporter is a small later step - and
+        no exporter is wired here deliberately, because there is no tracing
+        backend in this deployment to send spans to, and shipping an untestable
+        exporter would be worse than shipping none.
+        """
+        traced = [raw.get("trace_id") for raw in payloads if raw.get("trace_id")]
+        if not traced:
+            return
+        log.debug("batch traced", stream=stream, trace_id=traced[0],
+                  batches=len(payloads), consumer=self.consumer)
+
+    def _measure_lag(self, payloads: list[dict]) -> None:
+        """Pipeline latency: collector publish -> here.
+
+        Measured from ``sent_at`` on the batch, which is the only timestamp that
+        isolates transport and queueing from the device's own poll cadence.
+        ``collected_at`` would fold the poll interval into the number, so a
+        fleet polled every 120 s would show two minutes of "lag" while perfectly
+        healthy - and the 60 s threshold in the spec would be permanently
+        breached by a system with nothing wrong.
+
+        The newest batch in the read is used rather than the oldest: with a
+        backlog the oldest entry is late by definition, and what is wanted is
+        how far behind the pipeline is now.
+        """
+        sent = [raw.get("sent_at", 0) for raw in payloads if raw.get("sent_at")]
+        if not sent:
+            return
+        newest_s = max(sent) / 1_000_000.0
+        lag = time.time() - newest_s
+        # A collector whose clock is ahead produces a negative lag. That is a
+        # clock problem, not a negative latency, and clamping keeps it from
+        # masking a real backlog on another collector.
+        lag = max(0.0, lag)
+        self._last_lag_s = lag
+        self._batches += len(payloads)
+        metrics.ingest_lag.labels(stream=Stream.TELEMETRY).set(lag)
+        metrics.ingest_lag_hist.labels(stream=Stream.TELEMETRY).observe(lag)
+
+    async def _heartbeat_and_monitor(self) -> None:
+        """Say the worker is alive, then judge the platform.
+
+        The heartbeat is written every tick and the evaluation runs on a timer:
+        liveness has to be cheap and frequent, while the evaluation touches the
+        database and does not need to.
+        """
+        try:
+            await platform_monitor.write_heartbeat(
+                self.redis, consumer=self.consumer, lag_s=self._last_lag_s,
+                batches=self._batches, samples=self._samples)
+        except Exception as exc:
+            log.error("heartbeat write failed", error=str(exc))
+
+        now = time.monotonic()
+        if now - self._last_platform_check < PLATFORM_CHECK_S:
+            return
+        self._last_platform_check = now
+        try:
+            async with unit_of_work() as session:
+                await platform_monitor.run_once(
+                    session, self.redis,
+                    streams=[Stream.TELEMETRY, Stream.EVENTS],
+                    group=self.settings.ingest_group,
+                    ingest_lag_s=self._last_lag_s)
+        except Exception as exc:
+            # Self-monitoring must never be the thing that stops ingestion.
+            log.error("platform monitor failed", error=str(exc), exc_info=True)
 
     async def _maybe_sweep_staleness(self) -> None:
         """Look for endpoints that answer but deliver nothing.

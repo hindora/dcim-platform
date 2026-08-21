@@ -510,6 +510,49 @@ export interface ForecastResult {
   notes: string[];
 }
 
+// ------------------------------------------------- platform self-monitoring
+//
+// The distinction this whole page exists to make: silence from the datacenter
+// and silence from the monitoring look identical on every other screen.
+
+export interface PlatformFinding {
+  alarm_type: string;
+  instance: string;
+  severity: string;
+  message: string;
+  value: number | null;
+  threshold: number | null;
+}
+
+export interface CollectorHealth {
+  verdict: { healthy: boolean; severity: string | null; summary: string; count?: number };
+  findings: PlatformFinding[];
+  open_alarms: {
+    id: string; alarm_type: string; instance: string; severity: string;
+    message: string; first_seen: string; last_seen: string;
+    occurrence_count: number; acknowledged_at: string | null;
+  }[];
+  pipeline: {
+    // Two numbers, never one. Freshness is bounded by the poll interval even
+    // in perfect health; lag is publish-to-commit and lives under a second.
+    ingest_lag_seconds: number | null;
+    telemetry_age_seconds: number | null;
+    telemetry_present: boolean;
+    worker_heartbeat_age_seconds: number | null;
+    stream_pending: Record<string, number>;
+    lag_warning_seconds: number;
+    lag_critical_seconds: number;
+  };
+  collectors: {
+    collector_id: string;
+    heartbeat_age_seconds: number | null;
+    status: string | null;
+    endpoints_owned: number;
+    endpoints_online: number;
+    stale_after_seconds: number;
+  }[];
+}
+
 export const api = {
   login: (username: string, password: string) =>
     request<{ token: string; expires_in: number; username: string; role: string }>(
@@ -630,6 +673,8 @@ export const api = {
     if (opts.capacity) q.set('capacity', String(opts.capacity));
     return request<ForecastResult>(`/analytics/forecast?${q.toString()}`);
   },
+
+  collectorHealth: () => request<CollectorHealth>('/collector/health'),
 
   wsTicket: () =>
     request<{ ticket: string; expires_in: number }>('/ws/ticket', {

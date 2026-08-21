@@ -3,6 +3,7 @@ import { NavLink, Navigate, Route, Routes } from 'react-router-dom';
 import { api, getToken, setToken } from './api/client';
 import { AlarmList } from './features/alarms/AlarmList';
 import { Analytics } from './features/analytics/Analytics';
+import { PlatformHealth } from './features/platform/PlatformHealth';
 import { Dashboard } from './features/dashboard/Dashboard';
 import { DeviceDetail } from './features/devices/DeviceDetail';
 import { RackElevationView } from './features/racks/RackElevation';
@@ -64,6 +65,7 @@ function Sidebar({ onSignOut }: { onSignOut: () => void }) {
         <div className="section">Monitoring</div>
         <NavLink to="/alarms">Alarms</NavLink>
         <NavLink to="/analytics">Analytics</NavLink>
+        <NavLink to="/platform">Platform health</NavLink>
       </nav>
       <div className="section">Session</div>
       <nav>
@@ -107,6 +109,7 @@ export default function App() {
           <Route path="/topology" element={<TopologyView />} />
           <Route path="/alarms" element={<AlarmList />} />
           <Route path="/analytics" element={<Analytics />} />
+          <Route path="/platform" element={<PlatformHealth />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>

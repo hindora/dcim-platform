@@ -369,3 +369,7 @@ button.primary { background: var(--accent-dim); border-color: var(--accent); }
 .ok { color: var(--ok); }
 .critical { color: var(--critical); }
 .banner.soft { border-color: var(--warn); }
+
+/* The self-monitoring verdict. Red-edged when the platform cannot vouch for
+   its own numbers, because a quiet screen is the failure mode. */
+.verdict.unhealthy { border-left-color: var(--critical); }

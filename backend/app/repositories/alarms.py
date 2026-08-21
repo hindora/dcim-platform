@@ -152,7 +152,10 @@ _ALARM_SELECT = """
            a.is_symptom, a.root_cause_alarm_id::text,
            dc.code AS datacenter_code, rm.name AS room_name, r.name AS rack_name
     FROM alarm a
-    JOIN device d          ON d.id = a.device_id
+    -- LEFT, not INNER. A platform alarm has no device, and an inner join here
+    -- would silently drop the alarms that say the monitoring itself is broken -
+    -- the ones an operator most needs to see in this list.
+    LEFT JOIN device d     ON d.id = a.device_id
     LEFT JOIN rack r       ON r.id = d.rack_id
     LEFT JOIN rack_row rr  ON rr.id = r.row_id
     LEFT JOIN room rm      ON rm.id = COALESCE(rr.room_id, d.room_id)
@@ -325,4 +328,118 @@ async def open_alarms_of_type(session: AsyncSession,
           FROM alarm
          WHERE alarm_type = :alarm_type AND state <> 'CLEARED'
     """), {"alarm_type": alarm_type})).mappings().all()
+    return [dict(r) for r in rows]
+
+
+# --- platform alarms ----------------------------------------------------------
+#
+# Same table, same list, same acknowledge and clear paths as a device alarm.
+# They differ only in having no device, which is why they need their own
+# statements: `device_id = NULL` is never true, so the device-scoped clear
+# silently matches nothing.
+
+
+async def raise_platform_alarm(session: AsyncSession, *, alarm_type: str,
+                               instance: str, severity: str, message: str,
+                               observed_at: datetime,
+                               value: float | None = None,
+                               threshold: float | None = None,
+                               source: str = "platform") -> dict[str, Any] | None:
+    """Insert or update the open platform alarm for this key.
+
+    The ON CONFLICT target resolves to the NULLS NOT DISTINCT index added in
+    0013. Without that index this would insert a new row on every evaluation
+    cycle, because Postgres considers two NULL device_ids distinct by default.
+    """
+    row = (await session.execute(text("""
+        INSERT INTO alarm (device_id, alarm_type, instance, severity, state,
+                           message, trigger_value, threshold, source,
+                           first_seen, last_seen)
+        VALUES (NULL, :alarm_type, :instance, CAST(:severity AS severity_t),
+                'ACTIVE', :message, :value, :threshold, :source,
+                :observed_at, :observed_at)
+        ON CONFLICT (device_id, alarm_type, instance) WHERE state <> 'CLEARED'
+        DO UPDATE SET
+            prev_severity    = alarm.severity,
+            severity         = EXCLUDED.severity,
+            message          = EXCLUDED.message,
+            trigger_value    = EXCLUDED.trigger_value,
+            last_seen        = GREATEST(alarm.last_seen, EXCLUDED.last_seen),
+            occurrence_count = alarm.occurrence_count + 1
+        RETURNING id::text, severity::text AS severity,
+                  prev_severity::text AS prev_severity, occurrence_count,
+                  alarm_type, instance, message
+    """), {"alarm_type": alarm_type, "instance": instance, "severity": severity,
+           "message": message, "value": value, "threshold": threshold,
+           "source": source, "observed_at": observed_at})).mappings().first()
+    if row is None:
+        return None
+    out = dict(row)
+    # "severity_changed" rather than "escalated": ingest_lag_high going from
+    # CRITICAL back down to WARNING is a de-escalation, and calling it an
+    # escalation would tell an operator the opposite of what happened.
+    out["change"] = ("created" if out["occurrence_count"] == 1
+                     else "severity_changed"
+                     if out["prev_severity"] != out["severity"]
+                     else "touched")
+    return out
+
+
+async def open_platform_alarms(session: AsyncSession) -> list[dict[str, Any]]:
+    rows = (await session.execute(text("""
+        SELECT id::text, alarm_type, instance, severity::text AS severity,
+               message, first_seen, last_seen, occurrence_count,
+               acknowledged_at
+          FROM alarm
+         WHERE device_id IS NULL AND state <> 'CLEARED'
+         ORDER BY last_seen DESC
+    """))).mappings().all()
+    return [dict(r) for r in rows]
+
+
+async def clear_platform_alarms(session: AsyncSession, *,
+                                keys: list[tuple[str, str]], at: datetime,
+                                by: str = "system") -> list[dict[str, Any]]:
+    """Clear the named platform alarms.
+
+    Driven by absence from the current findings, because almost none of these
+    conditions produce a recovery event - a collector that starts heartbeating
+    again does not announce that it had stopped.
+    """
+    if not keys:
+        return []
+    # Two parallel arrays unnested into pairs, rather than a row comparison
+    # against a 2-D array: `(a, b) = ANY(CAST(:keys AS text[][]))` parses but
+    # fails at execution with "operator does not exist: record = text", because
+    # ANY over a multidimensional array yields its scalar elements, not rows.
+    rows = (await session.execute(text("""
+        UPDATE alarm SET state = 'CLEARED', cleared_at = :at, cleared_by = :by
+         WHERE device_id IS NULL
+           AND state <> 'CLEARED'
+           AND (alarm_type, instance) IN (
+                 SELECT t.a, t.b
+                   FROM unnest(CAST(:types AS text[]), CAST(:instances AS text[]))
+                     AS t(a, b))
+        RETURNING id::text, alarm_type, instance, severity::text AS severity,
+                  message
+    """), {"types": [k[0] for k in keys], "instances": [k[1] for k in keys],
+           "at": at, "by": by})).mappings().all()
+    return [dict(r) for r in rows]
+
+
+async def active_alarm_counts(session: AsyncSession) -> list[dict[str, Any]]:
+    """Active alarms by severity, split by whether they are about a device.
+
+    The split is the point: "12 active alarms" reads very differently when
+    three of them are saying the collector is dead and the rest are stale
+    telemetry caused by that.
+    """
+    rows = (await session.execute(text("""
+        SELECT severity::text AS severity,
+               CASE WHEN device_id IS NULL THEN 'platform' ELSE 'device' END AS origin,
+               count(*) AS n
+          FROM alarm
+         WHERE state <> 'CLEARED'
+         GROUP BY 1, 2
+    """))).mappings().all()
     return [dict(r) for r in rows]

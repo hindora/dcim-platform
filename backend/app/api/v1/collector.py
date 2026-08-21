@@ -10,8 +10,10 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Header, Query, Request, Response, status
 from pydantic import BaseModel, Field
+from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
 from app.core.security import Principal, current_principal, require_collector
 from app.db.session import get_session
@@ -128,3 +130,69 @@ async def discovery_results(run_id: str, body: DiscoveryResults,
         session, run_id, [r.model_dump() for r in body.responders])
     await session.commit()
     return result
+
+
+@router.get("/health", summary="Collector fleet and platform self-monitoring")
+async def collector_health(
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+    _: Principal = Depends(current_principal),
+) -> dict[str, Any]:
+    """What the platform currently believes about itself.
+
+    Read-only: it gathers the same signals the worker's evaluator uses and
+    reports the findings, without raising or clearing anything. The worker owns
+    the alarm lifecycle - two writers would fight over the same rows, and the
+    API has no business deciding the platform is unhealthy on a page load.
+
+    The distinction this page exists to make: silence from the datacenter and
+    silence from the monitoring look identical on every other screen.
+    """
+    from app.alarms import platform as rules
+    from app.alarms import platform_monitor
+    from app.contracts.messages_gen import Stream
+    from app.repositories import alarms as alarm_repo
+
+    redis = Redis.from_url(settings.redis_url)
+    try:
+        signals = await platform_monitor.gather(
+            session, redis,
+            streams=[Stream.TELEMETRY, Stream.EVENTS],
+            group=settings.ingest_group)
+    finally:
+        await redis.aclose()
+
+    findings = rules.evaluate(signals)
+    open_alarms = await alarm_repo.open_platform_alarms(session)
+
+    return {
+        "verdict": rules.summarise(findings),
+        "findings": [
+            {"alarm_type": f.alarm_type, "instance": f.instance,
+             "severity": f.severity, "message": f.message,
+             "value": f.value, "threshold": f.threshold}
+            for f in findings
+        ],
+        "open_alarms": open_alarms,
+        "pipeline": {
+            # Two numbers, never one. Freshness is bounded by the poll interval
+            # even when everything is perfect; lag is publish-to-commit and is
+            # sub-second when it is not broken.
+            "ingest_lag_seconds": signals.ingest_lag_s,
+            "telemetry_age_seconds": signals.telemetry_age_s,
+            "telemetry_present": signals.telemetry_present,
+            "worker_heartbeat_age_seconds": signals.worker_heartbeat_age_s,
+            "stream_pending": signals.stream_pending,
+            "lag_warning_seconds": rules.INGEST_LAG_WARNING_S,
+            "lag_critical_seconds": rules.INGEST_LAG_CRITICAL_S,
+        },
+        "collectors": [
+            {"collector_id": c.collector_id,
+             "heartbeat_age_seconds": c.heartbeat_age_s,
+             "status": c.status,
+             "endpoints_owned": c.endpoints_owned,
+             "endpoints_online": c.endpoints_online,
+             "stale_after_seconds": rules.COLLECTOR_STALE_S}
+            for c in signals.collectors
+        ],
+    }

@@ -13,10 +13,11 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from app import __version__
 from app.api.v1 import api_router
+from app.core import metrics
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
 from app.db.session import dispose_engine
@@ -82,11 +83,36 @@ def create_app() -> FastAPI:
     async def access_log(request: Request, call_next):
         started = time.perf_counter()
         response = await call_next(request)
-        duration_ms = (time.perf_counter() - started) * 1000
+        elapsed = time.perf_counter() - started
         # Query strings can carry a WebSocket ticket; log the path only.
         log.info("request", method=request.method, path=request.url.path,
-                 status=response.status_code, duration_ms=round(duration_ms, 1))
+                 status=response.status_code,
+                 duration_ms=round(elapsed * 1000, 1))
+        # The TEMPLATED path, resolved after routing: /devices/{id}, never
+        # /devices/2f9c-... . Labelling with the raw path gives one time series
+        # per device and takes the Prometheus install down with it.
+        route = request.scope.get("route")
+        path = getattr(route, "path", None) or "unmatched"
+        metrics.api_requests.labels(method=request.method, path=path,
+                                    status=str(response.status_code)).inc()
+        metrics.api_duration.labels(method=request.method, path=path).observe(elapsed)
         return response
+
+    # Deliberately outside the /api/v1 prefix and unauthenticated, matching the
+    # collector's own :9100/metrics. Prometheus scrapers do not carry JWTs, and
+    # the metrics here are cardinality-disciplined enough to leak nothing about
+    # individual devices. It still belongs on an internal network - this is a
+    # deployment control, not an application one.
+    @app.get("/metrics", include_in_schema=False)
+    async def prometheus_metrics() -> Response:
+        from app.db.session import get_engine
+        try:
+            pool = get_engine().pool
+            metrics.db_pool.labels(state="in_use").set(pool.checkedout())
+            metrics.db_pool.labels(state="idle").set(pool.checkedin())
+        except Exception:  # pragma: no cover - pool introspection is best effort
+            pass
+        return Response(content=metrics.render(), media_type=metrics.CONTENT_TYPE)
 
     @app.exception_handler(Exception)
     async def unhandled(request: Request, exc: Exception) -> JSONResponse:
