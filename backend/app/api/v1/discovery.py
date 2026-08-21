@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import Principal, current_principal
+from app.core import audit
+from app.core.security import Principal, current_principal, require_role
 from app.db.session import get_session
 from app.repositories import discovery as repo
 from app.services import discovery as service
@@ -30,8 +31,10 @@ class PromoteRequest(BaseModel):
 @router.post("/runs", status_code=status.HTTP_202_ACCEPTED,
              summary="Queue a discovery sweep")
 async def create_run(req: RunRequest,
+                     request: Request,
                      session: AsyncSession = Depends(get_session),
-                     _: Principal = Depends(current_principal)) -> dict[str, Any]:
+                     principal: Principal = Depends(require_role("operator")),
+                     ) -> dict[str, Any]:
     """Queues the run; a collector claims and executes it.
 
     Accepted rather than created: the sweep happens on the management network,
@@ -40,6 +43,14 @@ async def create_run(req: RunRequest,
     try:
         run = await service.create_run(session, method=req.method,
                                        subnets=req.subnets)
+        ip, agent = audit.client_of(request)
+        # A discovery sweep is active traffic on the management network, sent
+        # to addresses nobody has claimed yet. Who asked for it, and over which
+        # subnets, is worth keeping.
+        await audit.record(session, actor=audit.actor_of(principal),
+                           action="discovery.run", target_type="discovery_run",
+                           target_id=str(run.get("id")), ip=ip, user_agent=agent,
+                           after={"method": req.method, "subnets": req.subnets})
         await session.commit()
         return run
     except service.DiscoveryError as exc:
@@ -72,11 +83,20 @@ async def list_candidates(
 
 @router.post("/candidates/{candidate_id}/promote",
              summary="Create an inventory device from a candidate")
-async def promote(candidate_id: str, req: PromoteRequest,
+async def promote(candidate_id: str, req: PromoteRequest, request: Request,
                   session: AsyncSession = Depends(get_session),
-                  _: Principal = Depends(current_principal)) -> dict[str, Any]:
+                  principal: Principal = Depends(require_role("operator")),
+                  ) -> dict[str, Any]:
     try:
         result = await service.promote(session, candidate_id, req.model_dump())
+        ip, agent = audit.client_of(request)
+        # Promotion creates an inventory device from something found on the
+        # wire. scrub() runs over the payload on the way in, because a promote
+        # body can carry the credential the device answered with.
+        await audit.record(session, actor=audit.actor_of(principal),
+                           action="discovery.promote", target_type="candidate",
+                           target_id=candidate_id, ip=ip, user_agent=agent,
+                           after=req.model_dump())
         await session.commit()
         return result
     except service.DiscoveryError as exc:
@@ -85,11 +105,18 @@ async def promote(candidate_id: str, req: PromoteRequest,
 
 @router.post("/candidates/{candidate_id}/ignore",
              summary="Dismiss a candidate")
-async def ignore(candidate_id: str,
+async def ignore(candidate_id: str, request: Request,
                  session: AsyncSession = Depends(get_session),
-                 _: Principal = Depends(current_principal)) -> dict[str, Any]:
+                 principal: Principal = Depends(require_role("operator")),
+                 ) -> dict[str, Any]:
     try:
         result = await service.ignore(session, candidate_id)
+        ip, agent = audit.client_of(request)
+        # Dismissing a responder is a security-relevant decision: it is how a
+        # device that answers on the management network stops being asked about.
+        await audit.record(session, actor=audit.actor_of(principal),
+                           action="discovery.ignore", target_type="candidate",
+                           target_id=candidate_id, ip=ip, user_agent=agent)
         await session.commit()
         return result
     except service.DiscoveryError as exc:

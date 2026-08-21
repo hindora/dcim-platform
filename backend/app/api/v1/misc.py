@@ -6,13 +6,14 @@ import hmac
 import os
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from redis.asyncio import Redis
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.alarms import platform as platform_rules
 from app.alarms import platform_monitor
+from app.core import audit
 from app.core.config import Settings, get_settings
 from app.core.metrics_gen import METRICS
 from app.core.security import Principal, current_principal, issue_token
@@ -29,14 +30,27 @@ _DEFAULT_USER = os.environ.get("DCIM_ADMIN_USER", "admin")
 
 
 @router.post("/login", response_model=TokenResponse, summary="Exchange credentials for a JWT")
-async def login(req: LoginRequest,
+async def login(req: LoginRequest, request: Request,
+                session: AsyncSession = Depends(get_session),
                 settings: Settings = Depends(get_settings)) -> TokenResponse:
     expected = os.environ.get("DCIM_ADMIN_PASSWORD")
     if not expected:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE,
                             "DCIM_ADMIN_PASSWORD is not configured")
+    ip, agent = audit.client_of(request)
     if req.username != _DEFAULT_USER or not hmac.compare_digest(req.password, expected):
+        # Failures are the half of the login record that matters. The username
+        # attempted is recorded; the password is never touched, not even to
+        # note its length, which would leak into the one table an attacker
+        # would most like to read.
+        await audit.record(session, actor=req.username or "anonymous",
+                           action="auth.login", ip=ip, user_agent=agent,
+                           outcome="denied")
+        await session.commit()
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid username or password")
+    await audit.record(session, actor=req.username, action="auth.login",
+                       ip=ip, user_agent=agent, after={"role": "admin"})
+    await session.commit()
     return TokenResponse(
         token=issue_token(req.username, "admin", settings),
         expires_in=settings.jwt_ttl_minutes * 60,

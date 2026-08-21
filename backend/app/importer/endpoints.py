@@ -28,6 +28,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.core.security import credential_hint
+
 # core/snmprec_generator.py::_NO_SNMP_TYPES
 NO_SNMP_TYPES = frozenset({"rpp", "chiller", "pump", "cooling_tower", "valve"})
 
@@ -127,7 +129,10 @@ def _snmp_credential(addr: str) -> dict[str, Any]:
         "credential_kind": "snmp_v2c",
         "credential_payload": {"community": addr},
         "credential_name": f"snmp-v2c-{addr}",
-        "credential_hint": f"community: {addr}",
+        # Never "community: {addr}": on this fleet the community IS the
+        # address, so that hint is the credential written out in plaintext -
+        # stored unencrypted and served to every reader by GET /devices.
+        "credential_hint": credential_hint("snmp_v2c", {"community": addr}),
     }
 
 
@@ -186,7 +191,9 @@ def derive_endpoints(
             credential_kind="http_basic",
             credential_payload={"username": redfish_username, "password": redfish_password},
             credential_name=f"redfish-{dev['mgmt_ip']}",
-            credential_hint=f"user: {redfish_username}",
+            credential_hint=credential_hint(
+                "http_basic", {"username": redfish_username,
+                               "password": redfish_password}),
         ))
 
     # ------------------------------------------------------------------ gNMI

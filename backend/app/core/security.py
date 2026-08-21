@@ -8,6 +8,8 @@ any user-facing API may return is ``secret_hint``.
 from __future__ import annotations
 
 import base64
+import hashlib
+import hmac
 import json
 import os
 from datetime import UTC, datetime, timedelta
@@ -43,6 +45,56 @@ def decrypt_secret(blob: bytes, settings: Settings | None = None) -> dict[str, A
     aes = AESGCM(s.credential_key_bytes)
     plain = aes.decrypt(bytes(blob[:_NONCE_BYTES]), bytes(blob[_NONCE_BYTES:]), None)
     return json.loads(plain)
+
+
+# Which field of a credential payload is the secret, per kind. A username is
+# not a secret and is useful in a hint; a community string is the entire
+# credential and must never appear in one.
+_SECRET_FIELDS = ("password", "community", "passphrase", "private_key",
+                  "token", "secret", "auth_key", "priv_key")
+
+
+def credential_hint(kind: str, payload: dict[str, Any]) -> str:
+    """A hint that identifies a credential without revealing it.
+
+    The obvious hint for SNMP v2c - "community: <value>" - is the whole
+    credential written out, and on this fleet it is stored unencrypted and
+    returned to every authenticated reader by GET /devices. It looks harmless
+    because the simulator's community happens to be the device IP, which is not
+    a secret; against real hardware the same code publishes the real community
+    string.
+
+    So a hint says what KIND of secret exists and how long it is, never what it
+    is. Non-secret identifying fields - a username, an SNMPv3 security name -
+    are included, because the point of a hint is to tell two credentials apart.
+    """
+    parts: list[str] = []
+    for label in ("username", "user", "security_name"):
+        if payload.get(label):
+            parts.append(f"user: {payload[label]}")
+            break
+    for field in _SECRET_FIELDS:
+        value = payload.get(field)
+        if value:
+            parts.append(f"{field} ({len(str(value))} chars)")
+    if not parts:
+        parts.append(kind or "credential")
+    return ", ".join(parts)
+
+
+def hint_is_safe(hint: str | None, payload: dict[str, Any]) -> bool:
+    """Does this hint avoid containing any secret value it describes?
+
+    Used at write time and asserted in tests. A length is not a secret; the
+    value is.
+    """
+    if not hint:
+        return True
+    for field in _SECRET_FIELDS:
+        value = payload.get(field)
+        if value and str(value) in hint:
+            return False
+    return True
 
 
 def generate_credential_key() -> str:
@@ -114,21 +166,77 @@ def require_role(minimum: str):
     return _dep
 
 
+# Per-collector tokens are "<collector_id>.<hmac>", where the hmac is over the
+# collector id with the master token as the key. Derived rather than stored, so
+# minting one needs no migration and no provisioning table, and verifying one
+# needs no database round trip on the hot path.
+#
+# The property that matters: the master secret cannot be recovered from a
+# derived token, so a compromised collector's token grants that collector's
+# shard and nothing else. That is the difference between one machine's
+# credentials and the whole fleet's.
+_TOKEN_SEP = "."
+
+
+def mint_collector_token(collector_id: str, settings: Settings | None = None) -> str:
+    """Issue a token that carries, and is bound to, one collector's identity."""
+    s = settings or get_settings()
+    mac = hmac.new(s.collector_token.get_secret_value().encode(),
+                   collector_id.encode(), hashlib.sha256).hexdigest()
+    return f"{collector_id}{_TOKEN_SEP}{mac}"
+
+
+def verify_collector_token(token: str, settings: Settings | None = None) -> str | None:
+    """Return the collector id a token proves, or None.
+
+    Falls back to accepting the bare master token, which every collector
+    deployed before this change is using. That fallback is a real weakness -
+    it is a fleet-wide credential - so it does not pretend to be an identity:
+    it resolves to the sentinel below, which the assignments endpoint refuses
+    to treat as scoped and which the audit log records as unscoped.
+    """
+    s = settings or get_settings()
+    master = s.collector_token.get_secret_value()
+
+    if _TOKEN_SEP in token:
+        collector_id, _, mac = token.partition(_TOKEN_SEP)
+        expected = hmac.new(master.encode(), collector_id.encode(),
+                            hashlib.sha256).hexdigest()
+        # compare_digest on both halves: a plain == on the mac leaks its prefix
+        # through timing, and the whole point of a derived token is that it
+        # cannot be guessed.
+        if collector_id and hmac.compare_digest(mac, expected):
+            return collector_id
+        return None
+
+    if hmac.compare_digest(token, master):
+        return UNSCOPED_COLLECTOR
+    return None
+
+
+# What a legacy fleet-wide token resolves to. Never a real collector id, so it
+# can never satisfy a scope check by accident.
+UNSCOPED_COLLECTOR = "*unscoped*"
+
+
 async def require_collector(
     creds: HTTPAuthorizationCredentials | None = Depends(bearer),
     settings: Settings = Depends(get_settings),
 ) -> str:
-    """Collector-scoped auth.
+    """Collector-scoped auth, returning WHICH collector.
 
     A distinct credential type from user JWTs: the assignments endpoint returns
     decrypted device credentials, so it must never be reachable with a token
     that a browser holds.
+
+    It used to return the constant string "collector", which meant the audit
+    log could record that credentials had been handed out but not to whom -
+    and "someone with the collector token pulled every credential in the fleet"
+    is not an investigation, it is the start of one.
     """
     if creds is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "missing collector token")
-    import hmac
-
-    expected = settings.collector_token.get_secret_value()
-    if not hmac.compare_digest(creds.credentials, expected):
+    identity = verify_collector_token(creds.credentials, settings)
+    if identity is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid collector token")
-    return "collector"
+    return identity

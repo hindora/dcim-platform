@@ -8,14 +8,29 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, Header, Query, Request, Response, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    status,
+)
 from pydantic import BaseModel, Field
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import audit
 from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
-from app.core.security import Principal, current_principal, require_collector
+from app.core.security import (
+    UNSCOPED_COLLECTOR,
+    Principal,
+    current_principal,
+    require_collector,
+)
 from app.db.session import get_session
 from app.repositories import collector as repo
 from app.repositories import dashboard as dashboard_repo
@@ -37,15 +52,60 @@ async def assignments(
     protocol: list[str] | None = Query(None),
     if_none_match: str | None = Header(None, alias="If-None-Match"),
     session: AsyncSession = Depends(get_session),
-    _: str = Depends(require_collector),
+    identity: str = Depends(require_collector),
 ):
+    """The one endpoint that returns decrypted device credentials.
+
+    It cannot be otherwise - the collector has to authenticate to devices - so
+    the mitigations are what matter: a credential type no browser holds, a
+    token bound to one collector, and an audit row for every handout.
+    """
+    ip, agent = audit.client_of(request)
+
+    # Scope enforcement. A token derived for col-1 may not fetch col-2's
+    # shard: collector_id arrives as a query parameter, so without this check
+    # any holder of any collector token could ask for every other collector's
+    # endpoints and be handed the credentials for all of them.
+    if identity != UNSCOPED_COLLECTOR and identity != collector_id:
+        await audit.record(
+            session, actor=f"collector:{identity}", action="credential.denied",
+            target_type="collector", target_id=collector_id, ip=ip,
+            user_agent=agent, outcome="denied",
+            after={"reason": "token is scoped to a different collector"})
+        await session.commit()
+        log.warning("assignment scope violation", token_identity=identity,
+                    requested=collector_id, client=ip)
+        raise HTTPException(status.HTTP_403_FORBIDDEN,
+                            "this token is not scoped to that collector")
+
     assignment = await service.build_assignment(session, collector_id, protocol)
     etag = service.etag_for(assignment)
 
-    # Audit every fetch: this is the one endpoint that hands out secrets.
-    log.info("assignment fetch", collector_id=collector_id,
-             client=request.client.host if request.client else None,
-             endpoints=len(assignment.endpoints), etag=etag)
+    with_secrets = sum(1 for e in assignment.endpoints
+                       if getattr(e, "credential", None) is not None)
+    # Audit every fetch: this is the one endpoint that hands out secrets. The
+    # row records how many credentials went out, never which - the count is
+    # what an investigation needs, and the list would put the target set of a
+    # compromise into a table that is easier to read than the one it protects.
+    await audit.record(
+        session, actor=f"collector:{identity}", action="credential.fetch",
+        target_type="collector", target_id=collector_id, ip=ip,
+        user_agent=agent,
+        after={"endpoints": len(assignment.endpoints),
+               "credentials_returned": with_secrets, "etag": etag,
+               "scoped": identity != UNSCOPED_COLLECTOR})
+    await session.commit()
+
+    log.info("assignment fetch", collector_id=collector_id, identity=identity,
+             client=ip, endpoints=len(assignment.endpoints),
+             credentials=with_secrets, etag=etag,
+             scoped=identity != UNSCOPED_COLLECTOR)
+    if identity == UNSCOPED_COLLECTOR:
+        # Visible rather than silent: a fleet-wide token is a standing risk,
+        # and it should show up in the log every time it is used, not only in
+        # a design document.
+        log.warning("unscoped collector token used", collector_id=collector_id,
+                    client=ip)
 
     if if_none_match and if_none_match.strip() == etag:
         return Response(status_code=status.HTTP_304_NOT_MODIFIED,

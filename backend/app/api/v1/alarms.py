@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import audit
 from app.core.security import Principal, current_principal, require_role
 from app.db.session import get_session
 from app.repositories import alarms as repo
@@ -64,6 +65,7 @@ async def get_alarm(
 async def acknowledge(
     alarm_id: str,
     body: AckRequest,
+    request: Request,
     session: AsyncSession = Depends(get_session),
     principal: Principal = Depends(require_role("operator")),
 ) -> dict[str, Any]:
@@ -77,6 +79,12 @@ async def acknowledge(
                               action="acknowledged", severity=row["severity"],
                               actor=principal.username,
                               detail={"note": body.note} if body.note else None)
+    ip, agent = audit.client_of(request)
+    await audit.record(session, actor=audit.actor_of(principal),
+                       action="alarm.acknowledge", target_type="alarm",
+                       target_id=alarm_id, ip=ip, user_agent=agent,
+                       before={"state": "ACTIVE", "severity": row["severity"]},
+                       after={"state": "ACKNOWLEDGED", "note": body.note})
     await session.commit()
     return {"ok": True, "alarm_id": alarm_id, "acknowledged_by": principal.username}
 
@@ -84,6 +92,7 @@ async def acknowledge(
 @router.post("/alarms/{alarm_id}/clear", summary="Clear an alarm by hand")
 async def clear(
     alarm_id: str,
+    request: Request,
     session: AsyncSession = Depends(get_session),
     principal: Principal = Depends(require_role("operator")),
 ) -> dict[str, Any]:
@@ -94,6 +103,15 @@ async def clear(
                               action="cleared", severity=row["severity"],
                               actor=principal.username)
     await repo.refresh_device_alarm_state(session, [row["device_id"]])
+    ip, agent = audit.client_of(request)
+    # A manual clear is the one alarm action that can hide a live fault, so it
+    # is the one most worth attributing.
+    await audit.record(session, actor=audit.actor_of(principal),
+                       action="alarm.clear", target_type="alarm",
+                       target_id=alarm_id, ip=ip, user_agent=agent,
+                       before={"severity": row["severity"],
+                               "device_id": row["device_id"]},
+                       after={"state": "CLEARED"})
     await session.commit()
     return {"ok": True, "alarm_id": alarm_id, "cleared_by": principal.username}
 
