@@ -223,6 +223,39 @@ The cap that prevents the OOM also bounds how long an outage can be absorbed
 without loss. A **5-minute Postgres outage sheds telemetry** — measured. A
 shorter one costs nothing. Events survive either way.
 
+### 5.4 Backlog recovery is self-limiting
+
+Recovering from a long outage is harder than surviving it, and the reason is not
+obvious.
+
+Replayed samples are written with the timestamps they were **collected** at, so
+a backlog is a flood of *late-arriving* data. TimescaleDB's continuous
+aggregates (`telemetry_1m`, `_5m`, `_1h`) must then re-materialise buckets that
+were already computed, and that work grows with how far back the backlog
+reaches. The longer the outage, the more expensive each replayed row is to
+absorb — which slows the replay, which lengthens the backlog.
+
+Measured here after a series of chaos outages, with a 29.5 M-row table:
+
+```
+Postgres CPU        100.3%   (saturated - one full core, the bottleneck)
+Redis CPU            15%
+ingest rate         304 rows/s   (against 1,285-2,800/s when caught up)
+telemetry age       373s -> 503s over two minutes   (losing ground)
+```
+
+If the platform is behind and **not** catching up, check Postgres CPU before
+anything else. If it is pinned, the fix is to reduce what is being asked of it,
+not to restart the worker:
+
+* lengthen poll intervals on the noisiest profiles until it catches up;
+* if the fleet is a simulator, stop it — here `snmpsim` alone was using 85% of
+  another core on the same host;
+* leave it alone and let it drain during a quiet period.
+
+Restarting the worker does **not** help and briefly makes it worse: the replay
+starts again from the same stream position with the same late timestamps.
+
 ### 5.4 What survives what
 
 | Outage | Telemetry | Events | Recovery |
