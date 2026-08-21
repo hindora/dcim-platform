@@ -274,3 +274,98 @@ button.primary { background: var(--accent-dim); border-color: var(--accent); }
 .chart-tick-x { font-size: 10px; fill: var(--text-muted);
                 font-family: var(--mono); }
 .chart-unit { font-size: 10px; fill: var(--text-faint); font-family: var(--sans); }
+
+/* ---------------------------------------------------------------- analytics */
+
+.tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); margin: 4px 0 18px; }
+.tab {
+  background: none; border: none; border-bottom: 2px solid transparent;
+  color: var(--text-muted); padding: 8px 14px; font: inherit; font-size: 13px;
+  cursor: pointer;
+}
+.tab:hover { color: var(--text); }
+.tab.active { color: var(--text); border-bottom-color: var(--accent); }
+
+/* .toolbar itself is defined above and shared with the other pages; only the
+   label needs a rule, since analytics is the first place a control is labelled. */
+.toolbar { align-items: center; }
+.toolbar label { color: var(--text-muted); font-size: 12px; }
+
+/* The headline finding, stated in words. A verdict a reader has to derive by
+   comparing four percentages is a verdict the UI declined to give. */
+.verdict {
+  background: var(--bg-raised); border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius); padding: 12px 14px; margin-bottom: 16px;
+}
+.verdict-label { color: var(--text-muted); font-size: 12px; }
+.verdict-value { font-size: 22px; margin-top: 2px; text-transform: capitalize; }
+.verdict-reason { color: var(--text-muted); font-size: 13px; margin: 6px 0 0; }
+
+.meters { display: grid; gap: 14px; margin: 16px 0; }
+.meter { background: var(--bg-raised); border: 1px solid var(--border);
+         border-radius: var(--radius); padding: 12px 14px; }
+.meter.binding { border-color: var(--border-strong); }
+.meter-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.meter-label { text-transform: capitalize; }
+.meter-value { font-variant-numeric: tabular-nums; }
+.meter-track {
+  height: 8px; background: var(--bg-inset); border-radius: 4px;
+  margin: 8px 0 6px; overflow: hidden;
+}
+/* An unmeasured limit is hatched, never empty: an empty bar reads as headroom,
+   which is the opposite of what "nobody recorded a rating" means. */
+.meter-track.unknown {
+  background: repeating-linear-gradient(45deg,
+    var(--bg-inset), var(--bg-inset) 5px, var(--border) 5px, var(--border) 10px);
+}
+.meter-fill { height: 100%; border-radius: 4px; }
+.meter-fill.ok { background: var(--ok); }
+.meter-fill.warn { background: var(--warn); }
+.meter-fill.critical { background: var(--critical); }
+.meter-foot { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; }
+.meter-note { text-align: right; max-width: 65%; }
+
+.pill {
+  background: var(--accent-dim); color: var(--text); font-size: 11px;
+  border-radius: 10px; padding: 1px 8px; margin-left: 8px; text-transform: none;
+}
+
+.refusal {
+  background: var(--bg-raised); border: 1px solid var(--border);
+  border-left: 3px solid var(--warn);
+  border-radius: var(--radius); padding: 14px 16px; margin: 8px 0 16px;
+}
+.refusal-head { font-size: 16px; margin-bottom: 4px; }
+.refusal p { margin: 6px 0; font-size: 13px; }
+
+.stat-row { display: flex; gap: 24px; flex-wrap: wrap; margin: 12px 0; font-size: 13px;
+            font-variant-numeric: tabular-nums; }
+.stat-row .muted { margin-right: 6px; }
+
+.stack-bar { display: flex; height: 14px; border-radius: 4px; overflow: hidden;
+             background: var(--bg-inset); margin: 8px 0; }
+.stack-seg.ok { background: var(--ok); }
+.stack-seg.warn { background: var(--warn); }
+.stack-seg.critical { background: var(--critical); }
+.stack-seg.unknown { background: var(--unknown); }
+
+.legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12px;
+          color: var(--text-muted); margin: 6px 0 14px; }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px;
+            margin-right: 6px; vertical-align: middle; }
+.legend i.ok { background: var(--ok); }
+.legend i.warn { background: var(--warn); }
+.legend i.critical { background: var(--critical); }
+.legend i.unknown { background: var(--unknown); }
+
+.inline-bar { display: flex; align-items: center; gap: 8px; }
+.inline-bar .meter-track { flex: 1; margin: 0; }
+.inline-bar span { font-variant-numeric: tabular-nums; font-size: 12px; min-width: 56px; }
+
+/* .chip and its tones are defined above; analytics reuses them as-is. */
+.small { font-size: 12px; }
+/* .warn already exists as standalone warning text; these are its siblings. */
+.ok { color: var(--ok); }
+.critical { color: var(--critical); }
+.banner.soft { border-color: var(--warn); }

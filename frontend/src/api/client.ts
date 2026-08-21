@@ -360,6 +360,156 @@ export interface HistoryOut {
   series: Series[];
 }
 
+// ------------------------------------------------------- analytics (phase 5)
+//
+// Narrow on purpose. Every one of these responses carries its own caveats -
+// method, category, capacity_source, method_reason - and those fields are typed
+// as required rather than optional so a view cannot quietly drop the part that
+// says how much the number is worth.
+
+export interface PueResult {
+  pue: number | null;
+  method: 'energy' | 'power' | null;
+  category: 1 | 2 | 3 | null;
+  measurement_point?: string;
+  plausible: boolean;
+  note: string | null;
+  total_facility_kwh?: number;
+  it_kwh?: number;
+  total_facility_kw?: number;
+  it_kw?: number;
+  counter_resets?: number;
+  meters?: { facility: number; it: number };
+}
+
+export interface PueSeries {
+  points: { start: string; end: string; pue: number | null; method: string | null }[];
+  buckets: number;
+  mean: number | null;
+}
+
+export interface CapacityConstraint {
+  name: string;
+  unit: string;
+  used_p95: number | null;
+  used_peak: number | null;
+  capacity: number | null;
+  capacity_source: string;
+  headroom: number | null;
+  utilisation_pct: number | null;
+  tight: boolean;
+  note: string | null;
+}
+
+export interface CapacityReport {
+  scope: string;
+  scope_id: string;
+  name: string | null;
+  percentile: number;
+  window_hours: number;
+  binding_constraint: string | null;
+  binding_reason: string;
+  constraints: CapacityConstraint[];
+  notes: string[];
+}
+
+export interface ThermalRack {
+  rack_id: string;
+  name: string;
+  inlet_mean_c: number | null;
+  exhaust_mean_c: number | null;
+  delta_t_k: number | null;
+  above_recommended: boolean;
+  above_allowable: boolean;
+}
+
+export interface ThermalUnit {
+  device_id: string;
+  name: string;
+  state: 'ok' | 'high_supply' | 'high_return' | 'stopped' | string;
+  reason: string | null;
+  supply_c: number | null;
+  return_c: number | null;
+  setpoint_c: number | null;
+  delta_t_k: number | null;
+  running: boolean;
+}
+
+export interface ThermalRoom {
+  room_id: string;
+  name: string | null;
+  window_minutes: number;
+  inlet_p90_c: number | null;
+  hot_spot_threshold_c: number | null;
+  hot_spots: { rack_id: string; name: string; inlet_c: number; over_by_k: number }[];
+  hot_spot_count: number;
+  room_delta_t_k: number | null;
+  thermal_event: { type: string; summary: string; hottest?: string } | null;
+  crah_units: ThermalUnit[];
+  units_high_supply: number;
+  units_high_return: number;
+  racks: ThermalRack[];
+}
+
+export interface CoolingPlant {
+  staging: string;
+  reason: string;
+  load_kw: number;
+  running_capacity_kw: number;
+  installed_capacity_kw: number;
+  running: number;
+  standby: number;
+  nameplate_unknown: number;
+  utilisation_pct: number | null;
+  data_quality: { check: string; verdict: string; detail: string }[];
+  chillers: { device_id: string; name: string; running: boolean;
+              capacity_kw: number | null; load_kw: number | null }[];
+  loops: { room_id?: string; name: string; delta_t_k: number | null;
+           flow_l_s: number | null; heat_kw: number | null; verdict?: string;
+           note?: string }[];
+}
+
+export interface PowerFleet {
+  redundancy_census: Record<string, number>;
+  at_risk: { device_id: string; name: string; device_type: string;
+             redundancy: string; reason: string }[];
+  at_risk_total: number;
+  supplies: { device_id: string; name: string; device_type: string;
+              status: string; max_severity: string | null;
+              load_pct: number | null; load_w: number | null;
+              load_source: string; alternate_feeders: unknown[] }[];
+  phase_imbalance: { device_id: string; name: string; imbalance_pct: number }[];
+}
+
+export interface ForecastPoint { day: number; value: number; lower: number; upper: number }
+
+export interface ForecastResult {
+  scope: string;
+  scope_id: string;
+  name: string | null;
+  metric: string;
+  metric_label: string;
+  devices: number;
+  statistic: string;
+  history_days: number;
+  min_history_days: number;
+  method: 'insufficient_history' | 'linear' | 'holt_winters';
+  method_reason: string;
+  trend_per_day: number | null;
+  r2: number | null;
+  unit: string;
+  capacity: number | null;
+  points: ForecastPoint[];
+  history: { day: string; value: number }[];
+  runway: {
+    days: number | null;
+    earliest_days: number | null;
+    latest_days: number | null;
+    reason: string;
+  };
+  notes: string[];
+}
+
 export const api = {
   login: (username: string, password: string) =>
     request<{ token: string; expires_in: number; username: string; role: string }>(
@@ -428,6 +578,57 @@ export const api = {
     for (const [k, v] of Object.entries(params)) if (v) q.set(k, v);
     const qs = q.toString();
     return request<{ items: EventItem[] }>(`/events${qs ? `?${qs}` : ''}`);
+  },
+
+  pue: (params: Record<string, string | undefined> = {}) => {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) if (v) q.set(k, v);
+    const qs = q.toString();
+    return request<PueResult>(`/analytics/pue${qs ? `?${qs}` : ''}`);
+  },
+
+  pueSeries: (params: Record<string, string | undefined> = {}) => {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) if (v) q.set(k, v);
+    const qs = q.toString();
+    return request<PueSeries>(`/analytics/pue/series${qs ? `?${qs}` : ''}`);
+  },
+
+  capacity: (scope: string, scopeId: string, assumedRackKw?: number) => {
+    const q = new URLSearchParams({ scope, scope_id: scopeId });
+    if (assumedRackKw) q.set('assumed_rack_kw', String(assumedRackKw));
+    return request<CapacityReport>(`/capacity?${q.toString()}`);
+  },
+
+  thermal: (roomId: string, minutes?: number) => {
+    const q = new URLSearchParams({ room_id: roomId });
+    if (minutes) q.set('minutes', String(minutes));
+    return request<ThermalRoom>(`/analytics/thermal?${q.toString()}`);
+  },
+
+  cooling: (datacenterId?: string) => {
+    const q = new URLSearchParams();
+    if (datacenterId) q.set('datacenter_id', datacenterId);
+    const qs = q.toString();
+    return request<CoolingPlant>(`/cooling${qs ? `?${qs}` : ''}`);
+  },
+
+  powerFleet: (datacenterId?: string) => {
+    const q = new URLSearchParams();
+    if (datacenterId) q.set('datacenter_id', datacenterId);
+    const qs = q.toString();
+    return request<PowerFleet>(`/power${qs ? `?${qs}` : ''}`);
+  },
+
+  forecast: (scope: string, scopeId: string, opts: {
+    metric?: string; horizonDays?: number; historyDays?: number; capacity?: number;
+  } = {}) => {
+    const q = new URLSearchParams({ scope, scope_id: scopeId });
+    if (opts.metric) q.set('metric', opts.metric);
+    if (opts.horizonDays) q.set('horizon_days', String(opts.horizonDays));
+    if (opts.historyDays) q.set('history_days', String(opts.historyDays));
+    if (opts.capacity) q.set('capacity', String(opts.capacity));
+    return request<ForecastResult>(`/analytics/forecast?${q.toString()}`);
   },
 
   wsTicket: () =>
