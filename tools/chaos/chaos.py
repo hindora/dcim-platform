@@ -47,11 +47,29 @@ WORKER_CWD = "/home/hari/dcim-platform"
 WORKER_CMD = "./backend/.venv/bin/python -m app.ingest.worker"
 
 
-def sh(cmd: str, timeout: int = 120) -> str:
-    """Run a command inside WSL. Returns stdout, never raises on non-zero."""
-    out = subprocess.run(WSL + [cmd], capture_output=True, text=True,
-                         timeout=timeout)
-    return (out.stdout or "") + (out.stderr or "")
+def sh(script: str, timeout: int = 120) -> str:
+    """Run a shell script inside WSL, passed on STDIN as bytes.
+
+    Two details, both learned from failures that looked like something else.
+
+    **Stdin, not an argument.** A script handed to `wsl.exe -- bash -lc` is
+    parsed by the Windows shell first, which eats every $VAR on the way. The
+    restart script therefore sourced deploy/.env into variables that expanded
+    to nothing: the collector came back up with an empty Redis password, failed
+    every publish with NOAUTH and ERR Protocol error, and looked perfectly
+    alive while moving no data. The harness called that a successful restart.
+
+    **Bytes, not text.** With text=True Python translates newlines into the
+    pipe on Windows, so each line reaches bash with a trailing carriage return
+    and `. deploy/.env` becomes a source of a file whose name ends in CR.
+    Encoding explicitly removes the second way to get the same symptom.
+    """
+    out = subprocess.run(["wsl.exe", "-d", "Ubuntu", "--", "bash", "-s"],
+                         input=script.encode("utf-8"),
+                         capture_output=True, timeout=timeout)
+    return ((out.stdout or b"").decode("utf-8", "replace")
+            + (out.stderr or b"").decode("utf-8", "replace"))
+
 
 
 def docker(*args: str, timeout: int = 180) -> str:
@@ -71,15 +89,17 @@ def _relaunch(cwd: str, cmd: str, log: str) -> str:
     return f"""
 cd {cwd} || exit 1
 set -a
-. /home/hari/dcim-platform/deploy/.env 2>/dev/null
+. /home/hari/dcim-platform/deploy/.env
 set +a
 export DCIM_DATABASE_URL="postgresql+asyncpg://${{POSTGRES_USER:-dcim}}:${{POSTGRES_PASSWORD}}@127.0.0.1:5432/${{POSTGRES_DB:-dcim}}"
 export DCIM_REDIS_URL="redis://:${{REDIS_PASSWORD}}@127.0.0.1:6379/0"
 setsid nohup {cmd} > /home/hari/{log} 2>&1 < /dev/null &
-# The parent must outlive the child's startup. wsl.exe tears its session down
-# when the invoking shell exits, and a setsid child three seconds old goes with
-# it - the relaunch appeared to run, wrote no log, and left the service dead.
-sleep 20
+# Long enough for the child to fail loudly if it is going to. A process that
+# exits on a missing setting does so within a second or two, so waiting here
+# means the caller's check sees the steady state rather than a pid that is
+# about to disappear. A setsid child DOES survive wsl.exe returning - that was
+# measured, and is not the reason this used to fail.
+sleep 15
 echo "relaunched: $(pgrep -f '{cmd}' | tr '
 ' ' ')"
 """
@@ -97,6 +117,29 @@ def pids(pattern: str) -> list[int]:
                          capture_output=True, text=True, timeout=60)
     return [int(x) for x in (out.stdout or "").split() if x.isdigit()]
 
+
+
+def restore(pattern: str, cwd: str, cmd: str, log: str,
+            attempts: int = 3) -> dict[str, Any]:
+    """Restart a service and PROVE it is running, or say why it is not.
+
+    The harness kills services that have no supervisor, so this is the most
+    important function in the file: a restore that quietly fails leaves the
+    platform down. It therefore retries, and on final failure it returns the
+    tail of the child's own log rather than a bare False - "restarted: false"
+    sent me looking at WSL session semantics when the answer was a missing
+    environment variable printed in the log all along.
+    """
+    for attempt in range(1, attempts + 1):
+        sh(_relaunch(cwd, cmd, log), timeout=120)
+        alive = pids(pattern)
+        if alive:
+            return {"restarted": True, "restart_attempts": attempt,
+                    "restarted_pids": alive}
+        print(f"  restart attempt {attempt} did not take")
+    tail = sh(f"tail -5 /home/hari/{log} 2>/dev/null | cut -c1-200")
+    return {"restarted": False, "restart_attempts": attempts,
+            "restart_log_tail": tail.strip() or "(the child wrote no log at all)"}
 
 
 # --- observation --------------------------------------------------------------
@@ -201,10 +244,8 @@ def scenario_collector_kill(args) -> dict:
         result["unknown_delta"] = state["unknown"] - before["unknown"]
     finally:
         print("  restarting collector")
-        sh(f"cd {COLLECTOR_CWD} && setsid nohup {COLLECTOR_CMD} "
-           f"> /home/hari/collector-chaos.log 2>&1 < /dev/null &")
-        time.sleep(5)
-        result["restarted"] = bool(pids("bin/collector"))
+        result.update(restore("bin/collector", COLLECTOR_CWD, COLLECTOR_CMD,
+                              "collector-chaos.log"))
     if result.get("restarted"):
         met, secs, state = wait_for(
             lambda s: not has_alarm(s, "collector_stale"),
@@ -306,10 +347,8 @@ def scenario_worker_kill(args) -> dict:
         result["stream_after_kill"] = _redis_stream_len()
     finally:
         print("  restarting worker")
-        sh(f"cd {WORKER_CWD} && setsid nohup {WORKER_CMD} "
-           f"> /home/hari/worker-chaos.log 2>&1 < /dev/null &")
-        time.sleep(5)
-        result["restarted"] = bool(pids("app.ingest.worker"))
+        result.update(restore("app.ingest.worker", WORKER_CWD, WORKER_CMD,
+                              "worker-chaos.log"))
     met, secs, state = wait_for(
         lambda s: (s["telemetry_age_s"] or 9e9) < 180,
         args.timeout, "ingest resumed")

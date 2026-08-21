@@ -6,7 +6,8 @@ thing, observes what the platform *says* about it, restores, and verifies the
 restore.
 
 The observation is the deliverable. "It survived" is not a result; "it raised
-`collector_stale` after 112.9 s, and the endpoints did not go OFFLINE" is.
+`collector_stale` after 68.5 s, cleared it 24.4 s after the restart, and never
+marked a single endpoint OFFLINE" is.
 
 ```bash
 python chaos.py list
@@ -28,13 +29,14 @@ implemented or deliberately deferred — see below.
 
 | Expected (§7) | Observed |
 |---|---|
-| `collector_stale` alarm | **raised**, 112.9 s after the kill |
+| `collector_stale` alarm | **raised**, 68.5 s after the kill (112.9 s on an earlier run that started with staler telemetry) |
 | endpoints go UNKNOWN | **not met** — no endpoint became UNKNOWN |
 | endpoints do **not** go OFFLINE | **met** — OFFLINE count unchanged |
 
-112.9 s is consistent with the design rather than a surprise: a collector is
-stale after 60 s without a heartbeat, and the platform evaluator runs every
-30 s, so detection lands between 60 and 90 s plus the sampling interval.
+Both figures are consistent with the design rather than a surprise: a collector
+is stale after 60 s without a heartbeat and the platform evaluator runs every
+30 s, so detection lands between 60 and 90 s plus however stale the telemetry
+already was when the kill landed.
 
 The half that fails is the interesting half. Over the ~2 minute observation the
 94 endpoints that stopped reporting moved **ONLINE → DEGRADED**, and none
@@ -64,45 +66,62 @@ Only one worker runs in this deployment, so this exercised buffer-and-recover,
 not the `XAUTOCLAIM` handover between two live workers. The reclaim path needs a
 second worker running before the kill; the harness does not start one yet.
 
-## A defect in the harness itself
+## The restart bug, and what it actually was
 
-`_relaunch()` is not reliable in this environment. It reports
-`restarted: False` and leaves the service down, and it did so after killing the
-collector — twice — and after killing the worker once. Each time the service had
-to be restored by hand.
+The first runs reported `restarted: False` and left the collector down twice and
+the worker once. The cause written here originally — that a `setsid` child does
+not survive the `wsl.exe` session exiting — was **wrong**, and measuring it took
+two minutes: a detached child launched with two seconds of parent life is still
+running afterwards. Worth recording, because the wrong theory sent the fix in
+the direction of sleeps and process supervision instead of at the real problem.
 
-The cause is not fully pinned. A `setsid nohup` child started from a
-`wsl.exe … bash -s` session does not survive the session exiting, and extending
-the parent's lifetime to 20 s did not fix it, though the identical command typed
-as a heredoc does survive. Until that is understood:
+There were three faults, each hiding the next.
 
-**Do not run these scenarios unattended, and check the services afterwards.**
+**The restart helper was never called.** `_relaunch()` existed and both
+scenarios still used an older inline command that never sourced `deploy/.env`.
+An edit that would have wired them up had aborted on a failed assertion before
+writing the file, so the helper sat there looking correct and doing nothing.
 
-```bash
-wsl -d Ubuntu -- pgrep -af 'bin/collector|app.ingest.worker'
+**Scripts were passed as arguments to `bash -lc`.** The Windows shell parsed
+them first and ate every `$VAR`, so `. deploy/.env` loaded variables that then
+expanded to nothing. This is the failure that mattered most, because it did not
+look like a failure: the collector came back up, polled happily, and failed
+every publish with `NOAUTH Authentication required` and `ERR Protocol error`
+because its Redis URL had an empty password. Five thousand nine hundred and
+seventeen publish failures, telemetry shed five hundred at a time, and a harness
+cheerfully reporting a successful restart. Scripts now go in on stdin, which
+nothing on the Windows side parses.
+
+**`2>/dev/null` hid it.** The sourcing error was suppressed from the first
+draft, so the one line that would have named the problem was thrown away. That
+redirect is gone: an environment file that cannot be read must be loud, because
+everything downstream depends on it.
+
+A fourth was fixed pre-emptively while looking: `text=True` makes Python
+translate newlines into the pipe on Windows, so every line would have reached
+bash with a trailing carriage return — a second, independent way to produce the
+identical symptom. The script is written as bytes now.
+
+`restore()` replaces the fire-and-forget restart. It retries, verifies with
+`pgrep`, and on final failure returns the tail of the child's own log instead of
+a bare `False` — that log had been reporting the missing password all along.
+
+Verified end to end after the fix, one clean cycle:
+
 ```
-
-Restoring by hand — the pattern that works — is in `docs/` and reproduced here:
-
-```bash
-cd /home/hari/dcim-platform/collector
-set -a; . ../deploy/.env; set +a
-export DCIM_REDIS_URL="redis://:${REDIS_PASSWORD}@127.0.0.1:6379/0"
-setsid nohup ./bin/collector --config /home/hari/collector-live.yaml \
-    > /home/hari/collector.log 2>&1 < /dev/null &
+collector_stale_raised   True      detection 68.5 s
+restarted                True      first attempt, pid 18158
+alarm_cleared            True      24.4 s after the restart
+telemetry_age            11.4 s    pipeline fully recovered
+publish failures         0         (was 5917)
 ```
-
-The collector reads its Redis URL from `DCIM_REDIS_URL` (`url_env` in
-`collector-live.yaml`); the fallback `url:` in the file carries no password, so
-a relaunch that forgets the variable comes up polling happily and fails every
-publish with `NOAUTH Authentication required`. It looks alive and moves no data.
 
 ## Not run, and why
 
 | Row | Status |
 |---|---|
-| Kill Postgres 5 min | **implemented, not run.** Clean `docker stop/start` on a healthchecked container, so the risk is modest — but the harness's restore step is unproven, and this box has 0.5 GB free |
-| Kill Redis 2 min | **implemented, not run.** Same reason. Redis here has been OOM-killed before |
+| Kill Postgres 5 min | **implemented, not run.** A clean `docker stop/start` on a healthchecked container; the restore path is proven now, so what remains is that this box has 0.5 GB free |
+| Kill Redis 2 min | **implemented, not run.** Same. Redis here has been OOM-killed twice before |
 | Partition collector from devices | not implemented — needs iptables rules with a timed auto-revert, or the fleet stays partitioned if the session drops |
 | Clock skew +5 min | not implemented — there is no per-process clock in WSL, so skewing it moves Postgres and the collector together and tests nothing. Needs `libfaketime` around the collector alone |
 | Malformed BACnet APDU | not implemented — needs a hostile responder that answers with a deliberately broken APDU |
