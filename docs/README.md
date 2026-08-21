@@ -47,6 +47,7 @@ full finding list with severities. Summary:
 | `14-testing-strategy.md` | Unit, integration, end-to-end, chaos |
 | `15-implementation-roadmap.md` | Phased plan with exit criteria per phase |
 | `16-simulator-integration.md` | **Verified** simulator facts: ports, addressing, endpoints, quirks |
+| `17-operations-runbook.md` | Running it: restart procedures, alarm response, limits, known gaps |
 
 Start with `16-simulator-integration.md` if you want the concrete facts first;
 start with `01` if you want the argument first.
