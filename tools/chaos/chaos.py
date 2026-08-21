@@ -38,7 +38,31 @@ import sys
 import time
 from typing import Any
 
-DOCKER = "/c/Program Files/Docker/Docker/resources/bin/docker.exe"
+
+def _find_docker() -> str:
+    """Locate docker.exe.
+
+    Forward slashes throughout: Windows accepts them, and a backslashed path
+    written through two layers of quoting is one collapsed escape away from a
+    syntax error - or worse, a path with a carriage return inside it. A
+    POSIX-style /c/... path is equally unusable, because CreateProcess needs a
+    real Windows path even where a git-bash shell resolves it happily.
+    """
+    import shutil
+    found = shutil.which("docker")
+    if found:
+        return found
+    for candidate in (
+        "C:/Program Files/Docker/Docker/resources/bin/docker.exe",
+        "C:/ProgramData/DockerDesktop/version-bin/docker.exe",
+    ):
+        if pathlib.Path(candidate).exists():
+            return candidate
+    raise SystemExit("docker.exe not found - Postgres and Redis run as "
+                     "containers, so these scenarios cannot run without it")
+
+
+DOCKER = _find_docker()
 WSL = ["wsl.exe", "-d", "Ubuntu", "--", "bash", "-lc"]
 
 COLLECTOR_CWD = "/home/hari/dcim-platform/collector"
@@ -196,7 +220,18 @@ async def observe() -> dict[str, Any]:
 
 
 def snapshot() -> dict[str, Any]:
-    return asyncio.run(observe())
+    """A reading, or a recorded failure to read.
+
+    Raising here would abort the scenario mid-outage - after the fault was
+    injected and before it was reverted - which is the one thing this harness
+    must never do. During a Postgres outage the correct observation IS that the
+    database cannot be read, so it is returned as data.
+    """
+    try:
+        return asyncio.run(observe())
+    except Exception as exc:
+        return {"unreadable": type(exc).__name__, "detail": str(exc)[:120],
+                "at": time.time(), "platform_alarm_types": []}
 
 
 def wait_for(predicate, timeout_s: int, label: str, poll_s: int = 5
@@ -217,7 +252,30 @@ def wait_for(predicate, timeout_s: int, label: str, poll_s: int = 5
 
 
 def has_alarm(state: dict, alarm_type: str) -> bool:
-    return any(a["type"] == alarm_type for a in state["platform_alarm_types"])
+    return any(a["type"] == alarm_type
+               for a in state.get("platform_alarm_types", []))
+
+
+def fresh(state: dict, within_s: float) -> bool:
+    """Is the newest sample recent? False for an unreadable snapshot."""
+    age = state.get("telemetry_age_s")
+    return age is not None and age < within_s
+
+
+def progressing(state: dict, baseline: dict, minimum: int = 200) -> bool:
+    """Are rows still arriving? The correct test for recovery.
+
+    Freshness is the WRONG signal while a backlog drains. Buffered samples are
+    written with the timestamps they were collected at, so `now() - max(ts)`
+    stays stale for as long as the replay takes while the pipeline is at full
+    tilt - measured here at 1,285 rows a second with a reported "age" of three
+    minutes. Judged on freshness the Redis recovery looked like a failure; on
+    row growth it was plainly working. It is the same distinction the platform
+    itself draws between pipeline lag and data age.
+    """
+    now = state.get("samples")
+    was = baseline.get("samples")
+    return now is not None and was is not None and (now - was) >= minimum
 
 
 # --- scenarios ----------------------------------------------------------------
@@ -265,14 +323,25 @@ def scenario_redis_kill(args) -> dict:
         docker("stop", "dcim-redis-1")
         time.sleep(args.outage)
         result["during"] = snapshot()
+        # The database is up throughout, so the alarm path is readable: this is
+        # the one dependency whose loss the platform can still report on.
+        result["collector_degraded_during"] = has_alarm(
+            result["during"], "collector_degraded")
+        log = sh("grep -c 'shedding telemetry' /home/hari/collector-chaos.log "
+                 "2>/dev/null || echo 0")
+        events = sh(r"grep -c 'shedding events\|dropping events' "
+                    "/home/hari/collector-chaos.log 2>/dev/null || echo 0")
+        result["telemetry_shed_lines"] = log.strip().splitlines()[-1:] or ["0"]
+        # §7 is explicit that events must never be shed - they are state
+        # changes, and a dropped one is a fault nobody ever hears about.
+        result["events_shed_lines"] = events.strip().splitlines()[-1:] or ["0"]
     finally:
         print("  starting redis")
         docker("start", "dcim-redis-1")
         time.sleep(20)
     # Recovery is the assertion, not survival: telemetry must resume flowing.
     met, secs, state = wait_for(
-        lambda s: (s["telemetry_age_s"] or 9e9) < 180,
-        args.timeout, "telemetry resumed")
+        lambda s: progressing(s, before), args.timeout, "ingest progressing")
     result["telemetry_resumed"] = met
     result["recovery_seconds"] = round(secs, 1)
     result["after"] = state
@@ -283,7 +352,8 @@ def scenario_redis_kill(args) -> dict:
 def scenario_postgres_kill(args) -> dict:
     """Stop Postgres: the collector keeps polling, the stream grows, no loss."""
     before = snapshot()
-    result: dict[str, Any] = {"before": before, "outage_s": args.outage}
+    result: dict[str, Any] = {"before": before, "outage_s": args.outage,
+                              "stream_before": _redis_stream_len()}
     try:
         print(f"  stopping postgres for {args.outage}s")
         docker("stop", "dcim-postgres-1")
@@ -293,17 +363,18 @@ def scenario_postgres_kill(args) -> dict:
         time.sleep(args.outage)
         result["stream_during"] = _redis_stream_len()
         result["collector_alive_during"] = bool(pids("bin/collector"))
+        result["worker_alive_during"] = bool(pids("app.ingest.worker"))
     finally:
         print("  starting postgres")
         docker("start", "dcim-postgres-1")
         time.sleep(25)
     met, secs, state = wait_for(
-        lambda s: (s["telemetry_age_s"] or 9e9) < 300,
-        args.timeout, "telemetry resumed")
+        lambda s: progressing(s, before), args.timeout, "ingest progressing")
     result["telemetry_resumed"] = met
     result["recovery_seconds"] = round(secs, 1)
     result["after"] = state
-    result["samples_delta"] = state["samples"] - before["samples"]
+    result["samples_delta"] = (state.get("samples") or 0) - (before.get("samples") or 0)
+    result["stream_after"] = _redis_stream_len()
     return result
 
 
@@ -350,7 +421,7 @@ def scenario_worker_kill(args) -> dict:
         result.update(restore("app.ingest.worker", WORKER_CWD, WORKER_CMD,
                               "worker-chaos.log"))
     met, secs, state = wait_for(
-        lambda s: (s["telemetry_age_s"] or 9e9) < 180,
+        lambda s: fresh(s, 180),
         args.timeout, "ingest resumed")
     result["ingest_resumed"] = met
     result["recovery_seconds"] = round(secs, 1)

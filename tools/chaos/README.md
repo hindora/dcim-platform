@@ -22,8 +22,7 @@ Needs `DCIM_DATABASE_URL`, `DCIM_REDIS_URL`, `DCIM_CREDENTIAL_KEY`,
 
 ## Results
 
-Two of the eight rows were executed against the live stack. The rest are
-implemented or deliberately deferred — see below.
+Four of the eight rows have been executed against the live stack.
 
 ### Kill the collector
 
@@ -65,6 +64,62 @@ strategy specifies, and it is recorded here rather than rounded up to a pass.
 Only one worker runs in this deployment, so this exercised buffer-and-recover,
 not the `XAUTOCLAIM` handover between two live workers. The reclaim path needs a
 second worker running before the kill; the harness does not start one yet.
+
+### Kill Redis for 2 minutes
+
+| Expected (§7) | Observed |
+|---|---|
+| collector buffers, then sheds telemetry | **met** — 16 shedding events, 500 samples at a time |
+| events are **never** shed | **met** — zero events shed |
+| `collector_degraded` alarm | **met** — raised during the outage |
+| recovery | **met** — but see below |
+
+Events survive because they are given 25× the headroom on purpose:
+`telemetry.v1` is capped at 8,000 entries and `events.v1` at 200,000. A shed
+sample is a gap in a chart; a shed event is a state change nobody ever hears
+about.
+
+Recovery took longer than the harness first believed, for two reasons worth
+separating. Redis spends time in `LOADING Redis is loading the dataset in
+memory` after a restart, and the collector correctly buffers and retries
+throughout. Then the backlog drains — measured at **1,285 rows a second** while
+the platform reported a telemetry age of three minutes.
+
+That gap is the harness's fault, not the platform's, and it is the same
+distinction the platform itself draws between pipeline lag and data age.
+Buffered samples are written with the timestamps they were *collected* at, so
+`now() - max(ts)` stays stale for the whole replay while the pipeline runs flat
+out. Judged on freshness this looked like a failed recovery; judged on row
+growth it was obviously working. The harness now measures recovery by row
+growth.
+
+### Kill Postgres for 5 minutes
+
+| Expected (§7) | Observed |
+|---|---|
+| collector keeps polling | **met** — alive throughout, and so was the worker |
+| stream grows | **not met** — held at its 8,000 cap |
+| full recovery on restart | **met** — ingest progressing 80.8 s after restart, 45,471 buffered samples drained |
+| no data loss | **not met** — telemetry was shed during the outage |
+
+The two failures are the same fact, and it is a deliberate configuration
+tradeoff rather than a bug. `telemetry.v1` is capped at 8,000 entries because at
+the previous 2,000,000 a telemetry entry of ~49 KB made a stream of tens of
+gigabytes on a 3.7 GB host, and **Redis was OOM-killed twice before the trim
+ever fired**. The cap that prevents the OOM also bounds how long an outage the
+platform can absorb losslessly, and five minutes is past that bound.
+
+So the honest statement of the platform's tolerance is: a Postgres outage
+shorter than the buffer window costs nothing, a longer one costs telemetry, and
+events are protected either way. What that window is in minutes depends on the
+sample rate, which is the number worth publishing in a runbook — and it is not
+the five minutes §7 assumes. Raising it means raising Redis's `maxmemory`
+first, in that order, as the collector config says in a comment written after
+the second OOM.
+
+Both alarms the platform raised during these runs were correct readings of real
+conditions rather than injected ones: `collector_degraded` because it genuinely
+shed, and `ingest_lag_high` because it genuinely was behind while draining.
 
 ## The restart bug, and what it actually was
 
@@ -120,8 +175,6 @@ publish failures         0         (was 5917)
 
 | Row | Status |
 |---|---|
-| Kill Postgres 5 min | **implemented, not run.** A clean `docker stop/start` on a healthchecked container; the restore path is proven now, so what remains is that this box has 0.5 GB free |
-| Kill Redis 2 min | **implemented, not run.** Same. Redis here has been OOM-killed twice before |
 | Partition collector from devices | not implemented — needs iptables rules with a timed auto-revert, or the fleet stays partitioned if the session drops |
 | Clock skew +5 min | not implemented — there is no per-process clock in WSL, so skewing it moves Postgres and the collector together and tests nothing. Needs `libfaketime` around the collector alone |
 | Malformed BACnet APDU | not implemented — needs a hostile responder that answers with a deliberately broken APDU |
