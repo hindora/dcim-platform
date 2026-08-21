@@ -22,6 +22,7 @@ from app.schemas import (
     AssignmentEndpoint,
     AssignmentPoll,
 )
+from app.services import sharding
 
 log = get_logger("collector")
 
@@ -30,6 +31,34 @@ async def build_assignment(session: AsyncSession, collector_id: str,
                            protocols: list[str] | None = None) -> Assignment:
     rows = await repo.assignment_endpoints(session, collector_id, protocols)
     version = await repo.assignment_version(session, collector_id)
+
+    # Shard BEFORE decrypting. The rows returned above are candidates - every
+    # unpinned endpoint plus the ones pinned here - and handing all of them to
+    # every collector is the overlap this phase exists to remove. Filtering
+    # first also means a collector never decrypts a credential for a device it
+    # does not own, which keeps the blast radius of a compromised collector to
+    # its own shard rather than the fleet.
+    # Registering before planning closes the first-fetch race described in
+    # repositories/collector.register_collector.
+    if await repo.register_collector(session, collector_id):
+        log.info("collector registered on first assignment fetch",
+                 collector_id=collector_id)
+    collectors = [
+        sharding.Collector(collector_id=c["collector_id"],
+                           sites=frozenset(c["sites"]),
+                           healthy=c["healthy"])
+        for c in await repo.live_collectors(session)
+    ]
+    if not any(c.collector_id == collector_id for c in collectors):  # pragma: no cover
+        # A collector asking for work before its first heartbeat has no row
+        # yet. It still owns whatever the hash gives it, so it is added rather
+        # than handed nothing - otherwise a fresh collector polls nothing until
+        # its next heartbeat and the fleet is under-covered for that window.
+        collectors.append(sharding.Collector(collector_id=collector_id))
+    before = len(rows)
+    rows = sharding.owned_by(rows, collectors, collector_id)
+    log.info("assignment sharded", collector_id=collector_id,
+             candidates=before, owned=len(rows), collectors=len(collectors))
 
     endpoints: list[AssignmentEndpoint] = []
     decrypt_failures = 0

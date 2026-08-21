@@ -246,6 +246,13 @@ async def collector_health(
             "lag_warning_seconds": rules.INGEST_LAG_WARNING_S,
             "lag_critical_seconds": rules.INGEST_LAG_CRITICAL_S,
         },
+        # Who owns what. Without this the split is inferred rather than seen,
+        # and the failure it hides is specific: a collector that is registered
+        # but absent keeps its shard, so its endpoints are polled by nobody -
+        # and from every other collector's point of view they are simply "not
+        # mine". collector_stale says a collector is gone; this says how much
+        # of the fleet went with it.
+        "shards": await _shard_summary(session),
         "collectors": [
             {"collector_id": c.collector_id,
              "heartbeat_age_seconds": c.heartbeat_age_s,
@@ -255,4 +262,35 @@ async def collector_health(
              "stale_after_seconds": rules.COLLECTOR_STALE_S}
             for c in signals.collectors
         ],
+    }
+
+
+async def _shard_summary(session: AsyncSession) -> dict[str, Any]:
+    """Endpoints per collector, plus anything nothing can reach."""
+    from app.repositories import collector as crepo
+    from app.services import sharding
+
+    live = await crepo.live_collectors(session)
+    collectors = [
+        sharding.Collector(collector_id=c["collector_id"],
+                           sites=frozenset(c["sites"]), healthy=c["healthy"])
+        for c in live
+    ]
+    if not collectors:
+        return {"collectors": 0, "owned": {}, "unassigned": None,
+                "note": "no collector has ever registered, so nothing is assigned"}
+
+    rows = await crepo.assignment_endpoints(session, collectors[0].collector_id)
+    plan = sharding.plan(rows, collectors)
+    counts = sharding.distribution(plan)
+    healthy = {c.collector_id for c in collectors if c.healthy}
+    stranded = sum(n for cid, n in counts.items()
+                   if cid != "(unassigned)" and cid not in healthy)
+    return {
+        "collectors": len(collectors),
+        "owned": {k: v for k, v in counts.items() if k != "(unassigned)"},
+        "unassigned": counts.get("(unassigned)", 0),
+        # The number that matters during an incident: endpoints owned by a
+        # collector that is not currently answering.
+        "owned_by_unhealthy": stranded,
     }
