@@ -10,6 +10,7 @@ from app.api.v1 import (
     cooling,
     devices,
     discovery,
+    estate,
     infrastructure,
     misc,
     power,
@@ -27,6 +28,7 @@ api_router.include_router(capacity.router)
 api_router.include_router(cooling.router)
 api_router.include_router(power.router)
 api_router.include_router(sites.router)
+api_router.include_router(estate.router)
 api_router.include_router(topology.router)
 api_router.include_router(discovery.router)
 api_router.include_router(alarms.router)
