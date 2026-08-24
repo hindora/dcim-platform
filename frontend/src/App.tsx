@@ -1,4 +1,4 @@
-import { Fragment, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { NavLink, Navigate, Route, Routes } from 'react-router-dom';
 import { api, getToken, setToken } from './api/client';
@@ -107,10 +107,30 @@ function TopBar({ onSignOut }: { onSignOut: () => void }) {
   );
 }
 
-/** Silence is not an acceptable indication that the live feed has died. */
+/** Silence is not an acceptable indication that the live feed has died.
+ *
+ *  But neither is crying wolf. A socket takes a moment to open on every load,
+ *  and announcing that moment turned a healthy page into one that flashed a
+ *  fault on every navigation - which is how an operator learns to ignore the
+ *  banner that matters. So it waits: only a feed that has stayed down for a
+ *  few seconds is worth interrupting anyone about.
+ */
+const LIVE_GRACE_MS = 5_000;
+
 function LiveBanner() {
   const status = useSocketStatus();
-  if (status === 'open') return null;
+  const [overdue, setOverdue] = useState(false);
+
+  useEffect(() => {
+    if (status === 'open') {
+      setOverdue(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setOverdue(true), LIVE_GRACE_MS);
+    return () => window.clearTimeout(timer);
+  }, [status]);
+
+  if (status === 'open' || !overdue) return null;
   return (
     <div className="banner" style={{ margin: '0 28px 12px' }}>
       Live updates {status}. Values on this page may be stale until the

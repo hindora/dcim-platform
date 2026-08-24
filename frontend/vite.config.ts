@@ -14,6 +14,12 @@ export default defineConfig({
         // point the dev server at a backend on another port.
         target: process.env.VITE_API_PROXY || 'http://localhost:8000',
         changeOrigin: true,
+        // Without this the /api/v1/ws upgrade is never forwarded: vite answers
+        // the handshake itself, the socket closes, and the client retries for
+        // ever behind a "live updates connecting" banner while every REST call
+        // through the same proxy works fine. The banner is the only symptom,
+        // which is why it reads as a backend fault and is not one.
+        ws: true,
       },
     },
   },
