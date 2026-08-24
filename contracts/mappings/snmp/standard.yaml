@@ -70,22 +70,22 @@ profiles:
           # Errors and discards live ONLY in ifTable - RFC 2863 gave ifXTable
           # high-capacity octet and packet counters but left the error columns
           # behind, so these cannot move to the name-indexed table.
-          - oid: 1.3.6.1.2.1.2.2.1.13           # ifInDiscards
-            metric: if_in_discards
-            value_type: counter
-            counter_bits: 32
-          - oid: 1.3.6.1.2.1.2.2.1.14           # ifInErrors
-            metric: if_in_errors
-            value_type: counter
-            counter_bits: 32
-          - oid: 1.3.6.1.2.1.2.2.1.19           # ifOutDiscards
-            metric: if_out_discards
-            value_type: counter
-            counter_bits: 32
-          - oid: 1.3.6.1.2.1.2.2.1.20           # ifOutErrors
-            metric: if_out_errors
-            value_type: counter
-            counter_bits: 32
+          #
+          # NOT POLLED. Four columns across 5,700 interfaces were 17.6% of all
+          # telemetry - 90,000 samples per ten minutes - against a pipeline
+          # that could sustain 400 samples/s while the plane produced 740/s.
+          # The stream hit its cap and began shedding, which loses every
+          # metric, not just these. Error and discard counters are the cheapest
+          # thing to stop asking for: they read zero almost always, and a port
+          # that is genuinely erroring shows up in oper state, in the traps the
+          # device sends, and in the gNMI stream that switches and routers push.
+          # Re-enable them the day the database has the headroom - the OIDs are
+          # right here and the metrics stay registered.
+          #
+          # - oid: 1.3.6.1.2.1.2.2.1.13         # ifInDiscards -> if_in_discards
+          # - oid: 1.3.6.1.2.1.2.2.1.14         # ifInErrors   -> if_in_errors
+          # - oid: 1.3.6.1.2.1.2.2.1.19         # ifOutDiscards -> if_out_discards
+          # - oid: 1.3.6.1.2.1.2.2.1.20         # ifOutErrors  -> if_out_errors
 
       # ifXTable is a SEPARATE MIB table and needs its own entry: columns from
       # two tables share only 1.3.6.1.2.1, so combining them would walk the

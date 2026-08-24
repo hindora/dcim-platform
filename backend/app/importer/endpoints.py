@@ -79,11 +79,11 @@ def _probe_role(dev: dict) -> str | None:
 # Default poll profile per device type, by protocol.
 SNMP_PROFILE_BY_TYPE = {
     "server": "snmp-server-120s",
-    "switch": "snmp-network-120s",
-    "router": "snmp-network-120s",
-    "firewall": "snmp-network-120s",
-    "load_balancer": "snmp-network-120s",
-    "oob_switch": "snmp-network-120s",
+    "switch": "snmp-network-600s",
+    "router": "snmp-network-600s",
+    "firewall": "snmp-network-600s",
+    "load_balancer": "snmp-network-600s",
+    "oob_switch": "snmp-network-600s",
     "sensor": "snmp-sensor-10s",
 }
 DEFAULT_SNMP_PROFILE = "snmp-power-120s"
