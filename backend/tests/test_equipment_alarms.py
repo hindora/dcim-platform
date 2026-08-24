@@ -169,3 +169,28 @@ def test_every_arriving_point_has_a_severity():
         f"severity assigned to points nothing emits: {sorted(covered - arriving)}")
     assert not (set(seed.MAJOR_POINTS) & set(seed.WARNING_POINTS)), (
         "a point cannot be both MAJOR and WARNING")
+
+
+def test_dwell_counts_samples_not_batches():
+    """Two samples of the same key inside one batch must both count.
+
+    The ingest worker loads dwell state once per batch. Evaluating every sample
+    against that same snapshot made dwell count BATCHES: a point asserted for
+    twenty seconds - two consecutive samples at a 10 s poll - never reached
+    dwell 2, because both samples started from the same count and the last
+    write won. This pins the threading the service now does.
+    """
+    rule = _rule()
+    key = AlarmKey("dev-1", "equipment_alarm", "Alarm_Leak")
+
+    # What the buggy version did: both samples see the batch-start state.
+    start = DwellState()
+    a, _ = evaluate(rule, key, 1.0, NOW, start)
+    b, _ = evaluate(rule, key, 1.0, NOW + timedelta(seconds=10), start)
+    assert a is None and b is None, "both samples counted as the first"
+
+    # What it does now: the second sample sees the first's progress.
+    a, state = evaluate(rule, key, 1.0, NOW, DwellState())
+    b, _ = evaluate(rule, key, 1.0, NOW + timedelta(seconds=10), state)
+    assert a is None
+    assert isinstance(b, Candidate), "dwell must advance within one batch"

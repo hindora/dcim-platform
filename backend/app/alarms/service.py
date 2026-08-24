@@ -131,23 +131,34 @@ class AlarmService:
         if not work:
             return []
 
+        # In sample order, not arrival order. Dwell counts CONSECUTIVE samples,
+        # so evaluating them out of order would count a recovery before the
+        # breach it followed.
+        work.sort(key=lambda item: item[2]["observed_at"])
+
         fields = [f"{r.id}|{k.redis_field()}" for r, k, _ in work]
         states = await self._load_dwell(fields)
 
         actions: list[AlarmAction] = []
-        updates: dict[str, DwellState] = {}
-        drop: list[str] = []
+        # Progress WITHIN this batch, threaded from one sample to the next.
+        #
+        # Reading `states` for every item instead - the batch-start snapshot -
+        # meant two samples of the same key in one batch both started from the
+        # same dwell count and the last write won, so dwell counted BATCHES
+        # rather than samples. Numeric rules hid it, because a 120 s poll rarely
+        # puts two samples of one key in a 60 s batch. A BACnet point polled
+        # every 10 s puts five or six in, so it could never reach dwell 2 and a
+        # fault asserted for 20 seconds raised nothing at all.
+        progress: dict[str, DwellState] = {}
         touched_devices: set[str] = set()
 
         for (rule, key, s), field in zip(work, fields, strict=True):
             outcome, new_state = evaluate(
                 rule, key, float(s["value"]), s["observed_at"],
-                states.get(field, DwellState()), s.get("endpoint_id"))
+                progress.get(field, states.get(field, DwellState())),
+                s.get("endpoint_id"))
 
-            if new_state == DwellState():
-                drop.append(field)
-            else:
-                updates[field] = new_state
+            progress[field] = new_state
 
             if outcome is None:
                 continue
@@ -159,6 +170,10 @@ class AlarmService:
                 actions.append(action)
                 touched_devices.add(key.device_id)
 
+        # A key whose progress came back to zero is dropped rather than stored:
+        # the hash would otherwise grow a row per key per rule for ever.
+        updates = {f: st for f, st in progress.items() if st != DwellState()}
+        drop = [f for f, st in progress.items() if st == DwellState()]
         await self._save_dwell(updates, drop)
         await repo.refresh_device_alarm_state(session, list(touched_devices))
         return actions
