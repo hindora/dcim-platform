@@ -56,9 +56,20 @@ class Rule:
     device_types: tuple[str, ...] = ()
     stale_after_s: int | None = None
     enabled: bool = True
+    #: Evaluate only the device-level sample, ignoring per-instance ones.
+    #:
+    #: Some instances are a BREAKDOWN of the device total rather than separate
+    #: things that can fail: an energy monitor publishes its feed and the branch
+    #: circuits that add up to it, so one overload raised three alarms. Rack
+    #: inlet sensors are the opposite case - each instance is its own reading -
+    #: which is why this is per-rule and defaults to off.
+    device_total_only: bool = False
 
     def applies_to(self, device_type: str) -> bool:
         return not self.device_types or device_type in self.device_types
+
+    def applies_to_instance(self, instance: str) -> bool:
+        return not (self.device_total_only and instance)
 
 
 @dataclass(slots=True)

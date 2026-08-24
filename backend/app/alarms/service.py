@@ -65,6 +65,7 @@ class AlarmService:
                 clear_dwell_samples=r["clear_dwell_samples"],
                 device_types=tuple(r["device_types"] or ()),
                 stale_after_s=r["stale_after_s"], enabled=r["enabled"],
+                device_total_only=bool(r.get("device_total_only")),
             )
             for r in rows
         ]
@@ -114,8 +115,14 @@ class AlarmService:
 
         work: list[tuple[Rule, AlarmKey, dict]] = []
         for s in samples:
+            instance = s.get("instance", "") or ""
             for rule in self.rules_for_metric(s["metric"], s.get("device_type", "")):
-                key = AlarmKey(s["device_id"], rule.alarm_type, s.get("instance", ""))
+                # A branch circuit is part of the feed above it, not a separate
+                # thing that can fail on its own, so a rule that says so is
+                # evaluated on the device total alone.
+                if not rule.applies_to_instance(instance):
+                    continue
+                key = AlarmKey(s["device_id"], rule.alarm_type, instance)
                 work.append((rule, key, s))
         if not work:
             return []
