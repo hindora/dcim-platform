@@ -471,6 +471,22 @@ METRICS: dict[str, MetricDef] = {
         group="cooling", rate_of=None, rate_scale=1.0,
         device_types=("cooling_tower",),
     ),
+    "outdoor_dry_bulb_temp": MetricDef(
+        key="outdoor_dry_bulb_temp", display_name="Outdoor Dry Bulb", unit="C",
+        value_type="gauge", aggregation="avg",
+        min_valid=-60, max_valid=60,
+        stale_after_s=900, hot=False,
+        group="environment", rate_of=None, rate_scale=1.0,
+        device_types=("cooling_tower",),
+    ),
+    "outdoor_wet_bulb_temp": MetricDef(
+        key="outdoor_wet_bulb_temp", display_name="Outdoor Wet Bulb", unit="C",
+        value_type="gauge", aggregation="avg",
+        min_valid=-60, max_valid=45,
+        stale_after_s=900, hot=False,
+        group="environment", rate_of=None, rate_scale=1.0,
+        device_types=("cooling_tower",),
+    ),
     "vibration": MetricDef(
         key="vibration", display_name="Vibration", unit="mm/s",
         value_type="gauge", aggregation="avg",

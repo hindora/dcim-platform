@@ -17,6 +17,7 @@ is worse than an empty dashboard.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -58,6 +59,7 @@ class ImportReport:
     connections: int = 0
     endpoints: int = 0
     retired_endpoints: int = 0
+    sites_sized: int = 0
     credentials: int = 0
     decommissioned: int = 0
     # Outcome of the post-import A/B derivation: how many device pairs got a
@@ -147,8 +149,91 @@ class TopologyImporter:
         # the whole tree diverges, which is not knowable one edge at a time.
         self.report.redundancy = await recompute_power_sides(self.s)
 
+        # After redundancy, because the design figure depends on how many buses
+        # the site actually has.
+        self.report.sites_sized = await self._seed_design_capacity()
+
         log.info("import complete", **self.report.as_dict())
         return self.report
+
+    # UPS sizing target from the simulator's own selector (core/power_sizing.py):
+    # a UPS SKU is chosen so the load it carries sits at ~80 % of nameplate.
+    # Inverting it recovers the design IT load the site was built around.
+    _UPS_TARGET_UTILISATION = 0.80
+
+    async def _seed_design_capacity(self) -> int:
+        """Derive each site's design IT load from its installed UPS.
+
+        Nobody types a design figure into this system, and inventing one would
+        make every capacity percentage on the home page meaningless. What the
+        inventory does know is the UPS that was installed, and the estate was
+        built to a rule: each 2N bus carries the whole IT load, and a UPS is
+        selected so that load is ~80 % of its nameplate.
+
+        So: total UPS nameplate, divided by the number of distinct redundancy
+        sides the site's UPS feed (2 for a 2N pair, 1 if unsided), times the
+        selector's utilisation target. On a 2N site that is one bus's worth,
+        which is the load the facility is designed to carry.
+
+        The derivation is written into `attributes.design_it_kw_basis` alongside
+        the number, because a capacity percentage whose denominator cannot be
+        explained is a percentage nobody should act on. A site with no UPS in
+        inventory is left NULL - "unknown" is a usable answer here, a guess is
+        not.
+        """
+        rows = (await self.s.execute(text("""
+            WITH ups AS (
+                SELECT dc.id AS dc_id,
+                       d.id  AS device_id,
+                       m.rated_power_w AS rated_w
+                FROM device d
+                JOIN model m       ON m.id = d.model_id
+                LEFT JOIN rack r   ON r.id = d.rack_id
+                LEFT JOIN rack_row rr ON rr.id = r.row_id
+                LEFT JOIN room rm  ON rm.id = COALESCE(rr.room_id, d.room_id)
+                JOIN datacenter dc ON dc.id = rm.datacenter_id
+                WHERE d.device_type = 'ups'
+                  AND d.lifecycle <> 'decommissioned'
+                  AND m.rated_power_w IS NOT NULL
+                  AND m.rated_power_w > 0
+            ),
+            sides AS (
+                SELECT u.dc_id,
+                       count(DISTINCT c.redundancy_side) AS n
+                FROM ups u
+                JOIN connection c ON c.a_device_id = u.device_id
+                WHERE c.layer = 'power' AND c.redundancy_side IN ('A', 'B')
+                GROUP BY u.dc_id
+            )
+            SELECT u.dc_id::text AS dc_id,
+                   sum(u.rated_w) / 1000.0 AS ups_kw,
+                   count(*)                AS ups_count,
+                   COALESCE(max(s.n), 1)   AS buses
+            FROM ups u
+            LEFT JOIN sides s ON s.dc_id = u.dc_id
+            GROUP BY u.dc_id
+        """))).mappings().all()
+
+        seeded = 0
+        for r in rows:
+            buses = max(1, int(r["buses"] or 1))
+            ups_kw = float(r["ups_kw"] or 0.0)
+            if ups_kw <= 0:
+                continue
+            design_kw = round(ups_kw / buses * self._UPS_TARGET_UTILISATION, 2)
+            basis = (f"{int(r['ups_count'])} UPS totalling {ups_kw:.0f} kW "
+                     f"across {buses} bus(es), at the "
+                     f"{self._UPS_TARGET_UTILISATION:.0%} selector target")
+            await self.s.execute(text("""
+                UPDATE datacenter
+                   SET design_it_kw = :kw,
+                       attributes = attributes || CAST(:attrs AS jsonb)
+                 WHERE id = CAST(:dc AS uuid)
+            """), {"kw": design_kw, "dc": r["dc_id"],
+                   "attrs": json.dumps({"design_it_kw_basis": basis,
+                                        "design_it_kw_source": "derived"})})
+            seeded += 1
+        return seeded
 
     async def _load_lookups(self) -> None:
         rows = (await self.s.execute(text("SELECT name, id::text FROM poll_profile"))).all()
@@ -247,8 +332,18 @@ class TopologyImporter:
             return
 
         vendor_id = await self._vendor_id(dev.get("vendor"))
+        # Nameplate first, live draw only as a fallback.
+        #
+        # `power_draw_w` is what this ONE device happened to be drawing when the
+        # export was taken, and writing it onto the MODEL made every unit of that
+        # SKU inherit one machine's instantaneous load as its rating. The export
+        # now carries `rated_power_w` resolved from the simulator's SKU catalog,
+        # which is the actual nameplate. The fallback is kept because the catalog
+        # only rates distribution and backup gear - it returns 0 for a server -
+        # and dropping to NULL there would lose ratings the platform already has.
         model_id = await self._model_id(vendor_id, dev.get("model_name"), dtype,
-                                        dev.get("power_draw_w"))
+                                        dev.get("rated_power_w")
+                                        or dev.get("power_draw_w"))
 
         dc_code = dev.get("datacenter")
         room_id = self._room.get((dc_code, dev.get("room"))) if dc_code else None

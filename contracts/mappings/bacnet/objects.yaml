@@ -100,6 +100,12 @@ device_types:
       - { name: Makeup_Flow,    metric: makeup_water_flow, scale: 0.0166667 }
       - { name: Vibration,      metric: vibration }
       - { name: Run_Hours,      metric: run_hours, slow: true }
+      # Outdoor air lives on the tower controller because the tower is
+      # controlled to approach wet bulb. Slow-polled: weather does not move
+      # meaningfully inside one 30 s cycle, and every tower at a site reports
+      # the same two numbers.
+      - { name: OA_Dry_Bulb_Temp, metric: outdoor_dry_bulb_temp, slow: true }
+      - { name: OA_Wet_Bulb_Temp, metric: outdoor_wet_bulb_temp, slow: true }
       - { name: Fan_Status,     metric: equipment_state, instance: Fan_Status }
       - { name: "Alarm_*",      metric: alarm_state, instance_from: name }
 

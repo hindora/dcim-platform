@@ -677,6 +677,38 @@ metrics:
     device_types: [cooling_tower]
     description: Makeup water into the basin. Devices commonly report litres per minute; adapters convert.
 
+  # Outdoor air. Kept as its own keys rather than reusing ambient_temperature:
+  # that key is an INDOOR room sensor, and rolling both into one would let a
+  # January night outside pull a data hall's average inlet down with it.
+  #
+  # Read from the cooling-tower controller, which is where a BMS keeps them - a
+  # tower is controlled to approach wet bulb, so the outdoor sensor is wired to
+  # it. Aggregation is avg, not max: this is a condition the site is subject to,
+  # not a hot spot to find.
+  - key: outdoor_dry_bulb_temp
+    display_name: Outdoor Dry Bulb
+    unit: C
+    value_type: gauge
+    aggregation: avg
+    min_valid: -60
+    max_valid: 60
+    stale_after_s: 900
+    group: environment
+    device_types: [cooling_tower]
+    description: Outdoor air temperature at the site. Drives economiser hours and chiller lift.
+
+  - key: outdoor_wet_bulb_temp
+    display_name: Outdoor Wet Bulb
+    unit: C
+    value_type: gauge
+    aggregation: avg
+    min_valid: -60
+    max_valid: 45
+    stale_after_s: 900
+    group: environment
+    device_types: [cooling_tower]
+    description: Outdoor wet-bulb temperature. Sets the cooling tower's approach limit, so it decides whether the plant can hold its condenser setpoint. Never above dry bulb.
+
   - key: vibration
     display_name: Vibration
     unit: mm/s

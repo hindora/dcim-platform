@@ -57,6 +57,8 @@ export type MetricKey =
   | 'filter_diff_pressure'
   | 'basin_level_pct'
   | 'makeup_water_flow'
+  | 'outdoor_dry_bulb_temp'
+  | 'outdoor_wet_bulb_temp'
   | 'vibration'
   | 'motor_temp'
   | 'vfd_frequency'
@@ -605,6 +607,24 @@ export const METRICS: Record<MetricKey, MetricDef> = {
     maxValid: null,
     staleAfterS: 600, hot: false,
     group: 'cooling',
+  },
+  'outdoor_dry_bulb_temp': {
+    key: 'outdoor_dry_bulb_temp', displayName: 'Outdoor Dry Bulb'.replace(/^'|'$/g, ''),
+    unit: 'C', valueType: 'gauge',
+    aggregation: 'avg',
+    minValid: -60,
+    maxValid: 60,
+    staleAfterS: 900, hot: false,
+    group: 'environment',
+  },
+  'outdoor_wet_bulb_temp': {
+    key: 'outdoor_wet_bulb_temp', displayName: 'Outdoor Wet Bulb'.replace(/^'|'$/g, ''),
+    unit: 'C', valueType: 'gauge',
+    aggregation: 'avg',
+    minValid: -60,
+    maxValid: 45,
+    staleAfterS: 900, hot: false,
+    group: 'environment',
   },
   'vibration': {
     key: 'vibration', displayName: 'Vibration'.replace(/^'|'$/g, ''),
