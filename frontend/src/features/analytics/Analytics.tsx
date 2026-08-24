@@ -31,8 +31,10 @@ const TABS: { key: Tab; label: string; blurb: string }[] = [
   { key: 'power', label: 'Power', blurb: 'Redundancy census and the loads with one feed' },
 ];
 
-export function Analytics() {
-  const [tab, setTab] = useState<Tab>('capacity');
+/** `initialTab` lets the top-level nav land straight on Thermal or Power
+ *  without the reader having to find the tab strip. */
+export function Analytics({ initialTab = 'capacity' }: { initialTab?: Tab }) {
+  const [tab, setTab] = useState<Tab>(initialTab);
   const [roomId, setRoomId] = useState<string>('');
 
   const { data: rooms } = useQuery<{ items: RoomSummary[] }>({

@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { NavLink, Navigate, Route, Routes } from 'react-router-dom';
 import { api, getToken, setToken } from './api/client';
 import { AlarmList } from './features/alarms/AlarmList';
 import { Analytics } from './features/analytics/Analytics';
 import { PlatformHealth } from './features/platform/PlatformHealth';
-import { Dashboard } from './features/dashboard/Dashboard';
+import { Home } from './features/home/Home';
 import { DeviceDetail } from './features/devices/DeviceDetail';
 import { RackElevationView } from './features/racks/RackElevation';
 import { RackList } from './features/racks/RackList';
@@ -51,29 +52,55 @@ function Login({ onDone }: { onDone: () => void }) {
   );
 }
 
-function Sidebar({ onSignOut }: { onSignOut: () => void }) {
+/**
+ * Primary navigation.
+ *
+ * By operator task, not by device family. "Assets" is one page filtered, not
+ * five nav entries for servers, switches, routers, firewalls and load
+ * balancers - those are a query string, and putting them in the nav is how a
+ * sidebar reaches sixty items nobody reads.
+ */
+const NAV = [
+  { to: '/', label: 'HOME', end: true },
+  { to: '/thermal', label: 'THERMAL' },
+  { to: '/power', label: 'POWER' },
+  { to: '/utilization', label: 'UTILIZATION' },
+  { to: '/connectivity', label: 'CONNECTIVITY' },
+  { to: '/assets', label: 'ASSETS' },
+];
+
+function TopBar({ onSignOut }: { onSignOut: () => void }) {
   return (
-    <aside className="sidebar">
-      <h1>DCIM Platform</h1>
-      <nav>
-        <NavLink to="/" end>Dashboard</NavLink>
-        <div className="section">Infrastructure</div>
-        <NavLink to="/devices">Devices</NavLink>
-        <NavLink to="/racks">Racks</NavLink>
-        <NavLink to="/floorplan">Floor plan</NavLink>
-        <NavLink to="/topology">Topology</NavLink>
-        <div className="section">Monitoring</div>
-        <NavLink to="/alarms">Alarms</NavLink>
-        <NavLink to="/analytics">Analytics</NavLink>
-        <NavLink to="/platform">Platform health</NavLink>
+    <header className="topbar">
+      <div className="brand">
+        <span className="mark" aria-hidden />
+        <span className="wordmark">DCIM</span>
+      </div>
+
+      <nav className="topnav" aria-label="Primary">
+        {NAV.map((item, i) => (
+          <Fragment key={item.to}>
+            <NavLink to={item.to} end={item.end}>{item.label}</NavLink>
+            {i < NAV.length - 1 && <span className="sep" aria-hidden>/</span>}
+          </Fragment>
+        ))}
       </nav>
-      <div className="section">Session</div>
-      <nav>
-        {/* Phase 2 adds alarms and the live WebSocket feed; phase 4 adds racks,
-            topology and the floor plan. */}
-        <a href="#" onClick={(e) => { e.preventDefault(); onSignOut(); }}>Sign out</a>
-      </nav>
-    </aside>
+
+      <div className="utilities">
+        <NavLink to="/platform" style={{ padding: 0, border: 'none' }}>SYSTEM STATUS</NavLink>
+        {/* Kept as a placeholder rather than a live link: the design docs are
+            in the repository, not served by the app. A control that looks
+            clickable and does nothing is worse than one that says so. */}
+        <span style={{ color: 'var(--text-faint)' }}
+              title="Documentation is not published from the app yet">USER MANUAL</span>
+        <span className="user">
+          <span className="avatar" aria-hidden />
+          USER: ADMIN
+          <button onClick={onSignOut} title="Sign out"
+                  style={{ color: 'var(--text-muted)' }}>▾</button>
+        </span>
+      </div>
+    </header>
   );
 }
 
@@ -82,11 +109,43 @@ function LiveBanner() {
   const status = useSocketStatus();
   if (status === 'open') return null;
   return (
-    <div className="banner">
+    <div className="banner" style={{ margin: '0 28px 12px' }}>
       Live updates {status}. Values on this page may be stale until the
       connection is restored.
     </div>
   );
+}
+
+function Footer() {
+  const qc = useQueryClient();
+  const status = useSocketStatus();
+  const live = status === 'open';
+  return (
+    <footer className="home-footer">
+      <span>{new Date().toLocaleString(undefined, {
+        weekday: 'short', day: '2-digit', month: 'short', year: 'numeric',
+        hour: '2-digit', minute: '2-digit',
+      })}</span>
+      <button onClick={() => qc.invalidateQueries()}>
+        <svg width="17" height="17" viewBox="0 0 17 17" fill="none"
+             stroke="currentColor" strokeWidth="1.6" aria-hidden>
+          <path d="M15 8.5a6.5 6.5 0 1 1-1.9-4.6" strokeLinecap="round" />
+          <path d="M13.4 1v3.2h-3.2" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+        Refresh
+      </button>
+      <span className="spacer" />
+      <span className="live" style={{ color: live ? 'var(--ok)' : 'var(--warn)' }}>
+        <span className="dot" style={{ background: 'currentColor' }} />
+        {live ? 'Live feed connected' : `Live feed ${status}`}
+      </span>
+    </footer>
+  );
+}
+
+/** Interior pages keep the padding `main` used to carry; Home is full-bleed. */
+function Page({ children }: { children: React.ReactNode }) {
+  return <div className="page">{children}</div>;
 }
 
 export default function App() {
@@ -95,24 +154,35 @@ export default function App() {
   if (!authed) return <Login onDone={() => setAuthed(true)} />;
 
   return (
-    <div className="app">
-      <Sidebar onSignOut={() => { setToken(null); setAuthed(false); }} />
+    <div className="shell">
+      <TopBar onSignOut={() => { setToken(null); setAuthed(false); }} />
       <main>
         <LiveBanner />
         <Routes>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/devices" element={<DeviceList />} />
-          <Route path="/devices/:id" element={<DeviceDetail />} />
-          <Route path="/racks" element={<RackList />} />
-          <Route path="/racks/:id" element={<RackElevationView />} />
-          <Route path="/floorplan" element={<FloorPlanView />} />
-          <Route path="/topology" element={<TopologyView />} />
-          <Route path="/alarms" element={<AlarmList />} />
-          <Route path="/analytics" element={<Analytics />} />
-          <Route path="/platform" element={<PlatformHealth />} />
+          <Route path="/" element={<Home />} />
+
+          {/* Top-level nav. Thermal, Power and Utilisation land on the
+              analytics section with the right panel already selected. */}
+          <Route path="/thermal" element={<Page><Analytics initialTab="thermal" /></Page>} />
+          <Route path="/power" element={<Page><Analytics initialTab="power" /></Page>} />
+          <Route path="/utilization" element={<Page><Analytics initialTab="capacity" /></Page>} />
+          <Route path="/connectivity" element={<Page><PlatformHealth /></Page>} />
+          <Route path="/assets" element={<Page><DeviceList /></Page>} />
+
+          {/* Reached from rows, drill-downs and links rather than the nav. */}
+          <Route path="/devices" element={<Page><DeviceList /></Page>} />
+          <Route path="/devices/:id" element={<Page><DeviceDetail /></Page>} />
+          <Route path="/racks" element={<Page><RackList /></Page>} />
+          <Route path="/racks/:id" element={<Page><RackElevationView /></Page>} />
+          <Route path="/floorplan" element={<Page><FloorPlanView /></Page>} />
+          <Route path="/topology" element={<Page><TopologyView /></Page>} />
+          <Route path="/alarms" element={<Page><AlarmList /></Page>} />
+          <Route path="/analytics" element={<Page><Analytics /></Page>} />
+          <Route path="/platform" element={<Page><PlatformHealth /></Page>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>
+      <Footer />
     </div>
   );
 }

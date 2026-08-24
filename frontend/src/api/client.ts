@@ -553,6 +553,118 @@ export interface CollectorHealth {
   }[];
 }
 
+// ------------------------------------------------------------ home page
+//
+// Alert categories are mutually exclusive and defined server-side in
+// app/core/alarm_categories.py. `total` is every open root alarm, so it is a
+// superset of the named buckets, not their sum - the home page's ALM indicator
+// means "this site has an alarm", which is a different question from "this
+// site has a thermal alarm".
+
+export type AlertCategory = 'thermal' | 'connectivity' | 'datapoint' | 'anomaly' | 'other';
+
+export interface AlertCounts {
+  total: number;
+  thermal: number;
+  connectivity: number;
+  datapoint: number;
+  anomaly: number;
+  other: number;
+  critical: number;
+  major: number;
+  minor: number;
+}
+
+export interface SiteRoom {
+  id: string;
+  name: string;
+  room_type: string;
+  floor?: string | null;
+  datacenter_id: string;
+  datacenter_code: string;
+  rack_count: number;
+  device_count: number;
+  offline_count: number;
+  alerts: AlertCounts;
+}
+
+export interface SiteRow {
+  id: string;
+  code: string;
+  name: string;
+  /** Null until the datacenter record is seeded; rendered as "not set". */
+  city?: string | null;
+  country?: string | null;
+  timezone: string;
+  room_count: number;
+  device_count: number;
+  online_count: number;
+  offline_count: number;
+  alerts: AlertCounts;
+  rooms: SiteRoom[];
+}
+
+export interface SitesOverview {
+  sites: SiteRow[];
+  totals: AlertCounts;
+  /** Open root alarms that resolve to no site - platform alarms such as
+   *  `ingest_stalled`. Counted in `totals`, absent from every row, so the page
+   *  says so rather than leaving the columns not adding up. */
+  unlocated_alerts: number;
+  as_of: string;
+}
+
+/** A number the platform may legitimately not have. `note` says why not. */
+export interface MaybeMetric {
+  value: number | null;
+  note?: string | null;
+  method?: string | null;
+  category?: number | null;
+}
+
+export interface Utilisation {
+  pct: number | null;
+  basis?: string | null;
+  note?: string | null;
+}
+
+export interface SiteKpi {
+  site: {
+    id: string; code: string; name: string;
+    city?: string | null; country?: string | null; timezone: string;
+    design_it_kw: number | null; design_pue: number | null;
+  };
+  monitored: {
+    devices: number; devices_online: number; devices_offline: number;
+    endpoints: number; endpoints_enabled: number; protocols: number;
+    racks: number;
+  };
+  efficiency: {
+    pue: MaybeMetric; cer: MaybeMetric; wue: MaybeMetric; cue: MaybeMetric;
+  };
+  power: {
+    total_kw: number; it_load_kw: number; cooling_kw: number;
+    facility_other_kw: number; reporting_devices: number;
+  };
+  utilisation: { power: Utilisation; space: Utilisation; cooling: Utilisation };
+  weather: {
+    available: boolean;
+    note?: string | null;
+    /** Read off the cooling tower controller over BACnet. */
+    source?: string | null;
+    dry_bulb_c: number | null;
+    wet_bulb_c: number | null;
+    /** Neither is instrumented at any site; present so absence is explicit. */
+    humidity_pct: number | null;
+    wind_speed_ms: number | null;
+    as_of?: string | null;
+    /** Slow-polled points, so age travels with the value. */
+    age_s?: number | null;
+  };
+  alerts: AlertCounts;
+  as_of: string;
+}
+
 export const api = {
   login: (username: string, password: string) =>
     request<{ token: string; expires_in: number; username: string; role: string }>(
@@ -561,6 +673,12 @@ export const api = {
     ),
 
   dashboard: () => request<DashboardSummary>('/dashboard/summary'),
+
+  /** One call behind the entire home page - table, tabs and alert strip. */
+  sitesOverview: () => request<SitesOverview>('/sites/overview'),
+
+  siteKpi: (datacenterId: string) =>
+    request<SiteKpi>(`/sites/${datacenterId}/kpi`),
 
   devices: (params: Record<string, string | undefined> = {}) => {
     const q = new URLSearchParams();

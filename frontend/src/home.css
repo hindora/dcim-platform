@@ -1,0 +1,375 @@
+/* Home page shell.
+ *
+ * The redesign moves navigation from a left rail to a top bar with an alert
+ * strip beneath it. The strip is the point of the page: an operator arriving at
+ * a wall display should be able to read the state of the estate from across the
+ * room, before reading a single table row.
+ *
+ * Every colour here comes from the tokens in index.css. No raw hex at call
+ * sites, so a theme change stays a one-file edit.
+ */
+
+:root {
+  /* Tints for filled indicator cells. Mixed rather than hardcoded so a change
+     to the status colours carries through, and so the same rules still work
+     against the light background. */
+  --tint-ok: color-mix(in srgb, var(--ok) 18%, var(--bg-raised));
+  --tint-warn: color-mix(in srgb, var(--warn) 18%, var(--bg-raised));
+  --tint-major: color-mix(in srgb, var(--major) 18%, var(--bg-raised));
+  --tint-critical: color-mix(in srgb, var(--critical) 18%, var(--bg-raised));
+  --tint-accent: color-mix(in srgb, var(--accent) 18%, var(--bg-raised));
+}
+
+/* `min-width: 0` on the shell and on every nested flex/grid child is what stops
+   a wide table from widening the DOCUMENT. A flex or grid item defaults to
+   min-width:auto, which means "never shrink below my content" - so without
+   these the table's fixed column widths push the top bar, the alert strip and
+   the footer out with it, and the whole page scrolls sideways. */
+.shell { display: flex; flex-direction: column; min-height: 100vh; min-width: 0; }
+.shell > main { flex: 1; min-width: 0; padding: 0; }
+
+/* --- top bar -------------------------------------------------------------- */
+
+.topbar {
+  display: flex; align-items: center; gap: 36px;
+  padding: 0 28px; height: 68px; flex: none; min-width: 0;
+}
+/* The nav is what gives: it scrolls before the brand or the user menu is
+   pushed off the edge. */
+.topnav { min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.topnav::-webkit-scrollbar { display: none; }
+.topnav a, .topnav .sep { flex: none; white-space: nowrap; }
+.topbar .brand, .topbar .utilities { flex: none; }
+.topbar .brand { display: flex; align-items: center; gap: 10px; }
+.topbar .brand .mark {
+  width: 28px; height: 28px; border-radius: 7px; background: var(--accent);
+}
+.topbar .brand .wordmark { font-size: 16px; font-weight: 700; letter-spacing: .02em; }
+
+.topnav { display: flex; align-items: center; }
+.topnav a {
+  display: block; padding: 24px 18px 22px; font-size: 12px; font-weight: 600;
+  letter-spacing: .09em; color: var(--text-muted); text-decoration: none;
+  border-bottom: 2px solid transparent;
+}
+.topnav a:hover { color: var(--text); text-decoration: none; }
+.topnav a.active { color: var(--text); border-bottom-color: var(--accent); }
+.topnav .sep { color: var(--text-faint); font-size: 13px; }
+
+.topbar .utilities {
+  margin-left: auto; display: flex; align-items: center; gap: 28px;
+  font-size: 12px; font-weight: 600; letter-spacing: .09em;
+  color: var(--text-muted);
+}
+.topbar .utilities button {
+  background: none; border: none; padding: 0; color: inherit; font: inherit;
+  letter-spacing: inherit; cursor: pointer;
+}
+.topbar .utilities button:hover { color: var(--text); }
+.topbar .user { display: flex; align-items: center; gap: 8px; color: var(--text); }
+.topbar .user .avatar {
+  width: 15px; height: 15px; border-radius: 50%; background: var(--text-faint);
+}
+
+/* --- alert strip ---------------------------------------------------------- */
+
+/* Wraps rather than overflows. On a narrow window the counters drop to a second
+   line, which is legible; pushed off the right-hand edge they are not. */
+.alert-strip {
+  display: flex; align-items: center; flex-wrap: wrap; row-gap: 4px;
+  padding: 8px 34px 8px 28px; min-height: 92px; min-width: 0;
+}
+.alert-strip .site-title { flex: none; }
+.alert-strip .site-title { font-size: 26px; font-weight: 700; letter-spacing: -.01em; }
+.alert-strip .spacer { flex: 1; }
+.alert-strip .caption {
+  display: flex; align-items: center; gap: 9px; padding-right: 14px;
+  color: var(--text-muted); font-size: 14px;
+}
+.alert-strip .caption .ring {
+  width: 17px; height: 17px; border-radius: 50%; border: 1px solid currentColor;
+}
+
+.alert-counter {
+  position: relative; display: flex; flex-direction: column; align-items: center;
+  gap: 5px; padding: 12px 22px 0; background: none; border: none;
+  font: inherit; color: inherit; cursor: pointer;
+}
+/* The slanted rule between counters. Decoration only, so it is a
+   pseudo-element and never reaches the accessibility tree. */
+.alert-counter::before {
+  content: ""; position: absolute; left: 0; top: 6px; bottom: 2px;
+  width: 1px; background: var(--border); transform: skewX(-14deg);
+}
+.alert-counter .row { display: flex; align-items: center; gap: 10px; }
+.alert-counter .n {
+  font-size: 32px; font-weight: 600; line-height: 1;
+  font-variant-numeric: tabular-nums; color: var(--text);
+}
+.alert-counter.zero .n { color: var(--text-faint); }
+.alert-counter .name { font-size: 13px; }
+.alert-counter .rule {
+  height: 2px; width: 100%; border-radius: 1px; background: transparent;
+}
+.alert-counter[aria-pressed="true"] .rule { background: currentColor; }
+.alert-counter:hover .name { text-decoration: underline; }
+
+.cat-thermal { color: var(--warn); }
+.cat-connectivity { color: var(--critical); }
+.cat-alarms { color: var(--critical); }
+.cat-datapoint { color: var(--unknown); }
+.cat-anomaly { color: var(--unknown); }
+
+/* --- home body ------------------------------------------------------------ */
+
+/* Fill the viewport exactly: top bar (68) + alert strip (92) + footer (58)
+   plus the body's own padding. Without this the panel's own min-height pushed
+   the footer below the fold, and the one control that says whether the feed is
+   live ended up being the part you had to scroll to find. */
+.home-body {
+  display: grid; grid-template-columns: minmax(0, 1fr) 400px; gap: 20px;
+  padding: 8px 28px; align-items: stretch;
+  min-height: calc(100vh - 68px - 92px - 58px - 16px);
+  min-width: 0;
+}
+
+.sites-panel {
+  background: var(--bg-raised); border: 1px solid var(--border);
+  border-radius: 4px; display: flex; flex-direction: column;
+  min-height: 0; min-width: 0;
+}
+.sites-toolbar {
+  display: flex; align-items: center; gap: 26px; padding: 0 22px; height: 64px;
+}
+.sites-toolbar .search {
+  flex: 1; display: flex; align-items: center; gap: 10px;
+  background: var(--bg-inset); border: 1px solid var(--border);
+  border-radius: 4px; padding: 0 14px; height: 36px;
+}
+.sites-toolbar .search input {
+  flex: 1; background: none; border: none; padding: 0; color: var(--text);
+  font-size: 12px; letter-spacing: .06em;
+}
+.sites-toolbar .search input:focus { outline: none; }
+.sites-toolbar .search .glass {
+  width: 11px; height: 11px; border-radius: 50%; flex: none;
+  border: 1.4px solid var(--text-faint);
+}
+
+/* The table scrolls inside the panel. Twelve columns of status will not fit a
+   laptop at any sensible font size, and the answer is a scrollbar on the table
+   - not on the page, which would drag the alert strip out of view sideways. */
+.table-scroll { overflow-x: auto; min-width: 0; }
+.sites-table { width: 100%; border-collapse: collapse; font-size: 13px;
+               min-width: 940px; }
+.sites-table thead th {
+  background: var(--bg-inset); border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  padding: 0 10px; height: 44px; font-size: 11px; letter-spacing: .1em;
+  color: var(--text-muted); font-weight: 600; text-transform: uppercase;
+  white-space: nowrap;
+}
+.sites-table thead th.ind-h { text-align: center; width: 72px; min-width: 72px; }
+.sites-table thead th.act { text-align: center; width: 100px; min-width: 100px; }
+.sites-table thead th:first-child { min-width: 180px; }
+.sites-table tbody td {
+  padding: 0 10px; height: 56px; border-bottom: 1px solid var(--border);
+}
+.sites-table tbody tr:hover { background: var(--bg); }
+.sites-table tbody tr.room-row {
+  background: color-mix(in srgb, var(--bg-inset) 55%, transparent);
+}
+.sites-table tbody tr.room-row td { height: 50px; }
+.sites-table .site-cell { display: flex; align-items: center; gap: 12px; }
+.sites-table .site-cell .name { font-weight: 600; }
+.sites-table .room-row .site-cell { padding-left: 32px; gap: 10px; }
+.sites-table .room-row .site-cell .tick {
+  width: 2px; height: 14px; background: var(--border-strong); flex: none;
+}
+.sites-table .num { text-align: center; font-variant-numeric: tabular-nums; }
+.sites-table .dash { color: var(--unknown); }
+.sites-table .unset { color: var(--text-faint); font-style: italic; }
+
+.expander {
+  width: 20px; height: 20px; flex: none; border-radius: 3px;
+  background: var(--bg); border: 1px solid var(--border); color: var(--text-muted);
+  font: inherit; font-size: 13px; line-height: 1; cursor: pointer;
+}
+.expander:hover { border-color: var(--border-strong); color: var(--text); }
+
+/* Indicator cell. Colour is never the only signal: the glyph differs per
+   category, the count is printed, and the cell carries a title, so a
+   colour-blind operator and a screen reader both still get the meaning. */
+.ind-cell { text-align: center; }
+.ind {
+  display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+  min-width: 52px; height: 30px; padding: 0 8px; border-radius: 3px;
+  background: var(--bg-inset); border: 1px solid var(--border);
+  color: var(--unknown); font-size: 12px; font-variant-numeric: tabular-nums;
+}
+.ind.on.thermal { background: var(--tint-warn); border-color: var(--warn); color: var(--warn); }
+.ind.on.connectivity { background: var(--tint-critical); border-color: var(--critical); color: var(--critical); }
+.ind.on.alarms { background: var(--tint-critical); border-color: var(--critical); color: var(--critical); }
+.ind.on.datapoint { background: var(--tint-major); border-color: var(--major); color: var(--major); }
+.ind.on.anomaly { background: var(--tint-accent); border-color: var(--accent); color: var(--accent); }
+
+.row-btn {
+  min-width: 84px; height: 28px; border-radius: 3px; background: var(--bg);
+  border: 1px solid var(--border); color: var(--text-muted);
+  font: inherit; font-size: 11px; font-weight: 600; letter-spacing: .08em;
+  cursor: pointer;
+}
+.row-btn:hover { border-color: var(--border-strong); color: var(--text); }
+.row-btn.primary {
+  background: var(--tint-accent); border-color: var(--accent); color: var(--accent);
+}
+
+.sites-foot {
+  margin-top: auto; display: flex; align-items: center; gap: 20px;
+  padding: 0 22px; height: 58px; border-top: 1px solid var(--border);
+  font-size: 12px; color: var(--text-muted);
+}
+.sites-foot select { height: 30px; padding: 0 8px; }
+.sites-foot .pager { margin-left: auto; display: flex; gap: 14px; }
+.sites-foot .pager button {
+  background: none; border: none; color: var(--text-faint);
+  font: inherit; cursor: pointer; padding: 2px 4px;
+}
+.sites-foot .pager button:disabled { opacity: .4; cursor: default; }
+
+/* --- right rail ----------------------------------------------------------- */
+
+.home-rail { display: flex; flex-direction: column; gap: 16px; }
+.rail-card {
+  flex: 1; display: flex; flex-direction: column; text-decoration: none;
+  background: var(--bg-raised); border: 1px solid var(--border);
+  border-radius: 4px; overflow: hidden; color: var(--text);
+}
+.rail-card:hover { border-color: var(--border-strong); text-decoration: none; }
+.rail-card .visual { height: 132px; background: var(--bg-inset); flex: none; }
+.rail-card .visual svg { display: block; width: 100%; height: 100%; }
+.rail-card .body {
+  padding: 16px 18px; display: flex; flex-direction: column; gap: 8px; flex: 1;
+}
+.rail-card .body h3 { margin: 0; font-size: 16px; }
+.rail-card .body p { margin: 0; font-size: 12px; color: var(--text-muted); line-height: 1.45; }
+.rail-card .body .go { margin-top: auto; color: var(--accent); font-size: 15px; }
+
+/* --- footer --------------------------------------------------------------- */
+
+.home-footer {
+  display: flex; align-items: center; gap: 18px;
+  padding: 0 34px 0 28px; height: 58px; flex: none;
+  border-top: 1px solid var(--border); font-size: 12px; color: var(--text-muted);
+}
+.home-footer .spacer { flex: 1; }
+.home-footer button {
+  display: flex; align-items: center; gap: 9px; background: none; border: none;
+  color: inherit; font: inherit; cursor: pointer; padding: 0;
+}
+.home-footer button:hover { color: var(--text); }
+.home-footer .live { display: flex; align-items: center; gap: 8px; }
+.home-footer .live .dot { width: 7px; height: 7px; border-radius: 50%; }
+
+/* --- site KPI drawer ------------------------------------------------------ */
+
+.drawer-scrim {
+  position: fixed; inset: 0; background: rgba(0, 0, 0, .62);
+  border: none; padding: 0; z-index: 40; cursor: default;
+}
+.drawer {
+  position: fixed; top: 0; right: 0; bottom: 0; width: min(840px, 100vw);
+  z-index: 41; display: flex; flex-direction: column; overflow-y: auto;
+  background: var(--bg-raised); border-left: 1px solid var(--border-strong);
+  box-shadow: -24px 0 48px rgba(0, 0, 0, .55);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .drawer { animation: drawer-in .18s ease-out; }
+}
+@keyframes drawer-in {
+  from { transform: translateX(24px); opacity: .4; }
+}
+
+.drawer .close {
+  align-self: flex-end; margin: 16px 22px 0; width: 30px; height: 30px;
+  background: none; border: none; color: var(--text-muted);
+  font-size: 19px; line-height: 1; cursor: pointer;
+}
+.drawer .close:hover { color: var(--text); }
+
+.drawer-id {
+  display: flex; align-items: center; gap: 16px; padding: 14px 26px;
+  border-bottom: 1px solid var(--border);
+}
+.drawer-id .glyph { flex: none; color: var(--text-muted); }
+.drawer-id .cap {
+  font-size: 11px; font-weight: 600; letter-spacing: .1em; color: var(--text-faint);
+}
+.drawer-id .val { font-size: 16px; font-weight: 600; margin-top: 4px; }
+.drawer-id .sub { font-size: 11px; color: var(--text-faint); margin-top: 3px; }
+
+.drawer .enter {
+  margin: 20px 26px 22px; height: 44px; width: calc(100% - 52px);
+  background: var(--accent); border-color: var(--accent); color: #fff;
+  font-weight: 600; letter-spacing: .12em; font-size: 13px;
+}
+
+.drawer-head { display: flex; align-items: baseline; gap: 16px; padding: 0 26px 14px; }
+.drawer-head h3 { margin: 0; font-size: 18px; }
+.drawer-head .as-of { margin-left: auto; font-size: 11px; color: var(--text-faint); }
+
+.drawer-section { padding: 16px 26px 18px; border-top: 1px solid var(--border); }
+.drawer-section > .title {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 14px;
+  font-size: 11px; font-weight: 600; letter-spacing: .11em; color: var(--text-faint);
+}
+.drawer-section > .title .why {
+  color: var(--warn); letter-spacing: .02em; font-weight: 400; text-transform: none;
+}
+.drawer-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+.drawer-grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+.kpi-tile { display: flex; gap: 10px; }
+.kpi-tile .bar { width: 3px; border-radius: 2px; flex: none; }
+.kpi-tile .v { display: flex; align-items: baseline; gap: 5px; }
+.kpi-tile .v .n { font-size: 23px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.kpi-tile .v .u { font-size: 12px; color: var(--text-muted); }
+.kpi-tile .cap { font-size: 11px; color: var(--text-muted); margin-top: 5px; }
+.kpi-tile .note { font-size: 10px; color: var(--text-faint); margin-top: 4px; }
+/* A metric with no instrument behind it says so, in the tile, every time. */
+.kpi-tile.absent .v .n { color: var(--unknown); }
+.kpi-tile.absent .cap { color: var(--unknown); }
+.kpi-tile.absent .note { color: var(--warn); }
+
+.drawer-chips {
+  display: flex; gap: 12px; padding: 18px 26px 14px;
+  border-top: 1px solid var(--border); margin-top: auto;
+}
+.drawer-chips .ind { flex: 1; height: 40px; font-size: 13px; gap: 8px; }
+.drawer-conn { display: flex; align-items: center; gap: 10px; padding: 0 26px 26px; font-size: 12px; }
+
+.page { padding: 18px 28px 24px; }
+
+/* ---------------------------------------------------------------- responsive
+ *
+ * Kept at the END of the file on purpose. These rules have the same specificity
+ * as the base rules they override, so source order is the only thing deciding
+ * the winner. Placed earlier, `.home-rail { flex-direction: column }` beat the
+ * media query and the cards stayed stacked at full width.
+ */
+@media (max-width: 1400px) {
+  .home-body { grid-template-columns: minmax(0, 1fr); }
+  /* Below the table rather than hidden: these cards are the only route into
+     the thermal, power and utilisation views from this page. */
+  .home-rail { flex-direction: row; flex-wrap: wrap; align-items: stretch; }
+  .home-rail .rail-card { flex: 1 1 280px; min-width: 0; }
+  /* Side by side the cards are a third as wide, so the schematic no longer
+     needs the full band of height. */
+  .home-rail .rail-card .visual { height: 104px; }
+}
+
+@media (max-width: 900px) {
+  .home-body { padding: 8px 16px; }
+  .topbar, .alert-strip, .home-footer { padding-left: 16px; padding-right: 16px; }
+  .home-rail .rail-card { flex: 1 1 100%; }
+}
