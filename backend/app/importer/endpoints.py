@@ -233,7 +233,7 @@ def derive_endpoints(
             out.append(EndpointSpec(
                 protocol="bacnet", role="field_device",
                 address=dev["mstp_router_ip"], port=47808,
-                poll_profile="bacnet-10s",
+                poll_profile="bacnet-30s",
                 # No device_instance: the controller assigns it in
                 # commissioning order, so the adapter asks with a directed
                 # Who-Is rather than assuming a formula. A device on a trunk
@@ -247,7 +247,7 @@ def derive_endpoints(
             if addr:
                 out.append(EndpointSpec(
                     protocol="bacnet", role="native_card", address=addr, port=47808,
-                    poll_profile="bacnet-10s",
+                    poll_profile="bacnet-30s",
                     # The controller assigns the device instance; the adapter
                     # discovers it with a directed Who-Is rather than assuming
                     # a formula. Carried here only when the export knows it.
