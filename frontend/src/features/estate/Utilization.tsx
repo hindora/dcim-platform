@@ -2,7 +2,8 @@ import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { api, type UtilRow } from '../../api/client';
 import {
-  Column, DataTable, Notes, Num, PageHead, ScopeTabs, TableFoot, tone,
+  Column, DataTable, FacilityToggle, Notes, Num, PageHead, ScopeTabs, TableFoot,
+  tone,
 } from '../../components/estate';
 import { downloadCsv, stampedName } from '../../lib/csv';
 import { useEstateTable } from './useEstateTable';
@@ -67,6 +68,21 @@ export function Utilization() {
       render: (r) => r.rack_count ?? 0,
     },
     {
+      // Racks standing against rack positions the room was DRAWN with. A hall
+      // can be half full by U and a quarter built out; sizing a fit-out off the
+      // first number is how a floor runs out of positions with U to spare.
+      key: 'built', label: 'Built out', align: 'num', width: 130,
+      sort: (r) => r.built_out_pct,
+      render: (r) => (
+        <span title={r.designed_racks
+          ? `${r.rack_count ?? 0} of ${r.designed_racks} drawn rack positions`
+          : 'the floor plan gives no rack positions for this room'}>
+          <Num value={r.built_out_pct} digits={0} unit="%"
+               why="no drawn rack positions for this room" />
+        </span>
+      ),
+    },
+    {
       key: 'space', label: 'Space', align: 'num', width: 150,
       sort: (r) => r.space_pct,
       render: (r) => (
@@ -114,12 +130,14 @@ export function Utilization() {
     downloadCsv(
       stampedName('utilization'),
       ['scope', 'name', 'site', 'floor', 'racks', 'space_pct', 'space_used_u',
-       'space_total_u', 'power_pct', 'power_used_kw', 'power_capacity_kw',
+       'space_total_u', 'designed_racks', 'built_out_pct',
+       'power_pct', 'power_used_kw', 'power_capacity_kw',
        'power_basis', 'cooling_pct', 'cooling_used_kw', 'cooling_capacity_kw',
        'cooling_basis'],
       t.filtered.map((r) => [
         r.kind, r.name, r.site_code, r.floor ?? '', r.rack_count ?? '',
         r.space_pct ?? '', r.space_used_u, r.space_total_u,
+        r.designed_racks ?? '', r.built_out_pct ?? '',
         r.power_pct ?? '', r.power_used_kw, r.power_capacity_kw ?? '', r.power_basis,
         r.cooling_pct ?? '', r.cooling_used_kw, r.cooling_capacity_kw ?? '', r.cooling_basis,
       ]),
@@ -140,12 +158,18 @@ export function Utilization() {
           { caption: 'IT load', value: totals?.power_used_kw ?? null, unit: 'kW' },
           { caption: 'Cooling installed', value: totals?.cooling_capacity_kw ?? null, unit: 'kW',
             why: 'no cooling unit reports a rated capacity' },
+          { caption: 'Built out', value: totals?.built_out_pct ?? null, unit: '%',
+            why: 'the floor plan gives no rack positions yet - re-run the importer' },
           { caption: 'Racks', value: totals ? String(totals.racks) : null },
         ]}
       />
 
       <div className="estate-tools">
         <ScopeTabs scope={t.scope} onChange={t.setScope} />
+        {(t.scope === 'rooms' || t.selected) && (
+          <FacilityToggle on={t.includeFacility} count={t.facilityCount}
+                          onChange={t.setIncludeFacility} />
+        )}
         <input className="grow" type="search" placeholder="Search sites and rooms"
                aria-label="Search" value={t.search}
                onChange={(e) => t.setSearch(e.target.value)} />

@@ -14,21 +14,40 @@ export interface EstateRowLike {
   site_code: string;
   site_name: string;
   floor?: string | null;
+  room_class?: string | null;
 }
 
 export function useEstateTable<Row extends EstateRowLike>(
   sites: Row[], rooms: Row[],
 ) {
   const [scope, setScope] = useState<'sites' | 'rooms'>('sites');
+  // Facility rooms are hidden by default. A generator hall has no racks, no
+  // intake sensors and no capacity to sell, so it contributes a row of dashes
+  // that pushes the halls off the first screen. It is a toggle rather than a
+  // deletion because those rooms are real and their load is in every total.
+  const [includeFacility, setIncludeFacility] = useState(false);
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<Row | null>(null);
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
 
+  const visibleRooms = useMemo(
+    () => (includeFacility
+      ? rooms
+      // Unclassified rooms are shown: null means nobody has classified it, and
+      // hiding a room on the strength of a missing field is how a real hall
+      // disappears from the estate view.
+      : rooms.filter((r) => r.room_class !== 'facility')),
+    [rooms, includeFacility],
+  );
+
+  const facilityCount = rooms.length - rooms.filter(
+    (r) => r.room_class !== 'facility').length;
+
   const base = useMemo(() => {
-    if (selected) return rooms.filter((r) => r.site_id === selected.site_id);
-    return scope === 'sites' ? sites : rooms;
-  }, [scope, selected, sites, rooms]);
+    if (selected) return visibleRooms.filter((r) => r.site_id === selected.site_id);
+    return scope === 'sites' ? sites : visibleRooms;
+  }, [scope, selected, sites, visibleRooms]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -52,6 +71,9 @@ export function useEstateTable<Row extends EstateRowLike>(
 
   return {
     scope,
+    includeFacility,
+    setIncludeFacility: (v: boolean) => { setIncludeFacility(v); setPage(0); },
+    facilityCount,
     setScope: (s: 'sites' | 'rooms') => { setScope(s); setSelected(null); setPage(0); },
     search, setSearch: (v: string) => { setSearch(v); setPage(0); },
     selected, drillInto, clearDrill,

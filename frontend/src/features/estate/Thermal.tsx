@@ -3,7 +3,8 @@ import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { api, type ThermalRow } from '../../api/client';
 import {
-  Column, DataTable, Delta, Notes, Num, PageHead, ScopeTabs, Seg, TableFoot, tone,
+  Column, DataTable, Delta, FacilityToggle, Notes, Num, PageHead, ScopeTabs, Seg,
+  TableFoot, tone,
 } from '../../components/estate';
 import { downloadCsv, stampedName } from '../../lib/csv';
 import { useEstateTable } from './useEstateTable';
@@ -133,7 +134,10 @@ export function Thermal() {
             tone: (totals?.max_c ?? 0) > (data?.band.high_c ?? 27) ? 'warn' : undefined },
           { caption: 'In band', value: totals?.compliance_pct ?? null, unit: '%',
             tone: (totals?.compliance_pct ?? 100) < 95 ? 'warn' : 'ok' },
-          { caption: 'Rooms reporting',
+          // White space only: rack intake sensors exist where racks do, so
+          // counting a generator room as a room that failed to report made the
+          // ratio read as a fleet of dead sensors.
+          { caption: 'Halls reporting',
             value: totals ? `${totals.rooms_reporting}/${totals.rooms}` : null,
             tone: totals && totals.rooms_reporting < totals.rooms ? 'warn' : 'ok' },
         ]}
@@ -141,6 +145,10 @@ export function Thermal() {
 
       <div className="estate-tools">
         <ScopeTabs scope={t.scope} onChange={t.setScope} />
+        {(t.scope === 'rooms' || t.selected) && (
+          <FacilityToggle on={t.includeFacility} count={t.facilityCount}
+                          onChange={t.setIncludeFacility} />
+        )}
         <input className="grow" type="search" placeholder="Search sites and rooms"
                aria-label="Search" value={t.search}
                onChange={(e) => t.setSearch(e.target.value)} />

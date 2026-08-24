@@ -20,10 +20,12 @@ class _FakeSession:
 
 
 def _room(room_id: str, dc: str, code: str, *, f_sum=None, f_n=0, f_max=None,
-          f_in_band=0, c_sum=None, c_n=0, c_max=None, name=None):
+          f_in_band=0, c_sum=None, c_n=0, c_max=None, name=None,
+          room_class="white_space"):
     return {
         "room_id": room_id, "room_name": name or f"room-{room_id}",
-        "floor": "1", "room_type": "data_hall", "datacenter_id": dc,
+        "floor": "1", "room_type": "data_hall", "room_class": room_class,
+        "datacenter_id": dc,
         "site_code": code, "site_name": code, "rack_count": 2,
         "f_sum": f_sum, "f_n": f_n, "f_max": f_max, "f_in_band": f_in_band,
         "c_sum": c_sum, "c_n": c_n, "c_max": c_max,
@@ -95,9 +97,10 @@ async def test_compliance_counts_readings_inside_the_band(monkeypatch):
 
 def _power_row(room_id: str, dc: str, code: str, *, avg_it=None, peak_it=None,
                avg_cooling=None, peak_cooling=None, avg_total=None,
-               peak_total=None, prev_total=None):
+               peak_total=None, prev_total=None, room_class="white_space"):
     return {
         "room_id": room_id, "room_name": f"room-{room_id}", "floor": None,
+        "room_class": room_class,
         "datacenter_id": dc, "site_code": code, "site_name": code,
         "avg_it": avg_it, "peak_it": peak_it, "avg_cooling": avg_cooling,
         "peak_cooling": peak_cooling, "avg_other": 0.0, "peak_other": 0.0,
@@ -145,8 +148,10 @@ async def test_pue_needs_an_it_load_to_divide_by(monkeypatch):
 def _util_row(room_id: str, dc: str, code: str, **over):
     row = {
         "room_id": room_id, "room_name": f"room-{room_id}", "floor": None,
+        "room_class": "white_space",
         "datacenter_id": dc, "site_code": code, "site_name": code,
-        "design_it_kw": None, "rack_count": 10, "total_u": 420.0, "used_u": 210.0,
+        "design_it_kw": None, "designed_racks": 40, "width_m": 8.4,
+        "depth_m": 12.3, "rack_count": 10, "total_u": 420.0, "used_u": 210.0,
         "it_kw": 100.0, "cooling_kw": 20.0, "supply_rated_kw": None,
         "supply_units": 0, "cooling_capacity_kw": 400.0, "cooling_units": 4,
     }
@@ -209,6 +214,67 @@ async def test_alert_drilldown_accounts_for_unlocated_alarms(monkeypatch):
     out = await estate.alerts(_FakeSession(), category="datapoint")
     assert out["total"] == 7
     assert out["unlocated"] == 4
+
+
+@pytest.mark.asyncio
+async def test_facility_power_stays_in_the_site_total(monkeypatch):
+    """The rows a page hides must not change the arithmetic it does.
+
+    Two thirds of a site's cooling draw stands in its plant room. Excluding it
+    to tidy the room list would move PUE from 1.4 to 1.1 and describe a plant
+    that was never built.
+    """
+    monkeypatch.setattr(estate.repo, "power_live", _returns([
+        _power_row("hall", "dc1", "DC1", avg_it=100.0, avg_cooling=10.0),
+        _power_row("plant", "dc1", "DC1", avg_it=0.0, avg_cooling=30.0,
+                   room_class="facility"),
+    ]))
+    out = await estate.power(_FakeSession(), live=True)
+
+    assert out["totals"]["cooling_kw"] == 40.0
+    assert out["totals"]["pue"] == round(140.0 / 100.0, 3)
+    # And the difference is stated, so a header that does not match the visible
+    # rows explains itself on the page.
+    assert out["totals"]["facility"]["rooms"] == 1
+    assert out["totals"]["facility"]["cooling_kw"] == 30.0
+
+
+@pytest.mark.asyncio
+async def test_space_counts_white_space_only(monkeypatch):
+    """A plant room's two BMS cabinets are not estate capacity."""
+    monkeypatch.setattr(estate.repo, "utilisation", _returns([
+        _util_row("hall", "dc1", "DC1"),
+        _util_row("plant", "dc1", "DC1", room_class="facility",
+                  rack_count=2, total_u=84.0, used_u=2.0, designed_racks=None,
+                  width_m=None, depth_m=None),
+    ]))
+    monkeypatch.setattr(estate.repo, "site_design", _returns({}))
+    out = await estate.utilisation(_FakeSession())
+
+    site = out["sites"][0]
+    assert site["space_total_u"] == 420.0        # the hall only
+    # The rack count beside a white-space U total has to be the same subset,
+    # or the row says "12 racks" over a figure drawn from 10 of them.
+    assert site["rack_count"] == 10
+    assert site["facility_racks"] == 2
+    assert out["totals"]["facility_rooms"] == 1
+    # Load is whole-estate even though the plant row is not white space.
+    assert site["power_used_kw"] == 200.0
+
+
+@pytest.mark.asyncio
+async def test_build_out_measures_racks_against_drawn_positions(monkeypatch):
+    """A hall can be 50% full by U and 25% built out. Different questions."""
+    monkeypatch.setattr(estate.repo, "utilisation", _returns([
+        _util_row("hall", "dc1", "DC1", rack_count=10, designed_racks=40),
+    ]))
+    monkeypatch.setattr(estate.repo, "site_design", _returns({}))
+    out = await estate.utilisation(_FakeSession())
+
+    room = out["rooms"][0]
+    assert room["space_pct"] == 50.0
+    assert room["built_out_pct"] == 25.0
+    assert room["floor_area_m2"] == 103.3
 
 
 def test_bucket_widens_with_the_window():

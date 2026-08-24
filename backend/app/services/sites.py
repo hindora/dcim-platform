@@ -92,6 +92,10 @@ async def overview(session: AsyncSession) -> dict[str, Any]:
             "id": r["id"],
             "name": r["name"],
             "room_type": r["room_type"],
+            # White space or facility. The home table hides facility rooms by
+            # default: nobody racks a server in a generator hall, and eight
+            # rows of dashes made the halls harder to find.
+            "room_class": r["room_class"],
             "floor": r["floor"],
             "datacenter_id": r["datacenter_id"],
             "datacenter_code": r["datacenter_code"],

@@ -22,6 +22,7 @@ import {
   type SitesOverview,
 } from '../../api/client';
 import { CategoryGlyph, type GlyphKind } from '../../components/CategoryGlyph';
+import { FacilityToggle } from '../../components/estate';
 import { useInvalidateOn, useTopics } from '../../ws/useSocket';
 import { SiteDrawer } from './SiteDrawer';
 import { RoomDrawer } from './RoomDrawer';
@@ -97,6 +98,10 @@ export function Home() {
   // that count provokes exactly one question - "which five rooms?" - and
   // answering it by scrolling every room in the estate is not an answer.
   const [roomsSite, setRoomsSite] = useState<SiteRow | null>(null);
+  // Facility rooms - plant, switchrooms, the roof - are hidden by default.
+  // They hold no racks, so on this table they are eight rows of empty
+  // indicators between the halls that do carry load.
+  const [showFacility, setShowFacility] = useState(false);
   const [pageSize, setPageSize] = useState(25);
   const [page, setPage] = useState(0);
 
@@ -119,9 +124,13 @@ export function Home() {
   };
 
   const visibleSites = sites.filter((s) => matches(`${s.code} ${s.name}`, s.alerts));
-  const scopedRooms = roomsSite
+  // Unclassified rooms are never hidden: null means nobody classified it,
+  // which is not the same claim as "this is plant".
+  const isFacility = (r: SiteRoom) => r.room_class === 'facility';
+  const facilityCount = rooms.filter(isFacility).length;
+  const scopedRooms = (roomsSite
     ? rooms.filter((r) => r.datacenter_id === roomsSite.id)
-    : rooms;
+    : rooms).filter((r) => showFacility || !isFacility(r));
   const visibleRooms = scopedRooms.filter(
     (r) => matches(`${r.datacenter_code} ${r.name}`, r.alerts));
 
@@ -199,6 +208,10 @@ export function Home() {
                      aria-label={`Search ${tab}`}
                      onChange={(e) => { setSearch(e.target.value); setPage(0); }} />
             </label>
+            {tab === 'rooms' && (
+              <FacilityToggle on={showFacility} count={facilityCount}
+                              onChange={(v) => { setShowFacility(v); setPage(0); }} />
+            )}
             {roomsSite && (
               <button className="row-btn" onClick={() => { setRoomsSite(null); setPage(0); }}>
                 BACK TO ALL ROOMS
@@ -261,6 +274,7 @@ export function Home() {
                              onToggle={() => toggle(s.id)}
                              onKpis={() => setDrawerSite(s)}
                              onRooms={() => { setRoomsSite(s); setTab('rooms'); setPage(0); }}
+                             showFacility={showFacility}
                              onRoomKpis={(r) => setDrawerRoom(r)} />
               ))}
 
@@ -333,10 +347,15 @@ export function Home() {
 }
 
 /** A site row plus, when expanded, its rooms as children of the same table. */
-function FragmentRow({ site, open, onToggle, onKpis, onRooms, onRoomKpis }: {
+function FragmentRow({ site, open, onToggle, onKpis, onRooms, onRoomKpis,
+                      showFacility }: {
   site: SiteRow; open: boolean; onToggle: () => void; onKpis: () => void;
   onRooms: () => void; onRoomKpis: (room: SiteRoom) => void;
+  showFacility: boolean;
 }) {
+  const children = showFacility
+    ? site.rooms
+    : site.rooms.filter((r) => r.room_class !== 'facility');
   return (
     <>
       <tr>
@@ -380,7 +399,7 @@ function FragmentRow({ site, open, onToggle, onKpis, onRooms, onRoomKpis }: {
         </td>
       </tr>
 
-      {open && site.rooms.map((r) => (
+      {open && children.map((r) => (
         <tr key={r.id} className="room-row">
           <td>
             <span className="site-cell">

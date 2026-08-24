@@ -58,6 +58,13 @@ class Room(Base):
     name: Mapped[str] = mapped_column(Text, nullable=False)
     floor: Mapped[str | None] = mapped_column(Text)
     room_type: Mapped[str] = mapped_column(Text, nullable=False, default="data_hall")
+    # White space or facility, taken from the simulator's floor plan rather than
+    # inferred from the room's name. NULL means nobody has classified it yet,
+    # which the UI shows as unknown rather than filing it under plant.
+    room_class: Mapped[str | None] = mapped_column(Text)
+    #: Rack positions the room was DRAWN with - rows x racks_per_row. The
+    #: denominator for build-out, which installed rack count cannot provide.
+    designed_racks: Mapped[int | None] = mapped_column(Integer)
     width_m: Mapped[float | None] = mapped_column(Numeric(8, 2))
     depth_m: Mapped[float | None] = mapped_column(Numeric(8, 2))
     design_it_kw: Mapped[float | None] = mapped_column(Numeric(10, 2))

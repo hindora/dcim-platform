@@ -114,11 +114,15 @@ class TopologyImporter:
         self._credentials: dict[str, str] = {}
         self._endpoint_by_addr: dict[tuple[str, str], str] = {}  # (protocol, addr) -> id
         self._known_types: set[str] = set()
+        # {(dc_code, room_name): floor-plan record}. The simulator classifies
+        # its own rooms; see _apply_floorplan.
+        self._floorplan: dict[tuple[str, str], dict] = {}
 
     # ------------------------------------------------------------------ run
 
     async def run(self, topology: dict) -> ImportReport:
         await self._load_lookups()
+        self._read_floorplan(topology)
 
         nodes = topology.get("nodes") or []
         edges = topology.get("edges") or []
@@ -155,6 +159,24 @@ class TopologyImporter:
 
         log.info("import complete", **self.report.as_dict())
         return self.report
+
+    def _read_floorplan(self, topology: dict) -> None:
+        """Index the floor plan the simulator ships with its topology.
+
+        Keys arrive as "DC1/Server Hall A". Anything that does not split into a
+        datacentre and a room is skipped rather than guessed at - a
+        mis-attributed room would silently move racks between sites.
+        """
+        rooms = ((topology.get("floorplan") or {}).get("rooms") or {})
+        for key, rec in rooms.items():
+            dc = rec.get("datacenter")
+            room = rec.get("room")
+            if not (dc and room) and "/" in str(key):
+                dc, room = str(key).split("/", 1)
+            if dc and room:
+                self._floorplan[(dc, room)] = rec
+        if rooms:
+            log.info("floor plan read", rooms=len(self._floorplan))
 
     # UPS sizing target from the simulator's own selector (core/power_sizing.py):
     # a UPS SKU is chosen so the load it carries sits at ~80 % of nameplate.
@@ -266,16 +288,42 @@ class TopologyImporter:
             return
         rkey = (dc_code, room_name)
         if rkey not in self._room:
-            # Plant, electrical and network rooms are not data halls; the
-            # distinction drives capacity maths later.
+            fp = self._floorplan.get(rkey) or {}
+            # The simulator says which rooms are white space and which are
+            # facility, and it knows because it drew them. Falling back to the
+            # name only when the floor plan has nothing to say about the room.
+            room_class = fp.get("class") or _room_class_from_name(room_name)
             room_type = _room_type(room_name)
+            rows = fp.get("rows") or []
+            per_row = fp.get("racks_per_row") or 0
+            designed = (len(rows) * int(per_row)) or None
             self._room[rkey] = await self._scalar("""
-                INSERT INTO room (datacenter_id, name, floor, room_type)
-                VALUES (CAST(:dc AS uuid), :name, :floor, :rt)
-                ON CONFLICT (datacenter_id, name) DO UPDATE SET floor = EXCLUDED.floor
+                INSERT INTO room (datacenter_id, name, floor, room_type,
+                                  room_class, width_m, depth_m, designed_racks,
+                                  attributes)
+                VALUES (CAST(:dc AS uuid), :name, :floor, :rt, :rc, :w, :d, :dr,
+                        CAST(:attrs AS jsonb))
+                ON CONFLICT (datacenter_id, name) DO UPDATE
+                    SET floor = EXCLUDED.floor,
+                        room_type = EXCLUDED.room_type,
+                        -- COALESCE keeps a previously imported classification
+                        -- when this run has no floor plan to offer, rather than
+                        -- blanking a good value with a missing one.
+                        room_class = COALESCE(EXCLUDED.room_class, room.room_class),
+                        width_m = COALESCE(EXCLUDED.width_m, room.width_m),
+                        depth_m = COALESCE(EXCLUDED.depth_m, room.depth_m),
+                        designed_racks = COALESCE(EXCLUDED.designed_racks,
+                                                  room.designed_racks),
+                        attributes = room.attributes || EXCLUDED.attributes
                 RETURNING id::text
             """, dc=self._dc[dc_code], name=room_name,
-                floor=str(dev.get("floor") or ""), rt=room_type)
+                floor=str(dev.get("floor") or ""), rt=room_type, rc=room_class,
+                w=fp.get("width_m"), d=fp.get("depth_m"), dr=designed,
+                attrs=_json({"containment": fp.get("containment"),
+                             "designed_rows": len(rows) or None,
+                             "racks_per_row": per_row or None,
+                             "class_source": "simulator floor plan" if fp
+                                             else "inferred from room name"}))
             self.report.rooms += 1
 
         # Floor-standing plant has a synthetic room-grid coordinate rather than
@@ -694,6 +742,22 @@ def _json(obj: Any) -> str:
                       if isinstance(obj, dict) else obj)
 
 
+def _room_class_from_name(name: str) -> str:
+    """Last-resort classification when the floor plan carries no such room.
+
+    White space is where IT equipment lives and where a rack position is a unit
+    of capacity. Everything else - plant, switchrooms, the tower deck - is
+    facility: real, metered, and counted in the site totals, but not somewhere
+    anyone racks a server.
+    """
+    low = name.lower()
+    if any(k in low for k in ("hall", "data centre", "data center", "suite")):
+        return "white_space"
+    if any(k in low for k in ("network", "mmr", "meet-me", "telco")):
+        return "white_space"
+    return "facility"
+
+
 def _room_type(name: str) -> str:
     low = name.lower()
     if "plant" in low or "chiller" in low or "mechanical" in low:
@@ -702,6 +766,12 @@ def _room_type(name: str) -> str:
         return "electrical"
     if "network" in low or "mmr" in low or "meet-me" in low:
         return "network"
+    # Generator halls and the tower deck used to fall through to data_hall,
+    # which is how a roof ended up listed as raised floor.
+    if "generator" in low or "genset" in low:
+        return "electrical"
+    if "roof" in low or "yard" in low or "compound" in low:
+        return "plant"
     return "data_hall"
 
 

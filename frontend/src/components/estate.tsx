@@ -98,6 +98,29 @@ export function ScopeTabs({ scope, onChange, roomLabel = 'ROOMS' }: {
   );
 }
 
+/** Show or hide plant, switchrooms and the roof.
+ *
+ *  Off by default. Those rooms hold no racks and no intake sensors, so they
+ *  contribute rows of dashes that push the halls down the page - but their
+ *  electrical load is in every total on the page, which is why this is a
+ *  toggle with a count rather than a filter that pretends they do not exist.
+ */
+export function FacilityToggle({ on, count, onChange }: {
+  on: boolean; count: number; onChange: (v: boolean) => void;
+}) {
+  if (!count) return null;
+  return (
+    <button type="button" className={`facility-toggle ${on ? 'on' : ''}`}
+            aria-pressed={on} onClick={() => onChange(!on)}
+            title={on
+              ? 'Hide plant, switchrooms and the roof'
+              : `Show the ${count} facility room${count === 1 ? '' : 's'} - `
+                + 'their load is already counted in the totals'}>
+      {on ? '−' : '+'} FACILITY <span className="n">{count}</span>
+    </button>
+  );
+}
+
 /** A change against the comparison window.
  *
  *  Three states, not two: up, down, and "there was nothing to compare with".

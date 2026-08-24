@@ -579,6 +579,8 @@ export interface SiteRoom {
   id: string;
   name: string;
   room_type: string;
+  /** 'white_space' where racks live, 'facility' for plant and switchrooms. */
+  room_class: string | null;
   floor?: string | null;
   datacenter_id: string;
   datacenter_code: string;
@@ -682,6 +684,10 @@ export interface EstateRowBase {
   site_name: string;
   floor?: string | null;
   room_type?: string | null;
+  /** Where racks live ('white_space') vs plant, switchrooms and the roof
+   *  ('facility'). Comes from the simulator's floor plan, not from the room's
+   *  name. Null on a room nobody has classified yet. */
+  room_class?: string | null;
   room_count?: number;
   rack_count?: number;
   note?: string | null;
@@ -705,6 +711,7 @@ export interface ThermalPage {
   totals: {
     avg_c: number | null; max_c: number | null; compliance_pct: number | null;
     samples: number; rooms_reporting: number; rooms: number;
+    facility_rooms: number;
   };
   sites: ThermalRow[];
   rooms: ThermalRow[];
@@ -731,6 +738,8 @@ export interface PowerPage {
     total_kw: number | null; it_ac_kw: number | null; it_dc_kw: number | null;
     cooling_kw: number | null; other_kw: number | null; pue: number | null;
     rooms_reporting: number; rooms: number;
+    /** What the hidden facility rows contribute, so the header reconciles. */
+    facility: { rooms: number; total_kw: number | null; cooling_kw: number | null };
   };
   sites: PowerRow[];
   rooms: PowerRow[];
@@ -741,6 +750,10 @@ export interface UtilRow extends EstateRowBase {
   space_pct: number | null;
   space_used_u: number;
   space_total_u: number;
+  /** Rack positions the room was drawn with, and how many are standing. */
+  designed_racks: number | null;
+  built_out_pct: number | null;
+  floor_area_m2: number | null;
   power_pct: number | null;
   power_used_kw: number;
   power_capacity_kw: number | null;
@@ -757,6 +770,8 @@ export interface UtilPage {
     space_pct: number | null; power_used_kw: number;
     cooling_capacity_kw: number | null; cooling_pct: number | null;
     racks: number; rooms: number;
+    built_out_pct: number | null; designed_racks: number | null;
+    floor_area_m2: number | null; facility_rooms: number;
   };
   sites: UtilRow[];
   rooms: UtilRow[];

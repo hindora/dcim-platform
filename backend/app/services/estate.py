@@ -12,6 +12,11 @@ Two rules run through the whole module:
   nobody meters all take this path.
 * Site rows are folded from room rows by weight, never by averaging averages.
   A room with four probes must not outvote one with four hundred.
+* Rooms are labelled white space or facility, but facility rooms are never
+  dropped from a site total. Two thirds of a site's cooling draw stands in its
+  plant room; excluding it to make the room list tidier would move PUE by a
+  third and describe a plant nobody built. The rows a page SHOWS and the
+  arithmetic it does are separate decisions.
 """
 
 from __future__ import annotations
@@ -127,6 +132,7 @@ async def thermal(session: AsyncSession, *, focus: date | None = None,
             "name": r["room_name"],
             "floor": r["floor"],
             "room_type": r["room_type"],
+            "room_class": r["room_class"],
             "site_id": r["datacenter_id"],
             "site_code": r["site_code"],
             "site_name": r["site_name"],
@@ -208,13 +214,18 @@ def _fold_thermal_total(rooms: list[dict[str, Any]]) -> dict[str, Any]:
     in_band = sum(r["_in_band"] for r in rooms)
     maxes = [r["_max"] for r in rooms if r["_max"] is not None]
     total = sum(r["_sum"] for r in rooms)
+    white = [r for r in rooms if r["room_class"] == "white_space"]
     return {
         "avg_c": round(total / n, 1) if n else None,
         "max_c": round(max(maxes), 1) if maxes else None,
         "compliance_pct": _pct(in_band, n) if n else None,
         "samples": n,
-        "rooms_reporting": sum(1 for r in rooms if r["_n"]),
-        "rooms": len(rooms),
+        # Reporting is counted over WHITE SPACE only. Rack intake sensors exist
+        # where racks do; counting a generator room as a room that failed to
+        # report made the ratio read as a fleet of dead sensors.
+        "rooms_reporting": sum(1 for r in white if r["_n"]),
+        "rooms": len(white),
+        "facility_rooms": len(rooms) - len(white),
     }
 
 
@@ -276,6 +287,7 @@ def _power_row(r: dict[str, Any], *, peak: bool) -> dict[str, Any]:
         "kind": "room",
         "name": r["room_name"],
         "floor": r["floor"],
+        "room_class": r["room_class"],
         "site_id": r["datacenter_id"],
         "site_code": r["site_code"],
         "site_name": r["site_name"],
@@ -322,16 +334,25 @@ def _fold_power_sites(rooms: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _fold_power_total(rooms: list[dict[str, Any]]) -> dict[str, Any]:
-    def total(key: str) -> float | None:
-        vals = [r[key] for r in rooms if r[key] is not None]
+    def total(key: str, subset: list[dict[str, Any]] | None = None) -> float | None:
+        vals = [r[key] for r in (subset or rooms) if r[key] is not None]
         return round(sum(vals), 1) if vals else None
 
     it, all_kw = total("_it"), total("_total")
+    facility = [r for r in rooms if r["room_class"] != "white_space"]
     return {"total_kw": all_kw, "it_ac_kw": it, "it_dc_kw": None,
             "cooling_kw": total("_cooling"), "other_kw": total("_other"),
             "pue": round(all_kw / it, 3) if all_kw and it else None,
             "rooms_reporting": sum(1 for r in rooms if r["_total"] is not None),
-            "rooms": len(rooms)}
+            "rooms": len(rooms),
+            # What the facility rooms contribute. The UI hides those rows by
+            # default, and a header that does not match the visible rows has to
+            # explain the difference rather than let a reader find it.
+            "facility": {
+                "rooms": len(facility),
+                "total_kw": total("_total", facility),
+                "cooling_kw": total("_cooling", facility),
+            }}
 
 
 # ----------------------------------------------------------------- utilisation
@@ -362,11 +383,21 @@ async def utilisation(session: AsyncSession) -> dict[str, Any]:
             power_cap, power_basis = None, "no design rating and no rated PDU or RPP here"
 
         cooling_cap = _f(r["cooling_capacity_kw"])
+        designed = int(r["designed_racks"] or 0) or None
+        area = (_f(r["width_m"]) or 0) * (_f(r["depth_m"]) or 0) or None
         rows.append({
             "id": r["room_id"], "kind": "room", "name": r["room_name"],
-            "floor": r["floor"], "site_id": r["datacenter_id"],
+            "floor": r["floor"], "room_class": r["room_class"],
+            "site_id": r["datacenter_id"],
             "site_code": r["site_code"], "site_name": r["site_name"],
             "rack_count": int(r["rack_count"] or 0),
+            # Build-out: racks standing against rack positions the room was
+            # drawn with. A hall can be 35% full by U and 12% built out, and
+            # those are different conversations - one about the racks you have,
+            # one about the floor you have not filled yet.
+            "designed_racks": designed,
+            "built_out_pct": _pct(r["rack_count"], designed),
+            "floor_area_m2": None if area is None else round(area, 1),
             "space_pct": _pct(used_u, total_u), "space_used_u": used_u,
             "space_total_u": total_u,
             "power_pct": _pct(it_kw, power_cap), "power_used_kw": round(it_kw, 1),
@@ -392,6 +423,9 @@ async def utilisation(session: AsyncSession) -> dict[str, Any]:
             "Space is exact - it comes from inventory. Power and cooling are "
             "measured against whatever rating could be found, and each row "
             "says which one it used.",
+            "Space and build-out cover WHITE SPACE only: plant and switchrooms "
+            "hold cabinets, not rack capacity. Their electrical load is still "
+            "counted in every kW figure here.",
         ],
     }
 
@@ -404,13 +438,28 @@ def _fold_util_sites(rooms: list[dict[str, Any]],
             "id": r["site_id"], "kind": "site", "name": r["site_name"],
             "site_id": r["site_id"], "site_code": r["site_code"],
             "site_name": r["site_name"], "room_count": 0, "rack_count": 0,
+            "facility_racks": 0,
             "_used_u": 0.0, "_total_u": 0.0, "_it_kw": 0.0,
             "_power_cap": 0.0, "_cooling_cap": 0.0, "_power_rooms": 0,
+            "_designed": 0, "_white_racks": 0, "_area": 0.0,
         })
         s["room_count"] += 1
-        s["rack_count"] += r["rack_count"]
-        s["_used_u"] += r["_used_u"]
-        s["_total_u"] += r["_total_u"]
+        # SPACE is a white-space question, and so is the rack count beside it.
+        # The two cabinets in a plant room hold BMS controllers; counting them
+        # as estate capacity would say a site has room to sell that nobody
+        # could rack a server into - and a row reading "23 racks" next to a U
+        # total drawn from 20 of them is a row that does not add up.
+        if r["room_class"] == "white_space":
+            s["rack_count"] += r["rack_count"]
+            s["_used_u"] += r["_used_u"]
+            s["_total_u"] += r["_total_u"]
+            s["_designed"] += r["designed_racks"] or 0
+            s["_white_racks"] += r["rack_count"]
+            s["_area"] += r["floor_area_m2"] or 0.0
+        else:
+            # Counted, never hidden: someone asking "where are my 44 racks"
+            # deserves the four in plant rooms to be findable.
+            s["facility_racks"] += r["rack_count"]
         s["_it_kw"] += r["_it_kw"]
         if r["_power_cap"]:
             s["_power_cap"] += r["_power_cap"]
@@ -435,6 +484,9 @@ def _fold_util_sites(rooms: list[dict[str, Any]],
         out.append(_strip({**s,
                            "space_pct": _pct(s["_used_u"], s["_total_u"]),
                            "space_used_u": s["_used_u"], "space_total_u": s["_total_u"],
+                           "designed_racks": s["_designed"] or None,
+                           "built_out_pct": _pct(s["_white_racks"], s["_designed"] or None),
+                           "floor_area_m2": round(s["_area"], 1) or None,
                            "power_pct": _pct(s["_it_kw"], cap),
                            "power_used_kw": round(s["_it_kw"], 1),
                            "power_capacity_kw": None if cap is None else round(cap, 1),
@@ -449,16 +501,23 @@ def _fold_util_sites(rooms: list[dict[str, Any]],
 
 
 def _fold_util_total(rooms: list[dict[str, Any]]) -> dict[str, Any]:
-    used_u = sum(r["_used_u"] for r in rooms)
-    total_u = sum(r["_total_u"] for r in rooms)
+    white = [r for r in rooms if r["room_class"] == "white_space"]
+    used_u = sum(r["_used_u"] for r in white)
+    total_u = sum(r["_total_u"] for r in white)
+    designed = sum(r["designed_racks"] or 0 for r in white)
+    # Load stays whole-estate: the plant draws power whoever hides its row.
     it_kw = sum(r["_it_kw"] for r in rooms)
     cool_cap = sum(r["_cooling_cap"] or 0 for r in rooms)
     return {"space_pct": _pct(used_u, total_u),
+            "built_out_pct": _pct(sum(r["rack_count"] for r in white), designed or None),
+            "designed_racks": designed or None,
+            "floor_area_m2": round(sum(r["floor_area_m2"] or 0 for r in white), 1) or None,
             "power_used_kw": round(it_kw, 1),
             "cooling_capacity_kw": round(cool_cap, 1) or None,
             "cooling_pct": _pct(it_kw, cool_cap or None),
-            "racks": sum(r["rack_count"] for r in rooms),
-            "rooms": len(rooms)}
+            "racks": sum(r["rack_count"] for r in white),
+            "rooms": len(white),
+            "facility_rooms": len(rooms) - len(white)}
 
 
 # ---------------------------------------------------------------- alert drills
@@ -506,6 +565,7 @@ async def room_kpi(session: AsyncSession, room_id: str) -> dict[str, Any] | None
 
     return {
         "room": ident,
+        "is_white_space": ident.get("room_class") == "white_space",
         "monitored": {
             "devices": int(census.get("devices") or 0),
             "online": int(census.get("online") or 0),

@@ -3,7 +3,8 @@ import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { api, type PowerRow } from '../../api/client';
 import {
-  Column, DataTable, Delta, Notes, Num, PageHead, ScopeTabs, Seg, TableFoot,
+  Column, DataTable, Delta, FacilityToggle, Notes, Num, PageHead, ScopeTabs, Seg,
+  TableFoot,
 } from '../../components/estate';
 import { downloadCsv, stampedName } from '../../lib/csv';
 import { useEstateTable } from './useEstateTable';
@@ -134,6 +135,10 @@ export function Power() {
 
       <div className="estate-tools">
         <ScopeTabs scope={t.scope} onChange={t.setScope} />
+        {(t.scope === 'rooms' || t.selected) && (
+          <FacilityToggle on={t.includeFacility} count={t.facilityCount}
+                          onChange={t.setIncludeFacility} />
+        )}
         <input className="grow" type="search" placeholder="Search sites and rooms"
                aria-label="Search" value={t.search}
                onChange={(e) => t.setSearch(e.target.value)} />
@@ -193,6 +198,14 @@ export function Power() {
 
       <Notes items={[
         ...(data?.notes ?? []),
+        // The one number that would otherwise look like an error: the header
+        // totals the whole estate, the rows show white space.
+        !t.includeFacility && data?.totals.facility?.rooms
+          ? `The totals above include ${data.totals.facility.rooms} facility rooms `
+            + `(plant, switchrooms, roof) drawing ${data.totals.facility.total_kw ?? 0} kW, `
+            + `of which ${data.totals.facility.cooling_kw ?? 0} kW is cooling. `
+            + 'Their rows are hidden; their load is not.'
+          : '',
         mode === 'now'
           ? 'Now: the newest reading the ingest worker wrote for each device.'
           : `Window: ${data?.window.label ?? ''}, compared with the equally long window before it.`,
