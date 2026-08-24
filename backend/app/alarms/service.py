@@ -351,6 +351,46 @@ class AlarmService:
 
 
 
+    async def sweep_dead_endpoints(self, session: AsyncSession) -> list[AlarmAction]:
+        """Clear alarms whose endpoint has been retired or removed.
+
+        An endpoint alarm clears when the endpoint polls successfully again. A
+        disabled endpoint never polls, so without this its alarms are permanent
+        - 52 of them survived an import that correctly decided those device
+        types do not speak gNMI, and no operator action could have cleared them.
+
+        The alarm is cleared rather than deleted: it happened, and the history
+        should say so, including that it ended because the endpoint went away
+        rather than because anything recovered.
+        """
+        now = datetime.now(UTC)
+        orphans = await repo.open_alarms_on_dead_endpoints(session)
+        actions: list[AlarmAction] = []
+        touched: set[str] = set()
+
+        for row in orphans:
+            reason = ("endpoint removed" if row["endpoint_missing"]
+                      else "endpoint retired")
+            cleared = await repo.clear_alarms(
+                session, device_id=row["device_id"],
+                alarm_types=[row["alarm_type"]], instance=row["instance"],
+                at=now, by=f"system:{reason}")
+            for c in cleared:
+                touched.add(row["device_id"])
+                await repo.record_history(
+                    session, alarm_id=c["id"], device_id=row["device_id"],
+                    action="cleared", severity=c["severity"], actor="system",
+                    detail={"reason": reason})
+                for sym in await correlation.release_symptoms(session, c["id"]):
+                    touched.add(sym["device_id"])
+                actions.append(AlarmAction("alarm_cleared", c))
+
+        if touched:
+            await repo.refresh_device_alarm_state(session, sorted(touched))
+        if actions:
+            log.info("cleared alarms on retired endpoints", alarms=len(actions))
+        return actions
+
     async def sweep_staleness(self, session: AsyncSession) -> list[AlarmAction]:
         """Raise or clear telemetry_stale across the fleet.
 

@@ -315,6 +315,34 @@ async def list_events(session: AsyncSession, *, device_id: str | None = None,
     return [dict(r) for r in rows]
 
 
+async def open_alarms_on_dead_endpoints(session: AsyncSession) -> list[dict[str, Any]]:
+    """Open alarms whose endpoint is disabled or gone.
+
+    These can never clear on their own. Every clear path for an endpoint alarm
+    runs off a successful poll, and a disabled endpoint is never polled - so the
+    alarm outlives the thing it describes and sits on the estate for ever.
+
+    Retiring an endpoint is routine: an import narrows which device types speak
+    a protocol, an operator disables a probe. What is not routine is that doing
+    so used to leave the alarm behind.
+    """
+    rows = (await session.execute(text("""
+        SELECT a.id::text          AS id,
+               a.device_id::text   AS device_id,
+               a.endpoint_id::text AS endpoint_id,
+               a.alarm_type        AS alarm_type,
+               a.instance          AS instance,
+               a.severity::text    AS severity,
+               (e.id IS NULL)      AS endpoint_missing
+          FROM alarm a
+          LEFT JOIN device_endpoint e ON e.id = a.endpoint_id
+         WHERE a.state <> 'CLEARED'
+           AND a.endpoint_id IS NOT NULL
+           AND (e.id IS NULL OR NOT e.enabled)
+    """))).mappings().all()
+    return [dict(r) for r in rows]
+
+
 async def open_alarms_of_type(session: AsyncSession,
                               alarm_type: str) -> list[dict[str, Any]]:
     """Open alarms of one type, for a sweep that needs to clear what recovered.

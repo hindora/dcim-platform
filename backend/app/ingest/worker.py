@@ -267,6 +267,9 @@ class IngestWorker:
         try:
             async with unit_of_work() as session:
                 actions = await self.alarms.sweep_staleness(session)
+                # Same timer, because it is the same kind of question: an alarm
+                # nothing will ever come back to clear.
+                actions += await self.alarms.sweep_dead_endpoints(session)
             for action in actions:
                 await self.fanout.alarm(action.kind, action.alarm)
         except Exception as exc:
