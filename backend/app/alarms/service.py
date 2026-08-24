@@ -67,6 +67,9 @@ class AlarmService:
                 stale_after_s=r["stale_after_s"], enabled=r["enabled"],
                 device_total_only=bool(r.get("device_total_only")),
                 category=r.get("category"), detection=r.get("detection"),
+                metric_kind=r.get("metric_kind") or "numeric",
+                raise_on=bool(r.get("raise_on", True)),
+                instances=tuple(r.get("instances") or ()),
             )
             for r in rows
         ]

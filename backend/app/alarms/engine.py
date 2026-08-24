@@ -63,6 +63,20 @@ class Rule:
     category: str | None = None
     #: How this rule detects: threshold, state, absence, derived, forecast.
     detection: str | None = None
+    #: `numeric` compares against a threshold; `boolean` watches a point that
+    #: is either asserted or not. Equipment publishes its own faults as binary
+    #: points - a BACnet Alarm_Leak, a Modbus breaker bit - and there is no
+    #: threshold to cross, only a state to be in.
+    metric_kind: str = "numeric"
+    #: For boolean rules: which value is the fault. `True` for an alarm point
+    #: that asserts on fault; `False` for a run-status point where NOT running
+    #: is the fault.
+    raise_on: bool = True
+    #: Restrict a rule to named instances. Equipment points arrive as one
+    #: metric (`alarm_state`) carrying the point name as the instance, so
+    #: severity has to be assigned per point - a leak and a dirty filter are
+    #: not the same call-out. Empty means every instance.
+    instances: tuple[str, ...] = ()
     #: Evaluate only the device-level sample, ignoring per-instance ones.
     #:
     #: Some instances are a BREAKDOWN of the device total rather than separate
@@ -76,7 +90,9 @@ class Rule:
         return not self.device_types or device_type in self.device_types
 
     def applies_to_instance(self, instance: str) -> bool:
-        return not (self.device_total_only and instance)
+        if self.device_total_only and instance:
+            return False
+        return not self.instances or instance in self.instances
 
 
 @dataclass(slots=True)
@@ -167,6 +183,40 @@ def evaluate(
     which the caller persists. Deliberately returns a NEW state rather than
     mutating, so a failed write cannot leave half-applied progress.
     """
+    if rule.metric_kind == "boolean":
+        # No threshold and no hysteresis band: a binary point is asserted or it
+        # is not. Dwell still applies - one flap of a contact is not a fault -
+        # and the clear is simply the point de-asserting. There is nothing
+        # between "asserted" and "not asserted" for a deadband to sit in.
+        observed_us = int(observed_at.timestamp() * 1_000_000)
+        if (bool(value) is rule.raise_on):
+            first = state.first_breach_us or observed_us
+            new_state = DwellState(breach_count=state.breach_count + 1,
+                                   clear_count=0, first_breach_us=first)
+            held_samples = new_state.breach_count >= max(rule.dwell_samples, 1)
+            held_time = (rule.dwell_seconds is None
+                         or (observed_us - first) / 1_000_000 >= rule.dwell_seconds)
+            if held_samples and held_time:
+                return Candidate(
+                    key=key,
+                    severity=rule.severity,
+                    message=_render_state(rule, key),
+                    source="state",
+                    observed_at=observed_at,
+                    rule_id=rule.id,
+                    metric_key=rule.metric_key,
+                    value=value,
+                    threshold=None,
+                    endpoint_id=endpoint_id,
+                ), new_state
+            return None, new_state
+
+        new_state = DwellState(breach_count=0, clear_count=state.clear_count + 1,
+                               first_breach_us=0)
+        if new_state.clear_count >= max(rule.clear_dwell_samples, 1):
+            return ClearSignal(key=key, observed_at=observed_at), DwellState()
+        return None, new_state
+
     if rule.operator is None or rule.threshold is None:
         return None, state
 
@@ -212,6 +262,22 @@ def evaluate(
     if new.clear_count >= max(rule.clear_dwell_samples, 1):
         return ClearSignal(key=key, observed_at=observed_at), DwellState()
     return None, new
+
+
+def _render_state(rule: Rule, key: AlarmKey) -> str:
+    """Message for a binary point.
+
+    The instance IS the fault - `Alarm_Leak`, `Battery_Fault` - so the message
+    names it rather than reporting that something equals 1.0, which is what the
+    numeric renderer would produce.
+    """
+    point = (key.instance or rule.metric_key or "point").replace("_", " ")
+    try:
+        return rule.message_tpl.format(
+            point=point, instance=key.instance, metric=rule.metric_key,
+            alarm_type=rule.alarm_type, value=point, threshold="")
+    except (KeyError, IndexError, ValueError):
+        return f"{point} asserted"
 
 
 def _render(rule: Rule, value: float) -> str:

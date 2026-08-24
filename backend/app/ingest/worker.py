@@ -373,6 +373,18 @@ class IngestWorker:
                         instance=s.instance, value=bool(s.bool_value), quality=quality))
                     self._note_hot(hot, ws_frames, s.device_id, s.metric,
                                    bool(s.bool_value), observed, quality)
+                    # Booleans reach the rules too. Equipment publishes its own
+                    # faults as binary points - a BACnet Alarm_Leak, a Modbus
+                    # breaker bit - and until now they were stored and never
+                    # evaluated: 38 points streaming in from the plant that
+                    # could not raise anything. Carried as 1.0/0.0 so one dwell
+                    # and one clear path serve both kinds of rule.
+                    rule_inputs.append({
+                        "device_id": s.device_id, "device_type": ctx.device_type,
+                        "metric": s.metric, "instance": s.instance,
+                        "value": 1.0 if s.bool_value else 0.0,
+                        "observed_at": observed, "endpoint_id": s.endpoint_id,
+                    })
                     continue
 
                 if s.value_type == int(ValueType.COUNTER):

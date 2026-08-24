@@ -25,7 +25,8 @@ async def load_rules(session: AsyncSession) -> list[dict[str, Any]]:
                clear_threshold::float8 AS clear_threshold,
                dwell_samples, dwell_seconds, clear_dwell_samples,
                severity::text AS severity, device_types, message_tpl,
-               stale_after_s, enabled, device_total_only, category, detection
+               stale_after_s, enabled, device_total_only, category, detection,
+               metric_kind, raise_on, instances
         FROM alarm_rule WHERE enabled
     """))).mappings().all()
     return [dict(r) for r in rows]
@@ -38,7 +39,8 @@ async def list_rules(session: AsyncSession) -> list[dict[str, Any]]:
                clear_threshold::float8 AS clear_threshold,
                dwell_samples, dwell_seconds, clear_dwell_samples,
                severity::text AS severity, device_types, message_tpl,
-               stale_after_s, enabled, device_total_only, category, detection
+               stale_after_s, enabled, device_total_only, category, detection,
+               metric_kind, raise_on, instances
         FROM alarm_rule ORDER BY alarm_type, name
     """))).mappings().all()
     return [dict(r) for r in rows]
