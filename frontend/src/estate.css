@@ -1,0 +1,280 @@
+/* The estate pages: thermal, power, utilisation.
+ *
+ * These borrow an information architecture that works for operators - one
+ * headline band, one dense table, one scope toggle - but deliberately not a
+ * visual identity. Concretely, and on purpose:
+ *
+ *   * dividers are straight hairlines, never skewed rules;
+ *   * the headline reads caption-above-value with a short accent underline,
+ *     rather than an oversized numeral with a unit hung off its shoulder;
+ *   * the table marks a row with a 2 px left rule, not a filled tint block;
+ *   * radii stay at 4 px and nothing is pill-shaped.
+ *
+ * Every colour comes from the tokens in index.css. No raw hex here.
+ */
+
+/* --- page header ---------------------------------------------------------- */
+
+.estate {
+  display: flex; flex-direction: column; gap: 16px; min-width: 0;
+}
+
+.estate-head {
+  display: flex; align-items: flex-end; gap: 28px; flex-wrap: wrap;
+  padding-bottom: 14px; border-bottom: 1px solid var(--border);
+}
+.estate-head .title { min-width: 0; }
+.estate-head h2 {
+  margin: 0; font-size: 21px; font-weight: 650; letter-spacing: -.01em;
+}
+.estate-head .sub {
+  margin: 4px 0 0; font-size: 12px; color: var(--text-muted);
+}
+.estate-head .sub a { color: var(--accent); }
+
+/* The KPI band. Caption first: the reader is scanning for a label, and a
+   column of numbers with the labels underneath makes them read every value
+   before finding the one they wanted. */
+.kpi-band {
+  display: flex; flex-wrap: wrap; gap: 0; margin-left: auto;
+}
+.kpi-band .kpi {
+  display: flex; flex-direction: column; gap: 3px;
+  padding: 0 22px; border-left: 1px solid var(--border);
+}
+.kpi-band .kpi:first-child { border-left: none; padding-left: 0; }
+.kpi-band .cap {
+  font-size: 10px; font-weight: 600; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--text-faint);
+}
+.kpi-band .val {
+  display: flex; align-items: baseline; gap: 4px;
+  font-size: 27px; font-weight: 600; line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+.kpi-band .val .u { font-size: 12px; font-weight: 500; color: var(--text-muted); }
+.kpi-band .rule { height: 2px; width: 26px; border-radius: 1px; background: var(--accent); }
+.kpi-band .kpi.ok       .rule { background: var(--ok); }
+.kpi-band .kpi.warn     .rule { background: var(--warn); }
+.kpi-band .kpi.critical .rule { background: var(--critical); }
+.kpi-band .kpi.absent .val { color: var(--unknown); }
+.kpi-band .kpi.absent .rule { background: var(--unknown); }
+
+/* --- toolbar -------------------------------------------------------------- */
+
+.estate-tools {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  min-width: 0;
+}
+.scope-tabs { display: flex; gap: 0; }
+.scope-tabs button {
+  background: none; border: none; border-bottom: 2px solid transparent;
+  color: var(--text-muted); font: inherit; font-size: 11px; font-weight: 700;
+  letter-spacing: .11em; padding: 8px 14px; cursor: pointer; border-radius: 0;
+}
+.scope-tabs button:hover { color: var(--text); }
+.scope-tabs button.active { color: var(--text); border-bottom-color: var(--accent); }
+
+.estate-tools .grow { flex: 1; min-width: 160px; }
+.estate-tools input[type="search"],
+.estate-tools input[type="date"] {
+  height: 34px; background: var(--bg-inset); border: 1px solid var(--border);
+  border-radius: 4px; color: var(--text); font-size: 12px; padding: 0 10px;
+}
+.estate-tools .field { display: flex; flex-direction: column; gap: 3px; }
+.estate-tools .field > span {
+  font-size: 10px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+/* Segmented control. Square, hairline-divided, one active cell - no pills. */
+.seg { display: flex; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+.seg button {
+  background: var(--bg-inset); border: none; border-radius: 0;
+  border-left: 1px solid var(--border);
+  color: var(--text-muted); font: inherit; font-size: 11px; font-weight: 600;
+  letter-spacing: .09em; padding: 0 14px; height: 34px; cursor: pointer;
+}
+.seg button:first-child { border-left: none; }
+.seg button:hover { color: var(--text); }
+.seg button.active { background: var(--bg-raised); color: var(--text); box-shadow: inset 0 -2px 0 var(--accent); }
+
+/* --- table ---------------------------------------------------------------- */
+
+.estate-panel {
+  background: var(--bg-raised); border: 1px solid var(--border);
+  border-radius: 4px; display: flex; flex-direction: column; min-width: 0;
+}
+.estate-scroll { overflow-x: auto; min-width: 0; }
+
+.estate-table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 760px; }
+.estate-table thead th {
+  position: sticky; top: 0; z-index: 1;
+  background: var(--bg-inset); border-bottom: 1px solid var(--border);
+  height: 40px; padding: 0 12px; white-space: nowrap;
+  font-size: 10px; font-weight: 700; letter-spacing: .11em;
+  text-transform: uppercase; color: var(--text-muted); text-align: left;
+}
+.estate-table thead th.num, .estate-table tbody td.num { text-align: right; }
+.estate-table thead th.mid, .estate-table tbody td.mid { text-align: center; }
+.estate-table thead th button {
+  background: none; border: none; padding: 0; color: inherit; font: inherit;
+  letter-spacing: inherit; cursor: pointer; display: inline-flex; gap: 5px;
+  align-items: center;
+}
+.estate-table thead th button:hover { color: var(--text); }
+.estate-table thead th .caret { font-size: 9px; color: var(--accent); }
+
+.estate-table tbody td {
+  height: 46px; padding: 0 12px; border-bottom: 1px solid var(--border);
+  font-variant-numeric: tabular-nums;
+}
+/* The row marker: a rule on the leading edge, drawn in the row's own state
+   colour. Cheap to scan down, and it never fills a cell with colour that the
+   number then has to fight. */
+.estate-table tbody tr { border-left: 2px solid transparent; }
+.estate-table tbody tr:hover { background: var(--bg); }
+.estate-table tbody tr.lead-ok       { border-left-color: var(--ok); }
+.estate-table tbody tr.lead-warn     { border-left-color: var(--warn); }
+.estate-table tbody tr.lead-critical { border-left-color: var(--critical); }
+.estate-table tbody tr.lead-none     { border-left-color: var(--border-strong); }
+
+.estate-table .name-cell { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.estate-table .name-cell .n { font-weight: 600; }
+.estate-table .name-cell .where { font-size: 11px; color: var(--text-faint); }
+.estate-table .dash { color: var(--unknown); }
+.estate-table .why { font-size: 11px; color: var(--text-faint); }
+
+/* The selected-site band above the table when a site has been drilled into. */
+.estate-selected {
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  padding: 12px 16px; border-bottom: 1px solid var(--border);
+  background: var(--bg-inset);
+}
+.estate-selected .back {
+  background: none; border: 1px solid var(--border); border-radius: 4px;
+  color: var(--text-muted); cursor: pointer; height: 28px; padding: 0 10px;
+  font-size: 11px; letter-spacing: .08em; font-weight: 600;
+}
+.estate-selected .back:hover { color: var(--text); border-color: var(--border-strong); }
+.estate-selected .who { font-weight: 600; }
+.estate-selected .pairs { display: flex; gap: 22px; margin-left: auto; flex-wrap: wrap; }
+.estate-selected .pair { display: flex; flex-direction: column; gap: 2px; }
+.estate-selected .pair .cap {
+  font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--text-faint);
+}
+.estate-selected .pair .v { font-variant-numeric: tabular-nums; font-weight: 600; }
+
+/* --- delta ---------------------------------------------------------------- */
+
+/* Direction is carried by the arrow AND the sign, so the colour is the third
+   signal rather than the only one. */
+.delta { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; }
+.delta.up { color: var(--major); }
+.delta.down { color: var(--accent); }
+.delta.flat { color: var(--text-faint); }
+.delta.none { color: var(--unknown); }
+
+/* --- footer --------------------------------------------------------------- */
+
+.estate-foot {
+  display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+  padding: 0 16px; height: 52px; border-top: 1px solid var(--border);
+  font-size: 12px; color: var(--text-muted);
+}
+.estate-foot select { height: 28px; padding: 0 6px; }
+.estate-foot .pager { display: flex; gap: 10px; margin-left: auto; }
+.estate-foot .pager button {
+  background: none; border: none; color: var(--text-faint); font: inherit;
+  cursor: pointer; padding: 2px 6px;
+}
+.estate-foot .pager button:disabled { opacity: .4; cursor: default; }
+.estate-foot .csv {
+  background: none; border: 1px solid var(--border); border-radius: 4px;
+  color: var(--text-muted); height: 28px; padding: 0 12px; cursor: pointer;
+  font-size: 11px; font-weight: 600; letter-spacing: .08em;
+}
+.estate-foot .csv:hover { color: var(--text); border-color: var(--border-strong); }
+
+/* Footnotes: what this page cannot tell you, printed under it rather than
+   left for the reader to infer from a column of dashes. */
+.estate-notes {
+  display: flex; flex-direction: column; gap: 6px;
+  font-size: 11px; color: var(--text-faint); padding: 0 2px;
+}
+.estate-notes li { list-style: none; padding-left: 14px; position: relative; }
+.estate-notes li::before {
+  content: ""; position: absolute; left: 0; top: 7px;
+  width: 6px; height: 1px; background: var(--border-strong);
+}
+
+/* --- modal ---------------------------------------------------------------- */
+
+.modal-scrim {
+  position: fixed; inset: 0; background: rgba(0, 0, 0, .68);
+  z-index: 50; display: flex; padding: 40px 32px; overflow-y: auto;
+}
+.modal {
+  margin: auto; width: min(1080px, 100%);
+  background: var(--bg-raised); border: 1px solid var(--border-strong);
+  border-radius: 4px; box-shadow: 0 24px 60px rgba(0, 0, 0, .5);
+}
+.modal-head {
+  display: flex; align-items: flex-start; gap: 16px;
+  padding: 20px 24px 14px; border-bottom: 1px solid var(--border);
+}
+.modal-head h3 { margin: 0; font-size: 17px; }
+.modal-head h3 .count { color: var(--text-muted); font-weight: 500; }
+.modal-head p { margin: 6px 0 0; font-size: 12px; color: var(--text-muted); max-width: 76ch; }
+.modal-head .close {
+  margin-left: auto; background: none; border: none; color: var(--text-muted);
+  font-size: 20px; line-height: 1; cursor: pointer; padding: 0 4px;
+}
+.modal-head .close:hover { color: var(--text); }
+.modal-body { padding: 16px 24px 22px; }
+
+/* The legend, shared by the alert-status modal and the drill-downs. */
+.legend-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 22px;
+}
+.legend-col h4 {
+  margin: 0 0 8px; font-size: 12px; letter-spacing: .06em; text-transform: uppercase;
+}
+.legend-col p { margin: 0 0 12px; font-size: 12px; color: var(--text-muted); }
+.legend-item {
+  display: flex; align-items: center; gap: 10px; padding: 7px 0;
+  border-top: 1px solid var(--border); font-size: 12px;
+}
+.legend-swatch {
+  width: 4px; height: 20px; border-radius: 1px; background: var(--unknown); flex: none;
+}
+.legend-swatch.thermal { background: var(--warn); }
+.legend-swatch.connectivity { background: var(--critical); }
+.legend-swatch.datapoint { background: var(--major); }
+.legend-swatch.anomaly { background: var(--accent); }
+.legend-swatch.other { background: var(--text-faint); }
+
+@media (max-width: 900px) {
+  .estate-head { align-items: flex-start; }
+  .kpi-band { margin-left: 0; }
+  .kpi-band .kpi { padding: 0 14px; }
+}
+
+/* --- utilisation bar ------------------------------------------------------
+ *
+ * Its own rules rather than the analytics `.inline-bar`, which carries a
+ * `min-width: 56px` on its inner span - reusing it painted every bar the same
+ * length whatever the percentage, which is worse than showing no bar at all.
+ */
+.ubar { display: block; width: 74px; height: 6px; border-radius: 3px;
+        background: var(--bg-inset); overflow: hidden; }
+.ubar > i { display: block; height: 100%; border-radius: 3px; background: var(--ok); }
+.ubar > i.warn { background: var(--warn); }
+.ubar > i.critical { background: var(--critical); }
+/* Nothing measured: hatched, never an empty track. An empty bar reads as
+   headroom, which is the opposite of "no denominator was found". */
+.ubar.unknown {
+  background: repeating-linear-gradient(45deg,
+    var(--bg-inset), var(--bg-inset) 4px, var(--border) 4px, var(--border) 8px);
+}

@@ -24,6 +24,8 @@ import {
 import { CategoryGlyph, type GlyphKind } from '../../components/CategoryGlyph';
 import { useInvalidateOn, useTopics } from '../../ws/useSocket';
 import { SiteDrawer } from './SiteDrawer';
+import { RoomDrawer } from './RoomDrawer';
+import { AlertDrilldown, AlertLegend } from './AlertModals';
 import { RailCards } from './RailCards';
 
 const ALARM_EVENTS = ['alarm_created', 'alarm_updated', 'alarm_cleared'];
@@ -88,6 +90,13 @@ export function Home() {
   const [filter, setFilter] = useState<AlertCategory | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [drawerSite, setDrawerSite] = useState<SiteRow | null>(null);
+  const [drawerRoom, setDrawerRoom] = useState<SiteRoom | null>(null);
+  const [legendOpen, setLegendOpen] = useState(false);
+  const [drill, setDrill] = useState<AlertCategory | null>(null);
+  // ROOMS scoped to one site. Set by clicking a site's room count, because
+  // that count provokes exactly one question - "which five rooms?" - and
+  // answering it by scrolling every room in the estate is not an answer.
+  const [roomsSite, setRoomsSite] = useState<SiteRow | null>(null);
   const [pageSize, setPageSize] = useState(25);
   const [page, setPage] = useState(0);
 
@@ -110,7 +119,11 @@ export function Home() {
   };
 
   const visibleSites = sites.filter((s) => matches(`${s.code} ${s.name}`, s.alerts));
-  const visibleRooms = rooms.filter((r) => matches(`${r.datacenter_code} ${r.name}`, r.alerts));
+  const scopedRooms = roomsSite
+    ? rooms.filter((r) => r.datacenter_id === roomsSite.id)
+    : rooms;
+  const visibleRooms = scopedRooms.filter(
+    (r) => matches(`${r.datacenter_code} ${r.name}`, r.alerts));
 
   const rowsAll: (SiteRow | SiteRoom)[] = tab === 'sites' ? visibleSites : visibleRooms;
   const pageCount = Math.max(1, Math.ceil(rowsAll.length / pageSize));
@@ -130,7 +143,10 @@ export function Home() {
       <section className="alert-strip">
         <span className="site-title">DCIM Platform</span>
         <span className="spacer" />
-        <span className="caption"><span className="ring" /> Alert Status</span>
+        <button className="caption" onClick={() => setLegendOpen(true)}
+                title="What each counter counts">
+          <span className="ring" /> Alert status
+        </button>
 
         {COUNTERS.map((c) => {
           const n = data
@@ -138,20 +154,32 @@ export function Home() {
             : 0;
           const active = c.key !== null && filter === c.key;
           return (
-            <button key={c.label}
-                    className={`alert-counter ${c.tone} ${n === 0 ? 'zero' : ''}`}
-                    aria-pressed={active}
-                    // The total is a headline, not a facet: there is nothing to
-                    // filter to when every category is already included.
-                    disabled={c.key === null}
-                    onClick={() => { setFilter(active ? null : c.key); setPage(0); }}>
-              <span className="row">
-                <span className="n">{n}</span>
-                <CategoryGlyph kind={c.glyph} size={24} />
-              </span>
-              <span className="name">{c.label}</span>
+            <div key={c.label} className={`alert-counter ${c.tone} ${n === 0 ? 'zero' : ''}`}>
+              <button className="face"
+                      aria-pressed={active}
+                      // The total is a headline, not a facet: there is nothing
+                      // to filter to when every category is already included.
+                      disabled={c.key === null}
+                      title={c.key === null
+                        ? 'Every open alarm'
+                        : `Filter the table to ${c.label.toLowerCase()}`}
+                      onClick={() => { setFilter(active ? null : c.key); setPage(0); }}>
+                <span className="row">
+                  <span className="n">{n}</span>
+                  <CategoryGlyph kind={c.glyph} size={24} />
+                </span>
+                <span className="name">{c.label}</span>
+              </button>
+              {/* The counter filters the table; this lists what is behind it.
+                  Two different questions - "show me only those" and "which
+                  ones" - so two controls rather than one that has to guess. */}
+              <button className="drill" disabled={c.key === null || n === 0}
+                      title={`List the rooms with ${c.label.toLowerCase()}`}
+                      onClick={() => setDrill(c.key)}>
+                LIST
+              </button>
               <span className="rule" />
-            </button>
+            </div>
           );
         })}
       </section>
@@ -171,6 +199,11 @@ export function Home() {
                      aria-label={`Search ${tab}`}
                      onChange={(e) => { setSearch(e.target.value); setPage(0); }} />
             </label>
+            {roomsSite && (
+              <button className="row-btn" onClick={() => { setRoomsSite(null); setPage(0); }}>
+                BACK TO ALL ROOMS
+              </button>
+            )}
             {filter && (
               <button className="row-btn" onClick={() => setFilter(null)}>
                 CLEAR FILTER
@@ -194,7 +227,9 @@ export function Home() {
           <table className="sites-table">
             <thead>
               <tr>
-                <th>{tab === 'sites' ? 'Site' : 'Room'}</th>
+                <th>
+                  {tab === 'sites' ? 'Site' : roomsSite ? `Room in ${roomsSite.code}` : 'Room'}
+                </th>
                 <th>{tab === 'sites' ? 'Location' : 'Type'}</th>
                 <th className="ind-h">{tab === 'sites' ? 'Rooms' : 'Racks'}</th>
                 {INDICATORS.map((i) => (
@@ -224,7 +259,9 @@ export function Home() {
               {tab === 'sites' && (rows as SiteRow[]).map((s) => (
                 <FragmentRow key={s.id} site={s} open={expanded.has(s.id)}
                              onToggle={() => toggle(s.id)}
-                             onKpis={() => setDrawerSite(s)} />
+                             onKpis={() => setDrawerSite(s)}
+                             onRooms={() => { setRoomsSite(s); setTab('rooms'); setPage(0); }}
+                             onRoomKpis={(r) => setDrawerRoom(r)} />
               ))}
 
               {tab === 'rooms' && (rows as SiteRoom[]).map((r) => (
@@ -241,10 +278,7 @@ export function Home() {
                   {severityCell(r.alerts.critical, 'critical')}
                   {severityCell(r.alerts.major, 'major')}
                   <td className="ind-cell">
-                    <Link className="row-btn" to={`/analytics?room=${r.id}`}
-                          style={{ display: 'inline-block', lineHeight: '26px', textAlign: 'center' }}>
-                      KPIs
-                    </Link>
+                    <button className="row-btn" onClick={() => setDrawerRoom(r)}>KPIs</button>
                   </td>
                   <td className="ind-cell">
                     <Link className="row-btn primary" to={`/floorplan?room=${r.id}`}
@@ -286,13 +320,22 @@ export function Home() {
       {drawerSite && (
         <SiteDrawer site={drawerSite} onClose={() => setDrawerSite(null)} />
       )}
+
+      {drawerRoom && (
+        <RoomDrawer roomId={drawerRoom.id} roomName={drawerRoom.name}
+                    onClose={() => setDrawerRoom(null)} />
+      )}
+
+      {legendOpen && <AlertLegend onClose={() => setLegendOpen(false)} />}
+      {drill && <AlertDrilldown category={drill} onClose={() => setDrill(null)} />}
     </>
   );
 }
 
 /** A site row plus, when expanded, its rooms as children of the same table. */
-function FragmentRow({ site, open, onToggle, onKpis }: {
+function FragmentRow({ site, open, onToggle, onKpis, onRooms, onRoomKpis }: {
   site: SiteRow; open: boolean; onToggle: () => void; onKpis: () => void;
+  onRooms: () => void; onRoomKpis: (room: SiteRoom) => void;
 }) {
   return (
     <>
@@ -313,7 +356,16 @@ function FragmentRow({ site, open, onToggle, onKpis }: {
             ? [site.city, site.country].filter(Boolean).join(', ')
             : <span className="unset">not set</span>}
         </td>
-        <td className="num">{site.room_count}</td>
+        <td className="num">
+          {site.room_count > 0
+            ? (
+              <button className="linky" onClick={onRooms}
+                      title={`Show the ${site.room_count} rooms in ${site.code}`}>
+                {site.room_count}
+              </button>
+            )
+            : 0}
+        </td>
         {indicatorCells(site.alerts)}
         {severityCell(site.alerts.critical, 'critical')}
         {severityCell(site.alerts.major, 'major')}
@@ -342,10 +394,7 @@ function FragmentRow({ site, open, onToggle, onKpis }: {
           {severityCell(r.alerts.critical, 'critical')}
           {severityCell(r.alerts.major, 'major')}
           <td className="ind-cell">
-            <Link className="row-btn" to={`/analytics?room=${r.id}`}
-                  style={{ display: 'inline-block', lineHeight: '24px', textAlign: 'center' }}>
-              KPIs
-            </Link>
+            <button className="row-btn" onClick={() => onRoomKpis(r)}>KPIs</button>
           </td>
           <td className="ind-cell">
             <Link className="row-btn" to={`/floorplan?room=${r.id}`}

@@ -6,6 +6,9 @@ import { AlarmList } from './features/alarms/AlarmList';
 import { Analytics } from './features/analytics/Analytics';
 import { PlatformHealth } from './features/platform/PlatformHealth';
 import { Home } from './features/home/Home';
+import { Thermal } from './features/estate/Thermal';
+import { Power } from './features/estate/Power';
+import { Utilization } from './features/estate/Utilization';
 import { DeviceDetail } from './features/devices/DeviceDetail';
 import { RackElevationView } from './features/racks/RackElevation';
 import { RackList } from './features/racks/RackList';
@@ -161,11 +164,13 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Home />} />
 
-          {/* Top-level nav. Thermal, Power and Utilisation land on the
-              analytics section with the right panel already selected. */}
-          <Route path="/thermal" element={<Page><Analytics initialTab="thermal" /></Page>} />
-          <Route path="/power" element={<Page><Analytics initialTab="power" /></Page>} />
-          <Route path="/utilization" element={<Page><Analytics initialTab="capacity" /></Page>} />
+          {/* The estate pages: every site and room at once, one question each.
+              The older analytics section stays reachable from each of their
+              sub-links, because it answers the follow-up - this page tells you
+              WHICH room is hot, that one tells you why. */}
+          <Route path="/thermal" element={<Page><Thermal /></Page>} />
+          <Route path="/power" element={<Page><Power /></Page>} />
+          <Route path="/utilization" element={<Page><Utilization /></Page>} />
           <Route path="/connectivity" element={<Page><PlatformHealth /></Page>} />
           <Route path="/assets" element={<Page><DeviceList /></Page>} />
 

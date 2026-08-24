@@ -665,6 +665,144 @@ export interface SiteKpi {
   as_of: string;
 }
 
+/* ------------------------------------------------------------------ estate
+ *
+ * Thermal, power and utilisation share one row shape so a single table can
+ * render all three. Every optional number is genuinely optional: `null` means
+ * nothing measured it, which the UI must show as a dash and a reason rather
+ * than as a zero.
+ */
+
+export interface EstateRowBase {
+  id: string;
+  kind: 'site' | 'room';
+  name: string;
+  site_id: string;
+  site_code: string;
+  site_name: string;
+  floor?: string | null;
+  room_type?: string | null;
+  room_count?: number;
+  rack_count?: number;
+  note?: string | null;
+}
+
+export interface ThermalRow extends EstateRowBase {
+  avg_c: number | null;
+  max_c: number | null;
+  compliance_pct: number | null;
+  samples: number;
+  delta_avg: number | null;
+  delta_max: number | null;
+}
+
+export interface ThermalPage {
+  window: {
+    mode: string; label: string; compare_label: string;
+    focus_start: string; focus_end: string;
+  };
+  band: { low_c: number; high_c: number; basis: string };
+  totals: {
+    avg_c: number | null; max_c: number | null; compliance_pct: number | null;
+    samples: number; rooms_reporting: number; rooms: number;
+  };
+  sites: ThermalRow[];
+  rooms: ThermalRow[];
+  notes: string[];
+}
+
+export interface PowerRow extends EstateRowBase {
+  total_kw: number | null;
+  it_ac_kw: number | null;
+  /** No DC bus is metered in this estate; always null, rendered as a dash. */
+  it_dc_kw: number | null;
+  cooling_kw: number | null;
+  other_kw: number | null;
+  pue: number | null;
+  delta_total: number | null;
+}
+
+export interface PowerPage {
+  window: {
+    mode: string; label?: string; start?: string; end?: string;
+    bucket_seconds?: number;
+  };
+  totals: {
+    total_kw: number | null; it_ac_kw: number | null; it_dc_kw: number | null;
+    cooling_kw: number | null; other_kw: number | null; pue: number | null;
+    rooms_reporting: number; rooms: number;
+  };
+  sites: PowerRow[];
+  rooms: PowerRow[];
+  notes: string[];
+}
+
+export interface UtilRow extends EstateRowBase {
+  space_pct: number | null;
+  space_used_u: number;
+  space_total_u: number;
+  power_pct: number | null;
+  power_used_kw: number;
+  power_capacity_kw: number | null;
+  /** Which denominator was available - a design rating, or summed nameplate. */
+  power_basis: string;
+  cooling_pct: number | null;
+  cooling_used_kw: number;
+  cooling_capacity_kw: number | null;
+  cooling_basis: string;
+}
+
+export interface UtilPage {
+  totals: {
+    space_pct: number | null; power_used_kw: number;
+    cooling_capacity_kw: number | null; cooling_pct: number | null;
+    racks: number; rooms: number;
+  };
+  sites: UtilRow[];
+  rooms: UtilRow[];
+  notes: string[];
+}
+
+export interface AlertDrill {
+  category: string;
+  rows: Array<{
+    room_id: string; room_name: string; floor: string | null;
+    site_id: string; site_code: string; site_name: string;
+    qty: number; devices: number; critical: number; major: number;
+  }>;
+  total: number;
+  /** Platform alarms belong to no room; counted, never silently dropped. */
+  unlocated: number;
+}
+
+export interface RoomKpi {
+  room: {
+    id: string; name: string; room_type: string | null; floor: string | null;
+    design_it_kw: number | null; datacenter_id: string;
+    site_code: string; site_name: string; city: string | null;
+  };
+  monitored: {
+    devices: number; online: number; offline: number; racks: number;
+    cooling_units: number; cooling_online: number;
+    power_units: number; power_online: number;
+  };
+  environmental: {
+    avg_c: number | null; max_c: number | null; compliance_pct: number | null;
+    band: { low_c: number; high_c: number };
+    note: string | null; humidity_note: string;
+  };
+  power: {
+    total_kw: number | null; it_ac_kw: number | null; it_dc_kw: number | null;
+    cooling_kw: number | null; pue: number | null; note: string | null;
+  };
+  utilisation: {
+    space_pct: number | null; power_pct: number | null; power_basis: string;
+    cooling_pct: number | null; cooling_basis: string;
+  };
+  last_sample: string | null;
+  as_of: string;
+}
+
 export const api = {
   login: (username: string, password: string) =>
     request<{ token: string; expires_in: number; username: string; role: string }>(
@@ -791,6 +929,33 @@ export const api = {
     if (opts.capacity) q.set('capacity', String(opts.capacity));
     return request<ForecastResult>(`/analytics/forecast?${q.toString()}`);
   },
+
+  /** Estate thermal: one request serves both the SITES and ROOMS scopes. */
+  estateThermal: (params: { focus?: string; compare?: string; mode?: string } = {}) => {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) if (v) q.set(k, v);
+    const qs = q.toString();
+    return request<ThermalPage>(`/estate/thermal${qs ? `?${qs}` : ''}`);
+  },
+
+  estatePower: (params: {
+    start?: string; end?: string; mode?: string; live?: boolean;
+  } = {}) => {
+    const q = new URLSearchParams();
+    if (params.start) q.set('start', params.start);
+    if (params.end) q.set('end', params.end);
+    if (params.mode) q.set('mode', params.mode);
+    if (params.live) q.set('live', 'true');
+    const qs = q.toString();
+    return request<PowerPage>(`/estate/power${qs ? `?${qs}` : ''}`);
+  },
+
+  estateUtilization: () => request<UtilPage>('/estate/utilization'),
+
+  estateAlerts: (category: string) =>
+    request<AlertDrill>(`/estate/alerts?category=${encodeURIComponent(category)}`),
+
+  roomKpi: (roomId: string) => request<RoomKpi>(`/estate/rooms/${roomId}/kpi`),
 
   collectorHealth: () => request<CollectorHealth>('/collector/health'),
 
