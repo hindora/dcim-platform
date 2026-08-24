@@ -56,6 +56,13 @@ class Rule:
     device_types: tuple[str, ...] = ()
     stale_after_s: int | None = None
     enabled: bool = True
+    #: Override the classifier for this rule's alarms. Left None unless the
+    #: three-layer resolution gets a condition wrong - a rule that has to state
+    #: its own category is usually a sign the classifier needs the entry, not
+    #: that this rule is special.
+    category: str | None = None
+    #: How this rule detects: threshold, state, absence, derived, forecast.
+    detection: str | None = None
     #: Evaluate only the device-level sample, ignoring per-instance ones.
     #:
     #: Some instances are a BREAKDOWN of the device total rather than separate

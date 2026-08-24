@@ -14,6 +14,8 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import alert_taxonomy
+
 # ------------------------------------------------------------------- rules
 
 async def load_rules(session: AsyncSession) -> list[dict[str, Any]]:
@@ -23,7 +25,7 @@ async def load_rules(session: AsyncSession) -> list[dict[str, Any]]:
                clear_threshold::float8 AS clear_threshold,
                dwell_samples, dwell_seconds, clear_dwell_samples,
                severity::text AS severity, device_types, message_tpl,
-               stale_after_s, enabled, device_total_only
+               stale_after_s, enabled, device_total_only, category, detection
         FROM alarm_rule WHERE enabled
     """))).mappings().all()
     return [dict(r) for r in rows]
@@ -36,7 +38,7 @@ async def list_rules(session: AsyncSession) -> list[dict[str, Any]]:
                clear_threshold::float8 AS clear_threshold,
                dwell_samples, dwell_seconds, clear_dwell_samples,
                severity::text AS severity, device_types, message_tpl,
-               stale_after_s, enabled, device_total_only
+               stale_after_s, enabled, device_total_only, category, detection
         FROM alarm_rule ORDER BY alarm_type, name
     """))).mappings().all()
     return [dict(r) for r in rows]
@@ -59,22 +61,39 @@ async def raise_alarm(session: AsyncSession, *, device_id: str, alarm_type: str,
                       endpoint_id: str | None = None,
                       metric_key: str | None = None,
                       value: float | None = None,
-                      threshold: float | None = None) -> dict[str, Any] | None:
+                      threshold: float | None = None,
+                      category: str | None = None) -> dict[str, Any] | None:
     """Insert or update the open alarm for this key.
 
     Returns the alarm plus a `change` describing what happened - created,
     escalated, deescalated or touched - so the caller can decide what is worth
     telling a browser about. A repeat of an unchanged alarm produces no event:
     an alarm list that reshuffles every poll is unusable.
+
+    The category is stamped HERE rather than derived per query, because
+    classification is role-sensitive (a fan on a CRAH is cooling, a fan in a
+    server is IT) and the role has to be joined through device_type. Doing it
+    once at raise time also means an alarm keeps the category it was raised
+    under when a device is later re-typed - history should say what was true
+    then. A rule may override it; otherwise the three-layer classifier decides.
     """
-    row = (await session.execute(text("""
+    row = (await session.execute(text(f"""
         INSERT INTO alarm (device_id, endpoint_id, alarm_type, instance, rule_id,
                            severity, state, message, metric_key, trigger_value,
-                           threshold, source, first_seen, last_seen)
-        VALUES (CAST(:device_id AS uuid), CAST(:endpoint_id AS uuid), :alarm_type,
-                :instance, CAST(:rule_id AS uuid), CAST(:severity AS severity_t),
-                'ACTIVE', :message, :metric_key, :value, :threshold, :source,
-                :observed_at, :observed_at)
+                           threshold, source, first_seen, last_seen,
+                           category, detection)
+        SELECT CAST(:device_id AS uuid), CAST(:endpoint_id AS uuid), :alarm_type,
+               :instance, CAST(:rule_id AS uuid), CAST(:severity AS severity_t),
+               'ACTIVE', :message, :metric_key, :value, :threshold, :source,
+               :observed_at, :observed_at,
+               COALESCE(:category, {alert_taxonomy.sql_case(
+                   alarm_type_col=":alarm_type",
+                   role_col="dt.category",
+                   metric_col=":metric_key")}),
+               :detection
+          FROM device d
+          LEFT JOIN device_type dt ON dt.code = d.device_type
+         WHERE d.id = CAST(:device_id AS uuid)
         ON CONFLICT (device_id, alarm_type, instance) WHERE state <> 'CLEARED'
         DO UPDATE SET
             prev_severity    = alarm.severity,
@@ -92,7 +111,8 @@ async def raise_alarm(session: AsyncSession, *, device_id: str, alarm_type: str,
         "alarm_type": alarm_type, "instance": instance, "rule_id": rule_id,
         "severity": severity, "message": message, "metric_key": metric_key,
         "value": value, "threshold": threshold, "source": source,
-        "observed_at": observed_at,
+        "observed_at": observed_at, "category": category,
+        "detection": alert_taxonomy.detection_for(source, metric_key=metric_key),
     })).mappings().first()
     if row is None:
         return None

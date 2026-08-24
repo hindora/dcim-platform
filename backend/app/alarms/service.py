@@ -66,6 +66,7 @@ class AlarmService:
                 device_types=tuple(r["device_types"] or ()),
                 stale_after_s=r["stale_after_s"], enabled=r["enabled"],
                 device_total_only=bool(r.get("device_total_only")),
+                category=r.get("category"), detection=r.get("detection"),
             )
             for r in rows
         ]
