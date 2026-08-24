@@ -91,9 +91,13 @@ async def raise_alarm(session: AsyncSession, *, device_id: str, alarm_type: str,
                    role_col="dt.category",
                    metric_col=":metric_key")}),
                :detection
-          FROM device d
+          -- One row ALWAYS, whatever the joins find. Selecting FROM device
+          -- instead would insert nothing at all when an alarm has no device
+          -- behind it - the alarm would vanish rather than be classified, and
+          -- vanishing alarms are the failure this whole area keeps producing.
+          FROM (SELECT 1) AS one
+          LEFT JOIN device d       ON d.id = CAST(:device_id AS uuid)
           LEFT JOIN device_type dt ON dt.code = d.device_type
-         WHERE d.id = CAST(:device_id AS uuid)
         ON CONFLICT (device_id, alarm_type, instance) WHERE state <> 'CLEARED'
         DO UPDATE SET
             prev_severity    = alarm.severity,
@@ -402,10 +406,10 @@ async def raise_platform_alarm(session: AsyncSession, *, alarm_type: str,
     row = (await session.execute(text("""
         INSERT INTO alarm (device_id, alarm_type, instance, severity, state,
                            message, trigger_value, threshold, source,
-                           first_seen, last_seen)
+                           first_seen, last_seen, category, detection)
         VALUES (NULL, :alarm_type, :instance, CAST(:severity AS severity_t),
                 'ACTIVE', :message, :value, :threshold, :source,
-                :observed_at, :observed_at)
+                :observed_at, :observed_at, :category, :detection)
         ON CONFLICT (device_id, alarm_type, instance) WHERE state <> 'CLEARED'
         DO UPDATE SET
             prev_severity    = alarm.severity,
@@ -419,7 +423,13 @@ async def raise_platform_alarm(session: AsyncSession, *, alarm_type: str,
                   alarm_type, instance, message
     """), {"alarm_type": alarm_type, "instance": instance, "severity": severity,
            "message": message, "value": value, "threshold": threshold,
-           "source": source, "observed_at": observed_at})).mappings().first()
+           "source": source, "observed_at": observed_at,
+           # A platform alarm hangs off no device, so the role layer has
+           # nothing to work with and the classifier resolves it from the
+           # alarm type alone - which is right: every one of them is a
+           # statement about our own ability to see the estate.
+           "category": alert_taxonomy.classify(alarm_type),
+           "detection": alert_taxonomy.detection_for(source)})).mappings().first()
     if row is None:
         return None
     out = dict(row)
