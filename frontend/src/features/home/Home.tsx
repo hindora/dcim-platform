@@ -336,8 +336,11 @@ export function Home() {
           const total = c === null;
           const n = !data ? 0
             : total ? data.totals.total : countIn(data.totals, c.categories);
-          // What of that group needs answering. Printed under the number so
-          // "494 open" never reads as "494 to do".
+          // How much of that number is an alarm. Printed under the counter so
+          // "442 open" never reads as "442 to do" - the count above is every
+          // open condition in the domain, and this is the part somebody has to
+          // answer. Two words, because a caption repeated six times across a
+          // wall display should be read at a glance and then ignored.
           const answerable = !data || total ? 0
             : c.categories.reduce(
                 (t, k) => t + (data.totals.by_category_alarms?.[k] ?? 0), 0);
@@ -378,7 +381,7 @@ export function Home() {
               {!total && (
                 <span className={`needs ${answerable > 0 ? 'on' : ''}`}>
                   {n === 0 ? ' '
-                    : answerable > 0 ? `${answerable} to answer` : 'nothing to answer'}
+                    : `${answerable} alarm${answerable === 1 ? '' : 's'}`}
                 </span>
               )}
             </div>
