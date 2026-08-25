@@ -63,6 +63,8 @@
 }
 .topnav a:hover { color: var(--text); text-decoration: none; }
 .topnav a.active { color: var(--text); border-bottom-color: var(--accent); }
+/* Straight, like every other rule on this page. */
+.topnav a { border-radius: 0; }
 .topnav .sep { color: var(--text-faint); font-size: 13px; }
 
 .topbar .utilities {
