@@ -126,7 +126,12 @@ protocols:
 
   # Modbus/TCP for electrical gear and field instruments.
   modbus:
-    enabled: false
+    # ON. The electrical chain reports here: UPS, switchgear, generators, ATS,
+    # the branch-circuit monitors and the plant instruments behind the two Moxa
+    # gateways. With this off the newest load_pct in the database was a day old
+    # and `power-load-high` had nothing current to evaluate, so the power
+    # counter was reading zero on stale data rather than on a quiet estate.
+    enabled: true
     max_concurrent: 24
     # Per HOST, and it must stay 1 for anything behind a serial gateway: the
     # gateway forwards one RS-485 transaction at a time, so parallel requests
@@ -145,7 +150,15 @@ protocols:
   # the gnmi-stream profile). A streamed endpoint is never also polled: the
   # duplicate samples would be indistinguishable from real ones.
   gnmi:
-    enabled: false
+    # ON. Interface state, counters and adjacency for the fabric - the network
+    # category has raised exactly one alarm in the platform's life, which is
+    # what a domain with no feed looks like.
+    #
+    # WATCH THE FIRST CYCLE. Unlike BACnet and Modbus, nothing was listening on
+    # 57400 when this was turned on. If the device plane is not serving gNMI,
+    # 46 endpoints fail their poll and become unreachable alarms - real ones,
+    # correctly raised, about a plane that genuinely cannot be seen.
+    enabled: true
     max_concurrent: 16
     # A gRPC connection is multiplexed, so several concurrent RPCs to one
     # device share it rather than opening sockets.
