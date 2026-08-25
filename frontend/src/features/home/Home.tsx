@@ -73,7 +73,17 @@ function RoomsGlyph({ size = 15 }: { size?: number }) {
  *  Both are a LIST of categories rather than one, because the strip counters
  *  are groups: "Cooling & Environment" is two categories and has to filter and
  *  open as one thing. */
-interface Selection { key: string; label: string; categories: AlarmCategory[] }
+/** Where a click came from, and therefore what the panel may show.
+ *
+ *  A counter on the strip asks about the estate; a cell in DC1's row asks
+ *  about DC1. Opening the same estate-wide list from both made the row's
+ *  number and the panel's number disagree, which is the one thing this page
+ *  cannot do - the reader clicked a 4 and was shown six rooms. */
+interface Scope { kind: 'site' | 'room'; id: string; label: string }
+
+interface Selection {
+  key: string; label: string; categories: AlarmCategory[]; scope?: Scope;
+}
 
 /** Counts within a selection. Categories are mutually exclusive, so summing
  *  them is safe - the one arithmetic this page depends on. */
@@ -81,18 +91,23 @@ function countIn(alarms: AlarmCounts, categories: AlarmCategory[]): number {
   return categories.reduce((n, c) => n + (alarms.by_category?.[c] ?? 0), 0);
 }
 
-function Indicator({ category, count, label, onOpen }: {
-  category: AlarmCategory; count: number; label: string;
+function Indicator({ category, count, label, scope, onOpen }: {
+  category: AlarmCategory; count: number; label: string; scope?: Scope;
   onOpen: (sel: Selection) => void;
 }) {
   const meta = metaFor(category);
   const on = count > 0;
+  const where = scope ? ` in ${scope.label}` : '';
   return (
     <td className="ind-cell">
       <button className={`ind ${meta.tone} ${on ? 'on' : ''}`}
               disabled={!on}
-              title={on ? `${label}: ${count} - list the rooms` : `${label}: 0`}
-              onClick={() => onOpen({ key: category, label, categories: [category] })}>
+              title={on
+                ? `${label}: ${count}${where} - open the list`
+                : `${label}: 0${where}`}
+              onClick={() => onOpen({
+                key: category, label, categories: [category], scope,
+              })}>
         <CategoryGlyph kind={meta.glyph} />
         {on && <span>{count}</span>}
       </button>
@@ -118,8 +133,8 @@ function worst(alarms: AlarmCounts): 'critical' | 'major' | 'minor' | null {
  *  ALM is every open alarm here and the eight cells beside it partition that
  *  number - they are the same population cut by domain, so they add up and can
  *  be read against each other. */
-function IndicatorCells({ alarms, labels, onOpen }: {
-  alarms: AlarmCounts; labels: Record<string, string>;
+function IndicatorCells({ alarms, labels, scope, onOpen }: {
+  alarms: AlarmCounts; labels: Record<string, string>; scope?: Scope;
   onOpen: (sel: Selection) => void;
 }) {
   const n = alarms.total;
@@ -127,18 +142,23 @@ function IndicatorCells({ alarms, labels, onOpen }: {
   return (
     <>
       <td className="ind-cell">
-        <span className={`ind alarms ${sev ? `on sev-${sev}` : ''}`}
-              title={n > 0
-                ? `${n} open alarm${n === 1 ? '' : 's'}: `
-                  + `${alarms.critical} critical, ${alarms.major} major, `
-                  + `${alarms.minor} minor`
-                : 'No open alarms'}>
+        <button className={`ind alarms ${sev ? `on sev-${sev}` : ''}`}
+                disabled={n === 0}
+                title={n > 0
+                  ? `${n} open alarm${n === 1 ? '' : 's'}`
+                    + `${scope ? ` in ${scope.label}` : ''}: `
+                    + `${alarms.critical} critical, ${alarms.major} major, `
+                    + `${alarms.minor} minor`
+                  : 'No open alarms'}
+                onClick={() => onOpen({
+                  key: 'all', label: 'All', categories: [...COLUMN_ORDER], scope,
+                })}>
           <CategoryGlyph kind="alarms" />
           {n > 0 && <span>{n}</span>}
-        </span>
+        </button>
       </td>
       {COLUMN_ORDER.map((c) => (
-        <Indicator key={c} category={c} onOpen={onOpen}
+        <Indicator key={c} category={c} onOpen={onOpen} scope={scope}
                    label={labels[c] ?? c}
                    count={alarms.by_category?.[c] ?? 0} />
       ))}
@@ -406,7 +426,8 @@ export function Home() {
                   </td>
                   <td className="muted">{r.room_type.replace(/_/g, ' ')}</td>
                   <td className="num">{r.rack_count}</td>
-                  <IndicatorCells alarms={r.alarms} labels={labels} onOpen={setDrill} />
+                  <IndicatorCells alarms={r.alarms} labels={labels} onOpen={setDrill}
+                                  scope={{ kind: 'room', id: r.id, label: r.name }} />
                   <td className="ind-cell">
                     <button className="row-btn" onClick={() => setDrawerRoom(r)}>KPIs</button>
                   </td>
@@ -459,7 +480,7 @@ export function Home() {
       {legendOpen && <AlarmLegend onClose={() => setLegendOpen(false)} />}
       {drill && (
         <AlarmPanel categories={drill.categories} title={drill.label}
-                    onClose={() => setDrill(null)} />
+                    scope={drill.scope} onClose={() => setDrill(null)} />
       )}
     </>
   );
@@ -504,7 +525,8 @@ function SiteLine({ site, onKpis, onRooms, labels, onDrill }: {
             )
             : 0}
         </td>
-        <IndicatorCells alarms={site.alarms} labels={labels} onOpen={onDrill} />
+        <IndicatorCells alarms={site.alarms} labels={labels} onOpen={onDrill}
+                        scope={{ kind: 'site', id: site.id, label: site.code }} />
         <td className="ind-cell">
           <button className="row-btn" onClick={onKpis}>KPIs</button>
         </td>

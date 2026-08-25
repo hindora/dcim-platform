@@ -9,6 +9,13 @@
  *  choose which of the returned rows are on screen - none of them recompute a
  *  total, because a headline that disagrees with the rows underneath it is the
  *  failure this whole area keeps producing.
+ *
+ *  `scope` is the one exception, and it is the same rule seen from the other
+ *  side. A cell in DC1's row asks about DC1, so the panel drops every room that
+ *  is not DC1's AND re-totals from what is left - showing the estate's number
+ *  over a site's rows would be the same disagreement, just louder. The rows
+ *  carry their own severity and detection counts, so the facets narrow with
+ *  them exactly rather than approximately.
  */
 
 import { useEffect, useMemo, useState } from 'react';
@@ -80,8 +87,11 @@ function toCsv(rows: Row[], withCategory: boolean, labels: Record<string, string
   return [head.join(','), ...body].join('\n');
 }
 
-export function AlarmPanel({ categories, title, onClose }: {
-  categories: AlarmCategory[]; title: string; onClose: () => void;
+export interface PanelScope { kind: 'site' | 'room'; id: string; label: string }
+
+export function AlarmPanel({ categories, title, scope, onClose }: {
+  categories: AlarmCategory[]; title: string; scope?: PanelScope;
+  onClose: () => void;
 }) {
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState<SortKey>('qty');
@@ -120,8 +130,14 @@ export function AlarmPanel({ categories, title, onClose }: {
     .map((r, i) => (r.data ? { category: categories[i], drill: r.data } : null))
     .filter(Boolean) as { category: AlarmCategory; drill: AlarmDrill }[];
 
-  const total = loaded.reduce((n, d) => n + d.drill.total, 0);
-  const unlocated = loaded.reduce((n, d) => n + d.drill.unlocated, 0);
+  // Rows first, totals from the rows. Unscoped, the server's total is
+  // authoritative and includes the platform alarms that belong to no room;
+  // scoped, those cannot be in a site or a room by definition, so the scoped
+  // total is the sum of the rows that survived.
+  const inScope = (r: AlarmDrillRow) => (
+    !scope ? true
+      : scope.kind === 'site' ? r.site_id === scope.id
+        : r.room_id === scope.id);
 
   const labels = useMemo(() => Object.fromEntries(
     (taxonomy?.categories ?? []).map((c) => [c.key, c.label])), [taxonomy]);
@@ -130,7 +146,14 @@ export function AlarmPanel({ categories, title, onClose }: {
   // `devices`, where one device can carry alarms in two categories, and a
   // guessed rule there is a number nobody can reconcile against the alarm list.
   const all: Row[] = loaded.flatMap(
-    (d) => d.drill.rows.map((row) => ({ category: d.category, row })));
+    (d) => d.drill.rows.filter(inScope).map((row) => ({ category: d.category, row })));
+
+  const total = scope
+    ? all.reduce((n, { row }) => n + row.qty, 0)
+    : loaded.reduce((n, d) => n + d.drill.total, 0);
+  const unlocated = scope
+    ? 0
+    : loaded.reduce((n, d) => n + d.drill.unlocated, 0);
 
   const q = search.trim().toLowerCase();
   const filtered = q
@@ -157,12 +180,12 @@ export function AlarmPanel({ categories, title, onClose }: {
   const severity = SEVERITIES.map((k) => ({
     key: k,
     label: k.toUpperCase(),
-    n: loaded.reduce((n, d) => n + (d.drill.by_severity?.[k] ?? 0), 0),
+    n: all.reduce((n, { row }) => n + (row.by_severity?.[k] ?? 0), 0),
   }));
   const detections = (taxonomy?.detections ?? []).map((d) => ({
     key: d.key as AlarmDetection,
     label: d.label,
-    n: loaded.reduce((n, x) => n + (x.drill.by_detection?.[d.key] ?? 0), 0),
+    n: all.reduce((n, { row }) => n + (row.by_detection?.[d.key] ?? 0), 0),
   }));
 
   const withCategory = categories.length > 1;
@@ -173,9 +196,10 @@ export function AlarmPanel({ categories, title, onClose }: {
   const definitions = (taxonomy?.categories ?? []).filter(
     (c) => categories.includes(c.key));
   const blurb = everything
-    ? 'Every open alarm on the estate, grouped by the room it is in and the '
-      + 'kind of thing that is wrong. Roots only: one failed uplink is one '
-      + 'alarm, not one per device behind it.'
+    ? `Every open alarm ${scope ? `in ${scope.label}` : 'on the estate'}, `
+      + 'grouped by the room it is in and the kind of thing that is wrong. '
+      + 'Roots only: one failed uplink is one alarm, not one per device '
+      + 'behind it.'
     : definitions.map((c) => c.description).join(' ');
 
   function onSort(k: SortKey) {
@@ -191,7 +215,9 @@ export function AlarmPanel({ categories, title, onClose }: {
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${title.toLowerCase().replace(/\s+/g, '-')}-alarms.csv`;
+    const where = scope ? `-${scope.label}` : '';
+    a.download = `${title}${where}-alarms`
+      .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') + '.csv';
     a.click();
     URL.revokeObjectURL(url);
   }
@@ -214,7 +240,8 @@ export function AlarmPanel({ categories, title, onClose }: {
               <span className={`cat-${meta.tone}`} style={{ display: 'inline-flex' }}>
                 <CategoryGlyph kind={meta.glyph} size={20} />
               </span>
-              {title} alarms:<span className="count"> {loaded.length ? total : '—'}</span>
+              {title} alarms{scope ? ` in ${scope.label}` : ''}:
+              <span className="count"> {loaded.length ? total : '—'}</span>
             </h2>
             {blurb && <p>{blurb}</p>}
           </div>
@@ -243,7 +270,8 @@ export function AlarmPanel({ categories, title, onClose }: {
             <p className="muted">
               {q
                 ? `No room matches “${search}”.`
-                : `No room has an open ${title.toLowerCase()} alarm.`}
+                : `No open ${title.toLowerCase()} alarm`
+                  + `${scope ? ` in ${scope.label}` : ''}.`}
             </p>
           )}
 
