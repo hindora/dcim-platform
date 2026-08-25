@@ -83,10 +83,17 @@ function Indicator({ category, count, label, onOpen }: {
   );
 }
 
-function severityCell(n: number, tone: string) {
-  return n > 0
-    ? <td className="num" style={{ color: `var(--${tone})`, fontWeight: 600 }}>{n}</td>
-    : <td className="num dash">—</td>;
+/** The worst severity in a row, as a tone for its ALM tile.
+ *
+ *  Two more columns of numbers said the same thing as a colour and cost the
+ *  width that made the table scroll sideways. The count is in the tile, the
+ *  severity is the tile's colour, and the exact split is one click away in the
+ *  panel - which is where somebody deciding what to do next is going anyway. */
+function worst(alarms: AlarmCounts): 'critical' | 'major' | 'minor' | null {
+  if (alarms.total === 0) return null;
+  if (alarms.critical > 0) return 'critical';
+  if (alarms.major > 0) return 'major';
+  return 'minor';
 }
 
 /** ALM, then one cell per category.
@@ -99,12 +106,15 @@ function IndicatorCells({ alarms, labels, onOpen }: {
   onOpen: (sel: Selection) => void;
 }) {
   const n = alarms.total;
+  const sev = worst(alarms);
   return (
     <>
       <td className="ind-cell">
-        <span className={`ind ${n > 0 ? 'alarms on' : ''}`}
+        <span className={`ind alarms ${sev ? `on sev-${sev}` : ''}`}
               title={n > 0
-                ? `${n} open alarm${n === 1 ? '' : 's'} needing a response`
+                ? `${n} open alarm${n === 1 ? '' : 's'}: `
+                  + `${alarms.critical} critical, ${alarms.major} major, `
+                  + `${alarms.minor} minor`
                 : 'No open alarms'}>
           <CategoryGlyph kind="alarms" />
           {n > 0 && <span>{n}</span>}
@@ -292,68 +302,39 @@ export function Home() {
             </p>
           )}
 
-          {/* The site the rooms below belong to, kept on screen. Without it a
-              reader who arrives at a filtered ROOMS tab has to remember which
-              site they came from, and the back arrow is the way out - the same
-              control that got them here in reverse. */}
+          {/* The site these rooms belong to: a line, not a second table.
+              Stacking two tables with their own headers and their own
+              scrollbars made the reader parse the chrome twice to find out
+              they were looking at one site's rooms. Its numbers are one click
+              away on SITES, and its KPIs are on the button. */}
           {tab === 'rooms' && roomsSite && (
-            <div className="table-scroll">
-              <table className="sites-table selected-site">
-                <thead>
-                  <tr>
-                    <th>Selected site</th>
-                    <th>Location</th>
-                    <th className="ind-h">Rooms</th>
-                    <th className="ind-h" title="Every open alarm here">ALM</th>
-                    {COLUMN_ORDER.map((c) => (
-                      <th key={c} className="ind-h"
-                          title={`${labels[c] ?? c} alarms`}>{metaFor(c).head}</th>
-                    ))}
-                    <th className="ind-h">Crit</th>
-                    <th className="ind-h">Maj</th>
-                    <th className="act">View</th>
-                    <th className="act">Access</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr>
-                    <td>
-                      <span className="site-cell">
-                        <button className="expander back"
-                                onClick={() => { setRoomsSite(null); setTab('sites'); setPage(0); }}
-                                aria-label={`Back to all sites from ${roomsSite.code}`}
-                                title="Back to all sites">↩</button>
-                        <span className="name">{roomsSite.code}</span>
-                        {roomsSite.name !== roomsSite.code && (
-                          <span className="muted small">{roomsSite.name}</span>
-                        )}
-                      </span>
-                    </td>
-                    <td className="muted">
-                      {roomsSite.city || roomsSite.country
-                        ? [roomsSite.city, roomsSite.country].filter(Boolean).join(', ')
-                        : <span className="unset">not set</span>}
-                    </td>
-                    <td className="num">{roomsSite.room_count}</td>
-                    <IndicatorCells alarms={roomsSite.alarms} labels={labels}
-                                    onOpen={setDrill} />
-                    {severityCell(roomsSite.alarms.critical, 'critical')}
-                    {severityCell(roomsSite.alarms.major, 'major')}
-                    <td className="ind-cell">
-                      <button className="row-btn"
-                              onClick={() => setDrawerSite(roomsSite)}>KPIs</button>
-                    </td>
-                    <td className="ind-cell">
-                      <Link className="row-btn primary"
-                            to={`/devices?datacenter=${roomsSite.code}`}
-                            style={{ display: 'inline-block', lineHeight: '26px',
-                                     textAlign: 'center' }}>
-                        ENTER
-                      </Link>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
+            <div className="crumb">
+              <button className="back"
+                      onClick={() => { setRoomsSite(null); setTab('sites'); setPage(0); }}
+                      aria-label={`Back to all sites from ${roomsSite.code}`}
+                      title="Back to all sites">↩</button>
+              <span className="name">{roomsSite.code}</span>
+              {roomsSite.name !== roomsSite.code && (
+                <span className="muted">{roomsSite.name}</span>
+              )}
+              {(roomsSite.city || roomsSite.country) && (
+                <span className="muted">
+                  · {[roomsSite.city, roomsSite.country].filter(Boolean).join(', ')}
+                </span>
+              )}
+              <span className="muted">· {roomsSite.room_count} rooms</span>
+              {roomsSite.alarms.total > 0 && (
+                <span className="crumb-alm">
+                  {roomsSite.alarms.total} open alarm{roomsSite.alarms.total === 1 ? '' : 's'}
+                </span>
+              )}
+              <span className="spacer" />
+              <button className="row-btn" onClick={() => setDrawerSite(roomsSite)}>KPIs</button>
+              <Link className="row-btn primary" to={`/devices?datacenter=${roomsSite.code}`}
+                    style={{ display: 'inline-block', lineHeight: '26px',
+                             textAlign: 'center' }}>
+                ENTER
+              </Link>
             </div>
           )}
 
@@ -361,9 +342,7 @@ export function Home() {
           <table className="sites-table">
             <thead>
               <tr>
-                <th>
-                  {tab === 'sites' ? 'Site' : roomsSite ? `Room in ${roomsSite.code}` : 'Room'}
-                </th>
+                <th>{tab === 'sites' ? 'Site' : 'Room'}</th>
                 <th>{tab === 'sites' ? 'Location' : 'Type'}</th>
                 <th className="ind-h">{tab === 'sites' ? 'Rooms' : 'Racks'}</th>
                 <th className="ind-h" title="Every open alarm here">ALM</th>
@@ -371,20 +350,18 @@ export function Home() {
                   <th key={c} className="ind-h"
                       title={`${labels[c] ?? c} alerts`}>{metaFor(c).head}</th>
                 ))}
-                <th className="ind-h">Crit</th>
-                <th className="ind-h">Maj</th>
                 <th className="act">View</th>
                 <th className="act">Access</th>
               </tr>
             </thead>
             <tbody>
               {isLoading && (
-                <tr><td colSpan={16} className="muted" style={{ padding: 20 }}>Loading…</td></tr>
+                <tr><td colSpan={13} className="muted" style={{ padding: 20 }}>Loading…</td></tr>
               )}
 
               {!isLoading && rows.length === 0 && (
                 <tr>
-                  <td colSpan={16} className="muted" style={{ padding: 20 }}>
+                  <td colSpan={13} className="muted" style={{ padding: 20 }}>
                     {`No ${tab} match “${search}”.`}
                   </td>
                 </tr>
@@ -402,14 +379,12 @@ export function Home() {
                   <td>
                     <span className="site-cell">
                       <span className="name">{r.name}</span>
-                      <span className="muted small">{r.datacenter_code}</span>
+                      {!roomsSite && <span className="muted small">{r.datacenter_code}</span>}
                     </span>
                   </td>
                   <td className="muted">{r.room_type.replace(/_/g, ' ')}</td>
                   <td className="num">{r.rack_count}</td>
                   <IndicatorCells alarms={r.alarms} labels={labels} onOpen={setDrill} />
-                  {severityCell(r.alarms.critical, 'critical')}
-                  {severityCell(r.alarms.major, 'major')}
                   <td className="ind-cell">
                     <button className="row-btn" onClick={() => setDrawerRoom(r)}>KPIs</button>
                   </td>
@@ -508,8 +483,6 @@ function SiteLine({ site, onKpis, onRooms, labels, onDrill }: {
             : 0}
         </td>
         <IndicatorCells alarms={site.alarms} labels={labels} onOpen={onDrill} />
-        {severityCell(site.alarms.critical, 'critical')}
-        {severityCell(site.alarms.major, 'major')}
         <td className="ind-cell">
           <button className="row-btn" onClick={onKpis}>KPIs</button>
         </td>
