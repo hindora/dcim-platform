@@ -19,7 +19,7 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.alert_taxonomy import ALARM, DETECTIONS
+from app.core.alert_taxonomy import ALARM, ALERT, DETECTIONS
 
 # Device -> (datacenter, room). Same resolution as the home page: a device may
 # be racked, or stand on the floor in a room with no rack.
@@ -354,15 +354,32 @@ async def site_design(session: AsyncSession) -> dict[str, Any]:
 
 async def alarms_by_room(session: AsyncSession, *,
                          category: str) -> list[dict[str, Any]]:
-    """Open root ALARMS of one category, grouped by room.
+    """Open root alarms of one category, grouped by room - with the alerts beside them.
 
-    The drill-down behind a counter. Roots only, never CLEARED, and
-    `response_class = 'alarm'` - exactly the population the counter itself
-    totals. A drill-down that disagrees with the number that opened it is worse
-    than no drill-down.
+    The drill-down behind a counter. `qty` is alarms only, exactly the
+    population the counter totals: a drill-down that disagrees with the number
+    that opened it is worse than no drill-down. Every other alarm figure here -
+    devices, severities, the facets - is alarms only for the same reason.
+
+    `alerts` is the informational count for the same room and category, carried
+    as CONTEXT rather than as a second population. A room with two cooling
+    alarms and forty cooling alerts is a different room from one with two and
+    none, and an engineer deciding where to walk first wants to know which they
+    are looking at. What it must not do is change the row set: rooms are listed
+    because they have an alarm, so the HAVING clause below stays on the alarm
+    count. Otherwise the four hundred stale-telemetry alerts we deliberately
+    took off this console would walk back onto it through the drill-down.
     """
+    # Every alarm-side aggregate carries the same filter: these describe the
+    # alarms the counter opened, not the alerts sitting beside them.
+    sev_cols = ",\n               ".join(
+        f"count(*) FILTER (WHERE response_class = '{ALARM}' "
+        f"AND severity = '{s}') AS {s.lower()}"
+        for s in ("CRITICAL", "MAJOR", "MINOR", "WARNING")
+    )
     facet_cols = ",\n               ".join(
-        f"count(*) FILTER (WHERE detection = '{d}') AS detected_{d}"
+        f"count(*) FILTER (WHERE response_class = '{ALARM}' "
+        f"AND detection = '{d}') AS detected_{d}"
         for d in DETECTIONS
     )
 
@@ -371,11 +388,10 @@ async def alarms_by_room(session: AsyncSession, *,
         cat AS (
             SELECT dev.datacenter_id, dev.room_id, a.severity::text AS severity,
                    a.device_id, a.detection AS detection,
-                   a.category AS category
+                   a.category AS category, a.response_class AS response_class
             FROM alarm a
             JOIN dev ON dev.device_id = a.device_id
             WHERE a.state <> 'CLEARED' AND a.is_symptom = false
-              AND a.response_class = '{ALARM}'
         )
         SELECT rm.id::text            AS room_id,
                rm.name                AS room_name,
@@ -383,18 +399,20 @@ async def alarms_by_room(session: AsyncSession, *,
                dc.id::text            AS datacenter_id,
                dc.code                AS site_code,
                dc.name                AS site_name,
-               count(*)                                        AS qty,
-               count(DISTINCT cat.device_id)                   AS devices,
-               count(*) FILTER (WHERE severity = 'CRITICAL')   AS critical,
-               count(*) FILTER (WHERE severity = 'MAJOR')      AS major,
-               count(*) FILTER (WHERE severity = 'MINOR')      AS minor,
-               count(*) FILTER (WHERE severity = 'WARNING')    AS warning,
+               count(*) FILTER (WHERE response_class = '{ALARM}')  AS qty,
+               count(*) FILTER (WHERE response_class = '{ALERT}')  AS alerts,
+               count(DISTINCT cat.device_id)
+                   FILTER (WHERE response_class = '{ALARM}')       AS devices,
+               {sev_cols},
                {facet_cols}
         FROM cat
         JOIN room rm       ON rm.id = cat.room_id
         JOIN datacenter dc ON dc.id = cat.datacenter_id
         WHERE cat.category = :category
         GROUP BY rm.id, rm.name, rm.floor, dc.id, dc.code, dc.name
+        -- Listed because it has an ALARM. The alert count is context on a row
+        -- that earned its place, never the reason for the row.
+        HAVING count(*) FILTER (WHERE response_class = '{ALARM}') > 0
         ORDER BY qty DESC, dc.code, rm.name
     """), {"category": category})).mappings().all()
     return [dict(r) for r in rows]

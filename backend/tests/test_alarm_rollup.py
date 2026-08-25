@@ -139,7 +139,7 @@ def _alert_row(qty: int, **counts) -> dict:
     row = {
         "room_id": "r1", "room_name": "Server Hall A", "floor": "1",
         "datacenter_id": "dc1", "site_code": "DC1", "site_name": "DC1",
-        "qty": qty, "devices": qty, "critical": 0, "major": 0,
+        "qty": qty, "alerts": 0, "devices": qty, "critical": 0, "major": 0,
         "minor": 0, "warning": 0,
     }
     row.update(counts)
@@ -167,6 +167,30 @@ async def test_drill_down_facets_are_the_rows_they_sit_under(monkeypatch):
     assert out["by_detection"]["threshold"] == 4
     assert out["by_detection"]["state"] == 3
     assert sum(out["by_severity"].values()) == sum(r["qty"] for r in rows)
+
+
+async def test_the_alert_column_is_context_and_never_a_total(monkeypatch):
+    """A room's informational count rides beside its alarms, and nowhere else.
+
+    The whole console was made alarms-only because four hundred stale-telemetry
+    conditions drowned six real ones. The panel may SAY a room also holds a
+    hundred and twenty of them - that is the context an engineer wants before
+    walking somewhere - as long as it never adds them to a count.
+    """
+    rows = [
+        _alert_row(2, alerts=120, critical=0, major=2, detected_absence=2),
+        _alert_row(1, alerts=92, major=1, detected_absence=1),
+    ]
+    monkeypatch.setattr(estate_service.repo, "alarms_by_room", _returns(rows))
+    monkeypatch.setattr(estate_service.repo, "unlocated_alarms_by_category",
+                        _returns(0))
+
+    out = await estate_service.alarms(_FakeSession(), category="visibility")
+
+    assert [r["alerts"] for r in out["rows"]] == [120, 92]
+    assert out["total"] == 3, "alerts leaked into the total"
+    assert sum(out["by_severity"].values()) == 3
+    assert sum(out["by_detection"].values()) == 3
 
 
 async def test_unlocated_alarms_are_counted_in_the_total_and_not_in_the_facets(

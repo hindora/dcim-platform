@@ -857,7 +857,13 @@ export interface AlarmDrillRow {
   site_id: string;
   site_code: string;
   site_name: string;
+  /** Alarms: what the counter that opened the panel was counting. */
   qty: number;
+  /** Informational conditions in the same room and category. Context beside
+   *  the alarm count, never added to any total - a room with two cooling
+   *  alarms and forty cooling alerts is a different room from one with two
+   *  and none. */
+  alerts: number;
   devices: number;
   critical: number;
   major: number;

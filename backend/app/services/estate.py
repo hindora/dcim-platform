@@ -551,6 +551,9 @@ async def alarms(session: AsyncSession, *, category: str) -> dict[str, Any]:
         "floor": r["floor"], "site_id": r["datacenter_id"],
         "site_code": r["site_code"], "site_name": r["site_name"],
         "qty": int(r["qty"]), "devices": int(r["devices"]),
+        # Informational conditions in the same room and category. Context for
+        # the alarm count beside it, and deliberately not added to any total.
+        "alerts": int(r.get("alerts") or 0),
         "critical": int(r["critical"]), "major": int(r["major"]),
         "by_severity": _sev(r),
         "by_detection": _detect(r),

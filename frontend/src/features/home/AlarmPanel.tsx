@@ -34,7 +34,7 @@ import { metaFor } from '../../components/alertMeta';
 
 const SEVERITIES = ['critical', 'major', 'minor', 'warning'] as const;
 
-type SortKey = 'room' | 'site' | 'qty' | 'devices';
+type SortKey = 'room' | 'site' | 'qty' | 'alerts' | 'devices';
 type Row = { category: AlarmCategory; row: AlarmDrillRow };
 
 /** Facet chips: the same population the rows total, split two ways. */
@@ -72,7 +72,7 @@ function SortHead({ label, k, sort, dir, onSort, className }: {
 
 function toCsv(rows: Row[], withCategory: boolean, labels: Record<string, string>) {
   const head = ['Room', 'Site', 'Floor', ...(withCategory ? ['Category'] : []),
-                'Alarms', 'Devices', 'Critical', 'Major'];
+                'Alarms', 'Alerts', 'Devices', 'Critical', 'Major'];
   const cell = (v: unknown) => {
     const s = String(v ?? '');
     // Quote anything a spreadsheet would otherwise split or misread. Room
@@ -82,7 +82,7 @@ function toCsv(rows: Row[], withCategory: boolean, labels: Record<string, string
   const body = rows.map(({ category, row: r }) => [
     r.room_name, r.site_code, r.floor ?? '',
     ...(withCategory ? [labels[category] ?? category] : []),
-    r.qty, r.devices, r.critical, r.major,
+    r.qty, r.alerts, r.devices, r.critical, r.major,
   ].map(cell).join(','));
   return [head.join(','), ...body].join('\n');
 }
@@ -167,7 +167,8 @@ export function AlarmPanel({ categories, title, scope, onClose }: {
       sort === 'room' ? x.row.room_name.toLowerCase()
         : sort === 'site' ? x.row.site_code.toLowerCase()
           : sort === 'devices' ? x.row.devices
-            : x.row.qty);
+            : sort === 'alerts' ? x.row.alerts
+              : x.row.qty);
     const l = pick(a); const r = pick(b);
     if (l === r) return a.row.room_name.localeCompare(b.row.room_name);
     return (l < r ? -1 : 1) * dir;
@@ -207,7 +208,7 @@ export function AlarmPanel({ categories, title, scope, onClose }: {
     setSort(k);
     // Counts read high-to-low, names read A-to-Z. Anything else makes the
     // first click on a column look broken.
-    setDir(k === 'qty' || k === 'devices' ? -1 : 1);
+    setDir(k === 'room' || k === 'site' ? 1 : -1);
   }
 
   function download() {
@@ -286,6 +287,8 @@ export function AlarmPanel({ categories, title, scope, onClose }: {
                     {withCategory && <th>Category</th>}
                     <SortHead label="Alarms" k="qty" sort={sort} dir={dir}
                               onSort={onSort} className="num" />
+                    <SortHead label="Alerts" k="alerts" sort={sort} dir={dir}
+                              onSort={onSort} className="num" />
                     <SortHead label="Devices" k="devices" sort={sort} dir={dir}
                               onSort={onSort} className="num" />
                     <th className="num">Critical</th>
@@ -312,6 +315,15 @@ export function AlarmPanel({ categories, title, scope, onClose }: {
                         </td>
                       )}
                       <td className="num"><span className="qty">{r.qty}</span></td>
+                      {/* Muted on purpose. It is here to say what else is
+                          going on in this room, not to compete with the
+                          number somebody is acting on. */}
+                      <td className="num muted"
+                          title={`${r.alerts} informational condition`
+                                 + `${r.alerts === 1 ? '' : 's'} here - nothing `
+                                 + 'that needs a response tonight'}>
+                        {r.alerts || <span className="dash">—</span>}
+                      </td>
                       <td className="num">{r.devices}</td>
                       <td className="num">{r.critical || <span className="dash">—</span>}</td>
                       <td className="num">{r.major || <span className="dash">—</span>}</td>
