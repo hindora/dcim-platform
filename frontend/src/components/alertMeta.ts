@@ -12,7 +12,7 @@
  * on a wall display at four metres.
  */
 
-import type { AlertCategory } from '../api/client';
+import type { AlarmCategory } from '../api/client';
 import type { GlyphKind } from './CategoryGlyph';
 
 export interface CategoryMeta {
@@ -23,7 +23,7 @@ export interface CategoryMeta {
   tone: string;
 }
 
-export const CATEGORY_META: Record<AlertCategory, CategoryMeta> = {
+export const CATEGORY_META: Record<AlarmCategory, CategoryMeta> = {
   power:         { glyph: 'power',         head: 'PWR',  tone: 'pwr' },
   cooling:       { glyph: 'cooling',       head: 'COOL', tone: 'cool' },
   environmental: { glyph: 'environmental', head: 'ENV',  tone: 'cool' },
@@ -32,17 +32,6 @@ export const CATEGORY_META: Record<AlertCategory, CategoryMeta> = {
   visibility:    { glyph: 'visibility',    head: 'VIS',  tone: 'vis' },
   capacity:      { glyph: 'capacity',      head: 'CAP',  tone: 'cap' },
   uncategorised: { glyph: 'uncategorised', head: 'UNC',  tone: 'unc' },
-};
-
-/** Tone for the alarm/alert split.
- *
- *  Alarms take the status red - they are the only thing on this page that
- *  means "somebody move now". Alerts take the muted tone: real, worth
- *  scheduling, and deliberately not competing for attention with the six
- *  conditions that are. */
-export const CLASS_TONE: Record<string, string> = {
-  alarm: 'alarms',
-  alert: 'informational',
 };
 
 /** Tone per strip group, for the counters themselves. */
@@ -65,7 +54,7 @@ export const UNKNOWN_META: CategoryMeta = {
 };
 
 export function metaFor(key: string): CategoryMeta {
-  return CATEGORY_META[key as AlertCategory] ?? UNKNOWN_META;
+  return CATEGORY_META[key as AlarmCategory] ?? UNKNOWN_META;
 }
 
 /** Column order for the table: by owner, power first.
@@ -73,7 +62,7 @@ export function metaFor(key: string): CategoryMeta {
  *  Reads down the failure chain an operator thinks in - the electrical supply,
  *  then the heat, then what is being powered and cooled, then whether we can
  *  see any of it - rather than alphabetically. */
-export const COLUMN_ORDER: AlertCategory[] = [
+export const COLUMN_ORDER: AlarmCategory[] = [
   'power', 'cooling', 'environmental', 'it_equipment', 'network',
   'visibility', 'capacity', 'uncategorised',
 ];

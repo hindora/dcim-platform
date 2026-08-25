@@ -15,10 +15,10 @@
  * tofu boxes where the estate's health is supposed to be.
  */
 
-import type { AlertCategory } from '../api/client';
+import type { AlarmCategory } from '../api/client';
 
 /** The eight categories, plus `alarms` for the all-categories total. */
-export type GlyphKind = AlertCategory | 'alarms';
+export type GlyphKind = AlarmCategory | 'alarms';
 
 export function CategoryGlyph({ kind, size = 15 }: { kind: GlyphKind; size?: number }) {
   const common = {

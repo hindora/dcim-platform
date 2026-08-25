@@ -26,7 +26,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.alert_taxonomy import DETECTIONS, RESPONSE_CLASSES
+from app.core.alert_taxonomy import DETECTIONS
 from app.repositories import estate as repo
 
 # ASHRAE TC 9.9 recommended envelope for class A1-A4 equipment intake air.
@@ -524,22 +524,23 @@ def _fold_util_total(rooms: list[dict[str, Any]]) -> dict[str, Any]:
 # ---------------------------------------------------------------- alert drills
 
 
-async def alerts(session: AsyncSession, *, category: str) -> dict[str, Any]:
-    """The drill-down behind one alert counter.
+async def alarms(session: AsyncSession, *, category: str) -> dict[str, Any]:
+    """The drill-down behind one alarm counter.
+
+    Alarms only, matching the counter that opened it. The informational alerts
+    in the same category are not here and not counted; they live behind
+    `/alarms?response_class=alert`.
 
     Every row carries its own severity and detection split. The facets are the
     same population the row totals, computed in the one query that produced it:
     a facet fetched separately can disagree with the row it sits under, and
     then neither number is usable.
     """
-    rows = await repo.alerts_by_room(session, category=category)
-    unlocated = await repo.unlocated_alerts_by_category(session, category=category)
+    rows = await repo.alarms_by_room(session, category=category)
+    unlocated = await repo.unlocated_alarms_by_category(session, category=category)
 
     def _detect(r: dict[str, Any]) -> dict[str, int]:
         return {d: int(r.get(f"detected_{d}") or 0) for d in DETECTIONS}
-
-    def _cls(r: dict[str, Any]) -> dict[str, int]:
-        return {c: int(r.get(f"class_{c}") or 0) for c in RESPONSE_CLASSES}
 
     def _sev(r: dict[str, Any]) -> dict[str, int]:
         return {k: int(r.get(k) or 0)
@@ -553,7 +554,6 @@ async def alerts(session: AsyncSession, *, category: str) -> dict[str, Any]:
         "critical": int(r["critical"]), "major": int(r["major"]),
         "by_severity": _sev(r),
         "by_detection": _detect(r),
-        "by_class": _cls(r),
     } for r in rows]
 
     return {
@@ -572,10 +572,6 @@ async def alerts(session: AsyncSession, *, category: str) -> dict[str, Any]:
         },
         "by_detection": {
             d: sum(row["by_detection"][d] for row in out_rows) for d in DETECTIONS
-        },
-        "by_class": {
-            c: sum(row["by_class"][c] for row in out_rows)
-            for c in RESPONSE_CLASSES
         },
     }
 

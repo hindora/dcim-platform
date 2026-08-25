@@ -555,47 +555,54 @@ export interface CollectorHealth {
 
 // ------------------------------------------------------------ home page
 //
-// Alert categories are one axis - the domain of the failing thing, which is
-// the same question as who owns the first five minutes - and are defined
-// server-side in app/core/alert_taxonomy.py. They are mutually exclusive, so
-// `by_category` sums to `total`.
+// The home page is an ALARM console: every count it receives is
+// `response_class = 'alarm'`, a condition that requires a response now.
+// Informational alerts - wear, hygiene, stale telemetry - are classified and
+// stored, and are not on this screen. Reach them with
+// `/alarms?response_class=alert`.
+//
+// Categories are one axis - the domain of the failing thing, which is the same
+// question as who owns the first five minutes - defined server-side in
+// app/core/alert_taxonomy.py. They are mutually exclusive, so `by_category`
+// sums to `total`.
 //
 // `by_detection` is deliberately NOT a category. How a condition was found
 // (threshold, state, absence, derived, forecast) filters across all eight, so
 // improving a detector never moves an alarm between buckets.
 
-export type AlertCategory =
+export type AlarmCategory =
   | 'visibility' | 'environmental' | 'cooling' | 'power'
   | 'it_equipment' | 'network' | 'capacity' | 'uncategorised';
 
-export type AlertDetection =
+export type AlarmDetection =
   | 'threshold' | 'state' | 'absence' | 'derived' | 'forecast';
 
 /** Required response, the ISA-18.2 split. An `alarm` demands action now and
  *  expects an acknowledgement; an `alert` is informational and belongs to
- *  whoever schedules the work. A third attribute, not a category: it cuts
- *  across all eight domains. */
-export type AlertResponseClass = 'alarm' | 'alert';
+ *  whoever schedules the work.
+ *
+ *  The home page shows alarms only, so this appears in the legend - which has
+ *  to be able to say what the console leaves out - rather than on any counter. */
+export type ResponseClass = 'alarm' | 'alert';
 
-export interface AlertCounts {
-  /** Every open root condition - alarms AND alerts. `by_category` sums to it.
-   *  It is not the alarm count; `by_class.alarm` is. */
+export interface AlarmCounts {
+  /** Open root ALARMS. Informational alerts are excluded server-side, so the
+   *  eight categories partition this number. */
   total: number;
   critical: number;
   major: number;
   minor: number;
-  by_category: Record<AlertCategory, number>;
-  by_detection: Record<AlertDetection, number>;
-  by_class: Record<AlertResponseClass, number>;
+  by_category: Record<AlarmCategory, number>;
+  by_detection: Record<AlarmDetection, number>;
 }
 
 /** The taxonomy itself, served by the classifier that fills the counters.
  *  Fetched rather than transcribed: a legend written next to the classifier
  *  drifts from it, and the first symptom is an operator routing work by a
  *  definition that stopped being true. */
-export interface AlertTaxonomy {
+export interface AlarmTaxonomy {
   categories: {
-    key: AlertCategory;
+    key: AlarmCategory;
     label: string;
     /** Who acts first. The reason the axis is worth having. */
     owner: string;
@@ -604,11 +611,11 @@ export interface AlertTaxonomy {
   }[];
   /** How the eight group into the headline counters on the strip. The table
    *  keeps a column per category, so the grouping loses nothing. */
-  strip_groups: { key: string; label: string; categories: AlertCategory[] }[];
-  detections: { key: AlertDetection; label: string; description: string }[];
-  response_classes: {
-    key: AlertResponseClass; label: string; description: string;
-  }[];
+  strip_groups: { key: string; label: string; categories: AlarmCategory[] }[];
+  detections: { key: AlarmDetection; label: string; description: string }[];
+  /** Alarm and alert, defined. The legend uses these to say what this console
+   *  shows and what it deliberately does not. */
+  response_classes: { key: ResponseClass; label: string; description: string }[];
 }
 
 export interface SiteRoom {
@@ -623,7 +630,7 @@ export interface SiteRoom {
   rack_count: number;
   device_count: number;
   offline_count: number;
-  alerts: AlertCounts;
+  alarms: AlarmCounts;
 }
 
 export interface SiteRow {
@@ -638,17 +645,17 @@ export interface SiteRow {
   device_count: number;
   online_count: number;
   offline_count: number;
-  alerts: AlertCounts;
+  alarms: AlarmCounts;
   rooms: SiteRoom[];
 }
 
 export interface SitesOverview {
   sites: SiteRow[];
-  totals: AlertCounts;
+  totals: AlarmCounts;
   /** Open root alarms that resolve to no site - platform alarms such as
    *  `ingest_stalled`. Counted in `totals`, absent from every row, so the page
    *  says so rather than leaving the columns not adding up. */
-  unlocated_alerts: number;
+  unlocated_alarms: number;
   as_of: string;
 }
 
@@ -699,7 +706,7 @@ export interface SiteKpi {
     /** Slow-polled points, so age travels with the value. */
     age_s?: number | null;
   };
-  alerts: AlertCounts;
+  alarms: AlarmCounts;
   as_of: string;
 }
 
@@ -814,7 +821,7 @@ export interface UtilPage {
   notes: string[];
 }
 
-export interface AlertDrillRow {
+export interface AlarmDrillRow {
   room_id: string;
   room_name: string;
   floor: string | null;
@@ -826,13 +833,12 @@ export interface AlertDrillRow {
   critical: number;
   major: number;
   by_severity: { critical: number; major: number; minor: number; warning: number };
-  by_detection: Record<AlertDetection, number>;
-  by_class: Record<AlertResponseClass, number>;
+  by_detection: Record<AlarmDetection, number>;
 }
 
-export interface AlertDrill {
-  category: AlertCategory;
-  rows: AlertDrillRow[];
+export interface AlarmDrill {
+  category: AlarmCategory;
+  rows: AlarmDrillRow[];
   /** Rows plus `unlocated`: platform alarms have no room to sit in. */
   total: number;
   unlocated: number;
@@ -840,8 +846,7 @@ export interface AlertDrill {
    *  different instants of the estate. Excludes `unlocated` - those have no
    *  row to face against. */
   by_severity: { critical: number; major: number; minor: number; warning: number };
-  by_detection: Record<AlertDetection, number>;
-  by_class: Record<AlertResponseClass, number>;
+  by_detection: Record<AlarmDetection, number>;
 }
 
 export interface RoomKpi {
@@ -1021,10 +1026,10 @@ export const api = {
 
   estateUtilization: () => request<UtilPage>('/estate/utilization'),
 
-  estateAlerts: (category: string) =>
-    request<AlertDrill>(`/estate/alerts?category=${encodeURIComponent(category)}`),
+  estateAlarms: (category: string) =>
+    request<AlarmDrill>(`/estate/alarms?category=${encodeURIComponent(category)}`),
 
-  alertTaxonomy: () => request<AlertTaxonomy>('/estate/alert-categories'),
+  alarmTaxonomy: () => request<AlarmTaxonomy>('/estate/alarm-categories'),
 
   roomKpi: (roomId: string) => request<RoomKpi>(`/estate/rooms/${roomId}/kpi`),
 

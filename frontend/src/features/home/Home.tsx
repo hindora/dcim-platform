@@ -15,13 +15,12 @@
  * nothing. The grouping itself comes from the server with the taxonomy - the
  * page never decides which categories belong together.
  *
- * The counter in the middle is the TOTAL - every open condition - and it says
- * so. Underneath it sits the split that operators actually triage on: alarms
- * demand a response now, alerts are informational and belong to whoever
- * schedules the work (ISA-18.2 draws the line by required response, not by how
- * bad the number looks). Both are filters. It used to be one counter labelled
- * "Alarms" sitting among five labelled "alerts", which asserted a distinction
- * the data did not have.
+ * Everything on this page is an ALARM: a condition that requires a response
+ * now. Informational alerts - stale telemetry, dirty filters, wear - are
+ * classified and stored and deliberately not shown here; ISA-18.2 draws that
+ * line by required response, and a console listing four hundred things nobody
+ * will act on tonight is a console operators stop reading. The legend says
+ * what is left out and where to find it.
  */
 
 import { useMemo, useState } from 'react';
@@ -29,23 +28,20 @@ import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import {
   api,
-  type AlertCategory,
-  type AlertCounts,
-  type AlertResponseClass,
-  type AlertTaxonomy,
+  type AlarmCategory,
+  type AlarmCounts,
+  type AlarmTaxonomy,
   type SiteRoom,
   type SiteRow,
   type SitesOverview,
 } from '../../api/client';
 import { CategoryGlyph } from '../../components/CategoryGlyph';
-import {
-  CLASS_TONE, COLUMN_ORDER, GROUP_TONE, metaFor,
-} from '../../components/alertMeta';
+import { COLUMN_ORDER, GROUP_TONE, metaFor } from '../../components/alertMeta';
 import { FacilityToggle } from '../../components/estate';
 import { useInvalidateOn, useTopics } from '../../ws/useSocket';
 import { SiteDrawer } from './SiteDrawer';
 import { RoomDrawer } from './RoomDrawer';
-import { AlertDrilldown, AlertLegend } from './AlertModals';
+import { AlarmDrilldown, AlarmLegend } from './AlarmModals';
 import { RailCards } from './RailCards';
 
 const ALARM_EVENTS = ['alarm_created', 'alarm_updated', 'alarm_cleared'];
@@ -57,25 +53,16 @@ type Tab = 'sites' | 'rooms';
  *  Both are a LIST of categories rather than one, because the strip counters
  *  are groups: "Cooling & Environment" is two categories and has to filter and
  *  open as one thing. */
-interface Selection { key: string; label: string; categories: AlertCategory[] }
-
-/** Filtering on the response class instead - alarms only, or alerts only.
- *
- *  Deliberately NOT combinable with a category filter. A row carries its
- *  categories and its classes as two separate counts, not as the matrix of the
- *  two, so "power alarms" is a number this page does not have; showing rows
- *  that have some power condition AND some alarm would imply it did. Choosing
- *  one filter clears the other. */
-interface ClassFilter { kind: AlertResponseClass; label: string }
+interface Selection { key: string; label: string; categories: AlarmCategory[] }
 
 /** Counts within a selection. Categories are mutually exclusive, so summing
  *  them is safe - the one arithmetic this page depends on. */
-function countIn(alerts: AlertCounts, categories: AlertCategory[]): number {
-  return categories.reduce((n, c) => n + (alerts.by_category?.[c] ?? 0), 0);
+function countIn(alarms: AlarmCounts, categories: AlarmCategory[]): number {
+  return categories.reduce((n, c) => n + (alarms.by_category?.[c] ?? 0), 0);
 }
 
 function Indicator({ category, count, label, onOpen }: {
-  category: AlertCategory; count: number; label: string;
+  category: AlarmCategory; count: number; label: string;
   onOpen: (sel: Selection) => void;
 }) {
   const meta = metaFor(category);
@@ -99,41 +86,31 @@ function severityCell(n: number, tone: string) {
     : <td className="num dash">—</td>;
 }
 
-/** The row's two headline numbers, then one cell per category.
+/** ALM, then one cell per category.
  *
- *  OPEN and ALM are deliberately two cells. One cell showing 276 in red
- *  because four of those need a response says the wrong thing twice: it shouts
- *  a number nobody has to act on, and it hides the number they do. So OPEN is
- *  a plain count of everything and ALM is the actionable subset, coloured.
- *
- *  ALM is not the sum of the eight beside it - those partition OPEN, not ALM.
- *  A room can hold thirty cooling alerts and one cooling alarm; the COOL cell
- *  reads thirty-one, and that is correct for the question it answers. */
-function IndicatorCells({ alerts, labels, onOpen }: {
-  alerts: AlertCounts; labels: Record<string, string>;
+ *  ALM is every open alarm here and the eight cells beside it partition that
+ *  number - they are the same population cut by domain, so they add up and can
+ *  be read against each other. */
+function IndicatorCells({ alarms, labels, onOpen }: {
+  alarms: AlarmCounts; labels: Record<string, string>;
   onOpen: (sel: Selection) => void;
 }) {
-  const alarms = alerts.by_class?.alarm ?? 0;
+  const n = alarms.total;
   return (
     <>
-      <td className="num"
-          title={`${alerts.total} open here: ${alarms} needing a response, `
-                 + `${alerts.total - alarms} informational`}>
-        {alerts.total || <span className="dash">—</span>}
-      </td>
       <td className="ind-cell">
-        <span className={`ind ${alarms > 0 ? 'alarms on' : ''}`}
-              title={alarms > 0
-                ? `${alarms} condition${alarms === 1 ? '' : 's'} needing a response now`
-                : 'Nothing here needs a response now'}>
+        <span className={`ind ${n > 0 ? 'alarms on' : ''}`}
+              title={n > 0
+                ? `${n} open alarm${n === 1 ? '' : 's'} needing a response`
+                : 'No open alarms'}>
           <CategoryGlyph kind="alarms" />
-          {alarms > 0 && <span>{alarms}</span>}
+          {n > 0 && <span>{n}</span>}
         </span>
       </td>
       {COLUMN_ORDER.map((c) => (
         <Indicator key={c} category={c} onOpen={onOpen}
                    label={labels[c] ?? c}
-                   count={alerts.by_category?.[c] ?? 0} />
+                   count={alarms.by_category?.[c] ?? 0} />
       ))}
     </>
   );
@@ -143,7 +120,6 @@ export function Home() {
   const [tab, setTab] = useState<Tab>('sites');
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<Selection | null>(null);
-  const [classFilter, setClassFilter] = useState<ClassFilter | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [drawerSite, setDrawerSite] = useState<SiteRow | null>(null);
   const [drawerRoom, setDrawerRoom] = useState<SiteRoom | null>(null);
@@ -173,19 +149,14 @@ export function Home() {
   // counter. Served by the classifier that fills the counters, so the strip
   // cannot group one way while the numbers are classified another. It changes
   // only when the backend is redeployed, hence no refetch interval.
-  const { data: taxonomy } = useQuery<AlertTaxonomy>({
-    queryKey: ['alert-taxonomy'],
-    queryFn: api.alertTaxonomy,
+  const { data: taxonomy } = useQuery<AlarmTaxonomy>({
+    queryKey: ['alarm-taxonomy'],
+    queryFn: api.alarmTaxonomy,
     staleTime: Infinity,
   });
 
   const labels = useMemo(() => Object.fromEntries(
     (taxonomy?.categories ?? []).map((c) => [c.key, c.label])), [taxonomy]);
-
-  // "Alarms" / "Alerts", worded by the server so the strip, the legend and the
-  // classifier cannot disagree about which is which.
-  const classes = useMemo(() => Object.fromEntries(
-    (taxonomy?.response_classes ?? []).map((c) => [c.key, c.label])), [taxonomy]);
 
   // Five grouped counters, plus the all-categories total in the middle, plus
   // `uncategorised` ONLY when it is non-zero. An empty triage bucket is not
@@ -202,7 +173,7 @@ export function Home() {
     if (orphan > 0) {
       groups.push({
         key: 'uncategorised', label: 'Uncategorised',
-        categories: ['uncategorised'] as AlertCategory[],
+        categories: ['uncategorised'] as AlarmCategory[],
         tone: 'unc', glyph: metaFor('uncategorised').glyph,
       });
     }
@@ -214,14 +185,13 @@ export function Home() {
   const sites = data?.sites ?? [];
   const rooms = useMemo(() => sites.flatMap((s) => s.rooms), [sites]);
 
-  const matches = (name: string, alerts: AlertCounts) => {
+  const matches = (name: string, alarms: AlarmCounts) => {
     if (search && !name.toLowerCase().includes(search.toLowerCase())) return false;
-    if (filter && countIn(alerts, filter.categories) === 0) return false;
-    if (classFilter && (alerts.by_class?.[classFilter.kind] ?? 0) === 0) return false;
+    if (filter && countIn(alarms, filter.categories) === 0) return false;
     return true;
   };
 
-  const visibleSites = sites.filter((s) => matches(`${s.code} ${s.name}`, s.alerts));
+  const visibleSites = sites.filter((s) => matches(`${s.code} ${s.name}`, s.alarms));
   // Unclassified rooms are never hidden: null means nobody classified it,
   // which is not the same claim as "this is plant".
   const isFacility = (r: SiteRoom) => r.room_class === 'facility';
@@ -230,7 +200,7 @@ export function Home() {
     ? rooms.filter((r) => r.datacenter_id === roomsSite.id)
     : rooms).filter((r) => showFacility || !isFacility(r));
   const visibleRooms = scopedRooms.filter(
-    (r) => matches(`${r.datacenter_code} ${r.name}`, r.alerts));
+    (r) => matches(`${r.datacenter_code} ${r.name}`, r.alarms));
 
   const rowsAll: (SiteRow | SiteRoom)[] = tab === 'sites' ? visibleSites : visibleRooms;
   const pageCount = Math.max(1, Math.ceil(rowsAll.length / pageSize));
@@ -251,8 +221,8 @@ export function Home() {
         <span className="site-title">DCIM Platform</span>
         <span className="spacer" />
         <button className="caption" onClick={() => setLegendOpen(true)}
-                title="What each counter counts">
-          <span className="ring" /> Alert status
+                title="What each counter counts, and what this console leaves out">
+          <span className="ring" /> Alarm status
         </button>
 
         {counters.map((c) => {
@@ -270,51 +240,20 @@ export function Home() {
                       // to filter to when every category is already included.
                       disabled={total}
                       title={total
-                        ? 'Every open condition - alarms and alerts together'
-                        : `Filter the table to ${c.label.toLowerCase()}`}
+                        ? 'Every open alarm, all categories'
+                        : `Filter the table to ${c.label.toLowerCase()} alarms`}
                       onClick={() => {
                         if (total) return;
                         setFilter(active ? null
                           : { key: c.key, label: c.label, categories: c.categories });
-                        setClassFilter(null);
                         setPage(0);
                       }}>
                 <span className="row">
                   <span className="n">{n}</span>
                   <CategoryGlyph kind={total ? 'alarms' : c.glyph} size={24} />
                 </span>
-                <span className="name">{total ? 'All open' : c.label}</span>
+                <span className="name">{total ? 'Alarms' : c.label}</span>
               </button>
-
-              {/* The split under the total. An alarm needs a response now and
-                  expects an acknowledgement; an alert is informational. Both
-                  are filters, and both are counted from the same population
-                  the number above them totals. */}
-              {total && data && (
-                <span className="split">
-                  {(['alarm', 'alert'] as AlertResponseClass[]).map((k) => {
-                    const count = data.totals.by_class?.[k] ?? 0;
-                    const on = classFilter?.kind === k;
-                    const label = classes[k] ?? k;
-                    return (
-                      <button key={k}
-                              className={`chip ${CLASS_TONE[k]} ${on ? 'on' : ''}`}
-                              aria-pressed={on}
-                              disabled={count === 0}
-                              title={count === 0
-                                ? `No open ${label.toLowerCase()}`
-                                : `Filter the table to ${label.toLowerCase()}`}
-                              onClick={() => {
-                                setClassFilter(on ? null : { kind: k, label });
-                                setFilter(null);
-                                setPage(0);
-                              }}>
-                        <b>{count}</b> {label.toLowerCase()}
-                      </button>
-                    );
-                  })}
-                </span>
-              )}
               {/* The counter filters the table; this lists what is behind it.
                   Two different questions - "show me only those" and "which
                   ones" - so two controls rather than one that has to guess. */}
@@ -358,11 +297,10 @@ export function Home() {
                 BACK TO ALL ROOMS
               </button>
             )}
-            {(filter || classFilter) && (
-              <button className="row-btn"
-                      onClick={() => { setFilter(null); setClassFilter(null); }}
+            {filter && (
+              <button className="row-btn" onClick={() => setFilter(null)}
                       title={`Showing only ${tab} with an open `
-                        + `${(filter?.label ?? classFilter?.label ?? '').toLowerCase()}`}>
+                        + `${filter.label.toLowerCase()} alarm`}>
                 CLEAR FILTER
               </button>
             )}
@@ -370,11 +308,11 @@ export function Home() {
 
           {error && <div className="banner">Failed to load sites: {String(error)}</div>}
 
-          {!!data?.unlocated_alerts && (
+          {!!data?.unlocated_alarms && (
             <p className="muted small" style={{ margin: 0, padding: '0 22px 10px' }}>
-              {data.unlocated_alerts} platform{' '}
-              {data.unlocated_alerts === 1 ? 'alarm belongs' : 'alarms belong'} to no
-              site, so {data.unlocated_alerts === 1 ? 'it is' : 'they are'} counted in
+              {data.unlocated_alarms} platform{' '}
+              {data.unlocated_alarms === 1 ? 'alarm belongs' : 'alarms belong'} to no
+              site, so {data.unlocated_alarms === 1 ? 'it is' : 'they are'} counted in
               the strip above but not in the table.{' '}
               <Link to="/platform">Platform health</Link>
             </p>
@@ -389,14 +327,7 @@ export function Home() {
                 </th>
                 <th>{tab === 'sites' ? 'Location' : 'Type'}</th>
                 <th className="ind-h">{tab === 'sites' ? 'Rooms' : 'Racks'}</th>
-                <th className="ind-h"
-                    title="Every open condition here - alarms and alerts">
-                  OPEN
-                </th>
-                <th className="ind-h"
-                    title="Needs a response now. The rest is informational.">
-                  ALM
-                </th>
+                <th className="ind-h" title="Every open alarm here">ALM</th>
                 {COLUMN_ORDER.map((c) => (
                   <th key={c} className="ind-h"
                       title={`${labels[c] ?? c} alerts`}>{metaFor(c).head}</th>
@@ -409,17 +340,15 @@ export function Home() {
             </thead>
             <tbody>
               {isLoading && (
-                <tr><td colSpan={17} className="muted" style={{ padding: 20 }}>Loading…</td></tr>
+                <tr><td colSpan={16} className="muted" style={{ padding: 20 }}>Loading…</td></tr>
               )}
 
               {!isLoading && rows.length === 0 && (
                 <tr>
-                  <td colSpan={17} className="muted" style={{ padding: 20 }}>
+                  <td colSpan={16} className="muted" style={{ padding: 20 }}>
                     {filter
-                      ? `No ${tab} have an open ${filter.label.toLowerCase()} condition.`
-                      : classFilter
-                        ? `No ${tab} have an open ${classFilter.label.toLowerCase()}.`
-                        : `No ${tab} match “${search}”.`}
+                      ? `No ${tab} have an open ${filter.label.toLowerCase()} alarm.`
+                      : `No ${tab} match “${search}”.`}
                   </td>
                 </tr>
               )}
@@ -444,9 +373,9 @@ export function Home() {
                   </td>
                   <td className="muted">{r.room_type.replace(/_/g, ' ')}</td>
                   <td className="num">{r.rack_count}</td>
-                  <IndicatorCells alerts={r.alerts} labels={labels} onOpen={setDrill} />
-                  {severityCell(r.alerts.critical, 'critical')}
-                  {severityCell(r.alerts.major, 'major')}
+                  <IndicatorCells alarms={r.alarms} labels={labels} onOpen={setDrill} />
+                  {severityCell(r.alarms.critical, 'critical')}
+                  {severityCell(r.alarms.major, 'major')}
                   <td className="ind-cell">
                     <button className="row-btn" onClick={() => setDrawerRoom(r)}>KPIs</button>
                   </td>
@@ -496,9 +425,9 @@ export function Home() {
                     onClose={() => setDrawerRoom(null)} />
       )}
 
-      {legendOpen && <AlertLegend onClose={() => setLegendOpen(false)} />}
+      {legendOpen && <AlarmLegend onClose={() => setLegendOpen(false)} />}
       {drill && (
-        <AlertDrilldown categories={drill.categories} title={drill.label}
+        <AlarmDrilldown categories={drill.categories} title={drill.label}
                         onClose={() => setDrill(null)} />
       )}
     </>
@@ -545,9 +474,9 @@ function FragmentRow({ site, open, onToggle, onKpis, onRooms, onRoomKpis,
             )
             : 0}
         </td>
-        <IndicatorCells alerts={site.alerts} labels={labels} onOpen={onDrill} />
-        {severityCell(site.alerts.critical, 'critical')}
-        {severityCell(site.alerts.major, 'major')}
+        <IndicatorCells alarms={site.alarms} labels={labels} onOpen={onDrill} />
+        {severityCell(site.alarms.critical, 'critical')}
+        {severityCell(site.alarms.major, 'major')}
         <td className="ind-cell">
           <button className="row-btn" onClick={onKpis}>KPIs</button>
         </td>
@@ -569,9 +498,9 @@ function FragmentRow({ site, open, onToggle, onKpis, onRooms, onRoomKpis,
           </td>
           <td className="muted small">{r.room_type.replace(/_/g, ' ')}</td>
           <td className="num">{r.rack_count}</td>
-          <IndicatorCells alerts={r.alerts} labels={labels} onOpen={onDrill} />
-          {severityCell(r.alerts.critical, 'critical')}
-          {severityCell(r.alerts.major, 'major')}
+          <IndicatorCells alarms={r.alarms} labels={labels} onOpen={onDrill} />
+          {severityCell(r.alarms.critical, 'critical')}
+          {severityCell(r.alarms.major, 'major')}
           <td className="ind-cell">
             <button className="row-btn" onClick={() => onRoomKpis(r)}>KPIs</button>
           </td>

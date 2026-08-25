@@ -1,5 +1,14 @@
 """Per-site and per-room roll-ups for the home page.
 
+This page is an ALARM console. Every count here is `response_class = 'alarm'`:
+conditions that require a response now. Alerts - wear, hygiene, stale telemetry,
+everything informational - are classified, stored and queryable, and they are
+not on this screen. A console that lists four hundred things nobody will act on
+tonight is a console operators stop reading.
+
+Reach the informational ones with `/alarms?response_class=alert`.
+
+
 The home page is a table of sites with an alert indicator per category, and it
 must not fan out. One query per tab, both driven by the same device-to-location
 CTE the dashboard uses, so a device that hangs off a room directly rather than
@@ -16,7 +25,7 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.alert_taxonomy import CATEGORIES, DETECTIONS, RESPONSE_CLASSES
+from app.core.alert_taxonomy import ALARM, CATEGORIES, DETECTIONS
 
 # Device -> (datacenter, room). A device may be racked, or sit in a room with no
 # rack (facility gear, floor-standing plant), so both paths are resolved and
@@ -39,17 +48,21 @@ _DEV_CTE = """
 # Open root alarms, already bucketed. State is ACTIVE or ACKNOWLEDGED: an
 # acknowledged alarm is still a live condition, and hiding it here is how a
 # known fault becomes a forgotten one.
-_ALARM_CTE = """
+#
+# `response_class = 'alarm'` is the other filter that matters: this CTE is the
+# whole page's population, so the eight category counters, the severity columns
+# and the drill-downs all describe faults and nothing else.
+_ALARM_CTE = f"""
     alarm_cat AS (
         SELECT dev.datacenter_id,
                dev.room_id,
                a.severity::text AS severity,
                a.category       AS category,
-               a.detection      AS detection,
-               a.response_class AS response_class
+               a.detection      AS detection
         FROM alarm a
         JOIN dev ON dev.device_id = a.device_id
         WHERE a.state <> 'CLEARED' AND a.is_symptom = false
+          AND a.response_class = '{ALARM}'
     )
 """
 
@@ -69,17 +82,8 @@ _DETECTION_COLUMNS = ",\n".join(
     for d in DETECTIONS
 )
 
-# Alarm or alert: does this need a response now. A second attribute, counted
-# beside the categories rather than partitioning them - the strip prints the
-# split under the total, and a category counter still means every condition of
-# that kind whichever way it is answered.
-_CLASS_COLUMNS = ",\n".join(
-    f"count(*) FILTER (WHERE response_class = '{c}') AS class_{c}"
-    for c in RESPONSE_CLASSES
-)
-
 _ALL_CATEGORY_COLUMNS = ",\n".join(
-    (_CATEGORY_COLUMNS, _DETECTION_COLUMNS, _CLASS_COLUMNS))
+    (_CATEGORY_COLUMNS, _DETECTION_COLUMNS))
 
 _SEVERITY_COLUMNS = """
     count(*)                                                    AS alerts_total,
@@ -95,8 +99,7 @@ _SEVERITY_COLUMNS = """
 _AGG_COALESCE = ",\n               ".join(
     f"COALESCE(agg.{name}, 0) AS {name}"
     for name in ([f"alerts_{c}" for c in CATEGORIES]
-                 + [f"detected_{d}" for d in DETECTIONS]
-                 + [f"class_{c}" for c in RESPONSE_CLASSES])
+                 + [f"detected_{d}" for d in DETECTIONS])
 )
 
 
@@ -224,10 +227,10 @@ async def fleet_alert_totals(session: AsyncSession) -> dict[str, Any]:
         WITH alarm_cat AS (
             SELECT a.severity::text AS severity,
                    a.category       AS category,
-                   a.detection      AS detection,
-                   a.response_class AS response_class
+                   a.detection      AS detection
             FROM alarm a
             WHERE a.state <> 'CLEARED' AND a.is_symptom = false
+              AND a.response_class = '{ALARM}'
         )
         SELECT {_ALL_CATEGORY_COLUMNS},
                {_SEVERITY_COLUMNS}
@@ -236,7 +239,7 @@ async def fleet_alert_totals(session: AsyncSession) -> dict[str, Any]:
     return dict(row) if row else {}
 
 
-async def unlocated_alerts(session: AsyncSession) -> int:
+async def unlocated_alarms(session: AsyncSession) -> int:
     """Open root alarms that belong to no site.
 
     Surfaced so the difference between the strip total and the sum of the table
@@ -248,6 +251,7 @@ async def unlocated_alerts(session: AsyncSession) -> int:
         FROM alarm a
         LEFT JOIN dev ON dev.device_id = a.device_id
         WHERE a.state <> 'CLEARED' AND a.is_symptom = false
+          AND a.response_class = '{ALARM}'
           AND dev.datacenter_id IS NULL
     """))).mappings().first()
     return int(row["n"]) if row else 0
@@ -337,7 +341,7 @@ async def site_endpoints(session: AsyncSession, datacenter_id: str) -> dict[str,
     return dict(row) if row else {}
 
 
-async def site_alerts(session: AsyncSession, datacenter_id: str) -> dict[str, Any]:
+async def site_alarms(session: AsyncSession, datacenter_id: str) -> dict[str, Any]:
     """Alert counts for one site, same buckets as the table."""
     row = (await session.execute(text(f"""
         WITH {_DEV_CTE},

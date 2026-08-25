@@ -204,14 +204,14 @@ async def test_site_power_capacity_prefers_the_site_rating(monkeypatch):
 @pytest.mark.asyncio
 async def test_alert_drilldown_accounts_for_unlocated_alarms(monkeypatch):
     """The modal's total must reconcile with the counter that opened it."""
-    monkeypatch.setattr(estate.repo, "alerts_by_room", _returns([{
+    monkeypatch.setattr(estate.repo, "alarms_by_room", _returns([{
         "room_id": "r1", "room_name": "Hall A", "floor": "1",
         "datacenter_id": "dc1", "site_code": "DC1", "site_name": "DC1",
         "qty": 3, "devices": 2, "critical": 1, "major": 2,
     }]))
-    monkeypatch.setattr(estate.repo, "unlocated_alerts_by_category", _returns(4))
+    monkeypatch.setattr(estate.repo, "unlocated_alarms_by_category", _returns(4))
 
-    out = await estate.alerts(_FakeSession(), category="datapoint")
+    out = await estate.alarms(_FakeSession(), category="datapoint")
     assert out["total"] == 7
     assert out["unlocated"] == 4
 

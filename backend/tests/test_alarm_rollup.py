@@ -94,7 +94,7 @@ def test_the_alert_block_is_the_eight_categories_and_the_detections():
     detections, so an absent key is a crash rather than an empty cell - hence
     the whole set, not only what happens to be non-zero.
     """
-    block = sites_service._alerts(_row(
+    block = sites_service._alarms(_row(
         alerts_total=7, crit=2,
         alerts_power=3, alerts_cooling=1, alerts_visibility=3,
         detected_threshold=4, detected_state=2, detected_absence=1,
@@ -121,7 +121,7 @@ def test_the_old_vocabulary_is_gone():
 
 
 def test_severity_survives_the_move():
-    block = sites_service._alerts(_row(alerts_total=9, crit=4, major=3, minor=2))
+    block = sites_service._alarms(_row(alerts_total=9, crit=4, major=3, minor=2))
     assert (block["total"], block["critical"], block["major"], block["minor"]) \
         == (9, 4, 3, 2)
 
@@ -150,11 +150,11 @@ async def test_drill_down_facets_are_the_rows_they_sit_under(monkeypatch):
         _alert_row(5, critical=2, major=3, detected_threshold=4, detected_state=1),
         _alert_row(2, major=1, minor=1, detected_state=2),
     ]
-    monkeypatch.setattr(estate_service.repo, "alerts_by_room", _returns(rows))
-    monkeypatch.setattr(estate_service.repo, "unlocated_alerts_by_category",
+    monkeypatch.setattr(estate_service.repo, "alarms_by_room", _returns(rows))
+    monkeypatch.setattr(estate_service.repo, "unlocated_alarms_by_category",
                         _returns(0))
 
-    out = await estate_service.alerts(_FakeSession(), category="power")
+    out = await estate_service.alarms(_FakeSession(), category="power")
 
     assert out["by_severity"] == {"critical": 2, "major": 4, "minor": 1,
                                   "warning": 0}
@@ -171,12 +171,12 @@ async def test_unlocated_alarms_are_counted_in_the_total_and_not_in_the_facets(
     total disagreed with the counter that opened it would send an operator
     looking for rows that were never there.
     """
-    monkeypatch.setattr(estate_service.repo, "alerts_by_room",
+    monkeypatch.setattr(estate_service.repo, "alarms_by_room",
                         _returns([_alert_row(3, critical=3, detected_absence=3)]))
-    monkeypatch.setattr(estate_service.repo, "unlocated_alerts_by_category",
+    monkeypatch.setattr(estate_service.repo, "unlocated_alarms_by_category",
                         _returns(2))
 
-    out = await estate_service.alerts(_FakeSession(), category="visibility")
+    out = await estate_service.alarms(_FakeSession(), category="visibility")
 
     assert out["total"] == 5
     assert out["unlocated"] == 2
@@ -190,11 +190,11 @@ async def test_a_category_is_answered_from_the_stamped_column(monkeypatch):
         seen["category"] = category
         return []
 
-    monkeypatch.setattr(estate_service.repo, "alerts_by_room", _capture)
-    monkeypatch.setattr(estate_service.repo, "unlocated_alerts_by_category",
+    monkeypatch.setattr(estate_service.repo, "alarms_by_room", _capture)
+    monkeypatch.setattr(estate_service.repo, "unlocated_alarms_by_category",
                         _returns(0))
 
-    await estate_api.alerts(category="cooling", session=_FakeSession())
+    await estate_api.alarms(category="cooling", session=_FakeSession())
 
     assert seen == {"category": "cooling"}
 
@@ -208,7 +208,7 @@ async def test_an_unknown_category_is_rejected_rather_than_answered_empty(catego
     as "nothing wrong in this category".
     """
     with pytest.raises(HTTPException) as exc:
-        await estate_api.alerts(category=category, session=_FakeSession())
+        await estate_api.alarms(category=category, session=_FakeSession())
     assert exc.value.status_code == 400
 
 
@@ -222,7 +222,7 @@ async def test_the_legend_is_generated_from_the_classifier():
     symptom is an operator routing work by a description that stopped being
     true.
     """
-    legend = await estate_api.alert_categories()
+    legend = await estate_api.alarm_categories()
 
     assert [c["key"] for c in legend["categories"]] == list(CATEGORIES)
     assert all(c["owner"] and c["description"] for c in legend["categories"])

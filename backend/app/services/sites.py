@@ -16,7 +16,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.alert_taxonomy import CATEGORIES, DETECTIONS, RESPONSE_CLASSES
+from app.core.alert_taxonomy import CATEGORIES, DETECTIONS
 from app.repositories import sites as repo
 from app.services import pue as pue_service
 
@@ -37,19 +37,18 @@ def _pct(part: Any, whole: Any) -> float | None:
     return round(p / w * 100.0, 1)
 
 
-def _alerts(row: dict[str, Any]) -> dict[str, Any]:
-    """The alert block every row and the strip share.
+def _alarms(row: dict[str, Any]) -> dict[str, Any]:
+    """The alarm block every row and the strip share.
+
+    ALARMS ONLY - `response_class = 'alarm'`, conditions that need a response
+    now. Informational alerts are excluded upstream in the SQL, so `total` here
+    is the fault count and the eight categories partition it.
 
     `by_category` is the taxonomy of docs/18-alert-taxonomy.md: one axis, the
     domain of the failing thing, which is the same as who owns the first five
-    minutes. `by_detection` and `by_class` sit beside it rather than inside it -
-    how a condition was found, and whether it needs a response now, are
-    attributes. So "only what analytics noticed" and "only what somebody must
-    act on" both filter across all eight categories instead of being a ninth.
-
-    `total` is every open root condition, alarms and alerts together, and
-    `by_category` sums to it. It is NOT the alarm count: reading it that way is
-    the mistake this block now makes impossible to make.
+    minutes. `by_detection` sits beside it rather than inside it - how a
+    condition was found is an attribute, so "only what analysis noticed" is a
+    filter across all eight categories instead of being a ninth.
     """
     return {
         "total": int(row.get("alerts_total") or 0),
@@ -58,7 +57,6 @@ def _alerts(row: dict[str, Any]) -> dict[str, Any]:
         "minor": int(row.get("minor") or 0),
         "by_category": {c: int(row.get(f"alerts_{c}") or 0) for c in CATEGORIES},
         "by_detection": {d: int(row.get(f"detected_{d}") or 0) for d in DETECTIONS},
-        "by_class": {c: int(row.get(f"class_{c}") or 0) for c in RESPONSE_CLASSES},
     }
 
 
@@ -95,7 +93,7 @@ async def overview(session: AsyncSession) -> dict[str, Any]:
     sites = await repo.site_rollups(session)
     rooms = await repo.room_rollups(session)
     totals = await repo.fleet_alert_totals(session)
-    unlocated = await repo.unlocated_alerts(session)
+    unlocated = await repo.unlocated_alarms(session)
 
     by_site: dict[str, list[dict[str, Any]]] = {}
     for r in rooms:
@@ -113,7 +111,7 @@ async def overview(session: AsyncSession) -> dict[str, Any]:
             "rack_count": int(r["rack_count"] or 0),
             "device_count": int(r["device_count"] or 0),
             "offline_count": int(r["offline_count"] or 0),
-            "alerts": _alerts(r),
+            "alarms": _alarms(r),
         })
 
     return {
@@ -131,14 +129,14 @@ async def overview(session: AsyncSession) -> dict[str, Any]:
             "device_count": int(s["device_count"] or 0),
             "online_count": int(s["online_count"] or 0),
             "offline_count": int(s["offline_count"] or 0),
-            "alerts": _alerts(s),
+            "alarms": _alarms(s),
             "rooms": by_site.get(s["id"], []),
         } for s in sites],
-        "totals": _alerts(totals),
+        "totals": _alarms(totals),
         # The strip counts platform alarms; the table cannot place them. This
         # is the difference, so the page can say so instead of leaving a reader
         # to find that the columns do not add up.
-        "unlocated_alerts": unlocated,
+        "unlocated_alarms": unlocated,
         "as_of": datetime.now(UTC),
     }
 
@@ -153,7 +151,7 @@ async def kpi(session: AsyncSession, datacenter_id: str) -> dict[str, Any] | Non
     space = await repo.site_space(session, datacenter_id)
     devices = await repo.site_devices(session, datacenter_id)
     endpoints = await repo.site_endpoints(session, datacenter_id)
-    alerts = await repo.site_alerts(session, datacenter_id)
+    alarms = await repo.site_alarms(session, datacenter_id)
     weather = await repo.site_weather(session, datacenter_id)
 
     it_kw = _f(power.get("it_load_kw")) or 0.0
@@ -257,6 +255,6 @@ async def kpi(session: AsyncSession, datacenter_id: str) -> dict[str, Any] | Non
         # dry/wet bulb pair would publish a psychrometric calculation as though
         # it were an instrument reading. Wind has no source at all.
         "weather": _weather(weather),
-        "alerts": _alerts(alerts),
+        "alarms": _alarms(alarms),
         "as_of": datetime.now(UTC),
     }

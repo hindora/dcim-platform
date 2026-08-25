@@ -104,6 +104,11 @@ An unknown severity resolves to `alarm`, because the failure mode of guessing
 
 Two consequences worth stating:
 
+* **The console shows one side of it.** `/sites/overview`,
+  `/estate/alarms` and `/estate/alarm-categories` are alarm-only by
+  construction. The alert side is reachable through
+  `/alarms?response_class=alert`, which is also where an alert view would be
+  built if one is ever wanted.
 * **The class follows severity on update, the category does not.** A condition
   that escalates from WARNING to CRITICAL stops being something to schedule on
   the same statement that raises its severity. The category records what kind
@@ -200,19 +205,24 @@ three asserted points mean this will not start at zero.
 
 ### Phase 4 - UI  *(built)*
 
+* **The home page is an alarm console.** Every count it renders is
+  `response_class = 'alarm'` - a condition requiring a response now - filtered
+  in the roll-up CTE rather than per counter, so the eight categories partition
+  the fault count and nothing on the screen can disagree with anything else on
+  it. Informational alerts are classified, stored and queryable, and they are
+  not here: on this estate they outnumber alarms roughly eighty to one, and a
+  console listing four hundred things nobody will act on tonight is a console
+  operators stop reading. The legend says so explicitly and links to them,
+  because "0 cooling" has to be read as "nothing to act on", not "nothing".
 * **Strip: five grouped counters** - Power · Cooling & Environment · IT &
-  Network · Visibility · Capacity, with the total between them. The total is
-  labelled "All open" and carries the alarm/alert split underneath as two
-  filters; it used to be labelled "Alarms" while being the sum of five counters
-  labelled "alerts", which asserted a distinction the data did not have.
-  Uncategorised appears as a sixth only when non-zero.
-* **Table: eight indicator columns**, one per category, plus OPEN and ALM.
-  Those two are deliberately separate cells: one cell reading 276 in red
-  because four of them need a response shouts a number nobody must act on and
-  hides the number they do. OPEN counts everything, ALM counts the actionable
-  subset. Nothing is hidden by the grouping; the strip is the headline, the
-  table is the detail. A category cell with a count is also the way into the
-  rooms behind it.
+  Network · Visibility · Capacity - with the all-categories alarm total
+  between them, labelled "Alarms". Uncategorised appears as a sixth only when
+  non-zero.
+* **Table: eight indicator columns**, one per category, plus ALM. ALM is every
+  open alarm in that row and the eight cells beside it partition it, so they
+  add up and can be read against each other. Nothing is hidden by the grouping;
+  the strip is the headline, the table is the detail. A category cell with a
+  count is also the way into the rooms behind it.
 * Drill-down modal carries `severity` and `detection` facets, folded from the
   rows it shows rather than fetched, so the two cannot describe different
   instants. A grouped counter runs one query per category and keeps the rows

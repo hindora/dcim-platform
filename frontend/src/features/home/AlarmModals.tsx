@@ -1,9 +1,12 @@
-/** The two modals behind the alert strip.
+/** The two modals behind the alarm strip.
  *
- *  `AlertLegend` says what each counter counts. `AlertDrilldown` lists the
- *  rooms behind one counter, so the number on the strip has somewhere to go -
- *  a headline that cannot be opened is a headline an operator has to take on
- *  trust.
+ *  `AlarmLegend` says what each counter counts - and what the console leaves
+ *  out, which matters more here than it looks: this page shows alarms only,
+ *  and an operator who does not know that will read "0 cooling" as "no cooling
+ *  problems" rather than "no cooling problems anybody must act on tonight".
+ *  `AlarmDrilldown` lists the rooms behind one counter, so the number on the
+ *  strip has somewhere to go - a headline that cannot be opened is a headline
+ *  an operator has to take on trust.
  *
  *  Neither writes the taxonomy down. Labels, owners, definitions and examples
  *  all come from `/estate/alert-categories`, which is generated from the
@@ -19,12 +22,11 @@ import { useQueries, useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import {
   api,
-  type AlertCategory,
-  type AlertDetection,
-  type AlertDrill,
-  type AlertDrillRow,
-  type AlertResponseClass,
-  type AlertTaxonomy,
+  type AlarmCategory,
+  type AlarmDetection,
+  type AlarmDrill,
+  type AlarmDrillRow,
+  type AlarmTaxonomy,
 } from '../../api/client';
 import { Modal } from '../../components/estate';
 import { CategoryGlyph } from '../../components/CategoryGlyph';
@@ -33,22 +35,23 @@ import { metaFor } from '../../components/alertMeta';
 const SEVERITIES = ['critical', 'major', 'minor', 'warning'] as const;
 
 function useTaxonomy() {
-  return useQuery<AlertTaxonomy>({
-    queryKey: ['alert-taxonomy'],
-    queryFn: api.alertTaxonomy,
+  return useQuery<AlarmTaxonomy>({
+    queryKey: ['alarm-taxonomy'],
+    queryFn: api.alarmTaxonomy,
     staleTime: Infinity,
   });
 }
 
-export function AlertLegend({ onClose }: { onClose: () => void }) {
+export function AlarmLegend({ onClose }: { onClose: () => void }) {
   const { data, isLoading, error } = useTaxonomy();
 
   return (
-    <Modal title="Alert status" onClose={onClose}
-           blurb={'One axis: what kind of thing is wrong, and therefore who owns the '
-             + 'first five minutes. Categories are mutually exclusive, so the counters '
-             + 'sum to the total. Counts are ROOTS only - one failed uplink is one '
-             + 'alert, not one per device behind it.'}>
+    <Modal title="Alarm status" onClose={onClose}
+           blurb={'Everything on this page is an alarm: a condition that requires a '
+             + 'response now. One axis - what kind of thing is wrong, and therefore '
+             + 'who owns the first five minutes. Categories are mutually exclusive, '
+             + 'so the counters sum to the total. Counts are ROOTS only: one failed '
+             + 'uplink is one alarm, not one per device behind it.'}>
       {error && <div className="banner">Could not load the alert taxonomy.</div>}
       {isLoading && <p className="muted">Loading…</p>}
 
@@ -90,13 +93,15 @@ export function AlertLegend({ onClose }: { onClose: () => void }) {
 
           <h4 style={{ margin: '22px 0 6px', fontSize: 12, letterSpacing: '.06em',
                        textTransform: 'uppercase' }}>
-            Does it need a response now
+            What this console leaves out
           </h4>
           <p className="muted small" style={{ margin: '0 0 10px' }}>
-            The distinction operations standards draw by REQUIRED RESPONSE, not
-            by how bad the number looks. It cuts across all eight categories:
-            a category counter means every condition of that kind, whichever
-            way this is answered.
+            Operations standards separate the two by REQUIRED RESPONSE, not by
+            how bad the number looks. This page counts the first kind only.
+            The second is classified and stored, and reachable from the{' '}
+            <Link to="/alarms?response_class=alert">alarm list</Link> — worth
+            knowing, because “0 cooling” here means nothing to act on tonight,
+            not nothing at all.
           </p>
           <div className="legend-grid">
             {data.response_classes.map((c) => (
@@ -157,8 +162,8 @@ function Facets({ label, entries }: {
   );
 }
 
-export function AlertDrilldown({ categories, title, onClose }: {
-  categories: AlertCategory[]; title: string; onClose: () => void;
+export function AlarmDrilldown({ categories, title, onClose }: {
+  categories: AlarmCategory[]; title: string; onClose: () => void;
 }) {
   // One query per category, never a merged one. A grouped counter such as
   // "Cooling & Environment" is two categories; asking for each separately and
@@ -166,8 +171,8 @@ export function AlertDrilldown({ categories, title, onClose }: {
   // mutually exclusive so nothing is counted twice.
   const results = useQueries({
     queries: categories.map((category) => ({
-      queryKey: ['estate-alerts', category],
-      queryFn: () => api.estateAlerts(category),
+      queryKey: ['estate-alarms', category],
+      queryFn: () => api.estateAlarms(category),
     })),
   });
 
@@ -176,7 +181,7 @@ export function AlertDrilldown({ categories, title, onClose }: {
   const error = results.find((r) => r.error)?.error;
   const loaded = results
     .map((r, i) => (r.data ? { category: categories[i], drill: r.data } : null))
-    .filter(Boolean) as { category: AlertCategory; drill: AlertDrill }[];
+    .filter(Boolean) as { category: AlarmCategory; drill: AlarmDrill }[];
 
   const total = loaded.reduce((n, d) => n + d.drill.total, 0);
   const unlocated = loaded.reduce((n, d) => n + d.drill.unlocated, 0);
@@ -184,7 +189,7 @@ export function AlertDrilldown({ categories, title, onClose }: {
   // Rows stay per room AND per category. Merging them would need a rule for
   // `devices`, where the same device can carry alerts in two categories, and a
   // guessed rule there is a number nobody can reconcile against the alarm list.
-  const rows: { category: AlertCategory; row: AlertDrillRow }[] = loaded
+  const rows: { category: AlarmCategory; row: AlarmDrillRow }[] = loaded
     .flatMap((d) => d.drill.rows.map((row) => ({ category: d.category, row })))
     .sort((a, b) => b.row.qty - a.row.qty);
 
@@ -195,15 +200,9 @@ export function AlertDrilldown({ categories, title, onClose }: {
   }));
 
   const detections = (taxonomy?.detections ?? []).map((d) => ({
-    key: d.key as AlertDetection,
+    key: d.key as AlarmDetection,
     label: d.label,
     n: loaded.reduce((n, x) => n + (x.drill.by_detection?.[d.key] ?? 0), 0),
-  }));
-
-  const classes = (taxonomy?.response_classes ?? []).map((c) => ({
-    key: c.key as AlertResponseClass,
-    label: c.label,
-    n: loaded.reduce((n, x) => n + (x.drill.by_class?.[c.key] ?? 0), 0),
   }));
 
   const definitions = (taxonomy?.categories ?? []).filter(
@@ -220,7 +219,6 @@ export function AlertDrilldown({ categories, title, onClose }: {
 
       {!!loaded.length && (
         <>
-          <Facets label="Response" entries={classes} />
           <Facets label="Severity" entries={severity} />
           <Facets label="Found by" entries={detections} />
         </>
@@ -238,7 +236,7 @@ export function AlertDrilldown({ categories, title, onClose }: {
                 <th>Room</th><th>Site</th>
                 <th className="mid">Floor</th>
                 {categories.length > 1 && <th>Category</th>}
-                <th className="num">Alerts</th>
+                <th className="num">Alarms</th>
                 <th className="num">Devices</th>
                 <th className="num">Critical</th>
                 <th className="num">Major</th>

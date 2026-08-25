@@ -15,7 +15,7 @@ import { useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   api,
-  type AlertCategory,
+  type AlarmCategory,
   type MaybeMetric,
   type SiteKpi,
   type SiteRow,
@@ -69,15 +69,13 @@ function utilTile(u: Utilisation, caption: string) {
  *  Eight chips would not fit the panel, and the question this drawer answers -
  *  "who do I call about this site" - is the grouping's question anyway. The
  *  eight-column breakdown is one click away on the row behind it. */
-const CHIPS: { key: string; categories: AlertCategory[] | null;
+const CHIPS: { key: string; categories: AlarmCategory[] | null;
                glyph: GlyphKind; label: string; tone: string }[] = [
   { key: 'power', categories: ['power'], glyph: 'power', label: 'PWR', tone: 'pwr' },
   { key: 'cooling_env', categories: ['cooling', 'environmental'],
     glyph: 'cooling', label: 'CLG', tone: 'cool' },
-  // Every open condition at this site. The alarm count inside it rides in the
-  // title rather than as a seventh chip - the drawer is 400px wide, and the
-  // split has a home on the strip behind it.
-  { key: 'total', categories: null, glyph: 'alarms', label: 'OPEN', tone: 'alarms' },
+  // Every open alarm at this site, all categories.
+  { key: 'total', categories: null, glyph: 'alarms', label: 'ALM', tone: 'alarms' },
   { key: 'it_network', categories: ['it_equipment', 'network'],
     glyph: 'it_equipment', label: 'IT', tone: 'it' },
   { key: 'visibility', categories: ['visibility'], glyph: 'visibility',
@@ -234,14 +232,13 @@ export function SiteDrawer({ site, onClose }: { site: SiteRow; onClose: () => vo
             <div className="drawer-chips">
               {CHIPS.map((c) => {
                 const n = c.categories === null
-                  ? data.alerts.total
+                  ? data.alarms.total
                   : c.categories.reduce(
-                      (t, k) => t + (data.alerts.by_category?.[k] ?? 0), 0);
+                      (t, k) => t + (data.alarms.by_category?.[k] ?? 0), 0);
                 return (
                   <span key={c.key} className={`ind ${c.tone} ${n > 0 ? 'on' : ''}`}
                         title={c.categories === null
-                          ? `${n} open: ${data.alerts.by_class?.alarm ?? 0} needing a `
-                            + `response, ${data.alerts.by_class?.alert ?? 0} informational`
+                          ? `${n} open alarm${n === 1 ? '' : 's'} at this site`
                           : `${c.label}: ${n}`}>
                     <span>{n}</span>
                     <CategoryGlyph kind={c.glyph} />

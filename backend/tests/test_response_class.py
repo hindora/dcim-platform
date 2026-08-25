@@ -120,33 +120,37 @@ def test_a_rule_that_says_nothing_leaves_the_default_alone():
 # ------------------------------------------------------------- the roll-up
 
 
-def test_the_class_split_is_counted_and_coalesced():
-    for c in RESPONSE_CLASSES:
-        assert f"AS class_{c}" in sites_repo._CLASS_COLUMNS
-        assert f"COALESCE(agg.class_{c}, 0) AS class_{c}" in sites_repo._AGG_COALESCE
-    assert "a.response_class AS response_class" in sites_repo._ALARM_CTE
+def test_the_home_rollup_counts_alarms_only():
+    """The console filters on the class rather than reporting it.
 
-
-def test_the_block_splits_the_total_without_replacing_it():
-    """`total` stays every open condition; the split sits beside it.
-
-    The counter that used to be labelled "Alarms" was this total. Both numbers
-    are now on the page and they mean different things - which is the whole
-    point of the exercise.
+    Every counter on that page - the eight categories, the severity columns,
+    the drill-downs - reads this one CTE, so filtering here is what makes the
+    whole screen mean "faults" rather than "everything open". An operator
+    reading `0 cooling` is being told nothing needs a response, which is only
+    true if the filter is in the population and not bolted on per counter.
     """
-    block = sites_service._alerts({
-        "alerts_total": 42, "crit": 3, "major": 9, "minor": 30,
-        "alerts_power": 12, "alerts_visibility": 30,
-        "class_alarm": 12, "class_alert": 30,
+    assert f"a.response_class = '{tax.ALARM}'" in sites_repo._ALARM_CTE
+    # And it is not silently reported as a facet as well: alerts are absent,
+    # so a split of the population would read alarm=total, alert=0 and invite
+    # the reader to think the estate has no informational conditions at all.
+    assert "class_alert" not in sites_repo._AGG_COALESCE
+
+
+def test_the_block_is_the_fault_count():
+    """`total` is alarms, and the eight categories partition it."""
+    block = sites_service._alarms({
+        "alerts_total": 12, "crit": 3, "major": 9,
+        "alerts_power": 5, "alerts_visibility": 7,
     })
-    assert block["total"] == 42
-    assert block["by_class"] == {"alarm": 12, "alert": 30}
-    assert sum(block["by_class"].values()) == block["total"]
+    assert block["total"] == 12
+    assert sum(block["by_category"].values()) == block["total"]
+    assert "by_class" not in block
 
 
 def test_a_quiet_site_reads_zero_not_missing():
-    block = sites_service._alerts({"alerts_total": 0})
-    assert block["by_class"] == {"alarm": 0, "alert": 0}
+    block = sites_service._alarms({"alerts_total": 0})
+    assert block["total"] == 0
+    assert set(block["by_category"]) == set(CATEGORIES)
 
 
 # ------------------------------------------------------------------ the API
@@ -154,7 +158,7 @@ def test_a_quiet_site_reads_zero_not_missing():
 
 async def test_the_legend_defines_both_classes():
     """An operator who cannot define a facet will not use it."""
-    legend = await estate_api.alert_categories()
+    legend = await estate_api.alarm_categories()
     assert [c["key"] for c in legend["response_classes"]] == list(RESPONSE_CLASSES)
     for c in legend["response_classes"]:
         assert c["label"] and c["description"]

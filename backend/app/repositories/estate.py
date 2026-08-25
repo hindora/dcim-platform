@@ -19,7 +19,7 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.alert_taxonomy import DETECTIONS, RESPONSE_CLASSES
+from app.core.alert_taxonomy import ALARM, DETECTIONS
 
 # Device -> (datacenter, room). Same resolution as the home page: a device may
 # be racked, or stand on the floor in a room with no rack.
@@ -352,19 +352,18 @@ async def site_design(session: AsyncSession) -> dict[str, Any]:
     return {r["id"]: r["design_it_kw"] for r in rows}
 
 
-async def alerts_by_room(session: AsyncSession, *,
+async def alarms_by_room(session: AsyncSession, *,
                          category: str) -> list[dict[str, Any]]:
-    """Open root alarms of one category, grouped by room.
+    """Open root ALARMS of one category, grouped by room.
 
-    The drill-down behind an alert counter. Roots only and never CLEARED, the
-    same population the counter itself totals - a drill-down that disagrees
-    with the number that opened it is worse than no drill-down.
+    The drill-down behind a counter. Roots only, never CLEARED, and
+    `response_class = 'alarm'` - exactly the population the counter itself
+    totals. A drill-down that disagrees with the number that opened it is worse
+    than no drill-down.
     """
     facet_cols = ",\n               ".join(
-        [f"count(*) FILTER (WHERE detection = '{d}') AS detected_{d}"
-         for d in DETECTIONS]
-        + [f"count(*) FILTER (WHERE response_class = '{c}') AS class_{c}"
-           for c in RESPONSE_CLASSES]
+        f"count(*) FILTER (WHERE detection = '{d}') AS detected_{d}"
+        for d in DETECTIONS
     )
 
     rows = (await session.execute(text(f"""
@@ -372,11 +371,11 @@ async def alerts_by_room(session: AsyncSession, *,
         cat AS (
             SELECT dev.datacenter_id, dev.room_id, a.severity::text AS severity,
                    a.device_id, a.detection AS detection,
-                   a.response_class AS response_class,
                    a.category AS category
             FROM alarm a
             JOIN dev ON dev.device_id = a.device_id
             WHERE a.state <> 'CLEARED' AND a.is_symptom = false
+              AND a.response_class = '{ALARM}'
         )
         SELECT rm.id::text            AS room_id,
                rm.name                AS room_name,
@@ -401,7 +400,7 @@ async def alerts_by_room(session: AsyncSession, *,
     return [dict(r) for r in rows]
 
 
-async def unlocated_alerts_by_category(session: AsyncSession, *,
+async def unlocated_alarms_by_category(session: AsyncSession, *,
                                        category: str) -> int:
     """Alarms of a category that resolve to no room.
 
@@ -416,6 +415,7 @@ async def unlocated_alerts_by_category(session: AsyncSession, *,
             FROM alarm a
             LEFT JOIN dev ON dev.device_id = a.device_id
             WHERE a.state <> 'CLEARED' AND a.is_symptom = false
+              AND a.response_class = '{ALARM}'
         )
         SELECT count(*) AS n FROM cat
         WHERE category = :category AND room_id IS NULL

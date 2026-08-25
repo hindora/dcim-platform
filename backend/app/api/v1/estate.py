@@ -81,9 +81,9 @@ async def utilization(
     return await service.utilisation(session)
 
 
-@router.get("/alert-categories", summary="The taxonomy itself: categories, "
+@router.get("/alarm-categories", summary="The taxonomy itself: categories, "
                                         "owners, detection methods")
-async def alert_categories(
+async def alarm_categories(
     _: Principal = Depends(current_principal),
 ) -> dict:
     """What each counter means, served from the classifier that fills it.
@@ -113,8 +113,10 @@ async def alert_categories(
             "label": DETECTION_DESCRIPTIONS[d]["label"],
             "description": DETECTION_DESCRIPTIONS[d]["text"],
         } for d in DETECTIONS],
-        # Alarm or alert - required response, the ISA-18.2 split. An attribute,
-        # like detection: it cuts across all eight categories.
+        # Alarm or alert - required response, the ISA-18.2 split. Served so
+        # the legend can say what this console shows and what it leaves out:
+        # every count on the home page is `alarm`, and the informational half
+        # is reachable through /alarms?response_class=alert.
         "response_classes": [{
             "key": c,
             "label": RESPONSE_DESCRIPTIONS[c]["label"],
@@ -123,16 +125,22 @@ async def alert_categories(
     }
 
 
-@router.get("/alerts", summary="Open alerts of one category, by room")
-async def alerts(
+@router.get("/alarms", summary="Open alarms of one category, by room")
+async def alarms(
     category: str = Query(..., description="One of: " + ", ".join(CATEGORIES)),
     session: AsyncSession = Depends(get_session),
     _: Principal = Depends(current_principal),
 ) -> dict:
+    """Faults of one category, by room.
+
+    Alarms only. The same population the home page counts, which is the point:
+    a drill-down that returns more rows than the counter that opened it teaches
+    an operator to distrust both.
+    """
     if category not in CATEGORIES:
         raise HTTPException(status.HTTP_400_BAD_REQUEST,
                             f"unknown category {category!r}")
-    return await service.alerts(session, category=category)
+    return await service.alarms(session, category=category)
 
 
 @router.get("/rooms/{room_id}/kpi", summary="Everything the room drawer shows")
