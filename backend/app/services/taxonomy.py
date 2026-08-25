@@ -80,6 +80,22 @@ ACRONYMS = frozenset({
 })
 
 
+#: Metrics whose category is decided by the equipment reporting them, not by
+#: the metric name. Kept beside the classifier's own role layer.
+_ROLE_DEPENDENT_METRICS = frozenset({
+    "power_draw", "fan_speed", "fan_speed_pct", "inlet_temperature",
+    "exhaust_temperature", "component_temperature", "load_pct",
+    "energy_consumed", "current", "voltage_ln", "voltage_ll",
+    "alarm_state", "equipment_state",
+})
+
+
+def _role_dependent(rule: dict[str, Any]) -> bool:
+    """Would this rule's category change with the device it fires on?"""
+    return (rule.get("metric_key") in _ROLE_DEPENDENT_METRICS
+            and rule["alarm_type"] not in tax.BY_ALARM_TYPE)
+
+
 def _humanise(key: str) -> str:
     """`Alarm_HighSupplyTemp` -> `High supply temp`, `cpu_temp_high` -> `Cpu temp high`.
 
@@ -139,11 +155,12 @@ async def catalogue(session: AsyncSession) -> dict[str, Any]:
         conditions.append({
             "key": r["alarm_type"],
             "label": _humanise(r["alarm_type"]),
-            # `uncategorised` here does not mean nobody classified it - it means
-            # the metric means different things on different equipment, and the
-            # category is decided per alarm from the device's role. Null says
-            # that; the word would say the classifier has a gap.
-            "category": None if category == tax.UNCATEGORISED else category,
+            # Null, not a category, for a rule whose metric means different
+            # things on different equipment: `power_draw` is the electrical
+            # chain on a PDU and the host on a server, and the classifier
+            # decides that per alarm from the device's role. Naming one here
+            # would be wrong for half the fleet.
+            "category": None if _role_dependent(r) else category,
             "origin": RULE,
             "severity": severity,
             "response_class": cls,
@@ -194,7 +211,7 @@ async def catalogue(session: AsyncSession) -> dict[str, Any]:
     # list, which is the worst possible first impression of a catalogue.
     category_rank = {c: i for i, c in enumerate(
         ("power", "cooling", "environmental", "it_equipment", "network",
-         "visibility", "capacity", "uncategorised"))}
+         "visibility", "capacity"))}
     origin_rank = {RULE: 0, EQUIPMENT: 1, REPORTED: 2, PLATFORM: 3, PLANNED: 4}
 
     conditions.sort(key=lambda c: (

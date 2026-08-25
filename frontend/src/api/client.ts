@@ -572,7 +572,7 @@ export interface CollectorHealth {
 
 export type AlarmCategory =
   | 'visibility' | 'environmental' | 'cooling' | 'power'
-  | 'it_equipment' | 'network' | 'capacity' | 'uncategorised';
+  | 'it_equipment' | 'network' | 'capacity';
 
 export type AlarmDetection =
   | 'threshold' | 'state' | 'absence' | 'derived' | 'forecast';

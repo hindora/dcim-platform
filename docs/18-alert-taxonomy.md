@@ -62,11 +62,23 @@ five minutes.**
 | `it_equipment` | The host: CPU, memory, disk, fan, PSU, component temperature, predicted hardware failure | IT |
 | `network` | Fabric and transport: link and interface state, errors, path redundancy, adjacency | network |
 | `capacity` | Headroom and resilience: redundancy lost, single-corded load, days of supply, efficiency excursion | planning |
-| `uncategorised` | Anything unmatched, kept visible on purpose | triage |
 
-`uncategorised` is not a failure of the design; it is the instrument that
-measures the design. A point nobody classified must be countable, not filed
-into whichever bucket is nearest.
+**There is no residual bucket.** `uncategorised` existed through phases 1-4 as
+the instrument that measured the taxonomy - a point nobody classified had to be
+countable rather than filed into whichever bucket was nearest. It read zero for
+its whole life: across 29,545 historical alarms, and across every trap, point
+and alarm type the plane can emit, nothing ever landed there. Removed
+2026-08-25 (migration 0024), because a column that is always empty stops being
+an instrument and becomes furniture, and an operator cannot route
+"uncategorised" anyway.
+
+The gap it used to detect is now caught earlier and harder. `classify()` falls
+back to `visibility` - reachable only when the type, the metric and the device
+are all unknown, which is a statement about our own understanding rather than
+about equipment - and `test_alert_taxonomy` fails unless every condition the
+plane can emit is named in `BY_ALARM_TYPE` explicitly. A point added upstream
+and forgotten breaks the build instead of appearing in a column nobody
+watches.
 
 ## 3. What is an attribute, not a category
 
@@ -218,7 +230,7 @@ three asserted points mean this will not start at zero.
   Network · Visibility · Capacity - with the all-categories alarm total
   between them, labelled "Alarms". Uncategorised appears as a sixth only when
   non-zero.
-* **Table: eight indicator columns**, one per category, plus ALM. ALM is every
+* **Table: seven indicator columns**, one per category, plus ALM. ALM is every
   open alarm in that row and the eight cells beside it partition it, so they
   add up and can be read against each other. Nothing is hidden by the grouping;
   the strip is the headline, the table is the detail. A category cell with a

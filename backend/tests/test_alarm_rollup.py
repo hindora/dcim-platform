@@ -234,11 +234,11 @@ async def test_the_legend_is_generated_from_the_classifier(monkeypatch):
     assert [c["key"] for c in legend["categories"]] == list(CATEGORIES)
     assert all(c["owner"] and c["description"] for c in legend["categories"])
 
-    # The strip groups the eight into five headline counters. Grouping may not
+    # The strip groups the seven into five headline counters. Grouping may not
     # lose a category: the table has a column for each, and a category in no
     # group would be countable in one place and invisible in the other.
     grouped = {c for g in legend["strip_groups"] for c in g["categories"]}
-    assert grouped == set(CATEGORIES) - {"uncategorised"}
+    assert grouped == set(CATEGORIES)
     assert [d["key"] for d in legend["detections"]] == list(DETECTIONS)
     assert all(d["label"] and d["description"] for d in legend["detections"])
 

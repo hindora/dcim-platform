@@ -31,7 +31,6 @@ export const CATEGORY_META: Record<AlarmCategory, CategoryMeta> = {
   network:       { glyph: 'network',       head: 'NET',  tone: 'it' },
   visibility:    { glyph: 'visibility',    head: 'VIS',  tone: 'vis' },
   capacity:      { glyph: 'capacity',      head: 'CAP',  tone: 'cap' },
-  uncategorised: { glyph: 'uncategorised', head: 'UNC',  tone: 'unc' },
 };
 
 /** Tone per strip group, for the counters themselves. */
@@ -45,12 +44,12 @@ export const GROUP_TONE: Record<string, string> = {
 
 /** A category the UI has never heard of still has to render.
  *
- *  The server owns the taxonomy; if it grows a ninth category before this file
- *  learns about it, the counter must appear as an unknown rather than vanish.
- *  A category that is countable server-side and invisible here is the exact
- *  failure `uncategorised` exists to prevent. */
+ *  The server owns the taxonomy; if it grows an eighth category before this
+ *  file learns about it, the counter must appear as an unknown rather than
+ *  vanish. A category that is countable server-side and invisible here is a
+ *  number nobody can reconcile. */
 export const UNKNOWN_META: CategoryMeta = {
-  glyph: 'uncategorised', head: '???', tone: 'unc',
+  glyph: 'alarms', head: '???', tone: 'unc',
 };
 
 export function metaFor(key: string): CategoryMeta {
@@ -64,5 +63,5 @@ export function metaFor(key: string): CategoryMeta {
  *  see any of it - rather than alphabetically. */
 export const COLUMN_ORDER: AlarmCategory[] = [
   'power', 'cooling', 'environmental', 'it_equipment', 'network',
-  'visibility', 'capacity', 'uncategorised',
+  'visibility', 'capacity',
 ];

@@ -17,7 +17,7 @@
 
 import type { AlarmCategory } from '../api/client';
 
-/** The eight categories, plus `alarms` for the all-categories total. */
+/** The seven categories, plus `alarms` for the all-categories total. */
 export type GlyphKind = AlarmCategory | 'alarms';
 
 export function CategoryGlyph({ kind, size = 15 }: { kind: GlyphKind; size?: number }) {
@@ -111,16 +111,6 @@ export function CategoryGlyph({ kind, size = 15 }: { kind: GlyphKind; size?: num
         <svg {...common} strokeWidth="1.6" strokeLinecap="round">
           <path d="M2 12a6 6 0 1 1 12 0" />
           <line x1="8" y1="12" x2="12" y2="8.4" />
-        </svg>
-      );
-
-    // A question: nobody has classified this yet, and the gap is the point.
-    case 'uncategorised':
-      return (
-        <svg {...common} strokeWidth="1.5" strokeLinecap="round">
-          <circle cx="8" cy="8" r="6.4" />
-          <path d="M6.2 6.1a1.9 1.9 0 1 1 2.6 1.8c-.5.2-.8.7-.8 1.2v.4" />
-          <circle cx="8" cy="11.7" r=".85" fill="currentColor" stroke="none" />
         </svg>
       );
   }

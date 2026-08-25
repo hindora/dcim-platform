@@ -26,12 +26,13 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-from app.core.alert_taxonomy import (
-    DETECTION_BY_SOURCE,
-    THRESHOLD,
-    UNCATEGORISED,
-    sql_case,
-)
+from app.core.alert_taxonomy import DETECTION_BY_SOURCE, THRESHOLD, sql_case
+
+# Pinned, not imported. This was the column default AT THIS REVISION; 0024
+# removed the category from the taxonomy, and a migration that imports a live
+# constant stops replaying the moment that constant moves - which is how a
+# fresh database becomes unbuildable while every existing one looks fine.
+UNCATEGORISED = "uncategorised"
 
 revision = "0019"
 down_revision = "0018"

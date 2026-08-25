@@ -19,8 +19,15 @@ Classification resolves in three layers, first match wins:
                              different things on different equipment
     3. metric group        - the registry's own grouping, as a default
 
-and then `uncategorised`, which is deliberate: a point nobody classified has to
-be COUNTABLE, not filed into whichever bucket happens to be nearest.
+and every condition resolves to one of the seven. There is no residual bucket:
+the last resort is VISIBILITY, and it is reachable only by a condition with no
+known type, no metric and no device behind it - which is a statement about this
+platform's own understanding rather than about any equipment, and therefore
+belongs with the other conditions that mean "we cannot see properly".
+
+That the fallback is unreachable in practice is not assumed, it is tested:
+`test_alert_taxonomy` fails if any trap, point or alarm type the plane can emit
+resolves through it.
 
 This module is the only classifier. The five-bucket scheme it replaced -
 thermal / connectivity / datapoint / anomaly / other - ran beside it through
@@ -39,10 +46,18 @@ POWER = "power"
 IT_EQUIPMENT = "it_equipment"
 NETWORK = "network"
 CAPACITY = "capacity"
-UNCATEGORISED = "uncategorised"
 
 CATEGORIES = (VISIBILITY, ENVIRONMENTAL, COOLING, POWER, IT_EQUIPMENT,
-              NETWORK, CAPACITY, UNCATEGORISED)
+              NETWORK, CAPACITY)
+
+#: Where a condition goes when nothing else claims it.
+#:
+#: Not a bucket of its own: an operator cannot route "uncategorised", and a
+#: column that reads zero every day is a column people stop seeing. Reaching
+#: this means the condition has no known type, no metric we recognise and no
+#: device - so what we actually know is that our own classification failed,
+#: which is a visibility problem.
+FALLBACK = VISIBILITY
 
 #: What each category means and who owns the first five minutes. Shown in the
 #: UI legend, so the operator reads the same definition the classifier applies.
@@ -90,13 +105,6 @@ DESCRIPTIONS: dict[str, dict[str, str]] = {
         "owner": "planning",
         "text": "Headroom and resilience: redundancy lost, single-corded "
                 "load, days of supply, efficiency excursions.",
-    },
-    UNCATEGORISED: {
-        "label": "Uncategorised",
-        "owner": "triage",
-        "text": "Nothing has classified this condition yet. Kept visible on "
-                "purpose - an unclassified alarm is a gap in the taxonomy, "
-                "and a gap you cannot count is one nobody closes.",
     },
 }
 
@@ -424,8 +432,9 @@ METRIC_GROUP_FALLBACK: dict[str, str] = {
     "alarm_state": "cooling", "equipment_state": "cooling",
 }
 
-#: Device-type role -> category, the last resort before uncategorised. A fault
-#: on a chiller is a cooling fault even when we know nothing else about it.
+#: Device-type role -> category, and the layer that does the real work of
+#: making the taxonomy total. A fault on a chiller is a cooling fault even when
+#: we know nothing else about it.
 BY_ROLE: dict[str, str] = {
     "it": IT_EQUIPMENT,
     "network": NETWORK,
@@ -443,8 +452,9 @@ def classify(alarm_type: str | None = None, *, role: str | None = None,
 
     `role` is `device_type.category` - what the equipment IS - and it is what
     makes the same metric mean different things on different gear. Never
-    raises: an unknown condition is `uncategorised`, which is a finding rather
-    than an error.
+    raises, and always returns one of `CATEGORIES`: a condition nothing else
+    claims resolves to `FALLBACK`, which is reachable only when the type, the
+    metric and the device are all unknown to us.
     """
     if alarm_type and alarm_type in BY_ALARM_TYPE:
         return BY_ALARM_TYPE[alarm_type]
@@ -463,7 +473,7 @@ def classify(alarm_type: str | None = None, *, role: str | None = None,
     if role and role in BY_ROLE:
         return BY_ROLE[role]
 
-    return UNCATEGORISED
+    return FALLBACK
 
 
 def detection_for(source: str | None, *, metric_key: str | None = None) -> str:
@@ -506,7 +516,7 @@ def sql_case(alarm_type_col: str = "a.alarm_type",
     for role, category in BY_ROLE.items():
         lines.append(f"    WHEN {role_col} = '{role}' THEN '{category}'")
 
-    lines.append(f"    ELSE '{UNCATEGORISED}'")
+    lines.append(f"    ELSE '{FALLBACK}'")
     lines.append("END")
     return "\n".join(lines)
 
@@ -514,8 +524,7 @@ def sql_case(alarm_type_col: str = "a.alarm_type",
 #: How the eight categories group into the five headline counters on the home
 #: page. The strip is the wall-display headline and has to stay legible from
 #: across a room; the table underneath keeps one column per category, so the
-#: grouping hides nothing. `uncategorised` is deliberately absent - it appears
-#: as a sixth counter only when it is non-zero.
+#: grouping hides nothing.
 STRIP_GROUPS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("power", "Power", (POWER,)),
     ("cooling_env", "Cooling & Environment", (COOLING, ENVIRONMENTAL)),

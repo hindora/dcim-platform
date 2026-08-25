@@ -161,9 +161,9 @@ export function Home() {
   const labels = useMemo(() => Object.fromEntries(
     (taxonomy?.categories ?? []).map((c) => [c.key, c.label])), [taxonomy]);
 
-  // Five grouped counters, plus the all-categories total in the middle, plus
-  // `uncategorised` ONLY when it is non-zero. An empty triage bucket is not
-  // news; a non-empty one is a hole in the taxonomy and has to be visible.
+  // Five grouped counters, plus the all-categories total in the middle. Every
+  // category belongs to a group, so the strip and the table cover the same
+  // ground at two resolutions.
   const counters = useMemo(() => {
     const groups = (taxonomy?.strip_groups ?? []).map((g) => ({
       key: g.key,
@@ -172,14 +172,6 @@ export function Home() {
       tone: GROUP_TONE[g.key] ?? 'unc',
       glyph: metaFor(g.categories[0]).glyph,
     }));
-    const orphan = data ? (data.totals.by_category?.uncategorised ?? 0) : 0;
-    if (orphan > 0) {
-      groups.push({
-        key: 'uncategorised', label: 'Uncategorised',
-        categories: ['uncategorised'] as AlarmCategory[],
-        tone: 'unc', glyph: metaFor('uncategorised').glyph,
-      });
-    }
     // The total sits in the middle of the strip, where the eye lands first.
     const half = Math.ceil(groups.length / 2);
     return [...groups.slice(0, half), null, ...groups.slice(half)];

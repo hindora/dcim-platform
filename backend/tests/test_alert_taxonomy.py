@@ -9,7 +9,7 @@ Three properties matter, and each has bitten a version of this code:
 * **Nothing falls off the edge unnoticed.** Every trap and every equipment
   alarm point the simulator can emit either classifies or is listed here as
   knowingly unmapped. Adding a point upstream should fail this suite rather
-  than silently land in `uncategorised`.
+  than silently land in whichever category the fallback happens to be.
 """
 
 from __future__ import annotations
@@ -57,7 +57,7 @@ SIMULATOR_ALARM_TYPES = [
 
 #: (device role, alarm point) for every `alarm_state` instance arriving from
 #: BACnet and Modbus. These do not raise alarms yet - phase 2 - but they must
-#: already classify, or phase 2 turns 38 points into 38 uncategorised alarms.
+#: already classify, or phase 2 turns 38 points into 38 misfiled alarms.
 SIMULATOR_ALARM_POINTS = [
     ("cooling", "Alarm_HighPressure"), ("cooling", "Alarm_LowEvapTemp"),
     ("cooling", "Alarm_FlowLoss"), ("cooling", "Alarm_HighCHWSupply"),
@@ -88,14 +88,21 @@ KNOWN_UNMAPPED: set[str] = set()
 
 @pytest.mark.parametrize("alarm_type", SIMULATOR_ALARM_TYPES)
 def test_every_simulator_alarm_type_classifies(alarm_type):
-    category = tax.classify(alarm_type)
+    """Explicitly, not by falling through to the fallback.
+
+    Since the residual bucket was removed, EVERY condition resolves to a real
+    category - including one nobody classified, which lands on `FALLBACK`. So
+    "it has a category" no longer proves anything; what has to hold is that the
+    classifier names this condition on purpose.
+    """
     if alarm_type in KNOWN_UNMAPPED:
-        assert category == tax.UNCATEGORISED
+        assert alarm_type not in tax.BY_ALARM_TYPE
         return
-    assert category != tax.UNCATEGORISED, (
-        f"{alarm_type} has no category - add it to BY_ALARM_TYPE, or to "
-        f"KNOWN_UNMAPPED with a reason")
-    assert category in tax.CATEGORIES
+    assert alarm_type in tax.BY_ALARM_TYPE, (
+        f"{alarm_type} is not named in BY_ALARM_TYPE, so it would land in "
+        f"{tax.FALLBACK} by accident - add it, or add it to KNOWN_UNMAPPED "
+        f"with a reason")
+    assert tax.classify(alarm_type) in tax.CATEGORIES
 
 
 @pytest.mark.parametrize("role,point", SIMULATOR_ALARM_POINTS)
@@ -165,9 +172,18 @@ def test_alarm_type_wins_over_role():
                         metric_key="water_flow") == tax.VISIBILITY
 
 
-def test_unknown_condition_is_countable_not_guessed():
-    assert tax.classify("something_nobody_wrote_down") == tax.UNCATEGORISED
-    assert tax.classify(role="", metric_key="") == tax.UNCATEGORISED
+def test_an_unknown_condition_lands_in_visibility():
+    """There is no residual bucket, so the fallback has to be defensible.
+
+    Reaching it means we have no type, no metric we recognise and no device -
+    what we know is that our own classification failed, which is a statement
+    about our view of the estate rather than about any equipment. It is also
+    unreachable for anything the plane can actually emit; that is what
+    `test_every_simulator_alarm_type_classifies` is for.
+    """
+    assert tax.classify("something_nobody_wrote_down") == tax.VISIBILITY
+    assert tax.classify(role="", metric_key="") == tax.VISIBILITY
+    assert tax.FALLBACK in tax.CATEGORIES
 
 
 def test_detection_is_an_attribute_not_a_category():
@@ -190,15 +206,15 @@ def test_categories_resolve_to_exactly_one():
 
 
 def test_strip_groups_cover_every_category_once():
-    """The five headline counters must partition the eight categories.
+    """The five headline counters must partition the seven categories.
 
-    `uncategorised` is deliberately outside the groups - it shows as a sixth
-    counter only when non-zero, so a taxonomy gap is visible without giving it
-    permanent furniture.
+    Partition, not cover: a category in two groups would be counted twice on
+    the strip and once in the table, and a category in none would be countable
+    in the table and invisible on the strip.
     """
     grouped = [c for _key, _label, cats in tax.STRIP_GROUPS for c in cats]
     assert len(grouped) == len(set(grouped)), "a category appears in two groups"
-    assert set(grouped) == set(tax.CATEGORIES) - {tax.UNCATEGORISED}
+    assert set(grouped) == set(tax.CATEGORIES)
 
 
 def test_every_category_is_described():
