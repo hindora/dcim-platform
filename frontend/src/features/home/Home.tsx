@@ -122,7 +122,6 @@ function IndicatorCells({ alarms, labels, onOpen }: {
 export function Home() {
   const [tab, setTab] = useState<Tab>('sites');
   const [search, setSearch] = useState('');
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [drawerSite, setDrawerSite] = useState<SiteRow | null>(null);
   const [drawerRoom, setDrawerRoom] = useState<SiteRoom | null>(null);
   const [legendOpen, setLegendOpen] = useState(false);
@@ -201,14 +200,6 @@ export function Home() {
   const current = Math.min(page, pageCount - 1);
   const rows = rowsAll.slice(current * pageSize, current * pageSize + pageSize);
 
-  function toggle(id: string) {
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
-  }
-
   return (
     <>
       <section className="alert-strip">
@@ -284,7 +275,7 @@ export function Home() {
             )}
             {roomsSite && (
               <button className="row-btn" onClick={() => { setRoomsSite(null); setPage(0); }}>
-                BACK TO ALL ROOMS
+                ALL ROOMS
               </button>
             )}
           </div>
@@ -299,6 +290,71 @@ export function Home() {
               the strip above but not in the table.{' '}
               <Link to="/platform">Platform health</Link>
             </p>
+          )}
+
+          {/* The site the rooms below belong to, kept on screen. Without it a
+              reader who arrives at a filtered ROOMS tab has to remember which
+              site they came from, and the back arrow is the way out - the same
+              control that got them here in reverse. */}
+          {tab === 'rooms' && roomsSite && (
+            <div className="table-scroll">
+              <table className="sites-table selected-site">
+                <thead>
+                  <tr>
+                    <th>Selected site</th>
+                    <th>Location</th>
+                    <th className="ind-h">Rooms</th>
+                    <th className="ind-h" title="Every open alarm here">ALM</th>
+                    {COLUMN_ORDER.map((c) => (
+                      <th key={c} className="ind-h"
+                          title={`${labels[c] ?? c} alarms`}>{metaFor(c).head}</th>
+                    ))}
+                    <th className="ind-h">Crit</th>
+                    <th className="ind-h">Maj</th>
+                    <th className="act">View</th>
+                    <th className="act">Access</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>
+                      <span className="site-cell">
+                        <button className="expander back"
+                                onClick={() => { setRoomsSite(null); setTab('sites'); setPage(0); }}
+                                aria-label={`Back to all sites from ${roomsSite.code}`}
+                                title="Back to all sites">↩</button>
+                        <span className="name">{roomsSite.code}</span>
+                        {roomsSite.name !== roomsSite.code && (
+                          <span className="muted small">{roomsSite.name}</span>
+                        )}
+                      </span>
+                    </td>
+                    <td className="muted">
+                      {roomsSite.city || roomsSite.country
+                        ? [roomsSite.city, roomsSite.country].filter(Boolean).join(', ')
+                        : <span className="unset">not set</span>}
+                    </td>
+                    <td className="num">{roomsSite.room_count}</td>
+                    <IndicatorCells alarms={roomsSite.alarms} labels={labels}
+                                    onOpen={setDrill} />
+                    {severityCell(roomsSite.alarms.critical, 'critical')}
+                    {severityCell(roomsSite.alarms.major, 'major')}
+                    <td className="ind-cell">
+                      <button className="row-btn"
+                              onClick={() => setDrawerSite(roomsSite)}>KPIs</button>
+                    </td>
+                    <td className="ind-cell">
+                      <Link className="row-btn primary"
+                            to={`/devices?datacenter=${roomsSite.code}`}
+                            style={{ display: 'inline-block', lineHeight: '26px',
+                                     textAlign: 'center' }}>
+                        ENTER
+                      </Link>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           )}
 
           <div className="table-scroll">
@@ -335,13 +391,10 @@ export function Home() {
               )}
 
               {tab === 'sites' && (rows as SiteRow[]).map((s) => (
-                <FragmentRow key={s.id} site={s} open={expanded.has(s.id)}
-                             onToggle={() => toggle(s.id)}
-                             onKpis={() => setDrawerSite(s)}
-                             onRooms={() => { setRoomsSite(s); setTab('rooms'); setPage(0); }}
-                             showFacility={showFacility}
-                             labels={labels} onDrill={setDrill}
-                             onRoomKpis={(r) => setDrawerRoom(r)} />
+                <SiteLine key={s.id} site={s}
+                          onKpis={() => setDrawerSite(s)}
+                          onRooms={() => { setRoomsSite(s); setTab('rooms'); setPage(0); }}
+                          labels={labels} onDrill={setDrill} />
               ))}
 
               {tab === 'rooms' && (rows as SiteRoom[]).map((r) => (
@@ -415,26 +468,25 @@ export function Home() {
   );
 }
 
-/** A site row plus, when expanded, its rooms as children of the same table. */
-function FragmentRow({ site, open, onToggle, onKpis, onRooms, onRoomKpis,
-                      showFacility, labels, onDrill }: {
-  site: SiteRow; open: boolean; onToggle: () => void; onKpis: () => void;
-  onRooms: () => void; onRoomKpis: (room: SiteRoom) => void;
-  showFacility: boolean; labels: Record<string, string>;
-  onDrill: (sel: Selection) => void;
+/** One site.
+ *
+ *  The `+` used to expand the site's rooms as child rows of this table. It now
+ *  switches to ROOMS scoped to this site instead: eight rooms nested under a
+ *  site row pushed every other site off the screen, and the rooms arrived
+ *  without the columns that make a room row worth reading - racks, type, its
+ *  own way in. Same click, a view that fits. */
+function SiteLine({ site, onKpis, onRooms, labels, onDrill }: {
+  site: SiteRow; onKpis: () => void; onRooms: () => void;
+  labels: Record<string, string>; onDrill: (sel: Selection) => void;
 }) {
-  const children = showFacility
-    ? site.rooms
-    : site.rooms.filter((r) => r.room_class !== 'facility');
   return (
-    <>
       <tr>
         <td>
           <span className="site-cell">
-            <button className="expander" onClick={onToggle}
-                    aria-expanded={open}
-                    aria-label={`${open ? 'Collapse' : 'Expand'} ${site.code}`}>
-              {open ? '−' : '+'}
+            <button className="expander" onClick={onRooms}
+                    aria-label={`Show the ${site.room_count} rooms in ${site.code}`}
+                    title={`Show the ${site.room_count} rooms in ${site.code}`}>
+              +
             </button>
             <span className="name">{site.code}</span>
             {site.name !== site.code && <span className="muted small">{site.name}</span>}
@@ -468,31 +520,5 @@ function FragmentRow({ site, open, onToggle, onKpis, onRooms, onRoomKpis,
           </Link>
         </td>
       </tr>
-
-      {open && children.map((r) => (
-        <tr key={r.id} className="room-row">
-          <td>
-            <span className="site-cell">
-              <span className="tick" aria-hidden />
-              <span>{r.name}</span>
-            </span>
-          </td>
-          <td className="muted small">{r.room_type.replace(/_/g, ' ')}</td>
-          <td className="num">{r.rack_count}</td>
-          <IndicatorCells alarms={r.alarms} labels={labels} onOpen={onDrill} />
-          {severityCell(r.alarms.critical, 'critical')}
-          {severityCell(r.alarms.major, 'major')}
-          <td className="ind-cell">
-            <button className="row-btn" onClick={() => onRoomKpis(r)}>KPIs</button>
-          </td>
-          <td className="ind-cell">
-            <Link className="row-btn" to={`/floorplan?room=${r.id}`}
-                  style={{ display: 'inline-block', lineHeight: '24px', textAlign: 'center' }}>
-              ENTER
-            </Link>
-          </td>
-        </tr>
-      ))}
-    </>
   );
 }
