@@ -616,6 +616,27 @@ export interface AlarmTaxonomy {
   /** Alarm and alert, defined. The legend uses these to say what this console
    *  shows and what it deliberately does not. */
   response_classes: { key: ResponseClass; label: string; description: string }[];
+  /** Every condition the platform can raise, assembled from the rules table,
+   *  the plant's own fault points and the classifier. `response_class` is null
+   *  where severity is not fixed until the condition arrives - a trap carries
+   *  the severity the device chose. */
+  conditions: {
+    key: string;
+    label: string;
+    /** Null when the category depends on the equipment reporting it: the same
+     *  fan speed is cooling on a CRAH and IT on a server. */
+    category: AlarmCategory | null;
+    origin: 'rule' | 'equipment' | 'reported' | 'platform' | 'planned';
+    severity: string | null;
+    response_class: ResponseClass | null;
+    enabled: boolean;
+    detail: string;
+  }[];
+  origins: { key: string; label: string; text: string }[];
+  summary: {
+    total: number; alarm: number; alert: number; varies: number;
+    disabled: number; planned: number;
+  };
 }
 
 export interface SiteRoom {

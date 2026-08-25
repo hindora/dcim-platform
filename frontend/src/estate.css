@@ -321,3 +321,16 @@
   background: var(--bg-raised); color: var(--text-faint);
   font-variant-numeric: tabular-nums;
 }
+
+/* The condition catalogue in the alarm-status window. Dense on purpose: it is
+   a reference an operator scans, not a dashboard. */
+.estate-table.catalogue td { padding-top: 7px; padding-bottom: 7px; }
+.estate-table.catalogue tr.is-off { opacity: .55; }
+.estate-table.catalogue .name-cell .n { font-weight: 600; }
+
+/* The facet chips double as the catalogue's filter, so they need a pressed
+   state and a pointer. */
+button.facet { font: inherit; cursor: pointer; }
+button.facet.on {
+  background: var(--bg-raised); border-color: var(--accent); color: var(--text);
+}

@@ -340,13 +340,24 @@ BY_ALARM_TYPE: dict[str, str] = {
     "cooling_degraded": COOLING,
 
     # --- capacity: nothing raises these yet; the names are reserved so phase 6
-    # does not have to migrate anything
+    # does not have to migrate anything. Listed in RESERVED below, so the
+    # legend can say "not built" rather than implying the estate is clean.
     "redundancy_lost": CAPACITY,
     "single_corded_load": CAPACITY,
     "headroom_exhausted": CAPACITY,
     "days_of_supply_low": CAPACITY,
     "pue_excursion": CAPACITY,
 }
+
+#: Conditions whose names exist but which nothing raises yet. Reserved so the
+#: detector that lands later needs no migration and no UI change - and named
+#: here so the legend can mark them, because a category reading zero because it
+#: is unimplemented is a different fact from one reading zero because the
+#: estate is well.
+RESERVED: frozenset[str] = frozenset({
+    "redundancy_lost", "single_corded_load", "headroom_exhausted",
+    "days_of_supply_low", "pue_excursion",
+})
 
 # ------------------------------------- layer 2: (device role, metric) -> category
 

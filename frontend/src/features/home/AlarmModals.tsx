@@ -18,6 +18,7 @@
  *  which is one click away, because a modal that mutates state is a modal that
  *  needs a confirmation flow, an error state and an undo.
  */
+import { useMemo, useState } from 'react';
 import { useQueries, useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import {
@@ -42,8 +43,106 @@ function useTaxonomy() {
   });
 }
 
+/** One row of the catalogue: what it is, how loud, and where it comes from. */
+function ConditionRow({ c, categoryLabel }: {
+  c: AlarmTaxonomy['conditions'][number]; categoryLabel: string;
+}) {
+  const cls = c.response_class;
+  return (
+    <tr className={c.enabled ? undefined : 'is-off'}>
+      <td>
+        <span className="name-cell"><span className="n">{c.label}</span></span>
+        <div className="mono muted" style={{ fontSize: 10 }}>{c.key}</div>
+      </td>
+      <td className="muted">{categoryLabel}</td>
+      <td>
+        {cls
+          ? <span className={`facet ${cls === 'alarm' ? 'alarms' : ''}`}>
+              {cls === 'alarm' ? 'Alarm' : 'Alert'}
+            </span>
+          // Not "unknown": the severity arrives with the condition, and the
+          // class follows it. Saying so is the honest answer to "will this
+          // ring", and pretending otherwise would be a promise we cannot keep.
+          : <span className="muted small">follows severity</span>}
+      </td>
+      <td className="muted small">{c.severity ?? 'varies'}</td>
+      <td className="muted small">
+        {c.detail}
+        {!c.enabled && <span className="dash"> · disabled</span>}
+      </td>
+    </tr>
+  );
+}
+
+/** Every condition, grouped the way the counters are. */
+function Catalogue({ data }: { data: AlarmTaxonomy }) {
+  const [only, setOnly] = useState<'all' | 'alarm' | 'alert'>('all');
+
+  const labels = useMemo(() => Object.fromEntries(
+    data.categories.map((c) => [c.key, c.label])), [data]);
+
+  const rows = data.conditions.filter(
+    (c) => only === 'all' || c.response_class === only);
+
+  const s = data.summary;
+  return (
+    <>
+      <p className="muted small" style={{ margin: '0 0 10px' }}>
+        {s.total} conditions this platform knows how to raise: {s.alarm} always
+        ring, {s.alert} never do, and {s.varies} follow the severity they arrive
+        with. {s.planned > 0 && `${s.planned} are reserved names with no detector behind them yet. `}
+        {s.disabled > 0 && `${s.disabled} rule${s.disabled === 1 ? ' is' : 's are'} switched off.`}
+      </p>
+
+      <div className="facet-row">
+        <span className="facet-label">Show</span>
+        {(['all', 'alarm', 'alert'] as const).map((k) => (
+          <button key={k} className={`facet ${only === k ? 'on' : ''}`}
+                  aria-pressed={only === k}
+                  onClick={() => setOnly(k)}>
+            {k === 'all' ? 'Everything' : k === 'alarm' ? 'Alarms' : 'Alerts'}
+            <b>{k === 'all' ? s.total : k === 'alarm' ? s.alarm : s.alert}</b>
+          </button>
+        ))}
+      </div>
+
+      <div className="estate-scroll" style={{ maxHeight: '46vh' }}>
+        <table className="estate-table catalogue">
+          <thead>
+            <tr>
+              <th>Condition</th>
+              <th>Category</th>
+              <th>Class</th>
+              <th>Severity</th>
+              <th>Raised by</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((c) => (
+              <ConditionRow key={`${c.origin}-${c.key}`} c={c}
+                            categoryLabel={c.category
+                              ? (labels[c.category] ?? c.category)
+                              : 'by the equipment'} />
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="legend-grid" style={{ marginTop: 18 }}>
+        {data.origins.map((o) => (
+          <div className="legend-col" key={o.key}>
+            <h4>{o.label}</h4>
+            <p>{o.text}</p>
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
 export function AlarmLegend({ onClose }: { onClose: () => void }) {
   const { data, isLoading, error } = useTaxonomy();
+  const [tab, setTab] = useState<'axes' | 'catalogue'>('axes');
 
   return (
     <Modal title="Alarm status" onClose={onClose}
@@ -52,10 +151,23 @@ export function AlarmLegend({ onClose }: { onClose: () => void }) {
              + 'who owns the first five minutes. Categories are mutually exclusive, '
              + 'so the counters sum to the total. Counts are ROOTS only: one failed '
              + 'uplink is one alarm, not one per device behind it.'}>
-      {error && <div className="banner">Could not load the alert taxonomy.</div>}
+      {error && <div className="banner">Could not load the alarm taxonomy.</div>}
       {isLoading && <p className="muted">Loading…</p>}
 
       {data && (
+        <div className="tabs" style={{ margin: '0 0 16px' }}>
+          <button className={`tab ${tab === 'axes' ? 'active' : ''}`}
+                  onClick={() => setTab('axes')}>WHAT THE COUNTERS MEAN</button>
+          <button className={`tab ${tab === 'catalogue' ? 'active' : ''}`}
+                  onClick={() => setTab('catalogue')}>
+            EVERY CONDITION · {data.summary.total}
+          </button>
+        </div>
+      )}
+
+      {data && tab === 'catalogue' && <Catalogue data={data} />}
+
+      {data && tab === 'axes' && (
         <>
           <div className="legend-grid">
             {data.categories.map((c) => {

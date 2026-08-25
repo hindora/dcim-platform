@@ -156,9 +156,13 @@ def test_a_quiet_site_reads_zero_not_missing():
 # ------------------------------------------------------------------ the API
 
 
-async def test_the_legend_defines_both_classes():
+async def test_the_legend_defines_both_classes(monkeypatch):
     """An operator who cannot define a facet will not use it."""
-    legend = await estate_api.alarm_categories()
+    async def _no_catalogue(_session):
+        return {}
+
+    monkeypatch.setattr(estate_api.taxonomy, "catalogue", _no_catalogue)
+    legend = await estate_api.alarm_categories(session=_FakeSession())
     assert [c["key"] for c in legend["response_classes"]] == list(RESPONSE_CLASSES)
     for c in legend["response_classes"]:
         assert c["label"] and c["description"]

@@ -33,6 +33,12 @@ class _FakeSession:
     """The services never touch it; the repositories are stubbed."""
 
 
+async def _no_catalogue(_session):
+    """The catalogue has its own tests; these two are about the definitions."""
+    return {}
+
+
+
 def _returns(value):
     async def _fn(*_args, **_kwargs):
         return value
@@ -215,14 +221,15 @@ async def test_an_unknown_category_is_rejected_rather_than_answered_empty(catego
 # ------------------------------------------------------------------- legend
 
 
-async def test_the_legend_is_generated_from_the_classifier():
+async def test_the_legend_is_generated_from_the_classifier(monkeypatch):
     """The definition an operator reads comes from the module that applies it.
 
     A legend written beside the classifier drifts from it, and the first
     symptom is an operator routing work by a description that stopped being
     true.
     """
-    legend = await estate_api.alarm_categories()
+    monkeypatch.setattr(estate_api.taxonomy, "catalogue", _no_catalogue)
+    legend = await estate_api.alarm_categories(session=_FakeSession())
 
     assert [c["key"] for c in legend["categories"]] == list(CATEGORIES)
     assert all(c["owner"] and c["description"] for c in legend["categories"])

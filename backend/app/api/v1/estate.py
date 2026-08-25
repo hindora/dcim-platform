@@ -26,6 +26,7 @@ from app.core.alert_taxonomy import (
 from app.core.security import Principal, current_principal
 from app.db.session import get_session
 from app.services import estate as service
+from app.services import taxonomy
 
 router = APIRouter(prefix="/estate", tags=["estate"])
 
@@ -84,6 +85,7 @@ async def utilization(
 @router.get("/alarm-categories", summary="The taxonomy itself: categories, "
                                         "owners, detection methods")
 async def alarm_categories(
+    session: AsyncSession = Depends(get_session),
     _: Principal = Depends(current_principal),
 ) -> dict:
     """What each counter means, served from the classifier that fills it.
@@ -122,6 +124,10 @@ async def alarm_categories(
             "label": RESPONSE_DESCRIPTIONS[c]["label"],
             "description": RESPONSE_DESCRIPTIONS[c]["text"],
         } for c in RESPONSE_CLASSES],
+        # And the catalogue itself: every condition this platform can raise,
+        # which is the difference between a legend that defines the buckets and
+        # one an operator can look something up in.
+        **await taxonomy.catalogue(session),
     }
 
 
