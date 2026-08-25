@@ -27,6 +27,18 @@ class Settings(BaseSettings):
     environment: str = "development"
     service_name: str = "dcim-backend"
 
+    #: Whose estate this instance watches, shown as the home page's headline.
+    #:
+    #: An operator opening a DCIM is looking at THEIR datacentres, and the
+    #: product's own name is the least interesting thing on the screen - it is
+    #: the same on every install. It also matters when someone is signed into
+    #: two instances: "DCIM Platform" in both tabs tells them nothing about
+    #: which estate they are about to acknowledge an alarm on.
+    #:
+    #: Empty falls back to the product name, so an unconfigured install still
+    #: renders a heading instead of a gap.
+    org_name: str = ""
+
     # --- datastores ---------------------------------------------------------
     # 127.0.0.1 rather than localhost on purpose: on Windows, localhost resolves
     # to ::1 first and a Docker-published port answers there unreliably, which

@@ -2,6 +2,7 @@ import { Fragment, useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { NavLink, Navigate, Route, Routes } from 'react-router-dom';
 import { api, getToken, setToken } from './api/client';
+import { useOrg } from './lib/useOrg';
 import { AlarmList } from './features/alarms/AlarmList';
 import { Analytics } from './features/analytics/Analytics';
 import { PlatformHealth } from './features/platform/PlatformHealth';
@@ -38,9 +39,11 @@ function Login({ onDone }: { onDone: () => void }) {
     }
   }
 
+  const org = useOrg();
+
   return (
     <form className="login" onSubmit={submit}>
-      <h1>DCIM Platform</h1>
+      <h1>{org}</h1>
       <p className="muted" style={{ margin: 0, fontSize: 13 }}>Sign in to continue</p>
       <label htmlFor="u">Username</label>
       <input id="u" value={username} onChange={(e) => setUsername(e.target.value)} />
@@ -77,6 +80,9 @@ function TopBar({ onSignOut }: { onSignOut: () => void }) {
     <header className="topbar">
       <div className="brand">
         <span className="mark" aria-hidden />
+        {/* The product, not the customer. Top-left is where a user looks to
+            know WHICH TOOL they are in; the estate's name is the page's
+            headline, and printing it in both places says neither. */}
         <span className="wordmark">DCIM</span>
       </div>
 

@@ -670,6 +670,14 @@ export interface SiteRow {
   rooms: SiteRoom[];
 }
 
+/** Identity for the shell. `org_name` is whose estate this is - the product's
+ *  own name is the same on every install and tells an operator with two tabs
+ *  open nothing about which one they are acknowledging an alarm on. */
+export interface Instance {
+  org_name: string;
+  environment: string;
+}
+
 export interface SitesOverview {
   sites: SiteRow[];
   totals: AlarmCounts;
@@ -1051,6 +1059,10 @@ export const api = {
     request<AlarmDrill>(`/estate/alarms?category=${encodeURIComponent(category)}`),
 
   alarmTaxonomy: () => request<AlarmTaxonomy>('/estate/alarm-categories'),
+
+  /** Who this instance belongs to. Unauthenticated on purpose: the shell needs
+   *  a name before anybody has signed in. */
+  instance: () => request<Instance>('/instance'),
 
   roomKpi: (roomId: string) => request<RoomKpi>(`/estate/rooms/${roomId}/kpi`),
 

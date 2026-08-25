@@ -68,6 +68,10 @@ services:
       DCIM_SIMULATOR_BASE_URL: ${DCIM_SIMULATOR_BASE_URL:-http://host.docker.internal:8001}
       DCIM_SIMULATOR_PASSWORD: ${DCIM_SIMULATOR_PASSWORD:-}
       DCIM_ENVIRONMENT: development
+      # Whose estate this instance watches. Shown as the home page headline and
+      # in the browser tab, so two instances open side by side are tellable
+      # apart. Unset falls back to the product name.
+      DCIM_ORG_NAME: ${DCIM_ORG_NAME:-}
     ports:
       - "8000:8000"
     depends_on:

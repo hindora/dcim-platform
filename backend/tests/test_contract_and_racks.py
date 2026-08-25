@@ -104,6 +104,26 @@ def test_health_endpoint_needs_no_auth():
         assert r.json()["status"] == "ok"
 
 
+def test_instance_names_the_estate_and_needs_no_auth():
+    """The login card renders before anybody has a token.
+
+    It also must not leak the estate: an unauthenticated caller learns the
+    organisation's name and the environment, which is what a browser tab needs,
+    and nothing about sites, devices or alarms.
+    """
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    with TestClient(app) as client:
+        r = client.get("/api/v1/instance")
+        assert r.status_code == 200
+        body = r.json()
+        assert set(body) == {"org_name", "environment"}
+        # Unset falls back to the product name rather than to an empty heading.
+        assert body["org_name"]
+
+
 def test_protected_endpoint_rejects_anonymous():
     from fastapi.testclient import TestClient
 

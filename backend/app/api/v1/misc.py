@@ -79,6 +79,21 @@ async def metric_registry(_: Principal = Depends(current_principal)) -> dict:
     ]}
 
 
+@router.get("/instance", summary="Who this instance belongs to")
+async def instance(settings: Settings = Depends(get_settings)) -> dict:
+    """Identity for the shell: the organisation, and which environment it is.
+
+    Deliberately unauthenticated and deliberately thin. It is read before a
+    login form is rendered, so it must not need a token, and it must not carry
+    anything an unauthenticated caller should not see - no site names, no
+    counts, nothing about the estate itself.
+    """
+    return {
+        "org_name": settings.org_name or "DCIM Platform",
+        "environment": settings.environment,
+    }
+
+
 @router.get("/health", summary="Liveness")
 async def health() -> dict:
     return {"status": "ok", "time": datetime.now(UTC)}

@@ -40,6 +40,7 @@ import {
 import { CategoryGlyph } from '../../components/CategoryGlyph';
 import { COLUMN_ORDER, GROUP_TONE, metaFor } from '../../components/alertMeta';
 import { FacilityToggle } from '../../components/estate';
+import { useOrg, useOrgTitle } from '../../lib/useOrg';
 import { useInvalidateOn, useTopics } from '../../ws/useSocket';
 import { SiteDrawer } from './SiteDrawer';
 import { RoomDrawer } from './RoomDrawer';
@@ -163,6 +164,10 @@ export function Home() {
   const [pageSize, setPageSize] = useState(25);
   const [page, setPage] = useState(0);
 
+  // The estate's name, in the headline and in the browser tab.
+  const org = useOrg();
+  useOrgTitle();
+
   useTopics(['alarms']);
   useInvalidateOn(ALARM_EVENTS, [['sites-overview']]);
 
@@ -229,7 +234,7 @@ export function Home() {
   return (
     <>
       <section className="alert-strip">
-        <span className="site-title">DCIM Platform</span>
+        <span className="site-title">{org}</span>
         <span className="spacer" />
         <button className="caption" onClick={() => setLegendOpen(true)}
                 title="What each counter counts, and what this console leaves out">
