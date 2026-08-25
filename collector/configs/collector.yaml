@@ -102,7 +102,14 @@ protocols:
   # device - Who-Is, I-Am and COV notifications arrive unsolicited, and a
   # per-device socket would receive none of them.
   bacnet:
-    enabled: false
+    # ON. Every CRAH, CDU, chiller, tower, pump and valve carries its readings
+    # and its 36 fault points on BACnet only - their SNMP agent answers the
+    # system group and one interface, nothing else. With this off the collector
+    # was handed 94 BACnet endpoints, polled none of them, and the cooling
+    # counter read zero because nothing was ever measured rather than because
+    # the plant was well. It had never raised an alarm in 33,000 rows of
+    # history, which is the shape of a plane nobody is watching.
+    enabled: true
     # 0 asks the kernel for an ephemeral port. Replies come back to the source
     # of the request, so 47808 is only needed to receive broadcasts - and it is
     # usually already held by whatever else on the host speaks BACnet.
