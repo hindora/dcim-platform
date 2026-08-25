@@ -28,11 +28,19 @@ export function CategoryGlyph({ kind, size = 15 }: { kind: GlyphKind; size?: num
   };
 
   switch (kind) {
-    // Warning triangle: any alarm, of any category.
+    // A bell: any alarm, of any category.
+    //
+    // Not a warning triangle. A triangle is the caution sign on equipment and
+    // on every other status glyph in the industry, so it reads as "something
+    // to be careful of"; a bell is the thing that rings at somebody, which is
+    // exactly what separates an alarm from an alert here.
     case 'alarms':
       return (
         <svg {...common}>
-          <path d="M8 2 L15 14 H1 Z" fill="currentColor" stroke="none" />
+          <path d="M8 1.5a1.1 1.1 0 0 1 1.05 1.13v.35a3.9 3.9 0 0 1 2.85 3.75V9.1l1.28 2.05a.5.5 0 0 1-.42.77H3.24a.5.5 0 0 1-.42-.77L4.1 9.1V6.73a3.9 3.9 0 0 1 2.85-3.75v-.35A1.1 1.1 0 0 1 8 1.5Z"
+                fill="currentColor" stroke="none" />
+          <path d="M6.35 12.9a1.75 1.75 0 0 0 3.3 0" strokeWidth="1.3"
+                strokeLinecap="round" />
         </svg>
       );
 
