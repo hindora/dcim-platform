@@ -202,17 +202,23 @@ async def test_site_power_capacity_prefers_the_site_rating(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_alert_drilldown_accounts_for_unlocated_alarms(monkeypatch):
-    """The modal's total must reconcile with the counter that opened it."""
+async def test_panel_totals_reconcile_with_the_counter_that_opened_it(monkeypatch):
+    """Everything open is the headline; the actionable part is stated beside it.
+
+    Both have to account for the conditions that belong to no room, or the
+    panel appears to have lost rows the counter was including.
+    """
     monkeypatch.setattr(estate.repo, "alarms_by_room", _returns([{
         "room_id": "r1", "room_name": "Hall A", "floor": "1",
         "datacenter_id": "dc1", "site_code": "DC1", "site_name": "DC1",
-        "qty": 3, "devices": 2, "critical": 1, "major": 2,
+        "qty": 3, "alerts": 10, "devices": 2, "critical": 1, "major": 2,
     }]))
-    monkeypatch.setattr(estate.repo, "unlocated_alarms_by_category", _returns(4))
+    monkeypatch.setattr(estate.repo, "unlocated_alarms_by_category",
+                        _returns({"total": 4, "alarms": 1}))
 
-    out = await estate.alarms(_FakeSession(), category="datapoint")
-    assert out["total"] == 7
+    out = await estate.alarms(_FakeSession(), category="visibility")
+    assert out["total"] == 3 + 10 + 4
+    assert out["alarms"] == 3 + 1
     assert out["unlocated"] == 4
 
 

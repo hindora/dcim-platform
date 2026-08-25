@@ -120,20 +120,25 @@ def test_a_rule_that_says_nothing_leaves_the_default_alone():
 # ------------------------------------------------------------- the roll-up
 
 
-def test_the_home_rollup_counts_alarms_only():
-    """The console filters on the class rather than reporting it.
+def test_the_rollup_counts_both_populations_and_keeps_them_apart():
+    """One CTE, two questions, and the split in the aggregates.
 
-    Every counter on that page - the eight categories, the severity columns,
-    the drill-downs - reads this one CTE, so filtering here is what makes the
-    whole screen mean "faults" rather than "everything open". An operator
-    reading `0 cooling` is being told nothing needs a response, which is only
-    true if the filter is in the population and not bolted on per counter.
+    The domain counters answer "how much is going on here" and count both
+    classes; the ALARMS counter and every severity column answer "what must be
+    answered" and count alarms only. Doing that with a filter per aggregate
+    keeps the two definitions in one file - the failure mode is a screen where
+    some numbers include alerts and others do not, with nothing saying which.
     """
-    assert f"a.response_class = '{tax.ALARM}'" in sites_repo._ALARM_CTE
-    # And it is not silently reported as a facet as well: alerts are absent,
-    # so a split of the population would read alarm=total, alert=0 and invite
-    # the reader to think the estate has no informational conditions at all.
-    assert "class_alert" not in sites_repo._AGG_COALESCE
+    # Both classes reach the aggregates...
+    assert "a.response_class AS response_class" in sites_repo._ALARM_CTE
+    assert f"a.response_class = '{tax.ALARM}'" not in sites_repo._ALARM_CTE
+    # ...the domain counters take everything...
+    assert ("count(*) FILTER (WHERE category = 'cooling') AS alerts_cooling"
+            in sites_repo._CATEGORY_COLUMNS)
+    # ...and the actionable subset carries the filter, per category and in the
+    # totals that drive ALARMS.
+    assert f"response_class = '{tax.ALARM}'" in sites_repo._CATEGORY_ALARM_COLUMNS
+    assert f"response_class = '{tax.ALARM}'" in sites_repo._SEVERITY_COLUMNS
 
 
 def test_the_block_is_the_fault_count():

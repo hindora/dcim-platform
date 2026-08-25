@@ -40,9 +40,19 @@ def _pct(part: Any, whole: Any) -> float | None:
 def _alarms(row: dict[str, Any]) -> dict[str, Any]:
     """The alarm block every row and the strip share.
 
-    ALARMS ONLY - `response_class = 'alarm'`, conditions that need a response
-    now. Informational alerts are excluded upstream in the SQL, so `total` here
-    is the fault count and the eight categories partition it.
+    Two numbers that must never be mistaken for each other:
+
+    * `total` is ALARMS - conditions requiring a response now. The ALARMS
+      counter and the ALM column read this, and `critical`/`major`/`minor`
+      describe the same population.
+    * `by_category` is EVERY open condition in that domain, alarms and alerts
+      together, because "how much is going on in the plant" is the question a
+      domain counter answers. `by_category_alarms` is the actionable subset of
+      each, so a tile can be coloured by whether anything in it must be
+      answered and a tooltip can say both numbers.
+
+    They do not sum to each other and are never displayed as if they did.
+    `open_total` is what the categories DO sum to.
 
     `by_category` is the taxonomy of docs/18-alert-taxonomy.md: one axis, the
     domain of the failing thing, which is the same as who owns the first five
@@ -57,6 +67,10 @@ def _alarms(row: dict[str, Any]) -> dict[str, Any]:
         "minor": int(row.get("minor") or 0),
         "by_category": {c: int(row.get(f"alerts_{c}") or 0) for c in CATEGORIES},
         "by_detection": {d: int(row.get(f"detected_{d}") or 0) for d in DETECTIONS},
+        "by_category_alarms": {
+            c: int(row.get(f"alarms_{c}") or 0) for c in CATEGORIES
+        },
+        "open_total": int(row.get("open_total") or 0),
     }
 
 

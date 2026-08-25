@@ -361,14 +361,15 @@ async def alarms_by_room(session: AsyncSession, *,
     that opened it is worse than no drill-down. Every other alarm figure here -
     devices, severities, the facets - is alarms only for the same reason.
 
-    `alerts` is the informational count for the same room and category, carried
-    as CONTEXT rather than as a second population. A room with two cooling
-    alarms and forty cooling alerts is a different room from one with two and
-    none, and an engineer deciding where to walk first wants to know which they
-    are looking at. What it must not do is change the row set: rooms are listed
-    because they have an alarm, so the HAVING clause below stays on the alarm
-    count. Otherwise the four hundred stale-telemetry alerts we deliberately
-    took off this console would walk back onto it through the drill-down.
+    `alerts` is the informational count for the same room and category. A room
+    with two cooling alarms and forty cooling alerts is a different room from
+    one with two and none, and an engineer deciding where to walk first wants
+    to know which they are looking at.
+
+    Both classes decide the row set, because the category counter that opens
+    this panel counts both: a panel listing fewer rooms than the tile that
+    opened it is the disagreement this whole area exists to avoid. The columns
+    keep them apart, and every alarm-side aggregate below keeps its filter.
     """
     # Every alarm-side aggregate carries the same filter: these describe the
     # alarms the counter opened, not the alerts sitting beside them.
@@ -410,35 +411,40 @@ async def alarms_by_room(session: AsyncSession, *,
         JOIN datacenter dc ON dc.id = cat.datacenter_id
         WHERE cat.category = :category
         GROUP BY rm.id, rm.name, rm.floor, dc.id, dc.code, dc.name
-        -- Listed because it has an ALARM. The alert count is context on a row
-        -- that earned its place, never the reason for the row.
-        HAVING count(*) FILTER (WHERE response_class = '{ALARM}') > 0
+        -- Every room with anything open in this category, because that is
+        -- what the counter that opens this panel now counts. The two columns
+        -- keep the classes apart on the row; the row set no longer does.
+        HAVING count(*) > 0
         ORDER BY qty DESC, dc.code, rm.name
     """), {"category": category})).mappings().all()
     return [dict(r) for r in rows]
 
 
 async def unlocated_alarms_by_category(session: AsyncSession, *,
-                                       category: str) -> int:
+                                       category: str) -> dict[str, int]:
     """Alarms of a category that resolve to no room.
 
-    Platform alarms hang off devices with no location. They are counted in the
-    strip, so the drill-down has to account for them or the modal will appear
-    to have lost rows.
+    Platform conditions hang off devices with no location. They are counted in
+    the strip, so the drill-down has to account for them or the modal will
+    appear to have lost rows. Both classes, matching the counter.
     """
     row = (await session.execute(text(f"""
         WITH {_DEV_CTE},
         cat AS (
-            SELECT dev.room_id, a.category AS category
+            SELECT dev.room_id, a.category AS category,
+                   a.response_class AS response_class
             FROM alarm a
             LEFT JOIN dev ON dev.device_id = a.device_id
             WHERE a.state <> 'CLEARED' AND a.is_symptom = false
-              AND a.response_class = '{ALARM}'
         )
-        SELECT count(*) AS n FROM cat
+        SELECT count(*)                                       AS n,
+               count(*) FILTER (WHERE response_class = '{ALARM}') AS alarms
+        FROM cat
         WHERE category = :category AND room_id IS NULL
     """), {"category": category})).mappings().first()
-    return int(row["n"]) if row else 0
+    if row is None:
+        return {"total": 0, "alarms": 0}
+    return {"total": int(row["n"]), "alarms": int(row["alarms"])}
 
 
 async def room(session: AsyncSession, room_id: str) -> dict[str, Any] | None:

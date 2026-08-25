@@ -586,13 +586,20 @@ export type AlarmDetection =
 export type ResponseClass = 'alarm' | 'alert';
 
 export interface AlarmCounts {
-  /** Open root ALARMS. Informational alerts are excluded server-side, so the
-   *  eight categories partition this number. */
+  /** Open root ALARMS - what needs a response now. The ALARMS counter and the
+   *  ALM column read this, and critical/major/minor describe it. */
   total: number;
+  /** Every open root condition, alarms and alerts. This is what the seven
+   *  category counters sum to; it is NOT `total` plus anything. */
+  open_total: number;
   critical: number;
   major: number;
   minor: number;
+  /** Every open condition in each domain - the domain counters. */
   by_category: Record<AlarmCategory, number>;
+  /** The actionable subset of each domain, so a tile can be coloured by
+   *  whether anything in it must be answered. */
+  by_category_alarms: Record<AlarmCategory, number>;
   by_detection: Record<AlarmDetection, number>;
 }
 
@@ -874,8 +881,11 @@ export interface AlarmDrillRow {
 export interface AlarmDrill {
   category: AlarmCategory;
   rows: AlarmDrillRow[];
-  /** Rows plus `unlocated`: platform alarms have no room to sit in. */
+  /** Every open condition in the category - what the counter that opened the
+   *  panel shows. Rows plus `unlocated`. */
   total: number;
+  /** The actionable part of `total`. */
+  alarms: number;
   unlocated: number;
   /** Folded from the rows above, so the facets and the rows can never be two
    *  different instants of the estate. Excludes `unlocated` - those have no

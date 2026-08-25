@@ -158,7 +158,7 @@ async def test_drill_down_facets_are_the_rows_they_sit_under(monkeypatch):
     ]
     monkeypatch.setattr(estate_service.repo, "alarms_by_room", _returns(rows))
     monkeypatch.setattr(estate_service.repo, "unlocated_alarms_by_category",
-                        _returns(0))
+                        _returns({"total": 0, "alarms": 0}))
 
     out = await estate_service.alarms(_FakeSession(), category="power")
 
@@ -183,12 +183,17 @@ async def test_the_alert_column_is_context_and_never_a_total(monkeypatch):
     ]
     monkeypatch.setattr(estate_service.repo, "alarms_by_room", _returns(rows))
     monkeypatch.setattr(estate_service.repo, "unlocated_alarms_by_category",
-                        _returns(0))
+                        _returns({"total": 0, "alarms": 0}))
 
     out = await estate_service.alarms(_FakeSession(), category="visibility")
 
+    # `total` is everything open, matching the counter that opened the panel;
+    # `alarms` is the part of it somebody has to answer. Both are reported, and
+    # the columns keep them apart on every row.
     assert [r["alerts"] for r in out["rows"]] == [120, 92]
-    assert out["total"] == 3, "alerts leaked into the total"
+    assert out["total"] == 3 + 120 + 92
+    assert out["alarms"] == 3, "the actionable count must not absorb the alerts"
+    # The facets describe the ALARMS: they are what an operator triages by.
     assert sum(out["by_severity"].values()) == 3
     assert sum(out["by_detection"].values()) == 3
 
@@ -204,11 +209,12 @@ async def test_unlocated_alarms_are_counted_in_the_total_and_not_in_the_facets(
     monkeypatch.setattr(estate_service.repo, "alarms_by_room",
                         _returns([_alert_row(3, critical=3, detected_absence=3)]))
     monkeypatch.setattr(estate_service.repo, "unlocated_alarms_by_category",
-                        _returns(2))
+                        _returns({"total": 2, "alarms": 2}))
 
     out = await estate_service.alarms(_FakeSession(), category="visibility")
 
     assert out["total"] == 5
+    assert out["alarms"] == 5
     assert out["unlocated"] == 2
     assert sum(out["by_severity"].values()) == 3
 
@@ -222,7 +228,7 @@ async def test_a_category_is_answered_from_the_stamped_column(monkeypatch):
 
     monkeypatch.setattr(estate_service.repo, "alarms_by_room", _capture)
     monkeypatch.setattr(estate_service.repo, "unlocated_alarms_by_category",
-                        _returns(0))
+                        _returns({"total": 0, "alarms": 0}))
 
     await estate_api.alarms(category="cooling", session=_FakeSession())
 

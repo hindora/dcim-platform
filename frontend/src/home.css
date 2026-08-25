@@ -472,3 +472,16 @@ button.ind:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px
   background: var(--tint-critical); border: 1px solid var(--critical);
   color: var(--critical);
 }
+
+/* Under a domain counter: how much of that number is anybody's problem
+   tonight. Small and quiet when it is zero, because "494 open, none to answer"
+   is good news and should not read like an alarm. */
+.alert-counter .needs {
+  font-size: 10px; letter-spacing: .04em; color: var(--text-faint);
+  white-space: nowrap;
+}
+.alert-counter .needs.on { color: var(--critical); }
+
+/* A domain tile that contains something to answer carries a mark, so the
+   count and the urgency are two readings of one tile rather than two tiles. */
+.ind.has-alarm { box-shadow: inset 0 -2px 0 var(--critical); }

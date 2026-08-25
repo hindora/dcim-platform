@@ -17,12 +17,15 @@
  * nothing. The grouping itself comes from the server with the taxonomy - the
  * page never decides which categories belong together.
  *
- * Everything on this page is an ALARM: a condition that requires a response
- * now. Informational alerts - stale telemetry, dirty filters, wear - are
- * classified and stored and deliberately not shown here; ISA-18.2 draws that
- * line by required response, and a console listing four hundred things nobody
- * will act on tonight is a console operators stop reading. The legend says
- * what is left out and where to find it.
+ * Two numbers, kept apart everywhere they appear. The domain counters and the
+ * category columns count EVERY open condition in a domain - how much is going
+ * on in the plant, in the electrical chain, in our view of the estate. ALARMS
+ * and the ALM column count what requires a response now.
+ *
+ * They are never added and never shown as if one contained the other by
+ * accident: ISA-18.2 draws the line by required response, and the reason to
+ * print both is that "494 open, 6 of them yours tonight" is a truer picture of
+ * an estate than either number alone.
  */
 
 import { useMemo, useState } from 'react';
@@ -91,20 +94,26 @@ function countIn(alarms: AlarmCounts, categories: AlarmCategory[]): number {
   return categories.reduce((n, c) => n + (alarms.by_category?.[c] ?? 0), 0);
 }
 
-function Indicator({ category, count, label, scope, onOpen }: {
-  category: AlarmCategory; count: number; label: string; scope?: Scope;
-  onOpen: (sel: Selection) => void;
+function Indicator({ category, count, alarms, label, scope, onOpen }: {
+  category: AlarmCategory; count: number; alarms: number; label: string;
+  scope?: Scope; onOpen: (sel: Selection) => void;
 }) {
   const meta = metaFor(category);
   const on = count > 0;
   const where = scope ? ` in ${scope.label}` : '';
   return (
     <td className="ind-cell">
-      <button className={`ind ${meta.tone} ${on ? 'on' : ''}`}
+      {/* Lit when anything is open, and marked when some of it needs
+          answering. The count is everything; the mark is the difference
+          between a domain that is noisy and one that is on fire. */}
+      <button className={`ind ${meta.tone} ${on ? 'on' : ''} ${alarms > 0 ? 'has-alarm' : ''}`}
               disabled={!on}
               title={on
-                ? `${label}: ${count}${where} - open the list`
-                : `${label}: 0${where}`}
+                ? `${label}${where}: ${count} open`
+                  + `${alarms > 0
+                    ? `, ${alarms} needing a response`
+                    : ', none needing a response'} - open the list`
+                : `${label}: nothing open${where}`}
               onClick={() => onOpen({
                 key: category, label, categories: [category], scope,
               })}>
@@ -160,7 +169,8 @@ function IndicatorCells({ alarms, labels, scope, onOpen }: {
       {COLUMN_ORDER.map((c) => (
         <Indicator key={c} category={c} onOpen={onOpen} scope={scope}
                    label={labels[c] ?? c}
-                   count={alarms.by_category?.[c] ?? 0} />
+                   count={alarms.by_category?.[c] ?? 0}
+                   alarms={alarms.by_category_alarms?.[c] ?? 0} />
       ))}
     </>
   );
@@ -272,6 +282,11 @@ export function Home() {
           const total = c === null;
           const n = !data ? 0
             : total ? data.totals.total : countIn(data.totals, c.categories);
+          // What of that group needs answering. Printed under the number so
+          // "494 open" never reads as "494 to do".
+          const answerable = !data || total ? 0
+            : c.categories.reduce(
+                (t, k) => t + (data.totals.by_category_alarms?.[k] ?? 0), 0);
           const empty = n === 0;
           return (
             <div key={total ? '__total' : c.key}
@@ -282,12 +297,13 @@ export function Home() {
                       // numbers are not worth clicking.
                       disabled={empty}
                       title={empty
-                        ? `No open ${(total ? 'alarms' : c.label.toLowerCase())}`
+                        ? `Nothing open in ${(total ? 'any category' : c.label.toLowerCase())}`
                         : total
                           ? 'Every open alarm, all categories - by room'
-                          : `The rooms with ${c.categories
+                          : `Everything open in ${c.categories
                               .map((k) => (labels[k] ?? k).toLowerCase())
-                              .join(' and ')} alarms`}
+                              .join(' and ')}`
+                            + `, ${answerable} needing a response`}
                       onClick={() => {
                         if (empty) return;
                         setDrill(total
@@ -300,6 +316,16 @@ export function Home() {
                 </span>
                 <span className="name">{total ? 'Alarms' : c.label}</span>
               </button>
+              {/* Always rendered, empty when there is nothing open, so the
+                  counters keep one baseline. A line that appears only on the
+                  busy ones makes the strip jog up and down as the estate
+                  changes, which is movement carrying no information. */}
+              {!total && (
+                <span className={`needs ${answerable > 0 ? 'on' : ''}`}>
+                  {n === 0 ? ' '
+                    : answerable > 0 ? `${answerable} to answer` : 'nothing to answer'}
+                </span>
+              )}
             </div>
           );
         })}

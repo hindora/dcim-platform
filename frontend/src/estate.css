@@ -442,3 +442,9 @@ button.facet.on {
   .sheet-foot { flex-wrap: wrap; gap: 12px; }
   .sheet-foot .csv { margin-left: 0; }
 }
+
+/* The panel's second number: everything open, then what must be answered. */
+.sheet-head h2 .of-which {
+  font-size: 13px; font-weight: 400; color: var(--critical);
+  padding-left: 10px;
+}

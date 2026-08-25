@@ -148,9 +148,14 @@ export function AlarmPanel({ categories, title, scope, onClose }: {
   const all: Row[] = loaded.flatMap(
     (d) => d.drill.rows.filter(inScope).map((row) => ({ category: d.category, row })));
 
+  // Everything open, matching the counter that opened this panel; and the part
+  // of it somebody has to answer. Both are printed, and they are never added.
   const total = scope
-    ? all.reduce((n, { row }) => n + row.qty, 0)
+    ? all.reduce((n, { row }) => n + row.qty + row.alerts, 0)
     : loaded.reduce((n, d) => n + d.drill.total, 0);
+  const alarms = scope
+    ? all.reduce((n, { row }) => n + row.qty, 0)
+    : loaded.reduce((n, d) => n + (d.drill.alarms ?? 0), 0);
   const unlocated = scope
     ? 0
     : loaded.reduce((n, d) => n + d.drill.unlocated, 0);
@@ -241,8 +246,15 @@ export function AlarmPanel({ categories, title, scope, onClose }: {
               <span className={`cat-${meta.tone}`} style={{ display: 'inline-flex' }}>
                 <CategoryGlyph kind={meta.glyph} size={20} />
               </span>
-              {title} alarms{scope ? ` in ${scope.label}` : ''}:
+              {title}{scope ? ` in ${scope.label}` : ''}:
               <span className="count"> {loaded.length ? total : '—'}</span>
+              {loaded.length > 0 && (
+                <span className="of-which">
+                  {alarms > 0
+                    ? `${alarms} needing a response`
+                    : 'none needing a response'}
+                </span>
+              )}
             </h2>
             {blurb && <p>{blurb}</p>}
           </div>
@@ -271,7 +283,7 @@ export function AlarmPanel({ categories, title, scope, onClose }: {
             <p className="muted">
               {q
                 ? `No room matches “${search}”.`
-                : `No open ${title.toLowerCase()} alarm`
+                : `Nothing open in ${title.toLowerCase()}`
                   + `${scope ? ` in ${scope.label}` : ''}.`}
             </p>
           )}

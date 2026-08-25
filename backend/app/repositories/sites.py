@@ -1,12 +1,17 @@
 """Per-site and per-room roll-ups for the home page.
 
-This page is an ALARM console. Every count here is `response_class = 'alarm'`:
-conditions that require a response now. Alerts - wear, hygiene, stale telemetry,
-everything informational - are classified, stored and queryable, and they are
-not on this screen. A console that lists four hundred things nobody will act on
-tonight is a console operators stop reading.
+Two populations, kept apart by construction rather than by care:
 
-Reach the informational ones with `/alarms?response_class=alert`.
+* the CATEGORY counters count every open condition in a domain - alarms and
+  alerts together - so "cooling" answers "how much is going on in the plant".
+* `total`, which drives the ALARMS counter and the ALM column, counts alarms
+  only: the conditions that require a response now.
+
+They are never added and never conflated. A category counter reading 495 beside
+an alarm count of 6 is the estate telling the truth about itself - most of what
+is open is informational - and the one thing this module must not do is let a
+reader mistake one number for the other, which is why the alarm figures carry
+the filter in the SQL rather than being derived downstream.
 
 
 The home page is a table of sites with an alert indicator per category, and it
@@ -49,20 +54,19 @@ _DEV_CTE = """
 # acknowledged alarm is still a live condition, and hiding it here is how a
 # known fault becomes a forgotten one.
 #
-# `response_class = 'alarm'` is the other filter that matters: this CTE is the
-# whole page's population, so the eight category counters, the severity columns
-# and the drill-downs all describe faults and nothing else.
-_ALARM_CTE = f"""
+# Both classes ride in this CTE. The aggregates below decide which of them each
+# column counts, so the split lives in one place rather than in five.
+_ALARM_CTE = """
     alarm_cat AS (
         SELECT dev.datacenter_id,
                dev.room_id,
                a.severity::text AS severity,
                a.category       AS category,
-               a.detection      AS detection
+               a.detection      AS detection,
+               a.response_class AS response_class
         FROM alarm a
         JOIN dev ON dev.device_id = a.device_id
         WHERE a.state <> 'CLEARED' AND a.is_symptom = false
-          AND a.response_class = '{ALARM}'
     )
 """
 
@@ -70,26 +74,47 @@ _ALARM_CTE = f"""
 # through the role-sensitive classifier, so deriving it in the roll-up would
 # mean joining every alarm through device to device_type on every count - and
 # would rewrite history the moment a device is re-typed.
+#
+# EVERY open condition, alarms and alerts: this is what a domain counter shows.
 _CATEGORY_COLUMNS = ",\n".join(
     f"count(*) FILTER (WHERE category = '{c}') AS alerts_{c}" for c in CATEGORIES
+)
+
+# The actionable subset of the same categories. Drives the tone of a category
+# tile - a domain with nothing to answer should not look like one that has
+# something - and lets a tooltip say "12 open, 2 need a response" without a
+# second request.
+_CATEGORY_ALARM_COLUMNS = ",\n".join(
+    f"count(*) FILTER (WHERE category = '{c}' AND response_class = '{ALARM}') "
+    f"AS alarms_{c}"
+    for c in CATEGORIES
 )
 
 # HOW each one was found, across all eight categories. This is what makes
 # "only what analytics noticed" a filter rather than a category that grows
 # every time a detector is added.
 _DETECTION_COLUMNS = ",\n".join(
-    f"count(*) FILTER (WHERE detection = '{d}') AS detected_{d}"
+    f"count(*) FILTER (WHERE detection = '{d}' AND response_class = '{ALARM}') "
+    f"AS detected_{d}"
     for d in DETECTIONS
 )
 
 _ALL_CATEGORY_COLUMNS = ",\n".join(
-    (_CATEGORY_COLUMNS, _DETECTION_COLUMNS))
+    (_CATEGORY_COLUMNS, _CATEGORY_ALARM_COLUMNS, _DETECTION_COLUMNS))
 
-_SEVERITY_COLUMNS = """
-    count(*)                                                    AS alerts_total,
-    count(*) FILTER (WHERE severity = 'CRITICAL')               AS crit,
-    count(*) FILTER (WHERE severity = 'MAJOR')                  AS major,
-    count(*) FILTER (WHERE severity IN ('MINOR', 'WARNING'))    AS minor
+# `alerts_total` is the ALARM count, whatever its name says - it drives the
+# ALARMS counter and the ALM column, and the severities beside it describe the
+# same population. `open_total` is everything, and exists so a reader can be
+# told what the categories sum to without adding seven numbers by eye.
+_SEVERITY_COLUMNS = f"""
+    count(*) FILTER (WHERE response_class = '{ALARM}')          AS alerts_total,
+    count(*)                                                    AS open_total,
+    count(*) FILTER (WHERE response_class = '{ALARM}'
+                     AND severity = 'CRITICAL')                 AS crit,
+    count(*) FILTER (WHERE response_class = '{ALARM}'
+                     AND severity = 'MAJOR')                    AS major,
+    count(*) FILTER (WHERE response_class = '{ALARM}'
+                     AND severity IN ('MINOR', 'WARNING'))      AS minor
 """
 
 # A site or room with no open alarm has no `agg` row at all, so every count
@@ -99,6 +124,7 @@ _SEVERITY_COLUMNS = """
 _AGG_COALESCE = ",\n               ".join(
     f"COALESCE(agg.{name}, 0) AS {name}"
     for name in ([f"alerts_{c}" for c in CATEGORIES]
+                 + [f"alarms_{c}" for c in CATEGORIES]
                  + [f"detected_{d}" for d in DETECTIONS])
 )
 
@@ -139,6 +165,7 @@ async def site_rollups(session: AsyncSession) -> list[dict[str, Any]]:
                COALESCE(devices.online_count, 0)  AS online_count,
                COALESCE(devices.offline_count, 0) AS offline_count,
                COALESCE(agg.alerts_total, 0)      AS alerts_total,
+               COALESCE(agg.open_total, 0)        AS open_total,
                COALESCE(agg.crit, 0)              AS crit,
                COALESCE(agg.major, 0)             AS major,
                COALESCE(agg.minor, 0)             AS minor,
@@ -195,6 +222,7 @@ async def room_rollups(session: AsyncSession,
                COALESCE(devices.device_count, 0)  AS device_count,
                COALESCE(devices.offline_count, 0) AS offline_count,
                COALESCE(agg.alerts_total, 0)      AS alerts_total,
+               COALESCE(agg.open_total, 0)        AS open_total,
                COALESCE(agg.crit, 0)              AS crit,
                COALESCE(agg.major, 0)             AS major,
                COALESCE(agg.minor, 0)             AS minor,
@@ -227,10 +255,10 @@ async def fleet_alert_totals(session: AsyncSession) -> dict[str, Any]:
         WITH alarm_cat AS (
             SELECT a.severity::text AS severity,
                    a.category       AS category,
-                   a.detection      AS detection
+                   a.detection      AS detection,
+                   a.response_class AS response_class
             FROM alarm a
             WHERE a.state <> 'CLEARED' AND a.is_symptom = false
-              AND a.response_class = '{ALARM}'
         )
         SELECT {_ALL_CATEGORY_COLUMNS},
                {_SEVERITY_COLUMNS}
