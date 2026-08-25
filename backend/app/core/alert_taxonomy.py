@@ -525,10 +525,15 @@ def sql_case(alarm_type_col: str = "a.alarm_type",
 #: page. The strip is the wall-display headline and has to stay legible from
 #: across a room; the table underneath keeps one column per category, so the
 #: grouping hides nothing.
+#: One word each. A wall-display headline is read at four metres and in
+#: peripheral vision, and "Cooling & Environment" at that distance is a shape,
+#: not a word. The two categories inside a group are still counted separately
+#: in the table and named in the counter's own tooltip, so nothing is lost -
+#: only the ampersand.
 STRIP_GROUPS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("power", "Power", (POWER,)),
-    ("cooling_env", "Cooling & Environment", (COOLING, ENVIRONMENTAL)),
-    ("it_network", "IT & Network", (IT_EQUIPMENT, NETWORK)),
+    ("cooling_env", "Cooling", (COOLING, ENVIRONMENTAL)),
+    ("it_network", "IT", (IT_EQUIPMENT, NETWORK)),
     ("visibility", "Visibility", (VISIBILITY,)),
     ("capacity", "Capacity", (CAPACITY,)),
 )

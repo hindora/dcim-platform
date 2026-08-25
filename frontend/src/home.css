@@ -92,19 +92,20 @@
 .alert-strip .site-title { font-size: 26px; font-weight: 700; letter-spacing: -.01em; }
 .alert-strip .spacer { flex: 1; }
 .alert-strip .caption {
-  display: flex; align-items: center; gap: 9px; padding: 6px 14px 6px 0;
+  display: flex; align-items: center; gap: 8px; padding: 6px 14px 6px 0;
   background: none; border: none; font: inherit;
   color: var(--text-muted); font-size: 14px; cursor: pointer;
 }
 .alert-strip .caption:hover { color: var(--text); }
-.alert-strip .caption:hover .ring { border-color: var(--accent); }
-.alert-strip .caption .ring {
-  width: 17px; height: 17px; border-radius: 50%; border: 1px solid currentColor;
-}
+.alert-strip .caption svg { flex: none; }
 
+/* Every counter the same width, whatever its label. Sized to the widest word
+   rather than to its own content: counters that jump sideways as numbers grow
+   from 6 to 106 make a wall display twitch, and an eye that has learned where
+   "Visibility" sits should not have to find it again. */
 .alert-counter {
   position: relative; display: flex; flex-direction: column; align-items: center;
-  gap: 4px; padding: 12px 22px 0;
+  gap: 4px; padding: 12px 10px 0; flex: 0 0 auto; width: 158px;
 }
 /* A straight hairline between counters - upright, like every other rule on the
    page. Decoration only, so it is a pseudo-element and never reaches the

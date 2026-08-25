@@ -217,7 +217,13 @@ export function Home() {
         <span className="spacer" />
         <button className="caption" onClick={() => setLegendOpen(true)}
                 title="What each counter counts, and what this console leaves out">
-          <span className="ring" /> Alarm status
+          <svg width="17" height="17" viewBox="0 0 16 16" aria-hidden
+               fill="none" stroke="currentColor" strokeWidth="1.3">
+            <circle cx="8" cy="8" r="6.6" />
+            <line x1="8" y1="7.1" x2="8" y2="11.4" strokeLinecap="round" />
+            <circle cx="8" cy="4.7" r=".85" fill="currentColor" stroke="none" />
+          </svg>
+          Alarm status
         </button>
 
         {counters.map((c) => {
@@ -236,7 +242,9 @@ export function Home() {
                       disabled={total}
                       title={total
                         ? 'Every open alarm, all categories'
-                        : `Filter the table to ${c.label.toLowerCase()} alarms`}
+                        : `Filter the table to ${c.categories
+                            .map((k) => (labels[k] ?? k).toLowerCase())
+                            .join(' and ')} alarms`}
                       onClick={() => {
                         if (total) return;
                         setFilter(active ? null
