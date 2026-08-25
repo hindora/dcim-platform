@@ -334,3 +334,111 @@ button.facet { font: inherit; cursor: pointer; }
 button.facet.on {
   background: var(--bg-raised); border-color: var(--accent); color: var(--text);
 }
+
+/* --- the alarm panel ------------------------------------------------------
+ *
+ * A full-window sheet that rises from the bottom. This is a work surface an
+ * operator reads down, searches and exports - not an explanation - so it gets
+ * the window rather than a box in the middle of one, and it arrives from the
+ * edge it will leave by.
+ */
+.sheet-scrim {
+  position: fixed; inset: 0; z-index: 60;
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  display: flex; align-items: flex-end;
+}
+.sheet {
+  width: 100%; height: calc(100vh - 34px);
+  background: var(--bg); border-top: 1px solid var(--border-strong);
+  border-radius: 8px 8px 0 0;
+  display: flex; flex-direction: column; min-height: 0;
+  box-shadow: 0 -24px 60px color-mix(in srgb, var(--bg-inset) 70%, transparent);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .sheet { animation: sheet-up .22s cubic-bezier(.2, .7, .3, 1); }
+}
+@keyframes sheet-up {
+  from { transform: translateY(28px); opacity: .6; }
+}
+
+.sheet-head {
+  display: flex; align-items: flex-start; gap: 20px;
+  padding: 26px 34px 18px; border-bottom: 1px solid var(--border); flex: none;
+}
+.sheet-head h2 {
+  margin: 0; font-size: 21px; font-weight: 600; letter-spacing: -.01em;
+  display: flex; align-items: center; gap: 10px;
+}
+.sheet-head h2 .count { font-variant-numeric: tabular-nums; }
+/* The description is the category's own definition, so it is the same words
+   the legend shows - one source, and the reader can carry the meaning between
+   the two screens. */
+.sheet-head p {
+  margin: 8px 0 0; max-width: 92ch; font-size: 13px; color: var(--text-muted);
+}
+.sheet-head .close {
+  margin-left: auto; flex: none; width: 34px; height: 34px; border-radius: 4px;
+  background: none; border: 1px solid transparent; color: var(--text-muted);
+  font-size: 17px; line-height: 1; cursor: pointer;
+}
+.sheet-head .close:hover { border-color: var(--border); color: var(--text); }
+
+.sheet-body { padding: 18px 34px 28px; overflow-y: auto; min-height: 0; }
+.sheet-body .search.wide { max-width: 620px; margin-bottom: 16px; }
+.sheet-body .search {
+  display: flex; align-items: center; gap: 10px; height: 38px; padding: 0 14px;
+  background: var(--bg-inset); border: 1px solid var(--border); border-radius: 4px;
+}
+.sheet-body .search input {
+  flex: 1; background: none; border: none; padding: 0; color: var(--text);
+  font-size: 12px; letter-spacing: .06em;
+}
+.sheet-body .search input:focus { outline: none; }
+.sheet-body .search .glass {
+  width: 11px; height: 11px; border-radius: 50%; flex: none;
+  border: 1.4px solid var(--text-faint);
+}
+
+/* A sortable header is a control, and looks like the text it replaced until
+   you point at it. */
+.estate-table th .sort {
+  background: none; border: none; padding: 0; font: inherit; color: inherit;
+  letter-spacing: inherit; text-transform: inherit; cursor: pointer;
+}
+.estate-table th .sort:hover { color: var(--text); }
+.estate-table th .sort.on { color: var(--text); }
+
+/* The count that opened this panel, repeated per room. Boxed because it is the
+   number the reader came here to find. */
+.estate-table .qty {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 34px; height: 26px; padding: 0 8px; border-radius: 3px;
+  background: var(--tint-critical); border: 1px solid var(--critical);
+  color: var(--critical); font-variant-numeric: tabular-nums;
+}
+
+.sheet-foot {
+  display: flex; align-items: center; gap: 22px; margin-top: 16px;
+  font-size: 12px; color: var(--text-muted);
+}
+.sheet-foot select {
+  background: var(--bg-inset); color: var(--text); border: 1px solid var(--border);
+  border-radius: 3px; padding: 4px 6px; font: inherit;
+}
+.sheet-foot .pager { display: flex; gap: 4px; }
+.sheet-foot .pager button {
+  /* Wide enough for the two-glyph first/last labels: at 28px they wrapped, and
+     a paging control that breaks onto a second line reads as broken. */
+  min-width: 34px; height: 26px; padding: 0 4px; border-radius: 3px;
+  background: var(--bg-inset); border: 1px solid var(--border);
+  color: var(--text-muted); font: inherit; font-size: 11px; line-height: 1;
+  white-space: nowrap; cursor: pointer;
+}
+.sheet-foot .pager button:disabled { opacity: .4; cursor: default; }
+.sheet-foot .csv { margin-left: auto; min-width: 140px; }
+
+@media (max-width: 900px) {
+  .sheet-head, .sheet-body { padding-left: 16px; padding-right: 16px; }
+  .sheet-foot { flex-wrap: wrap; gap: 12px; }
+  .sheet-foot .csv { margin-left: 0; }
+}

@@ -1,12 +1,12 @@
-/** The two modals behind the alarm strip.
+/** The legend behind the alarm strip.
  *
  *  `AlarmLegend` says what each counter counts - and what the console leaves
  *  out, which matters more here than it looks: this page shows alarms only,
  *  and an operator who does not know that will read "0 cooling" as "no cooling
  *  problems" rather than "no cooling problems anybody must act on tonight".
- *  `AlarmDrilldown` lists the rooms behind one counter, so the number on the
- *  strip has somewhere to go - a headline that cannot be opened is a headline
- *  an operator has to take on trust.
+ *
+ *  The rooms behind a counter live in `AlarmPanel`, which is a work surface
+ *  rather than an explanation and earns a full window of its own.
  *
  *  Neither writes the taxonomy down. Labels, owners, definitions and examples
  *  all come from `/estate/alert-categories`, which is generated from the
@@ -19,21 +19,12 @@
  *  needs a confirmation flow, an error state and an undo.
  */
 import { useMemo, useState } from 'react';
-import { useQueries, useQuery } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import {
-  api,
-  type AlarmCategory,
-  type AlarmDetection,
-  type AlarmDrill,
-  type AlarmDrillRow,
-  type AlarmTaxonomy,
-} from '../../api/client';
+import { api, type AlarmTaxonomy } from '../../api/client';
 import { Modal } from '../../components/estate';
 import { CategoryGlyph } from '../../components/CategoryGlyph';
 import { metaFor } from '../../components/alertMeta';
-
-const SEVERITIES = ['critical', 'major', 'minor', 'warning'] as const;
 
 function useTaxonomy() {
   return useQuery<AlarmTaxonomy>({
@@ -249,153 +240,6 @@ export function AlarmLegend({ onClose }: { onClose: () => void }) {
         fault, not a fixed one, and dropping it here is how it becomes a
         forgotten one. <Link to="/alarms">Open the alarm list →</Link>
       </p>
-    </Modal>
-  );
-}
-
-/** Facet chips: the same population the rows total, split two ways.
- *
- *  Folded from the rows rather than fetched, so a facet can never describe a
- *  different instant of the estate than the table under it. */
-function Facets({ label, entries }: {
-  label: string; entries: { key: string; label: string; n: number }[];
-}) {
-  const shown = entries.filter((e) => e.n > 0);
-  if (!shown.length) return null;
-  return (
-    <div className="facet-row">
-      <span className="facet-label">{label}</span>
-      {shown.map((e) => (
-        <span key={e.key} className={`facet ${e.key}`}>
-          {e.label}<b>{e.n}</b>
-        </span>
-      ))}
-    </div>
-  );
-}
-
-export function AlarmDrilldown({ categories, title, onClose }: {
-  categories: AlarmCategory[]; title: string; onClose: () => void;
-}) {
-  // One query per category, never a merged one. A grouped counter such as
-  // "Cooling & Environment" is two categories; asking for each separately and
-  // adding the results keeps every number the server's, and the categories are
-  // mutually exclusive so nothing is counted twice.
-  const results = useQueries({
-    queries: categories.map((category) => ({
-      queryKey: ['estate-alarms', category],
-      queryFn: () => api.estateAlarms(category),
-    })),
-  });
-
-  const { data: taxonomy } = useTaxonomy();
-  const isLoading = results.some((r) => r.isLoading);
-  const error = results.find((r) => r.error)?.error;
-  const loaded = results
-    .map((r, i) => (r.data ? { category: categories[i], drill: r.data } : null))
-    .filter(Boolean) as { category: AlarmCategory; drill: AlarmDrill }[];
-
-  const total = loaded.reduce((n, d) => n + d.drill.total, 0);
-  const unlocated = loaded.reduce((n, d) => n + d.drill.unlocated, 0);
-
-  // Rows stay per room AND per category. Merging them would need a rule for
-  // `devices`, where the same device can carry alerts in two categories, and a
-  // guessed rule there is a number nobody can reconcile against the alarm list.
-  const rows: { category: AlarmCategory; row: AlarmDrillRow }[] = loaded
-    .flatMap((d) => d.drill.rows.map((row) => ({ category: d.category, row })))
-    .sort((a, b) => b.row.qty - a.row.qty);
-
-  const severity = SEVERITIES.map((k) => ({
-    key: k,
-    label: k.toUpperCase(),
-    n: loaded.reduce((n, d) => n + (d.drill.by_severity?.[k] ?? 0), 0),
-  }));
-
-  const detections = (taxonomy?.detections ?? []).map((d) => ({
-    key: d.key as AlarmDetection,
-    label: d.label,
-    n: loaded.reduce((n, x) => n + (x.drill.by_detection?.[d.key] ?? 0), 0),
-  }));
-
-  const definitions = (taxonomy?.categories ?? []).filter(
-    (c) => categories.includes(c.key));
-  const blurb = definitions.map((c) => c.description).join(' ');
-
-  return (
-    // Not "X alerts": half of what this modal lists may be alarms, and the
-    // page has just spent a strip explaining that those are different things.
-    <Modal title={title} count={loaded.length ? total : undefined}
-           blurb={blurb || undefined} onClose={onClose}>
-      {error && <div className="banner">Could not load the drill-down.</div>}
-      {isLoading && <p className="muted">Loading…</p>}
-
-      {!!loaded.length && (
-        <>
-          <Facets label="Severity" entries={severity} />
-          <Facets label="Found by" entries={detections} />
-        </>
-      )}
-
-      {!!loaded.length && rows.length === 0 && (
-        <p className="muted">No room has an open {title.toLowerCase()} condition.</p>
-      )}
-
-      {rows.length > 0 && (
-        <div className="estate-scroll">
-          <table className="estate-table">
-            <thead>
-              <tr>
-                <th>Room</th><th>Site</th>
-                <th className="mid">Floor</th>
-                {categories.length > 1 && <th>Category</th>}
-                <th className="num">Alarms</th>
-                <th className="num">Devices</th>
-                <th className="num">Critical</th>
-                <th className="num">Major</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map(({ category, row: r }) => (
-                <tr key={`${category}-${r.room_id}`}
-                    className={r.critical ? 'lead-critical' : 'lead-warn'}>
-                  <td><span className="name-cell"><span className="n">{r.room_name}</span></span></td>
-                  <td className="muted">{r.site_code}</td>
-                  <td className="mid muted">{r.floor ?? '—'}</td>
-                  {categories.length > 1 && (
-                    <td className="muted">
-                      <span className={`cat-${metaFor(category).tone}`}
-                            style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                        <CategoryGlyph kind={metaFor(category).glyph} />
-                      </span>{' '}
-                      {taxonomy?.categories.find((c) => c.key === category)?.label ?? category}
-                    </td>
-                  )}
-                  <td className="num">{r.qty}</td>
-                  <td className="num">{r.devices}</td>
-                  <td className="num">{r.critical || <span className="dash">—</span>}</td>
-                  <td className="num">{r.major || <span className="dash">—</span>}</td>
-                  <td className="num">
-                    <Link className="row-btn" to={`/alarms?room=${r.room_id}`}
-                          style={{ display: 'inline-block', lineHeight: '26px', textAlign: 'center' }}>
-                      OPEN
-                    </Link>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {unlocated > 0 && (
-        <p className="muted small" style={{ marginTop: 14 }}>
-          {unlocated} of these belong to no room - platform alarms hang off
-          the pipeline rather than off a device on a floor, so they are counted
-          in the total above, have no row, and are left out of the facets.{' '}
-          <Link to="/platform">Platform health →</Link>
-        </p>
-      )}
     </Modal>
   );
 }

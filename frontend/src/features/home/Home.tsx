@@ -5,12 +5,11 @@
  * screen that stays open on a wall display and a dozen round trips per refresh
  * is how a NOC dashboard becomes the thing that falls over first.
  *
- * The strip is not decoration. Each counter is a filter: clicking "Power"
- * narrows the table to the sites that have a power alarm, so the headline
- * number and the rows underneath can never disagree. To see WHICH rooms are
- * behind a number, click the cell in the row - the drill-down opens from the
- * table rather than from the strip, so the question is always asked against a
- * site or a room the reader is already looking at.
+ * The strip is not decoration. Every number on it opens: click a counter and
+ * the panel rises with the rooms behind it, searchable and exportable. So does
+ * every cell in the table, scoped to that category. A headline that cannot be
+ * opened is a headline an operator has to take on trust, and one they cannot
+ * act on without leaving the page.
  *
  * Strip and table show the same eight categories at two resolutions. The strip
  * groups them into five counters, because it has to be readable from across a
@@ -44,7 +43,8 @@ import { FacilityToggle } from '../../components/estate';
 import { useInvalidateOn, useTopics } from '../../ws/useSocket';
 import { SiteDrawer } from './SiteDrawer';
 import { RoomDrawer } from './RoomDrawer';
-import { AlarmDrilldown, AlarmLegend } from './AlarmModals';
+import { AlarmLegend } from './AlarmModals';
+import { AlarmPanel } from './AlarmPanel';
 import { RailCards } from './RailCards';
 
 const ALARM_EVENTS = ['alarm_created', 'alarm_updated', 'alarm_cleared'];
@@ -122,7 +122,6 @@ function IndicatorCells({ alarms, labels, onOpen }: {
 export function Home() {
   const [tab, setTab] = useState<Tab>('sites');
   const [search, setSearch] = useState('');
-  const [filter, setFilter] = useState<Selection | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [drawerSite, setDrawerSite] = useState<SiteRow | null>(null);
   const [drawerRoom, setDrawerRoom] = useState<SiteRoom | null>(null);
@@ -180,13 +179,13 @@ export function Home() {
   const sites = data?.sites ?? [];
   const rooms = useMemo(() => sites.flatMap((s) => s.rooms), [sites]);
 
-  const matches = (name: string, alarms: AlarmCounts) => {
-    if (search && !name.toLowerCase().includes(search.toLowerCase())) return false;
-    if (filter && countIn(alarms, filter.categories) === 0) return false;
-    return true;
-  };
+  // Search only. Narrowing the table by category used to live on the counters;
+  // the panel answers the same question better - it names the rooms, and it
+  // does not make the reader hold "this table is filtered" in their head.
+  const matches = (name: string) =>
+    !search || name.toLowerCase().includes(search.toLowerCase());
 
-  const visibleSites = sites.filter((s) => matches(`${s.code} ${s.name}`, s.alarms));
+  const visibleSites = sites.filter((s) => matches(`${s.code} ${s.name}`));
   // Unclassified rooms are never hidden: null means nobody classified it,
   // which is not the same claim as "this is plant".
   const isFacility = (r: SiteRoom) => r.room_class === 'facility';
@@ -195,7 +194,7 @@ export function Home() {
     ? rooms.filter((r) => r.datacenter_id === roomsSite.id)
     : rooms).filter((r) => showFacility || !isFacility(r));
   const visibleRooms = scopedRooms.filter(
-    (r) => matches(`${r.datacenter_code} ${r.name}`, r.alarms));
+    (r) => matches(`${r.datacenter_code} ${r.name}`));
 
   const rowsAll: (SiteRow | SiteRoom)[] = tab === 'sites' ? visibleSites : visibleRooms;
   const pageCount = Math.max(1, Math.ceil(rowsAll.length / pageSize));
@@ -231,25 +230,27 @@ export function Home() {
           const total = c === null;
           const n = !data ? 0
             : total ? data.totals.total : countIn(data.totals, c.categories);
-          const active = !total && filter?.key === c.key;
+          const empty = n === 0;
           return (
             <div key={total ? '__total' : c.key}
-                 className={`alert-counter cat-${total ? 'alarms' : c.tone} ${n === 0 ? 'zero' : ''}`}>
+                 className={`alert-counter cat-${total ? 'alarms' : c.tone} ${empty ? 'zero' : ''}`}>
               <button className="face"
-                      aria-pressed={active}
-                      // The total is a headline, not a facet: there is nothing
-                      // to filter to when every category is already included.
-                      disabled={total}
-                      title={total
-                        ? 'Every open alarm, all categories'
-                        : `Filter the table to ${c.categories
-                            .map((k) => (labels[k] ?? k).toLowerCase())
-                            .join(' and ')} alarms`}
+                      // Nothing to open when nothing is wrong: a panel that
+                      // rises to say "no rooms" teaches an operator that the
+                      // numbers are not worth clicking.
+                      disabled={empty}
+                      title={empty
+                        ? `No open ${(total ? 'alarms' : c.label.toLowerCase())}`
+                        : total
+                          ? 'Every open alarm, all categories - by room'
+                          : `The rooms with ${c.categories
+                              .map((k) => (labels[k] ?? k).toLowerCase())
+                              .join(' and ')} alarms`}
                       onClick={() => {
-                        if (total) return;
-                        setFilter(active ? null
+                        if (empty) return;
+                        setDrill(total
+                          ? { key: 'all', label: 'All', categories: [...COLUMN_ORDER] }
                           : { key: c.key, label: c.label, categories: c.categories });
-                        setPage(0);
                       }}>
                 <span className="row">
                   <span className="n">{n}</span>
@@ -257,7 +258,6 @@ export function Home() {
                 </span>
                 <span className="name">{total ? 'Alarms' : c.label}</span>
               </button>
-              <span className="rule" />
             </div>
           );
         })}
@@ -285,13 +285,6 @@ export function Home() {
             {roomsSite && (
               <button className="row-btn" onClick={() => { setRoomsSite(null); setPage(0); }}>
                 BACK TO ALL ROOMS
-              </button>
-            )}
-            {filter && (
-              <button className="row-btn" onClick={() => setFilter(null)}
-                      title={`Showing only ${tab} with an open `
-                        + `${filter.label.toLowerCase()} alarm`}>
-                CLEAR FILTER
               </button>
             )}
           </div>
@@ -336,9 +329,7 @@ export function Home() {
               {!isLoading && rows.length === 0 && (
                 <tr>
                   <td colSpan={16} className="muted" style={{ padding: 20 }}>
-                    {filter
-                      ? `No ${tab} have an open ${filter.label.toLowerCase()} alarm.`
-                      : `No ${tab} match “${search}”.`}
+                    {`No ${tab} match “${search}”.`}
                   </td>
                 </tr>
               )}
@@ -417,8 +408,8 @@ export function Home() {
 
       {legendOpen && <AlarmLegend onClose={() => setLegendOpen(false)} />}
       {drill && (
-        <AlarmDrilldown categories={drill.categories} title={drill.label}
-                        onClose={() => setDrill(null)} />
+        <AlarmPanel categories={drill.categories} title={drill.label}
+                    onClose={() => setDrill(null)} />
       )}
     </>
   );

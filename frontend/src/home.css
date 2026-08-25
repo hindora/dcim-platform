@@ -127,9 +127,6 @@
 }
 .alert-counter.zero .n { color: var(--text-faint); }
 .alert-counter .name { font-size: 13px; }
-.alert-counter .rule {
-  height: 2px; width: 100%; border-radius: 1px; background: transparent;
-}
 
 
 /* Counter tone. `alarms` is the response class that demands action, and keeps
