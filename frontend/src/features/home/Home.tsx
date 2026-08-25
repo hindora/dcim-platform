@@ -6,8 +6,14 @@
  * is how a NOC dashboard becomes the thing that falls over first.
  *
  * The alert strip is not decoration. Each counter is a filter: clicking
- * "Thermal" narrows the table to the sites that have a thermal alert, so the
+ * "Power" narrows the table to the sites that have a power alert, so the
  * headline number and the rows underneath can never disagree.
+ *
+ * Strip and table show the same eight categories at two resolutions. The strip
+ * groups them into five counters, because it has to be readable from across a
+ * room; the table keeps one column per category, so the grouping hides
+ * nothing. The grouping itself comes from the server with the taxonomy - the
+ * page never decides which categories belong together.
  */
 
 import { useMemo, useState } from 'react';
@@ -17,11 +23,13 @@ import {
   api,
   type AlertCategory,
   type AlertCounts,
+  type AlertTaxonomy,
   type SiteRoom,
   type SiteRow,
   type SitesOverview,
 } from '../../api/client';
-import { CategoryGlyph, type GlyphKind } from '../../components/CategoryGlyph';
+import { CategoryGlyph } from '../../components/CategoryGlyph';
+import { COLUMN_ORDER, GROUP_TONE, metaFor } from '../../components/alertMeta';
 import { FacilityToggle } from '../../components/estate';
 import { useInvalidateOn, useTopics } from '../../ws/useSocket';
 import { SiteDrawer } from './SiteDrawer';
@@ -33,41 +41,34 @@ const ALARM_EVENTS = ['alarm_created', 'alarm_updated', 'alarm_cleared'];
 
 type Tab = 'sites' | 'rooms';
 
-/** The strip, left to right. `key` is null for the total. */
-const COUNTERS: { key: AlertCategory | null; glyph: GlyphKind; label: string; tone: string }[] = [
-  { key: 'connectivity', glyph: 'connectivity', label: 'Connectivity Alerts', tone: 'cat-connectivity' },
-  { key: 'thermal', glyph: 'thermal', label: 'Thermal Alerts', tone: 'cat-thermal' },
-  { key: null, glyph: 'alarms', label: 'Alarms', tone: 'cat-alarms' },
-  { key: 'datapoint', glyph: 'datapoint', label: 'Datapoint Alerts', tone: 'cat-datapoint' },
-  { key: 'anomaly', glyph: 'anomaly', label: 'Analytics Alerts', tone: 'cat-anomaly' },
-];
+/** What the table filters to, and what a drill-down opens on.
+ *
+ *  Both are a LIST of categories rather than one, because the strip counters
+ *  are groups: "Cooling & Environment" is two categories and has to filter and
+ *  open as one thing. */
+interface Selection { key: string; label: string; categories: AlertCategory[] }
 
-/** The indicator columns, in table order. */
-const INDICATORS: { key: AlertCategory | 'total'; glyph: GlyphKind; head: string; title: string }[] = [
-  { key: 'thermal', glyph: 'thermal', head: 'THM', title: 'Thermal alerts' },
-  { key: 'connectivity', glyph: 'connectivity', head: 'CONN', title: 'Connectivity alerts' },
-  { key: 'total', glyph: 'alarms', head: 'ALM', title: 'Open alarms (all categories)' },
-  { key: 'datapoint', glyph: 'datapoint', head: 'DPT', title: 'Datapoint alerts' },
-  { key: 'anomaly', glyph: 'anomaly', head: 'ANL', title: 'Analytics / anomaly alerts' },
-];
+/** Counts within a selection. Categories are mutually exclusive, so summing
+ *  them is safe - the one arithmetic this page depends on. */
+function countIn(alerts: AlertCounts, categories: AlertCategory[]): number {
+  return categories.reduce((n, c) => n + (alerts.by_category?.[c] ?? 0), 0);
+}
 
-const TONE: Record<string, string> = {
-  thermal: 'thermal', connectivity: 'connectivity', total: 'alarms',
-  datapoint: 'datapoint', anomaly: 'anomaly',
-};
-
-function Indicator({ kind, count, title }: {
-  kind: AlertCategory | 'total'; count: number; title: string;
+function Indicator({ category, count, label, onOpen }: {
+  category: AlertCategory; count: number; label: string;
+  onOpen: (sel: Selection) => void;
 }) {
-  const glyph = INDICATORS.find((i) => i.key === kind)!.glyph;
+  const meta = metaFor(category);
   const on = count > 0;
   return (
     <td className="ind-cell">
-      <span className={`ind ${TONE[kind]} ${on ? 'on' : ''}`}
-            title={`${title}: ${count}`}>
-        <CategoryGlyph kind={glyph} />
+      <button className={`ind ${meta.tone} ${on ? 'on' : ''}`}
+              disabled={!on}
+              title={on ? `${label}: ${count} - list the rooms` : `${label}: 0`}
+              onClick={() => onOpen({ key: category, label, categories: [category] })}>
+        <CategoryGlyph kind={meta.glyph} />
         {on && <span>{count}</span>}
-      </span>
+      </button>
     </td>
   );
 }
@@ -78,22 +79,43 @@ function severityCell(n: number, tone: string) {
     : <td className="num dash">—</td>;
 }
 
-function indicatorCells(alerts: AlertCounts) {
-  return INDICATORS.map((i) => (
-    <Indicator key={i.key} kind={i.key} title={i.title}
-               count={i.key === 'total' ? alerts.total : alerts[i.key]} />
-  ));
+/** The indicator row: every open alarm, then one cell per category.
+ *
+ *  ALM leads because it answers the first question - does this site have
+ *  anything wrong - and it is a superset, not the sum of the cells beside it
+ *  in any sense the eye needs to check: it IS their sum, since the categories
+ *  partition the alarms. */
+function IndicatorCells({ alerts, labels, onOpen }: {
+  alerts: AlertCounts; labels: Record<string, string>;
+  onOpen: (sel: Selection) => void;
+}) {
+  return (
+    <>
+      <td className="ind-cell">
+        <span className={`ind alarms ${alerts.total > 0 ? 'on' : ''}`}
+              title={`Open alarms, all categories: ${alerts.total}`}>
+          <CategoryGlyph kind="alarms" />
+          {alerts.total > 0 && <span>{alerts.total}</span>}
+        </span>
+      </td>
+      {COLUMN_ORDER.map((c) => (
+        <Indicator key={c} category={c} onOpen={onOpen}
+                   label={labels[c] ?? c}
+                   count={alerts.by_category?.[c] ?? 0} />
+      ))}
+    </>
+  );
 }
 
 export function Home() {
   const [tab, setTab] = useState<Tab>('sites');
   const [search, setSearch] = useState('');
-  const [filter, setFilter] = useState<AlertCategory | null>(null);
+  const [filter, setFilter] = useState<Selection | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [drawerSite, setDrawerSite] = useState<SiteRow | null>(null);
   const [drawerRoom, setDrawerRoom] = useState<SiteRoom | null>(null);
   const [legendOpen, setLegendOpen] = useState(false);
-  const [drill, setDrill] = useState<AlertCategory | null>(null);
+  const [drill, setDrill] = useState<Selection | null>(null);
   // ROOMS scoped to one site. Set by clicking a site's room count, because
   // that count provokes exactly one question - "which five rooms?" - and
   // answering it by scrolling every room in the estate is not an answer.
@@ -114,12 +136,49 @@ export function Home() {
     refetchInterval: 30_000,
   });
 
+  // The taxonomy - labels, owners, and which categories group into which
+  // counter. Served by the classifier that fills the counters, so the strip
+  // cannot group one way while the numbers are classified another. It changes
+  // only when the backend is redeployed, hence no refetch interval.
+  const { data: taxonomy } = useQuery<AlertTaxonomy>({
+    queryKey: ['alert-taxonomy'],
+    queryFn: api.alertTaxonomy,
+    staleTime: Infinity,
+  });
+
+  const labels = useMemo(() => Object.fromEntries(
+    (taxonomy?.categories ?? []).map((c) => [c.key, c.label])), [taxonomy]);
+
+  // Five grouped counters, plus the all-categories total in the middle, plus
+  // `uncategorised` ONLY when it is non-zero. An empty triage bucket is not
+  // news; a non-empty one is a hole in the taxonomy and has to be visible.
+  const counters = useMemo(() => {
+    const groups = (taxonomy?.strip_groups ?? []).map((g) => ({
+      key: g.key,
+      label: g.label,
+      categories: g.categories,
+      tone: GROUP_TONE[g.key] ?? 'unc',
+      glyph: metaFor(g.categories[0]).glyph,
+    }));
+    const orphan = data ? (data.totals.by_category?.uncategorised ?? 0) : 0;
+    if (orphan > 0) {
+      groups.push({
+        key: 'uncategorised', label: 'Uncategorised',
+        categories: ['uncategorised'] as AlertCategory[],
+        tone: 'unc', glyph: metaFor('uncategorised').glyph,
+      });
+    }
+    // The total sits in the middle of the strip, where the eye lands first.
+    const half = Math.ceil(groups.length / 2);
+    return [...groups.slice(0, half), null, ...groups.slice(half)];
+  }, [taxonomy, data]);
+
   const sites = data?.sites ?? [];
   const rooms = useMemo(() => sites.flatMap((s) => s.rooms), [sites]);
 
   const matches = (name: string, alerts: AlertCounts) => {
     if (search && !name.toLowerCase().includes(search.toLowerCase())) return false;
-    if (filter && alerts[filter] === 0) return false;
+    if (filter && countIn(alerts, filter.categories) === 0) return false;
     return true;
   };
 
@@ -157,34 +216,46 @@ export function Home() {
           <span className="ring" /> Alert status
         </button>
 
-        {COUNTERS.map((c) => {
-          const n = data
-            ? (c.key === null ? data.totals.total : data.totals[c.key])
-            : 0;
-          const active = c.key !== null && filter === c.key;
+        {counters.map((c) => {
+          // `null` is the all-categories total, which sits between the groups.
+          const total = c === null;
+          const n = !data ? 0
+            : total ? data.totals.total : countIn(data.totals, c.categories);
+          const active = !total && filter?.key === c.key;
           return (
-            <div key={c.label} className={`alert-counter ${c.tone} ${n === 0 ? 'zero' : ''}`}>
+            <div key={total ? '__total' : c.key}
+                 className={`alert-counter cat-${total ? 'alarms' : c.tone} ${n === 0 ? 'zero' : ''}`}>
               <button className="face"
                       aria-pressed={active}
                       // The total is a headline, not a facet: there is nothing
                       // to filter to when every category is already included.
-                      disabled={c.key === null}
-                      title={c.key === null
+                      disabled={total}
+                      title={total
                         ? 'Every open alarm'
                         : `Filter the table to ${c.label.toLowerCase()}`}
-                      onClick={() => { setFilter(active ? null : c.key); setPage(0); }}>
+                      onClick={() => {
+                        if (total) return;
+                        setFilter(active ? null
+                          : { key: c.key, label: c.label, categories: c.categories });
+                        setPage(0);
+                      }}>
                 <span className="row">
                   <span className="n">{n}</span>
-                  <CategoryGlyph kind={c.glyph} size={24} />
+                  <CategoryGlyph kind={total ? 'alarms' : c.glyph} size={24} />
                 </span>
-                <span className="name">{c.label}</span>
+                <span className="name">{total ? 'Alarms' : c.label}</span>
               </button>
               {/* The counter filters the table; this lists what is behind it.
                   Two different questions - "show me only those" and "which
                   ones" - so two controls rather than one that has to guess. */}
-              <button className="drill" disabled={c.key === null || n === 0}
-                      title={`List the rooms with ${c.label.toLowerCase()}`}
-                      onClick={() => setDrill(c.key)}>
+              <button className="drill" disabled={total || n === 0}
+                      title={total ? '' : `List the rooms with ${c.label.toLowerCase()}`}
+                      onClick={() => {
+                        if (!total) {
+                          setDrill({ key: c.key, label: c.label,
+                                     categories: c.categories });
+                        }
+                      }}>
                 LIST
               </button>
               <span className="rule" />
@@ -218,7 +289,8 @@ export function Home() {
               </button>
             )}
             {filter && (
-              <button className="row-btn" onClick={() => setFilter(null)}>
+              <button className="row-btn" onClick={() => setFilter(null)}
+                      title={`Showing only ${tab} with an open ${filter.label.toLowerCase()} alert`}>
                 CLEAR FILTER
               </button>
             )}
@@ -245,8 +317,10 @@ export function Home() {
                 </th>
                 <th>{tab === 'sites' ? 'Location' : 'Type'}</th>
                 <th className="ind-h">{tab === 'sites' ? 'Rooms' : 'Racks'}</th>
-                {INDICATORS.map((i) => (
-                  <th key={i.key} className="ind-h" title={i.title}>{i.head}</th>
+                <th className="ind-h" title="Open alarms, all categories">ALM</th>
+                {COLUMN_ORDER.map((c) => (
+                  <th key={c} className="ind-h"
+                      title={`${labels[c] ?? c} alerts`}>{metaFor(c).head}</th>
                 ))}
                 <th className="ind-h">Crit</th>
                 <th className="ind-h">Maj</th>
@@ -256,14 +330,14 @@ export function Home() {
             </thead>
             <tbody>
               {isLoading && (
-                <tr><td colSpan={12} className="muted" style={{ padding: 20 }}>Loading…</td></tr>
+                <tr><td colSpan={16} className="muted" style={{ padding: 20 }}>Loading…</td></tr>
               )}
 
               {!isLoading && rows.length === 0 && (
                 <tr>
-                  <td colSpan={12} className="muted" style={{ padding: 20 }}>
+                  <td colSpan={16} className="muted" style={{ padding: 20 }}>
                     {filter
-                      ? `No ${tab} have an open ${filter} alert.`
+                      ? `No ${tab} have an open ${filter.label.toLowerCase()} alert.`
                       : `No ${tab} match “${search}”.`}
                   </td>
                 </tr>
@@ -275,6 +349,7 @@ export function Home() {
                              onKpis={() => setDrawerSite(s)}
                              onRooms={() => { setRoomsSite(s); setTab('rooms'); setPage(0); }}
                              showFacility={showFacility}
+                             labels={labels} onDrill={setDrill}
                              onRoomKpis={(r) => setDrawerRoom(r)} />
               ))}
 
@@ -288,7 +363,7 @@ export function Home() {
                   </td>
                   <td className="muted">{r.room_type.replace(/_/g, ' ')}</td>
                   <td className="num">{r.rack_count}</td>
-                  {indicatorCells(r.alerts)}
+                  <IndicatorCells alerts={r.alerts} labels={labels} onOpen={setDrill} />
                   {severityCell(r.alerts.critical, 'critical')}
                   {severityCell(r.alerts.major, 'major')}
                   <td className="ind-cell">
@@ -341,17 +416,21 @@ export function Home() {
       )}
 
       {legendOpen && <AlertLegend onClose={() => setLegendOpen(false)} />}
-      {drill && <AlertDrilldown category={drill} onClose={() => setDrill(null)} />}
+      {drill && (
+        <AlertDrilldown categories={drill.categories} title={drill.label}
+                        onClose={() => setDrill(null)} />
+      )}
     </>
   );
 }
 
 /** A site row plus, when expanded, its rooms as children of the same table. */
 function FragmentRow({ site, open, onToggle, onKpis, onRooms, onRoomKpis,
-                      showFacility }: {
+                      showFacility, labels, onDrill }: {
   site: SiteRow; open: boolean; onToggle: () => void; onKpis: () => void;
   onRooms: () => void; onRoomKpis: (room: SiteRoom) => void;
-  showFacility: boolean;
+  showFacility: boolean; labels: Record<string, string>;
+  onDrill: (sel: Selection) => void;
 }) {
   const children = showFacility
     ? site.rooms
@@ -385,7 +464,7 @@ function FragmentRow({ site, open, onToggle, onKpis, onRooms, onRoomKpis,
             )
             : 0}
         </td>
-        {indicatorCells(site.alerts)}
+        <IndicatorCells alerts={site.alerts} labels={labels} onOpen={onDrill} />
         {severityCell(site.alerts.critical, 'critical')}
         {severityCell(site.alerts.major, 'major')}
         <td className="ind-cell">
@@ -409,7 +488,7 @@ function FragmentRow({ site, open, onToggle, onKpis, onRooms, onRoomKpis,
           </td>
           <td className="muted small">{r.room_type.replace(/_/g, ' ')}</td>
           <td className="num">{r.rack_count}</td>
-          {indicatorCells(r.alerts)}
+          <IndicatorCells alerts={r.alerts} labels={labels} onOpen={onDrill} />
           {severityCell(r.alerts.critical, 'critical')}
           {severityCell(r.alerts.major, 'major')}
           <td className="ind-cell">

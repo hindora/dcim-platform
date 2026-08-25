@@ -21,10 +21,10 @@ Classification resolves in three layers, first match wins:
 and then `uncategorised`, which is deliberate: a point nobody classified has to
 be COUNTABLE, not filed into whichever bucket happens to be nearest.
 
-This module does not replace `alarm_categories.py` yet. That one still drives
-the home page roll-up and keeps its five buckets until the API and UI move
-(phases 3 and 4); running both is what makes phase 1 a no-behaviour-change
-step rather than a flag day.
+This module is the only classifier. The five-bucket scheme it replaced -
+thermal / connectivity / datapoint / anomaly / other - ran beside it through
+phases 1 to 3 so the API could move ahead of the UI, and was removed with the
+phase 4 frontend that stopped reading it.
 """
 
 from __future__ import annotations
@@ -111,6 +111,35 @@ DERIVED = "derived"          # analysis over history said so
 FORECAST = "forecast"        # projection says it will happen
 
 DETECTIONS = (THRESHOLD, STATE, ABSENCE, DERIVED, FORECAST)
+
+#: What each detection method means, in an operator's terms. Served with the
+#: legend for the same reason the category text is: a facet an operator cannot
+#: define is a facet they will not use.
+DETECTION_DESCRIPTIONS: dict[str, dict[str, str]] = {
+    THRESHOLD: {
+        "label": "Threshold",
+        "text": "A measured number crossed a limit we set.",
+    },
+    STATE: {
+        "label": "State",
+        "text": "The equipment reported the fault itself - a BACnet or Modbus "
+                "alarm point, a trap, a Redfish status.",
+    },
+    ABSENCE: {
+        "label": "Absence",
+        "text": "Something stopped arriving. Nothing is reported as wrong; "
+                "that is what is wrong.",
+    },
+    DERIVED: {
+        "label": "Derived",
+        "text": "Analysis over history concluded it - a ratio, a trend, a "
+                "comparison against the rest of the fleet.",
+    },
+    FORECAST: {
+        "label": "Forecast",
+        "text": "A projection says it will happen. Nothing has failed yet.",
+    },
+}
 
 #: Default detection per alarm source, so callers that know nothing more still
 #: record something true.
@@ -397,3 +426,14 @@ STRIP_GROUPS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("visibility", "Visibility", (VISIBILITY,)),
     ("capacity", "Capacity", (CAPACITY,)),
 )
+
+
+def examples_for(category: str, limit: int = 3) -> list[str]:
+    """A few alarm types that land in one category.
+
+    Generated from `BY_ALARM_TYPE` rather than written beside it: the legend's
+    examples are then the classifier's actual entries, and a condition that
+    moves between categories moves in the legend with it.
+    """
+    found = [t for t, c in BY_ALARM_TYPE.items() if c == category]
+    return found[:limit]

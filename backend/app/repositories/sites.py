@@ -16,7 +16,7 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.alarm_categories import CATEGORIES, sql_case
+from app.core.alert_taxonomy import CATEGORIES, DETECTIONS
 
 # Device -> (datacenter, room). A device may be racked, or sit in a room with no
 # rack (facility gear, floor-standing plant), so both paths are resolved and
@@ -39,21 +39,37 @@ _DEV_CTE = """
 # Open root alarms, already bucketed. State is ACTIVE or ACKNOWLEDGED: an
 # acknowledged alarm is still a live condition, and hiding it here is how a
 # known fault becomes a forgotten one.
-_ALARM_CTE = f"""
+_ALARM_CTE = """
     alarm_cat AS (
         SELECT dev.datacenter_id,
                dev.room_id,
                a.severity::text AS severity,
-               {sql_case()} AS category
+               a.category       AS category,
+               a.detection      AS detection
         FROM alarm a
         JOIN dev ON dev.device_id = a.device_id
         WHERE a.state <> 'CLEARED' AND a.is_symptom = false
     )
 """
 
+# The category is READ here, not recomputed. Phase 1 stamps it at raise time
+# through the role-sensitive classifier, so deriving it in the roll-up would
+# mean joining every alarm through device to device_type on every count - and
+# would rewrite history the moment a device is re-typed.
 _CATEGORY_COLUMNS = ",\n".join(
     f"count(*) FILTER (WHERE category = '{c}') AS alerts_{c}" for c in CATEGORIES
 )
+
+# HOW each one was found, across all eight categories. This is what makes
+# "only what analytics noticed" a filter rather than a category that grows
+# every time a detector is added.
+_DETECTION_COLUMNS = ",\n".join(
+    f"count(*) FILTER (WHERE detection = '{d}') AS detected_{d}"
+    for d in DETECTIONS
+)
+
+_ALL_CATEGORY_COLUMNS = ",\n".join(
+    (_CATEGORY_COLUMNS, _DETECTION_COLUMNS))
 
 _SEVERITY_COLUMNS = """
     count(*)                                                    AS alerts_total,
@@ -61,6 +77,16 @@ _SEVERITY_COLUMNS = """
     count(*) FILTER (WHERE severity = 'MAJOR')                  AS major,
     count(*) FILTER (WHERE severity IN ('MINOR', 'WARNING'))    AS minor
 """
+
+# A site or room with no open alarm has no `agg` row at all, so every count
+# needs its COALESCE. Generated from the same tuples as the counting columns:
+# a category added to the taxonomy and forgotten here would read as absent
+# rather than as an error.
+_AGG_COALESCE = ",\n               ".join(
+    f"COALESCE(agg.{name}, 0) AS {name}"
+    for name in ([f"alerts_{c}" for c in CATEGORIES]
+                 + [f"detected_{d}" for d in DETECTIONS])
+)
 
 
 async def site_rollups(session: AsyncSession) -> list[dict[str, Any]]:
@@ -70,7 +96,7 @@ async def site_rollups(session: AsyncSession) -> list[dict[str, Any]]:
         {_ALARM_CTE},
         agg AS (
             SELECT datacenter_id,
-                   {_CATEGORY_COLUMNS},
+                   {_ALL_CATEGORY_COLUMNS},
                    {_SEVERITY_COLUMNS}
             FROM alarm_cat GROUP BY datacenter_id
         ),
@@ -102,11 +128,7 @@ async def site_rollups(session: AsyncSession) -> list[dict[str, Any]]:
                COALESCE(agg.crit, 0)              AS crit,
                COALESCE(agg.major, 0)             AS major,
                COALESCE(agg.minor, 0)             AS minor,
-               COALESCE(agg.alerts_thermal, 0)      AS alerts_thermal,
-               COALESCE(agg.alerts_connectivity, 0) AS alerts_connectivity,
-               COALESCE(agg.alerts_datapoint, 0)    AS alerts_datapoint,
-               COALESCE(agg.alerts_anomaly, 0)      AS alerts_anomaly,
-               COALESCE(agg.alerts_other, 0)        AS alerts_other
+               {_AGG_COALESCE}
         FROM datacenter dc
         LEFT JOIN agg     ON agg.datacenter_id = dc.id
         LEFT JOIN devices ON devices.datacenter_id = dc.id
@@ -131,7 +153,7 @@ async def room_rollups(session: AsyncSession,
         {_ALARM_CTE},
         agg AS (
             SELECT room_id,
-                   {_CATEGORY_COLUMNS},
+                   {_ALL_CATEGORY_COLUMNS},
                    {_SEVERITY_COLUMNS}
             FROM alarm_cat GROUP BY room_id
         ),
@@ -162,11 +184,7 @@ async def room_rollups(session: AsyncSession,
                COALESCE(agg.crit, 0)              AS crit,
                COALESCE(agg.major, 0)             AS major,
                COALESCE(agg.minor, 0)             AS minor,
-               COALESCE(agg.alerts_thermal, 0)      AS alerts_thermal,
-               COALESCE(agg.alerts_connectivity, 0) AS alerts_connectivity,
-               COALESCE(agg.alerts_datapoint, 0)    AS alerts_datapoint,
-               COALESCE(agg.alerts_anomaly, 0)      AS alerts_anomaly,
-               COALESCE(agg.alerts_other, 0)        AS alerts_other
+               {_AGG_COALESCE}
         FROM room rm
         JOIN datacenter dc ON dc.id = rm.datacenter_id
         LEFT JOIN agg     ON agg.room_id = rm.id
@@ -194,11 +212,12 @@ async def fleet_alert_totals(session: AsyncSession) -> dict[str, Any]:
     row = (await session.execute(text(f"""
         WITH alarm_cat AS (
             SELECT a.severity::text AS severity,
-                   {sql_case()} AS category
+                   a.category       AS category,
+                   a.detection      AS detection
             FROM alarm a
             WHERE a.state <> 'CLEARED' AND a.is_symptom = false
         )
-        SELECT {_CATEGORY_COLUMNS},
+        SELECT {_ALL_CATEGORY_COLUMNS},
                {_SEVERITY_COLUMNS}
         FROM alarm_cat
     """))).mappings().first()
@@ -311,7 +330,7 @@ async def site_alerts(session: AsyncSession, datacenter_id: str) -> dict[str, An
     row = (await session.execute(text(f"""
         WITH {_DEV_CTE},
         {_ALARM_CTE}
-        SELECT {_CATEGORY_COLUMNS},
+        SELECT {_ALL_CATEGORY_COLUMNS},
                {_SEVERITY_COLUMNS}
         FROM alarm_cat
         WHERE datacenter_id = CAST(:dc AS uuid)

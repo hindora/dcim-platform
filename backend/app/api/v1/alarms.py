@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import audit
+from app.core.alert_taxonomy import CATEGORIES, DETECTIONS
 from app.core.security import Principal, current_principal, require_role
 from app.db.session import get_session
 from app.repositories import alarms as repo
@@ -27,6 +28,12 @@ async def list_alarms(
     severity: list[str] | None = Query(None),
     device_id: str | None = None,
     alarm_type: str | None = None,
+    category: list[str] | None = Query(None,
+        description="Domain of the failing thing: " + ", ".join(CATEGORIES)),
+    detection: list[str] | None = Query(None,
+        description="How it was found: " + ", ".join(DETECTIONS)
+                    + ". An attribute, not a category - filtering on `derived` "
+                      "shows what analysis noticed across every domain."),
     include_symptoms: bool = Query(
         False, description="Symptoms are hidden by default: one root cause with "
                            "twenty symptoms should read as one incident."),
@@ -34,10 +41,17 @@ async def list_alarms(
     session: AsyncSession = Depends(get_session),
     _: Principal = Depends(current_principal),
 ) -> dict[str, Any]:
+    for value, allowed, what in ((category, CATEGORIES, "category"),
+                                 (detection, DETECTIONS, "detection")):
+        unknown = sorted(set(value or []) - set(allowed))
+        if unknown:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                                f"unknown {what}: {', '.join(unknown)}")
     states = state or ["ACTIVE", "ACKNOWLEDGED"]
     items = await repo.list_alarms(
         session, states=states, severities=severity, device_id=device_id,
-        alarm_type=alarm_type, include_symptoms=include_symptoms, limit=limit)
+        alarm_type=alarm_type, categories=category, detections=detection,
+        include_symptoms=include_symptoms, limit=limit)
     return {"items": items}
 
 

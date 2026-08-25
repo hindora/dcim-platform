@@ -26,6 +26,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.alert_taxonomy import DETECTIONS
 from app.repositories import estate as repo
 
 # ASHRAE TC 9.9 recommended envelope for class A1-A4 equipment intake air.
@@ -524,21 +525,50 @@ def _fold_util_total(rooms: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 async def alerts(session: AsyncSession, *, category: str) -> dict[str, Any]:
+    """The drill-down behind one alert counter.
+
+    Every row carries its own severity and detection split. The facets are the
+    same population the row totals, computed in the one query that produced it:
+    a facet fetched separately can disagree with the row it sits under, and
+    then neither number is usable.
+    """
     rows = await repo.alerts_by_room(session, category=category)
     unlocated = await repo.unlocated_alerts_by_category(session, category=category)
+
+    def _detect(r: dict[str, Any]) -> dict[str, int]:
+        return {d: int(r.get(f"detected_{d}") or 0) for d in DETECTIONS}
+
+    def _sev(r: dict[str, Any]) -> dict[str, int]:
+        return {k: int(r.get(k) or 0)
+                for k in ("critical", "major", "minor", "warning")}
+
+    out_rows = [{
+        "room_id": r["room_id"], "room_name": r["room_name"],
+        "floor": r["floor"], "site_id": r["datacenter_id"],
+        "site_code": r["site_code"], "site_name": r["site_name"],
+        "qty": int(r["qty"]), "devices": int(r["devices"]),
+        "critical": int(r["critical"]), "major": int(r["major"]),
+        "by_severity": _sev(r),
+        "by_detection": _detect(r),
+    } for r in rows]
+
     return {
         "category": category,
-        "rows": [{
-            "room_id": r["room_id"], "room_name": r["room_name"],
-            "floor": r["floor"], "site_id": r["datacenter_id"],
-            "site_code": r["site_code"], "site_name": r["site_name"],
-            "qty": int(r["qty"]), "devices": int(r["devices"]),
-            "critical": int(r["critical"]), "major": int(r["major"]),
-        } for r in rows],
+        "rows": out_rows,
         "total": sum(int(r["qty"]) for r in rows) + unlocated,
         # Platform alarms belong to no room. Reported separately so the modal's
         # rows and the counter that opened it can be reconciled on the page.
         "unlocated": unlocated,
+        # Facet totals across the located rows. Unlocated alarms are excluded
+        # and said so: they have no room row to face against, and folding them
+        # into a facet would make the facets and the rows disagree.
+        "by_severity": {
+            k: sum(row["by_severity"][k] for row in out_rows)
+            for k in ("critical", "major", "minor", "warning")
+        },
+        "by_detection": {
+            d: sum(row["by_detection"][d] for row in out_rows) for d in DETECTIONS
+        },
     }
 
 

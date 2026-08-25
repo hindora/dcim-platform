@@ -13,7 +13,14 @@ from datetime import UTC, date, datetime
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.alarm_categories import CATEGORIES
+from app.core.alert_taxonomy import (
+    CATEGORIES,
+    DESCRIPTIONS,
+    DETECTION_DESCRIPTIONS,
+    DETECTIONS,
+    STRIP_GROUPS,
+    examples_for,
+)
 from app.core.security import Principal, current_principal
 from app.db.session import get_session
 from app.services import estate as service
@@ -70,6 +77,41 @@ async def utilization(
     nameplate of whatever PDUs happen to be installed.
     """
     return await service.utilisation(session)
+
+
+@router.get("/alert-categories", summary="The taxonomy itself: categories, "
+                                        "owners, detection methods")
+async def alert_categories(
+    _: Principal = Depends(current_principal),
+) -> dict:
+    """What each counter means, served from the classifier that fills it.
+
+    The UI legend is generated from this rather than written beside it, so the
+    definition an operator reads and the rule the classifier applies cannot
+    drift - and a category added to the taxonomy appears in the legend without
+    a frontend change.
+    """
+    return {
+        "categories": [{
+            "key": c,
+            "label": DESCRIPTIONS[c]["label"],
+            "owner": DESCRIPTIONS[c]["owner"],
+            "description": DESCRIPTIONS[c]["text"],
+            # Real entries out of the classifier, not illustrations of it.
+            "examples": examples_for(c),
+        } for c in CATEGORIES],
+        # How the eight group into the five headline counters on the home
+        # strip. The table keeps one column per category, so the grouping is a
+        # presentation of the same numbers and hides nothing.
+        "strip_groups": [{
+            "key": key, "label": label, "categories": list(members),
+        } for key, label, members in STRIP_GROUPS],
+        "detections": [{
+            "key": d,
+            "label": DETECTION_DESCRIPTIONS[d]["label"],
+            "description": DETECTION_DESCRIPTIONS[d]["text"],
+        } for d in DETECTIONS],
+    }
 
 
 @router.get("/alerts", summary="Open alerts of one category, by room")

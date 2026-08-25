@@ -176,6 +176,7 @@ _ALARM_SELECT = """
            a.first_seen, a.last_seen, a.occurrence_count,
            a.acknowledged_at, a.acknowledged_by, a.cleared_at,
            a.is_symptom, a.root_cause_alarm_id::text,
+           a.category, a.detection,
            dc.code AS datacenter_code, rm.name AS room_name, r.name AS rack_name
     FROM alarm a
     -- LEFT, not INNER. A platform alarm has no device, and an inner join here
@@ -193,6 +194,8 @@ async def list_alarms(session: AsyncSession, *, states: list[str] | None = None,
                       severities: list[str] | None = None,
                       device_id: str | None = None,
                       alarm_type: str | None = None,
+                      categories: list[str] | None = None,
+                      detections: list[str] | None = None,
                       include_symptoms: bool = False,
                       limit: int = 100) -> list[dict[str, Any]]:
     where, params = [], {"limit": limit}
@@ -208,6 +211,15 @@ async def list_alarms(session: AsyncSession, *, states: list[str] | None = None,
     if alarm_type:
         where.append("a.alarm_type = :alarm_type")
         params["alarm_type"] = alarm_type
+    # Category and detection are columns, not derivations: filtering them is an
+    # index lookup, and it returns the same population the roll-up counted
+    # because both read what was stamped at raise time.
+    if categories:
+        where.append("a.category = ANY(:categories)")
+        params["categories"] = categories
+    if detections:
+        where.append("a.detection = ANY(:detections)")
+        params["detections"] = detections
     if not include_symptoms:
         # Roots only by default. An alarm list showing 21 rows for one OOB
         # switch failure is the reason operators stop looking at alarm lists.

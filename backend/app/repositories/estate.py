@@ -19,6 +19,8 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.alert_taxonomy import DETECTIONS
+
 # Device -> (datacenter, room). Same resolution as the home page: a device may
 # be racked, or stand on the floor in a room with no rack.
 _DEV_CTE = """
@@ -350,21 +352,25 @@ async def site_design(session: AsyncSession) -> dict[str, Any]:
     return {r["id"]: r["design_it_kw"] for r in rows}
 
 
-async def alerts_by_room(session: AsyncSession, *, category: str) -> list[dict[str, Any]]:
+async def alerts_by_room(session: AsyncSession, *,
+                         category: str) -> list[dict[str, Any]]:
     """Open root alarms of one category, grouped by room.
 
     The drill-down behind an alert counter. Roots only and never CLEARED, the
     same population the counter itself totals - a drill-down that disagrees
     with the number that opened it is worse than no drill-down.
     """
-    from app.core.alarm_categories import sql_case
+    detection_cols = ",\n               ".join(
+        f"count(*) FILTER (WHERE detection = '{d}') AS detected_{d}"
+        for d in DETECTIONS
+    )
 
     rows = (await session.execute(text(f"""
         WITH {_DEV_CTE},
         cat AS (
             SELECT dev.datacenter_id, dev.room_id, a.severity::text AS severity,
-                   a.device_id,
-                   {sql_case()} AS category
+                   a.device_id, a.detection AS detection,
+                   a.category AS category
             FROM alarm a
             JOIN dev ON dev.device_id = a.device_id
             WHERE a.state <> 'CLEARED' AND a.is_symptom = false
@@ -378,7 +384,10 @@ async def alerts_by_room(session: AsyncSession, *, category: str) -> list[dict[s
                count(*)                                        AS qty,
                count(DISTINCT cat.device_id)                   AS devices,
                count(*) FILTER (WHERE severity = 'CRITICAL')   AS critical,
-               count(*) FILTER (WHERE severity = 'MAJOR')      AS major
+               count(*) FILTER (WHERE severity = 'MAJOR')      AS major,
+               count(*) FILTER (WHERE severity = 'MINOR')      AS minor,
+               count(*) FILTER (WHERE severity = 'WARNING')    AS warning,
+               {detection_cols}
         FROM cat
         JOIN room rm       ON rm.id = cat.room_id
         JOIN datacenter dc ON dc.id = cat.datacenter_id
@@ -397,12 +406,10 @@ async def unlocated_alerts_by_category(session: AsyncSession, *,
     strip, so the drill-down has to account for them or the modal will appear
     to have lost rows.
     """
-    from app.core.alarm_categories import sql_case
-
     row = (await session.execute(text(f"""
         WITH {_DEV_CTE},
         cat AS (
-            SELECT dev.room_id, {sql_case()} AS category
+            SELECT dev.room_id, a.category AS category
             FROM alarm a
             LEFT JOIN dev ON dev.device_id = a.device_id
             WHERE a.state <> 'CLEARED' AND a.is_symptom = false

@@ -16,6 +16,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.alert_taxonomy import CATEGORIES, DETECTIONS
 from app.repositories import sites as repo
 from app.services import pue as pue_service
 
@@ -36,18 +37,22 @@ def _pct(part: Any, whole: Any) -> float | None:
     return round(p / w * 100.0, 1)
 
 
-def _alerts(row: dict[str, Any]) -> dict[str, int]:
-    """The alert block every row and the strip share."""
+def _alerts(row: dict[str, Any]) -> dict[str, Any]:
+    """The alert block every row and the strip share.
+
+    `by_category` is the taxonomy of docs/18-alert-taxonomy.md: one axis, the
+    domain of the failing thing, which is the same as who owns the first five
+    minutes. `by_detection` sits beside it rather than inside it - how a
+    condition was found is an attribute, so "only what analytics noticed"
+    filters across all eight categories instead of being a ninth.
+    """
     return {
         "total": int(row.get("alerts_total") or 0),
-        "thermal": int(row.get("alerts_thermal") or 0),
-        "connectivity": int(row.get("alerts_connectivity") or 0),
-        "datapoint": int(row.get("alerts_datapoint") or 0),
-        "anomaly": int(row.get("alerts_anomaly") or 0),
-        "other": int(row.get("alerts_other") or 0),
         "critical": int(row.get("crit") or 0),
         "major": int(row.get("major") or 0),
         "minor": int(row.get("minor") or 0),
+        "by_category": {c: int(row.get(f"alerts_{c}") or 0) for c in CATEGORIES},
+        "by_detection": {d: int(row.get(f"detected_{d}") or 0) for d in DETECTIONS},
     }
 
 

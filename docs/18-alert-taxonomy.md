@@ -1,7 +1,19 @@
 # 18. Alert taxonomy
 
-Status: **planned**, not built. Decisions at the bottom are settled; the phases
-are the order of work.
+Status: phases **1-4 built** (classifier and schema, boolean rules seeded
+disabled, roll-up and API, UI). Phase 5 (tests) is partly done - the
+exhaustiveness, disjointness and roll-up suites exist; the golden backfill set
+does not. Phase 6 (capacity rules) remains: the category, the counter and the
+column all exist and read zero.
+
+The five-bucket vocabulary - thermal / connectivity / datapoint / anomaly /
+other - was served alongside the eight through phase 3 so the API could move
+ahead of the UI, and was **removed with the phase 4 frontend**:
+`core/alarm_categories.py`, the legacy roll-up columns, the `legacy` branch of
+the drill-down and the old flat keys on every alert block are gone. The retired
+names now 400 rather than resolving, deliberately: a bookmarked drill-down from
+the old UI must fail loudly instead of opening an empty modal that reads as
+"nothing wrong in this category".
 
 ## 1. Why this changes
 
@@ -153,15 +165,26 @@ three asserted points mean this will not start at zero.
 * Site and room rows gain a `by_detection` breakdown so "only what analytics
   found" is a filter rather than a category.
 
-### Phase 4 - UI
+### Phase 4 - UI  *(built)*
 
 * **Strip: five grouped counters** - Power · Cooling & Environment · IT &
-  Network · Visibility · Capacity. Uncategorised appears as a sixth only when
-  non-zero.
-* **Table: eight indicator columns**, one per category. Nothing is hidden by
-  the grouping; the strip is the headline, the table is the detail.
-* Drill-down modal gains `severity` and `detection` facets. The legend is
-  generated from the registry so it cannot drift from the classifier.
+  Network · Visibility · Capacity, with the all-categories total between them.
+  Uncategorised appears as a sixth only when non-zero.
+* **Table: eight indicator columns**, one per category, plus ALM. Nothing is
+  hidden by the grouping; the strip is the headline, the table is the detail.
+  A cell with a count is also the way into the rooms behind it.
+* Drill-down modal carries `severity` and `detection` facets, folded from the
+  rows it shows rather than fetched, so the two cannot describe different
+  instants. A grouped counter runs one query per category and keeps the rows
+  per room AND per category - merging them would need a rule for `devices`,
+  where one device can carry alerts in two categories.
+* The legend is generated from `/estate/alert-categories`, which is generated
+  from the classifier - including the example alarm types, which are real
+  entries out of `BY_ALARM_TYPE` rather than illustrations of it.
+* **Colour is the strip group, not the category.** Five hues for eight
+  categories: the two categories that share an owner share a hue and are told
+  apart by their glyph. Eight hues would be eight things to learn and several
+  of them indistinguishable on a wall display.
 
 ### Phase 5 - tests
 

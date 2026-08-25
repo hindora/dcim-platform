@@ -13,7 +13,14 @@
 
 import { useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { api, type MaybeMetric, type SiteKpi, type SiteRow, type Utilisation } from '../../api/client';
+import {
+  api,
+  type AlertCategory,
+  type MaybeMetric,
+  type SiteKpi,
+  type SiteRow,
+  type Utilisation,
+} from '../../api/client';
 import { CategoryGlyph, type GlyphKind } from '../../components/CategoryGlyph';
 import { relativeTime } from '../../lib/format';
 
@@ -57,13 +64,23 @@ function utilTile(u: Utilisation, caption: string) {
   );
 }
 
-const CHIPS: { key: 'thermal' | 'connectivity' | 'total' | 'datapoint' | 'anomaly';
+/** The drawer summarises by OWNER, not by category.
+ *
+ *  Eight chips would not fit the panel, and the question this drawer answers -
+ *  "who do I call about this site" - is the grouping's question anyway. The
+ *  eight-column breakdown is one click away on the row behind it. */
+const CHIPS: { key: string; categories: AlertCategory[] | null;
                glyph: GlyphKind; label: string; tone: string }[] = [
-  { key: 'thermal', glyph: 'thermal', label: 'THM', tone: 'thermal' },
-  { key: 'connectivity', glyph: 'connectivity', label: 'CONN', tone: 'connectivity' },
-  { key: 'total', glyph: 'alarms', label: 'ALM', tone: 'alarms' },
-  { key: 'datapoint', glyph: 'datapoint', label: 'DPT', tone: 'datapoint' },
-  { key: 'anomaly', glyph: 'anomaly', label: 'ANL', tone: 'anomaly' },
+  { key: 'power', categories: ['power'], glyph: 'power', label: 'PWR', tone: 'pwr' },
+  { key: 'cooling_env', categories: ['cooling', 'environmental'],
+    glyph: 'cooling', label: 'CLG', tone: 'cool' },
+  { key: 'total', categories: null, glyph: 'alarms', label: 'ALM', tone: 'alarms' },
+  { key: 'it_network', categories: ['it_equipment', 'network'],
+    glyph: 'it_equipment', label: 'IT', tone: 'it' },
+  { key: 'visibility', categories: ['visibility'], glyph: 'visibility',
+    label: 'VIS', tone: 'vis' },
+  { key: 'capacity', categories: ['capacity'], glyph: 'capacity',
+    label: 'CAP', tone: 'cap' },
 ];
 
 export function SiteDrawer({ site, onClose }: { site: SiteRow; onClose: () => void }) {
@@ -213,7 +230,10 @@ export function SiteDrawer({ site, onClose }: { site: SiteRow; onClose: () => vo
 
             <div className="drawer-chips">
               {CHIPS.map((c) => {
-                const n = c.key === 'total' ? data.alerts.total : data.alerts[c.key];
+                const n = c.categories === null
+                  ? data.alerts.total
+                  : c.categories.reduce(
+                      (t, k) => t + (data.alerts.by_category?.[k] ?? 0), 0);
                 return (
                   <span key={c.key} className={`ind ${c.tone} ${n > 0 ? 'on' : ''}`}
                         title={`${c.label}: ${n}`}>
@@ -228,7 +248,7 @@ export function SiteDrawer({ site, onClose }: { site: SiteRow; onClose: () => vo
             <div className="drawer-conn">
               <span style={{ color: data.monitored.devices_offline === 0
                 ? 'var(--ok)' : 'var(--critical)' }}>
-                <CategoryGlyph kind="connectivity" />
+                <CategoryGlyph kind="visibility" />
               </span>
               <span style={{ color: data.monitored.devices_offline === 0
                 ? 'var(--ok)' : 'var(--critical)' }}>

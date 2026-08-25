@@ -26,6 +26,25 @@
   --critical: #f85149;
   --unknown: #6e7681;
 
+  /* Alert-category hues. FIVE, not eight: colour on the home page means "who
+     owns the first five minutes", so the two categories that share an owner
+     share a hue and are told apart by their glyph. Eight hues would be eight
+     things to learn, and several of them indistinguishable on a wall display.
+
+     Deliberately not the status colours above: a power alert is not more
+     severe than a cooling one, and painting a category in --critical would say
+     it is. Severity keeps its own column. */
+  --cat-pwr: #e3a008;   /* electrical - the amber of a switchboard lamp */
+  --cat-cool: #2da9b8;
+  --cat-it: #a371f7;
+  --cat-vis: #8b949e;   /* grey: we cannot see it, which is not a fault */
+  --cat-cap: #58a6ff;
+  /* Magenta, not another amber: it sat next to --cat-pwr on the strip and
+     the two read as the same counter at a glance. Nothing else on the page
+     uses this hue, which is the point - an unclassified alarm should not
+     look like it belongs to anybody. */
+  --cat-unc: #f778ba;
+
   --radius: 6px;
   --mono: ui-monospace, "SFMono-Regular", "Cascadia Code", Consolas, monospace;
   --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;

@@ -18,6 +18,15 @@
   --tint-major: color-mix(in srgb, var(--major) 18%, var(--bg-raised));
   --tint-critical: color-mix(in srgb, var(--critical) 18%, var(--bg-raised));
   --tint-accent: color-mix(in srgb, var(--accent) 18%, var(--bg-raised));
+
+  /* One tint per category hue, mixed the same way so a themed background
+     carries through. */
+  --tint-pwr: color-mix(in srgb, var(--cat-pwr) 18%, var(--bg-raised));
+  --tint-cool: color-mix(in srgb, var(--cat-cool) 18%, var(--bg-raised));
+  --tint-it: color-mix(in srgb, var(--cat-it) 18%, var(--bg-raised));
+  --tint-vis: color-mix(in srgb, var(--cat-vis) 18%, var(--bg-raised));
+  --tint-cap: color-mix(in srgb, var(--cat-cap) 18%, var(--bg-raised));
+  --tint-unc: color-mix(in srgb, var(--cat-unc) 18%, var(--bg-raised));
 }
 
 /* `min-width: 0` on the shell and on every nested flex/grid child is what stops
@@ -135,11 +144,16 @@
 .alert-counter .face:hover:not(:disabled) .name { text-decoration: underline; }
 .alert-counter .face[aria-pressed="true"] .name { color: var(--text); }
 
-.cat-thermal { color: var(--warn); }
-.cat-connectivity { color: var(--critical); }
+/* Counter tone. `alarms` is the all-categories total and keeps the status red:
+   it is the only counter on the strip that means "something is wrong" rather
+   than "something of this kind is wrong". */
 .cat-alarms { color: var(--critical); }
-.cat-datapoint { color: var(--unknown); }
-.cat-anomaly { color: var(--unknown); }
+.cat-pwr { color: var(--cat-pwr); }
+.cat-cool { color: var(--cat-cool); }
+.cat-it { color: var(--cat-it); }
+.cat-vis { color: var(--cat-vis); }
+.cat-cap { color: var(--cat-cap); }
+.cat-unc { color: var(--cat-unc); }
 
 /* --- home body ------------------------------------------------------------ */
 
@@ -182,7 +196,7 @@
    - not on the page, which would drag the alert strip out of view sideways. */
 .table-scroll { overflow-x: auto; min-width: 0; }
 .sites-table { width: 100%; border-collapse: collapse; font-size: 13px;
-               min-width: 940px; }
+               min-width: 1240px; }
 .sites-table thead th {
   background: var(--bg-inset); border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
@@ -190,7 +204,9 @@
   color: var(--text-muted); font-weight: 600; text-transform: uppercase;
   white-space: nowrap;
 }
-.sites-table thead th.ind-h { text-align: center; width: 72px; min-width: 72px; }
+/* Nine status columns now, so each is narrower than it was: the cell holds a
+   glyph and up to four digits, and nothing else. */
+.sites-table thead th.ind-h { text-align: center; width: 58px; min-width: 58px; }
 .sites-table thead th.act { text-align: center; width: 100px; min-width: 100px; }
 .sites-table thead th:first-child { min-width: 180px; }
 .sites-table tbody td {
@@ -234,15 +250,26 @@
 .ind-cell { text-align: center; }
 .ind {
   display: inline-flex; align-items: center; justify-content: center; gap: 5px;
-  min-width: 52px; height: 30px; padding: 0 8px; border-radius: 3px;
+  min-width: 46px; height: 30px; padding: 0 7px; border-radius: 3px;
   background: var(--bg-inset); border: 1px solid var(--border);
-  color: var(--unknown); font-size: 12px; font-variant-numeric: tabular-nums;
+  color: var(--unknown); font: inherit; font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
-.ind.on.thermal { background: var(--tint-warn); border-color: var(--warn); color: var(--warn); }
-.ind.on.connectivity { background: var(--tint-critical); border-color: var(--critical); color: var(--critical); }
+/* A cell with a count is also the way into the rooms behind it. A cell reading
+   zero is not a control: there is nothing to open, and a button that opens an
+   empty modal teaches an operator to stop clicking. */
+button.ind { cursor: pointer; }
+button.ind:disabled { cursor: default; }
+button.ind:not(:disabled):hover { border-color: currentColor; }
+button.ind:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
 .ind.on.alarms { background: var(--tint-critical); border-color: var(--critical); color: var(--critical); }
-.ind.on.datapoint { background: var(--tint-major); border-color: var(--major); color: var(--major); }
-.ind.on.anomaly { background: var(--tint-accent); border-color: var(--accent); color: var(--accent); }
+.ind.on.pwr  { background: var(--tint-pwr);  border-color: var(--cat-pwr);  color: var(--cat-pwr); }
+.ind.on.cool { background: var(--tint-cool); border-color: var(--cat-cool); color: var(--cat-cool); }
+.ind.on.it   { background: var(--tint-it);   border-color: var(--cat-it);   color: var(--cat-it); }
+.ind.on.vis  { background: var(--tint-vis);  border-color: var(--cat-vis);  color: var(--cat-vis); }
+.ind.on.cap  { background: var(--tint-cap);  border-color: var(--cat-cap);  color: var(--cat-cap); }
+.ind.on.unc  { background: var(--tint-unc);  border-color: var(--cat-unc);  color: var(--cat-unc); }
 
 .row-btn {
   min-width: 84px; height: 28px; border-radius: 3px; background: var(--bg);

@@ -249,11 +249,35 @@
 .legend-swatch {
   width: 4px; height: 20px; border-radius: 1px; background: var(--unknown); flex: none;
 }
-.legend-swatch.thermal { background: var(--warn); }
-.legend-swatch.connectivity { background: var(--critical); }
-.legend-swatch.datapoint { background: var(--major); }
-.legend-swatch.anomaly { background: var(--accent); }
-.legend-swatch.other { background: var(--text-faint); }
+.legend-swatch.pwr  { background: var(--cat-pwr); }
+.legend-swatch.cool { background: var(--cat-cool); }
+.legend-swatch.it   { background: var(--cat-it); }
+.legend-swatch.vis  { background: var(--cat-vis); }
+.legend-swatch.cap  { background: var(--cat-cap); }
+.legend-swatch.unc  { background: var(--cat-unc); }
+
+/* Facet chips above a drill-down table. They are a READING of the rows below,
+   not a control: clicking one would promise filtering the table, and the rows
+   are already the whole population the counter opened. */
+.facet-row {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  margin: 0 0 14px;
+}
+.facet-label {
+  font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--text-faint); margin-right: 2px;
+}
+.facet {
+  display: inline-flex; align-items: center; gap: 7px; height: 26px;
+  padding: 0 10px; border-radius: 13px; font-size: 12px;
+  background: var(--bg-inset); border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+.facet b { font-variant-numeric: tabular-nums; color: var(--text); }
+.facet.critical { border-color: var(--critical); color: var(--critical); }
+.facet.major    { border-color: var(--major); color: var(--major); }
+.facet.minor,
+.facet.warning  { border-color: var(--border-strong); }
 
 @media (max-width: 900px) {
   .estate-head { align-items: flex-start; }

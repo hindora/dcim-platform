@@ -555,24 +555,48 @@ export interface CollectorHealth {
 
 // ------------------------------------------------------------ home page
 //
-// Alert categories are mutually exclusive and defined server-side in
-// app/core/alarm_categories.py. `total` is every open root alarm, so it is a
-// superset of the named buckets, not their sum - the home page's ALM indicator
-// means "this site has an alarm", which is a different question from "this
-// site has a thermal alarm".
+// Alert categories are one axis - the domain of the failing thing, which is
+// the same question as who owns the first five minutes - and are defined
+// server-side in app/core/alert_taxonomy.py. They are mutually exclusive, so
+// `by_category` sums to `total`.
+//
+// `by_detection` is deliberately NOT a category. How a condition was found
+// (threshold, state, absence, derived, forecast) filters across all eight, so
+// improving a detector never moves an alarm between buckets.
 
-export type AlertCategory = 'thermal' | 'connectivity' | 'datapoint' | 'anomaly' | 'other';
+export type AlertCategory =
+  | 'visibility' | 'environmental' | 'cooling' | 'power'
+  | 'it_equipment' | 'network' | 'capacity' | 'uncategorised';
+
+export type AlertDetection =
+  | 'threshold' | 'state' | 'absence' | 'derived' | 'forecast';
 
 export interface AlertCounts {
   total: number;
-  thermal: number;
-  connectivity: number;
-  datapoint: number;
-  anomaly: number;
-  other: number;
   critical: number;
   major: number;
   minor: number;
+  by_category: Record<AlertCategory, number>;
+  by_detection: Record<AlertDetection, number>;
+}
+
+/** The taxonomy itself, served by the classifier that fills the counters.
+ *  Fetched rather than transcribed: a legend written next to the classifier
+ *  drifts from it, and the first symptom is an operator routing work by a
+ *  definition that stopped being true. */
+export interface AlertTaxonomy {
+  categories: {
+    key: AlertCategory;
+    label: string;
+    /** Who acts first. The reason the axis is worth having. */
+    owner: string;
+    description: string;
+    examples: string[];
+  }[];
+  /** How the eight group into the headline counters on the strip. The table
+   *  keeps a column per category, so the grouping loses nothing. */
+  strip_groups: { key: string; label: string; categories: AlertCategory[] }[];
+  detections: { key: AlertDetection; label: string; description: string }[];
 }
 
 export interface SiteRoom {
@@ -778,16 +802,32 @@ export interface UtilPage {
   notes: string[];
 }
 
+export interface AlertDrillRow {
+  room_id: string;
+  room_name: string;
+  floor: string | null;
+  site_id: string;
+  site_code: string;
+  site_name: string;
+  qty: number;
+  devices: number;
+  critical: number;
+  major: number;
+  by_severity: { critical: number; major: number; minor: number; warning: number };
+  by_detection: Record<AlertDetection, number>;
+}
+
 export interface AlertDrill {
-  category: string;
-  rows: Array<{
-    room_id: string; room_name: string; floor: string | null;
-    site_id: string; site_code: string; site_name: string;
-    qty: number; devices: number; critical: number; major: number;
-  }>;
+  category: AlertCategory;
+  rows: AlertDrillRow[];
+  /** Rows plus `unlocated`: platform alarms have no room to sit in. */
   total: number;
-  /** Platform alarms belong to no room; counted, never silently dropped. */
   unlocated: number;
+  /** Folded from the rows above, so the facets and the rows can never be two
+   *  different instants of the estate. Excludes `unlocated` - those have no
+   *  row to face against. */
+  by_severity: { critical: number; major: number; minor: number; warning: number };
+  by_detection: Record<AlertDetection, number>;
 }
 
 export interface RoomKpi {
@@ -969,6 +1009,8 @@ export const api = {
 
   estateAlerts: (category: string) =>
     request<AlertDrill>(`/estate/alerts?category=${encodeURIComponent(category)}`),
+
+  alertTaxonomy: () => request<AlertTaxonomy>('/estate/alert-categories'),
 
   roomKpi: (roomId: string) => request<RoomKpi>(`/estate/rooms/${roomId}/kpi`),
 
