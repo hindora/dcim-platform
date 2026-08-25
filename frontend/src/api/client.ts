@@ -879,7 +879,7 @@ export interface AlarmDrillRow {
 }
 
 export interface AlarmDrill {
-  category: AlarmCategory;
+  categories: AlarmCategory[];
   rows: AlarmDrillRow[];
   /** Every open condition in the category - what the counter that opened the
    *  panel shows. Rows plus `unlocated`. */
@@ -887,6 +887,9 @@ export interface AlarmDrill {
   /** The actionable part of `total`. */
   alarms: number;
   unlocated: number;
+  /** The alarm part of `unlocated`, so an alarms-only view can leave the
+   *  informational ones out of its total as well as out of its rows. */
+  unlocated_alarms: number;
   /** Folded from the rows above, so the facets and the rows can never be two
    *  different instants of the estate. Excludes `unlocated` - those have no
    *  row to face against. */
@@ -1071,8 +1074,11 @@ export const api = {
 
   estateUtilization: () => request<UtilPage>('/estate/utilization'),
 
-  estateAlarms: (category: string) =>
-    request<AlarmDrill>(`/estate/alarms?category=${encodeURIComponent(category)}`),
+  /** One or more categories in one request: a grouped counter is one question,
+   *  and one room must come back as one row. */
+  estateAlarms: (categories: string[]) =>
+    request<AlarmDrill>('/estate/alarms?'
+      + categories.map((c) => `category=${encodeURIComponent(c)}`).join('&')),
 
   alarmTaxonomy: () => request<AlarmTaxonomy>('/estate/alarm-categories'),
 

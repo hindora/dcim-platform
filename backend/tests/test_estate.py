@@ -216,7 +216,7 @@ async def test_panel_totals_reconcile_with_the_counter_that_opened_it(monkeypatc
     monkeypatch.setattr(estate.repo, "unlocated_alarms_by_category",
                         _returns({"total": 4, "alarms": 1}))
 
-    out = await estate.alarms(_FakeSession(), category="visibility")
+    out = await estate.alarms(_FakeSession(), categories=["visibility"])
     assert out["total"] == 3 + 10 + 4
     assert out["alarms"] == 3 + 1
     assert out["unlocated"] == 4

@@ -353,7 +353,7 @@ async def site_design(session: AsyncSession) -> dict[str, Any]:
 
 
 async def alarms_by_room(session: AsyncSession, *,
-                         category: str) -> list[dict[str, Any]]:
+                         categories: list[str]) -> list[dict[str, Any]]:
     """Open root alarms of one category, grouped by room - with the alerts beside them.
 
     The drill-down behind a counter. `qty` is alarms only, exactly the
@@ -370,6 +370,12 @@ async def alarms_by_room(session: AsyncSession, *,
     this panel counts both: a panel listing fewer rooms than the tile that
     opened it is the disagreement this whole area exists to avoid. The columns
     keep them apart, and every alarm-side aggregate below keeps its filter.
+
+    Several categories in one call, because a grouped counter - Cooling is
+    cooling plus environmental - is one question. Asking twice and adding the
+    answers in the browser produced two rows for one room, and no honest way to
+    count its devices: a device with a fault in both domains is one device, and
+    only the database can say so. `count(DISTINCT)` over the union does.
     """
     # Every alarm-side aggregate carries the same filter: these describe the
     # alarms the counter opened, not the alerts sitting beside them.
@@ -409,19 +415,19 @@ async def alarms_by_room(session: AsyncSession, *,
         FROM cat
         JOIN room rm       ON rm.id = cat.room_id
         JOIN datacenter dc ON dc.id = cat.datacenter_id
-        WHERE cat.category = :category
+        WHERE cat.category = ANY(:categories)
         GROUP BY rm.id, rm.name, rm.floor, dc.id, dc.code, dc.name
         -- Every room with anything open in this category, because that is
         -- what the counter that opens this panel now counts. The two columns
         -- keep the classes apart on the row; the row set no longer does.
         HAVING count(*) > 0
         ORDER BY qty DESC, dc.code, rm.name
-    """), {"category": category})).mappings().all()
+    """), {"categories": categories})).mappings().all()
     return [dict(r) for r in rows]
 
 
 async def unlocated_alarms_by_category(session: AsyncSession, *,
-                                       category: str) -> dict[str, int]:
+                                       categories: list[str]) -> dict[str, int]:
     """Alarms of a category that resolve to no room.
 
     Platform conditions hang off devices with no location. They are counted in
@@ -440,8 +446,8 @@ async def unlocated_alarms_by_category(session: AsyncSession, *,
         SELECT count(*)                                       AS n,
                count(*) FILTER (WHERE response_class = '{ALARM}') AS alarms
         FROM cat
-        WHERE category = :category AND room_id IS NULL
-    """), {"category": category})).mappings().first()
+        WHERE category = ANY(:categories) AND room_id IS NULL
+    """), {"categories": categories})).mappings().first()
     if row is None:
         return {"total": 0, "alarms": 0}
     return {"total": int(row["n"]), "alarms": int(row["alarms"])}

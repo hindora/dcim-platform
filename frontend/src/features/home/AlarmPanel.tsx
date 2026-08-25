@@ -18,14 +18,13 @@
  *  them exactly rather than approximately.
  */
 
-import { useEffect, useMemo, useState } from 'react';
-import { useQueries, useQuery } from '@tanstack/react-query';
+import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import {
   api,
   type AlarmCategory,
   type AlarmDetection,
-  type AlarmDrill,
   type AlarmDrillRow,
   type AlarmTaxonomy,
 } from '../../api/client';
@@ -35,7 +34,6 @@ import { metaFor } from '../../components/alertMeta';
 const SEVERITIES = ['critical', 'major', 'minor', 'warning'] as const;
 
 type SortKey = 'room' | 'site' | 'qty' | 'alerts' | 'devices';
-type Row = { category: AlarmCategory; row: AlarmDrillRow };
 
 /** Facet chips: the same population the rows total, split two ways. */
 function Facets({ label, entries }: {
@@ -70,27 +68,31 @@ function SortHead({ label, k, sort, dir, onSort, className }: {
   );
 }
 
-function toCsv(rows: Row[], withCategory: boolean, labels: Record<string, string>) {
-  const head = ['Room', 'Site', 'Floor', ...(withCategory ? ['Category'] : []),
-                'Alarms', 'Alerts', 'Devices', 'Critical', 'Major'];
+function toCsv(rows: AlarmDrillRow[], withAlerts: boolean) {
+  const head = ['Room', 'Site', 'Floor', 'Alarms',
+                ...(withAlerts ? ['Alerts'] : []),
+                'Devices', 'Critical', 'Major'];
   const cell = (v: unknown) => {
     const s = String(v ?? '');
     // Quote anything a spreadsheet would otherwise split or misread. Room
     // names carry commas more often than anyone expects.
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
-  const body = rows.map(({ category, row: r }) => [
-    r.room_name, r.site_code, r.floor ?? '',
-    ...(withCategory ? [labels[category] ?? category] : []),
-    r.qty, r.alerts, r.devices, r.critical, r.major,
+  const body = rows.map((r) => [
+    r.room_name, r.site_code, r.floor ?? '', r.qty,
+    ...(withAlerts ? [r.alerts] : []),
+    r.devices, r.critical, r.major,
   ].map(cell).join(','));
   return [head.join(','), ...body].join('\n');
 }
 
 export interface PanelScope { kind: 'site' | 'room'; id: string; label: string }
 
-export function AlarmPanel({ categories, title, scope, onClose }: {
+export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
   categories: AlarmCategory[]; title: string; scope?: PanelScope;
+  /** Opened from ALARMS or an ALM cell: the panel is about what must be
+   *  answered, so the informational rows and the alert column are not in it. */
+  alarmsOnly?: boolean;
   onClose: () => void;
 }) {
   const [search, setSearch] = useState('');
@@ -107,15 +109,13 @@ export function AlarmPanel({ categories, title, scope, onClose }: {
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  // One query per category, never a merged one. A grouped counter such as
-  // Cooling is two categories; asking for each separately and adding the
-  // results keeps every number the server's, and the categories are mutually
-  // exclusive so nothing is counted twice.
-  const results = useQueries({
-    queries: categories.map((category) => ({
-      queryKey: ['estate-alarms', category],
-      queryFn: () => api.estateAlarms(category),
-    })),
+  // One query, however many categories the counter covers. Asking per category
+  // and stitching the answers together in the browser gave one room two rows
+  // and no honest way to count its devices - a device faulting in two domains
+  // is one device, and only the database can say so.
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['estate-alarms', ...categories],
+    queryFn: () => api.estateAlarms(categories),
   });
 
   const { data: taxonomy } = useQuery<AlarmTaxonomy>({
@@ -124,11 +124,6 @@ export function AlarmPanel({ categories, title, scope, onClose }: {
     staleTime: Infinity,
   });
 
-  const isLoading = results.some((r) => r.isLoading);
-  const error = results.find((r) => r.error)?.error;
-  const loaded = results
-    .map((r, i) => (r.data ? { category: categories[i], drill: r.data } : null))
-    .filter(Boolean) as { category: AlarmCategory; drill: AlarmDrill }[];
 
   // Rows first, totals from the rows. Unscoped, the server's total is
   // authoritative and includes the platform alarms that belong to no room;
@@ -139,43 +134,40 @@ export function AlarmPanel({ categories, title, scope, onClose }: {
       : scope.kind === 'site' ? r.site_id === scope.id
         : r.room_id === scope.id);
 
-  const labels = useMemo(() => Object.fromEntries(
-    (taxonomy?.categories ?? []).map((c) => [c.key, c.label])), [taxonomy]);
-
-  // Rows stay per room AND per category. Merging them would need a rule for
-  // `devices`, where one device can carry alarms in two categories, and a
-  // guessed rule there is a number nobody can reconcile against the alarm list.
-  const all: Row[] = loaded.flatMap(
-    (d) => d.drill.rows.filter(inScope).map((row) => ({ category: d.category, row })));
+  // An alarms panel drops the rooms that only hold alerts: they are not what
+  // it is about, and a list of forty quiet rooms buries the two that are not.
+  const all: AlarmDrillRow[] = (data?.rows ?? [])
+    .filter(inScope)
+    .filter((r) => !alarmsOnly || r.qty > 0);
 
   // Everything open, matching the counter that opened this panel; and the part
   // of it somebody has to answer. Both are printed, and they are never added.
-  const total = scope
-    ? all.reduce((n, { row }) => n + row.qty + row.alerts, 0)
-    : loaded.reduce((n, d) => n + d.drill.total, 0);
+  const totalAll = scope
+    ? all.reduce((n, r) => n + r.qty + r.alerts, 0)
+    : (data?.total ?? 0);
   const alarms = scope
-    ? all.reduce((n, { row }) => n + row.qty, 0)
-    : loaded.reduce((n, d) => n + (d.drill.alarms ?? 0), 0);
-  const unlocated = scope
-    ? 0
-    : loaded.reduce((n, d) => n + d.drill.unlocated, 0);
+    ? all.reduce((n, r) => n + r.qty, 0)
+    : (data?.alarms ?? 0);
+  const total = alarmsOnly ? alarms : totalAll;
+  const unlocated = scope ? 0
+    : alarmsOnly ? (data?.unlocated_alarms ?? 0) : (data?.unlocated ?? 0);
 
   const q = search.trim().toLowerCase();
   const filtered = q
-    ? all.filter(({ row: r }) =>
+    ? all.filter((r) =>
         `${r.room_name} ${r.site_code} ${r.site_name} ${r.floor ?? ''}`
           .toLowerCase().includes(q))
     : all;
 
   const sorted = [...filtered].sort((a, b) => {
-    const pick = (x: Row) => (
-      sort === 'room' ? x.row.room_name.toLowerCase()
-        : sort === 'site' ? x.row.site_code.toLowerCase()
-          : sort === 'devices' ? x.row.devices
-            : sort === 'alerts' ? x.row.alerts
-              : x.row.qty);
+    const pick = (x: AlarmDrillRow) => (
+      sort === 'room' ? x.room_name.toLowerCase()
+        : sort === 'site' ? x.site_code.toLowerCase()
+          : sort === 'devices' ? x.devices
+            : sort === 'alerts' ? x.alerts
+              : x.qty);
     const l = pick(a); const r = pick(b);
-    if (l === r) return a.row.room_name.localeCompare(b.row.room_name);
+    if (l === r) return a.room_name.localeCompare(b.room_name);
     return (l < r ? -1 : 1) * dir;
   });
 
@@ -186,18 +178,21 @@ export function AlarmPanel({ categories, title, scope, onClose }: {
   const severity = SEVERITIES.map((k) => ({
     key: k,
     label: k.toUpperCase(),
-    n: all.reduce((n, { row }) => n + (row.by_severity?.[k] ?? 0), 0),
+    n: all.reduce((n, r) => n + (r.by_severity?.[k] ?? 0), 0),
   }));
   const detections = (taxonomy?.detections ?? []).map((d) => ({
     key: d.key as AlarmDetection,
     label: d.label,
-    n: all.reduce((n, { row }) => n + (row.by_detection?.[d.key] ?? 0), 0),
+    n: all.reduce((n, r) => n + (r.by_detection?.[d.key] ?? 0), 0),
   }));
 
-  const withCategory = categories.length > 1;
-  // Every category at once is the all-alarms panel. Concatenating seven
-  // definitions there produced a paragraph nobody would read and pushed the
-  // table below the fold; one sentence says the same thing.
+  // The alert column belongs to a panel about a domain, not to one about what
+  // has to be answered - there, every row would carry a number the panel is
+  // deliberately not counting.
+  const withAlerts = !alarmsOnly;
+  // Every category at once. Concatenating seven definitions produced a
+  // paragraph nobody would read and pushed the table below the fold; one
+  // sentence says the same thing.
   const everything = categories.length > 2;
   const definitions = (taxonomy?.categories ?? []).filter(
     (c) => categories.includes(c.key));
@@ -217,7 +212,7 @@ export function AlarmPanel({ categories, title, scope, onClose }: {
   }
 
   function download() {
-    const csv = toCsv(sorted, withCategory, labels);
+    const csv = toCsv(sorted, withAlerts);
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
     const a = document.createElement('a');
     a.href = url;
@@ -247,8 +242,8 @@ export function AlarmPanel({ categories, title, scope, onClose }: {
                 <CategoryGlyph kind={meta.glyph} size={20} />
               </span>
               {title}{scope ? ` in ${scope.label}` : ''}:
-              <span className="count"> {loaded.length ? total : '—'}</span>
-              {loaded.length > 0 && (
+              <span className="count"> {data ? total : '—'}</span>
+              {data && !alarmsOnly && (
                 <span className="of-which">
                   {alarms > 0
                     ? `${alarms} needing a response`
@@ -265,7 +260,7 @@ export function AlarmPanel({ categories, title, scope, onClose }: {
           {error && <div className="banner">Could not load the rooms behind this counter.</div>}
           {isLoading && <p className="muted">Loading…</p>}
 
-          {!!loaded.length && (
+          {data && (
             <>
               <label className="search wide">
                 <span className="glass" aria-hidden />
@@ -279,7 +274,7 @@ export function AlarmPanel({ categories, title, scope, onClose }: {
             </>
           )}
 
-          {!!loaded.length && sorted.length === 0 && (
+          {data && sorted.length === 0 && (
             <p className="muted">
               {q
                 ? `No room matches “${search}”.`
@@ -296,11 +291,12 @@ export function AlarmPanel({ categories, title, scope, onClose }: {
                     <SortHead label="Room" k="room" sort={sort} dir={dir} onSort={onSort} />
                     <SortHead label="Site" k="site" sort={sort} dir={dir} onSort={onSort} />
                     <th className="mid">Floor</th>
-                    {withCategory && <th>Category</th>}
                     <SortHead label="Alarms" k="qty" sort={sort} dir={dir}
                               onSort={onSort} className="num" />
-                    <SortHead label="Alerts" k="alerts" sort={sort} dir={dir}
-                              onSort={onSort} className="num" />
+                    {withAlerts && (
+                      <SortHead label="Alerts" k="alerts" sort={sort} dir={dir}
+                                onSort={onSort} className="num" />
+                    )}
                     <SortHead label="Devices" k="devices" sort={sort} dir={dir}
                               onSort={onSort} className="num" />
                     <th className="num">Critical</th>
@@ -309,33 +305,26 @@ export function AlarmPanel({ categories, title, scope, onClose }: {
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map(({ category, row: r }) => (
-                    <tr key={`${category}-${r.room_id}`}
+                  {rows.map((r) => (
+                    <tr key={r.room_id}
                         className={r.critical ? 'lead-critical' : 'lead-warn'}>
                       <td>
                         <span className="name-cell"><span className="n">{r.room_name}</span></span>
                       </td>
                       <td className="muted">{r.site_code}</td>
                       <td className="mid muted">{r.floor ?? '—'}</td>
-                      {withCategory && (
-                        <td className="muted">
-                          <span className={`cat-${metaFor(category).tone}`}
-                                style={{ display: 'inline-flex', alignItems: 'center' }}>
-                            <CategoryGlyph kind={metaFor(category).glyph} />
-                          </span>{' '}
-                          {labels[category] ?? category}
-                        </td>
-                      )}
                       <td className="num"><span className="qty">{r.qty}</span></td>
                       {/* Muted on purpose. It is here to say what else is
                           going on in this room, not to compete with the
                           number somebody is acting on. */}
-                      <td className="num muted"
-                          title={`${r.alerts} informational condition`
-                                 + `${r.alerts === 1 ? '' : 's'} here - nothing `
-                                 + 'that needs a response tonight'}>
-                        {r.alerts || <span className="dash">—</span>}
-                      </td>
+                      {withAlerts && (
+                        <td className="num muted"
+                            title={`${r.alerts} informational condition`
+                                   + `${r.alerts === 1 ? '' : 's'} here - nothing `
+                                   + 'that needs a response tonight'}>
+                          {r.alerts || <span className="dash">—</span>}
+                        </td>
+                      )}
                       <td className="num">{r.devices}</td>
                       <td className="num">{r.critical || <span className="dash">—</span>}</td>
                       <td className="num">{r.major || <span className="dash">—</span>}</td>

@@ -131,6 +131,9 @@ interface Scope { kind: 'site' | 'room'; id: string; label: string }
 
 interface Selection {
   key: string; label: string; categories: AlarmCategory[]; scope?: Scope;
+  /** Opened from ALARMS or an ALM cell, so the panel is about what must be
+   *  answered rather than about a domain. */
+  alarmsOnly?: boolean;
 }
 
 /** Counts within a selection. Categories are mutually exclusive, so summing
@@ -205,7 +208,8 @@ function IndicatorCells({ alarms, labels, scope, onOpen }: {
                     + `${alarms.minor} minor`
                   : 'No open alarms'}
                 onClick={() => onOpen({
-                  key: 'all', label: 'All', categories: [...COLUMN_ORDER], scope,
+                  key: 'all', label: 'Alarms', categories: [...COLUMN_ORDER],
+                  scope, alarmsOnly: true,
                 })}>
           <CategoryGlyph kind="alarms" />
           {n > 0 && <span>{n}</span>}
@@ -357,7 +361,8 @@ export function Home() {
                       onClick={() => {
                         if (empty) return;
                         setDrill(total
-                          ? { key: 'all', label: 'All', categories: [...COLUMN_ORDER] }
+                          ? { key: 'all', label: 'Alarms',
+                              categories: [...COLUMN_ORDER], alarmsOnly: true }
                           : { key: c.key, label: c.label, categories: c.categories });
                       }}>
                 <span className="row">
@@ -571,7 +576,8 @@ export function Home() {
       {legendOpen && <AlarmLegend onClose={() => setLegendOpen(false)} />}
       {drill && (
         <AlarmPanel categories={drill.categories} title={drill.label}
-                    scope={drill.scope} onClose={() => setDrill(null)} />
+                    scope={drill.scope} alarmsOnly={drill.alarmsOnly}
+                    onClose={() => setDrill(null)} />
       )}
     </>
   );

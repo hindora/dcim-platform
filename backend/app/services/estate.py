@@ -524,8 +524,12 @@ def _fold_util_total(rooms: list[dict[str, Any]]) -> dict[str, Any]:
 # ---------------------------------------------------------------- alert drills
 
 
-async def alarms(session: AsyncSession, *, category: str) -> dict[str, Any]:
-    """The drill-down behind one category counter, by room.
+async def alarms(session: AsyncSession, *,
+                 categories: list[str]) -> dict[str, Any]:
+    """The drill-down behind one counter, by room.
+
+    Takes the counter's whole set of categories - Cooling is two of them - so
+    one room is one row whatever opened the panel.
 
     `total` is EVERYTHING open in the category, because that is what the
     counter that opens this panel counts; `alarms` is the actionable subset of
@@ -537,8 +541,9 @@ async def alarms(session: AsyncSession, *, category: str) -> dict[str, Any]:
     a facet fetched separately can disagree with the row it sits under, and
     then neither number is usable.
     """
-    rows = await repo.alarms_by_room(session, category=category)
-    unlocated = await repo.unlocated_alarms_by_category(session, category=category)
+    rows = await repo.alarms_by_room(session, categories=categories)
+    unlocated = await repo.unlocated_alarms_by_category(
+        session, categories=categories)
 
     def _detect(r: dict[str, Any]) -> dict[str, int]:
         return {d: int(r.get(f"detected_{d}") or 0) for d in DETECTIONS}
@@ -563,7 +568,7 @@ async def alarms(session: AsyncSession, *, category: str) -> dict[str, Any]:
     located_alerts = sum(int(r.get("alerts") or 0) for r in rows)
 
     return {
-        "category": category,
+        "categories": categories,
         "rows": out_rows,
         # What the counter shows: every open condition in this category.
         "total": located_alarms + located_alerts + unlocated["total"],
@@ -571,8 +576,11 @@ async def alarms(session: AsyncSession, *, category: str) -> dict[str, Any]:
         # without the reader adding a column by eye.
         "alarms": located_alarms + unlocated["alarms"],
         # Platform conditions belong to no room. Reported separately so the
-        # panel's rows and the counter that opened it can be reconciled.
+        # panel's rows and the counter that opened it can be reconciled, and
+        # split by class so an alarms-only view can leave the alerts out of
+        # its total as well as out of its rows.
         "unlocated": unlocated["total"],
+        "unlocated_alarms": unlocated["alarms"],
         # Facet totals across the located rows. Unlocated alarms are excluded
         # and said so: they have no room row to face against, and folding them
         # into a facet would make the facets and the rows disagree.

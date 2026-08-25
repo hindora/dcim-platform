@@ -131,22 +131,26 @@ async def alarm_categories(
     }
 
 
-@router.get("/alarms", summary="Open alarms of one category, by room")
+@router.get("/alarms", summary="What is open in one or more categories, by room")
 async def alarms(
-    category: str = Query(..., description="One of: " + ", ".join(CATEGORIES)),
+    category: list[str] = Query(..., description=(
+        "One or more of: " + ", ".join(CATEGORIES)
+        + ". Repeat the parameter for a grouped counter - Cooling is cooling "
+          "and environmental - so one room comes back as one row.")),
     session: AsyncSession = Depends(get_session),
     _: Principal = Depends(current_principal),
 ) -> dict:
-    """Faults of one category, by room.
+    """The rooms behind a counter.
 
-    Alarms only. The same population the home page counts, which is the point:
-    a drill-down that returns more rows than the counter that opened it teaches
-    an operator to distrust both.
+    The same population the counter totals, which is the point: a drill-down
+    that returns more rows, or fewer, than the number that opened it teaches an
+    operator to distrust both.
     """
-    if category not in CATEGORIES:
+    unknown = sorted(set(category) - set(CATEGORIES))
+    if unknown:
         raise HTTPException(status.HTTP_400_BAD_REQUEST,
-                            f"unknown category {category!r}")
-    return await service.alarms(session, category=category)
+                            f"unknown category: {', '.join(unknown)}")
+    return await service.alarms(session, categories=list(dict.fromkeys(category)))
 
 
 @router.get("/rooms/{room_id}/kpi", summary="Everything the room drawer shows")

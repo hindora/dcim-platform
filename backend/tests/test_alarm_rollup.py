@@ -160,7 +160,7 @@ async def test_drill_down_facets_are_the_rows_they_sit_under(monkeypatch):
     monkeypatch.setattr(estate_service.repo, "unlocated_alarms_by_category",
                         _returns({"total": 0, "alarms": 0}))
 
-    out = await estate_service.alarms(_FakeSession(), category="power")
+    out = await estate_service.alarms(_FakeSession(), categories=["power"])
 
     assert out["by_severity"] == {"critical": 2, "major": 4, "minor": 1,
                                   "warning": 0}
@@ -185,7 +185,7 @@ async def test_the_alert_column_is_context_and_never_a_total(monkeypatch):
     monkeypatch.setattr(estate_service.repo, "unlocated_alarms_by_category",
                         _returns({"total": 0, "alarms": 0}))
 
-    out = await estate_service.alarms(_FakeSession(), category="visibility")
+    out = await estate_service.alarms(_FakeSession(), categories=["visibility"])
 
     # `total` is everything open, matching the counter that opened the panel;
     # `alarms` is the part of it somebody has to answer. Both are reported, and
@@ -211,7 +211,7 @@ async def test_unlocated_alarms_are_counted_in_the_total_and_not_in_the_facets(
     monkeypatch.setattr(estate_service.repo, "unlocated_alarms_by_category",
                         _returns({"total": 2, "alarms": 2}))
 
-    out = await estate_service.alarms(_FakeSession(), category="visibility")
+    out = await estate_service.alarms(_FakeSession(), categories=["visibility"])
 
     assert out["total"] == 5
     assert out["alarms"] == 5
@@ -222,17 +222,43 @@ async def test_unlocated_alarms_are_counted_in_the_total_and_not_in_the_facets(
 async def test_a_category_is_answered_from_the_stamped_column(monkeypatch):
     seen: dict = {}
 
-    async def _capture(_session, *, category):
-        seen["category"] = category
+    async def _capture(_session, *, categories):
+        seen["categories"] = categories
         return []
 
     monkeypatch.setattr(estate_service.repo, "alarms_by_room", _capture)
     monkeypatch.setattr(estate_service.repo, "unlocated_alarms_by_category",
                         _returns({"total": 0, "alarms": 0}))
 
-    await estate_api.alarms(category="cooling", session=_FakeSession())
+    await estate_api.alarms(category=["cooling"], session=_FakeSession())
 
-    assert seen == {"category": "cooling"}
+    assert seen == {"categories": ["cooling"]}
+
+
+async def test_a_grouped_counter_asks_once(monkeypatch):
+    """Cooling is two categories and one question.
+
+    Asking per category and stitching the answers together gave one room two
+    rows, and no honest way to count its devices: a device faulting in both
+    domains is one device, and only a `count(DISTINCT)` over the union can say
+    so. The API takes the whole set.
+    """
+    seen: dict = {}
+
+    async def _capture(_session, *, categories):
+        seen["categories"] = categories
+        return []
+
+    monkeypatch.setattr(estate_service.repo, "alarms_by_room", _capture)
+    monkeypatch.setattr(estate_service.repo, "unlocated_alarms_by_category",
+                        _returns({"total": 0, "alarms": 0}))
+
+    await estate_api.alarms(category=["cooling", "environmental", "cooling"],
+                            session=_FakeSession())
+
+    # Deduplicated, and in the order asked: a repeated parameter is a caller
+    # mistake, not a reason to count a category twice.
+    assert seen == {"categories": ["cooling", "environmental"]}
 
 
 @pytest.mark.parametrize("category", ["thermalish", "thermal", "datapoint"])
@@ -244,7 +270,7 @@ async def test_an_unknown_category_is_rejected_rather_than_answered_empty(catego
     as "nothing wrong in this category".
     """
     with pytest.raises(HTTPException) as exc:
-        await estate_api.alarms(category=category, session=_FakeSession())
+        await estate_api.alarms(category=[category], session=_FakeSession())
     assert exc.value.status_code == 400
 
 
