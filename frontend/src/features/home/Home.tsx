@@ -28,7 +28,7 @@
  * an estate than either number alone.
  */
 
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import {
@@ -43,6 +43,7 @@ import {
 import { CategoryGlyph } from '../../components/CategoryGlyph';
 import { COLUMN_ORDER, GROUP_TONE, metaFor } from '../../components/alertMeta';
 import { FacilityToggle } from '../../components/estate';
+import { useColumnWidths } from '../../lib/useColumnWidths';
 import { useOrg, useOrgTitle } from '../../lib/useOrg';
 import { useInvalidateOn, useTopics } from '../../ws/useSocket';
 import { SiteDrawer } from './SiteDrawer';
@@ -54,6 +55,50 @@ import { RailCards } from './RailCards';
 const ALARM_EVENTS = ['alarm_created', 'alarm_updated', 'alarm_cleared'];
 
 type Tab = 'sites' | 'rooms';
+
+/** A header cell with a grip on its trailing edge.
+ *
+ *  The grip is a real control with a real hit area rather than a 1px border
+ *  that happens to be draggable: a resize handle nobody can grab is a feature
+ *  that only its author knows about. Double-click returns that one column to
+ *  the width the page shipped with, which is faster than dragging back to a
+ *  number you cannot see. */
+/** What every column is rendering at right now, read off the header row. */
+function measureColumns(el: HTMLElement | null): Record<string, number> {
+  const row = el?.closest('tr');
+  if (!row) return {};
+  const out: Record<string, number> = {};
+  for (const th of Array.from(row.children) as HTMLElement[]) {
+    const key = th.dataset.col;
+    if (key) out[key] = th.getBoundingClientRect().width;
+  }
+  return out;
+}
+
+function Th({ cols, col, w, className, title, children }: {
+  cols: ReturnType<typeof useColumnWidths>; col: string; w: number;
+  className?: string; title?: string; children: React.ReactNode;
+}) {
+  // `w === 0` means "take what is left". Under a fixed layout the columns
+  // without a declared width share the remainder, so the table is always
+  // exactly as wide as its panel until somebody drags it wider - which is the
+  // difference between a scrollbar that means something and one that is just
+  // the default layout missing by four pixels.
+  const stored = cols.width(col, 0);
+  const width = stored || w || undefined;
+  const ref = useRef<HTMLTableCellElement>(null);
+  return (
+    <th ref={ref} data-col={col}
+        className={`${className ?? ''} ${cols.resizing === col ? 'resizing' : ''}`}
+        style={width ? { width } : undefined} title={title}>
+      {children}
+      <span className="col-grip" role="separator" aria-orientation="vertical"
+            aria-label="Resize column"
+            onPointerDown={cols.begin(col, w, () => measureColumns(ref.current))}
+            onDoubleClick={() => cols.resetOne(col)} />
+    </th>
+  );
+}
 
 /** Rooms, drawn as a floor of them.
  *
@@ -193,6 +238,11 @@ export function Home() {
   const [showFacility, setShowFacility] = useState(false);
   const [pageSize, setPageSize] = useState(25);
   const [page, setPage] = useState(0);
+
+  // Column widths are the reader's, not the page's: one operator watches long
+  // room names, another wants the status tiles and nothing else. Remembered
+  // per browser, and reset from the toolbar when a layout stops working.
+  const cols = useColumnWidths('dcim.home.columns');
 
   // The estate's name, in the headline and in the browser tab.
   const org = useOrg();
@@ -355,6 +405,12 @@ export function Home() {
                 ALL ROOMS
               </button>
             )}
+            {cols.dirty && (
+              <button className="row-btn" onClick={cols.reset}
+                      title="Back to the column widths this page ships with">
+                RESET COLUMNS
+              </button>
+            )}
           </div>
 
           {error && <div className="banner">Failed to load sites: {String(error)}</div>}
@@ -409,16 +465,25 @@ export function Home() {
           <table className="sites-table">
             <thead>
               <tr>
-                <th>{tab === 'sites' ? 'Site' : 'Room'}</th>
-                <th>{tab === 'sites' ? 'Location' : 'Type'}</th>
-                <th className="ind-h">{tab === 'sites' ? 'Rooms' : 'Racks'}</th>
-                <th className="ind-h" title="Every open alarm here">ALM</th>
+                <Th cols={cols} col="name" w={0}>
+                  {tab === 'sites' ? 'Site' : 'Room'}
+                </Th>
+                <Th cols={cols} col="second" w={170}>
+                  {tab === 'sites' ? 'Location' : 'Type'}
+                </Th>
+                <Th cols={cols} col="count" w={65} className="ind-h">
+                  {tab === 'sites' ? 'Rooms' : 'Racks'}
+                </Th>
+                <Th cols={cols} col="alm" w={56} className="ind-h"
+                    title="Every open alarm here">ALM</Th>
                 {COLUMN_ORDER.map((c) => (
-                  <th key={c} className="ind-h"
-                      title={`${labels[c] ?? c} alerts`}>{metaFor(c).head}</th>
+                  <Th key={c} cols={cols} col={c} w={56} className="ind-h"
+                      title={`${labels[c] ?? c}: everything open, alarms marked`}>
+                    {metaFor(c).head}
+                  </Th>
                 ))}
-                <th className="act">View</th>
-                <th className="act">Access</th>
+                <Th cols={cols} col="view" w={88} className="act">View</Th>
+                <Th cols={cols} col="access" w={88} className="act">Access</Th>
               </tr>
             </thead>
             <tbody>

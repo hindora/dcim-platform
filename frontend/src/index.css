@@ -392,3 +392,43 @@ button.primary { background: var(--accent-dim); border-color: var(--accent); }
 /* The self-monitoring verdict. Red-edged when the platform cannot vouch for
    its own numbers, because a quiet screen is the failure mode. */
 .verdict.unhealthy { border-left-color: var(--critical); }
+
+/* --- scrollbars ------------------------------------------------------------
+ *
+ * Tables are sized to fit, so a horizontal bar should be rare - but "rare" is
+ * not "never": a resized column, a narrow window, a room name nobody planned
+ * for. When one is needed it is a thin overlay rail rather than the platform's
+ * grey trough, which on a dark console reads as a broken border across the
+ * bottom of the panel.
+ */
+.table-scroll, .estate-scroll, .sheet-body, .modal-body {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+.table-scroll::-webkit-scrollbar,
+.estate-scroll::-webkit-scrollbar,
+.sheet-body::-webkit-scrollbar,
+.modal-body::-webkit-scrollbar { width: 10px; height: 10px; }
+
+.table-scroll::-webkit-scrollbar-track,
+.estate-scroll::-webkit-scrollbar-track,
+.sheet-body::-webkit-scrollbar-track,
+.modal-body::-webkit-scrollbar-track { background: transparent; }
+
+.table-scroll::-webkit-scrollbar-thumb,
+.estate-scroll::-webkit-scrollbar-thumb,
+.sheet-body::-webkit-scrollbar-thumb,
+.modal-body::-webkit-scrollbar-thumb {
+  background: var(--border-strong); border-radius: 99px;
+  /* Inset with a transparent border so the rail floats clear of the content
+     instead of sitting on it. */
+  border: 3px solid transparent; background-clip: content-box;
+}
+.table-scroll:hover::-webkit-scrollbar-thumb,
+.estate-scroll:hover::-webkit-scrollbar-thumb,
+.sheet-body:hover::-webkit-scrollbar-thumb,
+.modal-body:hover::-webkit-scrollbar-thumb {
+  background: var(--text-faint); background-clip: content-box;
+}
+.table-scroll::-webkit-scrollbar-corner,
+.estate-scroll::-webkit-scrollbar-corner { background: transparent; }

@@ -180,8 +180,26 @@
    laptop at any sensible font size, and the answer is a scrollbar on the table
    - not on the page, which would drag the alert strip out of view sideways. */
 .table-scroll { overflow-x: auto; min-width: 0; }
-.sites-table { width: 100%; border-collapse: collapse; font-size: 13px;
-               min-width: 900px; }
+/* Fixed layout, not auto. Auto treats a declared width as a suggestion and
+   sizes columns to their content, which is why the table kept spilling a few
+   pixels past its panel and raising a scrollbar nobody asked for - and why
+   dragging a column produced an approximation of the width you dropped it at.
+   Fixed honours the numbers exactly: the reader's widths are the layout, and
+   the table fills its panel rather than overflowing it. */
+.sites-table {
+  width: 100%; border-collapse: collapse; font-size: 13px;
+  table-layout: fixed;
+}
+/* With fixed layout a long name has to be told what to do. Truncate, keep the
+   full text in the title, and let the reader widen the column if they live in
+   it - which is the whole point of the grips. */
+.sites-table td, .sites-table th {
+  overflow: hidden; text-overflow: ellipsis;
+}
+.sites-table .site-cell { min-width: 0; }
+.sites-table .site-cell .name {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .sites-table thead th {
   background: var(--bg-inset); border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
@@ -192,16 +210,26 @@
 /* Eight status columns, each sized to a glyph and up to four digits. Fixed
    rather than content-sized: a column that widens when its number reaches
    three digits drags every column after it sideways on the next poll. */
-.sites-table thead th.ind-h { text-align: center; width: 56px; min-width: 56px; }
-.sites-table thead th.act { text-align: center; width: 88px; min-width: 88px; }
-.sites-table thead th:first-child { min-width: 170px; }
-/* The second column is fixed so the slack lands on the NAME, which is the one
-   column a reader scans. Left auto, both text columns shared it and put a hand
-   of empty space between "data hall" and the racks count. Fixed also stops
-   "New York, USA" wrapping onto two lines and making that row taller than its
-   neighbours. */
-.sites-table thead th:nth-child(2) { width: 170px; min-width: 170px; }
+/* Header cells carry their width inline, from the resize hook - the reader
+   owns the layout. What stays here is alignment, and the grip. */
+.sites-table thead th.ind-h { text-align: center; }
+.sites-table thead th.act { text-align: center; }
+.sites-table thead th { position: relative; }
 .sites-table tbody td:nth-child(2) { white-space: nowrap; }
+
+/* The drag handle. A real target, not a hairline border that happens to be
+   draggable: a resize affordance nobody can grab is a feature only its author
+   knows about. It shows itself on hover and stays visible while dragging. */
+.col-grip {
+  position: absolute; top: 0; right: -4px; width: 9px; height: 100%;
+  cursor: col-resize; touch-action: none;
+}
+.col-grip::after {
+  content: ""; position: absolute; top: 25%; bottom: 25%; left: 4px; width: 2px;
+  border-radius: 1px; background: transparent;
+}
+.sites-table thead th:hover .col-grip::after { background: var(--border-strong); }
+.sites-table thead th.resizing .col-grip::after { background: var(--accent); }
 .sites-table tbody td {
   padding: 0 10px; height: 56px; border-bottom: 1px solid var(--border);
 }
@@ -435,6 +463,16 @@ button.ind:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px
   /* Side by side the cards are a third as wide, so the schematic no longer
      needs the full band of height. */
   .home-rail .rail-card .visual { height: 104px; }
+}
+
+/* On a narrow window the cells tighten before anything else gives: a reader on
+   a 1280 laptop should not have to drag a table sideways to see whether
+   anything is wrong. */
+@media (max-width: 1200px) {
+  .sites-table { font-size: 12px; }
+  .sites-table thead th, .sites-table tbody td { padding: 0 6px; }
+  .row-btn { min-width: 0; width: 100%; }
+  .ind { min-width: 0; }
 }
 
 @media (max-width: 900px) {
