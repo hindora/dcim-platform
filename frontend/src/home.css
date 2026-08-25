@@ -231,11 +231,16 @@
 .linky:hover { color: var(--accent); text-decoration-color: currentColor; }
 
 .expander {
-  width: 20px; height: 20px; flex: none; border-radius: 3px;
-  background: var(--bg); border: 1px solid var(--border); color: var(--text-muted);
-  font: inherit; font-size: 13px; line-height: 1; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; flex: none; border-radius: 4px;
+  background: var(--bg-inset); border: 1px solid var(--border);
+  color: var(--text-muted); font: inherit; font-size: 13px; line-height: 1;
+  cursor: pointer;
 }
-.expander:hover { border-color: var(--border-strong); color: var(--text); }
+.expander:hover { background: var(--bg); border-color: var(--accent); color: var(--accent); }
+/* The same mark on a room row, without the affordance: it labels the row, it
+   does not open anything. */
+.room-mark { display: inline-flex; color: var(--text-faint); flex: none; }
 
 /* Indicator cell. Colour is never the only signal: the glyph differs per
    category, the count is printed, and the cell carries a title, so a

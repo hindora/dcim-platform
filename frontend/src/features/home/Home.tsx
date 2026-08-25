@@ -51,6 +51,22 @@ const ALARM_EVENTS = ['alarm_created', 'alarm_updated', 'alarm_cleared'];
 
 type Tab = 'sites' | 'rooms';
 
+/** Rooms, drawn as a floor of them.
+ *
+ *  The control used to be a typographic `+` in a box, left over from when it
+ *  expanded child rows. It navigates now, and a plus sign promises to add
+ *  something - so it says what it opens instead: a plan with rooms in it. */
+function RoomsGlyph({ size = 15 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" aria-hidden
+         fill="none" stroke="currentColor" strokeWidth="1.3">
+      <rect x="1.6" y="2.6" width="12.8" height="10.8" rx="1.4" />
+      <line x1="6.6" y1="2.6" x2="6.6" y2="13.4" />
+      <line x1="6.6" y1="8" x2="14.4" y2="8" />
+    </svg>
+  );
+}
+
 /** What the table filters to, and what a drill-down opens on.
  *
  *  Both are a LIST of categories rather than one, because the strip counters
@@ -378,6 +394,7 @@ export function Home() {
                 <tr key={r.id}>
                   <td>
                     <span className="site-cell">
+                      <span className="room-mark" aria-hidden><RoomsGlyph /></span>
                       <span className="name">{r.name}</span>
                       {!roomsSite && <span className="muted small">{r.datacenter_code}</span>}
                     </span>
@@ -461,7 +478,7 @@ function SiteLine({ site, onKpis, onRooms, labels, onDrill }: {
             <button className="expander" onClick={onRooms}
                     aria-label={`Show the ${site.room_count} rooms in ${site.code}`}
                     title={`Show the ${site.room_count} rooms in ${site.code}`}>
-              +
+              <RoomsGlyph />
             </button>
             <span className="name">{site.code}</span>
             {site.name !== site.code && <span className="muted small">{site.name}</span>}
