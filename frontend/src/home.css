@@ -119,17 +119,6 @@
   cursor: pointer;
 }
 .alert-counter .face:disabled { cursor: default; }
-/* Deliberately quiet: the count is the headline, and a second control beside
-   it must not compete with the number for attention. */
-.alert-counter .drill {
-  background: none; border: none; padding: 2px 6px; border-radius: 3px;
-  color: var(--text-faint); font: inherit; font-size: 10px; font-weight: 700;
-  letter-spacing: .12em; cursor: pointer;
-}
-.alert-counter .drill:hover:not(:disabled) {
-  color: var(--text); background: var(--bg-raised);
-}
-.alert-counter .drill:disabled { opacity: 0; pointer-events: none; }
 .alert-counter .row { display: flex; align-items: center; gap: 10px; }
 .alert-counter .n {
   font-size: 32px; font-weight: 600; line-height: 1;

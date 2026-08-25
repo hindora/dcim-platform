@@ -5,9 +5,12 @@
  * screen that stays open on a wall display and a dozen round trips per refresh
  * is how a NOC dashboard becomes the thing that falls over first.
  *
- * The alert strip is not decoration. Each counter is a filter: clicking
- * "Power" narrows the table to the sites that have a power alert, so the
- * headline number and the rows underneath can never disagree.
+ * The strip is not decoration. Each counter is a filter: clicking "Power"
+ * narrows the table to the sites that have a power alarm, so the headline
+ * number and the rows underneath can never disagree. To see WHICH rooms are
+ * behind a number, click the cell in the row - the drill-down opens from the
+ * table rather than from the strip, so the question is always asked against a
+ * site or a room the reader is already looking at.
  *
  * Strip and table show the same eight categories at two resolutions. The strip
  * groups them into five counters, because it has to be readable from across a
@@ -253,19 +256,6 @@ export function Home() {
                   <CategoryGlyph kind={total ? 'alarms' : c.glyph} size={24} />
                 </span>
                 <span className="name">{total ? 'Alarms' : c.label}</span>
-              </button>
-              {/* The counter filters the table; this lists what is behind it.
-                  Two different questions - "show me only those" and "which
-                  ones" - so two controls rather than one that has to guess. */}
-              <button className="drill" disabled={total || n === 0}
-                      title={total ? '' : `List the rooms with ${c.label.toLowerCase()}`}
-                      onClick={() => {
-                        if (!total) {
-                          setDrill({ key: c.key, label: c.label,
-                                     categories: c.categories });
-                        }
-                      }}>
-                LIST
               </button>
               <span className="rule" />
             </div>
