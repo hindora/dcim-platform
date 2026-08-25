@@ -65,13 +65,29 @@ export function CategoryGlyph({ kind, size = 15 }: { kind: GlyphKind; size?: num
         </svg>
       );
 
-    // Snowflake: the plant that removes the heat.
+    // A snowflake: the plant that removes the heat.
+    //
+    // Three axes and six barbs rather than a bare asterisk. The barbs are what
+    // makes it read as a snowflake at 15px instead of as a spark or a star,
+    // and at this size they are the whole difference.
     case 'cooling':
       return (
-        <svg {...common} strokeWidth="1.5" strokeLinecap="round">
-          <line x1="8" y1="1.5" x2="8" y2="14.5" />
-          <line x1="2.4" y1="4.7" x2="13.6" y2="11.3" />
-          <line x1="2.4" y1="11.3" x2="13.6" y2="4.7" />
+        <svg {...common} strokeWidth="1.3" strokeLinecap="round"
+             strokeLinejoin="round">
+          <g>
+            <line x1="8" y1="1.4" x2="8" y2="14.6" />
+            <line x1="2.28" y1="4.7" x2="13.72" y2="11.3" />
+            <line x1="2.28" y1="11.3" x2="13.72" y2="4.7" />
+          </g>
+          {/* Barbs, one pair per arm end. */}
+          <g strokeWidth="1.2">
+            <path d="M6.2 3.2 8 1.4l1.8 1.8" />
+            <path d="M6.2 12.8 8 14.6l1.8-1.8" />
+            <path d="M4.55 3.9 2.28 4.7l.6 2.32" />
+            <path d="M13.12 8.98l.6 2.32-2.27.8" />
+            <path d="M2.88 8.98l-.6 2.32 2.27.8" />
+            <path d="M11.45 3.9l2.27.8-.6 2.32" />
+          </g>
         </svg>
       );
 

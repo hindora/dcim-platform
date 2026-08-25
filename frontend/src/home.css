@@ -122,6 +122,20 @@
   cursor: pointer;
 }
 .alert-counter .face:disabled { cursor: default; }
+
+/* Hover: the counter lifts out of the strip by a shade and its number takes
+   the tone it already owns. No border, no shadow, no movement - a wall display
+   with six counters cannot afford each one announcing itself, and the only
+   thing the pointer has to say is "this one opens". */
+.alert-counter:has(.face:not(:disabled):hover) {
+  background: color-mix(in srgb, var(--bg-raised) 55%, transparent);
+}
+.alert-counter:has(.face:not(:disabled):hover) .n { color: currentColor; }
+.alert-counter .face:hover:not(:disabled) .name { color: var(--text); }
+/* Keyboard gets the same affordance, and a ring it can actually see. */
+.alert-counter .face:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 3px;
+}
 .alert-counter .row { display: flex; align-items: center; gap: 10px; }
 .alert-counter .n {
   font-size: 32px; font-weight: 600; line-height: 1;
