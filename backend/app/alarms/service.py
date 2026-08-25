@@ -67,6 +67,7 @@ class AlarmService:
                 stale_after_s=r["stale_after_s"], enabled=r["enabled"],
                 device_total_only=bool(r.get("device_total_only")),
                 category=r.get("category"), detection=r.get("detection"),
+                response_class=r.get("response_class"),
                 metric_kind=r.get("metric_kind") or "numeric",
                 raise_on=bool(r.get("raise_on", True)),
                 instances=tuple(r.get("instances") or ()),
@@ -289,7 +290,8 @@ class AlarmService:
             session, device_id=device_id, alarm_type="endpoint_unreachable",
             instance=endpoint_id, severity=severity, message=message,
             source="comm", observed_at=now, endpoint_id=endpoint_id,
-            rule_id=rule.id if rule else None)
+            rule_id=rule.id if rule else None,
+            response_class=rule.response_class if rule else None)
         if alarm is None or alarm["change"] == "touched":
             return None
         await repo.record_history(session, alarm_id=alarm["id"], device_id=device_id,
@@ -322,7 +324,8 @@ class AlarmService:
             instance=c.key.instance, severity=c.severity, message=c.message,
             source=c.source, observed_at=c.observed_at, rule_id=c.rule_id,
             endpoint_id=c.endpoint_id, metric_key=c.metric_key,
-            value=c.value, threshold=c.threshold)
+            value=c.value, threshold=c.threshold,
+            category=c.category, response_class=c.response_class)
         if alarm is None or alarm["change"] == "touched":
             return None
         await repo.record_history(
@@ -435,7 +438,8 @@ class AlarmService:
                 severity=severity, message=staleness.message(row),
                 source="staleness", observed_at=now,
                 endpoint_id=row["endpoint_id"],
-                rule_id=rule.id if rule else None)
+                rule_id=rule.id if rule else None,
+                response_class=rule.response_class if rule else None)
             if alarm is None or alarm["change"] == "touched":
                 continue
             touched.add(row["device_id"])

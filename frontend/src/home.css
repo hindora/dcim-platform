@@ -140,13 +140,34 @@
 .alert-counter .rule {
   height: 2px; width: 100%; border-radius: 1px; background: transparent;
 }
+
+/* The alarm/alert split, under the total. Small on purpose: the total is the
+   headline an operator reads from across the room, and this is the pair they
+   read once they are at the desk. */
+.alert-counter .split { display: flex; align-items: center; gap: 6px; }
+.alert-counter .split .chip {
+  display: inline-flex; align-items: baseline; gap: 4px;
+  padding: 1px 7px; border-radius: 10px; font: inherit; font-size: 11px;
+  background: none; border: 1px solid var(--border); color: var(--text-muted);
+  cursor: pointer;
+}
+.alert-counter .split .chip b {
+  font-variant-numeric: tabular-nums; font-size: 12px; color: var(--text);
+}
+.alert-counter .split .chip:disabled { opacity: .5; cursor: default; }
+.alert-counter .split .chip.alarms { border-color: var(--critical); }
+.alert-counter .split .chip.alarms b { color: var(--critical); }
+.alert-counter .split .chip:not(:disabled):hover { border-color: var(--border-strong); }
+.alert-counter .split .chip.on {
+  background: var(--bg-raised); border-color: currentColor; color: var(--text);
+}
 .alert-counter:has(.face[aria-pressed="true"]) .rule { background: currentColor; }
 .alert-counter .face:hover:not(:disabled) .name { text-decoration: underline; }
 .alert-counter .face[aria-pressed="true"] .name { color: var(--text); }
 
-/* Counter tone. `alarms` is the all-categories total and keeps the status red:
-   it is the only counter on the strip that means "something is wrong" rather
-   than "something of this kind is wrong". */
+/* Counter tone. `alarms` is the response class that demands action, and keeps
+   the status red: it is the only thing on this strip that means somebody has
+   to move now. */
 .cat-alarms { color: var(--critical); }
 .cat-pwr { color: var(--cat-pwr); }
 .cat-cool { color: var(--cat-cool); }
@@ -196,7 +217,7 @@
    - not on the page, which would drag the alert strip out of view sideways. */
 .table-scroll { overflow-x: auto; min-width: 0; }
 .sites-table { width: 100%; border-collapse: collapse; font-size: 13px;
-               min-width: 1240px; }
+               min-width: 1300px; }
 .sites-table thead th {
   background: var(--bg-inset); border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
@@ -264,6 +285,12 @@ button.ind:not(:disabled):hover { border-color: currentColor; }
 button.ind:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 .ind.on.alarms { background: var(--tint-critical); border-color: var(--critical); color: var(--critical); }
+/* Open, but nothing anybody has to act on. Present, legible, and quiet - the
+   whole reason the split exists. */
+.ind.on.informational {
+  background: var(--bg-inset); border-color: var(--border-strong);
+  color: var(--text-muted);
+}
 .ind.on.pwr  { background: var(--tint-pwr);  border-color: var(--cat-pwr);  color: var(--cat-pwr); }
 .ind.on.cool { background: var(--tint-cool); border-color: var(--cat-cool); color: var(--cat-cool); }
 .ind.on.it   { background: var(--tint-it);   border-color: var(--cat-it);   color: var(--cat-it); }

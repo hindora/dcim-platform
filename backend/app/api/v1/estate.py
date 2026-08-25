@@ -18,6 +18,8 @@ from app.core.alert_taxonomy import (
     DESCRIPTIONS,
     DETECTION_DESCRIPTIONS,
     DETECTIONS,
+    RESPONSE_CLASSES,
+    RESPONSE_DESCRIPTIONS,
     STRIP_GROUPS,
     examples_for,
 )
@@ -111,6 +113,13 @@ async def alert_categories(
             "label": DETECTION_DESCRIPTIONS[d]["label"],
             "description": DETECTION_DESCRIPTIONS[d]["text"],
         } for d in DETECTIONS],
+        # Alarm or alert - required response, the ISA-18.2 split. An attribute,
+        # like detection: it cuts across all eight categories.
+        "response_classes": [{
+            "key": c,
+            "label": RESPONSE_DESCRIPTIONS[c]["label"],
+            "description": RESPONSE_DESCRIPTIONS[c]["text"],
+        } for c in RESPONSE_CLASSES],
     }
 
 

@@ -274,6 +274,8 @@
   color: var(--text-muted);
 }
 .facet b { font-variant-numeric: tabular-nums; color: var(--text); }
+.facet.alarms   { border-color: var(--critical); color: var(--critical); }
+.facet.informational { border-color: var(--border-strong); }
 .facet.critical { border-color: var(--critical); color: var(--critical); }
 .facet.major    { border-color: var(--major); color: var(--major); }
 .facet.minor,

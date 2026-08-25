@@ -34,6 +34,17 @@ export const CATEGORY_META: Record<AlertCategory, CategoryMeta> = {
   uncategorised: { glyph: 'uncategorised', head: 'UNC',  tone: 'unc' },
 };
 
+/** Tone for the alarm/alert split.
+ *
+ *  Alarms take the status red - they are the only thing on this page that
+ *  means "somebody move now". Alerts take the muted tone: real, worth
+ *  scheduling, and deliberately not competing for attention with the six
+ *  conditions that are. */
+export const CLASS_TONE: Record<string, string> = {
+  alarm: 'alarms',
+  alert: 'informational',
+};
+
 /** Tone per strip group, for the counters themselves. */
 export const GROUP_TONE: Record<string, string> = {
   power: 'pwr',

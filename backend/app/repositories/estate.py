@@ -19,7 +19,7 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.alert_taxonomy import DETECTIONS
+from app.core.alert_taxonomy import DETECTIONS, RESPONSE_CLASSES
 
 # Device -> (datacenter, room). Same resolution as the home page: a device may
 # be racked, or stand on the floor in a room with no rack.
@@ -360,9 +360,11 @@ async def alerts_by_room(session: AsyncSession, *,
     same population the counter itself totals - a drill-down that disagrees
     with the number that opened it is worse than no drill-down.
     """
-    detection_cols = ",\n               ".join(
-        f"count(*) FILTER (WHERE detection = '{d}') AS detected_{d}"
-        for d in DETECTIONS
+    facet_cols = ",\n               ".join(
+        [f"count(*) FILTER (WHERE detection = '{d}') AS detected_{d}"
+         for d in DETECTIONS]
+        + [f"count(*) FILTER (WHERE response_class = '{c}') AS class_{c}"
+           for c in RESPONSE_CLASSES]
     )
 
     rows = (await session.execute(text(f"""
@@ -370,6 +372,7 @@ async def alerts_by_room(session: AsyncSession, *,
         cat AS (
             SELECT dev.datacenter_id, dev.room_id, a.severity::text AS severity,
                    a.device_id, a.detection AS detection,
+                   a.response_class AS response_class,
                    a.category AS category
             FROM alarm a
             JOIN dev ON dev.device_id = a.device_id
@@ -387,7 +390,7 @@ async def alerts_by_room(session: AsyncSession, *,
                count(*) FILTER (WHERE severity = 'MAJOR')      AS major,
                count(*) FILTER (WHERE severity = 'MINOR')      AS minor,
                count(*) FILTER (WHERE severity = 'WARNING')    AS warning,
-               {detection_cols}
+               {facet_cols}
         FROM cat
         JOIN room rm       ON rm.id = cat.room_id
         JOIN datacenter dc ON dc.id = cat.datacenter_id

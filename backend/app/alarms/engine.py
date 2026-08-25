@@ -63,6 +63,11 @@ class Rule:
     category: str | None = None
     #: How this rule detects: threshold, state, absence, derived, forecast.
     detection: str | None = None
+    #: Override the alarm/alert split for this rule. Left None so the default
+    #: from severity applies - a rule that needs its own value is one whose
+    #: urgency genuinely disagrees with its consequence, which is rare enough
+    #: to be worth stating explicitly when it happens.
+    response_class: str | None = None
     #: `numeric` compares against a threshold; `boolean` watches a point that
     #: is either asserted or not. Equipment publishes its own faults as binary
     #: points - a BACnet Alarm_Leak, a Modbus breaker bit - and there is no
@@ -133,6 +138,11 @@ class Candidate:
     value: float | None = None
     threshold: float | None = None
     endpoint_id: str | None = None
+    #: Carried from the rule that produced this candidate. Both were columns
+    #: with nothing behind them until now: the rule could declare an override
+    #: and the raise path never asked for it.
+    category: str | None = None
+    response_class: str | None = None
     attributes: dict[str, Any] = field(default_factory=dict)
 
 
@@ -205,6 +215,8 @@ def evaluate(
                     observed_at=observed_at,
                     rule_id=rule.id,
                     metric_key=rule.metric_key,
+                    category=rule.category,
+                    response_class=rule.response_class,
                     value=value,
                     threshold=None,
                     endpoint_id=endpoint_id,
@@ -242,6 +254,8 @@ def evaluate(
                 observed_at=observed_at,
                 rule_id=rule.id,
                 metric_key=rule.metric_key,
+                category=rule.category,
+                response_class=rule.response_class,
                 value=value,
                 threshold=float(rule.threshold),
                 endpoint_id=endpoint_id,

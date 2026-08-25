@@ -74,7 +74,10 @@ const CHIPS: { key: string; categories: AlertCategory[] | null;
   { key: 'power', categories: ['power'], glyph: 'power', label: 'PWR', tone: 'pwr' },
   { key: 'cooling_env', categories: ['cooling', 'environmental'],
     glyph: 'cooling', label: 'CLG', tone: 'cool' },
-  { key: 'total', categories: null, glyph: 'alarms', label: 'ALM', tone: 'alarms' },
+  // Every open condition at this site. The alarm count inside it rides in the
+  // title rather than as a seventh chip - the drawer is 400px wide, and the
+  // split has a home on the strip behind it.
+  { key: 'total', categories: null, glyph: 'alarms', label: 'OPEN', tone: 'alarms' },
   { key: 'it_network', categories: ['it_equipment', 'network'],
     glyph: 'it_equipment', label: 'IT', tone: 'it' },
   { key: 'visibility', categories: ['visibility'], glyph: 'visibility',
@@ -236,7 +239,10 @@ export function SiteDrawer({ site, onClose }: { site: SiteRow; onClose: () => vo
                       (t, k) => t + (data.alerts.by_category?.[k] ?? 0), 0);
                 return (
                   <span key={c.key} className={`ind ${c.tone} ${n > 0 ? 'on' : ''}`}
-                        title={`${c.label}: ${n}`}>
+                        title={c.categories === null
+                          ? `${n} open: ${data.alerts.by_class?.alarm ?? 0} needing a `
+                            + `response, ${data.alerts.by_class?.alert ?? 0} informational`
+                          : `${c.label}: ${n}`}>
                     <span>{n}</span>
                     <CategoryGlyph kind={c.glyph} />
                     <span>{c.label}</span>

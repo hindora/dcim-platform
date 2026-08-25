@@ -14,6 +14,14 @@
  * room; the table keeps one column per category, so the grouping hides
  * nothing. The grouping itself comes from the server with the taxonomy - the
  * page never decides which categories belong together.
+ *
+ * The counter in the middle is the TOTAL - every open condition - and it says
+ * so. Underneath it sits the split that operators actually triage on: alarms
+ * demand a response now, alerts are informational and belong to whoever
+ * schedules the work (ISA-18.2 draws the line by required response, not by how
+ * bad the number looks). Both are filters. It used to be one counter labelled
+ * "Alarms" sitting among five labelled "alerts", which asserted a distinction
+ * the data did not have.
  */
 
 import { useMemo, useState } from 'react';
@@ -23,13 +31,16 @@ import {
   api,
   type AlertCategory,
   type AlertCounts,
+  type AlertResponseClass,
   type AlertTaxonomy,
   type SiteRoom,
   type SiteRow,
   type SitesOverview,
 } from '../../api/client';
 import { CategoryGlyph } from '../../components/CategoryGlyph';
-import { COLUMN_ORDER, GROUP_TONE, metaFor } from '../../components/alertMeta';
+import {
+  CLASS_TONE, COLUMN_ORDER, GROUP_TONE, metaFor,
+} from '../../components/alertMeta';
 import { FacilityToggle } from '../../components/estate';
 import { useInvalidateOn, useTopics } from '../../ws/useSocket';
 import { SiteDrawer } from './SiteDrawer';
@@ -47,6 +58,15 @@ type Tab = 'sites' | 'rooms';
  *  are groups: "Cooling & Environment" is two categories and has to filter and
  *  open as one thing. */
 interface Selection { key: string; label: string; categories: AlertCategory[] }
+
+/** Filtering on the response class instead - alarms only, or alerts only.
+ *
+ *  Deliberately NOT combinable with a category filter. A row carries its
+ *  categories and its classes as two separate counts, not as the matrix of the
+ *  two, so "power alarms" is a number this page does not have; showing rows
+ *  that have some power condition AND some alarm would imply it did. Choosing
+ *  one filter clears the other. */
+interface ClassFilter { kind: AlertResponseClass; label: string }
 
 /** Counts within a selection. Categories are mutually exclusive, so summing
  *  them is safe - the one arithmetic this page depends on. */
@@ -79,23 +99,35 @@ function severityCell(n: number, tone: string) {
     : <td className="num dash">—</td>;
 }
 
-/** The indicator row: every open alarm, then one cell per category.
+/** The row's two headline numbers, then one cell per category.
  *
- *  ALM leads because it answers the first question - does this site have
- *  anything wrong - and it is a superset, not the sum of the cells beside it
- *  in any sense the eye needs to check: it IS their sum, since the categories
- *  partition the alarms. */
+ *  OPEN and ALM are deliberately two cells. One cell showing 276 in red
+ *  because four of those need a response says the wrong thing twice: it shouts
+ *  a number nobody has to act on, and it hides the number they do. So OPEN is
+ *  a plain count of everything and ALM is the actionable subset, coloured.
+ *
+ *  ALM is not the sum of the eight beside it - those partition OPEN, not ALM.
+ *  A room can hold thirty cooling alerts and one cooling alarm; the COOL cell
+ *  reads thirty-one, and that is correct for the question it answers. */
 function IndicatorCells({ alerts, labels, onOpen }: {
   alerts: AlertCounts; labels: Record<string, string>;
   onOpen: (sel: Selection) => void;
 }) {
+  const alarms = alerts.by_class?.alarm ?? 0;
   return (
     <>
+      <td className="num"
+          title={`${alerts.total} open here: ${alarms} needing a response, `
+                 + `${alerts.total - alarms} informational`}>
+        {alerts.total || <span className="dash">—</span>}
+      </td>
       <td className="ind-cell">
-        <span className={`ind alarms ${alerts.total > 0 ? 'on' : ''}`}
-              title={`Open alarms, all categories: ${alerts.total}`}>
+        <span className={`ind ${alarms > 0 ? 'alarms on' : ''}`}
+              title={alarms > 0
+                ? `${alarms} condition${alarms === 1 ? '' : 's'} needing a response now`
+                : 'Nothing here needs a response now'}>
           <CategoryGlyph kind="alarms" />
-          {alerts.total > 0 && <span>{alerts.total}</span>}
+          {alarms > 0 && <span>{alarms}</span>}
         </span>
       </td>
       {COLUMN_ORDER.map((c) => (
@@ -111,6 +143,7 @@ export function Home() {
   const [tab, setTab] = useState<Tab>('sites');
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<Selection | null>(null);
+  const [classFilter, setClassFilter] = useState<ClassFilter | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [drawerSite, setDrawerSite] = useState<SiteRow | null>(null);
   const [drawerRoom, setDrawerRoom] = useState<SiteRoom | null>(null);
@@ -149,6 +182,11 @@ export function Home() {
   const labels = useMemo(() => Object.fromEntries(
     (taxonomy?.categories ?? []).map((c) => [c.key, c.label])), [taxonomy]);
 
+  // "Alarms" / "Alerts", worded by the server so the strip, the legend and the
+  // classifier cannot disagree about which is which.
+  const classes = useMemo(() => Object.fromEntries(
+    (taxonomy?.response_classes ?? []).map((c) => [c.key, c.label])), [taxonomy]);
+
   // Five grouped counters, plus the all-categories total in the middle, plus
   // `uncategorised` ONLY when it is non-zero. An empty triage bucket is not
   // news; a non-empty one is a hole in the taxonomy and has to be visible.
@@ -179,6 +217,7 @@ export function Home() {
   const matches = (name: string, alerts: AlertCounts) => {
     if (search && !name.toLowerCase().includes(search.toLowerCase())) return false;
     if (filter && countIn(alerts, filter.categories) === 0) return false;
+    if (classFilter && (alerts.by_class?.[classFilter.kind] ?? 0) === 0) return false;
     return true;
   };
 
@@ -231,20 +270,51 @@ export function Home() {
                       // to filter to when every category is already included.
                       disabled={total}
                       title={total
-                        ? 'Every open alarm'
+                        ? 'Every open condition - alarms and alerts together'
                         : `Filter the table to ${c.label.toLowerCase()}`}
                       onClick={() => {
                         if (total) return;
                         setFilter(active ? null
                           : { key: c.key, label: c.label, categories: c.categories });
+                        setClassFilter(null);
                         setPage(0);
                       }}>
                 <span className="row">
                   <span className="n">{n}</span>
                   <CategoryGlyph kind={total ? 'alarms' : c.glyph} size={24} />
                 </span>
-                <span className="name">{total ? 'Alarms' : c.label}</span>
+                <span className="name">{total ? 'All open' : c.label}</span>
               </button>
+
+              {/* The split under the total. An alarm needs a response now and
+                  expects an acknowledgement; an alert is informational. Both
+                  are filters, and both are counted from the same population
+                  the number above them totals. */}
+              {total && data && (
+                <span className="split">
+                  {(['alarm', 'alert'] as AlertResponseClass[]).map((k) => {
+                    const count = data.totals.by_class?.[k] ?? 0;
+                    const on = classFilter?.kind === k;
+                    const label = classes[k] ?? k;
+                    return (
+                      <button key={k}
+                              className={`chip ${CLASS_TONE[k]} ${on ? 'on' : ''}`}
+                              aria-pressed={on}
+                              disabled={count === 0}
+                              title={count === 0
+                                ? `No open ${label.toLowerCase()}`
+                                : `Filter the table to ${label.toLowerCase()}`}
+                              onClick={() => {
+                                setClassFilter(on ? null : { kind: k, label });
+                                setFilter(null);
+                                setPage(0);
+                              }}>
+                        <b>{count}</b> {label.toLowerCase()}
+                      </button>
+                    );
+                  })}
+                </span>
+              )}
               {/* The counter filters the table; this lists what is behind it.
                   Two different questions - "show me only those" and "which
                   ones" - so two controls rather than one that has to guess. */}
@@ -288,9 +358,11 @@ export function Home() {
                 BACK TO ALL ROOMS
               </button>
             )}
-            {filter && (
-              <button className="row-btn" onClick={() => setFilter(null)}
-                      title={`Showing only ${tab} with an open ${filter.label.toLowerCase()} alert`}>
+            {(filter || classFilter) && (
+              <button className="row-btn"
+                      onClick={() => { setFilter(null); setClassFilter(null); }}
+                      title={`Showing only ${tab} with an open `
+                        + `${(filter?.label ?? classFilter?.label ?? '').toLowerCase()}`}>
                 CLEAR FILTER
               </button>
             )}
@@ -317,7 +389,14 @@ export function Home() {
                 </th>
                 <th>{tab === 'sites' ? 'Location' : 'Type'}</th>
                 <th className="ind-h">{tab === 'sites' ? 'Rooms' : 'Racks'}</th>
-                <th className="ind-h" title="Open alarms, all categories">ALM</th>
+                <th className="ind-h"
+                    title="Every open condition here - alarms and alerts">
+                  OPEN
+                </th>
+                <th className="ind-h"
+                    title="Needs a response now. The rest is informational.">
+                  ALM
+                </th>
                 {COLUMN_ORDER.map((c) => (
                   <th key={c} className="ind-h"
                       title={`${labels[c] ?? c} alerts`}>{metaFor(c).head}</th>
@@ -330,15 +409,17 @@ export function Home() {
             </thead>
             <tbody>
               {isLoading && (
-                <tr><td colSpan={16} className="muted" style={{ padding: 20 }}>Loading…</td></tr>
+                <tr><td colSpan={17} className="muted" style={{ padding: 20 }}>Loading…</td></tr>
               )}
 
               {!isLoading && rows.length === 0 && (
                 <tr>
-                  <td colSpan={16} className="muted" style={{ padding: 20 }}>
+                  <td colSpan={17} className="muted" style={{ padding: 20 }}>
                     {filter
-                      ? `No ${tab} have an open ${filter.label.toLowerCase()} alert.`
-                      : `No ${tab} match “${search}”.`}
+                      ? `No ${tab} have an open ${filter.label.toLowerCase()} condition.`
+                      : classFilter
+                        ? `No ${tab} have an open ${classFilter.label.toLowerCase()}.`
+                        : `No ${tab} match “${search}”.`}
                   </td>
                 </tr>
               )}

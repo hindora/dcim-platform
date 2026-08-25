@@ -26,7 +26,7 @@ async def load_rules(session: AsyncSession) -> list[dict[str, Any]]:
                dwell_samples, dwell_seconds, clear_dwell_samples,
                severity::text AS severity, device_types, message_tpl,
                stale_after_s, enabled, device_total_only, category, detection,
-               metric_kind, raise_on, instances
+               response_class, metric_kind, raise_on, instances
         FROM alarm_rule WHERE enabled
     """))).mappings().all()
     return [dict(r) for r in rows]
@@ -40,7 +40,7 @@ async def list_rules(session: AsyncSession) -> list[dict[str, Any]]:
                dwell_samples, dwell_seconds, clear_dwell_samples,
                severity::text AS severity, device_types, message_tpl,
                stale_after_s, enabled, device_total_only, category, detection,
-               metric_kind, raise_on, instances
+               response_class, metric_kind, raise_on, instances
         FROM alarm_rule ORDER BY alarm_type, name
     """))).mappings().all()
     return [dict(r) for r in rows]
@@ -64,7 +64,8 @@ async def raise_alarm(session: AsyncSession, *, device_id: str, alarm_type: str,
                       metric_key: str | None = None,
                       value: float | None = None,
                       threshold: float | None = None,
-                      category: str | None = None) -> dict[str, Any] | None:
+                      category: str | None = None,
+                      response_class: str | None = None) -> dict[str, Any] | None:
     """Insert or update the open alarm for this key.
 
     Returns the alarm plus a `change` describing what happened - created,
@@ -83,7 +84,7 @@ async def raise_alarm(session: AsyncSession, *, device_id: str, alarm_type: str,
         INSERT INTO alarm (device_id, endpoint_id, alarm_type, instance, rule_id,
                            severity, state, message, metric_key, trigger_value,
                            threshold, source, first_seen, last_seen,
-                           category, detection)
+                           category, detection, response_class)
         SELECT CAST(:device_id AS uuid), CAST(:endpoint_id AS uuid), :alarm_type,
                :instance, CAST(:rule_id AS uuid), CAST(:severity AS severity_t),
                'ACTIVE', :message, :metric_key, :value, :threshold, :source,
@@ -92,7 +93,13 @@ async def raise_alarm(session: AsyncSession, *, device_id: str, alarm_type: str,
                    alarm_type_col=":alarm_type",
                    role_col="dt.category",
                    metric_col=":metric_key")}),
-               :detection
+               :detection,
+               -- Alarm or alert: does this need a response now. Defaulted from
+               -- severity, which already encodes consequence here, unless the
+               -- rule that raised it says otherwise.
+               {alert_taxonomy.response_sql_case(
+                   severity_col="CAST(:severity AS text)",
+                   rule_col=":response_class")}
           -- One row ALWAYS, whatever the joins find. Selecting FROM device
           -- instead would insert nothing at all when an alarm has no device
           -- behind it - the alarm would vanish rather than be classified, and
@@ -107,7 +114,14 @@ async def raise_alarm(session: AsyncSession, *, device_id: str, alarm_type: str,
             message          = EXCLUDED.message,
             trigger_value    = EXCLUDED.trigger_value,
             last_seen        = GREATEST(alarm.last_seen, EXCLUDED.last_seen),
-            occurrence_count = alarm.occurrence_count + 1
+            occurrence_count = alarm.occurrence_count + 1,
+            -- Follows severity, which this same statement may have just
+            -- changed: a condition that escalates from WARNING to CRITICAL
+            -- stops being something to schedule and becomes something to
+            -- answer. `category` deliberately does NOT follow - it records
+            -- what kind of thing this was when it was raised - but urgency is
+            -- a property of the condition now, not of its history.
+            response_class   = EXCLUDED.response_class
         RETURNING id::text, severity::text AS severity,
                   prev_severity::text AS prev_severity,
                   state::text AS state, occurrence_count, first_seen, last_seen,
@@ -118,6 +132,7 @@ async def raise_alarm(session: AsyncSession, *, device_id: str, alarm_type: str,
         "severity": severity, "message": message, "metric_key": metric_key,
         "value": value, "threshold": threshold, "source": source,
         "observed_at": observed_at, "category": category,
+        "response_class": response_class,
         "detection": alert_taxonomy.detection_for(source, metric_key=metric_key),
     })).mappings().first()
     if row is None:
@@ -176,7 +191,7 @@ _ALARM_SELECT = """
            a.first_seen, a.last_seen, a.occurrence_count,
            a.acknowledged_at, a.acknowledged_by, a.cleared_at,
            a.is_symptom, a.root_cause_alarm_id::text,
-           a.category, a.detection,
+           a.category, a.detection, a.response_class,
            dc.code AS datacenter_code, rm.name AS room_name, r.name AS rack_name
     FROM alarm a
     -- LEFT, not INNER. A platform alarm has no device, and an inner join here
@@ -196,6 +211,7 @@ async def list_alarms(session: AsyncSession, *, states: list[str] | None = None,
                       alarm_type: str | None = None,
                       categories: list[str] | None = None,
                       detections: list[str] | None = None,
+                      response_classes: list[str] | None = None,
                       include_symptoms: bool = False,
                       limit: int = 100) -> list[dict[str, Any]]:
     where, params = [], {"limit": limit}
@@ -220,6 +236,9 @@ async def list_alarms(session: AsyncSession, *, states: list[str] | None = None,
     if detections:
         where.append("a.detection = ANY(:detections)")
         params["detections"] = detections
+    if response_classes:
+        where.append("a.response_class = ANY(:response_classes)")
+        params["response_classes"] = response_classes
     if not include_symptoms:
         # Roots only by default. An alarm list showing 21 rows for one OOB
         # switch failure is the reason operators stop looking at alarm lists.
@@ -410,7 +429,8 @@ async def raise_platform_alarm(session: AsyncSession, *, alarm_type: str,
                                observed_at: datetime,
                                value: float | None = None,
                                threshold: float | None = None,
-                               source: str = "platform") -> dict[str, Any] | None:
+                               source: str = "platform",
+                               response_class: str | None = None) -> dict[str, Any] | None:
     """Insert or update the open platform alarm for this key.
 
     The ON CONFLICT target resolves to the NULLS NOT DISTINCT index added in
@@ -420,10 +440,12 @@ async def raise_platform_alarm(session: AsyncSession, *, alarm_type: str,
     row = (await session.execute(text("""
         INSERT INTO alarm (device_id, alarm_type, instance, severity, state,
                            message, trigger_value, threshold, source,
-                           first_seen, last_seen, category, detection)
+                           first_seen, last_seen, category, detection,
+                           response_class)
         VALUES (NULL, :alarm_type, :instance, CAST(:severity AS severity_t),
                 'ACTIVE', :message, :value, :threshold, :source,
-                :observed_at, :observed_at, :category, :detection)
+                :observed_at, :observed_at, :category, :detection,
+                :response_class)
         ON CONFLICT (device_id, alarm_type, instance) WHERE state <> 'CLEARED'
         DO UPDATE SET
             prev_severity    = alarm.severity,
@@ -431,7 +453,8 @@ async def raise_platform_alarm(session: AsyncSession, *, alarm_type: str,
             message          = EXCLUDED.message,
             trigger_value    = EXCLUDED.trigger_value,
             last_seen        = GREATEST(alarm.last_seen, EXCLUDED.last_seen),
-            occurrence_count = alarm.occurrence_count + 1
+            occurrence_count = alarm.occurrence_count + 1,
+            response_class   = EXCLUDED.response_class
         RETURNING id::text, severity::text AS severity,
                   prev_severity::text AS prev_severity, occurrence_count,
                   alarm_type, instance, message
@@ -443,6 +466,8 @@ async def raise_platform_alarm(session: AsyncSession, *, alarm_type: str,
            # alarm type alone - which is right: every one of them is a
            # statement about our own ability to see the estate.
            "category": alert_taxonomy.classify(alarm_type),
+           "response_class": alert_taxonomy.response_class_for(
+               severity, rule_class=response_class),
            "detection": alert_taxonomy.detection_for(source)})).mappings().first()
     if row is None:
         return None

@@ -8,8 +8,9 @@ alarm point or was inferred from a fan speed of zero; a chiller COP anomaly is a
 cooling problem whether a threshold or a model noticed it.
 
 Everything the old scheme smuggled into the category axis lives beside it
-instead: `severity`, `detection`, the source protocol, and whether the alarm is
-a symptom of something upstream.
+instead: `severity`, `detection`, `response_class` - alarm or alert, meaning
+does this need a response now - the source protocol, and whether the alarm is a
+symptom of something upstream.
 
 Classification resolves in three layers, first match wins:
 
@@ -155,6 +156,91 @@ DETECTION_BY_SOURCE: dict[str, str] = {
     "analytics": DERIVED,
     "forecast": FORECAST,
 }
+
+# ------------------------------------------------------------ response class
+
+#: Does this condition demand a response NOW, or is it something to schedule?
+#:
+#: ISA-18.2 and EEMUA 191 draw the line here, and they draw it by required
+#: response rather than by how bad the number looks: an ALARM is an abnormal
+#: condition that requires operator action and carries an acknowledge
+#: lifecycle; an ALERT is informational, needs no action at the console, and
+#: belongs to whoever plans maintenance. The distinction exists in the field
+#: protocols too - a BACnet notification class carries `notify_type`, which is
+#: ALARM or EVENT, set per point at commissioning.
+#:
+#: This is an ATTRIBUTE, exactly like `detection`, and for the same reason: it
+#: answers "how urgently must somebody move", not "what kind of thing is
+#: wrong". Making it a category would mean a leak and a dirty filter on the
+#: same CDU landed in different buckets, and the plant team would have to read
+#: two counters to see their own equipment.
+ALARM = "alarm"
+ALERT = "alert"
+
+RESPONSE_CLASSES = (ALARM, ALERT)
+
+RESPONSE_DESCRIPTIONS: dict[str, dict[str, str]] = {
+    ALARM: {
+        "label": "Alarms",
+        "text": "Requires a response now. An abnormal condition with a "
+                "consequence attached - load at risk, redundancy gone, or the "
+                "estate no longer visible. Acknowledging one is a statement "
+                "that somebody has taken it.",
+    },
+    ALERT: {
+        "label": "Alerts",
+        "text": "Informational. Wear, hygiene and drift - real, worth "
+                "scheduling, and not worth waking anybody. It goes to whoever "
+                "plans the work rather than to the console.",
+    },
+}
+
+#: The default, by severity. Severity already encodes consequence in this
+#: system - phase 2 sorted the 36 equipment points by it deliberately, with
+#: integrity faults that threaten load now as MAJOR and wear as WARNING - so
+#: the two axes agree by construction rather than by coincidence.
+#:
+#: MINOR sits on the alert side: it exists for conditions worth recording that
+#: nobody is expected to act on within the shift. A rule that disagrees says so
+#: itself; see `alarm_rule.response_class`.
+CLASS_BY_SEVERITY: dict[str, str] = {
+    "CRITICAL": ALARM,
+    "MAJOR": ALARM,
+    "MINOR": ALERT,
+    "WARNING": ALERT,
+    "INFO": ALERT,
+}
+
+
+def response_class_for(severity: str | None, *,
+                       rule_class: str | None = None) -> str:
+    """Alarm or alert, for one condition.
+
+    An unknown severity resolves to ALARM rather than ALERT, on purpose: the
+    failure mode of guessing "alert" is a condition that never reaches the
+    console, and silence is the one outcome an alarm system may not produce by
+    accident.
+    """
+    if rule_class in RESPONSE_CLASSES:
+        return rule_class
+    return CLASS_BY_SEVERITY.get((severity or "").upper(), ALARM)
+
+
+def response_sql_case(severity_col: str = "a.severity::text",
+                      rule_col: str | None = None) -> str:
+    """The same defaulting as SQL, for the insert and the backfill.
+
+    `rule_col`, when given, is the rule's override and wins - the CASE is only
+    consulted when it is NULL.
+    """
+    lines = ["CASE"]
+    for severity, cls in CLASS_BY_SEVERITY.items():
+        lines.append(f"    WHEN {severity_col} = '{severity}' THEN '{cls}'")
+    lines.append(f"    ELSE '{ALARM}'")
+    lines.append("END")
+    case = "\n".join(lines)
+    return f"COALESCE({rule_col}, {case})" if rule_col else case
+
 
 # ------------------------------------------------- layer 1: explicit alarm_type
 

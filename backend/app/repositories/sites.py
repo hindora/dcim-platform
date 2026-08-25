@@ -16,7 +16,7 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.alert_taxonomy import CATEGORIES, DETECTIONS
+from app.core.alert_taxonomy import CATEGORIES, DETECTIONS, RESPONSE_CLASSES
 
 # Device -> (datacenter, room). A device may be racked, or sit in a room with no
 # rack (facility gear, floor-standing plant), so both paths are resolved and
@@ -45,7 +45,8 @@ _ALARM_CTE = """
                dev.room_id,
                a.severity::text AS severity,
                a.category       AS category,
-               a.detection      AS detection
+               a.detection      AS detection,
+               a.response_class AS response_class
         FROM alarm a
         JOIN dev ON dev.device_id = a.device_id
         WHERE a.state <> 'CLEARED' AND a.is_symptom = false
@@ -68,8 +69,17 @@ _DETECTION_COLUMNS = ",\n".join(
     for d in DETECTIONS
 )
 
+# Alarm or alert: does this need a response now. A second attribute, counted
+# beside the categories rather than partitioning them - the strip prints the
+# split under the total, and a category counter still means every condition of
+# that kind whichever way it is answered.
+_CLASS_COLUMNS = ",\n".join(
+    f"count(*) FILTER (WHERE response_class = '{c}') AS class_{c}"
+    for c in RESPONSE_CLASSES
+)
+
 _ALL_CATEGORY_COLUMNS = ",\n".join(
-    (_CATEGORY_COLUMNS, _DETECTION_COLUMNS))
+    (_CATEGORY_COLUMNS, _DETECTION_COLUMNS, _CLASS_COLUMNS))
 
 _SEVERITY_COLUMNS = """
     count(*)                                                    AS alerts_total,
@@ -85,7 +95,8 @@ _SEVERITY_COLUMNS = """
 _AGG_COALESCE = ",\n               ".join(
     f"COALESCE(agg.{name}, 0) AS {name}"
     for name in ([f"alerts_{c}" for c in CATEGORIES]
-                 + [f"detected_{d}" for d in DETECTIONS])
+                 + [f"detected_{d}" for d in DETECTIONS]
+                 + [f"class_{c}" for c in RESPONSE_CLASSES])
 )
 
 
@@ -213,7 +224,8 @@ async def fleet_alert_totals(session: AsyncSession) -> dict[str, Any]:
         WITH alarm_cat AS (
             SELECT a.severity::text AS severity,
                    a.category       AS category,
-                   a.detection      AS detection
+                   a.detection      AS detection,
+                   a.response_class AS response_class
             FROM alarm a
             WHERE a.state <> 'CLEARED' AND a.is_symptom = false
         )

@@ -571,13 +571,22 @@ export type AlertCategory =
 export type AlertDetection =
   | 'threshold' | 'state' | 'absence' | 'derived' | 'forecast';
 
+/** Required response, the ISA-18.2 split. An `alarm` demands action now and
+ *  expects an acknowledgement; an `alert` is informational and belongs to
+ *  whoever schedules the work. A third attribute, not a category: it cuts
+ *  across all eight domains. */
+export type AlertResponseClass = 'alarm' | 'alert';
+
 export interface AlertCounts {
+  /** Every open root condition - alarms AND alerts. `by_category` sums to it.
+   *  It is not the alarm count; `by_class.alarm` is. */
   total: number;
   critical: number;
   major: number;
   minor: number;
   by_category: Record<AlertCategory, number>;
   by_detection: Record<AlertDetection, number>;
+  by_class: Record<AlertResponseClass, number>;
 }
 
 /** The taxonomy itself, served by the classifier that fills the counters.
@@ -597,6 +606,9 @@ export interface AlertTaxonomy {
    *  keeps a column per category, so the grouping loses nothing. */
   strip_groups: { key: string; label: string; categories: AlertCategory[] }[];
   detections: { key: AlertDetection; label: string; description: string }[];
+  response_classes: {
+    key: AlertResponseClass; label: string; description: string;
+  }[];
 }
 
 export interface SiteRoom {
@@ -815,6 +827,7 @@ export interface AlertDrillRow {
   major: number;
   by_severity: { critical: number; major: number; minor: number; warning: number };
   by_detection: Record<AlertDetection, number>;
+  by_class: Record<AlertResponseClass, number>;
 }
 
 export interface AlertDrill {
@@ -828,6 +841,7 @@ export interface AlertDrill {
    *  row to face against. */
   by_severity: { critical: number; major: number; minor: number; warning: number };
   by_detection: Record<AlertDetection, number>;
+  by_class: Record<AlertResponseClass, number>;
 }
 
 export interface RoomKpi {

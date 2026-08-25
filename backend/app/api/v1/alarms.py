@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import audit
-from app.core.alert_taxonomy import CATEGORIES, DETECTIONS
+from app.core.alert_taxonomy import CATEGORIES, DETECTIONS, RESPONSE_CLASSES
 from app.core.security import Principal, current_principal, require_role
 from app.db.session import get_session
 from app.repositories import alarms as repo
@@ -34,6 +34,11 @@ async def list_alarms(
         description="How it was found: " + ", ".join(DETECTIONS)
                     + ". An attribute, not a category - filtering on `derived` "
                       "shows what analysis noticed across every domain."),
+    response_class: list[str] | None = Query(None,
+        description="Required response: " + ", ".join(RESPONSE_CLASSES)
+                    + ". `alarm` demands action now and expects an "
+                      "acknowledgement; `alert` is informational and belongs to "
+                      "whoever schedules the work."),
     include_symptoms: bool = Query(
         False, description="Symptoms are hidden by default: one root cause with "
                            "twenty symptoms should read as one incident."),
@@ -42,7 +47,9 @@ async def list_alarms(
     _: Principal = Depends(current_principal),
 ) -> dict[str, Any]:
     for value, allowed, what in ((category, CATEGORIES, "category"),
-                                 (detection, DETECTIONS, "detection")):
+                                 (detection, DETECTIONS, "detection"),
+                                 (response_class, RESPONSE_CLASSES,
+                                  "response_class")):
         unknown = sorted(set(value or []) - set(allowed))
         if unknown:
             raise HTTPException(status.HTTP_400_BAD_REQUEST,
@@ -51,6 +58,7 @@ async def list_alarms(
     items = await repo.list_alarms(
         session, states=states, severities=severity, device_id=device_id,
         alarm_type=alarm_type, categories=category, detections=detection,
+        response_classes=response_class,
         include_symptoms=include_symptoms, limit=limit)
     return {"items": items}
 

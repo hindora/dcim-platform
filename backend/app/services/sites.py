@@ -16,7 +16,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.alert_taxonomy import CATEGORIES, DETECTIONS
+from app.core.alert_taxonomy import CATEGORIES, DETECTIONS, RESPONSE_CLASSES
 from app.repositories import sites as repo
 from app.services import pue as pue_service
 
@@ -42,9 +42,14 @@ def _alerts(row: dict[str, Any]) -> dict[str, Any]:
 
     `by_category` is the taxonomy of docs/18-alert-taxonomy.md: one axis, the
     domain of the failing thing, which is the same as who owns the first five
-    minutes. `by_detection` sits beside it rather than inside it - how a
-    condition was found is an attribute, so "only what analytics noticed"
-    filters across all eight categories instead of being a ninth.
+    minutes. `by_detection` and `by_class` sit beside it rather than inside it -
+    how a condition was found, and whether it needs a response now, are
+    attributes. So "only what analytics noticed" and "only what somebody must
+    act on" both filter across all eight categories instead of being a ninth.
+
+    `total` is every open root condition, alarms and alerts together, and
+    `by_category` sums to it. It is NOT the alarm count: reading it that way is
+    the mistake this block now makes impossible to make.
     """
     return {
         "total": int(row.get("alerts_total") or 0),
@@ -53,6 +58,7 @@ def _alerts(row: dict[str, Any]) -> dict[str, Any]:
         "minor": int(row.get("minor") or 0),
         "by_category": {c: int(row.get(f"alerts_{c}") or 0) for c in CATEGORIES},
         "by_detection": {d: int(row.get(f"detected_{d}") or 0) for d in DETECTIONS},
+        "by_class": {c: int(row.get(f"class_{c}") or 0) for c in RESPONSE_CLASSES},
     }
 
 

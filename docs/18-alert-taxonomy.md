@@ -75,10 +75,43 @@ Everything the old scheme smuggled into the category axis becomes a field:
 | Field | Values | Replaces |
 |---|---|---|
 | `severity` | CRITICAL / MAJOR / MINOR / WARNING | - |
+| `response_class` | `alarm` · `alert` | the counter that was labelled "Alarms" and was in fact the total |
 | `detection` | `threshold` · `state` · `absence` · `derived` · `forecast` | the "Analytics" category |
 | `source_protocol` | snmp / bacnet / modbus / redfish / gnmi | the "faults from BACnet/Modbus" definition |
 | `is_symptom` | root vs downstream | already exists |
 | `scope` | device / rack / room / site / plane | - |
+
+### `response_class`: alarm and alert are not the same claim
+
+Added 2026-08-25, migration 0023. ISA-18.2 and EEMUA 191 separate the two by
+REQUIRED RESPONSE: an alarm is an abnormal condition demanding operator action,
+with an acknowledge lifecycle behind it; an alert is informational, is not
+expected to be acted on at the console, and belongs to whoever schedules
+maintenance. BACnet carries the same split at the wire in `notify_type`
+(ALARM / EVENT), set per point at commissioning.
+
+It is an attribute for the same reason `detection` is: it answers how urgently
+somebody must move, not what kind of thing is wrong. As a category it would put
+a leak and a dirty filter on the same CDU in different buckets, and the plant
+team would read two counters to see their own equipment.
+
+The default comes from severity, which in this system already encodes
+consequence - phase 2 sorted the 36 equipment points that way deliberately - so
+the two axes agree by construction. CRITICAL and MAJOR are alarms; MINOR,
+WARNING and INFO are alerts; a rule may override via `alarm_rule.response_class`.
+An unknown severity resolves to `alarm`, because the failure mode of guessing
+"alert" is a condition that never reaches the console.
+
+Two consequences worth stating:
+
+* **The class follows severity on update, the category does not.** A condition
+  that escalates from WARNING to CRITICAL stops being something to schedule on
+  the same statement that raises its severity. The category records what kind
+  of thing this was when it was raised and stays put.
+* **What it says about this estate.** At the time of writing, 496 open root
+  conditions resolve to 7 alarms and 489 alerts - the console had been carrying
+  a wave of stale-telemetry rows that nobody was ever going to act on at 3am.
+  That ratio is the argument for the axis, not a bug in it.
 
 An anomaly in chiller COP is **cooling, detection=derived**. A predicted disk
 failure is **it_equipment, detection=forecast**. The analytics view becomes a
@@ -168,11 +201,18 @@ three asserted points mean this will not start at zero.
 ### Phase 4 - UI  *(built)*
 
 * **Strip: five grouped counters** - Power · Cooling & Environment · IT &
-  Network · Visibility · Capacity, with the all-categories total between them.
+  Network · Visibility · Capacity, with the total between them. The total is
+  labelled "All open" and carries the alarm/alert split underneath as two
+  filters; it used to be labelled "Alarms" while being the sum of five counters
+  labelled "alerts", which asserted a distinction the data did not have.
   Uncategorised appears as a sixth only when non-zero.
-* **Table: eight indicator columns**, one per category, plus ALM. Nothing is
-  hidden by the grouping; the strip is the headline, the table is the detail.
-  A cell with a count is also the way into the rooms behind it.
+* **Table: eight indicator columns**, one per category, plus OPEN and ALM.
+  Those two are deliberately separate cells: one cell reading 276 in red
+  because four of them need a response shouts a number nobody must act on and
+  hides the number they do. OPEN counts everything, ALM counts the actionable
+  subset. Nothing is hidden by the grouping; the strip is the headline, the
+  table is the detail. A category cell with a count is also the way into the
+  rooms behind it.
 * Drill-down modal carries `severity` and `detection` facets, folded from the
   rows it shows rather than fetched, so the two cannot describe different
   instants. A grouped counter runs one query per category and keeps the rows

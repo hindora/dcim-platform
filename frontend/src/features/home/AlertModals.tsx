@@ -23,6 +23,7 @@ import {
   type AlertDetection,
   type AlertDrill,
   type AlertDrillRow,
+  type AlertResponseClass,
   type AlertTaxonomy,
 } from '../../api/client';
 import { Modal } from '../../components/estate';
@@ -85,6 +86,25 @@ export function AlertLegend({ onClose }: { onClose: () => void }) {
                 </div>
               );
             })}
+          </div>
+
+          <h4 style={{ margin: '22px 0 6px', fontSize: 12, letterSpacing: '.06em',
+                       textTransform: 'uppercase' }}>
+            Does it need a response now
+          </h4>
+          <p className="muted small" style={{ margin: '0 0 10px' }}>
+            The distinction operations standards draw by REQUIRED RESPONSE, not
+            by how bad the number looks. It cuts across all eight categories:
+            a category counter means every condition of that kind, whichever
+            way this is answered.
+          </p>
+          <div className="legend-grid">
+            {data.response_classes.map((c) => (
+              <div className="legend-col" key={c.key}>
+                <h4>{c.label}</h4>
+                <p>{c.description}</p>
+              </div>
+            ))}
           </div>
 
           <h4 style={{ margin: '22px 0 6px', fontSize: 12, letterSpacing: '.06em',
@@ -180,25 +200,34 @@ export function AlertDrilldown({ categories, title, onClose }: {
     n: loaded.reduce((n, x) => n + (x.drill.by_detection?.[d.key] ?? 0), 0),
   }));
 
+  const classes = (taxonomy?.response_classes ?? []).map((c) => ({
+    key: c.key as AlertResponseClass,
+    label: c.label,
+    n: loaded.reduce((n, x) => n + (x.drill.by_class?.[c.key] ?? 0), 0),
+  }));
+
   const definitions = (taxonomy?.categories ?? []).filter(
     (c) => categories.includes(c.key));
   const blurb = definitions.map((c) => c.description).join(' ');
 
   return (
-    <Modal title={`${title} alerts`} count={loaded.length ? total : undefined}
+    // Not "X alerts": half of what this modal lists may be alarms, and the
+    // page has just spent a strip explaining that those are different things.
+    <Modal title={title} count={loaded.length ? total : undefined}
            blurb={blurb || undefined} onClose={onClose}>
       {error && <div className="banner">Could not load the drill-down.</div>}
       {isLoading && <p className="muted">Loading…</p>}
 
       {!!loaded.length && (
         <>
+          <Facets label="Response" entries={classes} />
           <Facets label="Severity" entries={severity} />
           <Facets label="Found by" entries={detections} />
         </>
       )}
 
       {!!loaded.length && rows.length === 0 && (
-        <p className="muted">No room has an open {title.toLowerCase()} alert.</p>
+        <p className="muted">No room has an open {title.toLowerCase()} condition.</p>
       )}
 
       {rows.length > 0 && (
