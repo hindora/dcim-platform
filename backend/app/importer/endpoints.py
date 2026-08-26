@@ -158,17 +158,31 @@ def derive_endpoints(
     # ------------------------------------------------------------------ SNMP
     if "snmp" in include_protocols and dtype not in NO_SNMP_TYPES:
         addr = snmp_address(dev)
+        bmc = bmc_address(dev)
         if addr:
+            # A server with no production NIC - a bastion that lives on the
+            # management network and nothing else - falls back to its mgmt
+            # address, and what answers SNMP there is the BMC. Calling that an
+            # os_agent aimed a host-resources profile at an iDRAC: the poll
+            # asked for hrStorage, UCD memory and ifTable, the controller
+            # served its 29 system and vendor OIDs, and the endpoint reported
+            # "reachable, no telemetry" for as long as it existed.
+            #
+            # The agent is named after what actually answers, so the profile
+            # that follows asks for what that agent has.
+            bmc_only = dtype == "server" and bmc is not None and addr == bmc
             out.append(EndpointSpec(
                 protocol="snmp",
-                role="os_agent" if dtype == "server" else "native_card",
+                role=("native_card" if dtype != "server"
+                      else "bmc" if bmc_only else "os_agent"),
                 address=addr,
                 port=int(dev.get("snmp_port") or 161),
-                poll_profile=SNMP_PROFILE_BY_TYPE.get(dtype, DEFAULT_SNMP_PROFILE),
+                poll_profile=("snmp-bmc-120s" if bmc_only else
+                              SNMP_PROFILE_BY_TYPE.get(dtype, DEFAULT_SNMP_PROFILE)),
                 **_snmp_credential(addr),
             ))
-        bmc = bmc_address(dev)
-        # Only when it is genuinely a different agent from the OS one.
+        # Only when it is genuinely a different agent from the OS one - the
+        # bmc_only case above has already emitted it.
         if bmc and bmc != addr:
             out.append(EndpointSpec(
                 protocol="snmp", role="bmc", address=bmc, port=161,

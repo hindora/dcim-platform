@@ -236,3 +236,36 @@ def test_etag_changes_when_a_poll_profile_changes():
     assert etag_for(_assignment(metric_groups=["system"])) != base
     # Same content, same ETag - otherwise every refresh re-downloads.
     assert etag_for(_assignment(interval_s=30)) == base
+
+
+def test_a_server_with_no_production_nic_is_polled_as_a_bmc():
+    """A bastion on the management network has no OS agent to reach.
+
+    JUMP1-DC1-NR-R1-03 sits in the network room with an empty `ip_address` and
+    a management IP only. `snmp_address` falls back to that management IP, and
+    what answers SNMP there is the iDRAC - measured: `iDRAC9 6.10.30.00 - Dell
+    PowerEdge R640 BMC`, 29 OIDs, no host MIBs at all.
+
+    Deriving that as an `os_agent` on the server profile asked a service
+    processor for hrStorage, UCD memory and ifTable every two minutes and
+    called the silence a fault. The endpoint is named after the agent that
+    actually answers so the profile matches what it can serve.
+    """
+    jump = {"device_type": "server", "name": "JUMP1-DC1-NR-R1-03",
+            "ip_address": "", "mgmt_ip": "10.51.13.18"}
+    eps = derive_endpoints(jump)
+    snmp = [e for e in eps if e.protocol == "snmp"]
+
+    assert len(snmp) == 1, "one agent answers, so one endpoint"
+    assert snmp[0].role == "bmc"
+    assert snmp[0].address == "10.51.13.18"
+    assert snmp[0].poll_profile == "snmp-bmc-120s"
+
+
+def test_a_normal_server_still_gets_both_agents(sim_server_device):
+    """The fix must not collapse the two-agent case it sits next to."""
+    eps = derive_endpoints(sim_server_device)
+    snmp = sorted((e for e in eps if e.protocol == "snmp"), key=lambda e: e.role)
+    assert [e.role for e in snmp] == ["bmc", "os_agent"]
+    assert snmp[0].address != snmp[1].address
+    assert snmp[1].poll_profile == "snmp-server-120s"
