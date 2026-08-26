@@ -24,6 +24,7 @@ from app.alarms.engine import (
     ClearSignal,
     DwellState,
     Rule,
+    band_dwell_violations,
     evaluate,
 )
 from app.core import alert_taxonomy
@@ -82,6 +83,16 @@ class AlarmService:
         self._rules, self._by_metric = rules, by_metric
         self._loaded_at = time.monotonic()
         log.info("alarm rules loaded", rules=len(rules), metric_rules=len(by_metric))
+
+        # Loud, and only when it is wrong. A band pair whose dwells contradict
+        # each other still WORKS - the collapse hides the mess - so nothing
+        # else would ever say so, and the next person to edit a dwell would
+        # reintroduce it in silence.
+        for low, high in band_dwell_violations(rules):
+            log.warning("band dwells contradict each other",
+                        lower=low, higher=high,
+                        detail="the lower band waits longer than the higher, so "
+                               "the more severe alarm is raised first")
 
     def rules_for_metric(self, metric: str, device_type: str) -> list[Rule]:
         return [r for r in self._by_metric.get(metric, ())

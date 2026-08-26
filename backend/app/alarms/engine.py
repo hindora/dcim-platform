@@ -156,6 +156,43 @@ class ClearSignal:
     also_clears: tuple[str, ...] = ()
 
 
+def band_dwell_violations(rules) -> list[tuple[str, str]]:
+    """Bands on one signal whose dwells contradict each other.
+
+    A lower band is a SUPERSET of a higher one: a value that has been above 90
+    for three samples has been above 80 for at least three. So the lower band
+    cannot honestly need MORE dwell than the higher - if it does, the critical
+    fires first and the warning arrives afterwards, and an operator reading the
+    list top-down watches the situation apparently improve while nothing has
+    changed. Measured here: cpu_temp_critical needed 2 samples and
+    cpu_temp_high 3, so the WARNING landed a minute after its own CRITICAL.
+
+    A higher band may legitimately need LESS dwell - reacting faster to a worse
+    reading is the point of a second threshold - so the check is one-sided.
+
+    Returns (lower_alarm_type, higher_alarm_type) pairs that violate it.
+    """
+    by_metric: dict[str, list] = {}
+    for rule in rules:
+        if rule.metric_key and rule.threshold is not None and rule.enabled:
+            by_metric.setdefault(rule.metric_key, []).append(rule)
+
+    bad: list[tuple[str, str]] = []
+    for family in by_metric.values():
+        for low in family:
+            for high in family:
+                if low is high or low.operator != high.operator:
+                    continue
+                is_higher = (high.threshold > low.threshold
+                             if low.operator == ">"
+                             else high.threshold < low.threshold)
+                if not is_higher:
+                    continue
+                if (low.dwell_samples or 0) > (high.dwell_samples or 0):
+                    bad.append((low.alarm_type, high.alarm_type))
+    return bad
+
+
 def compare(value: float, operator: str, threshold: float) -> bool:
     match operator:
         case ">":
