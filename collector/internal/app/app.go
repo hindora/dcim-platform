@@ -376,6 +376,16 @@ func (a *App) poll(ctx context.Context, ep *models.Endpoint) {
 	}
 }
 
+// streamCount is how many endpoints the subscriber holds, and 0 when this
+// build has no subscriber - so `owned` stays the scheduler alone rather than
+// silently gaining a phantom population.
+func (a *App) streamCount() int {
+	if a.gnmiSubs == nil {
+		return 0
+	}
+	return a.gnmiSubs.Sessions()
+}
+
 // streamed reports an endpoint the gNMI subscriber owns rather than the
 // scheduler: a zero interval with push enabled, which is what the gnmi-stream
 // poll profile means.
@@ -464,7 +474,20 @@ func (a *App) heartbeatLoop(ctx context.Context) {
 				Hostname:        hostname,
 				StartedAt:       a.startedAt.UnixMicro(),
 				SentAt:          models.NowMicros(),
-				EndpointsOwned:  uint32(a.sched.Count()),
+				// Owned is the scheduler PLUS the streams. A stream-only
+				// gNMI endpoint is deliberately kept out of the scheduler -
+				// polling it as well would collect the same device twice -
+				// but the collector owns it just as much, and the health
+				// tracker counts it online like any other.
+				//
+				// Counting only the scheduler made owned exclude a population
+				// that online included, so the heartbeat reported 1344 online
+				// out of 1340 owned. That is not a collector in trouble, it is
+				// two counts measuring different sets, and it raised a
+				// permanent `collector_degraded` that no operator could act
+				// on. Now the same set is on both sides: online below owned
+				// means a real coverage gap, and above it is impossible.
+				EndpointsOwned:  uint32(a.sched.Count() + a.streamCount()),
 				EndpointsOnline: uint32(a.tracker.OnlineCount()),
 				PollsTotal:      a.pollsOK + a.pollsBad,
 				PollsFailed:     a.pollsBad,
