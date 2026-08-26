@@ -39,6 +39,9 @@ async def list_alarms(
                     + ". `alarm` demands action now and expects an "
                       "acknowledgement; `alert` is informational and belongs to "
                       "whoever schedules the work."),
+    room: str | None = Query(None,
+        description="Only conditions in this room, resolved through the rack "
+                    "or off the device - the same location the roll-up uses."),
     include_symptoms: bool = Query(
         False, description="Symptoms are hidden by default: one root cause with "
                            "twenty symptoms should read as one incident."),
@@ -58,7 +61,7 @@ async def list_alarms(
     items = await repo.list_alarms(
         session, states=states, severities=severity, device_id=device_id,
         alarm_type=alarm_type, categories=category, detections=detection,
-        response_classes=response_class,
+        response_classes=response_class, room_id=room,
         include_symptoms=include_symptoms, limit=limit)
     return {"items": items}
 

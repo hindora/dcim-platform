@@ -448,3 +448,83 @@ button.facet.on {
   font-size: 13px; font-weight: 400; color: var(--critical);
   padding-left: 10px;
 }
+
+/* --- expandable rows ------------------------------------------------------
+ *
+ * The room row answers "how many, and where". Opening it answers "which ones",
+ * and that answer is a nested table rather than a second panel: an operator
+ * comparing two rooms should be able to hold both open at once, which a modal
+ * on top of a modal cannot do.
+ */
+.estate-table th.twist-col, .estate-table td.twist-col {
+  width: 34px; padding-left: 8px; padding-right: 0;
+}
+.estate-table .twist {
+  width: 22px; height: 22px; padding: 0; border-radius: 3px; cursor: pointer;
+  background: none; border: 1px solid transparent; color: var(--text-faint);
+  font-size: 10px; line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: transform .14s ease, color .14s ease;
+}
+.estate-table .twist:hover { border-color: var(--border); color: var(--text); }
+.estate-table .twist.on { transform: rotate(90deg); color: var(--accent); }
+@media (prefers-reduced-motion: reduce) {
+  .estate-table .twist { transition: none; }
+}
+
+/* The room name is a second, larger hit area for the same toggle - so it must
+   not look like the link it is not. */
+.estate-table .name-cell.as-link {
+  background: none; border: none; padding: 0; font: inherit; color: inherit;
+  cursor: pointer; text-align: left;
+}
+.estate-table .name-cell.as-link:hover .n { color: var(--accent); }
+
+.estate-table tr.expanded { background: var(--bg-inset); }
+.estate-table tr.sub-row:hover { background: none; }
+.estate-table td.sub-cell {
+  padding: 0 0 0 34px; background: var(--bg-inset);
+  border-bottom: 1px solid var(--border);
+}
+.sub-wrap { padding: 12px 16px 16px 0; }
+.sub-caption {
+  font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--text-faint); margin-bottom: 8px;
+}
+.sub-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.sub-table thead th {
+  text-align: left; font-weight: 500; font-size: 10px; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--text-faint);
+  padding: 0 12px 6px 0; border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.sub-table thead th.mid, .sub-table tbody td.mid { text-align: center; }
+.sub-table tbody td {
+  padding: 7px 12px 7px 0; border-bottom: 1px solid var(--border-soft, var(--border));
+  vertical-align: top;
+}
+.sub-table tbody tr:last-child td { border-bottom: none; }
+.sub-table .n { font-weight: 600; }
+/* The message is the long column: it wraps, everything else does not, so the
+   row heights stay even until there is genuinely something long to say. */
+.sub-table tbody td:nth-child(5) { max-width: 46ch; }
+.sub-table thead th:not(:nth-child(5)), .sub-table tbody td:not(:nth-child(5)) {
+  white-space: nowrap;
+}
+.sub-table .chip { font-size: 10px; }
+
+/* Which of the two populations this condition is in - the same distinction the
+   ALARMS and ALERTS columns above are counting, said in words on every line so
+   an expanded room needs no key. */
+.cls-pill {
+  display: inline-block; min-width: 52px; text-align: center;
+  padding: 2px 7px; border-radius: 3px; font-size: 10px; letter-spacing: .07em;
+  border: 1px solid;
+}
+.cls-pill.alarm {
+  background: var(--tint-critical); border-color: var(--critical);
+  color: var(--critical);
+}
+.cls-pill.alert {
+  background: none; border-color: var(--border-strong); color: var(--text-muted);
+}

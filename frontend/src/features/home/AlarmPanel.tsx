@@ -18,20 +18,130 @@
  *  them exactly rather than approximately.
  */
 
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import {
   api,
+  type Alarm,
   type AlarmCategory,
   type AlarmDetection,
   type AlarmDrillRow,
   type AlarmTaxonomy,
 } from '../../api/client';
 import { CategoryGlyph } from '../../components/CategoryGlyph';
+import { StatusChip } from '../../components/StatusChip';
 import { metaFor } from '../../components/alertMeta';
+import { relativeTime } from '../../lib/format';
 
 const SEVERITIES = ['critical', 'major', 'minor', 'warning'] as const;
+
+// Worst first, so an opened room reads its own headline on the first line.
+const SEV_RANK: Record<string, number> = {
+  CRITICAL: 0, MAJOR: 1, MINOR: 2, WARNING: 3, INFO: 4,
+};
+
+/** `chiller_supply_temp_high` -> `Chiller supply temp high`. The raw key stays
+ *  on screen beside it where there is an instance, because a rule and a runbook
+ *  are written against the key - this is the reading copy, not a replacement. */
+function humanise(key: string) {
+  const words = key.replace(/[._-]+/g, ' ').trim();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+/** The conditions inside one room, alarms above alerts.
+ *
+ *  Fetched when the row is opened, not with the panel: forty rooms times their
+ *  conditions is a payload nobody asked for, and the panel's first job is to be
+ *  readable immediately.
+ *
+ *  Both classes, always - including inside an alarms-only panel. Once a row is
+ *  open the question has changed from "what must I answer" to "what is actually
+ *  wrong in this room", and the alert that has not crossed its threshold yet is
+ *  usually the context for the alarm that has.
+ */
+function RoomConditions({ roomId, categories, span }: {
+  roomId: string; categories: AlarmCategory[]; span: number;
+}) {
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['room-conditions', roomId, ...categories],
+    queryFn: () => api.roomConditions(roomId, categories),
+    staleTime: 15_000,
+  });
+
+  const items = [...(data?.items ?? [])].sort((a, b) => {
+    const cls = (x: Alarm) => (x.response_class === 'alert' ? 1 : 0);
+    if (cls(a) !== cls(b)) return cls(a) - cls(b);
+    const ra = SEV_RANK[a.severity] ?? 9;
+    const rb = SEV_RANK[b.severity] ?? 9;
+    if (ra !== rb) return ra - rb;
+    return b.last_seen.localeCompare(a.last_seen);
+  });
+
+  const alarms = items.filter((a) => a.response_class !== 'alert').length;
+  const alerts = items.length - alarms;
+
+  return (
+    <td className="sub-cell" colSpan={span}>
+      <div className="sub-wrap">
+        {isLoading && <p className="muted small">Loading the conditions…</p>}
+        {error && <p className="muted small">Could not load this room.</p>}
+        {data && !items.length && (
+          <p className="muted small">Nothing open here in this domain.</p>
+        )}
+        {items.length > 0 && (
+          <>
+            <div className="sub-caption">
+              {alarms} alarm{alarms === 1 ? '' : 's'}
+              {' · '}{alerts} alert{alerts === 1 ? '' : 's'}
+            </div>
+            <table className="sub-table">
+              <thead>
+                <tr>
+                  <th>Class</th><th>Severity</th><th>Condition</th>
+                  <th>Device</th><th>Message</th>
+                  <th className="mid">Since</th><th className="mid">Last seen</th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((a) => {
+                  const alert = a.response_class === 'alert';
+                  return (
+                    <tr key={a.id}>
+                      <td>
+                        <span className={`cls-pill ${alert ? 'alert' : 'alarm'}`}>
+                          {alert ? 'ALERT' : 'ALARM'}
+                        </span>
+                      </td>
+                      <td><StatusChip status={a.severity} /></td>
+                      <td>
+                        <span className="n">{humanise(a.alarm_type)}</span>
+                        {a.instance && (
+                          <span className="mono muted"> {a.instance}</span>
+                        )}
+                      </td>
+                      <td>
+                        {a.device_id
+                          ? <Link to={`/devices/${a.device_id}`}>{a.device_name}</Link>
+                          : <span className="muted">platform</span>}
+                        {a.rack_name && (
+                          <span className="muted small"> · {a.rack_name}</span>
+                        )}
+                      </td>
+                      <td className="muted">{a.message}</td>
+                      <td className="mid muted">{relativeTime(a.first_seen)}</td>
+                      <td className="mid muted">{relativeTime(a.last_seen)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </>
+        )}
+      </div>
+    </td>
+  );
+}
 
 type SortKey = 'room' | 'site' | 'qty' | 'alerts' | 'devices';
 
@@ -100,6 +210,9 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
   const [dir, setDir] = useState<1 | -1>(-1);
   const [pageSize, setPageSize] = useState(25);
   const [page, setPage] = useState(0);
+  // Which rooms are open. A set, not one id: comparing two rooms is the
+  // ordinary reason anybody expands anything.
+  const [open, setOpen] = useState<Set<string>>(() => new Set());
 
   // Escape closes. A surface that covers the page and can only be dismissed
   // with the mouse traps a keyboard user.
@@ -203,6 +316,14 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
       + 'behind it.'
     : definitions.map((c) => c.description).join(' ');
 
+  function toggle(roomId: string) {
+    setOpen((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(roomId)) next.add(roomId);
+      return next;
+    });
+  }
+
   function onSort(k: SortKey) {
     if (k === sort) { setDir((d) => (d === 1 ? -1 : 1)); return; }
     setSort(k);
@@ -288,6 +409,7 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
               <table className="estate-table">
                 <thead>
                   <tr>
+                    <th className="twist-col" aria-label="Expand" />
                     <SortHead label="Room" k="room" sort={sort} dir={dir} onSort={onSort} />
                     <SortHead label="Site" k="site" sort={sort} dir={dir} onSort={onSort} />
                     <th className="mid">Floor</th>
@@ -305,11 +427,29 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((r) => (
-                    <tr key={r.room_id}
-                        className={r.critical ? 'lead-critical' : 'lead-warn'}>
+                  {rows.map((r) => {
+                    const isOpen = open.has(r.room_id);
+                    return (
+                      <Fragment key={r.room_id}>
+                        <tr className={(r.critical ? 'lead-critical' : 'lead-warn')
+                                       + (isOpen ? ' expanded' : '')}>
+                      <td className="twist-col">
+                        <button className={`twist ${isOpen ? 'on' : ''}`}
+                                onClick={() => toggle(r.room_id)}
+                                aria-expanded={isOpen}
+                                aria-label={`${isOpen ? 'Hide' : 'Show'} the`
+                                            + ` conditions in ${r.room_name}`}>
+                          <span aria-hidden>▸</span>
+                        </button>
+                      </td>
                       <td>
-                        <span className="name-cell"><span className="n">{r.room_name}</span></span>
+                        {/* The name opens the row as well. A 20px chevron is a
+                            small target for something the row is entirely
+                            about. */}
+                        <button className="name-cell as-link"
+                                onClick={() => toggle(r.room_id)}>
+                          <span className="n">{r.room_name}</span>
+                        </button>
                       </td>
                       <td className="muted">{r.site_code}</td>
                       <td className="mid muted">{r.floor ?? '—'}</td>
@@ -335,8 +475,16 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
                           ENTER
                         </Link>
                       </td>
-                    </tr>
-                  ))}
+                        </tr>
+                        {isOpen && (
+                          <tr className="sub-row">
+                            <RoomConditions roomId={r.room_id} categories={categories}
+                                            span={withAlerts ? 10 : 9} />
+                          </tr>
+                        )}
+                      </Fragment>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

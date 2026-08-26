@@ -212,6 +212,7 @@ async def list_alarms(session: AsyncSession, *, states: list[str] | None = None,
                       categories: list[str] | None = None,
                       detections: list[str] | None = None,
                       response_classes: list[str] | None = None,
+                      room_id: str | None = None,
                       include_symptoms: bool = False,
                       limit: int = 100) -> list[dict[str, Any]]:
     where, params = [], {"limit": limit}
@@ -239,6 +240,19 @@ async def list_alarms(session: AsyncSession, *, states: list[str] | None = None,
     if response_classes:
         where.append("a.response_class = ANY(:response_classes)")
         params["response_classes"] = response_classes
+    # Scoped to a room, resolved the way the rest of the platform resolves
+    # location: through the rack when a device is racked, and off the device
+    # itself when it stands on the floor. `_ALARM_SELECT` already coalesces
+    # those two paths, so this filters on the same room the roll-up counted.
+    if room_id:
+        # Decommissioned kit drops out with the room, and only with it: the
+        # roll-up that produced the number on the row counts live devices, so
+        # an expansion that included retired ones would not add up to it. An
+        # unscoped list keeps them - chasing a cleanup is exactly when somebody
+        # wants to see a dead device's open alarms.
+        where.append("rm.id = CAST(:room_id AS uuid)")
+        where.append("d.lifecycle <> 'decommissioned'")
+        params["room_id"] = room_id
     if not include_symptoms:
         # Roots only by default. An alarm list showing 21 rows for one OOB
         # switch failure is the reason operators stop looking at alarm lists.

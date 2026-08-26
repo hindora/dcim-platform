@@ -162,6 +162,10 @@ export interface Alarm {
   datacenter_code?: string | null;
   room_name?: string | null;
   rack_name?: string | null;
+  /** Stamped at raise time, not derived on read - see the taxonomy doc. */
+  category?: AlarmCategory | null;
+  detection?: AlarmDetection | null;
+  response_class?: ResponseClass | null;
 }
 
 export interface AlarmSummary {
@@ -1081,6 +1085,21 @@ export const api = {
       + categories.map((c) => `category=${encodeURIComponent(c)}`).join('&')),
 
   alarmTaxonomy: () => request<AlarmTaxonomy>('/estate/alarm-categories'),
+
+  /** The conditions behind one row of an alarm panel.
+   *
+   *  Both classes, always. The row above it splits alarms from alerts because
+   *  the split is what an operator triages on; once the row is open the
+   *  question has changed to "what is actually wrong in this room", and
+   *  answering it with half the conditions would make the panel look broken
+   *  against its own alert column.
+   *
+   *  Roots only and open only, the same two filters the roll-up counts with,
+   *  so the expansion adds up to the numbers on the row. */
+  roomConditions: (roomId: string, categories: string[]) =>
+    request<{ items: Alarm[] }>(
+      `/alarms?limit=500&room=${encodeURIComponent(roomId)}`
+      + categories.map((c) => `&category=${encodeURIComponent(c)}`).join('')),
 
   /** Who this instance belongs to. Unauthenticated on purpose: the shell needs
    *  a name before anybody has signed in. */
