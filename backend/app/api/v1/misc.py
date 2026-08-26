@@ -132,14 +132,19 @@ async def ready(response: Response,
     # read null and passed. The longer the pipeline had been dead, the
     # healthier it looked. It is unbounded now, so the number grows instead of
     # disappearing, and a table with no rows at all is its own answer.
+    #
+    # Presence comes from the max and not from a count. `count(*) > 0` here was
+    # a full scan of a 57-million-row hypertable - 60 seconds, measured - which
+    # is a readiness probe that fails its own deadline and would have an
+    # orchestrator restarting a healthy process. A table with no rows has no
+    # maximum, which answers the same question for 4.7 ms.
     try:
         row = (await session.execute(text("""
-            SELECT extract(epoch FROM (now() - max(ts))) AS age_s,
-                   count(*) > 0 AS present
+            SELECT extract(epoch FROM (now() - max(ts))) AS age_s
             FROM telemetry_sample
         """))).mappings().first()
         age = row["age_s"] if row else None
-        present = bool(row["present"]) if row else False
+        present = age is not None
         checks["telemetry_age_seconds"] = float(age) if age is not None else None
         checks["telemetry_present"] = present
         if not present:

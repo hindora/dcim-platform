@@ -65,16 +65,27 @@ async def _telemetry_freshness(session: AsyncSession) -> tuple[float | None, boo
     longer than the window, so the metric vanishes exactly when the pipeline
     dies. Every dashboard then reads "no data" and every threshold stops
     evaluating, at the moment they were needed.
+
+    `present` is derived from the max, NOT from a count. It used to be
+    ``count(*) > 0`` in this same statement, and on a 57-million-row hypertable
+    with compressed chunks that is a full scan: 60 SECONDS, measured, against
+    4.7 ms for the max alone. This runs inside the ingest worker's tick, so the
+    monitor was stalling the pipeline it exists to watch - the worker spent most
+    of every tick in here, ingest ran at roughly 60% of the rate the collector
+    was producing, and the estate's data fell an hour behind while the platform
+    reported itself healthy in between scans.
+
+    The two forms mean the same thing anyway: a table with no rows has no
+    maximum, and one with a maximum has rows.
     """
     row = (await session.execute(text("""
-        SELECT extract(epoch FROM (now() - max(ts))) AS age_s,
-               count(*) > 0 AS present
+        SELECT extract(epoch FROM (now() - max(ts))) AS age_s
           FROM telemetry_sample
     """))).mappings().first()
-    if row is None:
+    age = row["age_s"] if row is not None else None
+    if age is None:
         return None, False
-    age = row["age_s"]
-    return (float(age) if age is not None else None), bool(row["present"])
+    return float(age), True
 
 
 async def _collectors(session: AsyncSession) -> list[rules.Collector]:
