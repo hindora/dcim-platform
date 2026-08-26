@@ -289,6 +289,12 @@ BY_ALARM_TYPE: dict[str, str] = {
     # --- IT equipment: one host
     "cpu_high": IT_EQUIPMENT,
     "cpu_sustained": IT_EQUIPMENT,
+    # Control-plane saturation on network gear. IT equipment, not network:
+    # the category says whose kit is failing, and this is one box misbehaving
+    # rather than a path between two of them - the same reason a failed fan in
+    # a switch is not a network condition.
+    "cpu_saturated": IT_EQUIPMENT,
+    "server_cpu_saturated": IT_EQUIPMENT,
     "cpu_temp_high": IT_EQUIPMENT,
     "cpu_temp_critical": IT_EQUIPMENT,
     "memory_high": IT_EQUIPMENT,
