@@ -355,6 +355,28 @@ class IngestWorker:
                     or datetime.now(UTC)
                 quality = _QUALITY_NAMES.get(s.quality, "good")
 
+                # This endpoint has produced. Marked HERE, before the value
+                # type is dispatched, because every branch below returns
+                # early and only the gauge one used to record it - so an
+                # endpoint whose whole output is counters, booleans or text
+                # was written to the database every cycle and still counted
+                # as having delivered nothing.
+                #
+                # Not a corner case. `sys_uptime` is a counter and the only
+                # metric the `system` group yields, so EVERY endpoint on a
+                # system-only profile - 486 of them, every BMC and every
+                # facility card - sat in a permanent `telemetry_stale` while
+                # its samples landed on time. Anything bool-only, which is
+                # what a BACnet fault-point endpoint is, had the same fate.
+                #
+                # The rule was reporting this blind spot in the ingest path
+                # as an equipment condition, and nobody could have cleared
+                # it from the equipment end.
+                if s.endpoint_id:
+                    prev = produced.get(s.endpoint_id)
+                    if prev is None or observed > prev:
+                        produced[s.endpoint_id] = observed
+
                 if s.value_type == int(ValueType.TEXT):
                     # A state word, not a number. Falling through to the gauge
                     # branch stored float(double_value) - which is 0 for every
@@ -431,10 +453,6 @@ class IngestWorker:
                     "metric": s.metric, "instance": s.instance, "value": value,
                     "observed_at": observed, "endpoint_id": s.endpoint_id,
                 })
-                if s.endpoint_id:
-                    prev = produced.get(s.endpoint_id)
-                    if prev is None or observed > prev:
-                        produced[s.endpoint_id] = observed
 
             await writer.copy_samples(session, sample_rows)
             await writer.insert_bools(session, bool_rows)
