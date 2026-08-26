@@ -205,8 +205,11 @@ async def test_site_power_capacity_prefers_the_site_rating(monkeypatch):
 async def test_panel_totals_reconcile_with_the_counter_that_opened_it(monkeypatch):
     """Everything open is the headline; the actionable part is stated beside it.
 
-    Both have to account for the conditions that belong to no room, or the
-    panel appears to have lost rows the counter was including.
+    Both are the ROWS, and only the rows. The counter that opens this panel
+    counts located conditions, so anything that belongs to no room is reported
+    beside the total rather than inside it - otherwise the panel's headline
+    disagrees with the rows underneath it, which is the failure this whole area
+    exists to prevent.
     """
     monkeypatch.setattr(estate.repo, "alarms_by_room", _returns([{
         "room_id": "r1", "room_name": "Hall A", "floor": "1",
@@ -217,9 +220,10 @@ async def test_panel_totals_reconcile_with_the_counter_that_opened_it(monkeypatc
                         _returns({"total": 4, "alarms": 1}))
 
     out = await estate.alarms(_FakeSession(), categories=["visibility"])
-    assert out["total"] == 3 + 10 + 4
-    assert out["alarms"] == 3 + 1
+    assert out["total"] == 3 + 10
+    assert out["alarms"] == 3
     assert out["unlocated"] == 4
+    assert out["unlocated_alarms"] == 1
 
 
 @pytest.mark.asyncio

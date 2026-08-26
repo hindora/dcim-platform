@@ -36,6 +36,7 @@ import {
   type AlarmCategory,
   type AlarmCounts,
   type AlarmTaxonomy,
+  type PlatformState,
   type SiteRoom,
   type SiteRow,
   type SitesOverview,
@@ -225,6 +226,77 @@ function IndicatorCells({ alarms, labels, scope, onOpen }: {
   );
 }
 
+/** How old telemetry is, said the way somebody would say it out loud. */
+function age(seconds: number | null): string {
+  if (seconds === null) return 'never';
+  if (seconds < 90) return `${Math.round(seconds)}s old`;
+  if (seconds < 5400) return `${Math.round(seconds / 60)} min old`;
+  return `${Math.round(seconds / 3600)}h old`;
+}
+
+const MONITORING_WORD: Record<PlatformState['state'], string> = {
+  ok: 'OK', degraded: 'DEGRADED', impaired: 'IMPAIRED', blind: 'BLIND',
+};
+
+/** The state of the monitoring, beside the estate's counters and never inside
+ *  them.
+ *
+ *  It is a badge rather than a seventh counter on purpose. A dead pipeline is
+ *  not one more thing to triage - it is the reason the other six numbers
+ *  cannot be trusted, and a console that expresses that as "+2" has told the
+ *  reader the smaller half of the truth.
+ */
+function MonitoringBadge({ platform }: { platform?: PlatformState }) {
+  const state = platform?.state ?? 'ok';
+  const open = (platform?.alarms ?? 0) + (platform?.alerts ?? 0);
+  const detail = platform
+    ? `Newest telemetry ${age(platform.telemetry_age_s)}`
+      + (open ? ` · ${open} open condition${open === 1 ? '' : 's'}` : '')
+    : 'Checking';
+  return (
+    <Link className={`monitor ${state}`} to="/platform"
+          title={`${detail}. The estate counters beside this do not include `
+                 + 'the monitoring\u2019s own conditions.'}>
+      <span className="dot" aria-hidden />
+      <span className="lbl">MONITORING</span>
+      <span className="val">{MONITORING_WORD[state]}</span>
+    </Link>
+  );
+}
+
+/** What a degraded pipeline has done to the rest of the page.
+ *
+ *  The banner states the consequence, not the fault: an operator does not need
+ *  to know that the ingest worker's heartbeat is 140 seconds old, they need to
+ *  know that the thermal map they are reading is nine minutes stale. The
+ *  conditions themselves follow, in their own words, for whoever does.
+ */
+function MonitoringBanner({ platform }: { platform?: PlatformState }) {
+  if (!platform || platform.state === 'ok') return null;
+  const { conditions, telemetry_age_s, telemetry_stale } = platform;
+  return (
+    <div className={`monitor-banner ${platform.state}`} role="status">
+      <span className="head">
+        {telemetry_stale
+          ? `Telemetry is ${age(telemetry_age_s)} — the numbers below may not `
+            + 'describe the estate as it is now'
+          : 'The monitoring is degraded — the numbers below are still arriving'}
+      </span>
+      {conditions.slice(0, 3).map((c) => (
+        <span key={`${c.alarm_type}:${c.instance}`} className="cond">
+          <b>{c.alarm_type}</b> {c.message}
+          <i> since {new Date(c.first_seen).toLocaleTimeString([], {
+            hour: '2-digit', minute: '2-digit' })}</i>
+        </span>
+      ))}
+      {conditions.length > 3 && (
+        <span className="cond muted">+{conditions.length - 3} more</span>
+      )}
+      <Link className="row-btn" to="/platform">PLATFORM HEALTH</Link>
+    </div>
+  );
+}
+
 export function Home() {
   const [tab, setTab] = useState<Tab>('sites');
   const [search, setSearch] = useState('');
@@ -320,6 +392,7 @@ export function Home() {
       <section className="alert-strip">
         <span className="site-title">{org}</span>
         <span className="spacer" />
+        <MonitoringBadge platform={data?.platform} />
         <button className="caption" onClick={() => setLegendOpen(true)}
                 title="What each counter counts, and what this console leaves out">
           <svg width="17" height="17" viewBox="0 0 16 16" aria-hidden
@@ -389,6 +462,8 @@ export function Home() {
         })}
       </section>
 
+      <MonitoringBanner platform={data?.platform} />
+
       <div className="home-body">
         <section className="sites-panel">
           <div className="sites-toolbar">
@@ -422,16 +497,6 @@ export function Home() {
           </div>
 
           {error && <div className="banner">Failed to load sites: {String(error)}</div>}
-
-          {!!data?.unlocated_alarms && (
-            <p className="muted small" style={{ margin: 0, padding: '0 22px 10px' }}>
-              {data.unlocated_alarms} platform{' '}
-              {data.unlocated_alarms === 1 ? 'alarm belongs' : 'alarms belong'} to no
-              site, so {data.unlocated_alarms === 1 ? 'it is' : 'they are'} counted in
-              the strip above but not in the table.{' '}
-              <Link to="/platform">Platform health</Link>
-            </p>
-          )}
 
           {/* The site these rooms belong to: a line, not a second table.
               Stacking two tables with their own headers and their own

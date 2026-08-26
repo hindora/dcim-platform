@@ -689,13 +689,38 @@ export interface Instance {
   environment: string;
 }
 
+/** The state of the monitoring itself - deliberately NOT part of the estate's
+ *  counters.
+ *
+ *  Location decides: a condition in a room is the estate's, a condition in the
+ *  pipeline is the platform's. That keeps the estate figure equal to the sum
+ *  of the site rows, and it puts the pipeline where an operator can see what it
+ *  has done to everything else on the page - which a "+2" on an alarm count
+ *  never said. */
+export interface PlatformState {
+  /** ok · degraded (something informational) · impaired (an alarm) ·
+   *  blind (critical, or the data has stopped arriving). */
+  state: 'ok' | 'degraded' | 'impaired' | 'blind';
+  alarms: number;
+  alerts: number;
+  /** Age of the newest sample in the estate. `null` means none has ever
+   *  landed, which is a different claim from "the newest one is old". */
+  telemetry_age_s: number | null;
+  /** The age past which the platform stops vouching for its own numbers.
+   *  Sent so the UI cannot disagree with the badge about what stale means. */
+  telemetry_trusted_s: number;
+  telemetry_stale: boolean;
+  conditions: {
+    alarm_type: string; instance: string; severity: string;
+    response_class: string; message: string; first_seen: string;
+  }[];
+}
+
 export interface SitesOverview {
   sites: SiteRow[];
   totals: AlarmCounts;
-  /** Open root alarms that resolve to no site - platform alarms such as
-   *  `ingest_stalled`. Counted in `totals`, absent from every row, so the page
-   *  says so rather than leaving the columns not adding up. */
-  unlocated_alarms: number;
+  /** The monitoring's own state. Never added to `totals`. */
+  platform: PlatformState;
   as_of: string;
 }
 
@@ -889,14 +914,16 @@ export interface AlarmDrillRow {
 export interface AlarmDrill {
   categories: AlarmCategory[];
   rows: AlarmDrillRow[];
-  /** Every open condition in the category - what the counter that opened the
-   *  panel shows. Rows plus `unlocated`. */
+  /** Every open condition in the category, in a room - exactly what the rows
+   *  add up to and exactly what the counter that opened the panel counts. */
   total: number;
   /** The actionable part of `total`. */
   alarms: number;
+  /** Platform conditions in this category, which belong to no room and are in
+   *  NEITHER number above. Reported so the panel can name what it is not
+   *  counting and point at the monitoring badge that is. */
   unlocated: number;
-  /** The alarm part of `unlocated`, so an alarms-only view can leave the
-   *  informational ones out of its total as well as out of its rows. */
+  /** The alarm part of `unlocated`. */
   unlocated_alarms: number;
   /** Folded from the rows above, so the facets and the rows can never be two
    *  different instants of the estate. Excludes `unlocated` - those have no

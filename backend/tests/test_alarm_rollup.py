@@ -198,13 +198,17 @@ async def test_the_alert_column_is_context_and_never_a_total(monkeypatch):
     assert sum(out["by_detection"].values()) == 3
 
 
-async def test_unlocated_alarms_are_counted_in_the_total_and_not_in_the_facets(
-        monkeypatch):
-    """A platform alarm has no room, so it has no row to face against.
+async def test_platform_conditions_are_named_but_not_counted(monkeypatch):
+    """A platform condition has no room, so it has no row - and no place here.
 
-    It still belongs in the total - the strip counts it, and a drill-down whose
-    total disagreed with the counter that opened it would send an operator
-    looking for rows that were never there.
+    LOCATION DECIDES. The panel's total is what its rows add up to, the strip
+    counter that opened it counts the same population, and the monitoring badge
+    carries the pipeline's own conditions. Adding them here is what used to
+    make the estate read 2 while both of its sites read 0.
+
+    They are still REPORTED, because the panel has to be able to say what it is
+    not counting and point at the thing that is. Silence would be the one
+    unacceptable answer.
     """
     monkeypatch.setattr(estate_service.repo, "alarms_by_room",
                         _returns([_alert_row(3, critical=3, detected_absence=3)]))
@@ -213,9 +217,10 @@ async def test_unlocated_alarms_are_counted_in_the_total_and_not_in_the_facets(
 
     out = await estate_service.alarms(_FakeSession(), categories=["visibility"])
 
-    assert out["total"] == 5
-    assert out["alarms"] == 5
+    assert out["total"] == 3
+    assert out["alarms"] == 3
     assert out["unlocated"] == 2
+    assert out["unlocated_alarms"] == 2
     assert sum(out["by_severity"].values()) == 3
 
 

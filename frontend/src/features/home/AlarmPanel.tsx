@@ -537,10 +537,13 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
 
           {unlocated > 0 && (
             <p className="muted small" style={{ marginTop: 14 }}>
-              {unlocated} of these belong to no room — platform alarms hang off
-              the pipeline rather than off a device on a floor, so they are
-              counted in the total above, have no row, and are left out of the
-              facets. <Link to="/platform">Platform health →</Link>
+              Not counted above: {unlocated} condition{unlocated === 1 ? '' : 's'}
+              {' '}in the monitoring itself. {unlocated === 1 ? 'It hangs' : 'They hang'}
+              {' '}off the pipeline rather than off a device on a floor, so
+              {unlocated === 1 ? ' it has' : ' they have'} no room, no site and no
+              row here — the MONITORING badge carries
+              {unlocated === 1 ? ' it' : ' them'}.{' '}
+              <Link to="/platform">Platform health →</Link>
             </p>
           )}
         </div>

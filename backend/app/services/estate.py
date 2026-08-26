@@ -572,15 +572,17 @@ async def alarms(session: AsyncSession, *,
     return {
         "categories": categories,
         "rows": out_rows,
-        # What the counter shows: every open condition in this category.
-        "total": located_alarms + located_alerts + unlocated["total"],
+        # What the counter shows: every open condition in this category, in a
+        # room. Platform conditions are NOT in here and are not in the counter
+        # that opened this panel either - location decides which of the two
+        # populations a condition belongs to, so the rows add up to the
+        # headline and the headline adds up to the strip.
+        "total": located_alarms + located_alerts,
         # The part of it that needs answering, so the panel can say both
         # without the reader adding a column by eye.
-        "alarms": located_alarms + unlocated["alarms"],
-        # Platform conditions belong to no room. Reported separately so the
-        # panel's rows and the counter that opened it can be reconciled, and
-        # split by class so an alarms-only view can leave the alerts out of
-        # its total as well as out of its rows.
+        "alarms": located_alarms,
+        # Reported so the panel can name what it is NOT counting and point at
+        # the badge that is. Split by class for the same reason the rows are.
         "unlocated": unlocated["total"],
         "unlocated_alarms": unlocated["alarms"],
         # Facet totals across the located rows. Unlocated alarms are excluded

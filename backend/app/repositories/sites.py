@@ -241,24 +241,33 @@ async def room_rollups(session: AsyncSession,
 async def fleet_alert_totals(session: AsyncSession) -> dict[str, Any]:
     """Fleet-wide counts for the alert strip across the top of the page.
 
-    Deliberately does NOT join through to a location.
+    LOCATION DECIDES. The strip counts the conditions the table below it can
+    place - so the estate figure is the sum of the site rows, exactly, and a
+    reader who adds the column up is never told they are wrong by a footnote.
 
-    Platform alarms - `ingest_stalled`, `collector_stale`, `ingest_lag_high` -
-    hang off devices that resolve to no datacenter, so a location join silently
-    drops them. Excluding them from a per-SITE row is correct, since a stalled
-    ingest worker is not DC1's fault. Excluding them from the strip is not: it
-    puts "Datapoint Alerts: 0" at the top of the screen at the exact moment the
-    pipeline has stopped delivering datapoints, which is the one failure this
-    page must never hide.
+    Platform conditions - `ingest_stalled`, `collector_stale`, `ingest_lag_high`
+    - hang off devices that resolve to no datacenter, and they are NOT in here.
+    That is not the same as hiding them, and hiding them would be the one
+    failure this page may not commit: silence from the pipeline looks exactly
+    like silence from the datacenter. They go to their own indicator, which is
+    the arrangement every alarm standard arrives at for system diagnostics -
+    ISA-18.2 keeps them off the operator's summary because the operator can
+    take no action about them and their presence there ruins the alarm-rate
+    figure the standard is built around. Ours says something the counter never
+    could: when the pipeline is impaired, every other number on this page is
+    stale.
     """
     row = (await session.execute(text(f"""
-        WITH alarm_cat AS (
+        WITH {_DEV_CTE},
+        alarm_cat AS (
             SELECT a.severity::text AS severity,
                    a.category       AS category,
                    a.detection      AS detection,
                    a.response_class AS response_class
             FROM alarm a
+            JOIN dev ON dev.device_id = a.device_id
             WHERE a.state <> 'CLEARED' AND a.is_symptom = false
+              AND dev.datacenter_id IS NOT NULL
         )
         SELECT {_ALL_CATEGORY_COLUMNS},
                {_SEVERITY_COLUMNS}
@@ -267,22 +276,57 @@ async def fleet_alert_totals(session: AsyncSession) -> dict[str, Any]:
     return dict(row) if row else {}
 
 
-async def unlocated_alarms(session: AsyncSession) -> int:
-    """Open root alarms that belong to no site.
+async def platform_conditions(session: AsyncSession) -> list[dict[str, Any]]:
+    """The open conditions that belong to no site: the monitoring's own.
 
-    Surfaced so the difference between the strip total and the sum of the table
-    rows is explained on the page rather than read as an arithmetic error.
+    The exact complement of what `fleet_alert_totals` counts, by construction -
+    same CTE, opposite side of the same `IS NULL`. Nothing can fall between the
+    two, and nothing can be counted by both.
+
+    Returned as rows rather than as a number because the badge these feed is
+    not a count of things to do. "Ingest stalled since 21:14" tells an operator
+    that the green tiles beside it are describing a datacenter nobody has heard
+    from in seven minutes; "2" does not.
     """
-    row = (await session.execute(text(f"""
+    rows = (await session.execute(text(f"""
         WITH {_DEV_CTE}
-        SELECT count(*) AS n
+        SELECT a.alarm_type,
+               a.instance,
+               a.severity::text      AS severity,
+               a.response_class      AS response_class,
+               a.message,
+               a.first_seen,
+               a.state::text         AS state
         FROM alarm a
         LEFT JOIN dev ON dev.device_id = a.device_id
         WHERE a.state <> 'CLEARED' AND a.is_symptom = false
-          AND a.response_class = '{ALARM}'
           AND dev.datacenter_id IS NULL
+        ORDER BY CASE a.severity
+                     WHEN 'CRITICAL' THEN 0 WHEN 'MAJOR' THEN 1
+                     WHEN 'MINOR' THEN 2 WHEN 'WARNING' THEN 3 ELSE 4 END,
+                 a.first_seen
+    """))).mappings().all()
+    return [dict(r) for r in rows]
+
+
+async def telemetry_age_seconds(session: AsyncSession) -> float | None:
+    """How old the newest sample in the estate is.
+
+    The number behind the trust statement. `max(ts)` on the hypertable is a
+    chunk-ordered lookup, not a scan - deliberately NOT the presence check the
+    platform monitor does, which counts rows and has no business on a page
+    load.
+
+    None means no sample has ever landed, which is a different claim from
+    "the newest one is old" and is left for the caller to word.
+    """
+    row = (await session.execute(text("""
+        SELECT extract(epoch FROM (now() - max(ts))) AS age_s
+        FROM telemetry_sample
     """))).mappings().first()
-    return int(row["n"]) if row else 0
+    if row is None or row["age_s"] is None:
+        return None
+    return max(0.0, float(row["age_s"]))
 
 
 async def site_power(session: AsyncSession, datacenter_id: str) -> dict[str, Any]:

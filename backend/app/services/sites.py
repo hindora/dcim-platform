@@ -16,7 +16,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.alert_taxonomy import CATEGORIES, DETECTIONS
+from app.core.alert_taxonomy import ALARM, CATEGORIES, DETECTIONS
 from app.repositories import sites as repo
 from app.services import pue as pue_service
 
@@ -102,12 +102,73 @@ def _weather(rows: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# How stale the newest sample may be before the page stops vouching for its
+# own numbers. Poll intervals across the estate run to 60 s, and a collector may
+# be a cycle late without anything being wrong, so this is deliberately several
+# cycles rather than a tight bound - a trust warning that cries wolf is one
+# nobody reads.
+_TELEMETRY_TRUSTED_S = 300.0
+
+
+async def _platform_health(session: AsyncSession) -> dict[str, Any]:
+    """The state of the monitoring, kept out of the estate's counters.
+
+    Two things, and they are different claims:
+
+    * the open platform conditions - what is broken in the pipeline;
+    * the age of the newest sample - what that has done to every other number
+      on the page.
+
+    The second is the one that matters to a reader. A stalled ingest worker is
+    the platform team's problem; telemetry that is nine minutes old is
+    everybody's, because it means the thermal map they are looking at is nine
+    minutes old too.
+
+    `state` is the badge: ok, degraded (something informational), impaired
+    (an alarm), blind (a critical alarm, or telemetry that has stopped).
+    """
+    conditions = await repo.platform_conditions(session)
+    age_s = await repo.telemetry_age_seconds(session)
+
+    alarms = [c for c in conditions if c["response_class"] == ALARM]
+    worst = conditions[0]["severity"] if conditions else None
+    stale = age_s is not None and age_s > _TELEMETRY_TRUSTED_S
+
+    if worst == "CRITICAL" or age_s is None or stale:
+        state = "blind"
+    elif alarms:
+        state = "impaired"
+    elif conditions:
+        state = "degraded"
+    else:
+        state = "ok"
+
+    return {
+        "state": state,
+        "alarms": len(alarms),
+        "alerts": len(conditions) - len(alarms),
+        "telemetry_age_s": round(age_s, 1) if age_s is not None else None,
+        # The threshold travels with the number: a UI that hard-codes its own
+        # idea of "stale" will disagree with the badge sooner or later.
+        "telemetry_trusted_s": _TELEMETRY_TRUSTED_S,
+        "telemetry_stale": stale or age_s is None,
+        "conditions": [{
+            "alarm_type": c["alarm_type"],
+            "instance": c["instance"],
+            "severity": c["severity"],
+            "response_class": c["response_class"],
+            "message": c["message"],
+            "first_seen": c["first_seen"],
+        } for c in conditions],
+    }
+
+
 async def overview(session: AsyncSession) -> dict[str, Any]:
     """Everything the home page table and alert strip need, in one request."""
     sites = await repo.site_rollups(session)
     rooms = await repo.room_rollups(session)
     totals = await repo.fleet_alert_totals(session)
-    unlocated = await repo.unlocated_alarms(session)
+    platform = await _platform_health(session)
 
     by_site: dict[str, list[dict[str, Any]]] = {}
     for r in rooms:
@@ -147,10 +208,9 @@ async def overview(session: AsyncSession) -> dict[str, Any]:
             "rooms": by_site.get(s["id"], []),
         } for s in sites],
         "totals": _alarms(totals),
-        # The strip counts platform alarms; the table cannot place them. This
-        # is the difference, so the page can say so instead of leaving a reader
-        # to find that the columns do not add up.
-        "unlocated_alarms": unlocated,
+        # Not part of the estate arithmetic above: the state of the monitoring
+        # itself. See `_platform_health`.
+        "platform": platform,
         "as_of": datetime.now(UTC),
     }
 
