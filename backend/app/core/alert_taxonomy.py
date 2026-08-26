@@ -268,12 +268,36 @@ BY_ALARM_TYPE: dict[str, str] = {
     "db_pool_exhausted": VISIBILITY,
     "auth_failure": VISIBILITY,
 
-    # --- network: the fabric, not our view of it
+    # --- network: the PATH between boxes, not the boxes on it
+    #
+    # Everything here has blast radius past the device that reported it: a dead
+    # link, a dropped adjacency, a port discarding frames. The fix is a cable,
+    # an optic, a peer or a config, and the people who own it are looking at a
+    # topology, not at a chassis.
+    #
+    # What is deliberately NOT here: a switch's own CPU, memory, fan or
+    # temperature. Those are one box being unwell, they are fixed the same way
+    # a server is fixed, and filing them here would make the NETWORK counter
+    # answer "is some switch busy" when the question it exists to answer is
+    # "is the fabric intact".
     "link_down": NETWORK,
     "link_flap": NETWORK,
     "bgp_session_down": NETWORK,
     "if_errors_high": NETWORK,
     "if_discards_high": NETWORK,
+
+    # --- the box, when the box happens to be network gear
+    #
+    # These arrive as traps and had no entry, so they fell through to the role
+    # layer - which sent every one of them to NETWORK because the device is a
+    # switch. A firewall with a pinned control plane was filed as a fabric
+    # fault while the same condition on the same box, arriving by poll, was
+    # filed as IT equipment. Two categories, one fact.
+    "cpu_high_usage": IT_EQUIPMENT,
+    "memory_high_usage": IT_EQUIPMENT,
+    "device_restarted": IT_EQUIPMENT,
+    "server_power_on": IT_EQUIPMENT,   # server_power_off is filed with the rest
+    "rack_failure": IT_EQUIPMENT,
 
     # --- environmental: the room
     "ambient_temp_high": ENVIRONMENTAL,
@@ -443,7 +467,21 @@ METRIC_GROUP_FALLBACK: dict[str, str] = {
 #: we know nothing else about it.
 BY_ROLE: dict[str, str] = {
     "it": IT_EQUIPMENT,
-    "network": NETWORK,
+    # Network gear defaults to the BOX, not the fabric.
+    #
+    # This was NETWORK, and it made the role layer the largest miscategoriser
+    # in the platform: every condition on a switch, router, firewall or load
+    # balancer that had no explicit entry - CPU, memory, fan, temperature, a
+    # reboot - was filed as a fabric fault. Path conditions still reach NETWORK
+    # through their own entries above and through the `interfaces` metric
+    # group, both of which are explicit; nothing depends on this default to be
+    # called network any more.
+    #
+    # The asymmetry with cooling and power is deliberate. A chiller has one
+    # kind of failure and it is cooling. A switch has two, and they are owned
+    # by different people: the fabric team cares that a link is down, the
+    # people who own the hardware care that the box is hot.
+    "network": IT_EQUIPMENT,
     "cooling": COOLING,
     "power": POWER,
     "environment": ENVIRONMENTAL,
