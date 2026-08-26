@@ -302,3 +302,41 @@ profiles:
         metric: relative_humidity
         value_type: gauge
         transform: {scale: 0.1}
+
+  # --------------------------------------------------------- network CPU/memory
+  #
+  # Control-plane load on switches, routers, firewalls and load balancers. It
+  # was missing entirely: HOST-RESOURCES is a HOST MIB, the network agents do
+  # not carry it, and `hrProcessorLoad` on a spine returns noSuchInstance -
+  # measured. So the number that decides whether a box still answers a keepalive
+  # reached this platform only as a trap: nothing to graph, nothing to threshold,
+  # and on the 12 firewalls and 4 load balancers - which speak no gNMI, because
+  # PAN-OS and F5 TMOS genuinely do not - nothing at all.
+  #
+  # Cisco keeps its own family. IOS and NX-OS publish CISCO-PROCESS-MIB and
+  # CISCO-MEMORY-POOL-MIB and no host MIBs, which is why this is a separate
+  # group selected by vendor rather than an addition to `host_resources`: asking
+  # a Cisco box for hrProcessorLoad and a Dell one for cpmCPUTotal5minRev
+  # produces a noSuchObject on every poll of every device, forever.
+  - name: network_cisco
+    scalars:
+      - oid: 1.3.6.1.4.1.9.9.109.1.1.1.1.8.1     # cpmCPUTotal5minRev, percent
+        metric: cpu_utilization
+        value_type: gauge
+        # The 5-minute average, not the 5-second (.6): the short one swings with
+        # every convergence event and would alarm on a device that is working
+        # normally. Cisco's own guidance, and what an NMS graphs.
+      - oid: 1.3.6.1.4.1.9.9.48.1.1.1.5.1        # ciscoMemoryPoolUsed, bytes
+        metric: memory_used
+        value_type: gauge
+    derived_scalars:
+      # Used / (used + free). The pool has no "total" object - a poller that
+      # wants a percentage has to add the two, which is exactly the arithmetic
+      # people get wrong when they divide by the platform's nameplate RAM
+      # instead and report a router at 3% forever.
+      - metric: memory_utilization
+        value_type: gauge
+        numerator: 1.3.6.1.4.1.9.9.48.1.1.1.5.1
+        denominator: 1.3.6.1.4.1.9.9.48.1.1.1.6.1
+        sum_denominator: true
+        transform: {scale: 100}

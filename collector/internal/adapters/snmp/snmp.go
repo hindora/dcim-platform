@@ -315,6 +315,14 @@ func (a *Adapter) collectScalars(client *g.GoSNMP, profile *mapping.Profile,
 	for _, d := range profile.DerivedScalars {
 		num, okN := toFloat(valueOf(byOID, d.Numerator))
 		den, okD := toFloat(valueOf(byOID, d.Denominator))
+		if okN && okD && d.SumDenominator {
+			// used / (used + free): a memory POOL publishes its two halves and
+			// no total, so the whole is their sum. Summed BEFORE the zero check
+			// below, because free legitimately reaches zero - that is a pool at
+			// 100%, the exact moment the metric matters, and testing the raw
+			// denominator would drop it as a missing object instead.
+			den += num
+		}
 		if !okN || !okD || den == 0 {
 			outcome.Misses = append(outcome.Misses,
 				models.Miss{Metric: d.Metric, Reason: models.MissNoSuchObject})

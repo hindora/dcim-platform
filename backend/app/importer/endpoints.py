@@ -102,6 +102,33 @@ PDU_PROFILE_BY_VENDOR = {
 }
 
 
+# Network gear splits the same way rack PDUs do, and for the same reason: the
+# MIBs share no OIDs. Cisco IOS/NX-OS publish CISCO-PROCESS-MIB and
+# CISCO-MEMORY-POOL-MIB and no host MIBs; the Linux-based NOSes - Dell OS10,
+# PAN-OS, F5 TMOS, Arista EOS - publish HOST-RESOURCES and UCD and none of the
+# Cisco objects.
+#
+# This matters most on the firewalls and load balancers. PAN-OS and F5 TMOS do
+# not speak gNMI, so SNMP is not a second opinion for those 16 boxes, it is the
+# only way their control-plane load is visible at all.
+NETWORK_PROFILE_BY_VENDOR = {
+    "cisco": "snmp-network-cisco-600s",
+}
+NETWORK_HOST_PROFILE = "snmp-network-host-600s"
+NETWORK_PROFILE_TYPES = frozenset({
+    "switch", "router", "firewall", "load_balancer", "oob_switch",
+})
+
+
+def network_profile(dev: dict) -> str:
+    """The poll profile for this box's NOS family."""
+    vendor = (dev.get("vendor") or "").lower()
+    for key, profile in NETWORK_PROFILE_BY_VENDOR.items():
+        if key in vendor:
+            return profile
+    return NETWORK_HOST_PROFILE
+
+
 def pdu_profile(dev: dict) -> str:
     """The PDU poll profile for this unit's vendor, or the generic fallback."""
     vendor = (dev.get("vendor") or "").lower()
@@ -201,6 +228,8 @@ def derive_endpoints(
                 port=int(dev.get("snmp_port") or 161),
                 poll_profile=("snmp-bmc-120s" if bmc_only else
                               pdu_profile(dev) if dtype == "pdu" else
+                              network_profile(dev)
+                              if dtype in NETWORK_PROFILE_TYPES else
                               SNMP_PROFILE_BY_TYPE.get(dtype, DEFAULT_SNMP_PROFILE)),
                 **_snmp_credential(addr),
             ))

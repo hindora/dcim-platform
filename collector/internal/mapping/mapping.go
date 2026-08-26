@@ -74,6 +74,12 @@ type DerivedScalar struct {
 	Denominator string `yaml:"denominator"`
 	// OneMinus turns a remaining-fraction into a consumed-fraction.
 	OneMinus bool `yaml:"one_minus"`
+	// SumDenominator makes the divisor numerator+denominator. Memory POOLS
+	// publish used and free and no total - CISCO-MEMORY-POOL-MIB is the one in
+	// front of us - so the whole is the sum of the parts. Without it a poller
+	// divides by the platform's nameplate RAM instead and reports a router
+	// sitting at 3% for ever.
+	SumDenominator bool `yaml:"sum_denominator"`
 	// MultiplyBy scales the fraction back into absolute units.
 	MultiplyBy string     `yaml:"multiply_by"`
 	Transform  *Transform `yaml:"transform"`

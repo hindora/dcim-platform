@@ -13,6 +13,7 @@ from app.importer.endpoints import (
     NO_SNMP_TYPES,
     bmc_address,
     derive_endpoints,
+    network_profile,
     pdu_profile,
     snmp_address,
 )
@@ -301,3 +302,39 @@ def test_an_unmapped_pdu_vendor_keeps_the_generic_profile():
     """
     other = {"device_type": "pdu", "vendor": "Eaton", "mgmt_ip": "10.52.11.99"}
     assert pdu_profile(other) == "snmp-power-120s"
+
+
+def test_cisco_network_gear_is_polled_on_the_cisco_mibs():
+    """IOS and NX-OS carry CISCO-PROCESS-MIB and no host MIBs."""
+    for dtype in ("switch", "router", "oob_switch"):
+        dev = {"device_type": dtype, "vendor": "Cisco Systems",
+               "ip_address": "10.50.0.2", "mgmt_ip": "10.51.0.2"}
+        assert network_profile(dev) == "snmp-network-cisco-600s"
+        eps = [e for e in derive_endpoints(dev) if e.protocol == "snmp"]
+        assert eps[0].poll_profile == "snmp-network-cisco-600s"
+
+
+def test_a_linux_nos_is_polled_on_the_host_mibs():
+    """Dell OS10, PAN-OS and F5 TMOS are Linux underneath and serve them."""
+    for dtype, vendor in (("switch", "Dell Technologies"),
+                          ("firewall", "Palo Alto Networks"),
+                          ("load_balancer", "F5 Networks")):
+        dev = {"device_type": dtype, "vendor": vendor,
+               "ip_address": "10.50.0.3", "mgmt_ip": "10.51.0.3"}
+        assert network_profile(dev) == "snmp-network-host-600s"
+
+
+def test_the_firewall_and_load_balancer_have_no_gnmi_endpoint():
+    """PAN-OS exposes an XML/REST API, F5 exposes iControl REST.
+
+    Neither speaks gNMI, so this platform must not create a session that will
+    never connect - and the SNMP profile above is not a second opinion for
+    these 16 boxes, it is the only way their control-plane load is visible.
+    """
+    for dtype, vendor in (("firewall", "Palo Alto Networks"),
+                          ("load_balancer", "F5 Networks")):
+        dev = {"device_type": dtype, "vendor": vendor,
+               "ip_address": "10.50.0.4", "mgmt_ip": "10.51.0.4"}
+        eps = derive_endpoints(dev, include_protocols=frozenset({"snmp", "gnmi"}))
+        assert not [e for e in eps if e.protocol == "gnmi"]
+        assert [e for e in eps if e.protocol == "snmp"]
