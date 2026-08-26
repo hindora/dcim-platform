@@ -26,7 +26,6 @@ the record keeps both, the console shows the one that matters.
 from __future__ import annotations
 
 import inspect
-import re
 
 import pytest
 
