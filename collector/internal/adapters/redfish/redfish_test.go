@@ -259,7 +259,16 @@ func TestDiscoveryHappensOncePerEndpoint(t *testing.T) {
 	}
 }
 
-func TestExpiredTokenReauthenticates(t *testing.T) {
+func TestARejectedTokenIsRenewedInsideTheSamePoll(t *testing.T) {
+	// A Redfish token dies for ordinary reasons: the BMC was reset, the
+	// service processor aged the session out, or its session table filled -
+	// iDRAC and iLO both cap concurrent sessions in single digits. None of
+	// that means the device is unreachable.
+	//
+	// Failing the poll and re-authenticating on the NEXT one turned a single
+	// session invalidation into an alarm per device: 165 MAJOR "no response"
+	// alarms raised and cleared inside 51 seconds when the simulator restarted
+	// and every in-memory token died with it.
 	bmc := &fakeBMC{}
 	srv := httptest.NewTLSServer(bmc.handler())
 	defer srv.Close()
@@ -272,22 +281,61 @@ func TestExpiredTokenReauthenticates(t *testing.T) {
 
 	// The BMC restarts and forgets the session.
 	bmc.tokenValid = false
+	if _, err := a.Poll(context.Background(), ep); err != nil {
+		t.Fatalf("a rejected token should be renewed, not reported: %v", err)
+	}
+	if bmc.sessions != 2 {
+		t.Fatalf("sessions created %d, want 2 (one renewal)", bmc.sessions)
+	}
+
+	// And the renewed session is kept, so the next poll costs no extra login.
+	if _, err := a.Poll(context.Background(), ep); err != nil {
+		t.Fatalf("poll after renewal: %v", err)
+	}
+	if bmc.sessions != 2 {
+		t.Fatalf("sessions created %d after a third poll, want 2", bmc.sessions)
+	}
+}
+
+func TestACredentialThatIsActuallyWrongStillFails(t *testing.T) {
+	// The renewal is ONCE, not a loop. A password the BMC refuses has to
+	// surface as an auth error - retrying it forever would be a login storm
+	// against a service processor that is already saying no, and on real gear
+	// that locks the account out.
+	bmc := &rejectingBMC{}
+	srv := httptest.NewTLSServer(bmc.handler())
+	defer srv.Close()
+
+	a := newAdapter(t)
+	ep := endpointFor(t, srv)
 	_, err := a.Poll(context.Background(), ep)
 	if err == nil {
-		t.Fatal("expected the poll with a rejected token to fail")
+		t.Fatal("a rejected credential should fail the poll")
 	}
 	if models.ClassifyError(err) != models.ErrClassAuth {
 		t.Fatalf("error class %q, want auth", models.ClassifyError(err))
 	}
+	if bmc.logins > 2 {
+		t.Fatalf("%d login attempts in one poll - the renewal is looping",
+			bmc.logins)
+	}
+}
 
-	// The next poll must recover rather than fail forever.
-	bmc.tokenValid = true
-	if _, err := a.Poll(context.Background(), ep); err != nil {
-		t.Fatalf("poll after re-auth: %v", err)
-	}
-	if bmc.sessions != 2 {
-		t.Fatalf("sessions created %d, want 2 (one re-auth)", bmc.sessions)
-	}
+// rejectingBMC answers every session request with 401, the way a BMC with a
+// wrong password does.
+type rejectingBMC struct{ logins int }
+
+func (f *rejectingBMC) handler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/redfish/v1/SessionService/Sessions",
+		func(w http.ResponseWriter, r *http.Request) {
+			f.logins++
+			w.WriteHeader(http.StatusUnauthorized)
+		})
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	})
+	return mux
 }
 
 func TestMissingCredentialIsAnAuthError(t *testing.T) {

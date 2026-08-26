@@ -19,6 +19,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -286,7 +287,44 @@ func (a *Adapter) url(ep *models.Endpoint, s *session, path string) string {
 	return fmt.Sprintf("%s://%s:%d%s", scheme, ep.Address, port, path)
 }
 
+// get fetches one resource, renewing the session once if the BMC rejects the
+// token.
+//
+// A Redfish token dies for ordinary reasons: the BMC was reset, the service
+// processor aged the session out, or the session table filled - iDRAC and iLO
+// both cap concurrent sessions in single digits, so in a fleet this happens
+// continually. None of that means the device is unreachable.
+//
+// It used to mean exactly that. The 401 dropped the cached token so the NEXT
+// poll would re-authenticate, and failed the current one - which on a 60-second
+// profile turned one session invalidation into 310 MAJOR "no response"
+// alarms that cleared themselves a minute later. Measured: 165 raised and
+// cleared inside 51 seconds when the simulator restarted and every in-memory
+// token died with it.
+//
+// So the retry happens INSIDE the poll: renew once, ask again, and only then
+// call it an auth failure. Once, not in a loop - a credential that is actually
+// wrong must surface as an auth error rather than as a login storm against a
+// BMC that is already refusing it.
 func (a *Adapter) get(ctx context.Context, ep *models.Endpoint, s *session,
+	path string) (map[string]any, error) {
+	body, err := a.getOnce(ctx, ep, s, path)
+	if err == nil || !errors.Is(err, models.ErrAuth) {
+		return body, err
+	}
+
+	if authErr := a.authenticate(ctx, ep, s); authErr != nil {
+		return nil, authErr
+	}
+	a.mu.Lock()
+	a.sessions[ep.ID] = s
+	a.mu.Unlock()
+	a.log.Info("redfish session renewed after a rejected token",
+		"endpoint", ep.ID, "address", ep.Address)
+	return a.getOnce(ctx, ep, s, path)
+}
+
+func (a *Adapter) getOnce(ctx context.Context, ep *models.Endpoint, s *session,
 	path string) (map[string]any, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, a.url(ep, s, path), nil)
 	if err != nil {
@@ -304,8 +342,9 @@ func (a *Adapter) get(ctx context.Context, ep *models.Endpoint, s *session,
 	defer func() { _, _ = io.Copy(io.Discard, resp.Body); resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusUnauthorized {
-		// The token expired or the BMC restarted. Drop it so the next poll
-		// re-authenticates rather than failing forever.
+		// The token expired, the BMC restarted, or the session table evicted
+		// it. The caller renews once and asks again; Forget() stays so a
+		// genuinely bad credential does not leave a dead token cached.
 		a.Forget(ep.ID)
 		return nil, fmt.Errorf("%w: token rejected", models.ErrAuth)
 	}
