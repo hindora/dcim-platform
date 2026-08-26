@@ -45,6 +45,10 @@ type TrapDef struct {
 	// upper critical" is the critical one - on the same OID, from the same
 	// PDU. One condition would resolve half of that.
 	MatchVarbinds []VarbindMatch `yaml:"match_varbinds"`
+	// DisplayName is what the vendor calls this condition, in words. Used for
+	// the message a person reads; the OID stays on the event as
+	// raw_identifier, where a machine can still find it.
+	DisplayName string `yaml:"display_name"`
 	// DeviceTypes narrows this meaning to the kinds of device that can send
 	// it. Empty means any.
 	//

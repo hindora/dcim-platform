@@ -41,12 +41,70 @@ const SEV_RANK: Record<string, number> = {
   CRITICAL: 0, MAJOR: 1, MINOR: 2, WARNING: 3, INFO: 4,
 };
 
-/** `chiller_supply_temp_high` -> `Chiller supply temp high`. The raw key stays
- *  on screen beside it where there is an instance, because a rule and a runbook
- *  are written against the key - this is the reading copy, not a replacement. */
+/** The words an operator uses for a condition.
+ *
+ *  `cpu_temp_high` reads as "CPU temp high", not "Cpu temp high": every one of
+ *  these names is half acronym, and sentence-casing them wholesale makes a
+ *  column of familiar terms look like a column of typos.
+ */
+const ACRONYMS = new Set([
+  'cpu', 'gpu', 'psu', 'pdu', 'ups', 'ats', 'rpp', 'crah', 'crac', 'cdu',
+  'bgp', 'lldp', 'snmp', 'bmc', 'nic', 'oob', 'chw', 'cw', 'ct', 'dc', 'it',
+  'mcc', 'mpp', 'thd', 'pue', 'hvac', 'ev2', 'os',
+]);
+
 function humanise(key: string) {
-  const words = key.replace(/[._-]+/g, ' ').trim();
-  return words.charAt(0).toUpperCase() + words.slice(1);
+  const words = key.replace(/[._-]+/g, ' ').trim().split(/\s+/);
+  return words
+    .map((w, i) => (ACRONYMS.has(w.toLowerCase()) ? w.toUpperCase()
+      : i === 0 ? w.charAt(0).toUpperCase() + w.slice(1) : w))
+    .join(' ');
+}
+
+/** The measurement behind a threshold alarm, in one glance.
+ *
+ *  `93 °C, limit 90` says more than any sentence, and it is the first thing
+ *  anybody asks of a threshold condition. Returns null when the alarm carries
+ *  no reading - a link down or a trap has nothing to put here, and an empty
+ *  cell is better than a fabricated one.
+ */
+/** An endpoint id is an instance to the database and noise to a person.
+ *
+ *  `endpoint_unreachable` carries the endpoint's UUID, which identifies the
+ *  row perfectly and tells an operator nothing. A port name or a sensor index
+ *  is worth showing; 36 hex characters are not. */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const isUuid = (s: string) => UUID.test(s);
+
+const UNITS: Record<string, string> = {
+  cpu_temperature: '\u00b0C', inlet_temperature: '\u00b0C',
+  exhaust_temperature: '\u00b0C', ambient_temperature: '\u00b0C',
+  supply_air_temp: '\u00b0C', return_air_temp: '\u00b0C',
+  cpu_utilization: '%', memory_utilization: '%', disk_utilization: '%',
+  load_pct: '%', relative_humidity: '%', power_factor: '',
+  power_draw: ' W', apparent_power: ' VA', current: ' A',
+  voltage_ln: ' V', voltage_ll: ' V', line_frequency: ' Hz',
+};
+
+function reading(a: Alarm): string | null {
+  if (a.trigger_value === null || a.trigger_value === undefined) return null;
+  const unit = UNITS[a.metric_key ?? ''] ?? '';
+  const value = `${Math.round(a.trigger_value * 10) / 10}${unit}`;
+  if (a.threshold === null || a.threshold === undefined) return value;
+  return `${value}, limit ${Math.round(a.threshold * 10) / 10}${unit}`;
+}
+
+/** Does the message add anything the Condition column has not already said?
+ *
+ *  Trap messages used to be `cpu_high_usage (1.3.6.1.4.1.99999.1.1)` - the
+ *  condition again, in machine vocabulary, plus an OID. Two columns saying one
+ *  thing is worse than one column: the eye reads both before discovering the
+ *  second was redundant.
+ */
+function addsSomething(message: string, alarmType: string) {
+  const normal = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, '');
+  const m = normal(message);
+  return m !== '' && m !== normal(alarmType) && m !== normal(humanise(alarmType));
 }
 
 /** The conditions inside one room, alarms above alerts.
@@ -99,7 +157,7 @@ function RoomConditions({ roomId, categories, span }: {
               <thead>
                 <tr>
                   <th>Class</th><th>Severity</th><th>Condition</th>
-                  <th>Device</th><th>Message</th>
+                  <th>Device</th><th className="num">Reading</th><th>Detail</th>
                   <th className="mid">Since</th><th className="mid">Last seen</th>
                 </tr>
               </thead>
@@ -116,8 +174,8 @@ function RoomConditions({ roomId, categories, span }: {
                       <td><StatusChip status={a.severity} /></td>
                       <td>
                         <span className="n">{humanise(a.alarm_type)}</span>
-                        {a.instance && (
-                          <span className="mono muted"> {a.instance}</span>
+                        {a.instance && !isUuid(a.instance) && (
+                          <span className="on-instance"> on {a.instance}</span>
                         )}
                       </td>
                       <td>
@@ -128,7 +186,18 @@ function RoomConditions({ roomId, categories, span }: {
                           <span className="muted small"> · {a.rack_name}</span>
                         )}
                       </td>
-                      <td className="muted">{a.message}</td>
+                      {/* The measurement first: it is what anybody asks of
+                          a threshold condition, and it is the same shape on
+                          every row so the eye can scan the column. */}
+                      <td className="num reading">
+                        {reading(a) ?? <span className="dash">\u2014</span>}
+                      </td>
+                      {/* And only then the words, when they add something the
+                          condition name has not already said. */}
+                      <td className="muted">
+                        {addsSomething(a.message, a.alarm_type) ? a.message
+                          : <span className="dash">\u2014</span>}
+                      </td>
                       <td className="mid muted">{relativeTime(a.first_seen)}</td>
                       <td className="mid muted">{relativeTime(a.last_seen)}</td>
                     </tr>

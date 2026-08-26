@@ -505,12 +505,26 @@ button.facet.on {
 }
 .sub-table tbody tr:last-child td { border-bottom: none; }
 .sub-table .n { font-weight: 600; }
-/* The message is the long column: it wraps, everything else does not, so the
-   row heights stay even until there is genuinely something long to say. */
-.sub-table tbody td:nth-child(5) { max-width: 46ch; }
-.sub-table thead th:not(:nth-child(5)), .sub-table tbody td:not(:nth-child(5)) {
+/* Detail is the long column - column 6 since the reading was split out of it.
+   It wraps, everything else does not, so row heights stay even until there is
+   genuinely something long to say. */
+.sub-table tbody td:nth-child(6) { max-width: 44ch; }
+.sub-table thead th:not(:nth-child(6)), .sub-table tbody td:not(:nth-child(6)) {
   white-space: nowrap;
 }
+
+/* The measurement. Tabular figures and right alignment so a column of readings
+   can be scanned down rather than read across - which is the whole reason it
+   is a column of its own rather than a sentence in the detail. */
+.sub-table .reading {
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.sub-table thead th.num, .sub-table tbody td.num { text-align: right; }
+
+/* "on Gi0/1" - the port or sensor the condition is about, in the same cell as
+   the condition and clearly subordinate to it. */
+.sub-table .on-instance { color: var(--text-faint); }
 .sub-table .chip { font-size: 10px; }
 
 /* Which of the two populations this condition is in - the same distinction the

@@ -267,11 +267,27 @@ func severityFromName(name string) models.Severity {
 	}
 }
 
+// describe writes the line a person reads in the alarm list.
+//
+// It used to be `event_type (oid)` - "cpu_high_usage (1.3.6.1.4.1.99999.1.1)" -
+// which repeated the alarm's own type in machine vocabulary and then spent the
+// rest of the column on a number nobody reads at 3am. Worse after
+// canonicalisation: the alarm said `cpu_saturated` while its message said
+// `cpu_sustained`, so the two cells appeared to disagree about what had
+// happened.
+//
+// The vendor's own words when the mapping carries them, the event type when it
+// does not. The OID is not lost - it rides on the event as raw_identifier,
+// which is where something automated would look for it anyway.
 func describe(def mapping.TrapDef, oid string) string {
-	if def.IsClear {
-		return fmt.Sprintf("%s cleared (%s)", def.EventType, oid)
+	what := def.DisplayName
+	if what == "" {
+		what = def.EventType
 	}
-	return fmt.Sprintf("%s (%s)", def.EventType, oid)
+	if def.IsClear {
+		return what + " cleared"
+	}
+	return what
 }
 
 // dedupKey lets the ingest worker discard a redelivered trap without needing a

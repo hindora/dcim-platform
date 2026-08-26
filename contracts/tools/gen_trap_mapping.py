@@ -196,15 +196,20 @@ def main() -> int:
         else:
             device_types_for[name] = types
 
+    display_names = {t.value: (d.display_name or "")
+                     for t, d in TRAP_DEFINITIONS.items()}
+
     def entry_for(name: str, declared: str) -> dict:
         if name in CLEAR_PAIRS:
             targets = [event_type_for(r) for r in CLEAR_PAIRS[name]]
             return {"event_type": targets[0], "severity": "CLEAR",
                     "is_clear": True, "clears": targets, "name": name,
+                    "display_name": display_names.get(name, ""),
                     "device_types": sorted(device_types_for.get(name, ()))}
         return {"event_type": event_type_for(name),
                 "severity": SEVERITY_MAP.get(declared, "MINOR"),
                 "is_clear": False, "clears": [], "name": name,
+                "display_name": display_names.get(name, ""),
                 "device_types": sorted(device_types_for.get(name, ()))}
 
     by_oid: dict[str, list[dict]] = defaultdict(list)
@@ -334,6 +339,7 @@ def main() -> int:
             by_oid[rule.trap_oid].append({
                 "event_type": cleared, "severity": "CLEAR", "is_clear": True,
                 "clears": [cleared], "name": rule.rule_name, "vendor": "rule",
+                "display_name": snake(rule.rule_name).replace("_", " ").capitalize(),
                 "device_types": sorted(set(target.device_types or ())),
             })
             continue
@@ -342,6 +348,7 @@ def main() -> int:
             "severity": SEVERITY_MAP.get(rule.severity, "MINOR"),
             "is_clear": False, "clears": [],
             "name": rule.rule_name, "vendor": "rule",
+            "display_name": snake(rule.rule_name).replace("_", " ").capitalize(),
             "device_types": sorted(set(rule.device_types or ())),
         })
 
@@ -421,6 +428,8 @@ def main() -> int:
                 clears += 1
                 lines.append("    is_clear: true")
                 lines.append(f"    clears: [{', '.join(e['clears'])}]")
+            if e.get("display_name"):
+                lines.append(f"    display_name: \"{e['display_name']}\"")
             if e["device_types"]:
                 lines.append(f"    device_types: [{', '.join(e['device_types'])}]")
             if e["match_varbind"]:
