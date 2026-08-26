@@ -19,6 +19,21 @@
 #
 # Severity is the vendor's DECLARED severity, never inferred from the
 # trap's name.
+#
+# `device_types:` narrows a meaning to the equipment that can send it.
+# One wire OID often carries several conditions - a Liebert card sends
+# 476.1.42.3.3.0.5 for a fan failure and for a charger failure - and the
+# receiver tells them apart by the device the trap arrived from. An entry
+# with no device_types is the general meaning and applies to anything,
+# including a trap that could not be attributed to an endpoint.
+#
+# What device type CANNOT separate is marked AMBIGUOUS below: vendors
+# that put many conditions on ONE OID for ONE kind of device, with the
+# condition itself in a varbind. Liebert 476.1.42.3.3.0.1 carries seven.
+# Resolving those needs varbind-level disambiguation, which this file
+# has the shape for (`instance_from_varbind`) and the generator does not
+# yet emit - the ambiguity is recorded rather than hidden behind a
+# winner nobody chose deliberately.
 
 version: 1
 
@@ -50,14 +65,32 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [temperature_alert, cpu_temp_critical]
+    device_types: [firewall, load_balancer, router, server, switch]
     # temperatureNormal [cisco]
-    # AMBIGUOUS - this OID also carries: cpuTempCritical->cpu_temp_critical(CRITICAL); temperatureAlert->temperature_alert(CRITICAL)
+
+  - oid: 1.3.6.1.4.1.9.9.13.3.0.3
+    event_type: cpu_temp_critical
+    severity: CRITICAL
+    # cpuTempCritical [cisco]
+    # AMBIGUOUS - no device type separates this from: temperatureAlert->temperature_alert
+
+  - oid: 1.3.6.1.4.1.9.9.13.3.0.3
+    event_type: temperature_alert
+    severity: CRITICAL
+    # temperatureAlert [cisco]
+    # AMBIGUOUS - no device type separates this from: cpuTempCritical->cpu_temp_critical
+
+  - oid: 1.3.6.1.4.1.9.9.109.2.0.1
+    event_type: cpu_high_usage
+    severity: MAJOR
+    # cpuHighUsage [cisco]
+    # AMBIGUOUS - no device type separates this from: cpuSustained->cpu_sustained
 
   - oid: 1.3.6.1.4.1.9.9.109.2.0.1
     event_type: cpu_sustained
     severity: CRITICAL
     # cpuSustained [cisco]
-    # AMBIGUOUS - this OID also carries: cpuHighUsage->cpu_high_usage(MAJOR)
+    # AMBIGUOUS - no device type separates this from: cpuHighUsage->cpu_high_usage
 
   - oid: 1.3.6.1.4.1.9.9.109.2.0.2
     event_type: cpu_high_usage
@@ -67,24 +100,41 @@ traps:
     # cpuNormal [cisco]
 
   - oid: 1.3.6.1.4.1.232.0.6003
+    event_type: sensor_ambient_temp_critical
+    severity: CRITICAL
+    device_types: [sensor]
+    # sensorAmbientTempCritical [hpe]
+
+  - oid: 1.3.6.1.4.1.232.0.6003
     event_type: cpu_temp_critical
     severity: CRITICAL
     # cpuTempCritical [hpe]
-    # AMBIGUOUS - this OID also carries: sensorAmbientTempCritical->sensor_ambient_temp_critical(CRITICAL)
+
+  - oid: 1.3.6.1.4.1.232.0.6004
+    event_type: sensor_ambient_temp_high
+    severity: MAJOR
+    device_types: [sensor]
+    # sensorAmbientTempHigh [hpe]
 
   - oid: 1.3.6.1.4.1.232.0.6004
     event_type: temperature_alert
     severity: CRITICAL
     # temperatureAlert [hpe]
-    # AMBIGUOUS - this OID also carries: sensorAmbientTempHigh->sensor_ambient_temp_high(MAJOR)
 
   - oid: 1.3.6.1.4.1.232.0.6005
     event_type: temperature_alert
     severity: CLEAR
     is_clear: true
     clears: [temperature_alert, cpu_temp_critical]
+    device_types: [firewall, load_balancer, router, server, switch]
     # temperatureNormal [hpe]
-    # AMBIGUOUS - this OID also carries: sensorAmbientTempNormal->sensor_ambient_temp_high(CLEAR)
+
+  - oid: 1.3.6.1.4.1.232.0.6005
+    event_type: sensor_ambient_temp_high
+    severity: CLEAR
+    is_clear: true
+    clears: [sensor_ambient_temp_high, sensor_ambient_temp_critical]
+    # sensorAmbientTempNormal [hpe]
 
   - oid: 1.3.6.1.4.1.318.0.226
     event_type: breaker_tripped
@@ -94,8 +144,19 @@ traps:
   - oid: 1.3.6.1.4.1.318.0.253
     event_type: sensor_ambient_temp_critical
     severity: CRITICAL
+    device_types: [sensor]
     # sensorAmbientTempCritical [apc]
-    # AMBIGUOUS - this OID also carries: pduTempHigh->pdu_temp_high(MAJOR); sensorAmbientTempHigh->sensor_ambient_temp_high(MAJOR)
+
+  - oid: 1.3.6.1.4.1.318.0.253
+    event_type: sensor_ambient_temp_high
+    severity: MAJOR
+    device_types: [sensor]
+    # sensorAmbientTempHigh [apc]
+
+  - oid: 1.3.6.1.4.1.318.0.253
+    event_type: pdu_temp_high
+    severity: MAJOR
+    # pduTempHigh [apc]
 
   - oid: 1.3.6.1.4.1.318.0.254
     event_type: pdu_temp_high
@@ -103,13 +164,40 @@ traps:
     is_clear: true
     clears: [pdu_temp_high]
     # pduTempNormal [apc]
-    # AMBIGUOUS - this OID also carries: sensorAmbientTempNormal->sensor_ambient_temp_high(CLEAR)
+    # AMBIGUOUS - no device type separates this from: sensorAmbientTempNormal->sensor_ambient_temp_high
+
+  - oid: 1.3.6.1.4.1.318.0.254
+    event_type: sensor_ambient_temp_high
+    severity: CLEAR
+    is_clear: true
+    clears: [sensor_ambient_temp_high, sensor_ambient_temp_critical]
+    # sensorAmbientTempNormal [apc]
+    # AMBIGUOUS - no device type separates this from: pduTempNormal->pdu_temp_high
 
   - oid: 1.3.6.1.4.1.318.0.257
     event_type: sensor_critical_humidity
     severity: CRITICAL
+    device_types: [sensor]
     # sensorCriticalHumidity [apc]
-    # AMBIGUOUS - this OID also carries: pduHumidityHigh->pdu_humidity_high(MAJOR); sensorHighHumidity->sensor_high_humidity(MAJOR)
+
+  - oid: 1.3.6.1.4.1.318.0.257
+    event_type: sensor_high_humidity
+    severity: MAJOR
+    device_types: [sensor]
+    # sensorHighHumidity [apc]
+
+  - oid: 1.3.6.1.4.1.318.0.257
+    event_type: pdu_humidity_high
+    severity: MAJOR
+    # pduHumidityHigh [apc]
+
+  - oid: 1.3.6.1.4.1.318.0.258
+    event_type: sensor_high_humidity
+    severity: CLEAR
+    is_clear: true
+    clears: [sensor_high_humidity, sensor_critical_humidity, sensor_low_humidity, humidity_alert]
+    device_types: [sensor]
+    # sensorHumidityNormal [apc]
 
   - oid: 1.3.6.1.4.1.318.0.258
     event_type: pdu_humidity_high
@@ -117,11 +205,11 @@ traps:
     is_clear: true
     clears: [pdu_humidity_high]
     # pduHumidityNormal [apc]
-    # AMBIGUOUS - this OID also carries: sensorHumidityNormal->sensor_high_humidity(CLEAR)
 
   - oid: 1.3.6.1.4.1.318.0.259
     event_type: sensor_low_humidity
     severity: MAJOR
+    device_types: [sensor]
     # sensorLowHumidity [apc]
 
   - oid: 1.3.6.1.4.1.318.0.268
@@ -157,10 +245,156 @@ traps:
     # outletCurrentHigh [apc]
 
   - oid: 1.3.6.1.4.1.476.1.42.3.3.0.1
+    event_type: sensor_ambient_temp_critical
+    severity: CRITICAL
+    device_types: [sensor]
+    # sensorAmbientTempCritical [liebert]
+
+  - oid: 1.3.6.1.4.1.476.1.42.3.3.0.1
+    event_type: sensor_ambient_temp_high
+    severity: MAJOR
+    device_types: [sensor]
+    # sensorAmbientTempHigh [liebert]
+
+  - oid: 1.3.6.1.4.1.476.1.42.3.3.0.1
+    event_type: sensor_critical_humidity
+    severity: CRITICAL
+    device_types: [sensor]
+    # sensorCriticalHumidity [liebert]
+
+  - oid: 1.3.6.1.4.1.476.1.42.3.3.0.1
+    event_type: sensor_high_airflow
+    severity: MAJOR
+    device_types: [sensor]
+    # sensorHighAirflow [liebert]
+
+  - oid: 1.3.6.1.4.1.476.1.42.3.3.0.1
+    event_type: sensor_high_humidity
+    severity: MAJOR
+    device_types: [sensor]
+    # sensorHighHumidity [liebert]
+
+  - oid: 1.3.6.1.4.1.476.1.42.3.3.0.1
+    event_type: sensor_low_airflow
+    severity: CRITICAL
+    device_types: [sensor]
+    # sensorLowAirflow [liebert]
+
+  - oid: 1.3.6.1.4.1.476.1.42.3.3.0.1
+    event_type: sensor_low_humidity
+    severity: MAJOR
+    device_types: [sensor]
+    # sensorLowHumidity [liebert]
+
+  - oid: 1.3.6.1.4.1.476.1.42.3.3.0.1
+    event_type: sensor_mid_temp_high
+    severity: MAJOR
+    device_types: [sensor]
+    # sensorMidTempHigh [liebert]
+
+  - oid: 1.3.6.1.4.1.476.1.42.3.3.0.1
+    event_type: sensor_outlet_temp_high
+    severity: MAJOR
+    device_types: [sensor]
+    # sensorOutletTempHigh [liebert]
+
+  - oid: 1.3.6.1.4.1.476.1.42.3.3.0.1
+    event_type: airflow_alert
+    severity: MAJOR
+    # airflowAlert [liebert]
+    # AMBIGUOUS - no device type separates this from: dewPointAlert->dew_point_alert; frequencyOutOfRange->frequency_out_of_range; humidityAlert->humidity_alert; inputVoltageHigh->input_voltage_high; inputVoltageLow->input_voltage_low; temperatureAlert->temperature_alert
+
+  - oid: 1.3.6.1.4.1.476.1.42.3.3.0.1
+    event_type: dew_point_alert
+    severity: CRITICAL
+    # dewPointAlert [liebert]
+    # AMBIGUOUS - no device type separates this from: airflowAlert->airflow_alert; frequencyOutOfRange->frequency_out_of_range; humidityAlert->humidity_alert; inputVoltageHigh->input_voltage_high; inputVoltageLow->input_voltage_low; temperatureAlert->temperature_alert
+
+  - oid: 1.3.6.1.4.1.476.1.42.3.3.0.1
+    event_type: frequency_out_of_range
+    severity: MAJOR
+    # frequencyOutOfRange [liebert]
+    # AMBIGUOUS - no device type separates this from: airflowAlert->airflow_alert; dewPointAlert->dew_point_alert; humidityAlert->humidity_alert; inputVoltageHigh->input_voltage_high; inputVoltageLow->input_voltage_low; temperatureAlert->temperature_alert
+
+  - oid: 1.3.6.1.4.1.476.1.42.3.3.0.1
+    event_type: humidity_alert
+    severity: MAJOR
+    # humidityAlert [liebert]
+    # AMBIGUOUS - no device type separates this from: airflowAlert->airflow_alert; dewPointAlert->dew_point_alert; frequencyOutOfRange->frequency_out_of_range; inputVoltageHigh->input_voltage_high; inputVoltageLow->input_voltage_low; temperatureAlert->temperature_alert
+
+  - oid: 1.3.6.1.4.1.476.1.42.3.3.0.1
+    event_type: input_voltage_high
+    severity: MAJOR
+    # inputVoltageHigh [liebert]
+    # AMBIGUOUS - no device type separates this from: airflowAlert->airflow_alert; dewPointAlert->dew_point_alert; frequencyOutOfRange->frequency_out_of_range; humidityAlert->humidity_alert; inputVoltageLow->input_voltage_low; temperatureAlert->temperature_alert
+
+  - oid: 1.3.6.1.4.1.476.1.42.3.3.0.1
+    event_type: input_voltage_low
+    severity: MAJOR
+    # inputVoltageLow [liebert]
+    # AMBIGUOUS - no device type separates this from: airflowAlert->airflow_alert; dewPointAlert->dew_point_alert; frequencyOutOfRange->frequency_out_of_range; humidityAlert->humidity_alert; inputVoltageHigh->input_voltage_high; temperatureAlert->temperature_alert
+
+  - oid: 1.3.6.1.4.1.476.1.42.3.3.0.1
     event_type: temperature_alert
     severity: CRITICAL
     # temperatureAlert [liebert]
-    # AMBIGUOUS - this OID also carries: airflowAlert->airflow_alert(MAJOR); dewPointAlert->dew_point_alert(CRITICAL); frequencyOutOfRange->frequency_out_of_range(MAJOR); humidityAlert->humidity_alert(MAJOR); inputVoltageHigh->input_voltage_high(MAJOR); inputVoltageLow->input_voltage_low(MAJOR); sensorAmbientTempCritical->sensor_ambient_temp_critical(CRITICAL); sensorAmbientTempHigh->sensor_ambient_temp_high(MAJOR); sensorCriticalHumidity->sensor_critical_humidity(CRITICAL); sensorHighAirflow->sensor_high_airflow(MAJOR); sensorHighHumidity->sensor_high_humidity(MAJOR); sensorLowAirflow->sensor_low_airflow(CRITICAL); sensorLowHumidity->sensor_low_humidity(MAJOR); sensorMidTempHigh->sensor_mid_temp_high(MAJOR); sensorOutletTempHigh->sensor_outlet_temp_high(MAJOR)
+    # AMBIGUOUS - no device type separates this from: airflowAlert->airflow_alert; dewPointAlert->dew_point_alert; frequencyOutOfRange->frequency_out_of_range; humidityAlert->humidity_alert; inputVoltageHigh->input_voltage_high; inputVoltageLow->input_voltage_low
+
+  - oid: 1.3.6.1.4.1.476.1.42.3.3.0.2
+    event_type: dew_point_alert
+    severity: CLEAR
+    is_clear: true
+    clears: [dew_point_alert]
+    device_types: [sensor]
+    # sensorDewPointNormal [liebert]
+
+  - oid: 1.3.6.1.4.1.476.1.42.3.3.0.2
+    event_type: sensor_high_airflow
+    severity: CLEAR
+    is_clear: true
+    clears: [sensor_high_airflow, sensor_low_airflow, airflow_alert]
+    device_types: [sensor]
+    # sensorAirflowNormal [liebert]
+
+  - oid: 1.3.6.1.4.1.476.1.42.3.3.0.2
+    event_type: sensor_high_humidity
+    severity: CLEAR
+    is_clear: true
+    clears: [sensor_high_humidity, sensor_critical_humidity, sensor_low_humidity, humidity_alert]
+    device_types: [sensor]
+    # sensorHumidityNormal [liebert]
+
+  - oid: 1.3.6.1.4.1.476.1.42.3.3.0.2
+    event_type: sensor_mid_temp_high
+    severity: CLEAR
+    is_clear: true
+    clears: [sensor_mid_temp_high]
+    device_types: [sensor]
+    # sensorMidTempNormal [liebert]
+
+  - oid: 1.3.6.1.4.1.476.1.42.3.3.0.2
+    event_type: sensor_outlet_temp_high
+    severity: CLEAR
+    is_clear: true
+    clears: [sensor_outlet_temp_high]
+    device_types: [sensor]
+    # sensorOutletTempNormal [liebert]
+
+  - oid: 1.3.6.1.4.1.476.1.42.3.3.0.2
+    event_type: temperature_alert
+    severity: CLEAR
+    is_clear: true
+    clears: [temperature_alert, cpu_temp_critical]
+    device_types: [firewall, load_balancer, router, server, switch]
+    # temperatureNormal [liebert]
+
+  - oid: 1.3.6.1.4.1.476.1.42.3.3.0.2
+    event_type: battery_low_health
+    severity: CLEAR
+    is_clear: true
+    clears: [battery_low_health, battery_failure]
+    # batteryHealthRestored [liebert]
+    # AMBIGUOUS - no device type separates this from: batteryNormal->ups_battery_low; bypassCleared->bypass_active; inputVoltageLowCleared->input_voltage_low; inputVoltageNormal->input_voltage_high; outputNormal->ups_output_overload; sensorAmbientTempNormal->sensor_ambient_temp_high; utilityPowerRestored->ups_on_battery
 
   - oid: 1.3.6.1.4.1.476.1.42.3.3.0.2
     event_type: bypass_active
@@ -168,7 +402,55 @@ traps:
     is_clear: true
     clears: [bypass_active]
     # bypassCleared [liebert]
-    # AMBIGUOUS - this OID also carries: batteryHealthRestored->battery_low_health(CLEAR); batteryNormal->ups_battery_low(CLEAR); inputVoltageLowCleared->input_voltage_low(CLEAR); inputVoltageNormal->input_voltage_high(CLEAR); outputNormal->ups_output_overload(CLEAR); sensorAirflowNormal->sensor_high_airflow(CLEAR); sensorAmbientTempNormal->sensor_ambient_temp_high(CLEAR); sensorDewPointNormal->dew_point_alert(CLEAR); sensorHumidityNormal->sensor_high_humidity(CLEAR); sensorMidTempNormal->sensor_mid_temp_high(CLEAR); sensorOutletTempNormal->sensor_outlet_temp_high(CLEAR); temperatureNormal->temperature_alert(CLEAR); utilityPowerRestored->ups_on_battery(CLEAR)
+    # AMBIGUOUS - no device type separates this from: batteryHealthRestored->battery_low_health; batteryNormal->ups_battery_low; inputVoltageLowCleared->input_voltage_low; inputVoltageNormal->input_voltage_high; outputNormal->ups_output_overload; sensorAmbientTempNormal->sensor_ambient_temp_high; utilityPowerRestored->ups_on_battery
+
+  - oid: 1.3.6.1.4.1.476.1.42.3.3.0.2
+    event_type: input_voltage_high
+    severity: CLEAR
+    is_clear: true
+    clears: [input_voltage_high, voltage_high]
+    # inputVoltageNormal [liebert]
+    # AMBIGUOUS - no device type separates this from: batteryHealthRestored->battery_low_health; batteryNormal->ups_battery_low; bypassCleared->bypass_active; inputVoltageLowCleared->input_voltage_low; outputNormal->ups_output_overload; sensorAmbientTempNormal->sensor_ambient_temp_high; utilityPowerRestored->ups_on_battery
+
+  - oid: 1.3.6.1.4.1.476.1.42.3.3.0.2
+    event_type: input_voltage_low
+    severity: CLEAR
+    is_clear: true
+    clears: [input_voltage_low, voltage_low]
+    # inputVoltageLowCleared [liebert]
+    # AMBIGUOUS - no device type separates this from: batteryHealthRestored->battery_low_health; batteryNormal->ups_battery_low; bypassCleared->bypass_active; inputVoltageNormal->input_voltage_high; outputNormal->ups_output_overload; sensorAmbientTempNormal->sensor_ambient_temp_high; utilityPowerRestored->ups_on_battery
+
+  - oid: 1.3.6.1.4.1.476.1.42.3.3.0.2
+    event_type: sensor_ambient_temp_high
+    severity: CLEAR
+    is_clear: true
+    clears: [sensor_ambient_temp_high, sensor_ambient_temp_critical]
+    # sensorAmbientTempNormal [liebert]
+    # AMBIGUOUS - no device type separates this from: batteryHealthRestored->battery_low_health; batteryNormal->ups_battery_low; bypassCleared->bypass_active; inputVoltageLowCleared->input_voltage_low; inputVoltageNormal->input_voltage_high; outputNormal->ups_output_overload; utilityPowerRestored->ups_on_battery
+
+  - oid: 1.3.6.1.4.1.476.1.42.3.3.0.2
+    event_type: ups_battery_low
+    severity: CLEAR
+    is_clear: true
+    clears: [ups_battery_low]
+    # batteryNormal [liebert]
+    # AMBIGUOUS - no device type separates this from: batteryHealthRestored->battery_low_health; bypassCleared->bypass_active; inputVoltageLowCleared->input_voltage_low; inputVoltageNormal->input_voltage_high; outputNormal->ups_output_overload; sensorAmbientTempNormal->sensor_ambient_temp_high; utilityPowerRestored->ups_on_battery
+
+  - oid: 1.3.6.1.4.1.476.1.42.3.3.0.2
+    event_type: ups_on_battery
+    severity: CLEAR
+    is_clear: true
+    clears: [ups_on_battery]
+    # utilityPowerRestored [liebert]
+    # AMBIGUOUS - no device type separates this from: batteryHealthRestored->battery_low_health; batteryNormal->ups_battery_low; bypassCleared->bypass_active; inputVoltageLowCleared->input_voltage_low; inputVoltageNormal->input_voltage_high; outputNormal->ups_output_overload; sensorAmbientTempNormal->sensor_ambient_temp_high
+
+  - oid: 1.3.6.1.4.1.476.1.42.3.3.0.2
+    event_type: ups_output_overload
+    severity: CLEAR
+    is_clear: true
+    clears: [ups_output_overload]
+    # outputNormal [liebert]
+    # AMBIGUOUS - no device type separates this from: batteryHealthRestored->battery_low_health; batteryNormal->ups_battery_low; bypassCleared->bypass_active; inputVoltageLowCleared->input_voltage_low; inputVoltageNormal->input_voltage_high; sensorAmbientTempNormal->sensor_ambient_temp_high; utilityPowerRestored->ups_on_battery
 
   - oid: 1.3.6.1.4.1.476.1.42.3.3.0.3
     event_type: ups_battery_low
@@ -181,10 +463,15 @@ traps:
     # bypassActive [liebert]
 
   - oid: 1.3.6.1.4.1.476.1.42.3.3.0.5
+    event_type: fan_failure
+    severity: CRITICAL
+    device_types: [server]
+    # fanFailure [liebert]
+
+  - oid: 1.3.6.1.4.1.476.1.42.3.3.0.5
     event_type: charger_failure
     severity: CRITICAL
     # chargerFailure [liebert]
-    # AMBIGUOUS - this OID also carries: fanFailure->fan_failure(CRITICAL)
 
   - oid: 1.3.6.1.4.1.476.1.42.3.3.0.7
     event_type: ups_output_overload
@@ -202,10 +489,16 @@ traps:
     # rectifierFailure [liebert]
 
   - oid: 1.3.6.1.4.1.476.1.42.3.3.0.11
+    event_type: battery_disconnected
+    severity: CRITICAL
+    # batteryDisconnected [liebert]
+    # AMBIGUOUS - no device type separates this from: batteryFailure->battery_failure
+
+  - oid: 1.3.6.1.4.1.476.1.42.3.3.0.11
     event_type: battery_failure
     severity: CRITICAL
     # batteryFailure [liebert]
-    # AMBIGUOUS - this OID also carries: batteryDisconnected->battery_disconnected(CRITICAL)
+    # AMBIGUOUS - no device type separates this from: batteryDisconnected->battery_disconnected
 
   - oid: 1.3.6.1.4.1.476.1.42.3.3.0.14
     event_type: battery_low_health
@@ -216,7 +509,25 @@ traps:
     event_type: voltage_high
     severity: MAJOR
     # voltageHigh [eaton]
-    # AMBIGUOUS - this OID also carries: voltageLow->voltage_low(MAJOR)
+    # AMBIGUOUS - no device type separates this from: voltageLow->voltage_low
+
+  - oid: 1.3.6.1.4.1.534.6.6.7.0.11
+    event_type: voltage_low
+    severity: MAJOR
+    # voltageLow [eaton]
+    # AMBIGUOUS - no device type separates this from: voltageHigh->voltage_high
+
+  - oid: 1.3.6.1.4.1.534.6.6.7.0.12
+    event_type: pdu_load_critical
+    severity: CRITICAL
+    # loadCritical [eaton]
+    # AMBIGUOUS - no device type separates this from: loadHigh->pdu_load_high; pduLoadNormal->pdu_load_high
+
+  - oid: 1.3.6.1.4.1.534.6.6.7.0.12
+    event_type: pdu_load_high
+    severity: MAJOR
+    # loadHigh [eaton]
+    # AMBIGUOUS - no device type separates this from: loadCritical->pdu_load_critical; pduLoadNormal->pdu_load_high
 
   - oid: 1.3.6.1.4.1.534.6.6.7.0.12
     event_type: pdu_load_high
@@ -224,7 +535,13 @@ traps:
     is_clear: true
     clears: [pdu_load_high, pdu_load_critical]
     # pduLoadNormal [eaton]
-    # AMBIGUOUS - this OID also carries: loadCritical->pdu_load_critical(CRITICAL); loadHigh->pdu_load_high(MAJOR)
+    # AMBIGUOUS - no device type separates this from: loadCritical->pdu_load_critical; loadHigh->pdu_load_high
+
+  - oid: 1.3.6.1.4.1.534.6.6.7.0.13
+    event_type: pdu_frequency_fault
+    severity: MAJOR
+    # pduFrequencyFault [eaton]
+    # AMBIGUOUS - no device type separates this from: pduFrequencyNormal->pdu_frequency_fault
 
   - oid: 1.3.6.1.4.1.534.6.6.7.0.13
     event_type: pdu_frequency_fault
@@ -232,7 +549,7 @@ traps:
     is_clear: true
     clears: [pdu_frequency_fault, frequency_out_of_range]
     # pduFrequencyNormal [eaton]
-    # AMBIGUOUS - this OID also carries: pduFrequencyFault->pdu_frequency_fault(MAJOR)
+    # AMBIGUOUS - no device type separates this from: pduFrequencyFault->pdu_frequency_fault
 
   - oid: 1.3.6.1.4.1.534.6.6.7.0.23
     event_type: breaker_tripped
@@ -241,11 +558,23 @@ traps:
 
   - oid: 1.3.6.1.4.1.534.6.6.7.0.41
     event_type: pdu_temp_high
+    severity: MAJOR
+    # pduTempHigh [eaton]
+    # AMBIGUOUS - no device type separates this from: pduTempNormal->pdu_temp_high
+
+  - oid: 1.3.6.1.4.1.534.6.6.7.0.41
+    event_type: pdu_temp_high
     severity: CLEAR
     is_clear: true
     clears: [pdu_temp_high]
     # pduTempNormal [eaton]
-    # AMBIGUOUS - this OID also carries: pduTempHigh->pdu_temp_high(MAJOR)
+    # AMBIGUOUS - no device type separates this from: pduTempHigh->pdu_temp_high
+
+  - oid: 1.3.6.1.4.1.534.6.6.7.0.42
+    event_type: pdu_humidity_high
+    severity: MAJOR
+    # pduHumidityHigh [eaton]
+    # AMBIGUOUS - no device type separates this from: pduHumidityNormal->pdu_humidity_high
 
   - oid: 1.3.6.1.4.1.534.6.6.7.0.42
     event_type: pdu_humidity_high
@@ -253,39 +582,68 @@ traps:
     is_clear: true
     clears: [pdu_humidity_high]
     # pduHumidityNormal [eaton]
-    # AMBIGUOUS - this OID also carries: pduHumidityHigh->pdu_humidity_high(MAJOR)
+    # AMBIGUOUS - no device type separates this from: pduHumidityHigh->pdu_humidity_high
+
+  - oid: 1.3.6.1.4.1.674.10892.5.3.2.1.0.2161
+    event_type: sensor_ambient_temp_critical
+    severity: CRITICAL
+    device_types: [sensor]
+    # sensorAmbientTempCritical [dell]
 
   - oid: 1.3.6.1.4.1.674.10892.5.3.2.1.0.2161
     event_type: cpu_temp_critical
     severity: CRITICAL
     # cpuTempCritical [dell]
-    # AMBIGUOUS - this OID also carries: sensorAmbientTempCritical->sensor_ambient_temp_critical(CRITICAL)
+
+  - oid: 1.3.6.1.4.1.674.10892.5.3.2.1.0.2162
+    event_type: sensor_ambient_temp_high
+    severity: MAJOR
+    device_types: [sensor]
+    # sensorAmbientTempHigh [dell]
 
   - oid: 1.3.6.1.4.1.674.10892.5.3.2.1.0.2162
     event_type: temperature_alert
     severity: CRITICAL
     # temperatureAlert [dell]
-    # AMBIGUOUS - this OID also carries: sensorAmbientTempHigh->sensor_ambient_temp_high(MAJOR)
 
   - oid: 1.3.6.1.4.1.674.10892.5.3.2.1.0.2163
     event_type: temperature_alert
     severity: CLEAR
     is_clear: true
     clears: [temperature_alert, cpu_temp_critical]
+    device_types: [firewall, load_balancer, router, server, switch]
     # temperatureNormal [dell]
-    # AMBIGUOUS - this OID also carries: sensorAmbientTempNormal->sensor_ambient_temp_high(CLEAR)
+
+  - oid: 1.3.6.1.4.1.674.10892.5.3.2.1.0.2163
+    event_type: sensor_ambient_temp_high
+    severity: CLEAR
+    is_clear: true
+    clears: [sensor_ambient_temp_high, sensor_ambient_temp_critical]
+    # sensorAmbientTempNormal [dell]
 
   - oid: 1.3.6.1.4.1.674.10892.5.3.2.4.0.8579
     event_type: server_power_off
     severity: MAJOR
     # serverPowerOff [dell]
-    # AMBIGUOUS - this OID also carries: serverPowerOn->server_power_on(INFO)
+    # AMBIGUOUS - no device type separates this from: serverPowerOn->server_power_on
+
+  - oid: 1.3.6.1.4.1.674.10892.5.3.2.4.0.8579
+    event_type: server_power_on
+    severity: INFO
+    # serverPowerOn [dell]
+    # AMBIGUOUS - no device type separates this from: serverPowerOff->server_power_off
+
+  - oid: 1.3.6.1.4.1.3183.1.1.0.65793
+    event_type: cpu_temp_critical
+    severity: CRITICAL
+    # cpuTempCritical [ibm, supermicro]
+    # AMBIGUOUS - no device type separates this from: temperatureAlert->temperature_alert
 
   - oid: 1.3.6.1.4.1.3183.1.1.0.65793
     event_type: temperature_alert
     severity: CRITICAL
     # temperatureAlert [ibm, supermicro]
-    # AMBIGUOUS - this OID also carries: cpuTempCritical->cpu_temp_critical(CRITICAL)
+    # AMBIGUOUS - no device type separates this from: cpuTempCritical->cpu_temp_critical
 
   - oid: 1.3.6.1.4.1.3183.1.1.0.618240
     event_type: server_power_off
@@ -313,18 +671,86 @@ traps:
     # groundFault [raritan]
 
   - oid: 1.3.6.1.4.1.13742.6.0.61
+    event_type: pdu_frequency_fault
+    severity: MAJOR
+    # pduFrequencyFault [raritan]
+    # AMBIGUOUS - no device type separates this from: loadCritical->pdu_load_critical; loadHigh->pdu_load_high; pduFrequencyNormal->pdu_frequency_fault; pduLoadNormal->pdu_load_high; phaseImbalance->phase_imbalance; powerFactorLow->power_factor_low; voltageHigh->voltage_high; voltageLow->voltage_low
+
+  - oid: 1.3.6.1.4.1.13742.6.0.61
+    event_type: pdu_frequency_fault
+    severity: CLEAR
+    is_clear: true
+    clears: [pdu_frequency_fault, frequency_out_of_range]
+    # pduFrequencyNormal [raritan]
+    # AMBIGUOUS - no device type separates this from: loadCritical->pdu_load_critical; loadHigh->pdu_load_high; pduFrequencyFault->pdu_frequency_fault; pduLoadNormal->pdu_load_high; phaseImbalance->phase_imbalance; powerFactorLow->power_factor_low; voltageHigh->voltage_high; voltageLow->voltage_low
+
+  - oid: 1.3.6.1.4.1.13742.6.0.61
+    event_type: pdu_load_critical
+    severity: CRITICAL
+    # loadCritical [raritan]
+    # AMBIGUOUS - no device type separates this from: loadHigh->pdu_load_high; pduFrequencyFault->pdu_frequency_fault; pduFrequencyNormal->pdu_frequency_fault; pduLoadNormal->pdu_load_high; phaseImbalance->phase_imbalance; powerFactorLow->power_factor_low; voltageHigh->voltage_high; voltageLow->voltage_low
+
+  - oid: 1.3.6.1.4.1.13742.6.0.61
+    event_type: pdu_load_high
+    severity: MAJOR
+    # loadHigh [raritan]
+    # AMBIGUOUS - no device type separates this from: loadCritical->pdu_load_critical; pduFrequencyFault->pdu_frequency_fault; pduFrequencyNormal->pdu_frequency_fault; pduLoadNormal->pdu_load_high; phaseImbalance->phase_imbalance; powerFactorLow->power_factor_low; voltageHigh->voltage_high; voltageLow->voltage_low
+
+  - oid: 1.3.6.1.4.1.13742.6.0.61
     event_type: pdu_load_high
     severity: CLEAR
     is_clear: true
     clears: [pdu_load_high, pdu_load_critical]
     # pduLoadNormal [raritan]
-    # AMBIGUOUS - this OID also carries: loadCritical->pdu_load_critical(CRITICAL); loadHigh->pdu_load_high(MAJOR); pduFrequencyFault->pdu_frequency_fault(MAJOR); pduFrequencyNormal->pdu_frequency_fault(CLEAR); phaseImbalance->phase_imbalance(MAJOR); powerFactorLow->power_factor_low(MAJOR); voltageHigh->voltage_high(MAJOR); voltageLow->voltage_low(MAJOR)
+    # AMBIGUOUS - no device type separates this from: loadCritical->pdu_load_critical; loadHigh->pdu_load_high; pduFrequencyFault->pdu_frequency_fault; pduFrequencyNormal->pdu_frequency_fault; phaseImbalance->phase_imbalance; powerFactorLow->power_factor_low; voltageHigh->voltage_high; voltageLow->voltage_low
+
+  - oid: 1.3.6.1.4.1.13742.6.0.61
+    event_type: phase_imbalance
+    severity: MAJOR
+    # phaseImbalance [raritan]
+    # AMBIGUOUS - no device type separates this from: loadCritical->pdu_load_critical; loadHigh->pdu_load_high; pduFrequencyFault->pdu_frequency_fault; pduFrequencyNormal->pdu_frequency_fault; pduLoadNormal->pdu_load_high; powerFactorLow->power_factor_low; voltageHigh->voltage_high; voltageLow->voltage_low
+
+  - oid: 1.3.6.1.4.1.13742.6.0.61
+    event_type: power_factor_low
+    severity: MAJOR
+    # powerFactorLow [raritan]
+    # AMBIGUOUS - no device type separates this from: loadCritical->pdu_load_critical; loadHigh->pdu_load_high; pduFrequencyFault->pdu_frequency_fault; pduFrequencyNormal->pdu_frequency_fault; pduLoadNormal->pdu_load_high; phaseImbalance->phase_imbalance; voltageHigh->voltage_high; voltageLow->voltage_low
+
+  - oid: 1.3.6.1.4.1.13742.6.0.61
+    event_type: voltage_high
+    severity: MAJOR
+    # voltageHigh [raritan]
+    # AMBIGUOUS - no device type separates this from: loadCritical->pdu_load_critical; loadHigh->pdu_load_high; pduFrequencyFault->pdu_frequency_fault; pduFrequencyNormal->pdu_frequency_fault; pduLoadNormal->pdu_load_high; phaseImbalance->phase_imbalance; powerFactorLow->power_factor_low; voltageLow->voltage_low
+
+  - oid: 1.3.6.1.4.1.13742.6.0.61
+    event_type: voltage_low
+    severity: MAJOR
+    # voltageLow [raritan]
+    # AMBIGUOUS - no device type separates this from: loadCritical->pdu_load_critical; loadHigh->pdu_load_high; pduFrequencyFault->pdu_frequency_fault; pduFrequencyNormal->pdu_frequency_fault; pduLoadNormal->pdu_load_high; phaseImbalance->phase_imbalance; powerFactorLow->power_factor_low; voltageHigh->voltage_high
+
+  - oid: 1.3.6.1.4.1.13742.6.0.63
+    event_type: outlet_current_high
+    severity: MAJOR
+    # outletCurrentHigh [raritan]
+    # AMBIGUOUS - no device type separates this from: outletFailure->outlet_failure; outletOff->outlet_off; outletOn->outlet_on
 
   - oid: 1.3.6.1.4.1.13742.6.0.63
     event_type: outlet_failure
     severity: CRITICAL
     # outletFailure [raritan]
-    # AMBIGUOUS - this OID also carries: outletCurrentHigh->outlet_current_high(MAJOR); outletOff->outlet_off(MAJOR); outletOn->outlet_on(INFO)
+    # AMBIGUOUS - no device type separates this from: outletCurrentHigh->outlet_current_high; outletOff->outlet_off; outletOn->outlet_on
+
+  - oid: 1.3.6.1.4.1.13742.6.0.63
+    event_type: outlet_off
+    severity: MAJOR
+    # outletOff [raritan]
+    # AMBIGUOUS - no device type separates this from: outletCurrentHigh->outlet_current_high; outletFailure->outlet_failure; outletOn->outlet_on
+
+  - oid: 1.3.6.1.4.1.13742.6.0.63
+    event_type: outlet_on
+    severity: INFO
+    # outletOn [raritan]
+    # AMBIGUOUS - no device type separates this from: outletCurrentHigh->outlet_current_high; outletFailure->outlet_failure; outletOff->outlet_off
 
   - oid: 1.3.6.1.4.1.13742.6.0.65
     event_type: breaker_tripped
@@ -332,24 +758,180 @@ traps:
     # breakerTripped [raritan]
 
   - oid: 1.3.6.1.4.1.13742.6.0.66
+    event_type: dew_point_alert
+    severity: CLEAR
+    is_clear: true
+    clears: [dew_point_alert]
+    device_types: [sensor]
+    # sensorDewPointNormal [raritan]
+
+  - oid: 1.3.6.1.4.1.13742.6.0.66
+    event_type: sensor_ambient_temp_critical
+    severity: CRITICAL
+    device_types: [sensor]
+    # sensorAmbientTempCritical [raritan]
+
+  - oid: 1.3.6.1.4.1.13742.6.0.66
+    event_type: sensor_ambient_temp_high
+    severity: MAJOR
+    device_types: [sensor]
+    # sensorAmbientTempHigh [raritan]
+
+  - oid: 1.3.6.1.4.1.13742.6.0.66
+    event_type: sensor_critical_humidity
+    severity: CRITICAL
+    device_types: [sensor]
+    # sensorCriticalHumidity [raritan]
+
+  - oid: 1.3.6.1.4.1.13742.6.0.66
+    event_type: sensor_high_airflow
+    severity: MAJOR
+    device_types: [sensor]
+    # sensorHighAirflow [raritan]
+
+  - oid: 1.3.6.1.4.1.13742.6.0.66
+    event_type: sensor_high_airflow
+    severity: CLEAR
+    is_clear: true
+    clears: [sensor_high_airflow, sensor_low_airflow, airflow_alert]
+    device_types: [sensor]
+    # sensorAirflowNormal [raritan]
+
+  - oid: 1.3.6.1.4.1.13742.6.0.66
+    event_type: sensor_high_humidity
+    severity: MAJOR
+    device_types: [sensor]
+    # sensorHighHumidity [raritan]
+
+  - oid: 1.3.6.1.4.1.13742.6.0.66
+    event_type: sensor_high_humidity
+    severity: CLEAR
+    is_clear: true
+    clears: [sensor_high_humidity, sensor_critical_humidity, sensor_low_humidity, humidity_alert]
+    device_types: [sensor]
+    # sensorHumidityNormal [raritan]
+
+  - oid: 1.3.6.1.4.1.13742.6.0.66
+    event_type: sensor_low_airflow
+    severity: CRITICAL
+    device_types: [sensor]
+    # sensorLowAirflow [raritan]
+
+  - oid: 1.3.6.1.4.1.13742.6.0.66
+    event_type: sensor_low_humidity
+    severity: MAJOR
+    device_types: [sensor]
+    # sensorLowHumidity [raritan]
+
+  - oid: 1.3.6.1.4.1.13742.6.0.66
+    event_type: sensor_mid_temp_high
+    severity: MAJOR
+    device_types: [sensor]
+    # sensorMidTempHigh [raritan]
+
+  - oid: 1.3.6.1.4.1.13742.6.0.66
+    event_type: sensor_mid_temp_high
+    severity: CLEAR
+    is_clear: true
+    clears: [sensor_mid_temp_high]
+    device_types: [sensor]
+    # sensorMidTempNormal [raritan]
+
+  - oid: 1.3.6.1.4.1.13742.6.0.66
+    event_type: sensor_outlet_temp_high
+    severity: MAJOR
+    device_types: [sensor]
+    # sensorOutletTempHigh [raritan]
+
+  - oid: 1.3.6.1.4.1.13742.6.0.66
+    event_type: sensor_outlet_temp_high
+    severity: CLEAR
+    is_clear: true
+    clears: [sensor_outlet_temp_high]
+    device_types: [sensor]
+    # sensorOutletTempNormal [raritan]
+
+  - oid: 1.3.6.1.4.1.13742.6.0.66
+    event_type: airflow_alert
+    severity: MAJOR
+    # airflowAlert [raritan]
+    # AMBIGUOUS - no device type separates this from: dewPointAlert->dew_point_alert; humidityAlert->humidity_alert; pduHumidityHigh->pdu_humidity_high; pduHumidityNormal->pdu_humidity_high; pduTempHigh->pdu_temp_high; pduTempNormal->pdu_temp_high; sensorAmbientTempNormal->sensor_ambient_temp_high; smokeDetected->smoke_detected
+
+  - oid: 1.3.6.1.4.1.13742.6.0.66
+    event_type: dew_point_alert
+    severity: CRITICAL
+    # dewPointAlert [raritan]
+    # AMBIGUOUS - no device type separates this from: airflowAlert->airflow_alert; humidityAlert->humidity_alert; pduHumidityHigh->pdu_humidity_high; pduHumidityNormal->pdu_humidity_high; pduTempHigh->pdu_temp_high; pduTempNormal->pdu_temp_high; sensorAmbientTempNormal->sensor_ambient_temp_high; smokeDetected->smoke_detected
+
+  - oid: 1.3.6.1.4.1.13742.6.0.66
+    event_type: humidity_alert
+    severity: MAJOR
+    # humidityAlert [raritan]
+    # AMBIGUOUS - no device type separates this from: airflowAlert->airflow_alert; dewPointAlert->dew_point_alert; pduHumidityHigh->pdu_humidity_high; pduHumidityNormal->pdu_humidity_high; pduTempHigh->pdu_temp_high; pduTempNormal->pdu_temp_high; sensorAmbientTempNormal->sensor_ambient_temp_high; smokeDetected->smoke_detected
+
+  - oid: 1.3.6.1.4.1.13742.6.0.66
+    event_type: pdu_humidity_high
+    severity: MAJOR
+    # pduHumidityHigh [raritan]
+    # AMBIGUOUS - no device type separates this from: airflowAlert->airflow_alert; dewPointAlert->dew_point_alert; humidityAlert->humidity_alert; pduHumidityNormal->pdu_humidity_high; pduTempHigh->pdu_temp_high; pduTempNormal->pdu_temp_high; sensorAmbientTempNormal->sensor_ambient_temp_high; smokeDetected->smoke_detected
+
+  - oid: 1.3.6.1.4.1.13742.6.0.66
+    event_type: pdu_humidity_high
+    severity: CLEAR
+    is_clear: true
+    clears: [pdu_humidity_high]
+    # pduHumidityNormal [raritan]
+    # AMBIGUOUS - no device type separates this from: airflowAlert->airflow_alert; dewPointAlert->dew_point_alert; humidityAlert->humidity_alert; pduHumidityHigh->pdu_humidity_high; pduTempHigh->pdu_temp_high; pduTempNormal->pdu_temp_high; sensorAmbientTempNormal->sensor_ambient_temp_high; smokeDetected->smoke_detected
+
+  - oid: 1.3.6.1.4.1.13742.6.0.66
+    event_type: pdu_temp_high
+    severity: MAJOR
+    # pduTempHigh [raritan]
+    # AMBIGUOUS - no device type separates this from: airflowAlert->airflow_alert; dewPointAlert->dew_point_alert; humidityAlert->humidity_alert; pduHumidityHigh->pdu_humidity_high; pduHumidityNormal->pdu_humidity_high; pduTempNormal->pdu_temp_high; sensorAmbientTempNormal->sensor_ambient_temp_high; smokeDetected->smoke_detected
+
+  - oid: 1.3.6.1.4.1.13742.6.0.66
     event_type: pdu_temp_high
     severity: CLEAR
     is_clear: true
     clears: [pdu_temp_high]
     # pduTempNormal [raritan]
-    # AMBIGUOUS - this OID also carries: airflowAlert->airflow_alert(MAJOR); dewPointAlert->dew_point_alert(CRITICAL); humidityAlert->humidity_alert(MAJOR); pduHumidityHigh->pdu_humidity_high(MAJOR); pduHumidityNormal->pdu_humidity_high(CLEAR); pduTempHigh->pdu_temp_high(MAJOR); sensorAirflowNormal->sensor_high_airflow(CLEAR); sensorAmbientTempCritical->sensor_ambient_temp_critical(CRITICAL); sensorAmbientTempHigh->sensor_ambient_temp_high(MAJOR); sensorAmbientTempNormal->sensor_ambient_temp_high(CLEAR); sensorCriticalHumidity->sensor_critical_humidity(CRITICAL); sensorDewPointNormal->dew_point_alert(CLEAR); sensorHighAirflow->sensor_high_airflow(MAJOR); sensorHighHumidity->sensor_high_humidity(MAJOR); sensorHumidityNormal->sensor_high_humidity(CLEAR); sensorLowAirflow->sensor_low_airflow(CRITICAL); sensorLowHumidity->sensor_low_humidity(MAJOR); sensorMidTempHigh->sensor_mid_temp_high(MAJOR); sensorMidTempNormal->sensor_mid_temp_high(CLEAR); sensorOutletTempHigh->sensor_outlet_temp_high(MAJOR); sensorOutletTempNormal->sensor_outlet_temp_high(CLEAR); smokeDetected->smoke_detected(CRITICAL)
+    # AMBIGUOUS - no device type separates this from: airflowAlert->airflow_alert; dewPointAlert->dew_point_alert; humidityAlert->humidity_alert; pduHumidityHigh->pdu_humidity_high; pduHumidityNormal->pdu_humidity_high; pduTempHigh->pdu_temp_high; sensorAmbientTempNormal->sensor_ambient_temp_high; smokeDetected->smoke_detected
+
+  - oid: 1.3.6.1.4.1.13742.6.0.66
+    event_type: sensor_ambient_temp_high
+    severity: CLEAR
+    is_clear: true
+    clears: [sensor_ambient_temp_high, sensor_ambient_temp_critical]
+    # sensorAmbientTempNormal [raritan]
+    # AMBIGUOUS - no device type separates this from: airflowAlert->airflow_alert; dewPointAlert->dew_point_alert; humidityAlert->humidity_alert; pduHumidityHigh->pdu_humidity_high; pduHumidityNormal->pdu_humidity_high; pduTempHigh->pdu_temp_high; pduTempNormal->pdu_temp_high; smokeDetected->smoke_detected
+
+  - oid: 1.3.6.1.4.1.13742.6.0.66
+    event_type: smoke_detected
+    severity: CRITICAL
+    # smokeDetected [raritan]
+    # AMBIGUOUS - no device type separates this from: airflowAlert->airflow_alert; dewPointAlert->dew_point_alert; humidityAlert->humidity_alert; pduHumidityHigh->pdu_humidity_high; pduHumidityNormal->pdu_humidity_high; pduTempHigh->pdu_temp_high; pduTempNormal->pdu_temp_high; sensorAmbientTempNormal->sensor_ambient_temp_high
+
+  - oid: 1.3.6.1.4.1.19046.11.1.158.5.0.0
+    event_type: sensor_ambient_temp_critical
+    severity: CRITICAL
+    device_types: [sensor]
+    # sensorAmbientTempCritical [lenovo]
 
   - oid: 1.3.6.1.4.1.19046.11.1.158.5.0.0
     event_type: cpu_temp_critical
     severity: CRITICAL
     # cpuTempCritical [lenovo]
-    # AMBIGUOUS - this OID also carries: sensorAmbientTempCritical->sensor_ambient_temp_critical(CRITICAL)
+
+  - oid: 1.3.6.1.4.1.19046.11.1.158.5.0.12
+    event_type: sensor_ambient_temp_high
+    severity: MAJOR
+    device_types: [sensor]
+    # sensorAmbientTempHigh [lenovo]
 
   - oid: 1.3.6.1.4.1.19046.11.1.158.5.0.12
     event_type: temperature_alert
     severity: CRITICAL
     # temperatureAlert [lenovo]
-    # AMBIGUOUS - this OID also carries: sensorAmbientTempHigh->sensor_ambient_temp_high(MAJOR)
 
   - oid: 1.3.6.1.4.1.19046.11.1.158.5.0.23
     event_type: server_power_off
@@ -404,11 +986,13 @@ traps:
   - oid: 1.3.6.1.4.1.99999.1.9
     event_type: sensor_mid_temp_high
     severity: MAJOR
+    device_types: [sensor]
     # sensorMidTempHigh [synthetic]
 
   - oid: 1.3.6.1.4.1.99999.1.10
     event_type: sensor_outlet_temp_high
     severity: MAJOR
+    device_types: [sensor]
     # sensorOutletTempHigh [synthetic]
 
   - oid: 1.3.6.1.4.1.99999.1.11
@@ -416,6 +1000,7 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [sensor_mid_temp_high]
+    device_types: [sensor]
     # sensorMidTempNormal [synthetic]
 
   - oid: 1.3.6.1.4.1.99999.1.12
@@ -423,6 +1008,7 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [sensor_outlet_temp_high]
+    device_types: [sensor]
     # sensorOutletTempNormal [synthetic]
 
   - oid: 1.3.6.1.4.1.99999.1.13
@@ -444,6 +1030,7 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [temperature_alert, cpu_temp_critical]
+    device_types: [firewall, load_balancer, router, server, switch]
     # temperatureNormal [synthetic]
 
   - oid: 1.3.6.1.4.1.99999.1.16
@@ -458,6 +1045,7 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [sensor_high_humidity, sensor_critical_humidity, sensor_low_humidity, humidity_alert]
+    device_types: [sensor]
     # sensorHumidityNormal [synthetic]
 
   - oid: 1.3.6.1.4.1.99999.1.18
@@ -465,6 +1053,7 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [dew_point_alert]
+    device_types: [sensor]
     # sensorDewPointNormal [synthetic]
 
   - oid: 1.3.6.1.4.1.99999.1.19
@@ -472,6 +1061,7 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [sensor_high_airflow, sensor_low_airflow, airflow_alert]
+    device_types: [sensor]
     # sensorAirflowNormal [synthetic]
 
   - oid: 1.3.6.1.4.1.99999.1.20
@@ -487,46 +1077,55 @@ traps:
   - oid: 1.3.6.1.4.1.99999.1.22
     event_type: sensor_ambient_temp_high
     severity: MAJOR
+    device_types: [sensor]
     # sensorAmbientTempHigh [synthetic]
 
   - oid: 1.3.6.1.4.1.99999.1.23
     event_type: sensor_ambient_temp_critical
     severity: CRITICAL
+    device_types: [sensor]
     # sensorAmbientTempCritical [synthetic]
 
   - oid: 1.3.6.1.4.1.99999.1.24
     event_type: sensor_high_humidity
     severity: MAJOR
+    device_types: [sensor]
     # sensorHighHumidity [synthetic]
 
   - oid: 1.3.6.1.4.1.99999.1.25
     event_type: sensor_critical_humidity
     severity: CRITICAL
+    device_types: [sensor]
     # sensorCriticalHumidity [synthetic]
 
   - oid: 1.3.6.1.4.1.99999.1.26
     event_type: sensor_low_humidity
     severity: MAJOR
+    device_types: [sensor]
     # sensorLowHumidity [synthetic]
 
   - oid: 1.3.6.1.4.1.99999.1.27
     event_type: sensor_high_airflow
     severity: MAJOR
+    device_types: [sensor]
     # sensorHighAirflow [synthetic]
 
   - oid: 1.3.6.1.4.1.99999.1.28
     event_type: sensor_low_airflow
     severity: CRITICAL
+    device_types: [sensor]
     # sensorLowAirflow [synthetic]
 
   - oid: 1.3.6.1.4.1.99999.1.29
     event_type: fan_under_speed
     severity: MAJOR
+    device_types: [server]
     # FanUnderSpeed [rule]
 
   - oid: 1.3.6.1.4.1.99999.1.30
     event_type: fan_failure
     severity: CRITICAL
+    device_types: [server]
     # FanFailure [rule]
 
   - oid: 1.3.6.1.4.1.99999.1.31
@@ -534,6 +1133,7 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [fan_under_speed]
+    device_types: [server]
     # FanSpeedNormal [rule]
 
   - oid: 1.3.6.1.4.1.99999.1.32
@@ -541,6 +1141,7 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [fan_failure]
+    device_types: [server]
     # FanRestored [rule]
 
   - oid: 1.3.6.1.4.1.99999.1.33
@@ -548,6 +1149,7 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [sensor_ambient_temp_critical]
+    device_types: [sensor]
     # SensorAmbientTempCriticalCleared [rule]
 
   - oid: 1.3.6.1.4.1.99999.1.34
@@ -555,6 +1157,7 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [sensor_critical_humidity]
+    device_types: [sensor]
     # SensorCriticalHumidityCleared [rule]
 
   - oid: 1.3.6.1.4.1.99999.1.35
@@ -562,6 +1165,7 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [sensor_low_humidity]
+    device_types: [sensor]
     # SensorLowHumidityCleared [rule]
 
   - oid: 1.3.6.1.4.1.99999.1.36
@@ -569,6 +1173,7 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [sensor_low_airflow]
+    device_types: [sensor]
     # SensorLowAirflowCleared [rule]
 
   - oid: 1.3.6.1.4.1.99999.1.37
@@ -583,6 +1188,7 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [cpu_temp_critical]
+    device_types: [firewall, load_balancer, router, server, switch]
     # CriticalCPUAndTempCleared [rule]
 
   - oid: 1.3.6.1.4.1.99999.1.39
@@ -628,6 +1234,7 @@ traps:
   - oid: 1.3.6.1.4.1.99999.2.5
     event_type: fan_failure
     severity: CRITICAL
+    device_types: [server]
     # fanFailure [synthetic]
 
   - oid: 1.3.6.1.4.1.99999.2.6
@@ -713,6 +1320,7 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [fan_failure]
+    device_types: [ups]
     # UPSFanNormal [rule]
 
   - oid: 1.3.6.1.4.1.99999.2.21
@@ -720,6 +1328,7 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [ups_battery_low]
+    device_types: [ups]
     # UPSLowBatteryCleared [rule]
 
   - oid: 1.3.6.1.4.1.99999.2.22
@@ -727,6 +1336,7 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [battery_disconnected]
+    device_types: [ups]
     # UPSBatteryReconnected [rule]
 
   - oid: 1.3.6.1.4.1.99999.2.23
@@ -734,6 +1344,7 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [charger_failure]
+    device_types: [ups]
     # UPSChargerNormal [rule]
 
   - oid: 1.3.6.1.4.1.99999.2.24
@@ -741,6 +1352,7 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [rectifier_failure]
+    device_types: [ups]
     # UPSRectifierNormal [rule]
 
   - oid: 1.3.6.1.4.1.99999.2.25
@@ -748,6 +1360,7 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [ups_phase_failure]
+    device_types: [ups]
     # UPSPhaseNormal [rule]
 
   - oid: 1.3.6.1.4.1.99999.2.26
@@ -755,6 +1368,7 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [frequency_out_of_range]
+    device_types: [ups]
     # UPSFrequencyNormal [rule]
 
   - oid: 1.3.6.1.4.1.99999.3.1
@@ -835,6 +1449,7 @@ traps:
   - oid: 1.3.6.1.4.1.99999.3.14
     event_type: mcc_bus_dead
     severity: CRITICAL
+    device_types: [mcc]
     # MCCBusDead [rule]
 
   - oid: 1.3.6.1.4.1.99999.3.15
@@ -842,16 +1457,19 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [mcc_bus_dead]
+    device_types: [mcc]
     # MCCBusEnergized [rule]
 
   - oid: 1.3.6.1.4.1.99999.3.20
     event_type: mpp_overload
     severity: MAJOR
+    device_types: [mpp]
     # MPPOverload [rule]
 
   - oid: 1.3.6.1.4.1.99999.3.21
     event_type: mpp_overload_critical
     severity: CRITICAL
+    device_types: [mpp]
     # MPPOverloadCritical [rule]
 
   - oid: 1.3.6.1.4.1.99999.3.22
@@ -859,6 +1477,7 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [mpp_overload_critical]
+    device_types: [mpp]
     # MPPOverloadCriticalCleared [rule]
 
   - oid: 1.3.6.1.4.1.99999.3.23
@@ -866,11 +1485,13 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [mpp_overload]
+    device_types: [mpp]
     # MPPLoadNormal [rule]
 
   - oid: 1.3.6.1.4.1.99999.3.24
     event_type: mpp_bus_dead
     severity: MAJOR
+    device_types: [mpp]
     # MPPBusDead [rule]
 
   - oid: 1.3.6.1.4.1.99999.3.25
@@ -878,11 +1499,13 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [mpp_bus_dead]
+    device_types: [mpp]
     # MPPBusEnergized [rule]
 
   - oid: 1.3.6.1.4.1.99999.3.30
     event_type: generator_overload
     severity: CRITICAL
+    device_types: [generator]
     # GeneratorOverload [rule]
 
   - oid: 1.3.6.1.4.1.99999.3.31
@@ -890,11 +1513,13 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [generator_overload]
+    device_types: [generator]
     # GeneratorLoadNormal [rule]
 
   - oid: 1.3.6.1.4.1.99999.3.32
     event_type: generator_failed_to_start
     severity: CRITICAL
+    device_types: [generator]
     # GeneratorFailedToStart [rule]
 
   - oid: 1.3.6.1.4.1.99999.3.33
@@ -902,16 +1527,19 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [generator_failed_to_start]
+    device_types: [generator]
     # GeneratorRecovered [rule]
 
   - oid: 1.3.6.1.4.1.99999.4.1
     event_type: chw_supply_temp_high
     severity: MAJOR
+    device_types: [sensor]
     # CHWSupplyTempHigh [rule]
 
   - oid: 1.3.6.1.4.1.99999.4.2
     event_type: chw_supply_temp_critical
     severity: CRITICAL
+    device_types: [sensor]
     # CHWSupplyTempCritical [rule]
 
   - oid: 1.3.6.1.4.1.99999.4.3
@@ -919,6 +1547,7 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [chw_supply_temp_critical]
+    device_types: [sensor]
     # CHWSupplyTempCriticalCleared [rule]
 
   - oid: 1.3.6.1.4.1.99999.4.4
@@ -926,11 +1555,13 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [chw_supply_temp_high]
+    device_types: [sensor]
     # CHWSupplyTempNormal [rule]
 
   - oid: 1.3.6.1.4.1.99999.4.5
     event_type: chw_return_temp_high
     severity: MAJOR
+    device_types: [sensor]
     # CHWReturnTempHigh [rule]
 
   - oid: 1.3.6.1.4.1.99999.4.6
@@ -938,16 +1569,19 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [chw_return_temp_high]
+    device_types: [sensor]
     # CHWReturnTempNormal [rule]
 
   - oid: 1.3.6.1.4.1.99999.4.10
     event_type: cw_supply_temp_high
     severity: MAJOR
+    device_types: [sensor]
     # CWSupplyTempHigh [rule]
 
   - oid: 1.3.6.1.4.1.99999.4.11
     event_type: cw_supply_temp_critical
     severity: CRITICAL
+    device_types: [sensor]
     # CWSupplyTempCritical [rule]
 
   - oid: 1.3.6.1.4.1.99999.4.12
@@ -955,6 +1589,7 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [cw_supply_temp_critical]
+    device_types: [sensor]
     # CWSupplyTempCriticalCleared [rule]
 
   - oid: 1.3.6.1.4.1.99999.4.13
@@ -962,11 +1597,13 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [cw_supply_temp_high]
+    device_types: [sensor]
     # CWSupplyTempNormal [rule]
 
   - oid: 1.3.6.1.4.1.99999.4.14
     event_type: cw_return_temp_high
     severity: MAJOR
+    device_types: [sensor]
     # CWReturnTempHigh [rule]
 
   - oid: 1.3.6.1.4.1.99999.4.15
@@ -974,11 +1611,13 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [cw_return_temp_high]
+    device_types: [sensor]
     # CWReturnTempNormal [rule]
 
   - oid: 1.3.6.1.4.1.99999.4.20
     event_type: ct_basin_temp_high
     severity: MAJOR
+    device_types: [sensor]
     # CTBasinTempHigh [rule]
 
   - oid: 1.3.6.1.4.1.99999.4.21
@@ -986,11 +1625,13 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [ct_basin_temp_high]
+    device_types: [sensor]
     # CTBasinTempNormal [rule]
 
   - oid: 1.3.6.1.4.1.99999.4.30
     event_type: chw_flow_loss
     severity: CRITICAL
+    device_types: [sensor]
     # CHWFlowLoss [rule]
 
   - oid: 1.3.6.1.4.1.99999.4.31
@@ -998,11 +1639,13 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [chw_flow_loss]
+    device_types: [sensor]
     # CHWFlowRestored [rule]
 
   - oid: 1.3.6.1.4.1.99999.4.40
     event_type: chiller_high_pressure
     severity: CRITICAL
+    device_types: [chiller]
     # ChillerHighPressure [rule]
 
   - oid: 1.3.6.1.4.1.99999.4.41
@@ -1010,11 +1653,13 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [chiller_high_pressure]
+    device_types: [chiller]
     # ChillerHighPressureCleared [rule]
 
   - oid: 1.3.6.1.4.1.99999.4.42
     event_type: chiller_flow_loss
     severity: CRITICAL
+    device_types: [chiller, pump]
     # ChillerFlowLoss [rule]
 
   - oid: 1.3.6.1.4.1.99999.4.43
@@ -1022,11 +1667,13 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [chiller_flow_loss]
+    device_types: [chiller, pump]
     # ChillerFlowLossCleared [rule]
 
   - oid: 1.3.6.1.4.1.99999.4.44
     event_type: chiller_low_evap_temp
     severity: MAJOR
+    device_types: [chiller]
     # ChillerLowEvapTemp [rule]
 
   - oid: 1.3.6.1.4.1.99999.4.45
@@ -1034,11 +1681,13 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [chiller_low_evap_temp]
+    device_types: [chiller]
     # ChillerLowEvapTempCleared [rule]
 
   - oid: 1.3.6.1.4.1.99999.4.46
     event_type: tower_high_vibration
     severity: MAJOR
+    device_types: [cooling_tower]
     # TowerHighVibration [rule]
 
   - oid: 1.3.6.1.4.1.99999.4.47
@@ -1046,11 +1695,13 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [tower_high_vibration]
+    device_types: [cooling_tower]
     # TowerHighVibrationCleared [rule]
 
   - oid: 1.3.6.1.4.1.99999.4.48
     event_type: tower_low_basin
     severity: MAJOR
+    device_types: [cooling_tower]
     # TowerLowBasin [rule]
 
   - oid: 1.3.6.1.4.1.99999.4.49
@@ -1058,11 +1709,13 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [tower_low_basin]
+    device_types: [cooling_tower]
     # TowerLowBasinCleared [rule]
 
   - oid: 1.3.6.1.4.1.99999.4.50
     event_type: pump_fault
     severity: MAJOR
+    device_types: [pump]
     # PumpFault [rule]
 
   - oid: 1.3.6.1.4.1.99999.4.51
@@ -1070,11 +1723,13 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [pump_fault]
+    device_types: [pump]
     # PumpFaultCleared [rule]
 
   - oid: 1.3.6.1.4.1.99999.4.52
     event_type: pump_low_flow
     severity: MAJOR
+    device_types: [pump]
     # PumpLowFlow [rule]
 
   - oid: 1.3.6.1.4.1.99999.4.53
@@ -1082,11 +1737,13 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [pump_low_flow]
+    device_types: [pump]
     # PumpLowFlowCleared [rule]
 
   - oid: 1.3.6.1.4.1.99999.4.54
     event_type: valve_actuator_fault
     severity: CRITICAL
+    device_types: [valve]
     # ValveActuatorFault [rule]
 
   - oid: 1.3.6.1.4.1.99999.4.55
@@ -1094,11 +1751,13 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [valve_actuator_fault]
+    device_types: [valve]
     # ValveActuatorFaultCleared [rule]
 
   - oid: 1.3.6.1.4.1.99999.4.56
     event_type: crah_airflow_loss
     severity: MAJOR
+    device_types: [crah]
     # CRAHAirflowLoss [rule]
 
   - oid: 1.3.6.1.4.1.99999.4.57
@@ -1106,11 +1765,13 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [crah_airflow_loss]
+    device_types: [crah]
     # CRAHAirflowLossCleared [rule]
 
   - oid: 1.3.6.1.4.1.99999.4.58
     event_type: crah_high_temp
     severity: MAJOR
+    device_types: [cdu, crah]
     # CRAHHighTemp [rule]
 
   - oid: 1.3.6.1.4.1.99999.4.59
@@ -1118,11 +1779,13 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [crah_high_temp]
+    device_types: [cdu, crah]
     # CRAHHighTempCleared [rule]
 
   - oid: 1.3.6.1.4.1.99999.4.60
     event_type: crah_filter_dirty
     severity: MINOR
+    device_types: [crah]
     # CRAHFilterDirty [rule]
 
   - oid: 1.3.6.1.4.1.99999.4.61
@@ -1130,11 +1793,13 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [crah_filter_dirty]
+    device_types: [crah]
     # CRAHFilterDirtyCleared [rule]
 
   - oid: 1.3.6.1.4.1.99999.4.62
     event_type: plant_unit_stopped
     severity: MAJOR
+    device_types: [cdu, chiller, cooling_tower, crah, pump, valve]
     # PlantUnitStopped [rule]
 
   - oid: 1.3.6.1.4.1.99999.4.63
@@ -1142,6 +1807,7 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [plant_unit_stopped]
+    device_types: [cdu, chiller, cooling_tower, crah, pump, valve]
     # PlantUnitStoppedCleared [rule]
 
   - oid: 1.3.6.1.4.1.99999.6.1
@@ -1257,6 +1923,7 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [breaker_tripped]
+    device_types: [floor_pdu, pdu]
     # PDUBreakerReset [rule]
 
   - oid: 1.3.6.1.4.1.99999.6.22
@@ -1264,6 +1931,7 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [outlet_failure]
+    device_types: [floor_pdu, pdu]
     # PDUOutletRestored [rule]
 
   - oid: 1.3.6.1.4.1.99999.6.23
@@ -1271,6 +1939,7 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [smoke_detected]
+    device_types: [floor_pdu, pdu]
     # PDUSmokeCleared [rule]
 
   - oid: 1.3.6.1.4.1.99999.6.24
@@ -1278,6 +1947,7 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [ground_fault]
+    device_types: [floor_pdu, pdu]
     # PDUGroundFaultCleared [rule]
 
   - oid: 1.3.6.1.4.1.99999.6.25
@@ -1285,6 +1955,7 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [voltage_high]
+    device_types: [floor_pdu, pdu]
     # PDUVoltageNormal [rule]
 
   - oid: 1.3.6.1.4.1.99999.6.26
@@ -1292,6 +1963,7 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [voltage_low]
+    device_types: [floor_pdu, pdu]
     # PDUVoltageLowCleared [rule]
 
   - oid: 1.3.6.1.4.1.99999.6.27
@@ -1299,6 +1971,7 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [phase_imbalance]
+    device_types: [floor_pdu, pdu]
     # PDUPhaseBalanceRestored [rule]
 
   - oid: 1.3.6.1.4.1.99999.6.28
@@ -1306,6 +1979,7 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [power_factor_low]
+    device_types: [floor_pdu, pdu]
     # PDUPowerFactorNormal [rule]
 
   - oid: 1.3.6.1.4.1.99999.6.29
@@ -1313,6 +1987,7 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [pdu_load_critical]
+    device_types: [floor_pdu, pdu]
     # PDULoadCriticalCleared [rule]
 
   - oid: 1.3.6.1.4.1.99999.6.30
@@ -1320,6 +1995,7 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [outlet_current_high]
+    device_types: [floor_pdu, pdu]
     # PDUOutletCurrentNormal [rule]
 
   - oid: 1.3.6.1.4.1.99999.13.1
@@ -1379,6 +2055,7 @@ traps:
   - oid: 1.3.6.1.4.1.99999.14.3
     event_type: switchgear_bus_fault
     severity: CRITICAL
+    device_types: [switchgear]
     # switchgearBusFault [synthetic]
 
   - oid: 1.3.6.1.4.1.99999.14.4
@@ -1411,6 +2088,7 @@ traps:
   - oid: 1.3.6.1.6.3.1.1.5.3
     event_type: link_down
     severity: MAJOR
+    device_types: [firewall, load_balancer, router, server, switch]
     # linkDown [synthetic]
 
   - oid: 1.3.6.1.6.3.1.1.5.4
@@ -1418,6 +2096,7 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [link_down]
+    device_types: [firewall, load_balancer, router, server, switch]
     # linkUp [synthetic]
 
   - oid: 1.3.6.1.6.3.1.1.5.5

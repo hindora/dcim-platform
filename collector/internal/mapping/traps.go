@@ -28,6 +28,15 @@ type TrapDef struct {
 	// InstanceFromVarbind names a varbind OID whose value identifies WHICH
 	// interface, sensor or phase the notification is about.
 	InstanceFromVarbind string `yaml:"instance_from_varbind"`
+	// DeviceTypes narrows this meaning to the kinds of device that can send
+	// it. Empty means any.
+	//
+	// Vendors reuse OIDs. A Liebert card sends 476.1.42.3.3.0.5 for a charger
+	// failure on a UPS and for a fan failure on cooling gear; keyed on the OID
+	// alone, one of those two readings is always wrong. The receiver knows
+	// which endpoint the trap arrived from, so the sender's device type is the
+	// discriminator that was there all along.
+	DeviceTypes []string `yaml:"device_types"`
 }
 
 type trapFile struct {
@@ -36,13 +45,16 @@ type trapFile struct {
 }
 
 // TrapTable resolves a wire OID to its canonical meaning.
+//
+// One OID may carry SEVERAL meanings, told apart by the device type that sent
+// it, so the table holds every candidate rather than the last one parsed.
 type TrapTable struct {
-	byOID map[string]TrapDef
+	byOID map[string][]TrapDef
 }
 
 // LoadTraps reads every trap mapping under <dir>/snmp/traps*.yaml.
 func LoadTraps(dir string) (*TrapTable, error) {
-	t := &TrapTable{byOID: make(map[string]TrapDef)}
+	t := &TrapTable{byOID: make(map[string][]TrapDef)}
 	paths, err := filepath.Glob(filepath.Join(dir, "snmp", "traps*.yaml"))
 	if err != nil {
 		return nil, err
@@ -66,16 +78,54 @@ func LoadTraps(dir string) (*TrapTable, error) {
 				return nil, fmt.Errorf("%s: %s is_clear but lists no `clears`",
 					path, d.OID)
 			}
-			t.byOID[strings.TrimPrefix(d.OID, ".")] = d
+			key := strings.TrimPrefix(d.OID, ".")
+			t.byOID[key] = append(t.byOID[key], d)
 		}
 	}
 	return t, nil
 }
 
-// Lookup returns the definition for a wire OID.
-func (t *TrapTable) Lookup(oid string) (TrapDef, bool) {
-	d, ok := t.byOID[strings.TrimPrefix(oid, ".")]
-	return d, ok
+// Lookup returns the definition for a wire OID sent by a device of
+// deviceType. An empty deviceType means the sender is unknown - an
+// unattributable trap - and only the unrestricted entries can apply.
+//
+// Preference, in order:
+//
+//  1. an entry naming this device type. The sender is the only evidence that
+//     tells two meanings of one OID apart.
+//  2. an entry naming no device type, which is the general meaning.
+//  3. nothing, when every candidate belongs to some other kind of device -
+//     reported as unknown rather than guessed, because a wrong reading here
+//     files a fan failure as a charger fault and sends somebody to the wrong
+//     rack.
+func (t *TrapTable) Lookup(oid, deviceType string) (TrapDef, bool) {
+	defs := t.byOID[strings.TrimPrefix(oid, ".")]
+	if len(defs) == 0 {
+		return TrapDef{}, false
+	}
+	var generic *TrapDef
+	for i := range defs {
+		if len(defs[i].DeviceTypes) == 0 {
+			if generic == nil {
+				generic = &defs[i]
+			}
+			continue
+		}
+		if deviceType == "" {
+			continue
+		}
+		for _, dt := range defs[i].DeviceTypes {
+			if dt == deviceType {
+				return defs[i], true
+			}
+		}
+	}
+	if generic != nil {
+		return *generic, true
+	}
+	return TrapDef{}, false
 }
 
+// Len counts wire OIDs, not entries: an OID with three device-specific
+// meanings is still one OID a receiver can resolve.
 func (t *TrapTable) Len() int { return len(t.byOID) }

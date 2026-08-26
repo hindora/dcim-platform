@@ -167,14 +167,37 @@ def main() -> int:
             if r not in known:
                 sys.exit(f"CLEAR_PAIRS[{clear!r}] names unknown raise trap {r!r}")
 
+
+    # Which kinds of device can send each condition, from the rules that
+    # dispatch it. A rule with no device_types fires on anything, and that
+    # widest answer wins for the condition as a whole - narrowing it would drop
+    # traps from equipment the rule does accept.
+    #
+    # This is what tells two meanings of one OID apart. A Liebert card sends
+    # 476.1.42.3.3.0.5 for a charger failure and for a fan failure; the OID
+    # cannot say which, and the sending device can.
+    device_types_for: dict[str, set[str]] = {}
+    for rule in DEFAULT_RULES:
+        name = _lower_first(rule.rule_name)
+        types = set(rule.device_types or ())
+        if name in device_types_for:
+            if not types or not device_types_for[name]:
+                device_types_for[name] = set()
+            else:
+                device_types_for[name] |= types
+        else:
+            device_types_for[name] = types
+
     def entry_for(name: str, declared: str) -> dict:
         if name in CLEAR_PAIRS:
             targets = [event_type_for(r) for r in CLEAR_PAIRS[name]]
             return {"event_type": targets[0], "severity": "CLEAR",
-                    "is_clear": True, "clears": targets, "name": name}
+                    "is_clear": True, "clears": targets, "name": name,
+                    "device_types": sorted(device_types_for.get(name, ()))}
         return {"event_type": event_type_for(name),
                 "severity": SEVERITY_MAP.get(declared, "MINOR"),
-                "is_clear": False, "clears": [], "name": name}
+                "is_clear": False, "clears": [], "name": name,
+                "device_types": sorted(device_types_for.get(name, ()))}
 
     by_oid: dict[str, list[dict]] = defaultdict(list)
 
@@ -208,8 +231,7 @@ def main() -> int:
     # than paired by hand in CLEAR_PAIRS above - which is why these entries can
     # be generated at all. A rule naming a recovery target that does not exist
     # is a typo that would produce a clear resolving nothing, so it fails here.
-    by_rule_name = {r.rule_name: r for r in DEFAULT_RULES}
-    known_names = {t.value for t in TRAP_DEFINITIONS}
+
 
     def event_type_of_rule(rule) -> str:
         """What this platform should call the condition this rule reports.
@@ -230,6 +252,9 @@ def main() -> int:
             return event_type_for(_lower_first(rule.rule_name))
         return snake(rule.rule_name)
 
+    by_rule_name = {r.rule_name: r for r in DEFAULT_RULES}
+    known_names = {t.value for t in TRAP_DEFINITIONS}
+
     for rule in DEFAULT_RULES:
         if not rule.trap_oid or rule.trap_oid in by_oid:
             continue
@@ -246,6 +271,7 @@ def main() -> int:
             by_oid[rule.trap_oid].append({
                 "event_type": cleared, "severity": "CLEAR", "is_clear": True,
                 "clears": [cleared], "name": rule.rule_name, "vendor": "rule",
+                "device_types": sorted(set(target.device_types or ())),
             })
             continue
         by_oid[rule.trap_oid].append({
@@ -253,6 +279,7 @@ def main() -> int:
             "severity": SEVERITY_MAP.get(rule.severity, "MINOR"),
             "is_clear": False, "clears": [],
             "name": rule.rule_name, "vendor": "rule",
+            "device_types": sorted(set(rule.device_types or ())),
         })
 
     lines = [
@@ -277,6 +304,21 @@ def main() -> int:
         "#",
         "# Severity is the vendor's DECLARED severity, never inferred from the",
         "# trap's name.",
+        "#",
+        "# `device_types:` narrows a meaning to the equipment that can send it.",
+        "# One wire OID often carries several conditions - a Liebert card sends",
+        "# 476.1.42.3.3.0.5 for a fan failure and for a charger failure - and the",
+        "# receiver tells them apart by the device the trap arrived from. An entry",
+        "# with no device_types is the general meaning and applies to anything,",
+        "# including a trap that could not be attributed to an endpoint.",
+        "#",
+        "# What device type CANNOT separate is marked AMBIGUOUS below: vendors",
+        "# that put many conditions on ONE OID for ONE kind of device, with the",
+        "# condition itself in a varbind. Liebert 476.1.42.3.3.0.1 carries seven.",
+        "# Resolving those needs varbind-level disambiguation, which this file",
+        "# has the shape for (`instance_from_varbind`) and the generator does not",
+        "# yet emit - the ambiguity is recorded rather than hidden behind a",
+        "# winner nobody chose deliberately.",
         "",
         "version: 1",
         "",
@@ -287,28 +329,40 @@ def main() -> int:
     for oid in sorted(by_oid, key=lambda o: [int(p) for p in o.split(".") if p.isdigit()]):
         entries = by_oid[oid]
         uniq = {(e["event_type"], e["severity"], e["is_clear"]): e for e in entries}
-        # Prefer a clear over a raise on a shared OID: failing to clear leaves a
-        # stuck alarm, which is worse than an extra clear attempt that finds
-        # nothing to resolve.
-        chosen = max(uniq.values(),
-                     key=lambda e: (e["is_clear"], SEVERITY_RANK.get(e["severity"], 0)))
         vendors = sorted({e["vendor"] for e in entries})
 
-        lines.append(f"  - oid: {oid}")
-        lines.append(f"    event_type: {chosen['event_type']}")
-        lines.append(f"    severity: {chosen['severity']}")
-        if chosen["is_clear"]:
-            clears += 1
-            lines.append("    is_clear: true")
-            joined = ", ".join(chosen["clears"])
-            lines.append(f"    clears: [{joined}]")
-        lines.append(f"    # {chosen['name']} [{', '.join(vendors)}]")
-        if len(uniq) > 1:
+        # EVERY meaning is emitted, each with the device types that can send
+        # it, and the receiver picks by the sender. Collapsing a shared OID to
+        # one winner - which this did, preferring clears - meant a Liebert fan
+        # failure was read as a charger failure for as long as the table said
+        # so: one of the two readings was always wrong, and nothing recorded
+        # which.
+        ordered = sorted(uniq.values(),
+                         key=lambda e: (not e["device_types"], e["event_type"]))
+        unresolvable = [e for e in ordered if not e["device_types"]]
+        if len(ordered) > 1 and len(unresolvable) > 1:
+            # Two meanings that BOTH accept any device cannot be told apart by
+            # the sender. Count it, keep the widest, and say so in the file
+            # rather than pretending the ambiguity is gone.
             ambiguous += 1
-            others = sorted(f"{e['name']}->{e['event_type']}({e['severity']})"
-                            for e in uniq.values() if e is not chosen)
-            lines.append("    # AMBIGUOUS - this OID also carries: " + "; ".join(others))
-        lines.append("")
+
+        for e in ordered:
+            lines.append(f"  - oid: {oid}")
+            lines.append(f"    event_type: {e['event_type']}")
+            lines.append(f"    severity: {e['severity']}")
+            if e["is_clear"]:
+                clears += 1
+                lines.append("    is_clear: true")
+                lines.append(f"    clears: [{', '.join(e['clears'])}]")
+            if e["device_types"]:
+                lines.append(f"    device_types: [{', '.join(e['device_types'])}]")
+            lines.append(f"    # {e['name']} [{', '.join(vendors)}]")
+            if len(ordered) > 1 and len(unresolvable) > 1 and not e["device_types"]:
+                others = sorted(f"{o['name']}->{o['event_type']}"
+                                for o in unresolvable if o is not e)
+                lines.append("    # AMBIGUOUS - no device type separates this "
+                             "from: " + "; ".join(others))
+            lines.append("")
 
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text("\n".join(lines), encoding="utf-8", newline="\n")

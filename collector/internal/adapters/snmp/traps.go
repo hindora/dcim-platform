@@ -156,9 +156,14 @@ func (t *TrapReceiver) handle(ctx context.Context, p *g.SnmpPacket,
 		Varbinds:       varbinds,
 	}
 
+	// The sender's device type disambiguates an OID that carries more than one
+	// meaning; it stays empty when the trap cannot be attributed, in which case
+	// only the unrestricted meanings can apply.
+	senderType := ""
 	if ep, ok := t.resolver.Resolve(source, p.Community); ok {
 		ev.EndpointID = ep.ID
 		ev.DeviceID = ep.DeviceID
+		senderType = ep.DeviceType
 	} else {
 		// Recorded, not dropped: an unattributable trap is evidence that
 		// inventory and the network disagree, which is itself worth seeing.
@@ -166,7 +171,7 @@ func (t *TrapReceiver) handle(ctx context.Context, p *g.SnmpPacket,
 		t.log.Warn("trap from an unknown source", "source", source, "oid", trapOID)
 	}
 
-	def, known := t.table.Lookup(trapOID)
+	def, known := t.table.Lookup(trapOID, senderType)
 	if !known {
 		// Never drop an unknown trap. It becomes an INFO event carrying the
 		// raw OID so the gap in the mapping is visible in the UI rather than
