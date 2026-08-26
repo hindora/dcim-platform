@@ -256,6 +256,15 @@ class AlarmService:
                                   action="raised" if alarm["change"] == "created"
                                   else alarm["change"],
                                   severity=alarm["severity"], actor="device")
+
+        # A trap and a poll rule can raise different bands of one measurement -
+        # the trap fires at the vendor's threshold, the rule at ours - so the
+        # collapse has to happen on both paths or the console shows one row
+        # from each.
+        await self._collapse_bands(
+            session, alarm, device_id=device_id,
+            alarm_type=alert_taxonomy.canonical_alarm_type(ev["event_type"]),
+            instance=instance, actor="device")
         await repo.refresh_device_alarm_state(session, [device_id])
         return AlarmAction(
             "alarm_created" if alarm["change"] == "created" else "alarm_updated",
@@ -341,6 +350,30 @@ class AlarmService:
         await repo.refresh_device_alarm_state(session, [device_id])
         return AlarmAction("alarm_created", alarm)
 
+    async def _collapse_bands(self, session, alarm: dict, *, device_id: str,
+                              alarm_type: str, instance: str,
+                              actor: str) -> None:
+        """Fold this alarm and its band siblings into one visible row.
+
+        A warning rule and a critical rule on one measurement are two views of
+        one condition. Both stay in the record - they carry different
+        thresholds, dwells and response classes, and both are true - but only
+        the higher one is shown, the same way a dependency symptom is folded
+        under its root.
+        """
+        root = await correlation.collapse_bands(
+            session, alarm_id=alarm["id"], device_id=device_id,
+            alarm_type=alarm_type, instance=instance)
+        if not root:
+            return
+        alarm["is_symptom"] = True
+        alarm["root_cause_alarm_id"] = root["id"]
+        await repo.record_history(
+            session, alarm_id=alarm["id"], device_id=device_id,
+            action="suppressed", severity=alarm["severity"], actor=actor,
+            detail={"root": root["id"], "reason": "lower band of "
+                                                  f"{root['alarm_type']}"})
+
     # ----------------------------------------------------------- helpers
 
     async def _apply_candidate(self, session: AsyncSession,
@@ -374,6 +407,15 @@ class AlarmService:
                 action="suppressed", severity=alarm["severity"], actor="system",
                 detail={"root": root["id"], "layer": root["layer"],
                         "root_device": root["device_name"]})
+
+        # Bands, once the dependency question is settled. A warning and a
+        # critical on ONE measurement are two views of one condition, and an
+        # alarm already folded under an upstream root is not folded again.
+        if not alarm.get("is_symptom"):
+            await self._collapse_bands(
+                session, alarm, device_id=c.key.device_id,
+                alarm_type=c.key.alarm_type, instance=c.key.instance,
+                actor="system")
 
         return AlarmAction(
             "alarm_created" if alarm["change"] == "created" else "alarm_updated",

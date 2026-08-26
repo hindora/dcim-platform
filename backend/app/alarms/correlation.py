@@ -183,6 +183,116 @@ async def correlate(session: AsyncSession, *, alarm_id: str, device_id: str,
     return None
 
 
+# ---------------------------------------------------------------- bands
+#
+# A warning rule and a critical rule on ONE measurement are two views of one
+# condition, not two conditions. A CPU at 93 C crosses `cpu_temp_high` (>80)
+# and `cpu_temp_critical` (>90) together, and the console showed both: two
+# rows, two severities, two acknowledgements and two clears for one hot CPU.
+#
+# Measured on this fleet: three injected faults produced five alarms, and the
+# WARNING for the temperature arrived a minute AFTER its CRITICAL because the
+# two rules carry different dwells - so the list read as though the situation
+# had improved while nothing had changed.
+#
+# ISA-18.2's position is one alarm per measurement point with a severity that
+# escalates. This platform keeps the separate rules - they hold different
+# thresholds, dwells and response classes, and both are genuinely true - and
+# folds the lower under the higher, which is what the suppression machinery
+# above already does for dependency roots. The record keeps both; the console
+# shows the one that matters.
+
+_BAND_ROOT = text("""
+    WITH me AS (
+        SELECT metric_key, operator, threshold
+          FROM alarm_rule
+         WHERE alarm_type = :alarm_type AND metric_key IS NOT NULL
+         LIMIT 1
+    ), higher AS (
+        -- A band is HIGHER when its threshold is further along the direction
+        -- the rule fires in. Severity is not the test: it is a label chosen by
+        -- whoever wrote the rule, and two rules can share one.
+        SELECT r.alarm_type, r.threshold
+          FROM alarm_rule r, me
+         WHERE r.enabled
+           AND r.metric_key = me.metric_key
+           AND r.alarm_type <> :alarm_type
+           AND r.threshold IS NOT NULL AND me.threshold IS NOT NULL
+           AND ((me.operator = '>' AND r.threshold > me.threshold)
+             OR (me.operator = '<' AND r.threshold < me.threshold))
+    )
+    SELECT a.id::text AS id, a.alarm_type, a.severity::text AS severity
+      FROM alarm a
+      JOIN higher h ON h.alarm_type = a.alarm_type
+     WHERE a.device_id = CAST(:device_id AS uuid)
+       AND a.instance IS NOT DISTINCT FROM :instance
+       AND a.state <> 'CLEARED'
+       AND NOT a.is_symptom
+     ORDER BY CASE (SELECT operator FROM me) WHEN '>' THEN -h.threshold
+                                             ELSE h.threshold END
+     LIMIT 1
+""")
+
+_LOWER_BANDS = text("""
+    WITH me AS (
+        SELECT metric_key, operator, threshold
+          FROM alarm_rule
+         WHERE alarm_type = :alarm_type AND metric_key IS NOT NULL
+         LIMIT 1
+    ), lower AS (
+        SELECT r.alarm_type
+          FROM alarm_rule r, me
+         WHERE r.enabled
+           AND r.metric_key = me.metric_key
+           AND r.alarm_type <> :alarm_type
+           AND r.threshold IS NOT NULL AND me.threshold IS NOT NULL
+           AND ((me.operator = '>' AND r.threshold < me.threshold)
+             OR (me.operator = '<' AND r.threshold > me.threshold))
+    )
+    SELECT a.id::text AS id, a.alarm_type, a.severity::text AS severity
+      FROM alarm a
+      JOIN lower l ON l.alarm_type = a.alarm_type
+     WHERE a.device_id = CAST(:device_id AS uuid)
+       AND a.instance IS NOT DISTINCT FROM :instance
+       AND a.state <> 'CLEARED'
+       AND a.id <> CAST(:alarm_id AS uuid)
+""")
+
+
+async def collapse_bands(session: AsyncSession, *, alarm_id: str,
+                         device_id: str, alarm_type: str,
+                         instance: str) -> dict[str, Any] | None:
+    """Fold this alarm and its siblings into one visible band.
+
+    Both directions, because either can happen first and neither order is
+    unusual: a value that jumps straight past both thresholds raises the
+    critical first, while a value that climbs raises the warning first. The
+    dwells differ too, so the arrival order does not even follow the reading.
+
+    Returns the higher-band alarm when THIS one was folded under it; otherwise
+    folds any open lower bands under this one and returns None.
+    """
+    args = {"alarm_type": alarm_type, "device_id": device_id,
+            "instance": instance or ""}
+
+    root = (await session.execute(_BAND_ROOT, args)).mappings().first()
+    if root:
+        await mark_symptom(session, alarm_id=alarm_id, root_alarm_id=root["id"])
+        log.info("band folded under a higher one", alarm_id=alarm_id,
+                 alarm_type=alarm_type, root_alarm=root["id"],
+                 root_type=root["alarm_type"])
+        return dict(root)
+
+    lower = (await session.execute(
+        _LOWER_BANDS, {**args, "alarm_id": alarm_id})).mappings().all()
+    for row in lower:
+        await mark_symptom(session, alarm_id=row["id"], root_alarm_id=alarm_id)
+        log.info("lower band folded under this one", alarm_id=row["id"],
+                 alarm_type=row["alarm_type"], root_alarm=alarm_id,
+                 root_type=alarm_type)
+    return None
+
+
 async def release_symptoms(session: AsyncSession,
                            root_alarm_id: str) -> list[dict[str, Any]]:
     """Un-suppress everything a now-cleared root was explaining.
