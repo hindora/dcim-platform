@@ -23,9 +23,9 @@ from __future__ import annotations
 import pytest
 
 from app.core.alert_taxonomy import (
+    BY_ALARM_TYPE,
     IT_EQUIPMENT,
     NETWORK,
-    BY_ALARM_TYPE,
     classify,
 )
 
