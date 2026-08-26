@@ -557,6 +557,8 @@ async def alarms(session: AsyncSession, *,
         "floor": r["floor"], "site_id": r["datacenter_id"],
         "site_code": r["site_code"], "site_name": r["site_name"],
         "qty": int(r["qty"]), "devices": int(r["devices"]),
+        # Devices with anything open, for the panels that list both classes.
+        "devices_all": int(r.get("devices_all") or 0),
         # The two classes, side by side and never summed into one number here.
         "alerts": int(r.get("alerts") or 0),
         "critical": int(r["critical"]), "major": int(r["major"]),

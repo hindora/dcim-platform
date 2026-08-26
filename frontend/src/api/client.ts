@@ -875,7 +875,11 @@ export interface AlarmDrillRow {
    *  alarms and forty cooling alerts is a different room from one with two
    *  and none. */
   alerts: number;
+  /** Distinct devices behind `qty` - the alarms only. */
   devices: number;
+  /** The same count over both classes, for a panel that lists both. One
+   *  device faulting in two categories is still one device. */
+  devices_all: number;
   critical: number;
   major: number;
   by_severity: { critical: number; major: number; minor: number; warning: number };

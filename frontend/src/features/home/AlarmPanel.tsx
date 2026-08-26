@@ -178,6 +178,15 @@ function SortHead({ label, k, sort, dir, onSort, className }: {
   );
 }
 
+/** The devices figure that matches the columns beside it.
+ *
+ *  A panel listing alarms and alerts must count the devices behind both, or a
+ *  row reads "0 devices" next to four alerts and the column looks broken. An
+ *  alarms-only panel counts only the devices with something to answer - there,
+ *  a device that is merely warm is not one of them. */
+const deviceCount = (r: AlarmDrillRow, withAlerts: boolean) => (
+  withAlerts ? (r.devices_all ?? r.devices) : r.devices);
+
 function toCsv(rows: AlarmDrillRow[], withAlerts: boolean) {
   const head = ['Room', 'Site', 'Floor', 'Alarms',
                 ...(withAlerts ? ['Alerts'] : []),
@@ -191,7 +200,7 @@ function toCsv(rows: AlarmDrillRow[], withAlerts: boolean) {
   const body = rows.map((r) => [
     r.room_name, r.site_code, r.floor ?? '', r.qty,
     ...(withAlerts ? [r.alerts] : []),
-    r.devices, r.critical, r.major,
+    deviceCount(r, withAlerts), r.critical, r.major,
   ].map(cell).join(','));
   return [head.join(','), ...body].join('\n');
 }
@@ -265,6 +274,12 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
   const unlocated = scope ? 0
     : alarmsOnly ? (data?.unlocated_alarms ?? 0) : (data?.unlocated ?? 0);
 
+  // The alert column belongs to a panel about a domain, not to one about what
+  // has to be answered - there, every row would carry a number the panel is
+  // deliberately not counting. Declared up here because the sort reads it: the
+  // devices column sorts on the figure it prints, not on the other one.
+  const withAlerts = !alarmsOnly;
+
   const q = search.trim().toLowerCase();
   const filtered = q
     ? all.filter((r) =>
@@ -276,7 +291,7 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
     const pick = (x: AlarmDrillRow) => (
       sort === 'room' ? x.room_name.toLowerCase()
         : sort === 'site' ? x.site_code.toLowerCase()
-          : sort === 'devices' ? x.devices
+          : sort === 'devices' ? deviceCount(x, withAlerts)
             : sort === 'alerts' ? x.alerts
               : x.qty);
     const l = pick(a); const r = pick(b);
@@ -299,10 +314,6 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
     n: all.reduce((n, r) => n + (r.by_detection?.[d.key] ?? 0), 0),
   }));
 
-  // The alert column belongs to a panel about a domain, not to one about what
-  // has to be answered - there, every row would carry a number the panel is
-  // deliberately not counting.
-  const withAlerts = !alarmsOnly;
   // Every category at once. Concatenating seven definitions produced a
   // paragraph nobody would read and pushed the table below the fold; one
   // sentence says the same thing.
@@ -465,7 +476,13 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
                           {r.alerts || <span className="dash">—</span>}
                         </td>
                       )}
-                      <td className="num">{r.devices}</td>
+                                      <td className="num"
+                          title={withAlerts
+                            ? 'Distinct devices with anything open here - one '
+                              + 'device faulting twice is one device'
+                            : 'Distinct devices with an alarm here'}>
+                        {deviceCount(r, withAlerts)}
+                      </td>
                       <td className="num">{r.critical || <span className="dash">—</span>}</td>
                       <td className="num">{r.major || <span className="dash">—</span>}</td>
                       <td className="num">

@@ -360,6 +360,9 @@ async def alarms_by_room(session: AsyncSession, *,
     population the counter totals: a drill-down that disagrees with the number
     that opened it is worse than no drill-down. Every other alarm figure here -
     devices, severities, the facets - is alarms only for the same reason.
+    `devices_all` is the same count over both classes, for the panels that show
+    both: there, the alarm-only figure would sit next to an alert column it
+    does not describe.
 
     `alerts` is the informational count for the same room and category. A room
     with two cooling alarms and forty cooling alerts is a different room from
@@ -410,6 +413,12 @@ async def alarms_by_room(session: AsyncSession, *,
                count(*) FILTER (WHERE response_class = '{ALERT}')  AS alerts,
                count(DISTINCT cat.device_id)
                    FILTER (WHERE response_class = '{ALARM}')       AS devices,
+               -- Both classes. A panel showing alarms AND alerts printing a
+               -- device count that only saw the alarms reads as zero devices
+               -- beside four alerts, which looks like a broken column rather
+               -- than a deliberate one. The caller picks the figure that
+               -- matches the columns it is showing.
+               count(DISTINCT cat.device_id)                       AS devices_all,
                {sev_cols},
                {facet_cols}
         FROM cat

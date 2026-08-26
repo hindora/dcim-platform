@@ -223,6 +223,44 @@ async def test_panel_totals_reconcile_with_the_counter_that_opened_it(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_the_row_carries_a_device_count_for_each_population(monkeypatch):
+    """Two device counts, because the panel prints two populations.
+
+    A domain panel lists alarms AND alerts, so the devices beside them must be
+    the devices behind both - a room with four alerts and no alarms printing
+    "0 devices" reads as a broken column. An alarms-only panel wants the other
+    figure: a device that is merely warm is not a device anybody must visit.
+    """
+    monkeypatch.setattr(estate.repo, "alarms_by_room", _returns([{
+        "room_id": "r1", "room_name": "Hall A", "floor": "1",
+        "datacenter_id": "dc1", "site_code": "DC1", "site_name": "DC1",
+        "qty": 0, "alerts": 4, "devices": 0, "devices_all": 3,
+        "critical": 0, "major": 0,
+    }]))
+    monkeypatch.setattr(estate.repo, "unlocated_alarms_by_category",
+                        _returns({"total": 0, "alarms": 0}))
+
+    row = (await estate.alarms(_FakeSession(), categories=["it_equipment"]))["rows"][0]
+    assert row["devices"] == 0
+    assert row["devices_all"] == 3
+
+
+@pytest.mark.asyncio
+async def test_a_missing_device_count_reads_zero_not_absent(monkeypatch):
+    """The key must always be there: the browser sorts on it."""
+    monkeypatch.setattr(estate.repo, "alarms_by_room", _returns([{
+        "room_id": "r1", "room_name": "Hall A", "floor": "1",
+        "datacenter_id": "dc1", "site_code": "DC1", "site_name": "DC1",
+        "qty": 1, "alerts": 0, "devices": 1, "critical": 0, "major": 1,
+    }]))
+    monkeypatch.setattr(estate.repo, "unlocated_alarms_by_category",
+                        _returns({"total": 0, "alarms": 0}))
+
+    row = (await estate.alarms(_FakeSession(), categories=["power"]))["rows"][0]
+    assert row["devices_all"] == 0
+
+
+@pytest.mark.asyncio
 async def test_facility_power_stays_in_the_site_total(monkeypatch):
     """The rows a page hides must not change the arithmetic it does.
 
