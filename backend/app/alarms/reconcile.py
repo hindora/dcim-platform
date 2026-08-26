@@ -92,7 +92,7 @@ _MEASURED_CLEAR = text("""
                               OR d.device_type = ANY(r.device_types))
          WHERE a.state <> 'CLEARED'
            AND a.source = ANY(:sources)
-    ), window AS (
+    ), measured AS (
         SELECT c.id, c.device_id, c.device_name, c.alarm_type, c.severity,
                c.metric_key, c.operator, c.clear_threshold, c.need,
                count(*)   AS samples,
@@ -110,7 +110,7 @@ _MEASURED_CLEAR = text("""
            alarm_type, severity, metric_key,
            CASE WHEN operator = '>' THEN hi ELSE lo END AS worst,
            clear_threshold
-      FROM window
+      FROM measured
      WHERE samples >= need
        AND ((operator = '>' AND hi < clear_threshold)
          OR (operator = '<' AND lo > clear_threshold))
