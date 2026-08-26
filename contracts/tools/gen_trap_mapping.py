@@ -152,9 +152,17 @@ def main() -> int:
         sys.exit(f"no core/vendor_oids.py under {sim}")
     sys.path.insert(0, str(sim))
 
-    from core.trap_definitions import TRAP_DEFINITIONS  # noqa: E402
+    from core.trap_definitions import TRAP_DEFINITIONS, TrapType  # noqa: E402
     from core.trap_rules import DEFAULT_RULES  # noqa: E402
-    from core.vendor_oids import VENDOR_TRAPS  # noqa: E402
+    from core.vendor_oids import (  # noqa: E402
+        CISCO,
+        CISCO_ENV_STATE,
+        LIEBERT,
+        RARITAN,
+        RARITAN_SENSOR_STATE,
+        RARITAN_SENSOR_TYPE,
+        VENDOR_TRAPS,
+    )
 
     known = {t.value for t in TRAP_DEFINITIONS}
 
@@ -201,6 +209,60 @@ def main() -> int:
 
     by_oid: dict[str, list[dict]] = defaultdict(list)
 
+    # How each vendor says WHICH condition, when its OID does not.
+    #
+    # Read off the plane's own trap payloads rather than guessed: a Liebert
+    # condition trap carries lgpConditionDescr - "<device>: <display name>" -
+    # and a Cisco environmental notification carries the state enumeration.
+    # Those are the varbinds the vendors intended as the discriminator, and
+    # they are the only thing that separates several meanings of one OID sent
+    # by one kind of device.
+    _CISCO_AMBIENT = {TrapType.TEMPERATURE_ALERT, TrapType.CPU_TEMP_CRITICAL,
+                      TrapType.TEMPERATURE_NORMAL}
+
+    # Raritan says WHICH condition with two varbinds, never one: an inlet
+    # sensor notification carries the sensor type and the state it moved to, so
+    # "current, above upper warning" and "current, above upper critical" are a
+    # load alarm and a critical load alarm on the same OID from the same PDU.
+    _ST, _SS = RARITAN_SENSOR_TYPE, RARITAN_SENSOR_STATE
+    _RARITAN_PAIRS = {
+        TrapType.PDU_LOAD_HIGH: ("current", "aboveUpperWarning"),
+        TrapType.PDU_LOAD_CRITICAL: ("current", "aboveUpperCritical"),
+        TrapType.PDU_OUTLET_CURRENT_HIGH: ("current", "aboveUpperCritical"),
+        TrapType.PDU_LOAD_NORMAL: ("current", "normal"),
+        TrapType.PDU_BREAKER_TRIPPED: ("trip", "open"),
+        TrapType.PDU_VOLTAGE_HIGH: ("voltage", "aboveUpperCritical"),
+        TrapType.PDU_VOLTAGE_LOW: ("voltage", "belowLowerCritical"),
+        TrapType.PDU_FREQUENCY_FAULT: ("frequency", "aboveUpperWarning"),
+        TrapType.PDU_FREQUENCY_NORMAL: ("frequency", "normal"),
+    }
+
+    def varbind_match(vendor: str, trap, defn) -> list[dict] | None:
+        if vendor == "liebert":
+            # The engine writes display_name when there is one and the raw trap
+            # name when there is not; matching has to follow the same rule or
+            # the entries with no display name never match anything.
+            phrase = defn.display_name or trap.value
+            return [{"oid": LIEBERT["conditionDescr"], "contains": phrase}]
+        if vendor == "cisco" and trap in _CISCO_AMBIENT:
+            state = ("normal" if trap == TrapType.TEMPERATURE_NORMAL else
+                     "critical" if trap == TrapType.CPU_TEMP_CRITICAL else
+                     "warning")
+            return [{"oid": CISCO["envTempState"],
+                     "equals_int": CISCO_ENV_STATE[state]}]
+        if vendor == "raritan" and trap in _RARITAN_PAIRS:
+            sensor, state = _RARITAN_PAIRS[trap]
+            # The state lives in a table-specific column - inlet, outlet or
+            # unit - and the engine picks the table from the condition, so the
+            # matcher has to name the same one.
+            table = ("outlet" if trap == TrapType.PDU_OUTLET_CURRENT_HIGH else
+                     "unit" if trap == TrapType.PDU_BREAKER_TRIPPED else "inlet")
+            return [
+                {"oid": RARITAN["typeOfSensor"], "equals_int": _ST[sensor]},
+                {"oid": RARITAN[f"{table}State"], "equals_int": _SS[state]},
+            ]
+        return None
+
     for trap, defn in TRAP_DEFINITIONS.items():
         if defn.oid:
             e = entry_for(trap.value, defn.severity)
@@ -214,6 +276,7 @@ def main() -> int:
                 continue
             e = entry_for(trap.value, defn.severity)
             e["vendor"] = vendor
+            e["match_varbind"] = varbind_match(vendor, trap, defn)
             by_oid[oid].append(e)
 
     # ---- the transmit path -------------------------------------------------
@@ -329,6 +392,8 @@ def main() -> int:
     for oid in sorted(by_oid, key=lambda o: [int(p) for p in o.split(".") if p.isdigit()]):
         entries = by_oid[oid]
         uniq = {(e["event_type"], e["severity"], e["is_clear"]): e for e in entries}
+        for e in uniq.values():
+            e.setdefault("match_varbind", None)
         vendors = sorted({e["vendor"] for e in entries})
 
         # EVERY meaning is emitted, each with the device types that can send
@@ -338,8 +403,10 @@ def main() -> int:
         # so: one of the two readings was always wrong, and nothing recorded
         # which.
         ordered = sorted(uniq.values(),
-                         key=lambda e: (not e["device_types"], e["event_type"]))
-        unresolvable = [e for e in ordered if not e["device_types"]]
+                         key=lambda e: (e["match_varbind"] is None,
+                                        not e["device_types"], e["event_type"]))
+        unresolvable = [e for e in ordered
+                        if not e["device_types"] and e["match_varbind"] is None]
         if len(ordered) > 1 and len(unresolvable) > 1:
             # Two meanings that BOTH accept any device cannot be told apart by
             # the sender. Count it, keep the widest, and say so in the file
@@ -356,6 +423,14 @@ def main() -> int:
                 lines.append(f"    clears: [{', '.join(e['clears'])}]")
             if e["device_types"]:
                 lines.append(f"    device_types: [{', '.join(e['device_types'])}]")
+            if e["match_varbind"]:
+                lines.append("    match_varbinds:")
+                for m in e["match_varbind"]:
+                    lines.append(f"      - oid: {m['oid']}")
+                    if "equals_int" in m:
+                        lines.append(f"        equals_int: {m['equals_int']}")
+                    else:
+                        lines.append(f"        contains: \"{m['contains']}\"")
             lines.append(f"    # {e['name']} [{', '.join(vendors)}]")
             if len(ordered) > 1 and len(unresolvable) > 1 and not e["device_types"]:
                 others = sorted(f"{o['name']}->{o['event_type']}"

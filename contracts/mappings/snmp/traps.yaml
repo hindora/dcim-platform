@@ -66,19 +66,26 @@ traps:
     is_clear: true
     clears: [temperature_alert, cpu_temp_critical]
     device_types: [firewall, load_balancer, router, server, switch]
+    match_varbinds:
+      - oid: 1.3.6.1.4.1.9.9.13.1.3.1.6
+        equals_int: 1
     # temperatureNormal [cisco]
 
   - oid: 1.3.6.1.4.1.9.9.13.3.0.3
     event_type: cpu_temp_critical
     severity: CRITICAL
+    match_varbinds:
+      - oid: 1.3.6.1.4.1.9.9.13.1.3.1.6
+        equals_int: 3
     # cpuTempCritical [cisco]
-    # AMBIGUOUS - no device type separates this from: temperatureAlert->temperature_alert
 
   - oid: 1.3.6.1.4.1.9.9.13.3.0.3
     event_type: temperature_alert
     severity: CRITICAL
+    match_varbinds:
+      - oid: 1.3.6.1.4.1.9.9.13.1.3.1.6
+        equals_int: 2
     # temperatureAlert [cisco]
-    # AMBIGUOUS - no device type separates this from: cpuTempCritical->cpu_temp_critical
 
   - oid: 1.3.6.1.4.1.9.9.109.2.0.1
     event_type: cpu_high_usage
@@ -248,97 +255,138 @@ traps:
     event_type: sensor_ambient_temp_critical
     severity: CRITICAL
     device_types: [sensor]
+    match_varbinds:
+      - oid: 1.3.6.1.4.1.476.1.42.3.2.3.1.1
+        contains: "Sensor Ambient Temp Critical"
     # sensorAmbientTempCritical [liebert]
 
   - oid: 1.3.6.1.4.1.476.1.42.3.3.0.1
     event_type: sensor_ambient_temp_high
     severity: MAJOR
     device_types: [sensor]
+    match_varbinds:
+      - oid: 1.3.6.1.4.1.476.1.42.3.2.3.1.1
+        contains: "Sensor Ambient Temp High"
     # sensorAmbientTempHigh [liebert]
 
   - oid: 1.3.6.1.4.1.476.1.42.3.3.0.1
     event_type: sensor_critical_humidity
     severity: CRITICAL
     device_types: [sensor]
+    match_varbinds:
+      - oid: 1.3.6.1.4.1.476.1.42.3.2.3.1.1
+        contains: "Sensor Critical Humidity"
     # sensorCriticalHumidity [liebert]
 
   - oid: 1.3.6.1.4.1.476.1.42.3.3.0.1
     event_type: sensor_high_airflow
     severity: MAJOR
     device_types: [sensor]
+    match_varbinds:
+      - oid: 1.3.6.1.4.1.476.1.42.3.2.3.1.1
+        contains: "Sensor High Airflow"
     # sensorHighAirflow [liebert]
 
   - oid: 1.3.6.1.4.1.476.1.42.3.3.0.1
     event_type: sensor_high_humidity
     severity: MAJOR
     device_types: [sensor]
+    match_varbinds:
+      - oid: 1.3.6.1.4.1.476.1.42.3.2.3.1.1
+        contains: "Sensor High Humidity"
     # sensorHighHumidity [liebert]
 
   - oid: 1.3.6.1.4.1.476.1.42.3.3.0.1
     event_type: sensor_low_airflow
     severity: CRITICAL
     device_types: [sensor]
+    match_varbinds:
+      - oid: 1.3.6.1.4.1.476.1.42.3.2.3.1.1
+        contains: "Sensor Low Airflow"
     # sensorLowAirflow [liebert]
 
   - oid: 1.3.6.1.4.1.476.1.42.3.3.0.1
     event_type: sensor_low_humidity
     severity: MAJOR
     device_types: [sensor]
+    match_varbinds:
+      - oid: 1.3.6.1.4.1.476.1.42.3.2.3.1.1
+        contains: "Sensor Low Humidity"
     # sensorLowHumidity [liebert]
 
   - oid: 1.3.6.1.4.1.476.1.42.3.3.0.1
     event_type: sensor_mid_temp_high
     severity: MAJOR
     device_types: [sensor]
+    match_varbinds:
+      - oid: 1.3.6.1.4.1.476.1.42.3.2.3.1.1
+        contains: "Mid-Rack Temp High"
     # sensorMidTempHigh [liebert]
 
   - oid: 1.3.6.1.4.1.476.1.42.3.3.0.1
     event_type: sensor_outlet_temp_high
     severity: MAJOR
     device_types: [sensor]
+    match_varbinds:
+      - oid: 1.3.6.1.4.1.476.1.42.3.2.3.1.1
+        contains: "Exhaust Temp High"
     # sensorOutletTempHigh [liebert]
 
   - oid: 1.3.6.1.4.1.476.1.42.3.3.0.1
     event_type: airflow_alert
     severity: MAJOR
+    match_varbinds:
+      - oid: 1.3.6.1.4.1.476.1.42.3.2.3.1.1
+        contains: "Airflow Alert"
     # airflowAlert [liebert]
-    # AMBIGUOUS - no device type separates this from: dewPointAlert->dew_point_alert; frequencyOutOfRange->frequency_out_of_range; humidityAlert->humidity_alert; inputVoltageHigh->input_voltage_high; inputVoltageLow->input_voltage_low; temperatureAlert->temperature_alert
 
   - oid: 1.3.6.1.4.1.476.1.42.3.3.0.1
     event_type: dew_point_alert
     severity: CRITICAL
+    match_varbinds:
+      - oid: 1.3.6.1.4.1.476.1.42.3.2.3.1.1
+        contains: "Dew Point Alert"
     # dewPointAlert [liebert]
-    # AMBIGUOUS - no device type separates this from: airflowAlert->airflow_alert; frequencyOutOfRange->frequency_out_of_range; humidityAlert->humidity_alert; inputVoltageHigh->input_voltage_high; inputVoltageLow->input_voltage_low; temperatureAlert->temperature_alert
 
   - oid: 1.3.6.1.4.1.476.1.42.3.3.0.1
     event_type: frequency_out_of_range
     severity: MAJOR
+    match_varbinds:
+      - oid: 1.3.6.1.4.1.476.1.42.3.2.3.1.1
+        contains: "Frequency Out of Range"
     # frequencyOutOfRange [liebert]
-    # AMBIGUOUS - no device type separates this from: airflowAlert->airflow_alert; dewPointAlert->dew_point_alert; humidityAlert->humidity_alert; inputVoltageHigh->input_voltage_high; inputVoltageLow->input_voltage_low; temperatureAlert->temperature_alert
 
   - oid: 1.3.6.1.4.1.476.1.42.3.3.0.1
     event_type: humidity_alert
     severity: MAJOR
+    match_varbinds:
+      - oid: 1.3.6.1.4.1.476.1.42.3.2.3.1.1
+        contains: "Humidity Alert"
     # humidityAlert [liebert]
-    # AMBIGUOUS - no device type separates this from: airflowAlert->airflow_alert; dewPointAlert->dew_point_alert; frequencyOutOfRange->frequency_out_of_range; inputVoltageHigh->input_voltage_high; inputVoltageLow->input_voltage_low; temperatureAlert->temperature_alert
 
   - oid: 1.3.6.1.4.1.476.1.42.3.3.0.1
     event_type: input_voltage_high
     severity: MAJOR
+    match_varbinds:
+      - oid: 1.3.6.1.4.1.476.1.42.3.2.3.1.1
+        contains: "Input Voltage High"
     # inputVoltageHigh [liebert]
-    # AMBIGUOUS - no device type separates this from: airflowAlert->airflow_alert; dewPointAlert->dew_point_alert; frequencyOutOfRange->frequency_out_of_range; humidityAlert->humidity_alert; inputVoltageLow->input_voltage_low; temperatureAlert->temperature_alert
 
   - oid: 1.3.6.1.4.1.476.1.42.3.3.0.1
     event_type: input_voltage_low
     severity: MAJOR
+    match_varbinds:
+      - oid: 1.3.6.1.4.1.476.1.42.3.2.3.1.1
+        contains: "Input Voltage Low"
     # inputVoltageLow [liebert]
-    # AMBIGUOUS - no device type separates this from: airflowAlert->airflow_alert; dewPointAlert->dew_point_alert; frequencyOutOfRange->frequency_out_of_range; humidityAlert->humidity_alert; inputVoltageHigh->input_voltage_high; temperatureAlert->temperature_alert
 
   - oid: 1.3.6.1.4.1.476.1.42.3.3.0.1
     event_type: temperature_alert
     severity: CRITICAL
+    match_varbinds:
+      - oid: 1.3.6.1.4.1.476.1.42.3.2.3.1.1
+        contains: "Temperature Alert"
     # temperatureAlert [liebert]
-    # AMBIGUOUS - no device type separates this from: airflowAlert->airflow_alert; dewPointAlert->dew_point_alert; frequencyOutOfRange->frequency_out_of_range; humidityAlert->humidity_alert; inputVoltageHigh->input_voltage_high; inputVoltageLow->input_voltage_low
 
   - oid: 1.3.6.1.4.1.476.1.42.3.3.0.2
     event_type: dew_point_alert
@@ -346,6 +394,9 @@ traps:
     is_clear: true
     clears: [dew_point_alert]
     device_types: [sensor]
+    match_varbinds:
+      - oid: 1.3.6.1.4.1.476.1.42.3.2.3.1.1
+        contains: "Sensor Dew Point Normal"
     # sensorDewPointNormal [liebert]
 
   - oid: 1.3.6.1.4.1.476.1.42.3.3.0.2
@@ -354,6 +405,9 @@ traps:
     is_clear: true
     clears: [sensor_high_airflow, sensor_low_airflow, airflow_alert]
     device_types: [sensor]
+    match_varbinds:
+      - oid: 1.3.6.1.4.1.476.1.42.3.2.3.1.1
+        contains: "Sensor Airflow Normal"
     # sensorAirflowNormal [liebert]
 
   - oid: 1.3.6.1.4.1.476.1.42.3.3.0.2
@@ -362,6 +416,9 @@ traps:
     is_clear: true
     clears: [sensor_high_humidity, sensor_critical_humidity, sensor_low_humidity, humidity_alert]
     device_types: [sensor]
+    match_varbinds:
+      - oid: 1.3.6.1.4.1.476.1.42.3.2.3.1.1
+        contains: "Sensor Humidity Normal"
     # sensorHumidityNormal [liebert]
 
   - oid: 1.3.6.1.4.1.476.1.42.3.3.0.2
@@ -370,6 +427,9 @@ traps:
     is_clear: true
     clears: [sensor_mid_temp_high]
     device_types: [sensor]
+    match_varbinds:
+      - oid: 1.3.6.1.4.1.476.1.42.3.2.3.1.1
+        contains: "Mid-Rack Temp Normal"
     # sensorMidTempNormal [liebert]
 
   - oid: 1.3.6.1.4.1.476.1.42.3.3.0.2
@@ -378,6 +438,9 @@ traps:
     is_clear: true
     clears: [sensor_outlet_temp_high]
     device_types: [sensor]
+    match_varbinds:
+      - oid: 1.3.6.1.4.1.476.1.42.3.2.3.1.1
+        contains: "Exhaust Temp Normal"
     # sensorOutletTempNormal [liebert]
 
   - oid: 1.3.6.1.4.1.476.1.42.3.3.0.2
@@ -386,6 +449,9 @@ traps:
     is_clear: true
     clears: [temperature_alert, cpu_temp_critical]
     device_types: [firewall, load_balancer, router, server, switch]
+    match_varbinds:
+      - oid: 1.3.6.1.4.1.476.1.42.3.2.3.1.1
+        contains: "Temperature Normal"
     # temperatureNormal [liebert]
 
   - oid: 1.3.6.1.4.1.476.1.42.3.3.0.2
@@ -393,116 +459,160 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [battery_low_health, battery_failure]
+    match_varbinds:
+      - oid: 1.3.6.1.4.1.476.1.42.3.2.3.1.1
+        contains: "Battery Health Restored"
     # batteryHealthRestored [liebert]
-    # AMBIGUOUS - no device type separates this from: batteryNormal->ups_battery_low; bypassCleared->bypass_active; inputVoltageLowCleared->input_voltage_low; inputVoltageNormal->input_voltage_high; outputNormal->ups_output_overload; sensorAmbientTempNormal->sensor_ambient_temp_high; utilityPowerRestored->ups_on_battery
 
   - oid: 1.3.6.1.4.1.476.1.42.3.3.0.2
     event_type: bypass_active
     severity: CLEAR
     is_clear: true
     clears: [bypass_active]
+    match_varbinds:
+      - oid: 1.3.6.1.4.1.476.1.42.3.2.3.1.1
+        contains: "Bypass Cleared"
     # bypassCleared [liebert]
-    # AMBIGUOUS - no device type separates this from: batteryHealthRestored->battery_low_health; batteryNormal->ups_battery_low; inputVoltageLowCleared->input_voltage_low; inputVoltageNormal->input_voltage_high; outputNormal->ups_output_overload; sensorAmbientTempNormal->sensor_ambient_temp_high; utilityPowerRestored->ups_on_battery
 
   - oid: 1.3.6.1.4.1.476.1.42.3.3.0.2
     event_type: input_voltage_high
     severity: CLEAR
     is_clear: true
     clears: [input_voltage_high, voltage_high]
+    match_varbinds:
+      - oid: 1.3.6.1.4.1.476.1.42.3.2.3.1.1
+        contains: "Input Voltage Normal"
     # inputVoltageNormal [liebert]
-    # AMBIGUOUS - no device type separates this from: batteryHealthRestored->battery_low_health; batteryNormal->ups_battery_low; bypassCleared->bypass_active; inputVoltageLowCleared->input_voltage_low; outputNormal->ups_output_overload; sensorAmbientTempNormal->sensor_ambient_temp_high; utilityPowerRestored->ups_on_battery
 
   - oid: 1.3.6.1.4.1.476.1.42.3.3.0.2
     event_type: input_voltage_low
     severity: CLEAR
     is_clear: true
     clears: [input_voltage_low, voltage_low]
+    match_varbinds:
+      - oid: 1.3.6.1.4.1.476.1.42.3.2.3.1.1
+        contains: "Input Voltage Low Cleared"
     # inputVoltageLowCleared [liebert]
-    # AMBIGUOUS - no device type separates this from: batteryHealthRestored->battery_low_health; batteryNormal->ups_battery_low; bypassCleared->bypass_active; inputVoltageNormal->input_voltage_high; outputNormal->ups_output_overload; sensorAmbientTempNormal->sensor_ambient_temp_high; utilityPowerRestored->ups_on_battery
 
   - oid: 1.3.6.1.4.1.476.1.42.3.3.0.2
     event_type: sensor_ambient_temp_high
     severity: CLEAR
     is_clear: true
     clears: [sensor_ambient_temp_high, sensor_ambient_temp_critical]
+    match_varbinds:
+      - oid: 1.3.6.1.4.1.476.1.42.3.2.3.1.1
+        contains: "Sensor Ambient Temp Normal"
     # sensorAmbientTempNormal [liebert]
-    # AMBIGUOUS - no device type separates this from: batteryHealthRestored->battery_low_health; batteryNormal->ups_battery_low; bypassCleared->bypass_active; inputVoltageLowCleared->input_voltage_low; inputVoltageNormal->input_voltage_high; outputNormal->ups_output_overload; utilityPowerRestored->ups_on_battery
 
   - oid: 1.3.6.1.4.1.476.1.42.3.3.0.2
     event_type: ups_battery_low
     severity: CLEAR
     is_clear: true
     clears: [ups_battery_low]
+    match_varbinds:
+      - oid: 1.3.6.1.4.1.476.1.42.3.2.3.1.1
+        contains: "Battery Normal"
     # batteryNormal [liebert]
-    # AMBIGUOUS - no device type separates this from: batteryHealthRestored->battery_low_health; bypassCleared->bypass_active; inputVoltageLowCleared->input_voltage_low; inputVoltageNormal->input_voltage_high; outputNormal->ups_output_overload; sensorAmbientTempNormal->sensor_ambient_temp_high; utilityPowerRestored->ups_on_battery
 
   - oid: 1.3.6.1.4.1.476.1.42.3.3.0.2
     event_type: ups_on_battery
     severity: CLEAR
     is_clear: true
     clears: [ups_on_battery]
+    match_varbinds:
+      - oid: 1.3.6.1.4.1.476.1.42.3.2.3.1.1
+        contains: "Utility Power Restored"
     # utilityPowerRestored [liebert]
-    # AMBIGUOUS - no device type separates this from: batteryHealthRestored->battery_low_health; batteryNormal->ups_battery_low; bypassCleared->bypass_active; inputVoltageLowCleared->input_voltage_low; inputVoltageNormal->input_voltage_high; outputNormal->ups_output_overload; sensorAmbientTempNormal->sensor_ambient_temp_high
 
   - oid: 1.3.6.1.4.1.476.1.42.3.3.0.2
     event_type: ups_output_overload
     severity: CLEAR
     is_clear: true
     clears: [ups_output_overload]
+    match_varbinds:
+      - oid: 1.3.6.1.4.1.476.1.42.3.2.3.1.1
+        contains: "Output Normal"
     # outputNormal [liebert]
-    # AMBIGUOUS - no device type separates this from: batteryHealthRestored->battery_low_health; batteryNormal->ups_battery_low; bypassCleared->bypass_active; inputVoltageLowCleared->input_voltage_low; inputVoltageNormal->input_voltage_high; sensorAmbientTempNormal->sensor_ambient_temp_high; utilityPowerRestored->ups_on_battery
 
   - oid: 1.3.6.1.4.1.476.1.42.3.3.0.3
     event_type: ups_battery_low
     severity: CRITICAL
+    match_varbinds:
+      - oid: 1.3.6.1.4.1.476.1.42.3.2.3.1.1
+        contains: "UPS Low Battery"
     # upsLowBattery [liebert]
 
   - oid: 1.3.6.1.4.1.476.1.42.3.3.0.4
     event_type: bypass_active
     severity: MAJOR
+    match_varbinds:
+      - oid: 1.3.6.1.4.1.476.1.42.3.2.3.1.1
+        contains: "Bypass Active"
     # bypassActive [liebert]
 
   - oid: 1.3.6.1.4.1.476.1.42.3.3.0.5
     event_type: fan_failure
     severity: CRITICAL
     device_types: [server]
+    match_varbinds:
+      - oid: 1.3.6.1.4.1.476.1.42.3.2.3.1.1
+        contains: "Fan Failure"
     # fanFailure [liebert]
 
   - oid: 1.3.6.1.4.1.476.1.42.3.3.0.5
     event_type: charger_failure
     severity: CRITICAL
+    match_varbinds:
+      - oid: 1.3.6.1.4.1.476.1.42.3.2.3.1.1
+        contains: "Charger Failure"
     # chargerFailure [liebert]
 
   - oid: 1.3.6.1.4.1.476.1.42.3.3.0.7
     event_type: ups_output_overload
     severity: CRITICAL
+    match_varbinds:
+      - oid: 1.3.6.1.4.1.476.1.42.3.2.3.1.1
+        contains: "Output Overload"
     # outputOverload [liebert]
 
   - oid: 1.3.6.1.4.1.476.1.42.3.3.0.9
     event_type: ups_phase_failure
     severity: CRITICAL
+    match_varbinds:
+      - oid: 1.3.6.1.4.1.476.1.42.3.2.3.1.1
+        contains: "Phase Failure"
     # upsPhaseFailure [liebert]
 
   - oid: 1.3.6.1.4.1.476.1.42.3.3.0.10
     event_type: rectifier_failure
     severity: CRITICAL
+    match_varbinds:
+      - oid: 1.3.6.1.4.1.476.1.42.3.2.3.1.1
+        contains: "Rectifier Failure"
     # rectifierFailure [liebert]
 
   - oid: 1.3.6.1.4.1.476.1.42.3.3.0.11
     event_type: battery_disconnected
     severity: CRITICAL
+    match_varbinds:
+      - oid: 1.3.6.1.4.1.476.1.42.3.2.3.1.1
+        contains: "Battery Disconnected"
     # batteryDisconnected [liebert]
-    # AMBIGUOUS - no device type separates this from: batteryFailure->battery_failure
 
   - oid: 1.3.6.1.4.1.476.1.42.3.3.0.11
     event_type: battery_failure
     severity: CRITICAL
+    match_varbinds:
+      - oid: 1.3.6.1.4.1.476.1.42.3.2.3.1.1
+        contains: "Battery Failure"
     # batteryFailure [liebert]
-    # AMBIGUOUS - no device type separates this from: batteryDisconnected->battery_disconnected
 
   - oid: 1.3.6.1.4.1.476.1.42.3.3.0.14
     event_type: battery_low_health
     severity: MAJOR
+    match_varbinds:
+      - oid: 1.3.6.1.4.1.476.1.42.3.2.3.1.1
+        contains: "Battery Low Health"
     # batteryLowHealth [liebert]
 
   - oid: 1.3.6.1.4.1.534.6.6.7.0.11
@@ -673,64 +783,104 @@ traps:
   - oid: 1.3.6.1.4.1.13742.6.0.61
     event_type: pdu_frequency_fault
     severity: MAJOR
+    match_varbinds:
+      - oid: 1.3.6.1.4.1.13742.6.0.0.10
+        equals_int: 23
+      - oid: 1.3.6.1.4.1.13742.6.5.2.3.1.3
+        equals_int: 5
     # pduFrequencyFault [raritan]
-    # AMBIGUOUS - no device type separates this from: loadCritical->pdu_load_critical; loadHigh->pdu_load_high; pduFrequencyNormal->pdu_frequency_fault; pduLoadNormal->pdu_load_high; phaseImbalance->phase_imbalance; powerFactorLow->power_factor_low; voltageHigh->voltage_high; voltageLow->voltage_low
+    # AMBIGUOUS - no device type separates this from: phaseImbalance->phase_imbalance; powerFactorLow->power_factor_low
 
   - oid: 1.3.6.1.4.1.13742.6.0.61
     event_type: pdu_frequency_fault
     severity: CLEAR
     is_clear: true
     clears: [pdu_frequency_fault, frequency_out_of_range]
+    match_varbinds:
+      - oid: 1.3.6.1.4.1.13742.6.0.0.10
+        equals_int: 23
+      - oid: 1.3.6.1.4.1.13742.6.5.2.3.1.3
+        equals_int: 4
     # pduFrequencyNormal [raritan]
-    # AMBIGUOUS - no device type separates this from: loadCritical->pdu_load_critical; loadHigh->pdu_load_high; pduFrequencyFault->pdu_frequency_fault; pduLoadNormal->pdu_load_high; phaseImbalance->phase_imbalance; powerFactorLow->power_factor_low; voltageHigh->voltage_high; voltageLow->voltage_low
+    # AMBIGUOUS - no device type separates this from: phaseImbalance->phase_imbalance; powerFactorLow->power_factor_low
 
   - oid: 1.3.6.1.4.1.13742.6.0.61
     event_type: pdu_load_critical
     severity: CRITICAL
+    match_varbinds:
+      - oid: 1.3.6.1.4.1.13742.6.0.0.10
+        equals_int: 1
+      - oid: 1.3.6.1.4.1.13742.6.5.2.3.1.3
+        equals_int: 6
     # loadCritical [raritan]
-    # AMBIGUOUS - no device type separates this from: loadHigh->pdu_load_high; pduFrequencyFault->pdu_frequency_fault; pduFrequencyNormal->pdu_frequency_fault; pduLoadNormal->pdu_load_high; phaseImbalance->phase_imbalance; powerFactorLow->power_factor_low; voltageHigh->voltage_high; voltageLow->voltage_low
+    # AMBIGUOUS - no device type separates this from: phaseImbalance->phase_imbalance; powerFactorLow->power_factor_low
 
   - oid: 1.3.6.1.4.1.13742.6.0.61
     event_type: pdu_load_high
     severity: MAJOR
+    match_varbinds:
+      - oid: 1.3.6.1.4.1.13742.6.0.0.10
+        equals_int: 1
+      - oid: 1.3.6.1.4.1.13742.6.5.2.3.1.3
+        equals_int: 5
     # loadHigh [raritan]
-    # AMBIGUOUS - no device type separates this from: loadCritical->pdu_load_critical; pduFrequencyFault->pdu_frequency_fault; pduFrequencyNormal->pdu_frequency_fault; pduLoadNormal->pdu_load_high; phaseImbalance->phase_imbalance; powerFactorLow->power_factor_low; voltageHigh->voltage_high; voltageLow->voltage_low
+    # AMBIGUOUS - no device type separates this from: phaseImbalance->phase_imbalance; powerFactorLow->power_factor_low
 
   - oid: 1.3.6.1.4.1.13742.6.0.61
     event_type: pdu_load_high
     severity: CLEAR
     is_clear: true
     clears: [pdu_load_high, pdu_load_critical]
+    match_varbinds:
+      - oid: 1.3.6.1.4.1.13742.6.0.0.10
+        equals_int: 1
+      - oid: 1.3.6.1.4.1.13742.6.5.2.3.1.3
+        equals_int: 4
     # pduLoadNormal [raritan]
-    # AMBIGUOUS - no device type separates this from: loadCritical->pdu_load_critical; loadHigh->pdu_load_high; pduFrequencyFault->pdu_frequency_fault; pduFrequencyNormal->pdu_frequency_fault; phaseImbalance->phase_imbalance; powerFactorLow->power_factor_low; voltageHigh->voltage_high; voltageLow->voltage_low
+    # AMBIGUOUS - no device type separates this from: phaseImbalance->phase_imbalance; powerFactorLow->power_factor_low
+
+  - oid: 1.3.6.1.4.1.13742.6.0.61
+    event_type: voltage_high
+    severity: MAJOR
+    match_varbinds:
+      - oid: 1.3.6.1.4.1.13742.6.0.0.10
+        equals_int: 4
+      - oid: 1.3.6.1.4.1.13742.6.5.2.3.1.3
+        equals_int: 6
+    # voltageHigh [raritan]
+    # AMBIGUOUS - no device type separates this from: phaseImbalance->phase_imbalance; powerFactorLow->power_factor_low
+
+  - oid: 1.3.6.1.4.1.13742.6.0.61
+    event_type: voltage_low
+    severity: MAJOR
+    match_varbinds:
+      - oid: 1.3.6.1.4.1.13742.6.0.0.10
+        equals_int: 4
+      - oid: 1.3.6.1.4.1.13742.6.5.2.3.1.3
+        equals_int: 2
+    # voltageLow [raritan]
+    # AMBIGUOUS - no device type separates this from: phaseImbalance->phase_imbalance; powerFactorLow->power_factor_low
 
   - oid: 1.3.6.1.4.1.13742.6.0.61
     event_type: phase_imbalance
     severity: MAJOR
     # phaseImbalance [raritan]
-    # AMBIGUOUS - no device type separates this from: loadCritical->pdu_load_critical; loadHigh->pdu_load_high; pduFrequencyFault->pdu_frequency_fault; pduFrequencyNormal->pdu_frequency_fault; pduLoadNormal->pdu_load_high; powerFactorLow->power_factor_low; voltageHigh->voltage_high; voltageLow->voltage_low
+    # AMBIGUOUS - no device type separates this from: powerFactorLow->power_factor_low
 
   - oid: 1.3.6.1.4.1.13742.6.0.61
     event_type: power_factor_low
     severity: MAJOR
     # powerFactorLow [raritan]
-    # AMBIGUOUS - no device type separates this from: loadCritical->pdu_load_critical; loadHigh->pdu_load_high; pduFrequencyFault->pdu_frequency_fault; pduFrequencyNormal->pdu_frequency_fault; pduLoadNormal->pdu_load_high; phaseImbalance->phase_imbalance; voltageHigh->voltage_high; voltageLow->voltage_low
-
-  - oid: 1.3.6.1.4.1.13742.6.0.61
-    event_type: voltage_high
-    severity: MAJOR
-    # voltageHigh [raritan]
-    # AMBIGUOUS - no device type separates this from: loadCritical->pdu_load_critical; loadHigh->pdu_load_high; pduFrequencyFault->pdu_frequency_fault; pduFrequencyNormal->pdu_frequency_fault; pduLoadNormal->pdu_load_high; phaseImbalance->phase_imbalance; powerFactorLow->power_factor_low; voltageLow->voltage_low
-
-  - oid: 1.3.6.1.4.1.13742.6.0.61
-    event_type: voltage_low
-    severity: MAJOR
-    # voltageLow [raritan]
-    # AMBIGUOUS - no device type separates this from: loadCritical->pdu_load_critical; loadHigh->pdu_load_high; pduFrequencyFault->pdu_frequency_fault; pduFrequencyNormal->pdu_frequency_fault; pduLoadNormal->pdu_load_high; phaseImbalance->phase_imbalance; powerFactorLow->power_factor_low; voltageHigh->voltage_high
+    # AMBIGUOUS - no device type separates this from: phaseImbalance->phase_imbalance
 
   - oid: 1.3.6.1.4.1.13742.6.0.63
     event_type: outlet_current_high
     severity: MAJOR
+    match_varbinds:
+      - oid: 1.3.6.1.4.1.13742.6.0.0.10
+        equals_int: 1
+      - oid: 1.3.6.1.4.1.13742.6.5.4.3.1.3
+        equals_int: 6
     # outletCurrentHigh [raritan]
     # AMBIGUOUS - no device type separates this from: outletFailure->outlet_failure; outletOff->outlet_off; outletOn->outlet_on
 
@@ -738,23 +888,28 @@ traps:
     event_type: outlet_failure
     severity: CRITICAL
     # outletFailure [raritan]
-    # AMBIGUOUS - no device type separates this from: outletCurrentHigh->outlet_current_high; outletOff->outlet_off; outletOn->outlet_on
+    # AMBIGUOUS - no device type separates this from: outletOff->outlet_off; outletOn->outlet_on
 
   - oid: 1.3.6.1.4.1.13742.6.0.63
     event_type: outlet_off
     severity: MAJOR
     # outletOff [raritan]
-    # AMBIGUOUS - no device type separates this from: outletCurrentHigh->outlet_current_high; outletFailure->outlet_failure; outletOn->outlet_on
+    # AMBIGUOUS - no device type separates this from: outletFailure->outlet_failure; outletOn->outlet_on
 
   - oid: 1.3.6.1.4.1.13742.6.0.63
     event_type: outlet_on
     severity: INFO
     # outletOn [raritan]
-    # AMBIGUOUS - no device type separates this from: outletCurrentHigh->outlet_current_high; outletFailure->outlet_failure; outletOff->outlet_off
+    # AMBIGUOUS - no device type separates this from: outletFailure->outlet_failure; outletOff->outlet_off
 
   - oid: 1.3.6.1.4.1.13742.6.0.65
     event_type: breaker_tripped
     severity: CRITICAL
+    match_varbinds:
+      - oid: 1.3.6.1.4.1.13742.6.0.0.10
+        equals_int: 15
+      - oid: 1.3.6.1.4.1.13742.6.5.1.3.1.3
+        equals_int: 0
     # breakerTripped [raritan]
 
   - oid: 1.3.6.1.4.1.13742.6.0.66

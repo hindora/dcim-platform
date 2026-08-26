@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -28,6 +29,22 @@ type TrapDef struct {
 	// InstanceFromVarbind names a varbind OID whose value identifies WHICH
 	// interface, sensor or phase the notification is about.
 	InstanceFromVarbind string `yaml:"instance_from_varbind"`
+	// MatchVarbind narrows this meaning by a varbind the notification carries.
+	//
+	// The last resort of a receiver, and the one real gear leans on hardest: a
+	// Liebert card sends ONE OID - lgpEventConditionAdded, 476.1.42.3.3.0.1 -
+	// for airflow, dew point, frequency, humidity, input voltage and
+	// temperature alike, with the condition itself in lgpConditionDescr. Cisco
+	// sends one environmental notification for a warning and for a critical,
+	// with the state in ciscoEnvMonTemperatureState. No amount of OID or
+	// device-type matching separates those; the varbind does, and it is the
+	// discriminator the vendor intended.
+	// EVERY condition must hold. Raritan needs two to say anything at all: an
+	// inlet sensor notification carries typeOfSensor AND the new state, so
+	// "current, above upper warning" is a load alarm while "current, above
+	// upper critical" is the critical one - on the same OID, from the same
+	// PDU. One condition would resolve half of that.
+	MatchVarbinds []VarbindMatch `yaml:"match_varbinds"`
 	// DeviceTypes narrows this meaning to the kinds of device that can send
 	// it. Empty means any.
 	//
@@ -37,6 +54,58 @@ type TrapDef struct {
 	// which endpoint the trap arrived from, so the sender's device type is the
 	// discriminator that was there all along.
 	DeviceTypes []string `yaml:"device_types"`
+}
+
+// VarbindMatch is a condition on one varbind's value.
+//
+// `contains` for text the vendor writes for people to read - a description
+// field whose exact wording carries a device name and sometimes a measured
+// value, so equality would never hold. `equals_int` for an enumerated state,
+// where the vendor's own numbering is the meaning.
+type VarbindMatch struct {
+	OID       string `yaml:"oid"`
+	Contains  string `yaml:"contains"`
+	EqualsInt *int   `yaml:"equals_int"`
+}
+
+// matchesAll reports whether every condition holds. No conditions is not a
+// match: an entry with no matcher is a general meaning, resolved later and on
+// purpose, not something that quietly wins here.
+func matchesAll(ms []VarbindMatch, varbinds map[string]string) bool {
+	if len(ms) == 0 {
+		return false
+	}
+	for i := range ms {
+		if !ms[i].matches(varbinds) {
+			return false
+		}
+	}
+	return true
+}
+
+// matches reports whether this notification's varbinds satisfy the condition.
+// An absent varbind never matches: a receiver that treated silence as
+// agreement would resolve every ambiguous OID to whichever meaning happened to
+// be first.
+func (m *VarbindMatch) matches(varbinds map[string]string) bool {
+	if m == nil || m.OID == "" {
+		return false
+	}
+	value, ok := varbinds[strings.TrimPrefix(m.OID, ".")]
+	if !ok {
+		value, ok = varbinds[m.OID]
+	}
+	if !ok {
+		return false
+	}
+	if m.EqualsInt != nil {
+		n, err := strconv.Atoi(strings.TrimSpace(value))
+		return err == nil && n == *m.EqualsInt
+	}
+	if m.Contains == "" {
+		return false
+	}
+	return strings.Contains(strings.ToLower(value), strings.ToLower(m.Contains))
 }
 
 type trapFile struct {
@@ -98,20 +167,39 @@ func LoadTraps(dir string) (*TrapTable, error) {
 //     reported as unknown rather than guessed, because a wrong reading here
 //     files a fan failure as a charger fault and sends somebody to the wrong
 //     rack.
-func (t *TrapTable) Lookup(oid, deviceType string) (TrapDef, bool) {
+func (t *TrapTable) Lookup(oid, deviceType string,
+	varbinds map[string]string) (TrapDef, bool) {
+
 	defs := t.byOID[strings.TrimPrefix(oid, ".")]
 	if len(defs) == 0 {
 		return TrapDef{}, false
 	}
+
+	// 1. The varbind the vendor put the condition in. Most specific, and the
+	//    only thing that separates the meanings of a Liebert condition trap.
+	// Most specific first: an entry asking for two varbinds beats one asking
+	// for a single varbind on the same OID.
+	best, bestN := -1, 0
+	for i := range defs {
+		if n := len(defs[i].MatchVarbinds); n > bestN &&
+			matchesAll(defs[i].MatchVarbinds, varbinds) {
+			best, bestN = i, n
+		}
+	}
+	if best >= 0 {
+		return defs[best], true
+	}
+
+	// 2. The sender. Separates meanings that belong to different equipment.
 	var generic *TrapDef
 	for i := range defs {
-		if len(defs[i].DeviceTypes) == 0 {
+		if len(defs[i].DeviceTypes) == 0 && len(defs[i].MatchVarbinds) == 0 {
 			if generic == nil {
 				generic = &defs[i]
 			}
 			continue
 		}
-		if deviceType == "" {
+		if deviceType == "" || len(defs[i].DeviceTypes) == 0 {
 			continue
 		}
 		for _, dt := range defs[i].DeviceTypes {
@@ -120,6 +208,8 @@ func (t *TrapTable) Lookup(oid, deviceType string) (TrapDef, bool) {
 			}
 		}
 	}
+
+	// 3. The general meaning, if this OID has one.
 	if generic != nil {
 		return *generic, true
 	}

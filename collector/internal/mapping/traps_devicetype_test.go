@@ -49,12 +49,12 @@ traps:
 func TestTheSenderPicksTheMeaning(t *testing.T) {
 	tbl := tableFrom(t, shared)
 
-	got, ok := tbl.Lookup("1.3.6.1.4.1.476.1.42.3.3.0.5", "server")
+	got, ok := tbl.Lookup("1.3.6.1.4.1.476.1.42.3.3.0.5", "server", nil)
 	if !ok || got.EventType != "fan_failure" {
 		t.Fatalf("server sent it: got %q (ok=%v), want fan_failure", got.EventType, ok)
 	}
 
-	got, ok = tbl.Lookup("1.3.6.1.4.1.476.1.42.3.3.0.5", "ups")
+	got, ok = tbl.Lookup("1.3.6.1.4.1.476.1.42.3.3.0.5", "ups", nil)
 	if !ok || got.EventType != "charger_failure" {
 		t.Fatalf("ups sent it: got %q (ok=%v), want charger_failure", got.EventType, ok)
 	}
@@ -65,7 +65,7 @@ func TestAnUnattributableTrapFallsBackToTheGeneralMeaning(t *testing.T) {
 	// Only the unrestricted entry can apply - guessing the server-specific one
 	// would invent a fan failure on a device we cannot even name.
 	tbl := tableFrom(t, shared)
-	got, ok := tbl.Lookup("1.3.6.1.4.1.476.1.42.3.3.0.5", "")
+	got, ok := tbl.Lookup("1.3.6.1.4.1.476.1.42.3.3.0.5", "", nil)
 	if !ok || got.EventType != "charger_failure" {
 		t.Fatalf("unattributed: got %q (ok=%v), want charger_failure", got.EventType, ok)
 	}
@@ -83,10 +83,10 @@ traps:
     severity: CRITICAL
     device_types: [server]
 `)
-	if _, ok := tbl.Lookup("1.3.6.1.4.1.9.9.13.3.0.4", "chiller"); ok {
+	if _, ok := tbl.Lookup("1.3.6.1.4.1.9.9.13.3.0.4", "chiller", nil); ok {
 		t.Fatal("a chiller matched a server-only meaning")
 	}
-	if _, ok := tbl.Lookup("1.3.6.1.4.1.9.9.13.3.0.4", "server"); !ok {
+	if _, ok := tbl.Lookup("1.3.6.1.4.1.9.9.13.3.0.4", "server", nil); !ok {
 		t.Fatal("the server it does belong to did not match")
 	}
 }
@@ -94,7 +94,7 @@ traps:
 func TestALeadingDotIsStillTolerated(t *testing.T) {
 	// Some agents send .1.3.6... Losing that would drop every trap from them.
 	tbl := tableFrom(t, shared)
-	if _, ok := tbl.Lookup(".1.3.6.1.4.1.476.1.42.3.3.0.5", "server"); !ok {
+	if _, ok := tbl.Lookup(".1.3.6.1.4.1.476.1.42.3.3.0.5", "server", nil); !ok {
 		t.Fatal("a leading dot broke the lookup")
 	}
 }
@@ -116,7 +116,7 @@ func TestTheShippedMappingResolvesTheLiebertCollision(t *testing.T) {
 	if err != nil {
 		t.Skipf("shipped mapping not readable from here: %v", err)
 	}
-	got, ok := tbl.Lookup("1.3.6.1.4.1.476.1.42.3.3.0.5", "server")
+	got, ok := tbl.Lookup("1.3.6.1.4.1.476.1.42.3.3.0.5", "server", nil)
 	if !ok || got.EventType != "fan_failure" {
 		t.Fatalf("shipped mapping: server got %q (ok=%v), want fan_failure",
 			got.EventType, ok)

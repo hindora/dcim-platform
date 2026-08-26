@@ -171,7 +171,7 @@ func (t *TrapReceiver) handle(ctx context.Context, p *g.SnmpPacket,
 		t.log.Warn("trap from an unknown source", "source", source, "oid", trapOID)
 	}
 
-	def, known := t.table.Lookup(trapOID, senderType)
+	def, known := t.table.Lookup(trapOID, senderType, varbinds)
 	if !known {
 		// Never drop an unknown trap. It becomes an INFO event carrying the
 		// raw OID so the gap in the mapping is visible in the UI rather than
