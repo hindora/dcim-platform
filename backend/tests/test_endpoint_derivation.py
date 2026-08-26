@@ -13,6 +13,7 @@ from app.importer.endpoints import (
     NO_SNMP_TYPES,
     bmc_address,
     derive_endpoints,
+    pdu_profile,
     snmp_address,
 )
 
@@ -269,3 +270,34 @@ def test_a_normal_server_still_gets_both_agents(sim_server_device):
     assert [e.role for e in snmp] == ["bmc", "os_agent"]
     assert snmp[0].address != snmp[1].address
     assert snmp[1].poll_profile == "snmp-server-120s"
+
+
+def test_a_rack_pdu_is_polled_on_its_vendors_mib():
+    """PowerNet-MIB and PDU2-MIB share no OIDs, so the profile follows vendor.
+
+    One combined profile would ask every APC unit for Raritan objects it can
+    only answer noSuchObject to, twice a minute, forever.
+    """
+    apc = {"device_type": "pdu", "vendor": "APC by Schneider Electric",
+           "ip_address": "", "mgmt_ip": "10.52.11.41"}
+    raritan = {"device_type": "pdu", "vendor": "Raritan",
+               "ip_address": "", "mgmt_ip": "10.52.11.27"}
+
+    assert pdu_profile(apc) == "snmp-pdu-apc-120s"
+    assert pdu_profile(raritan) == "snmp-pdu-raritan-120s"
+
+    eps = derive_endpoints(apc)
+    snmp = [e for e in eps if e.protocol == "snmp"]
+    assert len(snmp) == 1
+    assert snmp[0].role == "native_card"
+    assert snmp[0].poll_profile == "snmp-pdu-apc-120s"
+
+
+def test_an_unmapped_pdu_vendor_keeps_the_generic_profile():
+    """A vendor whose MIB nobody has mapped must not claim a mapping.
+
+    Pointing it at the APC profile would poll OIDs it does not serve and read
+    as a broken device rather than an unmapped one.
+    """
+    other = {"device_type": "pdu", "vendor": "Eaton", "mgmt_ip": "10.52.11.99"}
+    assert pdu_profile(other) == "snmp-power-120s"

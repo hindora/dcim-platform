@@ -88,6 +88,28 @@ SNMP_PROFILE_BY_TYPE = {
 }
 DEFAULT_SNMP_PROFILE = "snmp-power-120s"
 
+# A rack PDU is polled on its VENDOR's MIB, so the profile follows the vendor
+# rather than the device type. PowerNet-MIB and PDU2-MIB share no OIDs at all;
+# a single "pdu" profile carrying both groups would ask every APC unit for
+# Raritan objects it will answer noSuchObject to, twice a minute, forever.
+#
+# Anything else keeps the generic power profile: it reads the system group,
+# which is all an unmapped vendor can be trusted to serve.
+PDU_PROFILE_BY_VENDOR = {
+    "apc": "snmp-pdu-apc-120s",
+    "schneider": "snmp-pdu-apc-120s",
+    "raritan": "snmp-pdu-raritan-120s",
+}
+
+
+def pdu_profile(dev: dict) -> str:
+    """The PDU poll profile for this unit's vendor, or the generic fallback."""
+    vendor = (dev.get("vendor") or "").lower()
+    for key, profile in PDU_PROFILE_BY_VENDOR.items():
+        if key in vendor:
+            return profile
+    return DEFAULT_SNMP_PROFILE
+
 
 @dataclass(slots=True)
 class EndpointSpec:
@@ -178,6 +200,7 @@ def derive_endpoints(
                 address=addr,
                 port=int(dev.get("snmp_port") or 161),
                 poll_profile=("snmp-bmc-120s" if bmc_only else
+                              pdu_profile(dev) if dtype == "pdu" else
                               SNMP_PROFILE_BY_TYPE.get(dtype, DEFAULT_SNMP_PROFILE)),
                 **_snmp_credential(addr),
             ))

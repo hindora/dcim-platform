@@ -187,3 +187,118 @@ profiles:
             metric: relative_humidity
             value_type: gauge
             precision_from: 1.3.6.1.2.1.99.1.1.1.3
+
+  # ------------------------------------------------------------- rack PDUs
+  #
+  # THE GAP THIS CLOSES: 80 rack PDUs, SNMP-only, delivering nothing but an
+  # uptime tick. Every other class in the estate had a live source - CRAH over
+  # BACnet, BMCs over Redfish, switchgear over Modbus - and the PDUs, which are
+  # the meter directly above the IT load, had none.
+  #
+  # Mapped against the VENDORS' OWN MIBs rather than the simulator's
+  # placeholder tree at 1.3.6.1.4.1.99999.5. Real Rack PDUs publish on
+  # PowerNet-MIB and PDU2-MIB, this plane imitates them faithfully, and a
+  # mapping written against the imitation would have to be thrown away the
+  # first time it met an actual PDU.
+  #
+  # Every OID below was walked on this plane before it was written down, and
+  # every scale was checked against the reading it produced.
+
+  # APC Rack PDU 2G - PowerNet-MIB rPDU2 status tables. 56 units here.
+  #
+  # Scalars, not tables: a single-inlet rack PDU has exactly one row in each of
+  # these tables, and the index is a constant 1. Multi-inlet and three-phase
+  # gear needs the table form with the phase as the instance - the engine can
+  # do it, this plane has nothing to point it at.
+  - name: pdu_apc
+    scalars:
+      - oid: 1.3.6.1.4.1.318.1.1.26.4.3.1.5.1     # rPDU2DeviceStatusPower, 0.01 kW
+        metric: power_draw
+        value_type: gauge
+        transform: {scale: 10}                    # 0.01 kW -> W
+      - oid: 1.3.6.1.4.1.318.1.1.26.4.3.1.16.1    # rPDU2DeviceStatusApparentPower, 0.01 kVA
+        metric: apparent_power
+        value_type: gauge
+        transform: {scale: 10}                    # 0.01 kVA -> VA
+      - oid: 1.3.6.1.4.1.318.1.1.26.4.3.1.17.1    # rPDU2DeviceStatusPowerFactor, hundredths
+        metric: power_factor
+        value_type: gauge
+        transform: {scale: 0.01}
+      - oid: 1.3.6.1.4.1.318.1.1.26.4.3.1.9.1     # rPDU2DeviceStatusEnergy, 0.1 kWh
+        metric: energy_consumed
+        value_type: counter
+        counter_bits: 32
+        transform: {scale: 0.1}
+        # A counter, and it must stay one. Cumulative energy read as a gauge
+        # charts as a ramp that never falls and no threshold on it means
+        # anything; as a counter the pipeline derives the rate, which is the
+        # number an operator actually wants from a meter.
+      - oid: 1.3.6.1.4.1.318.1.1.26.6.3.1.5.1     # rPDU2PhaseStatusCurrent, 0.1 A
+        metric: current
+        value_type: gauge
+        transform: {scale: 0.1}
+      - oid: 1.3.6.1.4.1.318.1.1.26.6.3.1.6.1     # rPDU2PhaseStatusVoltage, V
+        metric: voltage_ln
+        value_type: gauge
+      - oid: 1.3.6.1.4.1.318.1.1.26.10.2.2.1.8.1  # rPDU2SensorTempHumidityStatusTempC, 0.1 C
+        metric: ambient_temperature
+        value_type: gauge
+        transform: {scale: 0.1}
+        # The strip's own probe, at the back of the rack. Not the same reading
+        # as the room sensor and not a substitute for it - this is where the
+        # hot air actually is.
+      - oid: 1.3.6.1.4.1.318.1.1.26.10.2.2.1.10.1 # ...StatusRelativeHumidity, %
+        metric: relative_humidity
+        value_type: gauge
+
+  # Raritan PX2 - PDU2-MIB measurement tables. 24 units here.
+  #
+  # PDU2-MIB indexes as [pduId][inletId][sensorType] and scales every reading
+  # by that sensor's own decimalDigits attribute, so the sensor TYPE is in the
+  # OID index rather than in a column. `row_filter` matches on a column value
+  # and cannot see an index, so each sensor type is addressed as its own
+  # scalar with the scale its decimals imply - checked against this plane:
+  # current and voltage carry 3 decimals, power and energy 0, power factor 2,
+  # frequency 1.
+  #
+  # A poller facing REAL Raritan gear must read inletSensorDecimalDigits
+  # (1.3.6.1.4.1.13742.6.3.3.4.1.7) rather than assume these, because the
+  # digits vary by model - 23.5 C and 235 C are the same integer otherwise.
+  # That needs index-aware tables, which is the honest next step here.
+  - name: pdu_raritan
+    scalars:
+      - oid: 1.3.6.1.4.1.13742.6.5.2.3.1.4.1.1.1  # inlet sensor 1: current, mA
+        metric: current
+        value_type: gauge
+        transform: {scale: 0.001}
+      - oid: 1.3.6.1.4.1.13742.6.5.2.3.1.4.1.1.4  # 4: voltage, mV
+        metric: voltage_ln
+        value_type: gauge
+        transform: {scale: 0.001}
+      - oid: 1.3.6.1.4.1.13742.6.5.2.3.1.4.1.1.5  # 5: activePower, W
+        metric: power_draw
+        value_type: gauge
+      - oid: 1.3.6.1.4.1.13742.6.5.2.3.1.4.1.1.6  # 6: apparentPower, VA
+        metric: apparent_power
+        value_type: gauge
+      - oid: 1.3.6.1.4.1.13742.6.5.2.3.1.4.1.1.7  # 7: powerFactor, hundredths
+        metric: power_factor
+        value_type: gauge
+        transform: {scale: 0.01}
+      - oid: 1.3.6.1.4.1.13742.6.5.2.3.1.4.1.1.8  # 8: activeEnergy, Wh
+        metric: energy_consumed
+        value_type: counter
+        counter_bits: 32
+        transform: {scale: 0.001}                 # Wh -> kWh
+      - oid: 1.3.6.1.4.1.13742.6.5.2.3.1.4.1.1.23 # 23: frequency, 0.1 Hz
+        metric: line_frequency
+        value_type: gauge
+        transform: {scale: 0.1}
+      - oid: 1.3.6.1.4.1.13742.6.5.5.3.1.4.1.1    # external probe 1: temperature, 0.1 C
+        metric: ambient_temperature
+        value_type: gauge
+        transform: {scale: 0.1}
+      - oid: 1.3.6.1.4.1.13742.6.5.5.3.1.4.1.2    # external probe 2: humidity, 0.1 %
+        metric: relative_humidity
+        value_type: gauge
+        transform: {scale: 0.1}
