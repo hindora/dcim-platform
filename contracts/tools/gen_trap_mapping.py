@@ -30,6 +30,7 @@ cannot silently mis-read a name.
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from collections import defaultdict
 from datetime import UTC, datetime
@@ -105,6 +106,29 @@ SEVERITY_RANK = {"CLEAR": 0, "INFO": 1, "WARNING": 2, "MINOR": 3,
                  "MAJOR": 4, "CRITICAL": 5}
 
 
+def _lower_first(name: str) -> str:
+    """`FanUnderSpeed` -> `fanUnderSpeed`.
+
+    The rules spell their names CamelCase and the trap catalogue spells the
+    same conditions camelCase. Without this the two vocabularies produce
+    `_fan_under_speed` and `fan_under_speed` for one condition.
+    """
+    return name[:1].lower() + name[1:] if name else name
+
+
+def snake(name: str) -> str:
+    """`HighCPUSustained` -> `high_cpu_sustained`, acronyms intact.
+
+    `event_type_for` splits before every capital, which is right for camelCase
+    and wrong for the rules: they carry CPU, UPS, PDU, MPP, MCC, CHW, CRAH.
+    Splitting per letter produced `high_c_p_u_sustained`, which is not a name
+    anybody would search for or recognise in an alarm list.
+    """
+    out = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", name)
+    out = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", out)
+    return out.lower()
+
+
 def event_type_for(name: str) -> str:
     if name in EVENT_TYPE_OVERRIDES:
         return EVENT_TYPE_OVERRIDES[name]
@@ -129,6 +153,7 @@ def main() -> int:
     sys.path.insert(0, str(sim))
 
     from core.trap_definitions import TRAP_DEFINITIONS  # noqa: E402
+    from core.trap_rules import DEFAULT_RULES  # noqa: E402
     from core.vendor_oids import VENDOR_TRAPS  # noqa: E402
 
     known = {t.value for t in TRAP_DEFINITIONS}
@@ -167,6 +192,68 @@ def main() -> int:
             e = entry_for(trap.value, defn.severity)
             e["vendor"] = vendor
             by_oid[oid].append(e)
+
+    # ---- the transmit path -------------------------------------------------
+    #
+    # TRAP_DEFINITIONS is the plane's CATALOGUE; DEFAULT_RULES is what actually
+    # dispatches. They disagree by 57 OIDs, and the disagreement is not random:
+    # it is almost entirely RECOVERY traps - FanUnderSpeed, LinkFlapCleared,
+    # UPSFanNormal, PDUBreakerReset, CPUSustainedNormal. Generating from the
+    # catalogue alone meant this platform could hear every alarm and none of the
+    # all-clears. Measured on the wire: a CPU recovery arrived as
+    # 1.3.6.1.4.1.99999.1.37, matched nothing, and became an `unknown_trap`
+    # alarm that nothing could ever resolve.
+    #
+    # The rules carry `recovery_of`, so their clear pairing is DECLARED rather
+    # than paired by hand in CLEAR_PAIRS above - which is why these entries can
+    # be generated at all. A rule naming a recovery target that does not exist
+    # is a typo that would produce a clear resolving nothing, so it fails here.
+    by_rule_name = {r.rule_name: r for r in DEFAULT_RULES}
+    known_names = {t.value for t in TRAP_DEFINITIONS}
+
+    def event_type_of_rule(rule) -> str:
+        """What this platform should call the condition this rule reports.
+
+        The catalogue's vocabulary wins where the catalogue has the condition:
+        `HighCPU` and `cpuHighUsage` are one fact, and giving them two event
+        types would rebuild, one layer down, the duplicate-alarm problem this
+        platform just finished removing.
+
+        A rule whose OID the catalogue already carries is answered by the entry
+        that OID produced, rather than by re-deriving a name from the rule -
+        that is exact where a name match is a guess.
+        """
+        raised = [e for e in by_oid.get(rule.trap_oid, []) if not e["is_clear"]]
+        if raised:
+            return raised[0]["event_type"]
+        if _lower_first(rule.rule_name) in known_names:
+            return event_type_for(_lower_first(rule.rule_name))
+        return snake(rule.rule_name)
+
+    for rule in DEFAULT_RULES:
+        if not rule.trap_oid or rule.trap_oid in by_oid:
+            continue
+        if rule.is_recovery and rule.recovery_of:
+            target = by_rule_name.get(rule.recovery_of)
+            if target is None:
+                sys.exit(f"{rule.rule_name} recovers unknown rule "
+                         f"{rule.recovery_of!r}")
+            # Clear what the RAISE produced. Deriving the name from the
+            # recovery rule instead is how a clear ends up naming an event type
+            # nothing ever raises: it resolves nothing, the alarm stays open,
+            # and the console shows a fault on equipment that recovered.
+            cleared = event_type_of_rule(target)
+            by_oid[rule.trap_oid].append({
+                "event_type": cleared, "severity": "CLEAR", "is_clear": True,
+                "clears": [cleared], "name": rule.rule_name, "vendor": "rule",
+            })
+            continue
+        by_oid[rule.trap_oid].append({
+            "event_type": event_type_of_rule(rule),
+            "severity": SEVERITY_MAP.get(rule.severity, "MINOR"),
+            "is_clear": False, "clears": [],
+            "name": rule.rule_name, "vendor": "rule",
+        })
 
     lines = [
         "# SNMP trap mappings: WIRE OID -> canonical event.",
@@ -226,8 +313,8 @@ def main() -> int:
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text("\n".join(lines), encoding="utf-8", newline="\n")
     print(f"wrote {OUT.relative_to(ROOT)}: {len(by_oid)} wire OIDs, {clears} clears, "
-          f"{ambiguous} ambiguous, from {len(TRAP_DEFINITIONS)} trap definitions "
-          f"and {len(VENDOR_TRAPS)} vendor tables")
+          f"{ambiguous} ambiguous, from {len(TRAP_DEFINITIONS)} trap definitions, "
+          f"{len(VENDOR_TRAPS)} vendor tables and {len(DEFAULT_RULES)} rules")
     return 0
 
 

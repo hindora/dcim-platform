@@ -217,6 +217,26 @@ class AlarmService:
             await repo.refresh_device_alarm_state(session, [device_id])
             return AlarmAction("alarm_cleared", cleared[0])
 
+        if ev["event_type"] == "unknown_trap":
+            # An OID this platform does not map is a gap in the MAPPING, not a
+            # condition on the equipment. The collector is right to record it -
+            # it lands as an INFO event carrying the raw OID, which is how the
+            # gap becomes visible - but raising an alarm for it manufactures a
+            # row that nothing can ever clear: there is no rule behind it and no
+            # recovery trap names it.
+            #
+            # Measured: a CPU recovery arrived as 1.3.6.1.4.1.99999.1.37, was
+            # unmapped, and became a permanent INFO alarm on a device that had
+            # just recovered. Every unmapped vendor trap did the same, so the
+            # console filled with immortal rows in proportion to how much of the
+            # estate this platform did not yet understand.
+            #
+            # The event is already stored by the caller. Nothing is lost here
+            # except an alarm that should never have existed.
+            log.info("unmapped trap recorded as an event only",
+                     device_id=device_id, message=ev.get("message"))
+            return None
+
         severity = ev.get("severity") or "MINOR"
         if severity == "CLEAR":
             # A CLEAR severity with no clears list would otherwise raise an
