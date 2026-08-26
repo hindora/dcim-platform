@@ -55,6 +55,14 @@ async def set_rule_enabled(session: AsyncSession, rule_id: str,
     return res.first() is not None
 
 
+# Severity as a number, worst first, for comparisons in SQL. Mirrors the
+# ORDER BY the alarm list uses; kept as one fragment so a severity cannot be
+# ranked one way here and another way there.
+_SEV_RANK = ("CASE {col}::text WHEN 'CRITICAL' THEN 0 WHEN 'MAJOR' THEN 1 "
+             "WHEN 'MINOR' THEN 2 WHEN 'WARNING' THEN 3 WHEN 'INFO' THEN 4 "
+             "ELSE 5 END")
+
+
 # ------------------------------------------------------------------ alarms
 
 async def raise_alarm(session: AsyncSession, *, device_id: str, alarm_type: str,
@@ -110,7 +118,28 @@ async def raise_alarm(session: AsyncSession, *, device_id: str, alarm_type: str,
         ON CONFLICT (device_id, alarm_type, instance) WHERE state <> 'CLEARED'
         DO UPDATE SET
             prev_severity    = alarm.severity,
-            severity         = EXCLUDED.severity,
+            -- Severity ESCALATES freely; it de-escalates only from the source
+            -- that set it.
+            --
+            -- Two detectors now share one alarm type: the trap says CRITICAL
+            -- the moment a CPU pins, the poll rule says WARNING two minutes
+            -- later off its own lower threshold. Taking the newest
+            -- unconditionally let the slower, milder detector quietly demote a
+            -- critical alarm that nothing had resolved - condition unchanged,
+            -- console calmer, which is the worst direction for an alarm system
+            -- to be wrong in.
+            --
+            -- De-escalation still belongs to whoever raised the current
+            -- severity: a threshold rule walking its own value back down
+            -- through its own bands is telling the truth about its own
+            -- measurement. Otherwise the way down is the clear path.
+            severity         = CASE
+                WHEN {_SEV_RANK.format(col='EXCLUDED.severity')}
+                   < {_SEV_RANK.format(col='alarm.severity')}
+                  OR alarm.source IS NOT DISTINCT FROM EXCLUDED.source
+                THEN EXCLUDED.severity
+                ELSE alarm.severity
+            END,
             message          = EXCLUDED.message,
             trigger_value    = EXCLUDED.trigger_value,
             last_seen        = GREATEST(alarm.last_seen, EXCLUDED.last_seen),

@@ -583,6 +583,34 @@ STRIP_GROUPS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
 )
 
 
+#: Trap event type -> the alarm type this platform already calls it.
+#:
+#: A condition is one condition however it was noticed. `detection` records HOW
+#: - threshold, state, absence - and that is an ATTRIBUTE of the alarm, not a
+#: second alarm. Without this map the two detectors raise two rows: a pinned
+#: firewall CPU held `cpu_high_usage` from the trap and `cpu_high` from the poll
+#: rule at the same time, and an operator had to acknowledge, and later clear,
+#: the same fact twice under two names.
+#:
+#: Only where the two genuinely describe the SAME condition. `fan_failure`
+#: arrives by trap and by nothing else; `pdu_temp_high` is a PDU probe rather
+#: than a chassis sensor. Aliasing those would merge conditions that are not
+#: the same, which is the opposite failure and a worse one.
+CANONICAL_ALARM_TYPE: dict[str, str] = {
+    # CPU above the alert threshold. The trap fires at the vendor's 90%, the
+    # rule at ours - the same condition, seen sooner.
+    "cpu_high_usage": "cpu_high",
+    # CPU pinned long enough to need answering.
+    "cpu_sustained": "cpu_saturated",
+    "memory_high_usage": "memory_high",
+}
+
+
+def canonical_alarm_type(alarm_type: str) -> str:
+    """The name this platform files a condition under, whoever reported it."""
+    return CANONICAL_ALARM_TYPE.get(alarm_type, alarm_type)
+
+
 def examples_for(category: str, limit: int = 3) -> list[str]:
     """A few alarm types that land in one category.
 

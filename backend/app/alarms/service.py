@@ -26,6 +26,7 @@ from app.alarms.engine import (
     Rule,
     evaluate,
 )
+from app.core import alert_taxonomy
 from app.core.logging import get_logger
 from app.repositories import alarms as repo
 
@@ -199,7 +200,11 @@ class AlarmService:
         observed = ev["observed_at"]
 
         if ev.get("is_clear"):
-            targets = ev.get("clears") or [ev["event_type"]]
+            # Canonical on BOTH sides. A recovery trap that names the trap's own
+            # vocabulary must clear the row the raise actually created, or the
+            # alarm stays open with the device reporting itself healthy.
+            targets = [alert_taxonomy.canonical_alarm_type(t)
+                       for t in (ev.get("clears") or [ev["event_type"]])]
             cleared = await repo.clear_alarms(
                 session, device_id=device_id, alarm_types=list(targets),
                 instance=instance, at=observed, by="device")
@@ -219,7 +224,8 @@ class AlarmService:
             return None
 
         alarm = await repo.raise_alarm(
-            session, device_id=device_id, alarm_type=ev["event_type"],
+            session, device_id=device_id,
+            alarm_type=alert_taxonomy.canonical_alarm_type(ev["event_type"]),
             instance=instance, severity=severity,
             message=ev.get("message") or ev["event_type"],
             source=ev.get("source") or "snmp_trap", observed_at=observed,
