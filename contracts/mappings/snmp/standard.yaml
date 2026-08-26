@@ -326,9 +326,20 @@ profiles:
         # The 5-minute average, not the 5-second (.6): the short one swings with
         # every convergence event and would alarm on a device that is working
         # normally. Cisco's own guidance, and what an NMS graphs.
-      - oid: 1.3.6.1.4.1.9.9.48.1.1.1.5.1        # ciscoMemoryPoolUsed, bytes
+      - oid: 1.3.6.1.4.1.9.9.48.1.1.1.5.1        # ciscoMemoryPoolUsed
         metric: memory_used
         value_type: gauge
+        transform: {scale: 1048576}
+        # MEBIBYTES on this plane, not the bytes the MIB definition states -
+        # verified on the wire before this scale was written: a 2 GiB pool
+        # reports 2047 across used+free, not 2147483648.
+        #
+        # It is not a simulator shortcut either. ciscoMemoryPoolUsed is a 32-bit
+        # Gauge, so a real bytes value overflows on any platform with more than
+        # 4 GB of pool - which is every switch in this fleet. Real Cisco has the
+        # same problem, and the answer there is CISCO-ENHANCED-MEMPOOL-MIB with
+        # its 64-bit cempMemPoolHCUsed. A deployment facing modern IOS-XE should
+        # prefer that table and drop this scale.
     derived_scalars:
       # Used / (used + free). The pool has no "total" object - a poller that
       # wants a percentage has to add the two, which is exactly the arithmetic
