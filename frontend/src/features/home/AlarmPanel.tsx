@@ -61,13 +61,6 @@ function humanise(key: string) {
     .join(' ');
 }
 
-/** The measurement behind a threshold alarm, in one glance.
- *
- *  `93 °C, limit 90` says more than any sentence, and it is the first thing
- *  anybody asks of a threshold condition. Returns null when the alarm carries
- *  no reading - a link down or a trap has nothing to put here, and an empty
- *  cell is better than a fabricated one.
- */
 /** An endpoint id is an instance to the database and noise to a person.
  *
  *  `endpoint_unreachable` carries the endpoint's UUID, which identifies the
@@ -86,6 +79,11 @@ const UNITS: Record<string, string> = {
   voltage_ln: ' V', voltage_ll: ' V', line_frequency: ' Hz',
 };
 
+/** The measurement behind a threshold alarm.
+ *
+ *  Returns null when the alarm carries no reading - a link down or a trap has
+ *  nothing to put here, and an empty cell beats a fabricated one.
+ */
 function reading(a: Alarm): string | null {
   if (a.trigger_value === null || a.trigger_value === undefined) return null;
   const unit = UNITS[a.metric_key ?? ''] ?? '';
@@ -106,6 +104,38 @@ function addsSomething(message: string, alarmType: string) {
   const m = normal(message);
   return m !== '' && m !== normal(alarmType) && m !== normal(humanise(alarmType));
 }
+
+/** One line of detail: the words, carrying the reading where the words lack it.
+ *
+ *  A rule writes its own sentence and usually puts the numbers in it - "CPU
+ *  temperature 93.0 C above 80.0 C" needs nothing added, and a numeric column
+ *  beside that was the same fact twice. But the sentences are not uniform:
+ *  `cpu_temp_critical` says "93.0 C critical" and never mentions the 90 it
+ *  crossed, and a trap says only what it is.
+ *
+ *  So: the message when it says something, the limit appended when the message
+ *  states a value without what it breached, and the bare reading when there are
+ *  no words worth showing at all.
+ */
+function detail(a: Alarm): string | null {
+  const words = addsSomething(a.message, a.alarm_type) ? a.message : '';
+  const measure = reading(a);
+  if (!measure) return words || null;
+  if (!words) return measure;
+
+  const mentions = (n: number) =>
+    a.message.includes(String(Math.round(n * 10) / 10))
+    || a.message.includes(String(Math.round(n)));
+  if (a.trigger_value != null && !mentions(a.trigger_value)) {
+    return `${words} · ${measure}`;
+  }
+  if (a.threshold != null && !mentions(a.threshold)) {
+    const unit = UNITS[a.metric_key ?? ''] ?? '';
+    return `${words} (limit ${Math.round(a.threshold * 10) / 10}${unit})`;
+  }
+  return words;
+}
+
 
 /** The conditions inside one room, alarms above alerts.
  *
@@ -157,7 +187,7 @@ function RoomConditions({ roomId, categories, span }: {
               <thead>
                 <tr>
                   <th>Class</th><th>Severity</th><th>Condition</th>
-                  <th>Device</th><th className="num">Reading</th><th>Detail</th>
+                  <th>Device</th><th>Detail</th>
                   <th className="mid">Since</th><th className="mid">Last seen</th>
                 </tr>
               </thead>
@@ -186,17 +216,12 @@ function RoomConditions({ roomId, categories, span }: {
                           <span className="muted small"> · {a.rack_name}</span>
                         )}
                       </td>
-                      {/* The measurement first: it is what anybody asks of
-                          a threshold condition, and it is the same shape on
-                          every row so the eye can scan the column. */}
-                      <td className="num reading">
-                        {reading(a) ?? <span className="dash">\u2014</span>}
-                      </td>
-                      {/* And only then the words, when they add something the
-                          condition name has not already said. */}
+                      {/* The words, with the reading folded in where the words
+                          do not already carry it. A rule usually writes the
+                          numbers into its own sentence, and a separate column
+                          beside "93.0 C above 80.0 C" was the same fact twice. */}
                       <td className="muted">
-                        {addsSomething(a.message, a.alarm_type) ? a.message
-                          : <span className="dash">\u2014</span>}
+                        {detail(a) ?? <span className="dash">&mdash;</span>}
                       </td>
                       <td className="mid muted">{relativeTime(a.first_seen)}</td>
                       <td className="mid muted">{relativeTime(a.last_seen)}</td>
