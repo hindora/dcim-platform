@@ -17,7 +17,7 @@ from typing import Any
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.alarms import correlation, staleness
+from app.alarms import correlation, reconcile, staleness
 from app.alarms.engine import (
     AlarmKey,
     Candidate,
@@ -490,6 +490,53 @@ class AlarmService:
             await repo.refresh_device_alarm_state(session, sorted(touched))
         if actions:
             log.info("cleared alarms on retired endpoints", alarms=len(actions))
+        return actions
+
+    async def sweep_trap_reconciliation(self, session: AsyncSession
+                                        ) -> list[AlarmAction]:
+        """Close trap alarms the measurement, or the silence, has outlived.
+
+        A trap is one UDP datagram: the clear that ends a condition is as
+        losable as the raise that started it, and losing the clear leaves an
+        alarm nothing can resolve. Measured on this fleet - a CPUNormal fired
+        into a 33-second window while the collector restarted, and three alarms
+        stood open on a machine the platform could see was at 39.9%.
+
+        So the poll gets the last word, in the two ways it can have one.
+        """
+        now = datetime.now(UTC)
+        actions: list[AlarmAction] = []
+        touched: set[str] = set()
+
+        async def close(row: dict, reason: str, note: str) -> None:
+            cleared = await repo.clear_alarms(
+                session, device_id=row["device_id"],
+                alarm_types=[row["alarm_type"]], instance="",
+                at=now, by=f"reconciliation:{reason}")
+            for c in cleared:
+                touched.add(row["device_id"])
+                await repo.record_history(
+                    session, alarm_id=c["id"], device_id=row["device_id"],
+                    action="cleared", severity=c["severity"],
+                    actor="reconciliation", detail={"reason": note})
+                # A folded band or a dependency symptom comes back into view
+                # when its root goes, exactly as it would on any other clear.
+                for sym in await correlation.release_symptoms(session, c["id"]):
+                    touched.add(sym["device_id"])
+                actions.append(AlarmAction("alarm_cleared", c))
+            if cleared:
+                log.info("trap alarm reconciled", device=row["device_name"],
+                         alarm_type=row["alarm_type"], reason=reason,
+                         detail=note)
+
+        for row in await reconcile.measured_clear(session):
+            await close(row, "measured", reconcile.measured_reason(row))
+
+        for row in await reconcile.aged_out(session):
+            await close(row, "aged", reconcile.aged_reason(row))
+
+        if touched:
+            await repo.refresh_device_alarm_state(session, sorted(touched))
         return actions
 
     async def sweep_staleness(self, session: AsyncSession) -> list[AlarmAction]:

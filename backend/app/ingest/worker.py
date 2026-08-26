@@ -270,6 +270,10 @@ class IngestWorker:
                 # Same timer, because it is the same kind of question: an alarm
                 # nothing will ever come back to clear.
                 actions += await self.alarms.sweep_dead_endpoints(session)
+                # Last, and on the same cadence: by now this pass has the
+                # freshest possible view of what is arriving, which is exactly
+                # what deciding "the condition is over" depends on.
+                actions += await self.alarms.sweep_trap_reconciliation(session)
             for action in actions:
                 await self.fanout.alarm(action.kind, action.alarm)
         except Exception as exc:
