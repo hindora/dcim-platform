@@ -72,9 +72,15 @@ SEEING_IT_S = 660
 
 # The measurement contradicts the alarm.
 #
-# `max`/`min` over the window rather than the last sample: one reading below a
-# threshold is a dip, and clearing on it would flap an alarm that a rule's own
-# clear dwell exists to hold. The whole window has to be in the clear band.
+# The LAST `need` samples, not every sample in the window. Taking the extreme
+# over half an hour sounds safer and is not: the readings that raised the alarm
+# are in that half hour too, so the alarm would sit open until they aged out of
+# it - thirty minutes after the condition ended, which is barely better than
+# never noticing. The clear dwell already says how much evidence a clear needs;
+# this uses exactly that, taken from the newest end.
+#
+# The window is still there as an outer bound, so a device that fell silent an
+# hour ago cannot have its alarm cleared by whatever it last said.
 _MEASURED_CLEAR = text("""
     WITH candidate AS (
         SELECT a.id, a.device_id, a.alarm_type, a.severity::text AS severity,
@@ -92,25 +98,32 @@ _MEASURED_CLEAR = text("""
                               OR d.device_type = ANY(r.device_types))
          WHERE a.state <> 'CLEARED'
            AND a.source = ANY(:sources)
-    ), measured AS (
+    ), ranked AS (
         SELECT c.id, c.device_id, c.device_name, c.alarm_type, c.severity,
                c.metric_key, c.operator, c.clear_threshold, c.need,
-               count(*)   AS samples,
-               max(t.value) AS hi,
-               min(t.value) AS lo
+               t.value,
+               row_number() OVER (PARTITION BY c.id ORDER BY t.ts DESC) AS rn
           FROM candidate c
           JOIN metric m ON m.key = c.metric_key
           JOIN telemetry_sample t ON t.device_id = c.device_id
                                  AND t.metric_id = m.id
                                  AND t.ts > now() - make_interval(secs => :window_s)
-         GROUP BY c.id, c.device_id, c.device_name, c.alarm_type, c.severity,
-                  c.metric_key, c.operator, c.clear_threshold, c.need
+    ), tail AS (
+        SELECT id, device_id, device_name, alarm_type, severity, metric_key,
+               operator, clear_threshold, need,
+               count(*)     AS samples,
+               max(value)   AS hi,
+               min(value)   AS lo
+          FROM ranked
+         WHERE rn <= need
+         GROUP BY id, device_id, device_name, alarm_type, severity, metric_key,
+                  operator, clear_threshold, need
     )
     SELECT id::text AS id, device_id::text AS device_id, device_name,
            alarm_type, severity, metric_key,
            CASE WHEN operator = '>' THEN hi ELSE lo END AS worst,
            clear_threshold
-      FROM measured
+      FROM tail
      WHERE samples >= need
        AND ((operator = '>' AND hi < clear_threshold)
          OR (operator = '<' AND lo > clear_threshold))

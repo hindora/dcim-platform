@@ -56,17 +56,28 @@ def test_only_open_alarms_are_touched():
 # --------------------------------------------------- the measurement contests
 
 
-def test_the_whole_window_must_be_in_the_clear_band():
-    """One reading below a threshold is a dip, not a recovery.
+def test_every_one_of_the_newest_samples_must_be_in_the_clear_band():
+    """One reading below a threshold is a dip, not a recovery - and one above
+    it, an hour ago, is not a reason to keep an alarm.
 
-    Clearing on the latest sample would flap an alarm that a rule's own clear
-    dwell exists to hold, so the extreme of the window is what is tested:
-    max for a `>` rule, min for a `<` one.
+    The extreme of the LAST `need` samples is what decides: max for a `>` rule,
+    min for a `<` one. Taking the extreme over the whole window instead sounds
+    safer and is not - the readings that RAISED the alarm are in that window
+    too, so the alarm would stand until they aged out of it, half an hour after
+    the condition ended.
     """
     s = sql("_MEASURED_CLEAR")
-    assert "max(t.value)" in s and "min(t.value)" in s
+    assert "row_number() OVER (PARTITION BY c.id ORDER BY t.ts DESC)" in s
+    assert "WHERE rn <= need" in s
+    assert "max(value)" in s and "min(value)" in s
     assert "operator = '>' AND hi < clear_threshold" in s
     assert "operator = '<' AND lo > clear_threshold" in s
+
+
+def test_the_window_still_bounds_how_old_evidence_may_be():
+    """A device that fell silent an hour ago must not be cleared by whatever
+    it last happened to say."""
+    assert "t.ts > now() - make_interval(secs => :window_s)" in sql("_MEASURED_CLEAR")
 
 
 def test_a_clear_needs_enough_samples_to_be_evidence():
