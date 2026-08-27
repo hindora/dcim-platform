@@ -3,9 +3,16 @@ import { createRoot } from 'react-dom/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter } from 'react-router-dom';
 import App from './App';
+import { apply, getMode, watchSystem } from './lib/theme';
 import './index.css';
 import './home.css';
 import './estate.css';
+
+// Before anything renders: a light-mode machine should not be shown the dark
+// palette for a frame on its way in, and a wall display left on "sync with
+// system" has to keep following it without anybody reloading the page.
+apply(getMode());
+watchSystem(() => {});
 
 const queryClient = new QueryClient({
   defaultOptions: {

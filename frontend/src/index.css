@@ -50,6 +50,51 @@
   --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
 
+/* The light palette: the same token names, different values.
+ *
+ * Every colour in this app already came from a token, so a second palette is a
+ * list of values rather than a second stylesheet. The one thing that has to be
+ * thought about rather than inverted is contrast: #2ea043 on #0e1116 is a
+ * comfortable green and the same green on white is not, so the status hues are
+ * their darker siblings here. A status colour that fails to read is worse than
+ * a wrong one, because it is the colour of a condition somebody is meant to act
+ * on.
+ *
+ * `--bg-inset` also flips its RELATIONSHIP: darker than the page in the dark
+ * theme, lighter-grey-against-white here. Inset means recessed, and recession
+ * is a contrast direction, not a lightness value.
+ */
+:root[data-theme="light"] {
+  --bg: #ffffff;
+  --bg-raised: #f6f8fa;
+  --bg-inset: #eff2f5;
+  --border: #d0d7de;
+  --border-strong: #afb8c1;
+
+  --text: #1f2328;
+  --text-muted: #59636e;
+  --text-faint: #818b98;
+
+  --accent: #0969da;
+  /* Used as a fill behind text, so it is a tint here rather than a deeper
+     blue - the dark theme's --accent-dim is a background for light text and
+     would swallow dark text whole. */
+  --accent-dim: #b6d4fb;
+
+  --ok: #1a7f37;
+  --warn: #9a6700;
+  --major: #bc4c00;
+  --critical: #cf222e;
+  --unknown: #6e7681;
+
+  --cat-pwr: #9a6700;
+  --cat-cool: #157c8b;
+  --cat-it: #8250df;
+  --cat-vis: #6e7681;
+  --cat-cap: #0969da;
+  --cat-unc: #bf3989;
+}
+
 @media (prefers-color-scheme: light) {
   :root:not([data-theme='dark']) {
     --bg: #ffffff;
@@ -562,3 +607,46 @@ button.primary { background: var(--accent-dim); border-color: var(--accent); }
   text-transform: uppercase; color: var(--text-muted);
 }
 .sheet-body .proto .form-grid { gap: 14px; margin-top: 8px; }
+
+/* --------------------------------------------------------------- appearance
+ *
+ * Two cards that SHOW a palette rather than naming it. Each is painted in its
+ * own literal colours, because a card whose job is to show you the light theme
+ * has to look light while you are sitting in the dark one.
+ */
+.theme-cards { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 18px; }
+.theme-card {
+  flex: 1 1 240px; display: flex; flex-direction: column; gap: 10px;
+  padding: 14px; text-align: left; cursor: pointer;
+  background: var(--bg-raised); border: 1px solid var(--border);
+  border-radius: var(--radius); color: var(--text); font: inherit;
+}
+.theme-card:hover { border-color: var(--border-strong); }
+.theme-card.active { border-color: var(--accent); }
+.theme-card .head {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 13px; font-weight: 600;
+}
+.theme-card .badge {
+  margin-left: auto; padding: 1px 8px; border-radius: 10px;
+  border: 1px solid var(--accent); color: var(--accent);
+  font-size: 11px; font-weight: 500;
+}
+.theme-card .note { font-size: 12px; color: var(--text-faint); }
+
+.theme-card .mock {
+  display: block; border: 1px solid; border-radius: 4px; overflow: hidden;
+}
+.theme-card .mock-bar {
+  display: flex; align-items: center; gap: 6px;
+  padding: 7px 8px; border-bottom: 1px solid;
+}
+.theme-card .mock-bar i { height: 6px; border-radius: 2px; }
+.theme-card .mock-bar i:first-child { width: 12px; height: 12px; border-radius: 3px; }
+.theme-card .mock-body { display: block; padding: 10px 8px 12px; }
+.theme-card .mock-body > i { display: block; border-radius: 2px; margin-bottom: 8px; }
+.theme-card .mock-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 0; border-top: 1px solid;
+}
+.theme-card .mock-row i { height: 6px; border-radius: 2px; }

@@ -17,6 +17,11 @@ export const SETTINGS_NAV = [
     label: 'Collectors',
     blurb: 'Which planes each collector runs, and where it listens',
   },
+  {
+    to: 'appearance',
+    label: 'Appearance',
+    blurb: 'Light or dark, for this browser',
+  },
 ] as const;
 
 export function SettingsLayout() {
