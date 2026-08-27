@@ -106,8 +106,16 @@ _MEASURED_CLEAR = text("""
                d.name AS device_name, a.last_seen,
                coalesce(r.metric_key, a.metric_key)   AS metric_key,
                coalesce(r.operator, '>')              AS operator,
+               -- CAST is load-bearing. asyncpg sends parameters typed, and
+               -- Postgres infers this one from the integer literal beside it:
+               -- `1 - :margin` types the parameter int4, which turns 0.05 into
+               -- 0 and silently deletes the margin. It cleared alarms at
+               -- exactly their raise threshold for two live runs while every
+               -- test passed - including running the SQL by hand through psql,
+               -- which sends parameters untyped and infers numeric.
                coalesce(r.clear_threshold,
-                        a.threshold * (1 - :margin))  AS clear_threshold,
+                        a.threshold * (1 - CAST(:margin AS numeric)))
+                                                     AS clear_threshold,
                GREATEST(coalesce(r.clear_dwell_samples, 2), 2) AS need,
                (r.id IS NOT NULL)                     AS from_rule
           FROM alarm a

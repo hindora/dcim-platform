@@ -198,7 +198,7 @@ def test_the_devices_own_threshold_is_used_when_no_rule_has_one():
     """
     s = sql("_MEASURED_CLEAR")
     assert "coalesce(r.metric_key, a.metric_key)" in s
-    assert "a.threshold * (1 - :margin)" in s
+    assert "a.threshold * (1 - CAST(:margin AS numeric))" in s
 
 
 def test_a_rule_still_wins_when_it_has_an_opinion():
@@ -260,3 +260,16 @@ def test_only_readings_taken_after_the_condition_count_as_recovery():
     is right: the newest assertion is the one that has to be outlived.
     """
     assert "t.ts > c.last_seen" in sql("_MEASURED_CLEAR")
+
+
+def test_the_margin_parameter_is_cast_rather_than_inferred():
+    """asyncpg sends parameters typed, and Postgres infers this one from its
+    neighbour: `1 - :margin` types the parameter int4, 0.05 becomes 0, and the
+    margin disappears without an error anywhere.
+
+    It shipped, cleared two live alarms at exactly their raise threshold, and
+    every test still passed - including running the statement by hand through
+    psql, which sends parameters untyped and infers numeric. Only the real
+    driver reproduces it.
+    """
+    assert "CAST(:margin AS numeric)" in sql("_MEASURED_CLEAR")
