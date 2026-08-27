@@ -535,28 +535,6 @@ button.primary { background: var(--accent-dim); border-color: var(--accent); }
   .settings-nav .blurb { display: none; }
 }
 
-/* When a setting takes effect. Most of the collector reads its configuration
-   once, at startup, so a field that applies live is the exception and is worth
-   marking as one - the alternative is a page that implies every save reached
-   the wire. */
-.form-grid .tag {
-  display: inline-block; margin-left: 8px; padding: 1px 6px; border-radius: 3px;
-  border: 1px solid var(--border-strong); color: var(--text-faint);
-  font-size: 10px; letter-spacing: .06em;
-}
-.form-grid .tag.live { color: var(--ok); border-color: var(--ok); }
-.sheet-body h3 {
-  margin: 0 0 12px; font-size: 13px; font-weight: 600; letter-spacing: .04em;
-  text-transform: uppercase; color: var(--text-muted);
-}
-.banner .check { display: inline-flex; align-items: center; gap: 8px; }
-
-/* Where a value came from: typed here, or inherited from the collector's own
-   file. Without the distinction the two are indistinguishable, which is how
-   the first version of this page managed to show nothing at all. */
-.form-grid .tag.set  { color: var(--accent); border-color: var(--accent); }
-.form-grid .tag.from { color: var(--text-faint); }
-
 /* A field whose reasoning is a hover away. Small and quiet: it is an offer,
    not an instruction, and the line it sits on has already said the useful
    half. */
@@ -565,3 +543,13 @@ button.primary { background: var(--accent-dim); border-color: var(--accent); }
   border: 1px solid var(--border); color: var(--text-faint);
   font-size: 10px; cursor: help;
 }
+
+/* One protocol per box. Seven planes in one scroll is a list of thirty
+   controls; boxed, it is seven things, and the reader can skip six of them. */
+.sheet-body .proto {
+  margin-bottom: 18px; padding: 16px 18px 18px;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--bg-inset);
+}
+.sheet-body .proto h3 { margin: 0 0 14px; }
+.sheet-body .proto .form-grid { gap: 14px; }

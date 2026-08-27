@@ -136,6 +136,10 @@ function ConfigSheet({ row, sections, onClose }: {
   const [confirmed, setConfirmed] = useState(false);
 
   const save = useMutation({
+    // Only what somebody actually set: the stored overrides plus this
+    // session's edits. Sending every field would pin all of them at whatever
+    // the collector happens to run today, and a default that improves in a
+    // release would then never reach it again.
     mutationFn: () => api.setCollectorConfig(row.id, prune(values)),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['collectors'] });
@@ -167,11 +171,11 @@ function ConfigSheet({ row, sections, onClose }: {
         <header className="sheet-head">
           <div>
             <h2>{row.id}</h2>
-            <p title="An empty field is inherited from the collector's own
-                      file, which is how a default that changes in a release
-                      reaches every collector that never overrode it.">
+            <p title="Fields you do not change stay inherited from the
+                      collector's own file, so a default that improves in a
+                      release still reaches it.">
               {row.hostname ? `${row.hostname} · ` : ''}
-              Every field shows the value in force. Clear one to inherit.
+              Every field shows the value in force.
             </p>
           </div>
           <button className="close" onClick={onClose} aria-label="Close">✕</button>
@@ -217,7 +221,7 @@ function ConfigSheet({ row, sections, onClose }: {
           )}
 
           {sections.map((section) => (
-            <section key={section.key} style={{ marginBottom: 26 }}>
+            <section key={section.key} className="proto">
               <h3>
                 {section.title}
                 {section.danger && <span className="muted"> · listener</span>}
@@ -252,52 +256,50 @@ function ConfigSheet({ row, sections, onClose }: {
   );
 }
 
-/** One setting, showing the value that is actually in force.
+/** One setting, holding the value that is actually in force.
  *
- *  An empty box beside the words "collector's file" told an operator nothing:
- *  the override document is empty on every fresh install, so every field read
- *  the same and none of them said what the collector was doing. The running
- *  value is shown instead - as the entry itself where it is overridden here,
- *  and as the placeholder or the inherit option where it comes from the
- *  collector's own file. Clearing the box goes back to inheriting. */
+ *  The control carries the real number or state - not a placeholder behind an
+ *  empty box, which is what the first two versions of this form did and which
+ *  told an operator nothing about the collector in front of them.
+ *
+ *  What is NOT visible is that an untouched field stays inherited. The form
+ *  shows 48 because the collector runs 48; it stores an override only for the
+ *  fields somebody actually changed, so a default that improves in a release
+ *  still reaches every collector that never had an opinion about it. Showing a
+ *  value and pinning a value are different acts, and only the second one is a
+ *  decision. */
 function Field({ field, value, effective, onChange }: {
   field: ConfigField;
   value: unknown;
   effective: unknown;
   onChange: (v: unknown) => void;
 }) {
-  const when = field.when === 'live'
-    ? <span className="tag live">applies live</span>
-    : <span className="tag">on restart</span>;
-  const overridden = value !== undefined && value !== '';
-  const known = effective !== undefined && effective !== null;
-  const shown = known ? String(effective) : 'not reported';
+  // The value in force: what an operator has typed here this session, else
+  // the override already stored, else what the collector reports running.
+  const current = value !== undefined ? value : effective;
+  const known = current !== undefined && current !== null;
 
-  const source = overridden
-    ? <span className="tag set">set here</span>
-    : known
-      ? <span className="tag from">from the collector</span>
-      : null;
+  // When a setting takes effect, and why it is bounded where it is. Both were
+  // chips and a paragraph on screen; both are quieter than the value itself
+  // and belong behind the field rather than above it.
+  const tip = [
+    field.when === 'live'
+      ? 'Applies without a restart.'
+      : 'Stored now; in force when the collector next starts.',
+    field.detail,
+  ].filter(Boolean).join(' ');
 
   if (field.kind === 'bool') {
-    // Three states, not two: on, off, and inherit. A checkbox cannot express
-    // the third, and defaulting it to off would silently disable planes nobody
-    // touched. The inherit option carries what it resolves to, so the reader
-    // never has to guess what inheriting means here.
     return (
       <label>
-        <span>{field.label} {when} {source}</span>
-        <select value={value === undefined ? '' : String(value)}
-                onChange={(e) => onChange(
-                  e.target.value === '' ? undefined : e.target.value === 'true')}>
-          <option value="">
-            {known ? `Inherit \u2014 ${effective ? 'On' : 'Off'}` : 'Inherit'}
-          </option>
+        <span>{field.label}</span>
+        <select value={known ? String(current) : 'false'}
+                onChange={(e) => onChange(e.target.value === 'true')}>
           <option value="true">On</option>
           <option value="false">Off</option>
         </select>
-        <em className="hint" title={field.detail || undefined}>
-          {field.help}{field.detail ? <span className="why"> ?</span> : null}
+        <em className="hint" title={tip}>
+          {field.help}{tip ? <span className="why"> ?</span> : null}
         </em>
       </label>
     );
@@ -305,23 +307,16 @@ function Field({ field, value, effective, onChange }: {
 
   return (
     <label>
-      <span>{field.label} {when} {source}</span>
-      <input value={value === undefined || value === null ? '' : String(value)}
+      <span>{field.label}</span>
+      <input value={known ? String(current) : ''}
              inputMode={field.kind === 'int' || field.kind === 'seconds'
                ? 'numeric' : 'text'}
-             // The running value, so an empty box is still informative: it
-             // shows what will be used if nothing is typed.
-             placeholder={shown}
              onChange={(e) => onChange(
                e.target.value === '' ? undefined
                  : field.kind === 'int' || field.kind === 'seconds'
                    ? Number(e.target.value) : e.target.value)} />
-      <em className="hint" title={field.detail || undefined}>
-        {overridden && known && String(effective) !== String(value) ? (
-          <strong>Running: {shown}{field.kind === 'seconds' ? 's' : ''}. </strong>
-        ) : null}
-        {field.help}
-        {field.detail ? <span className="why"> ?</span> : null}
+      <em className="hint" title={tip}>
+        {field.help}{tip ? <span className="why"> ?</span> : null}
       </em>
     </label>
   );
