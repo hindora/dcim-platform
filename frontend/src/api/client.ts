@@ -95,6 +95,37 @@ export interface PollProfileSummary {
   push_enabled: boolean;
   metric_groups: string[];
   endpoints: number;
+  /** Present in the profiles list, absent in the endpoint-editor picker. */
+  endpoints_enabled?: number;
+  protocols?: string[];
+}
+
+export interface ProfileUsage {
+  profile_id: string;
+  endpoints: number;
+  devices: number;
+  breakdown: { protocol: string; device_type: string;
+               endpoints: number; devices: number }[];
+}
+
+export interface PollProfilesPage {
+  profiles: PollProfileSummary[];
+  /** Group names each protocol's mapping file defines. SNMP is the only key:
+   *  it is the only adapter that reads metric_groups. */
+  metric_groups: Record<string, string[]>;
+  limits: {
+    min_interval_s: number; max_interval_s: number;
+    min_timeout_ms: number; max_timeout_ms: number; max_retries: number;
+  };
+}
+
+export interface PollProfileBody {
+  name?: string;
+  interval_s?: number;
+  timeout_ms?: number;
+  retries?: number;
+  metric_groups?: string[];
+  push_enabled?: boolean;
 }
 
 export interface AddressingField {
@@ -1047,6 +1078,23 @@ export const api = {
   },
 
   device: (id: string) => request<DeviceDetail>(`/devices/${id}`),
+
+  pollProfiles: () => request<PollProfilesPage>('/poll-profiles'),
+
+  pollProfileUsage: (id: string) =>
+    request<ProfileUsage>(`/poll-profiles/${id}/usage`),
+
+  createPollProfile: (body: PollProfileBody) =>
+    request<PollProfileSummary>('/poll-profiles', {
+      method: 'POST', body: JSON.stringify(body),
+    }),
+
+  /** Returns what moved and how many endpoints followed it. */
+  updatePollProfile: (id: string, body: PollProfileBody) =>
+    request<{ profile_id: string; changed: Record<string, unknown>;
+              endpoints_moved: number }>(`/poll-profiles/${id}`, {
+      method: 'PATCH', body: JSON.stringify(body),
+    }),
 
   deviceEndpoints: (id: string) =>
     request<EndpointSummary[]>(`/devices/${id}/endpoints`),

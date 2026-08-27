@@ -56,10 +56,12 @@ ignore = ["B008"]   # FastAPI Depends() in defaults is the documented idiom
 [tool.ruff.lint.per-file-ignores]
 "app/contracts/messages_gen.py" = ["ALL"]
 "app/core/metrics_gen.py" = ["ALL"]
+"app/core/mappings_gen.py" = ["ALL"]
 "alembic/versions/*" = ["E501"]
 
 [tool.mypy]
 python_version = "3.11"
 warn_unused_ignores = true
 ignore_missing_imports = true
-exclude = ["app/contracts/messages_gen.py", "app/core/metrics_gen.py"]
+exclude = ["app/contracts/messages_gen.py", "app/core/metrics_gen.py",
+           "app/core/mappings_gen.py"]

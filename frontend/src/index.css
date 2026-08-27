@@ -477,3 +477,17 @@ button.primary { background: var(--accent-dim); border-color: var(--accent); }
 .form-grid label.switch > span { grid-row: 1; grid-column: 2; }
 .form-grid label.switch input { grid-row: 1; grid-column: 1; width: 15px; }
 .form-grid label.switch .hint { grid-column: 2; }
+
+/* A set of checkboxes reads as one field, so they sit in the field's own
+   column rather than each becoming a row of its own. */
+.form-grid .checks {
+  display: flex; flex-wrap: wrap; gap: 6px 18px;
+  padding: 8px 10px; border: 1px solid var(--border);
+  border-radius: var(--radius); background: var(--bg-inset);
+}
+.form-grid .check {
+  display: inline-flex; align-items: center; gap: 6px; gap: 6px;
+  font-size: 13px; text-transform: none; letter-spacing: 0;
+}
+.form-grid .check input { width: 14px; }
+.form-grid .check span { color: var(--text); }

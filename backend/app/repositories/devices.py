@@ -294,10 +294,22 @@ async def count_credentials(session: AsyncSession, protocol: str | None = None
 
 
 async def list_poll_profiles(session: AsyncSession) -> list[dict[str, Any]]:
+    """Every profile with what it is currently steering.
+
+    The counts are the point. A profile is shared - `redfish-60s` carries 310
+    endpoints - so the number beside an interval is how many devices an edit
+    moves, and it belongs in the list rather than behind a click.
+    """
     rows = (await session.execute(text("""
         SELECT p.id::text, p.name, p.interval_s, p.timeout_ms, p.retries,
                p.push_enabled, p.metric_groups,
-               count(e.id) AS endpoints
+               count(e.id) AS endpoints,
+               count(e.id) FILTER (WHERE e.enabled) AS endpoints_enabled,
+               -- Which planes it steers. A profile spanning two protocols is
+               -- legal and worth seeing: metric_groups only reaches the SNMP
+               -- adapter, so the same group set means nothing on the others.
+               coalesce(array_agg(DISTINCT e.protocol::text)
+                        FILTER (WHERE e.id IS NOT NULL), '{}') AS protocols
           FROM poll_profile p
           LEFT JOIN device_endpoint e ON e.poll_profile_id = p.id
          GROUP BY p.id, p.name, p.interval_s, p.timeout_ms, p.retries,
@@ -305,6 +317,82 @@ async def list_poll_profiles(session: AsyncSession) -> list[dict[str, Any]]:
          ORDER BY p.interval_s, p.name
     """))).mappings().all()
     return [dict(r) for r in rows]
+
+
+async def poll_profile_usage(session: AsyncSession, profile_id: str
+                             ) -> list[dict[str, Any]]:
+    """What an edit to this profile would move, broken down.
+
+    "310 endpoints" is a number; "310 Redfish BMCs across 2 sites" is a
+    decision. The breakdown is what makes the confirmation mean something.
+    """
+    rows = (await session.execute(text("""
+        SELECT e.protocol::text AS protocol, d.device_type,
+               count(*) AS endpoints,
+               count(DISTINCT d.id) AS devices
+          FROM device_endpoint e
+          JOIN device d ON d.id = e.device_id
+         WHERE e.poll_profile_id = CAST(:id AS uuid)
+           AND d.lifecycle <> 'decommissioned'
+         GROUP BY e.protocol, d.device_type
+         ORDER BY count(*) DESC
+    """), {"id": profile_id})).mappings().all()
+    return [dict(r) for r in rows]
+
+
+async def get_poll_profile_by_name(session: AsyncSession, name: str
+                                   ) -> dict[str, Any] | None:
+    row = (await session.execute(text("""
+        SELECT id::text, name FROM poll_profile WHERE name = CAST(:n AS text)
+    """), {"n": name})).mappings().first()
+    return dict(row) if row else None
+
+
+async def create_poll_profile(session: AsyncSession, values: dict[str, Any]
+                              ) -> dict[str, Any]:
+    row = (await session.execute(text("""
+        INSERT INTO poll_profile
+            (name, interval_s, timeout_ms, retries, metric_groups, push_enabled)
+        VALUES (CAST(:name AS text), CAST(:interval_s AS integer),
+                CAST(:timeout_ms AS integer), CAST(:retries AS integer),
+                CAST(:metric_groups AS text[]), CAST(:push_enabled AS boolean))
+        RETURNING id::text, name, interval_s, timeout_ms, retries,
+                  metric_groups, push_enabled
+    """), values)).mappings().one()
+    return dict(row)
+
+
+#: Columns an edit may touch. `name` is absent on purpose - see update below.
+_PROFILE_EDITABLE = {
+    "interval_s":    "interval_s = CAST(:interval_s AS integer)",
+    "timeout_ms":    "timeout_ms = CAST(:timeout_ms AS integer)",
+    "retries":       "retries = CAST(:retries AS integer)",
+    "metric_groups": "metric_groups = CAST(:metric_groups AS text[])",
+    "push_enabled":  "push_enabled = CAST(:push_enabled AS boolean)",
+}
+
+
+async def update_poll_profile(session: AsyncSession, profile_id: str,
+                              changes: dict[str, Any]) -> dict[str, Any] | None:
+    """Apply an edit, and touch every endpoint that follows this profile.
+
+    The endpoints are what the assignment version is built from. Editing the
+    profile alone changes what each endpoint SERVES without changing any
+    endpoint row, and a version-only comparison would answer 304 to every
+    collector - they would keep polling on the old interval until something
+    unrelated was edited. Bumping the endpoints is how the change is delivered.
+    """
+    if not changes:
+        return await get_poll_profile(session, profile_id)
+    sets = ", ".join(_PROFILE_EDITABLE[k] for k in changes)
+    await session.execute(text(f"""
+        UPDATE poll_profile SET {sets} WHERE id = CAST(:id AS uuid)
+    """), {"id": profile_id, **changes})
+    await session.execute(text("""
+        UPDATE device_endpoint SET updated_at = now()
+         WHERE poll_profile_id = CAST(:id AS uuid)
+    """), {"id": profile_id})
+    return await get_poll_profile(session, profile_id)
 
 
 async def list_interfaces(session: AsyncSession, device_id: str) -> list[dict[str, Any]]:

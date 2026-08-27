@@ -28,6 +28,7 @@ from app.schemas import (
     RoomExtent,
 )
 from app.services import endpoint_config, floorplan
+from app.services import poll_profile_config as cfg
 
 
 def _location(row: dict[str, Any]) -> LocationRef:
@@ -199,6 +200,10 @@ async def room_floorplan(session: AsyncSession, room_id: str) -> FloorPlan | Non
     )
 
 
+class PollProfileNotFoundError(LookupError):
+    """No profile with that id."""
+
+
 class EndpointNotFoundError(LookupError):
     """No endpoint with that id on that device."""
 
@@ -292,3 +297,74 @@ async def credential_count(session: AsyncSession, protocol: str | None = None
 
 async def poll_profiles(session: AsyncSession) -> list[dict[str, Any]]:
     return await repo.list_poll_profiles(session)
+
+
+async def poll_profile_usage(session: AsyncSession, profile_id: str
+                             ) -> list[dict[str, Any]]:
+    return await repo.poll_profile_usage(session, profile_id)
+
+
+async def create_poll_profile(session: AsyncSession, body: dict[str, Any]
+                              ) -> dict[str, Any]:
+    """Validate and insert. Defaults are stated rather than left to the table.
+
+    A profile created with the column defaults would be a 30-second poll with
+    no groups - collecting nothing, on every endpoint moved onto it - so the
+    form's values are required to be complete here even though the schema
+    would accept less.
+    """
+    existing = {p["name"] for p in await repo.list_poll_profiles(session)}
+    clean = cfg.validate(body, existing_names=existing, creating=True)
+    values = {
+        "name": clean["name"],
+        "interval_s": clean.get("interval_s", 60),
+        "timeout_ms": clean.get("timeout_ms", 5000),
+        "retries": clean.get("retries", 1),
+        "metric_groups": clean.get("metric_groups", []),
+        "push_enabled": clean.get("push_enabled", False),
+    }
+    cfg.check_timing(values["interval_s"], values["timeout_ms"],
+                     values["retries"])
+    return await repo.create_poll_profile(session, values)
+
+
+async def update_poll_profile(session: AsyncSession, profile_id: str,
+                              changes: dict[str, Any]
+                              ) -> tuple[dict[str, Any], dict[str, Any], int]:
+    """Validate an edit against the stored profile and apply it.
+
+    Returns the before and after of what moved, plus how many endpoints follow
+    this profile - the caller records that in the audit trail, because the
+    blast radius is the part worth being able to look up later.
+    """
+    current = await repo.get_poll_profile(session, profile_id)
+    if current is None:
+        raise PollProfileNotFoundError(profile_id)
+
+    # The name is deliberately not editable. app/importer/endpoints.py selects
+    # profiles by name - poll_profile="snmp-server-120s" - so renaming one
+    # silently breaks the next import, which lands endpoints on a default
+    # profile instead of failing.
+    if "name" in changes and changes["name"] != current["name"]:
+        raise cfg.PollProfileError(
+            "a profile cannot be renamed: the importer selects profiles by "
+            "name, and a rename would send the next import to a different "
+            "profile without failing. Create a new one and move the endpoints.")
+
+    clean = cfg.validate(changes, creating=False)
+    merged = {**current, **clean}
+    cfg.check_timing(merged["interval_s"], merged["timeout_ms"],
+                     merged["retries"])
+
+    effective = {k: v for k, v in clean.items()
+                 if k in ("interval_s", "timeout_ms", "retries",
+                          "metric_groups", "push_enabled")
+                 and current.get(k) != v}
+    if not effective:
+        return {}, {}, 0
+
+    before = {k: current.get(k) for k in effective}
+    await repo.update_poll_profile(session, profile_id, effective)
+    followers = sum(u["endpoints"]
+                    for u in await repo.poll_profile_usage(session, profile_id))
+    return before, effective, followers
