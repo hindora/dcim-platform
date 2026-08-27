@@ -547,9 +547,18 @@ button.primary { background: var(--accent-dim); border-color: var(--accent); }
 /* One protocol per box. Seven planes in one scroll is a list of thirty
    controls; boxed, it is seven things, and the reader can skip six of them. */
 .sheet-body .proto {
-  margin-bottom: 18px; padding: 16px 18px 18px;
+  margin: 0 0 18px; padding: 6px 18px 18px;
   border: 1px solid var(--border); border-radius: var(--radius);
   background: var(--bg-inset);
+  /* A fieldset carries browser defaults that would fight the grid inside it. */
+  min-width: 0;
 }
-.sheet-body .proto h3 { margin: 0 0 14px; }
-.sheet-body .proto .form-grid { gap: 14px; }
+/* The name sits ON the line, which is what a legend is for: the box says
+   these controls belong together and the label says what they are, without
+   spending a row on a heading. */
+.sheet-body .proto legend {
+  padding: 0 8px; margin-left: 4px;
+  font-size: 12px; font-weight: 600; letter-spacing: .09em;
+  text-transform: uppercase; color: var(--text-muted);
+}
+.sheet-body .proto .form-grid { gap: 14px; margin-top: 8px; }

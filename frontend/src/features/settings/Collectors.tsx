@@ -221,11 +221,15 @@ function ConfigSheet({ row, sections, onClose }: {
           )}
 
           {sections.map((section) => (
-            <section key={section.key} className="proto">
-              <h3>
+            /* fieldset rather than a section with a heading: these ARE
+               groups of related controls, the legend sits on the border where
+               a group label belongs, and a screen reader announces which group
+               each field is in without being told twice. */
+            <fieldset key={section.key} className="proto">
+              <legend>
                 {section.title}
                 {section.danger && <span className="muted"> · listener</span>}
-              </h3>
+              </legend>
               <div className="form-grid">
                 {section.fields.map((f) => (
                   <Field key={f.key} field={f}
@@ -234,7 +238,7 @@ function ConfigSheet({ row, sections, onClose }: {
                          onChange={(v) => set(section.key, f.key, v)} />
                 ))}
               </div>
-            </section>
+            </fieldset>
           ))}
         </div>
 
