@@ -27,6 +27,26 @@ const snmpTrapOID = "1.3.6.1.6.3.1.1.4.1.0"
 // sysUpTimeOID is the first varbind of every v2c trap and is not a payload.
 const trapSysUpTime = "1.3.6.1.2.1.1.3.0"
 
+// How long a trap waits for the inventory to explain it.
+//
+// Longer than the assignment interval by a wide margin: the first fetch
+// happens at startup and the periodic one every thirty seconds, so a trap that
+// cannot be attributed within two minutes is not waiting on a slow fetch - it
+// is from something this platform does not know about, which is a different
+// finding and deserves to be published as one.
+const defaultHoldFor = 2 * time.Minute
+
+// A ceiling, because "hold until we know" is unbounded otherwise: a device
+// plane pointed at the wrong collector would fill memory with traps nobody can
+// ever attribute. Past this the oldest is published unattributed - degraded,
+// not lost.
+const defaultHoldMax = 5000
+
+// How often held traps are retried. Frequent enough that a trap held at
+// startup is delivered within a second or two of the inventory arriving, which
+// is the whole point.
+const holdRetryEvery = 2 * time.Second
+
 // TrapReceiver listens for SNMP traps and turns them into canonical events.
 //
 // Traps are NOT polling and must not be modelled as such: a trap says a state
@@ -47,6 +67,37 @@ type TrapReceiver struct {
 	seen     map[string]*rateWindow
 	perMin   int
 	listener *g.TrapListener
+
+	// Traps that arrived before the collector knew who sent them.
+	//
+	// The socket binds in milliseconds and the first assignment lands twenty
+	// seconds later, so every trap in that window resolves to nothing: it is
+	// published with no device on it, and an event with no device raises no
+	// alarm. Measured, not theorised - a CPU trap fired 22 seconds after a
+	// restart was logged as "trap from an unknown source" and the fault never
+	// appeared on the console.
+	//
+	// Held rather than dropped, and retried as soon as the inventory arrives.
+	holdMu  sync.Mutex
+	held    []*heldTrap
+	holdFor time.Duration
+	holdMax int
+}
+
+// heldTrap is a decoded trap waiting for the inventory that explains it.
+//
+// Decoded rather than raw: the packet is parsed once, on arrival, so a replay
+// cannot decode differently from the first attempt.
+type heldTrap struct {
+	source    string
+	community string
+	trapOID   string
+	varbinds  map[string]string
+	// The moment the datagram ARRIVED, carried through every retry. Stamping
+	// a replay with its replay time would place the alarm's first_seen minutes
+	// after the condition, and - worse - could make a raise look newer than
+	// the clear that actually followed it.
+	at time.Time
 }
 
 type rateWindow struct {
@@ -67,7 +118,9 @@ func NewTrapReceiver(table *mapping.TrapTable, resolver *assign.Resolver,
 	return &TrapReceiver{
 		table: table, resolver: resolver, sink: sink, log: log, mets: mets,
 		listen: listen, workers: workers, perMin: perMinute,
-		seen: make(map[string]*rateWindow),
+		seen:    make(map[string]*rateWindow),
+		holdFor: defaultHoldFor,
+		holdMax: defaultHoldMax,
 	}
 }
 
@@ -112,6 +165,11 @@ func (t *TrapReceiver) Listen(ctx context.Context) error {
 		}()
 	}
 
+	// Retries held traps for as long as the receiver runs. A trap that arrives
+	// before the first assignment has nothing to resolve against, and this is
+	// what delivers it once there is.
+	go t.drainHeld(ctx)
+
 	errCh := make(chan error, 1)
 	go func() { errCh <- listener.Listen(t.listen) }()
 
@@ -147,10 +205,28 @@ func (t *TrapReceiver) handle(ctx context.Context, p *g.SnmpPacket,
 		return
 	}
 
+	trap := &heldTrap{source: source, community: p.Community,
+		trapOID: trapOID, varbinds: varbinds, at: at}
+
+	// A trap the collector cannot attribute YET is not the same as one it
+	// cannot attribute at all. Before the first assignment lands there is no
+	// inventory to resolve against, and publishing now would produce an event
+	// with no device on it - which raises no alarm and cannot be recovered
+	// later, because nothing keeps the trap.
+	if _, ok := t.resolver.Resolve(source, p.Community); !ok && t.hold(trap) {
+		return
+	}
+	t.emit(ctx, trap)
+}
+
+// emit resolves a trap against the current inventory and publishes it.
+func (t *TrapReceiver) emit(ctx context.Context, trap *heldTrap) {
+	source, trapOID, varbinds := trap.source, trap.trapOID, trap.varbinds
+
 	ev := models.Event{
 		SourceIP:       source,
 		Instance:       "",
-		ObservedAt:     at.UnixMicro(),
+		ObservedAt:     trap.at.UnixMicro(),
 		CollectedAt:    models.NowMicros(),
 		SourceProtocol: models.ProtocolSNMPTrap,
 		RawIdentifier:  trapOID,
@@ -161,7 +237,7 @@ func (t *TrapReceiver) handle(ctx context.Context, p *g.SnmpPacket,
 	// meaning; it stays empty when the trap cannot be attributed, in which case
 	// only the unrestricted meanings can apply.
 	senderType := ""
-	if ep, ok := t.resolver.Resolve(source, p.Community); ok {
+	if ep, ok := t.resolver.Resolve(source, trap.community); ok {
 		ev.EndpointID = ep.ID
 		ev.DeviceID = ep.DeviceID
 		senderType = ep.DeviceType
