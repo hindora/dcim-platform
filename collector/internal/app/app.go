@@ -521,6 +521,14 @@ func (a *App) heartbeatLoop(ctx context.Context) {
 				hb.ConfigRestartPending = a.restartPending()
 				hb.ConfigError = a.configError()
 			}
+			// What this process is effectively running, override included.
+			// Sent unconditionally: a collector with no stored config at all
+			// still has to be able to show an operator its own settings, and
+			// that is the case on every fresh install.
+			a.trapMu.Lock()
+			trap := a.trapCfg
+			a.trapMu.Unlock()
+			hb.ConfigEffective = config.Effective(a.cfg, trap)
 			if err := a.pub.Heartbeat(ctx, hb); err != nil {
 				a.log.Warn("heartbeat publish failed", "error", err)
 				a.ready.SetRedis(false)

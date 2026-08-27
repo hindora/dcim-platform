@@ -131,6 +131,11 @@ export interface CollectorRow {
   endpoints_owned: number;
   endpoints_online: number;
   config: Record<string, Record<string, unknown>>;
+  /** What the collector reports it is actually running: its own file's values
+   *  with any override already folded in. Empty until it has heartbeated once,
+   *  and the platform cannot derive it - the defaults live in collector.yaml
+   *  on the collector's host. */
+  effective: Record<string, Record<string, unknown>>;
   /** What is stored here. */
   version: number;
   /** What the collector's last heartbeat said it is actually running. */

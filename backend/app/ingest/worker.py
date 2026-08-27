@@ -74,6 +74,26 @@ _HOT_COLUMNS = {
 }
 
 
+def _config_effective(hb) -> dict:
+    """The collector's own report of its settings, decoded once here.
+
+    Stored as an object rather than the raw string so a reader is a query
+    rather than a parse. A collector too old to send it, or one that failed to
+    encode, leaves an empty object - which the UI shows as "not reported"
+    instead of inventing values it cannot know.
+    """
+    raw = getattr(hb, "config_effective", "") or ""
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except ValueError:
+        log.warning("collector sent unreadable effective config",
+                    collector_id=hb.collector_id)
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
 class IngestWorker:
     def __init__(self, consumer_name: str | None = None) -> None:
         self.settings = get_settings()
@@ -679,6 +699,11 @@ class IngestWorker:
                         "config_version": hb.config_version,
                         "config_restart_pending": hb.config_restart_pending,
                         "config_error": hb.config_error or "",
+                        # What the collector is effectively running, file
+                        # defaults included. The platform cannot derive these:
+                        # the defaults live in collector.yaml on its host, and
+                        # this table holds only what somebody overrode.
+                        "config_effective": _config_effective(hb),
                     }),
                 })
 

@@ -69,6 +69,10 @@ async def list_collectors(session: AsyncSession) -> list[dict[str, Any]]:
                coalesce((ci.stats->>'config_restart_pending')::boolean, false)
                                                     AS restart_pending,
                nullif(ci.stats->>'config_error', '') AS config_error,
+               -- What the collector says it is actually running. Empty for a
+               -- collector that has not reported one, which the UI must show
+               -- as unknown rather than as zeros.
+               coalesce(ci.stats->'config_effective', '{}'::jsonb) AS effective,
                (ci.last_heartbeat > now() - interval '90 seconds') AS alive
           FROM collector_instance ci
           LEFT JOIN collector_config cc ON cc.collector_id = ci.id

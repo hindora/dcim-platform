@@ -165,6 +165,15 @@ messages:
       # Why the last config could not be applied - a trap port already in use,
       # most often. Empty when it applied cleanly.
       - {name: config_error,       tag: 17, type: string}
+      # The configuration this process is EFFECTIVELY running, as JSON: the
+      # file's values with any stored override already folded in.
+      #
+      # The platform cannot work these out for itself. The defaults live in
+      # collector.yaml on the collector's own host, and the database holds only
+      # what somebody overrode - which on a fresh install is nothing at all. A
+      # settings page built from the override document alone shows every field
+      # empty and tells the operator nothing about what the collector is doing.
+      - {name: config_effective,   tag: 18, type: string}
 
 streams:
   # maxlen is an entry count, but memory is what runs out, so these are sized

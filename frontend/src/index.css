@@ -550,3 +550,9 @@ button.primary { background: var(--accent-dim); border-color: var(--accent); }
   text-transform: uppercase; color: var(--text-muted);
 }
 .banner .check { display: inline-flex; align-items: center; gap: 8px; }
+
+/* Where a value came from: typed here, or inherited from the collector's own
+   file. Without the distinction the two are indistinguishable, which is how
+   the first version of this page managed to show nothing at all. */
+.form-grid .tag.set  { color: var(--accent); border-color: var(--accent); }
+.form-grid .tag.from { color: var(--text-faint); }

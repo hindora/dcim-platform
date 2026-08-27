@@ -245,6 +245,7 @@ type CollectorHeartbeat struct {
 	ConfigVersion        uint32 `msgpack:"config_version,omitempty" json:"config_version,omitempty"`
 	ConfigRestartPending bool   `msgpack:"config_restart_pending,omitempty" json:"config_restart_pending,omitempty"`
 	ConfigError          string `msgpack:"config_error,omitempty" json:"config_error,omitempty"`
+	ConfigEffective      string `msgpack:"config_effective,omitempty" json:"config_effective,omitempty"`
 }
 
 // Stream names and caps, from contracts/schema/messages_v1.yaml.

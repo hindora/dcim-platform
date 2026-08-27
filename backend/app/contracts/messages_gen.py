@@ -217,6 +217,7 @@ class CollectorHeartbeat(_Msg):
     config_version: int = 0
     config_restart_pending: bool = False
     config_error: str = ""
+    config_effective: str = ""
 
 
 class Stream:

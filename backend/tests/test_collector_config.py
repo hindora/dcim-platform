@@ -136,3 +136,43 @@ def test_the_listeners_are_marked_as_dangerous():
     consequence so it can say so before saving."""
     dangerous = {s["key"] for s in cfg.describe()["sections"] if s["danger"]}
     assert dangerous == {"snmp_trap", "redfish_event"}
+
+
+# ---------------------------------------------- what the form has to show
+
+
+def test_gnmi_offers_no_retries_because_the_collector_has_none():
+    """A Get is one RPC over a pooled connection; a Subscribe reconnects.
+
+    GNMICfg has no Retries field, so offering the setting would store a value
+    nothing ever reads - the same fault as a metric group no mapping defines,
+    and just as invisible.
+    """
+    assert "retries" not in cfg.SCHEMA["gnmi"]["fields"]
+    assert "retries" in cfg.SCHEMA["snmp"]["fields"]
+    assert "retries" in cfg.SCHEMA["bacnet"]["fields"]
+
+
+def test_every_settable_field_can_be_reported_back():
+    """The collector reports its effective config under these exact keys.
+
+    The form puts a real value in front of every field by looking the key up in
+    that report, so a key present here and absent there is a field that renders
+    empty for ever - which is precisely the bug this pairing prevents.
+    """
+    # Mirrors collector/internal/config/effective.go.
+    reported = {
+        "snmp": {"enabled", "max_concurrent", "per_host", "timeout_s", "retries"},
+        "redfish": {"enabled", "max_concurrent", "per_host", "timeout_s", "retries"},
+        "modbus": {"enabled", "max_concurrent", "per_host", "timeout_s", "retries"},
+        "bacnet": {"enabled", "max_concurrent", "per_host", "timeout_s", "retries",
+                   "local_port"},
+        "gnmi": {"enabled", "max_concurrent", "per_host", "timeout_s", "stream"},
+        "snmp_trap": {"enabled", "listen", "workers", "rate_limit_per_minute"},
+        "redfish_event": {"enabled", "listen", "advertise", "tls"},
+    }
+    for section, spec in cfg.SCHEMA.items():
+        missing = set(spec["fields"]) - reported[section]
+        assert not missing, (
+            f"{section}: {missing} is settable but the collector reports no "
+            f"value for it, so the field would render empty for ever")

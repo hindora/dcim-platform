@@ -147,8 +147,11 @@ function ConfigSheet({ row, sections, onClose }: {
   // anywhere reports that as an error. Silence is the failure mode, so the
   // warning has to come before the save rather than after it.
   const moved = useMemo(
-    () => listenerMoves(sections, row.config, values),
-    [sections, row.config, values],
+    // Against the RUNNING config, not the stored overrides: an inherited
+    // listener is stored nowhere, and showing its move as "unset -> 0.0.0.0:162"
+    // hides the address every device is sending to right now.
+    () => listenerMoves(sections, row.effective ?? {}, values),
+    [sections, row.effective, values],
   );
   const blocked = moved.length > 0 && !confirmed;
 
@@ -165,9 +168,10 @@ function ConfigSheet({ row, sections, onClose }: {
             <h2>{row.id}</h2>
             <p>
               {row.hostname ? `${row.hostname} · ` : ''}
-              Empty means the collector's own file decides — which is how a
-              default that changes in a release reaches every collector that
-              never overrode it.
+              Every field shows the value in force. An empty one is inherited
+              from the collector's own file — which is how a default that
+              changes in a release reaches every collector that never overrode
+              it. Clear a field to go back to inheriting.
             </p>
           </div>
           <button className="close" onClick={onClose} aria-label="Close">✕</button>
@@ -181,6 +185,13 @@ function ConfigSheet({ row, sections, onClose }: {
                 : String((save.error as Error).message)}
             </div>
           )}
+          {!row.effective || Object.keys(row.effective).length === 0 ? (
+            <div className="banner soft">
+              This collector has not reported its own settings yet, so the
+              fields below show only what is overridden here. They fill in on
+              its next heartbeat.
+            </div>
+          ) : null}
           {row.config_error && (
             <div className="banner">
               The collector could not apply its last configuration:{' '}
@@ -215,6 +226,7 @@ function ConfigSheet({ row, sections, onClose }: {
                 {section.fields.map((f) => (
                   <Field key={f.key} field={f}
                          value={values[section.key]?.[f.key]}
+                         effective={row.effective?.[section.key]?.[f.key]}
                          onChange={(v) => set(section.key, f.key, v)} />
                 ))}
               </div>
@@ -240,26 +252,47 @@ function ConfigSheet({ row, sections, onClose }: {
   );
 }
 
-function Field({ field, value, onChange }: {
+/** One setting, showing the value that is actually in force.
+ *
+ *  An empty box beside the words "collector's file" told an operator nothing:
+ *  the override document is empty on every fresh install, so every field read
+ *  the same and none of them said what the collector was doing. The running
+ *  value is shown instead - as the entry itself where it is overridden here,
+ *  and as the placeholder or the inherit option where it comes from the
+ *  collector's own file. Clearing the box goes back to inheriting. */
+function Field({ field, value, effective, onChange }: {
   field: ConfigField;
   value: unknown;
+  effective: unknown;
   onChange: (v: unknown) => void;
 }) {
   const when = field.when === 'live'
     ? <span className="tag live">applies live</span>
     : <span className="tag">on restart</span>;
+  const overridden = value !== undefined && value !== '';
+  const known = effective !== undefined && effective !== null;
+  const shown = known ? String(effective) : 'not reported';
+
+  const source = overridden
+    ? <span className="tag set">set here</span>
+    : known
+      ? <span className="tag from">from the collector</span>
+      : null;
 
   if (field.kind === 'bool') {
-    // Three states, not two: on, off, and "the file decides". A checkbox
-    // cannot express the third, and defaulting it to off would silently
-    // disable planes nobody touched.
+    // Three states, not two: on, off, and inherit. A checkbox cannot express
+    // the third, and defaulting it to off would silently disable planes nobody
+    // touched. The inherit option carries what it resolves to, so the reader
+    // never has to guess what inheriting means here.
     return (
       <label>
-        <span>{field.label} {when}</span>
+        <span>{field.label} {when} {source}</span>
         <select value={value === undefined ? '' : String(value)}
                 onChange={(e) => onChange(
                   e.target.value === '' ? undefined : e.target.value === 'true')}>
-          <option value="">Collector's file</option>
+          <option value="">
+            {known ? `Inherit \u2014 ${effective ? 'On' : 'Off'}` : 'Inherit'}
+          </option>
           <option value="true">On</option>
           <option value="false">Off</option>
         </select>
@@ -270,16 +303,21 @@ function Field({ field, value, onChange }: {
 
   return (
     <label>
-      <span>{field.label} {when}</span>
+      <span>{field.label} {when} {source}</span>
       <input value={value === undefined || value === null ? '' : String(value)}
              inputMode={field.kind === 'int' || field.kind === 'seconds'
                ? 'numeric' : 'text'}
-             placeholder="collector's file"
+             // The running value, so an empty box is still informative: it
+             // shows what will be used if nothing is typed.
+             placeholder={shown}
              onChange={(e) => onChange(
                e.target.value === '' ? undefined
                  : field.kind === 'int' || field.kind === 'seconds'
                    ? Number(e.target.value) : e.target.value)} />
       <em className="hint">
+        {overridden && known && String(effective) !== String(value) ? (
+          <strong>Running: {shown}{field.kind === 'seconds' ? 's' : ''}. </strong>
+        ) : null}
         {field.help}
         {field.kind === 'seconds' && ' Seconds.'}
       </em>
@@ -307,14 +345,19 @@ function prune(values: Values): Values {
   return out;
 }
 
+/** Listener moves this edit would make, measured against what is running.
+ *
+ *  Both values are legal, so this is not validation - it is the one change on
+ *  this page whose failure mode is silence. Every device keeps sending to the
+ *  address it was told, and nothing anywhere reports that as an error. */
 function listenerMoves(sections: ConfigSection[],
-                       before: Record<string, Record<string, unknown>>,
+                       running: Record<string, Record<string, unknown>>,
                        after: Values) {
   const moves: { label: string; from: string; to: string }[] = [];
   for (const section of sections) {
     for (const f of section.fields) {
       if (f.kind !== 'listen') continue;
-      const from = (before?.[section.key] ?? {})[f.key];
+      const from = (running?.[section.key] ?? {})[f.key];
       const to = (after?.[section.key] ?? {})[f.key];
       if (to !== undefined && to !== '' && String(to) !== String(from ?? ''))
         moves.push({ label: `${section.title} ${f.label}`,

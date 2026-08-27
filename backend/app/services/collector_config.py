@@ -104,9 +104,14 @@ SCHEMA: dict[str, dict[str, Any]] = {
     "gnmi": {
         "title": "gNMI",
         "fields": {
-            **_protocol(
+            # No retries. A Get is one RPC over a pooled connection and a
+            # Subscribe reconnects rather than retrying, so the collector has
+            # no such setting - offering one would store a value nothing reads,
+            # which is worse than not offering it.
+            **{k: v for k, v in _protocol(
                 "gNMI",
-                "Interface state and counters for the fabric."),
+                "Interface state and counters for the fabric.").items()
+               if k != "retries"},
             "stream": _f(
                 "Subscribe", "bool", ON_RESTART,
                 "Use Subscribe for endpoints whose profile says the device "

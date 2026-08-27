@@ -155,4 +155,5 @@ message CollectorHeartbeat {
   uint32 config_version = 15;
   bool config_restart_pending = 16;
   string config_error = 17;
+  string config_effective = 18;
 }
