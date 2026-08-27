@@ -243,3 +243,20 @@ def test_the_reason_says_whose_threshold_was_used():
          "clear_threshold": 85.5, "from_rule": False})
     assert "rule's" in from_rule
     assert "device's own" in from_device
+
+
+def test_only_readings_taken_after_the_condition_count_as_recovery():
+    """The bug this caught, live, within a minute of shipping.
+
+    An injected CPU fault raised at 08:20:42 was cleared at 08:20:47 - five
+    seconds later - by a 63.2% reading taken at 08:17:50, three minutes before
+    the CPU ever climbed. Polls run every minute or two; a trap arrives the
+    instant the condition starts, so the newest sample in the window is very
+    often one from BEFORE the fault. That reading says nothing about whether
+    the fault has ended.
+
+    Anchoring on last_seen rather than first_seen also means a device that
+    keeps re-asserting the condition keeps resetting the evidence clock, which
+    is right: the newest assertion is the one that has to be outlived.
+    """
+    assert "t.ts > c.last_seen" in sql("_MEASURED_CLEAR")

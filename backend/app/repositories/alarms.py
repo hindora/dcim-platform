@@ -142,6 +142,15 @@ async def raise_alarm(session: AsyncSession, *, device_id: str, alarm_type: str,
             END,
             message          = EXCLUDED.message,
             trigger_value    = EXCLUDED.trigger_value,
+            -- What the condition MEASURES, kept current but never erased.
+            --
+            -- Two detectors share an alarm type and only one of them carries
+            -- numbers: a state trap re-asserting a condition a threshold trap
+            -- raised must not blank the metric reconciliation needs in order
+            -- to verify it later. COALESCE keeps the last source that had an
+            -- opinion rather than the last source to speak.
+            metric_key       = COALESCE(EXCLUDED.metric_key, alarm.metric_key),
+            threshold        = COALESCE(EXCLUDED.threshold, alarm.threshold),
             last_seen        = GREATEST(alarm.last_seen, EXCLUDED.last_seen),
             occurrence_count = alarm.occurrence_count + 1,
             -- Follows severity, which this same statement may have just

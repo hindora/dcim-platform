@@ -103,7 +103,7 @@ SEEING_IT_S = 660
 _MEASURED_CLEAR = text("""
     WITH candidate AS (
         SELECT a.id, a.device_id, a.alarm_type, a.severity::text AS severity,
-               d.name AS device_name,
+               d.name AS device_name, a.last_seen,
                coalesce(r.metric_key, a.metric_key)   AS metric_key,
                coalesce(r.operator, '>')              AS operator,
                coalesce(r.clear_threshold,
@@ -134,6 +134,20 @@ _MEASURED_CLEAR = text("""
           JOIN metric m ON m.key = c.metric_key
           JOIN telemetry_sample t ON t.device_id = c.device_id
                                  AND t.metric_id = m.id
+                                 -- Only readings taken AFTER the device last
+                                 -- asserted the condition. A poll from before
+                                 -- the fault is not evidence the fault ended -
+                                 -- and it is the reading most likely to be
+                                 -- sitting in the window, because polls run
+                                 -- every minute or two while a trap arrives
+                                 -- the instant the condition starts.
+                                 --
+                                 -- Live proof that this matters: an injected
+                                 -- CPU fault raised at 08:20:42 was cleared
+                                 -- five seconds later by a 63.2% reading taken
+                                 -- at 08:17:50, three minutes before the CPU
+                                 -- ever climbed.
+                                 AND t.ts > c.last_seen
                                  AND t.ts > now() - make_interval(secs => :window_s)
     ), tail AS (
         SELECT id, device_id, device_name, alarm_type, severity, metric_key,
