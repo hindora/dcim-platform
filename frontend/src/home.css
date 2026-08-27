@@ -77,9 +77,39 @@
   letter-spacing: inherit; cursor: pointer;
 }
 .topbar .utilities button:hover { color: var(--text); }
-.topbar .user { display: flex; align-items: center; gap: 8px; color: var(--text); }
-.topbar .user .avatar {
+/* --- account menu --------------------------------------------------------- */
+
+.user-menu { position: relative; }
+.topbar .utilities .user-menu .trigger {
+  display: flex; align-items: center; gap: 8px; color: var(--text);
+}
+.user-menu .avatar {
   width: 15px; height: 15px; border-radius: 50%; background: var(--text-faint);
+}
+.user-menu .chev { color: var(--text-muted); font-size: 11px; }
+
+/* Anchored to the right edge: the trigger is the last thing on the row, so a
+   panel that grew rightwards would leave the window. */
+.user-menu .menu {
+  position: absolute; top: calc(100% + 8px); right: 0; z-index: 70;
+  min-width: 190px; padding: 6px;
+  display: flex; flex-direction: column;
+  background: var(--bg-raised); border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  box-shadow: 0 14px 34px color-mix(in srgb, var(--bg-inset) 70%, transparent);
+  /* The row above is small caps; a menu is prose and reads as itself. */
+  font-size: 13px; font-weight: 400; letter-spacing: 0; text-transform: none;
+}
+.user-menu .menu button,
+.user-menu .menu .disabled {
+  display: block; width: 100%; text-align: left; padding: 7px 10px;
+  border: none; border-radius: 4px; background: none; color: var(--text);
+  font: inherit; letter-spacing: inherit; cursor: pointer;
+}
+.user-menu .menu button:hover { background: var(--bg-inset); }
+.user-menu .menu .disabled { color: var(--text-faint); cursor: default; }
+.user-menu .menu hr {
+  height: 1px; margin: 5px 4px; border: none; background: var(--border);
 }
 
 /* --- alert strip ---------------------------------------------------------- */

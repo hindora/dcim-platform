@@ -7,6 +7,8 @@ import { AlarmList } from './features/alarms/AlarmList';
 import { Analytics } from './features/analytics/Analytics';
 import { PlatformHealth } from './features/platform/PlatformHealth';
 import { PollProfiles } from './features/settings/PollProfiles';
+import { SettingsLayout } from './features/settings/SettingsLayout';
+import { UserMenu } from './components/UserMenu';
 import { Home } from './features/home/Home';
 import { Thermal } from './features/estate/Thermal';
 import { Power } from './features/estate/Power';
@@ -98,21 +100,10 @@ function TopBar({ onSignOut }: { onSignOut: () => void }) {
 
       <div className="utilities">
         <NavLink to="/platform" style={{ padding: 0, border: 'none' }}>SYSTEM STATUS</NavLink>
-        {/* Utilities rather than the primary nav: the top row is the estate,
-            and how often it is polled is not a view of it. */}
-        <NavLink to="/settings/poll-profiles"
-                 style={{ padding: 0, border: 'none' }}>SETTINGS</NavLink>
-        {/* Kept as a placeholder rather than a live link: the design docs are
-            in the repository, not served by the app. A control that looks
-            clickable and does nothing is worse than one that says so. */}
-        <span style={{ color: 'var(--text-faint)' }}
-              title="Documentation is not published from the app yet">USER MANUAL</span>
-        <span className="user">
-          <span className="avatar" aria-hidden />
-          USER: ADMIN
-          <button onClick={onSignOut} title="Sign out"
-                  style={{ color: 'var(--text-muted)' }}>▾</button>
-        </span>
+        {/* Settings and the manual live behind the name rather than along the
+            top row: they belong to the person signed in, not to the estate,
+            and the row above is a set of views of the estate. */}
+        <UserMenu username="admin" onSignOut={onSignOut} />
       </div>
     </header>
   );
@@ -215,8 +206,12 @@ export default function App() {
           <Route path="/alarms" element={<Page><AlarmList /></Page>} />
           <Route path="/analytics" element={<Page><Analytics /></Page>} />
           <Route path="/platform" element={<Page><PlatformHealth /></Page>} />
-          <Route path="/settings/poll-profiles"
-                 element={<Page><PollProfiles /></Page>} />
+          {/* One shell, one section today. A nested route rather than a flat
+              one so the left-hand list stays put as sections are added. */}
+          <Route path="/settings" element={<Page><SettingsLayout /></Page>}>
+            <Route index element={<Navigate to="poll-profiles" replace />} />
+            <Route path="poll-profiles" element={<PollProfiles />} />
+          </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>
