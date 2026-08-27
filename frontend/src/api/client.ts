@@ -107,6 +107,9 @@ export interface AddressingField {
 
 export interface EndpointOptions {
   credentials: CredentialSummary[];
+  /** How many exist behind the capped list, so the picker can say which it is
+   *  showing rather than silently offering the first fifty of nine hundred. */
+  credential_total: number;
   poll_profiles: PollProfileSummary[];
   default_ports: Record<string, number>;
   addressing: Record<string, Record<string, AddressingField>>;
@@ -1049,7 +1052,15 @@ export const api = {
   /** Credentials, poll profiles and the addressing fields each protocol
    *  defines - the same table the server validates against, so the form can
    *  reject a bad unit ID without a round trip. */
-  endpointOptions: () => request<EndpointOptions>('/devices/endpoint-options'),
+  endpointOptions: (params: {
+    protocol?: string; q?: string; current?: string;
+  } = {}) => {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) if (v) q.set(k, v);
+    const qs = q.toString();
+    return request<EndpointOptions>(
+      `/devices/endpoint-options${qs ? `?${qs}` : ''}`);
+  },
 
   /** Only the fields the operator touched. Absent means "leave alone"; null is
    *  a real value - a null port follows the protocol default. */

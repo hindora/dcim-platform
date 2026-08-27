@@ -278,8 +278,16 @@ async def update_endpoint(session: AsyncSession, *, device_id: str,
     return before, {k: v for k, v in effective.items() if k in _AUDITED}
 
 
-async def credentials(session: AsyncSession) -> list[dict[str, Any]]:
-    return await repo.list_credentials(session)
+async def credentials(session: AsyncSession, *, protocol: str | None = None,
+                      q: str | None = None, current: str | None = None
+                      ) -> list[dict[str, Any]]:
+    return await repo.list_credentials(session, protocol=protocol, q=q,
+                                       include_id=current)
+
+
+async def credential_count(session: AsyncSession, protocol: str | None = None
+                           ) -> int:
+    return await repo.count_credentials(session, protocol)
 
 
 async def poll_profiles(session: AsyncSession) -> list[dict[str, Any]]:

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ApiError,
@@ -28,11 +28,23 @@ export function EndpointEditor({
   onClose: () => void;
 }) {
   const qc = useQueryClient();
+  // Credential search, debounced. This estate holds 894 SNMP credentials -
+  // one per device, because the community string is per-device - so the list
+  // is filtered on the server and this is what filters it.
+  const [credSearch, setCredSearch] = useState('');
+  const search = useDebounced(credSearch, 250);
+
   const options = useQuery<EndpointOptions>({
-    queryKey: ['endpoint-options'],
-    queryFn: () => api.endpointOptions(),
-    // Credentials and profiles change rarely and are needed on every open.
-    staleTime: 5 * 60_000,
+    queryKey: ['endpoint-options', endpoint.protocol, search,
+               endpoint.credential_id],
+    queryFn: () => api.endpointOptions({
+      protocol: endpoint.protocol, q: search || undefined,
+      current: endpoint.credential_id ?? undefined,
+    }),
+    // Credentials and profiles change rarely; keep the previous list on screen
+    // while a new search resolves so the field does not empty under the cursor.
+    staleTime: 60_000,
+    placeholderData: (prev) => prev,
   });
 
   const [form, setForm] = useState(() => ({
@@ -50,10 +62,12 @@ export function EndpointEditor({
   const fields: Record<string, AddressingField> =
     options.data?.addressing[endpoint.protocol] ?? {};
 
-  // Credentials are offered per protocol. The server refuses a mismatch, but
-  // an operator should not be able to pick one and only then be told.
-  const credentials = (options.data?.credentials ?? [])
-    .filter((c) => c.protocol === endpoint.protocol);
+  // Already narrowed to this protocol by the server. The mismatch is refused
+  // there too, but an operator should not be able to pick one and only then be
+  // told what they picked cannot work.
+  const credentials = options.data?.credentials ?? [];
+  const credTotal = options.data?.credential_total ?? credentials.length;
+  const capped = credTotal > credentials.length;
   const profiles = options.data?.poll_profiles ?? [];
 
   const errors = useMemo(() => validate(form, fields), [form, fields]);
@@ -148,6 +162,11 @@ export function EndpointEditor({
 
             <label>
               <span>Credential</span>
+              {credTotal > 20 && (
+                <input value={credSearch} placeholder="Search credentials…"
+                       aria-label="Search credentials"
+                       onChange={(e) => setCredSearch(e.target.value)} />
+              )}
               <select value={form.credential_id}
                       onChange={(e) => set('credential_id', e.target.value)}>
                 <option value="">None</option>
@@ -159,9 +178,15 @@ export function EndpointEditor({
               </select>
               <em className="hint">
                 {credentials.length === 0
-                  ? `No ${endpoint.protocol} credentials are defined yet.`
-                  : 'Only credentials for this protocol are offered — one lent '
-                    + 'from another is a 401 on every poll, not a weaker login.'}
+                  ? `No ${endpoint.protocol} credential matches that.`
+                  : capped
+                    ? `Showing ${credentials.length} of ${credTotal
+                      .toLocaleString()} ${endpoint.protocol} credentials — `
+                      + 'search to narrow. Only credentials for this protocol '
+                      + 'are offered: one lent from another is a 401 on every '
+                      + 'poll.'
+                    : 'Only credentials for this protocol are offered — one lent '
+                      + 'from another is a 401 on every poll, not a weaker login.'}
               </em>
             </label>
 
@@ -304,4 +329,18 @@ function profileUse(
   if (!p) return 'other endpoints';
   return p.endpoints === 1 ? 'this endpoint only'
     : `${p.endpoints.toLocaleString()} endpoints`;
+}
+
+
+/** Hold a value still until typing stops.
+ *
+ *  Without it every keystroke in the credential search is a query against a
+ *  table with nine hundred rows in it, and the answers arrive out of order. */
+function useDebounced<T>(value: T, ms: number): T {
+  const [settled, setSettled] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setSettled(value), ms);
+    return () => clearTimeout(t);
+  }, [value, ms]);
+  return settled;
 }

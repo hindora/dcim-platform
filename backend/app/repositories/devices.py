@@ -236,18 +236,61 @@ async def update_endpoint(session: AsyncSession, endpoint_id: str,
     return await get_endpoint(session, endpoint_id)
 
 
-async def list_credentials(session: AsyncSession) -> list[dict[str, Any]]:
-    """Named credentials for the picker. Hints only - never a secret."""
+async def list_credentials(session: AsyncSession, *, protocol: str | None = None,
+                           q: str | None = None, limit: int = 50,
+                           include_id: str | None = None) -> list[dict[str, Any]]:
+    """Named credentials for the picker. Hints only - never a secret.
+
+    Filtered and capped, because "how many credentials can there be" has a bad
+    answer on a real estate: this fleet holds 894 SNMP credentials, one per
+    device, since the community string is per-device. An unfiltered picker is
+    a 45 KB payload and a dropdown nobody can use.
+
+    ``include_id`` is always returned regardless of the filter - the endpoint's
+    CURRENT credential must appear in its own editor even when it falls outside
+    the first page of matches.
+    """
     rows = (await session.execute(text("""
-        SELECT c.id::text, c.name, c.protocol::text AS protocol, c.kind,
-               c.secret_hint, c.rotated_at,
+        WITH matched AS (
+            SELECT c.id, c.name, c.protocol::text AS protocol, c.kind,
+                   c.secret_hint, c.rotated_at,
+                   (c.id = CAST(:include_id AS uuid)) AS current
+              FROM credential c
+             WHERE (CAST(:protocol AS text) IS NULL
+                OR c.protocol::text = CAST(:protocol AS text))
+               AND (CAST(:q AS text) IS NULL
+                OR c.name ILIKE '%' || CAST(:q AS text) || '%')
+             ORDER BY current DESC NULLS LAST, c.name
+             LIMIT CAST(:limit AS integer)
+        ), plus_current AS (
+            SELECT * FROM matched
+            UNION
+            SELECT c.id, c.name, c.protocol::text, c.kind, c.secret_hint,
+                   c.rotated_at, TRUE
+              FROM credential c
+             WHERE c.id = CAST(:include_id AS uuid)
+        )
+        SELECT p.id::text, p.name, p.protocol, p.kind, p.secret_hint,
+               p.rotated_at, p.current,
                count(e.id) AS endpoints
-          FROM credential c
-          LEFT JOIN device_endpoint e ON e.credential_id = c.id
-         GROUP BY c.id, c.name, c.protocol, c.kind, c.secret_hint, c.rotated_at
-         ORDER BY c.protocol, c.name
-    """))).mappings().all()
+          FROM plus_current p
+          LEFT JOIN device_endpoint e ON e.credential_id = p.id
+         GROUP BY p.id, p.name, p.protocol, p.kind, p.secret_hint,
+                  p.rotated_at, p.current
+         ORDER BY p.current DESC, p.name
+    """), {"protocol": protocol, "q": q, "limit": limit,
+           "include_id": include_id})).mappings().all()
     return [dict(r) for r in rows]
+
+
+async def count_credentials(session: AsyncSession, protocol: str | None = None
+                            ) -> int:
+    """How many exist behind the capped list, so the UI can say so."""
+    return int((await session.execute(text("""
+        SELECT count(*) FROM credential
+         WHERE (CAST(:protocol AS text) IS NULL
+            OR protocol::text = CAST(:protocol AS text))
+    """), {"protocol": protocol})).scalar_one())
 
 
 async def list_poll_profiles(session: AsyncSession) -> list[dict[str, Any]]:

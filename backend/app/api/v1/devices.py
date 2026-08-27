@@ -54,6 +54,9 @@ async def list_devices(
 @router.get("/endpoint-options",
             summary="Credentials and poll profiles an endpoint may point at")
 async def endpoint_options(
+    protocol: str | None = Query(None, description="narrow to one protocol"),
+    q: str | None = Query(None, description="search credential names"),
+    current: str | None = Query(None, description="credential to always include"),
     session: AsyncSession = Depends(get_session),
     _: Principal = Depends(current_principal),
 ) -> dict[str, Any]:
@@ -68,7 +71,11 @@ async def endpoint_options(
     server rejects with.
     """
     return {
-        "credentials": await service.credentials(session),
+        "credentials": await service.credentials(
+            session, protocol=protocol, q=q, current=current),
+        # The count behind the capped list. A picker that silently shows the
+        # first fifty of 894 is worse than one that says which it is showing.
+        "credential_total": await service.credential_count(session, protocol),
         "poll_profiles": await service.poll_profiles(session),
         "default_ports": endpoint_config.DEFAULT_PORT,
         "addressing": endpoint_config.ADDRESSING_FIELDS,
