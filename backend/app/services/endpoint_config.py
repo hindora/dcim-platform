@@ -35,33 +35,52 @@ DEFAULT_PORT = {
 #: Protocol-specific addressing, beyond host and port.
 #:
 #: These are the fields that decide WHICH device answers when the address alone
-#: does not identify one - the case for everything behind a gateway.
+#: does not - the case for everything behind a gateway - and how to talk to it
+#: once it does.
+#:
+#: Every entry here is read by the collector. That is the whole selection rule:
+#: a field the collector ignores would be a setting an operator can change with
+#: no effect, which is worse than one that is missing. Checked against
+#: adapters/{bacnet,modbus,gnmi,redfish} rather than invented.
 ADDRESSING_FIELDS: dict[str, dict[str, dict[str, Any]]] = {
     "modbus": {
         "unit_id": {
             "label": "Unit ID",
-            "min": 1, "max": 247,
-            # 0 is the broadcast address and 248-255 are reserved by the
-            # specification. A gateway will happily forward a request to unit
-            # 0 and no slave will answer it.
-            "help": "RS-485 slave address behind the gateway. 1-247; "
-                    "0 is broadcast and 248-255 are reserved.",
+            "min": 0, "max": 247,
+            # 248-255 are reserved by the specification. 0 is the broadcast
+            # address and therefore not a device - the collector treats it as
+            # "unset" rather than trusting it, because gear that ignores the
+            # unit id answers a 0 anyway and would look correctly addressed.
+            "help": "RS-485 slave address behind the gateway, 1-247. "
+                    "0 means unset; 248-255 are reserved.",
+        },
+        "probe_role": {
+            "label": "Probe role",
+            "kind": "text",
+            "help": "Which register map to use for a plant instrument behind a "
+                    "gateway, e.g. chw_flow.",
         },
     },
     "bacnet": {
-        "device_instance": {
-            "label": "Device instance",
-            "min": 0, "max": 4194302,
-            # 4194303 is the 'unconfigured' wildcard used in Who-Is, so it can
-            # never be a real device's instance number.
-            "help": "BACnet device object instance. Unique across the whole "
-                    "internetwork, not just this subnet.",
-        },
         "network": {
             "label": "Network number",
             "min": 0, "max": 65534,
-            "help": "0 for a device on this IP network. Non-zero only for gear "
-                    "behind a BACnet router, typically an MS/TP trunk.",
+            "help": "0 for a device on this IP network. Non-zero only behind a "
+                    "BACnet router, typically an MS/TP trunk.",
+        },
+        "mac": {
+            "label": "MS/TP MAC",
+            "min": 0, "max": 254,
+            # 255 is the broadcast MAC and can never identify a device.
+            "help": "Station address on the MS/TP trunk, 0-254. Only meaningful "
+                    "with a network number.",
+        },
+        "device_instance": {
+            "label": "Device instance",
+            "min": 0, "max": 4194302,
+            # 4194303 is the 'unconfigured' wildcard Who-Is uses.
+            "help": "BACnet device object instance, unique across the whole "
+                    "internetwork. 0 when the inventory does not know it.",
         },
     },
     "snmp": {
@@ -78,6 +97,38 @@ ADDRESSING_FIELDS: dict[str, dict[str, dict[str, Any]]] = {
             "kind": "text",
             "help": "gNMI target name in the path prefix. Empty unless the "
                     "device fronts several targets.",
+        },
+        "tls": {
+            "label": "TLS",
+            "kind": "bool",
+            "help": "Off only on a device that genuinely serves plaintext gRPC.",
+        },
+        "insecure": {
+            "label": "Skip certificate check",
+            "kind": "bool",
+            "help": "Accepts the device's certificate without verifying it. "
+                    "Common on gear with a self-signed default certificate, "
+                    "and a real exposure on a shared management network.",
+        },
+    },
+    "redfish": {
+        "scheme": {
+            "label": "Scheme",
+            "kind": "choice", "choices": ["https", "http"],
+            "help": "https on any real BMC. http exists for simulators and for "
+                    "gear behind a terminating proxy.",
+        },
+        "base": {
+            "label": "Service root",
+            "kind": "text",
+            "help": "/redfish/v1 unless the BMC publishes its service root "
+                    "somewhere else.",
+        },
+        "verify_tls": {
+            "label": "Verify certificate",
+            "kind": "bool",
+            "help": "Off for the self-signed certificate most BMCs ship with. "
+                    "On once they carry one your CA signed.",
         },
     },
 }
@@ -119,9 +170,26 @@ def validate_addressing(protocol: str, addressing: dict[str, Any]
             # Silently dropping it would look like a save that worked.
             raise EndpointConfigError(
                 f"{protocol} endpoints have no '{key}' setting")
+        # `False` is a VALUE here - "verify_tls off" is a decision, not an
+        # empty field - so only None and the empty string clear a setting.
         if raw is None or raw == "":
             continue
-        if spec.get("kind") == "text":
+        kind = spec.get("kind")
+        if kind == "text":
+            out[key] = str(raw)
+        elif kind == "bool":
+            if isinstance(raw, bool):
+                out[key] = raw
+            elif str(raw).lower() in ("true", "false"):
+                out[key] = str(raw).lower() == "true"
+            else:
+                raise EndpointConfigError(
+                    f"{spec['label']} is on or off")
+        elif kind == "choice":
+            if str(raw) not in spec["choices"]:
+                raise EndpointConfigError(
+                    f"{spec['label']} must be one of "
+                    f"{', '.join(spec['choices'])}")
             out[key] = str(raw)
         else:
             out[key] = _int_field(raw, spec, spec["label"])

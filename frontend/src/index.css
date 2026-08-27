@@ -469,3 +469,11 @@ button.primary { background: var(--accent-dim); border-color: var(--accent); }
   font-style: normal; font-size: 12px; color: var(--text-faint); max-width: 62ch;
 }
 .form-grid .hint.bad { color: var(--critical); }
+/* A switch reads as a statement, so its label sits beside the box rather than
+   above it like a field that takes a value. */
+.form-grid label.switch {
+  grid-template-columns: auto 1fr; align-items: center; gap: 4px 10px;
+}
+.form-grid label.switch > span { grid-row: 1; grid-column: 2; }
+.form-grid label.switch input { grid-row: 1; grid-column: 1; width: 15px; }
+.form-grid label.switch .hint { grid-column: 2; }

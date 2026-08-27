@@ -50,7 +50,7 @@ export function EndpointEditor({
   const [form, setForm] = useState(() => ({
     address: endpoint.address ?? '',
     port: endpoint.port == null ? '' : String(endpoint.port),
-    addressing: { ...endpoint.addressing } as Record<string, string>,
+    addressing: { ...endpoint.addressing } as AddressingValues,
     credential_id: endpoint.credential_id ?? '',
     poll_profile_id: endpoint.poll_profile_id ?? '',
     admin_state: endpoint.admin_state,
@@ -88,7 +88,7 @@ export function EndpointEditor({
 
   const set = (k: keyof typeof form, v: string) =>
     setForm((f) => ({ ...f, [k]: v }));
-  const setAddr = (k: string, v: string) =>
+  const setAddr = (k: string, v: string | boolean) =>
     setForm((f) => ({ ...f, addressing: { ...f.addressing, [k]: v } }));
 
   return (
@@ -149,11 +149,25 @@ export function EndpointEditor({
             </label>
 
             {Object.entries(fields).map(([key, spec]) => (
-              <label key={key}>
+              <label key={key} className={spec.kind === 'bool' ? 'switch' : undefined}>
                 <span>{spec.label}</span>
-                <input value={form.addressing[key] ?? ''}
-                       inputMode={spec.kind === 'text' ? 'text' : 'numeric'}
-                       onChange={(e) => setAddr(key, e.target.value)} />
+                {spec.kind === 'bool' ? (
+                  <input type="checkbox"
+                         checked={form.addressing[key] === true
+                                  || form.addressing[key] === 'true'}
+                         onChange={(e) => setAddr(key, e.target.checked)} />
+                ) : spec.kind === 'choice' ? (
+                  <select value={String(form.addressing[key] ?? spec.choices?.[0] ?? '')}
+                          onChange={(e) => setAddr(key, e.target.value)}>
+                    {(spec.choices ?? []).map((c) => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <input value={String(form.addressing[key] ?? '')}
+                         inputMode={spec.kind === 'text' ? 'text' : 'numeric'}
+                         onChange={(e) => setAddr(key, e.target.value)} />
+                )}
                 <em className={errors[key] ? 'hint bad' : 'hint'}>
                   {errors[key] ?? spec.help}
                 </em>
@@ -252,8 +266,10 @@ export function EndpointEditor({
   );
 }
 
+type AddressingValues = Record<string, string | number | boolean>;
+
 type Form = {
-  address: string; port: string; addressing: Record<string, string>;
+  address: string; port: string; addressing: AddressingValues;
   credential_id: string; poll_profile_id: string; admin_state: string;
 };
 
@@ -264,7 +280,11 @@ function validate(form: Form, fields: Record<string, AddressingField>) {
   const errors: Record<string, string> = {};
   for (const [key, spec] of Object.entries(fields)) {
     const raw = form.addressing[key];
-    if (raw == null || raw === '' || spec.kind === 'text') continue;
+    if (raw == null || raw === '') continue;
+    // Only the numeric fields can be mistyped. A checkbox and a two-option
+    // select cannot produce a value outside their range.
+    if (spec.kind === 'text' || spec.kind === 'bool' || spec.kind === 'choice')
+      continue;
     const n = Number(raw);
     if (!Number.isInteger(n)) errors[key] = `${spec.label} must be a whole number`;
     else if (spec.min != null && spec.max != null && (n < spec.min || n > spec.max))
@@ -298,10 +318,13 @@ function diff(current: EndpointSummary, form: Form,
     }
   }
 
-  const addressing: Record<string, string | number> = {};
+  const addressing: AddressingValues = {};
   for (const [k, v] of Object.entries(form.addressing)) {
+    // `false` is a value - "verify certificate: off" is a decision - so only
+    // an empty field clears a setting.
     if (v === '' || v == null) continue;
-    addressing[k] = /^-?\d+$/.test(String(v)) ? Number(v) : v;
+    addressing[k] = typeof v === 'boolean' ? v
+      : /^-?\d+$/.test(String(v)) ? Number(v) : v;
   }
   if (JSON.stringify(addressing) !== JSON.stringify(current.addressing ?? {}))
     patch.addressing = addressing;

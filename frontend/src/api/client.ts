@@ -100,7 +100,9 @@ export interface PollProfileSummary {
 export interface AddressingField {
   label: string;
   help?: string;
-  kind?: 'text';
+  /** Absent means a bounded integer - a unit ID, a network number. */
+  kind?: 'text' | 'bool' | 'choice';
+  choices?: string[];
   min?: number;
   max?: number;
 }
@@ -118,7 +120,7 @@ export interface EndpointOptions {
 export interface EndpointPatch {
   address?: string | null;
   port?: number | null;
-  addressing?: Record<string, string | number>;
+  addressing?: Record<string, string | number | boolean>;
   credential_id?: string | null;
   poll_profile_id?: string | null;
   enabled?: boolean;
@@ -135,7 +137,7 @@ export interface EndpointSummary {
   admin_state: string;
   /** Protocol-specific selectors: a Modbus unit ID, a BACnet device instance.
    *  Behind a gateway this, not the address, decides which device answers. */
-  addressing: Record<string, string | number>;
+  addressing: Record<string, string | number | boolean>;
   credential_id?: string | null;
   credential_name?: string | null;
   credential_hint?: string | null;

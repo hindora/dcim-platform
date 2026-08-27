@@ -40,13 +40,15 @@ def test_impossible_ports_are_refused(port):
 
 
 def test_a_modbus_unit_id_stays_inside_the_addressable_range():
-    """0 is the broadcast address and 248-255 are reserved.
+    """248-255 are reserved by the specification.
 
-    A gateway forwards a request to unit 0 without complaint and no slave
-    answers it, so the failure surfaces as a timeout on a device that is fine.
+    0 is accepted but means "unset": it is the broadcast address, and the
+    collector deliberately does not trust one, because gear that ignores the
+    unit id answers a broadcast anyway and would look correctly addressed.
     """
     assert cfg.validate_addressing("modbus", {"unit_id": 12}) == {"unit_id": 12}
-    for bad in (0, 248, 255, 300):
+    assert cfg.validate_addressing("modbus", {"unit_id": 0}) == {"unit_id": 0}
+    for bad in (248, 255, 300, -1):
         with pytest.raises(EndpointConfigError):
             cfg.validate_addressing("modbus", {"unit_id": bad})
 
@@ -57,6 +59,50 @@ def test_a_bacnet_instance_stops_below_the_wildcard():
     assert cfg.validate_addressing("bacnet", {"device_instance": 4194302})
     with pytest.raises(EndpointConfigError):
         cfg.validate_addressing("bacnet", {"device_instance": 4194303})
+
+
+def test_an_mstp_mac_stops_below_the_broadcast_address():
+    """255 is the broadcast MAC on an MS/TP trunk and identifies no station."""
+    assert cfg.validate_addressing("bacnet", {"mac": 254}) == {"mac": 254}
+    with pytest.raises(EndpointConfigError):
+        cfg.validate_addressing("bacnet", {"mac": 255})
+
+
+def test_every_field_offered_is_one_the_collector_reads():
+    """The selection rule for this catalogue, kept honest by a test.
+
+    A field the collector ignores is a setting an operator can change with no
+    effect, which is worse than one that is missing - the change appears to
+    have been made. These key names are the ones the adapters look up in
+    Addressing, checked against adapters/{bacnet,modbus,gnmi,redfish}.
+    """
+    assert set(cfg.ADDRESSING_FIELDS["modbus"]) == {"unit_id", "probe_role"}
+    assert set(cfg.ADDRESSING_FIELDS["bacnet"]) == {
+        "network", "mac", "device_instance"}
+    assert set(cfg.ADDRESSING_FIELDS["gnmi"]) == {"target", "tls", "insecure"}
+    assert set(cfg.ADDRESSING_FIELDS["redfish"]) == {
+        "scheme", "base", "verify_tls"}
+
+
+def test_a_switch_is_off_or_on_and_off_is_a_value():
+    """"Verify certificate: off" is a decision an operator made.
+
+    Treating it as an empty field would drop it from the payload and hand the
+    endpoint back whatever the default is - here, certificate checking on a BMC
+    with a self-signed certificate, so every poll fails.
+    """
+    assert cfg.validate_addressing(
+        "redfish", {"verify_tls": False}) == {"verify_tls": False}
+    assert cfg.validate_addressing(
+        "redfish", {"verify_tls": "true"}) == {"verify_tls": True}
+    with pytest.raises(EndpointConfigError):
+        cfg.validate_addressing("redfish", {"verify_tls": "maybe"})
+
+
+def test_a_scheme_outside_the_two_that_exist_is_refused():
+    assert cfg.validate_addressing("redfish", {"scheme": "http"})
+    with pytest.raises(EndpointConfigError):
+        cfg.validate_addressing("redfish", {"scheme": "ftp"})
 
 
 def test_a_field_the_protocol_does_not_have_is_refused_not_dropped():
