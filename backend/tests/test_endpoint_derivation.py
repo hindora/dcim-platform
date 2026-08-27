@@ -338,3 +338,43 @@ def test_the_firewall_and_load_balancer_have_no_gnmi_endpoint():
         eps = derive_endpoints(dev, include_protocols=frozenset({"snmp", "gnmi"}))
         assert not [e for e in eps if e.protocol == "gnmi"]
         assert [e for e in eps if e.protocol == "snmp"]
+
+
+def test_only_switches_and_routers_get_a_gnmi_endpoint(sim_switch_device):
+    """gNMI is a fabric feature, not a network-gear feature.
+
+    Arista, Cisco, Juniper and Nokia switches and routers ship it. PAN-OS and
+    F5 TMOS serve vendor APIs instead, and a console or OOB switch usually
+    speaks SNMP and nothing else. Deriving endpoints for them produced 52
+    permanently reconnecting sessions whose only message was that nothing was
+    listening - and, once retired, 52 state rows that claimed OFFLINE for eight
+    days against gear that was perfectly healthy.
+    """
+    for dtype in ("firewall", "load_balancer", "oob_switch"):
+        dev = {**sim_switch_device, "device_type": dtype}
+        assert derive_endpoints(dev, include_protocols=frozenset({"gnmi"})) == [], \
+            f"{dtype} does not speak gNMI"
+
+    for dtype in ("switch", "router"):
+        dev = {**sim_switch_device, "device_type": dtype}
+        assert derive_endpoints(dev, include_protocols=frozenset({"gnmi"})), \
+            f"{dtype} does speak gNMI"
+
+
+def test_retiring_an_endpoint_also_stops_its_state_claiming_a_fault():
+    """Nothing polls a retired endpoint, so its last word freezes there.
+
+    Left at OFFLINE it reads on the device page as a fault nobody is fixing,
+    and a page carrying 52 permanent untrue OFFLINE rows is a page where a real
+    one is not noticed. DISABLED says the true thing: not measured.
+    """
+    import inspect
+
+    from app.importer.simulator import TopologyImporter
+
+    src = inspect.getsource(TopologyImporter._retire_undesired_endpoints)
+    assert "UPDATE endpoint_state" in src
+    assert "'DISABLED'" in src
+    # The history stays: last_success and the poll totals are the record of
+    # what the endpoint did while it was in service.
+    assert "last_success" not in src.split("UPDATE endpoint_state")[1]

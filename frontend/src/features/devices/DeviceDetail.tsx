@@ -107,7 +107,21 @@ export function DeviceDetail() {
                 <td className="mono muted">{selector(e)}</td>
                 <td>
                   <StatusChip status={e.status} />
-                  {e.admin_state !== 'enabled' && (
+                  {/* Two different "off" states, and they answer different
+                      questions. admin_state is what an operator asked for;
+                      `enabled` is whether the collector is given this endpoint
+                      at all, which the importer turns off when a device type
+                      turns out not to speak the protocol - a firewall has no
+                      gNMI to poll however anyone feels about it. Showing only
+                      admin_state left 52 retired endpoints reading as
+                      "enabled" while nothing polled them. */}
+                  {!e.enabled ? (
+                    <span className="muted"
+                          title="Retired: this device type does not serve this
+                                 protocol, so the collector is not given it.">
+                      {' · retired'}
+                    </span>
+                  ) : e.admin_state !== 'enabled' && (
                     <span className="muted"> · {e.admin_state}</span>
                   )}
                 </td>

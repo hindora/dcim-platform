@@ -652,6 +652,32 @@ class TopologyImporter:
         if result.rowcount:
             self.report.retired_endpoints += result.rowcount
 
+        # And stop the state row claiming a fault.
+        #
+        # A retired endpoint is never polled again, so whatever it last said
+        # freezes: 52 firewalls and console switches sat at OFFLINE for eight
+        # days after their gNMI endpoints were retired, which reads on the
+        # device page as a fault nobody is fixing and buries the OFFLINE rows
+        # that are real.
+        #
+        # DISABLED, not deleted, for the same reason the endpoint itself is
+        # kept: last_success and the poll totals are the record of what this
+        # endpoint did while it was in service, and an endpoint that comes back
+        # should come back with its history.
+        await self.s.execute(text("""
+            UPDATE endpoint_state es
+               SET status = 'DISABLED',
+                   last_error = NULL,
+                   last_error_class = NULL,
+                   consecutive_failures = 0,
+                   updated_at = now()
+              FROM device_endpoint e
+             WHERE e.id = es.endpoint_id
+               AND e.device_id = CAST(:dev AS uuid)
+               AND NOT e.enabled
+               AND es.status <> 'DISABLED'
+        """), {"dev": device_id})
+
     async def _resolve_via_links(self, devices: list[dict]) -> None:
         """Link field devices to the gateway/router endpoint they are reached through."""
         for dev in devices:
