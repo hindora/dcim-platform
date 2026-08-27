@@ -113,6 +113,11 @@ th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--bor
 th { color: var(--text-muted); font-weight: 500; font-size: 12px;
      text-transform: uppercase; letter-spacing: .04em; }
 tbody tr:hover { background: var(--bg-raised); }
+/* The header goes where its numbers go. Right-aligning the cells alone left
+   every numeric column with its label floating above the left edge of a column
+   whose values sit at the right - the alignment reads as a layout bug because
+   it is one. Mono and tabular figures stay on the cells: a heading is a word. */
+th.num { text-align: right; }
 td.num { text-align: right; font-variant-numeric: tabular-nums; font-family: var(--mono); }
 code, .mono { font-family: var(--mono); font-size: 12px; }
 
