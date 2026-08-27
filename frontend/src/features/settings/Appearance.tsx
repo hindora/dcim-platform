@@ -37,8 +37,10 @@ export function Appearance() {
         </p>
       </div>
 
-      <fieldset className="proto">
-        <legend>Theme</legend>
+      {/* No box around it. A fieldset earns its border by grouping one set of
+          controls apart from another, and this page has a single group - the
+          border would be drawing a boundary against nothing. */}
+      <div>
         <div className="form-grid">
           <label>
             <span>Mode</span>
@@ -66,7 +68,7 @@ export function Appearance() {
                      onPick={() => choose('light')}
                      note="For a lit office, and for printing a screen." />
         </div>
-      </fieldset>
+      </div>
     </div>
   );
 }
