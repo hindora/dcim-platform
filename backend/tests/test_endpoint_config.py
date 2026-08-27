@@ -14,7 +14,6 @@ import pytest
 from app.services import endpoint_config as cfg
 from app.services.endpoint_config import EndpointConfigError
 
-
 # ------------------------------------------------------------------- ports
 
 

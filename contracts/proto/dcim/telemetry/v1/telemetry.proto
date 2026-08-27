@@ -152,4 +152,7 @@ message CollectorHeartbeat {
   uint32 queue_depth = 12;
   uint32 active_streams = 13;
   uint32 assignment_version = 14;
+  uint32 config_version = 15;
+  bool config_restart_pending = 16;
+  string config_error = 17;
 }

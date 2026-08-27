@@ -33,6 +33,7 @@ from app.core.security import (
 )
 from app.db.session import get_session
 from app.repositories import collector as repo
+from app.repositories import collector_config as config_repo
 from app.repositories import dashboard as dashboard_repo
 from app.repositories import discovery as disc_repo
 from app.schemas import Assignment
@@ -41,6 +42,38 @@ from app.services import discovery as disc_service
 
 router = APIRouter(prefix="/collector", tags=["collector"])
 log = get_logger("api.collector")
+
+
+@router.get("/config", summary="Configuration this collector should run")
+async def collector_config(
+    response: Response,
+    collector_id: str = Query(..., min_length=1, max_length=64),
+    if_none_match: str | None = Header(None, alias="If-None-Match"),
+    session: AsyncSession = Depends(get_session),
+    identity: str = Depends(require_collector),
+) -> dict[str, Any]:
+    """The operational overrides, on the same collector token as assignments.
+
+    Carries no secret - the token, the API address and Redis stay in the
+    collector's own file - but it is scoped exactly like assignments anyway:
+    a collector has no business reading what another one was told to run.
+
+    The version is an integer rather than a hash so the collector can report
+    back which one it is running. That is the difference between a settings
+    page that shows what was saved and one that shows what is in force.
+    """
+    if identity != UNSCOPED_COLLECTOR and identity != collector_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN,
+                            "this token is not scoped to that collector")
+
+    stored = await config_repo.get(session, collector_id)
+    etag = f'W/"cfg-{stored["version"]}"'
+    if if_none_match and if_none_match.strip() == etag:
+        response.status_code = status.HTTP_304_NOT_MODIFIED
+        return {}
+    response.headers["ETag"] = etag
+    return {"collector_id": collector_id, "version": stored["version"],
+            "config": stored["config"]}
 
 
 @router.get("/assignments", response_model=Assignment,

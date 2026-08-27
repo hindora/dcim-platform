@@ -672,6 +672,13 @@ class IngestWorker:
                         "queue_depth": hb.queue_depth,
                         "active_streams": hb.active_streams,
                         "assignment_version": hb.assignment_version,
+                        # What configuration this process is actually running,
+                        # which is not what the config table was last told to
+                        # store. Kept apart so the settings page can show both
+                        # and stop reporting a saved value as a live one.
+                        "config_version": hb.config_version,
+                        "config_restart_pending": hb.config_restart_pending,
+                        "config_error": hb.config_error or "",
                     }),
                 })
 

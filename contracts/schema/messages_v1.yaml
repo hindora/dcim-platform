@@ -149,6 +149,22 @@ messages:
       - {name: queue_depth,        tag: 12, type: uint32}
       - {name: active_streams,     tag: 13, type: uint32}
       - {name: assignment_version, tag: 14, type: uint32}
+      # What configuration this process is actually running, which is not the
+      # same question as what the database was last told to store.
+      #
+      # Most of the collector's settings are read once, when the adapters are
+      # built: concurrency, timeouts, retries, the BACnet local port. Saving a
+      # new value changes what the NEXT process will do and nothing about this
+      # one. Without a way to say so, a settings page reports every change as
+      # applied and an operator has no way to tell a live setting from a
+      # stored intention.
+      - {name: config_version,     tag: 15, type: uint32}
+      # True when the stored config differs from what this process booted with,
+      # in a field that only a restart can pick up.
+      - {name: config_restart_pending, tag: 16, type: bool}
+      # Why the last config could not be applied - a trap port already in use,
+      # most often. Empty when it applied cleanly.
+      - {name: config_error,       tag: 17, type: string}
 
 streams:
   # maxlen is an entry count, but memory is what runs out, so these are sized

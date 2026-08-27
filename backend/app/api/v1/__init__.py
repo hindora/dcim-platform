@@ -7,6 +7,7 @@ from app.api.v1 import (
     analytics,
     capacity,
     collector,
+    collectors,
     cooling,
     devices,
     discovery,
@@ -35,6 +36,7 @@ api_router.include_router(topology.router)
 api_router.include_router(discovery.router)
 api_router.include_router(alarms.router)
 api_router.include_router(collector.router)
+api_router.include_router(collectors.router)
 api_router.include_router(ws.router)
 
 __all__ = ["api_router"]

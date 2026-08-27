@@ -100,6 +100,53 @@ export interface PollProfileSummary {
   protocols?: string[];
 }
 
+export interface ConfigField {
+  key: string;
+  label: string;
+  /** 'int' | 'seconds' | 'bool' | 'text' | 'listen' */
+  kind: string;
+  /** 'live' applies without a restart; 'restart' is stored until the next one. */
+  when: 'live' | 'restart';
+  help: string;
+  min?: number;
+  max?: number;
+}
+
+export interface ConfigSection {
+  key: string;
+  title: string;
+  /** Set on sections that own a listener: moving one silences a plane with no
+   *  error anywhere, because every device keeps sending to the old address. */
+  danger?: string | null;
+  fields: ConfigField[];
+}
+
+export interface CollectorRow {
+  id: string;
+  hostname?: string | null;
+  build?: string | null;
+  status: string;
+  started_at?: string | null;
+  last_heartbeat?: string | null;
+  endpoints_owned: number;
+  endpoints_online: number;
+  config: Record<string, Record<string, unknown>>;
+  /** What is stored here. */
+  version: number;
+  /** What the collector's last heartbeat said it is actually running. */
+  running_version: number;
+  restart_pending: boolean;
+  config_error?: string | null;
+  alive: boolean;
+  updated_at?: string | null;
+  updated_by?: string | null;
+}
+
+export interface CollectorsPage {
+  collectors: CollectorRow[];
+  schema: { sections: ConfigSection[] };
+}
+
 export interface ProfileUsage {
   profile_id: string;
   endpoints: number;
@@ -1079,6 +1126,16 @@ export const api = {
 
   device: (id: string) => request<DeviceDetail>(`/devices/${id}`),
 
+  collectors: () => request<CollectorsPage>('/collectors'),
+
+  /** The complete document the page is showing. Whole-document rather than a
+   *  patch, so "clear this override and fall back to the collector's file" is
+   *  expressible - in a patch an absent key already means "leave it alone". */
+  setCollectorConfig: (id: string, config: Record<string, unknown>) =>
+    request<{ collector_id: string; version: number; restart_pending: string[] }>(
+      `/collectors/${id}/config`,
+      { method: 'PUT', body: JSON.stringify({ config }) }),
+
   pollProfiles: () => request<PollProfilesPage>('/poll-profiles'),
 
   pollProfileUsage: (id: string) =>
@@ -1145,7 +1202,6 @@ export const api = {
     return request<{ items: RackSummary[] }>(`/racks${qs ? `?${qs}` : ''}`);
   },
 
-  collectors: () => request<{ items: unknown[] }>('/collector/instances'),
 
   alarms: (params: Record<string, string | undefined> = {}) => {
     const q = new URLSearchParams();

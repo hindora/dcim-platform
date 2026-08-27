@@ -228,20 +228,23 @@ type EndpointState struct {
 }
 
 type CollectorHeartbeat struct {
-	CollectorID       string `msgpack:"collector_id,omitempty" json:"collector_id,omitempty"`
-	Version           string `msgpack:"version,omitempty" json:"version,omitempty"`
-	Hostname          string `msgpack:"hostname,omitempty" json:"hostname,omitempty"`
-	StartedAt         int64  `msgpack:"started_at,omitempty" json:"started_at,omitempty"`
-	SentAt            int64  `msgpack:"sent_at,omitempty" json:"sent_at,omitempty"`
-	EndpointsOwned    uint32 `msgpack:"endpoints_owned,omitempty" json:"endpoints_owned,omitempty"`
-	EndpointsOnline   uint32 `msgpack:"endpoints_online,omitempty" json:"endpoints_online,omitempty"`
-	PollsTotal        uint64 `msgpack:"polls_total,omitempty" json:"polls_total,omitempty"`
-	PollsFailed       uint64 `msgpack:"polls_failed,omitempty" json:"polls_failed,omitempty"`
-	TrapsReceived     uint64 `msgpack:"traps_received,omitempty" json:"traps_received,omitempty"`
-	EventsReceived    uint64 `msgpack:"events_received,omitempty" json:"events_received,omitempty"`
-	QueueDepth        uint32 `msgpack:"queue_depth,omitempty" json:"queue_depth,omitempty"`
-	ActiveStreams     uint32 `msgpack:"active_streams,omitempty" json:"active_streams,omitempty"`
-	AssignmentVersion uint32 `msgpack:"assignment_version,omitempty" json:"assignment_version,omitempty"`
+	CollectorID          string `msgpack:"collector_id,omitempty" json:"collector_id,omitempty"`
+	Version              string `msgpack:"version,omitempty" json:"version,omitempty"`
+	Hostname             string `msgpack:"hostname,omitempty" json:"hostname,omitempty"`
+	StartedAt            int64  `msgpack:"started_at,omitempty" json:"started_at,omitempty"`
+	SentAt               int64  `msgpack:"sent_at,omitempty" json:"sent_at,omitempty"`
+	EndpointsOwned       uint32 `msgpack:"endpoints_owned,omitempty" json:"endpoints_owned,omitempty"`
+	EndpointsOnline      uint32 `msgpack:"endpoints_online,omitempty" json:"endpoints_online,omitempty"`
+	PollsTotal           uint64 `msgpack:"polls_total,omitempty" json:"polls_total,omitempty"`
+	PollsFailed          uint64 `msgpack:"polls_failed,omitempty" json:"polls_failed,omitempty"`
+	TrapsReceived        uint64 `msgpack:"traps_received,omitempty" json:"traps_received,omitempty"`
+	EventsReceived       uint64 `msgpack:"events_received,omitempty" json:"events_received,omitempty"`
+	QueueDepth           uint32 `msgpack:"queue_depth,omitempty" json:"queue_depth,omitempty"`
+	ActiveStreams        uint32 `msgpack:"active_streams,omitempty" json:"active_streams,omitempty"`
+	AssignmentVersion    uint32 `msgpack:"assignment_version,omitempty" json:"assignment_version,omitempty"`
+	ConfigVersion        uint32 `msgpack:"config_version,omitempty" json:"config_version,omitempty"`
+	ConfigRestartPending bool   `msgpack:"config_restart_pending,omitempty" json:"config_restart_pending,omitempty"`
+	ConfigError          string `msgpack:"config_error,omitempty" json:"config_error,omitempty"`
 }
 
 // Stream names and caps, from contracts/schema/messages_v1.yaml.

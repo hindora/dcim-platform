@@ -6,6 +6,7 @@ import { useOrg } from './lib/useOrg';
 import { AlarmList } from './features/alarms/AlarmList';
 import { Analytics } from './features/analytics/Analytics';
 import { PlatformHealth } from './features/platform/PlatformHealth';
+import { Collectors } from './features/settings/Collectors';
 import { PollProfiles } from './features/settings/PollProfiles';
 import { SettingsLayout } from './features/settings/SettingsLayout';
 import { UserMenu } from './components/UserMenu';
@@ -211,6 +212,7 @@ export default function App() {
           <Route path="/settings" element={<Page><SettingsLayout /></Page>}>
             <Route index element={<Navigate to="poll-profiles" replace />} />
             <Route path="poll-profiles" element={<PollProfiles />} />
+            <Route path="collectors" element={<Collectors />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

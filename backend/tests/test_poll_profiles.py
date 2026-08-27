@@ -15,7 +15,6 @@ from app.core.mappings_gen import MAPPING_GROUPS
 from app.services import poll_profile_config as cfg
 from app.services.poll_profile_config import PollProfileError
 
-
 # -------------------------------------------------------------------- names
 
 

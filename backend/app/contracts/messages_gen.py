@@ -214,6 +214,9 @@ class CollectorHeartbeat(_Msg):
     queue_depth: int = 0
     active_streams: int = 0
     assignment_version: int = 0
+    config_version: int = 0
+    config_restart_pending: bool = False
+    config_error: str = ""
 
 
 class Stream:

@@ -12,6 +12,11 @@ export const SETTINGS_NAV = [
     label: 'Poll profiles',
     blurb: 'How often each endpoint is asked, and for what',
   },
+  {
+    to: 'collectors',
+    label: 'Collectors',
+    blurb: 'Which planes each collector runs, and where it listens',
+  },
 ] as const;
 
 export function SettingsLayout() {

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -50,6 +51,23 @@ type App struct {
 	// stream has to outlive the change that started it.
 	streamCtx context.Context
 	traps     *snmp.TrapReceiver
+
+	// The trap receiver is the one part of the collector that can be moved
+	// while it runs: it owns its socket and its workers, so it can be closed
+	// and reopened in place. Everything else is read once, when the adapters
+	// are built.
+	trapTable *mapping.TrapTable
+	trapMu    sync.Mutex
+	trapCfg   config.TrapCfg
+	trapStop  context.CancelFunc
+	trapDone  chan struct{}
+
+	cfgClient *config.RemoteClient
+	// What the process actually booted with, kept to answer "does this change
+	// need a restart" honestly rather than by assumption.
+	bootProtocols any
+	cfgErrMu      sync.Mutex
+	cfgErr        string
 	resolver  *assign.Resolver
 	adapters  map[string]models.Adapter
 
@@ -178,6 +196,8 @@ func New(cfg *config.Config, version string) (*App, error) {
 			return nil, fmt.Errorf("load trap mappings: %w", err)
 		}
 		log.Info("trap mappings loaded", "wire_oids", trapTable.Len())
+		a.trapTable = trapTable
+		a.trapCfg = cfg.Protocols.SNMPTrap
 		a.traps = snmp.NewTrapReceiver(trapTable, a.resolver, pub, log, mets,
 			cfg.Protocols.SNMPTrap.Listen, cfg.Protocols.SNMPTrap.Workers,
 			cfg.Protocols.SNMPTrap.RateLimitPerMinute)
@@ -240,14 +260,13 @@ func (a *App) Run(ctx context.Context) error {
 	go a.pub.Run(ctx)
 
 	if a.traps != nil {
-		go func() {
-			// A trap listener that cannot bind must not take the collector
-			// down: polling still works, and the operator needs to see which
-			// half is broken.
-			if err := a.traps.Listen(ctx); err != nil {
-				a.log.Error("trap receiver stopped", "error", err)
-			}
-		}()
+		a.startTraps(ctx, a.trapCfg)
+	}
+	if a.cfgClient != nil {
+		a.cfgClient.OnChange = func(version uint32, o config.Overrides) {
+			a.applyConfig(ctx, version, o)
+		}
+		go a.cfgClient.Run(ctx)
 	}
 
 	if a.rfEvents != nil {
@@ -492,6 +511,15 @@ func (a *App) heartbeatLoop(ctx context.Context) {
 				PollsTotal:      a.pollsOK + a.pollsBad,
 				PollsFailed:     a.pollsBad,
 				QueueDepth:      uint32(a.pub.QueueDepth()),
+			}
+			// Which configuration this process is running, as opposed to what
+			// the database was last told to store. Without these three the
+			// settings page can only report what it saved, which is not the
+			// same claim.
+			if a.cfgClient != nil {
+				hb.ConfigVersion = a.cfgClient.Version()
+				hb.ConfigRestartPending = a.restartPending()
+				hb.ConfigError = a.configError()
 			}
 			if err := a.pub.Heartbeat(ctx, hb); err != nil {
 				a.log.Warn("heartbeat publish failed", "error", err)
