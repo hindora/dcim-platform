@@ -234,36 +234,6 @@ function age(seconds: number | null): string {
   return `${Math.round(seconds / 3600)}h old`;
 }
 
-const MONITORING_WORD: Record<PlatformState['state'], string> = {
-  ok: 'OK', degraded: 'DEGRADED', impaired: 'IMPAIRED', blind: 'BLIND',
-};
-
-/** The state of the monitoring, beside the estate's counters and never inside
- *  them.
- *
- *  It is a badge rather than a seventh counter on purpose. A dead pipeline is
- *  not one more thing to triage - it is the reason the other six numbers
- *  cannot be trusted, and a console that expresses that as "+2" has told the
- *  reader the smaller half of the truth.
- */
-function MonitoringBadge({ platform }: { platform?: PlatformState }) {
-  const state = platform?.state ?? 'ok';
-  const open = (platform?.alarms ?? 0) + (platform?.alerts ?? 0);
-  const detail = platform
-    ? `Newest telemetry ${age(platform.telemetry_age_s)}`
-      + (open ? ` · ${open} open condition${open === 1 ? '' : 's'}` : '')
-    : 'Checking';
-  return (
-    <Link className={`monitor ${state}`} to="/platform"
-          title={`${detail}. The estate counters beside this do not include `
-                 + 'the monitoring\u2019s own conditions.'}>
-      <span className="dot" aria-hidden />
-      <span className="lbl">MONITORING</span>
-      <span className="val">{MONITORING_WORD[state]}</span>
-    </Link>
-  );
-}
-
 /** What a degraded pipeline has done to the rest of the page.
  *
  *  The banner states the consequence, not the fault: an operator does not need
@@ -392,7 +362,6 @@ export function Home() {
       <section className="alert-strip">
         <span className="site-title">{org}</span>
         <span className="spacer" />
-        <MonitoringBadge platform={data?.platform} />
         <button className="caption" onClick={() => setLegendOpen(true)}
                 title="What each counter counts, and what this console leaves out">
           <svg width="17" height="17" viewBox="0 0 16 16" aria-hidden
@@ -447,16 +416,20 @@ export function Home() {
                 </span>
                 <span className="name">{total ? 'Alarms' : c.label}</span>
               </button>
-              {/* Always rendered, empty when there is nothing open, so the
+              {/* Always rendered, blank when there is nothing to say, so the
                   counters keep one baseline. A line that appears only on the
                   busy ones makes the strip jog up and down as the estate
-                  changes, which is movement carrying no information. */}
-              {!total && (
-                <span className={`needs ${answerable > 0 ? 'on' : ''}`}>
-                  {n === 0 ? ' '
-                    : `${answerable} alarm${answerable === 1 ? '' : 's'}`}
-                </span>
-              )}
+                  changes, which is movement carrying no information.
+
+                  The total carries a blank one for the same reason. It is the
+                  one counter with nothing to put here - every alarm it counts
+                  is answerable by definition - and leaving the line out made
+                  it shorter than its neighbours, so the strip centred it a few
+                  pixels below the row it belongs to. */}
+              <span className={`needs ${!total && answerable > 0 ? 'on' : ''}`}>
+                {total || n === 0 ? ' '
+                  : `${answerable} alarm${answerable === 1 ? '' : 's'}`}
+              </span>
             </div>
           );
         })}

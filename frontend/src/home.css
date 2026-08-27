@@ -570,55 +570,11 @@ button.ind:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px
    count and the urgency are two readings of one tile rather than two tiles. */
 .ind.has-alarm { box-shadow: inset 0 -2px 0 var(--critical); }
 
-/* --- the monitoring badge and its banner -----------------------------------
+/* --- the monitoring banner --------------------------------------------------
  *
- * Beside the estate's counters, never inside them. A dead pipeline is not one
- * more thing to triage; it is the reason the six numbers to the left cannot be
- * trusted, so it is said in words and in a colour rather than added to a count.
+ * Only when the pipeline is degraded, and never as a counter. A dead pipeline
+ * is not one more thing to triage; it is the reason the numbers above cannot
+ * be trusted, so it is said in words across the page rather than added to a
+ * count. When the monitoring is well it says nothing at all - a badge reading
+ * OK is a line of screen that is right every day and useful on none of them.
  */
-.alert-strip .monitor {
-  display: inline-flex; align-items: center; gap: 8px; flex: none;
-  margin-right: 18px; padding: 6px 12px; border-radius: 3px;
-  border: 1px solid var(--border); background: var(--bg-inset);
-  color: var(--text-muted); text-decoration: none;
-  font-size: 11px; letter-spacing: .08em;
-}
-.alert-strip .monitor:hover { border-color: var(--border-strong); color: var(--text); }
-.alert-strip .monitor .dot {
-  width: 8px; height: 8px; border-radius: 50%; flex: none;
-  background: currentColor;
-}
-.alert-strip .monitor .val { font-weight: 600; }
-/* Colour lands on the state word and the dot, not on the whole chip: a badge
-   that is a solid red block at a glance competes with the alarm counter, which
-   is the number somebody must actually act on. */
-.alert-strip .monitor.ok       { color: var(--text-muted); }
-.alert-strip .monitor.ok .dot,
-.alert-strip .monitor.ok .val  { color: var(--ok); }
-.alert-strip .monitor.degraded .dot,
-.alert-strip .monitor.degraded .val { color: var(--warn); }
-.alert-strip .monitor.impaired { border-color: var(--warn); }
-.alert-strip .monitor.impaired .dot,
-.alert-strip .monitor.impaired .val { color: var(--warn); }
-.alert-strip .monitor.blind { border-color: var(--critical); }
-.alert-strip .monitor.blind .dot,
-.alert-strip .monitor.blind .val { color: var(--critical); }
-
-.monitor-banner {
-  display: flex; align-items: center; flex-wrap: wrap; gap: 10px 18px;
-  margin: 0 28px 10px; padding: 10px 16px; border-radius: 4px;
-  font-size: 12px; color: var(--text);
-  border: 1px solid var(--warn);
-  background: color-mix(in srgb, var(--warn) 10%, transparent);
-}
-.monitor-banner.blind {
-  border-color: var(--critical);
-  background: color-mix(in srgb, var(--critical) 10%, transparent);
-}
-/* The consequence first and in the reader's own language; the fault after it,
-   for whoever is going to fix the pipeline rather than read past it. */
-.monitor-banner .head { font-weight: 600; }
-.monitor-banner .cond { color: var(--text-muted); }
-.monitor-banner .cond b { font-family: var(--mono, monospace); font-weight: 600; }
-.monitor-banner .cond i { font-style: normal; color: var(--text-faint); }
-.monitor-banner .row-btn { margin-left: auto; flex: none; }
