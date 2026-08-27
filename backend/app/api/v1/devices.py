@@ -3,24 +3,31 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import Principal, current_principal
+from app.core import audit
+from app.core.logging import get_logger
+from app.core.security import Principal, current_principal, require_role
 from app.db.session import get_session
 from app.schemas import (
     DeviceDetail,
     DeviceStateOut,
     DeviceSummary,
+    EndpointSummary,
     HistoryOut,
     InterfaceOut,
     Page,
 )
 from app.services import dashboard as dashboard_service
 from app.services import devices as service
+from app.services import endpoint_config
 
 router = APIRouter(prefix="/devices", tags=["devices"])
+log = get_logger("api.devices")
 
 
 @router.get("", response_model=Page[DeviceSummary], summary="List devices")
@@ -42,6 +49,30 @@ async def list_devices(
         rack_id=rack_id, datacenter_id=datacenter_id, search=search,
         include_decommissioned=include_decommissioned, limit=limit, cursor=cursor)
     return Page[DeviceSummary](items=items, next_cursor=next_cursor)
+
+
+@router.get("/endpoint-options",
+            summary="Credentials and poll profiles an endpoint may point at")
+async def endpoint_options(
+    session: AsyncSession = Depends(get_session),
+    _: Principal = Depends(current_principal),
+) -> dict[str, Any]:
+    """Everything the endpoint editor needs to render its pickers.
+
+    Declared BEFORE /{device_id} on purpose: FastAPI matches in declaration
+    order, and a static path placed after a parameterised one is never reached
+    - "endpoint-options" would be looked up as a device id.
+
+    `addressing` describes the protocol-specific fields and their legal ranges
+    so the form can validate before the round trip, using the same table the
+    server rejects with.
+    """
+    return {
+        "credentials": await service.credentials(session),
+        "poll_profiles": await service.poll_profiles(session),
+        "default_ports": endpoint_config.DEFAULT_PORT,
+        "addressing": endpoint_config.ADDRESSING_FIELDS,
+    }
 
 
 @router.get("/{device_id}", response_model=DeviceDetail, summary="Device detail")
@@ -105,3 +136,78 @@ async def history(
     return await dashboard_service.history(
         session, device_id=device_id, metrics=metric, start=start, end=end,
         interval=interval, agg=agg, instance=instance)
+
+
+class EndpointPatch(BaseModel):
+    """An edit to one protocol endpoint.
+
+    Every field is optional and absence means "leave it alone", which is what
+    lets the UI send only what the operator touched. `None` is a real value for
+    the nullable ones: a null port follows the protocol default, a null
+    credential means the endpoint needs none.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    address: str | None = Field(None, description="host address; null clears it")
+    port: int | None = Field(None, ge=1, le=65535,
+                             description="null follows the protocol default")
+    addressing: dict[str, Any] | None = Field(
+        None, description="protocol-specific: modbus unit_id, bacnet instance")
+    credential_id: str | None = None
+    poll_profile_id: str | None = None
+    enabled: bool | None = None
+    admin_state: str | None = Field(None, pattern="^(enabled|disabled|maintenance)$")
+
+
+@router.get("/{device_id}/endpoints", response_model=list[EndpointSummary],
+            summary="Protocol endpoints and how they are configured")
+async def device_endpoints(
+    device_id: str,
+    session: AsyncSession = Depends(get_session),
+    _: Principal = Depends(current_principal),
+) -> list[EndpointSummary]:
+    return await service.endpoints(session, device_id)
+
+
+@router.patch("/{device_id}/endpoints/{endpoint_id}",
+              response_model=EndpointSummary,
+              summary="Change how this device is reached")
+async def update_endpoint(
+    device_id: str,
+    endpoint_id: str,
+    body: EndpointPatch,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    principal: Principal = Depends(require_role("operator")),
+) -> EndpointSummary:
+    """Edit one endpoint's connection settings.
+
+    The change reaches the collector on its next assignment fetch - within one
+    assignment interval, with nothing restarted - because the update bumps
+    `updated_at`, which the assignment version is derived from.
+    """
+    try:
+        before, after = await service.update_endpoint(
+            session, device_id=device_id, endpoint_id=endpoint_id,
+            changes=body.model_dump(exclude_unset=True))
+    except service.EndpointNotFoundError:
+        raise HTTPException(status.HTTP_404_NOT_FOUND,
+                            "no such endpoint on this device") from None
+    except endpoint_config.EndpointConfigError as exc:
+        # 422, not 400: the request was well-formed and the VALUE was wrong,
+        # and the message is written to be shown to the operator as-is.
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            str(exc)) from None
+
+    ip, agent = audit.client_of(request)
+    # Connection settings decide whether a device can be seen at all, so an
+    # edit that silences one has to be attributable afterwards.
+    await audit.record(session, actor=audit.actor_of(principal),
+                       action="endpoint.update", target_type="device_endpoint",
+                       target_id=endpoint_id, ip=ip, user_agent=agent,
+                       before=before, after=after)
+    await session.commit()
+    log.info("endpoint updated", endpoint_id=endpoint_id, device_id=device_id,
+             actor=principal.username, changed=sorted(after))
+    return await service.one_endpoint(session, device_id, endpoint_id)

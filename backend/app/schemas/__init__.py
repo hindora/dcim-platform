@@ -69,7 +69,20 @@ class EndpointSummary(BaseModel):
     address: str | None = None
     port: int | None = None
     enabled: bool = True
+    admin_state: str = "enabled"
+    # Protocol-specific selectors: a Modbus unit ID, a BACnet device instance.
+    # For anything behind a gateway this - not the address - is what decides
+    # which device answers.
+    addressing: dict[str, Any] = Field(default_factory=dict)
+    credential_id: str | None = None
+    credential_name: str | None = None
     credential_hint: str | None = None      # never the secret itself
+    poll_profile_id: str | None = None
+    poll_profile_name: str | None = None
+    # Set when this endpoint is reached THROUGH another one - a serial gateway
+    # or a BACnet router. Its address is the gateway's and is not editable here.
+    via_endpoint_id: str | None = None
+    via_name: str | None = None
     poll_interval_s: int | None = None
     status: str = "UNKNOWN"
     # last_seen is every poll ATTEMPT, last_success only the ones that worked.

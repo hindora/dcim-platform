@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
 import {
@@ -8,10 +9,12 @@ import {
 } from '../../api/client';
 import { StatusChip } from '../../components/StatusChip';
 import { DeviceHistory } from './DeviceHistory';
+import { EndpointEditor } from './EndpointEditor';
 import { formatMetric, metricLabel, relativeTime } from '../../lib/format';
 
 export function DeviceDetail() {
   const { id = '' } = useParams();
+  const [editing, setEditing] = useState<EndpointSummary | null>(null);
 
   const device = useQuery<Detail>({
     queryKey: ['device', id],
@@ -79,10 +82,10 @@ export function DeviceDetail() {
         <table>
           <thead>
             <tr>
-              <th>Protocol</th><th>Role</th><th>Address</th><th>Status</th>
-              <th>Credential</th><th className="num">Interval</th>
+              <th>Protocol</th><th>Role</th><th>Address</th><th>Selector</th>
+              <th>Status</th><th>Credential</th><th className="num">Interval</th>
               <th>Seen</th><th>Success</th><th className="num">Latency</th>
-              <th className="num">Polls</th><th>Last error</th>
+              <th className="num">Polls</th><th>Last error</th><th />
             </tr>
           </thead>
           <tbody>
@@ -90,10 +93,28 @@ export function DeviceDetail() {
               <tr key={e.id}>
                 <td>{e.protocol}</td>
                 <td className="muted">{e.role}</td>
-                <td className="mono">{e.address}{e.port ? `:${e.port}` : ''}</td>
-                <td><StatusChip status={e.status} /></td>
+                <td className="mono">
+                  {e.address}{e.port ? `:${e.port}` : ''}
+                  {e.via_name && (
+                    <span className="muted" title="reached through a gateway">
+                      {' '}via {e.via_name}
+                    </span>
+                  )}
+                </td>
+                {/* What selects this device when the address alone does not:
+                    a Modbus unit ID, a BACnet device instance. Empty for gear
+                    that answers on its own IP. */}
+                <td className="mono muted">{selector(e)}</td>
+                <td>
+                  <StatusChip status={e.status} />
+                  {e.admin_state !== 'enabled' && (
+                    <span className="muted"> · {e.admin_state}</span>
+                  )}
+                </td>
                 {/* Only ever the hint - the secret itself never leaves the server. */}
-                <td className="muted mono">{e.credential_hint ?? '—'}</td>
+                <td className="muted mono" title={e.credential_hint ?? undefined}>
+                  {e.credential_name ?? '—'}
+                </td>
                 <td className="num">{e.poll_interval_s ? `${e.poll_interval_s}s` : '—'}</td>
                 <td className="muted">{relativeTime(e.last_seen)}</td>
                 <td className="muted">{relativeTime(e.last_success)}</td>
@@ -106,12 +127,19 @@ export function DeviceDetail() {
                     ? `${e.last_error_class ?? 'error'}: ${e.last_error}`
                     : '—'}
                 </td>
+                <td>
+                  <button onClick={() => setEditing(e)}>Edit</button>
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
         {d.endpoints.length === 0 && (
           <p className="muted">No endpoints configured for this device.</p>
+        )}
+        {editing && (
+          <EndpointEditor deviceId={id} endpoint={editing}
+                          onClose={() => setEditing(null)} />
         )}
       </section>
 
@@ -180,4 +208,15 @@ function PollCounts({ endpoint }: { endpoint: EndpointSummary }) {
       )}
     </>
   );
+}
+
+/** The protocol-specific identifier that picks this device out, rendered for a
+ *  table cell. A Modbus slave behind a gateway and a BACnet device on a routed
+ *  trunk are both reached at somebody else's address; this column is where an
+ *  operator sees which one they actually are. */
+function selector(e: EndpointSummary): string {
+  const bits = Object.entries(e.addressing ?? {})
+    .filter(([, v]) => v !== '' && v != null)
+    .map(([k, v]) => `${k.replace(/_/g, ' ')} ${v}`);
+  return bits.length ? bits.join(' · ') : '—';
 }

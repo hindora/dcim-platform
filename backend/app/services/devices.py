@@ -27,7 +27,7 @@ from app.schemas import (
     RackSummary,
     RoomExtent,
 )
-from app.services import floorplan
+from app.services import endpoint_config, floorplan
 
 
 def _location(row: dict[str, Any]) -> LocationRef:
@@ -197,3 +197,90 @@ async def room_floorplan(session: AsyncSession, room_id: str) -> FloorPlan | Non
                            label=a.label, rows=a.rows)
                 for a in floorplan.derive_aisles(racks)],
     )
+
+
+class EndpointNotFoundError(LookupError):
+    """No endpoint with that id on that device."""
+
+
+async def endpoints(session: AsyncSession, device_id: str
+                    ) -> list[EndpointSummary]:
+    return [EndpointSummary(**e)
+            for e in await repo.list_endpoints(session, device_id)]
+
+
+async def one_endpoint(session: AsyncSession, device_id: str,
+                       endpoint_id: str) -> EndpointSummary:
+    for e in await endpoints(session, device_id):
+        if e.id == endpoint_id:
+            return e
+    raise EndpointNotFoundError(endpoint_id)
+
+
+#: Fields whose old value is worth recording in the audit trail.
+#:
+#: Not the whole row: an audit entry that repeats everything hides the one
+#: thing that moved, and this is the trail somebody reads after a device went
+#: quiet at 3am.
+_AUDITED = ("address", "port", "addressing", "credential_id",
+            "poll_profile_id", "enabled", "admin_state")
+
+
+async def update_endpoint(session: AsyncSession, *, device_id: str,
+                          endpoint_id: str, changes: dict[str, Any]
+                          ) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Validate an endpoint edit, apply it, and return what moved.
+
+    Validation happens against the STORED row rather than the request, because
+    the rules that matter are relational: whether this endpoint sits behind a
+    gateway, whether the chosen credential speaks this protocol. A request
+    carries none of that.
+    """
+    current = await repo.get_endpoint(session, endpoint_id)
+    if current is None or current["device_id"] != device_id:
+        raise EndpointNotFoundError(endpoint_id)
+
+    touched = set(changes)
+    endpoint_config.check_addressable(current, touched)
+    endpoint_config.check_trap_endpoint(current, touched)
+
+    clean: dict[str, Any] = {}
+    for key, value in changes.items():
+        if key == "port":
+            clean[key] = endpoint_config.validate_port(value)
+        elif key == "addressing":
+            clean[key] = endpoint_config.validate_addressing(
+                current["protocol"], value or {})
+        elif key == "credential_id" and value is not None:
+            cred = await repo.get_credential(session, value)
+            if cred is None:
+                raise endpoint_config.EndpointConfigError(
+                    "no such credential")
+            endpoint_config.check_credential(current["protocol"], cred)
+            clean[key] = value
+        elif key == "poll_profile_id" and value is not None:
+            if await repo.get_poll_profile(session, value) is None:
+                raise endpoint_config.EndpointConfigError(
+                    "no such poll profile")
+            clean[key] = value
+        else:
+            clean[key] = value
+
+    # Only what actually differs. An edit that changes nothing should not bump
+    # updated_at: that version is what every collector polls against, and a
+    # no-op save would hand the whole fleet a new assignment for nothing.
+    effective = {k: v for k, v in clean.items() if current.get(k) != v}
+    if not effective:
+        return {}, {}
+
+    before = {k: current.get(k) for k in effective if k in _AUDITED}
+    await repo.update_endpoint(session, endpoint_id, effective)
+    return before, {k: v for k, v in effective.items() if k in _AUDITED}
+
+
+async def credentials(session: AsyncSession) -> list[dict[str, Any]]:
+    return await repo.list_credentials(session)
+
+
+async def poll_profiles(session: AsyncSession) -> list[dict[str, Any]]:
+    return await repo.list_poll_profiles(session)

@@ -139,7 +139,17 @@ async def list_endpoints(session: AsyncSession, device_id: str) -> list[dict[str
     rows = (await session.execute(text("""
         SELECT e.id::text, e.protocol::text AS protocol, e.role::text AS role,
                host(e.address) AS address, e.port, e.enabled,
+               e.admin_state::text AS admin_state,
+               e.addressing,
+               e.credential_id::text AS credential_id,
+               c.name AS credential_name,
                c.secret_hint AS credential_hint,
+               e.poll_profile_id::text AS poll_profile_id,
+               p.name AS poll_profile_name,
+               e.via_endpoint_id::text AS via_endpoint_id,
+               -- The gateway's own identity, so the UI can say WHICH gateway
+               -- an endpoint sits behind rather than only that one exists.
+               vd.name AS via_name,
                p.interval_s AS poll_interval_s,
                COALESCE(es.status::text, 'UNKNOWN') AS status,
                es.last_seen, es.last_success, es.last_error, es.last_error_class,
@@ -157,9 +167,100 @@ async def list_endpoints(session: AsyncSession, device_id: str) -> list[dict[str
         LEFT JOIN credential c     ON c.id = e.credential_id
         JOIN poll_profile p        ON p.id = e.poll_profile_id
         LEFT JOIN endpoint_state es ON es.endpoint_id = e.id
+        LEFT JOIN device_endpoint ve ON ve.id = e.via_endpoint_id
+        LEFT JOIN device vd          ON vd.id = ve.device_id
         WHERE e.device_id = CAST(:id AS uuid)
         ORDER BY e.protocol, e.role
     """), {"id": device_id})).mappings().all()
+    return [dict(r) for r in rows]
+
+
+async def get_endpoint(session: AsyncSession, endpoint_id: str
+                       ) -> dict[str, Any] | None:
+    """One endpoint with everything an edit has to be checked against."""
+    row = (await session.execute(text("""
+        SELECT e.id::text, e.device_id::text AS device_id,
+               e.protocol::text AS protocol, e.role::text AS role,
+               host(e.address) AS address, e.port, e.enabled,
+               e.admin_state::text AS admin_state, e.addressing,
+               e.credential_id::text AS credential_id,
+               e.poll_profile_id::text AS poll_profile_id,
+               e.via_endpoint_id::text AS via_endpoint_id,
+               vd.name AS via_name, d.name AS device_name
+          FROM device_endpoint e
+          JOIN device d ON d.id = e.device_id
+          LEFT JOIN device_endpoint ve ON ve.id = e.via_endpoint_id
+          LEFT JOIN device vd          ON vd.id = ve.device_id
+         WHERE e.id = CAST(:id AS uuid)
+    """), {"id": endpoint_id})).mappings().first()
+    return dict(row) if row else None
+
+
+#: Columns an edit may touch, and how each is written.
+#:
+#: A whitelist rather than string-built SQL: this statement takes operator
+#: input and writes the row a collector will act on, and a column name is not
+#: the kind of thing that should ever arrive from a browser.
+_EDITABLE = {
+    "address":         "address = CAST(:address AS inet)",
+    "port":            "port = :port",
+    "addressing":      "addressing = CAST(:addressing AS jsonb)",
+    "credential_id":   "credential_id = CAST(:credential_id AS uuid)",
+    "poll_profile_id": "poll_profile_id = CAST(:poll_profile_id AS uuid)",
+    "enabled":         "enabled = :enabled",
+    "admin_state":     "admin_state = CAST(:admin_state AS admin_state_t)",
+}
+
+
+async def update_endpoint(session: AsyncSession, endpoint_id: str,
+                          changes: dict[str, Any]) -> dict[str, Any] | None:
+    """Apply an edit and bump updated_at.
+
+    updated_at is what the assignment `version` is derived from, so touching it
+    is not bookkeeping - it is the entire delivery mechanism. Every collector
+    holding this endpoint sees a new version on its next assignment fetch, and
+    the change takes effect within one assignment interval without anything
+    being restarted.
+    """
+    if not changes:
+        return await get_endpoint(session, endpoint_id)
+    sets = ", ".join(_EDITABLE[k] for k in changes)
+    params: dict[str, Any] = {"id": endpoint_id, **changes}
+    if "addressing" in params:
+        params["addressing"] = json.dumps(params["addressing"])
+    await session.execute(text(f"""
+        UPDATE device_endpoint
+           SET {sets}, updated_at = now()
+         WHERE id = CAST(:id AS uuid)
+    """), params)
+    return await get_endpoint(session, endpoint_id)
+
+
+async def list_credentials(session: AsyncSession) -> list[dict[str, Any]]:
+    """Named credentials for the picker. Hints only - never a secret."""
+    rows = (await session.execute(text("""
+        SELECT c.id::text, c.name, c.protocol::text AS protocol, c.kind,
+               c.secret_hint, c.rotated_at,
+               count(e.id) AS endpoints
+          FROM credential c
+          LEFT JOIN device_endpoint e ON e.credential_id = c.id
+         GROUP BY c.id, c.name, c.protocol, c.kind, c.secret_hint, c.rotated_at
+         ORDER BY c.protocol, c.name
+    """))).mappings().all()
+    return [dict(r) for r in rows]
+
+
+async def list_poll_profiles(session: AsyncSession) -> list[dict[str, Any]]:
+    rows = (await session.execute(text("""
+        SELECT p.id::text, p.name, p.interval_s, p.timeout_ms, p.retries,
+               p.push_enabled, p.metric_groups,
+               count(e.id) AS endpoints
+          FROM poll_profile p
+          LEFT JOIN device_endpoint e ON e.poll_profile_id = p.id
+         GROUP BY p.id, p.name, p.interval_s, p.timeout_ms, p.retries,
+                  p.push_enabled, p.metric_groups
+         ORDER BY p.interval_s, p.name
+    """))).mappings().all()
     return [dict(r) for r in rows]
 
 
@@ -171,3 +272,22 @@ async def list_interfaces(session: AsyncSession, device_id: str) -> list[dict[st
         ORDER BY if_index NULLS LAST, name
     """), {"id": device_id})).mappings().all()
     return [dict(r) for r in rows]
+
+
+async def get_credential(session: AsyncSession, credential_id: str
+                         ) -> dict[str, Any] | None:
+    """Credential metadata for validation. The secret stays where it is."""
+    row = (await session.execute(text("""
+        SELECT id::text, name, protocol::text AS protocol, kind, secret_hint
+          FROM credential WHERE id = CAST(:id AS uuid)
+    """), {"id": credential_id})).mappings().first()
+    return dict(row) if row else None
+
+
+async def get_poll_profile(session: AsyncSession, profile_id: str
+                           ) -> dict[str, Any] | None:
+    row = (await session.execute(text("""
+        SELECT id::text, name, interval_s, timeout_ms, retries, push_enabled
+          FROM poll_profile WHERE id = CAST(:id AS uuid)
+    """), {"id": profile_id})).mappings().first()
+    return dict(row) if row else None

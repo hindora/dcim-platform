@@ -75,6 +75,53 @@ export interface DeviceSummary {
   location: LocationRef;
 }
 
+export interface CredentialSummary {
+  id: string;
+  name: string;
+  protocol: string;
+  kind: string;
+  /** A hint only. The secret never leaves the server. */
+  secret_hint?: string | null;
+  rotated_at?: string | null;
+  endpoints: number;
+}
+
+export interface PollProfileSummary {
+  id: string;
+  name: string;
+  interval_s: number;
+  timeout_ms: number;
+  retries: number;
+  push_enabled: boolean;
+  metric_groups: string[];
+  endpoints: number;
+}
+
+export interface AddressingField {
+  label: string;
+  help?: string;
+  kind?: 'text';
+  min?: number;
+  max?: number;
+}
+
+export interface EndpointOptions {
+  credentials: CredentialSummary[];
+  poll_profiles: PollProfileSummary[];
+  default_ports: Record<string, number>;
+  addressing: Record<string, Record<string, AddressingField>>;
+}
+
+export interface EndpointPatch {
+  address?: string | null;
+  port?: number | null;
+  addressing?: Record<string, string | number>;
+  credential_id?: string | null;
+  poll_profile_id?: string | null;
+  enabled?: boolean;
+  admin_state?: string;
+}
+
 export interface EndpointSummary {
   id: string;
   protocol: string;
@@ -82,7 +129,19 @@ export interface EndpointSummary {
   address?: string | null;
   port?: number | null;
   enabled: boolean;
+  admin_state: string;
+  /** Protocol-specific selectors: a Modbus unit ID, a BACnet device instance.
+   *  Behind a gateway this, not the address, decides which device answers. */
+  addressing: Record<string, string | number>;
+  credential_id?: string | null;
+  credential_name?: string | null;
   credential_hint?: string | null;
+  poll_profile_id?: string | null;
+  poll_profile_name?: string | null;
+  /** Set when the endpoint is reached THROUGH another one - a serial gateway
+   *  or a BACnet router. Its address belongs to the gateway, not to it. */
+  via_endpoint_id?: string | null;
+  via_name?: string | null;
   poll_interval_s?: number | null;
   status: string;
   /** Every poll attempt. Fresh here with a stale last_success = polling and failing. */
@@ -983,6 +1042,21 @@ export const api = {
   },
 
   device: (id: string) => request<DeviceDetail>(`/devices/${id}`),
+
+  deviceEndpoints: (id: string) =>
+    request<EndpointSummary[]>(`/devices/${id}/endpoints`),
+
+  /** Credentials, poll profiles and the addressing fields each protocol
+   *  defines - the same table the server validates against, so the form can
+   *  reject a bad unit ID without a round trip. */
+  endpointOptions: () => request<EndpointOptions>('/devices/endpoint-options'),
+
+  /** Only the fields the operator touched. Absent means "leave alone"; null is
+   *  a real value - a null port follows the protocol default. */
+  updateEndpoint: (deviceId: string, endpointId: string, patch: EndpointPatch) =>
+    request<EndpointSummary>(`/devices/${deviceId}/endpoints/${endpointId}`, {
+      method: 'PATCH', body: JSON.stringify(patch),
+    }),
 
   deviceState: (id: string) => request<DeviceState>(`/devices/${id}/state`),
 

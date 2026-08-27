@@ -437,3 +437,35 @@ button.primary { background: var(--accent-dim); border-color: var(--accent); }
 }
 .table-scroll::-webkit-scrollbar-corner,
 .estate-scroll::-webkit-scrollbar-corner { background: transparent; }
+
+/* ---------------------------------------------------------------- edit sheet
+ *
+ * A narrower sheet for editing one thing, rather than the full-window work
+ * surface the estate panels use. Same furniture (scrim, head, body, foot) so
+ * the two read as one pattern; the width is the difference, because a form
+ * with six fields stretched across a 4K monitor is unreadable in a way a table
+ * of two hundred rows is not.
+ */
+.sheet.narrow { max-width: 720px; margin: 0 auto; height: auto; max-height: 88vh; }
+.sheet.narrow .sheet-foot {
+  padding: 14px 34px 20px; margin-top: 0; flex: none;
+  border-top: 1px solid var(--border);
+}
+.sheet-foot .spacer { flex: 1; }
+
+.form-grid { display: grid; gap: 18px; }
+.form-grid label { display: grid; gap: 5px; }
+.form-grid label > span {
+  font-size: 12px; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--text-muted);
+}
+.form-grid input:disabled, .form-grid select:disabled {
+  opacity: .55; cursor: not-allowed;
+}
+/* The line under a field carries the reason it has a range at all - a unit ID
+   stops at 247 because 248-255 are reserved, not because someone chose it.
+   That belongs beside the input, not in documentation nobody opens. */
+.form-grid .hint {
+  font-style: normal; font-size: 12px; color: var(--text-faint); max-width: 62ch;
+}
+.form-grid .hint.bad { color: var(--critical); }
