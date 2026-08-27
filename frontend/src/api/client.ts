@@ -103,11 +103,16 @@ export interface PollProfileSummary {
 export interface ConfigField {
   key: string;
   label: string;
+  /** One short line, always on screen. */
+  help: string;
+  /** The reasoning - why a limit is where it is, what breaks if it is wrong.
+   *  Read once by whoever decides to touch a setting, so it lives in a tooltip
+   *  rather than on the page. */
+  detail?: string;
   /** 'int' | 'seconds' | 'bool' | 'text' | 'listen' */
   kind: string;
   /** 'live' applies without a restart; 'restart' is stored until the next one. */
   when: 'live' | 'restart';
-  help: string;
   min?: number;
   max?: number;
 }

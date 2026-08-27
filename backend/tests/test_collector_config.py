@@ -128,6 +128,13 @@ def test_the_schema_travels_with_the_data():
         for field in section["fields"]:
             assert field["when"] in (cfg.LIVE, cfg.ON_RESTART)
             assert field["help"], f"{section['key']}.{field['key']} has no help"
+            # One line, because it is on screen permanently and next to
+            # thirty others. The reasoning goes in `detail`, which is a
+            # hover away - read once, by whoever decides to touch the
+            # setting, rather than every time by everyone.
+            assert len(field["help"]) <= 70, (
+                f"{section['key']}.{field['key']} help is "
+                f"{len(field['help'])} chars: move the reasoning to detail")
 
 
 def test_the_listeners_are_marked_as_dangerous():

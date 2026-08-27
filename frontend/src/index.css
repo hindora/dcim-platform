@@ -556,3 +556,12 @@ button.primary { background: var(--accent-dim); border-color: var(--accent); }
    the first version of this page managed to show nothing at all. */
 .form-grid .tag.set  { color: var(--accent); border-color: var(--accent); }
 .form-grid .tag.from { color: var(--text-faint); }
+
+/* A field whose reasoning is a hover away. Small and quiet: it is an offer,
+   not an instruction, and the line it sits on has already said the useful
+   half. */
+.form-grid .why {
+  display: inline-block; margin-left: 4px; padding: 0 4px; border-radius: 2px;
+  border: 1px solid var(--border); color: var(--text-faint);
+  font-size: 10px; cursor: help;
+}

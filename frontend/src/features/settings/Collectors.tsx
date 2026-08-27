@@ -35,12 +35,13 @@ export function Collectors() {
     <div className="stack">
       <div>
         <h2>Collectors</h2>
-        <p className="subtitle">
-          Which protocol planes each collector runs, how hard it polls them, and
-          where its inbound listeners sit. Its identity, this platform's address
-          and its token stay in the file on the collector host — breaking the
-          path to the control plane from the control plane is not a repair
-          anybody can do from here.
+        <p className="subtitle"
+           title="A collector's identity, this platform's address and its token
+                  stay in the file on its own host. Breaking the path to the
+                  control plane from the control plane is not a repair anybody
+                  can do from here.">
+          Which planes each collector runs, how hard it polls, and where it
+          listens.
         </p>
       </div>
 
@@ -166,12 +167,11 @@ function ConfigSheet({ row, sections, onClose }: {
         <header className="sheet-head">
           <div>
             <h2>{row.id}</h2>
-            <p>
+            <p title="An empty field is inherited from the collector's own
+                      file, which is how a default that changes in a release
+                      reaches every collector that never overrode it.">
               {row.hostname ? `${row.hostname} · ` : ''}
-              Every field shows the value in force. An empty one is inherited
-              from the collector's own file — which is how a default that
-              changes in a release reaches every collector that never overrode
-              it. Clear a field to go back to inheriting.
+              Every field shows the value in force. Clear one to inherit.
             </p>
           </div>
           <button className="close" onClick={onClose} aria-label="Close">✕</button>
@@ -296,7 +296,9 @@ function Field({ field, value, effective, onChange }: {
           <option value="true">On</option>
           <option value="false">Off</option>
         </select>
-        <em className="hint">{field.help}</em>
+        <em className="hint" title={field.detail || undefined}>
+          {field.help}{field.detail ? <span className="why"> ?</span> : null}
+        </em>
       </label>
     );
   }
@@ -314,12 +316,12 @@ function Field({ field, value, effective, onChange }: {
                e.target.value === '' ? undefined
                  : field.kind === 'int' || field.kind === 'seconds'
                    ? Number(e.target.value) : e.target.value)} />
-      <em className="hint">
+      <em className="hint" title={field.detail || undefined}>
         {overridden && known && String(effective) !== String(value) ? (
           <strong>Running: {shown}{field.kind === 'seconds' ? 's' : ''}. </strong>
         ) : null}
         {field.help}
-        {field.kind === 'seconds' && ' Seconds.'}
+        {field.detail ? <span className="why"> ?</span> : null}
       </em>
     </label>
   );
