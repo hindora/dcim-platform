@@ -99,3 +99,14 @@ export function statusClass(status: string): string {
       return 'unknown';
   }
 }
+
+/** Collapse a multi-line string into one line.
+ *
+ *  A JSX attribute written across several source lines keeps every newline and
+ *  every space of indentation, and a tooltip is one of the few places that
+ *  shows them: the reader gets a ragged block with a dozen spaces down its left
+ *  edge. The text wants wrapping in the source and not in the bubble.
+ */
+export function oneLine(text: string): string {
+  return text.replace(/\s+/g, ' ').trim();
+}

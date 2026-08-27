@@ -8,7 +8,7 @@ import {
   type ConfigField,
   type ConfigSection,
 } from '../../api/client';
-import { relativeTime } from '../../lib/format';
+import { oneLine, relativeTime } from '../../lib/format';
 
 /** What each collector is running, and what it has been told to run.
  *
@@ -36,10 +36,10 @@ export function Collectors() {
       <div>
         <h2>Collectors</h2>
         <p className="subtitle"
-           title="A collector's identity, this platform's address and its token
-                  stay in the file on its own host. Breaking the path to the
-                  control plane from the control plane is not a repair anybody
-                  can do from here.">
+           title={oneLine(`A collector's identity, this platform's address and
+                  its token stay in the file on its own host. Breaking the path
+                  to the control plane from the control plane is not a repair
+                  anybody can do from here.`)}>
           Which planes each collector runs, how hard it polls, and where it
           listens.
         </p>
@@ -106,8 +106,9 @@ function ConfigState({ row }: { row: CollectorRow }) {
   }
   if (row.restart_pending) {
     return (
-      <span className="warn" title="Saved, and waiting for a restart: adapters
-        read their concurrency, timeouts and ports once, when they are built.">
+      <span className="warn" title={oneLine(`Saved, and waiting for a restart:
+        adapters read their concurrency, timeouts and ports once, when they are
+        built.`)}>
         restart pending
       </span>
     );
@@ -171,9 +172,9 @@ function ConfigSheet({ row, sections, onClose }: {
         <header className="sheet-head">
           <div>
             <h2>{row.id}</h2>
-            <p title="Fields you do not change stay inherited from the
-                      collector's own file, so a default that improves in a
-                      release still reaches it.">
+            <p title={oneLine(`Fields you do not change stay inherited from
+                      the collector's own file, so a default that improves in a
+                      release still reaches it.`)}>
               {row.hostname ? `${row.hostname} · ` : ''}
               Every field shows the value in force.
             </p>
@@ -302,7 +303,7 @@ function Field({ field, value, effective, onChange }: {
           <option value="true">On</option>
           <option value="false">Off</option>
         </select>
-        <em className="hint" title={tip}>
+        <em className="hint" title={oneLine(tip)}>
           {field.help}{tip ? <span className="why"> ?</span> : null}
         </em>
       </label>
@@ -319,7 +320,7 @@ function Field({ field, value, effective, onChange }: {
                e.target.value === '' ? undefined
                  : field.kind === 'int' || field.kind === 'seconds'
                    ? Number(e.target.value) : e.target.value)} />
-      <em className="hint" title={tip}>
+      <em className="hint" title={oneLine(tip)}>
         {field.help}{tip ? <span className="why"> ?</span> : null}
       </em>
     </label>

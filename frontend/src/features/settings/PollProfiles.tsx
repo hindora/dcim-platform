@@ -8,6 +8,7 @@ import {
   type PollProfilesPage,
   type ProfileUsage,
 } from '../../api/client';
+import { oneLine } from '../../lib/format';
 
 /** Poll profiles: how often each endpoint is asked, and for what.
  *
@@ -192,10 +193,8 @@ function ProfileSheet({
             <h2>{isNew ? 'New poll profile' : profile!.name}</h2>
             <p>
               {isNew
-                ? 'Nothing follows a new profile until endpoints are moved onto '
-                  + 'it, one at a time, from a device page.'
-                : 'Every endpoint that follows this profile changes with it, on '
-                  + "each collector's next assignment fetch."}
+                ? 'Nothing follows a new profile until endpoints are moved onto it.'
+                : "Every endpoint that follows this profile changes with it."}
             </p>
           </div>
           <button className="close" onClick={onClose} aria-label="Close">✕</button>
@@ -222,89 +221,105 @@ function ProfileSheet({
             </div>
           )}
 
-          <div className="form-grid">
-            <label>
-              <span>Name</span>
-              <input value={form.name} disabled={!isNew}
-                     onChange={(e) => set('name', e.target.value)}
-                     placeholder="snmp-edge-300s" />
-              <em className={errors.name ? 'hint bad' : 'hint'}>
-                {errors.name ?? (isNew
-                  ? 'Lowercase letters, digits and hyphens. Convention here is '
-                    + 'protocol-purpose-interval.'
-                  : 'A profile cannot be renamed: the importer selects profiles '
-                    + 'by name, so a rename would send the next import to a '
-                    + 'different profile without failing.')}
-              </em>
-            </label>
+          <fieldset className="proto">
+            <legend>Identity</legend>
+            <div className="form-grid">
+              <label>
+                <span>Name</span>
+                <input value={form.name} disabled={!isNew}
+                       onChange={(e) => set('name', e.target.value)}
+                       placeholder="snmp-edge-300s" />
+                <Hint error={errors.name}
+                      help={isNew
+                        ? 'Lowercase, digits and hyphens.'
+                        : 'A profile cannot be renamed.'}
+                      detail={isNew
+                        ? 'Convention here is protocol-purpose-interval, so a '
+                          + 'reader can tell what a profile is for from the '
+                          + 'endpoint list alone.'
+                        : 'app/importer/endpoints.py selects profiles by name, '
+                          + 'so a rename would send the next import to a '
+                          + 'different profile without failing. Create a new '
+                          + 'one and move the endpoints.'} />
+              </label>
+            </div>
+          </fieldset>
 
-            <label className="switch">
-              <span>Device pushes on its own schedule</span>
-              <input type="checkbox" checked={form.push_enabled}
-                     onChange={(e) => {
-                       set('push_enabled', e.target.checked);
-                       if (e.target.checked) set('interval_s', '0');
-                     }} />
-              <em className="hint">
-                For gNMI subscriptions and Redfish events. A pushed endpoint is
-                never also polled — the duplicate samples would be
-                indistinguishable from real ones.
-              </em>
-            </label>
+          <fieldset className="proto">
+            <legend>Schedule</legend>
+            <div className="form-grid">
+              <label className="switch">
+                <span>Device pushes on its own schedule</span>
+                <input type="checkbox" checked={form.push_enabled}
+                       onChange={(e) => {
+                         set('push_enabled', e.target.checked);
+                         if (e.target.checked) set('interval_s', '0');
+                       }} />
+                <Hint help="For gNMI subscriptions and Redfish events."
+                      detail="A pushed endpoint is never also polled - the
+                              duplicate samples would be indistinguishable from
+                              real ones." />
+              </label>
 
-            <label>
-              <span>Interval</span>
-              <input value={form.interval_s} inputMode="numeric"
-                     disabled={pushed}
-                     onChange={(e) => set('interval_s', e.target.value)} />
-              <em className={errors.interval_s ? 'hint bad' : 'hint'}>
-                {errors.interval_s ?? (pushed
-                  ? 'Nothing is scheduled; the device decides when to send.'
-                  : `Seconds between polls, ${limits.min_interval_s} at the `
-                    + 'fastest. Multiplied by every endpoint that follows this '
-                    + 'profile.')}
-              </em>
-            </label>
+              <label>
+                <span>Interval</span>
+                <input value={form.interval_s} inputMode="numeric"
+                       disabled={pushed}
+                       onChange={(e) => set('interval_s', e.target.value)} />
+                <Hint error={errors.interval_s}
+                      help={pushed
+                        ? 'The device decides when to send.'
+                        : `Seconds between polls, ${limits.min_interval_s} at the fastest.`}
+                      detail={pushed ? '' : 'Multiplied by every endpoint that '
+                        + 'follows this profile, so a number typed here reaches '
+                        + 'a network hundreds of times over.'} />
+              </label>
 
-            <label>
-              <span>Timeout</span>
-              <input value={form.timeout_ms} inputMode="numeric"
-                     onChange={(e) => set('timeout_ms', e.target.value)} />
-              <em className={errors.timeout_ms ? 'hint bad' : 'hint'}>
-                {errors.timeout_ms
-                  ?? 'Milliseconds to wait for one answer. Gear behind a serial '
-                     + 'gateway genuinely needs seconds, not milliseconds.'}
-              </em>
-            </label>
+              <label>
+                <span>Timeout</span>
+                <input value={form.timeout_ms} inputMode="numeric"
+                       onChange={(e) => set('timeout_ms', e.target.value)} />
+                <Hint error={errors.timeout_ms}
+                      help="Milliseconds to wait for one answer."
+                      detail="Gear behind a serial gateway genuinely needs
+                              seconds, not milliseconds: the gateway forwards
+                              one transaction at a time." />
+              </label>
 
-            <label>
-              <span>Retries</span>
-              <input value={form.retries} inputMode="numeric"
-                     onChange={(e) => set('retries', e.target.value)} />
-              <em className={errors.retries ? 'hint bad' : 'hint'}>
-                {errors.retries ?? worstCase(form)}
-              </em>
-            </label>
+              <label>
+                <span>Retries</span>
+                <input value={form.retries} inputMode="numeric"
+                       onChange={(e) => set('retries', e.target.value)} />
+                <Hint error={errors.retries} help={worstCase(form)}
+                      detail="(retries + 1) x timeout is how long one endpoint
+                              can hold a worker. Longer than the interval and
+                              the next cycle starts before the last gave up." />
+              </label>
+            </div>
+          </fieldset>
 
-            <label>
-              <span>Metric groups</span>
-              <div className="checks">
-                {groups.map((g) => (
-                  <label key={g} className="check">
-                    <input type="checkbox" checked={form.metric_groups.has(g)}
-                           onChange={() => toggleGroup(g)} />
-                    <span className="mono">{g}</span>
-                  </label>
-                ))}
-              </div>
-              <em className="hint">
-                Read by the SNMP adapter only — gNMI, BACnet and Modbus select
-                what to read from their own mapping files, so these do nothing
-                on a profile used by them. An SNMP profile with none selected
-                collects nothing at all.
-              </em>
-            </label>
-          </div>
+          <fieldset className="proto">
+            <legend>What it collects</legend>
+            <div className="form-grid">
+              <label>
+                <span>Metric groups</span>
+                <div className="checks">
+                  {groups.map((g) => (
+                    <label key={g} className="check">
+                      <input type="checkbox" checked={form.metric_groups.has(g)}
+                             onChange={() => toggleGroup(g)} />
+                      <span className="mono">{g}</span>
+                    </label>
+                  ))}
+                </div>
+                <Hint help="Read by the SNMP adapter only."
+                      detail="gNMI, BACnet and Modbus select what to read from
+                              their own mapping files, so these do nothing on a
+                              profile used by them. An SNMP profile with none
+                              selected collects nothing at all." />
+              </label>
+            </div>
+          </fieldset>
         </div>
 
         <div className="sheet-foot">
@@ -325,6 +340,23 @@ function ProfileSheet({
         </div>
       </section>
     </div>
+  );
+}
+
+/** One short line under a field, with the reasoning behind a hover.
+ *
+ *  An error replaces the line rather than joining it: when something is wrong,
+ *  what is wrong is the only thing worth reading. */
+function Hint({ help, detail, error }: {
+  help: string;
+  detail?: string;
+  error?: string;
+}) {
+  if (error) return <em className="hint bad">{error}</em>;
+  return (
+    <em className="hint" title={detail ? oneLine(detail) : undefined}>
+      {help}{detail ? <span className="why"> ?</span> : null}
+    </em>
   );
 }
 
@@ -373,8 +405,7 @@ function validate(form: Form, limits: PollProfilesPage['limits']) {
 function worstCase(form: Form): string {
   const worst = (Number(form.retries) + 1) * Number(form.timeout_ms);
   if (!Number.isFinite(worst)) return 'Attempts after the first.';
-  return `Attempts after the first. Worst case ${(worst / 1000).toFixed(1)}s `
-    + 'before the endpoint is called failed.';
+  return `Attempts after the first. Worst case ${(worst / 1000).toFixed(1)}s.`;
 }
 
 function body(form: Form, creating: boolean): PollProfileBody {
