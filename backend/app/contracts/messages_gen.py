@@ -159,6 +159,9 @@ class Event(_Msg):
     varbinds: dict[str, str] = field(default_factory=dict)
     raw_identifier: str = ""
     dedup_key: str = ""
+    metric: str = ""
+    value: float = 0.0
+    threshold: float = 0.0
 
 
 @dataclass(slots=True)

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -185,6 +186,18 @@ func (t *TrapReceiver) handle(ctx context.Context, p *g.SnmpPacket,
 		ev.Severity = severityFromName(def.Severity)
 		ev.IsClear = def.IsClear
 		ev.Message = describe(def, trapOID)
+		// The measurement the notification arrived with, when it has one. The
+		// alarm it raises can then be checked against polled telemetry later,
+		// which is the only way a lost recovery trap ever resolves itself.
+		if def.Metric != "" {
+			ev.Metric = def.Metric
+			if v, ok := varbindFloat(varbinds, def.ValueVarbind); ok {
+				ev.Value = v
+			}
+			if t, ok := varbindFloat(varbinds, def.ThresholdVarbind); ok {
+				ev.Threshold = t
+			}
+		}
 		if def.InstanceFromVarbind != "" {
 			if v, ok := varbinds[def.InstanceFromVarbind]; ok {
 				ev.Instance = v
@@ -279,6 +292,25 @@ func severityFromName(name string) models.Severity {
 // The vendor's own words when the mapping carries them, the event type when it
 // does not. The OID is not lost - it rides on the event as raw_identifier,
 // which is where something automated would look for it anyway.
+// varbindFloat reads a numeric varbind, tolerating the leading dot some
+// agents send and the empty name of a mapping that declares no varbind.
+func varbindFloat(varbinds map[string]string, oid string) (float64, bool) {
+	if oid == "" {
+		return 0, false
+	}
+	raw, ok := varbinds[strings.TrimPrefix(oid, ".")]
+	if !ok {
+		if raw, ok = varbinds[oid]; !ok {
+			return 0, false
+		}
+	}
+	v, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
+	if err != nil {
+		return 0, false
+	}
+	return v, true
+}
+
 func describe(def mapping.TrapDef, oid string) string {
 	what := def.DisplayName
 	if what == "" {

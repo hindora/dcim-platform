@@ -183,3 +183,63 @@ def test_the_windows_are_arguments_rather_than_literals(fn, params):
     """So a deployment with slower gear can widen them without a code change."""
     sig = inspect.signature(getattr(reconcile, fn))
     assert params <= set(sig.parameters)
+
+
+# ------------------------------------------- the threshold the device declared
+
+
+def test_the_devices_own_threshold_is_used_when_no_rule_has_one():
+    """The case that started all of this.
+
+    A server's CPU has no rule, deliberately - a busy server is not a fault -
+    so before this the platform could only resolve a CPU trap with another trap
+    or with a timer. The trap said "93, limit 90" and both numbers were thrown
+    away on the way in.
+    """
+    s = sql("_MEASURED_CLEAR")
+    assert "coalesce(r.metric_key, a.metric_key)" in s
+    assert "a.threshold * (1 - :margin)" in s
+
+
+def test_a_rule_still_wins_when_it_has_an_opinion():
+    """An operator tuned that number and thought about hysteresis; a margin
+    invented here has done neither."""
+    s = sql("_MEASURED_CLEAR")
+    assert "coalesce(r.clear_threshold," in s
+    head = s[s.index("coalesce(r.clear_threshold,"):][:120]
+    assert head.index("r.clear_threshold") < head.index("a.threshold")
+
+
+def test_something_must_name_both_a_metric_and_a_limit():
+    """Half a measurement cannot contest anything."""
+    s = sql("_MEASURED_CLEAR")
+    assert "coalesce(r.metric_key, a.metric_key) IS NOT NULL" in s
+    assert "r.clear_threshold IS NOT NULL OR a.threshold IS NOT NULL" in s
+
+
+def test_the_margin_is_a_stand_in_for_hysteresis_not_a_free_pass():
+    """Clearing the instant a reading dips under its own threshold would flap
+    the alarm on a value hovering at the line."""
+    assert 0 < reconcile.CLEAR_MARGIN < 0.2
+
+
+def test_the_timer_only_gets_what_nothing_can_measure():
+    """Once an alarm carries a metric, the reading decides - not the clock.
+
+    Leaving the timer able to reach measurable alarms would let it close one
+    early, on silence, when the measurement was about to disagree.
+    """
+    assert "a.metric_key IS NULL" in sql("_AGED_OUT")
+
+
+def test_the_reason_says_whose_threshold_was_used():
+    """An operator reading the history should not have to guess whether the
+    number came from their rule or from the device."""
+    from_rule = reconcile.measured_reason(
+        {"metric_key": "cpu_utilization", "worst": 52.0,
+         "clear_threshold": 70.0, "from_rule": True})
+    from_device = reconcile.measured_reason(
+        {"metric_key": "cpu_utilization", "worst": 52.0,
+         "clear_threshold": 85.5, "from_rule": False})
+    assert "rule's" in from_rule
+    assert "device's own" in from_device

@@ -192,6 +192,9 @@ type Event struct {
 	Varbinds       map[string]string `msgpack:"varbinds,omitempty" json:"varbinds,omitempty"`
 	RawIdentifier  string            `msgpack:"raw_identifier,omitempty" json:"raw_identifier,omitempty"` // trap OID / Redfish MessageId / BACnet object ref
 	DedupKey       string            `msgpack:"dedup_key,omitempty" json:"dedup_key,omitempty"`
+	Metric         string            `msgpack:"metric,omitempty" json:"metric,omitempty"`       // metric key the notification is about, if any
+	Value          float64           `msgpack:"value,omitempty" json:"value,omitempty"`         // the reading the device reported
+	Threshold      float64           `msgpack:"threshold,omitempty" json:"threshold,omitempty"` // the limit the device says it crossed
 }
 
 type EventBatch struct {

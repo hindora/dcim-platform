@@ -53,6 +53,16 @@ log = get_logger("alarms.reconcile")
 #: has a first one, and the two would race.
 RECONCILABLE_SOURCES = ("snmp_trap", "state")
 
+#: How far below its own threshold a reading must fall to count as recovered,
+#: when the trap declared a threshold but no rule offers a clear point.
+#:
+#: A device says "I crossed 90". Clearing the moment it reads 89.9 would flap
+#: the alarm open and shut on a CPU hovering at the line, which is what a
+#: rule's clear threshold exists to prevent - so where no rule states one, 5%
+#: of the threshold stands in for it. It is a guess, and a rule's own number is
+#: always preferred when there is one.
+CLEAR_MARGIN = 0.05
+
 #: How long a trap alarm may go un-re-asserted before it is aged out, when no
 #: rule can contest it.
 #:
@@ -72,35 +82,52 @@ SEEING_IT_S = 660
 
 # The measurement contradicts the alarm.
 #
-# The LAST `need` samples, not every sample in the window. Taking the extreme
-# over half an hour sounds safer and is not: the readings that raised the alarm
-# are in that half hour too, so the alarm would sit open until they aged out of
-# it - thirty minutes after the condition ended, which is barely better than
-# never noticing. The clear dwell already says how much evidence a clear needs;
-# this uses exactly that, taken from the newest end.
+# The threshold comes from whichever source has the better claim to it:
 #
-# The window is still there as an outer bound, so a device that fell silent an
-# hour ago cannot have its alarm cleared by whatever it last said.
+#   a RULE covering this metric on this device type, whose clear_threshold an
+#   operator chose, with hysteresis already thought about;
+#
+#   otherwise the alarm's own threshold - the number the DEVICE declared when
+#   it raised the trap - with a margin standing in for the hysteresis nobody
+#   configured.
+#
+# The second half is what makes this work at all for the case that started it:
+# a server's CPU has no rule, deliberately, because a busy server is not a
+# fault. Before this, that meant a CPU trap could only be resolved by another
+# trap or by a timer. The trap said "93, limit 90" and the platform threw both
+# numbers away.
+#
+# The LAST `need` samples, not every sample in the window: the readings that
+# raised the alarm are in the window too, so taking the extreme over all of it
+# would hold the alarm until they aged out.
 _MEASURED_CLEAR = text("""
     WITH candidate AS (
         SELECT a.id, a.device_id, a.alarm_type, a.severity::text AS severity,
                d.name AS device_name,
-               r.metric_key, r.operator, r.clear_threshold,
-               GREATEST(coalesce(r.clear_dwell_samples, 2), 2) AS need
+               coalesce(r.metric_key, a.metric_key)   AS metric_key,
+               coalesce(r.operator, '>')              AS operator,
+               coalesce(r.clear_threshold,
+                        a.threshold * (1 - :margin))  AS clear_threshold,
+               GREATEST(coalesce(r.clear_dwell_samples, 2), 2) AS need,
+               (r.id IS NOT NULL)                     AS from_rule
           FROM alarm a
-          JOIN device d      ON d.id = a.device_id
-          JOIN alarm_rule r  ON r.alarm_type = a.alarm_type
-                            AND r.enabled
-                            AND r.metric_key IS NOT NULL
-                            AND r.clear_threshold IS NOT NULL
-                            AND r.operator IN ('>', '<')
-                            AND (cardinality(r.device_types) = 0
-                              OR d.device_type = ANY(r.device_types))
+          JOIN device d ON d.id = a.device_id
+          LEFT JOIN alarm_rule r ON r.alarm_type = a.alarm_type
+                                AND r.enabled
+                                AND r.metric_key IS NOT NULL
+                                AND r.clear_threshold IS NOT NULL
+                                AND r.operator IN ('>', '<')
+                                AND (cardinality(r.device_types) = 0
+                                  OR d.device_type = ANY(r.device_types))
          WHERE a.state <> 'CLEARED'
            AND a.source = ANY(:sources)
+           -- Something has to name the measurement, and something has to name
+           -- a limit. A bare link_down has neither and is left to the timer.
+           AND coalesce(r.metric_key, a.metric_key) IS NOT NULL
+           AND (r.clear_threshold IS NOT NULL OR a.threshold IS NOT NULL)
     ), ranked AS (
         SELECT c.id, c.device_id, c.device_name, c.alarm_type, c.severity,
-               c.metric_key, c.operator, c.clear_threshold, c.need,
+               c.metric_key, c.operator, c.clear_threshold, c.need, c.from_rule,
                t.value,
                row_number() OVER (PARTITION BY c.id ORDER BY t.ts DESC) AS rn
           FROM candidate c
@@ -110,17 +137,17 @@ _MEASURED_CLEAR = text("""
                                  AND t.ts > now() - make_interval(secs => :window_s)
     ), tail AS (
         SELECT id, device_id, device_name, alarm_type, severity, metric_key,
-               operator, clear_threshold, need,
-               count(*)     AS samples,
-               max(value)   AS hi,
-               min(value)   AS lo
+               operator, clear_threshold, need, from_rule,
+               count(*)   AS samples,
+               max(value) AS hi,
+               min(value) AS lo
           FROM ranked
          WHERE rn <= need
          GROUP BY id, device_id, device_name, alarm_type, severity, metric_key,
-                  operator, clear_threshold, need
+                  operator, clear_threshold, need, from_rule
     )
     SELECT id::text AS id, device_id::text AS device_id, device_name,
-           alarm_type, severity, metric_key,
+           alarm_type, severity, metric_key, from_rule,
            CASE WHEN operator = '>' THEN hi ELSE lo END AS worst,
            clear_threshold
       FROM tail
@@ -141,8 +168,15 @@ _AGED_OUT = text("""
          WHERE a.state <> 'CLEARED'
            AND a.source = ANY(:sources)
            AND a.last_seen < now() - make_interval(secs => :grace_s)
-           -- Not the ones a rule can speak for: those are decided by the
-           -- measurement above, and ageing them out would pre-empt it.
+           -- Only what nothing can MEASURE. An alarm that names a metric -
+           -- from its rule or from the trap's own varbinds - is decided by
+           -- the reading above, and ageing it out on a timer would pre-empt
+           -- the better answer.
+           --
+           -- What is left is the genuinely unverifiable: a bare link_down, a
+           -- state trap with no number attached. The timer is the last resort
+           -- it was always meant to be, rather than the ordinary path.
+           AND a.metric_key IS NULL
            AND NOT EXISTS (
                SELECT 1 FROM alarm_rule r
                 WHERE r.alarm_type = a.alarm_type
@@ -167,11 +201,12 @@ _AGED_OUT = text("""
 """)
 
 
-async def measured_clear(session: AsyncSession, *,
-                         window_s: int = 1800) -> list[dict[str, Any]]:
+async def measured_clear(session: AsyncSession, *, window_s: int = 1800,
+                         margin: float = CLEAR_MARGIN) -> list[dict[str, Any]]:
     """Alarms whose own metric has been in the clear band long enough."""
     rows = (await session.execute(_MEASURED_CLEAR, {
         "sources": list(RECONCILABLE_SOURCES), "window_s": window_s,
+        "margin": margin,
     })).mappings().all()
     return [dict(r) for r in rows]
 
@@ -188,7 +223,8 @@ async def aged_out(session: AsyncSession, *,
 
 
 def measured_reason(row: dict[str, Any]) -> str:
-    return (f"{row['metric_key']} has been past its clear point "
+    whose = "the rule's" if row.get("from_rule") else "the device's own"
+    return (f"{row['metric_key']} is back past {whose} clear point "
             f"({round(float(row['worst']), 1)} against "
             f"{round(float(row['clear_threshold']), 1)}) and no clear arrived")
 

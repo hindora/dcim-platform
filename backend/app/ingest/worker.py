@@ -552,6 +552,13 @@ class IngestWorker:
                     "source": "snmp_trap",
                     "varbinds": dict(e.varbinds),
                     "dedup_key": e.dedup_key,
+                    # What the notification measured, when it says so. This is
+                    # what lets a trap-raised alarm be checked against polled
+                    # telemetry later instead of waiting for a recovery trap
+                    # that may never arrive.
+                    "metric": e.metric or None,
+                    "value": e.value if e.metric else None,
+                    "threshold": e.threshold if e.metric else None,
                 }
                 rows.append(event_row(payload))
                 action = await self.alarms.handle_event(session, payload)

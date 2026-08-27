@@ -45,6 +45,21 @@ type TrapDef struct {
 	// upper critical" is the critical one - on the same OID, from the same
 	// PDU. One condition would resolve half of that.
 	MatchVarbinds []VarbindMatch `yaml:"match_varbinds"`
+	// Metric names what this notification measured, and ValueVarbind /
+	// ThresholdVarbind say which varbinds carry the reading and the limit.
+	//
+	// A threshold trap nearly always ships both: Cisco sends
+	// cpmCPUTotal5minRev beside its rising threshold, this plane sends its
+	// reading and limit in adjacent enterprise varbinds, Raritan sends the
+	// sensor value. Carrying them through is what lets an alarm raised by a
+	// notification be VERIFIED later against polled telemetry - and what puts
+	// a number in front of an operator instead of a bare condition name.
+	//
+	// All three are empty for a notification that measures nothing, which is
+	// most state traps: a link is down or it is not.
+	Metric           string `yaml:"metric"`
+	ValueVarbind     string `yaml:"value_varbind"`
+	ThresholdVarbind string `yaml:"threshold_varbind"`
 	// DisplayName is what the vendor calls this condition, in words. Used for
 	// the message a person reads; the OID stays on the event as
 	// raw_identifier, where a machine can still find it.

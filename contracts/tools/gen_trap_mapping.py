@@ -199,17 +199,53 @@ def main() -> int:
     display_names = {t.value: (d.display_name or "")
                      for t, d in TRAP_DEFINITIONS.items()}
 
-    def entry_for(name: str, declared: str) -> dict:
+    # What each notification MEASURES, and where it puts the numbers.
+    #
+    # Read off the plane's own varbind builder rather than guessed. A threshold
+    # trap nearly always ships the reading and the line it crossed - this plane
+    # uses adjacent enterprise varbinds, Cisco ships cpmCPUTotal5minRev beside
+    # its rising threshold - and carrying them through is what lets an alarm
+    # raised by a notification be verified later against polled telemetry.
+    #
+    # Without it a lost recovery trap can only be resolved by a timer, and the
+    # alarm reaches an operator with no number on it at all.
+    _V = "1.3.6.1.4.1.99999.2"
+    MEASURES = {
+        "cpuHighUsage":   ("cpu_utilization", f"{_V}.1", f"{_V}.5"),
+        "cpuSustained":   ("cpu_utilization", f"{_V}.1", f"{_V}.5"),
+        "cpuNormal":      ("cpu_utilization", f"{_V}.1", f"{_V}.5"),
+        "memoryHighUsage": ("memory_utilization", f"{_V}.2", f"{_V}.6"),
+        "memoryNormal":   ("memory_utilization", f"{_V}.2", f"{_V}.6"),
+        "cpuTempCritical": ("cpu_temperature", f"{_V}.3", f"{_V}.7"),
+        "temperatureAlert": ("cpu_temperature", f"{_V}.3", f"{_V}.7"),
+        "temperatureNormal": ("cpu_temperature", f"{_V}.3", f"{_V}.7"),
+        "sensorAmbientTempHigh": ("ambient_temperature", f"{_V}.3", f"{_V}.7"),
+        "sensorAmbientTempCritical": ("ambient_temperature", f"{_V}.3", f"{_V}.7"),
+        "sensorAmbientTempNormal": ("ambient_temperature", f"{_V}.3", f"{_V}.7"),
+        # Cisco puts the same two numbers on its own objects.
+        "_cisco_cpu": ("cpu_utilization", CISCO["cpu5min"], CISCO["cpuRisingThresh"]),
+    }
+
+    def measurement(name: str, vendor: str) -> tuple[str, str, str] | None:
+        if vendor == "cisco" and name in ("cpuHighUsage", "cpuSustained",
+                                          "cpuNormal"):
+            return MEASURES["_cisco_cpu"]
+        return MEASURES.get(name)
+
+    def entry_for(name: str, declared: str, vendor: str = "synthetic") -> dict:
         if name in CLEAR_PAIRS:
             targets = [event_type_for(r) for r in CLEAR_PAIRS[name]]
+            m = measurement(name, vendor)
             return {"event_type": targets[0], "severity": "CLEAR",
                     "is_clear": True, "clears": targets, "name": name,
                     "display_name": display_names.get(name, ""),
+                    "measures": m,
                     "device_types": sorted(device_types_for.get(name, ()))}
         return {"event_type": event_type_for(name),
                 "severity": SEVERITY_MAP.get(declared, "MINOR"),
                 "is_clear": False, "clears": [], "name": name,
                 "display_name": display_names.get(name, ""),
+                "measures": measurement(name, vendor),
                 "device_types": sorted(device_types_for.get(name, ()))}
 
     by_oid: dict[str, list[dict]] = defaultdict(list)
@@ -279,7 +315,7 @@ def main() -> int:
             defn = TRAP_DEFINITIONS.get(trap)
             if defn is None:
                 continue
-            e = entry_for(trap.value, defn.severity)
+            e = entry_for(trap.value, defn.severity, vendor)
             e["vendor"] = vendor
             e["match_varbind"] = varbind_match(vendor, trap, defn)
             by_oid[oid].append(e)
@@ -341,6 +377,7 @@ def main() -> int:
                 "clears": [cleared], "name": rule.rule_name, "vendor": "rule",
                 "display_name": snake(rule.rule_name).replace("_", " ").capitalize(),
                 "device_types": sorted(set(target.device_types or ())),
+                "measures": None,
             })
             continue
         by_oid[rule.trap_oid].append({
@@ -350,6 +387,7 @@ def main() -> int:
             "name": rule.rule_name, "vendor": "rule",
             "display_name": snake(rule.rule_name).replace("_", " ").capitalize(),
             "device_types": sorted(set(rule.device_types or ())),
+            "measures": None,
         })
 
     lines = [
@@ -428,6 +466,11 @@ def main() -> int:
                 clears += 1
                 lines.append("    is_clear: true")
                 lines.append(f"    clears: [{', '.join(e['clears'])}]")
+            if e.get("measures"):
+                metric, value_vb, thresh_vb = e["measures"]
+                lines.append(f"    metric: {metric}")
+                lines.append(f"    value_varbind: {value_vb}")
+                lines.append(f"    threshold_varbind: {thresh_vb}")
             if e.get("display_name"):
                 lines.append(f"    display_name: \"{e['display_name']}\"")
             if e["device_types"]:

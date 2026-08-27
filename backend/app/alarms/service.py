@@ -260,7 +260,12 @@ class AlarmService:
             instance=instance, severity=severity,
             message=ev.get("message") or ev["event_type"],
             source=ev.get("source") or "snmp_trap", observed_at=observed,
-            endpoint_id=ev.get("endpoint_id"))
+            endpoint_id=ev.get("endpoint_id"),
+            # Carried onto the alarm so the condition can be verified later -
+            # and so the row reaches an operator with a number on it rather
+            # than a bare condition name.
+            metric_key=ev.get("metric"), value=ev.get("value"),
+            threshold=ev.get("threshold"))
         if alarm is None or alarm["change"] == "touched":
             return None
         await repo.record_history(session, alarm_id=alarm["id"], device_id=device_id,

@@ -80,6 +80,21 @@ messages:
       - {name: varbinds,        tag: 12, type: "map<string,string>"}
       - {name: raw_identifier,  tag: 13, type: string, doc: "trap OID / Redfish MessageId / BACnet object ref"}
       - {name: dedup_key,       tag: 14, type: string}
+      # What the notification MEASURED, when it says so.
+      #
+      # A trap that reports a threshold crossing almost always carries the
+      # reading and the line it crossed - Cisco's cpmCPURisingThreshold ships
+      # cpmCPUTotal5minRev beside the rising threshold, this plane ships both
+      # in its enterprise varbinds, Raritan ships the sensor value. The
+      # receiver had them and dropped them, so every trap-raised alarm reached
+      # the database with no metric, no value and no threshold - nothing to
+      # verify against later, and no numbers to show an operator.
+      #
+      # Optional by design: a bare link_down measures nothing and leaves these
+      # unset.
+      - {name: metric,          tag: 15, type: string, doc: "metric key the notification is about, if any"}
+      - {name: value,           tag: 16, type: double, doc: "the reading the device reported"}
+      - {name: threshold,       tag: 17, type: double, doc: "the limit the device says it crossed"}
 
   EventBatch:
     fields:

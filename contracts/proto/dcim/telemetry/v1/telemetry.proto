@@ -102,6 +102,9 @@ message Event {
   map<string, string> varbinds = 12;
   string raw_identifier = 13;  // trap OID / Redfish MessageId / BACnet object ref
   string dedup_key = 14;
+  string metric = 15;  // metric key the notification is about, if any
+  double value = 16;  // the reading the device reported
+  double threshold = 17;  // the limit the device says it crossed
 }
 
 message EventBatch {
