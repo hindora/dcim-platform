@@ -47,12 +47,11 @@ async def db_session():
             await engine.dispose()
 
 
-async def _device(session, name):
+async def _device(session, name, device_type="switch"):
     return await session.scalar(text("""
-        INSERT INTO device (name, device_type_id, lifecycle)
-        VALUES (:n, (SELECT id FROM device_type LIMIT 1), 'active')
-        RETURNING id::text
-    """), {"n": name})
+        INSERT INTO device (name, device_type, lifecycle)
+        VALUES (:n, :t, 'in_service') RETURNING id::text
+    """), {"n": name, "t": device_type})
 
 
 async def _iface(session, device_id, name, if_index):
@@ -185,7 +184,7 @@ async def test_two_ports_on_one_switch_are_two_different_links(db_session, cable
     two cables. With no port on the alarm they shared one key, and the second
     only refreshed the first.
     """
-    other = await _device(db_session, "SRV09-TEST")
+    other = await _device(db_session, "SRV09-TEST", "server")
     lf_p2 = await _iface(db_session, cable["lf"], "GigabitEthernet0/9", 9)
     other_p = await _iface(db_session, other, "eth0", 0)
     await _link(db_session, cable["lf"], lf_p2, other, other_p)
@@ -249,8 +248,8 @@ async def test_power_and_cooling_connections_are_not_links(db_session):
     Both terminate on things that are not ports, and a device_id/name lookup
     against the interface table must not stray onto them.
     """
-    pdu = await _device(db_session, "PDUA-TEST")
-    srv = await _device(db_session, "SRV-TEST")
+    pdu = await _device(db_session, "PDUA-TEST", "pdu")
+    srv = await _device(db_session, "SRV-TEST", "server")
     a = await _iface(db_session, pdu, "port1", 1)
     b = await _iface(db_session, srv, "eth0", 0)
     await _link(db_session, pdu, a, srv, b, layer="power")

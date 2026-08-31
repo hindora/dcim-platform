@@ -60,6 +60,7 @@ class ImportReport:
     connections: int = 0
     endpoints: int = 0
     retired_endpoints: int = 0
+    connections_replaced: int = 0
     sites_sized: int = 0
     credentials: int = 0
     decommissioned: int = 0
@@ -154,6 +155,7 @@ class TopologyImporter:
         for dev in devices:
             await self._upsert_terminations(dev)
 
+        await self._clear_simulator_connections()
         for edge in edges:
             await self._upsert_connection(edge)
 
@@ -546,6 +548,37 @@ class TopologyImporter:
             self.report.psus += 1
 
     # --------------------------------------------------------- connections
+
+    async def _clear_simulator_connections(self) -> None:
+        """The export is the authority on cabling, so replace the set.
+
+        Upserting edges one at a time cannot converge. A link imported once
+        without ports and again with them is, to any key that includes the
+        terminations, two different rows - so the corrected import laid a
+        ported row beside every portless one instead of replacing it, and
+        production went from 436 rows to 833 for 436 cables. Widening the key
+        to ignore terminations is not the answer either: it would make two
+        genuinely different cables between the same pair of devices - a LAG,
+        an A/B pair - collapse into one.
+
+        A topology export describes the whole plant, and this importer already
+        treats it that way for devices, decommissioning anything absent. The
+        cabling gets the same treatment: what the simulator no longer describes
+        is no longer there.
+
+        Scoped to links whose BOTH ends are simulator-sourced, so a connection
+        recorded by hand between real equipment survives an import that knows
+        nothing about it.
+        """
+        result = await self.s.execute(text("""
+            DELETE FROM connection c
+             USING device a, device b
+             WHERE a.id = c.a_device_id AND b.id = c.b_device_id
+               AND a.attributes->>'source' = 'simulator'
+               AND b.attributes->>'source' = 'simulator'
+         RETURNING c.id
+        """))
+        self.report.connections_replaced = len(result.all())
 
     async def _upsert_connection(self, edge: dict) -> None:
         # The export already resolves direction from src_node/dst_node; an
