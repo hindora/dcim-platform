@@ -7,10 +7,10 @@
 package main
 
 import (
-	"log/slog"
 	"context"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"

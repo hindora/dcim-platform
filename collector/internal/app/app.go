@@ -68,8 +68,8 @@ type App struct {
 	bootProtocols any
 	cfgErrMu      sync.Mutex
 	cfgErr        string
-	resolver  *assign.Resolver
-	adapters  map[string]models.Adapter
+	resolver      *assign.Resolver
+	adapters      map[string]models.Adapter
 
 	startedAt time.Time
 	pollsOK   uint64
@@ -488,11 +488,11 @@ func (a *App) heartbeatLoop(ctx context.Context) {
 			}
 
 			hb := models.CollectorHeartbeat{
-				CollectorID:     a.cfg.Collector.ID,
-				Version:         a.cfg.Collector.Version,
-				Hostname:        hostname,
-				StartedAt:       a.startedAt.UnixMicro(),
-				SentAt:          models.NowMicros(),
+				CollectorID: a.cfg.Collector.ID,
+				Version:     a.cfg.Collector.Version,
+				Hostname:    hostname,
+				StartedAt:   a.startedAt.UnixMicro(),
+				SentAt:      models.NowMicros(),
 				// Owned is the scheduler PLUS the streams. A stream-only
 				// gNMI endpoint is deliberately kept out of the scheduler -
 				// polling it as well would collect the same device twice -
