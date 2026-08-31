@@ -131,3 +131,41 @@ func TestShippedMappingsAreValid(t *testing.T) {
 		}
 	}
 }
+
+// A scalar that IS a named sensor must be able to say so.
+//
+// Two planes publish a switch's die temperature: gNMI calls it "CPU", and
+// ENTITY-SENSOR-MIB carries it at a fixed index. While the SNMP side had no way
+// to name it, the two were different series for one reading - and a switch sat
+// with a cpu_temp_high raised from the unlabelled SNMP sample while the gNMI
+// samples ran below the clear point, with nothing able to join them up.
+func TestScalarCarriesItsInstance(t *testing.T) {
+	reg, err := Load("../../../contracts/mappings")
+	if err != nil {
+		t.Fatalf("load mappings: %v", err)
+	}
+	prof, ok := reg.Profile("network_sensors")
+	if !ok {
+		t.Fatal("network_sensors profile is missing")
+	}
+	var found, named int
+	{
+		for _, s := range prof.Scalars {
+			found++
+			if s.Instance != "" {
+				named++
+			}
+			if s.Metric == "cpu_temperature" && s.Instance != "CPU" {
+				t.Errorf("die temperature published as instance %q; gNMI calls "+
+					"it CPU, and two names for one sensor is two series",
+					s.Instance)
+			}
+		}
+	}
+	if found == 0 {
+		t.Fatal("network_sensors declares no scalars")
+	}
+	if named != found {
+		t.Errorf("%d of %d chassis sensors publish no instance", found-named, found)
+	}
+}

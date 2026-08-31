@@ -306,8 +306,8 @@ func (a *Adapter) collectScalars(client *g.GoSNMP, profile *mapping.Profile,
 			a.mets.MissesTotal.WithLabelValues("snmp", models.MissNoSuchObject).Inc()
 			continue
 		}
-		if sample, ok := a.sample(ep, s.Metric, s.ValueType, s.CounterBits, "",
-			pdu.Value, s.Transform, now, reset, s.OID); ok {
+		if sample, ok := a.sample(ep, s.Metric, s.ValueType, s.CounterBits,
+			s.Instance, pdu.Value, s.Transform, now, reset, s.OID); ok {
 			outcome.Samples = append(outcome.Samples, sample)
 		}
 	}

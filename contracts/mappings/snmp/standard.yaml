@@ -228,13 +228,18 @@ profiles:
   # carried system and interfaces only). A hot console switch was silent.
   - name: network_sensors
     scalars:
+      # The instances match what gNMI calls the same two sensors. Without
+      # that they are different series for one reading, and an alarm raised
+      # from the SNMP side cannot be cleared from the gNMI side.
       - oid: 1.3.6.1.2.1.99.1.1.1.4.1        # chassis / inlet sensor
         metric: component_temperature
+        instance: CHASSIS
         value_type: gauge
         # Stored x10 so one decimal survives an integer encoding.
         transform: {scale: 0.1}
       - oid: 1.3.6.1.2.1.99.1.1.1.4.2        # CPU / ASIC die
         metric: cpu_temperature
+        instance: CPU
         value_type: gauge
         transform: {scale: 0.1}
 

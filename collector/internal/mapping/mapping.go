@@ -86,9 +86,21 @@ type DerivedScalar struct {
 }
 
 type Scalar struct {
-	OID         string     `yaml:"oid"`
-	Metric      string     `yaml:"metric"`
-	ValueType   string     `yaml:"value_type"`
+	OID       string `yaml:"oid"`
+	Metric    string `yaml:"metric"`
+	ValueType string `yaml:"value_type"`
+	// Instance names the part this reading belongs to, for a scalar OID that
+	// IS a named sensor rather than a device-wide figure.
+	//
+	// Empty for most of them - sysUpTime and memTotalReal are properties of
+	// the box. It matters where another plane publishes the SAME metric with a
+	// name attached: a switch's die temperature arrives from gNMI as "CPU" and
+	// from ENTITY-SENSOR-MIB at a fixed index, and if the SNMP side leaves the
+	// instance empty the two become different series - and an alarm raised on
+	// one can never be cleared by the other. That happened: a switch carried a
+	// cpu_temp_high raised from the unlabelled SNMP reading while the labelled
+	// gNMI samples sat below the clear point, with nothing able to join them.
+	Instance    string     `yaml:"instance"`
 	CounterBits int        `yaml:"counter_bits"`
 	Transform   *Transform `yaml:"transform"`
 }
