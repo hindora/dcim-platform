@@ -60,6 +60,9 @@ CONSUMER_DEAD_AFTER_MS = 10 * 60 * 1000
 # The scan is cheap but pointless to run every second; the set only grows
 # on a restart.
 CONSUMER_REAP_EVERY_S = 300.0
+# Long enough to survive a slow poll cycle, short enough that a
+# decommissioned endpoint's baseline expires on its own.
+BASELINE_TTL_S = 3600
 
 # How often to look for endpoints that answer but say nothing. Well under
 # the smallest grace period, so an endpoint crosses its threshold and is
@@ -448,8 +451,14 @@ class IngestWorker:
         for s in samples:
             if s.value_type == int(ValueType.COUNTER):
                 baseline_reads[rates.baseline_key(s.endpoint_id, s.metric, s.instance)] = s
-        baselines = await self._load_baselines(list(baseline_reads))
-        baseline_writes: dict[str, str] = {}
+        # Atomically take the previous reading and leave this one in its
+        # place. See _exchange_baselines: doing both in one step is what
+        # makes more than one worker safe, and doing it BEFORE the
+        # transaction rather than after means no two workers can ever hold
+        # the same previous value at the same time.
+        baselines = await self._exchange_baselines({
+            key: f"{s.uint_value}:{s.observed_at or s.collected_at}"
+            for key, s in baseline_reads.items()})
 
         async with unit_of_work() as session:
             for s in samples:
@@ -549,9 +558,6 @@ class IngestWorker:
                         counter_bits=s.counter_bits or 64,
                         counter_reset=bool(s.counter_reset), baseline=prev,
                         max_gap_s=self.settings.ingest_max_counter_gap_s)
-                    # The baseline advances whether or not a rate was emitted.
-                    baseline_writes[key] = \
-                        f"{s.uint_value}:{s.observed_at or s.collected_at}"
                     sample_rows.append(writer.SampleRow(
                         ts=observed, device_id=s.device_id, metric_id=metric_id,
                         instance=s.instance, value=float(s.uint_value), quality=quality))
@@ -596,7 +602,6 @@ class IngestWorker:
             alarm_actions = await self.alarms.evaluate_samples(session, rule_inputs)
 
         # after commit
-        await self._store_baselines(baseline_writes)
         await self.fanout.telemetry(ws_frames)
         for action in alarm_actions:
             await self.fanout.alarm(action.kind, action.alarm)
@@ -816,56 +821,81 @@ class IngestWorker:
 
     # ------------------------------------------------------------- baselines
 
-    async def _load_baselines(self, keys: list[str]) -> dict[str, rates.Baseline]:
-        if not keys:
-            return {}
-        values = await self.redis.mget([f"dcim:ctr:{k}" for k in keys])
-        out: dict[str, rates.Baseline] = {}
-        for key, raw in zip(keys, values, strict=True):
-            if not raw:
-                continue
-            try:
-                value, ts = raw.decode().split(":", 1)
-                out[key] = rates.Baseline(value=int(value), observed_at_us=int(ts))
-            except (ValueError, AttributeError):
-                continue
-        return out
-
-    # A baseline may only move FORWARD in time.
-    #
-    # The stored value is "<counter>:<observed_at_us>". This replaces it only
-    # when the incoming reading is newer than the one already there, so a late
-    # or replayed batch cannot overwrite a fresher baseline. Without it the
-    # next real sample computes its delta against a reading from the future,
-    # gets a negative dt, and is discarded - the rate silently disappears for
-    # that series instead of being slightly wrong, which is harder to notice.
-    #
-    # This became necessary the moment reclaimed entries started being
-    # processed: those are old by definition, and they now flow through the
-    # same path as fresh ones. It is also the first of the two things that
-    # would have to be true before a second worker could safely share this
-    # consumer group.
-    _BASELINE_LUA = """
-    local cur = redis.call('GET', KEYS[1])
-    if cur then
-      local sep = string.find(cur, ':')
-      if sep and tonumber(string.sub(cur, sep + 1)) >= tonumber(ARGV[2]) then
-        return 0
+    # Returns the value that WAS there, and installs the new one only if it is
+    # newer. Both in one round trip, under Redis' single-threaded execution, so
+    # two workers cannot interleave between the read and the write.
+    _EXCHANGE_LUA = """
+    local prev = redis.call('GET', KEYS[1])
+    local install = true
+    if prev then
+      local sep = string.find(prev, ':')
+      if sep and tonumber(string.sub(prev, sep + 1)) >= tonumber(ARGV[2]) then
+        install = false
       end
     end
-    redis.call('SET', KEYS[1], ARGV[1], 'EX', 3600)
-    return 1
+    if install then
+      redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[3])
+    end
+    return prev
     """
 
-    async def _store_baselines(self, writes: dict[str, str]) -> None:
+    async def _exchange_baselines(
+            self, writes: dict[str, str]) -> dict[str, rates.Baseline]:
+        """Take the previous counter reading and leave this one in its place.
+
+        One atomic step per series, and the reason more than one worker can now
+        share this consumer group.
+
+        A consumer group hands out ENTRIES, not series. One batch carries
+        samples for hundreds of devices, and consecutive batches for the same
+        interface go to whichever worker was free - so no partitioning scheme
+        gives a series a permanent owner. Even hashing devices to workers would
+        not: when a worker dies its pending entries are reclaimed by another,
+        and during that handover the same series is genuinely touched by two.
+        Partitioning reduces contention; it cannot remove it, so the shared
+        state has to be safe on its own.
+
+        It was not. The old code read every baseline with MGET, computed rates,
+        ran a database transaction, and only then SET the new values - a
+        read-modify-write with the whole commit inside the window. Two workers
+        would both read baseline t0, compute their deltas from t0, and one
+        interface's throughput would be silently wrong rather than missing.
+
+        GET-and-SET together fixes it without moving any rate logic into Lua:
+        each caller receives a DIFFERENT previous value, so deltas chain
+        instead of overlapping. The set is conditional on the new reading being
+        newer, so a late or replayed batch cannot roll a baseline backwards;
+        such a caller gets a previous value from ahead of its own sample, which
+        `derive` discards as a non-positive interval. One rate lost, none
+        wrong - the trade this whole change exists to make.
+        """
         if not writes:
-            return
-        script = self.redis.register_script(self._BASELINE_LUA)
+            return {}
+        script = self.redis.register_script(self._EXCHANGE_LUA)
         pipe = self.redis.pipeline()
-        for key, value in writes.items():
+        keys = list(writes)
+        for key in keys:
+            value = writes[key]
             _, _, ts = value.rpartition(":")
-            script(keys=[f"dcim:ctr:{key}"], args=[value, ts], client=pipe)
-        await pipe.execute()
+            # Awaited even though it is buffered: on the async client the
+            # script call is itself a coroutine, and leaving it unawaited
+            # queues nothing and returns every previous value as None.
+            await script(keys=[f"dcim:ctr:{key}"],
+                         args=[value, ts, BASELINE_TTL_S], client=pipe)
+        previous = await pipe.execute()
+
+        out: dict[str, rates.Baseline] = {}
+        for key, raw in zip(keys, previous, strict=True):
+            if not raw:
+                continue
+            if isinstance(raw, bytes):
+                raw = raw.decode()
+            try:
+                value, ts = raw.split(":", 1)
+                out[key] = rates.Baseline(value=int(value), observed_at_us=int(ts))
+            except ValueError:
+                continue
+        return out
 
 
 async def _amain() -> None:

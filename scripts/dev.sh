@@ -148,9 +148,21 @@ if want api; then
 fi
 
 if want ingest; then
-  # Exactly one. Two workers in the same consumer group split batches between
-  # them, which looks like data silently going missing.
-  start ingest env PYTHONPATH="$ROOT/backend" "$PY" -m app.ingest.worker
+  # More than one is now safe. It was not: the workers split the batches
+  # between them, which is what a consumer group is for and loses nothing - but
+  # the counter baselines were a read-modify-write on shared Redis keys with a
+  # database transaction inside the window, so two workers computed their
+  # deltas from the same previous reading and an interface's throughput came
+  # out silently wrong. The baseline exchange is now a single atomic step, so
+  # each worker gets a different previous value and the deltas chain.
+  #
+  # Still one by default. Measured on this fleet, a single worker sits 0.3 s
+  # behind the newest entry and advances 66.7 s per 66 s of wall clock; there
+  # is no throughput deficit to spend a process on. Raise it when the
+  # measurement says to, not in advance.
+  for i in $(seq 1 "${INGEST_WORKERS:-1}"); do
+    start "ingest${i}" env PYTHONPATH="$ROOT/backend" "$PY" -m app.ingest.worker
+  done
 fi
 
 if want collector; then
