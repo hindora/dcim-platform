@@ -110,7 +110,7 @@ def _weather(rows: dict[str, Any]) -> dict[str, Any]:
 _TELEMETRY_TRUSTED_S = 300.0
 
 
-async def _platform_health(session: AsyncSession) -> dict[str, Any]:
+async def platform_health(session: AsyncSession) -> dict[str, Any]:
     """The state of the monitoring, kept out of the estate's counters.
 
     Two things, and they are different claims:
@@ -168,7 +168,7 @@ async def overview(session: AsyncSession) -> dict[str, Any]:
     sites = await repo.site_rollups(session)
     rooms = await repo.room_rollups(session)
     totals = await repo.fleet_alert_totals(session)
-    platform = await _platform_health(session)
+    platform = await platform_health(session)
 
     by_site: dict[str, list[dict[str, Any]]] = {}
     for r in rooms:
@@ -209,7 +209,7 @@ async def overview(session: AsyncSession) -> dict[str, Any]:
         } for s in sites],
         "totals": _alarms(totals),
         # Not part of the estate arithmetic above: the state of the monitoring
-        # itself. See `_platform_health`.
+        # itself. See `platform_health`.
         "platform": platform,
         "as_of": datetime.now(UTC),
     }

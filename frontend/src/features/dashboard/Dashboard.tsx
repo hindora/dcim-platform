@@ -34,7 +34,6 @@ export function Dashboard() {
   const lag = data.ingest?.lag_seconds;
   // A dashboard that silently shows five-minute-old numbers during a collector
   // outage is worse than one that says so.
-  const stale = lag !== null && lag !== undefined && lag > 120;
 
   return (
     <>
@@ -43,13 +42,6 @@ export function Dashboard() {
         As of {new Date(data.as_of).toLocaleTimeString()}
         {lag !== null && lag !== undefined && ` · ingest lag ${Math.round(lag)}s`}
       </p>
-
-      {stale && (
-        <div className="banner">
-          Telemetry is {Math.round(lag!)} seconds behind. The values below are
-          not current — check the collector and the ingest worker.
-        </div>
-      )}
 
       <div className="tiles">
         <Tile label="Devices" value={String(data.devices.total)}

@@ -9,6 +9,22 @@ export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
 }
 
+/** Told when the session ends underneath whatever the user was doing.
+ *
+ *  Clearing the token is not enough on its own: the app decides once, at
+ *  mount, whether it is signed in, so a token dropped by a 401 left the shell
+ *  standing over data it could no longer refresh. Every page then rendered its
+ *  own phrasing of one global cause - eighteen of them - and none could be
+ *  acted on, because the only fix was to sign in again.
+ */
+type AuthListener = () => void;
+const authLost = new Set<AuthListener>();
+
+export function onAuthLost(fn: AuthListener): () => void {
+  authLost.add(fn);
+  return () => { authLost.delete(fn); };
+}
+
 export function setToken(token: string | null): void {
   if (token) localStorage.setItem(TOKEN_KEY, token);
   else localStorage.removeItem(TOKEN_KEY);
@@ -33,6 +49,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     // An expired token must not leave the UI showing stale data behind a
     // silently failing refresh loop.
     setToken(null);
+    authLost.forEach((fn) => fn());
     throw new ApiError(401, 'session expired');
   }
   if (!res.ok) {
@@ -1123,6 +1140,7 @@ export const api = {
 
   /** One call behind the entire home page - table, tabs and alert strip. */
   sitesOverview: () => request<SitesOverview>('/sites/overview'),
+  platformState: () => request<PlatformState>('/sites/platform/state'),
 
   siteKpi: (datacenterId: string) =>
     request<SiteKpi>(`/sites/${datacenterId}/kpi`),

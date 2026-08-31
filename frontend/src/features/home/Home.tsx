@@ -36,7 +36,6 @@ import {
   type AlarmCategory,
   type AlarmCounts,
   type AlarmTaxonomy,
-  type PlatformState,
   type SiteRoom,
   type SiteRow,
   type SitesOverview,
@@ -226,47 +225,6 @@ function IndicatorCells({ alarms, labels, scope, onOpen }: {
   );
 }
 
-/** How old telemetry is, said the way somebody would say it out loud. */
-function age(seconds: number | null): string {
-  if (seconds === null) return 'never';
-  if (seconds < 90) return `${Math.round(seconds)}s old`;
-  if (seconds < 5400) return `${Math.round(seconds / 60)} min old`;
-  return `${Math.round(seconds / 3600)}h old`;
-}
-
-/** What a degraded pipeline has done to the rest of the page.
- *
- *  The banner states the consequence, not the fault: an operator does not need
- *  to know that the ingest worker's heartbeat is 140 seconds old, they need to
- *  know that the thermal map they are reading is nine minutes stale. The
- *  conditions themselves follow, in their own words, for whoever does.
- */
-function MonitoringBanner({ platform }: { platform?: PlatformState }) {
-  if (!platform || platform.state === 'ok') return null;
-  const { conditions, telemetry_age_s, telemetry_stale } = platform;
-  return (
-    <div className={`monitor-banner ${platform.state}`} role="status">
-      <span className="head">
-        {telemetry_stale
-          ? `Telemetry is ${age(telemetry_age_s)} — the numbers below may not `
-            + 'describe the estate as it is now'
-          : 'The monitoring is degraded — the numbers below are still arriving'}
-      </span>
-      {conditions.slice(0, 3).map((c) => (
-        <span key={`${c.alarm_type}:${c.instance}`} className="cond">
-          <b>{c.alarm_type}</b> {c.message}
-          <i> since {new Date(c.first_seen).toLocaleTimeString([], {
-            hour: '2-digit', minute: '2-digit' })}</i>
-        </span>
-      ))}
-      {conditions.length > 3 && (
-        <span className="cond muted">+{conditions.length - 3} more</span>
-      )}
-      <Link className="row-btn" to="/platform">PLATFORM HEALTH</Link>
-    </div>
-  );
-}
-
 export function Home() {
   const [tab, setTab] = useState<Tab>('sites');
   const [search, setSearch] = useState('');
@@ -434,8 +392,6 @@ export function Home() {
           );
         })}
       </section>
-
-      <MonitoringBanner platform={data?.platform} />
 
       <div className="home-body">
         <section className="sites-panel">

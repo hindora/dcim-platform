@@ -57,7 +57,7 @@ async def _health(monkeypatch, conditions, age_s):
                         _returns(conditions))
     monkeypatch.setattr(sites_service.repo, "telemetry_age_seconds",
                         _returns(age_s))
-    return await sites_service._platform_health(_FakeSession())
+    return await sites_service.platform_health(_FakeSession())
 
 
 # ------------------------------------------------------- the two populations

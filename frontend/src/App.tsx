@@ -1,7 +1,8 @@
 import { Fragment, useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { NavLink, Navigate, Route, Routes } from 'react-router-dom';
-import { api, getToken, setToken } from './api/client';
+import { NavLink, Navigate, Route, Routes, useLocation, useNavigate }
+  from 'react-router-dom';
+import { api, getToken, onAuthLost, setToken } from './api/client';
 import { useOrg } from './lib/useOrg';
 import { AlarmList } from './features/alarms/AlarmList';
 import { Analytics } from './features/analytics/Analytics';
@@ -10,6 +11,7 @@ import { Appearance } from './features/settings/Appearance';
 import { Collectors } from './features/settings/Collectors';
 import { PollProfiles } from './features/settings/PollProfiles';
 import { SettingsLayout } from './features/settings/SettingsLayout';
+import { TrustBanner } from './components/TrustBanner';
 import { UserMenu } from './components/UserMenu';
 import { Home } from './features/home/Home';
 import { Thermal } from './features/estate/Thermal';
@@ -23,7 +25,7 @@ import { TopologyView } from './features/topology/TopologyView';
 import { DeviceList } from './features/devices/DeviceList';
 import { useSocketStatus } from './ws/useSocket';
 
-function Login({ onDone }: { onDone: () => void }) {
+function Login({ onDone, returnTo }: { onDone: () => void; returnTo?: string }) {
   const [username, setUsername] = useState('admin');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -49,7 +51,10 @@ function Login({ onDone }: { onDone: () => void }) {
   return (
     <form className="login" onSubmit={submit}>
       <h1>{org}</h1>
-      <p className="muted" style={{ margin: 0, fontSize: 13 }}>Sign in to continue</p>
+      <p className="muted" style={{ margin: 0, fontSize: 13 }}>
+        {returnTo ? 'Session expired — sign in to continue where you were'
+                  : 'Sign in to continue'}
+      </p>
       <label htmlFor="u">Username</label>
       <input id="u" value={username} onChange={(e) => setUsername(e.target.value)} />
       <label htmlFor="p">Password</label>
@@ -111,38 +116,6 @@ function TopBar({ onSignOut }: { onSignOut: () => void }) {
   );
 }
 
-/** Silence is not an acceptable indication that the live feed has died.
- *
- *  But neither is crying wolf. A socket takes a moment to open on every load,
- *  and announcing that moment turned a healthy page into one that flashed a
- *  fault on every navigation - which is how an operator learns to ignore the
- *  banner that matters. So it waits: only a feed that has stayed down for a
- *  few seconds is worth interrupting anyone about.
- */
-const LIVE_GRACE_MS = 5_000;
-
-function LiveBanner() {
-  const status = useSocketStatus();
-  const [overdue, setOverdue] = useState(false);
-
-  useEffect(() => {
-    if (status === 'open') {
-      setOverdue(false);
-      return;
-    }
-    const timer = window.setTimeout(() => setOverdue(true), LIVE_GRACE_MS);
-    return () => window.clearTimeout(timer);
-  }, [status]);
-
-  if (status === 'open' || !overdue) return null;
-  return (
-    <div className="banner" style={{ margin: '0 28px 12px' }}>
-      Live updates {status}. Values on this page may be stale until the
-      connection is restored.
-    </div>
-  );
-}
-
 function Footer() {
   const qc = useQueryClient();
   const status = useSocketStatus();
@@ -177,14 +150,42 @@ function Page({ children }: { children: React.ReactNode }) {
 
 export default function App() {
   const [authed, setAuthed] = useState(Boolean(getToken()));
+  const [returnTo, setReturnTo] = useState<string | null>(null);
+  const location = useLocation();
+  const navigate = useNavigate();
 
-  if (!authed) return <Login onDone={() => setAuthed(true)} />;
+  // A 401 anywhere ends the session for everything, so the shell has to hear
+  // about it. Without this the token was cleared and nothing else happened:
+  // the app kept rendering over a cache it could no longer refresh, and each
+  // page invented its own wording for the one cause - "Failed to load sites:
+  // session expired", "Could not load collectors", eighteen in all, none of
+  // them actionable, because the only fix was to sign in again.
+  //
+  // Where the user was is remembered and restored. Being thrown to the home
+  // page is a second, smaller loss on top of the first.
+  useEffect(() => onAuthLost(() => {
+    setReturnTo(location.pathname + location.search);
+    setAuthed(false);
+  }), [location.pathname, location.search]);
+
+  if (!authed) {
+    return (
+      <Login
+        returnTo={returnTo ?? undefined}
+        onDone={() => {
+          setAuthed(true);
+          if (returnTo) navigate(returnTo, { replace: true });
+          setReturnTo(null);
+        }}
+      />
+    );
+  }
 
   return (
     <div className="shell">
+      <TrustBanner />
       <TopBar onSignOut={() => { setToken(null); setAuthed(false); }} />
       <main>
-        <LiveBanner />
         <Routes>
           <Route path="/" element={<Home />} />
 

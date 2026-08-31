@@ -26,6 +26,26 @@ async def sites_overview(
     return await service.overview(session)
 
 
+@router.get("/platform/state", summary="Whether the monitoring can be trusted")
+async def platform_state(
+    session: AsyncSession = Depends(get_session),
+    _: Principal = Depends(current_principal),
+) -> dict:
+    """The trust banner's own source, deliberately separate from the overview.
+
+    This answers one question - can the platform still see the estate - and it
+    is asked from every page, including the ones that never load a site. Two
+    queries rather than the whole home-page rollup, so a banner shown on the
+    assets list does not cost a fleet-wide aggregate.
+
+    Keeping it off /sites/overview matters for a second reason: if that call
+    fails, the banner has to still work. A trust indicator that disappears
+    when the estate query breaks is missing at exactly the moment its subject
+    is most likely true.
+    """
+    return await service.platform_health(session)
+
+
 @router.get("/{datacenter_id}/kpi", summary="Efficiency, load and utilisation for one site")
 async def site_kpi(
     datacenter_id: str,
