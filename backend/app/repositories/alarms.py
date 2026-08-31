@@ -330,7 +330,8 @@ async def manual_clear(session: AsyncSession, alarm_id: str,
     row = (await session.execute(text("""
         UPDATE alarm SET state = 'CLEARED', cleared_at = now(), cleared_by = :actor
         WHERE id = CAST(:id AS uuid) AND state <> 'CLEARED'
-        RETURNING id::text, device_id::text, alarm_type, severity::text AS severity
+        RETURNING id::text, device_id::text, alarm_type, instance,
+                  severity::text AS severity
     """), {"id": alarm_id, "actor": actor})).mappings().first()
     return dict(row) if row else None
 

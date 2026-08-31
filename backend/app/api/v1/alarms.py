@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.alarms import correlation, link_correlation
 from app.core import audit
 from app.core.alert_taxonomy import CATEGORIES, DETECTIONS, RESPONSE_CLASSES
 from app.core.security import Principal, current_principal, require_role
@@ -127,6 +128,25 @@ async def clear(
     await repo.record_history(session, alarm_id=row["id"], device_id=row["device_id"],
                               action="cleared", severity=row["severity"],
                               actor=principal.username)
+    # Clearing a ROOT by hand has to let go of what it was explaining.
+    #
+    # Suppression is only ever a display decision, and it is safe because the
+    # root is the row an operator acts on: when the root goes, the symptoms
+    # come back and stand on their own. Every automatic clear path did this.
+    # This one - the button an operator actually presses - did not, so a
+    # hand-cleared root left its symptoms flagged as explained by an alarm that
+    # no longer existed: invisible on the console, and unclearable, because the
+    # thing that would have released them was already gone.
+    #
+    # Found on a live board: a temperature critical cleared by hand at 09:20
+    # left the warning under it suppressed with a CLEARED root, still at 93 C.
+    for sym in await correlation.release_symptoms(session, row["id"]):
+        await repo.record_history(
+            session, alarm_id=sym["id"], device_id=sym["device_id"],
+            action="released", severity=sym["severity"],
+            actor=principal.username, detail={"root": row["id"]})
+    await link_correlation.refresh_link_state(
+        session, device_id=row["device_id"], instance=row["instance"] or "")
     await repo.refresh_device_alarm_state(session, [row["device_id"]])
     ip, agent = audit.client_of(request)
     # A manual clear is the one alarm action that can hide a live fault, so it
