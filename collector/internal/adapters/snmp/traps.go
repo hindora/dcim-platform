@@ -266,12 +266,21 @@ func (t *TrapReceiver) emit(ctx context.Context, trap *heldTrap) {
 		// alarm it raises can then be checked against polled telemetry later,
 		// which is the only way a lost recovery trap ever resolves itself.
 		if def.Metric != "" {
-			ev.Metric = def.Metric
-			if v, ok := varbindFloat(varbinds, def.ValueVarbind); ok {
-				ev.Value = v
-			}
-			if t, ok := varbindFloat(varbinds, def.ThresholdVarbind); ok {
-				ev.Threshold = t
+			value, gotValue := varbindFloat(varbinds, def.ValueVarbind)
+			limit, gotLimit := varbindFloat(varbinds, def.ThresholdVarbind)
+			// Claim the measurement only if the numbers actually arrived.
+			//
+			// A metric with no reading behind it is worse than no metric: zero
+			// is a plausible temperature and a plausible load, so it reaches
+			// the console as a measurement somebody took. One did exactly that
+			// - "0 C, limit 0 C" against a switch sitting at 93 - because the
+			// mapping named varbinds the sending vendor does not use. The
+			// mapping is fixed; this makes the same mistake harmless if it is
+			// ever made again.
+			if gotValue || gotLimit {
+				ev.Metric = def.Metric
+				ev.Value = value
+				ev.Threshold = limit
 			}
 		}
 		if def.InstanceFromVarbind != "" {

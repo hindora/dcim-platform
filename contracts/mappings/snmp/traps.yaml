@@ -69,9 +69,6 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [temperature_alert, cpu_temp_critical]
-    metric: cpu_temperature
-    value_varbind: 1.3.6.1.4.1.99999.2.3
-    threshold_varbind: 1.3.6.1.4.1.99999.2.7
     display_name: "Temperature Normal"
     device_types: [firewall, load_balancer, oob_switch, router, server, switch]
     match_varbinds:
@@ -82,9 +79,6 @@ traps:
   - oid: 1.3.6.1.4.1.9.9.13.3.0.3
     event_type: cpu_temp_critical
     severity: CRITICAL
-    metric: cpu_temperature
-    value_varbind: 1.3.6.1.4.1.99999.2.3
-    threshold_varbind: 1.3.6.1.4.1.99999.2.7
     display_name: "CPU & Temperature Critical"
     match_varbinds:
       - oid: 1.3.6.1.4.1.9.9.13.1.3.1.6
@@ -94,9 +88,6 @@ traps:
   - oid: 1.3.6.1.4.1.9.9.13.3.0.3
     event_type: temperature_alert
     severity: CRITICAL
-    metric: cpu_temperature
-    value_varbind: 1.3.6.1.4.1.99999.2.3
-    threshold_varbind: 1.3.6.1.4.1.99999.2.7
     display_name: "Temperature Alert"
     match_varbinds:
       - oid: 1.3.6.1.4.1.9.9.13.1.3.1.6
@@ -137,9 +128,6 @@ traps:
   - oid: 1.3.6.1.4.1.232.0.6003
     event_type: sensor_ambient_temp_critical
     severity: CRITICAL
-    metric: ambient_temperature
-    value_varbind: 1.3.6.1.4.1.99999.2.3
-    threshold_varbind: 1.3.6.1.4.1.99999.2.7
     display_name: "Sensor Ambient Temp Critical"
     device_types: [sensor]
     # sensorAmbientTempCritical [hpe]
@@ -147,18 +135,12 @@ traps:
   - oid: 1.3.6.1.4.1.232.0.6003
     event_type: cpu_temp_critical
     severity: CRITICAL
-    metric: cpu_temperature
-    value_varbind: 1.3.6.1.4.1.99999.2.3
-    threshold_varbind: 1.3.6.1.4.1.99999.2.7
     display_name: "CPU & Temperature Critical"
     # cpuTempCritical [hpe]
 
   - oid: 1.3.6.1.4.1.232.0.6004
     event_type: sensor_ambient_temp_high
     severity: MAJOR
-    metric: ambient_temperature
-    value_varbind: 1.3.6.1.4.1.99999.2.3
-    threshold_varbind: 1.3.6.1.4.1.99999.2.7
     display_name: "Sensor Ambient Temp High"
     device_types: [sensor]
     # sensorAmbientTempHigh [hpe]
@@ -166,9 +148,6 @@ traps:
   - oid: 1.3.6.1.4.1.232.0.6004
     event_type: temperature_alert
     severity: CRITICAL
-    metric: cpu_temperature
-    value_varbind: 1.3.6.1.4.1.99999.2.3
-    threshold_varbind: 1.3.6.1.4.1.99999.2.7
     display_name: "Temperature Alert"
     # temperatureAlert [hpe]
 
@@ -177,9 +156,6 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [temperature_alert, cpu_temp_critical]
-    metric: cpu_temperature
-    value_varbind: 1.3.6.1.4.1.99999.2.3
-    threshold_varbind: 1.3.6.1.4.1.99999.2.7
     display_name: "Temperature Normal"
     device_types: [firewall, load_balancer, oob_switch, router, server, switch]
     # temperatureNormal [hpe]
@@ -189,9 +165,6 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [sensor_ambient_temp_high, sensor_ambient_temp_critical]
-    metric: ambient_temperature
-    value_varbind: 1.3.6.1.4.1.99999.2.3
-    threshold_varbind: 1.3.6.1.4.1.99999.2.7
     display_name: "Sensor Ambient Temp Normal"
     # sensorAmbientTempNormal [hpe]
 
@@ -204,9 +177,6 @@ traps:
   - oid: 1.3.6.1.4.1.318.0.253
     event_type: sensor_ambient_temp_critical
     severity: CRITICAL
-    metric: ambient_temperature
-    value_varbind: 1.3.6.1.4.1.99999.2.3
-    threshold_varbind: 1.3.6.1.4.1.99999.2.7
     display_name: "Sensor Ambient Temp Critical"
     device_types: [sensor]
     # sensorAmbientTempCritical [apc]
@@ -214,9 +184,6 @@ traps:
   - oid: 1.3.6.1.4.1.318.0.253
     event_type: sensor_ambient_temp_high
     severity: MAJOR
-    metric: ambient_temperature
-    value_varbind: 1.3.6.1.4.1.99999.2.3
-    threshold_varbind: 1.3.6.1.4.1.99999.2.7
     display_name: "Sensor Ambient Temp High"
     device_types: [sensor]
     # sensorAmbientTempHigh [apc]
@@ -241,9 +208,6 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [sensor_ambient_temp_high, sensor_ambient_temp_critical]
-    metric: ambient_temperature
-    value_varbind: 1.3.6.1.4.1.99999.2.3
-    threshold_varbind: 1.3.6.1.4.1.99999.2.7
     display_name: "Sensor Ambient Temp Normal"
     # sensorAmbientTempNormal [apc]
     # AMBIGUOUS - no device type separates this from: pduTempNormal->pdu_temp_high
@@ -335,9 +299,6 @@ traps:
   - oid: 1.3.6.1.4.1.476.1.42.3.3.0.1
     event_type: sensor_ambient_temp_critical
     severity: CRITICAL
-    metric: ambient_temperature
-    value_varbind: 1.3.6.1.4.1.99999.2.3
-    threshold_varbind: 1.3.6.1.4.1.99999.2.7
     display_name: "Sensor Ambient Temp Critical"
     device_types: [sensor]
     match_varbinds:
@@ -348,9 +309,6 @@ traps:
   - oid: 1.3.6.1.4.1.476.1.42.3.3.0.1
     event_type: sensor_ambient_temp_high
     severity: MAJOR
-    metric: ambient_temperature
-    value_varbind: 1.3.6.1.4.1.99999.2.3
-    threshold_varbind: 1.3.6.1.4.1.99999.2.7
     display_name: "Sensor Ambient Temp High"
     device_types: [sensor]
     match_varbinds:
@@ -485,9 +443,6 @@ traps:
   - oid: 1.3.6.1.4.1.476.1.42.3.3.0.1
     event_type: temperature_alert
     severity: CRITICAL
-    metric: cpu_temperature
-    value_varbind: 1.3.6.1.4.1.99999.2.3
-    threshold_varbind: 1.3.6.1.4.1.99999.2.7
     display_name: "Temperature Alert"
     match_varbinds:
       - oid: 1.3.6.1.4.1.476.1.42.3.2.3.1.1
@@ -559,9 +514,6 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [temperature_alert, cpu_temp_critical]
-    metric: cpu_temperature
-    value_varbind: 1.3.6.1.4.1.99999.2.3
-    threshold_varbind: 1.3.6.1.4.1.99999.2.7
     display_name: "Temperature Normal"
     device_types: [firewall, load_balancer, oob_switch, router, server, switch]
     match_varbinds:
@@ -618,9 +570,6 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [sensor_ambient_temp_high, sensor_ambient_temp_critical]
-    metric: ambient_temperature
-    value_varbind: 1.3.6.1.4.1.99999.2.3
-    threshold_varbind: 1.3.6.1.4.1.99999.2.7
     display_name: "Sensor Ambient Temp Normal"
     match_varbinds:
       - oid: 1.3.6.1.4.1.476.1.42.3.2.3.1.1
@@ -845,9 +794,6 @@ traps:
   - oid: 1.3.6.1.4.1.674.10892.5.3.2.1.0.2161
     event_type: sensor_ambient_temp_critical
     severity: CRITICAL
-    metric: ambient_temperature
-    value_varbind: 1.3.6.1.4.1.99999.2.3
-    threshold_varbind: 1.3.6.1.4.1.99999.2.7
     display_name: "Sensor Ambient Temp Critical"
     device_types: [sensor]
     # sensorAmbientTempCritical [dell]
@@ -855,18 +801,12 @@ traps:
   - oid: 1.3.6.1.4.1.674.10892.5.3.2.1.0.2161
     event_type: cpu_temp_critical
     severity: CRITICAL
-    metric: cpu_temperature
-    value_varbind: 1.3.6.1.4.1.99999.2.3
-    threshold_varbind: 1.3.6.1.4.1.99999.2.7
     display_name: "CPU & Temperature Critical"
     # cpuTempCritical [dell]
 
   - oid: 1.3.6.1.4.1.674.10892.5.3.2.1.0.2162
     event_type: sensor_ambient_temp_high
     severity: MAJOR
-    metric: ambient_temperature
-    value_varbind: 1.3.6.1.4.1.99999.2.3
-    threshold_varbind: 1.3.6.1.4.1.99999.2.7
     display_name: "Sensor Ambient Temp High"
     device_types: [sensor]
     # sensorAmbientTempHigh [dell]
@@ -874,9 +814,6 @@ traps:
   - oid: 1.3.6.1.4.1.674.10892.5.3.2.1.0.2162
     event_type: temperature_alert
     severity: CRITICAL
-    metric: cpu_temperature
-    value_varbind: 1.3.6.1.4.1.99999.2.3
-    threshold_varbind: 1.3.6.1.4.1.99999.2.7
     display_name: "Temperature Alert"
     # temperatureAlert [dell]
 
@@ -885,9 +822,6 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [temperature_alert, cpu_temp_critical]
-    metric: cpu_temperature
-    value_varbind: 1.3.6.1.4.1.99999.2.3
-    threshold_varbind: 1.3.6.1.4.1.99999.2.7
     display_name: "Temperature Normal"
     device_types: [firewall, load_balancer, oob_switch, router, server, switch]
     # temperatureNormal [dell]
@@ -897,9 +831,6 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [sensor_ambient_temp_high, sensor_ambient_temp_critical]
-    metric: ambient_temperature
-    value_varbind: 1.3.6.1.4.1.99999.2.3
-    threshold_varbind: 1.3.6.1.4.1.99999.2.7
     display_name: "Sensor Ambient Temp Normal"
     # sensorAmbientTempNormal [dell]
 
@@ -922,9 +853,6 @@ traps:
   - oid: 1.3.6.1.4.1.3183.1.1.0.65793
     event_type: cpu_temp_critical
     severity: CRITICAL
-    metric: cpu_temperature
-    value_varbind: 1.3.6.1.4.1.99999.2.3
-    threshold_varbind: 1.3.6.1.4.1.99999.2.7
     display_name: "CPU & Temperature Critical"
     # cpuTempCritical [ibm, supermicro]
     # AMBIGUOUS - no device type separates this from: temperatureAlert->temperature_alert
@@ -932,9 +860,6 @@ traps:
   - oid: 1.3.6.1.4.1.3183.1.1.0.65793
     event_type: temperature_alert
     severity: CRITICAL
-    metric: cpu_temperature
-    value_varbind: 1.3.6.1.4.1.99999.2.3
-    threshold_varbind: 1.3.6.1.4.1.99999.2.7
     display_name: "Temperature Alert"
     # temperatureAlert [ibm, supermicro]
     # AMBIGUOUS - no device type separates this from: cpuTempCritical->cpu_temp_critical
@@ -956,18 +881,12 @@ traps:
   - oid: 1.3.6.1.4.1.3375.2.4.0.4
     event_type: cpu_temp_critical
     severity: CRITICAL
-    metric: cpu_temperature
-    value_varbind: 1.3.6.1.4.1.99999.2.3
-    threshold_varbind: 1.3.6.1.4.1.99999.2.7
     display_name: "CPU & Temperature Critical"
     # cpuTempCritical [f5]
 
   - oid: 1.3.6.1.4.1.3375.2.4.0.7
     event_type: temperature_alert
     severity: CRITICAL
-    metric: cpu_temperature
-    value_varbind: 1.3.6.1.4.1.99999.2.3
-    threshold_varbind: 1.3.6.1.4.1.99999.2.7
     display_name: "Temperature Alert"
     # temperatureAlert [f5]
 
@@ -1137,9 +1056,6 @@ traps:
   - oid: 1.3.6.1.4.1.13742.6.0.66
     event_type: sensor_ambient_temp_critical
     severity: CRITICAL
-    metric: ambient_temperature
-    value_varbind: 1.3.6.1.4.1.99999.2.3
-    threshold_varbind: 1.3.6.1.4.1.99999.2.7
     display_name: "Sensor Ambient Temp Critical"
     device_types: [sensor]
     # sensorAmbientTempCritical [raritan]
@@ -1147,9 +1063,6 @@ traps:
   - oid: 1.3.6.1.4.1.13742.6.0.66
     event_type: sensor_ambient_temp_high
     severity: MAJOR
-    metric: ambient_temperature
-    value_varbind: 1.3.6.1.4.1.99999.2.3
-    threshold_varbind: 1.3.6.1.4.1.99999.2.7
     display_name: "Sensor Ambient Temp High"
     device_types: [sensor]
     # sensorAmbientTempHigh [raritan]
@@ -1297,9 +1210,6 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [sensor_ambient_temp_high, sensor_ambient_temp_critical]
-    metric: ambient_temperature
-    value_varbind: 1.3.6.1.4.1.99999.2.3
-    threshold_varbind: 1.3.6.1.4.1.99999.2.7
     display_name: "Sensor Ambient Temp Normal"
     # sensorAmbientTempNormal [raritan]
     # AMBIGUOUS - no device type separates this from: airflowAlert->airflow_alert; dewPointAlert->dew_point_alert; humidityAlert->humidity_alert; pduHumidityHigh->pdu_humidity_high; pduHumidityNormal->pdu_humidity_high; pduTempHigh->pdu_temp_high; pduTempNormal->pdu_temp_high; smokeDetected->smoke_detected
@@ -1314,9 +1224,6 @@ traps:
   - oid: 1.3.6.1.4.1.19046.11.1.158.5.0.0
     event_type: sensor_ambient_temp_critical
     severity: CRITICAL
-    metric: ambient_temperature
-    value_varbind: 1.3.6.1.4.1.99999.2.3
-    threshold_varbind: 1.3.6.1.4.1.99999.2.7
     display_name: "Sensor Ambient Temp Critical"
     device_types: [sensor]
     # sensorAmbientTempCritical [lenovo]
@@ -1324,18 +1231,12 @@ traps:
   - oid: 1.3.6.1.4.1.19046.11.1.158.5.0.0
     event_type: cpu_temp_critical
     severity: CRITICAL
-    metric: cpu_temperature
-    value_varbind: 1.3.6.1.4.1.99999.2.3
-    threshold_varbind: 1.3.6.1.4.1.99999.2.7
     display_name: "CPU & Temperature Critical"
     # cpuTempCritical [lenovo]
 
   - oid: 1.3.6.1.4.1.19046.11.1.158.5.0.12
     event_type: sensor_ambient_temp_high
     severity: MAJOR
-    metric: ambient_temperature
-    value_varbind: 1.3.6.1.4.1.99999.2.3
-    threshold_varbind: 1.3.6.1.4.1.99999.2.7
     display_name: "Sensor Ambient Temp High"
     device_types: [sensor]
     # sensorAmbientTempHigh [lenovo]
@@ -1343,9 +1244,6 @@ traps:
   - oid: 1.3.6.1.4.1.19046.11.1.158.5.0.12
     event_type: temperature_alert
     severity: CRITICAL
-    metric: cpu_temperature
-    value_varbind: 1.3.6.1.4.1.99999.2.3
-    threshold_varbind: 1.3.6.1.4.1.99999.2.7
     display_name: "Temperature Alert"
     # temperatureAlert [lenovo]
 

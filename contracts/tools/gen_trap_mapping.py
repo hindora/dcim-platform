@@ -167,6 +167,36 @@ def event_type_for(name: str) -> str:
     return "".join(out)
 
 
+def same_tree(trap_oid: str, measures: tuple[str, str, str]) -> bool:
+    """Can a trap on this OID actually carry these varbinds?
+
+    A measurement is only worth declaring if the numbers arrive. A Dell
+    temperature trap carries Dell objects; pointing it at this plane's
+    synthetic 99999 varbinds resolves nothing, and the receiver then records a
+    reading of zero against a limit of zero - a measurement nobody took,
+    printed on the console as "0 C, limit 0 C" beside a device that was at 93.
+
+    Same enterprise tree is the test, because that is what a vendor's own trap
+    definition is free to reference. 34 of the 48 entries that declared a
+    measurement failed it: every vendor variant had been handed the synthetic
+    varbind OIDs regardless of who sends the trap.
+
+    Where a vendor's numeric objects ARE known they pair correctly and pass -
+    the Cisco CPU traps carry cpmCPUTotal5minRev beside their rising
+    threshold, both on Cisco's tree. Where they are not, no metric is claimed:
+    the alarm keeps its message and its severity, and simply does not pretend
+    to a reading. Dell puts the number inside a text varbind ("Temperature
+    sensor reading 93.0 C"), which is real and parseable and deliberately not
+    parsed here - a regex over an alert string is a different promise from
+    reading an object, and it should be made explicitly if it is made at all.
+    """
+    value_vb = measures[1]
+    if not value_vb:
+        return False
+    # 1.3.6.1.4.1.<enterprise> - the first seven arcs.
+    return ".".join(trap_oid.split(".")[:7]) == ".".join(value_vb.split(".")[:7])
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -493,7 +523,7 @@ def main() -> int:
                 clears += 1
                 lines.append("    is_clear: true")
                 lines.append(f"    clears: [{', '.join(e['clears'])}]")
-            if e.get("measures"):
+            if e.get("measures") and same_tree(oid, e["measures"]):
                 metric, value_vb, thresh_vb = e["measures"]
                 lines.append(f"    metric: {metric}")
                 lines.append(f"    value_varbind: {value_vb}")
