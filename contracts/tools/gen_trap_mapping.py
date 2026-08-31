@@ -85,11 +85,38 @@ CLEAR_PAIRS: dict[str, tuple[str, ...]] = {
     "atsTransferNormal": ("atsTransferEmergency", "atsSourceLost"),
     "atsTransferFaultCleared": ("atsFailToTransfer",),
     "switchgearBusNormal": ("switchgearBusFault",),
+    # A relay closing again, and a chassis coming back up. Both were missing,
+    # and both did exactly what the comment above this table predicts: the
+    # recovery raised a brand new alarm instead of resolving anything. A PDU
+    # left the console reading "Outlet Off MAJOR" and "Outlet On INFO" side by
+    # side - the fault that had ended, and beside it the news that it had
+    # ended, filed as a second thing to look at.
+    "outletOn": ("outletOff",),
+    "serverPowerOn": ("serverPowerOff",),
+    # "Main breaker reclosed - bus re-energized" against "Main breaker
+    # tripped - bus de-energized downstream". The third one found by the same
+    # audit, and the most expensive to leave: a tripped main is a critical
+    # alarm, and the reclose that ends it was arriving as informational news
+    # beside it.
+    "switchgearBreakerClosed": ("switchgearBreakerTrip",),
 }
 
 # warmStart and coldStart are NOT clears: a device restarting is its own event,
 # and treating it as a clear would silently resolve unrelated alarms.
 RESTART_TRAPS = {"coldStart", "warmStart"}
+
+#: Recovery-SHAPED names that really are their own event rather than a clear.
+#:
+#: The generator refuses to emit a trap whose name reads like a recovery and
+#: which resolves nothing, because that combination has now produced the same
+#: bug twice: the "clear" arrives, matches no open alarm, and is filed as a new
+#: one. Anything genuinely in that shape goes here, deliberately and by name,
+#: so the decision is visible rather than implied by an absence.
+NOT_A_CLEAR = RESTART_TRAPS | {
+    # A link coming up on a device that was never reported down is news in its
+    # own right on this plane - the OOB switch rules raise it separately.
+    "oobSwitchLinkUp",
+}
 
 EVENT_TYPE_OVERRIDES = {
     "coldStart": "device_restarted",
