@@ -17,7 +17,7 @@ from typing import Any
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.alarms import correlation, reconcile, staleness
+from app.alarms import correlation, link_correlation, reconcile, staleness
 from app.alarms.engine import (
     AlarmKey,
     Candidate,
@@ -233,6 +233,19 @@ class AlarmService:
                 await repo.record_history(session, alarm_id=row["id"],
                                           device_id=device_id, action="cleared",
                                           severity=row["severity"], actor="device")
+                # A root cleared by its own recovery trap has to let go of what
+                # it was explaining, exactly as a rule-cleared root does. Only
+                # the rule path did this, so anything folded under a
+                # trap-raised root - the far end of a link, the lower band of a
+                # measurement - stayed suppressed after the root recovered,
+                # invisible and with nothing left to clear it.
+                for sym in await correlation.release_symptoms(session, row["id"]):
+                    await repo.record_history(
+                        session, alarm_id=sym["id"], device_id=sym["device_id"],
+                        action="released", severity=sym["severity"],
+                        actor="device", detail={"root": row["id"]})
+            await link_correlation.refresh_link_state(
+                session, device_id=device_id, instance=instance)
             await repo.refresh_device_alarm_state(session, [device_id])
             return AlarmAction("alarm_cleared", cleared[0])
 
@@ -286,6 +299,10 @@ class AlarmService:
         # collapse has to happen on both paths or the console shows one row
         # from each.
         await self._collapse_bands(
+            session, alarm, device_id=device_id,
+            alarm_type=alert_taxonomy.canonical_alarm_type(ev["event_type"]),
+            instance=instance, actor="device")
+        await self._pair_link_ends(
             session, alarm, device_id=device_id,
             alarm_type=alert_taxonomy.canonical_alarm_type(ev["event_type"]),
             instance=instance, actor="device")
@@ -412,6 +429,40 @@ class AlarmService:
             action="suppressed", severity=alarm["severity"], actor=actor,
             detail={"root": root["id"], "reason": reason})
 
+    async def _pair_link_ends(self, session, alarm: dict, *, device_id: str,
+                              alarm_type: str, instance: str,
+                              actor: str) -> None:
+        """Fold the far end of a failed link under the near one.
+
+        Both ends of a cable report it, and both reports are real. The later
+        one becomes a symptom of the earlier so the console shows one row for
+        one cable, and that row names both ends. Nothing is discarded: a link
+        where only ONE end ever reports stays exactly as it is, because that
+        asymmetry is a diagnosis - a dead far end, or a unidirectional fibre.
+        """
+        if alarm_type not in link_correlation.LINK_TYPES:
+            return
+        state = await link_correlation.refresh_link_state(
+            session, device_id=device_id, instance=instance)
+        if alarm.get("is_symptom"):
+            # Already explained by something upstream - a dead peer, a failed
+            # feed. That root outranks the far end of the cable.
+            return
+        root = await link_correlation.pair_ends(
+            session, alarm_id=alarm["id"], device_id=device_id,
+            instance=instance)
+        if not root:
+            return
+        alarm["is_symptom"] = True
+        alarm["root_cause_alarm_id"] = root["id"]
+        await repo.record_history(
+            session, alarm_id=alarm["id"], device_id=device_id,
+            action="suppressed", severity=alarm["severity"], actor=actor,
+            detail={"root": root["id"], "link": root["connection_id"],
+                    "reason": f"far end of the same link, reported first by "
+                              f"{root['device_name']} {root['port']}",
+                    "oper_state": state})
+
     # ----------------------------------------------------------- helpers
 
     async def _apply_candidate(self, session: AsyncSession,
@@ -454,6 +505,10 @@ class AlarmService:
                 session, alarm, device_id=c.key.device_id,
                 alarm_type=c.key.alarm_type, instance=c.key.instance,
                 actor="system")
+        await self._pair_link_ends(
+            session, alarm, device_id=c.key.device_id,
+            alarm_type=c.key.alarm_type, instance=c.key.instance,
+            actor="system")
 
         return AlarmAction(
             "alarm_created" if alarm["change"] == "created" else "alarm_updated",
@@ -475,6 +530,8 @@ class AlarmService:
                     session, alarm_id=sym["id"], device_id=sym["device_id"],
                     action="released", severity=sym["severity"], actor=c.by,
                     detail={"root": row["id"]})
+        await link_correlation.refresh_link_state(
+            session, device_id=c.key.device_id, instance=c.key.instance)
         return AlarmAction("alarm_cleared", cleared[0])
 
 

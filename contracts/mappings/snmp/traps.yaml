@@ -2622,6 +2622,7 @@ traps:
   - oid: 1.3.6.1.6.3.1.1.5.3
     event_type: link_down
     severity: MAJOR
+    instance_from_varbind: 1.3.6.1.2.1.2.2.1.2
     display_name: "Link Down"
     device_types: [firewall, load_balancer, router, server, switch]
     # linkDown [synthetic]
@@ -2631,6 +2632,7 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [link_down]
+    instance_from_varbind: 1.3.6.1.2.1.2.2.1.2
     display_name: "Link Up"
     device_types: [firewall, load_balancer, router, server, switch]
     # linkUp [synthetic]

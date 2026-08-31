@@ -284,7 +284,7 @@ func (t *TrapReceiver) emit(ctx context.Context, trap *heldTrap) {
 			}
 		}
 		if def.InstanceFromVarbind != "" {
-			if v, ok := varbinds[def.InstanceFromVarbind]; ok {
+			if v, ok := varbindLookup(varbinds, def.InstanceFromVarbind); ok {
 				ev.Instance = v
 			}
 		}
@@ -379,15 +379,47 @@ func severityFromName(name string) models.Severity {
 // which is where something automated would look for it anyway.
 // varbindFloat reads a numeric varbind, tolerating the leading dot some
 // agents send and the empty name of a mapping that declares no varbind.
-func varbindFloat(varbinds map[string]string, oid string) (float64, bool) {
+// varbindLookup finds one varbind by OID, exactly or as a table column.
+//
+// A varbind that names a column of a table arrives with the row's index
+// appended: an agent reporting a link on ifIndex 7 sends ifDescr as
+// 1.3.6.1.2.1.2.2.1.2.7, not 1.3.6.1.2.1.2.2.1.2. Which index it will be is
+// not knowable when the mapping is written - that is the whole content of the
+// notification - so a mapping can only name the column, and the receiver has
+// to resolve the row. Real managers do this; matching the string exactly
+// would work only against an agent that happens to hard-code one index.
+//
+// An ambiguous column is left unresolved rather than guessed. Two ifDescr
+// varbinds in one linkDown would mean the notification is about two ports,
+// and picking either would name the wrong cable half the time - which is the
+// failure this whole change exists to stop.
+func varbindLookup(varbinds map[string]string, oid string) (string, bool) {
 	if oid == "" {
-		return 0, false
+		return "", false
 	}
-	raw, ok := varbinds[strings.TrimPrefix(oid, ".")]
-	if !ok {
-		if raw, ok = varbinds[oid]; !ok {
-			return 0, false
+	bare := strings.TrimPrefix(oid, ".")
+	if raw, ok := varbinds[bare]; ok {
+		return raw, true
+	}
+	if raw, ok := varbinds[oid]; ok {
+		return raw, true
+	}
+	found, prefix := "", bare+"."
+	for k, v := range varbinds {
+		if strings.HasPrefix(strings.TrimPrefix(k, "."), prefix) {
+			if found != "" {
+				return "", false
+			}
+			found = v
 		}
+	}
+	return found, found != ""
+}
+
+func varbindFloat(varbinds map[string]string, oid string) (float64, bool) {
+	raw, ok := varbindLookup(varbinds, oid)
+	if !ok {
+		return 0, false
 	}
 	v, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
 	if err != nil {

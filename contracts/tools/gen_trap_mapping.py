@@ -167,6 +167,25 @@ def event_type_for(name: str) -> str:
     return "".join(out)
 
 
+# RFC 2863 ifDescr, as a column. An interface notification is about ONE port,
+# and until the receiver knows which, every port on a switch shares a single
+# alarm: a leaf with an uplink down and a server port down showed one row, and
+# the second fault to arrive only refreshed the first.
+#
+# Unlike the enterprise varbinds guarded by same_tree() below, MIB-2 objects
+# are not a vendor's private vocabulary - Cisco, Juniper, Dell and Arista all
+# carry ifIndex and ifDescr on their link traps because the standard defines
+# linkDown to carry them. So this is keyed on what the notification MEANS, not
+# on who sent it.
+#
+# ifDescr rather than ifIndex: the name is what the operator sees on the
+# console and what the interface is recorded under, so an alarm instance of
+# "GigabitEthernet0/5" joins to the cable, where "7" needs a second lookup
+# that only works while the agent's index numbering stays put.
+IFDESCR_COLUMN = "1.3.6.1.2.1.2.2.1.2"
+PORT_EVENTS = {"link_down", "link_up"}
+
+
 def same_tree(trap_oid: str, measures: tuple[str, str, str]) -> bool:
     """Can a trap on this OID actually carry these varbinds?
 
@@ -528,6 +547,8 @@ def main() -> int:
                 lines.append(f"    metric: {metric}")
                 lines.append(f"    value_varbind: {value_vb}")
                 lines.append(f"    threshold_varbind: {thresh_vb}")
+            if e["event_type"] in PORT_EVENTS:
+                lines.append(f"    instance_from_varbind: {IFDESCR_COLUMN}")
             if e.get("display_name"):
                 lines.append(f"    display_name: \"{e['display_name']}\"")
             if e["device_types"]:

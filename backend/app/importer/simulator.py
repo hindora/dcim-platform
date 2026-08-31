@@ -23,6 +23,7 @@ from typing import Any
 
 import httpx
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
@@ -107,7 +108,18 @@ class TopologyImporter:
         self._vendor: dict[str, str] = {}
         self._model: dict[tuple[str, str], str] = {}
         self._device: dict[str, str] = {}      # external_id -> id
-        self._iface: dict[tuple[str, int], str] = {}   # (device_id, index) -> id
+        self._device_name: dict[str, str] = {}         # device_id -> name
+        self._iface: dict[tuple[str, int], str] = {}   # (device_id, if_index) -> id
+        # Edges address a port by its POSITION in the device's interface
+        # list, which is not its ifIndex: the simulator numbers ifIndex
+        # from 1, and src_iface/dst_iface count from 0. Keying the
+        # lookup by ifIndex made every edge resolve one port to the left,
+        # and since a miss drops BOTH ends to 'none' the ports vanished
+        # entirely - 2792 of 2879 production links landed with no port,
+        # leaving the table able to say LF1 connects to SRV05 but not on
+        # which cable. Both maps are kept: interface rows are still
+        # written with the real ifIndex, which is what SNMP reports.
+        self._iface_at: dict[tuple[str, int], str] = {}  # (device_id, pos) -> id
         self._outlet: dict[tuple[str, int], str] = {}
         self._psu: dict[tuple[str, int], str] = {}
         self._profiles: dict[str, str] = {}
@@ -462,6 +474,7 @@ class TopologyImporter:
                          "modbus_role": dev.get("modbus_role") or None,
                          "source": "simulator"}))
         self._device[ext] = device_id
+        self._device_name[device_id] = dev.get("name") or ext
         self.report.devices += 1
 
     async def _decommission_missing(self, present: set[str]) -> None:
@@ -500,6 +513,7 @@ class TopologyImporter:
                 speed=_speed_bps(iface), mac=iface.get("mac") or None,
                 ip=iface.get("ip") or None)
             self._iface[(device_id, if_index)] = iface_id
+            self._iface_at[(device_id, idx)] = iface_id
             self.report.interfaces += 1
 
         for outlet in dev.get("outlets") or []:
@@ -549,8 +563,8 @@ class TopologyImporter:
         if layer in ("production", "management"):
             # src_iface/dst_iface are deliberately NULL on power and cooling
             # edges; only port-bearing layers index into the interface map.
-            a_term = self._iface.get((a_id, edge.get("src_iface")))
-            b_term = self._iface.get((b_id, edge.get("dst_iface")))
+            a_term = self._iface_at.get((a_id, edge.get("src_iface")))
+            b_term = self._iface_at.get((b_id, edge.get("dst_iface")))
             if a_term is None or b_term is None:
                 a_type = b_type = "none"
                 a_term = b_term = None
@@ -562,6 +576,33 @@ class TopologyImporter:
                 a_type = b_type = "none"
                 a_term = b_term = None
 
+        try:
+            async with self.s.begin_nested():
+                await self._insert_connection(layer, a_id, a_type, a_term,
+                                              b_id, b_type, b_term, edge)
+        except IntegrityError:
+            # A port carries one cable. The uniqueness that says so is older
+            # than this importer and correct; what is new is that ports now
+            # resolve at all, so a topology that double-books one finally
+            # collides instead of passing unnoticed as two portless rows.
+            #
+            # Keep the link and drop the ports rather than dropping the link:
+            # that a cable exists is the more certain fact, and a report the
+            # operator reads beats a row silently missing from the model.
+            a_name = self._device_name.get(a_id, a_id)
+            b_name = self._device_name.get(b_id, b_id)
+            self.report.warnings.append(
+                f"{layer} link {a_name}:{edge.get('src_iface')} -> "
+                f"{b_name}:{edge.get('dst_iface')} claims a port that already "
+                f"carries another cable; imported without terminations")
+            async with self.s.begin_nested():
+                await self._insert_connection(layer, a_id, "none", None,
+                                              b_id, "none", None, edge)
+        self.report.connections += 1
+
+    async def _insert_connection(self, layer: str, a_id: str, a_type: str,
+                                 a_term: str | None, b_id: str, b_type: str,
+                                 b_term: str | None, edge: dict) -> None:
         await self.s.execute(text("""
             INSERT INTO connection (layer, link_type,
                                     a_device_id, a_termination_type, a_termination_id,
@@ -571,14 +612,15 @@ class TopologyImporter:
                     CAST(:a AS uuid), CAST(:at AS termination_t), CAST(:aid AS uuid),
                     CAST(:b AS uuid), CAST(:bt AS termination_t), CAST(:bid AS uuid),
                     :side, :oper)
-            ON CONFLICT DO NOTHING
+            ON CONFLICT (layer, a_device_id, a_termination_type, a_termination_id,
+                                b_device_id, b_termination_type, b_termination_id)
+            DO UPDATE SET oper_state = EXCLUDED.oper_state
         """), {"layer": layer, "link_type": _link_type(layer),
                "a": a_id, "at": a_type, "aid": a_term,
                "b": b_id, "bt": b_type, "bid": b_term,
                # Filled in by recompute_power_sides once every edge exists.
                "side": None,
                "oper": "down" if edge.get("broken") else "unknown"})
-        self.report.connections += 1
 
     # ----------------------------------------------------------- endpoints
 
