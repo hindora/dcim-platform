@@ -35,14 +35,25 @@ def test_a_healthy_platform_raises_nothing():
     assert p.evaluate(sig()) == []
 
 
+def test_a_lag_spike_that_has_not_persisted_raises_nothing():
+    """Added with the dwell: size alone is no longer enough.
+
+    Three raises in one hour on this platform - 89.8 s, 90.8 s, 106.8 s - each
+    clearing within two minutes while the consumer was 0.3 s behind the newest
+    entry. The queue was working; the banner said the estate was degraded.
+    """
+    assert [f for f in p.evaluate(sig(ingest_lag_s=400.0, ingest_lag_sustained_s=5.0))
+            if f.alarm_type == "ingest_lag_high"] == []
+
+
 def test_pipeline_lag_over_a_minute_warns():
-    found = p.evaluate(sig(ingest_lag_s=75.0))
+    found = p.evaluate(sig(ingest_lag_s=75.0, ingest_lag_sustained_s=999.0))
     assert types(found) == {"ingest_lag_high"}
     assert found[0].severity == p.WARNING
 
 
 def test_pipeline_lag_over_five_minutes_is_critical():
-    found = p.evaluate(sig(ingest_lag_s=400.0))
+    found = p.evaluate(sig(ingest_lag_s=400.0, ingest_lag_sustained_s=999.0))
     assert found[0].severity == p.CRITICAL
     assert found[0].value == 400.0
     assert found[0].threshold == p.INGEST_LAG_CRITICAL_S
@@ -164,13 +175,13 @@ def test_findings_that_disappear_are_cleared():
 
 
 def test_a_finding_that_persists_is_not_cleared_and_not_duplicated():
-    current = p.evaluate(sig(ingest_lag_s=400.0))
+    current = p.evaluate(sig(ingest_lag_s=400.0, ingest_lag_sustained_s=999.0))
     _, to_clear = p.diff(current, {("ingest_lag_high", "telemetry.v1")})
     assert to_clear == []
 
 
 def test_the_verdict_reports_the_worst_finding():
-    found = p.evaluate(sig(ingest_lag_s=400.0, collectors=[
+    found = p.evaluate(sig(ingest_lag_s=400.0, ingest_lag_sustained_s=999.0, collectors=[
         p.Collector(collector_id="col-1", heartbeat_age_s=5.0,
                     assignment_age_s=600.0)]))
     verdict = p.summarise(found)

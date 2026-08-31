@@ -150,6 +150,7 @@ async def gather(session: AsyncSession, redis: Redis, *,
                  streams: list[str], group: str,
                  poll_interval_s: float = 120.0,
                  ingest_lag_s: float | None = None,
+                 ingest_lag_sustained_s: float = 0.0,
                  collectors_expected: int = 1) -> rules.Signals:
     """Read every signal the evaluator needs, and export them as metrics.
 
@@ -184,6 +185,7 @@ async def gather(session: AsyncSession, redis: Redis, *,
 
     return rules.Signals(
         ingest_lag_s=lag,
+        ingest_lag_sustained_s=ingest_lag_sustained_s,
         telemetry_age_s=age,
         telemetry_present=present,
         worker_heartbeat_age_s=hb.get("age_s") if hb else None,
@@ -240,10 +242,12 @@ async def apply(session: AsyncSession, findings: list[rules.Finding]
 
 async def run_once(session: AsyncSession, redis: Redis, *, streams: list[str],
                    group: str, poll_interval_s: float = 120.0,
-                   ingest_lag_s: float | None = None) -> dict[str, Any]:
+                   ingest_lag_s: float | None = None,
+                   ingest_lag_sustained_s: float = 0.0) -> dict[str, Any]:
     signals = await gather(session, redis, streams=streams, group=group,
                            poll_interval_s=poll_interval_s,
-                           ingest_lag_s=ingest_lag_s)
+                           ingest_lag_s=ingest_lag_s,
+                           ingest_lag_sustained_s=ingest_lag_sustained_s)
     findings = rules.evaluate(signals)
     result = await apply(session, findings)
     result["signals"] = {

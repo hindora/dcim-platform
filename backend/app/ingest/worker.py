@@ -27,6 +27,7 @@ import msgpack
 from redis.asyncio import Redis
 from sqlalchemy import text
 
+from app.alarms import platform as rules
 from app.alarms import platform_monitor
 from app.alarms.service import AlarmService, event_row
 from app.contracts.messages_gen import (
@@ -51,6 +52,14 @@ from app.ingest.fanout import Fanout
 from app.repositories import alarms as repo_alarms
 
 log = get_logger("ingest")
+
+# A consumer idle this long is a worker that is gone. Comfortably longer
+# than any tick, so a live worker blocked on a slow batch is never mistaken
+# for a dead one.
+CONSUMER_DEAD_AFTER_MS = 10 * 60 * 1000
+# The scan is cheap but pointless to run every second; the set only grows
+# on a restart.
+CONSUMER_REAP_EVERY_S = 300.0
 
 # How often to look for endpoints that answer but say nothing. Well under
 # the smallest grace period, so an endpoint crosses its threshold and is
@@ -101,10 +110,12 @@ class IngestWorker:
         # -inf so the first tick sweeps immediately rather than after a minute.
         self._last_staleness_sweep = float("-inf")
         self._last_platform_check = float("-inf")
+        self._last_consumer_reap = float("-inf")
         # Pipeline latency measured on the last telemetry batch. None until a
         # batch has actually been seen - an idle worker has no lag to report,
         # and reporting zero would be a claim it cannot support.
         self._last_lag_s: float | None = None
+        self._lag_over_since: float | None = None
         self._batches = 0
         self._samples = 0
         self.redis: Redis = Redis.from_url(self.settings.redis_url)
@@ -162,6 +173,7 @@ class IngestWorker:
         await self._heartbeat_and_monitor()
 
         await self._reclaim_stale()
+        await self._reap_dead_consumers()
 
         entries = await self.redis.xreadgroup(
             self.settings.ingest_group, self.consumer,
@@ -175,24 +187,45 @@ class IngestWorker:
 
         for stream_name, messages in entries:
             name = stream_name.decode() if isinstance(stream_name, bytes) else stream_name
-            ids = [mid for mid, _ in messages]
-            payloads = [msgpack.unpackb(fields[b"p"], raw=False) for _, fields in messages]
+            await self._dispatch(name, messages, measure_lag=True)
 
-            metrics.ingest_messages.labels(stream=name, result="consumed").inc(
-                len(payloads))
+    async def _dispatch(self, name: str, messages: list, *,
+                        measure_lag: bool) -> None:
+        """Decode one stream's messages, hand them to their handler, ack them.
 
-            if name == Stream.TELEMETRY:
+        Separate from the read so that entries RECLAIMED from a dead worker go
+        through exactly the same path. They used not to: the only read in this
+        worker asks for `>`, which is new-messages-only, so anything claimed by
+        `_reclaim_stale` landed in this consumer's pending list and was never
+        read again - taken from the dead worker and dropped. 141 endpoint state
+        changes were sitting in that state, along with 265 heartbeats.
+
+        ``measure_lag`` is false for reclaimed batches. They are old by
+        definition - that is why they were reclaimed - and letting them set the
+        pipeline-latency figure would report a dead worker's backlog as the
+        current transport delay.
+        """
+        if not messages:
+            return
+        ids = [mid for mid, _ in messages]
+        payloads = [msgpack.unpackb(fields[b"p"], raw=False) for _, fields in messages]
+
+        metrics.ingest_messages.labels(stream=name, result="consumed").inc(
+            len(payloads))
+
+        if name == Stream.TELEMETRY:
+            if measure_lag:
                 self._measure_lag(payloads)
-                self._trace(payloads, name)
-                await self._handle_telemetry(payloads)
-            elif name == Stream.EVENTS:
-                await self._handle_events(payloads)
-            elif name == Stream.ENDPOINTSTATE:
-                await self._handle_endpoint_state(payloads)
-            elif name == Stream.HEARTBEAT:
-                await self._handle_heartbeat(payloads)
+            self._trace(payloads, name)
+            await self._handle_telemetry(payloads)
+        elif name == Stream.EVENTS:
+            await self._handle_events(payloads)
+        elif name == Stream.ENDPOINTSTATE:
+            await self._handle_endpoint_state(payloads)
+        elif name == Stream.HEARTBEAT:
+            await self._handle_heartbeat(payloads)
 
-            await self.redis.xack(name, self.settings.ingest_group, *ids)
+        await self.redis.xack(name, self.settings.ingest_group, *ids)
 
     def _trace(self, payloads: list[dict], stream: str) -> None:
         """Carry the batch's trace id into this stage's logs.
@@ -241,9 +274,24 @@ class IngestWorker:
         # masking a real backlog on another collector.
         lag = max(0.0, lag)
         self._last_lag_s = lag
+        # When the lag first went over the warning line, so a burst that drains
+        # can be told from a pipeline that is genuinely behind. Reset the moment
+        # it recovers: what matters is CONTINUOUS time over the line, not how
+        # often it has been crossed.
+        if lag >= rules.INGEST_LAG_WARNING_S:
+            if self._lag_over_since is None:
+                self._lag_over_since = time.monotonic()
+        else:
+            self._lag_over_since = None
         self._batches += len(payloads)
         metrics.ingest_lag.labels(stream=Stream.TELEMETRY).set(lag)
         metrics.ingest_lag_hist.labels(stream=Stream.TELEMETRY).observe(lag)
+
+    def _lag_sustained_s(self) -> float:
+        """Seconds the lag has been continuously above the warning line."""
+        if self._lag_over_since is None:
+            return 0.0
+        return time.monotonic() - self._lag_over_since
 
     async def _heartbeat_and_monitor(self) -> None:
         """Say the worker is alive, then judge the platform.
@@ -269,7 +317,8 @@ class IngestWorker:
                     session, self.redis,
                     streams=[Stream.TELEMETRY, Stream.EVENTS],
                     group=self.settings.ingest_group,
-                    ingest_lag_s=self._last_lag_s)
+                    ingest_lag_s=self._last_lag_s,
+                    ingest_lag_sustained_s=self._lag_sustained_s())
         except Exception as exc:
             # Self-monitoring must never be the thing that stops ingestion.
             log.error("platform monitor failed", error=str(exc), exc_info=True)
@@ -302,13 +351,71 @@ class IngestWorker:
             log.error("staleness sweep failed", error=str(exc), exc_info=True)
 
     async def _reclaim_stale(self) -> None:
-        """Take over entries a dead worker never acked."""
+        """Take over entries a dead worker never acked - and finish them.
+
+        XAUTOCLAIM returns the entries it moved. Discarding that return value
+        was the whole bug: ownership transferred, nothing was processed, and
+        because the main read asks for `>` the claimed entries could never be
+        read again. They accumulated in this consumer's pending list and were
+        re-claimed on every tick forever.
+
+        Now they go through the same dispatch as a fresh read, which processes
+        and acks them, so the pending list actually drains.
+        """
+        for stream in (Stream.TELEMETRY, Stream.EVENTS, Stream.ENDPOINTSTATE,
+                       Stream.HEARTBEAT):
+            try:
+                claimed = await self.redis.xautoclaim(
+                    stream, self.settings.ingest_group, self.consumer,
+                    min_idle_time=self.settings.ingest_claim_idle_ms, count=100)
+            except Exception as exc:
+                log.warning("reclaim failed", stream=stream, error=str(exc))
+                continue
+            # (next_cursor, entries) on redis-py 4.6+, with a third deleted-ids
+            # element on newer servers.
+            messages = claimed[1] if len(claimed) > 1 else []
+            if not messages:
+                continue
+            log.info("reclaimed entries from a dead consumer",
+                     stream=stream, count=len(messages))
+            with contextlib.suppress(Exception):
+                await self._dispatch(stream, messages, measure_lag=False)
+
+    async def _reap_dead_consumers(self) -> None:
+        """Forget consumers that are idle and hold nothing.
+
+        Every start mints a consumer name from hostname and pid, so each
+        restart leaves its predecessor behind forever. This group had 104
+        consumer records for one running worker, 94 on another stream. Redis
+        keeps each one's pending list indefinitely, and XAUTOCLAIM walks the
+        whole set on every tick, so the cost of a restart never goes away.
+
+        Only ever deletes a consumer with NO pending entries, and only after
+        the reclaim above has had its chance to take them. Deleting a consumer
+        that still holds pending entries destroys them - that is the failure
+        this is meant to prevent, not cause. The live consumer is never a
+        candidate: it is not idle.
+        """
+        now = time.time()
+        if now - self._last_consumer_reap < CONSUMER_REAP_EVERY_S:
+            return
+        self._last_consumer_reap = now
+
         for stream in (Stream.TELEMETRY, Stream.EVENTS, Stream.ENDPOINTSTATE,
                        Stream.HEARTBEAT):
             with contextlib.suppress(Exception):
-                await self.redis.xautoclaim(
-                    stream, self.settings.ingest_group, self.consumer,
-                    min_idle_time=self.settings.ingest_claim_idle_ms, count=100)
+                for c in await self.redis.xinfo_consumers(
+                        stream, self.settings.ingest_group):
+                    name = c["name"]
+                    name = name.decode() if isinstance(name, bytes) else name
+                    if name == self.consumer:
+                        continue
+                    if c["pending"] or c["idle"] < CONSUMER_DEAD_AFTER_MS:
+                        continue
+                    await self.redis.xgroup_delconsumer(
+                        stream, self.settings.ingest_group, name)
+                    log.info("reaped idle consumer", stream=stream,
+                             consumer=name, idle_ms=c["idle"])
 
     # -------------------------------------------------------------- handlers
 
@@ -724,12 +831,40 @@ class IngestWorker:
                 continue
         return out
 
+    # A baseline may only move FORWARD in time.
+    #
+    # The stored value is "<counter>:<observed_at_us>". This replaces it only
+    # when the incoming reading is newer than the one already there, so a late
+    # or replayed batch cannot overwrite a fresher baseline. Without it the
+    # next real sample computes its delta against a reading from the future,
+    # gets a negative dt, and is discarded - the rate silently disappears for
+    # that series instead of being slightly wrong, which is harder to notice.
+    #
+    # This became necessary the moment reclaimed entries started being
+    # processed: those are old by definition, and they now flow through the
+    # same path as fresh ones. It is also the first of the two things that
+    # would have to be true before a second worker could safely share this
+    # consumer group.
+    _BASELINE_LUA = """
+    local cur = redis.call('GET', KEYS[1])
+    if cur then
+      local sep = string.find(cur, ':')
+      if sep and tonumber(string.sub(cur, sep + 1)) >= tonumber(ARGV[2]) then
+        return 0
+      end
+    end
+    redis.call('SET', KEYS[1], ARGV[1], 'EX', 3600)
+    return 1
+    """
+
     async def _store_baselines(self, writes: dict[str, str]) -> None:
         if not writes:
             return
+        script = self.redis.register_script(self._BASELINE_LUA)
         pipe = self.redis.pipeline()
         for key, value in writes.items():
-            pipe.set(f"dcim:ctr:{key}", value, ex=3600)
+            _, _, ts = value.rpartition(":")
+            script(keys=[f"dcim:ctr:{key}"], args=[value, ts], client=pipe)
         await pipe.execute()
 
 

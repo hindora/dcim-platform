@@ -28,6 +28,20 @@ from typing import Any
 # thresholds have room. This is NOT data freshness - see core/metrics.py.
 INGEST_LAG_WARNING_S = 60.0
 INGEST_LAG_CRITICAL_S = 300.0
+# How long the lag has to STAY over the line before it is worth telling anyone.
+#
+# The pipeline is bursty by nature: a poll wave lands, the worker chews through
+# it, and the transport delay spikes and drains. Measured here, three times in
+# one hour - 89.8 s, 90.8 s, 106.8 s - each one raising a warning and clearing
+# it within two minutes. Nothing was wrong, and because a platform condition
+# paints a banner across every page, the estate looked degraded for most of an
+# hour on account of a queue that was doing its job.
+#
+# Two minutes is longer than any burst observed draining, and far shorter than
+# a genuine stall: the worst real one in this table sat at 59763 s. An
+# indication that fires on every poll wave is one that gets ignored, which is
+# the failure mode worth designing against.
+INGEST_LAG_DWELL_S = 120.0
 
 # A collector heartbeats every 30 s by contract; 60 s is two missed beats.
 COLLECTOR_STALE_S = 60.0
@@ -99,6 +113,11 @@ class Signals:
     """
 
     ingest_lag_s: float | None = None
+    # How long ingest_lag_s has been continuously over the warning line.
+    # Tracked by the caller so the rules stay a pure function of what they
+    # are handed, and can still be tested against states that are hard to
+    # produce on purpose.
+    ingest_lag_sustained_s: float = 0.0
     telemetry_age_s: float | None = None
     telemetry_present: bool = True
     worker_heartbeat_age_s: float | None = None
@@ -125,6 +144,10 @@ def evaluate(signals: Signals) -> list[Finding]:
     lag = signals.ingest_lag_s
     if lag is not None:
         severity = _lag_severity(lag)
+        # A spike that drains is the pipeline working, not the pipeline
+        # failing. Only a lag that persists is worth a banner.
+        if severity and signals.ingest_lag_sustained_s < INGEST_LAG_DWELL_S:
+            severity = None
         if severity:
             out.append(Finding(
                 alarm_type="ingest_lag_high", instance="telemetry.v1",
@@ -132,10 +155,12 @@ def evaluate(signals: Signals) -> list[Finding]:
                 threshold=(INGEST_LAG_CRITICAL_S if severity == CRITICAL
                            else INGEST_LAG_WARNING_S),
                 message=(
-                    f"Telemetry is taking {lag:.0f}s to travel from the "
-                    f"collector to the database. Samples are being written, "
-                    f"but everything read from this platform - dashboards, "
-                    f"alarms, analytics - is that far behind the datacenter")))
+                    f"Telemetry has been taking {lag:.0f}s to travel from the "
+                    f"collector to the database for "
+                    f"{signals.ingest_lag_sustained_s / 60:.0f} min. Samples "
+                    f"are being written, but everything read from this "
+                    f"platform - dashboards, alarms, analytics - is that far "
+                    f"behind the datacenter")))
 
     # Freshness is judged against the poll interval, not against zero. A fleet
     # polled every 120 s is a fleet whose newest sample is routinely 120 s old,
