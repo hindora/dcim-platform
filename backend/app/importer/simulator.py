@@ -473,6 +473,11 @@ class TopologyImporter:
             pip=dev.get("ip_address") or None, mip=dev.get("mgmt_ip") or None,
             attrs=_json({"mgmt_vlan": dev.get("mgmt_vlan"),
                          "power_draw_w": dev.get("power_draw_w"),
+                         # The nameplate. Without it a PDU's draw is a number
+                         # with nothing to be a fraction OF, and load_pct - the
+                         # metric its overload rule is written against - cannot
+                         # be derived at all.
+                         "rated_power_w": dev.get("rated_power_w") or None,
                          "modbus_role": dev.get("modbus_role") or None,
                          "source": "simulator"}))
         self._device[ext] = device_id

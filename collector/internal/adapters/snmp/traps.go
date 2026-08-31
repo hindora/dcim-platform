@@ -278,9 +278,13 @@ func (t *TrapReceiver) emit(ctx context.Context, trap *heldTrap) {
 			// mapping is fixed; this makes the same mistake harmless if it is
 			// ever made again.
 			if gotValue || gotLimit {
+				scale := def.ValueScale
+				if scale == 0 {
+					scale = 1
+				}
 				ev.Metric = def.Metric
-				ev.Value = value
-				ev.Threshold = limit
+				ev.Value = value * scale
+				ev.Threshold = limit * scale
 			}
 		}
 		if def.InstanceFromVarbind != "" {

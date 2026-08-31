@@ -231,6 +231,7 @@ def main() -> int:
     from core.trap_definitions import TRAP_DEFINITIONS, TrapType  # noqa: E402
     from core.trap_rules import DEFAULT_RULES  # noqa: E402
     from core.vendor_oids import (  # noqa: E402
+        APC,
         CISCO,
         CISCO_ENV_STATE,
         LIEBERT,
@@ -300,13 +301,45 @@ def main() -> int:
         "sensorAmbientTempNormal": ("ambient_temperature", f"{_V}.3", f"{_V}.7"),
         # Cisco puts the same two numbers on its own objects.
         "_cisco_cpu": ("cpu_utilization", CISCO["cpu5min"], CISCO["cpuRisingThresh"]),
+        # APC ships rPDULoadStatusLoad on every rPDU load notification. There
+        # is no matching limit object - PowerNet carries the STATE
+        # (nearOverload/overload) rather than the number it crossed - so the
+        # threshold varbind is deliberately empty and the alarm arrives with a
+        # reading and no limit, which is what the PDU actually said.
+        "_apc_pdu_load": ("current", APC["loadStatusLoad"], ""),
     }
 
-    def measurement(name: str, vendor: str) -> tuple[str, str, str] | None:
+    # Vendor units are not the metric's units. rPDULoadStatusLoad is TENTHS of
+    # an amp, so 135 is 13.5 A - and published raw under a metric measured in
+    # amps it would read as 135 A on a 13.5 A circuit: plausible, wrong by ten,
+    # and indistinguishable from the overload it is supposed to be reporting.
+    MEASURE_SCALE = {"_apc_pdu_load": 0.1}
+
+    # The APC notifications that carry a load reading. Kept as a set rather
+    # than folded into MEASURES because these names are shared with other
+    # vendors, whose traps carry entirely different objects.
+    # Names as PowerNet declares them, read off the generated table rather than
+    # guessed from the event types: APC calls it loadHigh, not pduLoadHigh,
+    # while the same vendor DOES prefix pduLoadNormal. Exactly the set the
+    # simulator answers with rPDULoadStatusLoad varbinds.
+    APC_LOAD_TRAPS = {"loadHigh", "loadCritical", "pduLoadNormal",
+                      "outletCurrentHigh", "breakerTripped"}
+
+    def measure_key(name: str, vendor: str) -> str | None:
         if vendor == "cisco" and name in ("cpuHighUsage", "cpuSustained",
                                           "cpuNormal"):
-            return MEASURES["_cisco_cpu"]
-        return MEASURES.get(name)
+            return "_cisco_cpu"
+        if vendor == "apc" and name in APC_LOAD_TRAPS:
+            return "_apc_pdu_load"
+        return name if name in MEASURES else None
+
+    def measurement(name: str, vendor: str) -> tuple[str, str, str] | None:
+        key = measure_key(name, vendor)
+        return MEASURES.get(key) if key else None
+
+    def measure_scale(name: str, vendor: str) -> float:
+        key = measure_key(name, vendor)
+        return MEASURE_SCALE.get(key, 1.0) if key else 1.0
 
     def entry_for(name: str, declared: str, vendor: str = "synthetic") -> dict:
         if name in CLEAR_PAIRS:
@@ -316,12 +349,14 @@ def main() -> int:
                     "is_clear": True, "clears": targets, "name": name,
                     "display_name": display_names.get(name, ""),
                     "measures": m,
+                    "scale": measure_scale(name, vendor),
                     "device_types": sorted(device_types_for.get(name, ()))}
         return {"event_type": event_type_for(name),
                 "severity": SEVERITY_MAP.get(declared, "MINOR"),
                 "is_clear": False, "clears": [], "name": name,
                 "display_name": display_names.get(name, ""),
                 "measures": measurement(name, vendor),
+                "scale": measure_scale(name, vendor),
                 "device_types": sorted(device_types_for.get(name, ()))}
 
     by_oid: dict[str, list[dict]] = defaultdict(list)
@@ -546,7 +581,10 @@ def main() -> int:
                 metric, value_vb, thresh_vb = e["measures"]
                 lines.append(f"    metric: {metric}")
                 lines.append(f"    value_varbind: {value_vb}")
-                lines.append(f"    threshold_varbind: {thresh_vb}")
+                if thresh_vb:
+                    lines.append(f"    threshold_varbind: {thresh_vb}")
+                if e.get("scale", 1.0) != 1.0:
+                    lines.append(f"    value_scale: {e['scale']}")
             if e["event_type"] in PORT_EVENTS:
                 lines.append(f"    instance_from_varbind: {IFDESCR_COLUMN}")
             if e.get("display_name"):

@@ -60,6 +60,16 @@ type TrapDef struct {
 	Metric           string `yaml:"metric"`
 	ValueVarbind     string `yaml:"value_varbind"`
 	ThresholdVarbind string `yaml:"threshold_varbind"`
+	// ValueScale converts the varbind's units to the metric's. Vendors do not
+	// send the unit an operator reads: APC reports rPDULoadStatusLoad in
+	// TENTHS of an amp, so 135 means 13.5 A. Publishing the raw number under a
+	// metric measured in amps would put "135 A" on a 13.5 A circuit - a
+	// plausible reading, wrong by a factor of ten, and indistinguishable from
+	// a real overload.
+	//
+	// Zero means unset and is treated as 1, so every existing entry keeps its
+	// value untouched.
+	ValueScale float64 `yaml:"value_scale"`
 	// DisplayName is what the vendor calls this condition, in words. Used for
 	// the message a person reads; the OID stays on the event as
 	// raw_identifier, where a machine can still find it.

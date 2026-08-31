@@ -64,6 +64,15 @@ CONSUMER_REAP_EVERY_S = 300.0
 # decommissioned endpoint's baseline expires on its own.
 BASELINE_TTL_S = 3600
 
+# Gear that reports watts drawn but not what fraction of itself that is.
+# Rack PDUs and RPPs publish current/power/voltage/energy; the UPS,
+# generator, switchgear, MCC and MPP publish load_pct directly and are
+# deliberately absent here, so nothing is derived over the top of a
+# reading the device already took.
+LOAD_PCT_FROM_DRAW = frozenset({"pdu", "rpp"})
+POWER_DRAW_METRIC = "power_draw"
+LOAD_PCT_METRIC = "load_pct"
+
 # How often to look for endpoints that answer but say nothing. Well under
 # the smallest grace period, so an endpoint crosses its threshold and is
 # alarmed within about a minute of doing so.
@@ -591,6 +600,8 @@ class IngestWorker:
                     "observed_at": observed, "endpoint_id": s.endpoint_id,
                 })
 
+            self._derive_load_pct(sample_rows, rule_inputs, hot, ws_frames)
+
             await writer.copy_samples(session, sample_rows)
             await writer.insert_bools(session, bool_rows)
             await writer.insert_texts(session, text_rows)
@@ -818,6 +829,56 @@ class IngestWorker:
                         "config_effective": _config_effective(hb),
                     }),
                 })
+
+    def _derive_load_pct(self, sample_rows: list, rule_inputs: list[dict],
+                         hot: dict, ws_frames: list) -> None:
+        """Draw as a fraction of the nameplate, for gear that reports only watts.
+
+        `power_load_high` fires on `load_pct` and lists pdu and rpp among its
+        device types, but a rack PDU never published that metric - it reports
+        current, power, voltage and energy, and load_pct arrived only from the
+        UPS, generator, switchgear, MCC and MPP. So the rule was armed against
+        those two device types and could never fire on them.
+
+        That left a trap as the ONLY way a PDU overload was noticed, and a trap
+        is one unacknowledged UDP datagram. It was lost for real on this
+        platform for three hours, when a simulator restart reset the receiver
+        port and every notification went to a closed socket. An overloading PDU
+        would have been silent for all of it.
+
+        Nothing had to be collected to fix this. The draw is already polled and
+        the nameplate is already in the export; only the division was missing.
+        Deriving it here rather than asking the device keeps it vendor-neutral:
+        APC exposes a phase capacity OID and Raritan exposes its own, and both
+        rack PDU families in this fleet would otherwise need separate mappings
+        to answer one question.
+
+        A device with no rating is skipped rather than assumed. "Percent of a
+        number we guessed" is worse than no percentage at all.
+        """
+        for row in list(sample_rows):
+            if self.cache.metric_id(POWER_DRAW_METRIC) != row.metric_id:
+                continue
+            ctx = self.cache.devices.get(row.device_id)
+            if ctx is None or ctx.device_type not in LOAD_PCT_FROM_DRAW:
+                continue
+            rated = ctx.rated_power_w
+            if not rated or rated <= 0:
+                continue
+            metric_id = self.cache.metric_id(LOAD_PCT_METRIC)
+            if metric_id is None:
+                return          # the metric is not registered; nothing to write
+            pct = round(row.value / rated * 100.0, 2)
+            sample_rows.append(writer.SampleRow(
+                ts=row.ts, device_id=row.device_id, metric_id=metric_id,
+                instance=row.instance, value=pct, quality=row.quality))
+            self._note_hot(hot, ws_frames, row.device_id, LOAD_PCT_METRIC,
+                           pct, row.ts, row.quality)
+            rule_inputs.append({
+                "device_id": row.device_id, "device_type": ctx.device_type,
+                "metric": LOAD_PCT_METRIC, "instance": row.instance,
+                "value": pct, "observed_at": row.ts, "endpoint_id": None,
+            })
 
     # ------------------------------------------------------------- baselines
 

@@ -40,6 +40,8 @@ class DeviceContext:
     room_name: str | None
     datacenter_id: str | None
     datacenter_code: str | None
+    # Nameplate watts, when inventory knows them. The denominator for load_pct.
+    rated_power_w: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,7 +75,8 @@ class InventoryCache:
                    r.id::text        AS rack_id,   r.name  AS rack_name,
                    rr.name           AS row_name,
                    rm.id::text       AS room_id,   rm.name AS room_name,
-                   dc.id::text       AS datacenter_id, dc.code AS datacenter_code
+                   dc.id::text       AS datacenter_id, dc.code AS datacenter_code,
+                   NULLIF(d.attributes->>'rated_power_w','')::float AS rated_power_w
             FROM device d
             LEFT JOIN vendor v      ON v.id = d.vendor_id
             LEFT JOIN model m       ON m.id = d.model_id
