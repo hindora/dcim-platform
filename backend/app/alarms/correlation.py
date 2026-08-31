@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.layers import UPSTREAM_COL
 from app.core.logging import get_logger
+from app.repositories.alarms import _SEV_RANK
 
 log = get_logger("alarms.correlation")
 
@@ -290,6 +291,83 @@ async def collapse_bands(session: AsyncSession, *, alarm_id: str,
         log.info("lower band folded under this one", alarm_id=row["id"],
                  alarm_type=row["alarm_type"], root_alarm=alarm_id,
                  root_type=alarm_type)
+    return None
+
+
+#: The same condition, reported without saying which part.
+#:
+#: A trap says "this device is hot" and carries no instance; the rule watching
+#: the same reading says "CPU Temp is hot" and carries the sensor's name. On an
+#: instance-scoped metric those cannot share an alarm key - and must not, since
+#: a dual-socket server's two CPU sensors are two faults - so they arrive as two
+#: alarms for one fan.
+#:
+#: The qualified one is the root: it names the part, which is what somebody
+#: acting on it needs. The unqualified one becomes its symptom, still there,
+#: still linked, no longer a second line on the console.
+_QUALIFIED_SIBLING = text("""
+    SELECT id::text, alarm_type, instance, severity::text AS severity
+      FROM alarm
+     WHERE device_id = CAST(:device_id AS uuid)
+       AND alarm_type = CAST(:alarm_type AS text)
+       AND instance <> ''
+       AND state <> 'CLEARED'
+       AND NOT is_symptom
+     -- Worst first: _SEV_RANK numbers CRITICAL 0, so ASC is most severe.
+     -- Imported rather than rewritten, because a severity ranked one way here
+     -- and another way in the alarm list is how a console starts disagreeing
+     -- with itself.
+     ORDER BY {rank} ASC, first_seen
+     LIMIT 1
+""".format(rank=_SEV_RANK.format(col="severity")))
+
+#: The reverse: an unqualified alarm already open when a qualified one arrives.
+_UNQUALIFIED_SIBLINGS = text("""
+    SELECT id::text, alarm_type, severity::text AS severity
+      FROM alarm
+     WHERE device_id = CAST(:device_id AS uuid)
+       AND alarm_type = CAST(:alarm_type AS text)
+       AND instance = ''
+       AND id <> CAST(:alarm_id AS uuid)
+       AND state <> 'CLEARED'
+       AND NOT is_symptom
+""")
+
+
+async def collapse_unqualified(session: AsyncSession, *, alarm_id: str,
+                               device_id: str, alarm_type: str,
+                               instance: str) -> dict[str, Any] | None:
+    """Fold a part-less alarm under the one that names the part.
+
+    Both directions, for the same reason bands need both: the trap usually
+    arrives first, having been sent the moment the device noticed, but a poll
+    that lands mid-climb can beat it.
+
+    Only within one canonical alarm type. Two different conditions on one
+    device are two conditions, however close together they appear.
+    """
+    if instance:
+        # This alarm names a part. Anything unqualified of the same type is the
+        # same condition, seen with less detail.
+        rows = (await session.execute(_UNQUALIFIED_SIBLINGS, {
+            "device_id": device_id, "alarm_type": alarm_type,
+            "alarm_id": alarm_id})).mappings().all()
+        for row in rows:
+            await mark_symptom(session, alarm_id=row["id"],
+                               root_alarm_id=alarm_id)
+            log.info("unqualified alarm folded under a named instance",
+                     alarm_id=row["id"], alarm_type=alarm_type,
+                     root_alarm=alarm_id, instance=instance)
+        return None
+
+    root = (await session.execute(_QUALIFIED_SIBLING, {
+        "device_id": device_id, "alarm_type": alarm_type})).mappings().first()
+    if root:
+        await mark_symptom(session, alarm_id=alarm_id, root_alarm_id=root["id"])
+        log.info("unqualified alarm folded under a named instance",
+                 alarm_id=alarm_id, alarm_type=alarm_type,
+                 root_alarm=root["id"], instance=root["instance"])
+        return dict(root)
     return None
 
 

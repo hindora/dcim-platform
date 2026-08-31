@@ -11,7 +11,7 @@ from __future__ import annotations
 #: Modbus its register templates - a group named on a profile used
 #: by any of those selects nothing at all.
 MAPPING_GROUPS: dict[str, tuple[str, ...]] = {
-    "snmp": ("system", "interfaces", "host_resources", "entity_sensors", "pdu_apc", "pdu_raritan", "network_cisco",),
+    "snmp": ("system", "interfaces", "host_resources", "entity_sensors", "network_sensors", "pdu_apc", "pdu_raritan", "network_cisco",),
 }
 
 #: Every group name known to any protocol.

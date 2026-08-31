@@ -62,6 +62,25 @@ metrics:
     description: Collector-measured round trip for one poll of one endpoint.
 
   # ------------------------------------------------------------------ compute
+  # alarm_scope: whether a condition on this metric belongs to the DEVICE or to
+  # a part of it.
+  #
+  # It exists because `instance` had been carrying whatever a source chose to
+  # call the reading rather than a sub-object anybody can point at: the same CPU
+  # arrived as "" from a server's host MIB, "ALL" from a switch's Cisco CPU
+  # table and nothing at all from a trap. The alarm key is
+  # (device, alarm_type, instance), so one hot switch raised cpu_high twice -
+  # MAJOR from the trap and WARNING from the rule, neither a duplicate of the
+  # other as far as the key was concerned, both on the console.
+  #
+  # `device` files every alarm on the metric at the device, whatever the source
+  # labelled the reading. `instance` - the default - keeps them apart, which is
+  # right for a metric whose instances are real and separately actionable: one
+  # interface, one rack inlet, one branch circuit. The default is that way round
+  # because the two mistakes are not equal. A metric wrongly left per-instance
+  # shows a duplicate on the console, which is visible and irritating; one
+  # wrongly collapsed merges two genuine faults into a single alarm, and the
+  # second fault is then invisible.
   - key: cpu_utilization
     display_name: CPU Utilization
     unit: pct
@@ -74,6 +93,7 @@ metrics:
     group: compute
     device_types: [server, switch, router, firewall, load_balancer]
 
+    alarm_scope: device
   - key: cpu_temperature
     display_name: CPU Temperature
     unit: C
@@ -87,6 +107,7 @@ metrics:
     device_types: [server]
     description: Package temperature of a CPU socket. instance = socket id.
 
+    alarm_scope: instance
   - key: memory_utilization
     display_name: Memory Utilization
     unit: pct
@@ -99,6 +120,7 @@ metrics:
     group: compute
     device_types: [server, switch, router, firewall, load_balancer]
 
+    alarm_scope: device
   - key: memory_used
     display_name: Memory Used
     unit: B

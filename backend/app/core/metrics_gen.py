@@ -20,6 +20,11 @@ class MetricDef:
     rate_of: str | None
     rate_scale: float
     device_types: tuple[str, ...]
+    #: 'device' files every alarm on this metric at the device,
+    #: whatever a source labelled the reading; 'instance' keeps
+    #: them apart, for metrics whose instances are separately
+    #: actionable - one interface, one inlet, one circuit.
+    alarm_scope: str
 
 
 METRICS: dict[str, MetricDef] = {
@@ -30,6 +35,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=300, hot=False,
         group="system", rate_of=None, rate_scale=1.0,
         device_types=(),
+        alarm_scope="instance",
     ),
     "reachable": MetricDef(
         key="reachable", display_name="Reachable", unit="bool",
@@ -38,6 +44,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=300, hot=True,
         group="system", rate_of=None, rate_scale=1.0,
         device_types=(),
+        alarm_scope="instance",
     ),
     "poll_latency": MetricDef(
         key="poll_latency", display_name="Poll Latency", unit="ms",
@@ -46,6 +53,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=300, hot=False,
         group="system", rate_of=None, rate_scale=1.0,
         device_types=(),
+        alarm_scope="instance",
     ),
     "cpu_utilization": MetricDef(
         key="cpu_utilization", display_name="CPU Utilization", unit="pct",
@@ -54,6 +62,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=120, hot=True,
         group="compute", rate_of=None, rate_scale=1.0,
         device_types=("server", "switch", "router", "firewall", "load_balancer",),
+        alarm_scope="device",
     ),
     "cpu_temperature": MetricDef(
         key="cpu_temperature", display_name="CPU Temperature", unit="C",
@@ -62,6 +71,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=120, hot=True,
         group="thermal", rate_of=None, rate_scale=1.0,
         device_types=("server",),
+        alarm_scope="instance",
     ),
     "memory_utilization": MetricDef(
         key="memory_utilization", display_name="Memory Utilization", unit="pct",
@@ -70,6 +80,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=120, hot=True,
         group="compute", rate_of=None, rate_scale=1.0,
         device_types=("server", "switch", "router", "firewall", "load_balancer",),
+        alarm_scope="device",
     ),
     "memory_used": MetricDef(
         key="memory_used", display_name="Memory Used", unit="B",
@@ -78,6 +89,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=120, hot=False,
         group="compute", rate_of=None, rate_scale=1.0,
         device_types=("server",),
+        alarm_scope="instance",
     ),
     "memory_total": MetricDef(
         key="memory_total", display_name="Memory Total", unit="B",
@@ -86,6 +98,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=3600, hot=False,
         group="compute", rate_of=None, rate_scale=1.0,
         device_types=("server",),
+        alarm_scope="instance",
     ),
     "memory_available": MetricDef(
         key="memory_available", display_name="Memory Available", unit="B",
@@ -94,6 +107,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=120, hot=False,
         group="compute", rate_of=None, rate_scale=1.0,
         device_types=("server",),
+        alarm_scope="instance",
     ),
     "disk_utilization": MetricDef(
         key="disk_utilization", display_name="Disk Utilization", unit="pct",
@@ -102,6 +116,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=300, hot=False,
         group="compute", rate_of=None, rate_scale=1.0,
         device_types=("server",),
+        alarm_scope="instance",
     ),
     "disk_used": MetricDef(
         key="disk_used", display_name="Disk Used", unit="B",
@@ -110,6 +125,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=300, hot=False,
         group="compute", rate_of=None, rate_scale=1.0,
         device_types=("server",),
+        alarm_scope="instance",
     ),
     "disk_total": MetricDef(
         key="disk_total", display_name="Disk Total", unit="B",
@@ -118,6 +134,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=3600, hot=False,
         group="compute", rate_of=None, rate_scale=1.0,
         device_types=("server",),
+        alarm_scope="instance",
     ),
     "inlet_temperature": MetricDef(
         key="inlet_temperature", display_name="Inlet Temperature", unit="C",
@@ -126,6 +143,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=120, hot=True,
         group="thermal", rate_of=None, rate_scale=1.0,
         device_types=("server", "switch", "router", "sensor",),
+        alarm_scope="instance",
     ),
     "exhaust_temperature": MetricDef(
         key="exhaust_temperature", display_name="Exhaust Temperature", unit="C",
@@ -134,6 +152,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=120, hot=False,
         group="thermal", rate_of=None, rate_scale=1.0,
         device_types=("server",),
+        alarm_scope="instance",
     ),
     "power_draw": MetricDef(
         key="power_draw", display_name="Power Draw", unit="W",
@@ -142,6 +161,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=120, hot=True,
         group="power", rate_of=None, rate_scale=1.0,
         device_types=("server", "switch", "router", "firewall", "load_balancer", "pdu", "cdu", "crah", "utility_feed", "switchgear", "mcc", "mpp", "generator", "ups", "energy_monitor", "chiller", "pump", "cooling_tower",),
+        alarm_scope="instance",
     ),
     "fan_speed": MetricDef(
         key="fan_speed", display_name="Fan Speed", unit="rpm",
@@ -150,6 +170,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=120, hot=False,
         group="thermal", rate_of=None, rate_scale=1.0,
         device_types=("server",),
+        alarm_scope="instance",
     ),
     "fan_speed_pct": MetricDef(
         key="fan_speed_pct", display_name="Fan Speed Percent", unit="pct",
@@ -158,6 +179,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=120, hot=False,
         group="thermal", rate_of=None, rate_scale=1.0,
         device_types=("server",),
+        alarm_scope="instance",
     ),
     "psu_input_voltage": MetricDef(
         key="psu_input_voltage", display_name="PSU Input Voltage", unit="V",
@@ -166,6 +188,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=120, hot=False,
         group="power", rate_of=None, rate_scale=1.0,
         device_types=("server",),
+        alarm_scope="instance",
     ),
     "psu_output_power": MetricDef(
         key="psu_output_power", display_name="PSU Output Power", unit="W",
@@ -174,6 +197,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=120, hot=False,
         group="power", rate_of=None, rate_scale=1.0,
         device_types=("server",),
+        alarm_scope="instance",
     ),
     "psu_state": MetricDef(
         key="psu_state", display_name="PSU State", unit="bool",
@@ -182,6 +206,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=300, hot=False,
         group="power", rate_of=None, rate_scale=1.0,
         device_types=("server",),
+        alarm_scope="instance",
     ),
     "energy_consumed": MetricDef(
         key="energy_consumed", display_name="Energy Consumed", unit="kWh",
@@ -190,6 +215,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=600, hot=False,
         group="power", rate_of=None, rate_scale=1.0,
         device_types=("server", "pdu",),
+        alarm_scope="instance",
     ),
     "if_admin_state": MetricDef(
         key="if_admin_state", display_name="Interface Admin State", unit="bool",
@@ -198,6 +224,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=300, hot=False,
         group="interfaces", rate_of=None, rate_scale=1.0,
         device_types=("switch", "router", "server", "firewall", "load_balancer", "oob_switch",),
+        alarm_scope="instance",
     ),
     "if_oper_state": MetricDef(
         key="if_oper_state", display_name="Interface Oper State", unit="bool",
@@ -206,6 +233,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=300, hot=False,
         group="interfaces", rate_of=None, rate_scale=1.0,
         device_types=("switch", "router", "server", "firewall", "load_balancer", "oob_switch",),
+        alarm_scope="instance",
     ),
     "if_speed": MetricDef(
         key="if_speed", display_name="Interface Speed", unit="bps",
@@ -214,6 +242,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=3600, hot=False,
         group="interfaces", rate_of=None, rate_scale=1.0,
         device_types=("switch", "router", "server", "firewall", "load_balancer", "oob_switch",),
+        alarm_scope="instance",
     ),
     "if_in_octets": MetricDef(
         key="if_in_octets", display_name="Interface In Octets", unit="B",
@@ -222,6 +251,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=300, hot=False,
         group="interfaces", rate_of=None, rate_scale=1.0,
         device_types=("switch", "router", "server", "firewall", "load_balancer", "oob_switch",),
+        alarm_scope="instance",
     ),
     "if_out_octets": MetricDef(
         key="if_out_octets", display_name="Interface Out Octets", unit="B",
@@ -230,6 +260,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=300, hot=False,
         group="interfaces", rate_of=None, rate_scale=1.0,
         device_types=("switch", "router", "server", "firewall", "load_balancer", "oob_switch",),
+        alarm_scope="instance",
     ),
     "if_in_bps": MetricDef(
         key="if_in_bps", display_name="Interface In Throughput", unit="bps",
@@ -238,6 +269,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=300, hot=False,
         group="interfaces", rate_of='if_in_octets', rate_scale=8.0,
         device_types=("switch", "router", "server", "firewall", "load_balancer", "oob_switch",),
+        alarm_scope="instance",
     ),
     "if_out_bps": MetricDef(
         key="if_out_bps", display_name="Interface Out Throughput", unit="bps",
@@ -246,6 +278,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=300, hot=False,
         group="interfaces", rate_of='if_out_octets', rate_scale=8.0,
         device_types=("switch", "router", "server", "firewall", "load_balancer", "oob_switch",),
+        alarm_scope="instance",
     ),
     "if_in_errors": MetricDef(
         key="if_in_errors", display_name="Interface In Errors", unit="count",
@@ -254,6 +287,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=300, hot=False,
         group="interfaces", rate_of=None, rate_scale=1.0,
         device_types=("switch", "router", "server", "firewall", "load_balancer", "oob_switch",),
+        alarm_scope="instance",
     ),
     "if_out_errors": MetricDef(
         key="if_out_errors", display_name="Interface Out Errors", unit="count",
@@ -262,6 +296,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=300, hot=False,
         group="interfaces", rate_of=None, rate_scale=1.0,
         device_types=("switch", "router", "server", "firewall", "load_balancer", "oob_switch",),
+        alarm_scope="instance",
     ),
     "if_in_discards": MetricDef(
         key="if_in_discards", display_name="Interface In Discards", unit="count",
@@ -270,6 +305,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=300, hot=False,
         group="interfaces", rate_of=None, rate_scale=1.0,
         device_types=("switch", "router", "server", "firewall", "load_balancer", "oob_switch",),
+        alarm_scope="instance",
     ),
     "if_out_discards": MetricDef(
         key="if_out_discards", display_name="Interface Out Discards", unit="count",
@@ -278,6 +314,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=300, hot=False,
         group="interfaces", rate_of=None, rate_scale=1.0,
         device_types=("switch", "router", "server", "firewall", "load_balancer", "oob_switch",),
+        alarm_scope="instance",
     ),
     "if_in_error_rate": MetricDef(
         key="if_in_error_rate", display_name="Interface In Error Rate", unit="count_per_s",
@@ -286,6 +323,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=300, hot=False,
         group="interfaces", rate_of='if_in_errors', rate_scale=1.0,
         device_types=("switch", "router", "server", "firewall", "load_balancer", "oob_switch",),
+        alarm_scope="instance",
     ),
     "ambient_temperature": MetricDef(
         key="ambient_temperature", display_name="Ambient Temperature", unit="C",
@@ -294,6 +332,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=120, hot=True,
         group="environment", rate_of=None, rate_scale=1.0,
         device_types=("sensor",),
+        alarm_scope="instance",
     ),
     "relative_humidity": MetricDef(
         key="relative_humidity", display_name="Relative Humidity", unit="pct",
@@ -302,6 +341,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=120, hot=True,
         group="environment", rate_of=None, rate_scale=1.0,
         device_types=("sensor",),
+        alarm_scope="instance",
     ),
     "dew_point": MetricDef(
         key="dew_point", display_name="Dew Point", unit="C",
@@ -310,6 +350,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=120, hot=False,
         group="environment", rate_of=None, rate_scale=1.0,
         device_types=("sensor",),
+        alarm_scope="instance",
     ),
     "airflow": MetricDef(
         key="airflow", display_name="Airflow", unit="pct",
@@ -318,6 +359,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=120, hot=False,
         group="environment", rate_of=None, rate_scale=1.0,
         device_types=("sensor", "crah",),
+        alarm_scope="instance",
     ),
     "water_supply_temp": MetricDef(
         key="water_supply_temp", display_name="Water Supply Temperature", unit="C",
@@ -326,6 +368,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=300, hot=True,
         group="cooling", rate_of=None, rate_scale=1.0,
         device_types=("chiller", "cdu", "crah", "pump",),
+        alarm_scope="instance",
     ),
     "water_return_temp": MetricDef(
         key="water_return_temp", display_name="Water Return Temperature", unit="C",
@@ -334,6 +377,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=300, hot=False,
         group="cooling", rate_of=None, rate_scale=1.0,
         device_types=("chiller", "cdu", "crah", "pump",),
+        alarm_scope="instance",
     ),
     "water_setpoint_temp": MetricDef(
         key="water_setpoint_temp", display_name="Water Setpoint", unit="C",
@@ -342,6 +386,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=900, hot=False,
         group="cooling", rate_of=None, rate_scale=1.0,
         device_types=("chiller", "cdu",),
+        alarm_scope="instance",
     ),
     "water_flow": MetricDef(
         key="water_flow", display_name="Water Flow", unit="L/s",
@@ -350,6 +395,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=300, hot=False,
         group="cooling", rate_of=None, rate_scale=1.0,
         device_types=("chiller", "cdu", "pump", "cooling_tower",),
+        alarm_scope="instance",
     ),
     "water_pressure": MetricDef(
         key="water_pressure", display_name="Water Pressure", unit="kPa",
@@ -358,6 +404,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=300, hot=False,
         group="cooling", rate_of=None, rate_scale=1.0,
         device_types=("chiller", "cdu", "pump",),
+        alarm_scope="instance",
     ),
     "water_diff_pressure": MetricDef(
         key="water_diff_pressure", display_name="Differential Pressure", unit="kPa",
@@ -366,6 +413,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=300, hot=False,
         group="cooling", rate_of=None, rate_scale=1.0,
         device_types=("pump", "cdu",),
+        alarm_scope="instance",
     ),
     "valve_position_pct": MetricDef(
         key="valve_position_pct", display_name="Valve Position", unit="pct",
@@ -374,6 +422,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=300, hot=False,
         group="cooling", rate_of=None, rate_scale=1.0,
         device_types=("valve", "crah", "cdu",),
+        alarm_scope="instance",
     ),
     "compressor_load_pct": MetricDef(
         key="compressor_load_pct", display_name="Compressor Load", unit="pct",
@@ -382,6 +431,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=300, hot=True,
         group="cooling", rate_of=None, rate_scale=1.0,
         device_types=("chiller",),
+        alarm_scope="instance",
     ),
     "cooling_capacity": MetricDef(
         key="cooling_capacity", display_name="Cooling Capacity", unit="W",
@@ -390,6 +440,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=300, hot=False,
         group="cooling", rate_of=None, rate_scale=1.0,
         device_types=("chiller",),
+        alarm_scope="instance",
     ),
     "cooling_output_pct": MetricDef(
         key="cooling_output_pct", display_name="Cooling Output", unit="pct",
@@ -398,6 +449,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=300, hot=False,
         group="cooling", rate_of=None, rate_scale=1.0,
         device_types=("crah",),
+        alarm_scope="instance",
     ),
     "thermal_load": MetricDef(
         key="thermal_load", display_name="Thermal Load", unit="W",
@@ -406,6 +458,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=300, hot=False,
         group="cooling", rate_of=None, rate_scale=1.0,
         device_types=("cdu",),
+        alarm_scope="instance",
     ),
     "cop": MetricDef(
         key="cop", display_name="Coefficient of Performance", unit="ratio",
@@ -414,6 +467,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=300, hot=False,
         group="cooling", rate_of=None, rate_scale=1.0,
         device_types=("chiller",),
+        alarm_scope="instance",
     ),
     "approach_temp": MetricDef(
         key="approach_temp", display_name="Approach Temperature", unit="K",
@@ -422,6 +476,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=300, hot=False,
         group="cooling", rate_of=None, rate_scale=1.0,
         device_types=("cdu", "cooling_tower",),
+        alarm_scope="instance",
     ),
     "supply_air_temp": MetricDef(
         key="supply_air_temp", display_name="Supply Air Temperature", unit="C",
@@ -430,6 +485,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=300, hot=True,
         group="cooling", rate_of=None, rate_scale=1.0,
         device_types=("crah",),
+        alarm_scope="instance",
     ),
     "return_air_temp": MetricDef(
         key="return_air_temp", display_name="Return Air Temperature", unit="C",
@@ -438,6 +494,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=300, hot=False,
         group="cooling", rate_of=None, rate_scale=1.0,
         device_types=("crah",),
+        alarm_scope="instance",
     ),
     "air_setpoint_temp": MetricDef(
         key="air_setpoint_temp", display_name="Air Setpoint", unit="C",
@@ -446,6 +503,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=900, hot=False,
         group="cooling", rate_of=None, rate_scale=1.0,
         device_types=("crah",),
+        alarm_scope="instance",
     ),
     "filter_diff_pressure": MetricDef(
         key="filter_diff_pressure", display_name="Filter Differential Pressure", unit="kPa",
@@ -454,6 +512,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=600, hot=False,
         group="cooling", rate_of=None, rate_scale=1.0,
         device_types=("cdu", "crah",),
+        alarm_scope="instance",
     ),
     "basin_level_pct": MetricDef(
         key="basin_level_pct", display_name="Basin Level", unit="pct",
@@ -462,6 +521,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=600, hot=False,
         group="cooling", rate_of=None, rate_scale=1.0,
         device_types=("cooling_tower",),
+        alarm_scope="instance",
     ),
     "makeup_water_flow": MetricDef(
         key="makeup_water_flow", display_name="Makeup Water Flow", unit="L/s",
@@ -470,6 +530,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=600, hot=False,
         group="cooling", rate_of=None, rate_scale=1.0,
         device_types=("cooling_tower",),
+        alarm_scope="instance",
     ),
     "outdoor_dry_bulb_temp": MetricDef(
         key="outdoor_dry_bulb_temp", display_name="Outdoor Dry Bulb", unit="C",
@@ -478,6 +539,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=900, hot=False,
         group="environment", rate_of=None, rate_scale=1.0,
         device_types=("cooling_tower",),
+        alarm_scope="instance",
     ),
     "outdoor_wet_bulb_temp": MetricDef(
         key="outdoor_wet_bulb_temp", display_name="Outdoor Wet Bulb", unit="C",
@@ -486,6 +548,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=900, hot=False,
         group="environment", rate_of=None, rate_scale=1.0,
         device_types=("cooling_tower",),
+        alarm_scope="instance",
     ),
     "vibration": MetricDef(
         key="vibration", display_name="Vibration", unit="mm/s",
@@ -494,6 +557,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=600, hot=False,
         group="cooling", rate_of=None, rate_scale=1.0,
         device_types=("cooling_tower", "pump",),
+        alarm_scope="instance",
     ),
     "motor_temp": MetricDef(
         key="motor_temp", display_name="Motor Temperature", unit="C",
@@ -502,6 +566,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=300, hot=False,
         group="cooling", rate_of=None, rate_scale=1.0,
         device_types=("pump", "valve",),
+        alarm_scope="instance",
     ),
     "vfd_frequency": MetricDef(
         key="vfd_frequency", display_name="VFD Output Frequency", unit="Hz",
@@ -510,6 +575,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=300, hot=False,
         group="cooling", rate_of=None, rate_scale=1.0,
         device_types=("pump",),
+        alarm_scope="instance",
     ),
     "pump_speed_pct": MetricDef(
         key="pump_speed_pct", display_name="Pump Speed", unit="pct",
@@ -518,6 +584,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=300, hot=False,
         group="cooling", rate_of=None, rate_scale=1.0,
         device_types=("pump", "cdu",),
+        alarm_scope="instance",
     ),
     "run_hours": MetricDef(
         key="run_hours", display_name="Run Hours", unit="h",
@@ -526,6 +593,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=3600, hot=False,
         group="cooling", rate_of=None, rate_scale=1.0,
         device_types=("chiller", "pump", "cooling_tower", "cdu", "crah",),
+        alarm_scope="instance",
     ),
     "equipment_state": MetricDef(
         key="equipment_state", display_name="Equipment State", unit="bool",
@@ -534,6 +602,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=300, hot=True,
         group="cooling", rate_of=None, rate_scale=1.0,
         device_types=("chiller", "pump", "cooling_tower", "cdu", "crah", "valve",),
+        alarm_scope="instance",
     ),
     "alarm_state": MetricDef(
         key="alarm_state", display_name="Alarm State", unit="bool",
@@ -542,6 +611,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=300, hot=True,
         group="cooling", rate_of=None, rate_scale=1.0,
         device_types=("chiller", "pump", "cooling_tower", "cdu", "crah", "valve", "energy_monitor",),
+        alarm_scope="instance",
     ),
     "voltage_ln": MetricDef(
         key="voltage_ln", display_name="Line-to-Neutral Voltage", unit="V",
@@ -550,6 +620,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=300, hot=False,
         group="power", rate_of=None, rate_scale=1.0,
         device_types=("energy_monitor", "pdu", "rpp", "ups",),
+        alarm_scope="instance",
     ),
     "current": MetricDef(
         key="current", display_name="Current", unit="A",
@@ -558,6 +629,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=300, hot=True,
         group="power", rate_of=None, rate_scale=1.0,
         device_types=("energy_monitor", "pdu", "rpp", "ups",),
+        alarm_scope="instance",
     ),
     "line_frequency": MetricDef(
         key="line_frequency", display_name="Line Frequency", unit="Hz",
@@ -566,6 +638,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=300, hot=False,
         group="power", rate_of=None, rate_scale=1.0,
         device_types=("energy_monitor", "pdu", "ups", "generator",),
+        alarm_scope="instance",
     ),
     "power_factor": MetricDef(
         key="power_factor", display_name="Power Factor", unit="ratio",
@@ -574,6 +647,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=300, hot=False,
         group="power", rate_of=None, rate_scale=1.0,
         device_types=("energy_monitor", "pdu", "rpp",),
+        alarm_scope="instance",
     ),
     "voltage_thd_pct": MetricDef(
         key="voltage_thd_pct", display_name="Voltage THD", unit="pct",
@@ -582,6 +656,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=600, hot=False,
         group="power", rate_of=None, rate_scale=1.0,
         device_types=("energy_monitor",),
+        alarm_scope="instance",
     ),
     "current_thd_pct": MetricDef(
         key="current_thd_pct", display_name="Current THD", unit="pct",
@@ -590,6 +665,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=600, hot=False,
         group="power", rate_of=None, rate_scale=1.0,
         device_types=("energy_monitor",),
+        alarm_scope="instance",
     ),
     "harmonic_current_pct": MetricDef(
         key="harmonic_current_pct", display_name="Harmonic Current", unit="pct",
@@ -598,6 +674,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=600, hot=False,
         group="power", rate_of=None, rate_scale=1.0,
         device_types=("energy_monitor",),
+        alarm_scope="instance",
     ),
     "voltage_ll": MetricDef(
         key="voltage_ll", display_name="Line-to-Line Voltage", unit="V",
@@ -606,6 +683,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=300, hot=True,
         group="power", rate_of=None, rate_scale=1.0,
         device_types=("utility_feed", "switchgear", "mcc", "mpp", "ats", "ups", "generator",),
+        alarm_scope="instance",
     ),
     "reactive_power": MetricDef(
         key="reactive_power", display_name="Reactive Power", unit="VAR",
@@ -614,6 +692,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=300, hot=False,
         group="power", rate_of=None, rate_scale=1.0,
         device_types=("utility_feed", "switchgear", "mcc", "mpp",),
+        alarm_scope="instance",
     ),
     "apparent_power": MetricDef(
         key="apparent_power", display_name="Apparent Power", unit="VA",
@@ -622,6 +701,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=300, hot=False,
         group="power", rate_of=None, rate_scale=1.0,
         device_types=("utility_feed", "switchgear", "mcc", "mpp",),
+        alarm_scope="instance",
     ),
     "load_pct": MetricDef(
         key="load_pct", display_name="Load", unit="pct",
@@ -630,6 +710,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=300, hot=True,
         group="power", rate_of=None, rate_scale=1.0,
         device_types=("switchgear", "mcc", "mpp", "generator", "ups",),
+        alarm_scope="instance",
     ),
     "phase_imbalance_pct": MetricDef(
         key="phase_imbalance_pct", display_name="Voltage Imbalance", unit="pct",
@@ -638,6 +719,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=300, hot=False,
         group="power", rate_of=None, rate_scale=1.0,
         device_types=("utility_feed", "switchgear", "mcc", "mpp",),
+        alarm_scope="instance",
     ),
     "demand_peak_power": MetricDef(
         key="demand_peak_power", display_name="Peak Demand", unit="W",
@@ -646,6 +728,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=900, hot=False,
         group="power", rate_of=None, rate_scale=1.0,
         device_types=("utility_feed",),
+        alarm_scope="instance",
     ),
     "battery_runtime": MetricDef(
         key="battery_runtime", display_name="Battery Runtime", unit="s",
@@ -654,6 +737,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=300, hot=True,
         group="power", rate_of=None, rate_scale=1.0,
         device_types=("ups",),
+        alarm_scope="instance",
     ),
     "battery_health_pct": MetricDef(
         key="battery_health_pct", display_name="Battery Health", unit="pct",
@@ -662,6 +746,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=900, hot=False,
         group="power", rate_of=None, rate_scale=1.0,
         device_types=("ups",),
+        alarm_scope="instance",
     ),
     "fuel_level_pct": MetricDef(
         key="fuel_level_pct", display_name="Fuel Level", unit="pct",
@@ -670,6 +755,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=900, hot=True,
         group="power", rate_of=None, rate_scale=1.0,
         device_types=("generator",),
+        alarm_scope="instance",
     ),
     "current_run_time": MetricDef(
         key="current_run_time", display_name="Current Run Time", unit="s",
@@ -678,6 +764,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=300, hot=False,
         group="power", rate_of=None, rate_scale=1.0,
         device_types=("generator",),
+        alarm_scope="instance",
     ),
     "start_attempts": MetricDef(
         key="start_attempts", display_name="Start Attempts", unit="count",
@@ -686,6 +773,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=3600, hot=False,
         group="power", rate_of=None, rate_scale=1.0,
         device_types=("generator",),
+        alarm_scope="instance",
     ),
     "transfer_count": MetricDef(
         key="transfer_count", display_name="Transfer Count", unit="count",
@@ -694,6 +782,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=3600, hot=False,
         group="power", rate_of=None, rate_scale=1.0,
         device_types=("ats",),
+        alarm_scope="instance",
     ),
     "time_on_emergency": MetricDef(
         key="time_on_emergency", display_name="Time on Emergency", unit="s",
@@ -702,6 +791,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=3600, hot=False,
         group="power", rate_of=None, rate_scale=1.0,
         device_types=("ats",),
+        alarm_scope="instance",
     ),
     "operating_mode": MetricDef(
         key="operating_mode", display_name="Operating Mode", unit="text",
@@ -710,6 +800,7 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=300, hot=True,
         group="power", rate_of=None, rate_scale=1.0,
         device_types=("ups", "ats", "generator",),
+        alarm_scope="instance",
     ),
     "component_temperature": MetricDef(
         key="component_temperature", display_name="Component Temperature", unit="C",
@@ -718,8 +809,12 @@ METRICS: dict[str, MetricDef] = {
         stale_after_s=300, hot=False,
         group="thermal", rate_of=None, rate_scale=1.0,
         device_types=("switch", "router", "firewall", "load_balancer", "oob_switch",),
+        alarm_scope="instance",
     ),
 }
+
+#: Metrics whose alarms are filed at the device, not per instance.
+DEVICE_SCOPED = frozenset(k for k, m in METRICS.items() if m.alarm_scope == 'device')
 
 HOT_METRICS = tuple(k for k, m in METRICS.items() if m.hot)
 COUNTER_METRICS = tuple(k for k, m in METRICS.items() if m.value_type == 'counter')

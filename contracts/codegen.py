@@ -441,6 +441,11 @@ def gen_py_metrics(reg: dict) -> str:
            "    rate_of: str | None",
            "    rate_scale: float",
            "    device_types: tuple[str, ...]",
+           "    #: 'device' files every alarm on this metric at the device,",
+           "    #: whatever a source labelled the reading; 'instance' keeps",
+           "    #: them apart, for metrics whose instances are separately",
+           "    #: actionable - one interface, one inlet, one circuit.",
+           "    alarm_scope: str",
            "", "", "METRICS: dict[str, MetricDef] = {"]
     for m in reg["metrics"]:
         dts = ", ".join(f'"{d}"' for d in m.get("device_types", []))
@@ -453,8 +458,17 @@ def gen_py_metrics(reg: dict) -> str:
         out.append(f'        group="{m.get("group", "")}", rate_of={m.get("rate_of", None)!r}, '
                    f'rate_scale={float(m.get("rate_scale", 1))!r},')
         out.append(f'        device_types={dts},')
+        # Default INSTANCE, which is today's behaviour and the safe direction.
+        # Collapsing a metric that should not be collapsed merges two genuine
+        # faults into one alarm; leaving one uncollapsed shows a duplicate,
+        # which is visible and annoying rather than dangerous.
+        out.append(f'        alarm_scope="{m.get("alarm_scope", "instance")}",')
         out.append("    ),")
     out.append("}")
+    out.append("")
+    out.append("#: Metrics whose alarms are filed at the device, not per instance.")
+    out.append("DEVICE_SCOPED = frozenset("
+               "k for k, m in METRICS.items() if m.alarm_scope == 'device')")
     out.append("")
     out.append("HOT_METRICS = tuple(k for k, m in METRICS.items() if m.hot)")
     out.append("COUNTER_METRICS = tuple(k for k, m in METRICS.items() if m.value_type == 'counter')")

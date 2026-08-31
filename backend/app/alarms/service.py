@@ -133,6 +133,13 @@ class AlarmService:
         work: list[tuple[Rule, AlarmKey, dict]] = []
         for s in samples:
             instance = s.get("instance", "") or ""
+            # What the SOURCE called this reading, which is not always a part
+            # of the device: "ALL" is a Cisco CPU table index, "CPU Temp" is a
+            # BMC's label for the only CPU sensor it has. A device-scoped
+            # metric files its alarm at the device so that a trap and a rule
+            # watching the same thing land on the same alarm.
+            instance = alert_taxonomy.alarm_instance(
+                s.get("metric") or s.get("metric_key"), instance)
             for rule in self.rules_for_metric(s["metric"], s.get("device_type", "")):
                 # A branch circuit is part of the feed above it, not a separate
                 # thing that can fail on its own, so a rule that says so is
@@ -207,7 +214,8 @@ class AlarmService:
             # no device to hang an alarm on.
             return None
 
-        instance = ev.get("instance") or ""
+        instance = alert_taxonomy.alarm_instance(
+            ev.get("metric"), ev.get("instance") or "")
         observed = ev["observed_at"]
 
         if ev.get("is_clear"):
@@ -380,6 +388,21 @@ class AlarmService:
         root = await correlation.collapse_bands(
             session, alarm_id=alarm["id"], device_id=device_id,
             alarm_type=alarm_type, instance=instance)
+        reason = f"lower band of {root['alarm_type']}" if root else ""
+
+        if not root:
+            # Same condition, one detector naming the part and the other not.
+            # A trap says "this device is hot" with no instance; the rule
+            # watching the same reading says "CPU Temp is hot". On a metric
+            # whose instances are real they cannot share an alarm key - and
+            # must not, since two CPU sensors are two faults - so the part-less
+            # one is folded under the one that names the part.
+            root = await correlation.collapse_unqualified(
+                session, alarm_id=alarm["id"], device_id=device_id,
+                alarm_type=alarm_type, instance=instance)
+            if root:
+                reason = (f"{root['alarm_type']} on {root['instance']}, "
+                          f"reported without naming the part")
         if not root:
             return
         alarm["is_symptom"] = True
@@ -387,8 +410,7 @@ class AlarmService:
         await repo.record_history(
             session, alarm_id=alarm["id"], device_id=device_id,
             action="suppressed", severity=alarm["severity"], actor=actor,
-            detail={"root": root["id"], "reason": "lower band of "
-                                                  f"{root['alarm_type']}"})
+            detail={"root": root["id"], "reason": reason})
 
     # ----------------------------------------------------------- helpers
 

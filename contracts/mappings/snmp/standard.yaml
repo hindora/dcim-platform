@@ -210,6 +210,34 @@ profiles:
   # these tables, and the index is a constant 1. Multi-inlet and three-phase
   # gear needs the table form with the phase as the instance - the engine can
   # do it, this plane has nothing to point it at.
+  # ------------------------------------------------ network chassis sensors
+  #
+  # ENTITY-SENSOR-MIB, which is the vendor-neutral place a switch, router or
+  # console switch reports how hot it is. Arista, Juniper, Nokia and modern
+  # IOS-XE all populate it; the Cisco boxes here also carry CISCO-ENVMON, read
+  # by `network_cisco`, and either is enough.
+  #
+  # Read as SCALARS at fixed indices rather than as a table walk, because the
+  # table cannot say which row is which: entPhySensorValue carries a chassis
+  # inlet and a die temperature under the same sensor type, and a walk that
+  # mapped both to one metric would file a 90 C ASIC as room air.
+  #
+  # This group exists because an OOB switch had neither channel. Its
+  # temperature was invisible to the platform for as long as it has existed:
+  # no trap (the simulator's rule excluded the type) and no poll (its profile
+  # carried system and interfaces only). A hot console switch was silent.
+  - name: network_sensors
+    scalars:
+      - oid: 1.3.6.1.2.1.99.1.1.1.4.1        # chassis / inlet sensor
+        metric: component_temperature
+        value_type: gauge
+        # Stored x10 so one decimal survives an integer encoding.
+        transform: {scale: 0.1}
+      - oid: 1.3.6.1.2.1.99.1.1.1.4.2        # CPU / ASIC die
+        metric: cpu_temperature
+        value_type: gauge
+        transform: {scale: 0.1}
+
   - name: pdu_apc
     scalars:
       - oid: 1.3.6.1.4.1.318.1.1.26.4.3.1.5.1     # rPDU2DeviceStatusPower, 0.01 kW

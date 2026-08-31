@@ -37,6 +37,8 @@ phase 4 frontend that stopped reading it.
 
 from __future__ import annotations
 
+from app.core.metrics_gen import DEVICE_SCOPED
+
 # ------------------------------------------------------------------ categories
 
 VISIBILITY = "visibility"
@@ -603,7 +605,41 @@ CANONICAL_ALARM_TYPE: dict[str, str] = {
     # CPU pinned long enough to need answering.
     "cpu_sustained": "cpu_saturated",
     "memory_high_usage": "memory_high",
+    # A hot device, reported by the device itself. The rule that watches the
+    # same reading calls the condition cpu_temp_critical, and one CPU cooking
+    # is one condition however many detectors noticed - SRV04 carried
+    # temperature_alert AND cpu_temp_critical AND cpu_temp_high through a whole
+    # campaign, three rows for one fan.
+    #
+    # Mapped to the CRITICAL band because that is what the trap means: the
+    # vendor fires it at its own critical point, not at a warning.
+    "temperature_alert": "cpu_temp_critical",
+    "cpu_temp_critical_trap": "cpu_temp_critical",
 }
+
+
+#: Metrics whose alarms belong to the device rather than to a named part of it.
+#:
+#: Re-exported from the generated registry so the alarm layer has one import
+#: rather than reaching into contracts.
+DEVICE_SCOPED_METRICS = DEVICE_SCOPED
+
+
+def alarm_instance(metric_key: str | None, instance: str) -> str:
+    """The instance an alarm on this metric should be filed under.
+
+    `instance` arrives carrying whatever the source called the reading: "" from
+    a server's host MIB, "ALL" from a switch's Cisco CPU table, "CPU Temp" from
+    a BMC sensor, nothing at all from a trap. For a metric the platform treats
+    as device-scoped those are four names for one thing, and since the alarm key
+    is (device, alarm_type, instance) they produced four alarms.
+
+    For an instance-scoped metric the label IS the sub-object - Gi0/1, Rack-A17,
+    Ckt02 - and collapsing it would merge two genuine faults into one.
+    """
+    if metric_key and metric_key in DEVICE_SCOPED_METRICS:
+        return ""
+    return instance
 
 
 def canonical_alarm_type(alarm_type: str) -> str:
