@@ -1038,14 +1038,17 @@ traps:
       - oid: 1.3.6.1.4.1.13742.6.5.4.3.1.3
         equals_int: 6
     # outletCurrentHigh [raritan]
-    # AMBIGUOUS - no device type separates this from: outletFailure->outlet_failure; outletOff->outlet_off; outletOn->outlet_off
 
   - oid: 1.3.6.1.4.1.13742.6.0.63
     event_type: outlet_failure
     severity: CRITICAL
     display_name: "Outlet Failure"
+    match_varbinds:
+      - oid: 1.3.6.1.4.1.13742.6.0.0.10
+        equals_int: 14
+      - oid: 1.3.6.1.4.1.13742.6.5.4.3.1.3
+        equals_int: 14
     # outletFailure [raritan]
-    # AMBIGUOUS - no device type separates this from: outletOff->outlet_off; outletOn->outlet_off
 
   - oid: 1.3.6.1.4.1.13742.6.0.63
     event_type: outlet_off
@@ -1053,15 +1056,23 @@ traps:
     is_clear: true
     clears: [outlet_off]
     display_name: "Outlet On"
+    match_varbinds:
+      - oid: 1.3.6.1.4.1.13742.6.0.0.10
+        equals_int: 14
+      - oid: 1.3.6.1.4.1.13742.6.5.4.3.1.3
+        equals_int: 7
     # outletOn [raritan]
-    # AMBIGUOUS - no device type separates this from: outletFailure->outlet_failure; outletOff->outlet_off
 
   - oid: 1.3.6.1.4.1.13742.6.0.63
     event_type: outlet_off
     severity: MAJOR
     display_name: "Outlet Off"
+    match_varbinds:
+      - oid: 1.3.6.1.4.1.13742.6.0.0.10
+        equals_int: 14
+      - oid: 1.3.6.1.4.1.13742.6.5.4.3.1.3
+        equals_int: 8
     # outletOff [raritan]
-    # AMBIGUOUS - no device type separates this from: outletFailure->outlet_failure; outletOn->outlet_off
 
   - oid: 1.3.6.1.4.1.13742.6.0.65
     event_type: breaker_tripped

@@ -422,6 +422,12 @@ def main() -> int:
     # "current, above upper warning" and "current, above upper critical" are a
     # load alarm and a critical load alarm on the same OID from the same PDU.
     _ST, _SS = RARITAN_SENSOR_TYPE, RARITAN_SENSOR_STATE
+    #: The conditions whose state lives in the OUTLET sensor column rather than
+    #: the inlet one. The matcher has to name the same table the plane wrote to.
+    _RARITAN_OUTLET_TRAPS = {
+        TrapType.PDU_OUTLET_CURRENT_HIGH, TrapType.PDU_OUTLET_ON,
+        TrapType.PDU_OUTLET_OFF, TrapType.PDU_OUTLET_FAILURE,
+    }
     _RARITAN_PAIRS = {
         TrapType.PDU_LOAD_HIGH: ("current", "aboveUpperWarning"),
         TrapType.PDU_LOAD_CRITICAL: ("current", "aboveUpperCritical"),
@@ -432,6 +438,14 @@ def main() -> int:
         TrapType.PDU_VOLTAGE_LOW: ("voltage", "belowLowerCritical"),
         TrapType.PDU_FREQUENCY_FAULT: ("frequency", "aboveUpperWarning"),
         TrapType.PDU_FREQUENCY_NORMAL: ("frequency", "normal"),
+        # The outlet trio. All four outlet conditions ride outletSensorStateChange,
+        # so without these the receiver could not tell a switch from a failure and
+        # resolved every one of them to whichever entry sat first - on this estate
+        # that was outletFailure, so switching an outlet on any of the 24 Raritan
+        # strips raised a HARDWARE FAULT alarm.
+        TrapType.PDU_OUTLET_ON: ("onOff", "on"),
+        TrapType.PDU_OUTLET_OFF: ("onOff", "off"),
+        TrapType.PDU_OUTLET_FAILURE: ("onOff", "fail"),
     }
 
     def varbind_match(vendor: str, trap, defn) -> list[dict] | None:
@@ -452,7 +466,7 @@ def main() -> int:
             # The state lives in a table-specific column - inlet, outlet or
             # unit - and the engine picks the table from the condition, so the
             # matcher has to name the same one.
-            table = ("outlet" if trap == TrapType.PDU_OUTLET_CURRENT_HIGH else
+            table = ("outlet" if trap in _RARITAN_OUTLET_TRAPS else
                      "unit" if trap == TrapType.PDU_BREAKER_TRIPPED else "inlet")
             return [
                 {"oid": RARITAN["typeOfSensor"], "equals_int": _ST[sensor]},
