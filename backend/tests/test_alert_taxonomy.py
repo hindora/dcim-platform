@@ -14,6 +14,9 @@ Three properties matter, and each has bitten a version of this code:
 
 from __future__ import annotations
 
+import pathlib
+import re
+
 import pytest
 
 from app.core import alert_taxonomy as tax
@@ -44,10 +47,17 @@ SIMULATOR_ALARM_TYPES = [
     "ups_bypass_active", "ups_battery_low_health", "ups_battery_failure",
     "ups_charger_failure", "ups_rectifier_failure", "ups_input_voltage_high",
     "ups_input_voltage_low", "ups_frequency_out_range", "ups_phase_failure",
-    # power - PDU
-    "pdu_load_high", "pdu_load_critical", "pdu_breaker_tripped",
-    "pdu_voltage_high", "pdu_voltage_low", "pdu_phase_imbalance",
-    "pdu_power_factor_low", "pdu_ground_fault", "pdu_outlet_current_high",
+    # power - PDU. These are the names that arrive ON THE WIRE, which is not
+    # what the simulator calls them internally: only the two load conditions
+    # carry a pdu_ prefix through the trap contract, and the rest are the bare
+    # vendor names shared with UPS and RPP gear. Transcribing the simulator
+    # vocabulary here instead put seven names in BY_ALARM_TYPE that nothing
+    # could ever match, and the mistake was invisible because classify() cannot
+    # fail - it just resolved them by role.
+    "pdu_load_high", "pdu_load_critical", "breaker_tripped",
+    "voltage_high", "voltage_low", "phase_imbalance",
+    "power_factor_low", "ground_fault", "outlet_current_high",
+    "outlet_failure", "outlet_off", "pdu_temp_high", "pdu_humidity_high",
     # power - generator, ATS, switchgear
     "generator_low_fuel", "generator_low_coolant", "generator_battery_failure",
     "generator_overcrank", "generator_temp_high", "ats_source_lost",
@@ -85,6 +95,19 @@ SIMULATOR_ALARM_POINTS = [
 #: is a decision to make rather than a line to add.
 KNOWN_UNMAPPED: set[str] = set()
 
+#: Conditions deliberately left to the role layer, which is NOT the same as
+#: unclassified. Each of these arrives from more than one kind of power gear -
+#: voltage_high is an Eaton UPS notification and a rack PDU one, breaker_tripped
+#: comes from PDUs and RPPs - and BY_ALARM_TYPE is keyed by name alone, so an
+#: explicit entry would win over the role for every device that sends it. That
+#: is the mistake the role layer exists to prevent; power_draw_high is left out
+#: of the table for the same reason.
+ROLE_RESOLVED: set[str] = {
+    "breaker_tripped", "voltage_high", "voltage_low", "phase_imbalance",
+    "power_factor_low", "ground_fault", "outlet_current_high",
+    "outlet_failure", "outlet_off",
+}
+
 
 @pytest.mark.parametrize("alarm_type", SIMULATOR_ALARM_TYPES)
 def test_every_simulator_alarm_type_classifies(alarm_type):
@@ -97,6 +120,15 @@ def test_every_simulator_alarm_type_classifies(alarm_type):
     """
     if alarm_type in KNOWN_UNMAPPED:
         assert alarm_type not in tax.BY_ALARM_TYPE
+        return
+    if alarm_type in ROLE_RESOLVED:
+        # Named nowhere on purpose, and still landing somewhere real: the
+        # device that sent it decides, which is the whole point of the layer.
+        assert alarm_type not in tax.BY_ALARM_TYPE, (
+            f"{alarm_type} is shared across power gear, so an explicit entry "
+            f"would override the role for every device that sends it")
+        for role in ("power", "ups"):
+            assert tax.classify(alarm_type, role=role) in tax.CATEGORIES
         return
     assert alarm_type in tax.BY_ALARM_TYPE, (
         f"{alarm_type} is not named in BY_ALARM_TYPE, so it would land in "
@@ -238,3 +270,102 @@ def test_sql_case_and_python_agree():
     for role, metric in tax.BY_ROLE_METRIC:
         assert f"'{role}'" in case and f"'{metric}'" in case
     assert case.strip().endswith("END")
+
+
+# ------------------------------------------------- the table has no dead names
+#
+# Conditions this platform can file that do NOT arrive as an SNMP trap: the
+# threshold rules in the rules table, the points that reach us over BACnet and
+# Modbus, and the ones the platform raises about itself. Kept here rather than
+# read from the database so the check stays a unit test - the rules table is
+# seeded by migration and is not available to import.
+NON_TRAP_ALARM_TYPES = frozenset({
+    # raised by the platform about its own health or its sight of the plane
+    "endpoint_unreachable", "telemetry_stale", "datapoint_missing",
+    "collector_degraded", "collector_stale", "assignment_stale",
+    "ingest_lag_high", "ingest_stalled", "ingest_worker_stale",
+    "db_pool_exhausted",
+    # threshold rules over polled telemetry
+    "cpu_high", "cpu_saturated", "server_cpu_saturated", "cpu_temp_high",
+    "memory_high", "disk_high", "if_errors_high", "if_discards_high",
+    "ambient_temp_high", "ambient_temp_critical", "humidity_high",
+    "humidity_low", "airflow_high", "airflow_low", "power_load_high",
+    # equipment points arriving over BACnet / Modbus rather than SNMP
+    "cooling_unit_fault", "cooling_leak", "cooling_low_flow",
+    "cooling_airflow_loss", "cooling_filter_dirty", "cooling_degraded",
+    "water_leak", "psu_failure", "server_power_on",
+    "ups_low_battery", "ups_battery_failure", "ups_battery_low_health",
+    "ups_bypass_active", "ups_charger_failure", "ups_rectifier_failure",
+    "ups_input_voltage_high", "ups_input_voltage_low",
+    "ups_frequency_out_range",
+    # analysis and capacity
+    "predicted_failure", "pue_excursion", "redundancy_lost",
+    "single_corded_load", "days_of_supply_low", "headroom_exhausted",
+})
+
+
+def _trap_contract_event_types() -> set[str]:
+    """Every event name the trap contract can put on an alarm."""
+    path = (pathlib.Path(__file__).resolve().parents[2]
+            / "contracts" / "mappings" / "snmp" / "traps.yaml")
+    raw = path.read_text(encoding="utf-8")
+    names = set(re.findall(r"^\s+event_type:\s*(\S+)", raw, re.M))
+    for group in re.findall(r"clears:\s*\[([^\]]*)\]", raw):
+        names |= {n.strip() for n in group.split(",") if n.strip()}
+    # Both forms: BY_ALARM_TYPE legitimately names either side of a
+    # canonicalisation (cpu_high_usage is what the wire says, cpu_high is what
+    # we file it as), and both are things something can raise.
+    return names | {tax.canonical_alarm_type(n) for n in names}
+
+
+def test_no_unreachable_alarm_types():
+    """Every explicit entry names a condition something can actually raise.
+
+    An entry that matches nothing is worse than no entry: it reads as a
+    deliberate classification while the condition is in fact resolving by role,
+    so the table documents an intention the code never carries out. Seven
+    pdu_-prefixed names sat here doing exactly that, transcribed from the
+    simulator catalogue rather than from the vocabulary the collector emits.
+    """
+    reachable = _trap_contract_event_types() | NON_TRAP_ALARM_TYPES
+    dead = sorted(set(tax.BY_ALARM_TYPE) - reachable)
+    assert not dead, (
+        f"BY_ALARM_TYPE names conditions nothing can raise: {dead}. Either wire "
+        f"the condition up, or delete the entry and let the role resolve it.")
+
+
+@pytest.mark.parametrize("event_type", sorted(_trap_contract_event_types()))
+def test_every_trap_event_type_classifies(event_type):
+    """A trap the collector can map always lands in a real category."""
+    assert tax.classify(event_type, role="power") in tax.CATEGORIES
+
+
+def test_a_vendor_threshold_trap_is_a_threshold_detection():
+    """Detection describes the condition, not the pipe it arrived down.
+
+    A PDU firing loadHigh compared a current against its own breaker rating.
+    Filed as `state` because it travelled as a trap, it vanished from a
+    detection=threshold filter that its polled twin answered.
+    """
+    assert tax.detection_for("snmp_trap", metric_key="current",
+                             alarm_type="pdu_load_high") == tax.THRESHOLD
+    assert tax.detection_for("threshold", metric_key="load_pct",
+                             alarm_type="power_load_high") == tax.THRESHOLD
+
+
+def test_a_state_trap_stays_a_state_detection():
+    """A reading carried as CONTEXT does not make a state change a crossing.
+
+    An open breaker reports ~0 A and a failed outlet reports nothing at all;
+    neither was found by comparing a number with a limit.
+    """
+    for alarm_type in ("breaker_tripped", "outlet_failure", "smoke_detected",
+                       "ground_fault"):
+        assert tax.detection_for("snmp_trap", metric_key="current",
+                                 alarm_type=alarm_type) == tax.STATE
+
+
+def test_threshold_crossings_are_classifiable():
+    """Nothing in the crossing set is a name the taxonomy cannot place."""
+    for alarm_type in tax.THRESHOLD_CROSSINGS:
+        assert tax.classify(alarm_type, role="power") in tax.CATEGORIES

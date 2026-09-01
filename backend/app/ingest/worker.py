@@ -701,7 +701,17 @@ class IngestWorker:
                     # that may never arrive.
                     "metric": e.metric or None,
                     "value": e.value if e.metric else None,
-                    "threshold": e.threshold if e.metric else None,
+                    # 0 means "not reported", not "the limit is zero". The
+                    # field is omitempty on the wire, so an absent threshold
+                    # and a zero one decode identically here - and none of
+                    # these notifications carries a limit of zero amps or
+                    # volts, while plenty carry no limit at all. Sending the
+                    # zero through put threshold 0.0 on every trap alarm that
+                    # had a metric, which reads on the console as a limit the
+                    # device announced. `value` is NOT filtered the same way:
+                    # a measured zero is a real reading (an open breaker
+                    # reports no current, and that is the point).
+                    "threshold": (e.threshold or None) if e.metric else None,
                 }
                 rows.append(event_row(payload))
                 action = await self.alarms.handle_event(session, payload)

@@ -171,7 +171,8 @@ async def raise_alarm(session: AsyncSession, *, device_id: str, alarm_type: str,
         "value": value, "threshold": threshold, "source": source,
         "observed_at": observed_at, "category": category,
         "response_class": response_class,
-        "detection": alert_taxonomy.detection_for(source, metric_key=metric_key),
+        "detection": alert_taxonomy.detection_for(source, metric_key=metric_key,
+                                                  alarm_type=alarm_type),
     })).mappings().first()
     if row is None:
         return None

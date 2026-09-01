@@ -167,6 +167,35 @@ DETECTION_BY_SOURCE: dict[str, str] = {
     "forecast": FORECAST,
 }
 
+#: Conditions that are a MEASUREMENT CROSSING A LIMIT, whoever noticed them.
+#:
+#: `DETECTION_BY_SOURCE` files everything that arrives by trap as `state`,
+#: which is true of most notifications and wrong for this set. A rack PDU
+#: firing loadHigh has compared a current against its own breaker rating; that
+#: is a threshold detection that happened to travel as a trap. Filed as state,
+#: it disappeared from `?detection=threshold` - so the same physical condition
+#: answered a filter differently depending on whether the device noticed it
+#: first or our own rule did, which is exactly what an attribute axis is
+#: supposed to prevent.
+#:
+#: A condition belongs here only if a number crossed a limit. A tripped
+#: breaker, a failed outlet and a smoke head are state changes that may carry
+#: a reading as CONTEXT (an open breaker reports ~0 A) and stay `state`.
+THRESHOLD_CROSSINGS: frozenset[str] = frozenset({
+    # rack PDU / RPP
+    "pdu_load_high", "pdu_load_critical", "outlet_current_high",
+    "voltage_high", "voltage_low", "phase_imbalance", "power_factor_low",
+    "pdu_temp_high", "pdu_humidity_high",
+    # UPS
+    "ups_output_overload", "ups_input_voltage_high", "ups_input_voltage_low",
+    "ups_frequency_out_range", "ups_battery_low_health",
+    # environment and host
+    "ambient_temp_high", "ambient_temp_critical", "humidity_high",
+    "humidity_low", "dew_point_alert", "airflow_high", "airflow_low",
+    "cpu_high_usage", "memory_high_usage", "cpu_temp_critical",
+})
+
+
 # ------------------------------------------------------------ response class
 
 #: Does this condition demand a response NOW, or is it something to schedule?
@@ -352,13 +381,22 @@ BY_ALARM_TYPE: dict[str, str] = {
     "ups_phase_failure": POWER,
     "pdu_load_high": POWER,
     "pdu_load_critical": POWER,
-    "pdu_breaker_tripped": POWER,
-    "pdu_voltage_high": POWER,
-    "pdu_voltage_low": POWER,
-    "pdu_phase_imbalance": POWER,
-    "pdu_power_factor_low": POWER,
-    "pdu_ground_fault": POWER,
-    "pdu_outlet_current_high": POWER,
+    # The other nine PDU conditions are deliberately NOT here. They reach this
+    # platform as breaker_tripped, voltage_high, voltage_low, phase_imbalance,
+    # power_factor_low, ground_fault, outlet_current_high, outlet_failure and
+    # outlet_off - no pdu_ prefix - and the same names arrive from UPS and RPP
+    # gear too: voltage_high is an Eaton XUPS notification as well as a rack
+    # PDU one. An explicit entry would win over the role and file a UPS input
+    # excursion as whatever the PDU wanted, which is the mistake the role layer
+    # exists to prevent - the same reason power_draw_high is left out below.
+    # They resolve by role, and every device that sends them is power gear.
+    #
+    # Seven pdu_-prefixed entries did sit here and matched nothing on the wire.
+    # They were transcribed from the simulator trap catalogue rather than from
+    # the event vocabulary the collector emits, so they read as deliberate
+    # classification while every one of those conditions was in fact resolving
+    # by role. test_no_unreachable_alarm_types now checks this table against the
+    # trap contract, so a name that matches nothing fails the build.
     "power_load_high": POWER,
     # power_draw_high is deliberately NOT here. It fires on servers as well as
     # on distribution gear, and an explicit entry would win over the role - the
@@ -529,10 +567,19 @@ def classify(alarm_type: str | None = None, *, role: str | None = None,
     return FALLBACK
 
 
-def detection_for(source: str | None, *, metric_key: str | None = None) -> str:
-    """Default detection method for an alarm, from the source that raised it."""
+def detection_for(source: str | None, *, metric_key: str | None = None,
+                  alarm_type: str | None = None) -> str:
+    """How this alarm was found, from the condition first and the source second.
+
+    The source is only a default. A condition known to be a limit crossing is
+    one however it travelled, so `alarm_type` outranks it - otherwise a vendor
+    threshold trap and our own rule watching the same reading record different
+    detection methods for one fact.
+    """
     if metric_key in ("alarm_state", "equipment_state"):
         return STATE
+    if alarm_type and alarm_type in THRESHOLD_CROSSINGS:
+        return THRESHOLD
     return DETECTION_BY_SOURCE.get(source or "", THRESHOLD)
 
 
