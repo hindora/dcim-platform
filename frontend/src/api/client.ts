@@ -331,6 +331,10 @@ export interface Alarm {
   datacenter_code?: string | null;
   room_name?: string | null;
   rack_name?: string | null;
+  /** What is plugged into the receptacle `instance` names, when it names one.
+   *  "Outlet 31" says where to put your hand; this says what you are about to
+   *  unplug. Null for every condition that is not about one outlet. */
+  instance_feeds?: string | null;
   /** Stamped at raise time, not derived on read - see the taxonomy doc. */
   category?: AlarmCategory | null;
   detection?: AlarmDetection | null;

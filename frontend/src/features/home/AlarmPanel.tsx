@@ -117,7 +117,7 @@ function addsSomething(message: string, alarmType: string) {
  *  states a value without what it breached, and the bare reading when there are
  *  no words worth showing at all.
  */
-function detail(a: Alarm): string | null {
+function conditionDetail(a: Alarm): string | null {
   const words = addsSomething(a.message, a.alarm_type) ? a.message : '';
   const measure = reading(a);
   if (!measure) return words || null;
@@ -134,6 +134,25 @@ function detail(a: Alarm): string | null {
     return `${words} (limit ${Math.round(a.threshold * 10) / 10}${unit})`;
   }
   return words;
+}
+
+/** What the operator is actually about to touch.
+ *
+ *  An outlet condition names a receptacle, and a receptacle number is a
+ *  position on a strip rather than a thing anybody recognises: "Outlet 31" says
+ *  where to put your hand, not what goes dark when you do. The cord is modelled
+ *  end to end, so the load is already known - and on a rack PDU that load is the
+ *  whole reason the alarm matters. A dead outlet feeding nothing is a note for
+ *  the next maintenance window; the same outlet feeding a CDU is not.
+ *
+ *  Kept ahead of the reading, because "which machine" is the first question and
+ *  the amps are the second.
+ */
+function detail(a: Alarm): string | null {
+  const rest = conditionDetail(a);
+  if (!a.instance_feeds) return rest;
+  const feeds = `feeds ${a.instance_feeds}`;
+  return rest ? `${feeds} · ${rest}` : feeds;
 }
 
 

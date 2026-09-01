@@ -185,6 +185,22 @@ def event_type_for(name: str) -> str:
 IFDESCR_COLUMN = "1.3.6.1.2.1.2.2.1.2"
 PORT_EVENTS = {"link_down", "link_up"}
 
+# The same idea one layer down, for a rack PDU: a condition on a
+# metered-by-outlet or switched strip belongs to ONE receptacle, and a
+# notification that cannot say which leaves an operator to walk 42 cords.
+# APC names the outlet in rPDU2OutletSwitchedStatusOutletName, so the alarm
+# instance reads "Outlet 12" - the label silk-screened on the strip and the one
+# an operator renames to the load it feeds.
+#
+# APC only, deliberately. Raritan carries the same identity in the OID INDEX of
+# its sensor varbinds rather than in a named column, which needs index-aware
+# extraction the receiver does not have yet; emitting a name varbind it never
+# sends would put an empty instance on every Raritan outlet alarm and look like
+# a mapping that works.
+APC_OUTLET_NAME = "1.3.6.1.4.1.318.1.1.26.9.2.3.1.4"
+OUTLET_EVENTS = {"outlet_on", "outlet_off", "outlet_failure",
+                 "outlet_current_high"}
+
 
 def same_tree(trap_oid: str, measures: tuple[str, str, str]) -> bool:
     """Can a trap on this OID actually carry these varbinds?
@@ -587,6 +603,8 @@ def main() -> int:
                     lines.append(f"    value_scale: {e['scale']}")
             if e["event_type"] in PORT_EVENTS:
                 lines.append(f"    instance_from_varbind: {IFDESCR_COLUMN}")
+            elif e["event_type"] in OUTLET_EVENTS and e["vendor"] == "apc":
+                lines.append(f"    instance_from_varbind: {APC_OUTLET_NAME}")
             if e.get("display_name"):
                 lines.append(f"    display_name: \"{e['display_name']}\"")
             if e["device_types"]:

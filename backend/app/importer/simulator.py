@@ -523,23 +523,39 @@ class TopologyImporter:
             self._iface_at[(device_id, idx)] = iface_id
             self.report.interfaces += 1
 
+        # The export names these the way the device plane does - `index`, `type`,
+        # `rated_a`, `bank` - not the way this schema does. Reading only the
+        # schema's own spelling meant `number` was always None, every outlet hit
+        # the skip below, and with the outlet map empty EVERY power cord then fell
+        # through _upsert_connection's "no termination" path. 1080 power links
+        # imported as bare device-to-device edges and the outlet and power_supply
+        # tables stayed at zero rows - a whole layer of the model switched off by
+        # one field name, and silently, because dropping the termination is also
+        # what a legitimately portless link does.
         for outlet in dev.get("outlets") or []:
-            number = outlet.get("number")
+            number = outlet.get("number", outlet.get("index"))
             if number is None:
                 continue
             oid = await self._scalar("""
-                INSERT INTO outlet (device_id, number, connector, rated_amps, phase)
-                VALUES (CAST(:dev AS uuid), :num, :conn, :amps, :phase)
-                ON CONFLICT (device_id, number) DO UPDATE SET connector = EXCLUDED.connector
+                INSERT INTO outlet (device_id, number, connector, rated_amps, phase, branch)
+                VALUES (CAST(:dev AS uuid), :num, :conn, :amps, :phase, :branch)
+                ON CONFLICT (device_id, number) DO UPDATE SET
+                    connector = EXCLUDED.connector, phase = EXCLUDED.phase,
+                    branch = EXCLUDED.branch
                 RETURNING id::text
             """, dev=device_id, num=int(number),
-                conn=outlet.get("connector") or "C13",
-                amps=outlet.get("rated_amps"), phase=outlet.get("phase"))
+                conn=outlet.get("connector") or outlet.get("type") or "C13",
+                amps=outlet.get("rated_amps", outlet.get("rated_a")),
+                phase=outlet.get("phase"),
+                # The bank IS the branch breaker: outlets on one bank share an
+                # overcurrent device, so a trip takes all of them together.
+                branch=(str(outlet["bank"]) if outlet.get("bank") is not None
+                        else outlet.get("branch")))
             self._outlet[(device_id, int(number))] = oid
             self.report.outlets += 1
 
         for psu in dev.get("psus") or []:
-            number = psu.get("number")
+            number = psu.get("number", psu.get("index"))
             if number is None:
                 continue
             pid = await self._scalar("""
@@ -548,7 +564,8 @@ class TopologyImporter:
                 ON CONFLICT (device_id, number) DO UPDATE SET connector = EXCLUDED.connector
                 RETURNING id::text
             """, dev=device_id, num=int(number),
-                conn=psu.get("connector") or "C14", watts=psu.get("rated_watts"))
+                conn=psu.get("connector") or psu.get("inlet") or "C14",
+                watts=psu.get("rated_watts", psu.get("capacity_w")))
             self._psu[(device_id, int(number))] = pid
             self.report.psus += 1
 

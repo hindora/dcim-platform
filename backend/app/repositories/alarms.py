@@ -231,7 +231,8 @@ _ALARM_SELECT = """
            a.acknowledged_at, a.acknowledged_by, a.cleared_at,
            a.is_symptom, a.root_cause_alarm_id::text,
            a.category, a.detection, a.response_class,
-           dc.code AS datacenter_code, rm.name AS room_name, r.name AS rack_name
+           dc.code AS datacenter_code, rm.name AS room_name, r.name AS rack_name,
+           fed.name AS instance_feeds
     FROM alarm a
     -- LEFT, not INNER. A platform alarm has no device, and an inner join here
     -- would silently drop the alarms that say the monitoring itself is broken -
@@ -241,6 +242,29 @@ _ALARM_SELECT = """
     LEFT JOIN rack_row rr  ON rr.id = r.row_id
     LEFT JOIN room rm      ON rm.id = COALESCE(rr.room_id, d.room_id)
     LEFT JOIN datacenter dc ON dc.id = rm.datacenter_id
+    -- What is plugged into the receptacle this alarm names.
+    --
+    -- "Outlet 31" tells an operator where to put their hand and nothing about
+    -- what they are about to unplug. The cord is already modelled - a power
+    -- connection terminates on the outlet at one end and a PSU at the other -
+    -- so the load is one join away, and the alarm can say "Outlet 31 -
+    -- SRV07-DC1-HA-R2-01" instead of making somebody go and look.
+    --
+    -- Matched on the exact label rather than by digging digits out of any
+    -- instance: instances elsewhere are endpoint UUIDs, port names and stream
+    -- names, and pulling a number out of those would join an alarm to a
+    -- receptacle that has nothing to do with it.
+    -- The number comes out of a capturing regex rather than a guard plus a
+    -- substring: a join condition is not evaluated left to right, so Postgres
+    -- ran the cast on instances the guard was there to exclude and an endpoint
+    -- UUID reached CAST(... AS int). This form yields NULL when the label is
+    -- not an outlet, and NULL simply fails to join.
+    LEFT JOIN outlet o      ON o.device_id = a.device_id
+                           AND o.number = CAST(substring(a.instance
+                                               from '^Outlet ([0-9]+)$') AS int)
+    LEFT JOIN connection pc ON pc.a_termination_type = 'outlet'
+                           AND pc.a_termination_id = o.id
+    LEFT JOIN device fed    ON fed.id = pc.b_device_id
 """
 
 
