@@ -897,10 +897,12 @@ class IngestWorker:
             # each write a load_pct and the later one - whichever that was -
             # would decide what the console showed.
             key = (row.device_id, row.instance)
-            if row.metric_id == draw_id and apparent_id is not None:
-                if any(r.device_id == row.device_id and r.instance == row.instance
-                       for r in sample_rows if r.metric_id == apparent_id):
-                    continue
+            if (row.metric_id == draw_id and apparent_id is not None
+                    and any(r.device_id == row.device_id
+                            and r.instance == row.instance
+                            for r in sample_rows
+                            if r.metric_id == apparent_id)):
+                continue
             if key in seen:
                 continue
             seen.add(key)
