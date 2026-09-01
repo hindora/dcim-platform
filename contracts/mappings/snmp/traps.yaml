@@ -943,6 +943,9 @@ traps:
   - oid: 1.3.6.1.4.1.13742.6.0.61
     event_type: pdu_load_critical
     severity: CRITICAL
+    metric: current
+    value_varbind: 1.3.6.1.4.1.13742.6.5.2.3.1.4
+    value_scale: 0.1
     display_name: "Load Critical"
     match_varbinds:
       - oid: 1.3.6.1.4.1.13742.6.0.0.10
@@ -955,6 +958,9 @@ traps:
   - oid: 1.3.6.1.4.1.13742.6.0.61
     event_type: pdu_load_high
     severity: MAJOR
+    metric: current
+    value_varbind: 1.3.6.1.4.1.13742.6.5.2.3.1.4
+    value_scale: 0.1
     display_name: "Load High"
     match_varbinds:
       - oid: 1.3.6.1.4.1.13742.6.0.0.10
@@ -969,6 +975,9 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [pdu_load_high, pdu_load_critical]
+    metric: current
+    value_varbind: 1.3.6.1.4.1.13742.6.5.2.3.1.4
+    value_scale: 0.1
     display_name: "PDU Load Normal"
     match_varbinds:
       - oid: 1.3.6.1.4.1.13742.6.0.0.10
@@ -1019,6 +1028,9 @@ traps:
   - oid: 1.3.6.1.4.1.13742.6.0.63
     event_type: outlet_current_high
     severity: MAJOR
+    metric: current
+    value_varbind: 1.3.6.1.4.1.13742.6.5.2.3.1.4
+    value_scale: 0.1
     display_name: "Outlet Current High"
     match_varbinds:
       - oid: 1.3.6.1.4.1.13742.6.0.0.10
@@ -1054,6 +1066,9 @@ traps:
   - oid: 1.3.6.1.4.1.13742.6.0.65
     event_type: breaker_tripped
     severity: CRITICAL
+    metric: current
+    value_varbind: 1.3.6.1.4.1.13742.6.5.2.3.1.4
+    value_scale: 0.1
     display_name: "Breaker Tripped"
     match_varbinds:
       - oid: 1.3.6.1.4.1.13742.6.0.0.10

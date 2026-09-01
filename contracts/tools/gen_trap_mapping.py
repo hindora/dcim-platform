@@ -329,13 +329,29 @@ def main() -> int:
         # threshold varbind is deliberately empty and the alarm arrives with a
         # reading and no limit, which is what the PDU actually said.
         "_apc_pdu_load": ("current", APC["loadStatusLoad"], ""),
+        # Raritan answers its PDU load notifications with the INLET sensor
+        # reading - measurementsInletSensorValue - because on a PX2 the load
+        # condition belongs to the inlet, not to a bank. Same shape as APC: a
+        # reading and no limit, since PDU2-MIB carries the state the sensor
+        # moved to rather than the number it crossed.
+        #
+        # Without this a Raritan strip raised Load High with no measurement at
+        # all, so the console printed the condition name and nothing else while
+        # the reading was sitting on the wire unread. Every non-APC PDU on this
+        # estate is a PX2, which is half of them.
+        "_raritan_pdu_load": ("current", RARITAN["inletValue"], ""),
     }
 
     # Vendor units are not the metric's units. rPDULoadStatusLoad is TENTHS of
     # an amp, so 135 is 13.5 A - and published raw under a metric measured in
     # amps it would read as 135 A on a 13.5 A circuit: plausible, wrong by ten,
     # and indistinguishable from the overload it is supposed to be reporting.
-    MEASURE_SCALE = {"_apc_pdu_load": 0.1}
+    # The plane sends the Raritan reading in tenths of an amp, the same way it
+    # sends APC's. NOTE: real PX2 gear scales every sensor by its own
+    # decimalDigits attribute, which is 3 for current on the models here - a
+    # poller facing real hardware must read that attribute rather than assume
+    # this constant, exactly as the polled mapping already warns.
+    MEASURE_SCALE = {"_apc_pdu_load": 0.1, "_raritan_pdu_load": 0.1}
 
     # The APC notifications that carry a load reading. Kept as a set rather
     # than folded into MEASURES because these names are shared with other
@@ -347,12 +363,19 @@ def main() -> int:
     APC_LOAD_TRAPS = {"loadHigh", "loadCritical", "pduLoadNormal",
                       "outletCurrentHigh", "breakerTripped"}
 
+    # The PX2 notifications the simulator answers with an inlet sensor value.
+    # Names as the plane declares them, same basis as the APC set above.
+    RARITAN_LOAD_TRAPS = {"loadHigh", "loadCritical", "pduLoadNormal",
+                          "outletCurrentHigh", "breakerTripped"}
+
     def measure_key(name: str, vendor: str) -> str | None:
         if vendor == "cisco" and name in ("cpuHighUsage", "cpuSustained",
                                           "cpuNormal"):
             return "_cisco_cpu"
         if vendor == "apc" and name in APC_LOAD_TRAPS:
             return "_apc_pdu_load"
+        if vendor == "raritan" and name in RARITAN_LOAD_TRAPS:
+            return "_raritan_pdu_load"
         return name if name in MEASURES else None
 
     def measurement(name: str, vendor: str) -> tuple[str, str, str] | None:
