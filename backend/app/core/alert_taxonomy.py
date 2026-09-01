@@ -311,6 +311,13 @@ BY_ALARM_TYPE: dict[str, str] = {
     "airflow_low": ENVIRONMENTAL,
     "water_leak": ENVIRONMENTAL,
     "smoke_detected": ENVIRONMENTAL,
+    # The probe on a rack PDU reads the RACK INTAKE AIR, not anything electrical.
+    # Filed here rather than under power for the same reason smoke_detected on the
+    # same strip is: the category records the failing thing, and a hot rack inlet
+    # is the room, which facilities owns. Without these two the PDU role resolved
+    # them to power and put a thermal condition in the electrical team queue.
+    "pdu_temp_high": ENVIRONMENTAL,
+    "pdu_humidity_high": ENVIRONMENTAL,
 
     # --- IT equipment: one host
     "cpu_high": IT_EQUIPMENT,
