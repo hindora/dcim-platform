@@ -224,12 +224,36 @@ def test_the_margin_is_a_stand_in_for_hysteresis_not_a_free_pass():
 
 
 def test_the_timer_only_gets_what_nothing_can_measure():
-    """Once an alarm carries a metric, the reading decides - not the clock.
+    """Once a reading CAN decide an alarm, the reading decides - not the clock.
 
     Leaving the timer able to reach measurable alarms would let it close one
     early, on silence, when the measurement was about to disagree.
     """
-    assert "a.metric_key IS NULL" in sql("_AGED_OUT")
+    aged = sql("_AGED_OUT")
+    assert "a.threshold IS NULL" in aged
+    # A rule that can decide the alarm outranks the clock too.
+    assert "NOT EXISTS" in aged
+    assert "r.clear_threshold IS NOT NULL" in aged
+
+
+def test_the_two_reconcilers_leave_no_alarm_unreachable():
+    """Their gates have to be complements, not merely different.
+
+    measured_clear acts when a limit exists - from the rule or from the device.
+    So the timer's gate must be that same question negated. It was not: the
+    timer asked whether the alarm named a METRIC, which is a different question,
+    and the difference was a hole. A trap that named a metric and carried no
+    limit - outlet_current_high, whose vendors send a reading and no threshold -
+    was excluded here for naming a metric and excluded there for having no
+    limit. Nothing could close it at all, and one sat open for over ninety
+    minutes on a healthy strip that was reporting the whole time.
+    """
+    measured, aged = sql("_MEASURED_CLEAR"), sql("_AGED_OUT")
+    assert "r.clear_threshold IS NOT NULL OR a.threshold IS NOT NULL" in measured
+    assert "a.threshold IS NULL" in aged
+    # Neither may gate on metric_key: naming a measurement is not the same as
+    # being able to decide one, and conflating them is what opened the hole.
+    assert "a.metric_key IS NULL" not in aged
 
 
 def test_the_reason_says_whose_threshold_was_used():

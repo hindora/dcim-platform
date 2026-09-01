@@ -190,15 +190,21 @@ _AGED_OUT = text("""
          WHERE a.state <> 'CLEARED'
            AND a.source = ANY(:sources)
            AND a.last_seen < now() - make_interval(secs => :grace_s)
-           -- Only what nothing can MEASURE. An alarm that names a metric -
-           -- from its rule or from the trap's own varbinds - is decided by
-           -- the reading above, and ageing it out on a timer would pre-empt
-           -- the better answer.
+           -- Only what nothing can MEASURE. An alarm that CAN be decided by a
+           -- reading is decided by the query above, and ageing it out on a
+           -- timer would pre-empt the better answer.
            --
-           -- What is left is the genuinely unverifiable: a bare link_down, a
-           -- state trap with no number attached. The timer is the last resort
-           -- it was always meant to be, rather than the ordinary path.
-           AND a.metric_key IS NULL
+           -- The test is "can measured_clear act on this", so it has to be the
+           -- exact complement of that query's own gate - a limit from a rule,
+           -- or a limit the device sent. Testing metric_key instead left a hole
+           -- between the two: a trap that names a metric but carries no limit
+           -- and has no backing rule was excluded HERE for naming a metric and
+           -- excluded THERE for having no limit, so nothing could ever close it.
+           -- outlet_current_high sat open for over ninety minutes that way,
+           -- with the strip healthy and reporting the whole time. The timer is
+           -- the last resort it was always meant to be - but a last resort has
+           -- to actually catch what falls past everything else.
+           AND a.threshold IS NULL
            AND NOT EXISTS (
                SELECT 1 FROM alarm_rule r
                 WHERE r.alarm_type = a.alarm_type
