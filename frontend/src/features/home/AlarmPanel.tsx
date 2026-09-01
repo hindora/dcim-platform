@@ -174,16 +174,39 @@ function detail(a: Alarm): string | null {
  *  wrong in this room", and the alert that has not crossed its threshold yet is
  *  usually the context for the alarm that has.
  */
+/** Which part of the lifecycle the room list is showing.
+ *
+ *  `open` is the default and matches the counter the panel was opened from -
+ *  a drill-down that disagreed with the number above it would be worse than no
+ *  drill-down. The other two answer a different question: what has this room
+ *  been doing, and did the thing I fixed actually clear. That history is
+ *  already in the table; it was simply unreachable from here.
+ */
+type Lifecycle = 'open' | 'cleared' | 'all';
+
+const LIFECYCLE: { key: Lifecycle; label: string; states?: string[] }[] = [
+  { key: 'open', label: 'Active' },
+  { key: 'cleared', label: 'Cleared', states: ['CLEARED'] },
+  { key: 'all', label: 'All', states: ['ACTIVE', 'ACKNOWLEDGED', 'CLEARED'] },
+];
+
 function RoomConditions({ roomId, categories, span }: {
   roomId: string; categories: AlarmCategory[]; span: number;
 }) {
+  const [view, setView] = useState<Lifecycle>('open');
+  const states = LIFECYCLE.find((l) => l.key === view)?.states;
   const { data, isLoading, error } = useQuery({
-    queryKey: ['room-conditions', roomId, ...categories],
-    queryFn: () => api.roomConditions(roomId, categories),
+    queryKey: ['room-conditions', roomId, view, ...categories],
+    queryFn: () => api.roomConditions(roomId, categories, states),
     staleTime: 15_000,
   });
 
   const items = [...(data?.items ?? [])].sort((a, b) => {
+    // History reads newest-first: once a condition is closed its severity is
+    // no longer a call to action, and "when" is the only ordering that helps.
+    if (view === 'cleared') {
+      return (b.cleared_at ?? b.last_seen).localeCompare(a.cleared_at ?? a.last_seen);
+    }
     const cls = (x: Alarm) => (x.response_class === 'alert' ? 1 : 0);
     if (cls(a) !== cls(b)) return cls(a) - cls(b);
     const ra = SEV_RANK[a.severity] ?? 9;
@@ -198,16 +221,35 @@ function RoomConditions({ roomId, categories, span }: {
   return (
     <td className="sub-cell" colSpan={span}>
       <div className="sub-wrap">
+        {/* Outside the items check on purpose: "no active faults" and "no
+            history" are different answers, and the reader can only tell which
+            one they are looking at if the switch is still there. */}
+        <div className="lifecycle" role="group" aria-label="Which conditions to show">
+          {LIFECYCLE.map((l) => (
+            <button key={l.key}
+                    className={`sort ${view === l.key ? 'on' : ''}`}
+                    aria-pressed={view === l.key}
+                    onClick={() => setView(l.key)}>
+              {l.label}
+            </button>
+          ))}
+        </div>
         {isLoading && <p className="muted small">Loading the conditions…</p>}
         {error && <p className="muted small">Could not load this room.</p>}
         {data && !items.length && (
-          <p className="muted small">Nothing open here in this domain.</p>
+          <p className="muted small">
+            {view === 'cleared'
+              ? 'Nothing has cleared here in this domain.'
+              : 'Nothing open here in this domain.'}
+          </p>
         )}
         {items.length > 0 && (
           <>
             <div className="sub-caption">
               {alarms} alarm{alarms === 1 ? '' : 's'}
               {' · '}{alerts} alert{alerts === 1 ? '' : 's'}
+              {view !== 'open' && <span className="muted">{' · '}
+                {view === 'cleared' ? 'closed' : 'open and closed'}</span>}
             </div>
             <table className="sub-table">
               <thead>
@@ -250,7 +292,15 @@ function RoomConditions({ roomId, categories, span }: {
                         {detail(a) ?? <span className="dash">&mdash;</span>}
                       </td>
                       <td className="mid muted">{relativeTime(a.first_seen)}</td>
-                      <td className="mid muted">{relativeTime(a.last_seen)}</td>
+                      {/* A closed row shows when it CLOSED, not when it was
+                          last seen: those are the same instant for a cleared
+                          condition, and "last seen" invites reading it as
+                          still happening. */}
+                      <td className="mid muted">
+                        {a.state === 'CLEARED'
+                          ? <span className="cleared-at">cleared {relativeTime(a.cleared_at ?? a.last_seen)}</span>
+                          : relativeTime(a.last_seen)}
+                      </td>
                     </tr>
                   );
                 })}

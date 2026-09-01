@@ -491,6 +491,24 @@ button.facet.on {
   font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
   color: var(--text-faint); margin-bottom: 8px;
 }
+
+/* Which part of the lifecycle this room is showing. Sits above the caption
+   because it changes what the caption is counting, and stays put when the list
+   is empty - "no active faults" and "no history" are different answers, and the
+   switch is how the reader tells which one they are looking at. */
+.lifecycle { display: flex; gap: 4px; margin-bottom: 8px; }
+.lifecycle .sort {
+  background: none; border: 1px solid transparent; border-radius: 3px;
+  padding: 2px 8px; cursor: pointer;
+  font: inherit; font-size: 11px; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--text-faint);
+}
+.lifecycle .sort:hover { color: var(--text); }
+.lifecycle .sort.on {
+  color: var(--text); border-color: var(--border); background: var(--bg-inset);
+}
+/* A closed condition is history, not a live reading. */
+.sub-table .cleared-at { font-style: italic; }
 .sub-table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .sub-table thead th {
   text-align: left; font-weight: 500; font-size: 10px; letter-spacing: .08em;

@@ -327,6 +327,9 @@ export interface Alarm {
   first_seen: string;
   last_seen: string;
   occurrence_count: number;
+  /** When it closed. Present on the row all along - the panel simply had no
+   *  way to ask for closed conditions until there was a lifecycle filter. */
+  cleared_at?: string | null;
   is_symptom: boolean;
   datacenter_code?: string | null;
   room_name?: string | null;
@@ -1354,10 +1357,14 @@ export const api = {
    *
    *  Roots only and open only, the same two filters the roll-up counts with,
    *  so the expansion adds up to the numbers on the row. */
-  roomConditions: (roomId: string, categories: string[]) =>
+  /** Conditions in one room. `states` selects the lifecycle to show: omitted,
+   *  the server answers with the open ones (ACTIVE + ACKNOWLEDGED), which is
+   *  what the roll-up counters are counting. */
+  roomConditions: (roomId: string, categories: string[], states?: string[]) =>
     request<{ items: Alarm[] }>(
       `/alarms?limit=500&room=${encodeURIComponent(roomId)}`
-      + categories.map((c) => `&category=${encodeURIComponent(c)}`).join('')),
+      + categories.map((c) => `&category=${encodeURIComponent(c)}`).join('')
+      + (states ?? []).map((s) => `&state=${encodeURIComponent(s)}`).join('')),
 
   /** Who this instance belongs to. Unauthenticated on purpose: the shell needs
    *  a name before anybody has signed in. */
