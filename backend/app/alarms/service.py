@@ -31,7 +31,7 @@ from app.core import alert_taxonomy
 from app.core.logging import get_logger
 from app.repositories import alarms as repo
 
-log = get_logger("alarms")
+log = get_logger("alarms")
 
 #: Conditions named for a percentage of nameplate that the DEVICE reports as
 #: amps. Only the two PDU load bands: outlet_current_high and breaker_tripped
