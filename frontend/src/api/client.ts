@@ -338,10 +338,11 @@ export interface Alarm {
    *  "Outlet 31" says where to put your hand; this says what you are about to
    *  unplug. Null for every condition that is not about one outlet. */
   instance_feeds?: string | null;
-  /** The absolute draw behind a percentage measurement, in watts, computed
-   *  from the value captured at raise and the device nameplate. Null unless the
+  /** The absolute load behind a percentage measurement, in VOLT-AMPS, computed
+   *  from the value captured at raise and the device nameplate. Apparent, not
+   *  real: a PDU nameplate is VA and load% is a share of it. Null unless the
    *  alarm measured `load_pct`. */
-  trigger_watts?: number | null;
+  trigger_va?: number | null;
   /** Stamped at raise time, not derived on read - see the taxonomy doc. */
   category?: AlarmCategory | null;
   detection?: AlarmDetection | null;

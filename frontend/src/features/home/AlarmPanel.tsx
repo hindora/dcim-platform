@@ -91,9 +91,9 @@ function reading(a: Alarm): string | null {
   // A percentage of nameplate is the number to act on; the absolute draw is
   // the one to size against. A PDU at 85% means nothing to somebody who does
   // not carry the strip's rating in their head, so both go on the row.
-  if (a.metric_key === 'load_pct' && a.trigger_watts != null) {
-    const kw = a.trigger_watts / 1000;
-    value += ` (${kw >= 10 ? Math.round(kw) : Math.round(kw * 10) / 10} kW)`;
+  if (a.metric_key === 'load_pct' && a.trigger_va != null) {
+    const kva = a.trigger_va / 1000;
+    value += ` (${kva >= 10 ? Math.round(kva) : Math.round(kva * 10) / 10} kVA)`;
   }
   if (a.threshold === null || a.threshold === undefined) return value;
   return `${value}, limit ${Math.round(a.threshold * 10) / 10}${unit}`;

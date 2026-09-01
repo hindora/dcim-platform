@@ -263,16 +263,21 @@ _ALARM_SELECT = """
            a.category, a.detection, a.response_class,
            dc.code AS datacenter_code, rm.name AS room_name, r.name AS rack_name,
            fed.name AS instance_feeds,
-           -- The absolute draw behind a percentage, from the SAME number the
+           -- The absolute load behind a percentage, from the SAME number the
            -- alarm captured rather than from live telemetry, so it stays the
            -- reading that accompanied the raise. Only meaningful when the
            -- measurement IS a percentage of that nameplate.
+           --
+           -- Volt-amps, not watts: a PDU nameplate is VA (the catalog figures
+           -- are all V x A) and load% is an apparent-power ratio, so the
+           -- product is apparent power. Calling it watts would be the same
+           -- units error one layer up.
            CASE WHEN a.metric_key = 'load_pct' AND mo.rated_power_w > 0
                 -- ::int, not bare round(): round() yields numeric, asyncpg maps
                 -- that to Decimal, and it serialises as a JSON STRING. The
                 -- client types this a number and would divide a string.
                 THEN round(a.trigger_value / 100.0 * mo.rated_power_w)::int
-           END AS trigger_watts
+           END AS trigger_va
     FROM alarm a
     -- LEFT, not INNER. A platform alarm has no device, and an inner join here
     -- would silently drop the alarms that say the monitoring itself is broken -

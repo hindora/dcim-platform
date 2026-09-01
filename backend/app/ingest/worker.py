@@ -71,6 +71,13 @@ BASELINE_TTL_S = 3600
 # reading the device already took.
 LOAD_PCT_FROM_DRAW = frozenset({"pdu", "rpp"})
 POWER_DRAW_METRIC = "power_draw"
+#: A PDU's capacity is a CURRENT limit and its nameplate is volt-amps, so the
+#: ratio that means "how full is this strip" is apparent power over the rating.
+#: Dividing real watts by a VA nameplate compares two different quantities and
+#: understates the load by the power factor - which is not cosmetic, because the
+#: current a strip draws is S/(phases x V): a PDU reported at 85% on that basis
+#: was already sitting at 101% of its breaker.
+APPARENT_POWER_METRIC = "apparent_power"
 LOAD_PCT_METRIC = "load_pct"
 
 # How often to look for endpoints that answer but say nothing. Well under
@@ -866,8 +873,15 @@ class IngestWorker:
         A device with no rating is skipped rather than assumed. "Percent of a
         number we guessed" is worse than no percentage at all.
         """
+        apparent_id = self.cache.metric_id(APPARENT_POWER_METRIC)
+        draw_id = self.cache.metric_id(POWER_DRAW_METRIC)
+        # Apparent power where the device reports it, real power where it does
+        # not. Both are kept rather than one replacing the other: a strip that
+        # publishes only watts still deserves a percentage, and the small
+        # understatement there is better than no number at all.
+        seen: set[tuple[str, str]] = set()
         for row in list(sample_rows):
-            if self.cache.metric_id(POWER_DRAW_METRIC) != row.metric_id:
+            if row.metric_id not in (apparent_id, draw_id):
                 continue
             ctx = self.cache.devices.get(row.device_id)
             if ctx is None or ctx.device_type not in LOAD_PCT_FROM_DRAW:
@@ -878,6 +892,18 @@ class IngestWorker:
             metric_id = self.cache.metric_id(LOAD_PCT_METRIC)
             if metric_id is None:
                 return          # the metric is not registered; nothing to write
+            # One percentage per device per batch, and apparent wins. Both
+            # metrics arrive in the same poll, so without this the two would
+            # each write a load_pct and the later one - whichever that was -
+            # would decide what the console showed.
+            key = (row.device_id, row.instance)
+            if row.metric_id == draw_id and apparent_id is not None:
+                if any(r.device_id == row.device_id and r.instance == row.instance
+                       for r in sample_rows if r.metric_id == apparent_id):
+                    continue
+            if key in seen:
+                continue
+            seen.add(key)
             pct = round(row.value / rated * 100.0, 2)
             sample_rows.append(writer.SampleRow(
                 ts=row.ts, device_id=row.device_id, metric_id=metric_id,
