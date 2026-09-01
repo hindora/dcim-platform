@@ -335,6 +335,10 @@ export interface Alarm {
    *  "Outlet 31" says where to put your hand; this says what you are about to
    *  unplug. Null for every condition that is not about one outlet. */
   instance_feeds?: string | null;
+  /** The absolute draw behind a percentage measurement, in watts, computed
+   *  from the value captured at raise and the device nameplate. Null unless the
+   *  alarm measured `load_pct`. */
+  trigger_watts?: number | null;
   /** Stamped at raise time, not derived on read - see the taxonomy doc. */
   category?: AlarmCategory | null;
   detection?: AlarmDetection | null;

@@ -31,7 +31,13 @@ from app.core import alert_taxonomy
 from app.core.logging import get_logger
 from app.repositories import alarms as repo
 
-log = get_logger("alarms")
+log = get_logger("alarms")
+
+#: Conditions named for a percentage of nameplate that the DEVICE reports as
+#: amps. Only the two PDU load bands: outlet_current_high and breaker_tripped
+#: are genuinely about current and keep it, and everything else reports the
+#: quantity it is named for already.
+_LOAD_CONDITIONS = frozenset({"pdu_load_high", "pdu_load_critical"})
 
 DWELL_HASH = "dcim:dwell"
 DWELL_TTL_S = 24 * 3600
@@ -275,9 +281,33 @@ class AlarmService:
             # alarm that can never be resolved.
             return None
 
+        # A condition named for a quantity the device cannot report gets the
+        # platform's own measurement instead.
+        #
+        # A rack PDU load notification carries AMPS - rPDULoadStatusLoad is
+        # tenths of an amp, Raritan sends its inlet sensor value - because that
+        # is what the MIBs define. Neither vendor has a percent object. But the
+        # condition is "this strip is heavily loaded", and 32.4 A does not answer
+        # that; it answers "am I near the breaker", which is the OTHER alarm on
+        # the same device. So the console showed Load High beside a figure that
+        # looked comfortable, and the number that actually tripped it - percent
+        # of nameplate - never reached an operator.
+        #
+        # load_pct is derived here from polled power and the nameplate, so it is
+        # ours to attach. Taken at RAISE time and stored, not joined at render:
+        # the alarm records a moment, and a cleared row must not drift to today's
+        # reading. The amps stay on the event and in the varbinds, which is the
+        # faithful record of what the device said.
+        alarm_type = alert_taxonomy.canonical_alarm_type(ev["event_type"])
+        metric_key, value = ev.get("metric"), ev.get("value")
+        if alarm_type in _LOAD_CONDITIONS:
+            derived = await repo.latest_reading(session, device_id, "load_pct")
+            if derived is not None:
+                metric_key, value = "load_pct", derived
+
         alarm = await repo.raise_alarm(
             session, device_id=device_id,
-            alarm_type=alert_taxonomy.canonical_alarm_type(ev["event_type"]),
+            alarm_type=alarm_type,
             instance=instance, severity=severity,
             message=ev.get("message") or ev["event_type"],
             source=ev.get("source") or "snmp_trap", observed_at=observed,
@@ -285,7 +315,7 @@ class AlarmService:
             # Carried onto the alarm so the condition can be verified later -
             # and so the row reaches an operator with a number on it rather
             # than a bare condition name.
-            metric_key=ev.get("metric"), value=ev.get("value"),
+            metric_key=metric_key, value=value,
             threshold=ev.get("threshold"))
         if alarm is None or alarm["change"] == "touched":
             return None

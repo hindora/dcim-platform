@@ -221,6 +221,36 @@ async def record_history(session: AsyncSession, *, alarm_id: str, device_id: str
            "detail": json.dumps(detail or {})})
 
 
+async def latest_reading(session: AsyncSession, device_id: str, metric_key: str,
+                         window_s: int = 900) -> float | None:
+    """The newest polled value of one metric on one device, or None.
+
+    Used to put the platform's OWN measurement on a trap-raised alarm. Some
+    conditions are named for a quantity the device cannot report: a rack PDU's
+    load notification carries amps, because that is what PowerNet and PDU2-MIB
+    define, and the percentage of nameplate an operator actually acts on is
+    something this platform derives. Reading it at RAISE time rather than at
+    render time matters - an alarm is a record of a moment, and a cleared row
+    from last week must not start showing today's load.
+
+    Bounded by a window so a stale sample cannot be presented as the reading
+    that accompanied the alarm; None then leaves the alarm with what the device
+    said, which is always better than a number nobody measured.
+    """
+    row = (await session.execute(text("""
+        SELECT t.value::float8 AS value
+          FROM telemetry_sample t
+          JOIN metric m ON m.id = t.metric_id
+         WHERE t.device_id = CAST(:device_id AS uuid)
+           AND m.key = :metric_key
+           AND t.ts > now() - make_interval(secs => :window_s)
+         ORDER BY t.ts DESC
+         LIMIT 1
+    """), {"device_id": device_id, "metric_key": metric_key,
+           "window_s": window_s})).mappings().first()
+    return float(row["value"]) if row else None
+
+
 _ALARM_SELECT = """
     SELECT a.id::text, a.device_id::text, d.name AS device_name, d.device_type,
            a.alarm_type, a.instance, a.severity::text AS severity,
@@ -232,7 +262,17 @@ _ALARM_SELECT = """
            a.is_symptom, a.root_cause_alarm_id::text,
            a.category, a.detection, a.response_class,
            dc.code AS datacenter_code, rm.name AS room_name, r.name AS rack_name,
-           fed.name AS instance_feeds
+           fed.name AS instance_feeds,
+           -- The absolute draw behind a percentage, from the SAME number the
+           -- alarm captured rather than from live telemetry, so it stays the
+           -- reading that accompanied the raise. Only meaningful when the
+           -- measurement IS a percentage of that nameplate.
+           CASE WHEN a.metric_key = 'load_pct' AND mo.rated_power_w > 0
+                -- ::int, not bare round(): round() yields numeric, asyncpg maps
+                -- that to Decimal, and it serialises as a JSON STRING. The
+                -- client types this a number and would divide a string.
+                THEN round(a.trigger_value / 100.0 * mo.rated_power_w)::int
+           END AS trigger_watts
     FROM alarm a
     -- LEFT, not INNER. A platform alarm has no device, and an inner join here
     -- would silently drop the alarms that say the monitoring itself is broken -
@@ -265,6 +305,7 @@ _ALARM_SELECT = """
     LEFT JOIN connection pc ON pc.a_termination_type = 'outlet'
                            AND pc.a_termination_id = o.id
     LEFT JOIN device fed    ON fed.id = pc.b_device_id
+    LEFT JOIN model mo      ON mo.id = d.model_id
 """
 
 

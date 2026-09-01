@@ -87,7 +87,14 @@ const UNITS: Record<string, string> = {
 function reading(a: Alarm): string | null {
   if (a.trigger_value === null || a.trigger_value === undefined) return null;
   const unit = UNITS[a.metric_key ?? ''] ?? '';
-  const value = `${Math.round(a.trigger_value * 10) / 10}${unit}`;
+  let value = `${Math.round(a.trigger_value * 10) / 10}${unit}`;
+  // A percentage of nameplate is the number to act on; the absolute draw is
+  // the one to size against. A PDU at 85% means nothing to somebody who does
+  // not carry the strip's rating in their head, so both go on the row.
+  if (a.metric_key === 'load_pct' && a.trigger_watts != null) {
+    const kw = a.trigger_watts / 1000;
+    value += ` (${kw >= 10 ? Math.round(kw) : Math.round(kw * 10) / 10} kW)`;
+  }
   if (a.threshold === null || a.threshold === undefined) return value;
   return `${value}, limit ${Math.round(a.threshold * 10) / 10}${unit}`;
 }
