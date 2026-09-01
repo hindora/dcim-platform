@@ -198,6 +198,12 @@ PORT_EVENTS = {"link_down", "link_up"}
 # sends would put an empty instance on every Raritan outlet alarm and look like
 # a mapping that works.
 APC_OUTLET_NAME = "1.3.6.1.4.1.318.1.1.26.9.2.3.1.4"
+# The same identity on the plane's own tree. Most recovery rules have no
+# TrapType, so they are never rewritten to a vendor OID and go out synthetic -
+# and a clear has to name the outlet its raise did, or it resolves a row nobody
+# opened and leaves the real alarm standing.
+SYNTH_OUTLET_NAME = "1.3.6.1.4.1.99999.5.20"
+SYNTHETIC_TREE = "1.3.6.1.4.1.99999."
 OUTLET_EVENTS = {"outlet_on", "outlet_off", "outlet_failure",
                  "outlet_current_high"}
 
@@ -605,6 +611,9 @@ def main() -> int:
                 lines.append(f"    instance_from_varbind: {IFDESCR_COLUMN}")
             elif e["event_type"] in OUTLET_EVENTS and e["vendor"] == "apc":
                 lines.append(f"    instance_from_varbind: {APC_OUTLET_NAME}")
+            elif (e["event_type"] in OUTLET_EVENTS
+                  and oid.startswith(SYNTHETIC_TREE)):
+                lines.append(f"    instance_from_varbind: {SYNTH_OUTLET_NAME}")
             if e.get("display_name"):
                 lines.append(f"    display_name: \"{e['display_name']}\"")
             if e["device_types"]:
