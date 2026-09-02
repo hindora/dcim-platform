@@ -504,3 +504,44 @@ a.asset-tile:hover { border-color: var(--border-strong); }
 @media (prefers-reduced-motion: reduce) {
   .asset-skeleton { animation: none; }
 }
+
+/* ------------------------------------------------------ lifecycle + windows */
+
+/* Window status reuses the lifecycle chip: both answer "what stage is this in",
+   and a second visual language for the same idea is a second thing to learn. */
+.asset-life.is-active { border-color: var(--warn); color: var(--warn); }
+.asset-life.is-scheduled { border-color: var(--accent); color: var(--accent); }
+.asset-life.is-completed { color: var(--text-faint); }
+.asset-life.is-cancelled { color: var(--text-faint); text-decoration: line-through; }
+
+/* A non-zero shelved count is not an alarm - it is a fact about our own
+   console, so it takes the warning hue rather than a status colour, and it
+   never blinks or pulses. */
+.asset-shelved {
+  color: var(--warn);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.asset-move {
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) minmax(180px, 2fr) minmax(120px, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+@media (max-width: 800px) {
+  .asset-move { grid-template-columns: 1fr; align-items: stretch; }
+}
+
+.asset-move label {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 0.72rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.asset-move select,
+.asset-move input { width: 100%; }

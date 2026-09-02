@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import Any
 
@@ -13,6 +14,8 @@ from app.core import audit
 from app.core.logging import get_logger
 from app.core.security import Principal, current_principal, require_role
 from app.db.session import get_session
+from app.repositories import lifecycle as lifecycle_repo
+from app.repositories import maintenance as maintenance_repo
 from app.schemas import (
     DeviceDetail,
     DeviceStateOut,
@@ -25,6 +28,7 @@ from app.schemas import (
 from app.services import dashboard as dashboard_service
 from app.services import devices as service
 from app.services import endpoint_config
+from app.services import lifecycle as lifecycle_service
 
 router = APIRouter(prefix="/devices", tags=["devices"])
 log = get_logger("api.devices")
@@ -156,6 +160,107 @@ async def history(
     return await dashboard_service.history(
         session, device_id=device_id, metrics=metric, start=start, end=end,
         interval=interval, agg=agg, instance=instance)
+
+
+class LifecycleTransition(BaseModel):
+    """A move from one lifecycle state to another, with why.
+
+    `reason` is optional in the schema and asked for in the UI: a change board
+    wants it, and a transition somebody could not explain is still better
+    recorded than not recorded.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    to_state: str = Field(pattern="^(planned|in_stock|installed|in_service"
+                                  "|maintenance|decommissioned|retired)$")
+    reason: str | None = Field(None, max_length=500)
+    change_ref: str | None = Field(None, max_length=100)
+
+
+@router.get("/{device_id}/lifecycle", summary="Transition history, newest first")
+async def lifecycle_history(
+    device_id: str,
+    session: AsyncSession = Depends(get_session),
+    _: Principal = Depends(current_principal),
+) -> dict[str, Any]:
+    return {
+        "current": await lifecycle_repo.current_state(session, device_id),
+        "allowed": list(lifecycle_service.TRANSITIONS.get(
+            await lifecycle_repo.current_state(session, device_id) or "", ())),
+        "events": await lifecycle_service.history(session, device_id),
+    }
+
+
+@router.post("/{device_id}/lifecycle", summary="Record a lifecycle transition")
+async def lifecycle_transition(
+    device_id: str,
+    body: LifecycleTransition,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    principal: Principal = Depends(require_role("operator")),
+) -> dict[str, Any]:
+    """Move the device, write the event and the audit row, in one transaction.
+
+    A refusal is a 409 carrying the allowed set, not a bare error: an operator
+    told "no" needs to be told what IS possible, and the matrix is the only
+    thing that knows.
+    """
+    ip, agent = audit.client_of(request)
+    try:
+        event = await lifecycle_service.transition(
+            session, device_id=device_id, to_state=body.to_state,
+            actor=audit.actor_of(principal), reason=body.reason,
+            change_ref=body.change_ref, ip=ip, user_agent=agent)
+    except LookupError:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "device not found") from None
+    except lifecycle_service.IllegalTransitionError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, {
+            "error": "illegal_transition",
+            "message": str(exc),
+            "current": exc.current,
+            "allowed": list(exc.allowed),
+        }) from None
+    await session.commit()
+    log.info("lifecycle transition", device_id=device_id,
+             to_state=body.to_state, actor=principal.username)
+    return event
+
+
+@router.get("/{device_id}/maintenance", summary="Work done on this device")
+async def maintenance_records(
+    device_id: str,
+    session: AsyncSession = Depends(get_session),
+    _: Principal = Depends(current_principal),
+) -> dict[str, Any]:
+    return {"items": await maintenance_repo.list_records(session, device_id)}
+
+
+class MaintenanceRecordIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    kind: str = Field(pattern="^(preventive|corrective|firmware|replacement)$")
+    summary: str = Field(min_length=1, max_length=500)
+    detail: str | None = None
+    window_id: str | None = None
+    parts_used: list[dict[str, Any]] = Field(default_factory=list)
+
+
+@router.post("/{device_id}/maintenance", status_code=status.HTTP_201_CREATED,
+             summary="Record work done on this device")
+async def add_maintenance_record(
+    device_id: str,
+    body: MaintenanceRecordIn,
+    session: AsyncSession = Depends(get_session),
+    principal: Principal = Depends(require_role("operator")),
+) -> dict[str, str]:
+    record_id = await maintenance_repo.add_record(
+        session, device_id=device_id, performed_by=audit.actor_of(principal),
+        kind=body.kind, summary=body.summary, detail=body.detail,
+        window_id=body.window_id,
+        parts_used=json.dumps(body.parts_used))
+    await session.commit()
+    return {"id": record_id}
 
 
 class EndpointPatch(BaseModel):

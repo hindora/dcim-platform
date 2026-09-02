@@ -31,6 +31,8 @@ import { EstateTree } from './features/assets/estate/EstateTree';
 import { RoomView } from './features/assets/estate/RoomView';
 import { AssetElevation } from './features/assets/estate/AssetElevation';
 import { CandidateQueue } from './features/assets/discovery/CandidateQueue';
+import { WindowList } from './features/assets/maintenance/WindowList';
+import { WindowDetail } from './features/assets/maintenance/WindowDetail';
 import { useSocketStatus } from './ws/useSocket';
 
 function Login({ onDone, returnTo }: { onDone: () => void; returnTo?: string }) {
@@ -217,6 +219,8 @@ export default function App() {
             <Route path="estate/rooms/:id" element={<RoomView />} />
             <Route path="estate/racks/:id" element={<AssetElevation />} />
             <Route path="discovery" element={<CandidateQueue />} />
+            <Route path="maintenance" element={<WindowList />} />
+            <Route path="maintenance/:id" element={<WindowDetail />} />
           </Route>
 
           {/* Reached from rows, drill-downs and links rather than the nav. */}

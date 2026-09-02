@@ -518,13 +518,19 @@ is a schema problem.
 `ALTER TYPE ... ADD VALUE` must not share a transaction with any use of the new
 label, which is why `0043` does nothing else.
 
+**Maintenance and support contracts swapped numbers when phase 3 was built.**
+Alembic is a linear chain, phase 3 lands before phase 4, and a table cannot
+depend on a revision that does not exist yet - so maintenance took `0046` and
+support contracts moved to `0047`. The original numbering assumed the phases
+could be built in any order; they cannot.
+
 | Migration | Contents | Depends on |
 |---|---|---|
 | `0043` | `lifecycle_t` gains `in_stock`, `installed`, `retired` — nothing else | — |
 | `0044` | `supplier`; `device` columns; unique indexes on serial and asset tag | 0043 |
 | `0045` | `device_lifecycle_event`, backfilled from `commissioned_at` / `decommissioned_at` | 0044 |
-| `0046` | `support_contract`, `device_support`; `warranty_expires` recompute | 0044 |
-| `0047` | `maintenance_window`, `maintenance_target`, `maintenance_record`; `alarm.shelved_by_window` | 0043 |
+| `0046` | `maintenance_window`, `maintenance_target`, `maintenance_record`; `alarm.shelved_by_window` | 0043 |
+| `0047` | `support_contract`, `device_support`; `warranty_expires` recompute | 0044 |
 | `0048` | `tag`, `tag_assignment` | — |
 | `0049` | `part`, `store`, `part_stock`, `stock_movement` | — |
 | `0050` | `capacity_reservation` | 0043 |

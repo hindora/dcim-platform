@@ -50,6 +50,7 @@ from app.ingest import rates, writer
 from app.ingest.enrich import InventoryCache
 from app.ingest.fanout import Fanout
 from app.repositories import alarms as repo_alarms
+from app.services import maintenance as maintenance_service
 
 log = get_logger("ingest")
 
@@ -83,6 +84,7 @@ LOAD_PCT_METRIC = "load_pct"
 # How often to look for endpoints that answer but say nothing. Well under
 # the smallest grace period, so an endpoint crosses its threshold and is
 # alarmed within about a minute of doing so.
+MAINTENANCE_TICK_S = 30.0
 STALENESS_SWEEP_S = 60.0
 
 # How often the platform evaluates its own health. Frequent enough that a dead
@@ -128,6 +130,9 @@ class IngestWorker:
         self.consumer = consumer_name or f"{socket.gethostname()}-{os.getpid()}"
         # -inf so the first tick sweeps immediately rather than after a minute.
         self._last_staleness_sweep = float("-inf")
+        # Same -inf, same reason: a window whose start time passed while the
+        # worker was down must open on the first tick, not a minute later.
+        self._last_maintenance_tick = float("-inf")
         self._last_platform_check = float("-inf")
         self._last_consumer_reap = float("-inf")
         # Pipeline latency measured on the last telemetry batch. None until a
@@ -186,6 +191,7 @@ class IngestWorker:
                 await self.cache.refresh(session)
 
         await self._maybe_sweep_staleness()
+        await self._maybe_advance_maintenance()
 
         # Before the early return below: the worker is alive whether or not
         # anything arrived, and an idle pipeline must not look like a dead one.
@@ -368,6 +374,33 @@ class IngestWorker:
             # A failed sweep must not stop telemetry ingestion; it runs again
             # on the next interval.
             log.error("staleness sweep failed", error=str(exc), exc_info=True)
+
+    async def _maybe_advance_maintenance(self) -> None:
+        """Open and close maintenance windows the clock has caught up with.
+
+        ONE process decides. `maintenance_window.status` is a column rather than
+        a comparison against now() precisely so that the worker and the API
+        cannot disagree about whether a window is running - and they would, on
+        two clocks, at exactly the boundary where an alarm is either shelved or
+        paged. This is the process that moves it.
+
+        On a timer for the same reason the staleness sweep is: the event is the
+        passage of time, and no message will ever arrive to prompt it.
+        """
+        now = time.monotonic()
+        if now - self._last_maintenance_tick < MAINTENANCE_TICK_S:
+            return
+        self._last_maintenance_tick = now
+        try:
+            async with unit_of_work() as session:
+                moved = await maintenance_service.run_due_transitions(session)
+            if moved["activated"] or moved["completed"]:
+                log.info("maintenance windows advanced", **moved)
+        except Exception as exc:
+            # A failed pass must not stop telemetry ingestion. The cost of
+            # missing one is a window that opens or closes a tick late, which
+            # is recoverable; the cost of stopping ingest is not.
+            log.error("maintenance tick failed", error=str(exc), exc_info=True)
 
     async def _reclaim_stale(self) -> None:
         """Take over entries a dead worker never acked - and finish them.

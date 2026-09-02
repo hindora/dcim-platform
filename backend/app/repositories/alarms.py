@@ -92,7 +92,7 @@ async def raise_alarm(session: AsyncSession, *, device_id: str, alarm_type: str,
         INSERT INTO alarm (device_id, endpoint_id, alarm_type, instance, rule_id,
                            severity, state, message, metric_key, trigger_value,
                            threshold, source, first_seen, last_seen,
-                           category, detection, response_class)
+                           category, detection, response_class, shelved_by_window)
         SELECT CAST(:device_id AS uuid), CAST(:endpoint_id AS uuid), :alarm_type,
                :instance, CAST(:rule_id AS uuid), CAST(:severity AS severity_t),
                'ACTIVE', :message, :metric_key, :value, :threshold, :source,
@@ -107,7 +107,21 @@ async def raise_alarm(session: AsyncSession, *, device_id: str, alarm_type: str,
                -- rule that raised it says otherwise.
                {alert_taxonomy.response_sql_case(
                    severity_col="CAST(:severity AS text)",
-                   rule_col=":response_class")}
+                   rule_col=":response_class")},
+               -- Shelved at RAISE time, in the insert itself, rather than by
+               -- each detector remembering to ask. There are six of them - poll
+               -- rules, traps, equipment alarm points, staleness, correlation,
+               -- platform - and a seventh will be written by somebody who has
+               -- never read this file. A subquery here cannot be forgotten.
+               --
+               -- NULL when no window is running, which is the normal case and
+               -- costs an index probe on ix_maintenance_target_device.
+               (SELECT w.id
+                  FROM maintenance_target t
+                  JOIN maintenance_window w ON w.id = t.window_id
+                 WHERE t.device_id = CAST(:device_id AS uuid)
+                   AND w.status = 'active' AND w.suppress
+                 LIMIT 1)
           -- One row ALWAYS, whatever the joins find. Selecting FROM device
           -- instead would insert nothing at all when an alarm has no device
           -- behind it - the alarm would vanish rather than be classified, and
@@ -323,6 +337,7 @@ async def list_alarms(session: AsyncSession, *, states: list[str] | None = None,
                       response_classes: list[str] | None = None,
                       room_id: str | None = None,
                       include_symptoms: bool = False,
+                      include_shelved: bool = False,
                       limit: int = 100) -> list[dict[str, Any]]:
     where, params = [], {"limit": limit}
     if states:
@@ -366,6 +381,11 @@ async def list_alarms(session: AsyncSession, *, states: list[str] | None = None,
         # Roots only by default. An alarm list showing 21 rows for one OOB
         # switch failure is the reason operators stop looking at alarm lists.
         where.append("NOT a.is_symptom")
+    if not include_shelved:
+        # Planned work, held out of "what is wrong right now". Still queryable -
+        # the window's own page lists what it shelved, which is how the
+        # post-work question "did anything ELSE break" gets answered.
+        where.append(NOT_SHELVED)
 
     sql = _ALARM_SELECT
     if where:
@@ -407,18 +427,37 @@ async def manual_clear(session: AsyncSession, alarm_id: str,
     return dict(row) if row else None
 
 
+# Shelved alarms are REAL and STORED - raised by the engine exactly as normal,
+# then marked because a maintenance window was running over the device. They are
+# excluded from anything an operator reads as "what is wrong right now", which is
+# every query below and the roll-ups in estate.py and sites.py.
+#
+# Not the same rule as is_symptom. A symptom is a genuine fault downstream of
+# another one, so it still raises the device's severity; a shelved alarm is
+# expected consequence of planned work and must not colour a room red for a
+# filter change. That is why this predicate also appears in
+# refresh_device_alarm_state, where is_symptom deliberately does not.
+NOT_SHELVED = "a.shelved_by_window IS NULL"
+
+
 async def summary(session: AsyncSession) -> dict[str, Any]:
     row = (await session.execute(text("""
-        SELECT count(*) FILTER (WHERE state <> 'CLEARED')                  AS active,
-               count(*) FILTER (WHERE state <> 'CLEARED'
+        SELECT count(*) FILTER (WHERE open AND live)                       AS active,
+               count(*) FILTER (WHERE open AND live
                                   AND severity = 'CRITICAL')               AS critical,
-               count(*) FILTER (WHERE state <> 'CLEARED'
+               count(*) FILTER (WHERE open AND live
                                   AND severity = 'MAJOR')                  AS major,
-               count(*) FILTER (WHERE state <> 'CLEARED'
+               count(*) FILTER (WHERE open AND live
                                   AND severity = 'WARNING')                AS warning,
-               count(*) FILTER (WHERE state = 'ACKNOWLEDGED')              AS acknowledged,
-               count(*) FILTER (WHERE state <> 'CLEARED' AND is_symptom)   AS suppressed_symptoms
-        FROM alarm
+               count(*) FILTER (WHERE state = 'ACKNOWLEDGED' AND live)     AS acknowledged,
+               count(*) FILTER (WHERE open AND live AND is_symptom)        AS suppressed_symptoms,
+               -- Counted, never hidden. A window scoped too widely is found by
+               -- somebody noticing this number, not by the alarms reappearing
+               -- hours later when it closes.
+               count(*) FILTER (WHERE open AND NOT live)                   AS shelved
+        FROM (SELECT *, state <> 'CLEARED' AS open,
+                     shelved_by_window IS NULL AS live
+                FROM alarm) a
     """))).mappings().first()
     return dict(row) if row else {}
 
@@ -431,9 +470,18 @@ async def refresh_device_alarm_state(session: AsyncSession,
     await session.execute(text("""
         WITH agg AS (
             SELECT d.id AS device_id,
-                   COALESCE(MAX(a.severity) FILTER (WHERE a.state <> 'CLEARED'),
+                   -- Shelved alarms are excluded HERE, which is the whole
+                   -- roll-up story: racks, rooms, topology, the power chain and
+                   -- the device list all read device_state rather than counting
+                   -- alarms themselves, so one predicate covers them and none
+                   -- can be forgotten. Symptoms are deliberately NOT excluded -
+                   -- a symptom is a real fault on a real device.
+                   COALESCE(MAX(a.severity) FILTER (
+                                WHERE a.state <> 'CLEARED'
+                                  AND a.shelved_by_window IS NULL),
                             'CLEAR')::severity_t AS max_sev,
-                   count(a.id) FILTER (WHERE a.state <> 'CLEARED') AS open_count
+                   count(a.id) FILTER (WHERE a.state <> 'CLEARED'
+                                         AND a.shelved_by_window IS NULL) AS open_count
             FROM device d
             LEFT JOIN alarm a ON a.device_id = d.id
             WHERE d.id = ANY(CAST(:ids AS uuid[]))
@@ -517,6 +565,10 @@ async def open_alarms_on_dead_endpoints(session: AsyncSession) -> list[dict[str,
                (e.id IS NULL)      AS endpoint_missing
           FROM alarm a
           LEFT JOIN device_endpoint e ON e.id = a.endpoint_id
+         -- shelve-exempt: this is cleanup, not a view. An alarm whose endpoint
+         -- has gone still has to be cleared even while a window shelves it, or
+         -- it outlives both the endpoint and the window and reappears attached
+         -- to nothing the moment the window closes.
          WHERE a.state <> 'CLEARED'
            AND a.endpoint_id IS NOT NULL
            AND (e.id IS NULL OR NOT e.enabled)

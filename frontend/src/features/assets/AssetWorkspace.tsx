@@ -34,6 +34,17 @@ export function AssetWorkspace() {
     refetchInterval: 60_000,
   });
 
+  const { data: active } = useQuery({
+    queryKey: ['maintenance-windows', 'active'],
+    queryFn: () => api.maintenanceWindows({ status: 'active' }),
+    refetchInterval: 60_000,
+  });
+
+  // Running windows are a badge because they change how the whole console
+  // reads: alarms are being held back somewhere, and an operator should be able
+  // to see that from any page in the module.
+  const windows = active?.items.length || undefined;
+
   const sections: { title: string; items: NavItem[] }[] = [
     {
       title: 'Estate',
@@ -52,6 +63,14 @@ export function AssetWorkspace() {
         { to: '/assets/discovery', label: 'Discovery',
           blurb: 'Responders nothing in inventory claims',
           count: data?.discovery.new_candidates },
+      ],
+    },
+    {
+      title: 'Upkeep',
+      items: [
+        { to: '/assets/maintenance', label: 'Maintenance',
+          blurb: 'Planned work, and the alarms it holds back',
+          count: windows },
       ],
     },
   ];

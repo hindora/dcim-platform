@@ -14,6 +14,7 @@ from app.api.v1 import (
     discovery,
     estate,
     infrastructure,
+    maintenance,
     misc,
     power,
     profiles,
@@ -26,6 +27,7 @@ api_router = APIRouter()
 api_router.include_router(misc.router)
 api_router.include_router(devices.router)
 api_router.include_router(assets.router)
+api_router.include_router(maintenance.router)
 api_router.include_router(infrastructure.router)
 api_router.include_router(analytics.router)
 api_router.include_router(capacity.router)

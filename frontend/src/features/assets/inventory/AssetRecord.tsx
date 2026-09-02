@@ -9,6 +9,8 @@ import {
 } from '../../../api/client';
 import { humanise } from '../../../lib/format';
 import { LifecycleChip } from '../components/LifecycleChip';
+import { LifecycleTab } from './LifecycleTab';
+import { MaintenanceTab } from './MaintenanceTab';
 
 /** One asset, as an asset.
  *
@@ -20,11 +22,14 @@ import { LifecycleChip } from '../components/LifecycleChip';
  *  There is no telemetry tab here and no charts. The header links out instead.
  */
 
-type Tab = 'overview' | 'placement' | 'connections';
+type Tab = 'overview' | 'placement' | 'lifecycle'
+  | 'maintenance' | 'connections';
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'overview', label: 'Overview' },
   { id: 'placement', label: 'Placement' },
+  { id: 'lifecycle', label: 'Lifecycle' },
+  { id: 'maintenance', label: 'Maintenance' },
   { id: 'connections', label: 'Connections' },
 ];
 
@@ -132,6 +137,10 @@ export function AssetRecord() {
           <Fact k="Facing" v={data.facing} />
         </div>
       )}
+
+      {tab === 'lifecycle' && <LifecycleTab deviceId={data.id} />}
+
+      {tab === 'maintenance' && <MaintenanceTab deviceId={data.id} />}
 
       {tab === 'connections' && (
         <>

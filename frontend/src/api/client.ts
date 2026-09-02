@@ -184,6 +184,66 @@ export interface DiscoveryCandidate {
   last_seen: string;
 }
 
+export interface LifecycleEvent {
+  id: string;
+  from_state?: string | null;
+  to_state: string;
+  reason?: string | null;
+  change_ref?: string | null;
+  actor: string;
+  ts: string;
+}
+
+export interface LifecycleHistory {
+  current?: string | null;
+  /** What this device may move to next. Server-owned: the UI must never offer
+   *  a transition the matrix would refuse. */
+  allowed: string[];
+  events: LifecycleEvent[];
+}
+
+export interface MaintenanceWindow {
+  id: string;
+  title: string;
+  description?: string | null;
+  change_ref?: string | null;
+  kind: string;
+  starts_at: string;
+  ends_at: string;
+  status: string;
+  suppress: boolean;
+  created_by: string;
+  target_count: number;
+  /** Alarms this window is holding out of the active list. The number that
+   *  tells an operator the window was scoped too widely. */
+  shelved_alarms: number;
+  targets?: { id: string; name: string; device_type: string; max_severity: string }[];
+  shelved?: {
+    id: string; alarm_type: string; severity: string; state: string;
+    message: string; first_seen: string; device_name: string; device_id: string;
+  }[];
+}
+
+export interface MaintenancePreview {
+  devices: number;
+  downstream_devices: number;
+  /** Goes dark, as opposed to merely losing a redundant feed. */
+  cut_off: number;
+  alarms_currently_active: number;
+  redundancy_warnings: { device_id: string; redundancy: string; reason: string }[];
+}
+
+export interface MaintenanceRecord {
+  id: string;
+  window_id?: string | null;
+  window_title?: string | null;
+  performed_at: string;
+  performed_by: string;
+  kind: string;
+  summary: string;
+  detail?: string | null;
+}
+
 export interface AssetFilterOptions {
   device_types: {
     code: string;
@@ -1307,6 +1367,30 @@ export const api = {
   // ---- asset workspace (docs/21). Additive; nothing above changes. ----
 
   assetSummary: () => request<AssetSummary>('/assets/summary'),
+
+  lifecycleHistory: (deviceId: string) =>
+    request<LifecycleHistory>(`/devices/${deviceId}/lifecycle`),
+  lifecycleTransition: (deviceId: string, body: {
+    to_state: string; reason?: string; change_ref?: string;
+  }) => request<LifecycleEvent>(`/devices/${deviceId}/lifecycle`, {
+    method: 'POST', body: JSON.stringify(body),
+  }),
+
+  maintenanceWindows: (params: Record<string, string | undefined> = {}) => {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) if (v) q.set(k, v);
+    const qs = q.toString();
+    return request<{ items: MaintenanceWindow[] }>(
+      `/maintenance/windows${qs ? `?${qs}` : ''}`);
+  },
+  maintenanceWindow: (id: string) =>
+    request<MaintenanceWindow>(`/maintenance/windows/${id}`),
+  maintenancePreview: (deviceIds: string[]) =>
+    request<MaintenancePreview>('/maintenance/windows/preview', {
+      method: 'POST', body: JSON.stringify({ device_ids: deviceIds }),
+    }),
+  maintenanceRecords: (deviceId: string) =>
+    request<{ items: MaintenanceRecord[] }>(`/devices/${deviceId}/maintenance`),
   powerChain: (deviceId: string) =>
     request<PowerChain>(`/power/chain/${deviceId}`),
   assetFilterOptions: () => request<AssetFilterOptions>('/assets/filter-options'),

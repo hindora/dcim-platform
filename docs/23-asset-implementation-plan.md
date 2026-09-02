@@ -124,6 +124,47 @@ serials land.
 
 ## Phase 3 — lifecycle, and making maintenance mean something
 
+Status: **code built 2026-09-02, not yet applied.** 952 backend tests pass (+25),
+`ruff` clean, `tsc` and production build clean. Migrations `0045` and `0046`
+proved against a throwaway database - up, shelving behaves, down to base - and
+**deliberately not run against the live one.**
+
+Shelving is verified end to end rather than asserted: with an alarm standing on
+a CRAH and a window opened over it, the device's `max_severity` went
+`CRITICAL -> CLEAR`, a second CRAH outside the window stayed `CRITICAL`, the
+alarm list showed 1 of 2 with the shelved row still retrievable, the summary
+moved `active 2 -> 1` with `shelved=1`, and completing the window put severity
+and the list back.
+
+Two design points worth recording, because both were decided rather than
+inherited:
+
+**One choke point, not ten.** Every rack, room, topology and power roll-up reads
+`device_state`, which `refresh_device_alarm_state` derives from open alarms. The
+shelve predicate goes there, so all of them follow and none can be forgotten.
+The direct alarm counters in `estate.py` and `sites.py` needed it too - six
+sites in total, and a sweep found one more in `sites.py` than the first pass
+did, which is why `test_every_open_alarm_query_excludes_shelved` now walks every
+repository and fails on any open-alarm query lacking the clause or a written
+`shelve-exempt` reason.
+
+**Stamped at raise time, inside the INSERT.** Six detectors raise alarms and a
+seventh will be written by somebody who has never read migration 0046, so the
+window lookup is a correlated subquery in `raise_alarm` rather than a thing each
+caller remembers. The `ON CONFLICT` branch deliberately leaves the mark alone -
+an alarm re-raised each poll would otherwise un-shelve itself within seconds.
+
+`maintenance_window.status` is a column advanced by the ingest worker on a
+30-second tick, not a comparison against `now()` evaluated per process: the
+worker and the API must agree about whether a window is running, and two clocks
+at the boundary do not.
+
+Still owed in this phase: the create-window form and its scoping preview are
+backed by `POST /maintenance/windows` and `/preview` but have no UI yet - windows
+are currently created through the API.
+
+
+
 Two migrations that must not share a transaction (`20` §3): `0043` adds the
 three enum labels and nothing else; `0045` adds `device_lifecycle_event` and
 backfills from `commissioned_at` / `decommissioned_at`.

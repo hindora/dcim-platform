@@ -402,6 +402,7 @@ async def alarms_by_room(session: AsyncSession, *,
             FROM alarm a
             JOIN dev ON dev.device_id = a.device_id
             WHERE a.state <> 'CLEARED' AND a.is_symptom = false
+              AND a.shelved_by_window IS NULL
         )
         SELECT rm.id::text            AS room_id,
                rm.name                AS room_name,
@@ -451,6 +452,7 @@ async def unlocated_alarms_by_category(session: AsyncSession, *,
             FROM alarm a
             LEFT JOIN dev ON dev.device_id = a.device_id
             WHERE a.state <> 'CLEARED' AND a.is_symptom = false
+              AND a.shelved_by_window IS NULL
         )
         SELECT count(*)                                       AS n,
                count(*) FILTER (WHERE response_class = '{ALARM}') AS alarms

@@ -67,6 +67,7 @@ _ALARM_CTE = """
         FROM alarm a
         JOIN dev ON dev.device_id = a.device_id
         WHERE a.state <> 'CLEARED' AND a.is_symptom = false
+              AND a.shelved_by_window IS NULL
     )
 """
 
@@ -267,6 +268,7 @@ async def fleet_alert_totals(session: AsyncSession) -> dict[str, Any]:
             FROM alarm a
             JOIN dev ON dev.device_id = a.device_id
             WHERE a.state <> 'CLEARED' AND a.is_symptom = false
+              AND a.shelved_by_window IS NULL
               AND dev.datacenter_id IS NOT NULL
         )
         SELECT {_ALL_CATEGORY_COLUMNS},
@@ -300,6 +302,7 @@ async def platform_conditions(session: AsyncSession) -> list[dict[str, Any]]:
         FROM alarm a
         LEFT JOIN dev ON dev.device_id = a.device_id
         WHERE a.state <> 'CLEARED' AND a.is_symptom = false
+              AND a.shelved_by_window IS NULL
           AND dev.datacenter_id IS NULL
         ORDER BY CASE a.severity
                      WHEN 'CRITICAL' THEN 0 WHEN 'MAJOR' THEN 1
