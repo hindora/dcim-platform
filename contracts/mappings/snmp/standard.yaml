@@ -140,8 +140,8 @@ profiles:
             value_type: gauge
         aggregate: avg
 
-    # UCD-SNMP memory rather than hrStorage: this plane serves the former and
-    # not the latter. UCD reports kilobytes, hence the 1024 scale.
+    # UCD-SNMP for memory, hrStorage for the filesystem. UCD reports kilobytes,
+    # hence the 1024 scale; hrStorage counts allocation units, scaled per row.
     scalars:
       - oid: 1.3.6.1.4.1.2021.4.5.0             # memTotalReal, kB
         metric: memory_total
@@ -151,6 +151,29 @@ profiles:
         metric: memory_available
         value_type: gauge
         transform: {scale: 1024}
+
+      # Disk, from HOST-RESOURCES-MIB hrStorage row 2 - the "/" filesystem.
+      #
+      # hrStorage counts in ALLOCATION UNITS, not bytes, and the unit is per
+      # row: this plane serves 1024-byte units for the memory row and 4096 for
+      # the filesystem, which is why the scale here is 4096 and belongs to row 2
+      # alone. A poller facing real hardware must read hrStorageAllocationUnits
+      # (25.2.3.1.4) per row rather than assume either number - the same caveat
+      # the Raritan sensor decimals carry, and for the same reason.
+      #
+      # Row 2 by index because that is where this plane puts the filesystem. A
+      # real host may enumerate several and index them in any order; picking the
+      # right one there needs a row filter on hrStorageType = hrStorageFixedDisk
+      # (25.2.1.4), which the table syntax above supports and the scalar syntax
+      # here does not.
+      - oid: 1.3.6.1.2.1.25.2.3.1.5.2         # hrStorageSize, 4 kB units
+        metric: disk_total
+        value_type: gauge
+        transform: {scale: 4096}
+      - oid: 1.3.6.1.2.1.25.2.3.1.6.2         # hrStorageUsed, 4 kB units
+        metric: disk_used
+        value_type: gauge
+        transform: {scale: 4096}
 
     derived_scalars:
       # used = total - available, so the numerator is the available fraction
@@ -167,6 +190,13 @@ profiles:
         numerator: 1.3.6.1.4.1.2021.4.6.0
         denominator: 1.3.6.1.4.1.2021.4.5.0
         one_minus: true
+        transform: {scale: 100}
+      # used/total directly - hrStorage reports what IS used, where UCD reports
+      # what is free, so this one needs no one_minus.
+      - metric: disk_utilization
+        value_type: gauge
+        numerator: 1.3.6.1.2.1.25.2.3.1.6.2
+        denominator: 1.3.6.1.2.1.25.2.3.1.5.2
         transform: {scale: 100}
 
   # ------------------------------------------------------------- environment
