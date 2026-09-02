@@ -52,15 +52,35 @@ def upgrade() -> None:
             f"ALTER TYPE lifecycle_t ADD VALUE IF NOT EXISTS '{label}' {position}")
 
 
-def downgrade() -> None:
-    """Not reversible, and saying so is better than pretending.
+# Where a row goes when its state stops existing. Every one of these is
+# lossy, and the mapping is a data decision written down rather than left to
+# whoever runs the rollback at 2am.
+RETIRING = {
+    # Owned, not in service, and not yet placed anywhere.
+    "in_stock": "planned",
+    # Racked and cabled. `in_service` is the least-wrong survivor - it keeps the
+    # machine in capacity and in elevations, which is true, at the cost of it
+    # starting to alarm, which is the whole reason `installed` exists. `planned`
+    # would be worse: it would read as not-yet-delivered hardware that is
+    # physically in a rack.
+    "installed": "in_service",
+    "retired": "decommissioned",
+}
 
-    PostgreSQL cannot drop a value from an enum. Undoing this means recreating
-    the type, rewriting every column that uses it, and deciding what happens to
-    rows already holding a label that is going away - which is a data decision,
-    not a schema one, and cannot be made here.
+
+def downgrade() -> None:
+    """Put the rows back on states the older code understands.
+
+    The LABELS stay. PostgreSQL cannot drop a value from an enum, and removing
+    one means recreating the type and rewriting every column that uses it - for
+    three labels that are inert the moment nothing references them. Downgrading
+    all the way to base drops `lifecycle_t` outright in 0001, so they do not
+    survive a full rollback either way.
+
+    What matters is that no row is left holding a state the code being rolled
+    back to has never heard of, which would fail on the way into its enum. That
+    is what this does.
     """
-    raise NotImplementedError(
-        "cannot remove a value from a PostgreSQL enum; "
-        "recreate lifecycle_t by hand and migrate the rows that use the new "
-        "labels first")
+    for old, new in RETIRING.items():
+        op.execute(
+            f"UPDATE device SET lifecycle = '{new}' WHERE lifecycle = '{old}'")

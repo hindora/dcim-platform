@@ -153,3 +153,27 @@ def test_identity_indexes_are_partial():
             rf"CREATE UNIQUE INDEX ix_device_{column.replace('serial_number', 'serial')}"
             rf"\w*_unique ON device \({column}\)\s*WHERE {column} IS NOT NULL",
             body), column
+
+
+def test_every_migration_can_be_rolled_back():
+    """The repo policy, enforced where it is cheap to check.
+
+    The CI workflow says it in its own words - "a migration that cannot be
+    rolled back is a migration you cannot deploy on a Friday" - and runs
+    `alembic downgrade base` to prove it. This catches the same mistake before
+    the push rather than after, which is how 0043 shipped with a downgrade that
+    raised NotImplementedError and took the Migrations job down.
+    """
+    offenders = []
+    for path in sorted(MIGRATIONS.glob("[0-9]*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        downgrade = next((n for n in ast.walk(tree)
+                          if isinstance(n, ast.FunctionDef)
+                          and n.name == "downgrade"), None)
+        if downgrade is None:
+            offenders.append(f"{path.name}: no downgrade()")
+            continue
+        raises = [n for n in ast.walk(downgrade) if isinstance(n, ast.Raise)]
+        if raises:
+            offenders.append(f"{path.name}: downgrade() raises")
+    assert not offenders, offenders
