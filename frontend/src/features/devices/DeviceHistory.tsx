@@ -18,6 +18,21 @@ const BUCKET_MS: Record<string, number> = {
 /** Charts are grouped by unit, never merged across units.
  *  Degrees and watts on one axis produce a picture where neither line means
  *  anything. */
+/** How far the chart reaches, at the precision the bucket justifies.
+ *
+ *  A daily bucket has no meaningful clock reading - "Sep 2, 00:00" would claim
+ *  a midnight measurement for a whole day's average - and a clock alone is
+ *  ambiguous once the data is older than today.
+ */
+function stampFor(ms: number, interval?: string): string {
+  const d = new Date(ms);
+  const date = d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  if (interval === '1d') return date;
+  const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const today = new Date().toDateString() === d.toDateString();
+  return today ? time : `${date}, ${time}`;
+}
+
 function groupByUnit(series: Series[]): Map<string, Series[]> {
   const out = new Map<string, Series[]>();
   for (const s of series) {
@@ -30,7 +45,11 @@ function groupByUnit(series: Series[]): Map<string, Series[]> {
  *  AND a question. Grouping by unit alone is the fallback for device types
  *  nobody has curated yet - it will happily put a fan tachometer beside a CPU
  *  load because both happen to be percentages. */
-export type ChartGroup = { title: string; metrics: string[]; caption?: string };
+/** Deliberately title + metrics only. There was a `caption` here for a note
+ *  above the chart, and what it produced was prose explaining how to read two
+ *  labelled lines. A panel that needs a sentence to be legible is a panel that
+ *  needs different metrics or a better title. */
+export type ChartGroup = { title: string; metrics: string[] };
 
 export function DeviceHistory({ deviceId, metrics, groups }: {
   deviceId: string;
@@ -111,6 +130,22 @@ export function DeviceHistory({ deviceId, metrics, groups }: {
                 title="Re-read up to now">
           {q.isFetching ? 'Loading…' : 'Refresh'}
         </button>
+        {/* Sits with the control that changes it, not in a sentence above the
+            charts. Two facts an operator needs and nothing else: how far the
+            line reaches, and a way to move it. The bucket width is a caveat on
+            reading a peak - hourly averaging flattens one - so it stays
+            available on hover rather than printed at everybody all the time. */}
+        {lastPointAt != null && (
+          <span className="as-of"
+                title={q.data && q.data.interval !== 'raw'
+                  ? `Averaged into ${q.data.interval} buckets, so a short spike may be flattened.`
+                  : 'Raw samples as polled.'}>
+            to{' '}
+            <time dateTime={new Date(lastPointAt).toISOString()}>
+              {stampFor(lastPointAt, q.data?.interval)}
+            </time>
+          </span>
+        )}
       </div>
 
       {q.isLoading && <p className="muted">Loading…</p>}
@@ -118,36 +153,6 @@ export function DeviceHistory({ deviceId, metrics, groups }: {
 
       {q.data && (
         <>
-          {/* The aggregation is a caveat on every number below it, so it stays -
-              but as the fact, not the essay. Why the bucket was chosen is a
-              tooltip on the reader's terms rather than a paragraph on mine, and
-              the source table name was internal detail nobody outside this
-              codebase can act on. */}
-          <p className="muted"
-             title={q.data.interval === 'raw' ? undefined
-               : 'The bucket keeps the chart to a readable number of points, so a longer range is a coarser average — not more detail.'}>
-            {q.data.interval === 'raw'
-              ? 'Raw samples as polled.'
-              : `Averaged into ${q.data.interval} buckets.`}
-            {/* The last point actually drawn, not the window that was asked
-                for. Those are not the same thing and the gap can be hours: an
-                hourly bucket only exists once its hour has closed, so a chart
-                on 1h buckets ends well short of now. Stamping the request
-                would print a time the line never reaches.
-
-                Absolute rather than "N minutes ago": a relative label only
-                stays true while something re-renders to tick it, and one that
-                quietly stops counting is worse than no label. */}
-            {lastPointAt != null && (
-              <>
-                {' · to '}
-                <time dateTime={new Date(lastPointAt).toISOString()}>
-                  {new Date(lastPointAt).toLocaleTimeString([],
-                    { hour: '2-digit', minute: '2-digit' })}
-                </time>
-              </>
-            )}
-          </p>
           {!panels && byUnit && byUnit.size === 0 && (
             <p className="muted">Nothing recorded in this window.</p>
           )}
@@ -157,7 +162,6 @@ export function DeviceHistory({ deviceId, metrics, groups }: {
           {panels?.map((p) => (
             <figure key={p.title} className="chart-figure">
               <figcaption>{p.title}</figcaption>
-              {p.caption && <figcaption className="muted">{p.caption}</figcaption>}
               {p.series.length === 0 ? (
                 <p className="muted">
                   Not reported by this device{p.missing.length ? ` (${p.missing.join(', ')})` : ''}.

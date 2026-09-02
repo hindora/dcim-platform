@@ -285,6 +285,10 @@ button.primary { background: var(--accent-dim); border-color: var(--accent); }
    "this is the range you are looking at". */
 .overlay-picker button.refresh { margin-left: 0.5rem; }
 .overlay-picker button.refresh:disabled { opacity: 0.6; cursor: default; }
+/* How far the chart reaches, sitting with the control that moves it rather
+   than in a sentence above the charts. */
+.overlay-picker .as-of { align-self: center; margin-left: 0.6rem;
+                         font-size: 0.8rem; color: var(--text-faint); }
 
 /* The rack itself. Slot height is driven by --u so a 4 U CDU is four times a
    1 U server: the point of an elevation is that the proportions are real. */

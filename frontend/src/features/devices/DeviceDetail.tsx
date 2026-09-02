@@ -32,7 +32,6 @@ const SERVER_CHARTS: ChartGroup[] = [
   {
     title: 'CPU and intake temperature',
     metrics: ['cpu_temperature', 'inlet_temperature'],
-    caption: 'Intake is what the room delivers; the gap to the CPU is what the machine adds.',
   },
   {
     title: 'Utilisation',
