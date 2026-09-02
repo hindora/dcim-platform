@@ -8,9 +8,36 @@ import {
   type EndpointSummary,
 } from '../../api/client';
 import { StatusChip } from '../../components/StatusChip';
-import { DeviceHistory } from './DeviceHistory';
+import { DeviceHistory, type ChartGroup } from './DeviceHistory';
 import { EndpointEditor } from './EndpointEditor';
 import { formatMetric, metricLabel, relativeTime } from '../../lib/format';
+
+/** What an operator opens a server page to ask, in the order they ask it.
+ *
+ * Each panel is one unit, so each frame has ONE axis. Putting watts and
+ * degrees on a shared frame with two scales lets any two series be made to
+ * look correlated by choosing the ranges - the most common way a chart lies -
+ * and it is why these are three panels rather than one.
+ *
+ * Draw sits first because it is the question the rack and the feed are sized
+ * against. Then the thermal pair: intake is what the room delivers and the CPU
+ * is what the machine does with it, so the GAP between them is the reading -
+ * a CPU climbing on a flat intake is the server's own problem, and both
+ * climbing together is the room's. Utilisation is last: it explains the other
+ * two rather than standing alone.
+ */
+const SERVER_CHARTS: ChartGroup[] = [
+  { title: 'Power draw', metrics: ['power_draw'] },
+  {
+    title: 'CPU and intake temperature',
+    metrics: ['cpu_temperature', 'inlet_temperature'],
+    caption: 'Intake is what the room delivers; the gap to the CPU is what the machine adds.',
+  },
+  {
+    title: 'Utilisation',
+    metrics: ['cpu_utilization', 'memory_utilization', 'disk_utilization'],
+  },
+];
 
 export function DeviceDetail() {
   const { id = '' } = useParams();
@@ -37,6 +64,19 @@ export function DeviceDetail() {
 
   const d = device.data;
   const metrics = state.data?.metrics ?? {};
+  // A curated page asks for exactly the keys its panels plot, rather than
+  // everything the device happens to report - and it asks for them even when
+  // none have arrived, so an absent metric can be named as absent instead of
+  // silently missing from a chart that still looks complete.
+  // The live draw, for the headroom line beside the rating. Only meaningful
+  // next to a nameplate, which is why it is read here and not in the metrics
+  // table - that one shows every reading without ranking them.
+  const draw = typeof metrics.power_draw?.v === 'number'
+    ? metrics.power_draw.v
+    : null;
+  const chartMetrics = d.device_type === 'server'
+    ? [...new Set(SERVER_CHARTS.flatMap((g) => g.metrics))]
+    : Object.keys(metrics);
 
   return (
     <div className="stack">
@@ -65,6 +105,48 @@ export function DeviceDetail() {
             {d.location.u_start ? ` · U${d.location.u_start}` : ''}
           </dd>
           <dt>Lifecycle</dt><dd>{d.lifecycle}</dd>
+        </dl>
+      </section>
+
+      <section>
+        <h3>Nameplate</h3>
+        <p className="muted">
+          What the chassis IS, as opposed to what it is doing. These are
+          datasheet and inventory facts - the rating a feed is sized against,
+          and the supplies that carry it.
+        </p>
+        <dl className="kv">
+          <dt>Rated power</dt>
+          <dd>
+            {d.rated_power_w != null ? `${d.rated_power_w} W` : '—'}
+            {d.rated_power_w != null && draw != null && (
+              <span className="muted">
+                {' · '}drawing {Math.round(draw)} W
+                {' '}({Math.round((draw / d.rated_power_w) * 100)}% of nameplate)
+              </span>
+            )}
+          </dd>
+          <dt>Power supplies</dt>
+          <dd>
+            {d.psus.length === 0 ? '—' : (
+              <>
+                {d.psus.length} × {d.psus[0].rated_watts ?? '?'} W
+                {' '}({[...new Set(d.psus.map((p) => p.connector ?? '?'))].join(', ')})
+                {/* Two supplies is the difference between losing a feed and
+                    losing the server, which is the whole reason to show it. */}
+                {d.psus.length > 1 && (
+                  <span className="muted">{' · '}redundant</span>
+                )}
+              </>
+            )}
+          </dd>
+          <dt>Rack units</dt>
+          <dd>
+            {d.u_height}U
+            {d.location.u_start ? ` at U${d.location.u_start}` : ''}
+          </dd>
+          <dt>Serial</dt><dd className="mono">{d.serial_number || '—'}</dd>
+          <dt>Asset tag</dt><dd className="mono">{d.asset_tag || '—'}</dd>
         </dl>
       </section>
 
@@ -185,8 +267,10 @@ export function DeviceDetail() {
 
       {/* Charted from the same metric keys the device is actually reporting,
           so a device with no telemetry gets an explanation rather than an
-          empty axis. */}
-      <DeviceHistory deviceId={id} metrics={Object.keys(metrics)} />
+          empty axis. Servers get curated panels; everything else still
+          groups by unit, which is a fallback rather than a layout. */}
+      <DeviceHistory deviceId={id} metrics={chartMetrics}
+                     groups={d.device_type === 'server' ? SERVER_CHARTS : undefined} />
 
       <p><Link to="/devices">← All devices</Link></p>
     </div>

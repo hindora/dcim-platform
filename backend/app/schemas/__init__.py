@@ -101,9 +101,22 @@ class EndpointSummary(BaseModel):
     auth_fail_count: int = 0
 
 
+class PowerSupplyOut(BaseModel):
+    """One PSU slot, as built - inventory rather than telemetry."""
+
+    number: int
+    connector: str | None = None
+    rated_watts: int | None = None
+
+
 class DeviceDetail(DeviceSummary):
     serial_number: str | None = None
     asset_tag: str | None = None
+    #: The model's datasheet rating, not a reading. What the chassis is built
+    #: to draw at most, which is the number a rack or a feed is sized against -
+    #: and the one an operator wants beside a live draw to know the headroom.
+    rated_power_w: int | None = None
+    psus: list[PowerSupplyOut] = Field(default_factory=list)
     u_height: int = 1
     facing: str | None = None
     lifecycle: str = "in_service"

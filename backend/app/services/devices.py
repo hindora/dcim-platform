@@ -23,6 +23,7 @@ from app.schemas import (
     InterfaceOut,
     LocationRef,
     MetricValue,
+    PowerSupplyOut,
     RackElevation,
     RackSummary,
     RoomExtent,
@@ -74,6 +75,9 @@ async def get_device(session: AsyncSession, device_id: str) -> DeviceDetail | No
         lifecycle=row.get("lifecycle") or "in_service",
         admin_state=row.get("admin_state") or "enabled",
         attributes=row.get("attributes") or {},
+        rated_power_w=row.get("rated_power_w"),
+        psus=[PowerSupplyOut(**ps)
+              for ps in await repo.list_power_supplies(session, device_id)],
         endpoints=endpoints,
     )
 

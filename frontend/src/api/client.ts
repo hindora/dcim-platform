@@ -268,8 +268,19 @@ export interface EndpointSummary {
   auth_fail_count: number;
 }
 
+export interface PowerSupply {
+  number: number;
+  connector?: string | null;
+  rated_watts?: number | null;
+}
+
 export interface DeviceDetail extends DeviceSummary {
   serial_number?: string | null;
+  asset_tag?: string | null;
+  /** The MODEL's datasheet rating, not a reading - what the chassis is built
+   *  to draw at most, and what a feed is sized against. */
+  rated_power_w?: number | null;
+  psus: PowerSupply[];
   u_height: number;
   lifecycle: string;
   admin_state: string;

@@ -120,10 +120,32 @@ async def get_device(session: AsyncSession, device_id: str) -> dict[str, Any] | 
         "           d.u_start\n",
         "           d.u_start, d.serial_number, d.asset_tag, d.u_height, d.facing,\n"
         "           d.lifecycle::text AS lifecycle, d.admin_state::text AS admin_state,\n"
-        "           d.attributes\n",
+        "           d.attributes,\n"
+        # The nameplate. rated_power_w is the MODEL's, not the device's:
+        # every R640 draws from the same datasheet, and a per-device override
+        # would be a measurement pretending to be a rating.
+        "           m.rated_power_w, m.u_height AS model_u_height\n",
     ) + " WHERE d.id = CAST(:id AS uuid)"
     row = (await session.execute(text(sql), {"id": device_id})).mappings().first()
     return dict(row) if row else None
+
+
+async def list_power_supplies(session: AsyncSession,
+                              device_id: str) -> list[dict[str, Any]]:
+    """The PSUs a device is built with, in slot order.
+
+    Inventory, not telemetry: what the chassis has and what each inlet is
+    rated for. Two 1100 W C14 supplies is a different machine from one, and it
+    is the fact behind whether losing a feed costs you the server - which is
+    what an operator is asking when they open this page.
+    """
+    rows = (await session.execute(text("""
+        SELECT number, connector, rated_watts
+          FROM power_supply
+         WHERE device_id = CAST(:id AS uuid)
+         ORDER BY number
+    """), {"id": device_id})).mappings().all()
+    return [dict(r) for r in rows]
 
 
 async def get_device_state(session: AsyncSession, device_id: str) -> dict[str, Any] | None:
