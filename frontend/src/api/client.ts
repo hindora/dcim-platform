@@ -268,6 +268,26 @@ export interface EndpointSummary {
   auth_fail_count: number;
 }
 
+/** One physical network port, as built and as cabled. */
+export interface NetworkInterface {
+  id: string;
+  if_index?: number | null;
+  name: string;
+  /** data or mgmt. A BMC port and a data NIC are different networks that fail
+   *  independently, which is why the distinction is carried rather than
+   *  inferred from the port name. */
+  role: string;
+  speed_bps?: number | null;
+  ip?: string | null;
+  mac?: string | null;
+  admin_state: string;
+  /** The far end of the cable, when there is one. Null means a spare port. */
+  peer_device_id?: string | null;
+  peer_device?: string | null;
+  peer_port?: string | null;
+  peer_layer?: string | null;
+}
+
 export interface PowerSupply {
   number: number;
   connector?: string | null;
@@ -1236,6 +1256,9 @@ export const api = {
     for (const m of metrics) q.append('metric', m);
     return request<HistoryOut>(`/devices/${deviceId}/history?${q.toString()}`);
   },
+
+  interfaces: (deviceId: string) =>
+    request<NetworkInterface[]>(`/devices/${deviceId}/interfaces`),
 
   topology: (layer: string, scope: string, depth: number) =>
     request<TopologyGraph>(

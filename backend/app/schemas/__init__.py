@@ -294,7 +294,16 @@ class InterfaceOut(BaseModel):
     role: str
     speed_bps: int | None = None
     ip: str | None = None
+    mac: str | None = None
     admin_state: str = "enabled"
+    #: The far end of the cable on this port, when there is one. A port with no
+    #: peer is a spare - which is a fact worth showing, not an absence to hide.
+    peer_device_id: str | None = None
+    peer_device: str | None = None
+    peer_port: str | None = None
+    #: Which plane the cable belongs to - production, management. A server's
+    #: BMC port and its data NICs are different networks that fail separately.
+    peer_layer: str | None = None
 
 
 # ------------------------------------------------------------------- racks

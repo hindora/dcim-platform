@@ -110,3 +110,24 @@ export function statusClass(status: string): string {
 export function oneLine(text: string): string {
   return text.replace(/\s+/g, ' ').trim();
 }
+
+/** A link speed, in the units a network engineer says out loud.
+ *
+ *  Decimal multiples, not binary: 1 Gb/s is 1,000,000,000 bits, not 2^30. The
+ *  distinction matters here in a way it does not for memory - an interface is
+ *  named for its decimal rate, so rendering 1000000000 as "0.93 Gb/s" would
+ *  contradict the label printed on the port.
+ */
+export function formatSpeed(bps: number | null | undefined): string {
+  if (bps == null || !Number.isFinite(bps) || bps <= 0) return '—';
+  const units: [number, string][] = [
+    [1e12, 'Tb/s'], [1e9, 'Gb/s'], [1e6, 'Mb/s'], [1e3, 'kb/s'],
+  ];
+  for (const [scale, label] of units) {
+    if (bps >= scale) {
+      const v = bps / scale;
+      return `${v >= 10 || Number.isInteger(v) ? Math.round(v) : v.toFixed(1)} ${label}`;
+    }
+  }
+  return `${bps} b/s`;
+}

@@ -6,11 +6,12 @@ import {
   type DeviceDetail as Detail,
   type DeviceState,
   type EndpointSummary,
+  type NetworkInterface,
 } from '../../api/client';
 import { StatusChip } from '../../components/StatusChip';
 import { DeviceHistory, type ChartGroup } from './DeviceHistory';
 import { EndpointEditor } from './EndpointEditor';
-import { formatMetric, metricLabel, relativeTime } from '../../lib/format';
+import { formatMetric, formatSpeed, metricLabel, relativeTime } from '../../lib/format';
 
 /** What an operator opens a server page to ask, in the order they ask it.
  *
@@ -49,6 +50,15 @@ export function DeviceDetail() {
     enabled: Boolean(id),
   });
 
+  // Ports are inventory: they change when somebody re-cables a rack, not on a
+  // poll interval, so this is fetched once rather than refreshed like state.
+  const ports = useQuery<NetworkInterface[]>({
+    queryKey: ['device-interfaces', id],
+    queryFn: () => api.interfaces(id),
+    enabled: Boolean(id),
+    retry: false,
+  });
+
   const state = useQuery<DeviceState>({
     queryKey: ['device-state', id],
     queryFn: () => api.deviceState(id),
@@ -68,6 +78,24 @@ export function DeviceDetail() {
   // everything the device happens to report - and it asks for them even when
   // none have arrived, so an absent metric can be named as absent instead of
   // silently missing from a chart that still looks complete.
+  // "4 x 1 Gb/s data, 1 x 1 Gb/s mgmt" - the port inventory as one line, which
+  // is the nameplate fact. Grouped by role AND speed because a server with two
+  // 25G NICs and a 1G BMC is three different things on one chassis, and a bare
+  // count of five would say none of it.
+  const fitted = ports.data?.length ?? 0;
+  const cabled = ports.data?.filter((p) => p.peer_device).length ?? null;
+  const portSummary = (() => {
+    if (!ports.data?.length) return null;
+    const buckets = new Map<string, number>();
+    for (const p of ports.data) {
+      const k = `${formatSpeed(p.speed_bps)}|${p.role}`;
+      buckets.set(k, (buckets.get(k) ?? 0) + 1);
+    }
+    return [...buckets.entries()]
+      .map(([k, n]) => { const [sp, role] = k.split('|'); return `${n} × ${sp} ${role}`; })
+      .join(', ');
+  })();
+
   // The live draw, for the headroom line beside the rating. Only meaningful
   // next to a nameplate, which is why it is read here and not in the metrics
   // table - that one shows every reading without ranking them.
@@ -140,6 +168,17 @@ export function DeviceDetail() {
               </>
             )}
           </dd>
+          <dt>Network ports</dt>
+          <dd>
+            {portSummary ?? '—'}
+            {/* Patched vs fitted. A rack with no spare ports is a constraint on
+                the next install, and it is invisible from a port count alone. */}
+            {cabled != null && fitted > 0 && (
+              <span className="muted">
+                {' · '}{cabled} of {fitted} patched
+              </span>
+            )}
+          </dd>
           <dt>Rack units</dt>
           <dd>
             {d.u_height}U
@@ -148,6 +187,56 @@ export function DeviceDetail() {
           <dt>Serial</dt><dd className="mono">{d.serial_number || '—'}</dd>
           <dt>Asset tag</dt><dd className="mono">{d.asset_tag || '—'}</dd>
         </dl>
+      </section>
+
+      <section>
+        <h3>Network ports</h3>
+        <p className="muted">
+          The ports the chassis has and what each one is patched to. A port with
+          no peer is a spare — which is the fact somebody re-cabling a rack is
+          looking for, so it is shown rather than hidden.
+        </p>
+        {ports.isLoading && <p className="muted">Loading…</p>}
+        {ports.error && <p className="warn">Could not load ports.</p>}
+        {ports.data && ports.data.length === 0 && (
+          <p className="muted">No ports recorded for this device.</p>
+        )}
+        {ports.data && ports.data.length > 0 && (
+          <table>
+            <thead>
+              <tr>
+                <th>Port</th><th>Role</th><th>Speed</th><th>MAC</th>
+                <th>Cabled to</th>
+              </tr>
+            </thead>
+            <tbody>
+              {ports.data.map((p) => (
+                <tr key={p.id}>
+                  <td>{p.name}</td>
+                  <td className="muted">{p.role}</td>
+                  <td>{formatSpeed(p.speed_bps)}</td>
+                  <td className="mono muted">{p.mac ?? '—'}</td>
+                  <td>
+                    {p.peer_device_id ? (
+                      <>
+                        <Link to={`/devices/${p.peer_device_id}`}>{p.peer_device}</Link>
+                        {p.peer_port && <span className="muted"> · {p.peer_port}</span>}
+                        {/* Which plane the cable belongs to. A BMC on the
+                            management fabric and a NIC on production fail
+                            separately, and the row should say which is which. */}
+                        {p.peer_layer && (
+                          <span className="muted small"> · {p.peer_layer}</span>
+                        )}
+                      </>
+                    ) : (
+                      <span className="muted">not patched</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </section>
 
       <section>

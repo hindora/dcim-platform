@@ -418,11 +418,35 @@ async def update_poll_profile(session: AsyncSession, profile_id: str,
 
 
 async def list_interfaces(session: AsyncSession, device_id: str) -> list[dict[str, Any]]:
+    # What the port IS, and what it is plugged into. The second half is the
+    # half that makes a port row actionable: four identical idle NICs and one
+    # patched to a leaf switch look the same until the cable is named, and
+    # "which of these can I reuse" is the question somebody opens this for.
+    #
+    # A port carries one cable - the uniqueness constraints on the termination
+    # columns say so - which is why this joins without fanning the row out.
+    # Matching on either end because a cable does not know which of its two
+    # devices you are looking at.
     rows = (await session.execute(text("""
-        SELECT id::text, if_index, name, role, speed_bps, host(ip) AS ip,
-               admin_state::text AS admin_state
-        FROM interface WHERE device_id = CAST(:id AS uuid)
-        ORDER BY if_index NULLS LAST, name
+        SELECT i.id::text, i.if_index, i.name, i.role, i.speed_bps,
+               host(i.ip) AS ip, i.mac::text AS mac,
+               i.admin_state::text AS admin_state,
+               c.layer::text AS peer_layer,
+               pd.id::text   AS peer_device_id,
+               pd.name       AS peer_device,
+               pi.name       AS peer_port
+          FROM interface i
+          LEFT JOIN connection c
+                 ON (c.a_termination_type = 'interface' AND c.a_termination_id = i.id)
+                 OR (c.b_termination_type = 'interface' AND c.b_termination_id = i.id)
+          LEFT JOIN device pd
+                 ON pd.id = CASE WHEN c.a_termination_id = i.id
+                                 THEN c.b_device_id ELSE c.a_device_id END
+          LEFT JOIN interface pi
+                 ON pi.id = CASE WHEN c.a_termination_id = i.id
+                                 THEN c.b_termination_id ELSE c.a_termination_id END
+         WHERE i.device_id = CAST(:id AS uuid)
+         ORDER BY i.if_index NULLS LAST, i.name
     """), {"id": device_id})).mappings().all()
     return [dict(r) for r in rows]
 
