@@ -190,7 +190,13 @@ export function DeviceDetail() {
       </section>
 
       <section>
-        <h3>Network ports</h3>
+        <h3>
+          Network ports
+          {/* The count belongs in the heading once the table can scroll: with
+              only a dozen rows visible, nothing else says whether this is a
+              five-port server or a sixty-five-port switch. */}
+          {fitted > 0 && <span className="count"> {fitted}</span>}
+        </h3>
         <p className="muted">
           The ports the chassis has and what each one is patched to. A port with
           no peer is a spare — which is the fact somebody re-cabling a rack is
@@ -202,6 +208,7 @@ export function DeviceDetail() {
           <p className="muted">No ports recorded for this device.</p>
         )}
         {ports.data && ports.data.length > 0 && (
+          <div className="table-scroll">
           <table>
             <thead>
               <tr>
@@ -236,6 +243,7 @@ export function DeviceDetail() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </section>
 
