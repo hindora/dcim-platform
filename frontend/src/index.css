@@ -172,21 +172,34 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
 h3 .count { color: var(--text-muted); font-weight: 500;
             font-variant-numeric: tabular-nums; }
 
-/* A long table that must not push the page around.
+/* Every data table on a detail page wears the same frame.
 
-   A switch carries 65 ports and an OOB switch 50; rendered in full that is two
-   thousand pixels of table and everything below it is off the screen. A server
-   has four. So max-height, never height: the short case renders at its natural
-   size with no scrollbar and no empty box below it, and only the long case
-   scrolls. Sized to show about a dozen rows, which is enough to see that the
-   list continues without the container becoming the page. */
-.table-scroll {
-  max-height: 26rem; overflow-y: auto;
+   The frame is the shared style; SCROLLING is a data-driven exception layered
+   on top. Only one table on the device page can be long - a switch carries 65
+   ports where a chassis has four supplies, three endpoints and a dozen metrics -
+   so capping the others would put a scrollbar on lists that were never going to
+   need one, and giving only the long one a border made it look like a different
+   kind of object than the tables above it. */
+.table-frame {
   border: 1px solid var(--border); border-radius: var(--radius);
+  overflow: hidden;   /* keeps the rows inside the rounded corners */
 }
-/* Scrolling 65 rows past their own column labels makes the MAC and the peer
-   columns unreadable - they are only distinguishable by position. */
-.table-scroll thead th {
+/* The wrapper owns the outer frame, so the last row must not draw a second
+   line just inside it. */
+.table-frame tbody tr:last-child td { border-bottom: none; }
+
+/* Long enough to need capping. max-height, never height: the cap only takes
+   effect once the content exceeds it, so a table that fits still renders at its
+   natural size rather than in a mostly empty box. Sized to about a dozen rows -
+   enough to show the list continues without the container becoming the page. */
+.table-frame.is-scrollable { max-height: 26rem; overflow-y: auto; }
+
+/* Sticky only where there is scrolling to survive. Scrolling 65 rows past their
+   own column labels leaves the MAC and peer columns unreadable, since they are
+   only distinguishable by position - but a sticky header in a table that does
+   NOT scroll would anchor itself to the page instead and detach from its own
+   three rows as the page moves. */
+.table-frame.is-scrollable thead th {
   position: sticky; top: 0; z-index: 1;
   background: var(--bg-raised);
   /* box-shadow rather than border-bottom: with border-collapse the border
@@ -194,9 +207,6 @@ h3 .count { color: var(--text-muted); font-weight: 500;
      header floating over the rows with nothing under it. */
   box-shadow: inset 0 -1px 0 var(--border);
 }
-/* The wrapper owns the frame, so the last row must not draw a second line just
-   inside it. */
-.table-scroll tbody tr:last-child td { border-bottom: none; }
 
 .chip {
   display: inline-flex; align-items: center; gap: 5px;
@@ -514,21 +524,24 @@ button.primary { background: var(--accent-dim); border-color: var(--accent); }
  * grey trough, which on a dark console reads as a broken border across the
  * bottom of the panel.
  */
-.table-scroll, .estate-scroll, .sheet-body, .modal-body {
+.table-scroll, .table-frame.is-scrollable, .estate-scroll, .sheet-body, .modal-body {
   scrollbar-width: thin;
   scrollbar-color: var(--border-strong) transparent;
 }
 .table-scroll::-webkit-scrollbar,
+.table-frame.is-scrollable::-webkit-scrollbar,
 .estate-scroll::-webkit-scrollbar,
 .sheet-body::-webkit-scrollbar,
 .modal-body::-webkit-scrollbar { width: 10px; height: 10px; }
 
 .table-scroll::-webkit-scrollbar-track,
+.table-frame.is-scrollable::-webkit-scrollbar-track,
 .estate-scroll::-webkit-scrollbar-track,
 .sheet-body::-webkit-scrollbar-track,
 .modal-body::-webkit-scrollbar-track { background: transparent; }
 
 .table-scroll::-webkit-scrollbar-thumb,
+.table-frame.is-scrollable::-webkit-scrollbar-thumb,
 .estate-scroll::-webkit-scrollbar-thumb,
 .sheet-body::-webkit-scrollbar-thumb,
 .modal-body::-webkit-scrollbar-thumb {
@@ -538,6 +551,7 @@ button.primary { background: var(--accent-dim); border-color: var(--accent); }
   border: 3px solid transparent; background-clip: content-box;
 }
 .table-scroll:hover::-webkit-scrollbar-thumb,
+.table-frame.is-scrollable:hover::-webkit-scrollbar-thumb,
 .estate-scroll:hover::-webkit-scrollbar-thumb,
 .sheet-body:hover::-webkit-scrollbar-thumb,
 .modal-body:hover::-webkit-scrollbar-thumb {

@@ -217,9 +217,10 @@ export function DeviceDetail() {
             something separate feeds each one — the same rack PDU twice is a
             single point of failure wearing a pair of supplies.
           </p>
-          {/* No scroll wrapper here, unlike the ports table. A chassis has one
-              to four supplies; capping four rows would add a scrollbar to a list
-              that was never going to be long. */}
+          {/* Framed like every other table here, but not scrollable: a chassis
+              has one to four supplies, and capping four rows would add a
+              scrollbar to a list that was never going to need one. */}
+          <div className="table-frame">
           <table>
             <thead>
               <tr>
@@ -253,6 +254,7 @@ export function DeviceDetail() {
               ))}
             </tbody>
           </table>
+          </div>
         </section>
       )}
 
@@ -275,7 +277,7 @@ export function DeviceDetail() {
           <p className="muted">No ports recorded for this device.</p>
         )}
         {ports.data && ports.data.length > 0 && (
-          <div className="table-scroll">
+          <div className="table-frame is-scrollable">
           <table>
             <thead>
               <tr>
@@ -325,6 +327,11 @@ export function DeviceDetail() {
           is polling at all. Poll and failure totals are cumulative for the life
           of the endpoint, not a recent window.
         </p>
+        {/* Rendered only when it has rows. It used to draw unconditionally with
+            the "none configured" note underneath, which framed reads as an empty
+            box with a header floating in it. */}
+        {d.endpoints.length > 0 && (
+        <div className="table-frame">
         <table>
           <thead>
             <tr>
@@ -394,6 +401,8 @@ export function DeviceDetail() {
             ))}
           </tbody>
         </table>
+        </div>
+        )}
         {d.endpoints.length === 0 && (
           <p className="muted">No endpoints configured for this device.</p>
         )}
@@ -411,6 +420,7 @@ export function DeviceDetail() {
             collector picking this endpoint up.
           </p>
         ) : (
+          <div className="table-frame">
           <table>
             <thead>
               <tr><th>Metric</th><th className="num">Value</th><th>Quality</th><th>Age</th></tr>
@@ -426,6 +436,7 @@ export function DeviceDetail() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </section>
 
