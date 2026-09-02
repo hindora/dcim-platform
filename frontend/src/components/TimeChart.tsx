@@ -65,19 +65,38 @@ function fmt(v: number): string {
   return v.toPrecision(2);
 }
 
+const shortDate = (d: Date) =>
+  d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+const clock = (d: Date) =>
+  d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
 function timeLabel(ms: number, spanMs: number): string {
   const d = new Date(ms);
-  const p = (n: number) => String(n).padStart(2, '0');
   // A day or less is a clock reading; anything longer needs the date, or every
   // tick on a month-long chart says 00:00.
-  if (spanMs <= 36 * 3600_000) return `${p(d.getHours())}:${p(d.getMinutes())}`;
-  return `${d.getMonth() + 1}/${p(d.getDate())}`;
+  return spanMs <= 36 * 3600_000 ? clock(d) : shortDate(d);
 }
 
-function stamp(ms: number): string {
+/** The hovered instant, at the precision the data actually has.
+ *
+ *  Both halves were wrong. It always printed HH:MM:SS, so a 30-day chart
+ *  answered "which day is this peak" with "14:00:00" - and the axis underneath
+ *  had already switched to dates, so the two disagreed about what the reader
+ *  was even looking at.
+ *
+ *  The date appears when the visible points span more than one calendar day,
+ *  which is the exact condition under which a bare clock reading is ambiguous -
+ *  including a six-hour window that happens to cross midnight.
+ *
+ *  The seconds are gone. The finest bucket here is a minute, so a trailing
+ *  ":00" was never a measurement - it was two digits of borrowed precision on
+ *  every reading. Where the bucket IS a day the clock goes too: "Sep 2, 00:00"
+ *  claims a midnight reading for a daily average.
+ */
+function stamp(ms: number, bucketMs: number, spansDays: boolean): string {
   const d = new Date(ms);
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  if (bucketMs >= 86400_000) return shortDate(d);
+  return spansDays ? `${shortDate(d)}, ${clock(d)}` : clock(d);
 }
 
 /** What a series is called on the legend and in the tooltip.
@@ -136,7 +155,12 @@ export function TimeChart({ series, unit, bucketMs }: {
     // sample rather than interpolating a reading nobody took.
     const times = [...new Set(xs)].sort((a, b) => a - b);
 
-    return { paths, x0, x1, y0, y1, sx, sy, span: x1 - x0, times };
+    // Whether a bare clock reading would be ambiguous: true the moment the
+    // first and last points fall on different calendar days.
+    const spansDays =
+      new Date(x0).toDateString() !== new Date(x1).toDateString();
+
+    return { paths, x0, x1, y0, y1, sx, sy, span: x1 - x0, times, spansDays };
   }, [series, bucketMs]);
 
   /** The readings at the hovered time, one per series that has one there. */
@@ -218,7 +242,7 @@ export function TimeChart({ series, unit, bucketMs }: {
             <rect className="chart-tip" x={tipX} y={PAD_T} width={tipW} height={tipH}
                   rx={3} />
             <text className="chart-tip-time" x={tipX + 7} y={PAD_T + 12}>
-              {stamp(hover.at)}
+              {stamp(hover.at, bucketMs, model.spansDays)}
             </text>
             {hover.rows.map((r, i) => (
               <g key={r.label}>
