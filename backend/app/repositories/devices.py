@@ -24,10 +24,17 @@ _LIST_BASE = """
            rm.id::text AS room_id, rm.name AS room_name,
            rr.name AS row_name,
            r.id::text AS rack_id, r.name AS rack_name,
-           d.u_start
+           d.u_start,
+           -- Asset-view columns. Additive: every consumer that predates the
+           -- asset module ignores them, which is what keeps the pages outside
+           -- /assets unchanged (docs/22 §1).
+           d.serial_number, d.asset_tag,
+           d.lifecycle::text AS lifecycle,
+           dt.category
     FROM device d
     LEFT JOIN vendor v        ON v.id = d.vendor_id
     LEFT JOIN model m         ON m.id = d.model_id
+    LEFT JOIN device_type dt  ON dt.code = d.device_type
     LEFT JOIN device_state ds ON ds.device_id = d.id
     LEFT JOIN rack r          ON r.id = d.rack_id
     LEFT JOIN rack_row rr     ON rr.id = r.row_id
@@ -58,13 +65,25 @@ async def list_devices(
     datacenter_id: str | None = None,
     search: str | None = None,
     include_decommissioned: bool = False,
+    lifecycle: list[str] | None = None,
+    category: list[str] | None = None,
+    vendor_id: str | None = None,
+    asset_tag: str | None = None,
+    serial_number: str | None = None,
+    has_serial: bool | None = None,
     limit: int = 50,
     cursor: str | None = None,
 ) -> tuple[list[dict[str, Any]], str | None]:
     where = []
     params: dict[str, Any] = {"limit": limit + 1}
 
-    if not include_decommissioned:
+    # An explicit lifecycle filter replaces the default hiding of
+    # decommissioned rows rather than stacking with it - otherwise asking for
+    # decommissioned devices returns nothing, which reads as "there are none".
+    if lifecycle:
+        where.append("d.lifecycle::text = ANY(:lifecycle)")
+        params["lifecycle"] = lifecycle
+    elif not include_decommissioned:
         where.append("d.lifecycle <> 'decommissioned'")
     if device_types:
         where.append("d.device_type = ANY(:device_types)")
@@ -81,11 +100,30 @@ async def list_devices(
     if datacenter_id:
         where.append("dc.id = CAST(:datacenter_id AS uuid)")
         params["datacenter_id"] = datacenter_id
+    if category:
+        where.append("dt.category = ANY(:category)")
+        params["category"] = category
+    if vendor_id:
+        where.append("d.vendor_id = CAST(:vendor_id AS uuid)")
+        params["vendor_id"] = vendor_id
+    if asset_tag:
+        where.append("d.asset_tag = :asset_tag")
+        params["asset_tag"] = asset_tag
+    if serial_number:
+        where.append("d.serial_number = :serial_number")
+        params["serial_number"] = serial_number
+    if has_serial is not None:
+        # `has_serial=false` is the reconciliation work queue, and today it
+        # returns the whole estate (docs/19 B2). That is the point of exposing
+        # it as a filter rather than only as a number on a tile.
+        where.append("d.serial_number IS NOT NULL" if has_serial
+                     else "d.serial_number IS NULL")
     if search:
         # Trigram index on name; the IP casts are cheap because the result set
         # is already narrowed by the other predicates in practice.
         where.append("(d.name ILIKE :search OR host(d.mgmt_ip) LIKE :like "
-                     "OR host(d.primary_ip) LIKE :like OR d.serial_number ILIKE :search)")
+                     "OR host(d.primary_ip) LIKE :like OR d.serial_number ILIKE :search "
+                     "OR d.asset_tag ILIKE :search)")
         params["search"] = f"%{search}%"
         params["like"] = f"%{search}%"
     if cursor:
@@ -117,9 +155,9 @@ async def get_device(session: AsyncSession, device_id: str) -> dict[str, Any] | 
     # Detail needs extra columns, and they must land in the SELECT list rather
     # than after it, so the shared base is patched rather than concatenated.
     sql = _LIST_BASE.replace(
-        "           d.u_start\n",
-        "           d.u_start, d.serial_number, d.asset_tag, d.u_height, d.facing,\n"
-        "           d.lifecycle::text AS lifecycle, d.admin_state::text AS admin_state,\n"
+        "           dt.category\n",
+        "           dt.category, d.u_height, d.facing,\n"
+        "           d.admin_state::text AS admin_state,\n"
         "           d.attributes,\n"
         # The nameplate. rated_power_w is the MODEL's, not the device's:
         # every R640 draws from the same datasheet, and a per-device override

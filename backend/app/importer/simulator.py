@@ -426,9 +426,11 @@ class TopologyImporter:
 
         device_id = await self._scalar("""
             INSERT INTO device (external_id, name, device_type, model_id, vendor_id,
+                                serial_number,
                                 room_id, rack_id, u_start, u_height, facing,
                                 floor_x, floor_y, primary_ip, mgmt_ip, attributes)
             VALUES (:ext, :name, :dtype, CAST(:model AS uuid), CAST(:vendor AS uuid),
+                    :serial,
                     CAST(:room AS uuid), CAST(:rack AS uuid), :u_start, :u_height, :facing,
                     :fx, :fy, CAST(:pip AS inet), CAST(:mip AS inet), CAST(:attrs AS jsonb))
             ON CONFLICT (external_id) DO UPDATE SET
@@ -436,6 +438,12 @@ class TopologyImporter:
                 device_type = EXCLUDED.device_type,
                 model_id = EXCLUDED.model_id,
                 vendor_id = EXCLUDED.vendor_id,
+                -- COALESCE, not a plain assignment: an export taken before the
+                -- simulator carried serials would otherwise ERASE the identity
+                -- the estate reconciles on. asset_tag is deliberately absent
+                -- from this statement entirely - it is entered by facilities off
+                -- a physical sticker and the importer has no business owning it.
+                serial_number = COALESCE(EXCLUDED.serial_number, device.serial_number),
                 room_id = EXCLUDED.room_id,
                 rack_id = EXCLUDED.rack_id,
                 u_start = EXCLUDED.u_start,
@@ -452,6 +460,12 @@ class TopologyImporter:
             RETURNING id::text
         """, ext=ext, name=dev.get("name") or ext, dtype=dtype,
             model=model_id, vendor=vendor_id, room=room_id, rack=rack_id,
+            # The chassis serial, as every protocol plane reports it. This is
+            # the key discovery reconciles against, so it must be the SAME
+            # string the collector reads over SNMP or Redfish - which is why the
+            # simulator derives it once and serves it everywhere rather than
+            # each plane inventing its own.
+            serial=(dev.get("serial_number") or "").strip() or None,
             # NOT rack_facing. That is the rack's orientation in the hall
             # ('N' faces lower y, 'S' faces higher y) and says nothing about
             # which side of the rack a device is mounted on. Copying it here

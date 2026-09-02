@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
 from sqlalchemy import (
     CheckConstraint,
+    Date,
     Enum,
     ForeignKey,
     Index,
@@ -119,6 +120,27 @@ class Rack(Base):
 
 # ------------------------------------------------------------------ catalog
 
+class Supplier(Base, TimestampMixin):
+    """Who we bought it from and who supports it.
+
+    Not `Vendor`, which is the MANUFACTURER - it carries `enterprise_oid` for
+    trap mapping, which is the giveaway. A reseller has no enterprise OID and
+    never appears in a trap, and the two are routinely different companies.
+    """
+
+    __tablename__ = "supplier"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True,
+                                          default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    account_ref: Mapped[str | None] = mapped_column(Text)
+    contact_name: Mapped[str | None] = mapped_column(Text)
+    contact_email: Mapped[str | None] = mapped_column(Text)
+    contact_phone: Mapped[str | None] = mapped_column(Text)
+    notes: Mapped[str | None] = mapped_column(Text)
+    attributes: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+
+
 class Vendor(Base):
     __tablename__ = "vendor"
 
@@ -166,6 +188,15 @@ class Device(Base, TimestampMixin):
         Index("ix_device_room_id", "room_id"),
         Index("ix_device_mgmt_ip_live", "mgmt_ip", unique=True,
               postgresql_where="mgmt_ip IS NOT NULL AND lifecycle <> 'decommissioned'"),
+        # Identity. Partial, because two assets may both be unidentified but no
+        # two may claim the same identity - and until migration 0044 the whole
+        # estate was the former (docs/19 B2).
+        Index("ix_device_serial_unique", "serial_number", unique=True,
+              postgresql_where="serial_number IS NOT NULL"),
+        Index("ix_device_asset_tag_unique", "asset_tag", unique=True,
+              postgresql_where="asset_tag IS NOT NULL"),
+        Index("ix_device_warranty_expires", "warranty_expires",
+              postgresql_where="warranty_expires IS NOT NULL"),
         CheckConstraint("u_height >= 1", name="u_height_positive"),
     )
 
@@ -198,6 +229,25 @@ class Device(Base, TimestampMixin):
         _enum(Lifecycle, "lifecycle_t"), nullable=False, default=Lifecycle.IN_SERVICE)
     commissioned_at: Mapped[datetime | None] = mapped_column()
     decommissioned_at: Mapped[datetime | None] = mapped_column()
+
+    # Commercial. Who it came from, what it cost, and when the cover runs out.
+    supplier_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("supplier.id"))
+    purchase_date: Mapped[date | None] = mapped_column(Date)
+    purchase_order: Mapped[str | None] = mapped_column(Text)
+    purchase_cost: Mapped[float | None] = mapped_column(Numeric(12, 2))
+    currency: Mapped[str | None] = mapped_column(String(3))
+    install_date: Mapped[date | None] = mapped_column(Date)
+    #: A CACHE of the earliest active covering contract's expiry. The truth is
+    #: `support_contract` (migration 0046); only the recompute that writes a
+    #: `device_support` row may write this. It exists so the asset list can sort
+    #: and filter 664 rows by expiry without a three-table join per keystroke.
+    warranty_expires: Mapped[date | None] = mapped_column(Date)
+    eol_date: Mapped[date | None] = mapped_column(Date)
+    eos_date: Mapped[date | None] = mapped_column(Date)
+    owner_group: Mapped[str | None] = mapped_column(Text)
+    cost_centre: Mapped[str | None] = mapped_column(Text)
+    notes: Mapped[str | None] = mapped_column(Text)
+
     attributes: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
 
     rack: Mapped[Rack | None] = relationship(back_populates="devices")

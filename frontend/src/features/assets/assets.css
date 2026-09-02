@@ -1,0 +1,506 @@
+/* Asset workspace styles.
+ *
+ * Every selector in this file is prefixed `.asset-`, and this file is imported
+ * by AssetWorkspace.tsx rather than main.tsx, so nothing here can reach a page
+ * outside /assets. That is the enforceable half of the scope boundary in
+ * docs/22 §1 - the other half is not editing shared components.
+ *
+ * No new colour is introduced. Everything reads the tokens in index.css, so the
+ * module follows the light/dark themes without knowing they exist. Adding a
+ * token would be additive and legal; adding a raw hex would not.
+ */
+
+/* ---------------------------------------------------------------- shell */
+
+.asset-shell {
+  display: grid;
+  grid-template-columns: minmax(200px, 260px) minmax(0, 1fr);
+  gap: 28px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .asset-shell { grid-template-columns: 1fr; gap: 16px; }
+}
+
+.asset-nav h2 { margin: 0 0 4px; }
+
+.asset-nav-group { margin-top: 18px; }
+
+.asset-nav-title {
+  margin: 0 0 6px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.asset-nav ul { list-style: none; margin: 0; padding: 0; }
+
+.asset-nav li + li { margin-top: 2px; }
+
+.asset-nav a {
+  display: block;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  border-left: 2px solid transparent;
+  text-decoration: none;
+  color: var(--text);
+}
+
+.asset-nav a:hover { background: var(--bg-raised); }
+
+.asset-nav a.active {
+  background: var(--bg-raised);
+  border-left-color: var(--accent);
+}
+
+.asset-nav .label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500;
+  font-size: 0.92rem;
+}
+
+.asset-nav .blurb {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.76rem;
+  line-height: 1.35;
+  color: var(--text-muted);
+}
+
+.asset-nav-note {
+  margin-top: 22px;
+  font-size: 0.74rem;
+  line-height: 1.45;
+  color: var(--text-faint);
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+.asset-badge {
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.68rem;
+  font-weight: 600;
+  line-height: 18px;
+  text-align: center;
+}
+
+.asset-body { min-width: 0; }
+
+/* ---------------------------------------------------------------- tiles */
+
+.asset-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin: 16px 0 24px;
+}
+
+.asset-tile {
+  display: block;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  text-decoration: none;
+  color: inherit;
+}
+
+a.asset-tile:hover { border-color: var(--border-strong); }
+
+.asset-tile .k {
+  font-size: 0.74rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.asset-tile .v {
+  margin-top: 6px;
+  font-size: 1.7rem;
+  font-weight: 600;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.asset-tile .sub {
+  margin-top: 4px;
+  font-size: 0.76rem;
+  color: var(--text-muted);
+}
+
+/* A tile that is reporting a problem with our own data, not with the estate.
+   Bordered rather than filled: it must read as "look at this", not as an
+   equipment alarm - those are the status colours and they mean something else. */
+.asset-tile.is-gap { border-color: var(--warn); }
+.asset-tile.is-gap .v { color: var(--warn); }
+
+/* ---------------------------------------------------------------- columns */
+
+.asset-cols {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 20px;
+}
+
+.asset-panel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  padding: 14px 16px;
+}
+
+.asset-panel h3 {
+  margin: 0 0 12px;
+  font-size: 0.86rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+/* ------------------------------------------------------------- bar list */
+
+.asset-barlist { display: flex; flex-direction: column; gap: 8px; }
+
+.asset-barlist-row {
+  display: grid;
+  grid-template-columns: minmax(90px, 30%) 1fr auto;
+  gap: 10px;
+  align-items: center;
+  font-size: 0.85rem;
+}
+
+.asset-barlist-row .n {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+
+.asset-bar {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--bg-inset);
+  overflow: hidden;
+}
+
+.asset-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+/* One stacked bar for parts of a whole - lifecycle states are a partition of
+   the estate, and seven separate bars would invite comparing them to the wrong
+   denominator. */
+.asset-stack {
+  display: flex;
+  height: 14px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--bg-inset);
+}
+
+.asset-stack > span { display: block; height: 100%; }
+
+.asset-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  margin-top: 10px;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.asset-legend span.sw {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  margin-right: 6px;
+  vertical-align: -1px;
+}
+
+/* --------------------------------------------------------- lifecycle chip */
+
+/* Colour is never the only encoding: the chip always carries its label. */
+.asset-life {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 10px;
+  border: 1px solid var(--border-strong);
+  font-size: 0.72rem;
+  white-space: nowrap;
+  color: var(--text-muted);
+}
+
+.asset-life.is-in_service { border-color: var(--ok); color: var(--ok); }
+.asset-life.is-installed { border-color: var(--accent); color: var(--accent); }
+.asset-life.is-maintenance { border-color: var(--warn); color: var(--warn); }
+.asset-life.is-planned { border-style: dashed; }
+.asset-life.is-decommissioned,
+.asset-life.is-retired { color: var(--text-faint); text-decoration: line-through; }
+
+/* ------------------------------------------------------------ filter rail */
+
+.asset-work {
+  display: grid;
+  grid-template-columns: minmax(180px, 230px) minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+
+@media (max-width: 1100px) {
+  .asset-work { grid-template-columns: 1fr; }
+}
+
+.asset-filters {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  padding: 12px 14px;
+  position: sticky;
+  top: 12px;
+}
+
+.asset-filter-group { margin-bottom: 14px; }
+
+.asset-filter-group > label,
+.asset-filter-group > p.legend {
+  display: block;
+  margin: 0 0 5px;
+  font-size: 0.72rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.asset-filters select,
+.asset-filters input[type='search'],
+.asset-filters input[type='text'] { width: 100%; }
+
+.asset-check {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 2px 0;
+  font-size: 0.84rem;
+  cursor: pointer;
+}
+
+.asset-check input { margin: 0; }
+
+.asset-check .n {
+  margin-left: auto;
+  font-size: 0.74rem;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.asset-filter-clear {
+  width: 100%;
+  margin-top: 4px;
+}
+
+/* ---------------------------------------------------------------- table */
+
+.asset-table-note {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  align-items: baseline;
+  margin: 0 0 10px;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.asset-scroll { overflow-x: auto; }
+
+.asset-tag {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.82rem;
+}
+
+.asset-none { color: var(--text-faint); }
+
+/* ---------------------------------------------------------------- record */
+
+.asset-record-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 14px;
+  margin-bottom: 4px;
+}
+
+.asset-record-head h2 { margin: 0; }
+
+.asset-record-head .asset-tag { font-size: 1rem; }
+
+.asset-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+  margin: 16px 0 18px;
+}
+
+.asset-tabs button {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 7px 12px;
+  color: var(--text-muted);
+  font-size: 0.88rem;
+  cursor: pointer;
+}
+
+.asset-tabs button:hover { color: var(--text); }
+
+.asset-tabs button.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+.asset-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px 24px;
+}
+
+.asset-fact .k {
+  font-size: 0.72rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.asset-fact .v { margin-top: 2px; font-size: 0.92rem; }
+
+/* ------------------------------------------------------------- elevation */
+
+.asset-elev {
+  display: flex;
+  flex-direction: column-reverse;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--bg-inset);
+  max-width: 420px;
+}
+
+.asset-elev-slot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  border-top: 1px solid var(--border);
+  font-size: 0.78rem;
+  min-height: 20px;
+  background: var(--bg-raised);
+}
+
+.asset-elev-slot:first-child { border-top: none; }
+
+.asset-elev-slot .u {
+  width: 30px;
+  flex: none;
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.asset-elev-slot .who { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.asset-elev-slot.is-free {
+  background: var(--bg-inset);
+  color: var(--text-faint);
+}
+
+/* Held, not occupied. Hatching rather than a fill so a reservation can never be
+   misread as a machine that is actually there. */
+.asset-elev-slot.is-planned {
+  background-image: repeating-linear-gradient(
+    45deg,
+    transparent 0 5px,
+    var(--bg-inset) 5px 10px
+  );
+}
+
+.asset-elev-free-note {
+  margin-top: 8px;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.asset-attention {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 0.86rem;
+}
+
+.asset-attention li {
+  padding: 6px 0;
+  border-top: 1px solid var(--border);
+  color: var(--text-muted);
+}
+
+.asset-attention li:first-child { border-top: none; }
+
+.asset-chain {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 0.85rem;
+}
+
+.asset-chain li {
+  padding: 5px 0 5px 14px;
+  border-left: 2px solid var(--border-strong);
+  position: relative;
+}
+
+.asset-chain li::before {
+  content: '';
+  position: absolute;
+  left: -4px;
+  top: 12px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--border-strong);
+}
+
+/* ----------------------------------------------------------------- misc */
+
+.asset-empty {
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  padding: 22px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.asset-skeleton {
+  height: 12px;
+  border-radius: 3px;
+  background: var(--bg-inset);
+  animation: asset-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes asset-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .asset-skeleton { animation: none; }
+}

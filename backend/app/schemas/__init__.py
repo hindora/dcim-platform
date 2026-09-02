@@ -60,6 +60,13 @@ class DeviceSummary(BaseModel):
     primary_ip: str | None = None
     last_seen: datetime | None = None
     location: LocationRef = Field(default_factory=LocationRef)
+    # Asset-view fields, added for the /assets workspace (docs/21 §2). Optional
+    # and additive: consumers that predate the asset module ignore them, which
+    # is what lets the Devices pages stay byte-identical.
+    asset_tag: str | None = None
+    serial_number: str | None = None
+    lifecycle: str = "in_service"
+    category: str | None = None
 
 
 class EndpointSummary(BaseModel):
@@ -115,8 +122,9 @@ class PowerSupplyOut(BaseModel):
 
 
 class DeviceDetail(DeviceSummary):
-    serial_number: str | None = None
-    asset_tag: str | None = None
+    # serial_number, asset_tag, lifecycle and category are inherited: they were
+    # promoted onto DeviceSummary so the asset list can render them without a
+    # per-row fetch. Re-declaring them here would shadow the parent for no gain.
     #: The model's datasheet rating, not a reading. What the chassis is built
     #: to draw at most, which is the number a rack or a feed is sized against -
     #: and the one an operator wants beside a live draw to know the headroom.
@@ -124,7 +132,6 @@ class DeviceDetail(DeviceSummary):
     psus: list[PowerSupplyOut] = Field(default_factory=list)
     u_height: int = 1
     facing: str | None = None
-    lifecycle: str = "in_service"
     admin_state: str = "enabled"
     attributes: dict[str, Any] = Field(default_factory=dict)
     endpoints: list[EndpointSummary] = Field(default_factory=list)

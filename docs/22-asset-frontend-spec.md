@@ -339,12 +339,40 @@ frontend/src/features/assets/
   reservations/ReservationList.tsx
   admin/TagAdmin.tsx
   components/                 forks of shared components, module-local
-  api.ts                      all React Query hooks for the module
-  types.ts
+  assets.css                  every selector prefixed .asset-
 ```
 
-One directory, one route subtree, one entry in `App.tsx`. The boundary in §1 is
-enforceable by looking at the diff: **a pull request for this module that
-touches a file outside `features/assets/` — other than the one line in
-`App.tsx`, additive `.asset-` CSS, and backend additions — is out of scope by
-construction.**
+**Two corrections against what phase 1 actually built.**
+
+*API calls live in `api/client.ts`, not a module-local `api.ts`.* The client's
+`request()` is not exported, and duplicating it would give the asset module its
+own fetch wrapper outside the shell's 401 handling — a session that expired
+while the operator was on `/assets` would fail silently instead of returning
+them to the login screen. Every other feature calls through `client.ts`; the
+module follows the codebase rather than this document. The additions are
+additive: new types, `assetSummary`, `assetFilterOptions`, `assetDevices`,
+`powerChain`, `discoveryCandidates`, and optional fields on `DeviceSummary`. No
+existing method or type changed meaning.
+
+*`assets.css` is imported by `AssetWorkspace.tsx`, not `main.tsx`.* This is
+stricter than planned and worth keeping: the stylesheet cannot load on a page
+outside the module at all.
+
+The boundary in §1 is enforceable by looking at the diff. Phase 1's, in full:
+
+```
+ backend/app/api/v1/__init__.py      |   2 +   router registration
+ backend/app/api/v1/devices.py       |  15 +   additive query params
+ backend/app/repositories/devices.py |  50 +   additive filters and columns
+ backend/app/schemas/__init__.py     |  13 +   optional fields
+ backend/app/services/devices.py     |   9 +
+ frontend/src/App.tsx                |  22 +   route subtree + imports
+ frontend/src/api/client.ts          | 143 +   additive types and methods
+ + backend/app/{api/v1,repositories,services}/assets.py
+ + backend/tests/test_assets.py
+ + frontend/src/features/assets/**
+```
+
+**No file under `features/` outside `features/assets/` was touched, and no
+existing test changed.** A pull request for this module that alters a component
+mounted by another page is out of scope by construction.

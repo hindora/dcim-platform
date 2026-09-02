@@ -39,6 +39,16 @@ async def list_devices(
     datacenter_id: str | None = None,
     search: str | None = Query(None, max_length=128),
     include_decommissioned: bool = False,
+    # Asset-view filters (docs/21 §2). All optional and AND-combined, so a
+    # caller that sends none of them gets exactly the response it got before
+    # the asset module existed.
+    lifecycle: list[str] | None = Query(None, description="repeatable"),
+    category: list[str] | None = Query(None, description="repeatable"),
+    vendor_id: str | None = None,
+    asset_tag: str | None = Query(None, max_length=128),
+    serial_number: str | None = Query(None, max_length=128),
+    has_serial: bool | None = Query(
+        None, description="false lists what still needs reconciling"),
     limit: int = Query(50, ge=1, le=500),
     cursor: str | None = None,
     session: AsyncSession = Depends(get_session),
@@ -47,7 +57,10 @@ async def list_devices(
     items, next_cursor = await service.list_devices(
         session, device_types=device_type, status=status_filter, room_id=room_id,
         rack_id=rack_id, datacenter_id=datacenter_id, search=search,
-        include_decommissioned=include_decommissioned, limit=limit, cursor=cursor)
+        include_decommissioned=include_decommissioned, lifecycle=lifecycle,
+        category=category, vendor_id=vendor_id, asset_tag=asset_tag,
+        serial_number=serial_number, has_serial=has_serial,
+        limit=limit, cursor=cursor)
     return Page[DeviceSummary](items=items, next_cursor=next_cursor)
 
 

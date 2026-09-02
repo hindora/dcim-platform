@@ -90,6 +90,110 @@ export interface DeviceSummary {
   primary_ip?: string | null;
   last_seen?: string | null;
   location: LocationRef;
+  /** Asset-view fields. Optional and additive: the Devices pages ignore them,
+   *  which is what keeps them unchanged while /assets is built. */
+  asset_tag?: string | null;
+  serial_number?: string | null;
+  lifecycle?: string;
+  category?: string | null;
+}
+
+/** Estate-wide counts behind the /assets landing page.
+ *
+ *  Blocks for tables that are not migrated yet - warranty, maintenance, parts -
+ *  are absent rather than zero. Optional here for the same reason: the UI must
+ *  render "not tracked yet" rather than a confident nought.
+ */
+export interface AssetSummary {
+  totals: {
+    assets: number;
+    planned: number;
+    in_stock: number;
+    installed: number;
+    in_service: number;
+    maintenance: number;
+    decommissioned: number;
+    retired: number;
+  };
+  identity: {
+    with_serial: number;
+    with_asset_tag: number;
+    unidentified: number;
+  };
+  estate: {
+    datacenters: number;
+    rooms: number;
+    racks: number;
+    u_total: number;
+    u_used: number;
+    u_reserved: number;
+    u_free: number;
+  };
+  by_category: { category: string; n: number }[];
+  discovery: { new_candidates: number; unmatched: number };
+}
+
+/** One device on a power path, upstream of the load. */
+export interface PowerHop {
+  device_id: string;
+  name: string;
+  device_type: string;
+  status: string;
+  max_severity: string;
+  load_pct?: number | null;
+  load_w?: number | null;
+  load_source?: string | null;
+  /** Other devices that also feed this hop; named rather than dropped. */
+  alternate_feeders: string[];
+}
+
+export interface PowerPath {
+  /** 'A' or 'B' on a dual-corded load; null when the cord carries no side. */
+  side?: string | null;
+  hops: PowerHop[];
+  reaches_source: boolean;
+}
+
+/** What feeds one load, and whether it is still redundant. */
+export interface PowerChain {
+  device: PowerHop;
+  redundancy: string;
+  reason: string;
+  live_paths: number;
+  total_paths: number;
+  paths: PowerPath[];
+  shared_upstream: PowerHop[];
+}
+
+/** A responder a sweep found, and whether inventory already claims it. */
+export interface DiscoveryCandidate {
+  id: string;
+  run_id: string;
+  address?: string | null;
+  protocol: string;
+  /** Whatever the probe could read: sysDescr, sysObjectID, sysName. */
+  identity: Record<string, unknown>;
+  suggested_device_type?: string | null;
+  suggested_vendor?: string | null;
+  suggested_model?: string | null;
+  /** Non-null means this responder is already known. */
+  matched_device_id?: string | null;
+  matched_device_name?: string | null;
+  status: string;
+  first_seen: string;
+  last_seen: string;
+}
+
+export interface AssetFilterOptions {
+  device_types: {
+    code: string;
+    display_name: string;
+    category: string;
+    is_rack_mounted: boolean;
+    device_count: number;
+  }[];
+  vendors: { id: string; name: string; device_count: number }[];
+  lifecycles: { value: string; label: string }[];
 }
 
 export interface CredentialSummary {
@@ -299,14 +403,15 @@ export interface PowerSupply {
 }
 
 export interface DeviceDetail extends DeviceSummary {
-  serial_number?: string | null;
-  asset_tag?: string | null;
+  // serial_number, asset_tag, lifecycle and category are inherited: they were
+  // promoted onto DeviceSummary so the asset list can render them per row.
   /** The MODEL's datasheet rating, not a reading - what the chassis is built
    *  to draw at most, and what a feed is sized against. */
   rated_power_w?: number | null;
   psus: PowerSupply[];
   u_height: number;
-  lifecycle: string;
+  /** Which way the chassis faces in the rack. */
+  facing?: string | null;
   admin_state: string;
   attributes: Record<string, unknown>;
   endpoints: EndpointSummary[];
@@ -1195,6 +1300,41 @@ export const api = {
   devices: (params: Record<string, string | undefined> = {}) => {
     const q = new URLSearchParams();
     for (const [k, v] of Object.entries(params)) if (v) q.set(k, v);
+    const qs = q.toString();
+    return request<Page<DeviceSummary>>(`/devices${qs ? `?${qs}` : ''}`);
+  },
+
+  // ---- asset workspace (docs/21). Additive; nothing above changes. ----
+
+  assetSummary: () => request<AssetSummary>('/assets/summary'),
+  powerChain: (deviceId: string) =>
+    request<PowerChain>(`/power/chain/${deviceId}`),
+  assetFilterOptions: () => request<AssetFilterOptions>('/assets/filter-options'),
+
+  discoveryCandidates: (params: Record<string, string | undefined> = {}) => {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) if (v) q.set(k, v);
+    const qs = q.toString();
+    return request<{ items: DiscoveryCandidate[] }>(
+      `/discovery/candidates${qs ? `?${qs}` : ''}`);
+  },
+
+  /** The same /devices resource, called the way the asset list needs it.
+   *
+   *  A separate method rather than a wider `devices()` because that one drops
+   *  falsy values - which is correct for its callers and wrong here: the
+   *  reconciliation queue is `has_serial=false`, and `if (v)` would silently
+   *  turn it into "no filter" and return the whole estate looking healthy.
+   *  Arrays are emitted as repeated keys, which is what FastAPI reads back as
+   *  a list.
+   */
+  assetDevices: (params: Record<string, string | string[] | undefined> = {}) => {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) {
+      if (v === undefined || v === '') continue;
+      if (Array.isArray(v)) v.forEach((one) => { if (one) q.append(k, one); });
+      else q.set(k, v);
+    }
     const qs = q.toString();
     return request<Page<DeviceSummary>>(`/devices${qs ? `?${qs}` : ''}`);
   },

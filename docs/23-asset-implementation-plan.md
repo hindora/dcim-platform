@@ -35,6 +35,14 @@ phase 4.
 
 ## Phase 1 — the workspace, on what already exists
 
+Status: **built 2026-09-02.** 920 backend tests pass (11 new), `ruff` clean,
+`tsc` clean, production build clean. Not yet deployed — the WSL runtime still
+runs the previous commit. Delivered: overview, inventory with URL-backed
+filters, asset record (Overview / Placement / Connections), estate drill-down,
+asset-context elevation with contiguous-gap call-outs, and the discovery queue.
+Deferred within the phase: bulk selection and the column chooser, which belong
+with phase 6's write path.
+
 **No migrations. No new tables. No backend beyond one endpoint.**
 
 The whole of `22` §2–§6 rendered against endpoints that ship today: overview,
@@ -61,6 +69,34 @@ obviously necessary rather than an argument in a document.
   line), `index.css` (additive `.asset-` block), and the backend additions.
 
 ## Phase 2 — identity
+
+Status: **code built 2026-09-02, not yet applied.** 927 backend tests pass,
+`ruff` clean, build clean; the simulator suite passes with 16 new tests. The
+migrations have been proved against a throwaway database and **deliberately not
+run against the live one** — that, and the re-import, are deployment steps the
+operator takes.
+
+A defect was found and fixed on the way through, and it is the reason this
+phase was more than a column. **The simulator's planes disagreed about serial
+numbers.** SNMP served `sha1(id)[:7]` through `entPhysicalSerialNum` while
+Redfish served `SN-<id[:8]>` on both `ComputerSystem` and `Chassis` — two
+strings for one chassis. A collector polling both planes would have read two
+identities off one server and had every reason to file it twice, which is the
+exact duplicate-asset failure §9's reconciliation exists to prevent. Real
+hardware burns one serial in at manufacture and reports it identically over
+Redfish, IPMI FRU and ENTITY-MIB. `core.device_manager.device_serial()` is now
+the single source, every plane reads it, and the serial is materialised onto the
+`Device` dataclass so the topology export carries it.
+
+The formats are vendor-shaped rather than one flat hash — Dell 7-char service
+tag, HPE `SGH421X9KL`, Cisco `FOC` + year + week + sequence, APC 12 — because
+vendor tooling matches on the shape, and a simulator that emits one shape for
+everything means that parsing is never exercised until real gear arrives. The
+charset excludes `I`, `O`, `0` and `1` the way real service tags do: the string
+gets read off a sticker by a person under a rack.
+
+Measured on the real topology: **664 devices, 664 distinct serials, 0
+collisions**, stable across an export/import/export round trip.
 
 The gate. `19` B2: 664 devices, 0 serials, 0 asset tags, no unique index.
 Everything after this phase reads an asset identity, so it comes second.

@@ -5,6 +5,7 @@ from fastapi import APIRouter
 from app.api.v1 import (
     alarms,
     analytics,
+    assets,
     capacity,
     collector,
     collectors,
@@ -24,6 +25,7 @@ from app.api.v1 import (
 api_router = APIRouter()
 api_router.include_router(misc.router)
 api_router.include_router(devices.router)
+api_router.include_router(assets.router)
 api_router.include_router(infrastructure.router)
 api_router.include_router(analytics.router)
 api_router.include_router(capacity.router)

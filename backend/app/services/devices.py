@@ -54,6 +54,9 @@ def _summary(row: dict[str, Any]) -> DeviceSummary:
         max_severity=row.get("max_severity") or "CLEAR",
         mgmt_ip=row.get("mgmt_ip"), primary_ip=row.get("primary_ip"),
         last_seen=row.get("last_seen"), location=_location(row),
+        asset_tag=row.get("asset_tag"), serial_number=row.get("serial_number"),
+        lifecycle=row.get("lifecycle") or "in_service",
+        category=row.get("category"),
     )
 
 
@@ -67,12 +70,14 @@ async def get_device(session: AsyncSession, device_id: str) -> DeviceDetail | No
     if row is None:
         return None
     endpoints = [EndpointSummary(**e) for e in await repo.list_endpoints(session, device_id)]
+    # serial_number, asset_tag, lifecycle and category now come from the
+    # summary itself - they were promoted onto DeviceSummary for the asset
+    # list. Passing them again here is a duplicate-keyword TypeError, so the
+    # detail only adds what the summary does not carry.
     base = _summary(row).model_dump()
     return DeviceDetail(
         **base,
-        serial_number=row.get("serial_number"), asset_tag=row.get("asset_tag"),
         u_height=row.get("u_height") or 1, facing=row.get("facing"),
-        lifecycle=row.get("lifecycle") or "in_service",
         admin_state=row.get("admin_state") or "enabled",
         attributes=row.get("attributes") or {},
         rated_power_w=row.get("rated_power_w"),
