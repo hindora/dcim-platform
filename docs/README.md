@@ -48,6 +48,28 @@ full finding list with severities. Summary:
 | `15-implementation-roadmap.md` | Phased plan with exit criteria per phase |
 | `16-simulator-integration.md` | **Verified** simulator facts: ports, addressing, endpoints, quirks |
 | `17-operations-runbook.md` | Running it: restart procedures, alarm response, limits, known gaps |
+| `18-alert-taxonomy.md` | The seven-category alarm taxonomy, why it replaced the five, and what it cost |
 
 Start with `16-simulator-integration.md` if you want the concrete facts first;
 start with `01` if you want the argument first.
+
+## Asset & inventory module (`19`–`23`)
+
+A second design set, written the same way: a review of the proposal against the
+running system first, then the specification that follows from it. **Not built.**
+
+| Doc | Contents |
+|---|---|
+| `19-asset-inventory-review.md` | Critique of the 27-section asset plan, finding by finding (B1–B11), with a section-by-section scorecard |
+| `20-asset-data-model.md` | Schema delta: columns on `device`, seven new tables, migration order `0043`–`0050` |
+| `21-asset-api-spec.md` | REST additions — all additive; no existing endpoint changes shape |
+| `22-asset-frontend-spec.md` | The `/assets` workspace. **§1 is the scope boundary: no page outside `/assets` changes** |
+| `23-asset-implementation-plan.md` | Six phases with checkable exit criteria, plus a risk register |
+
+The headline finding: **roughly sixty percent of the proposed module already
+exists and runs.** §21 of the proposal would build a parallel `assets` table
+duplicating seven live tables and giving every asset a second identity — the one
+thing §24 of the same proposal exists to prevent. `19` B1 is the argument; `20`
+§1 is the rule that replaces it.
+
+Start with `19` — `20`–`23` only make sense as its consequences.
