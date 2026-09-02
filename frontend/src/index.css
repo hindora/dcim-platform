@@ -280,6 +280,11 @@ button.primary { background: var(--accent-dim); border-color: var(--accent); }
                          padding: 0.3rem 0.75rem; cursor: pointer; font: inherit;
                          font-size: 0.85rem; }
 .overlay-picker button.active { color: var(--text); border-color: var(--accent); }
+/* A refresh sits beside the range options without being one of them: pushed
+   clear of the group, and never wearing the active state, which here means
+   "this is the range you are looking at". */
+.overlay-picker button.refresh { margin-left: 0.5rem; }
+.overlay-picker button.refresh:disabled { opacity: 0.6; cursor: default; }
 
 /* The rack itself. Slot height is driven by --u so a 4 U CDU is four times a
    1 U server: the point of an elevation is that the proportions are real. */

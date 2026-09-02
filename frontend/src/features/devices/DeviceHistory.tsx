@@ -41,18 +41,27 @@ export function DeviceHistory({ deviceId, metrics, groups }: {
   const [range, setRange] = useState('6h');
   const span = RANGES.find((r) => r.key === range)?.ms ?? 6 * 3600_000;
 
-  // Anchored to a value that only changes when the range does, so a re-render
-  // does not shift the window and refetch on every paint.
-  const { startIso, endIso } = useMemo(() => {
-    const end = Date.now();
-    return {
-      startIso: new Date(end - span).toISOString(),
-      endIso: new Date(end).toISOString(),
-    };
-  }, [span]);
+  /** The instant the window ends. Bumping it is what "refresh" means here.
+   *
+   *  These charts do NOT advance on their own, deliberately. The live question
+   *  - is this device hot right now - is answered by the current-value table
+   *  and the alarm; a trend chart answers what has happened since, and the
+   *  moment it is worth reading is the moment somebody is hovering a point.
+   *  Re-rendering the line under their cursor while they do that is hostile,
+   *  and the underlying buckets are a minute wide anyway, so an auto-advancing
+   *  chart would crawl rather than live.
+   *
+   *  Held in state rather than computed per render for the original reason: a
+   *  window that moved on every paint would refetch on every paint.
+   */
+  const [endsAt, setEndsAt] = useState(() => Date.now());
+  const { startIso, endIso } = useMemo(() => ({
+    startIso: new Date(endsAt - span).toISOString(),
+    endIso: new Date(endsAt).toISOString(),
+  }), [span, endsAt]);
 
   const q = useQuery<HistoryOut>({
-    queryKey: ['history', deviceId, range, metrics.join(',')],
+    queryKey: ['history', deviceId, range, metrics.join(','), endsAt],
     queryFn: () => api.history(deviceId, metrics, startIso, endIso),
     enabled: Boolean(deviceId) && metrics.length > 0,
     retry: false,
@@ -79,13 +88,25 @@ export function DeviceHistory({ deviceId, metrics, groups }: {
     <section>
       <h3>History</h3>
       <div className="overlay-picker" role="group" aria-label="Range">
+        {/* Changing the range re-anchors to now as well: picking "24 h" means
+            the last 24 hours from now, not 24 hours ending whenever the page
+            happened to open. */}
         {RANGES.map((r) => (
           <button key={r.key} type="button"
                   className={range === r.key ? 'active' : undefined}
-                  onClick={() => setRange(r.key)}>
+                  onClick={() => { setRange(r.key); setEndsAt(Date.now()); }}>
             {r.label}
           </button>
         ))}
+        {/* Not one of the range options, so not inside the group: it would read
+            as an eighth range. Explicit refresh instead of a timer - the reader
+            decides when the ground moves under them. */}
+        <button type="button" className="refresh"
+                onClick={() => setEndsAt(Date.now())}
+                disabled={q.isFetching}
+                title="Re-read up to now">
+          {q.isFetching ? 'Loading…' : 'Refresh'}
+        </button>
       </div>
 
       {q.isLoading && <p className="muted">Loading…</p>}
@@ -104,6 +125,16 @@ export function DeviceHistory({ deviceId, metrics, groups }: {
             {q.data.interval === 'raw'
               ? 'Raw samples as polled.'
               : `Averaged into ${q.data.interval} buckets.`}
+            {/* The right edge of the chart, stated. Without it a frozen window
+                is indistinguishable from a live one, which is the whole reason
+                a static chart feels broken beside a table that updates itself.
+                An absolute time rather than "N minutes ago": a relative label
+                only stays true if something re-renders to tick it, and one
+                that quietly stops counting is worse than no label. */}
+            {' · to '}
+            <time dateTime={endIso}>
+              {new Date(endsAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            </time>
           </p>
           {!panels && byUnit && byUnit.size === 0 && (
             <p className="muted">Nothing recorded in this window.</p>

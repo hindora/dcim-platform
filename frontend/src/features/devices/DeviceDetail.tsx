@@ -63,7 +63,11 @@ export function DeviceDetail() {
     queryKey: ['device-state', id],
     queryFn: () => api.deviceState(id),
     enabled: Boolean(id),
-    refetchInterval: 10_000,
+    // 30s, not 10s. The slowest source behind this table is a 120s BMC poll and
+    // the fastest a 10s sensor, so a 10s refetch spent up to twelve requests per
+    // new reading. This still beats every source to the punch without asking the
+    // API for numbers that cannot have changed.
+    refetchInterval: 30_000,
     // A device with no telemetry yet is a normal state, not an error.
     retry: false,
   });
