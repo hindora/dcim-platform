@@ -93,12 +93,17 @@ export function DeviceHistory({ deviceId, metrics, groups }: {
 
       {q.data && (
         <>
-          <p className="muted">
+          {/* The aggregation is a caveat on every number below it, so it stays -
+              but as the fact, not the essay. Why the bucket was chosen is a
+              tooltip on the reader's terms rather than a paragraph on mine, and
+              the source table name was internal detail nobody outside this
+              codebase can act on. */}
+          <p className="muted"
+             title={q.data.interval === 'raw' ? undefined
+               : 'The bucket keeps the chart to a readable number of points, so a longer range is a coarser average — not more detail.'}>
             {q.data.interval === 'raw'
               ? 'Raw samples as polled.'
-              : `Averaged into ${q.data.interval} buckets (${q.data.source}). `}
-            {q.data.interval !== 'raw' &&
-              'The bucket is chosen to keep the chart to a readable number of points, so a longer range is a coarser average — not more detail.'}
+              : `Averaged into ${q.data.interval} buckets.`}
           </p>
           {!panels && byUnit && byUnit.size === 0 && (
             <p className="muted">Nothing recorded in this window.</p>

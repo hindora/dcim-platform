@@ -156,11 +156,6 @@ export function DeviceDetail() {
 
       <section>
         <h3>Nameplate</h3>
-        <p className="muted">
-          What the chassis IS, as opposed to what it is doing. These are
-          datasheet and inventory facts - the rating a feed is sized against,
-          and the supplies that carry it.
-        </p>
         <dl className="kv">
           <dt>Rated power</dt>
           <dd>
@@ -212,11 +207,6 @@ export function DeviceDetail() {
       {d.psus.length > 0 && (
         <section>
           <h3>Power supplies<span className="count"> {d.psus.length}</span></h3>
-          <p className="muted">
-            Which outlet each cord lands on. Two supplies are only redundancy if
-            something separate feeds each one — the same rack PDU twice is a
-            single point of failure wearing a pair of supplies.
-          </p>
           {/* Framed like every other table here, but not scrollable: a chassis
               has one to four supplies, and capping four rows would add a
               scrollbar to a list that was never going to need one. */}
@@ -266,11 +256,6 @@ export function DeviceDetail() {
               five-port server or a sixty-five-port switch. */}
           {fitted > 0 && <span className="count"> {fitted}</span>}
         </h3>
-        <p className="muted">
-          The ports the chassis has and what each one is patched to. A port with
-          no peer is a spare — which is the fact somebody re-cabling a rack is
-          looking for, so it is shown rather than hidden.
-        </p>
         {ports.isLoading && <p className="muted">Loading…</p>}
         {ports.error && <p className="warn">Could not load ports.</p>}
         {ports.data && ports.data.length === 0 && (
@@ -318,15 +303,6 @@ export function DeviceDetail() {
 
       <section>
         <h3>Communication</h3>
-        <p className="muted">
-          One row per protocol endpoint. A server has an OS agent and a BMC:
-          they are separate agents and fail independently. <em>Seen</em> is the
-          last poll attempt and <em>Success</em> the last one that answered — a
-          fresh <em>Seen</em> beside a stale <em>Success</em> is an endpoint
-          being polled and failing, which is a different fault from one nothing
-          is polling at all. Poll and failure totals are cumulative for the life
-          of the endpoint, not a recent window.
-        </p>
         {/* Rendered only when it has rows. It used to draw unconditionally with
             the "none configured" note underneath, which framed reads as an empty
             box with a header floating in it. */}
@@ -337,8 +313,18 @@ export function DeviceDetail() {
             <tr>
               <th>Protocol</th><th>Role</th><th>Address</th><th>Selector</th>
               <th>Status</th><th>Credential</th><th className="num">Interval</th>
-              <th>Seen</th><th>Success</th><th className="num">Latency</th>
-              <th className="num">Polls</th><th>Last error</th><th />
+              {/* Seen and Success are not the same question, and the column
+                  names alone do not say so: a fresh Seen beside a stale Success
+                  is an endpoint being polled and failing, which is a different
+                  fault from one nothing polls at all. Said where the confusion
+                  happens rather than in a paragraph above the table. */}
+              <th title="Last poll attempt">Seen</th>
+              <th title="Last poll that answered">Success</th>
+              <th className="num">Latency</th>
+              <th className="num" title="Cumulative for the life of the endpoint, not a recent window">
+                Polls
+              </th>
+              <th>Last error</th><th />
             </tr>
           </thead>
           <tbody>
