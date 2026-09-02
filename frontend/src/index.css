@@ -188,6 +188,15 @@ h3 .count { color: var(--text-muted); font-weight: 500;
    line just inside it. */
 .table-frame tbody tr:last-child td { border-bottom: none; }
 
+/* One header band across every framed table.
+
+   --bg-inset, matching the estate and home tables rather than inventing a
+   third convention: it is the recessive surface in both themes (darker than
+   the page in dark, greyer in light), which is what a column label wants to
+   be. NOT --bg-raised, which is the row-hover colour - a header painted in it
+   is the same shade as whatever row the pointer happens to be over. */
+.table-frame thead th { background: var(--bg-inset); }
+
 /* Long enough to need capping. max-height, never height: the cap only takes
    effect once the content exceeds it, so a table that fits still renders at its
    natural size rather than in a mostly empty box. Sized to about a dozen rows -
@@ -201,7 +210,8 @@ h3 .count { color: var(--text-muted); font-weight: 500;
    three rows as the page moves. */
 .table-frame.is-scrollable thead th {
   position: sticky; top: 0; z-index: 1;
-  background: var(--bg-raised);
+  /* The background is inherited from the shared rule above and has to be
+     opaque here for a second reason: a sticky header travels OVER the rows. */
   /* box-shadow rather than border-bottom: with border-collapse the border
      belongs to the table and scrolls away from a sticky cell, leaving the
      header floating over the rows with nothing under it. */
