@@ -170,3 +170,19 @@ export function humanise(key: string | null | undefined): string {
     })
     .join(' ');
 }
+
+/** A unit code, as it should appear beside a number or on an axis.
+ *
+ *  The registry stores what a unit IS ('pct', 'C'), which is the right thing to
+ *  key off and the wrong thing to print. Some have a symbol, and some - a ratio,
+ *  a boolean, a bare count - have no unit worth showing at all: labelling an
+ *  axis 'count' says nothing the metric's own name has not already said.
+ */
+const UNIT_SYMBOL: Record<string, string> = {
+  pct: '%', C: '°C', K: 'K', ratio: '', bool: '', count: '', B: 'B',
+};
+
+export function unitSymbol(unit: string | null | undefined): string {
+  if (!unit) return '';
+  return unit in UNIT_SYMBOL ? UNIT_SYMBOL[unit] : unit;
+}

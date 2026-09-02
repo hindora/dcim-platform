@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import type { Series } from '../api/client';
-import { metricLabel } from '../lib/format';
+import { metricLabel, unitSymbol } from '../lib/format';
 
 /** A small SVG line chart.
  *
@@ -209,7 +209,7 @@ export function TimeChart({ series, unit, bucketMs }: {
   return (
     <div className="chart-wrap">
       <svg className="chart" viewBox={`0 0 ${W} ${H}`} role="img"
-           aria-label={`${series.map(seriesLabel).join(', ')} over time, in ${unit}`}>
+           aria-label={`${series.map(seriesLabel).join(', ')} over time, in ${unitSymbol(unit) || unit}`}>
         {yTicks.map((t) => (
           <g key={t}>
             <line x1={PAD_L} x2={W - PAD_R} y1={model.sy(t)} y2={model.sy(t)}
@@ -253,7 +253,10 @@ export function TimeChart({ series, unit, bucketMs }: {
                 </text>
                 <text className="chart-tip-value" x={tipX + tipW - 7}
                       y={PAD_T + 27 + i * 14} textAnchor="end">
-                  {fmt(r.value)}{unit === 'pct' ? '%' : ''}
+                  {/* The symbol, not the code, and not just for percentages -
+                     a reading of "67.9" beside a line labelled C is a number
+                     the reader has to carry the unit for. */}
+                  {fmt(r.value)}{unitSymbol(unit) ? ` ${unitSymbol(unit)}` : ''}
                 </text>
               </g>
             ))}
@@ -264,7 +267,7 @@ export function TimeChart({ series, unit, bucketMs }: {
             are not hoverable and should not move the crosshair. */}
         <rect x={PAD_L} y={PAD_T} width={W - PAD_L - PAD_R} height={H - PAD_T - PAD_B}
               fill="transparent" onMouseMove={onMove} onMouseLeave={() => setAt(null)} />
-        <text x={4} y={PAD_T + 2} className="chart-unit">{unit}</text>
+        <text x={4} y={PAD_T + 2} className="chart-unit">{unitSymbol(unit)}</text>
       </svg>
 
       {/* Two or more lines are never told apart by colour alone. One line needs

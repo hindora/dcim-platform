@@ -9,37 +9,12 @@ import {
   type NetworkInterface,
 } from '../../api/client';
 import { StatusChip } from '../../components/StatusChip';
-import { DeviceHistory, type ChartGroup } from './DeviceHistory';
+import { DeviceHistory } from './DeviceHistory';
+import { chartGroupsFor } from './chartGroups';
 import { EndpointEditor } from './EndpointEditor';
 import {
   formatMetric, formatSpeed, humanise, metricLabel, relativeTime,
 } from '../../lib/format';
-
-/** What an operator opens a server page to ask, in the order they ask it.
- *
- * Each panel is one unit, so each frame has ONE axis. Putting watts and
- * degrees on a shared frame with two scales lets any two series be made to
- * look correlated by choosing the ranges - the most common way a chart lies -
- * and it is why these are three panels rather than one.
- *
- * Draw sits first because it is the question the rack and the feed are sized
- * against. Then the thermal pair: intake is what the room delivers and the CPU
- * is what the machine does with it, so the GAP between them is the reading -
- * a CPU climbing on a flat intake is the server's own problem, and both
- * climbing together is the room's. Utilisation is last: it explains the other
- * two rather than standing alone.
- */
-const SERVER_CHARTS: ChartGroup[] = [
-  { title: 'Power draw', metrics: ['power_draw'] },
-  {
-    title: 'CPU and intake temperature',
-    metrics: ['cpu_temperature', 'inlet_temperature'],
-  },
-  {
-    title: 'Utilisation',
-    metrics: ['cpu_utilization', 'memory_utilization', 'disk_utilization'],
-  },
-];
 
 export function DeviceDetail() {
   const { id = '' } = useParams();
@@ -125,8 +100,9 @@ export function DeviceDetail() {
   const draw = typeof metrics.power_draw?.v === 'number'
     ? metrics.power_draw.v
     : null;
-  const chartMetrics = d.device_type === 'server'
-    ? [...new Set(SERVER_CHARTS.flatMap((g) => g.metrics))]
+  const groups = chartGroupsFor(d.device_type);
+  const chartMetrics = groups
+    ? [...new Set(groups.flatMap((g) => g.metrics))]
     : Object.keys(metrics);
 
   return (
@@ -433,10 +409,9 @@ export function DeviceDetail() {
 
       {/* Charted from the same metric keys the device is actually reporting,
           so a device with no telemetry gets an explanation rather than an
-          empty axis. Servers get curated panels; everything else still
-          groups by unit, which is a fallback rather than a layout. */}
-      <DeviceHistory deviceId={id} metrics={chartMetrics}
-                     groups={d.device_type === 'server' ? SERVER_CHARTS : undefined} />
+          empty axis. Curated panels where the device type has them; anything
+          else still groups by unit, which is a fallback rather than a layout. */}
+      <DeviceHistory deviceId={id} metrics={chartMetrics} groups={groups} />
 
       <p><Link to="/devices">← All devices</Link></p>
     </div>

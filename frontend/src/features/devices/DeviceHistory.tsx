@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { api, type HistoryOut, type Series } from '../../api/client';
-import { metricLabel } from '../../lib/format';
+import { metricLabel, unitSymbol } from '../../lib/format';
 import { TimeChart } from '../../components/TimeChart';
 
 const RANGES = [
@@ -186,9 +186,14 @@ export function DeviceHistory({ deviceId, metrics, groups }: {
 
           {!panels && byUnit && [...byUnit.entries()].map(([unit, series]) => (
             <figure key={unit} className="chart-figure">
+              {/* Display names, not metric keys. Every device that is not a
+                  server takes this path, so a router, a CRAH and a UPS were all
+                  captioned with the column names out of the database. */}
               <figcaption>
-                {[...new Set(series.map((s) => s.metric))].join(', ')}
-                <span className="muted"> · {unit}</span>
+                {[...new Set(series.map((s) => metricLabel(s.metric)))].join(', ')}
+                {unitSymbol(unit) && (
+                  <span className="muted"> · {unitSymbol(unit)}</span>
+                )}
               </figcaption>
               <TimeChart series={series} unit={unit}
                          bucketMs={BUCKET_MS[q.data.interval] ?? 60_000} />
