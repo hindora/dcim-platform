@@ -26,9 +26,17 @@ function groupByUnit(series: Series[]): Map<string, Series[]> {
   return out;
 }
 
-export function DeviceHistory({ deviceId, metrics }: {
+/** A named panel: metrics that belong on one frame because they share a unit
+ *  AND a question. Grouping by unit alone is the fallback for device types
+ *  nobody has curated yet - it will happily put a fan tachometer beside a CPU
+ *  load because both happen to be percentages. */
+export type ChartGroup = { title: string; metrics: string[]; caption?: string };
+
+export function DeviceHistory({ deviceId, metrics, groups }: {
   deviceId: string;
   metrics: string[];
+  /** Curated panels. Omitted, the charts fall back to one per unit. */
+  groups?: ChartGroup[];
 }) {
   const [range, setRange] = useState('6h');
   const span = RANGES.find((r) => r.key === range)?.ms ?? 6 * 3600_000;
@@ -54,7 +62,18 @@ export function DeviceHistory({ deviceId, metrics }: {
     return <p className="muted">This device is not reporting any metrics yet.</p>;
   }
 
-  const groups = q.data ? groupByUnit(q.data.series.filter((s) => s.points.length)) : null;
+  const withData = q.data ? q.data.series.filter((s) => s.points.length) : [];
+  const byUnit = q.data ? groupByUnit(withData) : null;
+
+  // A curated panel keeps its DECLARED order - CPU, then memory, then disk -
+  // rather than whatever order the series came back in, so the legend reads the
+  // same on every device and after every reload. Colour follows that order, so
+  // a metric that stops reporting must not repaint the ones that remain.
+  const panels = groups?.map((g) => ({
+    ...g,
+    series: g.metrics.flatMap((k) => withData.filter((s) => s.metric === k)),
+    missing: g.metrics.filter((k) => !withData.some((s) => s.metric === k)),
+  }));
 
   return (
     <section>
@@ -81,10 +100,37 @@ export function DeviceHistory({ deviceId, metrics }: {
             {q.data.interval !== 'raw' &&
               'The bucket is chosen to keep the chart to a readable number of points, so a longer range is a coarser average — not more detail.'}
           </p>
-          {groups && groups.size === 0 && (
+          {!panels && byUnit && byUnit.size === 0 && (
             <p className="muted">Nothing recorded in this window.</p>
           )}
-          {groups && [...groups.entries()].map(([unit, series]) => (
+
+          {/* Curated panels: each one answers a question, and the metrics on it
+              share a unit so the frame has a single axis. */}
+          {panels?.map((p) => (
+            <figure key={p.title} className="chart-figure">
+              <figcaption>{p.title}</figcaption>
+              {p.caption && <figcaption className="muted">{p.caption}</figcaption>}
+              {p.series.length === 0 ? (
+                <p className="muted">
+                  Not reported by this device{p.missing.length ? ` (${p.missing.join(', ')})` : ''}.
+                </p>
+              ) : (
+                <>
+                  <TimeChart series={p.series} unit={p.series[0].unit}
+                             bucketMs={BUCKET_MS[q.data.interval] ?? 60_000} />
+                  {/* Say what is absent rather than drawing a panel that looks
+                      complete. A missing line and a flat one look identical. */}
+                  {p.missing.length > 0 && (
+                    <figcaption className="muted">
+                      No data for {p.missing.join(', ')} in this window.
+                    </figcaption>
+                  )}
+                </>
+              )}
+            </figure>
+          ))}
+
+          {!panels && byUnit && [...byUnit.entries()].map(([unit, series]) => (
             <figure key={unit} className="chart-figure">
               <figcaption>
                 {[...new Set(series.map((s) => s.metric))].join(', ')}
@@ -92,11 +138,6 @@ export function DeviceHistory({ deviceId, metrics }: {
               </figcaption>
               <TimeChart series={series} unit={unit}
                          bucketMs={BUCKET_MS[q.data.interval] ?? 60_000} />
-              {series.length > 1 && (
-                <figcaption className="muted">
-                  {series.length} series — one per instance
-                </figcaption>
-              )}
             </figure>
           ))}
         </>

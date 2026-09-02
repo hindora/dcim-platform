@@ -336,13 +336,39 @@ button.primary { background: var(--accent-dim); border-color: var(--accent); }
          background: var(--bg-inset); border: 1px solid var(--border);
          border-radius: var(--radius); }
 .chart-grid { stroke: var(--border); stroke-width: 1; }
-.chart-line { fill: none; stroke-width: 1.5; stroke-linejoin: round;
+.chart-line { fill: none; stroke-width: 2; stroke-linejoin: round;
               stroke-linecap: round; }
 .chart-tick-y { font-size: 10px; fill: var(--text-muted); text-anchor: end;
                 dominant-baseline: middle; font-family: var(--mono); }
 .chart-tick-x { font-size: 10px; fill: var(--text-muted);
                 font-family: var(--mono); }
 .chart-unit { font-size: 10px; fill: var(--text-faint); font-family: var(--sans); }
+
+/* Hover layer. A line chart on a screen is an interactive object: the reader
+   wants the value AT a moment, and reading it off a pixel against an axis is
+   a worse answer than being told. The crosshair snaps to a real sample rather
+   than interpolating, so the number shown is one somebody actually took. */
+.chart-crosshair { stroke: var(--text-faint); stroke-width: 1;
+                   stroke-dasharray: 3 3; }
+/* A ring in the surface colour keeps a dot legible where two lines cross. */
+.chart-dot { stroke: var(--bg-inset); stroke-width: 2; }
+.chart-tip { fill: var(--bg-raised); stroke: var(--border); }
+.chart-tip-time { font-size: 10px; fill: var(--text-faint);
+                  font-family: var(--mono); }
+/* Text wears text tokens. The swatch beside it carries the identity - a label
+   painted in the series colour is unreadable at the ends of the ramp and says
+   nothing extra when it is not. */
+.chart-tip-label { font-size: 10px; fill: var(--text); font-family: var(--sans); }
+.chart-tip-value { font-size: 10px; fill: var(--text);
+                   font-family: var(--mono); }
+
+.chart-wrap { max-width: 45rem; }
+.chart-legend { list-style: none; display: flex; flex-wrap: wrap; gap: 0.15rem 1rem;
+                margin: 0.35rem 0 0; padding: 0;
+                font-size: 0.8rem; color: var(--text-muted); }
+.chart-legend li { display: inline-flex; align-items: center; gap: 0.35rem; }
+.chart-legend .swatch { width: 9px; height: 9px; border-radius: 2px;
+                        display: inline-block; flex: none; }
 
 /* ---------------------------------------------------------------- analytics */
 
