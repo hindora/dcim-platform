@@ -292,6 +292,10 @@ export interface PowerSupply {
   number: number;
   connector?: string | null;
   rated_watts?: number | null;
+  /** The outlet this cord lands on. Null means fitted but not corded. */
+  feed_device_id?: string | null;
+  feed_device?: string | null;
+  feed_outlet?: number | null;
 }
 
 export interface DeviceDetail extends DeviceSummary {

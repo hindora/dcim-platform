@@ -107,6 +107,11 @@ class PowerSupplyOut(BaseModel):
     number: int
     connector: str | None = None
     rated_watts: int | None = None
+    #: The outlet at the far end of this cord. Null means the supply is fitted
+    #: but not corded - which is a finding, not a blank.
+    feed_device_id: str | None = None
+    feed_device: str | None = None
+    feed_outlet: int | None = None
 
 
 class DeviceDetail(DeviceSummary):

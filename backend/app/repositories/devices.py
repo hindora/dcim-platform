@@ -139,11 +139,25 @@ async def list_power_supplies(session: AsyncSession,
     is the fact behind whether losing a feed costs you the server - which is
     what an operator is asking when they open this page.
     """
+    # ...and what feeds each one. A cord lands on an outlet at the far end, so
+    # the PSU is the B side of a power connection and the PDU is the A side -
+    # the mirror of the outlet query, which walks the same cable the other way.
+    #
+    # This is the fact that decides whether two supplies are redundancy or
+    # decoration: two cords into one strip is a single point of failure wearing
+    # a pair of PSUs.
     rows = (await session.execute(text("""
-        SELECT number, connector, rated_watts
-          FROM power_supply
-         WHERE device_id = CAST(:id AS uuid)
-         ORDER BY number
+        SELECT ps.number, ps.connector, ps.rated_watts,
+               fd.id::text AS feed_device_id,
+               fd.name     AS feed_device,
+               o.number    AS feed_outlet
+          FROM power_supply ps
+          LEFT JOIN connection c ON c.b_termination_type = 'psu'
+                                AND c.b_termination_id = ps.id
+          LEFT JOIN device fd ON fd.id = c.a_device_id
+          LEFT JOIN outlet o  ON o.id = c.a_termination_id
+         WHERE ps.device_id = CAST(:id AS uuid)
+         ORDER BY ps.number
     """), {"id": device_id})).mappings().all()
     return [dict(r) for r in rows]
 

@@ -78,6 +78,24 @@ export function DeviceDetail() {
   // everything the device happens to report - and it asks for them even when
   // none have arrived, so an absent metric can be named as absent instead of
   // silently missing from a chart that still looks complete.
+  /** Whether the supplies actually buy anything.
+   *
+   *  Two PSUs are redundancy only if they are fed from different sources. Two
+   *  cords into one strip is a single point of failure wearing a pair of
+   *  supplies, and it looks identical from a count - which is what this said
+   *  before: `psus.length > 1` labelled "redundant". True across this estate
+   *  today, and it would have gone on saying so the moment somebody re-cabled
+   *  both cords to one PDU, which is precisely the state worth flagging.
+   */
+  const feeds = new Set((d.psus ?? []).map((p) => p.feed_device_id)
+                                      .filter((x): x is string => Boolean(x)));
+  const uncorded = (d.psus ?? []).filter((p) => !p.feed_device_id).length;
+  const psuVerdict = d.psus.length === 0 ? null
+    : uncorded > 0 ? { text: `${uncorded} not corded`, warn: true }
+    : d.psus.length === 1 ? { text: 'single-corded', warn: true }
+    : feeds.size > 1 ? { text: `${feeds.size} independent feeds`, warn: false }
+    : { text: 'both cords on one PDU', warn: true };
+
   // "4 x 1 Gb/s data, 1 x 1 Gb/s mgmt" - the port inventory as one line, which
   // is the nameplate fact. Grouped by role AND speed because a server with two
   // 25G NICs and a 1G BMC is three different things on one chassis, and a bare
@@ -160,10 +178,12 @@ export function DeviceDetail() {
               <>
                 {d.psus.length} × {d.psus[0].rated_watts ?? '?'} W
                 {' '}({[...new Set(d.psus.map((p) => p.connector ?? '?'))].join(', ')})
-                {/* Two supplies is the difference between losing a feed and
-                    losing the server, which is the whole reason to show it. */}
-                {d.psus.length > 1 && (
-                  <span className="muted">{' · '}redundant</span>
+                {/* The verdict, not the count: supplies are only redundancy if
+                    something separate feeds each one. */}
+                {psuVerdict && (
+                  <span className={psuVerdict.warn ? 'warn' : 'muted'}>
+                    {' · '}{psuVerdict.text}
+                  </span>
                 )}
               </>
             )}
@@ -188,6 +208,53 @@ export function DeviceDetail() {
           <dt>Asset tag</dt><dd className="mono">{d.asset_tag || '—'}</dd>
         </dl>
       </section>
+
+      {d.psus.length > 0 && (
+        <section>
+          <h3>Power supplies<span className="count"> {d.psus.length}</span></h3>
+          <p className="muted">
+            Which outlet each cord lands on. Two supplies are only redundancy if
+            something separate feeds each one — the same rack PDU twice is a
+            single point of failure wearing a pair of supplies.
+          </p>
+          {/* No scroll wrapper here, unlike the ports table. A chassis has one
+              to four supplies; capping four rows would add a scrollbar to a list
+              that was never going to be long. */}
+          <table>
+            <thead>
+              <tr>
+                <th>Slot</th><th>Inlet</th><th className="num">Rated</th>
+                <th>Fed from</th>
+              </tr>
+            </thead>
+            <tbody>
+              {d.psus.map((p) => (
+                <tr key={p.number}>
+                  <td>PSU{p.number}</td>
+                  <td className="muted">{p.connector ?? '—'}</td>
+                  <td className="num">
+                    {p.rated_watts != null ? `${p.rated_watts} W` : '—'}
+                  </td>
+                  <td>
+                    {p.feed_device_id ? (
+                      <>
+                        <Link to={`/devices/${p.feed_device_id}`}>{p.feed_device}</Link>
+                        {p.feed_outlet != null && (
+                          <span className="muted"> · outlet {p.feed_outlet}</span>
+                        )}
+                      </>
+                    ) : (
+                      /* Fitted but not corded. A blank would read as missing
+                         data; this is a real state and a finding. */
+                      <span className="warn">not corded</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
 
       <section>
         <h3>
