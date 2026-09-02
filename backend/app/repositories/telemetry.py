@@ -23,7 +23,20 @@ MAX_POINTS = 10_000
 # every series, which protects the database and the browser and has to scale
 # with the number of series asked for - a seven-metric chart legitimately wants
 # seven times the rows of a one-metric chart.
-MAX_POINTS_PER_SERIES = 2500
+#: What a LINE can carry, not what a response can. These are different budgets
+#: and conflating them is what made a week denser than a day: 2500 points into a
+#: plot ~650 units wide is four per pixel, so adjacent samples of a noisy signal
+#: overprint into a band and the trajectory disappears inside it.
+#:
+#: ~200 leaves roughly three units between points, and - the part that actually
+#: matters - it forces a bucket wide enough that the averaging does the
+#: smoothing. Measured on one CPU series: at 1m buckets the line spans 1-90% and
+#: reads as noise; the same hours at 1h buckets span 36-60% and read as a trend.
+#: The aggregation IS the trend extraction.
+TARGET_POINTS_PER_SERIES = 200
+
+#: A safety cap on the response, unrelated to legibility: it stops a
+#: pathological request pulling the table into memory.
 MAX_ROWS = 10_000
 
 # (bucket duration, table, bucket column, label), finest first. The raw table
@@ -59,7 +72,7 @@ def choose_source(start: datetime, end: datetime,
 
     window = max(end - start, timedelta(seconds=1))
     for bucket, table, col, label in _BUCKETS:
-        if window / bucket <= MAX_POINTS_PER_SERIES:
+        if window / bucket <= TARGET_POINTS_PER_SERIES:
             return table, col, label
     # Nothing coarser exists. 1h over a very long window is still the right
     # answer; the caller gets more points than the budget rather than an error.
@@ -83,7 +96,9 @@ async def history(
     # Scale the cap with the number of series requested, then bound it, so a
     # normal multi-metric chart is never truncated but a pathological request
     # still cannot pull the table into memory.
-    row_cap = min(MAX_ROWS, MAX_POINTS_PER_SERIES * max(1, len(metrics)))
+    # Generous against the routing target: the cap is a backstop, and a chart
+    # that is a little over budget should be drawn, not truncated.
+    row_cap = min(MAX_ROWS, 4 * TARGET_POINTS_PER_SERIES * max(1, len(metrics)))
     params: dict[str, Any] = {"device_id": device_id, "metrics": metrics,
                               "start": start, "end": end, "limit": row_cap + 1}
     instance_clause = ""

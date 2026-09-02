@@ -72,6 +72,10 @@ export function DeviceHistory({ deviceId, metrics, groups }: {
   }
 
   const withData = q.data ? q.data.series.filter((s) => s.points.length) : [];
+  // The newest instant any series reaches - what the chart actually shows.
+  const lastPointAt = withData.length
+    ? Math.max(...withData.map((s) => s.points[s.points.length - 1][0]))
+    : null;
   const byUnit = q.data ? groupByUnit(withData) : null;
 
   // A curated panel keeps its DECLARED order - CPU, then memory, then disk -
@@ -125,16 +129,24 @@ export function DeviceHistory({ deviceId, metrics, groups }: {
             {q.data.interval === 'raw'
               ? 'Raw samples as polled.'
               : `Averaged into ${q.data.interval} buckets.`}
-            {/* The right edge of the chart, stated. Without it a frozen window
-                is indistinguishable from a live one, which is the whole reason
-                a static chart feels broken beside a table that updates itself.
-                An absolute time rather than "N minutes ago": a relative label
-                only stays true if something re-renders to tick it, and one
-                that quietly stops counting is worse than no label. */}
-            {' · to '}
-            <time dateTime={endIso}>
-              {new Date(endsAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-            </time>
+            {/* The last point actually drawn, not the window that was asked
+                for. Those are not the same thing and the gap can be hours: an
+                hourly bucket only exists once its hour has closed, so a chart
+                on 1h buckets ends well short of now. Stamping the request
+                would print a time the line never reaches.
+
+                Absolute rather than "N minutes ago": a relative label only
+                stays true while something re-renders to tick it, and one that
+                quietly stops counting is worse than no label. */}
+            {lastPointAt != null && (
+              <>
+                {' · to '}
+                <time dateTime={new Date(lastPointAt).toISOString()}>
+                  {new Date(lastPointAt).toLocaleTimeString([],
+                    { hour: '2-digit', minute: '2-digit' })}
+                </time>
+              </>
+            )}
           </p>
           {!panels && byUnit && byUnit.size === 0 && (
             <p className="muted">Nothing recorded in this window.</p>
