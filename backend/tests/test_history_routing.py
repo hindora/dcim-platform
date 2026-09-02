@@ -17,7 +17,7 @@ from app.repositories.telemetry import (
 )
 
 NOW = datetime(2026, 8, 20, 12, 0, tzinfo=UTC)
-BUCKET_SECONDS = {"1m": 60, "5m": 300, "1h": 3600}
+BUCKET_SECONDS = {"1m": 60, "5m": 300, "1h": 3600, "1d": 86400}
 
 
 def route(**kw) -> str:
@@ -31,19 +31,20 @@ def route(**kw) -> str:
     ({"hours": 6}, "5m"),
     ({"days": 1}, "1h"),       # a day reads as its hourly shape, not 1440 samples
     ({"days": 7}, "1h"),
-    ({"days": 30}, "1h"),      # nothing coarser is stored; see the note below
-    ({"days": 90}, "1h"),
+    ({"days": 30}, "1d"),      # 30 points, not 720
+    ({"days": 90}, "1d"),
 ])
 def test_window_routes_to_the_right_aggregate(window, expected):
     assert route(**window) == expected
 
 
-def test_a_month_is_served_from_hourly_buckets_not_five_minute_ones():
-    """30 days at 5m is 8,640 points per line.
+def test_a_month_is_served_from_daily_buckets():
+    """30 days at 5m is 8,640 points per line, and at 1h it is still 720.
 
-    Slow to ship, and once drawn there are more points than pixels.
+    Slow to ship, and once drawn there are more points than pixels. A month
+    view wants 30 of them.
     """
-    assert route(days=30) == "1h"
+    assert route(days=30) == "1d"
 
 
 def test_a_day_is_not_served_from_minute_buckets():
@@ -59,26 +60,18 @@ def test_a_day_is_not_served_from_minute_buckets():
 
 
 def test_every_auto_route_stays_inside_the_per_series_budget():
-    """Up to the point where the ladder runs out.
+    """Now true for every window the charts offer.
 
-    Only 1m, 5m and 1h aggregates exist, so beyond about eight days the hourly
-    bucket is the coarsest thing there is and the budget stops being reachable:
-    30 days is 720 hourly points and 90 days is 2,160. Those windows are
-    KNOWINGLY over budget and will read densely.
-
-    Closing it needs either a daily continuous aggregate or re-bucketing at
-    query time with time_bucket over the hourly view. Asserted as "inside the
-    budget, or already as coarse as the data goes" so the exception is stated
-    rather than the invariant quietly weakened.
+    It was not before the daily aggregate existed: the ladder stopped at 1h, so
+    30 days routed to 720 points per series and 90 days to 2,160, and this test
+    had to carry an explicit exemption for "already as coarse as the data goes".
+    The exemption is gone because the case is.
     """
-    coarsest = max(BUCKET_SECONDS.values())
-    for days in (1, 2, 7, 14, 30, 60, 90):
+    for days in (1, 2, 7, 14, 30, 60, 90, 180):
         label = route(days=days)
         points = days * 86400 / BUCKET_SECONDS[label]
-        assert points <= TARGET_POINTS_PER_SERIES or BUCKET_SECONDS[label] == coarsest, (
-            f"{days}d routed to {label} at {points:.0f} points per series, and a "
-            f"coarser bucket was available")
-
+        assert points <= TARGET_POINTS_PER_SERIES, (
+            f"{days}d routed to {label}, which is {points:.0f} points per series")
 
 def test_the_finest_bucket_that_fits_is_chosen():
     """Not merely a bucket that fits - the most detailed one that does."""
@@ -99,7 +92,7 @@ def test_raw_is_only_reachable_by_asking_for_it():
     assert choose_source(NOW - timedelta(days=1), NOW, "raw")[0] == "telemetry_sample"
 
 
-@pytest.mark.parametrize("interval", ["1m", "5m", "1h"])
+@pytest.mark.parametrize("interval", ["1m", "5m", "1h", "1d"])
 def test_an_explicit_interval_is_honoured_over_the_budget(interval):
     table, _, label = choose_source(NOW - timedelta(days=365), NOW, interval)
     assert label == interval
@@ -108,7 +101,7 @@ def test_an_explicit_interval_is_honoured_over_the_budget(interval):
 
 def test_a_very_long_window_still_answers_with_the_coarsest_bucket():
     """More points than the budget beats an error or an empty chart."""
-    assert route(days=3650) == "1h"
+    assert route(days=3650) == "1d"
 
 
 # --- row cap -----------------------------------------------------------------

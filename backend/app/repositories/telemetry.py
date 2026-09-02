@@ -47,6 +47,7 @@ _BUCKETS = [
     (timedelta(minutes=1), "telemetry_1m", "bucket", "1m"),
     (timedelta(minutes=5), "telemetry_5m", "bucket", "5m"),
     (timedelta(hours=1), "telemetry_1h", "bucket", "1h"),
+    (timedelta(days=1), "telemetry_1d", "bucket", "1d"),
 ]
 
 _AGG_COLUMN = {"avg": "avg_value", "min": "min_value",
@@ -62,21 +63,21 @@ def choose_source(start: datetime, end: datetime,
     for the same cost: a 7-day window at 1-minute buckets is 10,080 points per
     series, which is both slow to ship and unreadable once drawn, while a
     30-day window at 5 minutes is 8,640. Targeting a point budget instead
-    lands on 1m for a day, 5m for a week and 1h for a month, which is what a
-    chart actually wants.
+    lands on 1h for a day and a week, and daily buckets for a month, which is
+    what a chart actually wants.
     """
     if interval == "raw":
         return "telemetry_sample", "ts", "raw"
-    if interval in ("1m", "5m", "1h"):
+    if interval in ("1m", "5m", "1h", "1d"):
         return f"telemetry_{interval}", "bucket", interval
 
     window = max(end - start, timedelta(seconds=1))
     for bucket, table, col, label in _BUCKETS:
         if window / bucket <= TARGET_POINTS_PER_SERIES:
             return table, col, label
-    # Nothing coarser exists. 1h over a very long window is still the right
+    # Nothing coarser exists. Daily over a multi-year window is still the right
     # answer; the caller gets more points than the budget rather than an error.
-    return "telemetry_1h", "bucket", "1h"
+    return "telemetry_1d", "bucket", "1d"
 
 
 async def history(

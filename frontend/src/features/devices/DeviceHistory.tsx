@@ -12,7 +12,7 @@ const RANGES = [
 ];
 
 const BUCKET_MS: Record<string, number> = {
-  raw: 60_000, '1m': 60_000, '5m': 300_000, '1h': 3600_000,
+  raw: 60_000, '1m': 60_000, '5m': 300_000, '1h': 3600_000, '1d': 86400_000,
 };
 
 /** Charts are grouped by unit, never merged across units.
