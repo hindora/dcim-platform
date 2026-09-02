@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { humanise } from '../../lib/format';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ApiError,
@@ -98,7 +99,7 @@ export function EndpointEditor({
       <section className="sheet narrow">
         <header className="sheet-head">
           <div>
-            <h2>{endpoint.protocol} · {endpoint.role.replace(/_/g, ' ')}</h2>
+            <h2>{humanise(endpoint.protocol)} · {humanise(endpoint.role)}</h2>
             <p>
               How the collector reaches this device on {endpoint.protocol}.
               Saved changes reach it on its next assignment fetch — within

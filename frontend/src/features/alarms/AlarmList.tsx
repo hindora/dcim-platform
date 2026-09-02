@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { api, type Alarm } from '../../api/client';
 import { StatusChip } from '../../components/StatusChip';
-import { relativeTime } from '../../lib/format';
+import { humanise, relativeTime } from '../../lib/format';
 import { useInvalidateOn, useTopics } from '../../ws/useSocket';
 
 const ALARM_EVENTS = ['alarm_created', 'alarm_updated', 'alarm_cleared'];
@@ -110,7 +110,7 @@ export function AlarmList() {
                 <td><Link to={`/devices/${a.device_id}`} onClick={(e) => e.stopPropagation()}>
                   {a.device_name}
                 </Link></td>
-                <td className="mono">{a.alarm_type}{a.instance ? `:${a.instance}` : ''}</td>
+                <td>{humanise(a.alarm_type)}{a.instance ? <span className="muted"> · {a.instance}</span> : null}</td>
                 <td className="muted">{a.message}</td>
                 <td className="muted">
                   {[a.datacenter_code, a.room_name, a.rack_name].filter(Boolean).join(' · ') || '—'}
@@ -138,7 +138,7 @@ export function AlarmList() {
 
       {selected && (
         <section className="stack" style={{ marginTop: 24 }}>
-          <h3>{selected.alarm_type} on {selected.device_name}</h3>
+          <h3>{humanise(selected.alarm_type)} on {selected.device_name}</h3>
           <dl className="kv">
             <dt>Severity</dt><dd><StatusChip status={selected.severity} /></dd>
             <dt>State</dt><dd>{selected.state}</dd>

@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { humanise } from '../../lib/format';
 import { Link, useParams } from 'react-router-dom';
 import { useState } from 'react';
 import { api, type ElevationDevice, type RackElevation as Elevation } from '../../api/client';
@@ -151,7 +152,7 @@ export function RackElevationView() {
                 // measurement nobody took.
                 ['--fill' as string]: frac == null ? '0' : String(frac),
               }}
-              title={`${d.name} · ${d.device_type} · ${overlayValue(d, overlay)}`}
+              title={`${d.name} · ${humanise(d.device_type)} · ${overlayValue(d, overlay)}`}
             >
               <span className="u-label">{label}</span>
               <span className="rack-name">{d.name}</span>
@@ -179,7 +180,7 @@ export function RackElevationView() {
             {zeroU.map((d) => (
               <li key={d.id}>
                 <Link to={`/devices/${d.id}`}>{d.name}</Link>
-                <span className="muted"> · {d.device_type} · </span>
+                <span className="muted"> · {humanise(d.device_type)} · </span>
                 <StatusChip status={d.status} />
               </li>
             ))}

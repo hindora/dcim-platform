@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { humanise } from '../../lib/format';
 import { Link, useNavigate } from 'react-router-dom';
 import { useState } from 'react';
 import { api, type FloorPlan as Plan, type FloorRack, type RoomSummary } from '../../api/client';
@@ -208,7 +209,7 @@ function Plan2D({ plan, overlay }: { plan: Plan; overlay: Overlay }) {
             {plan.unpositioned_equipment.map((e) => (
               <li key={e.id}>
                 <Link to={`/devices/${e.id}`}>{e.name}</Link>
-                <span className="muted"> · {e.device_type} · </span>
+                <span className="muted"> · {humanise(e.device_type)} · </span>
                 <StatusChip status={e.status} />
               </li>
             ))}

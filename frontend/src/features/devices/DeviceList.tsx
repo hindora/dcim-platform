@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { api, type DeviceSummary, type Page } from '../../api/client';
 import { StatusChip } from '../../components/StatusChip';
-import { relativeTime } from '../../lib/format';
+import { humanise, relativeTime } from '../../lib/format';
 
 export function DeviceList() {
   const [search, setSearch] = useState('');
@@ -73,7 +73,7 @@ export function DeviceList() {
               {data.items.map((d) => (
                 <tr key={d.id}>
                   <td><Link to={`/devices/${d.id}`}>{d.name}</Link></td>
-                  <td className="muted">{d.device_type}</td>
+                  <td className="muted">{humanise(d.device_type)}</td>
                   <td><StatusChip status={d.status} /></td>
                   <td className="mono">{d.mgmt_ip ?? d.primary_ip ?? '—'}</td>
                   <td className="muted">

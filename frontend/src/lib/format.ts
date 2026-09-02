@@ -131,3 +131,42 @@ export function formatSpeed(bps: number | null | undefined): string {
   }
   return `${bps} b/s`;
 }
+
+/** Initialisms that are read as letters and belong in full caps. */
+const ACRONYMS = new Set([
+  'cpu', 'gpu', 'psu', 'pdu', 'ups', 'ats', 'rpp', 'crah', 'crac', 'cdu',
+  'bgp', 'lldp', 'snmp', 'bmc', 'nic', 'oob', 'chw', 'cw', 'ct', 'dc', 'it',
+  'mcc', 'mpp', 'thd', 'pue', 'hvac', 'ev2', 'os', 'ip', 'mac', 'ipmi', 'id',
+]);
+
+/** Names with a spelling of their own, which neither capitalising nor
+ *  upper-casing gets right. A protocol rendered "BACNET" or "Gnmi" looks like
+ *  a system that does not know what it is talking to. */
+const PROPER: Record<string, string> = {
+  bacnet: 'BACnet', gnmi: 'gNMI', redfish: 'Redfish', modbus: 'Modbus',
+  mgmt: 'Management', sflow: 'sFlow', ipv4: 'IPv4', ipv6: 'IPv6',
+};
+
+/** A machine identifier, rendered for a person.
+ *
+ *  `oob_switch` and `in_service` are how the database spells things; printing
+ *  them at an operator exposes the schema and reads as unfinished. Separators
+ *  become spaces, the first word is capitalised, and the words that have their
+ *  own conventions keep them.
+ *
+ *  Only the FIRST word is capitalised on purpose: this renders labels and cell
+ *  values, not headlines. "Out of band switch" is a phrase; "Out Of Band
+ *  Switch" is a title, and a table full of them reads as shouting.
+ */
+export function humanise(key: string | null | undefined): string {
+  if (!key) return '';
+  const words = key.replace(/[._-]+/g, ' ').trim().split(/\s+/);
+  return words
+    .map((w, i) => {
+      const lower = w.toLowerCase();
+      if (PROPER[lower]) return PROPER[lower];
+      if (ACRONYMS.has(lower)) return w.toUpperCase();
+      return i === 0 ? w.charAt(0).toUpperCase() + w.slice(1) : lower;
+    })
+    .join(' ');
+}

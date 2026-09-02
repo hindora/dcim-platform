@@ -32,7 +32,7 @@ import {
 import { CategoryGlyph } from '../../components/CategoryGlyph';
 import { StatusChip } from '../../components/StatusChip';
 import { metaFor } from '../../components/alertMeta';
-import { relativeTime } from '../../lib/format';
+import { humanise, relativeTime } from '../../lib/format';
 
 const SEVERITIES = ['critical', 'major', 'minor', 'warning'] as const;
 
@@ -47,19 +47,6 @@ const SEV_RANK: Record<string, number> = {
  *  these names is half acronym, and sentence-casing them wholesale makes a
  *  column of familiar terms look like a column of typos.
  */
-const ACRONYMS = new Set([
-  'cpu', 'gpu', 'psu', 'pdu', 'ups', 'ats', 'rpp', 'crah', 'crac', 'cdu',
-  'bgp', 'lldp', 'snmp', 'bmc', 'nic', 'oob', 'chw', 'cw', 'ct', 'dc', 'it',
-  'mcc', 'mpp', 'thd', 'pue', 'hvac', 'ev2', 'os',
-]);
-
-function humanise(key: string) {
-  const words = key.replace(/[._-]+/g, ' ').trim().split(/\s+/);
-  return words
-    .map((w, i) => (ACRONYMS.has(w.toLowerCase()) ? w.toUpperCase()
-      : i === 0 ? w.charAt(0).toUpperCase() + w.slice(1) : w))
-    .join(' ');
-}
 
 /** An endpoint id is an instance to the database and noise to a person.
  *

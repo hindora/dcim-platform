@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { humanise } from '../../lib/format';
 import { api, type PowerFleet, type RoomSummary } from '../../api/client';
 
 /** Who has a second feed, and who only looks like they do.
@@ -82,7 +83,7 @@ export function PowerView({ room }: { room: RoomSummary }) {
               {data.at_risk.map((d) => (
                 <tr key={d.device_id}>
                   <td>{d.name}</td>
-                  <td className="muted">{d.device_type}</td>
+                  <td className="muted">{humanise(d.device_type)}</td>
                   <td>
                     <span className={`chip ${TONE[d.redundancy] ?? 'unknown'}`}>
                       {d.redundancy.replace(/_/g, ' ')}
@@ -107,7 +108,7 @@ export function PowerView({ room }: { room: RoomSummary }) {
               {data.supplies.slice(0, 25).map((s) => (
                 <tr key={s.device_id}>
                   <td>{s.name}</td>
-                  <td className="muted">{s.device_type}</td>
+                  <td className="muted">{humanise(s.device_type)}</td>
                   <td><span className={`chip ${s.status === 'ONLINE' ? 'ok' : 'warn'}`}>
                     {s.status}
                   </span></td>

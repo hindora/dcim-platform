@@ -27,6 +27,7 @@
  */
 
 import { useState } from 'react';
+import { humanise } from '../lib/format';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { api, type PlatformState } from '../api/client';
@@ -89,7 +90,7 @@ export function TrustBanner() {
 
       {shown.map((c) => (
         <span key={`${c.alarm_type}:${c.instance}`} className="cond">
-          <b>{c.alarm_type}</b> {c.message}
+          <b>{humanise(c.alarm_type)}</b> {c.message}
           <i> since {new Date(c.first_seen).toLocaleTimeString([], {
             hour: '2-digit', minute: '2-digit' })}</i>
         </span>

@@ -11,7 +11,9 @@ import {
 import { StatusChip } from '../../components/StatusChip';
 import { DeviceHistory, type ChartGroup } from './DeviceHistory';
 import { EndpointEditor } from './EndpointEditor';
-import { formatMetric, formatSpeed, metricLabel, relativeTime } from '../../lib/format';
+import {
+  formatMetric, formatSpeed, humanise, metricLabel, relativeTime,
+} from '../../lib/format';
 
 /** What an operator opens a server page to ask, in the order they ask it.
  *
@@ -109,7 +111,7 @@ export function DeviceDetail() {
     if (!ports.data?.length) return null;
     const buckets = new Map<string, number>();
     for (const p of ports.data) {
-      const k = `${formatSpeed(p.speed_bps)}|${p.role}`;
+      const k = `${formatSpeed(p.speed_bps)}|${humanise(p.role)}`;
       buckets.set(k, (buckets.get(k) ?? 0) + 1);
     }
     return [...buckets.entries()]
@@ -132,7 +134,7 @@ export function DeviceDetail() {
       <div>
         <h2>{d.name}</h2>
         <p className="subtitle">
-          {d.device_type} · {d.vendor ?? 'unknown vendor'} {d.model ?? ''}
+          {humanise(d.device_type)} · {d.vendor ?? 'unknown vendor'} {d.model ?? ''}
         </p>
         <StatusChip status={d.status} />
       </div>
@@ -140,7 +142,7 @@ export function DeviceDetail() {
       <section>
         <h3>Identity and location</h3>
         <dl className="kv">
-          <dt>Device type</dt><dd>{d.device_type}</dd>
+          <dt>Device type</dt><dd>{humanise(d.device_type)}</dd>
           <dt>Vendor</dt><dd>{d.vendor ?? '—'}</dd>
           <dt>Model</dt><dd>{d.model ?? '—'}</dd>
           <dt>Serial</dt><dd className="mono">{d.serial_number ?? '—'}</dd>
@@ -153,7 +155,7 @@ export function DeviceDetail() {
             {d.location.row_name ?? '—'} / {d.location.rack_name ?? '—'}
             {d.location.u_start ? ` · U${d.location.u_start}` : ''}
           </dd>
-          <dt>Lifecycle</dt><dd>{d.lifecycle}</dd>
+          <dt>Lifecycle</dt><dd>{humanise(d.lifecycle)}</dd>
         </dl>
       </section>
 
@@ -277,7 +279,7 @@ export function DeviceDetail() {
               {ports.data.map((p) => (
                 <tr key={p.id}>
                   <td>{p.name}</td>
-                  <td className="muted">{p.role}</td>
+                  <td className="muted">{humanise(p.role)}</td>
                   <td>{formatSpeed(p.speed_bps)}</td>
                   <td className="mono muted">{p.mac ?? '—'}</td>
                   <td>
@@ -333,8 +335,8 @@ export function DeviceDetail() {
           <tbody>
             {d.endpoints.map((e) => (
               <tr key={e.id}>
-                <td>{e.protocol}</td>
-                <td className="muted">{e.role}</td>
+                <td>{humanise(e.protocol)}</td>
+                <td className="muted">{humanise(e.role)}</td>
                 <td className="mono">
                   {e.address}{e.port ? `:${e.port}` : ''}
                   {e.via_name && (
@@ -364,7 +366,7 @@ export function DeviceDetail() {
                       {' · retired'}
                     </span>
                   ) : e.admin_state !== 'enabled' && (
-                    <span className="muted"> · {e.admin_state}</span>
+                    <span className="muted"> · {humanise(e.admin_state)}</span>
                   )}
                 </td>
                 {/* Only ever the hint - the secret itself never leaves the server. */}
@@ -419,7 +421,7 @@ export function DeviceDetail() {
                 <tr key={key}>
                   <td>{metricLabel(key)}</td>
                   <td className="num">{formatMetric(key, m.v)}</td>
-                  <td className="muted">{m.q}</td>
+                  <td className="muted">{humanise(m.q)}</td>
                   <td className="muted">{relativeTime(m.t)}</td>
                 </tr>
               ))}

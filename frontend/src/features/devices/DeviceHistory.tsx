@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { api, type HistoryOut, type Series } from '../../api/client';
+import { metricLabel } from '../../lib/format';
 import { TimeChart } from '../../components/TimeChart';
 
 const RANGES = [
@@ -164,7 +165,8 @@ export function DeviceHistory({ deviceId, metrics, groups }: {
               <figcaption>{p.title}</figcaption>
               {p.series.length === 0 ? (
                 <p className="muted">
-                  Not reported by this device{p.missing.length ? ` (${p.missing.join(', ')})` : ''}.
+                  Not reported by this device{p.missing.length
+                    ? ` (${p.missing.map(metricLabel).join(', ')})` : ''}.
                 </p>
               ) : (
                 <>
@@ -174,7 +176,7 @@ export function DeviceHistory({ deviceId, metrics, groups }: {
                       complete. A missing line and a flat one look identical. */}
                   {p.missing.length > 0 && (
                     <figcaption className="muted">
-                      No data for {p.missing.join(', ')} in this window.
+                      No data for {p.missing.map(metricLabel).join(', ')} in this window.
                     </figcaption>
                   )}
                 </>
