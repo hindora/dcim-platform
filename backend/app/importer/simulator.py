@@ -513,11 +513,21 @@ class TopologyImporter:
                         CAST(:mac AS macaddr), CAST(:ip AS inet))
                 ON CONFLICT (device_id, name) DO UPDATE SET
                     if_index = EXCLUDED.if_index, role = EXCLUDED.role,
-                    speed_bps = EXCLUDED.speed_bps
+                    speed_bps = EXCLUDED.speed_bps,
+                    -- Without these two an existing row keeps whatever it was
+                    -- first imported with, so a corrected read would fix new
+                    -- installs and leave every device already on the estate
+                    -- wrong. Re-importing IS the repair path.
+                    mac = EXCLUDED.mac, ip = EXCLUDED.ip
                 RETURNING id::text
             """, dev=device_id, idx=if_index, name=name,
                 role=iface.get("role") or "data",
-                speed=_speed_bps(iface), mac=iface.get("mac") or None,
+                speed=_speed_bps(iface),
+                # `mac_address` is what the export calls it. Reading only this
+                # schema's own spelling left all 5700 interfaces on the estate
+                # with a NULL MAC - the same field-name mismatch that switched
+                # off the outlet model, in the block directly below.
+                mac=iface.get("mac", iface.get("mac_address")) or None,
                 ip=iface.get("ip") or None)
             self._iface[(device_id, if_index)] = iface_id
             self._iface_at[(device_id, idx)] = iface_id
