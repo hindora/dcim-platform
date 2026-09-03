@@ -970,3 +970,75 @@ tr.is-selected > td { background: var(--accent-dim); }
 .asset-shell td.asset-tag,
 .asset-shell .asset-life,
 .asset-shell .asset-cover { white-space: nowrap; }
+
+/* --------------------------------------------------------- scrollbars */
+
+/* COLOR-SCHEME FIRST, because it is the only lever on the one scrollbar CSS
+ * cannot reach. A native <select> renders its option list as a browser popup,
+ * outside the page's DOM: ::-webkit-scrollbar never applies to it. What the
+ * browser does honour is the used color-scheme, so declaring it turns that
+ * popup - and its scrollbar, and the native date pickers - dark instead of
+ * leaving them the white default that sits so badly on this console.
+ *
+ * Mirrors the palette's own three states exactly: dark by default, light when
+ * the system asks and nothing overrides it, light when explicitly chosen. Set
+ * on our own subtree rather than :root, which is shared with every page. */
+.asset-shell,
+.asset-backdrop { color-scheme: dark; }
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) .asset-shell,
+  :root:not([data-theme='dark']) .asset-backdrop { color-scheme: light; }
+}
+
+:root[data-theme='light'] .asset-shell,
+:root[data-theme='light'] .asset-backdrop { color-scheme: light; }
+
+/* Then the rails this module owns, following the treatment already set for
+   .table-scroll and friends: a thin floating rail rather than the platform's
+   grey trough, which on a dark console reads as a broken border. */
+.asset-nav,
+.asset-filters,
+.asset-scroll,
+.asset-picker-list,
+.asset-backdrop {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+.asset-nav::-webkit-scrollbar,
+.asset-filters::-webkit-scrollbar,
+.asset-scroll::-webkit-scrollbar,
+.asset-picker-list::-webkit-scrollbar,
+.asset-backdrop::-webkit-scrollbar { width: 10px; height: 10px; }
+
+.asset-nav::-webkit-scrollbar-track,
+.asset-filters::-webkit-scrollbar-track,
+.asset-scroll::-webkit-scrollbar-track,
+.asset-picker-list::-webkit-scrollbar-track,
+.asset-backdrop::-webkit-scrollbar-track { background: transparent; }
+
+.asset-nav::-webkit-scrollbar-thumb,
+.asset-filters::-webkit-scrollbar-thumb,
+.asset-scroll::-webkit-scrollbar-thumb,
+.asset-picker-list::-webkit-scrollbar-thumb,
+.asset-backdrop::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 99px;
+  /* Inset by a transparent border so the rail floats clear of the content
+     rather than sitting on it. */
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+.asset-nav:hover::-webkit-scrollbar-thumb,
+.asset-filters:hover::-webkit-scrollbar-thumb,
+.asset-scroll:hover::-webkit-scrollbar-thumb,
+.asset-picker-list:hover::-webkit-scrollbar-thumb,
+.asset-backdrop:hover::-webkit-scrollbar-thumb { background: var(--text-faint); }
+
+.asset-nav::-webkit-scrollbar-corner,
+.asset-filters::-webkit-scrollbar-corner,
+.asset-scroll::-webkit-scrollbar-corner,
+.asset-picker-list::-webkit-scrollbar-corner,
+.asset-backdrop::-webkit-scrollbar-corner { background: transparent; }
