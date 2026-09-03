@@ -883,3 +883,23 @@ tr.is-selected > td { background: var(--accent-dim); }
 .asset-pager-gap { color: var(--text-faint); padding: 0 2px; }
 
 .asset-pager-size input[type='number'] { width: 68px; }
+
+/* The selection column. Its header carries a word, because a bare column of
+   checkboxes reads as decoration until somebody tries one - and the whole
+   label is the hit target, since a 14px box is a small thing to ask a pointer
+   for on every row. */
+.asset-select-head { width: 76px; }
+
+.asset-select-head label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  /* th is uppercase and letter-spaced; inherit rather than restate it, so the
+     column reads as one of the headers instead of a control bolted on. */
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+}
+
+.asset-select-head input { margin: 0; }

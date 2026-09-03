@@ -114,6 +114,7 @@ export function InventoryTable() {
   const rows = data?.items ?? [];
   const chosen = new Set(selected);
   const allShown = rows.length > 0 && rows.every((d) => chosen.has(d.id));
+  const someShown = rows.some((d) => chosen.has(d.id));
 
   // Only transitions EVERY selected asset can make. Offering a move that some
   // of them would refuse turns one action into a report nobody wanted.
@@ -246,15 +247,27 @@ export function InventoryTable() {
             <table>
               <thead>
                 <tr>
-                  <th style={{ width: 28 }}>
-                    <input
-                      type="checkbox"
-                      checked={allShown}
-                      aria-label="Select all shown"
-                      onChange={() => setSelected(allShown
-                        ? selected.filter((id) => !rows.some((d) => d.id === id))
-                        : [...new Set([...selected, ...rows.map((d) => d.id)])])}
-                    />
+                  <th className="asset-select-head">
+                    {/* Labelled, because an unexplained column of checkboxes
+                        reads as decoration. Clicking the word toggles too - a
+                        14px box is a small target to ask for repeatedly. */}
+                    <label title={`Select all ${rows.length} on this page`}>
+                      <input
+                        type="checkbox"
+                        checked={allShown}
+                        ref={(el) => {
+                          // Some-but-not-all. Without it the box reads as
+                          // "nothing selected" while a bulk action is armed on
+                          // rows scrolled out of sight.
+                          if (el) el.indeterminate = someShown && !allShown;
+                        }}
+                        aria-label={`Select all ${rows.length} assets on this page`}
+                        onChange={() => setSelected(allShown
+                          ? selected.filter((id) => !rows.some((d) => d.id === id))
+                          : [...new Set([...selected, ...rows.map((d) => d.id)])])}
+                      />
+                      <span>Select</span>
+                    </label>
                   </th>
                   <th>Asset tag</th>
                   <th>Name</th>
