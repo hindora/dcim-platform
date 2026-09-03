@@ -30,8 +30,27 @@ Neither is code and both block schema.
 | **Tenancy in scope?** (`19` B8) | column + repository filter from day one / explicitly out | **Out.** And then `tenant` must not exist as an attribute or a tag either |
 | **Document storage** (`20` §10) | object store (MinIO/S3) / defer documents entirely | **Defer.** No blobs in PostgreSQL |
 
-Exit: both written down in this file. Tenancy is cheap now and expensive in
-phase 4.
+### Decided
+
+**Tenancy: OUT OF SCOPE.** Confirmed 2026-09-03, after phases 1-6 were built on
+it as the working assumption.
+
+The consequence is not "we skipped a column". It is that `tenant` must not exist
+as an attribute or a tag either, because a free-text label would be populated,
+then relied on, and would look like an access boundary while filtering nothing.
+Nothing in `19`-`23` introduces one, and `20` §8 says so at the point somebody
+would be tempted.
+
+If this ever reverses, the work is a column with a foreign key plus a filter in
+the repository layer on every list endpoint - and it grows with the schema. It
+was 33 tables when the question was first raised and is 42 now.
+
+**Documents: DEFERRED.** No object store is deployed, and blobs do not go in
+PostgreSQL - a rack photo is 4 MB, somebody uploads forty in an afternoon, and
+`pg_dump` is how you find out. `asset_document` is specified in `20` §10 and
+deliberately unbuilt.
+
+Exit: both written down here, which is what this phase was for.
 
 ## Phase 1 — the workspace, on what already exists
 
