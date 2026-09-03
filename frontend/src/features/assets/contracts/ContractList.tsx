@@ -1,7 +1,9 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { api, type Supplier, type SupportContract } from '../../../api/client';
 import { humanise } from '../../../lib/format';
+import { ContractForm, SupplierForm } from './ContractForm';
 
 /** Support contracts, soonest expiry first.
  *
@@ -11,6 +13,7 @@ import { humanise } from '../../../lib/format';
  *  overview about what counts as near.
  */
 export function ContractList() {
+  const [creating, setCreating] = useState<'contract' | 'supplier' | null>(null);
   const { data, isLoading, error } = useQuery({
     queryKey: ['contracts'],
     queryFn: () => api.contracts({ limit: '500' }),
@@ -36,6 +39,18 @@ export function ContractList() {
         Cover is a contract, not a date on a machine. One contract covers many
         devices and renews as a unit.
       </p>
+
+      <p className="asset-table-note">
+        <button type="button" onClick={() => setCreating('contract')}>
+          Record a contract
+        </button>
+        <button type="button" onClick={() => setCreating('supplier')}>
+          Add a supplier
+        </button>
+      </p>
+
+      {creating === 'contract' && <ContractForm onClose={() => setCreating(null)} />}
+      {creating === 'supplier' && <SupplierForm onClose={() => setCreating(null)} />}
 
       {isLoading && <p className="muted">Loading…</p>}
 

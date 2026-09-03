@@ -31,7 +31,16 @@ export function setToken(token: string | null): void {
 }
 
 export class ApiError extends Error {
-  constructor(readonly status: number, message: string) {
+  /** The structured body, when the server sent one.
+   *
+   *  Several endpoints refuse with a shape rather than a string - an illegal
+   *  lifecycle transition carries the allowed set, a rack collision names the
+   *  occupying device. `String(error)` on those renders "[object Object]",
+   *  which is how a form ends up telling an operator nothing at all. `message`
+   *  is always a sentence; `detail` is there when a form wants to do better.
+   */
+  constructor(readonly status: number, message: string,
+              readonly detail?: Record<string, unknown>) {
     super(message);
   }
 }
@@ -53,14 +62,30 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     throw new ApiError(401, 'session expired');
   }
   if (!res.ok) {
-    let detail = res.statusText;
+    let message = res.statusText;
+    let structured: Record<string, unknown> | undefined;
     try {
       const body = await res.json();
-      detail = body.detail ?? body.title ?? detail;
+      const raw = body.detail ?? body.title ?? message;
+      if (raw && typeof raw === 'object') {
+        // FastAPI passes a dict detail straight through. Keep it, and pull the
+        // human sentence out of it rather than stringifying the object.
+        structured = raw as Record<string, unknown>;
+        message = typeof structured.message === 'string'
+          ? structured.message
+          : JSON.stringify(structured);
+      } else if (Array.isArray(raw)) {
+        // Pydantic validation errors: one entry per bad field.
+        message = raw
+          .map((e) => (e?.msg ? `${(e.loc ?? []).slice(1).join('.')}: ${e.msg}` : ''))
+          .filter(Boolean).join('; ') || message;
+      } else {
+        message = String(raw);
+      }
     } catch {
       /* non-JSON error body */
     }
-    throw new ApiError(res.status, detail);
+    throw new ApiError(res.status, message, structured);
   }
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
@@ -1431,6 +1456,81 @@ export const api = {
   deviceContracts: (deviceId: string) =>
     request<{ items: SupportContract[] }>(`/devices/${deviceId}/contracts`),
   tags: () => request<{ items: Tag[] }>('/tags'),
+
+  // ---- writes. Every one of these already existed as an endpoint; what was
+  // missing was a form behind it, which is what left the module read-only.
+
+  createWindow: (body: {
+    title: string; description?: string; change_ref?: string;
+    kind: string; starts_at: string; ends_at: string;
+    suppress: boolean; device_ids: string[];
+  }) => request<MaintenanceWindow>('/maintenance/windows', {
+    method: 'POST', body: JSON.stringify(body),
+  }),
+  windowAction: (id: string, action: 'start' | 'complete' | 'cancel') =>
+    request<{ status: string; shelved_alarms?: number; unshelved_devices?: number }>(
+      `/maintenance/windows/${id}/${action}`, { method: 'POST' }),
+  addWindowTargets: (id: string, deviceIds: string[]) =>
+    request<{ added: number }>(`/maintenance/windows/${id}/targets`, {
+      method: 'POST', body: JSON.stringify({ device_ids: deviceIds }),
+    }),
+  removeWindowTarget: (id: string, deviceId: string) =>
+    request<{ status: string }>(`/maintenance/windows/${id}/targets/${deviceId}`, {
+      method: 'DELETE',
+    }),
+
+  createRecord: (deviceId: string, body: {
+    kind: string; summary: string; detail?: string; window_id?: string;
+    parts_used?: unknown[];
+  }) => request<{ id: string }>(`/devices/${deviceId}/maintenance`, {
+    method: 'POST', body: JSON.stringify(body),
+  }),
+
+  createSupplier: (body: Record<string, string | null | undefined>) =>
+    request<{ id: string }>('/suppliers', {
+      method: 'POST', body: JSON.stringify(body),
+    }),
+
+  createContract: (body: Record<string, unknown>) =>
+    request<SupportContract>('/contracts', {
+      method: 'POST', body: JSON.stringify(body),
+    }),
+  patchContract: (id: string, body: Record<string, unknown>) =>
+    request<SupportContract>(`/contracts/${id}`, {
+      method: 'PATCH', body: JSON.stringify(body),
+    }),
+  deleteContract: (id: string) =>
+    request<{ status: string; devices_recomputed: number }>(`/contracts/${id}`, {
+      method: 'DELETE',
+    }),
+  coverDevices: (id: string, deviceIds: string[]) =>
+    request<{ added: number }>(`/contracts/${id}/devices`, {
+      method: 'POST', body: JSON.stringify({ device_ids: deviceIds }),
+    }),
+  uncoverDevice: (id: string, deviceId: string) =>
+    request<{ status: string }>(`/contracts/${id}/devices/${deviceId}`, {
+      method: 'DELETE',
+    }),
+
+  createTag: (body: { key: string; value: string; colour?: string;
+                      description?: string }) =>
+    request<{ id: string }>('/tags', { method: 'POST', body: JSON.stringify(body) }),
+  patchTag: (id: string, body: Record<string, unknown>) =>
+    request<{ status: string }>(`/tags/${id}`, {
+      method: 'PATCH', body: JSON.stringify(body),
+    }),
+  deleteTag: (id: string) =>
+    request<{ status: string }>(`/tags/${id}`, { method: 'DELETE' }),
+  objectTags: (type: string, id: string) =>
+    request<{ items: Tag[] }>(`/objects/${type}/${id}/tags`),
+  assignTags: (type: string, id: string, tagIds: string[]) =>
+    request<{ added: number }>(`/objects/${type}/${id}/tags`, {
+      method: 'POST', body: JSON.stringify({ tag_ids: tagIds }),
+    }),
+  unassignTag: (type: string, id: string, tagId: string) =>
+    request<{ status: string }>(`/objects/${type}/${id}/tags/${tagId}`, {
+      method: 'DELETE',
+    }),
 
   lifecycleHistory: (deviceId: string) =>
     request<LifecycleHistory>(`/devices/${deviceId}/lifecycle`),

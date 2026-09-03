@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import {
@@ -6,6 +7,7 @@ import {
   type MaintenanceWindow,
 } from '../../../api/client';
 import { humanise, relativeTime } from '../../../lib/format';
+import { RecordWorkForm } from './RecordWorkForm';
 
 /** Work planned on this asset, and work done to it.
  *
@@ -14,6 +16,7 @@ import { humanise, relativeTime } from '../../../lib/format';
  *  last thing done to it.
  */
 export function MaintenanceTab({ deviceId }: { deviceId: string }) {
+  const [recording, setRecording] = useState(false);
   const { data: windows } = useQuery<{ items: MaintenanceWindow[] }>({
     queryKey: ['maintenance-windows', 'device', deviceId],
     queryFn: () => api.maintenanceWindows({ device_id: deviceId }),
@@ -61,6 +64,12 @@ export function MaintenanceTab({ deviceId }: { deviceId: string }) {
       )}
 
       <h3>Work done</h3>
+      <p className="asset-table-note">
+        <button type="button" onClick={() => setRecording(true)}>Record work</button>
+      </p>
+      {recording && (
+        <RecordWorkForm deviceId={deviceId} onClose={() => setRecording(false)} />
+      )}
       {isLoading && <p className="muted">Loading…</p>}
       {!isLoading && (records?.items.length ?? 0) === 0 && (
         <p className="muted">

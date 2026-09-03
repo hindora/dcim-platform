@@ -339,6 +339,8 @@ frontend/src/features/assets/
   reservations/ReservationList.tsx
   admin/TagAdmin.tsx
   components/                 forks of shared components, module-local
+    Dialog.tsx                focus trap, Escape, restore focus on close
+    DevicePicker.tsx          shared by window targets and contract coverage
   assets.css                  every selector prefixed .asset-
 ```
 

@@ -35,6 +35,7 @@ import { WindowList } from './features/assets/maintenance/WindowList';
 import { WindowDetail } from './features/assets/maintenance/WindowDetail';
 import { ContractList } from './features/assets/contracts/ContractList';
 import { ContractDetail } from './features/assets/contracts/ContractDetail';
+import { TagAdmin } from './features/assets/admin/TagAdmin';
 import { useSocketStatus } from './ws/useSocket';
 
 function Login({ onDone, returnTo }: { onDone: () => void; returnTo?: string }) {
@@ -225,6 +226,7 @@ export default function App() {
             <Route path="maintenance/:id" element={<WindowDetail />} />
             <Route path="contracts" element={<ContractList />} />
             <Route path="contracts/:id" element={<ContractDetail />} />
+            <Route path="admin/tags" element={<TagAdmin />} />
           </Route>
 
           {/* Reached from rows, drill-downs and links rather than the nav. */}

@@ -1,7 +1,9 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { api, type MaintenanceWindow } from '../../../api/client';
 import { humanise, relativeTime } from '../../../lib/format';
+import { WindowForm } from './WindowForm';
 
 /** Maintenance windows, and what each is holding out of the alarm console.
  *
@@ -10,6 +12,7 @@ import { humanise, relativeTime } from '../../../lib/format';
  *  shows before somebody discovers it as a missed outage.
  */
 export function WindowList() {
+  const [scheduling, setScheduling] = useState(false);
   const { data, isLoading, error } = useQuery<{ items: MaintenanceWindow[] }>({
     queryKey: ['maintenance-windows'],
     queryFn: () => api.maintenanceWindows({ limit: '200' }),
@@ -31,6 +34,14 @@ export function WindowList() {
         device inside a running window is still recorded — it is kept out of the
         active list, not thrown away.
       </p>
+
+      <p className="asset-table-note">
+        <button type="button" onClick={() => setScheduling(true)}>
+          Schedule maintenance
+        </button>
+      </p>
+
+      {scheduling && <WindowForm onClose={() => setScheduling(false)} />}
 
       {isLoading && <p className="muted">Loading…</p>}
 

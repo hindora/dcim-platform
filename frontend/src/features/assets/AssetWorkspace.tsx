@@ -81,6 +81,13 @@ export function AssetWorkspace() {
           count: expiring },
       ],
     },
+    {
+      title: 'Manage',
+      items: [
+        { to: '/assets/admin/tags', label: 'Tags',
+          blurb: 'The vocabulary assets are grouped by' },
+      ],
+    },
   ];
 
   return (

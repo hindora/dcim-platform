@@ -12,6 +12,7 @@ import { LifecycleChip } from '../components/LifecycleChip';
 import { LifecycleTab } from './LifecycleTab';
 import { MaintenanceTab } from './MaintenanceTab';
 import { SupportTab } from './SupportTab';
+import { TagAssignForm } from './RecordWorkForm';
 
 /** One asset, as an asset.
  *
@@ -47,6 +48,7 @@ function Fact({ k, v }: { k: string; v: React.ReactNode }) {
 export function AssetRecord() {
   const { id = '' } = useParams();
   const [tab, setTab] = useState<Tab>('overview');
+  const [editingTags, setEditingTags] = useState(false);
 
   const { data, error, isLoading } = useQuery<DeviceDetail>({
     queryKey: ['device', id],
@@ -129,6 +131,14 @@ export function AssetRecord() {
                 </span>
               : null}
           />
+          <div className="asset-fact">
+            <div className="k">&nbsp;</div>
+            <div className="v">
+              <button type="button" onClick={() => setEditingTags(true)}>
+                Edit tags
+              </button>
+            </div>
+          </div>
           <Fact k="Owner" v={data.owner_group} />
           <Fact k="Management IP" v={data.mgmt_ip} />
           <Fact k="Primary IP" v={data.primary_ip} />
@@ -155,6 +165,11 @@ export function AssetRecord() {
       )}
 
       {tab === 'lifecycle' && <LifecycleTab deviceId={data.id} />}
+
+      {editingTags && (
+        <TagAssignForm objectType="device" objectId={data.id}
+                       onClose={() => setEditingTags(false)} />
+      )}
 
       {tab === 'support' && <SupportTab device={data} />}
 

@@ -159,9 +159,10 @@ an alarm re-raised each poll would otherwise un-shelve itself within seconds.
 worker and the API must agree about whether a window is running, and two clocks
 at the boundary do not.
 
-Still owed in this phase: the create-window form and its scoping preview are
-backed by `POST /maintenance/windows` and `/preview` but have no UI yet - windows
-are currently created through the API.
+~~Still owed: the create-window form.~~ **Closed by the write-UI pass,
+2026-09-03.** Scheduling is a three-step dialog whose middle step calls
+`/maintenance/windows/preview` live as devices are selected, and start, end and
+cancel are on the window's own page.
 
 
 
@@ -235,8 +236,8 @@ The 90-day "expiring" threshold is defined once, on the server, and served to
 the UI - the tile, the filter and the asset record read the same number rather
 than each hard-coding one.
 
-Still owed: no create or edit forms for contracts, suppliers or tags - all three
-are read-only in the UI and written through the API. Documents remain blocked on
+~~Still owed: no create or edit forms for contracts, suppliers or tags.~~
+**Closed by the write-UI pass, 2026-09-03.** Documents remain blocked on
 phase 0.
 
 
@@ -259,6 +260,46 @@ link is the truth. Only the recompute writes it (`20` §5).
   90-day threshold defined in the frontend.
 - A tag renamed in `/assets/admin/tags` renames everywhere; deleting a tag
   detaches it and does not delete objects.
+
+## Write-UI pass — closing the forms owed by phases 3 and 4
+
+Status: **built 2026-09-03.** No backend change: every endpoint behind these
+already existed and had shipped without a form, which had left the module
+read-only for everything except the lifecycle transition. `tsc` and the
+production build are clean; the 972 backend tests are untouched because nothing
+under `backend/` moved.
+
+Six flows, all inside `/assets`: schedule a window (three steps), start/end/
+cancel one, record a contract, add a supplier, record work done on an asset, and
+create, edit, delete and attach tags.
+
+**The window form is three steps because step two is the point.** A window
+scoped too widely is otherwise discovered at 02:00, having silenced a rack
+nobody was working on. Selecting devices calls
+`POST /maintenance/windows/preview` live and reports what the selection would
+actually cover - how many machines go dark downstream, how many are already
+alarming, and which of them are not redundantly fed. Taking a feeder into a
+window costs its loads their power, not just their alarms, and that sentence
+belongs before the commit rather than after.
+
+Two smaller decisions worth recording:
+
+**`ApiError` now keeps the structured body.** Several endpoints refuse with a
+shape rather than a string - an illegal lifecycle transition carries its allowed
+set, a rack collision names the occupying device. `String(error)` on those
+rendered `[object Object]`, so a form told the operator nothing. The sentence is
+pulled out for `message`; the object stays on `detail` for forms that want to do
+better. Pydantic validation arrays are flattened to `field: reason` rather than
+JSON.
+
+**Selection survives a filter change in the device picker.** An operator narrows
+to one rack, ticks four things, narrows to another, ticks three more. "Select
+all" adds or removes only what is currently shown, so it cannot silently discard
+the work that came before it.
+
+Still not built: editing a scheduled window (no `PATCH /maintenance/windows/{id}`
+exists), and editing a contract's fields after creation - `PATCH /contracts/{id}`
+exists but has no form.
 
 ## Phase 5 — parts and reservations
 

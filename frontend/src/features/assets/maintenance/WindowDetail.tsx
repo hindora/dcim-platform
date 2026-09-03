@@ -1,6 +1,7 @@
-import { useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
-import { api, type MaintenanceWindow } from '../../../api/client';
+import { ApiError, api, type MaintenanceWindow } from '../../../api/client';
 import { humanise, relativeTime } from '../../../lib/format';
 
 /** One window: what it covers, and what it is holding back.
@@ -12,6 +13,22 @@ import { humanise, relativeTime } from '../../../lib/format';
  */
 export function WindowDetail() {
   const { id = '' } = useParams();
+  const qc = useQueryClient();
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const act = useMutation({
+    mutationFn: (action: 'start' | 'complete' | 'cancel') =>
+      api.windowAction(id, action),
+    onSuccess: () => {
+      setActionError(null);
+      qc.invalidateQueries({ queryKey: ['maintenance-window', id] });
+      qc.invalidateQueries({ queryKey: ['maintenance-windows'] });
+      // Shelving moved, so every roll-up the console draws may have changed.
+      qc.invalidateQueries({ queryKey: ['alarms'] });
+      qc.invalidateQueries({ queryKey: ['asset-devices'] });
+    },
+    onError: (e) => setActionError(e instanceof ApiError ? e.message : String(e)),
+  });
 
   const { data, isLoading, error } = useQuery<MaintenanceWindow>({
     queryKey: ['maintenance-window', id],
@@ -33,6 +50,34 @@ export function WindowDetail() {
         <h2>{data.title}</h2>
         <span className={`asset-life is-${data.status}`}>{humanise(data.status)}</span>
       </div>
+
+      <p className="asset-table-note">
+        {data.status === 'scheduled' && (
+          <button type="button" disabled={act.isPending}
+                  onClick={() => act.mutate('start')}>
+            Start now
+          </button>
+        )}
+        {data.status === 'active' && (
+          <button type="button" disabled={act.isPending}
+                  onClick={() => act.mutate('complete')}>
+            End window
+          </button>
+        )}
+        {(data.status === 'scheduled' || data.status === 'active') && (
+          <button type="button" disabled={act.isPending}
+                  onClick={() => act.mutate('cancel')}>
+            Cancel
+          </button>
+        )}
+        {data.status === 'active' && (
+          <span className="muted">
+            Ending it puts back any alarm still open on these devices.
+          </span>
+        )}
+      </p>
+
+      {actionError && <div className="banner">{actionError}</div>}
 
       <div className="asset-facts" style={{ marginBottom: 20 }}>
         <div className="asset-fact">
