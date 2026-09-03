@@ -113,6 +113,20 @@ async def summary(session: AsyncSession) -> dict[str, Any]:
         FROM support_contract
     """), {"expiring": EXPIRING_DAYS})).mappings().one()
 
+    stock = (await session.execute(text("""
+        SELECT count(*) FILTER (WHERE reorder_at IS NOT NULL
+                                  AND on_hand <= reorder_at) AS below_reorder,
+               count(*)                                      AS stock_lines
+        FROM part_stock
+    """))).mappings().one()
+
+    reservations = (await session.execute(text("""
+        SELECT count(*) FILTER (WHERE status = 'held')               AS held,
+               count(*) FILTER (WHERE status = 'held'
+                                  AND expires_at < CURRENT_DATE)     AS overdue
+        FROM capacity_reservation
+    """))).mappings().one()
+
     return {
         "totals": {
             "assets": identity["total"],
@@ -132,6 +146,8 @@ async def summary(session: AsyncSession) -> dict[str, Any]:
         "warranty": dict(warranty),
         "contracts": dict(contracts),
         "expiring_days": EXPIRING_DAYS,
+        "stock": dict(stock),
+        "reservations": dict(reservations),
     }
 
 

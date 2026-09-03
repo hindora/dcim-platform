@@ -68,6 +68,9 @@ export function AssetWorkspace() {
         { to: '/assets/discovery', label: 'Discovery',
           blurb: 'Responders nothing in inventory claims',
           count: data?.discovery.new_candidates },
+        { to: '/assets/reservations', label: 'Reservations',
+          blurb: 'Space and power held for projects',
+          count: data?.reservations?.overdue || undefined },
       ],
     },
     {
@@ -79,6 +82,9 @@ export function AssetWorkspace() {
         { to: '/assets/contracts', label: 'Support',
           blurb: 'Warranty and support cover, soonest first',
           count: expiring },
+        { to: '/assets/parts', label: 'Parts',
+          blurb: 'Consumable stock, tracked by count',
+          count: data?.stock?.below_reorder || undefined },
       ],
     },
     {
@@ -115,8 +121,8 @@ export function AssetWorkspace() {
           </div>
         ))}
         <p className="asset-nav-note">
-          Parts and reservations arrive with their migrations. They are absent
-          rather than empty on purpose.
+          A badge is a queue, not a status: it means somebody has something to
+          do here.
         </p>
       </nav>
       <div className="asset-body">

@@ -303,6 +303,54 @@ exists but has no form.
 
 ## Phase 5 — parts and reservations
 
+Status: **built 2026-09-03.** 991 backend tests pass (+19), `ruff` clean, `tsc`
+and production build clean. Migrations `0048` and `0049` proved against a
+throwaway database - up, ledger and U-enforcement behave, down to base - and
+**deliberately not run against the live one**, which sits at `0047`.
+
+Two bugs the scratch run caught, both invisible to a unit test:
+
+**PostgreSQL evaluates a CHECK against the row an INSERT proposes, before it
+resolves `ON CONFLICT`.** So `INSERT ... VALUES (part, store, -3) ON CONFLICT DO
+UPDATE SET on_hand = on_hand + EXCLUDED.on_hand` trips `on_hand >= 0` even
+though the update branch would have landed on 7 - a constraint violation on a
+movement that is entirely legal. The row is now ensured at zero with
+`DO NOTHING` and the delta applied by a separate `UPDATE`, so the check runs
+once, against the value that actually results.
+
+**`:attrs::jsonb` and `:u_start + :u_height`** both failed - the first because
+SQLAlchemy's `text()` reads `::` as part of the bind name, the second because
+Postgres cannot resolve `unknown + unknown` from two untyped parameters. Both
+are now explicit `CAST(...)`, which is the form the rest of this codebase
+already uses for exactly these reasons.
+
+Verified end to end:
+
+```
+receipt 10, consumed 3   -> on_hand 7
+overdraw                 -> refused: "750W-PSU: asked for 99, only 7 on hand"
+adjustment with note     -> on_hand 6;  ledger vs balance: no discrepancies
+adjustment without note  -> refused
+reservation U20-23       -> held, backed by a planned device
+overlapping reservation  -> refused: "U22-U23 is occupied by RESERVED-march-build-U20"
+fulfil                   -> promoted in place; the units are never vacated
+expired hold             -> released, placeholder removed
+```
+
+`on_hand` has no setter anywhere - not in the repository, not in the API, not in
+the UI. Correcting a miscount is an `adjustment` carrying a note, which the
+schema requires. `/stock/reconcile` exists to prove the running total and the
+ledger agree; a non-empty result means something wrote `part_stock` outside
+`move()`, which is the failure the design exists to prevent.
+
+Rack units are enforced by `device_u_no_overlap` and nothing else. A reservation
+naming a U range inserts a `planned` device to stand in for it, so the overlap
+is refused by the constraint that already works - no cross-table trigger, no
+locking to get wrong, and the elevation renders the hold for free. Fulfilling
+promotes that row rather than replacing it, so the range is never briefly free
+for somebody else's install to slip into.
+
+
 The two genuinely new subsystems. Migrations `0049` (part, store, `part_stock`,
 `stock_movement`) and `0050` (`capacity_reservation`).
 

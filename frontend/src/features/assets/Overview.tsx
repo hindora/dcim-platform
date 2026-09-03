@@ -209,6 +209,21 @@ export function AssetOverview() {
                 {' '}within {data.expiring_days ?? 90} days
               </li>
             )}
+            {data.stock && data.stock.below_reorder > 0 && (
+              <li>
+                <Link to="/assets/parts?below_reorder=true">
+                  {data.stock.below_reorder} parts below their reorder point
+                </Link>
+              </li>
+            )}
+            {data.reservations && data.reservations.overdue > 0 && (
+              <li>
+                <Link to="/assets/reservations">
+                  {data.reservations.overdue} reservations past their expiry
+                </Link>
+                {' — '}holding space nobody has claimed
+              </li>
+            )}
             {discovery.new_candidates > 0 && (
               <li>
                 <Link to="/assets/discovery">
@@ -218,14 +233,12 @@ export function AssetOverview() {
               </li>
             )}
             {identity.unidentified === 0 && discovery.new_candidates === 0
-              && !data.contracts?.expired && !data.contracts?.expiring && (
+              && !data.contracts?.expired && !data.contracts?.expiring
+              && !data.stock?.below_reorder && !data.reservations?.overdue && (
               <li className="muted">Nothing needs attention.</li>
             )}
           </ul>
-          <p className="muted" style={{ marginTop: 12, fontSize: '0.78rem' }}>
-            Stock queues appear here once parts have a table. They are absent
-            rather than reading zero.
-          </p>
+
         </div>
       </div>
 

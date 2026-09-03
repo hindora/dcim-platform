@@ -167,6 +167,8 @@ export interface AssetSummary {
   warranty?: { unknown: number; expired: number; expiring: number; active: number };
   contracts?: { total: number; expired: number; expiring: number };
   expiring_days?: number;
+  stock?: { below_reorder: number; stock_lines: number };
+  reservations?: { held: number; overdue: number };
 }
 
 /** One device on a power path, upstream of the load. */
@@ -318,6 +320,77 @@ export interface Tag {
   colour?: string | null;
   description?: string | null;
   usage_count: number;
+}
+
+export interface Part {
+  id: string;
+  sku: string;
+  name: string;
+  category: string;
+  vendor_name?: string | null;
+  fits_types: string[];
+  unit_cost?: number | null;
+  currency?: string | null;
+  on_hand: number;
+  reserved: number;
+  reorder_at?: number | null;
+  below_reorder: boolean;
+  stock?: PartStock[];
+}
+
+export interface PartStock {
+  store_id: string;
+  store_name: string;
+  datacenter_code?: string | null;
+  on_hand: number;
+  reserved: number;
+  available: number;
+  reorder_at?: number | null;
+  reorder_to?: number | null;
+}
+
+export interface StockMovement {
+  id: string;
+  delta: number;
+  reason: string;
+  actor: string;
+  ts: string;
+  note?: string | null;
+  store_name: string;
+  device_id?: string | null;
+  device_name?: string | null;
+}
+
+export interface Store {
+  id: string;
+  name: string;
+  datacenter_code?: string | null;
+  room_name?: string | null;
+  location_note?: string | null;
+  lines: number;
+  units: number;
+}
+
+export interface Reservation {
+  id: string;
+  project: string;
+  owner_group?: string | null;
+  rack_id?: string | null;
+  rack_name?: string | null;
+  room_name?: string | null;
+  datacenter_code?: string | null;
+  u_start?: number | null;
+  u_height?: number | null;
+  power_kw?: number | null;
+  cool_kw?: number | null;
+  needed_by?: string | null;
+  expires_at: string;
+  status: string;
+  notes?: string | null;
+  created_by: string;
+  placeholder_device_id?: string | null;
+  overdue: boolean;
+  days_left: number;
 }
 
 export interface AssetFilterOptions {
@@ -1456,6 +1529,48 @@ export const api = {
   deviceContracts: (deviceId: string) =>
     request<{ items: SupportContract[] }>(`/devices/${deviceId}/contracts`),
   tags: () => request<{ items: Tag[] }>('/tags'),
+
+  parts: (params: Record<string, string | undefined> = {}) => {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) if (v) q.set(k, v);
+    const qs = q.toString();
+    return request<{ items: Part[] }>(`/parts${qs ? `?${qs}` : ''}`);
+  },
+  part: (id: string) => request<Part>(`/parts/${id}`),
+  createPart: (body: Record<string, unknown>) =>
+    request<{ id: string }>('/parts', { method: 'POST', body: JSON.stringify(body) }),
+  partMovements: (id: string) =>
+    request<{ items: StockMovement[] }>(`/parts/${id}/movements`),
+  postMovement: (id: string, body: {
+    store_id: string; delta: number; reason: string;
+    device_id?: string; note?: string;
+  }) => request<{ id: string }>(`/parts/${id}/movements`, {
+    method: 'POST', body: JSON.stringify(body),
+  }),
+  setReorder: (id: string, body: {
+    store_id: string; reorder_at?: number | null; reorder_to?: number | null;
+  }) => request<{ status: string }>(`/parts/${id}/reorder`, {
+    method: 'POST', body: JSON.stringify(body),
+  }),
+  stores: () => request<{ items: Store[] }>('/stores'),
+  createStore: (body: Record<string, unknown>) =>
+    request<{ id: string }>('/stores', { method: 'POST', body: JSON.stringify(body) }),
+
+  reservations: (params: Record<string, string | undefined> = {}) => {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) if (v) q.set(k, v);
+    const qs = q.toString();
+    return request<{
+      items: Reservation[];
+      summary: { held: number; overdue: number; u_held: number; kw_held: number };
+    }>(`/reservations${qs ? `?${qs}` : ''}`);
+  },
+  createReservation: (body: Record<string, unknown>) =>
+    request<Reservation>('/reservations', {
+      method: 'POST', body: JSON.stringify(body),
+    }),
+  releaseReservation: (id: string) =>
+    request<{ status: string }>(`/reservations/${id}/release`, { method: 'POST' }),
 
   // ---- writes. Every one of these already existed as an endpoint; what was
   // missing was a form behind it, which is what left the module read-only.

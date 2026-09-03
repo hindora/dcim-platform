@@ -36,6 +36,9 @@ import { WindowDetail } from './features/assets/maintenance/WindowDetail';
 import { ContractList } from './features/assets/contracts/ContractList';
 import { ContractDetail } from './features/assets/contracts/ContractDetail';
 import { TagAdmin } from './features/assets/admin/TagAdmin';
+import { PartList } from './features/assets/parts/PartList';
+import { PartDetail } from './features/assets/parts/PartDetail';
+import { ReservationList } from './features/assets/reservations/ReservationList';
 import { useSocketStatus } from './ws/useSocket';
 
 function Login({ onDone, returnTo }: { onDone: () => void; returnTo?: string }) {
@@ -226,6 +229,9 @@ export default function App() {
             <Route path="maintenance/:id" element={<WindowDetail />} />
             <Route path="contracts" element={<ContractList />} />
             <Route path="contracts/:id" element={<ContractDetail />} />
+            <Route path="parts" element={<PartList />} />
+            <Route path="parts/:id" element={<PartDetail />} />
+            <Route path="reservations" element={<ReservationList />} />
             <Route path="admin/tags" element={<TagAdmin />} />
           </Route>
 
