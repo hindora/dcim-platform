@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api, type AssetCharts } from '../../api/client';
 import { humanise } from '../../lib/format';
 import { BarChart, type BarRow } from './components/BarChart';
+import { Donut, Gauge, VColumns } from './components/Shapes';
 
 /** Composition and capacity of the estate.
  *
@@ -133,16 +134,12 @@ export function Charts() {
               quarter, then the rest. Sorting would destroy the only thing a
               runway is for. Colour marks the band that is already a problem;
               the rest is ordering, which left-to-right already carries. */}
-          <BarChart
-            sorted={false}
-            limitable={false}
-            rows={data.warranty_runway.map((r): BarRow => ({
-              label: r.bucket,
+          <VColumns
+            rows={data.warranty_runway.map((r) => ({
+              label: r.bucket.replace('Beyond 2 years', 'Later'),
               n: r.n,
               colour: r.band === 0 ? 'var(--critical)'
                 : r.band === 2 ? 'var(--border-strong)' : undefined,
-              href: r.band === 0
-                ? '/assets/inventory?warranty_state=expired' : undefined,
             }))}
           />
         </Panel>
@@ -190,27 +187,32 @@ export function Charts() {
       <h3 className="asset-charts-head">Capacity</h3>
       <div className="asset-cols">
         <Panel title="Cabinet space">
-          <Fill
+          {/* One part-to-whole, so a donut earns its keep here: the centre
+              carries the figure everyone wants first, and every segment's own
+              value is in the legend - nobody reads a number off an arc. Held
+              is still not the free colour: those units are spoken for. */}
+          <Donut
+            centre={`${space.u_total.toLocaleString()}U`}
+            centreLabel={`${space.racks} racks`}
             parts={[
-              { label: 'Installed', n: space.u_used, tone: 'used' },
-              { label: 'Held for planned', n: space.u_held, tone: 'held' },
-              { label: 'Free', n: space.u_free, tone: 'free' },
+              { label: 'Installed', n: space.u_used, colour: 'var(--accent)' },
+              { label: 'Held for planned', n: space.u_held, colour: 'var(--warn)' },
+              { label: 'Free', n: space.u_free, colour: 'var(--border-strong)' },
             ]}
-            total={space.u_total}
-            unit="U"
-            note={`${space.racks} racks`}
           />
         </Panel>
 
-        <Panel title="Floor space">
-          <Fill
-            parts={[
-              { label: 'Racks installed', n: floor.installed, tone: 'used' },
-              { label: 'Positions free', n: floor.free, tone: 'free' },
-            ]}
-            total={floor.designed}
+        <Panel title="Floor space remaining">
+          {/* A bounded ratio where LOW is the problem, which is the one
+              question a gauge answers better than a bar: the bands say what
+              being there means. Under 15% of positions left is red, under 40%
+              amber. */}
+          <Gauge
+            value={floor.free}
+            max={floor.designed}
             unit=""
-            note={`${floor.rooms} rooms · ${Math.round(floor.area_m2).toLocaleString()} m²`}
+            label={`rack positions · ${floor.rooms} rooms · ${Math.round(floor.area_m2).toLocaleString()} m²`}
+            bands={[[0.15, 'var(--critical)'], [0.4, 'var(--warn)'], [1, 'var(--ok)']]}
           />
         </Panel>
 
@@ -265,38 +267,6 @@ function toneOf(band: string): string {
   if (band === 'Empty') return ' is-empty';
   if (band === 'Over 90%') return ' is-full';
   return '';
-}
-
-function Fill({ parts, total, unit, note }: {
-  parts: { label: string; n: number; tone: string }[];
-  total: number;
-  unit: string;
-  note?: string;
-}) {
-  const denominator = Math.max(1, total);
-  return (
-    <>
-      <div className="asset-stack">
-        {parts.filter((p) => p.n > 0).map((p) => (
-          <span
-            key={p.label}
-            className={`is-${p.tone}`}
-            style={{ width: `${(p.n / denominator) * 100}%` }}
-            title={`${p.label}: ${p.n}${unit}`}
-          />
-        ))}
-      </div>
-      <div className="asset-legend">
-        {parts.map((p) => (
-          <span key={p.label}>
-            <span className={`sw is-${p.tone}`} />
-            {p.label} {p.n.toLocaleString()}{unit}
-          </span>
-        ))}
-        {note && <span className="muted">{note}</span>}
-      </div>
-    </>
-  );
 }
 
 /** The four cover states, in worsening-to-best order rather than by size, so

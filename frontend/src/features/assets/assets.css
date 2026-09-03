@@ -1228,3 +1228,80 @@ tr.is-selected > td { background: var(--accent-dim); }
 /* The denominator on a ratio bar. Dimmer than the value, because "628" is the
    number being reported and "/ 664" is the context for it. */
 .asset-chart-row .val .of { color: var(--text-faint); }
+
+/* ------------------------------------------------------- donut + gauge */
+
+.asset-donut { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+
+.asset-donut-centre {
+  fill: var(--text);
+  font-size: 1.35rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.asset-donut-sub { fill: var(--text-muted); font-size: 0.68rem; }
+
+.asset-gauge { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+
+.asset-gauge-needle {
+  stroke: var(--text);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+}
+
+.asset-gauge-hub { fill: var(--text); }
+
+.asset-gauge-tick { fill: var(--text-faint); font-size: 0.62rem; }
+
+.asset-gauge-value {
+  font-size: 1.25rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.asset-gauge-value .muted { font-size: 0.8rem; font-weight: 400; }
+
+.asset-gauge-label { font-size: 0.74rem; color: var(--text-muted); }
+
+/* ---------------------------------------------------- vertical columns */
+
+.asset-vcols {
+  display: grid;
+  align-items: end;
+  gap: 8px;
+  height: 150px;
+}
+
+.asset-vcols-col {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  align-items: end;
+  height: 100%;
+  text-align: center;
+  min-width: 0;
+}
+
+.asset-vcols-col .v {
+  font-size: 0.76rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  margin-bottom: 3px;
+}
+
+.asset-vcols-col .bar {
+  background: var(--accent);
+  border-radius: 3px 3px 0 0;
+  align-self: end;
+  /* Zero still gets a foot, or the column reads as missing rather than none. */
+  min-height: 2px;
+}
+
+.asset-vcols-col .k {
+  margin-top: 5px;
+  font-size: 0.66rem;
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
