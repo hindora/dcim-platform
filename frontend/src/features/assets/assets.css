@@ -234,7 +234,7 @@ a.asset-tile:hover { border-color: var(--border-strong); }
 
 .asset-work {
   display: grid;
-  grid-template-columns: minmax(158px, 186px) minmax(0, 1fr);
+  grid-template-columns: minmax(178px, 206px) minmax(0, 1fr);
   gap: 16px;
   align-items: start;
 }
