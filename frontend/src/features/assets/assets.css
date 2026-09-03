@@ -14,8 +14,8 @@
 
 .asset-shell {
   display: grid;
-  grid-template-columns: minmax(200px, 260px) minmax(0, 1fr);
-  gap: 28px;
+  grid-template-columns: minmax(164px, 190px) minmax(0, 1fr);
+  gap: 20px;
   align-items: start;
 }
 
@@ -234,8 +234,8 @@ a.asset-tile:hover { border-color: var(--border-strong); }
 
 .asset-work {
   display: grid;
-  grid-template-columns: minmax(180px, 230px) minmax(0, 1fr);
-  gap: 20px;
+  grid-template-columns: minmax(158px, 186px) minmax(0, 1fr);
+  gap: 16px;
   align-items: start;
 }
 
@@ -247,7 +247,7 @@ a.asset-tile:hover { border-color: var(--border-strong); }
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--bg-raised);
-  padding: 12px 14px;
+  padding: 10px 12px;
   position: sticky;
   top: 12px;
 }
@@ -903,3 +903,18 @@ tr.is-selected > td { background: var(--accent-dim); }
 }
 
 .asset-select-head input { margin: 0; }
+
+/* ---------------------------------------------------------- table text */
+
+/* Column headers never wrap. A two-line header pushes the first row down and
+   makes two tables on the same page disagree about where their data starts -
+   and a header is a label, not prose, so there is nothing to gain from
+   breaking it. The table already scrolls sideways if the sum is too wide,
+   which is the honest failure rather than a squashed column. */
+.asset-shell th { white-space: nowrap; }
+
+/* Cells that must not wrap either, because their content is a single token an
+   operator reads or compares character by character. */
+.asset-shell td.asset-tag,
+.asset-shell .asset-life,
+.asset-shell .asset-cover { white-space: nowrap; }
