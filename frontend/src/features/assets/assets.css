@@ -315,13 +315,20 @@ a.asset-tile:hover { border-color: var(--border-strong); }
 .asset-check {
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 2px 0;
+  /* The gap is the WHOLE separation here, because the rule below removes the
+     margin a browser puts around a checkbox by default. At 7px the label sat
+     against the box; 10 gives it room without the two reading as unrelated. */
+  gap: 10px;
+  /* Rows need air of their own, or a column of six filters reads as one block
+     and the pointer has to be precise to hit the right line. */
+  padding: 4px 0;
   font-size: 0.84rem;
   cursor: pointer;
 }
 
-.asset-check input { margin: 0; }
+/* flex: none so a long label - "Decommissioned" is the longest here - squeezes
+   the text rather than the box it belongs to. */
+.asset-check input { margin: 0; flex: none; }
 
 .asset-check .n {
   margin-left: auto;
@@ -928,23 +935,10 @@ tr.is-selected > td { background: var(--accent-dim); }
 
 .asset-pager-size input[type='number'] { width: 68px; }
 
-/* The selection column. Its header carries a word, because a bare column of
-   checkboxes reads as decoration until somebody tries one - and the whole
-   label is the hit target, since a 14px box is a small thing to ask a pointer
-   for on every row. */
-.asset-select-head { width: 76px; }
-
-.asset-select-head label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  cursor: pointer;
-  /* th is uppercase and letter-spaced; inherit rather than restate it, so the
-     column reads as one of the headers instead of a control bolted on. */
-  font: inherit;
-  letter-spacing: inherit;
-  text-transform: inherit;
-}
+/* The selection column. No header word - the toolbar above turns into the bulk
+   actions as soon as a row is ticked, which explains the column better than a
+   label would, and the width goes back to the table. */
+.asset-select-head { width: 34px; }
 
 .asset-select-head input { margin: 0; }
 
