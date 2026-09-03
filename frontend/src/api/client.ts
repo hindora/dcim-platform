@@ -434,6 +434,13 @@ export interface AssetCharts {
     rooms: number; designed: number; installed: number;
     free: number; area_m2: number;
   };
+  /** Four states on one threshold, scoped to the live estate - the same scope
+   *  the runway uses, so the two charts cannot disagree about the denominator. */
+  cover_state: { active: number; expiring: number; expired: number; unknown: number };
+  /** When cover lapses. `band` is 0 expired, 1 a quarter, 2 beyond two years -
+   *  ordering the UI must not re-sort. */
+  warranty_runway: { bucket: string; n: number; band: number }[];
+  completeness: { label: string; filled: number; total: number }[];
 }
 
 export interface AssetFilterOptions {

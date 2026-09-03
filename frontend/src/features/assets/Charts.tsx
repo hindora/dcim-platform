@@ -92,6 +92,57 @@ export function Charts() {
         </Panel>
       </div>
 
+      <h3 className="asset-charts-head">Cover and records</h3>
+      <div className="asset-cols">
+        <Panel title="When cover lapses" total={sum(data.warranty_runway)}>
+          {/* A SEQUENCE, so it is not sorted by size: expired first, then each
+              quarter, then the rest. Sorting would destroy the only thing a
+              runway is for. Colour marks the band that is already a problem;
+              the rest is ordering, which left-to-right already carries. */}
+          <BarChart
+            sorted={false}
+            limitable={false}
+            rows={data.warranty_runway.map((r): BarRow => ({
+              label: r.bucket,
+              n: r.n,
+              colour: r.band === 0 ? 'var(--critical)'
+                : r.band === 2 ? 'var(--border-strong)' : undefined,
+              href: r.band === 0
+                ? '/assets/inventory?warranty_state=expired' : undefined,
+            }))}
+          />
+        </Panel>
+
+        <Panel title="Cover state" total={coverTotal(data)}>
+          {/* Colour is the state here, matching the Cover column in the table:
+              expired is a fault, expiring is a warning, no cover recorded is
+              an absence and deliberately not painted as either. */}
+          <BarChart
+            sorted={false}
+            limitable={false}
+            rows={coverRows(data)}
+          />
+        </Panel>
+
+        <Panel title="Record completeness">
+          {/* Ratio bars against one denominator, so a full field and an empty
+              one are compared down the same column. The value of this chart is
+              the rows that are EMPTY - each is a filter or a chart somebody
+              expects to work and finds blank. */}
+          <BarChart
+            sorted={false}
+            limitable={false}
+            rows={data.completeness.map((c): BarRow => ({
+              label: c.label,
+              n: c.filled,
+              of: c.total,
+              colour: c.filled === 0 ? 'var(--critical)'
+                : c.filled === c.total ? 'var(--ok)' : 'var(--warn)',
+            }))}
+          />
+        </Panel>
+      </div>
+
       <h3 className="asset-charts-head">Capacity</h3>
       <div className="asset-cols">
         <Panel title="Cabinet space">
@@ -202,6 +253,28 @@ function Fill({ parts, total, unit, note }: {
       </div>
     </>
   );
+}
+
+/** The four cover states, in worsening-to-best order rather than by size, so
+ *  the eye lands on the problem first and the shape stays comparable between
+ *  visits. */
+function coverRows(data: AssetCharts): BarRow[] {
+  const w = data.cover_state;
+  return [
+    { label: 'Expired', n: w.expired, colour: 'var(--critical)',
+      href: '/assets/inventory?warranty_state=expired' },
+    { label: 'Expiring', n: w.expiring, colour: 'var(--warn)',
+      href: '/assets/inventory?warranty_state=expiring' },
+    { label: 'Covered', n: w.active, colour: 'var(--ok)',
+      href: '/assets/inventory?warranty_state=active' },
+    { label: 'No cover recorded', n: w.unknown, colour: 'var(--border-strong)',
+      href: '/assets/inventory?warranty_state=unknown' },
+  ];
+}
+
+function coverTotal(data: AssetCharts): number {
+  const w = data.cover_state;
+  return w.expired + w.expiring + w.active + w.unknown;
 }
 
 function sum(rows: { n: number }[]): number {

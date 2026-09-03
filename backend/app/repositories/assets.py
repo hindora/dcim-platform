@@ -277,6 +277,78 @@ async def charts(session: AsyncSession) -> dict[str, Any]:
         WHERE rm.designed_racks IS NOT NULL
     """))).mappings().one()
 
+    # WHEN cover lapses, which is a budget question rather than a status one.
+    # Quarters, because that is the granularity a renewal is planned at, and
+    # only for two years out - past that "Later" is the honest bucket, since
+    # nobody plans a refresh from a chart four years ahead.
+    #
+    # Decommissioned and retired assets are excluded: cover on kit that has
+    # left the estate is not a renewal anybody has to fund.
+    runway = (await session.execute(text("""
+        SELECT CASE
+                 WHEN warranty_expires < CURRENT_DATE THEN 'Expired'
+                 WHEN warranty_expires <= CURRENT_DATE + 730
+                   THEN to_char(warranty_expires, 'YYYY "Q"Q')
+                 ELSE 'Beyond 2 years'
+               END AS bucket,
+               CASE
+                 WHEN warranty_expires < CURRENT_DATE THEN 0
+                 WHEN warranty_expires <= CURRENT_DATE + 730 THEN 1
+                 ELSE 2
+               END AS band,
+               min(warranty_expires) AS first_lapse,
+               count(*) AS n
+        FROM device
+        WHERE warranty_expires IS NOT NULL
+          AND lifecycle NOT IN ('decommissioned', 'retired')
+        GROUP BY 1, 2
+        ORDER BY band, first_lapse
+    """))).mappings().all()
+
+    # Cover as four states, on the same threshold and the same live-estate
+    # scope the runway uses - so the two charts beside each other cannot
+    # disagree about how many assets there are to cover.
+    cover = (await session.execute(text("""
+        SELECT count(*) FILTER (WHERE warranty_expires IS NULL)        AS unknown,
+               count(*) FILTER (WHERE warranty_expires < CURRENT_DATE) AS expired,
+               count(*) FILTER (WHERE warranty_expires >= CURRENT_DATE
+                 AND warranty_expires <= CURRENT_DATE + CAST(:expiring AS integer))
+                                                                       AS expiring,
+               count(*) FILTER (WHERE warranty_expires
+                 > CURRENT_DATE + CAST(:expiring AS integer))          AS active
+        FROM device
+        WHERE lifecycle NOT IN ('decommissioned', 'retired')
+    """), {"expiring": EXPIRING_DAYS})).mappings().one()
+
+    # How much of the estate carries each field. The point is not the fields
+    # that are full - it is the ones that are not, because every empty column
+    # here is a chart or a filter somebody expects to work and finds blank.
+    completeness = (await session.execute(text("""
+        SELECT count(*)                                              AS total,
+               count(serial_number)                                  AS serial_number,
+               count(asset_tag)                                      AS asset_tag,
+               count(owner_group)                                    AS owner_group,
+               count(cost_centre)                                    AS cost_centre,
+               count(warranty_expires)                               AS warranty_expires,
+               count(purchase_date)                                  AS purchase_date,
+               count(install_date)                                   AS install_date,
+               count(supplier_id)                                    AS supplier_id,
+               count(*) FILTER (WHERE rack_id IS NOT NULL)           AS placement
+        FROM device
+        WHERE lifecycle NOT IN ('decommissioned', 'retired')
+    """))).mappings().one()
+    fields = [
+        ("Serial number", "serial_number"),
+        ("Asset tag", "asset_tag"),
+        ("Placement", "placement"),
+        ("Owner", "owner_group"),
+        ("Cover", "warranty_expires"),
+        ("Supplier", "supplier_id"),
+        ("Cost centre", "cost_centre"),
+        ("Purchase date", "purchase_date"),
+        ("Install date", "install_date"),
+    ]
+
     return {
         "by_type": [dict(r) for r in by_type],
         "by_vendor": [dict(r) for r in by_vendor],
@@ -291,4 +363,14 @@ async def charts(session: AsyncSession) -> dict[str, Any]:
             **dict(floor),
             "free": max(0, floor["designed"] - floor["installed"]),
         },
+        "cover_state": dict(cover),
+        "warranty_runway": [
+            {"bucket": r["bucket"], "n": r["n"], "band": r["band"]}
+            for r in runway
+        ],
+        "completeness": [
+            {"label": label, "filled": completeness[key],
+             "total": completeness["total"]}
+            for label, key in fields
+        ],
     }

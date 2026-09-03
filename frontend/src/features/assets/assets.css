@@ -1224,3 +1224,7 @@ tr.is-selected > td { background: var(--accent-dim); }
 
 .asset-chart-axis .ticks > span:first-child { transform: none; }
 .asset-chart-axis .ticks > span:last-child { transform: translateX(-100%); }
+
+/* The denominator on a ratio bar. Dimmer than the value, because "628" is the
+   number being reported and "/ 664" is the context for it. */
+.asset-chart-row .val .of { color: var(--text-faint); }

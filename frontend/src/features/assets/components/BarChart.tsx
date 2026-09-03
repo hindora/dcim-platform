@@ -28,19 +28,29 @@ export type BarRow = {
   href?: string;
   /** Overrides the single accent, for series where colour carries meaning. */
   colour?: string;
+  /** A denominator. With it the bar reads as a PROPORTION of its own total and
+   *  the value prints "628 / 664" - which is the whole point of a completeness
+   *  chart, where 628 alone says nothing. */
+  of?: number;
 };
 
 const LIMITS = [10, 25, 0] as const;   // 0 = all
 
-export function BarChart({ rows, unit = '', limitable = true, defaultLimit = 10 }: {
+export function BarChart({
+  rows, unit = '', limitable = true, defaultLimit = 10, sorted = true,
+}: {
   rows: BarRow[];
   unit?: string;
   limitable?: boolean;
   defaultLimit?: number;
+  /** False keeps the order given. A runway is a SEQUENCE - expired, then each
+   *  quarter, then later - and sorting it by size would destroy the only thing
+   *  it is for. */
+  sorted?: boolean;
 }) {
   const [limit, setLimit] = useState<number>(defaultLimit);
 
-  const ranked = [...rows].sort((a, b) => b.n - a.n);
+  const ranked = sorted ? [...rows].sort((a, b) => b.n - a.n) : rows;
   const capped = limit > 0 && ranked.length > limit + 1;
   const shown = capped ? ranked.slice(0, limit) : ranked;
   const hidden = capped ? ranked.slice(limit) : [];
@@ -48,8 +58,12 @@ export function BarChart({ rows, unit = '', limitable = true, defaultLimit = 10 
 
   // Scaled to the largest bar, not the total: at 310 of 664 every other
   // category would be a sliver, and comparing them with each other is the
-  // whole job of the chart.
-  const max = Math.max(1, ...shown.map((r) => r.n), hiddenTotal);
+  // whole job of the chart. A ratio series scales to its own denominator, so "628 of 664" and "0 of
+  // 664" are drawn against the same 664 and can be compared down the column.
+  const ratio = shown.length > 0 && shown.every((r) => r.of != null);
+  const max = ratio
+    ? Math.max(1, ...shown.map((r) => r.of ?? 0))
+    : Math.max(1, ...shown.map((r) => r.n), hiddenTotal);
   const ticks = axisTicks(max);
 
   if (rows.length === 0) return <p className="muted">Nothing recorded.</p>;
@@ -115,7 +129,9 @@ function Bar({ row, max, unit, muted }: {
 
   return (
     <div className={`asset-chart-row${muted ? ' is-muted' : ''}`}
-         title={`${row.label}: ${row.n.toLocaleString()}${unit}`}>
+         title={row.of != null
+           ? `${row.label}: ${row.n.toLocaleString()} of ${row.of.toLocaleString()}`
+           : `${row.label}: ${row.n.toLocaleString()}${unit}`}>
       <div className="lbl">{label}</div>
       <div className="track">
         <span className="fill"
@@ -124,7 +140,12 @@ function Bar({ row, max, unit, muted }: {
       {/* The number is always printed. A bar shows a ranking; the figure is
           what somebody quotes in a meeting, and reading it off an axis is a
           worse way to get it. */}
-      <div className="val">{row.n.toLocaleString()}{unit}</div>
+      <div className="val">
+        {row.n.toLocaleString()}{unit}
+        {row.of != null && (
+          <span className="of"> / {row.of.toLocaleString()}</span>
+        )}
+      </div>
     </div>
   );
 }
