@@ -30,6 +30,13 @@ _LIST_BASE = """
            -- /assets unchanged (docs/22 §1).
            d.serial_number, d.asset_tag,
            d.lifecycle::text AS lifecycle,
+           d.warranty_expires, d.owner_group, d.cost_centre,
+           -- Derived server-side, from ONE threshold, so the tile, the filter
+           -- and the asset record cannot disagree about what "expiring" means.
+           CASE WHEN d.warranty_expires IS NULL THEN 'unknown'
+                WHEN d.warranty_expires < CURRENT_DATE THEN 'expired'
+                WHEN d.warranty_expires <= CURRENT_DATE + 90 THEN 'expiring'
+                ELSE 'active' END AS warranty_state,
            dt.category
     FROM device d
     LEFT JOIN vendor v        ON v.id = d.vendor_id
@@ -71,6 +78,12 @@ async def list_devices(
     asset_tag: str | None = None,
     serial_number: str | None = None,
     has_serial: bool | None = None,
+    warranty_state: str | None = None,
+    warranty_before: str | None = None,
+    supplier_id: str | None = None,
+    owner_group: str | None = None,
+    cost_centre: str | None = None,
+    tags: list[str] | None = None,
     limit: int = 50,
     cursor: str | None = None,
 ) -> tuple[list[dict[str, Any]], str | None]:
@@ -118,6 +131,40 @@ async def list_devices(
         # it as a filter rather than only as a number on a tile.
         where.append("d.serial_number IS NOT NULL" if has_serial
                      else "d.serial_number IS NULL")
+    if warranty_state == "unknown":
+        where.append("d.warranty_expires IS NULL")
+    elif warranty_state == "expired":
+        where.append("d.warranty_expires < CURRENT_DATE")
+    elif warranty_state == "expiring":
+        where.append("d.warranty_expires >= CURRENT_DATE "
+                     "AND d.warranty_expires <= CURRENT_DATE + 90")
+    elif warranty_state == "active":
+        where.append("d.warranty_expires > CURRENT_DATE + 90")
+    if warranty_before:
+        where.append("d.warranty_expires < CAST(:warranty_before AS date)")
+        params["warranty_before"] = warranty_before
+    if supplier_id:
+        where.append("d.supplier_id = CAST(:supplier_id AS uuid)")
+        params["supplier_id"] = supplier_id
+    if owner_group:
+        where.append("d.owner_group = :owner_group")
+        params["owner_group"] = owner_group
+    if cost_centre:
+        where.append("d.cost_centre = :cost_centre")
+        params["cost_centre"] = cost_centre
+    if tags:
+        # AND within the filter: `tag=env:prod&tag=tier:1` means devices that
+        # carry BOTH, which is what somebody narrowing a list expects. An OR
+        # would widen the result as they added filters.
+        for i, spec in enumerate(tags):
+            key, _, value = spec.partition(":")
+            where.append(
+                f"EXISTS (SELECT 1 FROM tag_assignment ta JOIN tag tg "
+                f"ON tg.id = ta.tag_id WHERE ta.object_type = 'device' "
+                f"AND ta.object_id = d.id AND tg.key = :tag_k{i} "
+                f"AND tg.value = :tag_v{i})")
+            params[f"tag_k{i}"] = key
+            params[f"tag_v{i}"] = value
     if search:
         # Trigram index on name; the IP casts are cheap because the result set
         # is already narrowed by the other predicates in practice.

@@ -11,6 +11,7 @@ import { humanise } from '../../../lib/format';
 import { LifecycleChip } from '../components/LifecycleChip';
 import { LifecycleTab } from './LifecycleTab';
 import { MaintenanceTab } from './MaintenanceTab';
+import { SupportTab } from './SupportTab';
 
 /** One asset, as an asset.
  *
@@ -22,13 +23,14 @@ import { MaintenanceTab } from './MaintenanceTab';
  *  There is no telemetry tab here and no charts. The header links out instead.
  */
 
-type Tab = 'overview' | 'placement' | 'lifecycle'
+type Tab = 'overview' | 'placement' | 'lifecycle' | 'support'
   | 'maintenance' | 'connections';
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'overview', label: 'Overview' },
   { id: 'placement', label: 'Placement' },
   { id: 'lifecycle', label: 'Lifecycle' },
+  { id: 'support', label: 'Support' },
   { id: 'maintenance', label: 'Maintenance' },
   { id: 'connections', label: 'Connections' },
 ];
@@ -114,6 +116,20 @@ export function AssetRecord() {
           <Fact k="Height" v={`${data.u_height}U`} />
           <Fact k="Lifecycle" v={humanise(data.lifecycle)} />
           <Fact k="Admin state" v={humanise(data.admin_state)} />
+          <Fact
+            k="Tags"
+            v={data.tags && data.tags.length > 0
+              ? <span className="asset-tagrow">
+                  {data.tags.map((t) => (
+                    <span className="asset-chip" key={t.id}
+                          style={t.colour ? { borderColor: t.colour } : undefined}>
+                      {t.key}={t.value}
+                    </span>
+                  ))}
+                </span>
+              : null}
+          />
+          <Fact k="Owner" v={data.owner_group} />
           <Fact k="Management IP" v={data.mgmt_ip} />
           <Fact k="Primary IP" v={data.primary_ip} />
         </div>
@@ -139,6 +155,8 @@ export function AssetRecord() {
       )}
 
       {tab === 'lifecycle' && <LifecycleTab deviceId={data.id} />}
+
+      {tab === 'support' && <SupportTab device={data} />}
 
       {tab === 'maintenance' && <MaintenanceTab deviceId={data.id} />}
 

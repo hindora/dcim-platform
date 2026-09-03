@@ -96,6 +96,12 @@ export interface DeviceSummary {
   serial_number?: string | null;
   lifecycle?: string;
   category?: string | null;
+  warranty_expires?: string | null;
+  /** active | expiring | expired | unknown, derived server-side. */
+  warranty_state?: string;
+  owner_group?: string | null;
+  cost_centre?: string | null;
+  tags?: { id: string; key: string; value: string; colour?: string | null }[];
 }
 
 /** Estate-wide counts behind the /assets landing page.
@@ -131,6 +137,11 @@ export interface AssetSummary {
   };
   by_category: { category: string; n: number }[];
   discovery: { new_candidates: number; unmatched: number };
+  /** Absent until migration 0047 - a tile reading "0 expiring" with no
+   *  contract table is a statement an operator would act on, and false. */
+  warranty?: { unknown: number; expired: number; expiring: number; active: number };
+  contracts?: { total: number; expired: number; expiring: number };
+  expiring_days?: number;
 }
 
 /** One device on a power path, upstream of the load. */
@@ -242,6 +253,46 @@ export interface MaintenanceRecord {
   kind: string;
   summary: string;
   detail?: string | null;
+}
+
+export interface Supplier {
+  id: string;
+  name: string;
+  account_ref?: string | null;
+  contact_name?: string | null;
+  contact_email?: string | null;
+  device_count: number;
+  contract_count: number;
+}
+
+export interface SupportContract {
+  id: string;
+  supplier_id?: string | null;
+  supplier_name?: string | null;
+  reference: string;
+  kind: string;
+  service_level?: string | null;
+  start_date: string;
+  end_date: string;
+  cost?: number | null;
+  currency?: string | null;
+  auto_renew: boolean;
+  notes?: string | null;
+  device_count: number;
+  /** Derived server-side from one threshold: active | expiring | expired. */
+  state: string;
+  days_remaining: number;
+  devices?: { id: string; name: string; device_type: string;
+              serial_number?: string | null; warranty_expires?: string | null }[];
+}
+
+export interface Tag {
+  id: string;
+  key: string;
+  value: string;
+  colour?: string | null;
+  description?: string | null;
+  usage_count: number;
 }
 
 export interface AssetFilterOptions {
@@ -1367,6 +1418,19 @@ export const api = {
   // ---- asset workspace (docs/21). Additive; nothing above changes. ----
 
   assetSummary: () => request<AssetSummary>('/assets/summary'),
+
+  suppliers: () => request<{ items: Supplier[] }>('/suppliers'),
+  contracts: (params: Record<string, string | undefined> = {}) => {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) if (v) q.set(k, v);
+    const qs = q.toString();
+    return request<{ items: SupportContract[]; expiring_days: number }>(
+      `/contracts${qs ? `?${qs}` : ''}`);
+  },
+  contract: (id: string) => request<SupportContract>(`/contracts/${id}`),
+  deviceContracts: (deviceId: string) =>
+    request<{ items: SupportContract[] }>(`/devices/${deviceId}/contracts`),
+  tags: () => request<{ items: Tag[] }>('/tags'),
 
   lifecycleHistory: (deviceId: string) =>
     request<LifecycleHistory>(`/devices/${deviceId}/lifecycle`),

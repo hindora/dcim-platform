@@ -20,6 +20,8 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.repositories.contracts import EXPIRING_DAYS
+
 # Lifecycle states that mean "this is part of the estate right now". Used as
 # the denominator for placement and capacity, never for the asset COUNT - a
 # planned device is an asset you own on paper and have not racked, and the
@@ -90,6 +92,27 @@ async def summary(session: AsyncSession) -> dict[str, Any]:
         FROM discovery_candidate
     """))).mappings().one()
 
+    warranty = (await session.execute(text("""
+        SELECT count(*) FILTER (WHERE warranty_expires IS NULL)        AS unknown,
+               count(*) FILTER (WHERE warranty_expires < CURRENT_DATE) AS expired,
+               count(*) FILTER (WHERE warranty_expires >= CURRENT_DATE
+                                  AND warranty_expires <= CURRENT_DATE + CAST(:expiring AS integer))
+                                                                        AS expiring,
+               count(*) FILTER (WHERE warranty_expires > CURRENT_DATE + CAST(:expiring AS integer))
+                                                                        AS active
+        FROM device
+        WHERE lifecycle NOT IN ('decommissioned', 'retired')
+    """), {"expiring": EXPIRING_DAYS})).mappings().one()
+
+    contracts = (await session.execute(text("""
+        SELECT count(*)                                                 AS total,
+               count(*) FILTER (WHERE end_date < CURRENT_DATE)          AS expired,
+               count(*) FILTER (WHERE end_date >= CURRENT_DATE
+                                  AND end_date <= CURRENT_DATE + CAST(:expiring AS integer))
+                                                                        AS expiring
+        FROM support_contract
+    """), {"expiring": EXPIRING_DAYS})).mappings().one()
+
     return {
         "totals": {
             "assets": identity["total"],
@@ -103,6 +126,12 @@ async def summary(session: AsyncSession) -> dict[str, Any]:
         "estate": dict(estate),
         "by_category": [dict(r) for r in category_rows],
         "discovery": dict(discovery),
+        # Present now that migration 0047 gives them something to count. Before
+        # it they were ABSENT rather than zero - a tile reading "0 expiring"
+        # with no contract table is a statement an operator would act on.
+        "warranty": dict(warranty),
+        "contracts": dict(contracts),
+        "expiring_days": EXPIRING_DAYS,
     }
 
 

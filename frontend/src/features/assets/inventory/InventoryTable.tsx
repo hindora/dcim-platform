@@ -20,7 +20,7 @@ import { LifecycleChip } from '../components/LifecycleChip';
  */
 
 /** Repeatable params read as arrays; everything else as a single value. */
-const MULTI = ['lifecycle', 'category', 'device_type'] as const;
+const MULTI = ['lifecycle', 'category', 'device_type', 'tag'] as const;
 
 export function InventoryTable() {
   const [params, setParams] = useSearchParams();
@@ -37,7 +37,8 @@ export function InventoryTable() {
     if (all.length) query[key] = all;
   }
   for (const key of ['search', 'vendor_id', 'datacenter_id', 'room_id',
-                     'rack_id', 'has_serial']) {
+                     'rack_id', 'has_serial', 'warranty_state',
+                     'owner_group', 'cost_centre']) {
     const v = params.get(key);
     if (v !== null && v !== '') query[key] = v;
   }
@@ -150,6 +151,21 @@ export function InventoryTable() {
             </select>
           </div>
 
+          <div className="asset-filter-group">
+            <label htmlFor="asset-cover">Cover</label>
+            <select
+              id="asset-cover"
+              value={params.get('warranty_state') ?? ''}
+              onChange={(e) => setSingle('warranty_state', e.target.value)}
+            >
+              <option value="">Any</option>
+              <option value="expired">Expired</option>
+              <option value="expiring">Expiring soon</option>
+              <option value="active">Covered</option>
+              <option value="unknown">No cover recorded</option>
+            </select>
+          </div>
+
           {activeCount > 0 && (
             <button
               type="button"
@@ -185,6 +201,7 @@ export function InventoryTable() {
                   <th>Model</th>
                   <th>Location</th>
                   <th>Lifecycle</th>
+                  <th>Cover</th>
                   <th>Serial</th>
                 </tr>
               </thead>
@@ -206,6 +223,15 @@ export function InventoryTable() {
                         .filter(Boolean).join(' · ') || '—'}
                     </td>
                     <td><LifecycleChip state={d.lifecycle} /></td>
+                    <td>
+                      {d.warranty_state && d.warranty_state !== 'unknown' ? (
+                        <span className={`asset-cover is-${d.warranty_state}`}>
+                          {d.warranty_expires}
+                        </span>
+                      ) : (
+                        <span className="asset-none">—</span>
+                      )}
+                    </td>
                     <td className="asset-tag">
                       {d.serial_number ?? <span className="asset-none">—</span>}
                     </td>

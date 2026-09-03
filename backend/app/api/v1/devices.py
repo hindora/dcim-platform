@@ -14,6 +14,7 @@ from app.core import audit
 from app.core.logging import get_logger
 from app.core.security import Principal, current_principal, require_role
 from app.db.session import get_session
+from app.repositories import contracts as contracts_repo
 from app.repositories import lifecycle as lifecycle_repo
 from app.repositories import maintenance as maintenance_repo
 from app.schemas import (
@@ -53,6 +54,14 @@ async def list_devices(
     serial_number: str | None = Query(None, max_length=128),
     has_serial: bool | None = Query(
         None, description="false lists what still needs reconciling"),
+    warranty_state: str | None = Query(
+        None, pattern="^(active|expiring|expired|unknown)$"),
+    warranty_before: str | None = None,
+    supplier_id: str | None = None,
+    owner_group: str | None = None,
+    cost_centre: str | None = None,
+    tag: list[str] | None = Query(
+        None, description="repeatable key:value; AND-combined"),
     limit: int = Query(50, ge=1, le=500),
     cursor: str | None = None,
     session: AsyncSession = Depends(get_session),
@@ -64,6 +73,9 @@ async def list_devices(
         include_decommissioned=include_decommissioned, lifecycle=lifecycle,
         category=category, vendor_id=vendor_id, asset_tag=asset_tag,
         serial_number=serial_number, has_serial=has_serial,
+        warranty_state=warranty_state, warranty_before=warranty_before,
+        supplier_id=supplier_id, owner_group=owner_group,
+        cost_centre=cost_centre, tags=tag,
         limit=limit, cursor=cursor)
     return Page[DeviceSummary](items=items, next_cursor=next_cursor)
 
@@ -225,6 +237,15 @@ async def lifecycle_transition(
     log.info("lifecycle transition", device_id=device_id,
              to_state=body.to_state, actor=principal.username)
     return event
+
+
+@router.get("/{device_id}/contracts", summary="Cover standing on this device")
+async def device_contracts(
+    device_id: str,
+    session: AsyncSession = Depends(get_session),
+    _: Principal = Depends(current_principal),
+) -> dict[str, Any]:
+    return {"items": await contracts_repo.device_contracts(session, device_id)}
 
 
 @router.get("/{device_id}/maintenance", summary="Work done on this device")

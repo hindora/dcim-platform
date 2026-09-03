@@ -9,6 +9,7 @@ from app.api.v1 import (
     capacity,
     collector,
     collectors,
+    contracts,
     cooling,
     devices,
     discovery,
@@ -28,6 +29,7 @@ api_router.include_router(misc.router)
 api_router.include_router(devices.router)
 api_router.include_router(assets.router)
 api_router.include_router(maintenance.router)
+api_router.include_router(contracts.router)
 api_router.include_router(infrastructure.router)
 api_router.include_router(analytics.router)
 api_router.include_router(capacity.router)

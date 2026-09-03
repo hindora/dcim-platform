@@ -44,6 +44,11 @@ export function AssetWorkspace() {
   // reads: alarms are being held back somewhere, and an operator should be able
   // to see that from any page in the module.
   const windows = active?.items.length || undefined;
+  // Expiring cover is a queue, not a status: somebody has to renew it, and the
+  // badge is how they find out before it lapses rather than after.
+  const expiring = data?.contracts
+    ? (data.contracts.expiring + data.contracts.expired) || undefined
+    : undefined;
 
   const sections: { title: string; items: NavItem[] }[] = [
     {
@@ -71,6 +76,9 @@ export function AssetWorkspace() {
         { to: '/assets/maintenance', label: 'Maintenance',
           blurb: 'Planned work, and the alarms it holds back',
           count: windows },
+        { to: '/assets/contracts', label: 'Support',
+          blurb: 'Warranty and support cover, soonest first',
+          count: expiring },
       ],
     },
   ];
@@ -100,8 +108,8 @@ export function AssetWorkspace() {
           </div>
         ))}
         <p className="asset-nav-note">
-          Support, maintenance, parts and reservations arrive with their
-          migrations. They are absent rather than empty on purpose.
+          Parts and reservations arrive with their migrations. They are absent
+          rather than empty on purpose.
         </p>
       </nav>
       <div className="asset-body">

@@ -237,8 +237,11 @@ class Device(Base, TimestampMixin):
     purchase_cost: Mapped[float | None] = mapped_column(Numeric(12, 2))
     currency: Mapped[str | None] = mapped_column(String(3))
     install_date: Mapped[date | None] = mapped_column(Date)
-    #: A CACHE of the earliest active covering contract's expiry. The truth is
-    #: `support_contract` (migration 0046); only the recompute that writes a
+    #: A CACHE of the LATEST active covering contract's expiry - the date
+    #: cover runs out. With cover to 2027 and to 2029 the device is covered
+    #: until 2029; the earliest date is when the FIRST contract lapses, which
+    #: is a different question. The truth is `support_contract` (migration
+    #: 0047); only the recompute that writes a
     #: `device_support` row may write this. It exists so the asset list can sort
     #: and filter 664 rows by expiry without a three-table join per keystroke.
     warranty_expires: Mapped[date | None] = mapped_column(Date)

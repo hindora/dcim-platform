@@ -545,3 +545,37 @@ a.asset-tile:hover { border-color: var(--border-strong); }
 
 .asset-move select,
 .asset-move input { width: 100%; }
+
+/* ------------------------------------------------------------ cover + tags */
+
+/* Contract state reuses the lifecycle chip vocabulary. */
+.asset-life.is-expired { border-color: var(--critical); color: var(--critical); }
+.asset-life.is-expiring { border-color: var(--warn); color: var(--warn); }
+
+/* Cover dates in a table column. Colour is a hint; the date is the message, so
+   the text is always the date rather than a coloured bar with a tooltip. */
+.asset-cover { font-variant-numeric: tabular-nums; }
+.asset-cover.is-expired { color: var(--critical); }
+.asset-cover.is-expiring { color: var(--warn); }
+.asset-cover.is-active { color: var(--text-muted); }
+
+.asset-cover-line { margin: 0; font-size: 0.95rem; }
+.asset-cover-line.is-expired { color: var(--critical); }
+.asset-cover-line.is-expiring { color: var(--warn); }
+.asset-cover-line.is-unknown { color: var(--text-muted); }
+
+.asset-tagrow { display: inline-flex; flex-wrap: wrap; gap: 5px; }
+
+/* Outlined, not filled: a tag is a label somebody chose, and a solid block of
+   colour would compete with the status hues that mean something is wrong. */
+.asset-chip {
+  display: inline-block;
+  padding: 0 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  line-height: 1.5;
+  color: var(--text-muted);
+  white-space: nowrap;
+}

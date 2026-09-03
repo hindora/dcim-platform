@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.repositories import devices as repo
 from app.repositories import racks as rack_repo
+from app.repositories import tags as tag_repo
 from app.schemas import (
     DeviceDetail,
     DeviceStateOut,
@@ -57,12 +58,24 @@ def _summary(row: dict[str, Any]) -> DeviceSummary:
         asset_tag=row.get("asset_tag"), serial_number=row.get("serial_number"),
         lifecycle=row.get("lifecycle") or "in_service",
         category=row.get("category"),
+        warranty_expires=row.get("warranty_expires"),
+        warranty_state=row.get("warranty_state") or "unknown",
+        owner_group=row.get("owner_group"),
+        cost_centre=row.get("cost_centre"),
     )
 
 
 async def list_devices(session: AsyncSession, **kwargs) -> tuple[list[DeviceSummary], str | None]:
     rows, cursor = await repo.list_devices(session, **kwargs)
-    return [_summary(r) for r in rows], cursor
+    items = [_summary(r) for r in rows]
+    # One query for every row's tags rather than one per row: the asset table
+    # renders 200 of them, and a per-row fetch is 200 round trips behind one
+    # screen.
+    if items:
+        by_device = await tag_repo.tags_for_devices(session, [d.id for d in items])
+        for device in items:
+            device.tags = by_device.get(device.id, [])
+    return items, cursor
 
 
 async def get_device(session: AsyncSession, device_id: str) -> DeviceDetail | None:

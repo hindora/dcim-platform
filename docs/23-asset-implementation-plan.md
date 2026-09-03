@@ -198,6 +198,48 @@ change and the whole feature is worse than not having it.
 
 ## Phase 4 — support, tags, documents
 
+Status: **code built 2026-09-03, not yet applied.** 972 backend tests pass
+(+20), `ruff` clean, `tsc` and production build clean. Migration `0047` proved
+against a throwaway database - up, cache behaves, down to base - and
+**deliberately not run against the live one.**
+
+Built under phase 0's documented defaults, neither of which has been overruled:
+**tenancy is out of scope** (so it is not a column and not a tag either), and
+**documents are deferred** pending an object-store decision, so `asset_document`
+does not exist. Contracts, suppliers and tags are in.
+
+**A contradiction in this document set was found and settled.** `20` §2 said
+`warranty_expires` held the *earliest* active covering expiry and §5 said
+`MAX(end_date)`. `MAX` is correct: with cover to 2027 and to 2029 the device is
+covered until 2029, and the earliest date is when the *first* contract lapses -
+a different question, and not the one an asset list asks. §2, migration `0044`'s
+comment and the ORM docstring all inherited the wrong wording and are corrected.
+
+The cache has exactly one writer, and that is why `services/contracts.py` exists
+rather than the router calling the repository directly. Four paths change cover
+- covering a device, uncovering one, moving a contract's dates, deleting a
+contract - and each recomputes in the same transaction. Verified end to end:
+
+```
+two contracts        -> covered until 2029-02-19 (the LATER of the two)
+future contract      -> unchanged; it has not started
+dropped the long one -> 2026-10-03
+extended the other   -> 2027-03-22
+deleted it           -> None
+```
+
+A contract that has not started is not cover. Reporting it as such is how a
+machine goes to site believing it has support it cannot yet claim.
+
+The 90-day "expiring" threshold is defined once, on the server, and served to
+the UI - the tile, the filter and the asset record read the same number rather
+than each hard-coding one.
+
+Still owed: no create or edit forms for contracts, suppliers or tags - all three
+are read-only in the UI and written through the API. Documents remain blocked on
+phase 0.
+
+
 Pure CRUD, no telemetry coupling, no alarm coupling. The most parallelisable
 phase and the least risky.
 

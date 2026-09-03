@@ -96,6 +96,27 @@ export function AssetOverview() {
           </div>
         </Link>
 
+        {/* Rendered only when migration 0047 has run. Before it the block is
+            ABSENT from the payload, and a tile reading "0 expiring" with no
+            contract table is a false statement an operator would act on. */}
+        {data.warranty && (
+          <Link
+            className={`asset-tile${data.warranty.expired ? ' is-gap' : ''}`}
+            to="/assets/inventory?warranty_state=expiring"
+          >
+            <div className="k">Cover expiring</div>
+            <div className="v">{data.warranty.expiring.toLocaleString()}</div>
+            <div className="sub">
+              {data.warranty.expired
+                ? `${data.warranty.expired} already expired`
+                : `within ${data.expiring_days ?? 90} days`}
+              {data.warranty.unknown
+                ? ` · ${data.warranty.unknown} with no cover recorded`
+                : ''}
+            </div>
+          </Link>
+        )}
+
         <Link className="asset-tile" to="/assets/estate">
           <div className="k">Rack space free</div>
           <div className="v">{estate.u_free.toLocaleString()}U</div>
@@ -172,6 +193,22 @@ export function AssetOverview() {
                 {' — '}reconciliation cannot match them
               </li>
             )}
+            {data.contracts && data.contracts.expired > 0 && (
+              <li>
+                <Link to="/assets/contracts">
+                  {data.contracts.expired} contracts have expired
+                </Link>
+                {' — '}assets under them have no cover
+              </li>
+            )}
+            {data.contracts && data.contracts.expiring > 0 && (
+              <li>
+                <Link to="/assets/contracts">
+                  {data.contracts.expiring} contracts expiring
+                </Link>
+                {' '}within {data.expiring_days ?? 90} days
+              </li>
+            )}
             {discovery.new_candidates > 0 && (
               <li>
                 <Link to="/assets/discovery">
@@ -180,13 +217,14 @@ export function AssetOverview() {
                 {' '}awaiting a decision
               </li>
             )}
-            {identity.unidentified === 0 && discovery.new_candidates === 0 && (
+            {identity.unidentified === 0 && discovery.new_candidates === 0
+              && !data.contracts?.expired && !data.contracts?.expiring && (
               <li className="muted">Nothing needs attention.</li>
             )}
           </ul>
           <p className="muted" style={{ marginTop: 12, fontSize: '0.78rem' }}>
-            Warranty, maintenance and stock queues appear here once their
-            tables exist. They are absent rather than reading zero.
+            Stock queues appear here once parts have a table. They are absent
+            rather than reading zero.
           </p>
         </div>
       </div>

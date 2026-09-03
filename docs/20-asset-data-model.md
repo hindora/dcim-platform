@@ -69,7 +69,8 @@ CREATE INDEX ix_device_warranty_expires ON device (warranty_expires)
 ```
 
 **`warranty_expires` is denormalised on purpose.** The authoritative record is
-`support_contract` (§5); this column is the earliest active covering expiry,
+`support_contract` (§5); this column is the LATEST active covering expiry -
+the date cover actually runs out,
 maintained by the same code that writes the contract link. It exists because the
 asset list has to sort and filter 664 rows by expiry without a three-table join
 on every keystroke, and because the "expiring in 90 days" count on the landing

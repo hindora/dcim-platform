@@ -63,8 +63,8 @@ def upgrade() -> None:
         sa.Column("currency", sa.CHAR(3)),
         sa.Column("install_date", sa.Date),
         # A CACHE. The authoritative record is support_contract (migration
-        # 0046); this is the earliest active covering expiry, maintained by the
-        # same code that writes the contract link. It exists because the asset
+        # 0047); this is the LATEST active covering expiry - the date cover
+        # actually runs out - maintained by the code that writes the link. It exists because the asset
         # list sorts and filters by expiry on every page load and a three-table
         # join per keystroke is not that. Nothing else may write it.
         sa.Column("warranty_expires", sa.Date),

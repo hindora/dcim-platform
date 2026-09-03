@@ -7,7 +7,7 @@ the public API and makes lazy-loading a latency bug.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Generic, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -67,6 +67,12 @@ class DeviceSummary(BaseModel):
     serial_number: str | None = None
     lifecycle: str = "in_service"
     category: str | None = None
+    warranty_expires: date | None = None
+    #: Derived server-side: active | expiring | expired | unknown.
+    warranty_state: str = "unknown"
+    owner_group: str | None = None
+    cost_centre: str | None = None
+    tags: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class EndpointSummary(BaseModel):

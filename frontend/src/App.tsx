@@ -33,6 +33,8 @@ import { AssetElevation } from './features/assets/estate/AssetElevation';
 import { CandidateQueue } from './features/assets/discovery/CandidateQueue';
 import { WindowList } from './features/assets/maintenance/WindowList';
 import { WindowDetail } from './features/assets/maintenance/WindowDetail';
+import { ContractList } from './features/assets/contracts/ContractList';
+import { ContractDetail } from './features/assets/contracts/ContractDetail';
 import { useSocketStatus } from './ws/useSocket';
 
 function Login({ onDone, returnTo }: { onDone: () => void; returnTo?: string }) {
@@ -221,6 +223,8 @@ export default function App() {
             <Route path="discovery" element={<CandidateQueue />} />
             <Route path="maintenance" element={<WindowList />} />
             <Route path="maintenance/:id" element={<WindowDetail />} />
+            <Route path="contracts" element={<ContractList />} />
+            <Route path="contracts/:id" element={<ContractDetail />} />
           </Route>
 
           {/* Reached from rows, drill-downs and links rather than the nav. */}
