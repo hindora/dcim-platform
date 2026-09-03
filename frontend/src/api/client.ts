@@ -441,6 +441,15 @@ export interface AssetCharts {
    *  ordering the UI must not re-sort. */
   warranty_runway: { bucket: string; n: number; band: number }[];
   completeness: { label: string; filled: number; total: number }[];
+  by_owner: { label: string; n: number }[];
+  by_room: { label: string; n: number }[];
+  /** In a rack, floor-standing, or genuinely unplaced - three different states,
+   *  and floor-standing plant is placed. */
+  placement: { label: string; n: number }[];
+  contract_spend: { label: string; contracts: number; total: number }[];
+  /** Live draw per rack, keyed on rack id so cabinets sharing a name across
+   *  rooms are not summed together. */
+  rack_power: { label: string; devices: number; kw: number }[];
 }
 
 export interface AssetFilterOptions {

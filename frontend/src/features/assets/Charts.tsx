@@ -92,6 +92,40 @@ export function Charts() {
         </Panel>
       </div>
 
+      <h3 className="asset-charts-head">Where it is, and whose</h3>
+      <div className="asset-cols">
+        <Panel title="By room" total={sum(data.by_room)}>
+          <BarChart rows={data.by_room.map((r): BarRow => ({
+            label: r.label, n: r.n,
+          }))} />
+        </Panel>
+
+        <Panel title="By owner" total={sum(data.by_owner)}>
+          <BarChart rows={data.by_owner.map((o): BarRow => ({
+            label: o.label,
+            n: o.n,
+            href: `/assets/inventory?owner_group=${encodeURIComponent(o.label)}`,
+          }))} />
+        </Panel>
+
+        <Panel title="How it is placed" total={sum(data.placement)}>
+          {/* Floor-standing is NOT a gap. A chiller in a plant room is placed;
+              it simply has no rack, and colouring it as a problem would report
+              the estate's own design as a data fault. "Not placed" is the only
+              row here that means something is missing. */}
+          <BarChart
+            sorted={false}
+            limitable={false}
+            rows={data.placement.map((p): BarRow => ({
+              label: p.label,
+              n: p.n,
+              colour: p.label === 'Not placed' ? 'var(--warn)'
+                : p.label === 'Floor-standing' ? 'var(--border-strong)' : undefined,
+            }))}
+          />
+        </Panel>
+      </div>
+
       <h3 className="asset-charts-head">Cover and records</h3>
       <div className="asset-cols">
         <Panel title="When cover lapses" total={sum(data.warranty_runway)}>
@@ -121,6 +155,16 @@ export function Charts() {
             sorted={false}
             limitable={false}
             rows={coverRows(data)}
+          />
+        </Panel>
+
+        <Panel title="Contract spend">
+          <BarChart
+            limitable={false}
+            format={money}
+            rows={data.contract_spend.map((c): BarRow => ({
+              label: `${c.label} (${c.contracts})`, n: c.total,
+            }))}
           />
         </Panel>
 
@@ -167,6 +211,19 @@ export function Charts() {
             total={floor.designed}
             unit=""
             note={`${floor.rooms} rooms · ${Math.round(floor.area_m2).toLocaleString()} m²`}
+          />
+        </Panel>
+
+        <Panel title="Live draw by rack">
+          {/* Measured, not nameplate: this answers what a cabinet is pulling
+              right now, which is the question asked before adding to it. Racks
+              with no good reading are absent rather than drawn at zero - a
+              rack nobody can measure is not an empty one. */}
+          <BarChart
+            format={(n) => `${n.toFixed(1)} kW`}
+            rows={data.rack_power.map((r): BarRow => ({
+              label: r.label, n: r.kw,
+            }))}
           />
         </Panel>
 
@@ -275,6 +332,12 @@ function coverRows(data: AssetCharts): BarRow[] {
 function coverTotal(data: AssetCharts): number {
   const w = data.cover_state;
   return w.expired + w.expiring + w.active + w.unknown;
+}
+
+/** Money, rounded to whole units. Pennies on a five-figure contract are noise
+ *  in a chart somebody reads to compare suppliers. */
+function money(n: number): string {
+  return n.toLocaleString(undefined, { maximumFractionDigits: 0 });
 }
 
 function sum(rows: { n: number }[]): number {

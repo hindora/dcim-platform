@@ -37,10 +37,13 @@ export type BarRow = {
 const LIMITS = [10, 25, 0] as const;   // 0 = all
 
 export function BarChart({
-  rows, unit = '', limitable = true, defaultLimit = 10, sorted = true,
+  rows, unit = '', limitable = true, defaultLimit = 10, sorted = true, format,
 }: {
   rows: BarRow[];
   unit?: string;
+  /** Renders the value. Counts are counts, but a bar can carry money or
+   *  kilowatts, and "147396.08" is not how either is read. */
+  format?: (n: number) => string;
   limitable?: boolean;
   defaultLimit?: number;
   /** False keeps the order given. A runway is a SEQUENCE - expired, then each
@@ -89,7 +92,7 @@ export function BarChart({
 
       <div className="asset-chart-rows">
         {shown.map((r) => (
-          <Bar key={r.label} row={r} max={max} unit={unit} />
+          <Bar key={r.label} row={r} max={max} unit={unit} format={format} />
         ))}
         {hidden.length > 0 && (
           // Summed rather than dropped: without it the bars no longer add up
@@ -99,6 +102,7 @@ export function BarChart({
             row={{ label: `and ${hidden.length} others`, n: hiddenTotal }}
             max={max}
             unit={unit}
+            format={format}
             muted
           />
         )}
@@ -119,9 +123,11 @@ export function BarChart({
   );
 }
 
-function Bar({ row, max, unit, muted }: {
+function Bar({ row, max, unit, muted, format }: {
   row: BarRow; max: number; unit: string; muted?: boolean;
+  format?: (n: number) => string;
 }) {
+  const shownValue = format ? format(row.n) : `${row.n.toLocaleString()}${unit}`;
   const width = `${(row.n / max) * 100}%`;
   const label = row.href
     ? <Link to={row.href}>{row.label}</Link>
@@ -131,7 +137,7 @@ function Bar({ row, max, unit, muted }: {
     <div className={`asset-chart-row${muted ? ' is-muted' : ''}`}
          title={row.of != null
            ? `${row.label}: ${row.n.toLocaleString()} of ${row.of.toLocaleString()}`
-           : `${row.label}: ${row.n.toLocaleString()}${unit}`}>
+           : `${row.label}: ${shownValue}`}>
       <div className="lbl">{label}</div>
       <div className="track">
         <span className="fill"
@@ -141,7 +147,7 @@ function Bar({ row, max, unit, muted }: {
           what somebody quotes in a meeting, and reading it off an axis is a
           worse way to get it. */}
       <div className="val">
-        {row.n.toLocaleString()}{unit}
+        {shownValue}
         {row.of != null && (
           <span className="of"> / {row.of.toLocaleString()}</span>
         )}

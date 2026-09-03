@@ -349,6 +349,74 @@ async def charts(session: AsyncSession) -> dict[str, Any]:
         ("Install date", "install_date"),
     ]
 
+    by_owner = (await session.execute(text("""
+        SELECT COALESCE(owner_group, 'Unassigned') AS label, count(*) AS n
+        FROM device
+        WHERE lifecycle NOT IN ('decommissioned', 'retired')
+        GROUP BY 1 ORDER BY n DESC
+    """))).mappings().all()
+
+    by_room = (await session.execute(text("""
+        SELECT dc.code || ' · ' || rm.name AS label, count(d.id) AS n
+        FROM device d
+        LEFT JOIN rack r ON r.id = d.rack_id
+        LEFT JOIN rack_row rr ON rr.id = r.row_id
+        JOIN room rm ON rm.id = COALESCE(rr.room_id, d.room_id)
+        JOIN datacenter dc ON dc.id = rm.datacenter_id
+        WHERE d.lifecycle NOT IN ('decommissioned', 'retired')
+        GROUP BY 1 ORDER BY n DESC
+    """))).mappings().all()
+
+    # Where things physically are. "Not placed" is a genuine third state and
+    # not the same as floor-standing: a chiller in a plant room is placed, it
+    # simply has no rack. Calling it unplaced would report the estate's own
+    # design as a data gap.
+    placement = (await session.execute(text("""
+        SELECT CASE WHEN rack_id IS NOT NULL THEN 'In a rack'
+                    WHEN room_id IS NOT NULL THEN 'Floor-standing'
+                    ELSE 'Not placed' END AS label,
+               count(*) AS n
+        FROM device
+        WHERE lifecycle NOT IN ('decommissioned', 'retired')
+        GROUP BY 1
+    """))).mappings().all()
+
+    spend = (await session.execute(text("""
+        SELECT COALESCE(s.name, 'No supplier recorded') AS label,
+               count(*) AS contracts,
+               COALESCE(sum(c.cost), 0)::float AS total
+        FROM support_contract c
+        LEFT JOIN supplier s ON s.id = c.supplier_id
+        GROUP BY 1 ORDER BY total DESC
+    """))).mappings().all()
+
+    # GROUPED BY RACK ID, NOT NAME. Rack names repeat across rooms - every hall
+    # has an R2-01 - so grouping by name silently sums unrelated cabinets and
+    # reports 80 devices and 95 kW in a 42U rack. The label carries the site and
+    # room for the same reason.
+    #
+    # Live readings, so this is draw and not nameplate: it answers "what is this
+    # rack pulling right now", which is the question asked before adding to it.
+    rack_power = (await session.execute(text("""
+        SELECT dc.code || ' · ' || rm.name || ' · ' || rk.name AS label,
+               count(*) AS devices,
+               round(sum((ds.metrics->'power_draw'->>'v')::numeric) / 1000.0, 1)::float
+                   AS kw
+        FROM device d
+        JOIN rack rk ON rk.id = d.rack_id
+        JOIN rack_row rr ON rr.id = rk.row_id
+        JOIN room rm ON rm.id = rr.room_id
+        JOIN datacenter dc ON dc.id = rm.datacenter_id
+        JOIN device_state ds ON ds.device_id = d.id
+        WHERE ds.metrics ? 'power_draw'
+          -- Only readings the collector believes. A stale or suspect value
+          -- summed into a rack total is worse than a rack missing from the
+          -- chart, because nothing on screen would say it was guessed.
+          AND ds.metrics->'power_draw'->>'q' = 'good'
+        GROUP BY rk.id, dc.code, rm.name, rk.name
+        ORDER BY kw DESC NULLS LAST
+    """))).mappings().all()
+
     return {
         "by_type": [dict(r) for r in by_type],
         "by_vendor": [dict(r) for r in by_vendor],
@@ -368,6 +436,11 @@ async def charts(session: AsyncSession) -> dict[str, Any]:
             {"bucket": r["bucket"], "n": r["n"], "band": r["band"]}
             for r in runway
         ],
+        "by_owner": [dict(r) for r in by_owner],
+        "by_room": [dict(r) for r in by_room],
+        "placement": [dict(r) for r in placement],
+        "contract_spend": [dict(r) for r in spend],
+        "rack_power": [dict(r) for r in rack_power],
         "completeness": [
             {"label": label, "filled": completeness[key],
              "total": completeness["total"]}
