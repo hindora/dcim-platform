@@ -862,3 +862,7 @@ tr.is-selected > td { background: var(--accent-dim); }
    every other page reads. */
 .asset-shell a:hover { text-decoration: none; color: var(--text); }
 .asset-shell .asset-nav a:hover { color: var(--text); }
+
+.asset-pager-gap { color: var(--text-faint); padding: 0 2px; }
+
+.asset-pager-size input[type='number'] { width: 68px; }

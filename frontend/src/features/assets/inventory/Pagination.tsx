@@ -1,34 +1,27 @@
-/** Paging controls for a cursor-paged list.
+/** Paging controls for the inventory table.
  *
- *  The list is cursor-paged on purpose - `(name, id) > (last name, last id)`
- *  rather than OFFSET - because under concurrent inserts OFFSET makes a page
- *  repeat or skip rows, and an inventory that quietly omits a device is worse
- *  than a slow one.
- *
- *  That has one honest consequence: you cannot jump to an arbitrary page,
- *  because page 7's cursor is only known once page 6 has been fetched. So
- *  numbered buttons appear for pages already visited, Next walks forward one at
- *  a time, and First is always available. Every other paging affordance - page
- *  size, the range, the total, knowing when you are on the last page - is here.
+ *  Offset-paged, so any page is reachable directly. The ordering behind it is
+ *  a TOTAL order - `name` then `id` - so rows cannot shuffle among themselves
+ *  between fetches; what offset costs is that a row inserted or deleted earlier
+ *  in the order shifts everything after it, so a reader paging through a
+ *  changing estate can see one row twice or miss one. That is the accepted
+ *  trade for being able to jump to page 7 without having fetched page 6.
  */
 export function Pagination({
-  page, pageSize, shown, total, hasNext, onPage, onFirst, onPrev, onNext, onSize,
+  page, pageSize, shown, total, hasNext, onPage, onSize,
 }: {
   page: number;
   pageSize: number;
   shown: number;
   total?: number | null;
   hasNext: boolean;
-  /** Jump to a page whose cursor is already known. */
   onPage: (page: number) => void;
-  onFirst: () => void;
-  onPrev: () => void;
-  onNext: () => void;
   onSize: (size: number) => void;
 }) {
   const from = shown === 0 ? 0 : (page - 1) * pageSize + 1;
   const to = (page - 1) * pageSize + shown;
   const pages = total != null ? Math.max(1, Math.ceil(total / pageSize)) : null;
+  const last = pages ?? page;
 
   return (
     <div className="asset-pager">
@@ -58,31 +51,72 @@ export function Pagination({
         </select>
       </label>
 
-      <div className="asset-pager-buttons" role="group" aria-label="Pagination">
-        <button type="button" onClick={onFirst} disabled={page === 1}
-                aria-label="First page">« First</button>
-        <button type="button" onClick={onPrev} disabled={page === 1}
-                aria-label="Previous page">‹ Prev</button>
+      {pages != null && pages > 1 && (
+        <label className="asset-pager-size">
+          <span>Go to</span>
+          {/* For twenty-seven pages the numbered buttons are enough; for two
+              hundred, typing the number is the only usable way in. */}
+          <input
+            type="number"
+            min={1}
+            max={pages}
+            value={page}
+            aria-label="Go to page"
+            onChange={(e) => {
+              const n = Number(e.target.value);
+              if (n >= 1 && n <= pages) onPage(n);
+            }}
+          />
+        </label>
+      )}
 
-        {/* Only pages whose cursor we hold. Offering 7 when nothing has fetched
-            6 would be a button that cannot work. */}
-        {Array.from({ length: page }, (_, i) => i + 1)
-          .slice(Math.max(0, page - 5))
-          .map((n) => (
+      <div className="asset-pager-buttons" role="group" aria-label="Pagination">
+        <button type="button" onClick={() => onPage(1)} disabled={page === 1}
+                aria-label="First page">«</button>
+        <button type="button" onClick={() => onPage(page - 1)} disabled={page === 1}
+                aria-label="Previous page">‹</button>
+
+        {pageWindow(page, last).map((n, i) =>
+          n === null ? (
+            // A gap, not a button: it stands for pages nobody asked to see.
+            <span className="asset-pager-gap" key={`gap-${i}`} aria-hidden="true">…</span>
+          ) : (
             <button
               key={n}
               type="button"
               className={n === page ? 'is-current' : ''}
               aria-current={n === page ? 'page' : undefined}
+              aria-label={`Page ${n}`}
               onClick={() => onPage(n)}
             >
               {n}
             </button>
           ))}
 
-        <button type="button" onClick={onNext} disabled={!hasNext}
-                aria-label="Next page">Next ›</button>
+        <button type="button" onClick={() => onPage(page + 1)} disabled={!hasNext}
+                aria-label="Next page">›</button>
+        <button type="button" onClick={() => onPage(last)}
+                disabled={pages == null || page === last}
+                aria-label="Last page">»</button>
       </div>
     </div>
   );
+}
+
+/** The numbers to show: always the first and last, always a run around the
+ *  current page, and a gap standing in for the rest.
+ *
+ *  Returns null where a gap belongs, so the caller renders text rather than a
+ *  button somebody would try to click. */
+function pageWindow(page: number, last: number): (number | null)[] {
+  if (last <= 7) {
+    return Array.from({ length: last }, (_, i) => i + 1);
+  }
+  const around = [page - 1, page, page + 1].filter((n) => n > 1 && n < last);
+  const out: (number | null)[] = [1];
+  if (around[0] > 2) out.push(null);
+  out.push(...around);
+  if (around[around.length - 1] < last - 1) out.push(null);
+  out.push(last);
+  return out;
 }

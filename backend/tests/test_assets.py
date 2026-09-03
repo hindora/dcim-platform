@@ -204,3 +204,69 @@ async def test_asset_columns_are_selected_for_every_row():
     for column in ("d.serial_number", "d.asset_tag",
                    "d.lifecycle::text AS lifecycle", "dt.category"):
         assert column in session.sql
+
+
+# ------------------------------------------------------------------- paging
+
+@pytest.mark.asyncio
+async def test_offset_and_cursor_are_both_supported():
+    """Two ways to say where a page starts, for two different jobs.
+
+    Cursor for walking the whole list, because it cannot repeat or skip a row.
+    Offset for jumping to page 7 without having fetched page 6, which a cursor
+    cannot do at all.
+    """
+    session = _FakeSession()
+    await device_repo.list_devices(session, offset=100, limit=25)
+    assert "OFFSET :offset" in session.sql
+    assert session.params["offset"] == 100
+
+    session = _FakeSession()
+    await device_repo.list_devices(session, limit=25)
+    assert "OFFSET" not in session.sql
+
+
+@pytest.mark.asyncio
+async def test_the_ordering_is_a_total_order():
+    """This is what makes OFFSET tolerable here.
+
+    `name` alone ties, and rows that tie can swap places between two fetches -
+    which is the classic way an offset-paged list shows a row twice. Breaking
+    every tie on `id` removes that failure mode entirely; what remains is only
+    the genuine one, a row inserted or removed earlier in the order.
+    """
+    session = _FakeSession()
+    await device_repo.list_devices(session)
+    assert "ORDER BY d.name, d.id::text" in session.sql
+
+
+@pytest.mark.asyncio
+async def test_the_count_ignores_paging():
+    """A total that shrank as somebody paged would make the last page look
+    broken, so neither the cursor nor the offset reaches the count."""
+    session = _FakeSession()
+    await device_repo.count_matching(session, category=["network"])
+
+    assert "count(*)" in session.sql
+    assert "OFFSET" not in session.sql
+    assert "cur_name" not in session.sql
+    assert "dt.category = ANY(:category)" in session.sql
+
+
+@pytest.mark.asyncio
+async def test_the_count_and_the_list_share_one_predicate_builder():
+    """Assembled separately they drift, and a total that disagrees with the rows
+    beneath it is worse than no total at all."""
+    filters = {"category": ["network"], "has_serial": False,
+               "warranty_state": "expired"}
+
+    listing = _FakeSession()
+    await device_repo.list_devices(listing, **filters)
+    counting = _FakeSession()
+    await device_repo.count_matching(counting, **filters)
+
+    for predicate in ("dt.category = ANY(:category)",
+                      "d.serial_number IS NULL",
+                      "d.warranty_expires < CURRENT_DATE"):
+        assert predicate in listing.sql, predicate
+        assert predicate in counting.sql, predicate

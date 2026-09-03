@@ -207,6 +207,7 @@ async def list_devices(
     tags: list[str] | None = None,
     limit: int = 50,
     cursor: str | None = None,
+    offset: int | None = None,
 ) -> tuple[list[dict[str, Any]], str | None]:
     where, params = _filters(
         device_types=device_types, status=status, room_id=room_id,
@@ -229,6 +230,21 @@ async def list_devices(
     if where:
         sql += " WHERE " + " AND ".join(where)
     sql += " ORDER BY d.name, d.id::text LIMIT :limit"
+
+    # OFFSET, for jumping to an arbitrary page. The cursor path stays the
+    # default and is what anything walking the whole list should use.
+    #
+    # The usual objection to OFFSET - that a page repeats or skips rows - is
+    # narrower here than it looks, because the ORDER BY is a TOTAL order:
+    # `d.name` alone would tie, and `d.id::text` breaks every tie, so rows
+    # cannot shuffle among themselves between fetches. What remains is the real
+    # and unavoidable case: a row INSERTED OR DELETED EARLIER IN THE ORDER
+    # between two page fetches shifts everything after it by one, so a reader
+    # paging through a changing estate can see one row twice or miss one. That
+    # is the trade for being able to jump to page 7 without having fetched 6.
+    if offset:
+        sql += " OFFSET :offset"
+        params["offset"] = offset
 
     rows = (await session.execute(text(sql), params)).mappings().all()
     next_cursor = None

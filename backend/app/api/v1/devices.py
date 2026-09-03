@@ -64,12 +64,21 @@ async def list_devices(
         None, description="repeatable key:value; AND-combined"),
     limit: int = Query(50, ge=1, le=500),
     cursor: str | None = None,
+    offset: int | None = Query(
+        None, ge=0,
+        description="jump straight to a position. Mutually exclusive with "
+                    "cursor: they are two answers to 'where does this page "
+                    "start' and honouring both would silently pick one"),
     with_total: bool = Query(
         False, description="also count every row the filters match; the paging "
                            "UI needs it, a plain next-page fetch does not"),
     session: AsyncSession = Depends(get_session),
     _: Principal = Depends(current_principal),
 ) -> Page[DeviceSummary]:
+    if cursor and offset:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "pass cursor or offset, not both")
     items, next_cursor, total = await service.list_devices(
         session, with_total=with_total,
         device_types=device_type, status=status_filter, room_id=room_id,
@@ -80,7 +89,7 @@ async def list_devices(
         warranty_state=warranty_state, warranty_before=warranty_before,
         supplier_id=supplier_id, owner_group=owner_group,
         cost_centre=cost_centre, tags=tag,
-        limit=limit, cursor=cursor)
+        limit=limit, cursor=cursor, offset=offset)
     return Page[DeviceSummary](items=items, next_cursor=next_cursor, total=total)
 
 

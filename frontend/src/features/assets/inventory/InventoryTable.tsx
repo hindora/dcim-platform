@@ -31,26 +31,11 @@ export function InventoryTable() {
   const [selected, setSelected] = useState<string[]>([]);
   const [importing, setImporting] = useState(false);
 
-  // Page size lives in the URL with the filters, so a link somebody pastes into
-  // a ticket reproduces what they were looking at. The cursor stack does not:
-  // it is a position, not a view, and a stale cursor in a bookmarked link would
-  // silently start somebody mid-list.
+  // Page size AND page number live in the URL with the filters. Offset paging
+  // makes the page number sufficient to locate a page, so a pasted link now
+  // reproduces the exact view - which a cursor never could.
   const pageSize = Number(params.get('page_size') || 50);
-  const [cursors, setCursors] = useState<(string | null)[]>([null]);
-  const [page, setPage] = useState(1);
-
-  // Any change to what is being filtered invalidates every cursor held, because
-  // a cursor is a position in one particular result set.
-  const filterKey = [...params.entries()]
-    .filter(([k]) => k !== 'page_size')
-    .map(([k, v]) => `${k}=${v}`).sort().join('&');
-  const [lastFilterKey, setLastFilterKey] = useState(filterKey);
-  if (filterKey !== lastFilterKey) {
-    setLastFilterKey(filterKey);
-    setCursors([null]);
-    setPage(1);
-    setSelected([]);
-  }
+  const page = Math.max(1, Number(params.get('page') || 1));
 
   const { data: options } = useQuery<AssetFilterOptions>({
     queryKey: ['asset-filter-options'],
@@ -60,12 +45,12 @@ export function InventoryTable() {
 
   const query: Record<string, string | string[] | undefined> = {
     limit: String(pageSize),
-    // The denominator behind "1-50 of 664". Asked for only by this screen; a
-    // plain next-page fetch elsewhere does not pay for the count.
+    // The denominator behind "1-50 of 664", and what makes the last page
+    // reachable at all. Asked for only by this screen; a plain next-page fetch
+    // elsewhere does not pay for the count.
     with_total: 'true',
   };
-  const cursor = cursors[page - 1];
-  if (cursor) query.cursor = cursor;
+  if (page > 1) query.offset = String((page - 1) * pageSize);
   for (const key of MULTI) {
     const all = params.getAll(key);
     if (all.length) query[key] = all;
@@ -78,7 +63,7 @@ export function InventoryTable() {
   }
 
   const { data, error, isLoading } = useQuery<Page<DeviceSummary>>({
-    queryKey: ['asset-devices', params.toString(), page, pageSize],
+    queryKey: ['asset-devices', params.toString()],
     queryFn: () => api.assetDevices(query),
     refetchInterval: 30_000,
   });
@@ -103,32 +88,28 @@ export function InventoryTable() {
 
   // page_size is a view preference, not a filter - counting it would make the
   // "clear filters" button claim there is one when there is not.
-  const activeCount = [...params.keys()].filter((k) => k !== 'page_size').length;
+  const VIEW_KEYS = new Set(['page_size', 'page']);
+  const activeCount = [...params.keys()].filter((k) => !VIEW_KEYS.has(k)).length;
 
   function goToPage(next: number) {
-    setPage(next);
+    const q = new URLSearchParams(params);
+    if (next <= 1) q.delete('page');
+    else q.set('page', String(next));
+    setParams(q, { replace: true });
+    // The selection was of rows that are about to leave the screen. Carrying it
+    // invisibly across a page turn is how somebody decommissions the wrong
+    // forty devices.
     setSelected([]);
-  }
-
-  function advance() {
-    const nextCursor = data?.next_cursor;
-    if (!nextCursor) return;
-    setCursors((prev) => {
-      const copy = [...prev];
-      copy[page] = nextCursor;      // the cursor that STARTS the next page
-      return copy;
-    });
-    goToPage(page + 1);
   }
 
   function setPageSize(size: number) {
     const next = new URLSearchParams(params);
     if (size === 50) next.delete('page_size');
     else next.set('page_size', String(size));
+    // Row boundaries move, so the current page number means something else.
+    next.delete('page');
     setParams(next, { replace: true });
-    // Row boundaries move, so every cursor held is meaningless.
-    setCursors([null]);
-    goToPage(1);
+    setSelected([]);
   }
   const rows = data?.items ?? [];
   const chosen = new Set(selected);
@@ -337,9 +318,6 @@ export function InventoryTable() {
               total={data?.total}
               hasNext={Boolean(data?.next_cursor)}
               onPage={goToPage}
-              onFirst={() => goToPage(1)}
-              onPrev={() => goToPage(Math.max(1, page - 1))}
-              onNext={advance}
               onSize={setPageSize}
             />
           )}
