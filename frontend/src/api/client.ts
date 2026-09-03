@@ -441,6 +441,10 @@ export interface AssetCharts {
    *  ordering the UI must not re-sort. */
   warranty_runway: { bucket: string; n: number; band: number }[];
   completeness: { label: string; filled: number; total: number }[];
+  /** How many new devices of each height still fit, computed from CONTIGUOUS
+   *  gaps - the number fragmentation actually costs. 1U always equals total
+   *  free U; the fall-off from there is the fragmentation. */
+  fragmentation: { size: number; fits: number }[];
   by_owner: { label: string; n: number }[];
   by_room: { label: string; n: number }[];
   /** In a rack, floor-standing, or genuinely unplaced - three different states,

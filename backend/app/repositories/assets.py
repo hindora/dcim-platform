@@ -390,6 +390,44 @@ async def charts(session: AsyncSession) -> dict[str, Any]:
         GROUP BY 1 ORDER BY total DESC
     """))).mappings().all()
 
+    # What still FITS, which is the number fragmentation actually costs. Total
+    # free U says nothing about placeability: 1392U spread as 1U slivers takes
+    # hundreds of pizza boxes and not one blade chassis. Computed from
+    # CONTIGUOUS gaps - a gaps-and-islands walk over every rack unit, cheap at
+    # 1,848 units - and each gap of length L fits floor(L / size) devices of
+    # that size.
+    #
+    # Planned placeholders count as occupied, because they are: a reservation's
+    # units are spoken for and must not be offered as placeable.
+    #
+    # Sizes are the chassis heights that exist: 1U-4U servers, 6U/8U for blade
+    # chassis. A continuous axis would imply 5U equipment somebody could buy.
+    fragmentation = (await session.execute(text("""
+        WITH units AS (
+            SELECT r.id AS rack_id, gs.u
+            FROM rack r, generate_series(1, r.u_height) AS gs(u)
+        ), occupied AS (
+            SELECT d.rack_id, gs.u
+            FROM device d,
+                 generate_series(d.u_start, d.u_start + d.u_height - 1) AS gs(u)
+            WHERE d.rack_id IS NOT NULL AND d.u_start IS NOT NULL
+        ), free_units AS (
+            SELECT un.rack_id, un.u,
+                   un.u - row_number() OVER (PARTITION BY un.rack_id
+                                             ORDER BY un.u) AS grp
+            FROM units un
+            LEFT JOIN occupied o ON o.rack_id = un.rack_id AND o.u = un.u
+            WHERE o.u IS NULL
+        ), gaps AS (
+            SELECT rack_id, count(*) AS len
+            FROM free_units GROUP BY rack_id, grp
+        )
+        SELECT s.size, COALESCE(sum(g.len / s.size), 0)::int AS fits
+        FROM (VALUES (1),(2),(3),(4),(6),(8)) AS s(size)
+        LEFT JOIN gaps g ON g.len >= s.size
+        GROUP BY s.size ORDER BY s.size
+    """))).mappings().all()
+
     return {
         "by_type": [dict(r) for r in by_type],
         "by_vendor": [dict(r) for r in by_vendor],
@@ -413,6 +451,9 @@ async def charts(session: AsyncSession) -> dict[str, Any]:
         "by_room": [dict(r) for r in by_room],
         "placement": [dict(r) for r in placement],
         "contract_spend": [dict(r) for r in spend],
+        "fragmentation": [
+            {"size": r["size"], "fits": r["fits"]} for r in fragmentation
+        ],
         "completeness": [
             {"label": label, "filled": completeness[key],
              "total": completeness["total"]}

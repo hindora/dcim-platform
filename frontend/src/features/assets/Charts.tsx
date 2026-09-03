@@ -216,6 +216,20 @@ export function Charts() {
           />
         </Panel>
 
+        <Panel title="What still fits">
+          {/* The number fragmentation costs. Total free U says nothing about
+              placeability - 1392U spread as slivers takes hundreds of 1U
+              servers and few 4U chassis, and this is the chart where that
+              fall-off is visible. Sizes are chassis heights that exist; a
+              continuous axis would imply 5U equipment somebody could buy. */}
+          <VColumns
+            rows={data.fragmentation.map((f) => ({
+              label: `${f.size}U`,
+              n: f.fits,
+            }))}
+          />
+        </Panel>
+
         <Panel title="How full the racks are">
           {/* The distribution behind the single "free U" figure. A mean hides
               whether the space is one empty cabinet or forty part-used ones,
