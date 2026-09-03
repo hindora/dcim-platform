@@ -23,6 +23,28 @@
   .asset-shell { grid-template-columns: 1fr; gap: 16px; }
 }
 
+/* Both rails stay put while the rows move. At 200 a page, scrolling back to
+   the top to change a filter or switch section is friction paid on every
+   query.
+
+   Sticky rather than a viewport-locked shell: `main` sets no height and is
+   shared with every other page, so locking the layout would mean changing
+   chrome this module is not allowed to touch. Sticky reaches the same place
+   from inside our own subtree.
+
+   max-height with its own overflow because a rail can be taller than the
+   window - a short laptop screen would otherwise put the last filter group
+   somewhere unreachable, pinned off the bottom. */
+.asset-nav {
+  position: sticky;
+  top: 12px;
+  max-height: calc(100vh - 24px);
+  overflow-y: auto;
+  /* Reserve the scrollbar's width always, so the labels do not shift sideways
+     the moment the rail becomes tall enough to need one. */
+  scrollbar-gutter: stable;
+}
+
 .asset-nav h2 { margin: 0 0 4px; }
 
 .asset-nav-group { margin-top: 18px; }
@@ -250,6 +272,9 @@ a.asset-tile:hover { border-color: var(--border-strong); }
   padding: 10px 12px;
   position: sticky;
   top: 12px;
+  max-height: calc(100vh - 24px);
+  overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 
 .asset-filter-group { margin-bottom: 14px; }
