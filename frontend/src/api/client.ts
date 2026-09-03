@@ -453,6 +453,24 @@ export interface AssetCharts {
   contract_spend: { label: string; contracts: number; total: number }[];
 }
 
+/** The estate over time. Snapshots carry counts of STATE; activity carries the
+ *  movements between states, from the lifecycle events - a snapshot diff would
+ *  net ten installs against ten decommissions and show nothing. */
+export interface AssetTrends {
+  snapshots: {
+    day: string;
+    devices: number; in_service: number; planned: number; in_stock: number;
+    installed: number; maintenance: number; decommissioned: number;
+    retired: number;
+    racks: number; u_total: number; u_used: number; u_held: number;
+    u_free: number;
+    with_serial: number; with_asset_tag: number;
+    cover_active: number; cover_expiring: number; cover_expired: number;
+    cover_unknown: number;
+  }[];
+  activity: { month: string; installs: number; decommissions: number }[];
+}
+
 export interface AssetFilterOptions {
   device_types: {
     code: string;
@@ -1754,6 +1772,7 @@ export const api = {
     request<PowerChain>(`/power/chain/${deviceId}`),
   assetFilterOptions: () => request<AssetFilterOptions>('/assets/filter-options'),
   assetCharts: () => request<AssetCharts>('/assets/charts'),
+  assetTrends: () => request<AssetTrends>('/assets/trends'),
 
   discoveryCandidates: (params: Record<string, string | undefined> = {}) => {
     const q = new URLSearchParams();

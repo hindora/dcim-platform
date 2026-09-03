@@ -1305,3 +1305,103 @@ tr.is-selected > td { background: var(--accent-dim); }
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* -------------------------------------------------------------- trends */
+
+.asset-trend-single .v {
+  font-size: 1.4rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.asset-trend-line { fill: none; stroke: var(--accent); stroke-width: 2; }
+.asset-trend-area { fill: var(--accent); opacity: 0.12; }
+.asset-trend-dot { fill: var(--accent); }
+
+.asset-trend-axis {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 0.7rem;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.asset-trend-axis .range { color: var(--text-muted); }
+.asset-trend-axis strong { color: var(--text); }
+
+/* Diverging columns: up and down share one scale around a zero baseline. */
+.asset-diverge {
+  display: grid;
+  gap: 6px;
+  height: 140px;
+}
+
+.asset-diverge-col {
+  display: grid;
+  grid-template-rows: 1fr 1fr auto;
+  height: 100%;
+  text-align: center;
+  min-width: 0;
+}
+
+.asset-diverge-col .up { display: flex; align-items: flex-end; justify-content: center; }
+.asset-diverge-col .down {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  border-top: 1px solid var(--border-strong);   /* the zero line */
+}
+
+.asset-diverge-col .bar { width: 70%; border-radius: 3px; }
+.asset-diverge-col .bar.is-up { background: var(--accent); border-radius: 3px 3px 0 0; }
+.asset-diverge-col .bar.is-down { background: var(--warn); border-radius: 0 0 3px 3px; }
+
+.asset-diverge-col .k {
+  margin-top: 4px;
+  font-size: 0.64rem;
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Paired columns: two series per bucket on one shared scale. */
+.asset-paired-wrap { display: flex; flex-direction: column; gap: 8px; }
+
+.asset-paired {
+  display: grid;
+  gap: 8px;
+  height: 120px;
+  align-items: end;
+}
+
+.asset-paired-col {
+  display: grid;
+  grid-template-rows: 1fr auto;
+  height: 100%;
+  min-width: 0;
+  text-align: center;
+}
+
+.asset-paired-col .bars {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 2px;
+  height: 100%;
+}
+
+.asset-paired-col .bar { width: 40%; min-height: 2px; border-radius: 3px 3px 0 0; }
+.asset-paired-col .bar.is-a { background: var(--accent); }
+.asset-paired-col .bar.is-b { background: var(--warn); }
+
+.asset-paired-col .k {
+  margin-top: 4px;
+  font-size: 0.64rem;
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

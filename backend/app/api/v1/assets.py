@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import Principal, current_principal
 from app.db.session import get_session
+from app.repositories import snapshots as snapshot_repo
 from app.services import assets as service
 
 router = APIRouter(prefix="/assets", tags=["assets"])
@@ -51,6 +52,24 @@ async def assets_charts(
     a line that says something it cannot know.
     """
     return await service.charts(session)
+
+
+@router.get("/trends", summary="The estate over time, from the nightly snapshots")
+async def assets_trends(
+    days: int = 90,
+    session: AsyncSession = Depends(get_session),
+    _: Principal = Depends(current_principal),
+) -> dict[str, Any]:
+    """Snapshots for the state trends, lifecycle events for the activity.
+
+    Two sources on purpose: a snapshot DIFF conflates movement - ten installs
+    and ten decommissions in one day net to zero - so counts of state come from
+    the snapshots and movements between states come from the events.
+    """
+    return {
+        "snapshots": await snapshot_repo.series(session, days=min(days, 400)),
+        "activity": await snapshot_repo.lifecycle_activity(session),
+    }
 
 
 @router.get("/filter-options", summary="Vocabularies for the inventory filters")

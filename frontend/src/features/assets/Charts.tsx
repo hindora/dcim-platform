@@ -3,6 +3,7 @@ import { api, type AssetCharts } from '../../api/client';
 import { humanise } from '../../lib/format';
 import { BarChart, type BarRow } from './components/BarChart';
 import { Donut, Gauge, VColumns } from './components/Shapes';
+import { Trends } from './Trends';
 
 /** Composition and capacity of the estate.
  *
@@ -237,6 +238,8 @@ export function Charts() {
           <Histogram rows={data.rack_fill} />
         </Panel>
       </div>
+
+      <Trends />
     </>
   );
 }

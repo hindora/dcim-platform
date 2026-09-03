@@ -50,6 +50,7 @@ from app.ingest import rates, writer
 from app.ingest.enrich import InventoryCache
 from app.ingest.fanout import Fanout
 from app.repositories import alarms as repo_alarms
+from app.repositories import snapshots as snapshot_repo
 from app.services import maintenance as maintenance_service
 
 log = get_logger("ingest")
@@ -85,6 +86,7 @@ LOAD_PCT_METRIC = "load_pct"
 # the smallest grace period, so an endpoint crosses its threshold and is
 # alarmed within about a minute of doing so.
 MAINTENANCE_TICK_S = 30.0
+SNAPSHOT_CHECK_S = 3600.0
 STALENESS_SWEEP_S = 60.0
 
 # How often the platform evaluates its own health. Frequent enough that a dead
@@ -133,6 +135,10 @@ class IngestWorker:
         # Same -inf, same reason: a window whose start time passed while the
         # worker was down must open on the first tick, not a minute later.
         self._last_maintenance_tick = float("-inf")
+        # And the snapshot: the first tick after any start records today if it
+        # is not already recorded, so a worker that was down at midnight still
+        # leaves no hole in the trend.
+        self._last_snapshot_check = float("-inf")
         self._last_platform_check = float("-inf")
         self._last_consumer_reap = float("-inf")
         # Pipeline latency measured on the last telemetry batch. None until a
@@ -192,6 +198,7 @@ class IngestWorker:
 
         await self._maybe_sweep_staleness()
         await self._maybe_advance_maintenance()
+        await self._maybe_snapshot()
 
         # Before the early return below: the worker is alive whether or not
         # anything arrived, and an idle pipeline must not look like a dead one.
@@ -374,6 +381,28 @@ class IngestWorker:
             # A failed sweep must not stop telemetry ingestion; it runs again
             # on the next interval.
             log.error("staleness sweep failed", error=str(exc), exc_info=True)
+
+    async def _maybe_snapshot(self) -> None:
+        """Record today's asset snapshot, once.
+
+        Checked hourly rather than scheduled at midnight, because the check is
+        one indexed INSERT .. ON CONFLICT that no-ops when today exists - and a
+        worker that happened to be down at midnight would otherwise leave a
+        hole in every trend. Idempotence lives in the day primary key, so two
+        workers checking at once still write one row.
+        """
+        now = time.monotonic()
+        if now - self._last_snapshot_check < SNAPSHOT_CHECK_S:
+            return
+        self._last_snapshot_check = now
+        try:
+            async with unit_of_work() as session:
+                if await snapshot_repo.take(session):
+                    log.info("asset snapshot taken")
+        except Exception as exc:
+            # Missing one check is a snapshot an hour late, which the day key
+            # absorbs. Stopping ingest would not be.
+            log.error("asset snapshot failed", error=str(exc), exc_info=True)
 
     async def _maybe_advance_maintenance(self) -> None:
         """Open and close maintenance windows the clock has caught up with.
