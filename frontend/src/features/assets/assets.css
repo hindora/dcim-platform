@@ -767,26 +767,43 @@ ol.asset-steps li.active { border-top-color: var(--accent); color: var(--text); 
 
 /* --------------------------------------------------------------- bulk */
 
-/* Anchored to the viewport, not the table: the selection is still live when
-   somebody has scrolled to the bottom of two hundred rows, and an action bar
-   that scrolled away with the header would be unreachable exactly then. */
-.asset-bulkbar {
+/* One strip, two states. It sits ABOVE the table because that is where the
+   header checkbox is and where a contextual toolbar is looked for - a bar
+   pinned to the bottom of the viewport is a screen away from the control that
+   summons it and lands on top of the pager.
+
+   Sticky, so it survives scrolling two hundred rows. Same height in both
+   states, so starting a selection moves nothing under the pointer. */
+.asset-toolbar {
   position: sticky;
-  bottom: 0;
-  z-index: 20;
+  top: 0;
+  z-index: 15;
   display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
-  margin-top: 12px;
-  padding: 10px 14px;
-  border: 1px solid var(--border-strong);
+  min-height: 44px;
+  margin-bottom: 10px;
+  padding: 6px 12px;
+  border: 1px solid transparent;
   border-radius: var(--radius);
-  background: var(--bg-raised);
-  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.25);
+  background: var(--bg);
+  font-size: 0.85rem;
 }
 
-.asset-bulkbar strong { font-variant-numeric: tabular-nums; }
+/* Tinted rather than recoloured: the operator needs to see at a glance that the
+   toolbar is acting on a selection, without the strip shouting like an alarm. */
+.asset-toolbar.is-selecting {
+  border-color: var(--accent);
+  background: var(--bg-raised);
+}
+
+.asset-toolbar strong { font-variant-numeric: tabular-nums; }
+
+.asset-toolbar-clear {
+  padding: 2px 8px;
+  line-height: 1.2;
+}
 
 tr.is-selected > td { background: var(--accent-dim); }
 

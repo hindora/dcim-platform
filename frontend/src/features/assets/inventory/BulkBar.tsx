@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ApiError,
@@ -9,46 +9,80 @@ import {
 import { humanise } from '../../../lib/format';
 import { Dialog, DialogActions } from '../components/Dialog';
 
-/** What you can do to a selection, and what happened when you did.
+/** The table's toolbar, which becomes contextual when rows are selected.
  *
- *  Two rules run through this file. Every action states what it will do to how
- *  many things BEFORE it does it, and every result is shown row by row —
- *  "2 failed" in a toast is how a feature stops being trusted, because the
- *  operator cannot tell which two, cannot retry them and cannot find out why.
+ *  ABOVE the table, not pinned to the bottom of the viewport. A bottom bar sits
+ *  a screen away from the checkboxes that summon it, competes with the pager
+ *  for the same strip, and is a thumb-reach pattern borrowed from mobile. The
+ *  actions belong beside the header checkbox that selects everything.
+ *
+ *  It replaces the idle toolbar rather than appearing beneath it, so nothing on
+ *  the page moves when a selection starts - a row jumping out from under the
+ *  pointer mid-click is how somebody ticks the wrong asset.
+ *
+ *  Two rules run through the actions themselves. Each states what it will do to
+ *  how many things BEFORE doing it, and each result is shown row by row - "2
+ *  failed" in a toast is how a feature stops being trusted, because the
+ *  operator cannot tell which two, retry them, or find out why.
  */
 
 type Action = 'lifecycle' | 'tags' | 'fields' | null;
 
-export function BulkBar({ selected, onClear, allowed }: {
+export function BulkBar({ selected, onClear, allowed, children }: {
   selected: string[];
   onClear: () => void;
-  /** Transitions the server says these assets may make. */
+  /** Transitions the server says every selected asset may make. */
   allowed: string[];
+  /** The idle toolbar - export, import. Shown when nothing is selected, so one
+   *  strip serves both states and the layout never shifts. */
+  children?: React.ReactNode;
 }) {
   const [action, setAction] = useState<Action>(null);
   const [report, setReport] = useState<BulkReport | null>(null);
 
+  // Escape clears a selection. Standard for a contextual mode, and it is the
+  // fastest way out when somebody has ticked forty rows by mistake.
+  useEffect(() => {
+    if (selected.length === 0) return undefined;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape' && !action) onClear();
+    }
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [selected.length, action, onClear]);
+
   if (selected.length === 0 && !report) return null;
+
+  const active = selected.length > 0;
 
   return (
     <>
-      {selected.length > 0 && (
-        <div className="asset-bulkbar" role="region" aria-label="Bulk actions">
-          <strong>{selected.length}</strong>
-          <span className="muted">
-            asset{selected.length === 1 ? '' : 's'} selected
-          </span>
-          <span style={{ flex: 1 }} />
-          <button type="button" onClick={() => setAction('lifecycle')}>
-            Change lifecycle
-          </button>
-          <button type="button" onClick={() => setAction('tags')}>Tags</button>
-          <button type="button" onClick={() => setAction('fields')}>
-            Set ownership
-          </button>
-          <button type="button" onClick={onClear}>Clear</button>
-        </div>
-      )}
+      <div className={`asset-toolbar${active ? ' is-selecting' : ''}`}>
+        {active ? (
+          <>
+            {/* Announced, not just drawn: a screen reader has no other way to
+                know the toolbar changed under it. */}
+            <strong aria-live="polite">
+              {selected.length} selected
+            </strong>
+            <span style={{ flex: 1 }} />
+            <button type="button" onClick={() => setAction('lifecycle')}>
+              Change lifecycle
+            </button>
+            <button type="button" onClick={() => setAction('tags')}>Tags</button>
+            <button type="button" onClick={() => setAction('fields')}>
+              Set ownership
+            </button>
+            <button type="button" className="asset-toolbar-clear"
+                    onClick={onClear} aria-label="Clear selection"
+                    title="Clear selection (Esc)">
+              ✕
+            </button>
+          </>
+        ) : (
+          children
+        )}
+      </div>
 
       {action === 'lifecycle' && (
         <LifecycleAction selected={selected} allowed={allowed}

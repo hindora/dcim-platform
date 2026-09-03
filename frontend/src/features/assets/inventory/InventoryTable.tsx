@@ -231,14 +231,16 @@ export function InventoryTable() {
         <div>
           {error && <div className="banner">Failed to load: {String(error)}</div>}
 
-          <p className="asset-table-note">
-            <span>{isLoading ? 'Loading…' : ''}</span>
+          <BulkBar selected={selected} allowed={allowed}
+                   onClear={() => setSelected([])}>
+            <span className="muted">{isLoading ? 'Loading…' : ''}</span>
+            <span style={{ flex: 1 }} />
             <a href={`/api/v1/assets/bulk/export?${params.toString()}`}
                download="assets.csv">Export CSV</a>
             <button type="button" onClick={() => setImporting(true)}>
               Import CSV
             </button>
-          </p>
+          </BulkBar>
 
           <div className="asset-scroll">
             <table>
@@ -341,8 +343,6 @@ export function InventoryTable() {
           )}
         </div>
       </div>
-      <BulkBar selected={selected} allowed={allowed}
-               onClear={() => setSelected([])} />
       {importing && <ImportDialog onClose={() => setImporting(false)} />}
     </>
   );
