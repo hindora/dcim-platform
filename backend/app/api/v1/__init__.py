@@ -6,6 +6,7 @@ from app.api.v1 import (
     alarms,
     analytics,
     assets,
+    bulk,
     capacity,
     collector,
     collectors,
@@ -29,6 +30,7 @@ api_router = APIRouter()
 api_router.include_router(misc.router)
 api_router.include_router(devices.router)
 api_router.include_router(assets.router)
+api_router.include_router(bulk.router)
 api_router.include_router(maintenance.router)
 api_router.include_router(contracts.router)
 api_router.include_router(inventory.router)

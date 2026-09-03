@@ -377,6 +377,51 @@ cross-table trigger.
 
 ## Phase 6 — bulk operations
 
+Status: **built 2026-09-03.** 1016 backend tests pass (+25), `ruff` clean, `tsc`
+and production build clean. No migration - bulk operates on tables that already
+exist.
+
+All four exit criteria verified against a real database:
+
+```
+12 moves, the 3rd colliding -> 11 succeeded, 1 refused:
+        "SRV-02: rack_unit_occupied - U5 is occupied by SRV-BLOCKER"
+the same batch, atomic:true  -> 0 succeeded, 0 landed in the target rack
+decommission 40              -> 40 audit rows AND 40 lifecycle events
+illegal transition           -> "illegal_transition - decommissioned cannot go
+                                 to in_service; allowed: retired, in_stock"
+```
+
+**Two defects the verification run found.**
+
+*An illegal transition reported the key `rejected`.* The translator matched on
+substrings only, so an application refusal that already carries a good sentence
+fell through to the generic branch - and logged itself as an untranslated
+surprise. Typed refusals (`IllegalTransitionError`,
+`InsufficientStockError`, `ReservationConflictError`) are now matched by class,
+*before* the string table, and keep both their stable key and their own message.
+
+*`python-multipart` was missing.* The CSV endpoint uses `File`/`Form`, and
+FastAPI raises at request time without it - so the endpoint would have 500ed in
+production and CI would have failed on import. Added as a runtime dependency,
+not a dev one.
+
+**The import is two-phase and stateless.** `validate` writes nothing and returns
+a digest of the bytes it read; `apply` requires that digest back. A file edited
+between the two phases no longer matches and is refused. That is tamper-evident
+and, unlike a server-side job, cannot expire under somebody reviewing a long
+report. The dry run also says which key matched each row, so a row landing on a
+device by *name* when serial was expected is visible before it lands.
+
+**What bulk deliberately cannot do.** `/fields` edits ownership and purchase
+columns only. Placement goes through `/move`, which has to reason about rack
+units, and state goes through `/lifecycle`, which has a matrix - letting a
+generic field setter write `rack_id` or `lifecycle` would route around both. The
+CSV importer may set an `asset_tag` and never a `serial_number`: a tag is a
+sticker somebody applied, a serial is what the hardware reports, and a
+spreadsheet should not be able to contradict the machine.
+
+
 Deliberately last. Bulk is the sharpest tool in the module and it should be
 built when the constraints it will hit are all in place — otherwise the failure
 translation table (`21` §11) is written twice.

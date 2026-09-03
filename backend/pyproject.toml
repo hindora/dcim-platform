@@ -5,6 +5,9 @@ description = "DCIM platform backend: REST/WebSocket API, ingest worker, migrati
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115",
+    # Required by the CSV import endpoint: FastAPI raises at request
+    # time without it, so it is a runtime dependency, not a dev one.
+    "python-multipart>=0.0.9",
     "uvicorn[standard]>=0.30",
     "sqlalchemy[asyncio]>=2.0.30",
     "asyncpg>=0.29",

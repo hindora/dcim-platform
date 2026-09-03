@@ -781,3 +781,54 @@ ol.asset-steps li.active { border-top-color: var(--accent); color: var(--text); 
 .asset-preview-warn ul { margin: 4px 0 8px; padding-left: 18px; }
 
 .asset-confirm p { margin: 0 0 10px; }
+
+/* --------------------------------------------------------------- bulk */
+
+/* Anchored to the viewport, not the table: the selection is still live when
+   somebody has scrolled to the bottom of two hundred rows, and an action bar
+   that scrolled away with the header would be unreachable exactly then. */
+.asset-bulkbar {
+  position: sticky;
+  bottom: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.25);
+}
+
+.asset-bulkbar strong { font-variant-numeric: tabular-nums; }
+
+tr.is-selected > td { background: var(--accent-dim); }
+
+:root[data-theme="light"] tr.is-selected > td { background: var(--accent-dim); }
+
+/* Three states, so a tag can be attached, detached, or left alone. A checkbox
+   only has two and cannot express "remove this from all of them". */
+.asset-tagpick {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 4px 6px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+
+.asset-tagpick:hover { background: var(--bg-raised); }
+.asset-tagpick.is-add { border-color: var(--ok); }
+.asset-tagpick.is-remove { border-color: var(--critical); }
+.asset-tagpick .n { margin-left: auto; font-size: 0.72rem; color: var(--text-muted); }
+.asset-tagpick.is-add .n { color: var(--ok); }
+.asset-tagpick.is-remove .n { color: var(--critical); }

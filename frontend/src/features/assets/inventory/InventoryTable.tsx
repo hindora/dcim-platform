@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
@@ -8,6 +9,8 @@ import {
 } from '../../../api/client';
 import { humanise } from '../../../lib/format';
 import { LifecycleChip } from '../components/LifecycleChip';
+import { BulkBar } from './BulkBar';
+import { ImportDialog } from './ImportDialog';
 
 /** The asset table.
  *
@@ -24,6 +27,8 @@ const MULTI = ['lifecycle', 'category', 'device_type', 'tag'] as const;
 
 export function InventoryTable() {
   const [params, setParams] = useSearchParams();
+  const [selected, setSelected] = useState<string[]>([]);
+  const [importing, setImporting] = useState(false);
 
   const { data: options } = useQuery<AssetFilterOptions>({
     queryKey: ['asset-filter-options'],
@@ -69,6 +74,18 @@ export function InventoryTable() {
 
   const activeCount = [...params.keys()].length;
   const rows = data?.items ?? [];
+  const chosen = new Set(selected);
+  const allShown = rows.length > 0 && rows.every((d) => chosen.has(d.id));
+
+  // Only transitions EVERY selected asset can make. Offering a move that some
+  // of them would refuse turns one action into a report nobody wanted.
+  const states = [...new Set(rows.filter((d) => chosen.has(d.id))
+    .map((d) => d.lifecycle ?? 'in_service'))];
+  const allowed = states.length === 1
+    ? (options?.lifecycles ?? [])
+        .map((l) => l.value)
+        .filter((v) => v !== states[0])
+    : [];
 
   return (
     <>
@@ -184,6 +201,11 @@ export function InventoryTable() {
             <span>
               {isLoading ? 'Loading…' : `${rows.length.toLocaleString()} assets`}
             </span>
+            <a href={`/api/v1/assets/bulk/export?${params.toString()}`}
+               download="assets.csv">Export CSV</a>
+            <button type="button" onClick={() => setImporting(true)}>
+              Import CSV
+            </button>
             {data?.next_cursor && (
               <span className="muted">
                 More beyond this page — narrow the filters to see them all.
@@ -195,6 +217,16 @@ export function InventoryTable() {
             <table>
               <thead>
                 <tr>
+                  <th style={{ width: 28 }}>
+                    <input
+                      type="checkbox"
+                      checked={allShown}
+                      aria-label="Select all shown"
+                      onChange={() => setSelected(allShown
+                        ? selected.filter((id) => !rows.some((d) => d.id === id))
+                        : [...new Set([...selected, ...rows.map((d) => d.id)])])}
+                    />
+                  </th>
                   <th>Asset tag</th>
                   <th>Name</th>
                   <th>Type</th>
@@ -207,7 +239,17 @@ export function InventoryTable() {
               </thead>
               <tbody>
                 {rows.map((d) => (
-                  <tr key={d.id}>
+                  <tr key={d.id} className={chosen.has(d.id) ? 'is-selected' : ''}>
+                    <td>
+                      <input
+                        type="checkbox"
+                        checked={chosen.has(d.id)}
+                        aria-label={`Select ${d.name}`}
+                        onChange={() => setSelected(chosen.has(d.id)
+                          ? selected.filter((x) => x !== d.id)
+                          : [...selected, d.id])}
+                      />
+                    </td>
                     <td className="asset-tag">
                       {d.asset_tag ?? <span className="asset-none">—</span>}
                     </td>
@@ -263,6 +305,9 @@ export function InventoryTable() {
           )}
         </div>
       </div>
+      <BulkBar selected={selected} allowed={allowed}
+               onClear={() => setSelected([])} />
+      {importing && <ImportDialog onClose={() => setImporting(false)} />}
     </>
   );
 }

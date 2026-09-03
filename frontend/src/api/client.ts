@@ -393,6 +393,31 @@ export interface Reservation {
   days_left: number;
 }
 
+/** What a bulk operation did, row by row. Never a bare count: an operator who
+ *  is told "2 failed" cannot tell which two, retry them, or find out why. */
+export interface BulkReport {
+  succeeded: number;
+  failed: {
+    device_id: string;
+    name?: string | null;
+    /** Stable machine key: rack_unit_occupied, illegal_transition, ... */
+    error: string;
+    message: string;
+  }[];
+}
+
+export interface ImportValidation {
+  mode: string;
+  /** Required back on apply. A file edited in between no longer matches. */
+  digest: string;
+  rows: number;
+  would_update: number;
+  unmatched: { row: number; name?: string | null; error: string; message: string }[];
+  matched_by: Record<string, number>;
+  sample: { device_id: string; row: number; matched_by: string;
+            name?: string | null; fields: Record<string, string> }[];
+}
+
 export interface AssetFilterOptions {
   device_types: {
     code: string;
@@ -1529,6 +1554,26 @@ export const api = {
   deviceContracts: (deviceId: string) =>
     request<{ items: SupportContract[] }>(`/devices/${deviceId}/contracts`),
   tags: () => request<{ items: Tag[] }>('/tags'),
+
+  bulkLifecycle: (body: {
+    device_ids: string[]; to_state: string; reason?: string; change_ref?: string;
+  }) => request<BulkReport>('/assets/bulk/lifecycle', {
+    method: 'POST', body: JSON.stringify(body),
+  }),
+  bulkTags: (body: { device_ids: string[]; add?: string[]; remove?: string[] }) =>
+    request<BulkReport>('/assets/bulk/tags', {
+      method: 'POST', body: JSON.stringify(body),
+    }),
+  bulkFields: (body: { device_ids: string[]; set: Record<string, unknown> }) =>
+    request<BulkReport>('/assets/bulk/fields', {
+      method: 'POST', body: JSON.stringify(body),
+    }),
+  bulkMove: (body: {
+    moves: { device_id: string; rack_id?: string | null; u_start?: number | null }[];
+    atomic?: boolean;
+  }) => request<BulkReport>('/assets/bulk/move', {
+    method: 'POST', body: JSON.stringify(body),
+  }),
 
   parts: (params: Record<string, string | undefined> = {}) => {
     const q = new URLSearchParams();
