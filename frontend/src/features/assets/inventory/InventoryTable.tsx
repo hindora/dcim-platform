@@ -151,7 +151,11 @@ export function InventoryTable() {
                   checked={params.getAll('lifecycle').includes(life.value)}
                   onChange={() => toggleMulti('lifecycle', life.value)}
                 />
-                {life.label}
+                {/* A real element, not a bare text node. Loose text inside a
+                    flex container only becomes an ANONYMOUS flex item, and
+                    spacing against one of those is far less dependable than
+                    against a span - which is why the gap looked ignored. */}
+                <span>{life.label}</span>
               </label>
             ))}
           </div>

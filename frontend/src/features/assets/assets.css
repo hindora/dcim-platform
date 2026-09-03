@@ -316,9 +316,9 @@ a.asset-tile:hover { border-color: var(--border-strong); }
   display: flex;
   align-items: center;
   /* The gap is the WHOLE separation here, because the rule below removes the
-     margin a browser puts around a checkbox by default. At 7px the label sat
-     against the box; 10 gives it room without the two reading as unrelated. */
-  gap: 10px;
+     margin a browser puts around a checkbox by default. 7px had the label
+     against the box and 10 was still tight against a 13px control. */
+  gap: 12px;
   /* Rows need air of their own, or a column of six filters reads as one block
      and the pointer has to be precise to hit the right line. */
   padding: 4px 0;
@@ -328,7 +328,13 @@ a.asset-tile:hover { border-color: var(--border-strong); }
 
 /* flex: none so a long label - "Decommissioned" is the longest here - squeezes
    the text rather than the box it belongs to. */
-.asset-check input { margin: 0; flex: none; }
+.asset-check input {
+  /* margin-right as well as the gap: a row whose label is loose text gets an
+     anonymous flex item, and margin on the control is the one thing that
+     spaces it reliably either way. */
+  margin: 0 2px 0 0;
+  flex: none;
+}
 
 .asset-check .n {
   margin-left: auto;
