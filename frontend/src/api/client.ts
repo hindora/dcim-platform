@@ -1736,6 +1736,8 @@ export const api = {
    *  Arrays are emitted as repeated keys, which is what FastAPI reads back as
    *  a list.
    */
+  /** Paged asset list. Pass `with_total: 'true'` when the paging controls need
+   *  a denominator; a plain next-page fetch should not pay for the count. */
   assetDevices: (params: Record<string, string | string[] | undefined> = {}) => {
     const q = new URLSearchParams();
     for (const [k, v] of Object.entries(params)) {

@@ -815,3 +815,50 @@ tr.is-selected > td { background: var(--accent-dim); }
 .asset-tagpick .n { margin-left: auto; font-size: 0.72rem; color: var(--text-muted); }
 .asset-tagpick.is-add .n { color: var(--ok); }
 .asset-tagpick.is-remove .n { color: var(--critical); }
+
+/* ---------------------------------------------------------- pagination */
+
+.asset-pager {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  font-size: 0.85rem;
+}
+
+.asset-pager-range { font-variant-numeric: tabular-nums; color: var(--text-muted); }
+
+.asset-pager-size { display: flex; align-items: center; gap: 6px; }
+
+.asset-pager-size > span {
+  font-size: 0.72rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.asset-pager-buttons { display: flex; gap: 4px; flex-wrap: wrap; }
+
+.asset-pager-buttons button { min-width: 32px; font-variant-numeric: tabular-nums; }
+
+.asset-pager-buttons button.is-current {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* A disabled pager button is a fact about where you are, not a fault - so it
+   recedes rather than looking broken. */
+.asset-pager-buttons button:disabled { opacity: 0.45; cursor: default; }
+
+/* -------------------------------------------------------------- links */
+
+/* The app underlines links on hover globally. In a dense table that is a lot of
+   movement for a pointer crossing rows, so inside the asset workspace the hover
+   cue is colour instead. Scoped here rather than changed in index.css, which
+   every other page reads. */
+.asset-shell a:hover { text-decoration: none; color: var(--text); }
+.asset-shell .asset-nav a:hover { color: var(--text); }

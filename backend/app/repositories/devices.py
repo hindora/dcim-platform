@@ -62,8 +62,7 @@ def decode_cursor(cursor: str) -> tuple[str, str] | None:
         return None
 
 
-async def list_devices(
-    session: AsyncSession,
+def _filters(
     *,
     device_types: list[str] | None = None,
     status: list[str] | None = None,
@@ -84,11 +83,19 @@ async def list_devices(
     owner_group: str | None = None,
     cost_centre: str | None = None,
     tags: list[str] | None = None,
-    limit: int = 50,
-    cursor: str | None = None,
-) -> tuple[list[dict[str, Any]], str | None]:
-    where = []
-    params: dict[str, Any] = {"limit": limit + 1}
+) -> tuple[list[str], dict[str, Any]]:
+    """Every predicate the list understands, shared with the count.
+
+    One builder rather than two, because a count assembled separately
+    drifts from the query it is supposed to describe - and a total that
+    disagrees with the rows underneath it is worse than no total, since
+    the last page then looks broken.
+
+    The CURSOR is deliberately not here: it narrows a page, not the result
+    set, and folding it in would make the total shrink as somebody paged.
+    """
+    where: list[str] = []
+    params: dict[str, Any] = {}
 
     # An explicit lifecycle filter replaces the default hiding of
     # decommissioned rows rather than stacking with it - otherwise asking for
@@ -173,6 +180,45 @@ async def list_devices(
                      "OR d.asset_tag ILIKE :search)")
         params["search"] = f"%{search}%"
         params["like"] = f"%{search}%"
+    return where, params
+
+
+async def list_devices(
+    session: AsyncSession,
+    *,
+    device_types: list[str] | None = None,
+    status: list[str] | None = None,
+    room_id: str | None = None,
+    rack_id: str | None = None,
+    datacenter_id: str | None = None,
+    search: str | None = None,
+    include_decommissioned: bool = False,
+    lifecycle: list[str] | None = None,
+    category: list[str] | None = None,
+    vendor_id: str | None = None,
+    asset_tag: str | None = None,
+    serial_number: str | None = None,
+    has_serial: bool | None = None,
+    warranty_state: str | None = None,
+    warranty_before: str | None = None,
+    supplier_id: str | None = None,
+    owner_group: str | None = None,
+    cost_centre: str | None = None,
+    tags: list[str] | None = None,
+    limit: int = 50,
+    cursor: str | None = None,
+) -> tuple[list[dict[str, Any]], str | None]:
+    where, params = _filters(
+        device_types=device_types, status=status, room_id=room_id,
+        rack_id=rack_id, datacenter_id=datacenter_id, search=search,
+        include_decommissioned=include_decommissioned, lifecycle=lifecycle,
+        category=category, vendor_id=vendor_id, asset_tag=asset_tag,
+        serial_number=serial_number, has_serial=has_serial,
+        warranty_state=warranty_state, warranty_before=warranty_before,
+        supplier_id=supplier_id, owner_group=owner_group,
+        cost_centre=cost_centre, tags=tags)
+    params["limit"] = limit + 1
+
     if cursor:
         decoded = decode_cursor(cursor)
         if decoded:
@@ -190,6 +236,32 @@ async def list_devices(
         rows = rows[:limit]
         next_cursor = encode_cursor(rows[-1]["name"], rows[-1]["id"])
     return [dict(r) for r in rows], next_cursor
+
+
+async def count_matching(session: AsyncSession, **filters: Any) -> int:
+    """How many rows the filters select, ignoring paging.
+
+    Uses the same joins as the list because the predicates reach into them -
+    device_state for status, device_type for category, the rack chain for room
+    and site. A leaner count would be a different query answering a different
+    question.
+    """
+    where, params = _filters(**filters)
+    sql = """
+        SELECT count(*)
+        FROM device d
+        LEFT JOIN vendor v        ON v.id = d.vendor_id
+        LEFT JOIN model m         ON m.id = d.model_id
+        LEFT JOIN device_type dt  ON dt.code = d.device_type
+        LEFT JOIN device_state ds ON ds.device_id = d.id
+        LEFT JOIN rack r          ON r.id = d.rack_id
+        LEFT JOIN rack_row rr     ON rr.id = r.row_id
+        LEFT JOIN room rm         ON rm.id = COALESCE(rr.room_id, d.room_id)
+        LEFT JOIN datacenter dc   ON dc.id = rm.datacenter_id
+    """
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    return (await session.execute(text(sql), params)).scalar_one()
 
 
 async def count_devices(session: AsyncSession) -> int:

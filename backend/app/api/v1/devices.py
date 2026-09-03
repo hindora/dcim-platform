@@ -64,11 +64,15 @@ async def list_devices(
         None, description="repeatable key:value; AND-combined"),
     limit: int = Query(50, ge=1, le=500),
     cursor: str | None = None,
+    with_total: bool = Query(
+        False, description="also count every row the filters match; the paging "
+                           "UI needs it, a plain next-page fetch does not"),
     session: AsyncSession = Depends(get_session),
     _: Principal = Depends(current_principal),
 ) -> Page[DeviceSummary]:
-    items, next_cursor = await service.list_devices(
-        session, device_types=device_type, status=status_filter, room_id=room_id,
+    items, next_cursor, total = await service.list_devices(
+        session, with_total=with_total,
+        device_types=device_type, status=status_filter, room_id=room_id,
         rack_id=rack_id, datacenter_id=datacenter_id, search=search,
         include_decommissioned=include_decommissioned, lifecycle=lifecycle,
         category=category, vendor_id=vendor_id, asset_tag=asset_tag,
@@ -77,7 +81,7 @@ async def list_devices(
         supplier_id=supplier_id, owner_group=owner_group,
         cost_centre=cost_centre, tags=tag,
         limit=limit, cursor=cursor)
-    return Page[DeviceSummary](items=items, next_cursor=next_cursor)
+    return Page[DeviceSummary](items=items, next_cursor=next_cursor, total=total)
 
 
 @router.get("/endpoint-options",

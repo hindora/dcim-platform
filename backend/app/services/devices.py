@@ -65,7 +65,8 @@ def _summary(row: dict[str, Any]) -> DeviceSummary:
     )
 
 
-async def list_devices(session: AsyncSession, **kwargs) -> tuple[list[DeviceSummary], str | None]:
+async def list_devices(session: AsyncSession, *, with_total: bool = False,
+                       **kwargs) -> tuple[list[DeviceSummary], str | None, int | None]:
     rows, cursor = await repo.list_devices(session, **kwargs)
     items = [_summary(r) for r in rows]
     # One query for every row's tags rather than one per row: the asset table
@@ -75,7 +76,16 @@ async def list_devices(session: AsyncSession, **kwargs) -> tuple[list[DeviceSumm
         by_device = await tag_repo.tags_for_devices(session, [d.id for d in items])
         for device in items:
             device.tags = by_device.get(device.id, [])
-    return items, cursor
+
+    total = None
+    if with_total:
+        # Opt-in, because it is a second query and the callers that only want
+        # the next page should not pay for it. The paging UI asks; the rest
+        # do not.
+        paging = {"limit", "cursor"}
+        total = await repo.count_matching(
+            session, **{k: v for k, v in kwargs.items() if k not in paging})
+    return items, cursor, total
 
 
 async def get_device(session: AsyncSession, device_id: str) -> DeviceDetail | None:
