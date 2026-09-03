@@ -1129,3 +1129,98 @@ tr.is-selected > td { background: var(--accent-dim); }
    machine however much total free U the estate reports. */
 .asset-histogram-bar.is-empty { background: var(--text-faint); }
 .asset-histogram-bar.is-full { background: var(--warn); }
+
+/* ---------------------------------------------------------- bar chart */
+
+.asset-chart-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+  font-size: 0.76rem;
+}
+
+.asset-chart-controls button {
+  padding: 1px 8px;
+  font-size: 0.74rem;
+}
+
+.asset-chart-controls button.is-current {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.asset-chart-rows { display: flex; flex-direction: column; gap: 5px; }
+
+/* label | bar | value. The value has its own column so the numbers line up in
+   a stack rather than drifting with the end of each bar. */
+.asset-chart-row,
+.asset-chart-axis {
+  display: grid;
+  grid-template-columns: minmax(72px, 30%) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.82rem;
+}
+
+.asset-chart-row .lbl {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.asset-chart-row.is-muted .lbl { color: var(--text-faint); }
+
+.asset-chart-row .track {
+  height: 15px;
+  background: var(--bg-inset);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.asset-chart-row .fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 3px;
+  /* A category with a count of zero still gets a visible foot, or the row
+     reads as missing data rather than as none. */
+  min-width: 2px;
+}
+
+.asset-chart-row.is-muted .fill { background: var(--border-strong); }
+
+.asset-chart-row:hover .track { background: var(--border); }
+
+.asset-chart-row .val {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  min-width: 3ch;
+  text-align: right;
+}
+
+/* The axis. Zero, a round midpoint and the max - enough to judge a length by
+   without turning the panel into graph paper. It ALWAYS starts at zero: a bar
+   encodes magnitude by length, so a truncated baseline makes the length lie. */
+.asset-chart-axis {
+  margin-top: 8px;
+  padding-top: 6px;
+  font-size: 0.68rem;
+  color: var(--text-faint);
+}
+
+.asset-chart-axis .ticks {
+  position: relative;
+  height: 1em;
+  border-top: 1px solid var(--border);
+}
+
+.asset-chart-axis .ticks > span {
+  position: absolute;
+  top: 3px;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.asset-chart-axis .ticks > span:first-child { transform: none; }
+.asset-chart-axis .ticks > span:last-child { transform: translateX(-100%); }

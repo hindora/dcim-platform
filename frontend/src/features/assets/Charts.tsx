@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
 import { api, type AssetCharts } from '../../api/client';
 import { humanise } from '../../lib/format';
+import { BarChart, type BarRow } from './components/BarChart';
 
 /** Composition and capacity of the estate.
  *
@@ -17,9 +17,19 @@ import { humanise } from '../../lib/format';
  *  to read.
  */
 
-/** Bars beyond this are summed into one row. Twenty-five device types is a
- *  scrollbar, not a chart; the long tail is a single fact - "and 13 others". */
-const TOP_N = 10;
+/** The lifecycle hues, matching the chips in the inventory table so the chart
+ *  and the rows speak one vocabulary. `installed` is deliberately not the same
+ *  green as `in_service`: the whole reason that state exists is that it is
+ *  racked and must NOT alarm, and painting it as live hides exactly that. */
+const LIFECYCLE_HUE: Record<string, string> = {
+  planned: 'var(--accent-dim)',
+  in_stock: 'var(--text-faint)',
+  installed: 'var(--accent)',
+  in_service: 'var(--ok)',
+  maintenance: 'var(--warn)',
+  decommissioned: 'var(--unknown)',
+  retired: 'var(--text-faint)',
+};
 
 export function Charts() {
   const { data, isLoading, error } = useQuery<AssetCharts>({
@@ -49,25 +59,35 @@ export function Charts() {
       <h3 className="asset-charts-head">Composition</h3>
       <div className="asset-cols">
         <Panel title="By type" total={sum(data.by_type)}>
-          <BarList
-            rows={collapse(data.by_type.map((t) => ({ label: t.label, n: t.n })))}
-            href={(r) => `/assets/inventory?device_type=${encodeURIComponent(r.key ?? '')}`}
+          <BarChart
+            rows={data.by_type.map((t): BarRow => ({
+              label: t.label,
+              n: t.n,
+              href: `/assets/inventory?device_type=${encodeURIComponent(t.key)}`,
+            }))}
           />
         </Panel>
 
         <Panel title="By make" total={sum(data.by_vendor)}>
-          <BarList rows={collapse(data.by_vendor.map((v) => ({ label: v.label, n: v.n })))} />
+          <BarChart rows={data.by_vendor.map((v): BarRow => ({
+            label: v.label, n: v.n,
+          }))} />
         </Panel>
 
         <Panel title="By lifecycle" total={sum(data.by_lifecycle)}>
-          {/* States with nothing in them are kept, not dropped: "no assets are
-              decommissioned" is a fact worth seeing, and a chart whose rows
-              come and go cannot be compared with itself week to week. */}
-          <BarList
-            rows={data.by_lifecycle.map((l) => ({ label: humanise(l.key), n: l.n }))}
-            keepZeros
-            href={(r) => `/assets/inventory?lifecycle=${encodeURIComponent(r.key ?? '')}`}
-            keys={data.by_lifecycle.map((l) => l.key)}
+          {/* The one chart where a colour per bar earns itself: here the hue IS
+              the state, and it is the same hue the chips in the table use, so
+              the two read as one vocabulary. Empty states are kept - "nothing
+              is decommissioned" is worth seeing, and a chart whose rows come
+              and go cannot be compared with itself week to week. */}
+          <BarChart
+            limitable={false}
+            rows={data.by_lifecycle.map((l): BarRow => ({
+              label: humanise(l.key),
+              n: l.n,
+              colour: LIFECYCLE_HUE[l.key],
+              href: `/assets/inventory?lifecycle=${encodeURIComponent(l.key)}`,
+            }))}
           />
         </Panel>
       </div>
@@ -120,41 +140,6 @@ function Panel({ title, total, children }: {
         {total != null && <span className="asset-panel-total">{total.toLocaleString()}</span>}
       </h3>
       {children}
-    </div>
-  );
-}
-
-type Row = { label: string; n: number; key?: string };
-
-function BarList({ rows, href, keepZeros, keys }: {
-  rows: Row[];
-  href?: (r: Row) => string;
-  keepZeros?: boolean;
-  keys?: string[];
-}) {
-  const withKeys = rows.map((r, i) => ({ ...r, key: keys?.[i] }));
-  const shown = keepZeros ? withKeys : withKeys.filter((r) => r.n > 0);
-  // Scaled to the largest bar, not to the total: at 310 of 664 the rest would
-  // be slivers and the point of the chart is comparing them with each other.
-  const max = Math.max(1, ...shown.map((r) => r.n));
-
-  if (shown.length === 0) return <p className="muted">Nothing recorded.</p>;
-
-  return (
-    <div className="asset-barlist">
-      {shown.map((r) => (
-        <div className="asset-barlist-row" key={r.label}>
-          {href && r.key ? (
-            <Link to={href(r)}>{r.label}</Link>
-          ) : (
-            <span>{r.label}</span>
-          )}
-          <div className="asset-bar">
-            <span style={{ width: `${(r.n / max) * 100}%` }} />
-          </div>
-          <div className="n">{r.n.toLocaleString()}</div>
-        </div>
-      ))}
     </div>
   );
 }
@@ -223,11 +208,3 @@ function sum(rows: { n: number }[]): number {
   return rows.reduce((t, r) => t + r.n, 0);
 }
 
-/** Keep the top rows and fold the rest into one. A chart with a scrollbar has
- *  stopped being a chart. */
-function collapse(rows: Row[]): Row[] {
-  if (rows.length <= TOP_N + 1) return rows;
-  const head = rows.slice(0, TOP_N);
-  const tail = rows.slice(TOP_N);
-  return [...head, { label: `and ${tail.length} others`, n: sum(tail) }];
-}
