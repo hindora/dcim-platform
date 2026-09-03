@@ -142,9 +142,7 @@ export function ContractForm({ onClose }: { onClose: () => void }) {
           {showPicker ? 'Hide assets' : 'Choose covered assets'}
         </button>
         <span className="muted" style={{ marginLeft: 10 }}>
-          {deviceIds.length
-            ? `${deviceIds.length} selected`
-            : 'A contract covering nothing protects nothing.'}
+          {deviceIds.length ? `${deviceIds.length} selected` : 'None selected'}
         </span>
       </div>
 

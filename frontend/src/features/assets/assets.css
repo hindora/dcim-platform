@@ -64,23 +64,6 @@
   font-size: 0.92rem;
 }
 
-.asset-nav .blurb {
-  display: block;
-  margin-top: 2px;
-  font-size: 0.76rem;
-  line-height: 1.35;
-  color: var(--text-muted);
-}
-
-.asset-nav-note {
-  margin-top: 22px;
-  font-size: 0.74rem;
-  line-height: 1.45;
-  color: var(--text-faint);
-  border-top: 1px solid var(--border);
-  padding-top: 12px;
-}
-
 .asset-badge {
   min-width: 18px;
   padding: 0 5px;

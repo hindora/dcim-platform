@@ -72,10 +72,7 @@ export function MaintenanceTab({ deviceId }: { deviceId: string }) {
       )}
       {isLoading && <p className="muted">Loading…</p>}
       {!isLoading && (records?.items.length ?? 0) === 0 && (
-        <p className="muted">
-          Nothing recorded. A record is written when somebody completes work,
-          not when a window closes — a window can end with nothing done.
-        </p>
+        <p className="muted">Nothing recorded.</p>
       )}
       {records && records.items.length > 0 && (
         <div className="asset-scroll">

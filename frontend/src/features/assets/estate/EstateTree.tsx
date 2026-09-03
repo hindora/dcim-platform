@@ -39,10 +39,6 @@ export function EstateTree() {
   return (
     <>
       <h2>Placement</h2>
-      <p className="subtitle">
-        Where the estate physically is, and where it has room to grow.
-      </p>
-
       {[...sites.entries()].map(([code, siteRooms]) => (
         <section key={code} style={{ marginBottom: 26 }}>
           <h3>{code}</h3>

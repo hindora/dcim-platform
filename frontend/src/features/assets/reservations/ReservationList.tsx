@@ -41,12 +41,6 @@ export function ReservationList() {
   return (
     <>
       <h2>Reservations</h2>
-      <p className="subtitle">
-        Space and power committed to a project before the hardware arrives. A
-        held rack unit is refused to anybody else by the same constraint that
-        stops two servers sharing a U.
-      </p>
-
       {s && (
         <div className="asset-tiles">
           <div className="asset-tile">
@@ -74,8 +68,7 @@ export function ReservationList() {
 
       {!isLoading && items.length === 0 && (
         <div className="asset-empty">
-          Nothing is held. Reserving rack units keeps a second project from
-          planning into the same space.
+          Nothing is held.
         </div>
       )}
 
@@ -241,12 +234,8 @@ function ReservationForm({ onClose }: { onClose: () => void }) {
 
       <p className="asset-form-note">
         {uStart
-          ? 'These rack units will be refused to anything else until the hold is '
-            + 'released or fulfilled.'
-          : 'Without a unit range this holds power and cooling only — no rack '
-            + 'space is reserved.'}
-        {' '}Every hold needs an expiry: the common failure is a rack kept for a
-        project that was cancelled and never released.
+          ? 'These rack units are held until the reservation is released or fulfilled.'
+          : 'No unit range: this holds power and cooling only.'}
       </p>
 
       {error && <div className="banner">{error}</div>}

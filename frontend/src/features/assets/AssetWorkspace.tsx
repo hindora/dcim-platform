@@ -19,7 +19,6 @@ import './assets.css';
 interface NavItem {
   to: string;
   label: string;
-  blurb: string;
   /** Undefined = this section has no queue. Null = not tracked yet. */
   count?: number | null;
   end?: boolean;
@@ -54,22 +53,17 @@ export function AssetWorkspace() {
     {
       title: 'Estate',
       items: [
-        { to: '/assets', end: true, label: 'Overview',
-          blurb: 'What we own, and what we do not know about it' },
-        { to: '/assets/inventory', label: 'Inventory',
-          blurb: 'Every asset, filtered' },
-        { to: '/assets/estate', label: 'Placement',
-          blurb: 'Sites, rooms and racks by what fits' },
+        { to: '/assets', end: true, label: 'Overview' },
+        { to: '/assets/inventory', label: 'Inventory' },
+        { to: '/assets/estate', label: 'Placement' },
       ],
     },
     {
       title: 'Intake',
       items: [
         { to: '/assets/discovery', label: 'Discovery',
-          blurb: 'Responders nothing in inventory claims',
           count: data?.discovery.new_candidates },
         { to: '/assets/reservations', label: 'Reservations',
-          blurb: 'Space and power held for projects',
           count: data?.reservations?.overdue || undefined },
       ],
     },
@@ -77,21 +71,17 @@ export function AssetWorkspace() {
       title: 'Upkeep',
       items: [
         { to: '/assets/maintenance', label: 'Maintenance',
-          blurb: 'Planned work, and the alarms it holds back',
           count: windows },
         { to: '/assets/contracts', label: 'Support',
-          blurb: 'Warranty and support cover, soonest first',
           count: expiring },
         { to: '/assets/parts', label: 'Parts',
-          blurb: 'Consumable stock, tracked by count',
           count: data?.stock?.below_reorder || undefined },
       ],
     },
     {
       title: 'Manage',
       items: [
-        { to: '/assets/admin/tags', label: 'Tags',
-          blurb: 'The vocabulary assets are grouped by' },
+        { to: '/assets/admin/tags', label: 'Tags' },
       ],
     },
   ];
@@ -113,17 +103,12 @@ export function AssetWorkspace() {
                         <span className="asset-badge">{item.count}</span>
                       ) : null}
                     </span>
-                    <span className="blurb">{item.blurb}</span>
                   </NavLink>
                 </li>
               ))}
             </ul>
           </div>
         ))}
-        <p className="asset-nav-note">
-          A badge is a queue, not a status: it means somebody has something to
-          do here.
-        </p>
       </nav>
       <div className="asset-body">
         <Outlet />

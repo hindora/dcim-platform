@@ -37,11 +37,6 @@ export function TagAdmin() {
   return (
     <>
       <h2>Tags</h2>
-      <p className="subtitle">
-        Labels you can filter and count by. Anything one-off belongs in an
-        asset's notes instead — a tag used once is a tag nobody will maintain.
-      </p>
-
       <p className="asset-table-note">
         <button type="button" onClick={() => setEditing('new')}>New tag</button>
       </p>
@@ -50,8 +45,7 @@ export function TagAdmin() {
 
       {!isLoading && items.length === 0 && (
         <div className="asset-empty">
-          No tags defined. Create one to start grouping assets by something the
-          hierarchy does not already say — environment, tier, project.
+          No tags defined.
         </div>
       )}
 
@@ -105,9 +99,7 @@ export function TagAdmin() {
           </p>
           <p className="muted">
             {confirmDelete.usage_count > 0
-              ? `${confirmDelete.usage_count} objects lose this label. `
-                + 'Nothing else about them changes — a tag is a label, not a '
-                + 'property of the equipment.'
+              ? `${confirmDelete.usage_count} objects lose this label.`
               : 'Nothing is using it.'}
           </p>
           <DialogActions>

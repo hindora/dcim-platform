@@ -93,9 +93,7 @@ export function ImportDialog({ onClose }: { onClose: () => void }) {
             </label>
           </div>
           <p className="asset-form-note">
-            Rows are matched on external id, then serial, then asset tag, then
-            name — first hit wins. Nothing is written until you have seen what
-            it would do.
+            Matched on external id, then serial, then asset tag, then name.
           </p>
         </>
       )}
@@ -134,10 +132,6 @@ export function ImportDialog({ onClose }: { onClose: () => void }) {
                   </tbody>
                 </table>
               </div>
-              <p className="muted">
-                These are skipped. Applying updates only the {validation.would_update}{' '}
-                that matched.
-              </p>
             </>
           )}
         </>

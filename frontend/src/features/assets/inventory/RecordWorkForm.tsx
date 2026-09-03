@@ -72,10 +72,6 @@ export function RecordWorkForm({ deviceId, onClose }: {
                     onChange={(e) => setDetail(e.target.value)} />
         </label>
       </div>
-      <p className="asset-form-note">
-        Parts consumed will be recorded here once stock has a table of its own.
-        Until then, note them in the detail.
-      </p>
       {error && <div className="banner">{error}</div>}
       <DialogActions>
         <span style={{ flex: 1 }} />
@@ -131,11 +127,7 @@ export function TagAssignForm({ objectType, objectId, onClose }: {
   return (
     <Dialog title="Tags" onClose={onClose}>
       {items.length === 0 ? (
-        <p className="muted">
-          No tags are defined yet. Create them under Tags, then attach them
-          here — the vocabulary is deliberately shared rather than typed in per
-          asset.
-        </p>
+        <p className="muted">No tags defined.</p>
       ) : (
         <div className="asset-picker-list">
           {items.map((t) => (

@@ -68,9 +68,6 @@ export function PartDetail() {
 
       <p className="asset-table-note">
         <button type="button" onClick={() => setMoving(true)}>Post a movement</button>
-        <span className="muted">
-          Receipts, consumption and corrections all go through the ledger.
-        </span>
       </p>
 
       {moving && (
@@ -107,10 +104,6 @@ export function PartDetail() {
       )}
 
       <h3>Movement ledger</h3>
-      <p className="muted">
-        The record, newest first. <code>on_hand</code> is the sum of this column —
-        it is not stored independently and cannot drift from it.
-      </p>
       {ledger && ledger.items.length > 0 ? (
         <div className="asset-scroll">
           <table>

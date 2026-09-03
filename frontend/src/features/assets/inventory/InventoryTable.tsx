@@ -90,10 +90,6 @@ export function InventoryTable() {
   return (
     <>
       <h2>Inventory</h2>
-      <p className="subtitle">
-        Every asset the platform knows about, whatever state it is in.
-      </p>
-
       <div className="asset-work">
         <aside className="asset-filters" aria-label="Inventory filters">
           <div className="asset-filter-group">
@@ -206,11 +202,6 @@ export function InventoryTable() {
             <button type="button" onClick={() => setImporting(true)}>
               Import CSV
             </button>
-            {data?.next_cursor && (
-              <span className="muted">
-                More beyond this page — narrow the filters to see them all.
-              </span>
-            )}
           </p>
 
           <div className="asset-scroll">
@@ -296,10 +287,7 @@ export function InventoryTable() {
                   </button>
                 </>
               ) : (
-                <p>
-                  The inventory is empty. Run the seed importer to populate it
-                  from the topology export.
-                </p>
+                <p>The inventory is empty.</p>
               )}
             </div>
           )}

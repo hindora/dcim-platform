@@ -35,11 +35,6 @@ export function ContractList() {
   return (
     <>
       <h2>Support</h2>
-      <p className="subtitle">
-        Cover is a contract, not a date on a machine. One contract covers many
-        devices and renews as a unit.
-      </p>
-
       <p className="asset-table-note">
         <button type="button" onClick={() => setCreating('contract')}>
           Record a contract
@@ -56,8 +51,7 @@ export function ContractList() {
 
       {!isLoading && items.length === 0 && (
         <div className="asset-empty">
-          No contracts recorded. Until one exists every asset reads “no cover
-          recorded”, which is not the same as “out of warranty”.
+          No contracts recorded.
         </div>
       )}
 

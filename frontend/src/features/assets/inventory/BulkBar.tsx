@@ -87,10 +87,6 @@ function ReportView({ report, onClose }: {
 
       {failed > 0 && (
         <>
-          <p className="muted">
-            The ones that applied are done — nothing was rolled back. These were
-            refused:
-          </p>
           <div className="asset-scroll">
             <table>
               <thead>
@@ -254,7 +250,7 @@ function TagsAction({ selected, onClose, onDone }: {
       ) : (
         <>
           <p className="muted">
-            Click once to attach, twice to detach, again to leave alone.
+            Click to attach, again to detach, again to leave unchanged.
           </p>
           <div className="asset-picker-list">
             {items.map((t) => {
@@ -339,9 +335,7 @@ function FieldsAction({ selected, onClose, onDone }: {
         </label>
       </div>
       <p className="asset-form-note">
-        An empty field is left alone rather than blanked. Placement and lifecycle
-        are not editable here — they have their own actions, because both have
-        rules this form cannot check.
+        Empty fields are left unchanged.
       </p>
       {error && <div className="banner">{error}</div>}
       <DialogActions>

@@ -93,9 +93,7 @@ export function ContractDetail() {
           </table>
         </div>
       ) : (
-        <p className="muted">
-          This contract covers nothing, so it protects nothing.
-        </p>
+        <p className="muted">No assets covered.</p>
       )}
     </>
   );

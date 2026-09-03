@@ -59,7 +59,7 @@ export function RoomView() {
       </div>
 
       {racks.length === 0 && (
-        <div className="asset-empty">No racks recorded in this room.</div>
+        <div className="asset-empty">No racks in this room.</div>
       )}
     </>
   );

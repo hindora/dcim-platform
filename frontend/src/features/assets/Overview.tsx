@@ -59,11 +59,6 @@ export function AssetOverview() {
   return (
     <>
       <h2>Overview</h2>
-      <p className="subtitle">
-        The estate as an asset base. Counts are live; nothing here is a
-        measurement, so nothing here needs a time range.
-      </p>
-
       <div className="asset-tiles">
         <Link className="asset-tile" to="/assets/inventory">
           <div className="k">Assets</div>

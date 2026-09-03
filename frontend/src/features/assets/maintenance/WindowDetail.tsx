@@ -70,11 +70,6 @@ export function WindowDetail() {
             Cancel
           </button>
         )}
-        {data.status === 'active' && (
-          <span className="muted">
-            Ending it puts back any alarm still open on these devices.
-          </span>
-        )}
       </p>
 
       {actionError && <div className="banner">{actionError}</div>}
@@ -131,11 +126,6 @@ export function WindowDetail() {
       <h3 style={{ marginTop: 24 }}>
         Shelved alarms — {data.shelved?.length ?? 0}
       </h3>
-      <p className="muted">
-        Raised and recorded as normal, held out of the active list and the
-        roll-ups while this window runs. Anything still open when it ends comes
-        back automatically.
-      </p>
       {data.shelved && data.shelved.length > 0 ? (
         <div className="asset-scroll">
           <table>

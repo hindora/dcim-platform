@@ -41,10 +41,6 @@ export function CandidateQueue() {
   return (
     <>
       <h2>Discovery</h2>
-      <p className="subtitle">
-        What answered on the network, and whether inventory already claims it.
-      </p>
-
       {serialMatchingBlind && (
         <div className="banner">
           Serial-number matching is unavailable: no asset carries a serial.
@@ -57,15 +53,13 @@ export function CandidateQueue() {
 
       {!isLoading && items.length === 0 && (
         <div className="asset-empty">
-          No discovery candidates. Queue a sweep to look for responders the
-          inventory does not know about.
+          No discovery candidates.
         </div>
       )}
 
       {unmatched.length > 0 && (
         <>
           <h3>Unmatched — {unmatched.length}</h3>
-          <p className="muted">Nothing in inventory claims these responders.</p>
           <CandidateTable rows={unmatched} />
         </>
       )}

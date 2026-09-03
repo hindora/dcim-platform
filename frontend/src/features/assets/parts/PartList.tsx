@@ -43,12 +43,6 @@ export function PartList() {
   return (
     <>
       <h2>Parts</h2>
-      <p className="subtitle">
-        Consumables tracked by count, not by serial. Anything you track
-        individually — a spare server, a spare switch — is an asset and belongs
-        in Inventory.
-      </p>
-
       <p className="asset-table-note">
         <button type="button" onClick={() => setCreating('part')}>New part</button>
         <button type="button" onClick={() => setCreating('store')}>Add a store</button>
@@ -80,15 +74,13 @@ export function PartList() {
 
       {!isLoading && items.length === 0 && (
         <div className="asset-empty">
-          No parts recorded. Add one, then post a receipt against a store — stock
-          only ever moves by a recorded movement, never by typing a number.
+          No parts recorded.
         </div>
       )}
 
       {low.length > 0 && (
         <p className="asset-form-note">
-          {low.length} part{low.length === 1 ? ' is' : 's are'} at or below the
-          reorder point.
+          {low.length} part{low.length === 1 ? ' is' : 's are'} at or below reorder.
         </p>
       )}
 
@@ -206,12 +198,9 @@ function PartForm({ stores, onClose }: { stores: Store[]; onClose: () => void })
                  onChange={(e) => setCost(e.target.value)} />
         </label>
       </div>
-      <p className="asset-form-note">
-        {stores.length === 0
-          ? 'There are no stores yet. Add one before receiving stock — a count '
-            + 'has to be somewhere.'
-          : 'Stock is added afterwards by posting a receipt against a store.'}
-      </p>
+      {stores.length === 0 && (
+        <p className="asset-form-note">No stores yet — add one to receive stock.</p>
+      )}
       {error && <div className="banner">{error}</div>}
       <DialogActions>
         <span style={{ flex: 1 }} />

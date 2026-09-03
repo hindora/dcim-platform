@@ -26,10 +26,7 @@ export function SupportTab({ device }: { device: DeviceDetail }) {
           {coverSentence(device)}
         </p>
         {contracts.length === 0 && (
-          <p className="muted">
-            No contract covers this asset. That is not the same as out of
-            warranty — it means nobody has recorded one.
-          </p>
+          <p className="muted">No contract covers this asset.</p>
         )}
       </div>
 

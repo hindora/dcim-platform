@@ -29,12 +29,6 @@ export function WindowList() {
   return (
     <>
       <h2>Maintenance</h2>
-      <p className="subtitle">
-        Planned work, and the alarms it is holding back. An alarm raised on a
-        device inside a running window is still recorded — it is kept out of the
-        active list, not thrown away.
-      </p>
-
       <p className="asset-table-note">
         <button type="button" onClick={() => setScheduling(true)}>
           Schedule maintenance
@@ -47,8 +41,7 @@ export function WindowList() {
 
       {!isLoading && items.length === 0 && (
         <div className="asset-empty">
-          No maintenance windows. Scheduling one silences alarms on the devices
-          it covers for its duration, so planned work does not page anyone.
+          No maintenance windows.
         </div>
       )}
 

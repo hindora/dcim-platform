@@ -89,10 +89,7 @@ export function LifecycleTab({ deviceId }: { deviceId: string }) {
 
       <h3>History</h3>
       {data.events.length === 0 ? (
-        <div className="asset-empty">
-          No recorded transitions. History begins when somebody moves this asset
-          through the platform — anything before that was never written down.
-        </div>
+        <div className="asset-empty">No recorded transitions.</div>
       ) : (
         <div className="asset-scroll">
           <table>
