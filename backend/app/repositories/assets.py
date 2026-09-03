@@ -390,33 +390,6 @@ async def charts(session: AsyncSession) -> dict[str, Any]:
         GROUP BY 1 ORDER BY total DESC
     """))).mappings().all()
 
-    # GROUPED BY RACK ID, NOT NAME. Rack names repeat across rooms - every hall
-    # has an R2-01 - so grouping by name silently sums unrelated cabinets and
-    # reports 80 devices and 95 kW in a 42U rack. The label carries the site and
-    # room for the same reason.
-    #
-    # Live readings, so this is draw and not nameplate: it answers "what is this
-    # rack pulling right now", which is the question asked before adding to it.
-    rack_power = (await session.execute(text("""
-        SELECT dc.code || ' · ' || rm.name || ' · ' || rk.name AS label,
-               count(*) AS devices,
-               round(sum((ds.metrics->'power_draw'->>'v')::numeric) / 1000.0, 1)::float
-                   AS kw
-        FROM device d
-        JOIN rack rk ON rk.id = d.rack_id
-        JOIN rack_row rr ON rr.id = rk.row_id
-        JOIN room rm ON rm.id = rr.room_id
-        JOIN datacenter dc ON dc.id = rm.datacenter_id
-        JOIN device_state ds ON ds.device_id = d.id
-        WHERE ds.metrics ? 'power_draw'
-          -- Only readings the collector believes. A stale or suspect value
-          -- summed into a rack total is worse than a rack missing from the
-          -- chart, because nothing on screen would say it was guessed.
-          AND ds.metrics->'power_draw'->>'q' = 'good'
-        GROUP BY rk.id, dc.code, rm.name, rk.name
-        ORDER BY kw DESC NULLS LAST
-    """))).mappings().all()
-
     return {
         "by_type": [dict(r) for r in by_type],
         "by_vendor": [dict(r) for r in by_vendor],
@@ -440,7 +413,6 @@ async def charts(session: AsyncSession) -> dict[str, Any]:
         "by_room": [dict(r) for r in by_room],
         "placement": [dict(r) for r in placement],
         "contract_spend": [dict(r) for r in spend],
-        "rack_power": [dict(r) for r in rack_power],
         "completeness": [
             {"label": label, "filled": completeness[key],
              "total": completeness["total"]}

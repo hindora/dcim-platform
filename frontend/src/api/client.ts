@@ -447,9 +447,6 @@ export interface AssetCharts {
    *  and floor-standing plant is placed. */
   placement: { label: string; n: number }[];
   contract_spend: { label: string; contracts: number; total: number }[];
-  /** Live draw per rack, keyed on rack id so cabinets sharing a name across
-   *  rooms are not summed together. */
-  rack_power: { label: string; devices: number; kw: number }[];
 }
 
 export interface AssetFilterOptions {

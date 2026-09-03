@@ -214,19 +214,6 @@ export function Charts() {
           />
         </Panel>
 
-        <Panel title="Live draw by rack">
-          {/* Measured, not nameplate: this answers what a cabinet is pulling
-              right now, which is the question asked before adding to it. Racks
-              with no good reading are absent rather than drawn at zero - a
-              rack nobody can measure is not an empty one. */}
-          <BarChart
-            format={(n) => `${n.toFixed(1)} kW`}
-            rows={data.rack_power.map((r): BarRow => ({
-              label: r.label, n: r.kw,
-            }))}
-          />
-        </Panel>
-
         <Panel title="How full the racks are">
           {/* The distribution behind the single "free U" figure. A mean hides
               whether the space is one empty cabinet or forty part-used ones,
