@@ -22,6 +22,10 @@ async def summary(session: AsyncSession) -> dict[str, Any]:
     return data
 
 
+async def charts(session: AsyncSession) -> dict[str, Any]:
+    return await repo.charts(session)
+
+
 async def filter_options(session: AsyncSession) -> dict[str, Any]:
     """Everything the inventory filter rail needs, in one call.
 

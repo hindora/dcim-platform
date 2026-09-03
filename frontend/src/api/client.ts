@@ -418,6 +418,24 @@ export interface ImportValidation {
             name?: string | null; fields: Record<string, string> }[];
 }
 
+/** Composition and capacity of the estate. Counts, never trends: nothing in
+ *  the schema records history yet, so a line would be drawn through one point. */
+export interface AssetCharts {
+  by_type: { key: string; label: string; category: string; n: number }[];
+  by_vendor: { label: string; n: number }[];
+  by_lifecycle: { key: string; n: number }[];
+  rack_space: {
+    racks: number; u_total: number; u_used: number;
+    /** Occupied by planned rows - reserved, not installed, and not free. */
+    u_held: number; u_free: number;
+  };
+  rack_fill: { band: string; n: number }[];
+  floor_space: {
+    rooms: number; designed: number; installed: number;
+    free: number; area_m2: number;
+  };
+}
+
 export interface AssetFilterOptions {
   device_types: {
     code: string;
@@ -1718,6 +1736,7 @@ export const api = {
   powerChain: (deviceId: string) =>
     request<PowerChain>(`/power/chain/${deviceId}`),
   assetFilterOptions: () => request<AssetFilterOptions>('/assets/filter-options'),
+  assetCharts: () => request<AssetCharts>('/assets/charts'),
 
   discoveryCandidates: (params: Record<string, string | undefined> = {}) => {
     const q = new URLSearchParams();

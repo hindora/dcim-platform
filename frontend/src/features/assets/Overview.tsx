@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { api, type AssetSummary } from '../../api/client';
-import { humanise } from '../../lib/format';
+import { Charts } from './Charts';
 
 /** The asset landing page: a stock-take, not a trend.
  *
@@ -9,23 +9,6 @@ import { humanise } from '../../lib/format';
  *  what do we own, where is it, and what do we not know about it - and every
  *  answer is a count from one call (docs/21 §3).
  */
-
-/* Seven states, in the enum's own order so the stacked bar reads as a
-   progression. `installed` and `in_service` are deliberately different hues:
-   the whole reason `installed` exists is that it is racked and must NOT alarm,
-   and a chart that paints it as live hides exactly that. */
-const LIFECYCLE_HUE: Record<string, string> = {
-  planned: 'var(--accent-dim)',
-  in_stock: 'var(--text-faint)',
-  installed: 'var(--accent)',
-  in_service: 'var(--ok)',
-  maintenance: 'var(--warn)',
-  decommissioned: 'var(--unknown)',
-  retired: 'var(--text-faint)',
-};
-
-const LIFECYCLE_ORDER = ['planned', 'in_stock', 'installed', 'in_service',
-                         'maintenance', 'decommissioned', 'retired'];
 
 export function AssetOverview() {
   const { data, error, isLoading } = useQuery<AssetSummary>({
@@ -52,10 +35,7 @@ export function AssetOverview() {
     );
   }
 
-  const { totals, identity, estate, by_category: byCategory, discovery } = data;
-  const placed = estate.u_used + estate.u_reserved;
-  const maxCategory = Math.max(1, ...byCategory.map((c) => c.n));
-
+  const { totals, identity, estate, discovery } = data;
   return (
     <>
       <h2>Overview</h2>
@@ -123,61 +103,6 @@ export function AssetOverview() {
 
       <div className="asset-cols">
         <div className="asset-panel">
-          <h3>By category</h3>
-          {byCategory.length === 0 ? (
-            <p className="muted">Nothing classified yet.</p>
-          ) : (
-            <div className="asset-barlist">
-              {byCategory.map((row) => (
-                <div className="asset-barlist-row" key={row.category}>
-                  <Link to={`/assets/inventory?category=${encodeURIComponent(row.category)}`}>
-                    {humanise(row.category)}
-                  </Link>
-                  <div className="asset-bar">
-                    <span style={{ width: `${(row.n / maxCategory) * 100}%` }} />
-                  </div>
-                  <div className="n">{row.n.toLocaleString()}</div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <div className="asset-panel">
-          <h3>By lifecycle</h3>
-          {/* One stacked bar, because the states partition the estate. Separate
-              bars invite reading each against the wrong denominator. */}
-          <div className="asset-stack">
-            {LIFECYCLE_ORDER.map((state) => {
-              const n = (totals as unknown as Record<string, number>)[state] ?? 0;
-              if (!n) return null;
-              return (
-                <span
-                  key={state}
-                  title={`${humanise(state)}: ${n}`}
-                  style={{
-                    width: `${(n / Math.max(1, totals.assets)) * 100}%`,
-                    background: LIFECYCLE_HUE[state],
-                  }}
-                />
-              );
-            })}
-          </div>
-          <div className="asset-legend">
-            {LIFECYCLE_ORDER.map((state) => {
-              const n = (totals as unknown as Record<string, number>)[state] ?? 0;
-              if (!n) return null;
-              return (
-                <span key={state}>
-                  <span className="sw" style={{ background: LIFECYCLE_HUE[state] }} />
-                  {humanise(state)} {n.toLocaleString()}
-                </span>
-              );
-            })}
-          </div>
-        </div>
-
-        <div className="asset-panel">
           <h3>Needs attention</h3>
           <ul className="asset-attention">
             {identity.unidentified > 0 && (
@@ -237,38 +162,8 @@ export function AssetOverview() {
         </div>
       </div>
 
-      <div className="asset-panel" style={{ marginTop: 20 }}>
-        <h3>Rack space</h3>
-        <div className="asset-stack">
-          <span
-            title={`Used ${estate.u_used}U`}
-            style={{ width: `${(estate.u_used / Math.max(1, estate.u_total)) * 100}%`,
-                     background: 'var(--accent)' }}
-          />
-          <span
-            title={`Held ${estate.u_reserved}U`}
-            style={{ width: `${(estate.u_reserved / Math.max(1, estate.u_total)) * 100}%`,
-                     background: 'var(--warn)' }}
-          />
-        </div>
-        <div className="asset-legend">
-          <span>
-            <span className="sw" style={{ background: 'var(--accent)' }} />
-            Used {estate.u_used.toLocaleString()}U
-          </span>
-          <span>
-            <span className="sw" style={{ background: 'var(--warn)' }} />
-            Held for planned {estate.u_reserved.toLocaleString()}U
-          </span>
-          <span>
-            <span className="sw" style={{ background: 'var(--bg-inset)' }} />
-            Free {estate.u_free.toLocaleString()}U
-          </span>
-          <span className="muted">
-            {estate.rooms} rooms · {estate.racks} racks · {placed}U placed
-          </span>
-        </div>
-      </div>
+      <Charts />
+
     </>
   );
 }

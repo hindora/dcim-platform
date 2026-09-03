@@ -38,6 +38,21 @@ async def assets_summary(
     return await service.summary(session)
 
 
+@router.get("/charts", summary="Composition and capacity, for the overview")
+async def assets_charts(
+    session: AsyncSession = Depends(get_session),
+    _: Principal = Depends(current_principal),
+) -> dict[str, Any]:
+    """Every chart on the overview, in one round trip.
+
+    Counts only - nothing here is a time series, because nothing in this
+    schema records history yet. A trend needs either lifecycle events to
+    accrue or a nightly snapshot, and drawing one from a single point would be
+    a line that says something it cannot know.
+    """
+    return await service.charts(session)
+
+
 @router.get("/filter-options", summary="Vocabularies for the inventory filters")
 async def filter_options(
     session: AsyncSession = Depends(get_session),
