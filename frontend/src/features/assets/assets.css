@@ -298,7 +298,15 @@ a.asset-tile:hover { border-color: var(--border-strong); }
 
 .asset-filter-group { margin-bottom: 14px; }
 
-.asset-filter-group > label,
+/* The caption ABOVE a control - "Search", "Type", "Vendor". Not the label of a
+   checkbox, which is a row beside its box and is styled by .asset-check.
+ *
+ * `> label` is (0,1,1) and `.asset-check` is (0,1,0), so without the :not()
+ * this rule won every checkbox row: display:block beat display:flex, the row
+ * was never a flex container, and `gap` had nothing to act on. Three attempts
+ * at widening that gap changed nothing for exactly this reason - and the rows
+ * were being drawn in tiny uppercase caption text as well. */
+.asset-filter-group > label:not(.asset-check),
 .asset-filter-group > p.legend {
   display: block;
   margin: 0 0 5px;
