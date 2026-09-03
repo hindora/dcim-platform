@@ -12,6 +12,25 @@
 
 /* ---------------------------------------------------------------- shell */
 
+/* WHY NOTHING WAS STICKING.
+ *
+ * `main` carries `overflow-x: auto`, and CSS computes the other axis to `auto`
+ * with it - so main is a scroll container. A sticky element sticks to its
+ * nearest SCROLLING ancestor, which was therefore main and not the viewport;
+ * main has no height, so it never scrolls, so nothing ever stuck. The body was
+ * doing the scrolling all along. Every sticky rule in this file was inert.
+ *
+ * `:has()` lets us undo that for the pages this module owns and nowhere else -
+ * no class to add, no JS, no change to App.tsx. Removing main's overflow
+ * outright would fix it everywhere, but it is shared chrome and this module
+ * has not touched shared chrome in six phases.
+ *
+ * Safe because nothing here relies on main to scroll sideways: every wide
+ * region in this module is wrapped in .asset-scroll, exactly as the estate,
+ * home, floorplan and topology pages wrap theirs.
+ */
+main:has(.asset-shell) { overflow: visible; }
+
 .asset-shell {
   display: grid;
   grid-template-columns: minmax(164px, 190px) minmax(0, 1fr);
