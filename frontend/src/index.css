@@ -841,3 +841,21 @@ button.primary { background: var(--accent-dim); border-color: var(--accent); }
 }
 
 .asset-max:hover { color: var(--text); }
+
+/* ------------------------------------------- light-theme shadow weights */
+
+/* The cards keep their shape in both palettes, but a shadow is painted
+   darkness: at the dark theme's weight it reads as a hole in a light page.
+   Same geometry, a fraction of the ink. */
+[data-theme='light'] .hover-tip,
+[data-theme='light'] .asset-info .asset-tip {
+  box-shadow: 0 6px 18px rgb(31 35 40 / 0.14);
+}
+
+[data-theme='light'] .max-modal-card {
+  box-shadow: 0 16px 48px rgb(31 35 40 / 0.24);
+}
+
+[data-theme='light'] .max-modal {
+  background: rgb(31 35 40 / 0.4);
+}
