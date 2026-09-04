@@ -55,7 +55,7 @@ export function EstateTree() {
         {otherCount > 0 && (
           <button type="button" className="row-btn"
                   onClick={() => setShowOther((v) => !v)}>
-            {showOther ? 'Hide other rooms' : `Show ${otherCount} other rooms`}
+            {showOther ? '− Facility' : '+ Facility'}
           </button>
         )}
       </div>
