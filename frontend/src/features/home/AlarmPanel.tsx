@@ -401,24 +401,33 @@ function AlarmTrend({ categories, scope }: {
     if (counts.has(day)) counts.set(day, (counts.get(day) ?? 0) + 1);
   }
   const max = Math.max(1, ...counts.values());
+  const total = [...counts.values()].reduce((t, n) => t + n, 0);
 
-  if (!data) return null;
+  if (!data) return <p className="muted">Loading the trend…</p>;
   return (
-    <div className="alarm-trend" role="img"
-         aria-label="Conditions raised per day, last 14 days">
-      <span className="cap">Raised / day · 14d</span>
-      {days.map((day) => {
-        const n = counts.get(day) ?? 0;
-        return (
-          <div className="col" key={day}
-               {...bind(<><b>{day.slice(5)}</b> {n} raised</>)}>
-            <div className="bar"
-                 style={{ height: `${(n / max) * 100}%` }} />
-          </div>
-        );
-      })}
-      {tipEl}
-    </div>
+    <>
+      <p className="muted">
+        {total} condition{total === 1 ? '' : 's'} raised in the last 14 days
+        {scope ? ` in ${scope.label}` : ''}.
+      </p>
+      <div className="alarm-trend" role="img"
+           aria-label="Conditions raised per day, last 14 days">
+        {days.map((day) => {
+          const n = counts.get(day) ?? 0;
+          return (
+            <div className="col" key={day}
+                 {...bind(<><b>{day.slice(5)}</b> {n} raised</>)}>
+              <div className="barwrap">
+                <div className="v">{n || ''}</div>
+                <div className="bar" style={{ height: `${(n / max) * 100}%` }} />
+              </div>
+              <div className="k">{day.slice(5)}</div>
+            </div>
+          );
+        })}
+        {tipEl}
+      </div>
+    </>
   );
 }
 
@@ -504,6 +513,7 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState<SortKey>('qty');
   const [dir, setDir] = useState<1 | -1>(-1);
+  const [tab, setTab] = useState<'list' | 'trend'>('list');
   const [pageSize, setPageSize] = useState(25);
   const [page, setPage] = useState(0);
   // Which rooms are open. A set, not one id: comparing two rooms is the
@@ -679,7 +689,23 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
           {error && <div className="banner">Could not load the rooms behind this counter.</div>}
           {isLoading && <p className="muted">Loading…</p>}
 
-          <AlarmTrend categories={categories} scope={scope} />
+          {/* Two answers to two questions: WHAT is happening (the rooms and
+              their conditions, or the history when quiet) and WHETHER now is
+              normal (the fortnight trend, full-size). */}
+          <div className="panel-tabs" role="tablist" aria-label="Panel view">
+            <button role="tab" aria-selected={tab === 'list'}
+                    className={tab === 'list' ? 'active' : ''}
+                    onClick={() => setTab('list')}>Conditions</button>
+            <button role="tab" aria-selected={tab === 'trend'}
+                    className={tab === 'trend' ? 'active' : ''}
+                    onClick={() => setTab('trend')}>Trend</button>
+          </div>
+
+          {tab === 'trend' && (
+            <AlarmTrend categories={categories} scope={scope} />
+          )}
+          {tab === 'list' && (
+          <>
 
           {data && (
             <>
@@ -835,6 +861,8 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
               {unlocated === 1 ? ' it' : ' them'}.{' '}
               <Link to="/platform">Platform health →</Link>
             </p>
+          )}
+          </>
           )}
         </div>
       </section>

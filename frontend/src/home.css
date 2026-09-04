@@ -173,39 +173,86 @@
 .alert-strip .caption:hover { color: var(--text); }
 .alert-strip a.caption { text-decoration: none; }
 
-/* The fortnight of raised-per-day columns at the top of the alarm panel.
-   Small on purpose: it is context for the table, not a page of its own. */
-.alarm-trend {
+/* The panel's two views: the conditions and the trend. Underline tabs, the
+   same form the asset record uses, square-cornered. */
+.panel-tabs {
   display: flex;
-  align-items: flex-end;
   gap: 4px;
-  height: 56px;
-  margin: 4px 0 14px;
-  padding: 0 2px 0 0;
+  border-bottom: 1px solid var(--border);
+  margin: 2px 0 16px;
 }
 
-.alarm-trend .cap {
-  align-self: center;
-  margin-right: 10px;
-  font-size: 11px;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: var(--text-faint);
-  white-space: nowrap;
+.panel-tabs button {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  padding: 7px 12px;
+  color: var(--text-muted);
+  font-size: 0.88rem;
+  cursor: pointer;
+}
+
+.panel-tabs button:hover { color: var(--text); }
+
+.panel-tabs button.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+/* The fortnight of raised-per-day columns, full size on its own tab: a
+   value on each column, the bar, the date under it. */
+.alarm-trend {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+  height: 280px;
+  margin: 6px 0 10px;
 }
 
 .alarm-trend .col {
-  flex: 0 0 18px;
-  height: 100%;
+  flex: 1;
+  min-width: 0;
   display: flex;
-  align-items: flex-end;
+  flex-direction: column;
+  text-align: center;
+}
+
+/* Value and bar share a bottom-anchored stack so the figure rides its own
+   bar's top; the padding reserves the value's headroom over a full-height
+   bar, and the bar never flex-shrinks - a shrunken tallest bar would
+   misstate every ratio (the asset charts' rule, applied here). */
+.alarm-trend .col .barwrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  min-height: 0;
+  padding-top: 20px;
+}
+
+.alarm-trend .col .barwrap > * { flex-shrink: 0; }
+
+.alarm-trend .col .v {
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  margin-bottom: 2px;
 }
 
 .alarm-trend .col .bar {
   width: 100%;
   min-height: 2px;
-  border-radius: 2px 2px 0 0;
+  border-radius: 3px 3px 0 0;
   background: var(--accent);
+}
+
+.alarm-trend .col .k {
+  margin-top: 6px;
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+  white-space: nowrap;
 }
 .alert-strip .caption svg { flex: none; }
 
