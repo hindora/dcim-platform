@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
 import { api, type RackElevation } from '../../../api/client';
 import { humanise } from '../../../lib/format';
+import { useHoverTip } from '../../../components/HoverTip';
 
 /** An asset-context rack elevation.
  *
@@ -24,6 +25,7 @@ export function AssetElevation() {
     queryFn: () => api.rackElevation(id),
     enabled: Boolean(id),
   });
+  const { bind, tipEl } = useHoverTip();
 
   if (error) return <div className="banner">Failed to load: {String(error)}</div>;
   if (isLoading || !data) return <p className="muted">Loading…</p>;
@@ -57,7 +59,9 @@ export function AssetElevation() {
                   className={`asset-elev-slot${slot.free ? ' is-free' : ''}`}
                   key={slot.u_start}
                   style={{ minHeight: 20 * slot.u_height }}
-                  title={slot.device ? humanise(slot.device.device_type) : 'Free'}
+                  {...bind(slot.device
+                    ? <><b>{slot.device.name}</b> · {humanise(slot.device.device_type)}</>
+                    : 'Free')}
                 >
                   <span className="u">
                     {slot.u_height > 1
@@ -75,6 +79,7 @@ export function AssetElevation() {
               );
             })}
           </div>
+          {tipEl}
         </div>
 
         <div>

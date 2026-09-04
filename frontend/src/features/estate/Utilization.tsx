@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { api, type UtilRow } from '../../api/client';
+import { Tip } from '../../components/HoverTip';
 import {
   Column, DataTable, FacilityToggle, Notes, Num, PageHead, ScopeTabs, TableFoot,
   tone,
@@ -31,12 +32,12 @@ function headline(pct: number | null | undefined): 'ok' | 'warn' | 'critical' | 
 function Bar({ pct }: { pct: number | null }) {
   const t = tone(pct);
   if (pct === null || pct === undefined) {
-    return <span className="ubar unknown" title="nothing to measure against" />;
+    return <Tip className="ubar unknown" tip="nothing to measure against" />;
   }
   return (
-    <span className="ubar" title={`${pct.toFixed(1)}%`}>
+    <Tip className="ubar" tip={<b>{pct.toFixed(1)}%</b>}>
       <i className={t} style={{ width: `${Math.min(100, Math.max(pct, 1))}%` }} />
-    </span>
+    </Tip>
   );
 }
 
@@ -74,21 +75,20 @@ export function Utilization() {
       key: 'built', label: 'Built out', align: 'num', width: 130,
       sort: (r) => r.built_out_pct,
       render: (r) => (
-        <span title={r.designed_racks
-          ? `${r.rack_count ?? 0} of ${r.designed_racks} drawn rack positions`
+        <Tip tip={r.designed_racks
+          ? <><b>{r.rack_count ?? 0}</b> of <b>{r.designed_racks}</b> drawn rack positions</>
           : 'the floor plan gives no rack positions for this room'}>
-          <Num value={r.built_out_pct} digits={0} unit="%"
-               why="no drawn rack positions for this room" />
-        </span>
+          <Num value={r.built_out_pct} digits={0} unit="%" />
+        </Tip>
       ),
     },
     {
       key: 'space', label: 'Space', align: 'num', width: 150,
       sort: (r) => r.space_pct,
       render: (r) => (
-        <span title={`${r.space_used_u} of ${r.space_total_u} rack U occupied`}>
-          <Num value={r.space_pct} unit="%" why="no racks in this scope" />
-        </span>
+        <Tip tip={<><b>{r.space_used_u}</b> of <b>{r.space_total_u}</b> rack U occupied</>}>
+          <Num value={r.space_pct} unit="%" />
+        </Tip>
       ),
     },
     { key: 'spacebar', label: '', width: 90, render: (r) => <Bar pct={r.space_pct} /> },
@@ -96,9 +96,10 @@ export function Utilization() {
       key: 'power', label: 'Power', align: 'num', width: 150,
       sort: (r) => r.power_pct,
       render: (r) => (
-        <span title={`${r.power_used_kw} kW against ${r.power_capacity_kw ?? '—'} kW · ${r.power_basis}`}>
-          <Num value={r.power_pct} unit="%" why={r.power_basis} />
-        </span>
+        <Tip tip={<><b>{r.power_used_kw} kW</b> against{' '}
+          <b>{r.power_capacity_kw ?? '—'} kW</b> · {r.power_basis}</>}>
+          <Num value={r.power_pct} unit="%" />
+        </Tip>
       ),
     },
     { key: 'powerbar', label: '', width: 90, render: (r) => <Bar pct={r.power_pct} /> },
@@ -106,9 +107,10 @@ export function Utilization() {
       key: 'cooling', label: 'Cooling', align: 'num', width: 150,
       sort: (r) => r.cooling_pct,
       render: (r) => (
-        <span title={`${r.cooling_used_kw} kW of IT heat against ${r.cooling_capacity_kw ?? '—'} kW rated · ${r.cooling_basis}`}>
-          <Num value={r.cooling_pct} unit="%" why={r.cooling_basis} />
-        </span>
+        <Tip tip={<><b>{r.cooling_used_kw} kW</b> of IT heat against{' '}
+          <b>{r.cooling_capacity_kw ?? '—'} kW</b> rated · {r.cooling_basis}</>}>
+          <Num value={r.cooling_pct} unit="%" />
+        </Tip>
       ),
     },
     { key: 'coolingbar', label: '', width: 90, render: (r) => <Bar pct={r.cooling_pct} /> },

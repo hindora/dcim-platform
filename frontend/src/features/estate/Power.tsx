@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { api, type PowerRow } from '../../api/client';
+import { Tip } from '../../components/HoverTip';
 import {
   Column, DataTable, Delta, FacilityToggle, Notes, Num, PageHead, ScopeTabs, Seg,
   TableFoot,
@@ -80,7 +81,7 @@ export function Power() {
     },
     {
       key: 'itdc', label: 'IT (DC) kW', align: 'num', width: 120,
-      render: () => <span className="dash" title="no DC bus is metered in this estate">—</span>,
+      render: () => <Tip className="dash" tip="no DC bus is metered in this estate">—</Tip>,
     },
     {
       key: 'cooling', label: 'Cooling kW', align: 'num', width: 120,

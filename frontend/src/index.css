@@ -741,3 +741,39 @@ button.primary { background: var(--accent-dim); border-color: var(--accent); }
   padding: 6px 0; border-top: 1px solid;
 }
 .theme-card .mock-row i { height: 6px; border-radius: 2px; }
+
+/* ------------------------------------------------------- hover tooltip */
+
+/* The cursor-anchored tooltip card chart marks and table cells share,
+   replacing the browser's native title balloon. Global because every page
+   uses it; the component is src/components/HoverTip.tsx. */
+@keyframes hover-tip-in {
+  from { opacity: 0; transform: translateY(-4px); }
+}
+
+.hover-tip {
+  position: fixed;
+  z-index: 60;
+  max-width: 280px;
+  padding: 6px 10px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  box-shadow: 0 6px 18px rgb(0 0 0 / 0.4);
+  font-size: 0.76rem;
+  font-weight: 400;
+  font-style: normal;
+  line-height: 1.4;
+  letter-spacing: normal;
+  text-transform: none;
+  text-align: left;
+  white-space: normal;
+  color: var(--text-muted);
+  animation: hover-tip-in 0.1s ease;
+  pointer-events: none;
+}
+
+.hover-tip b {
+  color: var(--text);
+  font-weight: 600;
+}

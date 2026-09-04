@@ -12,8 +12,10 @@ import { humanise } from '../../../lib/format';
  */
 export function LifecycleChip({ state }: { state?: string | null }) {
   const value = state ?? 'in_service';
+  // No tooltip: the chip already carries its label as text, and a balloon
+  // repeating it verbatim is noise.
   return (
-    <span className={`asset-life is-${value}`} title={`Lifecycle: ${humanise(value)}`}>
+    <span className={`asset-life is-${value}`}>
       {humanise(value)}
     </span>
   );

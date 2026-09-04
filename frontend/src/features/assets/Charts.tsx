@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api, type AssetCharts } from '../../api/client';
 import { humanise } from '../../lib/format';
 import { BarChart, type BarRow } from './components/BarChart';
-import { useHoverTip } from './components/HoverTip';
+import { useHoverTip } from '../../components/HoverTip';
 import { Donut, Gauge, VColumns } from './components/Shapes';
 import { Trends } from './Trends';
 

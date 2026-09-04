@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { useHoverTip } from '../../components/HoverTip';
 import { api, type AssetTrends } from '../../api/client';
 
 /** The estate over time, from the nightly snapshots and the lifecycle events.
@@ -152,12 +153,13 @@ function Diverging({ rows, unit }: {
   unit: string;
 }) {
   const max = Math.max(1, ...rows.map((r) => Math.abs(r.n)));
+  const { bind, tipEl } = useHoverTip();
   return (
     <div className="asset-diverge"
          style={{ gridTemplateColumns: `repeat(${rows.length}, 1fr)` }}>
       {rows.map((r, i) => (
         <div className="asset-diverge-col" key={`${r.label}-${i}`}
-             title={`${r.label}: ${r.n > 0 ? '+' : ''}${r.n}${unit}`}>
+             {...bind(<><b>{r.label}</b> {r.n > 0 ? '+' : ''}{r.n}{unit}</>)}>
           <div className="up">
             {r.n > 0 && (
               <div className="bar is-up"
@@ -173,6 +175,7 @@ function Diverging({ rows, unit }: {
           <div className="k">{r.label}</div>
         </div>
       ))}
+      {tipEl}
     </div>
   );
 }
@@ -186,6 +189,7 @@ function Paired({ rows, aLabel, bLabel }: {
   bLabel: string;
 }) {
   const max = Math.max(1, ...rows.flatMap((r) => [r.a, r.b]));
+  const { bind, tipEl } = useHoverTip();
   return (
     <div className="asset-paired-wrap">
       <div className="asset-legend">
@@ -196,7 +200,7 @@ function Paired({ rows, aLabel, bLabel }: {
            style={{ gridTemplateColumns: `repeat(${rows.length}, 1fr)` }}>
         {rows.map((r) => (
           <div className="asset-paired-col" key={r.label}
-               title={`${r.label}: ${r.a} in, ${r.b} out`}>
+               {...bind(<><b>{r.label}</b> {r.a} in, {r.b} out</>)}>
             <div className="bars">
               <div className="bar is-a" style={{ height: `${(r.a / max) * 100}%` }} />
               <div className="bar is-b" style={{ height: `${(r.b / max) * 100}%` }} />
@@ -205,6 +209,7 @@ function Paired({ rows, aLabel, bLabel }: {
           </div>
         ))}
       </div>
+      {tipEl}
     </div>
   );
 }

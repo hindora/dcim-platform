@@ -6,6 +6,7 @@
  *  table takes a column list rather than each page rolling its own <table>.
  */
 import { useMemo, useState } from 'react';
+import { Tip } from './HoverTip';
 
 /* ------------------------------------------------------------------ headline */
 
@@ -30,11 +31,10 @@ export function KpiBand({ items }: { items: Kpi[] }) {
             : k.value;
         return (
           <div key={k.caption}
-               className={`kpi ${absent ? 'absent' : k.tone ?? ''}`}
-               title={absent ? (k.why ?? 'not measured') : undefined}>
+               className={`kpi ${absent ? 'absent' : k.tone ?? ''}`}>
             <span className="cap">{k.caption}</span>
             <span className="val">
-              {shown}
+              {absent ? <Tip tip={k.why ?? 'not measured'}>{shown}</Tip> : shown}
               {!absent && k.unit && <span className="u">{k.unit}</span>}
             </span>
             <span className="rule" />
@@ -131,10 +131,10 @@ export function Delta({ value, digits = 1, unit }: {
   value: number | null | undefined; digits?: number; unit?: string;
 }) {
   if (value === null || value === undefined) {
-    return <span className="delta none" title="no comparison window">·</span>;
+    return <Tip className="delta none" tip="no comparison window">·</Tip>;
   }
   const rounded = Number(value.toFixed(digits));
-  if (rounded === 0) return <span className="delta flat" title="unchanged">↔</span>;
+  if (rounded === 0) return <Tip className="delta flat" tip="unchanged">↔</Tip>;
   const up = rounded > 0;
   return (
     <span className={`delta ${up ? 'up' : 'down'}`}>
@@ -298,12 +298,15 @@ export function Modal({ title, count, blurb, onClose, children }: {
 
 /* ------------------------------------------------------------------ helpers */
 
-/** A number, or a dash carrying the reason it is missing. */
+/** A number, or a dash carrying the reason it is missing. Without a `why`
+ *  the dash stays bare - a caller that already wraps the cell in its own
+ *  Tip must not stack a second card on top of it. */
 export function Num({ value, digits = 1, unit, why }: {
   value: number | null | undefined; digits?: number; unit?: string; why?: string | null;
 }) {
   if (value === null || value === undefined) {
-    return <span className="dash" title={why ?? 'not measured'}>—</span>;
+    if (!why) return <span className="dash">—</span>;
+    return <Tip className="dash" tip={why}>—</Tip>;
   }
   return <>{value.toFixed(digits)}{unit ? <span className="why"> {unit}</span> : null}</>;
 }

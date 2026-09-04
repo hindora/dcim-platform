@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { useHoverTip } from './HoverTip';
+import { useHoverTip } from '../../../components/HoverTip';
 
 /** A categorical bar chart: label, bar, value, and an axis under it.
  *

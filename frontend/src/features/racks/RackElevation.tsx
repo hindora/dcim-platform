@@ -4,6 +4,7 @@ import { Link, useParams } from 'react-router-dom';
 import { useState } from 'react';
 import { api, type ElevationDevice, type RackElevation as Elevation } from '../../api/client';
 import { StatusChip } from '../../components/StatusChip';
+import { useHoverTip } from '../../components/HoverTip';
 
 /** Which measurement is painted onto the occupied slots.
  *
@@ -64,6 +65,7 @@ function overlayValue(device: ElevationDevice, overlay: Overlay): string {
 export function RackElevationView() {
   const { id = '' } = useParams();
   const [overlay, setOverlay] = useState<Overlay>('status');
+  const { bind, tipEl } = useHoverTip();
 
   const q = useQuery<Elevation>({
     queryKey: ['rack-elevation', id],
@@ -152,7 +154,8 @@ export function RackElevationView() {
                 // measurement nobody took.
                 ['--fill' as string]: frac == null ? '0' : String(frac),
               }}
-              title={`${d.name} · ${humanise(d.device_type)} · ${overlayValue(d, overlay)}`}
+              {...bind(<><b>{d.name}</b> · {humanise(d.device_type)} ·{' '}
+                {overlayValue(d, overlay)}</>)}
             >
               <span className="u-label">{label}</span>
               <span className="rack-name">{d.name}</span>
@@ -167,6 +170,7 @@ export function RackElevationView() {
           );
         })}
       </div>
+      {tipEl}
 
       {zeroU.length > 0 && (
         <section>

@@ -11,7 +11,7 @@
  *  bought with that cost.
  */
 
-import { useHoverTip } from './HoverTip';
+import { useHoverTip } from '../../../components/HoverTip';
 
 export type Segment = { label: string; n: number; colour: string };
 
