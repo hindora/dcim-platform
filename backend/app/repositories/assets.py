@@ -291,70 +291,90 @@ async def charts(session: AsyncSession) -> dict[str, Any]:
     #
     # Decommissioned and retired assets are excluded: cover on kit that has
     # left the estate is not a renewal anybody has to fund.
+    # The runway rows carry vendor and site because renewal is a per-vendor,
+    # often per-site conversation - the chart filters on both, summing rows
+    # client-side. Quarter buckets sort lexically within their band, so
+    # (band, bucket) is a complete ordering and first_lapse is not needed.
     runway = (await session.execute(text("""
         SELECT CASE
-                 WHEN warranty_expires < CURRENT_DATE THEN 'Expired'
-                 WHEN warranty_expires <= CURRENT_DATE + 730
-                   THEN to_char(warranty_expires, 'YYYY "Q"Q')
+                 WHEN d.warranty_expires < CURRENT_DATE THEN 'Expired'
+                 WHEN d.warranty_expires <= CURRENT_DATE + 730
+                   THEN to_char(d.warranty_expires, 'YYYY "Q"Q')
                  ELSE 'Beyond 2 years'
                END AS bucket,
                CASE
-                 WHEN warranty_expires < CURRENT_DATE THEN 0
-                 WHEN warranty_expires <= CURRENT_DATE + 730 THEN 1
+                 WHEN d.warranty_expires < CURRENT_DATE THEN 0
+                 WHEN d.warranty_expires <= CURRENT_DATE + 730 THEN 1
                  ELSE 2
                END AS band,
-               min(warranty_expires) AS first_lapse,
+               COALESCE(v.name, 'Unrecorded') AS vendor,
+               dc.code AS dc,
                count(*) AS n
-        FROM device
-        WHERE warranty_expires IS NOT NULL
-          AND lifecycle NOT IN ('decommissioned', 'retired')
-        GROUP BY 1, 2
-        ORDER BY band, first_lapse
+        FROM device d
+        LEFT JOIN vendor v ON v.id = d.vendor_id
+        LEFT JOIN rack r ON r.id = d.rack_id
+        LEFT JOIN rack_row rr ON rr.id = r.row_id
+        LEFT JOIN room rm ON rm.id = COALESCE(rr.room_id, d.room_id)
+        LEFT JOIN datacenter dc ON dc.id = rm.datacenter_id
+        WHERE d.warranty_expires IS NOT NULL
+          AND d.lifecycle NOT IN ('decommissioned', 'retired')
+        GROUP BY 1, 2, v.name, dc.code
+        ORDER BY band, bucket
     """))).mappings().all()
 
     # Cover as four states, on the same threshold and the same live-estate
     # scope the runway uses - so the two charts beside each other cannot
-    # disagree about how many assets there are to cover.
+    # disagree about how many assets there are to cover. Dimensioned by the
+    # same (vendor, site) pair as the runway, for the same filters.
     cover = (await session.execute(text("""
-        SELECT count(*) FILTER (WHERE warranty_expires IS NULL)        AS unknown,
-               count(*) FILTER (WHERE warranty_expires < CURRENT_DATE) AS expired,
-               count(*) FILTER (WHERE warranty_expires >= CURRENT_DATE
-                 AND warranty_expires <= CURRENT_DATE + CAST(:expiring AS integer))
-                                                                       AS expiring,
-               count(*) FILTER (WHERE warranty_expires
-                 > CURRENT_DATE + CAST(:expiring AS integer))          AS active
-        FROM device
-        WHERE lifecycle NOT IN ('decommissioned', 'retired')
-    """), {"expiring": EXPIRING_DAYS})).mappings().one()
+        SELECT CASE
+                 WHEN d.warranty_expires IS NULL THEN 'unknown'
+                 WHEN d.warranty_expires < CURRENT_DATE THEN 'expired'
+                 WHEN d.warranty_expires
+                   <= CURRENT_DATE + CAST(:expiring AS integer) THEN 'expiring'
+                 ELSE 'active'
+               END AS state,
+               COALESCE(v.name, 'Unrecorded') AS vendor,
+               dc.code AS dc,
+               count(*) AS n
+        FROM device d
+        LEFT JOIN vendor v ON v.id = d.vendor_id
+        LEFT JOIN rack r ON r.id = d.rack_id
+        LEFT JOIN rack_row rr ON rr.id = r.row_id
+        LEFT JOIN room rm ON rm.id = COALESCE(rr.room_id, d.room_id)
+        LEFT JOIN datacenter dc ON dc.id = rm.datacenter_id
+        WHERE d.lifecycle NOT IN ('decommissioned', 'retired')
+        GROUP BY 1, v.name, dc.code
+    """), {"expiring": EXPIRING_DAYS})).mappings().all()
 
     # How much of the estate carries each field. The point is not the fields
     # that are full - it is the ones that are not, because every empty column
     # here is a chart or a filter somebody expects to work and finds blank.
+    # Grouped by (site, type) so the chart can filter to "which fields are
+    # empty on the PDUs in DC1" - the ratios stay honest under any filter
+    # because every row carries its own denominator.
     completeness = (await session.execute(text("""
-        SELECT count(*)                                              AS total,
-               count(serial_number)                                  AS serial_number,
-               count(asset_tag)                                      AS asset_tag,
-               count(owner_group)                                    AS owner_group,
-               count(cost_centre)                                    AS cost_centre,
-               count(warranty_expires)                               AS warranty_expires,
-               count(purchase_date)                                  AS purchase_date,
-               count(install_date)                                   AS install_date,
-               count(supplier_id)                                    AS supplier_id,
-               count(*) FILTER (WHERE rack_id IS NOT NULL)           AS placement
-        FROM device
-        WHERE lifecycle NOT IN ('decommissioned', 'retired')
-    """))).mappings().one()
-    fields = [
-        ("Serial number", "serial_number"),
-        ("Asset tag", "asset_tag"),
-        ("Placement", "placement"),
-        ("Owner", "owner_group"),
-        ("Cover", "warranty_expires"),
-        ("Supplier", "supplier_id"),
-        ("Cost centre", "cost_centre"),
-        ("Purchase date", "purchase_date"),
-        ("Install date", "install_date"),
-    ]
+        SELECT dc.code AS dc,
+               COALESCE(dt.display_name, d.device_type) AS type_label,
+               count(*)                                              AS total,
+               count(d.serial_number)                                AS serial_number,
+               count(d.asset_tag)                                    AS asset_tag,
+               count(d.owner_group)                                  AS owner_group,
+               count(d.cost_centre)                                  AS cost_centre,
+               count(d.warranty_expires)                             AS warranty_expires,
+               count(d.purchase_date)                                AS purchase_date,
+               count(d.install_date)                                 AS install_date,
+               count(d.supplier_id)                                  AS supplier_id,
+               count(*) FILTER (WHERE d.rack_id IS NOT NULL)         AS placement
+        FROM device d
+        LEFT JOIN device_type dt ON dt.code = d.device_type
+        LEFT JOIN rack r ON r.id = d.rack_id
+        LEFT JOIN rack_row rr ON rr.id = r.row_id
+        LEFT JOIN room rm ON rm.id = COALESCE(rr.room_id, d.room_id)
+        LEFT JOIN datacenter dc ON dc.id = rm.datacenter_id
+        WHERE d.lifecycle NOT IN ('decommissioned', 'retired')
+        GROUP BY dc.code, 2
+    """))).mappings().all()
 
     # dc and room ship as their own fields, not only fused into the label: the
     # chart filters on them, and parsing them back out of the label would tie
@@ -385,14 +405,23 @@ async def charts(session: AsyncSession) -> dict[str, Any]:
         GROUP BY 1
     """))).mappings().all()
 
+    # Spend rows carry the contract's status on the same expiring threshold
+    # the cover charts use: "what am I paying now" and "what lapsed" are
+    # different meetings, and a single all-time sum answers neither.
     spend = (await session.execute(text("""
         SELECT COALESCE(s.name, 'No supplier recorded') AS label,
+               CASE
+                 WHEN c.end_date < CURRENT_DATE THEN 'expired'
+                 WHEN c.end_date <= CURRENT_DATE + CAST(:expiring AS integer)
+                   THEN 'expiring'
+                 ELSE 'active'
+               END AS status,
                count(*) AS contracts,
                COALESCE(sum(c.cost), 0)::float AS total
         FROM support_contract c
         LEFT JOIN supplier s ON s.id = c.supplier_id
-        GROUP BY 1 ORDER BY total DESC
-    """))).mappings().all()
+        GROUP BY 1, 2 ORDER BY total DESC
+    """), {"expiring": EXPIRING_DAYS})).mappings().all()
 
     # What still FITS, which is the number fragmentation actually costs. Total
     # free U says nothing about placeability: 1392U spread as 1U slivers takes
@@ -445,20 +474,13 @@ async def charts(session: AsyncSession) -> dict[str, Any]:
             **dict(floor),
             "free": max(0, floor["designed"] - floor["installed"]),
         },
-        "cover_state": dict(cover),
-        "warranty_runway": [
-            {"bucket": r["bucket"], "n": r["n"], "band": r["band"]}
-            for r in runway
-        ],
+        "cover_state": [dict(r) for r in cover],
+        "warranty_runway": [dict(r) for r in runway],
         "by_room": [dict(r) for r in by_room],
         "placement": [dict(r) for r in placement],
         "contract_spend": [dict(r) for r in spend],
         "fragmentation": [
             {"size": r["size"], "fits": r["fits"]} for r in fragmentation
         ],
-        "completeness": [
-            {"label": label, "filled": completeness[key],
-             "total": completeness["total"]}
-            for label, key in fields
-        ],
+        "completeness": [dict(r) for r in completeness],
     }

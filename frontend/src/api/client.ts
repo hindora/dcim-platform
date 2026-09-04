@@ -441,12 +441,23 @@ export interface AssetCharts {
     free: number; area_m2: number;
   };
   /** Four states on one threshold, scoped to the live estate - the same scope
-   *  the runway uses, so the two charts cannot disagree about the denominator. */
-  cover_state: { active: number; expiring: number; expired: number; unknown: number };
-  /** When cover lapses. `band` is 0 expired, 1 a quarter, 2 beyond two years -
-   *  ordering the UI must not re-sort. */
-  warranty_runway: { bucket: string; n: number; band: number }[];
-  completeness: { label: string; filled: number; total: number }[];
+   *  the runway uses, so the two charts cannot disagree about the denominator.
+   *  Dimensioned by (vendor, site) for the panel's filters; sum client-side. */
+  cover_state: { state: string; vendor: string; dc: string | null; n: number }[];
+  /** When cover lapses. `band` is 0 expired, 1 a quarter, 2 beyond two years;
+   *  quarter buckets sort lexically within their band, so (band, bucket) is
+   *  the complete ordering. Dimensioned by (vendor, site) for the filters. */
+  warranty_runway: {
+    bucket: string; band: number; vendor: string; dc: string | null; n: number;
+  }[];
+  /** Field-fill counts per (site, type), each row carrying its own
+   *  denominator so filtered ratios stay honest. */
+  completeness: {
+    dc: string | null; type_label: string; total: number;
+    serial_number: number; asset_tag: number; owner_group: number;
+    cost_centre: number; warranty_expires: number; purchase_date: number;
+    install_date: number; supplier_id: number; placement: number;
+  }[];
   /** How many new devices of each height still fit, computed from CONTIGUOUS
    *  gaps - the number fragmentation actually costs. 1U always equals total
    *  free U; the fall-off from there is the fragmentation. */
@@ -455,7 +466,11 @@ export interface AssetCharts {
   /** In a rack, floor-standing, or genuinely unplaced - three different states,
    *  and floor-standing plant is placed. */
   placement: { label: string; n: number }[];
-  contract_spend: { label: string; contracts: number; total: number }[];
+  /** One row per (supplier, status) on the cover threshold: active, expiring,
+   *  expired. "What am I paying now" and "what lapsed" are different sums. */
+  contract_spend: {
+    label: string; status: string; contracts: number; total: number;
+  }[];
 }
 
 /** The estate over time. Snapshots carry counts of STATE; activity carries the

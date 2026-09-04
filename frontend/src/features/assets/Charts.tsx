@@ -109,63 +109,13 @@ export function Charts() {
 
       <h3 className="asset-charts-head">Cover and records</h3>
       <div className="asset-cols">
-        <Panel title="When cover lapses" total={sum(data.warranty_runway)}>
-          {/* A SEQUENCE, so it is not sorted by size: expired first, then each
-              quarter, then the rest. Sorting would destroy the only thing a
-              runway is for. Colour marks the band that is already a problem;
-              the rest is ordering, which left-to-right already carries. */}
-          {/* is-short: quarter labels need a fraction of the diagonal room
-              the By-room chart's site-and-hall names reserve. */}
-          <div className="asset-vcols-tilt is-short">
-            <VColumns
-              rows={data.warranty_runway.map((r) => ({
-                label: r.bucket.replace('Beyond 2 years', 'Later'),
-                n: r.n,
-                colour: r.band === 0 ? 'var(--critical)'
-                  : r.band === 2 ? 'var(--border-strong)' : undefined,
-              }))}
-            />
-          </div>
-        </Panel>
+        <CoverLapsesPanel rows={data.warranty_runway} />
 
-        <Panel title="Cover state" total={coverTotal(data)}>
-          {/* Colour is the state here, matching the Cover column in the table:
-              expired is a fault, expiring is a warning, no cover recorded is
-              an absence and deliberately not painted as either. */}
-          <BarChart
-            sorted={false}
-            limitable={false}
-            rows={coverRows(data)}
-          />
-        </Panel>
+        <CoverStatePanel rows={data.cover_state} />
 
-        <Panel title="Contract spend">
-          <BarChart
-            limitable={false}
-            format={money}
-            rows={data.contract_spend.map((c): BarRow => ({
-              label: `${c.label} (${c.contracts})`, n: c.total,
-            }))}
-          />
-        </Panel>
+        <ContractSpendPanel rows={data.contract_spend} />
 
-        <Panel title="Record completeness">
-          {/* Ratio bars against one denominator, so a full field and an empty
-              one are compared down the same column. The value of this chart is
-              the rows that are EMPTY - each is a filter or a chart somebody
-              expects to work and finds blank. */}
-          <BarChart
-            sorted={false}
-            limitable={false}
-            rows={data.completeness.map((c): BarRow => ({
-              label: c.label,
-              n: c.filled,
-              of: c.total,
-              colour: c.filled === 0 ? 'var(--critical)'
-                : c.filled === c.total ? 'var(--ok)' : 'var(--warn)',
-            }))}
-          />
-        </Panel>
+        <CompletenessPanel rows={data.completeness} />
       </div>
 
       <h3 className="asset-charts-head">Capacity</h3>
@@ -233,13 +183,14 @@ function uniqSorted(values: string[]): string[] {
   return [...new Set(values)].sort();
 }
 
-/** "By type" and "By make" are two rollups of the one composition cube, and
- *  each panel filters by site plus the OTHER panel's dimension - which is the
- *  useful cross ("which vendors make my switches") without collapsing two
- *  always-visible charts into one hidden behind a dropdown. The second
- *  dropdown's options follow the site, and a selection the narrowed cube no
- *  longer contains is cleared rather than silently shown empty. */
-function useCubeFilters(rows: CompositionRow[], other: (r: CompositionRow) => string) {
+/** The site-plus-one-dimension filter pair every cube panel shares: "By
+ *  type" filters by make, "By make" and "By owner" by type, the cover
+ *  panels by make, completeness by type - the useful cross in each case,
+ *  without collapsing two always-visible charts into one hidden behind a
+ *  dropdown. The second dropdown's options follow the site, and a selection
+ *  the narrowed cube no longer contains is cleared rather than silently
+ *  shown empty. */
+function useCubeFilters<R extends { dc: string | null }>(rows: R[], other: (r: R) => string) {
   const [dc, setDc] = useState('');
   const [pick, setPick] = useState('');
 
@@ -339,6 +290,173 @@ function ByOwnerPanel({ rows }: { rows: CompositionRow[] }) {
         </select>
       </div>
       <BarChart rows={bars} />
+    </Panel>
+  );
+}
+
+/** The renewal timeline behind site and make filters - renewal is a
+ *  per-vendor conversation, and this is where "when does APC cover lapse"
+ *  gets its answer. A SEQUENCE, so it is never sorted by size: expired
+ *  first, then each quarter, then the rest; quarter buckets sort lexically
+ *  within their band, so (band, bucket) is the complete ordering. */
+function CoverLapsesPanel({ rows }: { rows: AssetCharts['warranty_runway'] }) {
+  const f = useCubeFilters(rows, (r) => r.vendor);
+
+  const byBucket = new Map<string, { band: number; n: number }>();
+  for (const r of f.shown) {
+    const g = byBucket.get(r.bucket);
+    if (g) g.n += r.n;
+    else byBucket.set(r.bucket, { band: r.band, n: r.n });
+  }
+  const bars = [...byBucket.entries()]
+    .sort((a, b) => a[1].band - b[1].band || a[0].localeCompare(b[0]))
+    .map(([bucket, g]) => ({
+      label: bucket.replace('Beyond 2 years', 'Later'),
+      n: g.n,
+      colour: g.band === 0 ? 'var(--critical)'
+        : g.band === 2 ? 'var(--border-strong)' : undefined,
+    }));
+
+  return (
+    <Panel title="When cover lapses" total={bars.reduce((t, r) => t + r.n, 0)}>
+      <div className="asset-panel-filters">
+        <select value={f.dc} onChange={(e) => f.pickDc(e.target.value)} aria-label="Site">
+          <option value="">All sites</option>
+          {f.dcs.map((d) => <option key={d} value={d}>{d}</option>)}
+        </select>
+        <select value={f.pick} onChange={(e) => f.setPick(e.target.value)} aria-label="Make">
+          <option value="">All makes</option>
+          {f.options.map((v) => <option key={v} value={v}>{v}</option>)}
+        </select>
+      </div>
+      {/* is-short: quarter labels need a fraction of the diagonal room the
+          By-room chart's site-and-hall names reserve. */}
+      <div className="asset-vcols-tilt is-short">
+        <VColumns rows={bars} />
+      </div>
+    </Panel>
+  );
+}
+
+/** The four cover states behind the same (site, make) filters as the runway
+ *  beside it, in worsening-to-best order rather than by size, so the eye
+ *  lands on the problem first and the shape stays comparable between visits.
+ *  Colour is the state, matching the Cover column in the table: expired is a
+ *  fault, expiring a warning, no cover recorded an absence and deliberately
+ *  painted as neither. */
+function CoverStatePanel({ rows }: { rows: AssetCharts['cover_state'] }) {
+  const f = useCubeFilters(rows, (r) => r.vendor);
+
+  const n = (state: string) =>
+    f.shown.filter((r) => r.state === state).reduce((t, r) => t + r.n, 0);
+  const bars: BarRow[] = [
+    { label: 'Expired', n: n('expired'), colour: 'var(--critical)',
+      href: '/assets/inventory?warranty_state=expired' },
+    { label: 'Expiring', n: n('expiring'), colour: 'var(--warn)',
+      href: '/assets/inventory?warranty_state=expiring' },
+    { label: 'Covered', n: n('active'), colour: 'var(--ok)',
+      href: '/assets/inventory?warranty_state=active' },
+    { label: 'No cover recorded', n: n('unknown'), colour: 'var(--border-strong)',
+      href: '/assets/inventory?warranty_state=unknown' },
+  ];
+
+  return (
+    <Panel title="Cover state" total={bars.reduce((t, r) => t + r.n, 0)}>
+      <div className="asset-panel-filters">
+        <select value={f.dc} onChange={(e) => f.pickDc(e.target.value)} aria-label="Site">
+          <option value="">All sites</option>
+          {f.dcs.map((d) => <option key={d} value={d}>{d}</option>)}
+        </select>
+        <select value={f.pick} onChange={(e) => f.setPick(e.target.value)} aria-label="Make">
+          <option value="">All makes</option>
+          {f.options.map((v) => <option key={v} value={v}>{v}</option>)}
+        </select>
+      </div>
+      <BarChart sorted={false} limitable={false} rows={bars} />
+    </Panel>
+  );
+}
+
+/** Spend per supplier behind a contract-status filter on the same expiring
+ *  threshold the cover charts use: "what am I paying now" and "what lapsed"
+ *  are different meetings, and the all-time sum answers neither. */
+function ContractSpendPanel({ rows }: { rows: AssetCharts['contract_spend'] }) {
+  const [status, setStatus] = useState('');
+  const shown = rows.filter((r) => !status || r.status === status);
+
+  const bySupplier = new Map<string, { contracts: number; total: number }>();
+  for (const r of shown) {
+    const g = bySupplier.get(r.label);
+    if (g) { g.contracts += r.contracts; g.total += r.total; }
+    else bySupplier.set(r.label, { contracts: r.contracts, total: r.total });
+  }
+  const bars = [...bySupplier.entries()].map(([label, g]): BarRow => ({
+    label: `${label} (${g.contracts})`, n: g.total,
+  }));
+
+  return (
+    <Panel title="Contract spend">
+      <div className="asset-panel-filters">
+        <select value={status} onChange={(e) => setStatus(e.target.value)}
+                aria-label="Contract status">
+          <option value="">All contracts</option>
+          <option value="active">Active</option>
+          <option value="expiring">Expiring</option>
+          <option value="expired">Expired</option>
+        </select>
+      </div>
+      <BarChart limitable={false} format={money} rows={bars} />
+    </Panel>
+  );
+}
+
+/** The nine fields and their fill order, worst-consequence first. */
+const COMPLETENESS_FIELDS = [
+  ['Serial number', 'serial_number'],
+  ['Asset tag', 'asset_tag'],
+  ['Placement', 'placement'],
+  ['Owner', 'owner_group'],
+  ['Cover', 'warranty_expires'],
+  ['Supplier', 'supplier_id'],
+  ['Cost centre', 'cost_centre'],
+  ['Purchase date', 'purchase_date'],
+  ['Install date', 'install_date'],
+] as const;
+
+/** Field-fill ratios behind site and type filters, which turn a wall of
+ *  ratios into a cleanup work-list: "which fields are empty on the PDUs in
+ *  DC1". Every row of the cube carries its own denominator, so the ratios
+ *  stay honest under any filter. Ratio bars share one denominator column, so
+ *  a full field and an empty one are compared down the same column - the
+ *  value of this chart is the rows that are EMPTY. */
+function CompletenessPanel({ rows }: { rows: AssetCharts['completeness'] }) {
+  const f = useCubeFilters(rows, (r) => r.type_label);
+
+  const total = f.shown.reduce((t, r) => t + r.total, 0);
+  const bars = COMPLETENESS_FIELDS.map(([label, key]): BarRow => {
+    const filled = f.shown.reduce((t, r) => t + r[key], 0);
+    return {
+      label,
+      n: filled,
+      of: total,
+      colour: filled === 0 ? 'var(--critical)'
+        : filled === total ? 'var(--ok)' : 'var(--warn)',
+    };
+  });
+
+  return (
+    <Panel title="Record completeness">
+      <div className="asset-panel-filters">
+        <select value={f.dc} onChange={(e) => f.pickDc(e.target.value)} aria-label="Site">
+          <option value="">All sites</option>
+          {f.dcs.map((d) => <option key={d} value={d}>{d}</option>)}
+        </select>
+        <select value={f.pick} onChange={(e) => f.setPick(e.target.value)} aria-label="Type">
+          <option value="">All types</option>
+          {f.options.map((t) => <option key={t} value={t}>{t}</option>)}
+        </select>
+      </div>
+      <BarChart sorted={false} limitable={false} rows={bars} />
     </Panel>
   );
 }
@@ -447,28 +565,6 @@ function toneOf(band: string): string {
   if (band === 'Empty') return ' is-empty';
   if (band === 'Over 90%') return ' is-full';
   return '';
-}
-
-/** The four cover states, in worsening-to-best order rather than by size, so
- *  the eye lands on the problem first and the shape stays comparable between
- *  visits. */
-function coverRows(data: AssetCharts): BarRow[] {
-  const w = data.cover_state;
-  return [
-    { label: 'Expired', n: w.expired, colour: 'var(--critical)',
-      href: '/assets/inventory?warranty_state=expired' },
-    { label: 'Expiring', n: w.expiring, colour: 'var(--warn)',
-      href: '/assets/inventory?warranty_state=expiring' },
-    { label: 'Covered', n: w.active, colour: 'var(--ok)',
-      href: '/assets/inventory?warranty_state=active' },
-    { label: 'No cover recorded', n: w.unknown, colour: 'var(--border-strong)',
-      href: '/assets/inventory?warranty_state=unknown' },
-  ];
-}
-
-function coverTotal(data: AssetCharts): number {
-  const w = data.cover_state;
-  return w.expired + w.expiring + w.active + w.unknown;
 }
 
 /** Money, rounded to whole units. Pennies on a five-figure contract are noise
