@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { api, type RackSummary, type RoomSummary } from '../../../api/client';
@@ -9,7 +10,15 @@ import { api, type RackSummary, type RoomSummary } from '../../../api/client';
  *  which is why the asset module renders its own rather than borrowing a page
  *  that must not change (docs/22 §1, §6).
  */
+/** The rooms placement work actually happens in: the IT halls and the
+ *  network room. Everything else - plant rooms, roof, UPS room - holds
+ *  floor-standing gear or the odd instrument rack, and opens on demand
+ *  rather than padding every site's table. */
+const MAIN_ROOMS = new Set(['Network Room', 'Server Hall A', 'Server Hall B']);
+
 export function EstateTree() {
+  const [showOther, setShowOther] = useState(false);
+
   const { data: rooms, isLoading } = useQuery<{ items: RoomSummary[] }>({
     queryKey: ['rooms'],
     queryFn: api.rooms,
@@ -36,9 +45,20 @@ export function EstateTree() {
     sites.set(key, [...(sites.get(key) ?? []), room]);
   }
 
+  const isMain = (room: RoomSummary) => MAIN_ROOMS.has(room.name);
+  const otherCount = [...sites.values()].flat().filter((r) => !isMain(r)).length;
+
   return (
     <>
-      <h2>Placement</h2>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+        <h2 style={{ marginRight: 'auto' }}>Placement</h2>
+        {otherCount > 0 && (
+          <button type="button" className="row-btn"
+                  onClick={() => setShowOther((v) => !v)}>
+            {showOther ? 'Hide other rooms' : `Show ${otherCount} other rooms`}
+          </button>
+        )}
+      </div>
       {[...sites.entries()].map(([code, siteRooms]) => (
         <section key={code} style={{ marginBottom: 26 }}>
           <h3>{code}</h3>
@@ -51,7 +71,7 @@ export function EstateTree() {
                 </tr>
               </thead>
               <tbody>
-                {siteRooms.map((room) => {
+                {siteRooms.filter((r) => showOther || isMain(r)).map((room) => {
                   const roomRacks = byRoom.get(room.id) ?? [];
                   // Racks with no reported free_u are omitted from the sum
                   // rather than counted as zero: "unknown" and "full" are
