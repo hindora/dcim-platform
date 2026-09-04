@@ -85,16 +85,15 @@ main:has(.asset-shell) { overflow: visible; }
   display: block;
   padding: 8px 10px;
   border-radius: var(--radius);
-  border-left: 2px solid transparent;
   text-decoration: none;
   color: var(--text);
 }
 
 .asset-nav a:hover { background: var(--bg-raised); }
 
+/* The raised background alone marks the active item - no border. */
 .asset-nav a.active {
   background: var(--bg-raised);
-  border-left-color: var(--accent);
 }
 
 .asset-nav .label {
