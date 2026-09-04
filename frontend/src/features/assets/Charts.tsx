@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api, type AssetCharts } from '../../api/client';
 import { humanise } from '../../lib/format';
 import { BarChart, type BarRow } from './components/BarChart';
+import { useHoverTip } from './components/HoverTip';
 import { Donut, Gauge, VColumns } from './components/Shapes';
 import { Trends } from './Trends';
 
@@ -678,24 +679,26 @@ function Panel({ title, total, unit = 'devices', wide, children }: {
 
 function Histogram({ rows }: { rows: { band: string; n: number }[] }) {
   const max = Math.max(1, ...rows.map((r) => r.n));
+  const { bind, tipEl } = useHoverTip();
   return (
     <div className="asset-vcols-frame">
     <div className="asset-vcols-ylabel">Number of cabinets</div>
     <div className="asset-histogram">
       {rows.map((r) => (
-        <div className="asset-histogram-col" key={r.band}>
+        <div className="asset-histogram-col" key={r.band}
+             {...bind(<><b>{r.band}</b> {r.n.toLocaleString()} rack{r.n === 1 ? '' : 's'}</>)}>
           <div className="asset-col-stack">
             <div className="v">{r.n || ''}</div>
             <div
               className={`asset-histogram-bar${toneOf(r.band)}`}
               style={{ height: `${(r.n / max) * 100}%` }}
-              title={`${r.n} racks ${r.band.toLowerCase()}`}
             />
           </div>
           <div className="k">{r.band}</div>
         </div>
       ))}
       </div>
+    {tipEl}
     </div>
   );
 }

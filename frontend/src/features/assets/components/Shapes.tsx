@@ -11,6 +11,8 @@
  *  bought with that cost.
  */
 
+import { useHoverTip } from './HoverTip';
+
 export type Segment = { label: string; n: number; colour: string };
 
 /** A donut: one ratio, its total in the middle, values in the legend.
@@ -169,6 +171,7 @@ export function VColumns({ rows, format, caption }: {
   caption?: string;
 }) {
   const max = Math.max(1, ...rows.map((r) => r.n));
+  const { bind, tipEl } = useHoverTip();
   if (rows.length === 0) return <p className="muted">Nothing recorded.</p>;
 
   return (
@@ -178,7 +181,8 @@ export function VColumns({ rows, format, caption }: {
          style={{ gridTemplateColumns: `repeat(${rows.length}, 1fr)` }}>
       {rows.map((r) => (
         <div className="asset-vcols-col" key={r.label}
-             title={`${r.label}: ${format ? format(r.n) : r.n.toLocaleString()}`}>
+             {...bind(<><b>{r.label}</b>{' '}
+               {format ? format(r.n) : r.n.toLocaleString()}</>)}>
           <div className="asset-col-stack">
             <div className="v">{r.n ? (format ? format(r.n) : r.n.toLocaleString()) : ''}</div>
             <div className="bar"
@@ -189,6 +193,7 @@ export function VColumns({ rows, format, caption }: {
         </div>
       ))}
     </div>
+    {tipEl}
     </div>
   );
 }

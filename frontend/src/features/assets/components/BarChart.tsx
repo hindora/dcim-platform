@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
+import { useHoverTip } from './HoverTip';
 
 /** A categorical bar chart: label, bar, value, and an axis under it.
  *
@@ -52,6 +53,7 @@ export function BarChart({
   sorted?: boolean;
 }) {
   const [limit, setLimit] = useState<number>(defaultLimit);
+  const { bind, tipEl } = useHoverTip();
 
   const ranked = sorted ? [...rows].sort((a, b) => b.n - a.n) : rows;
   const capped = limit > 0 && ranked.length > limit + 1;
@@ -92,7 +94,8 @@ export function BarChart({
 
       <div className="asset-chart-rows">
         {shown.map((r) => (
-          <Bar key={r.label} row={r} max={max} unit={unit} format={format} />
+          <Bar key={r.label} row={r} max={max} unit={unit} format={format}
+               bind={bind} />
         ))}
         {hidden.length > 0 && (
           // Summed rather than dropped: without it the bars no longer add up
@@ -103,10 +106,12 @@ export function BarChart({
             max={max}
             unit={unit}
             format={format}
+            bind={bind}
             muted
           />
         )}
       </div>
+      {tipEl}
 
       <div className="asset-chart-axis" aria-hidden="true">
         <span className="lbl" />
@@ -123,9 +128,10 @@ export function BarChart({
   );
 }
 
-function Bar({ row, max, unit, muted, format }: {
+function Bar({ row, max, unit, muted, format, bind }: {
   row: BarRow; max: number; unit: string; muted?: boolean;
   format?: (n: number) => string;
+  bind: (node: ReactNode) => Record<string, unknown>;
 }) {
   const shownValue = format ? format(row.n) : `${row.n.toLocaleString()}${unit}`;
   const width = `${(row.n / max) * 100}%`;
@@ -135,9 +141,10 @@ function Bar({ row, max, unit, muted, format }: {
 
   return (
     <div className={`asset-chart-row${muted ? ' is-muted' : ''}`}
-         title={row.of != null
-           ? `${row.label}: ${row.n.toLocaleString()} of ${row.of.toLocaleString()}`
-           : `${row.label}: ${shownValue}`}>
+         {...bind(<><b>{row.label}</b>{' '}
+           {row.of != null
+             ? `${row.n.toLocaleString()} of ${row.of.toLocaleString()}`
+             : shownValue}</>)}>
       <div className="lbl">{label}</div>
       <div className="track">
         <span className="fill"

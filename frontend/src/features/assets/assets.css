@@ -1333,6 +1333,30 @@ tr.is-selected > td { background: var(--accent-dim); }
   color: var(--text-muted);
 }
 
+/* The cursor-anchored value tooltip the chart marks share. Same family as
+   .asset-tip, sized for one label and one figure. */
+.asset-hover-tip {
+  position: fixed;
+  z-index: 60;
+  max-width: 220px;
+  padding: 6px 10px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  box-shadow: 0 6px 18px rgb(0 0 0 / 0.4);
+  font-size: 0.76rem;
+  line-height: 1.4;
+  color: var(--text-muted);
+  white-space: nowrap;
+  animation: asset-tip-in 0.1s ease;
+  pointer-events: none;
+}
+
+.asset-hover-tip b {
+  color: var(--text);
+  font-weight: 600;
+}
+
 /* ------------------------------------------------- in-panel chart filters */
 
 /* Two selects sharing the panel width. min-width: 0 so a long room name
