@@ -292,14 +292,25 @@ function ByRoomPanel({ rows }: { rows: AssetCharts['by_room'] }) {
   );
 }
 
-function Panel({ title, total, wide, children }: {
-  title: string; total?: number; wide?: boolean; children: React.ReactNode;
+/** The total names its unit ("664 devices", not a bare "664"): the page is
+ *  full of figures that could as easily be U, kW or racks, and the one word
+ *  where the number sits settles it for every panel at once. Counting
+ *  devices is the default because every counted panel here counts them; a
+ *  future money or capacity total passes its own unit. */
+function Panel({ title, total, unit = 'devices', wide, children }: {
+  title: string; total?: number; unit?: string; wide?: boolean;
+  children: React.ReactNode;
 }) {
   return (
     <div className={`asset-panel${wide ? ' asset-panel-wide' : ''}`}>
       <h3>
         {title}
-        {total != null && <span className="asset-panel-total">{total.toLocaleString()}</span>}
+        {total != null && (
+          <span className="asset-panel-total">
+            {total.toLocaleString()}
+            <span className="unit"> {unit}</span>
+          </span>
+        )}
       </h3>
       {children}
     </div>

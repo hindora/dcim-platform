@@ -1060,6 +1060,13 @@ tr.is-selected > td { background: var(--accent-dim); }
   letter-spacing: 0;
 }
 
+/* The unit is context, not the figure: lowercase against the heading's
+   uppercase, and a step quieter, so the number stays what the eye lands on. */
+.asset-panel h3 .asset-panel-total .unit {
+  font-size: 0.68rem;
+  text-transform: lowercase;
+}
+
 /* Bars scale to the largest bar, not the total, so the small categories stay
    comparable with each other instead of collapsing into slivers beside a
    dominant one. The number is always printed beside the bar - a bar shows a
