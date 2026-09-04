@@ -9,6 +9,7 @@ import {
   type NetworkInterface,
 } from '../../api/client';
 import { StatusChip } from '../../components/StatusChip';
+import { Tip } from '../../components/HoverTip';
 import { DeviceHistory } from './DeviceHistory';
 import { chartGroupsFor } from './chartGroups';
 import { EndpointEditor } from './EndpointEditor';
@@ -299,11 +300,13 @@ export function DeviceDetail() {
                   is an endpoint being polled and failing, which is a different
                   fault from one nothing polls at all. Said where the confusion
                   happens rather than in a paragraph above the table. */}
-              <th title="Last poll attempt">Seen</th>
-              <th title="Last poll that answered">Success</th>
+              <th><Tip tip="Last poll attempt">Seen</Tip></th>
+              <th><Tip tip="Last poll that answered">Success</Tip></th>
               <th className="num">Latency</th>
-              <th className="num" title="Cumulative for the life of the endpoint, not a recent window">
-                Polls
+              <th className="num">
+                <Tip tip="Cumulative for the life of the endpoint, not a recent window">
+                  Polls
+                </Tip>
               </th>
               <th>Last error</th><th />
             </tr>
@@ -316,9 +319,9 @@ export function DeviceDetail() {
                 <td className="mono">
                   {e.address}{e.port ? `:${e.port}` : ''}
                   {e.via_name && (
-                    <span className="muted" title="reached through a gateway">
+                    <Tip className="muted" tip="reached through a gateway">
                       {' '}via {e.via_name}
-                    </span>
+                    </Tip>
                   )}
                 </td>
                 {/* What selects this device when the address alone does not:
@@ -336,18 +339,19 @@ export function DeviceDetail() {
                       admin_state left 52 retired endpoints reading as
                       "enabled" while nothing polled them. */}
                   {!e.enabled ? (
-                    <span className="muted"
-                          title="Retired: this device type does not serve this
-                                 protocol, so the collector is not given it.">
+                    <Tip className="muted"
+                         tip="Retired: this device type does not serve this protocol, so the collector is not given it.">
                       {' · retired'}
-                    </span>
+                    </Tip>
                   ) : e.admin_state !== 'enabled' && (
                     <span className="muted"> · {humanise(e.admin_state)}</span>
                   )}
                 </td>
                 {/* Only ever the hint - the secret itself never leaves the server. */}
-                <td className="muted mono" title={e.credential_hint ?? undefined}>
-                  {e.credential_name ?? '—'}
+                <td className="muted mono">
+                  {e.credential_hint
+                    ? <Tip tip={e.credential_hint}>{e.credential_name ?? '—'}</Tip>
+                    : (e.credential_name ?? '—')}
                 </td>
                 <td className="num">{e.poll_interval_s ? `${e.poll_interval_s}s` : '—'}</td>
                 <td className="muted">{relativeTime(e.last_seen)}</td>
@@ -441,9 +445,9 @@ function PollCounts({ endpoint }: { endpoint: EndpointSummary }) {
     <>
       <span>{polls.toLocaleString()}</span>
       {fails > 0 && (
-        <span className="warn" title={parts.join(', ')}>
+        <Tip className="warn" tip={parts.join(', ')}>
           {' · '}{fails.toLocaleString()} failed
-        </span>
+        </Tip>
       )}
     </>
   );

@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react';
 import { api, type HistoryOut, type Series } from '../../api/client';
 import { metricLabel, unitSymbol } from '../../lib/format';
 import { TimeChart } from '../../components/TimeChart';
+import { Tip } from '../../components/HoverTip';
 
 const RANGES = [
   { key: '1h', label: '1 h', ms: 3600_000 },
@@ -137,15 +138,16 @@ export function DeviceHistory({ deviceId, metrics, groups }: {
             reading a peak - hourly averaging flattens one - so it stays
             available on hover rather than printed at everybody all the time. */}
         {lastPointAt != null && (
-          <span className="as-of"
-                title={q.data && q.data.interval !== 'raw'
-                  ? `Averaged into ${q.data.interval} buckets, so a short spike may be flattened.`
-                  : 'Raw samples as polled.'}>
+          <Tip className="as-of"
+               tip={q.data && q.data.interval !== 'raw'
+                 ? <>Averaged into <b>{q.data.interval}</b> buckets, so a short
+                     spike may be flattened.</>
+                 : 'Raw samples as polled.'}>
             to{' '}
             <time dateTime={new Date(lastPointAt).toISOString()}>
               {stampFor(lastPointAt, q.data?.interval)}
             </time>
-          </span>
+          </Tip>
         )}
       </div>
 
