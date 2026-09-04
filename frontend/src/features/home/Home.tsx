@@ -333,6 +333,18 @@ export function Home() {
       <section className="alert-strip">
         <span className="site-title">{org}</span>
         <span className="spacer" />
+        {/* Always reachable, ESPECIALLY on a quiet day: every counter below
+            disables itself at zero, and a zero is exactly when somebody asks
+            "so what cleared overnight". */}
+        <Link className="caption" to="/alarms?view=cleared"
+              title="Cleared alarms - what happened and was resolved">
+          <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden
+               fill="none" stroke="currentColor" strokeWidth="1.3">
+            <circle cx="8" cy="8" r="6.6" />
+            <path d="M8 4.6V8l2.4 1.7" strokeLinecap="round" />
+          </svg>
+          History
+        </Link>
         <button className="caption" onClick={() => setLegendOpen(true)}
                 title="What each counter counts, and what this console leaves out">
           <svg width="17" height="17" viewBox="0 0 16 16" aria-hidden

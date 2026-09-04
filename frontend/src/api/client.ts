@@ -1929,9 +1929,13 @@ export const api = {
   },
 
 
-  alarms: (params: Record<string, string | undefined> = {}) => {
+  alarms: (params: Record<string, string | string[] | undefined> = {}) => {
     const q = new URLSearchParams();
-    for (const [k, v] of Object.entries(params)) if (v) q.set(k, v);
+    for (const [k, v] of Object.entries(params)) {
+      if (!v) continue;
+      if (Array.isArray(v)) v.forEach((x) => q.append(k, x));
+      else q.set(k, v);
+    }
     const qs = q.toString();
     return request<{ items: Alarm[] }>(`/alarms${qs ? `?${qs}` : ''}`);
   },

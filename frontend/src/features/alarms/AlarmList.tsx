@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { api, type Alarm } from '../../api/client';
 import { StatusChip } from '../../components/StatusChip';
 import { humanise, relativeTime } from '../../lib/format';
@@ -8,23 +8,47 @@ import { useInvalidateOn, useTopics } from '../../ws/useSocket';
 
 const ALARM_EVENTS = ['alarm_created', 'alarm_updated', 'alarm_cleared'];
 
+/** Which lifecycle slice the list shows. The API keys on alarm STATE;
+ *  "open" is its default (active + acknowledged), "cleared" is the history
+ *  a quiet estate still has, "all" is both. */
+const VIEWS: Record<string, string[] | undefined> = {
+  open: undefined,
+  cleared: ['CLEARED'],
+  all: ['ACTIVE', 'ACKNOWLEDGED', 'CLEARED'],
+};
+
 export function AlarmList() {
   const [severity, setSeverity] = useState('');
   const [includeSymptoms, setIncludeSymptoms] = useState(false);
   const [selected, setSelected] = useState<Alarm | null>(null);
+  // In the URL, so "the history" is a link somebody pastes - and so the
+  // Home page can open it directly on a quiet day.
+  const [params, setParams] = useSearchParams();
+  const rawView = params.get('view') ?? 'open';
+  const view = rawView in VIEWS ? rawView : 'open';
   const qc = useQueryClient();
 
   useTopics(['alarms']);
   useInvalidateOn(ALARM_EVENTS, [['alarms'], ['alarm-summary'], ['dashboard']]);
 
   const { data, error, isLoading } = useQuery({
-    queryKey: ['alarms', severity, includeSymptoms],
+    queryKey: ['alarms', severity, includeSymptoms, view,
+               params.get('room') ?? ''],
     queryFn: () => api.alarms({
       severity: severity || undefined,
       include_symptoms: includeSymptoms ? 'true' : undefined,
+      state: VIEWS[view],
+      room: params.get('room') ?? undefined,
       limit: '200',
     }),
   });
+
+  function setView(next: string) {
+    const q = new URLSearchParams(params);
+    if (next === 'open') q.delete('view');
+    else q.set('view', next);
+    setParams(q, { replace: true });
+  }
 
   const summary = useQuery({ queryKey: ['alarm-summary'], queryFn: api.alarmSummary });
 
@@ -78,6 +102,12 @@ export function AlarmList() {
       )}
 
       <div className="toolbar">
+        <select value={view} onChange={(e) => setView(e.target.value)}
+                aria-label="Alarm state">
+          <option value="open">Open</option>
+          <option value="cleared">Cleared — history</option>
+          <option value="all">All</option>
+        </select>
         <select value={severity} onChange={(e) => setSeverity(e.target.value)}>
           <option value="">Any severity</option>
           <option value="CRITICAL">Critical</option>
