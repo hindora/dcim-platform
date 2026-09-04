@@ -63,10 +63,14 @@ export function RoomView() {
         <Link to="/assets/estate">← Placement</Link>
       </p>
       <h2>{roomName}</h2>
+      {/* A plant room is not a hall missing its racks: with nothing racked,
+          the subtitle says what IS here instead of leading with a zero. */}
       <p className="subtitle">
-        {racks.length} racks
-        {floorStanding.length
-          ? ` · ${floorStanding.length} floor-standing devices` : ''}
+        {[
+          racks.length ? `${racks.length} racks` : null,
+          floorStanding.length
+            ? `${floorStanding.length} floor-standing devices` : null,
+        ].filter(Boolean).join(' · ') || 'Nothing placed here yet'}
       </p>
 
       {rows.map(([rowName, rowRacks]) => (
@@ -106,8 +110,10 @@ export function RoomView() {
         </section>
       ))}
 
-      {racks.length === 0 && (
-        <div className="asset-empty">No racks in this room.</div>
+      {/* Only when the room is genuinely empty - a UPS room full of
+          switchgear is not missing anything. */}
+      {racks.length === 0 && floorStanding.length === 0 && (
+        <div className="asset-empty">Nothing placed in this room.</div>
       )}
 
       {floorStanding.length > 0 && (
