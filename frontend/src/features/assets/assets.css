@@ -196,10 +196,28 @@ a.asset-tile:hover { border-color: var(--border-strong); }
 }
 
 .asset-panel {
+  position: relative;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--bg-raised);
   padding: 14px 16px;
+}
+
+/* The maximize glyph lives in the panel's far corner, out of the heading's
+   flow; the heading rows reserve its lane so a total chip or a range seg
+   never collides with it. */
+.asset-panel .asset-max {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  float: none;
+  margin: 0;
+  padding: 4px;
+}
+
+.asset-panel > h3,
+.asset-panel-flex > div:first-child {
+  padding-right: 22px;
 }
 
 .asset-panel h3 {
@@ -1071,11 +1089,6 @@ tr.is-selected > td { background: var(--accent-dim); }
   letter-spacing: 0.03em;
   text-transform: uppercase;
   color: var(--text-muted);
-}
-
-.asset-panel h3 .asset-max {
-  float: right;
-  margin-left: 8px;
 }
 
 .asset-panel h3 .asset-panel-total {
