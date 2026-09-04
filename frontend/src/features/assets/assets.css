@@ -1094,7 +1094,7 @@ tr.is-selected > td { background: var(--accent-dim); }
 
 .asset-histogram-col {
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: 1fr auto;
   align-items: end;
   height: 100%;
   text-align: center;
@@ -1105,7 +1105,8 @@ tr.is-selected > td { background: var(--accent-dim); }
   font-size: 0.78rem;
   font-variant-numeric: tabular-nums;
   color: var(--text-muted);
-  margin-bottom: 3px;
+  margin-bottom: 1px;
+  line-height: 1.1;
 }
 
 .asset-histogram-col .k {
@@ -1118,7 +1119,6 @@ tr.is-selected > td { background: var(--accent-dim); }
 .asset-histogram-bar {
   background: var(--accent);
   border-radius: 3px 3px 0 0;
-  align-self: end;
   /* A band with no racks still needs a visible foot, or the column reads as
      missing rather than as zero. */
   min-height: 2px;
@@ -1331,24 +1331,50 @@ tr.is-selected > td { background: var(--accent-dim); }
 
 .asset-vcols-col {
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: 1fr auto;
   align-items: end;
   height: 100%;
   text-align: center;
   min-width: 0;
 }
 
+/* Value and bar share a bottom-anchored stack, so the figure sits on the top
+   of the bar it names and rides it as the bar grows, instead of floating in a
+   value row of its own at the top of the chart. */
+/* Not ".stack": index.css already owns that name as a 16px-gap grid
+   utility, and the collision floated every value 16px off its bar. */
+.asset-vcols-col .asset-col-stack,
+.asset-histogram-col .asset-col-stack {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  height: 100%;
+  min-height: 0;
+  /* Headroom for the value above a full-height bar. Bar heights are
+     percentages of the content box and must never flex-shrink - a shrunken
+     tallest bar would misstate every ratio in the chart - so the value line
+     overflows upward into this reserved padding instead. */
+  padding-top: 20px;
+}
+
+.asset-vcols-col .asset-col-stack > *,
+.asset-histogram-col .asset-col-stack > * {
+  flex-shrink: 0;
+}
+
 .asset-vcols-col .v {
   font-size: 0.76rem;
   font-variant-numeric: tabular-nums;
   color: var(--text-muted);
-  margin-bottom: 3px;
+  /* The value sits ON the bar: no margin, and a tight line box, or the
+     number floats a whole descender's height above the top it names. */
+  margin-bottom: 1px;
+  line-height: 1.1;
 }
 
 .asset-vcols-col .bar {
   background: var(--accent);
   border-radius: 3px 3px 0 0;
-  align-self: end;
   /* Zero still gets a foot, or the column reads as missing rather than none. */
   min-height: 2px;
 }

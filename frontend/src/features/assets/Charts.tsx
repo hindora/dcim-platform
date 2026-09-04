@@ -312,12 +312,14 @@ function Histogram({ rows }: { rows: { band: string; n: number }[] }) {
     <div className="asset-histogram">
       {rows.map((r) => (
         <div className="asset-histogram-col" key={r.band}>
-          <div className="v">{r.n || ''}</div>
-          <div
-            className={`asset-histogram-bar${toneOf(r.band)}`}
-            style={{ height: `${(r.n / max) * 100}%` }}
-            title={`${r.n} racks ${r.band.toLowerCase()}`}
-          />
+          <div className="asset-col-stack">
+            <div className="v">{r.n || ''}</div>
+            <div
+              className={`asset-histogram-bar${toneOf(r.band)}`}
+              style={{ height: `${(r.n / max) * 100}%` }}
+              title={`${r.n} racks ${r.band.toLowerCase()}`}
+            />
+          </div>
           <div className="k">{r.band}</div>
         </div>
       ))}

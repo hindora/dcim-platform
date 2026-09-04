@@ -147,8 +147,10 @@ export type Column = { label: string; n: number; colour?: string };
 /** Vertical columns, for a SEQUENCE with short labels - quarters, bands.
  *
  *  The order given is the order drawn; a sequence sorted by size stops being a
- *  sequence. Values sit on top of every column, and the baseline is zero for
- *  the same reason the bar chart's is. */
+ *  sequence. Each value rides its own column's top - value and bar share a
+ *  bottom-anchored stack, so the figure moves with the bar it names rather
+ *  than floating in a row of its own - and the baseline is zero for the same
+ *  reason the bar chart's is. */
 export function VColumns({ rows, format }: {
   rows: Column[];
   format?: (n: number) => string;
@@ -162,10 +164,12 @@ export function VColumns({ rows, format }: {
       {rows.map((r) => (
         <div className="asset-vcols-col" key={r.label}
              title={`${r.label}: ${format ? format(r.n) : r.n.toLocaleString()}`}>
-          <div className="v">{r.n ? (format ? format(r.n) : r.n.toLocaleString()) : ''}</div>
-          <div className="bar"
-               style={{ height: `${(r.n / max) * 100}%`,
-                        background: r.colour }} />
+          <div className="asset-col-stack">
+            <div className="v">{r.n ? (format ? format(r.n) : r.n.toLocaleString()) : ''}</div>
+            <div className="bar"
+                 style={{ height: `${(r.n / max) * 100}%`,
+                          background: r.colour }} />
+          </div>
           <div className="k">{r.label}</div>
         </div>
       ))}
