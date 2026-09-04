@@ -8,6 +8,21 @@ import { api, type RackSummary } from '../../../api/client';
  *  is where there is room, and a full rack and an empty one look identical in a
  *  list sorted by name.
  */
+/** "R2" -> "Row 2". The compact codes are wire-format identifiers; a page a
+ *  person reads says the word. Anything not matching passes through, so a
+ *  site that names rows differently keeps its names. */
+function rowLabel(name: string | null | undefined): string {
+  if (!name) return '—';
+  const m = /^R(\d+)$/.exec(name);
+  return m ? `Row ${Number(m[1])}` : name;
+}
+
+/** "R2-02" -> "Rack 02" - the row is already said by the caption above. */
+function rackLabel(name: string): string {
+  const m = /^R\d+-(\d+)$/.exec(name);
+  return m ? `Rack ${m[1]}` : name;
+}
+
 export function RoomView() {
   const { id = '' } = useParams();
 
@@ -41,8 +56,10 @@ export function RoomView() {
               to={`/assets/estate/racks/${rack.id}`}
               key={rack.id}
             >
-              <div className="k">{rack.row_name ?? '—'}</div>
-              <div className="v" style={{ fontSize: '1.1rem' }}>{rack.name}</div>
+              <div className="k">{rowLabel(rack.row_name)}</div>
+              <div className="v" style={{ fontSize: '1.1rem' }}>
+                {rackLabel(rack.name)}
+              </div>
               <div className="asset-bar" style={{ marginTop: 8 }}>
                 <span style={{ width: `${fill}%` }} />
               </div>
