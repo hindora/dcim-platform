@@ -514,37 +514,107 @@ a.asset-tile:hover { border-color: var(--border-strong); }
   border-radius: var(--radius);
   overflow: hidden;
   background: var(--bg-inset);
-  max-width: 420px;
+  max-width: 480px;
 }
 
 .asset-elev-slot {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 0 8px;
+  padding: 0 10px 0 8px;
   border-top: 1px solid var(--border);
   font-size: 0.78rem;
-  min-height: 20px;
+  min-height: 22px;
   background: var(--bg-raised);
 }
 
+.asset-elev-slot:hover { background: var(--bg); }
+
 .asset-elev-slot:first-child { border-top: none; }
 
+/* The U gutter reads as the rack's rail: mono digits against the inset
+   ground, separated from the equipment area. */
 .asset-elev-slot .u {
-  width: 30px;
+  width: 42px;
   flex: none;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
   color: var(--text-faint);
   font-family: var(--mono);
   font-size: 0.72rem;
   font-variant-numeric: tabular-nums;
+  border-right: 1px solid var(--border);
 }
 
-.asset-elev-slot .who { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The category stripe - what KIND of thing fills the slot, in the alarm
+   strip's own colour vocabulary, so the two read as one language. */
+.asset-elev-slot .stripe {
+  flex: none;
+  align-self: stretch;
+  width: 4px;
+  border-radius: 2px;
+  margin: 2px 0;
+  background: transparent;
+}
+
+.asset-elev-slot.cat-cap .stripe { background: var(--cat-cap); }
+.asset-elev-slot.cat-it .stripe { background: var(--cat-it); }
+.asset-elev-slot.cat-pwr .stripe { background: var(--cat-pwr); }
+.asset-elev-slot.cat-cool .stripe { background: var(--cat-cool); }
+.asset-elev-slot.cat-vis .stripe { background: var(--cat-vis); }
+
+.asset-elev-slot .who {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.asset-elev-slot .meta {
+  margin-left: auto;
+  flex: none;
+  color: var(--text-faint);
+  font-size: 0.7rem;
+}
 
 .asset-elev-slot.is-free {
   background: var(--bg-inset);
   color: var(--text-faint);
 }
+
+.asset-elev-slot.is-free .free-label { font-style: italic; }
+
+/* The largest contiguous gap is the answer to "will the next machine fit",
+   so it is the one free block allowed to draw attention. */
+.asset-elev-slot.is-largest {
+  box-shadow: inset 0 0 0 1px var(--accent-dim);
+}
+
+.asset-elev-slot.is-largest .free-label { color: var(--text-muted); }
+
+.asset-elev-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-top: 8px;
+  max-width: 480px;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.asset-elev-legend .sw {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  margin-right: 5px;
+}
+
+.asset-elev-legend .sw.cat-cap { background: var(--cat-cap); }
+.asset-elev-legend .sw.cat-it { background: var(--cat-it); }
+.asset-elev-legend .sw.cat-pwr { background: var(--cat-pwr); }
+.asset-elev-legend .sw.cat-cool { background: var(--cat-cool); }
+.asset-elev-legend .sw.cat-vis { background: var(--cat-vis); }
 
 /* Held, not occupied. Hatching rather than a fill so a reservation can never be
    misread as a machine that is actually there. */
