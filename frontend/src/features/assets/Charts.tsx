@@ -58,7 +58,7 @@ export function Charts() {
 
   return (
     <>
-      <h3 className="asset-charts-head">Capacity</h3>
+      <h3 className="asset-charts-head">Space</h3>
       <div className="asset-cols">
         <CabinetSpacePanel rows={data.rack_space} />
 

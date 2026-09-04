@@ -96,7 +96,7 @@ const NAV = [
   { to: '/', label: 'HOME', end: true },
   { to: '/thermal', label: 'THERMAL' },
   { to: '/power', label: 'POWER' },
-  { to: '/utilization', label: 'UTILIZATION' },
+  { to: '/capacity', label: 'CAPACITY' },
   { to: '/connectivity', label: 'CONNECTIVITY' },
   { to: '/assets', label: 'ASSETS' },
 ];
@@ -211,7 +211,10 @@ export default function App() {
               WHICH room is hot, that one tells you why. */}
           <Route path="/thermal" element={<Page><Thermal /></Page>} />
           <Route path="/power" element={<Page><Power /></Page>} />
-          <Route path="/utilization" element={<Page><Utilization /></Page>} />
+          <Route path="/capacity" element={<Page><Utilization /></Page>} />
+          {/* The page's old address. Bookmarks and pasted links outlive a
+              rename; a dead one teaches people not to share links. */}
+          <Route path="/utilization" element={<Navigate to="/capacity" replace />} />
           <Route path="/connectivity" element={<Page><PlatformHealth /></Page>} />
           {/* The asset workspace. Everything it renders lives under this route
               and inside features/assets/ - no page outside /assets changes, and

@@ -148,7 +148,7 @@ export function Utilization() {
   return (
     <div className="estate">
       <PageHead
-        title="Utilization"
+        title="Capacity"
         sub={<>Space, power and cooling against what is installed. Every percentage
           carries the basis of its denominator.{' '}
           <Link to="/analytics">Constraint detail and forecast →</Link></>}
