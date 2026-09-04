@@ -237,7 +237,17 @@ async def test_the_ordering_is_a_total_order():
     """
     session = _FakeSession()
     await device_repo.list_devices(session)
-    assert "ORDER BY d.name, d.id::text" in session.sql
+    assert "ORDER BY d.name ASC NULLS LAST, d.id::text" in session.sql
+
+
+@pytest.mark.asyncio
+async def test_a_custom_order_still_ends_on_the_id_tiebreak():
+    """Sorting by any column keeps the total order - and a nullable column
+    reads NULLS LAST in both directions, so untagged devices sit at the end
+    whichever way the tagged ones are read."""
+    session = _FakeSession()
+    await device_repo.list_devices(session, order_by="cover", descending=True)
+    assert "ORDER BY d.warranty_expires DESC NULLS LAST, d.id::text" in session.sql
 
 
 @pytest.mark.asyncio

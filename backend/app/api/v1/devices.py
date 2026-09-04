@@ -72,6 +72,11 @@ async def list_devices(
     with_total: bool = Query(
         False, description="also count every row the filters match; the paging "
                            "UI needs it, a plain next-page fetch does not"),
+    order_by: str | None = Query(
+        None,
+        pattern="^(name|asset_tag|device_type|model|location|lifecycle|cover|serial)$",
+        description="column to order by; default is name"),
+    desc: bool = Query(False, description="reverse the order"),
     session: AsyncSession = Depends(get_session),
     _: Principal = Depends(current_principal),
 ) -> Page[DeviceSummary]:
@@ -79,6 +84,13 @@ async def list_devices(
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
             "pass cursor or offset, not both")
+    if cursor and (order_by or desc):
+        # The cursor encodes a position in the DEFAULT order; following it
+        # under another order would page through a list that no longer exists.
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "a cursor cannot be combined with order_by/desc - "
+            "use offset paging to sort")
     items, next_cursor, total = await service.list_devices(
         session, with_total=with_total,
         device_types=device_type, status=status_filter, room_id=room_id,
@@ -89,7 +101,8 @@ async def list_devices(
         warranty_state=warranty_state, warranty_before=warranty_before,
         supplier_id=supplier_id, owner_group=owner_group,
         cost_centre=cost_centre, tags=tag,
-        limit=limit, cursor=cursor, offset=offset)
+        limit=limit, cursor=cursor, offset=offset,
+        order_by=order_by, descending=desc)
     return Page[DeviceSummary](items=items, next_cursor=next_cursor, total=total)
 
 

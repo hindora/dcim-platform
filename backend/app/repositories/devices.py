@@ -50,6 +50,34 @@ _LIST_BASE = """
 """
 
 
+#: The columns the list may be ordered by - each key is API surface, each
+#: value a SQL expression the base query's joins already provide. A lookup,
+#: never interpolation of caller input.
+ORDERINGS: dict[str, str] = {
+    "name": "d.name",
+    "asset_tag": "d.asset_tag",
+    "device_type": "dt.display_name",
+    "model": "m.name",
+    "location": "dc.code, rm.name, r.name, d.u_start",
+    "lifecycle": "d.lifecycle::text",
+    "cover": "d.warranty_expires",
+    "serial": "d.serial_number",
+}
+
+
+def _order_clause(order_by: str | None, descending: bool) -> str:
+    """ORDER BY for the chosen column, always a TOTAL order.
+
+    NULLS LAST in both directions: a device without an asset tag belongs at
+    the end whichever way the tagged ones are read. d.id::text breaks every
+    tie so rows cannot shuffle between page fetches.
+    """
+    cols = ORDERINGS.get(order_by or "name", "d.name").split(", ")
+    direction = "DESC" if descending else "ASC"
+    ordered = ", ".join(f"{c} {direction} NULLS LAST" for c in cols)
+    return f" ORDER BY {ordered}, d.id::text LIMIT :limit"
+
+
 def encode_cursor(name: str, device_id: str) -> str:
     return base64.urlsafe_b64encode(json.dumps([name, device_id]).encode()).decode()
 
@@ -208,6 +236,8 @@ async def list_devices(
     limit: int = 50,
     cursor: str | None = None,
     offset: int | None = None,
+    order_by: str | None = None,
+    descending: bool = False,
 ) -> tuple[list[dict[str, Any]], str | None]:
     where, params = _filters(
         device_types=device_types, status=status, room_id=room_id,
@@ -229,7 +259,9 @@ async def list_devices(
     sql = _LIST_BASE
     if where:
         sql += " WHERE " + " AND ".join(where)
-    sql += " ORDER BY d.name, d.id::text LIMIT :limit"
+    # The cursor encodes a (name, id) position, so it only means anything
+    # under the default order - the API refuses the combination upstream.
+    sql += _order_clause(order_by, descending)
 
     # OFFSET, for jumping to an arbitrary page. The cursor path stays the
     # default and is what anything walking the whole list should use.
@@ -250,7 +282,10 @@ async def list_devices(
     next_cursor = None
     if len(rows) > limit:
         rows = rows[:limit]
-        next_cursor = encode_cursor(rows[-1]["name"], rows[-1]["id"])
+        # A cursor is a (name, id) position and means nothing under any
+        # other order, so none is offered there.
+        if order_by in (None, "name") and not descending:
+            next_cursor = encode_cursor(rows[-1]["name"], rows[-1]["id"])
     return [dict(r) for r in rows], next_cursor
 
 

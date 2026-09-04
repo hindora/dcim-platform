@@ -205,8 +205,8 @@ async def owner_groups(session: AsyncSession) -> list[str]:
     rows = (await session.execute(text("""
         SELECT DISTINCT owner_group FROM device
         WHERE owner_group IS NOT NULL ORDER BY 1
-    """))).scalars().all()
-    return list(rows)
+    """))).mappings().all()
+    return [r["owner_group"] for r in rows]
 
 
 # ------------------------------------------------------------------ charts

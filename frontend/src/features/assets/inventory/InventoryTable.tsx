@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
@@ -8,6 +8,7 @@ import {
   type Page,
 } from '../../../api/client';
 import { humanise } from '../../../lib/format';
+import { useColumnWidths, type ColumnWidths } from '../../../lib/useColumnWidths';
 import { LifecycleChip } from '../components/LifecycleChip';
 import { BulkBar } from './BulkBar';
 import { ImportDialog } from './ImportDialog';
@@ -26,6 +27,60 @@ import { Pagination } from './Pagination';
 /** Repeatable params read as arrays; everything else as a single value. */
 const MULTI = ['lifecycle', 'category', 'device_type', 'tag'] as const;
 
+/** The table's columns: key is both the resize-store key and the server's
+ *  order_by vocabulary; w is the shipped width, 0 meaning "take what is
+ *  left". */
+const COLUMNS = [
+  { key: 'asset_tag', label: 'Asset tag', w: 120 },
+  { key: 'name', label: 'Name', w: 0 },
+  { key: 'device_type', label: 'Type', w: 130 },
+  { key: 'model', label: 'Model', w: 170 },
+  { key: 'location', label: 'Location', w: 200 },
+  { key: 'lifecycle', label: 'Lifecycle', w: 110 },
+  { key: 'cover', label: 'Cover', w: 105 },
+  { key: 'serial', label: 'Serial', w: 110 },
+] as const;
+
+/** What every column currently renders at, read off the header row - the
+ *  first drag pins them all, or the flexible column absorbs every pixel its
+ *  neighbours gain. */
+function measureRow(th: HTMLTableCellElement | null): Record<string, number> {
+  const row = th?.parentElement;
+  if (!row) return {};
+  const out: Record<string, number> = {};
+  for (const cell of Array.from(row.children) as HTMLElement[]) {
+    const key = (cell as HTMLElement).dataset.col;
+    if (key) out[key] = cell.getBoundingClientRect().width;
+  }
+  return out;
+}
+
+/** A header cell that sorts on click and resizes on its grip. */
+function SortTh({ col, label, w, cols, sort, desc, onSort }: {
+  col: string; label: string; w: number; cols: ColumnWidths;
+  sort: string; desc: boolean; onSort: (key: string) => void;
+}) {
+  const stored = cols.width(col, 0);
+  const width = stored || w || undefined;
+  const ref = useRef<HTMLTableCellElement>(null);
+  const active = sort === col;
+  return (
+    <th ref={ref} data-col={col}
+        className={cols.resizing === col ? 'resizing' : ''}
+        style={width ? { width } : undefined}
+        aria-sort={active ? (desc ? 'descending' : 'ascending') : undefined}>
+      <button type="button" className="asset-sort" onClick={() => onSort(col)}>
+        {label}
+        {active && <span className="dirn">{desc ? ' ▾' : ' ▴'}</span>}
+      </button>
+      <span className="col-grip" role="separator" aria-orientation="vertical"
+            aria-label="Resize column"
+            onPointerDown={cols.begin(col, w, () => measureRow(ref.current))}
+            onDoubleClick={() => cols.resetOne(col)} />
+    </th>
+  );
+}
+
 export function InventoryTable() {
   const [params, setParams] = useSearchParams();
   const [selected, setSelected] = useState<string[]>([]);
@@ -36,6 +91,11 @@ export function InventoryTable() {
   // reproduces the exact view - which a cursor never could.
   const pageSize = Number(params.get('page_size') || 50);
   const page = Math.max(1, Number(params.get('page') || 1));
+  // Sort lives in the URL with the filters, for the same reason they do: a
+  // sorted view is a link somebody pastes into a ticket.
+  const sort = params.get('sort') ?? '';
+  const desc = params.get('dir') === 'desc';
+  const cols = useColumnWidths('dcim.inventory.columns');
 
   const { data: options } = useQuery<AssetFilterOptions>({
     queryKey: ['asset-filter-options'],
@@ -61,6 +121,8 @@ export function InventoryTable() {
     const v = params.get(key);
     if (v !== null && v !== '') query[key] = v;
   }
+  if (sort) query.order_by = sort;
+  if (desc) query.desc = 'true';
 
   const { data, error, isLoading } = useQuery<Page<DeviceSummary>>({
     queryKey: ['asset-devices', params.toString()],
@@ -104,9 +166,27 @@ export function InventoryTable() {
   const roomChoices = (options?.rooms ?? [])
     .filter((r) => !siteId || r.datacenter_id === siteId);
 
+  // Click cycles ascending, descending, back to the default name order.
+  // The page resets: row boundaries mean something else under a new order.
+  function toggleSort(key: string) {
+    const next = new URLSearchParams(params);
+    if (sort !== key) {
+      next.set('sort', key);
+      next.delete('dir');
+    } else if (!desc) {
+      next.set('dir', 'desc');
+    } else {
+      next.delete('sort');
+      next.delete('dir');
+    }
+    next.delete('page');
+    setParams(next, { replace: true });
+  }
+
   // page_size is a view preference, not a filter - counting it would make the
-  // "clear filters" button claim there is one when there is not.
-  const VIEW_KEYS = new Set(['page_size', 'page']);
+  // "clear filters" button claim there is one when there is not. Sort is a
+  // view preference too.
+  const VIEW_KEYS = new Set(['page_size', 'page', 'sort', 'dir']);
   const activeCount = [...params.keys()].filter((k) => !VIEW_KEYS.has(k)).length;
 
   function goToPage(next: number) {
@@ -310,10 +390,11 @@ export function InventoryTable() {
           </BulkBar>
 
           <div className="asset-scroll">
-            <table>
+            <table className="asset-table-cols">
               <thead>
                 <tr>
-                  <th className="asset-select-head">
+                  <th className="asset-select-head" data-col="select"
+                      style={{ width: 34 }}>
                     {/* No visible label: the toolbar directly above changes to
                         the bulk actions the moment anything is ticked, which
                         says what the column is for better than a word would.
@@ -336,14 +417,11 @@ export function InventoryTable() {
                         : [...new Set([...selected, ...rows.map((d) => d.id)])])}
                     />
                   </th>
-                  <th>Asset tag</th>
-                  <th>Name</th>
-                  <th>Type</th>
-                  <th>Model</th>
-                  <th>Location</th>
-                  <th>Lifecycle</th>
-                  <th>Cover</th>
-                  <th>Serial</th>
+                  {COLUMNS.map((c) => (
+                    <SortTh key={c.key} col={c.key} label={c.label} w={c.w}
+                            cols={cols} sort={sort} desc={desc}
+                            onSort={toggleSort} />
+                  ))}
                 </tr>
               </thead>
               <tbody>

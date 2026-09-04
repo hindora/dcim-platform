@@ -82,7 +82,7 @@ async def list_devices(session: AsyncSession, *, with_total: bool = False,
         # Opt-in, because it is a second query and the callers that only want
         # the next page should not pay for it. The paging UI asks; the rest
         # do not.
-        paging = {"limit", "cursor", "offset"}
+        paging = {"limit", "cursor", "offset", "order_by", "descending"}
         total = await repo.count_matching(
             session, **{k: v for k, v in kwargs.items() if k not in paging})
     return items, cursor, total

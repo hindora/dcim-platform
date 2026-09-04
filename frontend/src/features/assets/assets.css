@@ -408,6 +408,39 @@ a.asset-tile:hover { border-color: var(--border-strong); }
 
 .asset-scroll { overflow-x: auto; }
 
+/* Resizable, sortable inventory columns. Fixed layout so a header's width
+   MEANS the column's width - the flexible Name column takes the remainder -
+   and cells ellipsise rather than reflowing the row. */
+.asset-table-cols { table-layout: fixed; width: 100%; }
+
+.asset-table-cols th { position: relative; }
+
+.asset-table-cols td {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The header text IS the sort control; it inherits the header's look so the
+   table does not sprout eight buttons. The active direction is the accent. */
+.asset-sort {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.asset-sort:hover { color: var(--text); }
+
+.asset-sort .dirn { color: var(--accent); }
+
+.asset-table-cols thead th:hover .col-grip::after { background: var(--border-strong); }
+.asset-table-cols thead th.resizing .col-grip::after { background: var(--accent); }
+
 .asset-tag {
   font-family: var(--mono);
   font-variant-numeric: tabular-nums;
