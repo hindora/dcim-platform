@@ -1270,14 +1270,67 @@ tr.is-selected > td { background: var(--accent-dim); }
 
 .asset-gauge-label { font-size: 0.74rem; color: var(--text-muted); }
 
-/* An ⓘ beside a column header, carrying the explanation as its tooltip.
+/* An ⓘ beside a column header, revealing a small card on hover or focus.
    cursor: help is the affordance; the muted ink keeps it from reading as
    data. */
 .asset-info {
+  position: relative;
   margin-left: 5px;
   color: var(--text-faint);
   cursor: help;
   font-style: normal;
+}
+
+/* The card. position: fixed, at coordinates the component reads from the
+   icon - the tables live in .asset-scroll containers whose overflow clips
+   an absolutely positioned card taller than the table. Everything a table
+   header sets (uppercase, tracking, faint ink) is undone here - the card
+   is prose, not a heading. */
+@keyframes asset-tip-in {
+  from { opacity: 0; transform: translateY(-4px); }
+}
+
+.asset-info .asset-tip {
+  position: fixed;
+  z-index: 60;
+  display: block;
+  width: 260px;
+  padding: 10px 12px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.45);
+  font-size: 0.76rem;
+  font-weight: 400;
+  letter-spacing: normal;
+  text-transform: none;
+  text-align: left;
+  white-space: normal;
+  color: var(--text);
+  animation: asset-tip-in 0.12s ease;
+  pointer-events: none;
+}
+
+.asset-info .asset-tip b {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.asset-info .asset-tip ul {
+  margin: 0;
+  padding-left: 16px;
+  display: grid;
+  gap: 4px;
+}
+
+.asset-info .asset-tip li {
+  line-height: 1.4;
+  color: var(--text-muted);
 }
 
 /* ------------------------------------------------- in-panel chart filters */

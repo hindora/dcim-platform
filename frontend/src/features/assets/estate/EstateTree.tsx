@@ -16,6 +16,39 @@ import { api, type RackSummary, type RoomSummary } from '../../../api/client';
  *  rather than padding every site's table. */
 const MAIN_ROOMS = new Set(['Network Room', 'Server Hall A', 'Server Hall B']);
 
+/** An ⓘ that shows a small card on hover or keyboard focus. The card is
+ *  position: fixed at coordinates read from the icon, because the table
+ *  lives in an .asset-scroll container whose overflow clips anything
+ *  absolutely positioned taller than the table itself. */
+function InfoTip({ label, children }: {
+  label: string; children: React.ReactNode;
+}) {
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
+  const show = (e: React.SyntheticEvent<HTMLElement>) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    setPos({ x: r.right + 4, y: r.bottom + 8 });
+  };
+  return (
+    <span
+      className="asset-info"
+      tabIndex={0}
+      aria-label={label}
+      onMouseEnter={show}
+      onFocus={show}
+      onMouseLeave={() => setPos(null)}
+      onBlur={() => setPos(null)}
+    >
+      ⓘ
+      {pos && (
+        <span className="asset-tip" role="tooltip"
+              style={{ top: pos.y, left: Math.max(8, pos.x - 268) }}>
+          {children}
+        </span>
+      )}
+    </span>
+  );
+}
+
 export function EstateTree() {
   const [showOther, setShowOther] = useState(false);
 
@@ -70,19 +103,18 @@ export function EstateTree() {
                   <th>U free</th>
                   <th>
                     Rated kW
-                    <span
-                      className="asset-info"
-                      tabIndex={0}
-                      role="img"
-                      aria-label="About the Rated kW column"
-                      title={'The room’s total rack power rating: the sum of '
-                        + 'each rack’s rating, which is derived from the rack '
-                        + 'PDUs feeding it. Under 2N a rack must run on one feed, '
-                        + 'so a rack’s rating is its smallest single PDU '
-                        + 'nameplate, never the sum of both feeds. Racks with no '
-                        + 'rack PDU (plant instrument racks) have no rating and '
-                        + 'show —.'}
-                    >ⓘ</span>
+                    <InfoTip label="About the Rated kW column">
+                      <b>Rack power rating</b>
+                      <ul>
+                        <li>Room value is the sum of its racks’ ratings</li>
+                        <li>A rack’s rating is its smallest single rack-PDU
+                          nameplate</li>
+                        <li>Under 2N a rack must run on one feed — never
+                          the sum of both</li>
+                        <li>— means the rack has no rack PDUs (plant
+                          instrument racks)</li>
+                      </ul>
+                    </InfoTip>
                   </th>
                 </tr>
               </thead>
