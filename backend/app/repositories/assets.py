@@ -215,11 +215,23 @@ async def charts(session: AsyncSession) -> dict[str, Any]:
         GROUP BY d.device_type, dt.display_name, v.name, d.owner_group, dc.code
     """))).mappings().all()
 
+    # Its own cube, NOT the composition cube: lifecycle is the one panel that
+    # deliberately counts decommissioned and retired kit - "nothing is
+    # decommissioned" is worth seeing - while composition excludes what has
+    # left the estate. Dimensioned by (type, site) for the panel's filters.
     by_lifecycle = (await session.execute(text("""
-        SELECT lifecycle::text AS key, count(*) AS n
-        FROM device GROUP BY 1
+        SELECT d.lifecycle::text AS key,
+               COALESCE(dt.display_name, d.device_type) AS type_label,
+               dc.code AS dc,
+               count(*) AS n
+        FROM device d
+        LEFT JOIN device_type dt ON dt.code = d.device_type
+        LEFT JOIN rack r ON r.id = d.rack_id
+        LEFT JOIN rack_row rr ON rr.id = r.row_id
+        LEFT JOIN room rm ON rm.id = COALESCE(rr.room_id, d.room_id)
+        LEFT JOIN datacenter dc ON dc.id = rm.datacenter_id
+        GROUP BY 1, 2, dc.code
     """))).mappings().all()
-    counted = {r["key"]: r["n"] for r in by_lifecycle}
 
     # Rack space. `used` counts what is INSTALLED; `held` counts planned rows,
     # which occupy the units without being equipment yet - conflating them
@@ -410,14 +422,24 @@ async def charts(session: AsyncSession) -> dict[str, Any]:
     # not the same as floor-standing: a chiller in a plant room is placed, it
     # simply has no rack. Calling it unplaced would report the estate's own
     # design as a data gap.
+    # Dimensioned by (type, site). A device that is not placed has no site,
+    # so it shows under "All sites" only - which is where somebody hunting
+    # for unplaced kit starts anyway.
     placement = (await session.execute(text("""
-        SELECT CASE WHEN rack_id IS NOT NULL THEN 'In a rack'
-                    WHEN room_id IS NOT NULL THEN 'Floor-standing'
+        SELECT CASE WHEN d.rack_id IS NOT NULL THEN 'In a rack'
+                    WHEN d.room_id IS NOT NULL THEN 'Floor-standing'
                     ELSE 'Not placed' END AS label,
+               COALESCE(dt.display_name, d.device_type) AS type_label,
+               dc.code AS dc,
                count(*) AS n
-        FROM device
-        WHERE lifecycle NOT IN ('decommissioned', 'retired')
-        GROUP BY 1
+        FROM device d
+        LEFT JOIN device_type dt ON dt.code = d.device_type
+        LEFT JOIN rack r ON r.id = d.rack_id
+        LEFT JOIN rack_row rr ON rr.id = r.row_id
+        LEFT JOIN room rm ON rm.id = COALESCE(rr.room_id, d.room_id)
+        LEFT JOIN datacenter dc ON dc.id = rm.datacenter_id
+        WHERE d.lifecycle NOT IN ('decommissioned', 'retired')
+        GROUP BY 1, 2, dc.code
     """))).mappings().all()
 
     # Spend rows carry the contract's status on the same expiring threshold
@@ -489,8 +511,7 @@ async def charts(session: AsyncSession) -> dict[str, Any]:
 
     return {
         "composition": [dict(r) for r in composition],
-        "by_lifecycle": [{"key": k, "n": counted.get(k, 0)}
-                         for k in ALL_LIFECYCLES],
+        "by_lifecycle": [dict(r) for r in by_lifecycle],
         "rack_space": [dict(r) for r in space],
         "rack_fill": [dict(r) for r in fill],
         "floor_space": [dict(r) for r in floor],

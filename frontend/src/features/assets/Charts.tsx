@@ -63,22 +63,7 @@ export function Charts() {
 
         <ByMakePanel rows={data.composition} />
 
-        <Panel title="By lifecycle" total={sum(data.by_lifecycle)}>
-          {/* The one chart where a colour per bar earns itself: here the hue IS
-              the state, and it is the same hue the chips in the table use, so
-              the two read as one vocabulary. Empty states are kept - "nothing
-              is decommissioned" is worth seeing, and a chart whose rows come
-              and go cannot be compared with itself week to week. */}
-          <BarChart
-            limitable={false}
-            rows={data.by_lifecycle.map((l): BarRow => ({
-              label: humanise(l.key),
-              n: l.n,
-              colour: LIFECYCLE_HUE[l.key],
-              href: `/assets/inventory?lifecycle=${encodeURIComponent(l.key)}`,
-            }))}
-          />
-        </Panel>
+        <ByLifecyclePanel rows={data.by_lifecycle} />
       </div>
 
       <h3 className="asset-charts-head">Where it is, and whose</h3>
@@ -87,22 +72,7 @@ export function Charts() {
 
         <ByOwnerPanel rows={data.composition} />
 
-        <Panel title="How it is placed" total={sum(data.placement)}>
-          {/* Floor-standing is NOT a gap. A chiller in a plant room is placed;
-              it simply has no rack, and colouring it as a problem would report
-              the estate's own design as a data fault. "Not placed" is the only
-              row here that means something is missing. */}
-          <BarChart
-            sorted={false}
-            limitable={false}
-            rows={data.placement.map((p): BarRow => ({
-              label: p.label,
-              n: p.n,
-              colour: p.label === 'Not placed' ? 'var(--warn)'
-                : p.label === 'Floor-standing' ? 'var(--border-strong)' : undefined,
-            }))}
-          />
-        </Panel>
+        <PlacementPanel rows={data.placement} />
       </div>
 
       <h3 className="asset-charts-head">Cover and records</h3>
@@ -444,6 +414,56 @@ function FilterRow({ f, label, all }: {
 }
 
 const roomOf = (r: { room: string | null }): string => r.room ?? '';
+
+/** The one chart where a colour per bar earns itself: here the hue IS the
+ *  state, and it is the same hue the chips in the table use, so the two read
+ *  as one vocabulary. Empty states are kept - "nothing is decommissioned" is
+ *  worth seeing, and a chart whose rows come and go cannot be compared with
+ *  itself week to week. Site and type filters: "what state is the DC2 server
+ *  fleet in" is the refresh-planning version of the question. */
+function ByLifecyclePanel({ rows }: { rows: AssetCharts['by_lifecycle'] }) {
+  const f = useCubeFilters(rows, (r) => r.type_label);
+
+  const bars = Object.keys(LIFECYCLE_HUE).map((key): BarRow => ({
+    label: humanise(key),
+    n: f.shown.filter((r) => r.key === key).reduce((t, r) => t + r.n, 0),
+    colour: LIFECYCLE_HUE[key],
+    href: `/assets/inventory?lifecycle=${encodeURIComponent(key)}`,
+  }));
+
+  return (
+    <Panel title="By lifecycle" total={bars.reduce((t, r) => t + r.n, 0)}>
+      <FilterRow f={f} label="Type" all="All types" />
+      <BarChart limitable={false} rows={bars} />
+    </Panel>
+  );
+}
+
+/** Placement states, in the fixed placed-to-missing order. */
+const PLACEMENT_STATES = ['In a rack', 'Floor-standing', 'Not placed'];
+
+/** Floor-standing is NOT a gap. A chiller in a plant room is placed; it
+ *  simply has no rack, and colouring it as a problem would report the
+ *  estate's own design as a data fault. "Not placed" is the only row here
+ *  that means something is missing - and the type filter is how somebody
+ *  hunts it down. */
+function PlacementPanel({ rows }: { rows: AssetCharts['placement'] }) {
+  const f = useCubeFilters(rows, (r) => r.type_label);
+
+  const bars = PLACEMENT_STATES.map((label): BarRow => ({
+    label,
+    n: f.shown.filter((r) => r.label === label).reduce((t, r) => t + r.n, 0),
+    colour: label === 'Not placed' ? 'var(--warn)'
+      : label === 'Floor-standing' ? 'var(--border-strong)' : undefined,
+  }));
+
+  return (
+    <Panel title="How it is placed" total={bars.reduce((t, r) => t + r.n, 0)}>
+      <FilterRow f={f} label="Type" all="All types" />
+      <BarChart sorted={false} limitable={false} rows={bars} />
+    </Panel>
+  );
+}
 
 /** One part-to-whole, so a donut earns its keep: the centre carries the
  *  figure everyone wants first, and every segment's own value is in the

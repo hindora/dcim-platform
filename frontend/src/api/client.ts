@@ -429,7 +429,12 @@ export interface AssetCharts {
     type_key: string; type_label: string; vendor: string; owner: string;
     dc: string | null; n: number;
   }[];
-  by_lifecycle: { key: string; n: number }[];
+  /** One row per (lifecycle, type, site). The one cube that counts
+   *  decommissioned and retired kit - "nothing is decommissioned" is worth
+   *  seeing. Sum client-side; empty states render as zero. */
+  by_lifecycle: {
+    key: string; type_label: string; dc: string | null; n: number;
+  }[];
   /** One row per (site, room); every figure is additive over racks, so the
    *  capacity panels' filters are exact client-side sums. u_held counts
    *  planned rows - reserved, not installed, and not free. */
@@ -470,8 +475,11 @@ export interface AssetCharts {
   }[];
   by_room: { dc: string; room: string; label: string; n: number }[];
   /** In a rack, floor-standing, or genuinely unplaced - three different states,
-   *  and floor-standing plant is placed. */
-  placement: { label: string; n: number }[];
+   *  and floor-standing plant is placed. One row per (state, type, site);
+   *  an unplaced device has no site and shows under "All sites" only. */
+  placement: {
+    label: string; type_label: string; dc: string | null; n: number;
+  }[];
   /** One row per (supplier, status) on the cover threshold: active, expiring,
    *  expired. "What am I paying now" and "what lapsed" are different sums. */
   contract_spend: {
