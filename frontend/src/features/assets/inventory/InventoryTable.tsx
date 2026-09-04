@@ -86,6 +86,24 @@ export function InventoryTable() {
     setParams(next, { replace: true });
   }
 
+  // The room follows the site, as everywhere else: a room the newly chosen
+  // site does not have is cleared rather than silently returning nothing.
+  function pickSite(id: string) {
+    const next = new URLSearchParams(params);
+    if (id) next.set('datacenter_id', id);
+    else next.delete('datacenter_id');
+    const room = next.get('room_id');
+    if (room && !(options?.rooms ?? []).some(
+        (r) => r.id === room && (!id || r.datacenter_id === id))) {
+      next.delete('room_id');
+    }
+    setParams(next, { replace: true });
+  }
+
+  const siteId = params.get('datacenter_id') ?? '';
+  const roomChoices = (options?.rooms ?? [])
+    .filter((r) => !siteId || r.datacenter_id === siteId);
+
   // page_size is a view preference, not a filter - counting it would make the
   // "clear filters" button claim there is one when there is not.
   const VIEW_KEYS = new Set(['page_size', 'page']);
@@ -161,6 +179,36 @@ export function InventoryTable() {
           </div>
 
           <div className="asset-filter-group">
+            <label htmlFor="asset-site">Site</label>
+            <select
+              id="asset-site"
+              value={siteId}
+              onChange={(e) => pickSite(e.target.value)}
+            >
+              <option value="">All sites</option>
+              {(options?.sites ?? []).map((s) => (
+                <option key={s.id} value={s.id}>{s.code}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="asset-filter-group">
+            <label htmlFor="asset-room">Room</label>
+            <select
+              id="asset-room"
+              value={params.get('room_id') ?? ''}
+              onChange={(e) => setSingle('room_id', e.target.value)}
+            >
+              <option value="">All rooms</option>
+              {roomChoices.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {siteId ? r.name : `${r.dc} · ${r.name}`}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="asset-filter-group">
             <label htmlFor="asset-type">Type</label>
             <select
               id="asset-type"
@@ -190,6 +238,20 @@ export function InventoryTable() {
                 <option key={v.id} value={v.id}>
                   {v.name} ({v.device_count})
                 </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="asset-filter-group">
+            <label htmlFor="asset-owner">Owner</label>
+            <select
+              id="asset-owner"
+              value={params.get('owner_group') ?? ''}
+              onChange={(e) => setSingle('owner_group', e.target.value)}
+            >
+              <option value="">Any owner</option>
+              {(options?.owner_groups ?? []).map((o) => (
+                <option key={o} value={o}>{o}</option>
               ))}
             </select>
           </div>

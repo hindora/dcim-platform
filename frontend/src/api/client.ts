@@ -518,6 +518,11 @@ export interface AssetFilterOptions {
   }[];
   vendors: { id: string; name: string; device_count: number }[];
   lifecycles: { value: string; label: string }[];
+  sites: { id: string; code: string }[];
+  /** Rooms with their site, so the room picker can follow the site picker. */
+  rooms: { id: string; name: string; datacenter_id: string; dc: string }[];
+  /** The owner vocabulary as actually recorded on devices. */
+  owner_groups: string[];
 }
 
 export interface CredentialSummary {

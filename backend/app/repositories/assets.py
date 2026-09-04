@@ -181,6 +181,34 @@ async def vendors(session: AsyncSession) -> list[dict[str, Any]]:
     return [dict(r) for r in rows]
 
 
+async def sites(session: AsyncSession) -> list[dict[str, Any]]:
+    rows = (await session.execute(text("""
+        SELECT id::text, code FROM datacenter ORDER BY code
+    """))).mappings().all()
+    return [dict(r) for r in rows]
+
+
+async def rooms_by_site(session: AsyncSession) -> list[dict[str, Any]]:
+    """Rooms with their site, so the room picker can follow the site picker."""
+    rows = (await session.execute(text("""
+        SELECT rm.id::text, rm.name, dc.id::text AS datacenter_id, dc.code AS dc
+        FROM room rm
+        JOIN datacenter dc ON dc.id = rm.datacenter_id
+        ORDER BY dc.code, rm.name
+    """))).mappings().all()
+    return [dict(r) for r in rows]
+
+
+async def owner_groups(session: AsyncSession) -> list[str]:
+    """The owner vocabulary as it exists on devices - free text, so the
+    picker offers what is actually recorded rather than a hoped-for list."""
+    rows = (await session.execute(text("""
+        SELECT DISTINCT owner_group FROM device
+        WHERE owner_group IS NOT NULL ORDER BY 1
+    """))).scalars().all()
+    return list(rows)
+
+
 # ------------------------------------------------------------------ charts
 
 async def charts(session: AsyncSession) -> dict[str, Any]:

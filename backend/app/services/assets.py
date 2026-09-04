@@ -35,6 +35,9 @@ async def filter_options(session: AsyncSession) -> dict[str, Any]:
     return {
         "device_types": await repo.device_types(session),
         "vendors": await repo.vendors(session),
+        "sites": await repo.sites(session),
+        "rooms": await repo.rooms_by_site(session),
+        "owner_groups": await repo.owner_groups(session),
         # Served from the server so the UI never hard-codes a state the
         # database does not have. Migration 0043 added the middle three.
         "lifecycles": [
