@@ -67,7 +67,23 @@ export function EstateTree() {
               <thead>
                 <tr>
                   <th>Room</th><th>Racks</th><th>Assets</th>
-                  <th>U free</th><th>Rated kW</th>
+                  <th>U free</th>
+                  <th>
+                    Rated kW
+                    <span
+                      className="asset-info"
+                      tabIndex={0}
+                      role="img"
+                      aria-label="About the Rated kW column"
+                      title={'The room’s total rack power rating: the sum of '
+                        + 'each rack’s rating, which is derived from the rack '
+                        + 'PDUs feeding it. Under 2N a rack must run on one feed, '
+                        + 'so a rack’s rating is its smallest single PDU '
+                        + 'nameplate, never the sum of both feeds. Racks with no '
+                        + 'rack PDU (plant instrument racks) have no rating and '
+                        + 'show —.'}
+                    >ⓘ</span>
+                  </th>
                 </tr>
               </thead>
               <tbody>

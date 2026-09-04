@@ -1270,6 +1270,16 @@ tr.is-selected > td { background: var(--accent-dim); }
 
 .asset-gauge-label { font-size: 0.74rem; color: var(--text-muted); }
 
+/* An ⓘ beside a column header, carrying the explanation as its tooltip.
+   cursor: help is the affordance; the muted ink keeps it from reading as
+   data. */
+.asset-info {
+  margin-left: 5px;
+  color: var(--text-faint);
+  cursor: help;
+  font-style: normal;
+}
+
 /* ------------------------------------------------- in-panel chart filters */
 
 /* Two selects sharing the panel width. min-width: 0 so a long room name
