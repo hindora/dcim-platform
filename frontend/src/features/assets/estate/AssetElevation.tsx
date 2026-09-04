@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { api, type RackElevation } from '../../../api/client';
 import { humanise } from '../../../lib/format';
 import { useHoverTip } from '../../../components/HoverTip';
+import { rackLabel, rowLabel } from './labels';
 
 /** An asset-context rack elevation.
  *
@@ -41,9 +42,9 @@ export function AssetElevation() {
           <Link to={`/assets/estate/rooms/${rack.room_id}`}>← {rack.room_name}</Link>
         )}
       </p>
-      <h2>{rack.name}</h2>
+      <h2>{rackLabel(rack.name)}</h2>
       <p className="subtitle">
-        {rack.datacenter_code} · {rack.room_name} · {rack.row_name} ·{' '}
+        {rack.datacenter_code} · {rack.room_name} · {rowLabel(rack.row_name)} ·{' '}
         {rack.u_height}U
       </p>
 

@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
 import { api, type RackSummary } from '../../../api/client';
+import { rackLabel, rowLabel } from './labels';
 
 /** The racks in one room, ranked by space rather than by health.
  *
@@ -8,21 +9,6 @@ import { api, type RackSummary } from '../../../api/client';
  *  is where there is room, and a full rack and an empty one look identical in a
  *  list sorted by name.
  */
-/** "R2" -> "Row 2". The compact codes are wire-format identifiers; a page a
- *  person reads says the word. Anything not matching passes through, so a
- *  site that names rows differently keeps its names. */
-function rowLabel(name: string | null | undefined): string {
-  if (!name) return '—';
-  const m = /^R(\d+)$/.exec(name);
-  return m ? `Row ${Number(m[1])}` : name;
-}
-
-/** "R2-02" -> "Rack 02" - the row is already said by the caption above. */
-function rackLabel(name: string): string {
-  const m = /^R\d+-(\d+)$/.exec(name);
-  return m ? `Rack ${m[1]}` : name;
-}
-
 export function RoomView() {
   const { id = '' } = useParams();
 
