@@ -55,8 +55,6 @@ export function Charts() {
     );
   }
 
-  const { rack_space: space, floor_space: floor } = data;
-
   return (
     <>
       <h3 className="asset-charts-head">Composition</h3>
@@ -120,57 +118,13 @@ export function Charts() {
 
       <h3 className="asset-charts-head">Capacity</h3>
       <div className="asset-cols">
-        <Panel title="Cabinet space">
-          {/* One part-to-whole, so a donut earns its keep here: the centre
-              carries the figure everyone wants first, and every segment's own
-              value is in the legend - nobody reads a number off an arc. Held
-              is still not the free colour: those units are spoken for. */}
-          <Donut
-            centre={`${space.u_total.toLocaleString()}U`}
-            centreLabel={`${space.racks} racks`}
-            parts={[
-              { label: 'Installed', n: space.u_used, colour: 'var(--accent)' },
-              { label: 'Held for planned', n: space.u_held, colour: 'var(--warn)' },
-              { label: 'Free', n: space.u_free, colour: 'var(--border-strong)' },
-            ]}
-          />
-        </Panel>
+        <CabinetSpacePanel rows={data.rack_space} />
 
-        <Panel title="Floor space remaining">
-          {/* A bounded ratio where LOW is the problem, which is the one
-              question a gauge answers better than a bar: the bands say what
-              being there means. Under 15% of positions left is red, under 40%
-              amber. */}
-          <Gauge
-            value={floor.free}
-            max={floor.designed}
-            unit=""
-            label={`rack positions · ${floor.rooms} rooms · ${Math.round(floor.area_m2).toLocaleString()} m²`}
-            bands={[[0.15, 'var(--critical)'], [0.4, 'var(--warn)'], [1, 'var(--ok)']]}
-          />
-        </Panel>
+        <FloorSpacePanel rows={data.floor_space} />
 
-        <Panel title="What still fits">
-          {/* The number fragmentation costs. Total free U says nothing about
-              placeability - 1392U spread as slivers takes hundreds of 1U
-              servers and few 4U chassis, and this is the chart where that
-              fall-off is visible. Sizes are chassis heights that exist; a
-              continuous axis would imply 5U equipment somebody could buy. */}
-          <VColumns
-            caption="Potential new items"
-            rows={data.fragmentation.map((f) => ({
-              label: `${f.size}U`,
-              n: f.fits,
-            }))}
-          />
-        </Panel>
+        <StillFitsPanel rows={data.fragmentation} />
 
-        <Panel title="How full the racks are">
-          {/* The distribution behind the single "free U" figure. A mean hides
-              whether the space is one empty cabinet or forty part-used ones,
-              and only the first of those takes a full-height install. */}
-          <Histogram rows={data.rack_fill} />
-        </Panel>
+        <RackFillPanel rows={data.rack_fill} />
       </div>
 
       <Trends />
@@ -196,7 +150,11 @@ function useCubeFilters<R extends { dc: string | null }>(rows: R[], other: (r: R
   const [pick, setPick] = useState('');
 
   const dcs = uniqSorted(rows.map((r) => r.dc).filter((d): d is string => d !== null));
-  const options = uniqSorted(rows.filter((r) => !dc || r.dc === dc).map(other));
+  // The empty string is a null dimension (a rack outside any room): such
+  // rows count under "All", but an empty option would be indistinguishable
+  // from it, so none is offered.
+  const options = uniqSorted(
+    rows.filter((r) => !dc || r.dc === dc).map(other).filter((v) => v !== ''));
 
   const pickDc = (next: string) => {
     setDc(next);
@@ -458,6 +416,135 @@ function CompletenessPanel({ rows }: { rows: AssetCharts['completeness'] }) {
         </select>
       </div>
       <BarChart sorted={false} limitable={false} rows={bars} />
+    </Panel>
+  );
+}
+
+/** The two dropdowns every cube panel wears, in one place. */
+function FilterRow({ f, label, all }: {
+  f: {
+    dc: string; pickDc: (v: string) => void;
+    pick: string; setPick: (v: string) => void;
+    dcs: string[]; options: string[];
+  };
+  label: string; all: string;
+}) {
+  return (
+    <div className="asset-panel-filters">
+      <select value={f.dc} onChange={(e) => f.pickDc(e.target.value)} aria-label="Site">
+        <option value="">All sites</option>
+        {f.dcs.map((d) => <option key={d} value={d}>{d}</option>)}
+      </select>
+      <select value={f.pick} onChange={(e) => f.setPick(e.target.value)} aria-label={label}>
+        <option value="">{all}</option>
+        {f.options.map((o) => <option key={o} value={o}>{o}</option>)}
+      </select>
+    </div>
+  );
+}
+
+const roomOf = (r: { room: string | null }): string => r.room ?? '';
+
+/** One part-to-whole, so a donut earns its keep: the centre carries the
+ *  figure everyone wants first, and every segment's own value is in the
+ *  legend - nobody reads a number off an arc. Held is still not the free
+ *  colour: those units are spoken for. Site and room filters, because
+ *  capacity is a per-hall conversation and the estate-wide total is the
+ *  least actionable version of the number. */
+function CabinetSpacePanel({ rows }: { rows: AssetCharts['rack_space'] }) {
+  const f = useCubeFilters(rows, roomOf);
+  const s = f.shown.reduce((t, r) => ({
+    racks: t.racks + r.racks,
+    u_total: t.u_total + r.u_total,
+    u_used: t.u_used + r.u_used,
+    u_held: t.u_held + r.u_held,
+  }), { racks: 0, u_total: 0, u_used: 0, u_held: 0 });
+  const free = Math.max(0, s.u_total - s.u_used - s.u_held);
+
+  return (
+    <Panel title="Cabinet space">
+      <FilterRow f={f} label="Room" all="All rooms" />
+      <Donut
+        centre={`${s.u_total.toLocaleString()}U`}
+        centreLabel={`${s.racks} racks`}
+        parts={[
+          { label: 'Installed', n: s.u_used, colour: 'var(--accent)' },
+          { label: 'Held for planned', n: s.u_held, colour: 'var(--warn)' },
+          { label: 'Free', n: free, colour: 'var(--border-strong)' },
+        ]}
+      />
+    </Panel>
+  );
+}
+
+/** A bounded ratio where LOW is the problem, which is the one question a
+ *  gauge answers better than a bar: the bands say what being there means.
+ *  Under 15% of positions left is red, under 40% amber. The denominator
+ *  lives on the room, so the gauge stays honest at every filter level. */
+function FloorSpacePanel({ rows }: { rows: AssetCharts['floor_space'] }) {
+  const f = useCubeFilters(rows, roomOf);
+  const designed = f.shown.reduce((t, r) => t + r.designed, 0);
+  const installed = f.shown.reduce((t, r) => t + r.installed, 0);
+  const area = f.shown.reduce((t, r) => t + r.area_m2, 0);
+  const rooms = f.shown.length;
+  const free = Math.max(0, designed - installed);
+
+  return (
+    <Panel title="Floor space remaining">
+      <FilterRow f={f} label="Room" all="All rooms" />
+      <Gauge
+        value={free}
+        max={designed}
+        unit=""
+        label={`rack positions · ${rooms} room${rooms === 1 ? '' : 's'} · ${Math.round(area).toLocaleString()} m²`}
+        bands={[[0.15, 'var(--critical)'], [0.4, 'var(--warn)'], [1, 'var(--ok)']]}
+      />
+    </Panel>
+  );
+}
+
+/** Chassis heights that exist; a continuous axis would imply 5U equipment
+ *  somebody could buy. */
+const CHASSIS_SIZES = [1, 2, 3, 4, 6, 8];
+
+/** The number fragmentation costs. Total free U says nothing about
+ *  placeability - 1392U spread as slivers takes hundreds of 1U servers and
+ *  few 4U chassis, and this is the chart where that fall-off is visible.
+ *  Fits are additive per rack, so "can Hall A take another blade chassis"
+ *  is an exact client-side sum. */
+function StillFitsPanel({ rows }: { rows: AssetCharts['fragmentation'] }) {
+  const f = useCubeFilters(rows, roomOf);
+  const bars = CHASSIS_SIZES.map((size) => ({
+    label: `${size}U`,
+    n: f.shown.filter((r) => r.size === size).reduce((t, r) => t + r.fits, 0),
+  }));
+
+  return (
+    <Panel title="What still fits">
+      <FilterRow f={f} label="Room" all="All rooms" />
+      <VColumns caption="Potential new items" rows={bars} />
+    </Panel>
+  );
+}
+
+/** How full a rack is, in bands somebody would act on rather than even
+ *  tenths - "Empty" and "Over 90%" are the two that mean something alone. */
+const FILL_BANDS = ['Empty', '1-25%', '26-50%', '51-75%', '76-90%', 'Over 90%'];
+
+/** The distribution behind the single "free U" figure. A mean hides whether
+ *  the space is one empty cabinet or forty part-used ones, and only the
+ *  first of those takes a full-height install. */
+function RackFillPanel({ rows }: { rows: AssetCharts['rack_fill'] }) {
+  const f = useCubeFilters(rows, roomOf);
+  const bands = FILL_BANDS.map((band) => ({
+    band,
+    n: f.shown.filter((r) => r.band === band).reduce((t, r) => t + r.n, 0),
+  }));
+
+  return (
+    <Panel title="How full the racks are">
+      <FilterRow f={f} label="Room" all="All rooms" />
+      <Histogram rows={bands} />
     </Panel>
   );
 }

@@ -430,16 +430,20 @@ export interface AssetCharts {
     dc: string | null; n: number;
   }[];
   by_lifecycle: { key: string; n: number }[];
+  /** One row per (site, room); every figure is additive over racks, so the
+   *  capacity panels' filters are exact client-side sums. u_held counts
+   *  planned rows - reserved, not installed, and not free. */
   rack_space: {
-    racks: number; u_total: number; u_used: number;
-    /** Occupied by planned rows - reserved, not installed, and not free. */
-    u_held: number; u_free: number;
-  };
-  rack_fill: { band: string; n: number }[];
+    dc: string | null; room: string | null;
+    racks: number; u_total: number; u_used: number; u_held: number;
+  }[];
+  rack_fill: { dc: string | null; room: string | null; band: string; n: number }[];
+  /** One row per room that has designed_racks - the denominator lives on the
+   *  room, so a filtered gauge stays honest. */
   floor_space: {
-    rooms: number; designed: number; installed: number;
-    free: number; area_m2: number;
-  };
+    dc: string | null; room: string | null;
+    designed: number; installed: number; area_m2: number;
+  }[];
   /** Four states on one threshold, scoped to the live estate - the same scope
    *  the runway uses, so the two charts cannot disagree about the denominator.
    *  Dimensioned by (vendor, site) for the panel's filters; sum client-side. */
@@ -461,7 +465,9 @@ export interface AssetCharts {
   /** How many new devices of each height still fit, computed from CONTIGUOUS
    *  gaps - the number fragmentation actually costs. 1U always equals total
    *  free U; the fall-off from there is the fragmentation. */
-  fragmentation: { size: number; fits: number }[];
+  fragmentation: {
+    dc: string | null; room: string | null; size: number; fits: number;
+  }[];
   by_room: { dc: string; room: string; label: string; n: number }[];
   /** In a rack, floor-standing, or genuinely unplaced - three different states,
    *  and floor-standing plant is placed. */

@@ -183,13 +183,6 @@ async def vendors(session: AsyncSession) -> list[dict[str, Any]]:
 
 # ------------------------------------------------------------------ charts
 
-#: How full a rack is, in bands somebody would act on rather than even tenths.
-#: "Empty" and "over 90" are the two that mean something on their own: one is
-#: where the next install goes, the other is a rack that cannot take another
-#: full-depth server whatever the total free U says.
-_FILL_BANDS = ("Empty", "1-25%", "26-50%", "51-75%", "76-90%", "Over 90%")
-
-
 async def charts(session: AsyncSession) -> dict[str, Any]:
     """Composition and capacity, in one call.
 
@@ -230,33 +223,51 @@ async def charts(session: AsyncSession) -> dict[str, Any]:
 
     # Rack space. `used` counts what is INSTALLED; `held` counts planned rows,
     # which occupy the units without being equipment yet - conflating them
-    # would report space as free that nobody may take.
+    # would report space as free that nobody may take. One row per (site,
+    # room) - capacity is a per-hall conversation, and every figure here is
+    # additive over racks, so the panel's filters are client-side sums.
     space = (await session.execute(text("""
-        SELECT
-          (SELECT count(*) FROM rack)                             AS racks,
-          (SELECT COALESCE(sum(u_height), 0) FROM rack)           AS u_total,
-          (SELECT COALESCE(sum(d.u_height), 0) FROM device d
-             WHERE d.rack_id IS NOT NULL AND d.u_start IS NOT NULL
-               AND d.lifecycle::text = ANY(:live))                AS u_used,
-          (SELECT COALESCE(sum(d.u_height), 0) FROM device d
-             WHERE d.rack_id IS NOT NULL AND d.u_start IS NOT NULL
-               AND d.lifecycle::text = 'planned')                 AS u_held
-    """), {"live": list(LIVE_LIFECYCLES)})).mappings().one()
+        WITH per_rack AS (
+            SELECT r.id, r.u_height, rm.name AS room, dc.code AS dc,
+                   COALESCE(sum(d.u_height) FILTER (
+                       WHERE d.u_start IS NOT NULL
+                         AND d.lifecycle::text = ANY(:live)), 0)   AS used,
+                   COALESCE(sum(d.u_height) FILTER (
+                       WHERE d.u_start IS NOT NULL
+                         AND d.lifecycle::text = 'planned'), 0)    AS held
+            FROM rack r
+            LEFT JOIN rack_row rr ON rr.id = r.row_id
+            LEFT JOIN room rm ON rm.id = rr.room_id
+            LEFT JOIN datacenter dc ON dc.id = rm.datacenter_id
+            LEFT JOIN device d ON d.rack_id = r.id
+            GROUP BY r.id, r.u_height, rm.name, dc.code
+        )
+        SELECT dc, room, count(*) AS racks,
+               COALESCE(sum(u_height), 0)::int AS u_total,
+               sum(used)::int AS u_used, sum(held)::int AS u_held
+        FROM per_rack GROUP BY dc, room
+    """), {"live": list(LIVE_LIFECYCLES)})).mappings().all()
 
     # The distribution behind that single number. A mean of 25% across 44 racks
     # says nothing about whether there is one contiguous cabinet to fill or
     # forty part-used ones - which is the only version of the question anybody
-    # plans an install against.
+    # plans an install against. Dimensioned by (site, room): a hall of
+    # part-used racks and a hall with one empty cabinet look identical
+    # estate-wide.
     fill = (await session.execute(text("""
         WITH per_rack AS (
-            SELECT r.id, r.u_height,
+            SELECT r.id, r.u_height, rm.name AS room, dc.code AS dc,
                    COALESCE(sum(d.u_height) FILTER (
                        WHERE d.u_start IS NOT NULL), 0) AS used
             FROM rack r
+            LEFT JOIN rack_row rr ON rr.id = r.row_id
+            LEFT JOIN room rm ON rm.id = rr.room_id
+            LEFT JOIN datacenter dc ON dc.id = rm.datacenter_id
             LEFT JOIN device d ON d.rack_id = r.id
-            GROUP BY r.id, r.u_height
+            GROUP BY r.id, r.u_height, rm.name, dc.code
         ), banded AS (
-            SELECT CASE
+            SELECT dc, room,
+                   CASE
                      WHEN used = 0 THEN 'Empty'
                      WHEN used * 100 / NULLIF(u_height, 0) <= 25 THEN '1-25%'
                      WHEN used * 100 / NULLIF(u_height, 0) <= 50 THEN '26-50%'
@@ -266,23 +277,27 @@ async def charts(session: AsyncSession) -> dict[str, Any]:
                    END AS band
             FROM per_rack
         )
-        SELECT band, count(*) AS n FROM banded GROUP BY band
+        SELECT dc, room, band, count(*) AS n
+        FROM banded GROUP BY dc, room, band
     """))).mappings().all()
-    banded = {r["band"]: r["n"] for r in fill}
 
     # Floor space, measured as rack POSITIONS drawn versus racks installed.
     # designed_racks is the denominator the room was laid out with; installed
     # rack count cannot provide it, and floor area alone says nothing about how
-    # much of a room is actually usable for equipment.
+    # much of a room is actually usable for equipment. One row per room; the
+    # estate view is the sum, and a filtered gauge keeps an honest
+    # denominator because the denominator lives on the room.
     floor = (await session.execute(text("""
-        SELECT
-          count(*)                                        AS rooms,
-          COALESCE(sum(rm.designed_racks), 0)             AS designed,
-          COALESCE(sum(rm.width_m * rm.depth_m), 0)::float AS area_m2,
-          (SELECT count(*) FROM rack)                     AS installed
+        SELECT dc.code AS dc, rm.name AS room,
+               COALESCE(rm.designed_racks, 0)                   AS designed,
+               COALESCE(rm.width_m * rm.depth_m, 0)::float      AS area_m2,
+               (SELECT count(*) FROM rack r
+                  JOIN rack_row rr ON rr.id = r.row_id
+                  WHERE rr.room_id = rm.id)                     AS installed
         FROM room rm
+        JOIN datacenter dc ON dc.id = rm.datacenter_id
         WHERE rm.designed_racks IS NOT NULL
-    """))).mappings().one()
+    """))).mappings().all()
 
     # WHEN cover lapses, which is a budget question rather than a status one.
     # Quarters, because that is the granularity a renewal is planned at, and
@@ -435,6 +450,9 @@ async def charts(session: AsyncSession) -> dict[str, Any]:
     #
     # Sizes are the chassis heights that exist: 1U-4U servers, 6U/8U for blade
     # chassis. A continuous axis would imply 5U equipment somebody could buy.
+    # Dimensioned by (site, room): "can Hall A take another blade chassis"
+    # is the install question. Fits are additive per rack - each contributes
+    # floor(gap / size) - so the filtered figure is an exact client-side sum.
     fragmentation = (await session.execute(text("""
         WITH units AS (
             SELECT r.id AS rack_id, gs.u
@@ -454,33 +472,33 @@ async def charts(session: AsyncSession) -> dict[str, Any]:
         ), gaps AS (
             SELECT rack_id, count(*) AS len
             FROM free_units GROUP BY rack_id, grp
+        ), located AS (
+            SELECT r.id AS rack_id, rm.name AS room, dc.code AS dc
+            FROM rack r
+            LEFT JOIN rack_row rr ON rr.id = r.row_id
+            LEFT JOIN room rm ON rm.id = rr.room_id
+            LEFT JOIN datacenter dc ON dc.id = rm.datacenter_id
         )
-        SELECT s.size, COALESCE(sum(g.len / s.size), 0)::int AS fits
-        FROM (VALUES (1),(2),(3),(4),(6),(8)) AS s(size)
-        LEFT JOIN gaps g ON g.len >= s.size
-        GROUP BY s.size ORDER BY s.size
+        SELECT l.dc, l.room, s.size,
+               COALESCE(sum(g.len / s.size), 0)::int AS fits
+        FROM located l
+        CROSS JOIN (VALUES (1),(2),(3),(4),(6),(8)) AS s(size)
+        LEFT JOIN gaps g ON g.rack_id = l.rack_id AND g.len >= s.size
+        GROUP BY l.dc, l.room, s.size ORDER BY s.size
     """))).mappings().all()
 
     return {
         "composition": [dict(r) for r in composition],
         "by_lifecycle": [{"key": k, "n": counted.get(k, 0)}
                          for k in ALL_LIFECYCLES],
-        "rack_space": {
-            **dict(space),
-            "u_free": max(0, space["u_total"] - space["u_used"] - space["u_held"]),
-        },
-        "rack_fill": [{"band": b, "n": banded.get(b, 0)} for b in _FILL_BANDS],
-        "floor_space": {
-            **dict(floor),
-            "free": max(0, floor["designed"] - floor["installed"]),
-        },
+        "rack_space": [dict(r) for r in space],
+        "rack_fill": [dict(r) for r in fill],
+        "floor_space": [dict(r) for r in floor],
         "cover_state": [dict(r) for r in cover],
         "warranty_runway": [dict(r) for r in runway],
         "by_room": [dict(r) for r in by_room],
         "placement": [dict(r) for r in placement],
         "contract_spend": [dict(r) for r in spend],
-        "fragmentation": [
-            {"size": r["size"], "fits": r["fits"]} for r in fragmentation
-        ],
+        "fragmentation": [dict(r) for r in fragmentation],
         "completeness": [dict(r) for r in completeness],
     }
