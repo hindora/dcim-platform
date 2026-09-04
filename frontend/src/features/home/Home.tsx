@@ -155,20 +155,17 @@ function Indicator({ category, count, alarms, label, scope, onOpen }: {
   const where = scope ? ` in ${scope.label}` : '';
   const { bind, tipEl } = useHoverTip();
   return (
-    // The tip binds to the CELL: a disabled button swallows mouse events, and
-    // "nothing open" is exactly the state whose explanation would vanish.
     <td className="ind-cell"
         {...bind(on
           ? <><b>{label}{where}</b>: {count} open
               {alarms > 0
                 ? <>, <b>{alarms}</b> needing a response</>
                 : ', none needing a response'} — open the list</>
-          : <><b>{label}</b>: nothing open{where}</>)}>
+          : <><b>{label}</b>: nothing open{where} — open for the history</>)}>
       {/* Lit when anything is open, and marked when some of it needs
-          answering. The count is everything; the mark is the difference
-          between a domain that is noisy and one that is on fire. */}
+          answering. Clickable at zero: the panel carries the cleared
+          history, and quiet is when somebody asks what happened. */}
       <button className={`ind ${meta.tone} ${on ? 'on' : ''} ${alarms > 0 ? 'has-alarm' : ''}`}
-              disabled={!on}
               onClick={() => onOpen({
                 key: category, label, categories: [category], scope,
               })}>
@@ -213,9 +210,8 @@ function IndicatorCells({ alarms, labels, scope, onOpen }: {
                 {scope ? ` in ${scope.label}` : ''}:{' '}
                 {alarms.critical} critical, {alarms.major} major,{' '}
                 {alarms.minor} minor</>
-            : 'No open alarms')}>
+            : 'No open alarms — open for the history')}>
         <button className={`ind alarms ${sev ? `on sev-${sev}` : ''}`}
-                disabled={n === 0}
                 onClick={() => onOpen({
                   key: 'all', label: 'Alarms', categories: [...COLUMN_ORDER],
                   scope, alarmsOnly: true,
@@ -333,18 +329,6 @@ export function Home() {
       <section className="alert-strip">
         <span className="site-title">{org}</span>
         <span className="spacer" />
-        {/* Always reachable, ESPECIALLY on a quiet day: every counter below
-            disables itself at zero, and a zero is exactly when somebody asks
-            "so what cleared overnight". */}
-        <Link className="caption" to="/alarms?view=cleared"
-              title="Cleared alarms - what happened and was resolved">
-          <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden
-               fill="none" stroke="currentColor" strokeWidth="1.3">
-            <circle cx="8" cy="8" r="6.6" />
-            <path d="M8 4.6V8l2.4 1.7" strokeLinecap="round" />
-          </svg>
-          History
-        </Link>
         <button className="caption" onClick={() => setLegendOpen(true)}
                 title="What each counter counts, and what this console leaves out">
           <svg width="17" height="17" viewBox="0 0 16 16" aria-hidden
@@ -374,19 +358,18 @@ export function Home() {
             <div key={total ? '__total' : c.key}
                  className={`alert-counter cat-${total ? 'alarms' : c.tone} ${empty ? 'zero' : ''}`}
                  {...strip.bind(empty
-                   ? `Nothing open in ${(total ? 'any category' : c.label.toLowerCase())}`
+                   ? <>Nothing open in {(total ? 'any category' : c.label.toLowerCase())}
+                       {' '}— open for the history</>
                    : total
                      ? 'Every open alarm, all categories — by room'
                      : <>Everything open in {c.categories
                          .map((k) => (labels[k] ?? k).toLowerCase())
                          .join(' and ')}, <b>{answerable}</b> needing a response</>)}>
+              {/* Clickable at zero on purpose: the panel carries the CLEARED
+                  history, and a quiet counter is exactly when somebody asks
+                  what happened overnight. */}
               <button className="face"
-                      // Nothing to open when nothing is wrong: a panel that
-                      // rises to say "no rooms" teaches an operator that the
-                      // numbers are not worth clicking.
-                      disabled={empty}
                       onClick={() => {
-                        if (empty) return;
                         setDrill(total
                           ? { key: 'all', label: 'Alarms',
                               categories: [...COLUMN_ORDER], alarmsOnly: true }

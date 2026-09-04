@@ -365,6 +365,78 @@ function toCsv(rows: AlarmDrillRow[], withAlerts: boolean) {
 
 export interface PanelScope { kind: 'site' | 'room'; id: string; label: string }
 
+/** The empty state that still answers a question. With nothing open in
+ *  scope, the panel shows what CLEARED there recently instead - a quiet
+ *  counter is exactly when somebody asks what happened overnight, and this
+ *  is why the counters stay clickable at zero. */
+function RecentCleared({ categories, scope, title }: {
+  categories: AlarmCategory[]; scope?: PanelScope; title: string;
+}) {
+  const { data, isLoading } = useQuery({
+    queryKey: ['recent-cleared', scope?.id ?? '', ...categories],
+    queryFn: () => api.alarms({
+      state: ['CLEARED'],
+      category: categories,
+      room: scope?.kind === 'room' ? scope.id : undefined,
+      limit: '100',
+    }),
+    staleTime: 30_000,
+  });
+
+  const items = (data?.items ?? [])
+    // The alarms endpoint scopes by room but not by site; the rows carry
+    // their site, so a site scope narrows here.
+    .filter((a) => scope?.kind !== 'site' || a.datacenter_code === scope.label)
+    .sort((a, b) => (b.cleared_at ?? b.last_seen)
+      .localeCompare(a.cleared_at ?? a.last_seen))
+    .slice(0, 15);
+
+  return (
+    <>
+      <p className="muted">
+        Nothing open in {title.toLowerCase()}{scope ? ` in ${scope.label}` : ''}.
+      </p>
+      {isLoading && <p className="muted small">Looking at the history…</p>}
+      {!isLoading && items.length === 0 && (
+        <p className="muted small">Nothing has cleared here either.</p>
+      )}
+      {items.length > 0 && (
+        <>
+          <p className="sub-caption" style={{ marginTop: 14 }}>
+            Recently cleared
+          </p>
+          <div className="estate-scroll">
+            <table className="estate-table">
+              <thead>
+                <tr>
+                  <th>Cleared</th><th>Device</th><th>Condition</th>
+                  <th>Where</th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((a) => (
+                  <tr key={a.id}>
+                    <td className="muted">
+                      {relativeTime(a.cleared_at ?? a.last_seen)}
+                    </td>
+                    <td>
+                      <Link to={`/devices/${a.device_id}`}>{a.device_name}</Link>
+                    </td>
+                    <td>{humanise(a.alarm_type)}</td>
+                    <td className="muted">
+                      {[a.datacenter_code, a.room_name].filter(Boolean).join(' · ') || '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </>
+  );
+}
+
 export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
   categories: AlarmCategory[]; title: string; scope?: PanelScope;
   /** Opened from ALARMS or an ALM cell: the panel is about what must be
@@ -565,12 +637,12 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
           )}
 
           {data && sorted.length === 0 && (
-            <p className="muted">
-              {q
-                ? `No room matches “${search}”.`
-                : `Nothing open in ${title.toLowerCase()}`
-                  + `${scope ? ` in ${scope.label}` : ''}.`}
-            </p>
+            q ? (
+              <p className="muted">No room matches “{search}”.</p>
+            ) : (
+              <RecentCleared categories={categories} scope={scope}
+                             title={title} />
+            )
           )}
 
           {sorted.length > 0 && (
