@@ -477,10 +477,13 @@ function CabinetSpacePanel({ rows }: { rows: AssetCharts['rack_space'] }) {
   );
 }
 
-/** A bounded ratio where LOW is the problem, which is the one question a
- *  gauge answers better than a bar: the bands say what being there means.
- *  Under 15% of positions left is red, under 40% amber. The denominator
- *  lives on the room, so the gauge stays honest at every filter level. */
+/** A bounded ratio read as UTILIZATION, the way an operator quotes it -
+ *  "the hall is at 85%" - with the needle climbing toward red as the hall
+ *  fills, which is what every neighbouring capacity panel frames too. Green
+ *  to 60% used, amber to 85%, red above. The positions still free stay
+ *  printed in the label, because that is the number an install is planned
+ *  with. The denominator lives on the room, so the gauge stays honest at
+ *  every filter level. */
 function FloorSpacePanel({ rows }: { rows: AssetCharts['floor_space'] }) {
   const f = useCubeFilters(rows, roomOf);
   const designed = f.shown.reduce((t, r) => t + r.designed, 0);
@@ -490,14 +493,14 @@ function FloorSpacePanel({ rows }: { rows: AssetCharts['floor_space'] }) {
   const free = Math.max(0, designed - installed);
 
   return (
-    <Panel title="Floor space remaining">
+    <Panel title="Floor space">
       <FilterRow f={f} label="Room" all="All rooms" />
       <Gauge
-        value={free}
+        value={installed}
         max={designed}
         unit=""
-        label={`rack positions · ${rooms} room${rooms === 1 ? '' : 's'} · ${Math.round(area).toLocaleString()} m²`}
-        bands={[[0.15, 'var(--critical)'], [0.4, 'var(--warn)'], [1, 'var(--ok)']]}
+        label={`rack positions used · ${free.toLocaleString()} free · ${rooms} room${rooms === 1 ? '' : 's'} · ${Math.round(area).toLocaleString()} m²`}
+        bands={[[0.6, 'var(--ok)'], [0.85, 'var(--warn)'], [1, 'var(--critical)']]}
       />
     </Panel>
   );
