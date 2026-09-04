@@ -57,6 +57,28 @@ export function Charts() {
 
   return (
     <>
+      <h3 className="asset-charts-head">Capacity</h3>
+      <div className="asset-cols">
+        <CabinetSpacePanel rows={data.rack_space} />
+
+        <FloorSpacePanel rows={data.floor_space} />
+
+        <StillFitsPanel rows={data.fragmentation} />
+
+        <RackFillPanel rows={data.rack_fill} />
+      </div>
+
+      <h3 className="asset-charts-head">Cover and records</h3>
+      <div className="asset-cols">
+        <CoverLapsesPanel rows={data.warranty_runway} />
+
+        <CoverStatePanel rows={data.cover_state} />
+
+        <ContractSpendPanel rows={data.contract_spend} />
+
+        <CompletenessPanel rows={data.completeness} />
+      </div>
+
       <h3 className="asset-charts-head">Composition</h3>
       <div className="asset-cols">
         <ByTypePanel rows={data.composition} />
@@ -73,28 +95,6 @@ export function Charts() {
         <ByOwnerPanel rows={data.composition} />
 
         <PlacementPanel rows={data.placement} />
-      </div>
-
-      <h3 className="asset-charts-head">Cover and records</h3>
-      <div className="asset-cols">
-        <CoverLapsesPanel rows={data.warranty_runway} />
-
-        <CoverStatePanel rows={data.cover_state} />
-
-        <ContractSpendPanel rows={data.contract_spend} />
-
-        <CompletenessPanel rows={data.completeness} />
-      </div>
-
-      <h3 className="asset-charts-head">Capacity</h3>
-      <div className="asset-cols">
-        <CabinetSpacePanel rows={data.rack_space} />
-
-        <FloorSpacePanel rows={data.floor_space} />
-
-        <StillFitsPanel rows={data.fragmentation} />
-
-        <RackFillPanel rows={data.rack_fill} />
       </div>
 
       <Trends />
