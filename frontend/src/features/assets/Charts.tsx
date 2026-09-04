@@ -267,7 +267,7 @@ function ByRoomPanel({ rows }: { rows: AssetCharts['by_room'] }) {
   const shown = rows.filter((r) => (!dc || r.dc === dc) && (!room || r.room === room));
 
   return (
-    <Panel title="By room" total={sum(shown)}>
+    <Panel title="By room" total={sum(shown)} wide>
       <div className="asset-panel-filters">
         <select value={dc} onChange={(e) => pickDc(e.target.value)} aria-label="Site">
           <option value="">All sites</option>
@@ -278,19 +278,25 @@ function ByRoomPanel({ rows }: { rows: AssetCharts['by_room'] }) {
           {rooms.map((r) => <option key={r} value={r}>{r}</option>)}
         </select>
       </div>
-      <VColumns rows={shown.map((r) => ({
-        label: dc ? r.room : r.label,
-        n: r.n,
-      }))} />
+      {/* Tilted labels: sixteen room names across one panel truncate to a
+          single letter when horizontal, and a label that says nothing is not
+          a label. The tilt is on the wrapper, not VColumns, because the other
+          column charts have short labels and should keep them flat. */}
+      <div className="asset-vcols-tilt">
+        <VColumns rows={shown.map((r) => ({
+          label: dc ? r.room : r.label,
+          n: r.n,
+        }))} />
+      </div>
     </Panel>
   );
 }
 
-function Panel({ title, total, children }: {
-  title: string; total?: number; children: React.ReactNode;
+function Panel({ title, total, wide, children }: {
+  title: string; total?: number; wide?: boolean; children: React.ReactNode;
 }) {
   return (
-    <div className="asset-panel">
+    <div className={`asset-panel${wide ? ' asset-panel-wide' : ''}`}>
       <h3>
         {title}
         {total != null && <span className="asset-panel-total">{total.toLocaleString()}</span>}

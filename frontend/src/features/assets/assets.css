@@ -1277,9 +1277,47 @@ tr.is-selected > td { background: var(--accent-dim); }
 .asset-panel-filters select {
   flex: 1;
   min-width: 0;
+  max-width: 200px;
   height: 26px;
   padding: 0 6px;
   font-size: 0.76rem;
+}
+
+/* A panel whose chart needs the width of two: sixteen room columns in one
+   grid cell leaves each bar a sliver. Collapses back to one cell where the
+   row itself is only one column wide. */
+.asset-panel-wide { grid-column: span 2; }
+
+@media (max-width: 640px) {
+  .asset-panel-wide { grid-column: auto; }
+}
+
+/* Tilted column labels, for column charts whose categories are room names
+   rather than bands.
+   The label must leave the flow entirely: each column is itself a one-track
+   grid, and a nowrap label with visible overflow sizes that track to the
+   text, blowing every bar up to label width. Absolute placement keeps the
+   track sized by the bar; the column's bottom padding reserves the diagonal
+   space the rotated text actually needs. */
+.asset-vcols-tilt .asset-vcols { height: 232px; }
+
+/* 90px: the longest label ("DC2 · Mechanical Room") at 45° drops about
+   textwidth / sqrt(2) below the baseline; less and it walks out of the
+   panel. */
+.asset-vcols-tilt .asset-vcols-col {
+  position: relative;
+  padding-bottom: 90px;
+}
+
+.asset-vcols-tilt .asset-vcols-col .k {
+  position: absolute;
+  top: calc(100% - 84px);
+  right: 50%;
+  margin-top: 0;
+  overflow: visible;
+  text-overflow: clip;
+  transform: rotate(-45deg);
+  transform-origin: top right;
 }
 
 /* ---------------------------------------------------- vertical columns */
