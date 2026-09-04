@@ -7,6 +7,7 @@ import {
   type MaintenanceWindow,
 } from '../../../api/client';
 import { humanise, relativeTime } from '../../../lib/format';
+import { Tip } from '../../../components/HoverTip';
 import { RecordWorkForm } from './RecordWorkForm';
 
 /** Work planned on this asset, and work done to it.
@@ -50,11 +51,11 @@ export function MaintenanceTab({ deviceId }: { deviceId: string }) {
                       {humanise(w.status)}
                     </span>
                   </td>
-                  <td className="muted" title={w.starts_at}>
-                    {relativeTime(w.starts_at)}
+                  <td className="muted">
+                    <Tip tip={w.starts_at}>{relativeTime(w.starts_at)}</Tip>
                   </td>
-                  <td className="muted" title={w.ends_at}>
-                    {relativeTime(w.ends_at)}
+                  <td className="muted">
+                    <Tip tip={w.ends_at}>{relativeTime(w.ends_at)}</Tip>
                   </td>
                 </tr>
               ))}
@@ -83,8 +84,8 @@ export function MaintenanceTab({ deviceId }: { deviceId: string }) {
             <tbody>
               {records.items.map((r) => (
                 <tr key={r.id}>
-                  <td className="muted" title={r.performed_at}>
-                    {relativeTime(r.performed_at)}
+                  <td className="muted">
+                    <Tip tip={r.performed_at}>{relativeTime(r.performed_at)}</Tip>
                   </td>
                   <td className="muted">{humanise(r.kind)}</td>
                   <td>{r.summary}</td>

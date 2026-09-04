@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError, type LifecycleHistory } from '../../../api/client';
 import { humanise, relativeTime } from '../../../lib/format';
+import { Tip } from '../../../components/HoverTip';
 import { LifecycleChip } from '../components/LifecycleChip';
 
 /** An asset's lifecycle: where it is, where it may go, and how it got here.
@@ -102,7 +103,9 @@ export function LifecycleTab({ deviceId }: { deviceId: string }) {
             <tbody>
               {data.events.map((e) => (
                 <tr key={e.id}>
-                  <td className="muted" title={e.ts}>{relativeTime(e.ts)}</td>
+                  <td className="muted">
+                    <Tip tip={e.ts}>{relativeTime(e.ts)}</Tip>
+                  </td>
                   <td>
                     {e.from_state
                       ? <LifecycleChip state={e.from_state} />
