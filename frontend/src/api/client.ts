@@ -421,8 +421,14 @@ export interface ImportValidation {
 /** Composition and capacity of the estate. Counts, never trends: nothing in
  *  the schema records history yet, so a line would be drawn through one point. */
 export interface AssetCharts {
-  by_type: { key: string; label: string; category: string; n: number }[];
-  by_vendor: { label: string; n: number }[];
+  /** The composition cube: one row per (type, vendor, site). "By type" and
+   *  "By make" are client-side rollups of it, which is what lets each panel
+   *  filter by site and the other panel's dimension without a round trip.
+   *  dc is null for a device that is not placed in any room. */
+  composition: {
+    type_key: string; type_label: string; vendor: string;
+    dc: string | null; n: number;
+  }[];
   by_lifecycle: { key: string; n: number }[];
   rack_space: {
     racks: number; u_total: number; u_used: number;

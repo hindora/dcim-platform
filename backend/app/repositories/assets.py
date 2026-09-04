@@ -196,23 +196,26 @@ async def charts(session: AsyncSession) -> dict[str, Any]:
     One round trip because the whole section renders together - three loading
     states stacked on one panel reads as a page that cannot make up its mind.
     """
-    by_type = (await session.execute(text("""
-        SELECT d.device_type AS key,
-               COALESCE(dt.display_name, d.device_type) AS label,
-               COALESCE(dt.category, 'unclassified') AS category,
+    # One cube for both composition panels: the same devices grouped once by
+    # (type, vendor, site). "By type" and "By make" are rollups of it, so each
+    # panel's filters - site plus the OTHER panel's dimension - are client-side
+    # sums over rows already in hand rather than extra round trips. All joins
+    # are LEFT: an unplaced device has no site (dc is NULL) but must not
+    # vanish from the composition of the estate.
+    composition = (await session.execute(text("""
+        SELECT d.device_type AS type_key,
+               COALESCE(dt.display_name, d.device_type) AS type_label,
+               COALESCE(v.name, 'Unrecorded') AS vendor,
+               dc.code AS dc,
                count(*) AS n
         FROM device d
         LEFT JOIN device_type dt ON dt.code = d.device_type
-        GROUP BY d.device_type, dt.display_name, dt.category
-        ORDER BY n DESC
-    """))).mappings().all()
-
-    by_vendor = (await session.execute(text("""
-        SELECT COALESCE(v.name, 'Unrecorded') AS label, count(*) AS n
-        FROM device d
         LEFT JOIN vendor v ON v.id = d.vendor_id
-        GROUP BY 1
-        ORDER BY n DESC
+        LEFT JOIN rack r ON r.id = d.rack_id
+        LEFT JOIN rack_row rr ON rr.id = r.row_id
+        LEFT JOIN room rm ON rm.id = COALESCE(rr.room_id, d.room_id)
+        LEFT JOIN datacenter dc ON dc.id = rm.datacenter_id
+        GROUP BY d.device_type, dt.display_name, v.name, dc.code
     """))).mappings().all()
 
     by_lifecycle = (await session.execute(text("""
@@ -433,8 +436,7 @@ async def charts(session: AsyncSession) -> dict[str, Any]:
     """))).mappings().all()
 
     return {
-        "by_type": [dict(r) for r in by_type],
-        "by_vendor": [dict(r) for r in by_vendor],
+        "composition": [dict(r) for r in composition],
         "by_lifecycle": [{"key": k, "n": counted.get(k, 0)}
                          for k in ALL_LIFECYCLES],
         "rack_space": {

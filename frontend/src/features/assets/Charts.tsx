@@ -61,21 +61,9 @@ export function Charts() {
     <>
       <h3 className="asset-charts-head">Composition</h3>
       <div className="asset-cols">
-        <Panel title="By type" total={sum(data.by_type)}>
-          <BarChart
-            rows={data.by_type.map((t): BarRow => ({
-              label: t.label,
-              n: t.n,
-              href: `/assets/inventory?device_type=${encodeURIComponent(t.key)}`,
-            }))}
-          />
-        </Panel>
+        <ByTypePanel rows={data.composition} />
 
-        <Panel title="By make" total={sum(data.by_vendor)}>
-          <BarChart rows={data.by_vendor.map((v): BarRow => ({
-            label: v.label, n: v.n,
-          }))} />
-        </Panel>
+        <ByMakePanel rows={data.composition} />
 
         <Panel title="By lifecycle" total={sum(data.by_lifecycle)}>
           {/* The one chart where a colour per bar earns itself: here the hue IS
@@ -242,6 +230,94 @@ export function Charts() {
 
       <Trends />
     </>
+  );
+}
+
+type CompositionRow = AssetCharts['composition'][number];
+
+function uniqSorted(values: string[]): string[] {
+  return [...new Set(values)].sort();
+}
+
+/** "By type" and "By make" are two rollups of the one composition cube, and
+ *  each panel filters by site plus the OTHER panel's dimension - which is the
+ *  useful cross ("which vendors make my switches") without collapsing two
+ *  always-visible charts into one hidden behind a dropdown. The second
+ *  dropdown's options follow the site, and a selection the narrowed cube no
+ *  longer contains is cleared rather than silently shown empty. */
+function useCubeFilters(rows: CompositionRow[], other: (r: CompositionRow) => string) {
+  const [dc, setDc] = useState('');
+  const [pick, setPick] = useState('');
+
+  const dcs = uniqSorted(rows.map((r) => r.dc).filter((d): d is string => d !== null));
+  const options = uniqSorted(rows.filter((r) => !dc || r.dc === dc).map(other));
+
+  const pickDc = (next: string) => {
+    setDc(next);
+    if (pick && !rows.some((r) => (!next || r.dc === next) && other(r) === pick)) {
+      setPick('');
+    }
+  };
+
+  const shown = rows.filter((r) => (!dc || r.dc === dc) && (!pick || other(r) === pick));
+  return { dc, pickDc, pick, setPick, dcs, options, shown };
+}
+
+function ByTypePanel({ rows }: { rows: CompositionRow[] }) {
+  const f = useCubeFilters(rows, (r) => r.vendor);
+
+  // Rolled up by type_key so the deep link into the inventory survives the
+  // aggregation; the label rides along.
+  const byType = new Map<string, { label: string; n: number }>();
+  for (const r of f.shown) {
+    const g = byType.get(r.type_key);
+    if (g) g.n += r.n;
+    else byType.set(r.type_key, { label: r.type_label, n: r.n });
+  }
+  const bars = [...byType.entries()].map(([key, g]): BarRow => ({
+    label: g.label,
+    n: g.n,
+    href: `/assets/inventory?device_type=${encodeURIComponent(key)}`,
+  }));
+
+  return (
+    <Panel title="By type" total={bars.reduce((t, r) => t + r.n, 0)}>
+      <div className="asset-panel-filters">
+        <select value={f.dc} onChange={(e) => f.pickDc(e.target.value)} aria-label="Site">
+          <option value="">All sites</option>
+          {f.dcs.map((d) => <option key={d} value={d}>{d}</option>)}
+        </select>
+        <select value={f.pick} onChange={(e) => f.setPick(e.target.value)} aria-label="Make">
+          <option value="">All makes</option>
+          {f.options.map((v) => <option key={v} value={v}>{v}</option>)}
+        </select>
+      </div>
+      <BarChart rows={bars} />
+    </Panel>
+  );
+}
+
+function ByMakePanel({ rows }: { rows: CompositionRow[] }) {
+  const f = useCubeFilters(rows, (r) => r.type_label);
+
+  const byVendor = new Map<string, number>();
+  for (const r of f.shown) byVendor.set(r.vendor, (byVendor.get(r.vendor) ?? 0) + r.n);
+  const bars = [...byVendor.entries()].map(([label, n]): BarRow => ({ label, n }));
+
+  return (
+    <Panel title="By make" total={bars.reduce((t, r) => t + r.n, 0)}>
+      <div className="asset-panel-filters">
+        <select value={f.dc} onChange={(e) => f.pickDc(e.target.value)} aria-label="Site">
+          <option value="">All sites</option>
+          {f.dcs.map((d) => <option key={d} value={d}>{d}</option>)}
+        </select>
+        <select value={f.pick} onChange={(e) => f.setPick(e.target.value)} aria-label="Type">
+          <option value="">All types</option>
+          {f.options.map((t) => <option key={t} value={t}>{t}</option>)}
+        </select>
+      </div>
+      <BarChart rows={bars} />
+    </Panel>
   );
 }
 
