@@ -4,6 +4,7 @@ import { api, type AssetCharts } from '../../api/client';
 import { humanise } from '../../lib/format';
 import { BarChart, type BarRow } from './components/BarChart';
 import { useHoverTip } from '../../components/HoverTip';
+import { MaxGlyph, MaxModal } from '../../components/MaxModal';
 import { Donut, Gauge, VColumns } from './components/Shapes';
 import { Trends } from './Trends';
 
@@ -661,10 +662,16 @@ function Panel({ title, total, unit = 'devices', wide, children }: {
   title: string; total?: number; unit?: string; wide?: boolean;
   children: React.ReactNode;
 }) {
+  // The modal renders the same children the panel does, so a filter chosen
+  // in either place is the one state - the big view is never a stale copy.
+  const [max, setMax] = useState(false);
   return (
     <div className={`asset-panel${wide ? ' asset-panel-wide' : ''}`}>
       <h3>
         {title}
+        <button type="button" className="asset-max"
+                aria-label={`Maximize ${title}`}
+                onClick={() => setMax(true)}><MaxGlyph /></button>
         {total != null && (
           <span className="asset-panel-total">
             {total.toLocaleString()}
@@ -673,6 +680,11 @@ function Panel({ title, total, unit = 'devices', wide, children }: {
         )}
       </h3>
       {children}
+      {max && (
+        <MaxModal title={title} onClose={() => setMax(false)}>
+          {children}
+        </MaxModal>
+      )}
     </div>
   );
 }

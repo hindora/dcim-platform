@@ -1073,6 +1073,11 @@ tr.is-selected > td { background: var(--accent-dim); }
   color: var(--text-muted);
 }
 
+.asset-panel h3 .asset-max {
+  float: right;
+  margin-left: 8px;
+}
+
 .asset-panel h3 .asset-panel-total {
   float: right;
   font-variant-numeric: tabular-nums;

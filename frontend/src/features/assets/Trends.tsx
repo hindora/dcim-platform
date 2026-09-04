@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useHoverTip } from '../../components/HoverTip';
 import { Seg } from '../../components/estate';
+import { MaxGlyph, MaxModal } from '../../components/MaxModal';
 import { api, type AssetTrends } from '../../api/client';
 
 /** The windows a trend is read at. Days drive the snapshot series; the
@@ -38,19 +39,35 @@ type Metric = (typeof METRICS)[number][0];
  *  stripe at the top that hides the one thing a trend exists to show. The
  *  range is printed on the axis so the zoom is never a secret.
  */
-/** A panel heading with its own range control. Each chart reads at its own
- *  window - a year of item count beside a month of deltas is a legitimate
- *  combination - and every toggle SLICES the year already in hand rather
- *  than refetching. */
-function PanelHead({ title, range, onRange }: {
+/** A trend panel: its own range control, and a maximize into the full-window
+ *  modal. Each chart reads at its own window - a year of item count beside a
+ *  month of deltas is a legitimate combination - and every toggle SLICES the
+ *  year already in hand rather than refetching. The modal renders the same
+ *  filter and chart elements, so state chosen in either place is one state. */
+function TrendPanel({ title, range, onRange, filters, children }: {
   title: string; range: string; onRange: (v: string) => void;
+  filters?: React.ReactNode; children: React.ReactNode;
 }) {
+  const [max, setMax] = useState(false);
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-      <h3 style={{ marginRight: 'auto' }}>{title}</h3>
-      <Seg value={range} label={`${title} range`}
-           options={RANGES.map((r) => ({ key: r.key, label: r.label }))}
-           onChange={onRange} />
+    <div className="asset-panel asset-panel-flex">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <h3 style={{ marginRight: 'auto' }}>{title}</h3>
+        <Seg value={range} label={`${title} range`}
+             options={RANGES.map((r) => ({ key: r.key, label: r.label }))}
+             onChange={onRange} />
+        <button type="button" className="asset-max"
+                aria-label={`Maximize ${title}`}
+                onClick={() => setMax(true)}><MaxGlyph /></button>
+      </div>
+      {filters}
+      <div className="asset-trend-slot">{children}</div>
+      {max && (
+        <MaxModal title={title} onClose={() => setMax(false)}>
+          {filters}
+          {children}
+        </MaxModal>
+      )}
     </div>
   );
 }
@@ -98,73 +115,63 @@ export function Trends() {
             picker), so the charts floated at different heights. The slot
             takes margin-top auto and every baseline lands the same distance
             from its panel's bottom. */}
-        <div className="asset-panel asset-panel-flex">
-          <PanelHead title="Item count" range={rItems} onRange={setRItems} />
-          <div className="asset-panel-filters">
-            <select value={metric} aria-label="Metric"
-                    onChange={(e) => setMetric(e.target.value as Metric)}>
-              {METRICS.map(([key, label]) => (
-                <option key={key} value={key}>{label}</option>
-              ))}
-            </select>
-          </div>
-          <div className="asset-trend-slot">
-            <TrendLine
-              points={lastDays(snaps, rItems).map((s) => ({ day: s.day, v: s[metric] }))}
+        <TrendPanel title="Item count" range={rItems} onRange={setRItems}
+                    filters={
+                      <div className="asset-panel-filters">
+                        <select value={metric} aria-label="Metric"
+                                onChange={(e) => setMetric(e.target.value as Metric)}>
+                          {METRICS.map(([key, label]) => (
+                            <option key={key} value={key}>{label}</option>
+                          ))}
+                        </select>
+                      </div>
+                    }>
+          <TrendLine
+            points={lastDays(snaps, rItems).map((s) => ({ day: s.day, v: s[metric] }))}
+          />
+        </TrendPanel>
+
+        <TrendPanel title="Free rack units" range={rFree} onRange={setRFree}>
+          <TrendLine
+            points={lastDays(snaps, rFree).map((s) => ({ day: s.day, v: s.u_free }))}
+            unit="U"
+          />
+        </TrendPanel>
+
+        {/* Day-on-day change in INSTALLED units, from consecutive snapshots.
+            Needs two nights by definition - a delta is a difference. */}
+        <TrendPanel title="Rack units delta" range={rDelta} onRange={setRDelta}>
+          {deltas.length === 0 ? (
+            <p className="muted">
+              Needs two nightly snapshots — the first difference appears
+              tomorrow.
+            </p>
+          ) : (
+            <Diverging rows={deltas} unit="U" />
+          )}
+        </TrendPanel>
+
+        {/* From the lifecycle events, NOT snapshot diffs: ten installs and
+            ten decommissions in one month net to zero, and the activity is
+            the point. */}
+        <TrendPanel title="Installs and decommissions"
+                    range={rActivity} onRange={setRActivity}>
+          {activity.length === 0 ? (
+            <p className="muted">
+              Accrues as assets move through lifecycle states.
+            </p>
+          ) : (
+            <Paired
+              rows={activity.map((a) => ({
+                label: a.month.slice(2),
+                a: a.installs,
+                b: a.decommissions,
+              }))}
+              aLabel="Installs"
+              bLabel="Decommissions"
             />
-          </div>
-        </div>
-
-        <div className="asset-panel asset-panel-flex">
-          <PanelHead title="Free rack units" range={rFree} onRange={setRFree} />
-          <div className="asset-trend-slot">
-            <TrendLine
-              points={lastDays(snaps, rFree).map((s) => ({ day: s.day, v: s.u_free }))}
-              unit="U"
-            />
-          </div>
-        </div>
-
-        <div className="asset-panel asset-panel-flex">
-          <PanelHead title="Rack units delta" range={rDelta} onRange={setRDelta} />
-          {/* Day-on-day change in INSTALLED units, from consecutive snapshots.
-              Needs two nights by definition - a delta is a difference. */}
-          <div className="asset-trend-slot">
-            {deltas.length === 0 ? (
-              <p className="muted">
-                Needs two nightly snapshots — the first difference appears
-                tomorrow.
-              </p>
-            ) : (
-              <Diverging rows={deltas} unit="U" />
-            )}
-          </div>
-        </div>
-
-        <div className="asset-panel asset-panel-flex">
-          <PanelHead title="Installs and decommissions"
-                     range={rActivity} onRange={setRActivity} />
-          {/* From the lifecycle events, NOT snapshot diffs: ten installs and
-              ten decommissions in one month net to zero, and the activity is
-              the point. */}
-          <div className="asset-trend-slot">
-            {activity.length === 0 ? (
-              <p className="muted">
-                Accrues as assets move through lifecycle states.
-              </p>
-            ) : (
-              <Paired
-                rows={activity.map((a) => ({
-                  label: a.month.slice(2),
-                  a: a.installs,
-                  b: a.decommissions,
-                }))}
-                aLabel="Installs"
-                bLabel="Decommissions"
-              />
-            )}
-          </div>
-        </div>
+          )}
+        </TrendPanel>
       </div>
     </>
   );

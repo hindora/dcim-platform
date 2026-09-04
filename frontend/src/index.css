@@ -777,3 +777,67 @@ button.primary { background: var(--accent-dim); border-color: var(--accent); }
   color: var(--text);
   font-weight: 600;
 }
+
+/* ---------------------------------------------------- maximize modal */
+
+/* Full-window chart view. The card takes the whole viewport minus a rim of
+   backdrop, so the click-away affordance stays visible. */
+.max-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  padding: 3vh 3vw;
+  background: rgb(0 0 0 / 0.6);
+}
+
+.max-modal-card {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--bg-inset, var(--bg-raised));
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  box-shadow: 0 16px 48px rgb(0 0 0 / 0.5);
+}
+
+.max-modal-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.max-modal-head h2 { margin: 0; font-size: 1.05rem; }
+
+.max-modal-head button {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+.max-modal-head button:hover { color: var(--text); }
+
+.max-modal-body {
+  flex: 1;
+  overflow: auto;
+  padding: 20px 24px;
+}
+
+/* The ghost maximize glyph a panel heading carries. */
+.asset-max {
+  background: none;
+  border: none;
+  padding: 0 2px;
+  color: var(--text-faint);
+  font-size: 0.85rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.asset-max:hover { color: var(--text); }
