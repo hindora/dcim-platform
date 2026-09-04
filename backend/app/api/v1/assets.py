@@ -66,9 +66,13 @@ async def assets_trends(
     and ten decommissions in one day net to zero - so counts of state come from
     the snapshots and movements between states come from the events.
     """
+    days = min(days, 400)
     return {
-        "snapshots": await snapshot_repo.series(session, days=min(days, 400)),
-        "activity": await snapshot_repo.lifecycle_activity(session),
+        "snapshots": await snapshot_repo.series(session, days=days),
+        # The activity window follows the range, so the two halves of the
+        # section describe the same stretch of time.
+        "activity": await snapshot_repo.lifecycle_activity(
+            session, months=max(1, min(13, round(days / 30)))),
     }
 
 

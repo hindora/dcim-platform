@@ -1,6 +1,29 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useHoverTip } from '../../components/HoverTip';
+import { Seg } from '../../components/estate';
 import { api, type AssetTrends } from '../../api/client';
+
+/** The windows a trend is read at. Days drive the snapshot series; the
+ *  backend widens the activity chart's month window to match. */
+const RANGES = [
+  { key: '30', label: '30D' },
+  { key: '90', label: '90D' },
+  { key: '180', label: '180D' },
+  { key: '365', label: '1Y' },
+] as const;
+
+/** What Item count counts. Each is a column the snapshot already carries -
+ *  the picker chooses, it never refetches. */
+const METRICS = [
+  ['devices', 'All devices'],
+  ['in_service', 'In service'],
+  ['installed', 'Installed'],
+  ['in_stock', 'In stock'],
+  ['planned', 'Planned'],
+  ['maintenance', 'Maintenance'],
+] as const;
+type Metric = (typeof METRICS)[number][0];
 
 /** The estate over time, from the nightly snapshots and the lifecycle events.
  *
@@ -16,9 +39,11 @@ import { api, type AssetTrends } from '../../api/client';
  *  range is printed on the axis so the zoom is never a secret.
  */
 export function Trends() {
+  const [days, setDays] = useState('90');
+  const [metric, setMetric] = useState<Metric>('devices');
   const { data, isLoading, error } = useQuery<AssetTrends>({
-    queryKey: ['asset-trends'],
-    queryFn: api.assetTrends,
+    queryKey: ['asset-trends', days],
+    queryFn: () => api.assetTrends(Number(days)),
     refetchInterval: 5 * 60_000,
   });
 
@@ -33,15 +58,30 @@ export function Trends() {
 
   return (
     <>
-      <h3 className="asset-charts-head">Trends</h3>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 14 }}>
+        <h3 className="asset-charts-head" style={{ marginRight: 'auto' }}>
+          Trends
+        </h3>
+        <Seg value={days} label="Trend range"
+             options={RANGES.map((r) => ({ key: r.key, label: r.label }))}
+             onChange={setDays} />
+      </div>
       {/* Two-up: a trend line squeezed to a quarter of the row flattens the
           movement it exists to show. Half the row gives the day-to-day slope
           room to be read. */}
       <div className="asset-cols asset-cols-two">
         <div className="asset-panel">
           <h3>Item count</h3>
+          <div className="asset-panel-filters">
+            <select value={metric} aria-label="Metric"
+                    onChange={(e) => setMetric(e.target.value as Metric)}>
+              {METRICS.map(([key, label]) => (
+                <option key={key} value={key}>{label}</option>
+              ))}
+            </select>
+          </div>
           <TrendLine
-            points={snaps.map((s) => ({ day: s.day, v: s.devices }))}
+            points={snaps.map((s) => ({ day: s.day, v: s[metric] }))}
           />
         </div>
 

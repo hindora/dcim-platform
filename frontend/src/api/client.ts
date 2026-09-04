@@ -1814,7 +1814,8 @@ export const api = {
     request<PowerChain>(`/power/chain/${deviceId}`),
   assetFilterOptions: () => request<AssetFilterOptions>('/assets/filter-options'),
   assetCharts: () => request<AssetCharts>('/assets/charts'),
-  assetTrends: () => request<AssetTrends>('/assets/trends'),
+  assetTrends: (days = 90) =>
+    request<AssetTrends>(`/assets/trends?days=${days}`),
 
   discoveryCandidates: (params: Record<string, string | undefined> = {}) => {
     const q = new URLSearchParams();
