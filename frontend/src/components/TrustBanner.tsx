@@ -26,17 +26,40 @@
  * and it goes away when the condition does.
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { humanise } from '../lib/format';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { api, type PlatformState } from '../api/client';
 import { useSocketStatus } from '../ws/useSocket';
+import type { SocketStatus } from '../ws/client';
 
 /** How often to ask. The endpoint is two queries, and the answer is the
  *  premise of everything else on screen, so it is worth asking often - but a
  *  banner that flickers between states reads as noise, so not every second. */
 const POLL_MS = 20_000;
+
+/** How long the socket must stay away from 'open' before it counts as down.
+ *  Every page load spends its first seconds handshaking, so without this
+ *  grace each refresh opened with "live updates have stopped" over a feed
+ *  that was two seconds from connecting - and a trust banner that cries on
+ *  every load is one nobody believes during an incident. */
+const SOCKET_GRACE_MS = 10_000;
+
+/** True only once the socket has been non-open for the whole grace window;
+ *  false again the moment it opens. */
+function useSocketDown(status: SocketStatus): boolean {
+  const [down, setDown] = useState(false);
+  useEffect(() => {
+    if (status === 'open') {
+      setDown(false);
+      return;
+    }
+    const t = window.setTimeout(() => setDown(true), SOCKET_GRACE_MS);
+    return () => window.clearTimeout(t);
+  }, [status]);
+  return down;
+}
 
 function age(seconds: number | null): string {
   if (seconds === null) return 'not arriving at all';
@@ -74,9 +97,9 @@ export function TrustBanner() {
 
   // A dropped socket alone is not worth interrupting anyone about - it
   // reconnects, and announcing every reconnect is how an operator learns to
-  // ignore this strip. It earns a line here only as a condition alongside a
-  // pipeline that is already degraded, or when it stays down.
-  const socketDown = socket !== 'open';
+  // ignore this strip. It earns a line here only when it STAYS down past the
+  // grace window, or as a condition alongside an already-degraded pipeline.
+  const socketDown = useSocketDown(socket);
   if (!platform) return null;
   if (platform.state === 'ok' && !socketDown) return null;
 
