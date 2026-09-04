@@ -474,6 +474,9 @@ a.asset-tile:hover { border-color: var(--border-strong); }
   background: none;
   border: none;
   border-bottom: 2px solid transparent;
+  /* Square. The global button radius rounds the active underline's ends,
+     and a tab is a tab, not a pill. */
+  border-radius: 0;
   padding: 7px 12px;
   color: var(--text-muted);
   font-size: 0.88rem;
