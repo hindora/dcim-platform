@@ -157,6 +157,7 @@ export function Charts() {
               fall-off is visible. Sizes are chassis heights that exist; a
               continuous axis would imply 5U equipment somebody could buy. */}
           <VColumns
+            caption="Potential new items"
             rows={data.fragmentation.map((f) => ({
               label: `${f.size}U`,
               n: f.fits,
@@ -540,6 +541,7 @@ function Panel({ title, total, unit = 'devices', wide, children }: {
 function Histogram({ rows }: { rows: { band: string; n: number }[] }) {
   const max = Math.max(1, ...rows.map((r) => r.n));
   return (
+    <>
     <div className="asset-histogram">
       {rows.map((r) => (
         <div className="asset-histogram-col" key={r.band}>
@@ -554,7 +556,9 @@ function Histogram({ rows }: { rows: { band: string; n: number }[] }) {
           <div className="k">{r.band}</div>
         </div>
       ))}
-    </div>
+      </div>
+      <div className="asset-vcols-caption">Number of cabinets</div>
+    </>
   );
 }
 
