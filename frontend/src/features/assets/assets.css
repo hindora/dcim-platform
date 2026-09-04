@@ -1409,10 +1409,23 @@ tr.is-selected > td { background: var(--accent-dim); }
   text-overflow: ellipsis;
 }
 
-/* The axis caption: what the figures ARE, centred under the columns and a
-   step quieter than the category labels above it. */
-.asset-vcols-caption {
-  margin-top: 8px;
+/* The y-axis title: what the figures ARE. The count is the vertical
+   dimension of a column chart, so its name stands rotated beside the
+   columns, reading bottom-to-top as y-axis titles do. */
+.asset-vcols-frame {
+  display: flex;
+  gap: 8px;
+}
+
+.asset-vcols-frame > .asset-vcols,
+.asset-vcols-frame > .asset-histogram {
+  flex: 1;
+  min-width: 0;
+}
+
+.asset-vcols-ylabel {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
   text-align: center;
   font-size: 0.7rem;
   letter-spacing: 0.04em;

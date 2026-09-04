@@ -154,15 +154,17 @@ export type Column = { label: string; n: number; colour?: string };
 export function VColumns({ rows, format, caption }: {
   rows: Column[];
   format?: (n: number) => string;
-  /** A line under the axis naming what the figures ARE ("Potential new
-   *  items") - the one thing neither the labels nor the values say. */
+  /** Names what the figures ARE ("Potential new items") - the one thing
+   *  neither the labels nor the values say. The count is the VERTICAL
+   *  dimension of a column chart, so it stands rotated on the y axis. */
   caption?: string;
 }) {
   const max = Math.max(1, ...rows.map((r) => r.n));
   if (rows.length === 0) return <p className="muted">Nothing recorded.</p>;
 
   return (
-    <>
+    <div className="asset-vcols-frame">
+    {caption && <div className="asset-vcols-ylabel">{caption}</div>}
     <div className="asset-vcols"
          style={{ gridTemplateColumns: `repeat(${rows.length}, 1fr)` }}>
       {rows.map((r) => (
@@ -178,7 +180,6 @@ export function VColumns({ rows, format, caption }: {
         </div>
       ))}
     </div>
-    {caption && <div className="asset-vcols-caption">{caption}</div>}
-    </>
+    </div>
   );
 }

@@ -541,7 +541,8 @@ function Panel({ title, total, unit = 'devices', wide, children }: {
 function Histogram({ rows }: { rows: { band: string; n: number }[] }) {
   const max = Math.max(1, ...rows.map((r) => r.n));
   return (
-    <>
+    <div className="asset-vcols-frame">
+    <div className="asset-vcols-ylabel">Number of cabinets</div>
     <div className="asset-histogram">
       {rows.map((r) => (
         <div className="asset-histogram-col" key={r.band}>
@@ -557,8 +558,7 @@ function Histogram({ rows }: { rows: { band: string; n: number }[] }) {
         </div>
       ))}
       </div>
-      <div className="asset-vcols-caption">Number of cabinets</div>
-    </>
+    </div>
   );
 }
 
