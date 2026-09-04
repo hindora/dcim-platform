@@ -62,6 +62,7 @@ class ImportReport:
     retired_endpoints: int = 0
     connections_replaced: int = 0
     sites_sized: int = 0
+    racks_rated: int = 0
     credentials: int = 0
     decommissioned: int = 0
     # Outcome of the post-import A/B derivation: how many device pairs got a
@@ -171,6 +172,8 @@ class TopologyImporter:
         # the site actually has.
         self.report.sites_sized = await self._seed_design_capacity()
 
+        self.report.racks_rated = await self._seed_rack_ratings()
+
         log.info("import complete", **self.report.as_dict())
         return self.report
 
@@ -270,6 +273,45 @@ class TopologyImporter:
                                         "design_it_kw_source": "derived"})})
             seeded += 1
         return seeded
+
+    async def _seed_rack_ratings(self) -> int:
+        """Derive each rack's power rating from the rPDUs that feed it.
+
+        Nobody types a rack rating into this system either. What the
+        inventory does know is the rack PDUs installed in the rack, each with
+        a datasheet nameplate on its model. Under 2N the rack must be able to
+        run on ONE feed, so the rating is the smallest single feed - never
+        the sum, which would promise power the rack loses the moment a feed
+        drops. A rack with no rated PDU stays NULL: unknown is a usable
+        answer, a guess is not. The basis lands in attributes for the same
+        reason design_it_kw's does - a limit that cannot be explained is a
+        limit nobody should plan against.
+        """
+        rows = (await self.s.execute(text("""
+            UPDATE rack r
+               SET rated_power_kw = sub.kw,
+                   attributes = r.attributes || CAST(:attrs AS jsonb)
+                       || jsonb_build_object('rated_power_kw_basis',
+                            sub.feeds || ' rPDU feed(s), smallest nameplate '
+                            || sub.min_w || ' W')
+              FROM (
+                  SELECT d.rack_id,
+                         round(min(m.rated_power_w) / 1000.0, 2) AS kw,
+                         min(m.rated_power_w)::int AS min_w,
+                         count(*) AS feeds
+                  FROM device d
+                  JOIN model m ON m.id = d.model_id
+                  WHERE d.device_type = 'pdu'
+                    AND d.rack_id IS NOT NULL
+                    AND d.lifecycle NOT IN ('decommissioned', 'retired')
+                    AND m.rated_power_w > 0
+                  GROUP BY d.rack_id
+              ) AS sub
+             WHERE r.id = sub.rack_id
+             RETURNING r.id
+        """), {"attrs": json.dumps({"rated_power_kw_source": "derived"})}
+        )).all()
+        return len(rows)
 
     async def _load_lookups(self) -> None:
         rows = (await self.s.execute(text("SELECT name, id::text FROM poll_profile"))).all()
