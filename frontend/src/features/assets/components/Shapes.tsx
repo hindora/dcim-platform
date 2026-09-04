@@ -118,6 +118,15 @@ export function Gauge({ value, max, bands, unit, label }: {
 
   const [nx, ny] = point(frac, r - thickness / 2 - 2);
 
+  // Quarter ticks, printed INSIDE the ring: the old pair of end labels sat
+  // on the arc itself and the stroke swallowed them. Inside, every number
+  // has dark ground behind it, and the quarters give the needle a scale to
+  // be read against rather than only two ends to interpolate between.
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => {
+    const [tx, ty] = point(f, r - thickness / 2 - 14);
+    return { f, x: tx, y: ty + 3, v: Math.round(f * max) };
+  });
+
   return (
     <div className="asset-gauge">
       <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`}
@@ -126,12 +135,12 @@ export function Gauge({ value, max, bands, unit, label }: {
           <path key={s.key} d={s.d} fill="none" stroke={s.colour}
                 strokeWidth={thickness} strokeLinecap="butt" />
         ))}
+        {ticks.map((t) => (
+          <text key={t.f} x={t.x} y={t.y} textAnchor="middle"
+                className="asset-gauge-tick">{t.v.toLocaleString()}</text>
+        ))}
         <line x1={cx} y1={cy} x2={nx} y2={ny} className="asset-gauge-needle" />
         <circle cx={cx} cy={cy} r={4.5} className="asset-gauge-hub" />
-        <text x={cx - r - 2} y={cy + 2} textAnchor="start"
-              className="asset-gauge-tick">0</text>
-        <text x={cx + r + 2} y={cy + 2} textAnchor="end"
-              className="asset-gauge-tick">{max.toLocaleString()}</text>
       </svg>
       <div className="asset-gauge-value">
         {value.toLocaleString()}{unit}
