@@ -31,6 +31,7 @@ import {
 } from '../../api/client';
 import { CategoryGlyph } from '../../components/CategoryGlyph';
 import { StatusChip } from '../../components/StatusChip';
+import { Tip } from '../../components/HoverTip';
 import { metaFor } from '../../components/alertMeta';
 import { humanise, relativeTime } from '../../lib/format';
 
@@ -626,19 +627,20 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
                           going on in this room, not to compete with the
                           number somebody is acting on. */}
                       {withAlerts && (
-                        <td className="num muted"
-                            title={`${r.alerts} informational condition`
-                                   + `${r.alerts === 1 ? '' : 's'} here - nothing `
-                                   + 'that needs a response tonight'}>
-                          {r.alerts || <span className="dash">—</span>}
+                        <td className="num muted">
+                          <Tip tip={<><b>{r.alerts}</b> informational condition
+                            {r.alerts === 1 ? '' : 's'} here — nothing that
+                            needs a response tonight</>}>
+                            {r.alerts || <span className="dash">—</span>}
+                          </Tip>
                         </td>
                       )}
-                                      <td className="num"
-                          title={withAlerts
-                            ? 'Distinct devices with anything open here - one '
-                              + 'device faulting twice is one device'
-                            : 'Distinct devices with an alarm here'}>
-                        {deviceCount(r, withAlerts)}
+                      <td className="num">
+                        <Tip tip={withAlerts
+                          ? 'Distinct devices with anything open here — one device faulting twice is one device'
+                          : 'Distinct devices with an alarm here'}>
+                          {deviceCount(r, withAlerts)}
+                        </Tip>
                       </td>
                       <td className="num">{r.critical || <span className="dash">—</span>}</td>
                       <td className="num">{r.major || <span className="dash">—</span>}</td>

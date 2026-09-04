@@ -22,6 +22,7 @@ import {
   type Utilisation,
 } from '../../api/client';
 import { CategoryGlyph, type GlyphKind } from '../../components/CategoryGlyph';
+import { Tip } from '../../components/HoverTip';
 import { relativeTime } from '../../lib/format';
 
 function Tile({ value, unit, caption, note, absent, bar }: {
@@ -236,14 +237,14 @@ export function SiteDrawer({ site, onClose }: { site: SiteRow; onClose: () => vo
                   : c.categories.reduce(
                       (t, k) => t + (data.alarms.by_category?.[k] ?? 0), 0);
                 return (
-                  <span key={c.key} className={`ind ${c.tone} ${n > 0 ? 'on' : ''}`}
-                        title={c.categories === null
-                          ? `${n} open alarm${n === 1 ? '' : 's'} at this site`
-                          : `${c.label}: ${n}`}>
+                  <Tip key={c.key} className={`ind ${c.tone} ${n > 0 ? 'on' : ''}`}
+                       tip={c.categories === null
+                         ? <><b>{n}</b> open alarm{n === 1 ? '' : 's'} at this site</>
+                         : <><b>{c.label}</b>: {n}</>}>
                     <span>{n}</span>
                     <CategoryGlyph kind={c.glyph} />
                     <span>{c.label}</span>
-                  </span>
+                  </Tip>
                 );
               })}
             </div>

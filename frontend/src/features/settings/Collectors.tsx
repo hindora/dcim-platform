@@ -9,6 +9,7 @@ import {
   type ConfigSection,
 } from '../../api/client';
 import { oneLine, relativeTime } from '../../lib/format';
+import { Tip } from '../../components/HoverTip';
 
 /** What each collector is running, and what it has been told to run.
  *
@@ -35,13 +36,14 @@ export function Collectors() {
     <div className="stack">
       <div>
         <h2>Collectors</h2>
-        <p className="subtitle"
-           title={oneLine(`A collector's identity, this platform's address and
+        <p className="subtitle">
+          <Tip tip={oneLine(`A collector's identity, this platform's address and
                   its token stay in the file on its own host. Breaking the path
                   to the control plane from the control plane is not a repair
                   anybody can do from here.`)}>
-          Which planes each collector runs, how hard it polls, and where it
-          listens.
+            Which planes each collector runs, how hard it polls, and where it
+            listens.
+          </Tip>
         </p>
       </div>
 
@@ -102,24 +104,24 @@ export function Collectors() {
  *  not fetched yet, or fetched something it cannot apply without a restart. */
 function ConfigState({ row }: { row: CollectorRow }) {
   if (row.config_error) {
-    return <span className="warn" title={row.config_error}>failed to apply</span>;
+    return <Tip className="warn" tip={row.config_error}>failed to apply</Tip>;
   }
   if (row.restart_pending) {
     return (
-      <span className="warn" title={oneLine(`Saved, and waiting for a restart:
+      <Tip className="warn" tip={oneLine(`Saved, and waiting for a restart:
         adapters read their concurrency, timeouts and ports once, when they are
         built.`)}>
         restart pending
-      </span>
+      </Tip>
     );
   }
   if (row.version === 0) return <span className="muted">file only</span>;
   if (row.running_version !== row.version) {
     return (
-      <span className="muted" title={`stored v${row.version}, `
-        + `running v${row.running_version}`}>
+      <Tip className="muted"
+           tip={<>stored <b>v{row.version}</b>, running <b>v{row.running_version}</b></>}>
         v{row.version} · not fetched yet
-      </span>
+      </Tip>
     );
   }
   return <span className="muted">v{row.version} · in force</span>;
@@ -172,11 +174,13 @@ function ConfigSheet({ row, sections, onClose }: {
         <header className="sheet-head">
           <div>
             <h2>{row.id}</h2>
-            <p title={oneLine(`Fields you do not change stay inherited from
+            <p>
+              <Tip tip={oneLine(`Fields you do not change stay inherited from
                       the collector's own file, so a default that improves in a
                       release still reaches it.`)}>
-              {row.hostname ? `${row.hostname} · ` : ''}
-              Every field shows the value in force.
+                {row.hostname ? `${row.hostname} · ` : ''}
+                Every field shows the value in force.
+              </Tip>
             </p>
           </div>
           <button className="close" onClick={onClose} aria-label="Close">✕</button>
@@ -303,8 +307,10 @@ function Field({ field, value, effective, onChange }: {
           <option value="true">On</option>
           <option value="false">Off</option>
         </select>
-        <em className="hint" title={oneLine(tip)}>
-          {field.help}{tip ? <span className="why"> ?</span> : null}
+        <em className="hint">
+          {tip
+            ? <Tip tip={oneLine(tip)}>{field.help}<span className="why"> ?</span></Tip>
+            : field.help}
         </em>
       </label>
     );
@@ -320,8 +326,10 @@ function Field({ field, value, effective, onChange }: {
                e.target.value === '' ? undefined
                  : field.kind === 'int' || field.kind === 'seconds'
                    ? Number(e.target.value) : e.target.value)} />
-      <em className="hint" title={oneLine(tip)}>
-        {field.help}{tip ? <span className="why"> ?</span> : null}
+      <em className="hint">
+        {tip
+          ? <Tip tip={oneLine(tip)}>{field.help}<span className="why"> ?</span></Tip>
+          : field.help}
       </em>
     </label>
   );

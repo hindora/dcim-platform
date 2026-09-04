@@ -9,6 +9,7 @@ import {
   type ProfileUsage,
 } from '../../api/client';
 import { oneLine } from '../../lib/format';
+import { Tip } from '../../components/HoverTip';
 
 /** Poll profiles: how often each endpoint is asked, and for what.
  *
@@ -70,9 +71,9 @@ export function PollProfiles() {
               <td className="mono">{p.name}</td>
               <td className="num">
                 {p.interval_s === 0
-                  ? <span title="the device pushes on its own schedule">
+                  ? <Tip tip="the device pushes on its own schedule">
                       pushed
-                    </span>
+                    </Tip>
                   : `${p.interval_s}s`}
               </td>
               <td className="num muted">{p.timeout_ms} ms</td>
@@ -123,12 +124,11 @@ export function PollProfiles() {
 function GroupsNote({ protocols }: { protocols: string[] }) {
   const snmp = protocols.includes('snmp');
   return (
-    <span className="muted" title={snmp
+    <Tip className="muted" tip={snmp
       ? 'An SNMP profile with no groups collects nothing.'
-      : 'Only the SNMP adapter reads metric groups; this protocol selects '
-        + 'what to read from its own mapping file.'}>
+      : 'Only the SNMP adapter reads metric groups; this protocol selects what to read from its own mapping file.'}>
       {snmp ? '— none, collects nothing' : 'n/a'}
-    </span>
+    </Tip>
   );
 }
 
@@ -353,9 +353,12 @@ function Hint({ help, detail, error }: {
   error?: string;
 }) {
   if (error) return <em className="hint bad">{error}</em>;
+  if (!detail) return <em className="hint">{help}</em>;
   return (
-    <em className="hint" title={detail ? oneLine(detail) : undefined}>
-      {help}{detail ? <span className="why"> ?</span> : null}
+    <em className="hint">
+      <Tip tip={oneLine(detail)}>
+        {help}<span className="why"> ?</span>
+      </Tip>
     </em>
   );
 }

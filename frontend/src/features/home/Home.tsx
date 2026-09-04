@@ -43,6 +43,7 @@ import {
 import { CategoryGlyph } from '../../components/CategoryGlyph';
 import { COLUMN_ORDER, GROUP_TONE, metaFor } from '../../components/alertMeta';
 import { FacilityToggle } from '../../components/estate';
+import { useHoverTip } from '../../components/HoverTip';
 import { useColumnWidths } from '../../lib/useColumnWidths';
 import { useOrg, useOrgTitle } from '../../lib/useOrg';
 import { useInvalidateOn, useTopics } from '../../ws/useSocket';
@@ -87,11 +88,14 @@ function Th({ cols, col, w, className, title, children }: {
   const stored = cols.width(col, 0);
   const width = stored || w || undefined;
   const ref = useRef<HTMLTableCellElement>(null);
+  const { bind, tipEl } = useHoverTip();
   return (
     <th ref={ref} data-col={col}
         className={`${className ?? ''} ${cols.resizing === col ? 'resizing' : ''}`}
-        style={width ? { width } : undefined} title={title}>
+        style={width ? { width } : undefined}
+        {...(title ? bind(title) : {})}>
       {children}
+      {tipEl}
       <span className="col-grip" role="separator" aria-orientation="vertical"
             aria-label="Resize column"
             onPointerDown={cols.begin(col, w, () => measureColumns(ref.current))}
@@ -149,25 +153,29 @@ function Indicator({ category, count, alarms, label, scope, onOpen }: {
   const meta = metaFor(category);
   const on = count > 0;
   const where = scope ? ` in ${scope.label}` : '';
+  const { bind, tipEl } = useHoverTip();
   return (
-    <td className="ind-cell">
+    // The tip binds to the CELL: a disabled button swallows mouse events, and
+    // "nothing open" is exactly the state whose explanation would vanish.
+    <td className="ind-cell"
+        {...bind(on
+          ? <><b>{label}{where}</b>: {count} open
+              {alarms > 0
+                ? <>, <b>{alarms}</b> needing a response</>
+                : ', none needing a response'} — open the list</>
+          : <><b>{label}</b>: nothing open{where}</>)}>
       {/* Lit when anything is open, and marked when some of it needs
           answering. The count is everything; the mark is the difference
           between a domain that is noisy and one that is on fire. */}
       <button className={`ind ${meta.tone} ${on ? 'on' : ''} ${alarms > 0 ? 'has-alarm' : ''}`}
               disabled={!on}
-              title={on
-                ? `${label}${where}: ${count} open`
-                  + `${alarms > 0
-                    ? `, ${alarms} needing a response`
-                    : ', none needing a response'} - open the list`
-                : `${label}: nothing open${where}`}
               onClick={() => onOpen({
                 key: category, label, categories: [category], scope,
               })}>
         <CategoryGlyph kind={meta.glyph} />
         {on && <span>{count}</span>}
       </button>
+      {tipEl}
     </td>
   );
 }
@@ -196,17 +204,18 @@ function IndicatorCells({ alarms, labels, scope, onOpen }: {
 }) {
   const n = alarms.total;
   const sev = worst(alarms);
+  const { bind, tipEl } = useHoverTip();
   return (
     <>
-      <td className="ind-cell">
+      <td className="ind-cell"
+          {...bind(n > 0
+            ? <><b>{n} open alarm{n === 1 ? '' : 's'}</b>
+                {scope ? ` in ${scope.label}` : ''}:{' '}
+                {alarms.critical} critical, {alarms.major} major,{' '}
+                {alarms.minor} minor</>
+            : 'No open alarms')}>
         <button className={`ind alarms ${sev ? `on sev-${sev}` : ''}`}
                 disabled={n === 0}
-                title={n > 0
-                  ? `${n} open alarm${n === 1 ? '' : 's'}`
-                    + `${scope ? ` in ${scope.label}` : ''}: `
-                    + `${alarms.critical} critical, ${alarms.major} major, `
-                    + `${alarms.minor} minor`
-                  : 'No open alarms'}
                 onClick={() => onOpen({
                   key: 'all', label: 'Alarms', categories: [...COLUMN_ORDER],
                   scope, alarmsOnly: true,
@@ -214,6 +223,7 @@ function IndicatorCells({ alarms, labels, scope, onOpen }: {
           <CategoryGlyph kind="alarms" />
           {n > 0 && <span>{n}</span>}
         </button>
+        {tipEl}
       </td>
       {COLUMN_ORDER.map((c) => (
         <Indicator key={c} category={c} onOpen={onOpen} scope={scope}
@@ -247,6 +257,9 @@ export function Home() {
   // room names, another wants the status tiles and nothing else. Remembered
   // per browser, and reset from the toolbar when a layout stops working.
   const cols = useColumnWidths('dcim.home.columns');
+  // One tip shared by the strip counters; bound to each counter's wrapper
+  // because an empty counter's button is disabled and swallows mouse events.
+  const strip = useHoverTip();
 
   // The estate's name, in the headline and in the browser tab.
   const org = useOrg();
@@ -347,20 +360,19 @@ export function Home() {
           const empty = n === 0;
           return (
             <div key={total ? '__total' : c.key}
-                 className={`alert-counter cat-${total ? 'alarms' : c.tone} ${empty ? 'zero' : ''}`}>
+                 className={`alert-counter cat-${total ? 'alarms' : c.tone} ${empty ? 'zero' : ''}`}
+                 {...strip.bind(empty
+                   ? `Nothing open in ${(total ? 'any category' : c.label.toLowerCase())}`
+                   : total
+                     ? 'Every open alarm, all categories — by room'
+                     : <>Everything open in {c.categories
+                         .map((k) => (labels[k] ?? k).toLowerCase())
+                         .join(' and ')}, <b>{answerable}</b> needing a response</>)}>
               <button className="face"
                       // Nothing to open when nothing is wrong: a panel that
                       // rises to say "no rooms" teaches an operator that the
                       // numbers are not worth clicking.
                       disabled={empty}
-                      title={empty
-                        ? `Nothing open in ${(total ? 'any category' : c.label.toLowerCase())}`
-                        : total
-                          ? 'Every open alarm, all categories - by room'
-                          : `Everything open in ${c.categories
-                              .map((k) => (labels[k] ?? k).toLowerCase())
-                              .join(' and ')}`
-                            + `, ${answerable} needing a response`}
                       onClick={() => {
                         if (empty) return;
                         setDrill(total
@@ -391,6 +403,7 @@ export function Home() {
             </div>
           );
         })}
+        {strip.tipEl}
       </section>
 
       <div className="home-body">
