@@ -93,7 +93,12 @@ export function Trends() {
           movement it exists to show. Half the row gives the day-to-day slope
           room to be read. */}
       <div className="asset-cols asset-cols-two">
-        <div className="asset-panel">
+        {/* asset-panel-flex + asset-trend-slot: the panels are equal height
+            by grid, but the content above each chart is not (the metric
+            picker), so the charts floated at different heights. The slot
+            takes margin-top auto and every baseline lands the same distance
+            from its panel's bottom. */}
+        <div className="asset-panel asset-panel-flex">
           <PanelHead title="Item count" range={rItems} onRange={setRItems} />
           <div className="asset-panel-filters">
             <select value={metric} aria-label="Metric"
@@ -103,54 +108,62 @@ export function Trends() {
               ))}
             </select>
           </div>
-          <TrendLine
-            points={lastDays(snaps, rItems).map((s) => ({ day: s.day, v: s[metric] }))}
-          />
+          <div className="asset-trend-slot">
+            <TrendLine
+              points={lastDays(snaps, rItems).map((s) => ({ day: s.day, v: s[metric] }))}
+            />
+          </div>
         </div>
 
-        <div className="asset-panel">
+        <div className="asset-panel asset-panel-flex">
           <PanelHead title="Free rack units" range={rFree} onRange={setRFree} />
-          <TrendLine
-            points={lastDays(snaps, rFree).map((s) => ({ day: s.day, v: s.u_free }))}
-            unit="U"
-          />
+          <div className="asset-trend-slot">
+            <TrendLine
+              points={lastDays(snaps, rFree).map((s) => ({ day: s.day, v: s.u_free }))}
+              unit="U"
+            />
+          </div>
         </div>
 
-        <div className="asset-panel">
+        <div className="asset-panel asset-panel-flex">
           <PanelHead title="Rack units delta" range={rDelta} onRange={setRDelta} />
           {/* Day-on-day change in INSTALLED units, from consecutive snapshots.
               Needs two nights by definition - a delta is a difference. */}
-          {deltas.length === 0 ? (
-            <p className="muted">
-              Needs two nightly snapshots — the first difference appears
-              tomorrow.
-            </p>
-          ) : (
-            <Diverging rows={deltas} unit="U" />
-          )}
+          <div className="asset-trend-slot">
+            {deltas.length === 0 ? (
+              <p className="muted">
+                Needs two nightly snapshots — the first difference appears
+                tomorrow.
+              </p>
+            ) : (
+              <Diverging rows={deltas} unit="U" />
+            )}
+          </div>
         </div>
 
-        <div className="asset-panel">
+        <div className="asset-panel asset-panel-flex">
           <PanelHead title="Installs and decommissions"
                      range={rActivity} onRange={setRActivity} />
           {/* From the lifecycle events, NOT snapshot diffs: ten installs and
               ten decommissions in one month net to zero, and the activity is
               the point. */}
-          {activity.length === 0 ? (
-            <p className="muted">
-              Accrues as assets move through lifecycle states.
-            </p>
-          ) : (
-            <Paired
-              rows={activity.map((a) => ({
-                label: a.month.slice(2),
-                a: a.installs,
-                b: a.decommissions,
-              }))}
-              aLabel="Installs"
-              bLabel="Decommissions"
-            />
-          )}
+          <div className="asset-trend-slot">
+            {activity.length === 0 ? (
+              <p className="muted">
+                Accrues as assets move through lifecycle states.
+              </p>
+            ) : (
+              <Paired
+                rows={activity.map((a) => ({
+                  label: a.month.slice(2),
+                  a: a.installs,
+                  b: a.decommissions,
+                }))}
+                aLabel="Installs"
+                bLabel="Decommissions"
+              />
+            )}
+          </div>
         </div>
       </div>
     </>

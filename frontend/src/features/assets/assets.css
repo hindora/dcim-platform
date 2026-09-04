@@ -179,6 +179,18 @@ a.asset-tile:hover { border-color: var(--border-strong); }
   grid-template-columns: repeat(2, minmax(280px, 1fr));
 }
 
+/* Grid makes the panels equal height; flex + the slot's top margin push
+   every chart to the bottom, so the baselines sit the same distance from
+   every panel's lower edge whatever stands above them. */
+.asset-panel-flex {
+  display: flex;
+  flex-direction: column;
+}
+
+.asset-panel-flex .asset-trend-slot {
+  margin-top: auto;
+}
+
 @media (max-width: 640px) {
   .asset-cols-two { grid-template-columns: 1fr; }
 }
