@@ -31,7 +31,7 @@ import {
 } from '../../api/client';
 import { CategoryGlyph } from '../../components/CategoryGlyph';
 import { StatusChip } from '../../components/StatusChip';
-import { Tip } from '../../components/HoverTip';
+import { Tip, useHoverTip } from '../../components/HoverTip';
 import { metaFor } from '../../components/alertMeta';
 import { humanise, relativeTime } from '../../lib/format';
 
@@ -365,6 +365,63 @@ function toCsv(rows: AlarmDrillRow[], withAlerts: boolean) {
 
 export interface PanelScope { kind: 'site' | 'room'; id: string; label: string }
 
+/** Conditions raised per day over the last fortnight, in this panel's
+ *  scope. The table below says what is happening NOW; this says whether now
+ *  is normal - a hall raising six a day for two weeks and a hall that just
+ *  started are different problems wearing the same count. Built from the
+ *  same rows the history shows (roots only, open and cleared), bucketed on
+ *  first_seen: raised-per-day survives the clears that empty the table. */
+function AlarmTrend({ categories, scope }: {
+  categories: AlarmCategory[]; scope?: PanelScope;
+}) {
+  const { bind, tipEl } = useHoverTip();
+  const { data } = useQuery({
+    queryKey: ['alarm-trend', scope?.id ?? '', ...categories],
+    queryFn: () => api.alarms({
+      state: ['ACTIVE', 'ACKNOWLEDGED', 'CLEARED'],
+      category: categories,
+      room: scope?.kind === 'room' ? scope.id : undefined,
+      limit: '500',
+    }),
+    staleTime: 60_000,
+  });
+
+  const items = (data?.items ?? [])
+    .filter((a) => scope?.kind !== 'site' || a.datacenter_code === scope.label);
+
+  const days: string[] = [];
+  for (let i = 13; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    days.push(d.toISOString().slice(0, 10));
+  }
+  const counts = new Map(days.map((d) => [d, 0]));
+  for (const a of items) {
+    const day = a.first_seen.slice(0, 10);
+    if (counts.has(day)) counts.set(day, (counts.get(day) ?? 0) + 1);
+  }
+  const max = Math.max(1, ...counts.values());
+
+  if (!data) return null;
+  return (
+    <div className="alarm-trend" role="img"
+         aria-label="Conditions raised per day, last 14 days">
+      <span className="cap">Raised / day · 14d</span>
+      {days.map((day) => {
+        const n = counts.get(day) ?? 0;
+        return (
+          <div className="col" key={day}
+               {...bind(<><b>{day.slice(5)}</b> {n} raised</>)}>
+            <div className="bar"
+                 style={{ height: `${(n / max) * 100}%` }} />
+          </div>
+        );
+      })}
+      {tipEl}
+    </div>
+  );
+}
+
 /** The empty state that still answers a question. With nothing open in
  *  scope, the panel shows what CLEARED there recently instead - a quiet
  *  counter is exactly when somebody asks what happened overnight, and this
@@ -621,6 +678,8 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
         <div className="sheet-body">
           {error && <div className="banner">Could not load the rooms behind this counter.</div>}
           {isLoading && <p className="muted">Loading…</p>}
+
+          <AlarmTrend categories={categories} scope={scope} />
 
           {data && (
             <>

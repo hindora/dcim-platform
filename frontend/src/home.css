@@ -172,6 +172,41 @@
 }
 .alert-strip .caption:hover { color: var(--text); }
 .alert-strip a.caption { text-decoration: none; }
+
+/* The fortnight of raised-per-day columns at the top of the alarm panel.
+   Small on purpose: it is context for the table, not a page of its own. */
+.alarm-trend {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  height: 56px;
+  margin: 4px 0 14px;
+  padding: 0 2px 0 0;
+}
+
+.alarm-trend .cap {
+  align-self: center;
+  margin-right: 10px;
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.alarm-trend .col {
+  flex: 0 0 18px;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+}
+
+.alarm-trend .col .bar {
+  width: 100%;
+  min-height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: var(--accent);
+}
 .alert-strip .caption svg { flex: none; }
 
 /* Every counter the same width, whatever its label. Sized to the widest word
