@@ -132,14 +132,18 @@ export function Charts() {
               quarter, then the rest. Sorting would destroy the only thing a
               runway is for. Colour marks the band that is already a problem;
               the rest is ordering, which left-to-right already carries. */}
-          <VColumns
-            rows={data.warranty_runway.map((r) => ({
-              label: r.bucket.replace('Beyond 2 years', 'Later'),
-              n: r.n,
-              colour: r.band === 0 ? 'var(--critical)'
-                : r.band === 2 ? 'var(--border-strong)' : undefined,
-            }))}
-          />
+          {/* is-short: quarter labels need a fraction of the diagonal room
+              the By-room chart's site-and-hall names reserve. */}
+          <div className="asset-vcols-tilt is-short">
+            <VColumns
+              rows={data.warranty_runway.map((r) => ({
+                label: r.bucket.replace('Beyond 2 years', 'Later'),
+                n: r.n,
+                colour: r.band === 0 ? 'var(--critical)'
+                  : r.band === 2 ? 'var(--border-strong)' : undefined,
+              }))}
+            />
+          </div>
         </Panel>
 
         <Panel title="Cover state" total={coverTotal(data)}>
