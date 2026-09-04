@@ -80,15 +80,6 @@ export function Charts() {
         <CompletenessPanel rows={data.completeness} />
       </div>
 
-      <h3 className="asset-charts-head">Composition</h3>
-      <div className="asset-cols">
-        <ByTypePanel rows={data.composition} />
-
-        <ByMakePanel rows={data.composition} />
-
-        <ByLifecyclePanel rows={data.by_lifecycle} />
-      </div>
-
       <h3 className="asset-charts-head">Where it is, and whose</h3>
       <div className="asset-cols">
         <ByRoomPanel rows={data.by_room} />
@@ -96,6 +87,15 @@ export function Charts() {
         <ByOwnerPanel rows={data.composition} />
 
         <PlacementPanel rows={data.placement} />
+      </div>
+
+      <h3 className="asset-charts-head">Composition</h3>
+      <div className="asset-cols">
+        <ByTypePanel rows={data.composition} />
+
+        <ByMakePanel rows={data.composition} />
+
+        <ByLifecyclePanel rows={data.by_lifecycle} />
       </div>
 
       <Trends />
