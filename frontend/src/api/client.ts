@@ -426,7 +426,7 @@ export interface AssetCharts {
    *  filter by site and the other panel's dimension without a round trip.
    *  dc is null for a device that is not placed in any room. */
   composition: {
-    type_key: string; type_label: string; vendor: string;
+    type_key: string; type_label: string; vendor: string; owner: string;
     dc: string | null; n: number;
   }[];
   by_lifecycle: { key: string; n: number }[];
@@ -451,7 +451,6 @@ export interface AssetCharts {
    *  gaps - the number fragmentation actually costs. 1U always equals total
    *  free U; the fall-off from there is the fragmentation. */
   fragmentation: { size: number; fits: number }[];
-  by_owner: { label: string; n: number }[];
   by_room: { dc: string; room: string; label: string; n: number }[];
   /** In a rack, floor-standing, or genuinely unplaced - three different states,
    *  and floor-standing plant is placed. */

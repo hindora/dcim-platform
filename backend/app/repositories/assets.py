@@ -196,16 +196,19 @@ async def charts(session: AsyncSession) -> dict[str, Any]:
     One round trip because the whole section renders together - three loading
     states stacked on one panel reads as a page that cannot make up its mind.
     """
-    # One cube for both composition panels: the same devices grouped once by
-    # (type, vendor, site). "By type" and "By make" are rollups of it, so each
-    # panel's filters - site plus the OTHER panel's dimension - are client-side
-    # sums over rows already in hand rather than extra round trips. All joins
-    # are LEFT: an unplaced device has no site (dc is NULL) but must not
-    # vanish from the composition of the estate.
+    # One cube for the composition panels: the same devices grouped once by
+    # (type, vendor, owner, site). "By type", "By make" and "By owner" are
+    # rollups of it, so each panel's filters - site plus another panel's
+    # dimension - are client-side sums over rows already in hand rather than
+    # extra round trips. All joins are LEFT: an unplaced device has no site
+    # (dc is NULL) but must not vanish from the composition of the estate.
+    # Decommissioned and retired kit is excluded, as everywhere in this
+    # section - what has left the estate is not part of its composition.
     composition = (await session.execute(text("""
         SELECT d.device_type AS type_key,
                COALESCE(dt.display_name, d.device_type) AS type_label,
                COALESCE(v.name, 'Unrecorded') AS vendor,
+               COALESCE(d.owner_group, 'Unassigned') AS owner,
                dc.code AS dc,
                count(*) AS n
         FROM device d
@@ -215,7 +218,8 @@ async def charts(session: AsyncSession) -> dict[str, Any]:
         LEFT JOIN rack_row rr ON rr.id = r.row_id
         LEFT JOIN room rm ON rm.id = COALESCE(rr.room_id, d.room_id)
         LEFT JOIN datacenter dc ON dc.id = rm.datacenter_id
-        GROUP BY d.device_type, dt.display_name, v.name, dc.code
+        WHERE d.lifecycle NOT IN ('decommissioned', 'retired')
+        GROUP BY d.device_type, dt.display_name, v.name, d.owner_group, dc.code
     """))).mappings().all()
 
     by_lifecycle = (await session.execute(text("""
@@ -352,13 +356,6 @@ async def charts(session: AsyncSession) -> dict[str, Any]:
         ("Install date", "install_date"),
     ]
 
-    by_owner = (await session.execute(text("""
-        SELECT COALESCE(owner_group, 'Unassigned') AS label, count(*) AS n
-        FROM device
-        WHERE lifecycle NOT IN ('decommissioned', 'retired')
-        GROUP BY 1 ORDER BY n DESC
-    """))).mappings().all()
-
     # dc and room ship as their own fields, not only fused into the label: the
     # chart filters on them, and parsing them back out of the label would tie
     # the filter to a display convention.
@@ -453,7 +450,6 @@ async def charts(session: AsyncSession) -> dict[str, Any]:
             {"bucket": r["bucket"], "n": r["n"], "band": r["band"]}
             for r in runway
         ],
-        "by_owner": [dict(r) for r in by_owner],
         "by_room": [dict(r) for r in by_room],
         "placement": [dict(r) for r in placement],
         "contract_spend": [dict(r) for r in spend],

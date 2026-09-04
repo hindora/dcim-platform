@@ -87,13 +87,7 @@ export function Charts() {
       <div className="asset-cols">
         <ByRoomPanel rows={data.by_room} />
 
-        <Panel title="By owner" total={sum(data.by_owner)}>
-          <BarChart rows={data.by_owner.map((o): BarRow => ({
-            label: o.label,
-            n: o.n,
-            href: `/assets/inventory?owner_group=${encodeURIComponent(o.label)}`,
-          }))} />
-        </Panel>
+        <ByOwnerPanel rows={data.composition} />
 
         <Panel title="How it is placed" total={sum(data.placement)}>
           {/* Floor-standing is NOT a gap. A chiller in a plant room is placed;
@@ -306,6 +300,34 @@ function ByMakePanel({ rows }: { rows: CompositionRow[] }) {
 
   return (
     <Panel title="By make" total={bars.reduce((t, r) => t + r.n, 0)}>
+      <div className="asset-panel-filters">
+        <select value={f.dc} onChange={(e) => f.pickDc(e.target.value)} aria-label="Site">
+          <option value="">All sites</option>
+          {f.dcs.map((d) => <option key={d} value={d}>{d}</option>)}
+        </select>
+        <select value={f.pick} onChange={(e) => f.setPick(e.target.value)} aria-label="Type">
+          <option value="">All types</option>
+          {f.options.map((t) => <option key={t} value={t}>{t}</option>)}
+        </select>
+      </div>
+      <BarChart rows={bars} />
+    </Panel>
+  );
+}
+
+function ByOwnerPanel({ rows }: { rows: CompositionRow[] }) {
+  const f = useCubeFilters(rows, (r) => r.type_label);
+
+  const byOwner = new Map<string, number>();
+  for (const r of f.shown) byOwner.set(r.owner, (byOwner.get(r.owner) ?? 0) + r.n);
+  const bars = [...byOwner.entries()].map(([label, n]): BarRow => ({
+    label,
+    n,
+    href: `/assets/inventory?owner_group=${encodeURIComponent(label)}`,
+  }));
+
+  return (
+    <Panel title="By owner" total={bars.reduce((t, r) => t + r.n, 0)}>
       <div className="asset-panel-filters">
         <select value={f.dc} onChange={(e) => f.pickDc(e.target.value)} aria-label="Site">
           <option value="">All sites</option>
