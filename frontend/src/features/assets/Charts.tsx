@@ -582,31 +582,62 @@ function RackFillPanel({ rows }: { rows: AssetCharts['rack_fill'] }) {
 function ByRoomPanel({ rows }: { rows: AssetCharts['by_room'] }) {
   const [dc, setDc] = useState('');
   const [room, setRoom] = useState('');
+  const [type, setType] = useState('');
 
-  const dcs = [...new Set(rows.map((r) => r.dc))].sort();
-  const rooms = [...new Set(
-    rows.filter((r) => !dc || r.dc === dc).map((r) => r.room),
-  )].sort();
+  const dcs = uniqSorted(rows.map((r) => r.dc));
+  const rooms = uniqSorted(rows.filter((r) => !dc || r.dc === dc).map((r) => r.room));
+  // The type list follows BOTH narrower filters: a type no surviving room
+  // holds is not offered.
+  const types = uniqSorted(rows
+    .filter((r) => (!dc || r.dc === dc) && (!room || r.room === room))
+    .map((r) => r.type_label));
 
   const pickDc = (next: string) => {
     setDc(next);
     if (room && !rows.some((r) => (!next || r.dc === next) && r.room === room)) {
       setRoom('');
     }
+    if (type && !rows.some((r) => (!next || r.dc === next) && r.type_label === type)) {
+      setType('');
+    }
+  };
+  const pickRoom = (next: string) => {
+    setRoom(next);
+    if (type && !rows.some((r) => (!dc || r.dc === dc)
+        && (!next || r.room === next) && r.type_label === type)) {
+      setType('');
+    }
   };
 
-  const shown = rows.filter((r) => (!dc || r.dc === dc) && (!room || r.room === room));
+  const shown = rows.filter((r) => (!dc || r.dc === dc)
+    && (!room || r.room === room) && (!type || r.type_label === type));
+
+  // One column per room; the per-type rows sum away, and the columns re-rank
+  // by the filtered count - "where do the PDUs sit" should lead with the
+  // room that holds the most of them.
+  const byLabel = new Map<string, number>();
+  for (const r of shown) {
+    const key = dc ? r.room : r.label;
+    byLabel.set(key, (byLabel.get(key) ?? 0) + r.n);
+  }
+  const cols = [...byLabel.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([label, n]) => ({ label, n }));
 
   return (
-    <Panel title="By room" total={sum(shown)} wide>
+    <Panel title="By room" total={cols.reduce((t, r) => t + r.n, 0)} wide>
       <div className="asset-panel-filters">
         <select value={dc} onChange={(e) => pickDc(e.target.value)} aria-label="Site">
           <option value="">All sites</option>
           {dcs.map((d) => <option key={d} value={d}>{d}</option>)}
         </select>
-        <select value={room} onChange={(e) => setRoom(e.target.value)} aria-label="Room">
+        <select value={room} onChange={(e) => pickRoom(e.target.value)} aria-label="Room">
           <option value="">All rooms</option>
           {rooms.map((r) => <option key={r} value={r}>{r}</option>)}
+        </select>
+        <select value={type} onChange={(e) => setType(e.target.value)} aria-label="Type">
+          <option value="">All types</option>
+          {types.map((t) => <option key={t} value={t}>{t}</option>)}
         </select>
       </div>
       {/* Tilted labels: sixteen room names across one panel truncate to a
@@ -614,10 +645,7 @@ function ByRoomPanel({ rows }: { rows: AssetCharts['by_room'] }) {
           a label. The tilt is on the wrapper, not VColumns, because the other
           column charts have short labels and should keep them flat. */}
       <div className="asset-vcols-tilt">
-        <VColumns rows={shown.map((r) => ({
-          label: dc ? r.room : r.label,
-          n: r.n,
-        }))} />
+        <VColumns rows={cols} />
       </div>
     </Panel>
   );
@@ -687,7 +715,4 @@ function money(n: number): string {
   return n.toLocaleString(undefined, { maximumFractionDigits: 0 });
 }
 
-function sum(rows: { n: number }[]): number {
-  return rows.reduce((t, r) => t + r.n, 0);
-}
 

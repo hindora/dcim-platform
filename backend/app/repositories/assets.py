@@ -405,17 +405,20 @@ async def charts(session: AsyncSession) -> dict[str, Any]:
 
     # dc and room ship as their own fields, not only fused into the label: the
     # chart filters on them, and parsing them back out of the label would tie
-    # the filter to a display convention.
+    # the filter to a display convention. type_label is the cross dimension -
+    # "where do the PDUs sit" - summed away client-side when unfiltered.
     by_room = (await session.execute(text("""
         SELECT dc.code AS dc, rm.name AS room,
+               COALESCE(dt.display_name, d.device_type) AS type_label,
                dc.code || ' · ' || rm.name AS label, count(d.id) AS n
         FROM device d
+        LEFT JOIN device_type dt ON dt.code = d.device_type
         LEFT JOIN rack r ON r.id = d.rack_id
         LEFT JOIN rack_row rr ON rr.id = r.row_id
         JOIN room rm ON rm.id = COALESCE(rr.room_id, d.room_id)
         JOIN datacenter dc ON dc.id = rm.datacenter_id
         WHERE d.lifecycle NOT IN ('decommissioned', 'retired')
-        GROUP BY dc.code, rm.name ORDER BY n DESC
+        GROUP BY dc.code, rm.name, 3 ORDER BY n DESC
     """))).mappings().all()
 
     # Where things physically are. "Not placed" is a genuine third state and

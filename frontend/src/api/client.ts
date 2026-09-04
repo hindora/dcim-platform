@@ -473,7 +473,10 @@ export interface AssetCharts {
   fragmentation: {
     dc: string | null; room: string | null; size: number; fits: number;
   }[];
-  by_room: { dc: string; room: string; label: string; n: number }[];
+  /** One row per (site, room, type); label is the display "DC · room". */
+  by_room: {
+    dc: string; room: string; type_label: string; label: string; n: number;
+  }[];
   /** In a rack, floor-standing, or genuinely unplaced - three different states,
    *  and floor-standing plant is placed. One row per (state, type, site);
    *  an unplaced device has no site and shows under "All sites" only. */
