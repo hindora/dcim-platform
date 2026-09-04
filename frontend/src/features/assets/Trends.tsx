@@ -33,7 +33,7 @@ export function Trends() {
 
   return (
     <>
-      <h3 className="asset-charts-head">Over time</h3>
+      <h3 className="asset-charts-head">Trends</h3>
       {/* Two-up: a trend line squeezed to a quarter of the row flattens the
           movement it exists to show. Half the row gives the day-to-day slope
           room to be read. */}
