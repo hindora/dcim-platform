@@ -38,12 +38,39 @@ type Metric = (typeof METRICS)[number][0];
  *  stripe at the top that hides the one thing a trend exists to show. The
  *  range is printed on the axis so the zoom is never a secret.
  */
+/** A panel heading with its own range control. Each chart reads at its own
+ *  window - a year of item count beside a month of deltas is a legitimate
+ *  combination - and every toggle SLICES the year already in hand rather
+ *  than refetching. */
+function PanelHead({ title, range, onRange }: {
+  title: string; range: string; onRange: (v: string) => void;
+}) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+      <h3 style={{ marginRight: 'auto' }}>{title}</h3>
+      <Seg value={range} label={`${title} range`}
+           options={RANGES.map((r) => ({ key: r.key, label: r.label }))}
+           onChange={onRange} />
+    </div>
+  );
+}
+
+/** The last `days` entries. Snapshots are one row per night, so the count is
+ *  the window. */
+function lastDays<T>(rows: T[], days: string): T[] {
+  return rows.slice(-Number(days));
+}
+
 export function Trends() {
-  const [days, setDays] = useState('90');
   const [metric, setMetric] = useState<Metric>('devices');
+  const [rItems, setRItems] = useState('90');
+  const [rFree, setRFree] = useState('90');
+  const [rDelta, setRDelta] = useState('90');
+  const [rActivity, setRActivity] = useState('365');
+  // One fetch at the widest window; the per-panel controls slice it.
   const { data, isLoading, error } = useQuery<AssetTrends>({
-    queryKey: ['asset-trends', days],
-    queryFn: () => api.assetTrends(Number(days)),
+    queryKey: ['asset-trends'],
+    queryFn: () => api.assetTrends(365),
     refetchInterval: 5 * 60_000,
   });
 
@@ -51,27 +78,23 @@ export function Trends() {
   if (isLoading || !data) return null;
 
   const snaps = data.snapshots;
-  const deltas = snaps.slice(1).map((s, i) => ({
+  const deltaSnaps = lastDays(snaps, rDelta);
+  const deltas = deltaSnaps.slice(1).map((s, i) => ({
     label: s.day.slice(5),
-    n: s.u_used - snaps[i].u_used,
+    n: s.u_used - deltaSnaps[i].u_used,
   }));
+  const activity = data.activity.slice(
+    -Math.max(1, Math.round(Number(rActivity) / 30)));
 
   return (
     <>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 14 }}>
-        <h3 className="asset-charts-head" style={{ marginRight: 'auto' }}>
-          Trends
-        </h3>
-        <Seg value={days} label="Trend range"
-             options={RANGES.map((r) => ({ key: r.key, label: r.label }))}
-             onChange={setDays} />
-      </div>
+      <h3 className="asset-charts-head">Trends</h3>
       {/* Two-up: a trend line squeezed to a quarter of the row flattens the
           movement it exists to show. Half the row gives the day-to-day slope
           room to be read. */}
       <div className="asset-cols asset-cols-two">
         <div className="asset-panel">
-          <h3>Item count</h3>
+          <PanelHead title="Item count" range={rItems} onRange={setRItems} />
           <div className="asset-panel-filters">
             <select value={metric} aria-label="Metric"
                     onChange={(e) => setMetric(e.target.value as Metric)}>
@@ -81,20 +104,20 @@ export function Trends() {
             </select>
           </div>
           <TrendLine
-            points={snaps.map((s) => ({ day: s.day, v: s[metric] }))}
+            points={lastDays(snaps, rItems).map((s) => ({ day: s.day, v: s[metric] }))}
           />
         </div>
 
         <div className="asset-panel">
-          <h3>Free rack units</h3>
+          <PanelHead title="Free rack units" range={rFree} onRange={setRFree} />
           <TrendLine
-            points={snaps.map((s) => ({ day: s.day, v: s.u_free }))}
+            points={lastDays(snaps, rFree).map((s) => ({ day: s.day, v: s.u_free }))}
             unit="U"
           />
         </div>
 
         <div className="asset-panel">
-          <h3>Rack units delta</h3>
+          <PanelHead title="Rack units delta" range={rDelta} onRange={setRDelta} />
           {/* Day-on-day change in INSTALLED units, from consecutive snapshots.
               Needs two nights by definition - a delta is a difference. */}
           {deltas.length === 0 ? (
@@ -108,17 +131,18 @@ export function Trends() {
         </div>
 
         <div className="asset-panel">
-          <h3>Installs and decommissions</h3>
+          <PanelHead title="Installs and decommissions"
+                     range={rActivity} onRange={setRActivity} />
           {/* From the lifecycle events, NOT snapshot diffs: ten installs and
               ten decommissions in one month net to zero, and the activity is
               the point. */}
-          {data.activity.length === 0 ? (
+          {activity.length === 0 ? (
             <p className="muted">
               Accrues as assets move through lifecycle states.
             </p>
           ) : (
             <Paired
-              rows={data.activity.map((a) => ({
+              rows={activity.map((a) => ({
                 label: a.month.slice(2),
                 a: a.installs,
                 b: a.decommissions,
