@@ -1264,6 +1264,24 @@ tr.is-selected > td { background: var(--accent-dim); }
 
 .asset-gauge-label { font-size: 0.74rem; color: var(--text-muted); }
 
+/* ------------------------------------------------- in-panel chart filters */
+
+/* Two selects sharing the panel width. min-width: 0 so a long room name
+   squeezes its own select rather than pushing the pair out of the panel. */
+.asset-panel-filters {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.asset-panel-filters select {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 0 6px;
+  font-size: 0.76rem;
+}
+
 /* ---------------------------------------------------- vertical columns */
 
 .asset-vcols {

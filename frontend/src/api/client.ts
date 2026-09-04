@@ -446,7 +446,7 @@ export interface AssetCharts {
    *  free U; the fall-off from there is the fragmentation. */
   fragmentation: { size: number; fits: number }[];
   by_owner: { label: string; n: number }[];
-  by_room: { label: string; n: number }[];
+  by_room: { dc: string; room: string; label: string; n: number }[];
   /** In a rack, floor-standing, or genuinely unplaced - three different states,
    *  and floor-standing plant is placed. */
   placement: { label: string; n: number }[];

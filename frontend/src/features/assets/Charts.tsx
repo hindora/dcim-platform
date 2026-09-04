@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api, type AssetCharts } from '../../api/client';
 import { humanise } from '../../lib/format';
@@ -96,11 +97,7 @@ export function Charts() {
 
       <h3 className="asset-charts-head">Where it is, and whose</h3>
       <div className="asset-cols">
-        <Panel title="By room" total={sum(data.by_room)}>
-          <BarChart rows={data.by_room.map((r): BarRow => ({
-            label: r.label, n: r.n,
-          }))} />
-        </Panel>
+        <ByRoomPanel rows={data.by_room} />
 
         <Panel title="By owner" total={sum(data.by_owner)}>
           <BarChart rows={data.by_owner.map((o): BarRow => ({
@@ -241,6 +238,51 @@ export function Charts() {
 
       <Trends />
     </>
+  );
+}
+
+/** "By room", as vertical columns behind a site and a room filter.
+ *
+ *  Room names are long for a column chart, so the site filter earns its keep
+ *  twice: it narrows the rows, and with a site chosen the DC prefix is dropped
+ *  from every label so the room name gets the width. The room list follows the
+ *  site - a room of a filtered-out site is not offered, and a selection that
+ *  the new site does not have is cleared rather than silently shown empty. */
+function ByRoomPanel({ rows }: { rows: AssetCharts['by_room'] }) {
+  const [dc, setDc] = useState('');
+  const [room, setRoom] = useState('');
+
+  const dcs = [...new Set(rows.map((r) => r.dc))].sort();
+  const rooms = [...new Set(
+    rows.filter((r) => !dc || r.dc === dc).map((r) => r.room),
+  )].sort();
+
+  const pickDc = (next: string) => {
+    setDc(next);
+    if (room && !rows.some((r) => (!next || r.dc === next) && r.room === room)) {
+      setRoom('');
+    }
+  };
+
+  const shown = rows.filter((r) => (!dc || r.dc === dc) && (!room || r.room === room));
+
+  return (
+    <Panel title="By room" total={sum(shown)}>
+      <div className="asset-panel-filters">
+        <select value={dc} onChange={(e) => pickDc(e.target.value)} aria-label="Site">
+          <option value="">All sites</option>
+          {dcs.map((d) => <option key={d} value={d}>{d}</option>)}
+        </select>
+        <select value={room} onChange={(e) => setRoom(e.target.value)} aria-label="Room">
+          <option value="">All rooms</option>
+          {rooms.map((r) => <option key={r} value={r}>{r}</option>)}
+        </select>
+      </div>
+      <VColumns rows={shown.map((r) => ({
+        label: dc ? r.room : r.label,
+        n: r.n,
+      }))} />
+    </Panel>
   );
 }
 

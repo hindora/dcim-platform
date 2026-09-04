@@ -356,15 +356,19 @@ async def charts(session: AsyncSession) -> dict[str, Any]:
         GROUP BY 1 ORDER BY n DESC
     """))).mappings().all()
 
+    # dc and room ship as their own fields, not only fused into the label: the
+    # chart filters on them, and parsing them back out of the label would tie
+    # the filter to a display convention.
     by_room = (await session.execute(text("""
-        SELECT dc.code || ' · ' || rm.name AS label, count(d.id) AS n
+        SELECT dc.code AS dc, rm.name AS room,
+               dc.code || ' · ' || rm.name AS label, count(d.id) AS n
         FROM device d
         LEFT JOIN rack r ON r.id = d.rack_id
         LEFT JOIN rack_row rr ON rr.id = r.row_id
         JOIN room rm ON rm.id = COALESCE(rr.room_id, d.room_id)
         JOIN datacenter dc ON dc.id = rm.datacenter_id
         WHERE d.lifecycle NOT IN ('decommissioned', 'retired')
-        GROUP BY 1 ORDER BY n DESC
+        GROUP BY dc.code, rm.name ORDER BY n DESC
     """))).mappings().all()
 
     # Where things physically are. "Not placed" is a genuine third state and
