@@ -227,25 +227,50 @@
   border-bottom: 1px solid var(--border);
 }
 
-/* Raised-per-bucket columns: a value on each column, the bar, the date
-   under it. A dense chart (a quarter of days, a year of weeks) drops the
-   per-bar values into the tooltip and thins the axis to every k-th date. */
+/* Raised-per-bucket columns, in the Assets page's vertical-columns form:
+   a value riding each column's top, the bar, the date under it, the axis
+   named beside them. A dense chart (a quarter of days, a year of weeks)
+   drops the per-bar values into the tooltip and thins the axis to every
+   k-th date. Sizes match .asset-vcols; only the full-width sheet is
+   taller, because it is the one place the chart has the height. */
+.alarm-trend-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.alarm-trend-head p { margin: 0 auto 0 0; font-size: 0.85rem; }
+.alarm-trend-head p b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+.alarm-trend-frame { display: flex; gap: 8px; }
+.alarm-trend-frame > .alarm-trend { flex: 1; min-width: 0; }
+
+.alarm-trend-ylabel {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  text-align: center;
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
 .alarm-trend {
   display: flex;
   align-items: stretch;
-  gap: 10px;
-  height: 280px;
-  margin: 6px 0 10px;
+  gap: 8px;
+  height: 220px;
+  margin: 2px 0 6px;
 }
 
 .alarm-trend.dense { gap: 2px; }
-
-/* In the drawer the chart is one section among five: shorter, and the
-   range chips sit tight under the section title. */
-.drawer-section .alarm-trend { height: 170px; margin-bottom: 4px; }
-.drawer-section .trend-range { margin-top: 2px; }
 .alarm-trend.dense .col .v { visibility: hidden; }
 .alarm-trend .col .k.hide { visibility: hidden; }
+
+/* Beside four other sections in a drawer, or under a room row in the
+   sheet, the chart is the asset column chart's height. */
+.drawer-section .alarm-trend,
+.sub-wrap .alarm-trend { height: 150px; }
 
 .alarm-trend .col {
   flex: 1;
@@ -271,10 +296,13 @@
 .alarm-trend .col .barwrap > * { flex-shrink: 0; }
 
 .alarm-trend .col .v {
-  font-size: 0.78rem;
+  font-size: 0.76rem;
   font-variant-numeric: tabular-nums;
   color: var(--text-muted);
-  margin-bottom: 2px;
+  /* The value sits ON the bar: a tight line box and no margin, or the
+     number floats a descender's height above the top it names. */
+  margin-bottom: 1px;
+  line-height: 1.1;
 }
 
 .alarm-trend .col .bar {
@@ -285,16 +313,12 @@
 }
 
 .alarm-trend .col .k {
-  margin-top: 6px;
-  font-size: 0.7rem;
+  margin-top: 5px;
+  font-size: 0.66rem;
   font-variant-numeric: tabular-nums;
   color: var(--text-faint);
   white-space: nowrap;
 }
-
-/* Under a room row rather than on a tab of its own: shorter, so a reader
-   comparing two rooms can hold both fortnights on one screen. */
-.sub-wrap .alarm-trend { height: 180px; margin-top: 2px; }
 .alert-strip .caption svg { flex: none; }
 
 /* Every counter the same width, whatever its label. Sized to the widest word

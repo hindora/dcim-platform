@@ -503,20 +503,6 @@ button.facet.on {
   color: var(--text-faint); margin-bottom: 8px;
 }
 
-/* How far back a trend chart looks. Sits above the caption because it
-   changes what the caption is counting, and stays put while a range loads
-   or fails - the chips are how the reader tells which range they are on. */
-.trend-range { display: flex; gap: 4px; margin-bottom: 8px; }
-.trend-range .sort {
-  background: none; border: 1px solid transparent; border-radius: 3px;
-  padding: 2px 8px; cursor: pointer;
-  font: inherit; font-size: 11px; letter-spacing: .06em;
-  text-transform: uppercase; color: var(--text-faint);
-}
-.trend-range .sort:hover { color: var(--text); }
-.trend-range .sort.on {
-  color: var(--text); border-color: var(--border); background: var(--bg-inset);
-}
 /* A closed condition is history, not a live reading. */
 .sub-table .cleared-at { font-style: italic; }
 
