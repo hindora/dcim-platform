@@ -242,10 +242,13 @@
 .alarm-trend-head p { margin: 0 auto 0 0; font-size: 0.85rem; }
 .alarm-trend-head p b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
 
-/* The picked window, under the title row when CUSTOM is the range: the
-   asset panels' filter row, with date fields where they have selects. */
+/* The picked window, directly under the range control it belongs to -
+   right-aligned so it hangs off the CUSTOM cell rather than sitting under
+   the caption on the far side of the row. The asset panels' filter row,
+   with date fields where they have selects. */
 .alarm-trend-dates {
   display: flex;
+  justify-content: flex-end;
   align-items: center;
   gap: 10px;
   margin: -2px 0 10px;
