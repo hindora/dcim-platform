@@ -177,18 +177,15 @@
 
 /* --- footer --------------------------------------------------------------- */
 
+/* The shared pager (components/Pagination.tsx) with the CSV button after it.
+   The foot draws the rule and reserves the height; the pager's own rule and
+   top margin are dropped so it sits centred in the band. */
 .estate-foot {
   display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
-  padding: 0 16px; height: 52px; border-top: 1px solid var(--border);
+  padding: 0 16px; min-height: 52px; border-top: 1px solid var(--border);
   font-size: 12px; color: var(--text-muted);
 }
-.estate-foot select { height: 28px; padding: 0 6px; }
-.estate-foot .pager { display: flex; gap: 10px; margin-left: auto; }
-.estate-foot .pager button {
-  background: none; border: none; color: var(--text-faint); font: inherit;
-  cursor: pointer; padding: 2px 6px;
-}
-.estate-foot .pager button:disabled { opacity: .4; cursor: default; }
+.estate-foot .asset-pager { flex: 1; margin-top: 0; padding-top: 0; border-top: none; }
 .estate-foot .csv {
   background: none; border: 1px solid var(--border); border-radius: 4px;
   color: var(--text-muted); height: 28px; padding: 0 12px; cursor: pointer;

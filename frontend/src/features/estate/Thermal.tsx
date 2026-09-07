@@ -201,6 +201,7 @@ export function Thermal() {
         />
 
         <TableFoot total={t.filtered.length} page={t.page} pageSize={t.pageSize}
+                   noun={t.selected ? 'rooms' : t.scope}
                    onPage={t.setPage} onPageSize={t.setPageSize} onCsv={exportCsv} />
       </div>
 

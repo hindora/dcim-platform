@@ -7,6 +7,7 @@
  */
 import { useMemo, useState } from 'react';
 import { Tip } from './HoverTip';
+import { Pagination } from './Pagination';
 
 /* ------------------------------------------------------------------ headline */
 
@@ -233,33 +234,27 @@ export function DataTable<Row extends { id: string }>({
 
 /* ------------------------------------------------------------------- footer */
 
-export function TableFoot({ total, page, pageSize, onPage, onPageSize, onCsv }: {
+/** The estate pages' footer: the shared pager (components/Pagination.tsx),
+ *  with the CSV button after it. Kept as a wrapper because the estate table
+ *  hook counts pages from zero and the pager from one, and three pages
+ *  should not each do that arithmetic. */
+export function TableFoot({ total, page, pageSize, onPage, onPageSize, onCsv, noun }: {
   total: number; page: number; pageSize: number;
   onPage: (p: number) => void; onPageSize: (n: number) => void;
   onCsv?: () => void;
+  /** What the rows are - "sites", "rooms" - after the total. */
+  noun?: string;
 }) {
   const pages = Math.max(1, Math.ceil(total / pageSize));
   const current = Math.min(page, pages - 1);
+  const shown = Math.max(0, Math.min(pageSize, total - current * pageSize));
   return (
     <div className="estate-foot">
-      <label>
-        Rows{' '}
-        <select value={pageSize}
-                onChange={(e) => { onPageSize(Number(e.target.value)); onPage(0); }}>
-          {[10, 25, 50, 100].map((n) => <option key={n} value={n}>{n}</option>)}
-        </select>
-      </label>
-      <span>
-        {total === 0 ? 'nothing to show'
-          : `${current * pageSize + 1}–${Math.min(total, (current + 1) * pageSize)} of ${total}`}
-      </span>
+      <Pagination page={current + 1} pageSize={pageSize} shown={shown} total={total}
+                  hasNext={current < pages - 1} noun={noun}
+                  onPage={(p) => onPage(p - 1)}
+                  onSize={(n) => { onPageSize(n); onPage(0); }} />
       {onCsv && <button className="csv" onClick={onCsv}>DOWNLOAD CSV</button>}
-      <span className="pager">
-        <button onClick={() => onPage(0)} disabled={current === 0}>« first</button>
-        <button onClick={() => onPage(current - 1)} disabled={current === 0}>‹ prev</button>
-        <button onClick={() => onPage(current + 1)} disabled={current >= pages - 1}>next ›</button>
-        <button onClick={() => onPage(pages - 1)} disabled={current >= pages - 1}>last »</button>
-      </span>
     </div>
   );
 }
