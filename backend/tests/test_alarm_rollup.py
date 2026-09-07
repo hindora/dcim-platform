@@ -316,16 +316,33 @@ async def test_the_trend_fills_every_day_of_the_window(monkeypatch):
 
     monkeypatch.setattr(estate_service.repo, "alarm_trend", _trend)
 
-    out = await estate_api.alarm_trend(category=["power"], days=5, room="r1",
+    room = "4be69c4a-831e-44ec-a769-65a602153529"
+    out = await estate_api.alarm_trend(category=["power"], days=5, room=room,
                                        site=None, session=_FakeSession())
 
-    assert seen["room_id"] == "r1" and seen["datacenter_id"] is None
+    assert seen["room_id"] == room and seen["datacenter_id"] is None
     assert seen["since"].date() == today - timedelta(days=4)
     assert [p["day"] for p in out["points"]] == [
         (today - timedelta(days=i)).isoformat() for i in range(4, -1, -1)]
     assert [p["raised"] for p in out["points"]] == [0, 0, 3, 0, 1]
     assert out["total"] == 4
     assert isinstance(date.today(), date)
+
+
+@pytest.mark.parametrize("scope", [{"room": "hall-a"}, {"site": "DC1"}])
+async def test_a_malformed_trend_scope_is_a_bad_request_not_a_crash(monkeypatch, scope):
+    """The ids are cast to uuid in SQL; a bad one must fail before it gets there."""
+    async def _never(*_a, **_k):
+        raise AssertionError("the database was asked")
+
+    monkeypatch.setattr(estate_service.repo, "alarm_trend", _never)
+
+    with pytest.raises(HTTPException) as e:
+        await estate_api.alarm_trend(category=["power"], days=14,
+                                     room=scope.get("room"), site=scope.get("site"),
+                                     session=_FakeSession())
+    assert e.value.status_code == 400
+    assert "not a uuid" in e.value.detail
 
 
 @pytest.mark.parametrize("category", ["thermalish", "thermal", "datapoint"])

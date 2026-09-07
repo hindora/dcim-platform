@@ -9,6 +9,7 @@ different instants and call it the same screen.
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -177,6 +178,17 @@ async def alarm_trend(
     if unknown:
         raise HTTPException(status.HTTP_400_BAD_REQUEST,
                             f"unknown category: {', '.join(unknown)}")
+    # The ids are cast to uuid inside the query; a malformed one would come
+    # back from the database as a 500, which reads as the trend being broken
+    # rather than the request.
+    for name, value in (("room", room), ("site", site)):
+        if value is None:
+            continue
+        try:
+            UUID(value)
+        except ValueError:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                                f"{name} is not a uuid: {value}") from None
     return await service.alarm_trend(
         session, categories=list(dict.fromkeys(category)), days=days,
         room_id=room, datacenter_id=site)
