@@ -177,13 +177,22 @@ type Tab = 'live' | 'history';
 
 const HISTORY_STATES = ['ACTIVE', 'ACKNOWLEDGED', 'CLEARED'];
 
+/** Rows per page inside an expanded room. A hall's history runs to
+ *  thousands of conditions; they are all fetched, but not all mounted at
+ *  once - nine thousand table rows in a sub-row make the whole sheet drag. */
+const SUB_PAGE = 100;
+
 function RoomConditions({ roomId, categories, span, tab }: {
   roomId: string; categories: AlarmCategory[]; span: number; tab: Tab;
 }) {
   const history = tab === 'history';
+  const [page, setPage] = useState(0);
   const { data, isLoading, error } = useQuery({
     queryKey: ['room-conditions', roomId, tab, ...categories],
-    queryFn: () => api.roomConditions(
+    // Every condition, walked in pages of 500 until the end: the row above
+    // counts them all, and an expansion that stopped at 500 disagreed with
+    // the number it sat under.
+    queryFn: () => api.roomConditionsAll(
       roomId, categories, history ? HISTORY_STATES : undefined),
     staleTime: 15_000,
   });
@@ -204,6 +213,10 @@ function RoomConditions({ roomId, categories, span, tab }: {
 
   const alarms = items.filter((a) => a.response_class !== 'alert').length;
   const alerts = items.length - alarms;
+
+  const pageCount = Math.max(1, Math.ceil(items.length / SUB_PAGE));
+  const current = Math.min(page, pageCount - 1);
+  const shown = items.slice(current * SUB_PAGE, current * SUB_PAGE + SUB_PAGE);
 
   return (
     <td className="sub-cell" colSpan={span}>
@@ -233,7 +246,7 @@ function RoomConditions({ roomId, categories, span, tab }: {
                 </tr>
               </thead>
               <tbody>
-                {items.map((a) => {
+                {shown.map((a) => {
                   const alert = a.response_class === 'alert';
                   return (
                     <tr key={a.id}>
@@ -279,6 +292,26 @@ function RoomConditions({ roomId, categories, span, tab }: {
                 })}
               </tbody>
             </table>
+            {pageCount > 1 && (
+              <div className="sub-foot">
+                <span>
+                  {current * SUB_PAGE + 1}–{Math.min(items.length, (current + 1) * SUB_PAGE)}
+                  {' of '}{items.length}
+                </span>
+                <span className="pager">
+                  <button onClick={() => setPage(0)} disabled={current === 0}
+                          aria-label="First page">|◀</button>
+                  <button onClick={() => setPage(current - 1)} disabled={current === 0}
+                          aria-label="Previous page">◀</button>
+                  <button onClick={() => setPage(current + 1)}
+                          disabled={current >= pageCount - 1}
+                          aria-label="Next page">▶</button>
+                  <button onClick={() => setPage(pageCount - 1)}
+                          disabled={current >= pageCount - 1}
+                          aria-label="Last page">▶|</button>
+                </span>
+              </div>
+            )}
           </>
         )}
       </div>

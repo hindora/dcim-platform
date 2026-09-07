@@ -338,8 +338,9 @@ async def list_alarms(session: AsyncSession, *, states: list[str] | None = None,
                       room_id: str | None = None,
                       include_symptoms: bool = False,
                       include_shelved: bool = False,
-                      limit: int = 100) -> list[dict[str, Any]]:
-    where, params = [], {"limit": limit}
+                      limit: int = 100,
+                      offset: int = 0) -> list[dict[str, Any]]:
+    where, params = [], {"limit": limit, "offset": offset}
     if states:
         where.append("a.state::text = ANY(:states)")
         params["states"] = states
@@ -390,10 +391,15 @@ async def list_alarms(session: AsyncSession, *, states: list[str] | None = None,
     sql = _ALARM_SELECT
     if where:
         sql += " WHERE " + " AND ".join(where)
+    # `a.id` last: the page boundary has to fall in the same place on every
+    # request, and two conditions raised in the same tick share a last_seen.
+    # Without a total order a caller walking the list by offset sees one row
+    # twice and another not at all, and the table it builds is quietly wrong.
     sql += """ ORDER BY CASE a.severity
                    WHEN 'CRITICAL' THEN 0 WHEN 'MAJOR' THEN 1 WHEN 'MINOR' THEN 2
                    WHEN 'WARNING' THEN 3 WHEN 'INFO' THEN 4 ELSE 5 END,
-               a.last_seen DESC LIMIT :limit"""
+               a.last_seen DESC, a.id
+               LIMIT :limit OFFSET :offset"""
     rows = (await session.execute(text(sql), params)).mappings().all()
     return [dict(r) for r in rows]
 

@@ -2078,11 +2078,28 @@ export const api = {
   /** Conditions in one room. `states` selects the lifecycle to show: omitted,
    *  the server answers with the open ones (ACTIVE + ACKNOWLEDGED), which is
    *  what the roll-up counters are counting. */
-  roomConditions: (roomId: string, categories: string[], states?: string[]) =>
+  roomConditions: (roomId: string, categories: string[], states?: string[],
+                   offset = 0) =>
     request<{ items: Alarm[] }>(
-      `/alarms?limit=500&room=${encodeURIComponent(roomId)}`
+      `/alarms?limit=500&offset=${offset}&room=${encodeURIComponent(roomId)}`
       + categories.map((c) => `&category=${encodeURIComponent(c)}`).join('')
       + (states ?? []).map((s) => `&state=${encodeURIComponent(s)}`).join('')),
+
+  /** Every condition in one room, however many. The list endpoint hands
+   *  out at most 500 a call; this walks it by offset until a short page
+   *  says the end was reached. The order is total server-side, so no row
+   *  is seen twice or skipped across the boundaries. */
+  roomConditionsAll: async (roomId: string, categories: string[],
+                            states?: string[]) => {
+    const PAGE = 500;
+    const items: Alarm[] = [];
+    for (let offset = 0; ; offset += PAGE) {
+      const page = await api.roomConditions(roomId, categories, states, offset);
+      items.push(...page.items);
+      if (page.items.length < PAGE) break;
+    }
+    return { items };
+  },
 
   /** Who this instance belongs to. Unauthenticated on purpose: the shell needs
    *  a name before anybody has signed in. */

@@ -47,6 +47,9 @@ async def list_alarms(
         False, description="Symptoms are hidden by default: one root cause with "
                            "twenty symptoms should read as one incident."),
     limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0, description=(
+        "Rows to skip. The order is total, so walking the list in pages of "
+        "`limit` from offset 0 sees every row once.")),
     session: AsyncSession = Depends(get_session),
     _: Principal = Depends(current_principal),
 ) -> dict[str, Any]:
@@ -63,7 +66,7 @@ async def list_alarms(
         session, states=states, severities=severity, device_id=device_id,
         alarm_type=alarm_type, categories=category, detections=detection,
         response_classes=response_class, room_id=room,
-        include_symptoms=include_symptoms, limit=limit)
+        include_symptoms=include_symptoms, limit=limit, offset=offset)
     return {"items": items}
 
 
