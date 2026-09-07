@@ -296,6 +296,38 @@ async def test_a_grouped_counter_asks_once(monkeypatch):
     assert seen == {"categories": ["cooling", "environmental"]}
 
 
+async def test_the_trend_fills_every_day_of_the_window(monkeypatch):
+    """A day with nothing raised is a zero, not a gap.
+
+    The chart draws its axis from the points, so a missing day would shift
+    every bar after it one column left and put Tuesday's count under
+    Wednesday's date.
+    """
+    from datetime import UTC, date, datetime, timedelta
+
+    today = datetime.now(UTC).date()
+    seen: dict = {}
+
+    async def _trend(_session, *, categories, since, room_id, datacenter_id):
+        seen.update(categories=categories, since=since,
+                    room_id=room_id, datacenter_id=datacenter_id)
+        return [{"day": today - timedelta(days=2), "n": 3},
+                {"day": today, "n": 1}]
+
+    monkeypatch.setattr(estate_service.repo, "alarm_trend", _trend)
+
+    out = await estate_api.alarm_trend(category=["power"], days=5, room="r1",
+                                       site=None, session=_FakeSession())
+
+    assert seen["room_id"] == "r1" and seen["datacenter_id"] is None
+    assert seen["since"].date() == today - timedelta(days=4)
+    assert [p["day"] for p in out["points"]] == [
+        (today - timedelta(days=i)).isoformat() for i in range(4, -1, -1)]
+    assert [p["raised"] for p in out["points"]] == [0, 0, 3, 0, 1]
+    assert out["total"] == 4
+    assert isinstance(date.today(), date)
+
+
 @pytest.mark.parametrize("category", ["thermalish", "thermal", "datapoint"])
 async def test_an_unknown_category_is_rejected_rather_than_answered_empty(category):
     """Zero rows and a wrong filter look identical on the screen.

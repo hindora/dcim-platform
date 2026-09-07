@@ -363,66 +363,53 @@ function toCsv(rows: AlarmDrillRow[], withAlerts: boolean) {
 
 export interface PanelScope { kind: 'site' | 'room'; id: string; label: string }
 
-/** Conditions raised per day over the last fortnight, in this panel's
- *  scope. The table below says what is happening NOW; this says whether now
- *  is normal - a hall raising six a day for two weeks and a hall that just
- *  started are different problems wearing the same count. Built from the
- *  same rows the history shows (roots only, open and cleared), bucketed on
- *  first_seen: raised-per-day survives the clears that empty the table. */
+/** Conditions raised per day over the last fortnight, in one scope. The
+ *  table beside it says what is happening; this says whether that is normal
+ *  - a hall raising six a day for two weeks and a hall that just started are
+ *  different problems wearing the same count.
+ *
+ *  Counted by the server. This used to bucket a page of the alarm list in
+ *  the browser, and that page is capped at 500 and ordered by severity: at
+ *  estate scope it charted the 500 most severe conditions ever, not the
+ *  fortnight. */
 function AlarmTrend({ categories, scope }: {
   categories: AlarmCategory[]; scope?: PanelScope;
 }) {
   const { bind, tipEl } = useHoverTip();
-  const { data } = useQuery({
-    queryKey: ['alarm-trend', scope?.id ?? '', ...categories],
-    queryFn: () => api.alarms({
-      state: ['ACTIVE', 'ACKNOWLEDGED', 'CLEARED'],
-      category: categories,
+  const { data, error } = useQuery({
+    queryKey: ['alarm-trend', scope?.kind ?? '', scope?.id ?? '', ...categories],
+    queryFn: () => api.alarmTrend(categories, {
       room: scope?.kind === 'room' ? scope.id : undefined,
-      limit: '500',
+      site: scope?.kind === 'site' ? scope.id : undefined,
     }),
     staleTime: 60_000,
   });
 
-  const items = (data?.items ?? [])
-    .filter((a) => scope?.kind !== 'site' || a.datacenter_code === scope.label);
-
-  const days: string[] = [];
-  for (let i = 13; i >= 0; i--) {
-    const d = new Date();
-    d.setDate(d.getDate() - i);
-    days.push(d.toISOString().slice(0, 10));
-  }
-  const counts = new Map(days.map((d) => [d, 0]));
-  for (const a of items) {
-    const day = a.first_seen.slice(0, 10);
-    if (counts.has(day)) counts.set(day, (counts.get(day) ?? 0) + 1);
-  }
-  const max = Math.max(1, ...counts.values());
-  const total = [...counts.values()].reduce((t, n) => t + n, 0);
-
+  if (error) return <p className="muted">Could not load the trend.</p>;
   if (!data) return <p className="muted">Loading the trend…</p>;
+
+  const points = data.points;
+  const max = Math.max(1, ...points.map((p) => p.raised));
+  const total = data.total;
+
   return (
     <>
       <p className="muted">
-        {total} condition{total === 1 ? '' : 's'} raised in the last 14 days
-        {scope ? ` in ${scope.label}` : ''}.
+        {total} condition{total === 1 ? '' : 's'} raised in the last {data.days} days
+        {scope ? ` in ${scope.label}` : ' on the estate'}.
       </p>
       <div className="alarm-trend" role="img"
-           aria-label="Conditions raised per day, last 14 days">
-        {days.map((day) => {
-          const n = counts.get(day) ?? 0;
-          return (
-            <div className="col" key={day}
-                 {...bind(<><b>{day.slice(5)}</b> {n} raised</>)}>
-              <div className="barwrap">
-                <div className="v">{n || ''}</div>
-                <div className="bar" style={{ height: `${(n / max) * 100}%` }} />
-              </div>
-              <div className="k">{day.slice(5)}</div>
+           aria-label={`Conditions raised per day, last ${data.days} days`}>
+        {points.map(({ day, raised: n }) => (
+          <div className="col" key={day}
+               {...bind(<><b>{day.slice(5)}</b> {n} raised</>)}>
+            <div className="barwrap">
+              <div className="v">{n || ''}</div>
+              <div className="bar" style={{ height: `${(n / max) * 100}%` }} />
             </div>
-          );
-        })}
+            <div className="k">{day.slice(5)}</div>
+          </div>
+        ))}
         {tipEl}
       </div>
     </>
@@ -449,6 +436,10 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
   // so a room's fortnight can sit under its conditions rather than replace
   // them.
   const [trendOpen, setTrendOpen] = useState<Set<string>>(() => new Set());
+  // The whole panel's trend - the estate's, or the site's or room's the
+  // panel was opened on. Same question as a row's trend button, asked of
+  // the scope over the rows rather than of one of them.
+  const [overallTrend, setOverallTrend] = useState(false);
   const history = tab === 'history';
 
   // Escape closes. A surface that covers the page and can only be dismissed
@@ -587,6 +578,7 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
     setTab(next);
     setOpen(new Set());
     setTrendOpen(new Set());
+    setOverallTrend(false);
     setPage(0);
   }
 
@@ -659,7 +651,22 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
             <button role="tab" aria-selected={tab === 'history'}
                     className={tab === 'history' ? 'active' : ''}
                     onClick={() => switchTab('history')}>History</button>
+            {history && (
+              <button className={`trend-toggle ${overallTrend ? 'on' : ''}`}
+                      onClick={() => setOverallTrend((v) => !v)}
+                      aria-pressed={overallTrend}
+                      title="Raised per day, last 14 days, across every room below">
+                <TrendGlyph />
+                <span>Trend</span>
+              </button>
+            )}
           </div>
+
+          {history && overallTrend && (
+            <div className="panel-trend">
+              <AlarmTrend categories={categories} scope={scope} />
+            </div>
+          )}
 
           <>
 

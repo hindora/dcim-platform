@@ -457,6 +457,50 @@ async def alarms_by_room(session: AsyncSession, *,
     return [dict(r) for r in rows]
 
 
+async def alarm_trend(session: AsyncSession, *,
+                      categories: list[str], since: datetime,
+                      room_id: str | None = None,
+                      datacenter_id: str | None = None) -> list[dict[str, Any]]:
+    """Root conditions raised per UTC day since `since`, in a scope.
+
+    Counted in the database, not from a page of the alarm list. The list is
+    capped at 500 rows and ordered by severity, so bucketing it in the browser
+    counted the 500 most SEVERE conditions, not the most recent - at estate
+    scope that was a chart of noise wearing the axis of a trend.
+
+    Located conditions only, the same rule the room rows use: a platform
+    condition belongs to no room and no site, and is reported beside the
+    table rather than folded into it. A room or a site scope is inherently
+    located; the estate scope stays consistent with them.
+
+    Days with nothing raised are absent here; the service fills them, because
+    a day that is missing and a day with zero are the same fact to a chart.
+    """
+    where = ["a.is_symptom = false",
+             "a.shelved_by_window IS NULL",
+             "a.category = ANY(:categories)",
+             "a.first_seen >= :since",
+             "dev.room_id IS NOT NULL"]
+    params: dict[str, Any] = {"categories": categories, "since": since}
+    if room_id:
+        where.append("dev.room_id = CAST(:room_id AS uuid)")
+        params["room_id"] = room_id
+    if datacenter_id:
+        where.append("dev.datacenter_id = CAST(:datacenter_id AS uuid)")
+        params["datacenter_id"] = datacenter_id
+    rows = (await session.execute(text(f"""
+        WITH {_DEV_CTE}
+        SELECT (a.first_seen AT TIME ZONE 'UTC')::date AS day,
+               count(*)                                AS n
+        FROM alarm a
+        JOIN dev ON dev.device_id = a.device_id
+        WHERE {" AND ".join(where)}
+        GROUP BY 1
+        ORDER BY 1
+    """), params)).mappings().all()
+    return [dict(r) for r in rows]
+
+
 async def unlocated_alarms_by_category(session: AsyncSession, *,
                                        categories: list[str],
                                        lifecycle: str = "open") -> dict[str, int]:

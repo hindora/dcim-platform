@@ -1561,6 +1561,16 @@ export interface AlarmDrillRow {
   by_detection: Record<AlarmDetection, number>;
 }
 
+export interface AlarmTrend {
+  categories: AlarmCategory[];
+  days: number;
+  room_id: string | null;
+  datacenter_id: string | null;
+  /** One per day of the window, oldest first, zeros included. */
+  points: { day: string; raised: number }[];
+  total: number;
+}
+
 export interface AlarmDrill {
   categories: AlarmCategory[];
   rows: AlarmDrillRow[];
@@ -2040,6 +2050,15 @@ export const api = {
       + categories.map((c) => `&category=${encodeURIComponent(c)}`).join('')),
 
   alarmTaxonomy: () => request<AlarmTaxonomy>('/estate/alarm-categories'),
+
+  /** Conditions raised per day in a scope, counted in the database. Every
+   *  day of the window is present, zero included, oldest first. */
+  alarmTrend: (categories: string[], scope?: { room?: string; site?: string },
+               days = 14) =>
+    request<AlarmTrend>(`/estate/alarm-trend?days=${days}`
+      + categories.map((c) => `&category=${encodeURIComponent(c)}`).join('')
+      + (scope?.room ? `&room=${encodeURIComponent(scope.room)}` : '')
+      + (scope?.site ? `&site=${encodeURIComponent(scope.site)}` : '')),
 
   /** The conditions behind one row of an alarm panel.
    *

@@ -200,6 +200,33 @@
   border-bottom-color: var(--accent);
 }
 
+/* The history tab's whole-scope trend toggle, at the far end of the tab
+   row: a glyph and a word, lit while its chart is showing below. Not a tab -
+   it opens a strip over the table rather than replacing it. */
+.panel-tabs .trend-toggle {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  margin-bottom: 4px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.panel-tabs .trend-toggle:hover { border-color: var(--border-strong); color: var(--text); }
+.panel-tabs .trend-toggle.on { border-color: var(--accent); color: var(--accent); }
+
+.panel-trend {
+  padding: 4px 0 12px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+}
+
 /* The fortnight of raised-per-day columns, full size on its own tab: a
    value on each column, the bar, the date under it. */
 .alarm-trend {

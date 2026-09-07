@@ -157,6 +157,31 @@ async def alarms(
                                 lifecycle=lifecycle)
 
 
+@router.get("/alarm-trend", summary="Conditions raised per day in a scope")
+async def alarm_trend(
+    category: list[str] = Query(..., description=(
+        "One or more of: " + ", ".join(CATEGORIES) + ", as for /alarms.")),
+    days: int = Query(14, ge=1, le=90),
+    room: str | None = Query(None, description="Only this room."),
+    site: str | None = Query(None, description="Only this site (datacenter id)."),
+    session: AsyncSession = Depends(get_session),
+    _: Principal = Depends(current_principal),
+) -> dict:
+    """Whether now is normal: what this scope raised per day, zeros included.
+
+    Counted in the database. The alarm list is capped and ordered by
+    severity, so a trend bucketed from it in the browser was a chart of the
+    most severe 500 rather than the most recent.
+    """
+    unknown = sorted(set(category) - set(CATEGORIES))
+    if unknown:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            f"unknown category: {', '.join(unknown)}")
+    return await service.alarm_trend(
+        session, categories=list(dict.fromkeys(category)), days=days,
+        room_id=room, datacenter_id=site)
+
+
 @router.get("/rooms/{room_id}/kpi", summary="Everything the room drawer shows")
 async def room_kpi(
     room_id: str,
