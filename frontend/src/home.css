@@ -603,18 +603,16 @@ button.ind:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px
 }
 .row-btn.primary:hover { border-color: var(--accent); color: var(--accent); }
 
+/* The foot holds the shared pager (components/Pagination.tsx). The foot
+   draws the rule and reserves the height; the pager's own rule and top
+   margin are dropped so it sits centred in the band. */
 .sites-foot {
-  margin-top: auto; display: flex; align-items: center; gap: 20px;
-  padding: 0 22px; height: 58px; border-top: 1px solid var(--border);
-  font-size: 12px; color: var(--text-muted);
+  margin-top: auto; display: flex; align-items: center;
+  padding: 0 22px; min-height: 58px; border-top: 1px solid var(--border);
 }
-.sites-foot select { height: 30px; padding: 0 8px; }
-.sites-foot .pager { margin-left: auto; display: flex; gap: 14px; }
-.sites-foot .pager button {
-  background: none; border: none; color: var(--text-faint);
-  font: inherit; cursor: pointer; padding: 2px 4px;
+.sites-foot .asset-pager {
+  flex: 1; margin-top: 0; padding-top: 0; border-top: none; font-size: 12px;
 }
-.sites-foot .pager button:disabled { opacity: .4; cursor: default; }
 
 /* --- right rail ----------------------------------------------------------- */
 

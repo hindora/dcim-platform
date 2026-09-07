@@ -445,25 +445,14 @@ button.facet.on {
   color: var(--critical); font-variant-numeric: tabular-nums;
 }
 
+/* The sheet's foot: the shared pager (components/Pagination.tsx) with the
+   CSV button after it. The pager takes the width; the button keeps its own. */
 .sheet-foot {
   display: flex; align-items: center; gap: 22px; margin-top: 16px;
   font-size: 12px; color: var(--text-muted);
 }
-.sheet-foot select {
-  background: var(--bg-inset); color: var(--text); border: 1px solid var(--border);
-  border-radius: 3px; padding: 4px 6px; font: inherit;
-}
-.sheet-foot .pager { display: flex; gap: 4px; }
-.sheet-foot .pager button {
-  /* Wide enough for the two-glyph first/last labels: at 28px they wrapped, and
-     a paging control that breaks onto a second line reads as broken. */
-  min-width: 34px; height: 26px; padding: 0 4px; border-radius: 3px;
-  background: var(--bg-inset); border: 1px solid var(--border);
-  color: var(--text-muted); font: inherit; font-size: 11px; line-height: 1;
-  white-space: nowrap; cursor: pointer;
-}
-.sheet-foot .pager button:disabled { opacity: .4; cursor: default; }
-.sheet-foot .csv { margin-left: auto; min-width: 140px; }
+.sheet-foot .asset-pager { flex: 1; margin-top: 0; padding-top: 0; border-top: none; }
+.sheet-foot .csv { min-width: 140px; }
 
 @media (max-width: 900px) {
   .sheet-head, .sheet-body { padding-left: 16px; padding-right: 16px; }

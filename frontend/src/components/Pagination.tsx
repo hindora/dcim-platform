@@ -14,7 +14,7 @@
  *  trade for being able to jump to page 7 without having fetched page 6.
  */
 export function Pagination({
-  page, pageSize, shown, total, hasNext, onPage, onSize,
+  page, pageSize, shown, total, hasNext, onPage, onSize, noun,
 }: {
   page: number;
   pageSize: number;
@@ -23,6 +23,9 @@ export function Pagination({
   hasNext: boolean;
   onPage: (page: number) => void;
   onSize: (size: number) => void;
+  /** What the rows are, after the total: "of 16 rooms". Optional - a table
+   *  whose heading already says what it lists can leave it out. */
+  noun?: string;
 }) {
   const from = shown === 0 ? 0 : (page - 1) * pageSize + 1;
   const to = (page - 1) * pageSize + shown;
@@ -33,9 +36,9 @@ export function Pagination({
     <div className="asset-pager">
       <span className="asset-pager-range">
         {shown === 0
-          ? 'No rows'
+          ? (noun ? `No ${noun}` : 'No rows')
           : total != null
-            ? `${from.toLocaleString()}–${to.toLocaleString()} of ${total.toLocaleString()}`
+            ? `${from.toLocaleString()}–${to.toLocaleString()} of ${total.toLocaleString()}${noun ? ` ${noun}` : ''}`
             : `${from.toLocaleString()}–${to.toLocaleString()}`}
         {pages != null && pages > 1 && (
           <span className="muted"> · page {page} of {pages}</span>

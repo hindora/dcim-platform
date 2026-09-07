@@ -892,28 +892,15 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
 
           {sorted.length > 0 && (
             <div className="sheet-foot">
-              <label>
-                Items per page:{' '}
-                <select value={pageSize}
-                        onChange={(e) => { setPageSize(Number(e.target.value)); setPage(0); }}>
-                  {[10, 25, 50, 100].map((n) => <option key={n} value={n}>{n}</option>)}
-                </select>
-              </label>
-              <span>
-                {current * pageSize + 1}–{Math.min(sorted.length, (current + 1) * pageSize)}
-                {' of '}{sorted.length}
-                {sorted.length !== all.length && ` (filtered from ${all.length})`}
-              </span>
-              <span className="pager">
-                <button onClick={() => setPage(0)} disabled={current === 0}
-                        aria-label="First page">|◀</button>
-                <button onClick={() => setPage(current - 1)} disabled={current === 0}
-                        aria-label="Previous page">◀</button>
-                <button onClick={() => setPage(current + 1)} disabled={current >= pageCount - 1}
-                        aria-label="Next page">▶</button>
-                <button onClick={() => setPage(pageCount - 1)} disabled={current >= pageCount - 1}
-                        aria-label="Last page">▶|</button>
-              </span>
+              {/* The shared pager; the search's narrowing is said in the noun
+                  so "of 3 rooms (of 16)" still tells the reader a filter is
+                  on. */}
+              <Pagination page={current + 1} pageSize={pageSize} shown={rows.length}
+                          total={sorted.length} hasNext={current < pageCount - 1}
+                          noun={sorted.length !== all.length
+                            ? `rooms (of ${all.length})` : 'rooms'}
+                          onPage={(p) => setPage(p - 1)}
+                          onSize={(n) => { setPageSize(n); setPage(0); }} />
               <button className="row-btn csv" onClick={download}>DOWNLOAD CSV</button>
             </div>
           )}

@@ -51,6 +51,7 @@ import { SiteDrawer } from './SiteDrawer';
 import { RoomDrawer } from './RoomDrawer';
 import { AlarmLegend } from './AlarmModals';
 import { AlarmPanel } from './AlarmPanel';
+import { Pagination } from '../../components/Pagination';
 import { RailCards } from './RailCards';
 
 const ALARM_EVENTS = ['alarm_created', 'alarm_updated', 'alarm_cleared'];
@@ -544,25 +545,14 @@ export function Home() {
           </table>
           </div>
 
+          {/* The shared pager, so the sites and rooms page the way every
+              other table does. */}
           <div className="sites-foot">
-            <label>
-              Items per page:{' '}
-              <select value={pageSize}
-                      onChange={(e) => { setPageSize(Number(e.target.value)); setPage(0); }}>
-                {[10, 25, 50, 100].map((n) => <option key={n} value={n}>{n}</option>)}
-              </select>
-            </label>
-            <span>
-              {rowsAll.length === 0
-                ? `0 ${tab}`
-                : `${current * pageSize + 1}–${Math.min(rowsAll.length, (current + 1) * pageSize)} of ${rowsAll.length} ${tab}`}
-            </span>
-            <span className="pager">
-              <button onClick={() => setPage(0)} disabled={current === 0} aria-label="First page">|◀</button>
-              <button onClick={() => setPage(current - 1)} disabled={current === 0} aria-label="Previous page">◀</button>
-              <button onClick={() => setPage(current + 1)} disabled={current >= pageCount - 1} aria-label="Next page">▶</button>
-              <button onClick={() => setPage(pageCount - 1)} disabled={current >= pageCount - 1} aria-label="Last page">▶|</button>
-            </span>
+            <Pagination page={current + 1} pageSize={pageSize} shown={rows.length}
+                        total={rowsAll.length} hasNext={current < pageCount - 1}
+                        noun={tab}
+                        onPage={(p) => setPage(p - 1)}
+                        onSize={(n) => { setPageSize(n); setPage(0); }} />
           </div>
         </section>
 
