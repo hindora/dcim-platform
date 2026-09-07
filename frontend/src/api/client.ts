@@ -1568,6 +1568,8 @@ export interface AlarmTrend {
    *  to a Monday so the first bar is a whole one. */
   bucket: 'day' | 'week';
   since: string;
+  /** Last day of the window, inclusive. */
+  until: string;
   room_id: string | null;
   datacenter_id: string | null;
   /** One per bucket of the window, oldest first, zeros included; `day` is
@@ -2059,11 +2061,13 @@ export const api = {
   /** Conditions raised per day in a scope, counted in the database. Every
    *  day of the window is present, zero included, oldest first. */
   alarmTrend: (categories: string[], scope?: { room?: string; site?: string },
-               days = 30, bucket: 'day' | 'week' = 'day') =>
+               days = 30, bucket: 'day' | 'week' = 'day',
+               window?: { since: string; until: string }) =>
     request<AlarmTrend>(`/estate/alarm-trend?days=${days}&bucket=${bucket}`
       + categories.map((c) => `&category=${encodeURIComponent(c)}`).join('')
       + (scope?.room ? `&room=${encodeURIComponent(scope.room)}` : '')
-      + (scope?.site ? `&site=${encodeURIComponent(scope.site)}` : '')),
+      + (scope?.site ? `&site=${encodeURIComponent(scope.site)}` : '')
+      + (window ? `&since=${window.since}&until=${window.until}` : '')),
 
   /** The conditions behind one row of an alarm panel.
    *

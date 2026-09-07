@@ -607,11 +607,21 @@ async def alarms(session: AsyncSession, *,
     }
 
 
+MAX_TREND_DAYS = 366
+
+
 async def alarm_trend(session: AsyncSession, *, categories: list[str],
                       days: int = 30, bucket: str = "day",
+                      since: date | None = None, until: date | None = None,
                       room_id: str | None = None,
                       datacenter_id: str | None = None) -> dict[str, Any]:
-    """Conditions raised per bucket over the last `days`, in one scope.
+    """Conditions raised per bucket over a window, in one scope.
+
+    The window is the last `days` ending today, or - when `since` and
+    `until` are both given - exactly those dates, inclusive. A picked range
+    is the operator's question ("what happened over the change freeze"),
+    so it is honoured to the day and never widened to a preset; only the
+    weekly bucket moves its start back to a Monday, as it does for presets.
 
     The table beside it says what is happening; this says whether that is
     normal - a hall raising six a day for a month and a hall that started
@@ -625,19 +635,34 @@ async def alarm_trend(session: AsyncSession, *, categories: list[str],
     Monday on or before its first day: a first week counted from Wednesday
     would be a short bar that looks like a quiet one.
     """
-    today = datetime.now(UTC).date()
-    first = today - timedelta(days=days - 1)
+    if (since is None) != (until is None):
+        raise ValueError("since and until go together")
+    if since is not None and until is not None:
+        if until < since:
+            raise ValueError("until is before since")
+        if (until - since).days + 1 > MAX_TREND_DAYS:
+            raise ValueError(f"a window is at most {MAX_TREND_DAYS} days")
+        last = until
+        first = since
+        days = (until - since).days + 1
+    else:
+        last = datetime.now(UTC).date()
+        first = last - timedelta(days=days - 1)
     step = 7 if bucket == "week" else 1
     if bucket == "week":
         first -= timedelta(days=first.weekday())
-    since = datetime.combine(first, time.min, tzinfo=UTC)
-    rows = await repo.alarm_trend(session, categories=categories, since=since,
+    since_at = datetime.combine(first, time.min, tzinfo=UTC)
+    # Exclusive end: the instant after the last day, so the last day's
+    # conditions are inside the window and tomorrow's are not.
+    until_at = datetime.combine(last + timedelta(days=1), time.min, tzinfo=UTC)
+    rows = await repo.alarm_trend(session, categories=categories,
+                                  since=since_at, until=until_at,
                                   bucket=bucket, room_id=room_id,
                                   datacenter_id=datacenter_id)
     raised = {str(r["day"]): int(r["n"]) for r in rows}
     starts: list[date] = []
     d = first
-    while d <= today:
+    while d <= last:
         starts.append(d)
         d += timedelta(days=step)
     points = [{"day": d.isoformat(), "raised": raised.get(d.isoformat(), 0)}
@@ -646,7 +671,8 @@ async def alarm_trend(session: AsyncSession, *, categories: list[str],
         "categories": categories,
         "days": days,
         "bucket": bucket,
-        "since": since,
+        "since": since_at,
+        "until": last,
         "room_id": room_id,
         "datacenter_id": datacenter_id,
         "points": points,

@@ -462,6 +462,7 @@ TREND_BUCKETS = ("day", "week")
 
 async def alarm_trend(session: AsyncSession, *,
                       categories: list[str], since: datetime,
+                      until: datetime | None = None,
                       bucket: str = "day",
                       room_id: str | None = None,
                       datacenter_id: str | None = None) -> list[dict[str, Any]]:
@@ -494,6 +495,11 @@ async def alarm_trend(session: AsyncSession, *,
              "dev.room_id IS NOT NULL"]
     params: dict[str, Any] = {"categories": categories, "since": since,
                               "bucket": bucket}
+    # `until` is EXCLUSIVE: the service passes the instant after the last
+    # day of the window, so a window ending on the 7th holds all of the 7th.
+    if until is not None:
+        where.append("a.first_seen < :until")
+        params["until"] = until
     if room_id:
         where.append("dev.room_id = CAST(:room_id AS uuid)")
         params["room_id"] = room_id

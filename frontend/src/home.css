@@ -242,6 +242,26 @@
 .alarm-trend-head p { margin: 0 auto 0 0; font-size: 0.85rem; }
 .alarm-trend-head p b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
 
+/* The picked window, under the title row when CUSTOM is the range: the
+   asset panels' filter row, with date fields where they have selects. */
+.alarm-trend-dates {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: -2px 0 10px;
+  font-size: 0.76rem;
+  color: var(--text-muted);
+}
+.alarm-trend-dates label { display: inline-flex; align-items: center; gap: 6px; }
+.alarm-trend-dates input[type="date"] {
+  height: 26px;
+  padding: 0 6px;
+  font-size: 0.76rem;
+  color: var(--text);
+  color-scheme: light dark;
+}
+.alarm-trend-dates .why { color: var(--warn); }
+
 .alarm-trend-frame { display: flex; gap: 8px; }
 .alarm-trend-frame > .alarm-trend { flex: 1; min-width: 0; }
 

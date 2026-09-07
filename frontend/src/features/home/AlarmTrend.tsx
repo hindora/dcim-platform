@@ -51,20 +51,44 @@ export function TrendGlyph() {
  *  estate scope it charted the 500 most severe conditions ever, not the
  *  fortnight. */
 /** How far back a trend looks. Daily bars up to a quarter; beyond that a
- *  bar is a week, because 180 daily columns is a texture, not a chart. */
+ *  bar is a week, because 180 daily columns is a texture, not a chart.
+ *  CUSTOM is the fifth cell: two dates the operator picks - a change
+ *  freeze, an incident week - honoured to the day. */
 const RANGES = [
-  { label: '30D', days: 30, bucket: 'day', said: 'the last 30 days' },
-  { label: '90D', days: 90, bucket: 'day', said: 'the last 90 days' },
-  { label: '180D', days: 180, bucket: 'week', said: 'the last 180 days' },
-  { label: '1Y', days: 365, bucket: 'week', said: 'the last year' },
+  { label: '30D', days: 30, bucket: 'day', said: 'in the last 30 days' },
+  { label: '90D', days: 90, bucket: 'day', said: 'in the last 90 days' },
+  { label: '180D', days: 180, bucket: 'week', said: 'in the last 180 days' },
+  { label: '1Y', days: 365, bucket: 'week', said: 'in the last year' },
 ] as const;
 type Range = typeof RANGES[number];
+const CUSTOM = 'CUSTOM';
+/** Past this many picked days a bar is a week, as for the presets. */
+const WEEKLY_FROM_DAYS = 120;
+const MAX_DAYS = 366;
+
+const isoDay = (d: Date) => d.toISOString().slice(0, 10);
+const daysBetween = (a: string, b: string) =>
+  Math.round((Date.parse(b) - Date.parse(a)) / 86_400_000) + 1;
+const shortDay = (iso: string) => iso.slice(5);
 
 export function AlarmTrend({ categories, scope }: {
   categories: AlarmCategory[]; scope?: TrendScope;
 }) {
   const { bind, tipEl } = useHoverTip();
   const [range, setRange] = useState<Range>(RANGES[0]);
+  // The picked window. `custom` says which of the two the chart is
+  // reading; the dates persist while a preset is chosen, so flipping back
+  // to CUSTOM returns to the last window picked rather than to today.
+  const [custom, setCustom] = useState(false);
+  const [since, setSince] = useState(() => {
+    const d = new Date(); d.setDate(d.getDate() - 29); return isoDay(d);
+  });
+  const [until, setUntil] = useState(() => isoDay(new Date()));
+  const span = daysBetween(since, until);
+  const windowOk = span >= 1 && span <= MAX_DAYS;
+  const bucket: 'day' | 'week' = custom
+    ? (span > WEEKLY_FROM_DAYS ? 'week' : 'day')
+    : range.bucket;
   // How wide the chart actually is. The same 30 bars are readable across a
   // full-width sheet and a wall of dates in an 800px drawer, so what to hide
   // is decided from pixels per bar, not from the bar count.
@@ -82,11 +106,14 @@ export function AlarmTrend({ categories, scope }: {
   }, []);
   const { data, error } = useQuery({
     queryKey: ['alarm-trend', scope?.kind ?? '', scope?.id ?? '',
-               range.days, range.bucket, ...categories],
+               custom ? `${since}..${until}` : range.days, bucket, ...categories],
     queryFn: () => api.alarmTrend(categories, {
       room: scope?.kind === 'room' ? scope.id : undefined,
       site: scope?.kind === 'site' ? scope.id : undefined,
-    }, range.days, range.bucket),
+    }, range.days, bucket, custom ? { since, until } : undefined),
+    // A window the server would refuse is not asked: the row under the
+    // chips says what is wrong with it instead.
+    enabled: !custom || windowOk,
     staleTime: 60_000,
     // Keep the old bars up while the new range loads: a chart that blanks
     // on every click reads as broken, and the ranges are compared by eye.
@@ -97,19 +124,51 @@ export function AlarmTrend({ categories, scope }: {
   // row, right-aligned: a range is a slice of one series, not a filter on
   // its dimensions, and the Assets page settled what that looks like.
   const picker = (
-    <Seg value={range.label} label="How far back"
-         options={RANGES.map((r) => ({ key: r.label, label: r.label }))}
-         onChange={(k) => setRange(RANGES.find((r) => r.label === k) ?? RANGES[0])} />
+    <Seg value={custom ? CUSTOM : range.label} label="How far back"
+         options={[...RANGES.map((r) => ({ key: r.label, label: r.label })),
+                   { key: CUSTOM, label: CUSTOM }]}
+         onChange={(k) => {
+           if (k === CUSTOM) { setCustom(true); return; }
+           setCustom(false);
+           setRange(RANGES.find((r) => r.label === k) ?? RANGES[0]);
+         }} />
   );
-  const head = (caption: React.ReactNode) => (
-    <div className="alarm-trend-head">
-      <p className="muted">{caption}</p>
-      {picker}
+  // Typing a date is choosing CUSTOM; nobody picks a day and then wants
+  // to click a fifth chip to be shown it.
+  const pick = (set: (v: string) => void) => (e: React.ChangeEvent<HTMLInputElement>) => {
+    set(e.target.value);
+    setCustom(true);
+  };
+  const dates = custom && (
+    <div className="alarm-trend-dates">
+      <label>From <input type="date" value={since} max={until} onChange={pick(setSince)} /></label>
+      <label>To <input type="date" value={until} min={since} max={isoDay(new Date())}
+                       onChange={pick(setUntil)} /></label>
+      {!windowOk && (
+        <span className="why">
+          {span < 1 ? 'The end is before the start.' : `At most ${MAX_DAYS} days.`}
+        </span>
+      )}
     </div>
   );
+  const head = (caption: React.ReactNode) => (
+    <>
+      <div className="alarm-trend-head">
+        <p className="muted">{caption}</p>
+        {picker}
+      </div>
+      {dates}
+    </>
+  );
+  const said = custom
+    ? `from ${shortDay(since)} to ${shortDay(until)}`
+    : range.said;
 
   if (error) {
     return <div ref={box}>{head('Could not load the trend.')}</div>;
+  }
+  if (custom && !windowOk) {
+    return <div ref={box}>{head('Pick a window to draw.')}</div>;
   }
   if (!data) {
     return <div ref={box}>{head('Loading the trend…')}</div>;
@@ -132,7 +191,7 @@ export function AlarmTrend({ categories, scope }: {
   return (
     <div ref={box}>
       {head(<>
-        <b>{total.toLocaleString()}</b> condition{total === 1 ? '' : 's'} raised in {range.said}
+        <b>{total.toLocaleString()}</b> condition{total === 1 ? '' : 's'} raised {said}
         {scope ? ` in ${scope.label}` : ' on the estate'}
         {weekly ? ', by week' : ''}
       </>)}
@@ -142,7 +201,7 @@ export function AlarmTrend({ categories, scope }: {
       <div className="alarm-trend-frame">
         <div className="alarm-trend-ylabel">Conditions raised</div>
         <div className={`alarm-trend ${dense ? 'dense' : ''}`} role="img"
-             aria-label={`Conditions raised per ${unit}, ${range.said}`}>
+             aria-label={`Conditions raised per ${unit}, ${said}`}>
           {points.map(({ day, raised: n }, i) => (
             <div className="col" key={day}
                  {...bind(<><b>{weekly ? `w/c ${day.slice(5)}` : day.slice(5)}</b>{' '}

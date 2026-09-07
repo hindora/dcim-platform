@@ -19,6 +19,8 @@ is what stops it creeping back in as an alias.
 
 from __future__ import annotations
 
+from datetime import date
+
 import pytest
 from fastapi import HTTPException
 
@@ -330,6 +332,56 @@ async def test_the_trend_fills_every_day_of_the_window(monkeypatch):
     assert [p["raised"] for p in out["points"]] == [0, 0, 3, 0, 1]
     assert out["total"] == 4
     assert isinstance(date.today(), date)
+
+
+async def test_a_picked_window_is_honoured_to_the_day(monkeypatch):
+    """`since`/`until` replace `days`, inclusive at both ends.
+
+    The operator asked about those dates - a change freeze, an incident -
+    so the axis runs from the first to the last, the query's exclusive end
+    is the instant after the last day, and today plays no part.
+    """
+    from datetime import UTC, date, timedelta
+
+    seen: dict = {}
+
+    async def _trend(_session, *, since, until, **_kw):
+        seen.update(since=since, until=until)
+        return [{"day": date(2026, 8, 12), "n": 5}]
+
+    monkeypatch.setattr(estate_service.repo, "alarm_trend", _trend)
+
+    out = await estate_api.alarm_trend(
+        category=["power"], days=30, bucket="day",
+        since=date(2026, 8, 10), until=date(2026, 8, 14),
+        room=None, site=None, session=_FakeSession())
+
+    assert seen["since"].date() == date(2026, 8, 10)
+    assert seen["since"].tzinfo == UTC
+    assert seen["until"].date() == date(2026, 8, 15)      # exclusive end
+    assert [p["day"] for p in out["points"]] == [
+        (date(2026, 8, 10) + timedelta(days=i)).isoformat() for i in range(5)]
+    assert [p["raised"] for p in out["points"]] == [0, 0, 5, 0, 0]
+    assert out["days"] == 5 and out["until"] == date(2026, 8, 14)
+
+
+@pytest.mark.parametrize("since, until, why", [
+    (date(2026, 8, 14), date(2026, 8, 10), "before"),
+    (date(2025, 1, 1), date(2026, 8, 10), "at most"),
+    (date(2026, 8, 10), None, "together"),
+])
+async def test_an_impossible_window_is_a_bad_request(monkeypatch, since, until, why):
+    async def _never(*_a, **_k):
+        raise AssertionError("the database was asked")
+
+    monkeypatch.setattr(estate_service.repo, "alarm_trend", _never)
+
+    with pytest.raises(HTTPException) as e:
+        await estate_api.alarm_trend(category=["power"], days=30, bucket="day",
+                                     since=since, until=until,
+                                     room=None, site=None, session=_FakeSession())
+    assert e.value.status_code == 400
+    assert why in e.value.detail
 
 
 async def test_a_weekly_trend_starts_on_a_monday_and_steps_by_seven(monkeypatch):

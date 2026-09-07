@@ -166,6 +166,11 @@ async def alarm_trend(
     bucket: str = Query("day", pattern="^(day|week)$", description=(
         "Bar width. `week` is Monday-anchored and widens the window back to "
         "a Monday, so the first bar is a whole week.")),
+    since: date | None = Query(None, description=(
+        "First day of a picked window (inclusive). With `until`, replaces "
+        "`days`; at most 366 days apart.")),
+    until: date | None = Query(None, description=(
+        "Last day of a picked window (inclusive).")),
     room: str | None = Query(None, description="Only this room."),
     site: str | None = Query(None, description="Only this site (datacenter id)."),
     session: AsyncSession = Depends(get_session),
@@ -192,9 +197,15 @@ async def alarm_trend(
         except ValueError:
             raise HTTPException(status.HTTP_400_BAD_REQUEST,
                                 f"{name} is not a uuid: {value}") from None
-    return await service.alarm_trend(
-        session, categories=list(dict.fromkeys(category)), days=days,
-        bucket=bucket, room_id=room, datacenter_id=site)
+    try:
+        return await service.alarm_trend(
+            session, categories=list(dict.fromkeys(category)), days=days,
+            bucket=bucket, since=since, until=until,
+            room_id=room, datacenter_id=site)
+    except ValueError as e:
+        # A window that cannot be answered is the request's fault, not the
+        # chart's: said as such rather than surfacing as a 500.
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)) from None
 
 
 @router.get("/rooms/{room_id}/kpi", summary="Everything the room drawer shows")
