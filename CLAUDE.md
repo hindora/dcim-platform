@@ -83,6 +83,21 @@ otherwise copy its CSS values verbatim. Never invent a new chart style.
   (ResizeObserver), not from bar count: values into the tooltip under
   ~34px a bar, every k-th date label so each keeps ~46px.
 
+### Tables
+
+Every table that can exceed a screen pages, and it pages with the one
+pager: `frontend/src/components/Pagination.tsx` (styles `.asset-pager*` in
+`index.css`, global). Born on the inventory table; never write another.
+It gives, in this order: the range ("1–25 of 9,065 · page 1 of 363"), a
+Rows-per-page select (25 / 50 / 100 / 200, 25 to start), a Go-to page
+number field when there is more than one page, and first / previous / a
+window of page numbers with gaps / next / last, the current page in the
+accent. It is 1-based; the caller keeps `page`, `pageSize` and passes
+`shown`, `total` and `hasNext`. It does not care whether pages come from
+the server (offset-paged over a TOTAL order, so a page is stable between
+fetches) or from a list already in hand (slice it). Inside a row's
+expansion it is a shade smaller (`.sub-wrap .asset-pager`).
+
 ### Which form for which question
 
 1. **Horizontal bar list** (`BarChart`): categoricals with long labels.
