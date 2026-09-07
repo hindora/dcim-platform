@@ -162,7 +162,10 @@ async def alarms(
 async def alarm_trend(
     category: list[str] = Query(..., description=(
         "One or more of: " + ", ".join(CATEGORIES) + ", as for /alarms.")),
-    days: int = Query(14, ge=1, le=90),
+    days: int = Query(30, ge=1, le=366),
+    bucket: str = Query("day", pattern="^(day|week)$", description=(
+        "Bar width. `week` is Monday-anchored and widens the window back to "
+        "a Monday, so the first bar is a whole week.")),
     room: str | None = Query(None, description="Only this room."),
     site: str | None = Query(None, description="Only this site (datacenter id)."),
     session: AsyncSession = Depends(get_session),
@@ -191,7 +194,7 @@ async def alarm_trend(
                                 f"{name} is not a uuid: {value}") from None
     return await service.alarm_trend(
         session, categories=list(dict.fromkeys(category)), days=days,
-        room_id=room, datacenter_id=site)
+        bucket=bucket, room_id=room, datacenter_id=site)
 
 
 @router.get("/rooms/{room_id}/kpi", summary="Everything the room drawer shows")

@@ -227,8 +227,9 @@
   border-bottom: 1px solid var(--border);
 }
 
-/* The fortnight of raised-per-day columns, full size on its own tab: a
-   value on each column, the bar, the date under it. */
+/* Raised-per-bucket columns: a value on each column, the bar, the date
+   under it. A dense chart (a quarter of days, a year of weeks) drops the
+   per-bar values into the tooltip and thins the axis to every k-th date. */
 .alarm-trend {
   display: flex;
   align-items: stretch;
@@ -236,6 +237,10 @@
   height: 280px;
   margin: 6px 0 10px;
 }
+
+.alarm-trend.dense { gap: 2px; }
+.alarm-trend.dense .col .v { visibility: hidden; }
+.alarm-trend .col .k.hide { visibility: hidden; }
 
 .alarm-trend .col {
   flex: 1;

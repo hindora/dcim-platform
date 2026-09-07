@@ -1564,9 +1564,14 @@ export interface AlarmDrillRow {
 export interface AlarmTrend {
   categories: AlarmCategory[];
   days: number;
+  /** Bar width. A week is Monday-anchored, and the window is widened back
+   *  to a Monday so the first bar is a whole one. */
+  bucket: 'day' | 'week';
+  since: string;
   room_id: string | null;
   datacenter_id: string | null;
-  /** One per day of the window, oldest first, zeros included. */
+  /** One per bucket of the window, oldest first, zeros included; `day` is
+   *  the bucket's first day. */
   points: { day: string; raised: number }[];
   total: number;
 }
@@ -2054,8 +2059,8 @@ export const api = {
   /** Conditions raised per day in a scope, counted in the database. Every
    *  day of the window is present, zero included, oldest first. */
   alarmTrend: (categories: string[], scope?: { room?: string; site?: string },
-               days = 14) =>
-    request<AlarmTrend>(`/estate/alarm-trend?days=${days}`
+               days = 30, bucket: 'day' | 'week' = 'day') =>
+    request<AlarmTrend>(`/estate/alarm-trend?days=${days}&bucket=${bucket}`
       + categories.map((c) => `&category=${encodeURIComponent(c)}`).join('')
       + (scope?.room ? `&room=${encodeURIComponent(scope.room)}` : '')
       + (scope?.site ? `&site=${encodeURIComponent(scope.site)}` : '')),

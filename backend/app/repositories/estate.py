@@ -457,11 +457,20 @@ async def alarms_by_room(session: AsyncSession, *,
     return [dict(r) for r in rows]
 
 
+TREND_BUCKETS = ("day", "week")
+
+
 async def alarm_trend(session: AsyncSession, *,
                       categories: list[str], since: datetime,
+                      bucket: str = "day",
                       room_id: str | None = None,
                       datacenter_id: str | None = None) -> list[dict[str, Any]]:
-    """Root conditions raised per UTC day since `since`, in a scope.
+    """Root conditions raised per UTC day (or ISO week) since `since`, in a scope.
+
+    `bucket` is `day` or `week`; a week is Postgres's `date_trunc('week')`,
+    Monday-anchored, and the row's `day` is the bucket's first day. Chosen
+    by the caller from the window: a year of daily bars is 365 columns
+    nobody can read, and a month of weekly ones is four.
 
     Counted in the database, not from a page of the alarm list. The list is
     capped at 500 rows and ordered by severity, so bucketing it in the browser
@@ -476,12 +485,15 @@ async def alarm_trend(session: AsyncSession, *,
     Days with nothing raised are absent here; the service fills them, because
     a day that is missing and a day with zero are the same fact to a chart.
     """
+    if bucket not in TREND_BUCKETS:
+        raise ValueError(f"unknown bucket: {bucket}")
     where = ["a.is_symptom = false",
              "a.shelved_by_window IS NULL",
              "a.category = ANY(:categories)",
              "a.first_seen >= :since",
              "dev.room_id IS NOT NULL"]
-    params: dict[str, Any] = {"categories": categories, "since": since}
+    params: dict[str, Any] = {"categories": categories, "since": since,
+                              "bucket": bucket}
     if room_id:
         where.append("dev.room_id = CAST(:room_id AS uuid)")
         params["room_id"] = room_id
@@ -490,8 +502,8 @@ async def alarm_trend(session: AsyncSession, *,
         params["datacenter_id"] = datacenter_id
     rows = (await session.execute(text(f"""
         WITH {_DEV_CTE}
-        SELECT (a.first_seen AT TIME ZONE 'UTC')::date AS day,
-               count(*)                                AS n
+        SELECT date_trunc(:bucket, a.first_seen AT TIME ZONE 'UTC')::date AS day,
+               count(*)                                                   AS n
         FROM alarm a
         JOIN dev ON dev.device_id = a.device_id
         WHERE {" AND ".join(where)}

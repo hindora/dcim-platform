@@ -608,30 +608,45 @@ async def alarms(session: AsyncSession, *,
 
 
 async def alarm_trend(session: AsyncSession, *, categories: list[str],
-                      days: int = 14, room_id: str | None = None,
+                      days: int = 30, bucket: str = "day",
+                      room_id: str | None = None,
                       datacenter_id: str | None = None) -> dict[str, Any]:
-    """Conditions raised per day over the last `days`, in one scope.
+    """Conditions raised per bucket over the last `days`, in one scope.
 
     The table beside it says what is happening; this says whether that is
-    normal - a hall raising six a day for a fortnight and a hall that started
+    normal - a hall raising six a day for a month and a hall that started
     this morning are different problems wearing the same count.
 
-    Every day in the window is present, zero included, oldest first: the
-    chart draws the axis from these and a missing day would shift every bar
+    Every bucket in the window is present, zero included, oldest first: the
+    chart draws the axis from these and a missing one would shift every bar
     after it one column left.
+
+    Weekly buckets are Monday-anchored, so the window is widened back to the
+    Monday on or before its first day: a first week counted from Wednesday
+    would be a short bar that looks like a quiet one.
     """
     today = datetime.now(UTC).date()
     first = today - timedelta(days=days - 1)
+    step = 7 if bucket == "week" else 1
+    if bucket == "week":
+        first -= timedelta(days=first.weekday())
     since = datetime.combine(first, time.min, tzinfo=UTC)
     rows = await repo.alarm_trend(session, categories=categories, since=since,
-                                  room_id=room_id, datacenter_id=datacenter_id)
+                                  bucket=bucket, room_id=room_id,
+                                  datacenter_id=datacenter_id)
     raised = {str(r["day"]): int(r["n"]) for r in rows}
-    points = [{"day": (first + timedelta(days=i)).isoformat(),
-               "raised": raised.get((first + timedelta(days=i)).isoformat(), 0)}
-              for i in range(days)]
+    starts: list[date] = []
+    d = first
+    while d <= today:
+        starts.append(d)
+        d += timedelta(days=step)
+    points = [{"day": d.isoformat(), "raised": raised.get(d.isoformat(), 0)}
+              for d in starts]
     return {
         "categories": categories,
         "days": days,
+        "bucket": bucket,
+        "since": since,
         "room_id": room_id,
         "datacenter_id": datacenter_id,
         "points": points,

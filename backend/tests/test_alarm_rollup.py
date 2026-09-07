@@ -308,8 +308,9 @@ async def test_the_trend_fills_every_day_of_the_window(monkeypatch):
     today = datetime.now(UTC).date()
     seen: dict = {}
 
-    async def _trend(_session, *, categories, since, room_id, datacenter_id):
-        seen.update(categories=categories, since=since,
+    async def _trend(_session, *, categories, since, bucket, room_id,
+                     datacenter_id):
+        seen.update(categories=categories, since=since, bucket=bucket,
                     room_id=room_id, datacenter_id=datacenter_id)
         return [{"day": today - timedelta(days=2), "n": 3},
                 {"day": today, "n": 1}]
@@ -317,16 +318,55 @@ async def test_the_trend_fills_every_day_of_the_window(monkeypatch):
     monkeypatch.setattr(estate_service.repo, "alarm_trend", _trend)
 
     room = "4be69c4a-831e-44ec-a769-65a602153529"
-    out = await estate_api.alarm_trend(category=["power"], days=5, room=room,
-                                       site=None, session=_FakeSession())
+    out = await estate_api.alarm_trend(category=["power"], days=5, bucket="day",
+                                       room=room, site=None,
+                                       session=_FakeSession())
 
     assert seen["room_id"] == room and seen["datacenter_id"] is None
+    assert seen["bucket"] == "day"
     assert seen["since"].date() == today - timedelta(days=4)
     assert [p["day"] for p in out["points"]] == [
         (today - timedelta(days=i)).isoformat() for i in range(4, -1, -1)]
     assert [p["raised"] for p in out["points"]] == [0, 0, 3, 0, 1]
     assert out["total"] == 4
     assert isinstance(date.today(), date)
+
+
+async def test_a_weekly_trend_starts_on_a_monday_and_steps_by_seven(monkeypatch):
+    """A first week counted from Wednesday is a short bar that looks quiet.
+
+    So the window is widened back to the Monday on or before its first day,
+    and every point after it is seven days on - the same anchoring Postgres
+    uses for date_trunc('week'), which is what the rows come back keyed by.
+    """
+    from datetime import UTC, datetime, timedelta
+    from itertools import pairwise
+
+    today = datetime.now(UTC).date()
+    seen: dict = {}
+
+    async def _trend(_session, *, since, **_kw):
+        seen["since"] = since
+        monday = since.date()
+        return [{"day": monday, "n": 4}, {"day": monday + timedelta(days=7), "n": 2}]
+
+    monkeypatch.setattr(estate_service.repo, "alarm_trend", _trend)
+
+    out = await estate_api.alarm_trend(category=["power"], days=30, bucket="week",
+                                       room=None, site=None,
+                                       session=_FakeSession())
+
+    first = seen["since"].date()
+    assert first.weekday() == 0
+    assert first <= today - timedelta(days=29)
+    assert first > today - timedelta(days=36)
+    days = [p["day"] for p in out["points"]]
+    assert days[0] == first.isoformat()
+    assert all((datetime.fromisoformat(b) - datetime.fromisoformat(a)).days == 7
+               for a, b in pairwise(days))
+    assert datetime.fromisoformat(days[-1]).date() <= today
+    assert [p["raised"] for p in out["points"]][:2] == [4, 2]
+    assert out["bucket"] == "week"
 
 
 @pytest.mark.parametrize("scope", [{"room": "hall-a"}, {"site": "DC1"}])
