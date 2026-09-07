@@ -23,6 +23,7 @@ import {
 } from '../../api/client';
 import { CategoryGlyph, type GlyphKind } from '../../components/CategoryGlyph';
 import { Tip } from '../../components/HoverTip';
+import { ALL_CATEGORIES, AlarmTrend } from './AlarmTrend';
 import { relativeTime } from '../../lib/format';
 
 function Tile({ value, unit, caption, note, absent, bar }: {
@@ -248,6 +249,15 @@ export function SiteDrawer({ site, onClose }: { site: SiteRow; onClose: () => vo
                 );
               })}
             </div>
+
+            {/* Whether now is normal for this site: what it has raised over
+                time, every domain at once, across all its rooms. The tiles
+                above are the present; this is the run-up to it. */}
+            <section className="drawer-section">
+              <div className="title">ALARMS RAISED</div>
+              <AlarmTrend categories={ALL_CATEGORIES}
+                          scope={{ kind: 'site', id: site.id, label: site.code }} />
+            </section>
 
             <div className="drawer-conn">
               <span style={{ color: data.monitored.devices_offline === 0
