@@ -14,9 +14,15 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { api, type AlarmCategory } from '../../api/client';
+import { api, type AlarmCategory, type AlarmTrend as TrendData } from '../../api/client';
 import { Seg } from '../../components/estate';
 import { useHoverTip } from '../../components/HoverTip';
+import { MaxGlyph, MaxModal } from '../../components/MaxModal';
+
+/** Whether a maximized chart is up. The sheet and the drawers close on
+ *  Escape from a window listener of their own; while a modal is open the
+ *  key is the modal's, or one press would take both layers down. */
+export const maxOpen = () => document.querySelector('.max-modal') !== null;
 
 /** What the chart is about: the estate when absent, else one site or room. */
 export interface TrendScope { kind: 'site' | 'room'; id: string; label: string }
@@ -71,11 +77,73 @@ const daysBetween = (a: string, b: string) =>
   Math.round((Date.parse(b) - Date.parse(a)) / 86_400_000) + 1;
 const shortDay = (iso: string) => iso.slice(5);
 
+/** The columns themselves, sized to the box they are in.
+ *
+ *  Its own component because the same points are drawn twice when the
+ *  chart is maximized - inline and in the modal - and each drawing has to
+ *  measure its own width: the same 30 bars are readable across a
+ *  full-width sheet and a wall of dates in an 800px drawer, so what to
+ *  hide is decided from pixels per bar, not from the bar count. */
+function TrendBars({ data, said }: { data: TrendData; said: string }) {
+  const { bind, tipEl } = useHoverTip();
+  const box = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(0);
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      setWidth(entries[0]?.contentRect.width ?? 0);
+    });
+    ro.observe(el);
+    setWidth(el.getBoundingClientRect().width);
+    return () => ro.disconnect();
+  }, []);
+
+  const points = data.points;
+  const max = Math.max(1, ...points.map((p) => p.raised));
+  const weekly = data.bucket === 'week';
+  // Pixels per bar decide what fits. A value needs ~34px before it collides
+  // with its neighbour; a date label ~46px. Below that the values move into
+  // the tooltip and the axis keeps every k-th date. Until the box has been
+  // measured, assume room - a first paint that hides everything and then
+  // shows it flickers.
+  const per = width > 0 ? width / Math.max(1, points.length) : 999;
+  const dense = per < 34;
+  const every = Math.max(1, Math.ceil(46 / per));
+  const unit = weekly ? 'week' : 'day';
+
+  return (
+    <div className="alarm-trend-frame" ref={box}>
+      <div className="alarm-trend-ylabel">Conditions raised</div>
+      <div className={`alarm-trend ${dense ? 'dense' : ''}`} role="img"
+           aria-label={`Conditions raised per ${unit}, ${said}`}>
+        {points.map(({ day, raised: n }, i) => (
+          <div className="col" key={day}
+               {...bind(<><b>{weekly ? `w/c ${day.slice(5)}` : day.slice(5)}</b>{' '}
+                 {n.toLocaleString()} raised</>)}>
+            <div className="barwrap">
+              <div className="v">{n ? n.toLocaleString() : ''}</div>
+              <div className="bar" style={{ height: `${(n / max) * 100}%` }} />
+            </div>
+            <div className={`k ${dense && i % every !== 0 ? 'hide' : ''}`}>
+              {day.slice(5)}
+            </div>
+          </div>
+        ))}
+        {tipEl}
+      </div>
+    </div>
+  );
+}
+
 export function AlarmTrend({ categories, scope }: {
   categories: AlarmCategory[]; scope?: TrendScope;
 }) {
-  const { bind, tipEl } = useHoverTip();
   const [range, setRange] = useState<Range>(RANGES[0]);
+  // The full-window view. It renders the same head and the same bars from
+  // the same state, so a range chosen in either place is the one range and
+  // the big view is never a stale copy - the asset panels' rule.
+  const [maxed, setMaxed] = useState(false);
   // The picked window. `custom` says which of the two the chart is
   // reading; the dates persist while a preset is chosen, so flipping back
   // to CUSTOM returns to the last window picked rather than to today.
@@ -89,21 +157,6 @@ export function AlarmTrend({ categories, scope }: {
   const bucket: 'day' | 'week' = custom
     ? (span > WEEKLY_FROM_DAYS ? 'week' : 'day')
     : range.bucket;
-  // How wide the chart actually is. The same 30 bars are readable across a
-  // full-width sheet and a wall of dates in an 800px drawer, so what to hide
-  // is decided from pixels per bar, not from the bar count.
-  const box = useRef<HTMLDivElement>(null);
-  const [width, setWidth] = useState(0);
-  useEffect(() => {
-    const el = box.current;
-    if (!el) return;
-    const ro = new ResizeObserver((entries) => {
-      setWidth(entries[0]?.contentRect.width ?? 0);
-    });
-    ro.observe(el);
-    setWidth(el.getBoundingClientRect().width);
-    return () => ro.disconnect();
-  }, []);
   const { data, error } = useQuery({
     queryKey: ['alarm-trend', scope?.kind ?? '', scope?.id ?? '',
                custom ? `${since}..${until}` : range.days, bucket, ...categories],
@@ -151,11 +204,20 @@ export function AlarmTrend({ categories, scope }: {
       )}
     </div>
   );
-  const head = (caption: React.ReactNode) => (
+  const where = scope ? `in ${scope.label}` : 'on the estate';
+  const title = `Conditions raised ${where}`;
+  // The head row: the caption, the range control, and - inline only - the
+  // maximize glyph the asset panels carry in the same corner.
+  const head = (caption: React.ReactNode, inline: boolean) => (
     <>
       <div className="alarm-trend-head">
         <p className="muted">{caption}</p>
         {picker}
+        {inline && (
+          <button type="button" className="asset-max"
+                  aria-label={`Maximize ${title}`} title="Maximize"
+                  onClick={() => setMaxed(true)}><MaxGlyph /></button>
+        )}
       </div>
       {dates}
     </>
@@ -164,60 +226,26 @@ export function AlarmTrend({ categories, scope }: {
     ? `from ${shortDay(since)} to ${shortDay(until)}`
     : range.said;
 
-  if (error) {
-    return <div ref={box}>{head('Could not load the trend.')}</div>;
-  }
-  if (custom && !windowOk) {
-    return <div ref={box}>{head('Pick a window to draw.')}</div>;
-  }
-  if (!data) {
-    return <div ref={box}>{head('Loading the trend…')}</div>;
-  }
-
-  const points = data.points;
-  const max = Math.max(1, ...points.map((p) => p.raised));
-  const total = data.total;
-  const weekly = data.bucket === 'week';
-  // Pixels per bar decide what fits. A value needs ~34px before it collides
-  // with its neighbour; a date label ~46px. Below that the values move into
-  // the tooltip and the axis keeps every k-th date. Until the box has been
-  // measured, assume room - a first paint that hides everything and then
-  // shows it flickers.
-  const per = width > 0 ? width / Math.max(1, points.length) : 999;
-  const dense = per < 34;
-  const every = Math.max(1, Math.ceil(46 / per));
-  const unit = weekly ? 'week' : 'day';
+  const caption = error ? 'Could not load the trend.'
+    : custom && !windowOk ? 'Pick a window to draw.'
+      : !data ? 'Loading the trend…'
+        : <>
+            <b>{data.total.toLocaleString()}</b> condition{data.total === 1 ? '' : 's'}
+            {' '}raised {said} {where}
+            {data.bucket === 'week' ? ', by week' : ''}
+          </>;
+  const drawable = !error && data && !(custom && !windowOk);
 
   return (
-    <div ref={box}>
-      {head(<>
-        <b>{total.toLocaleString()}</b> condition{total === 1 ? '' : 's'} raised {said}
-        {scope ? ` in ${scope.label}` : ' on the estate'}
-        {weekly ? ', by week' : ''}
-      </>)}
-      {/* The y axis named beside the columns, as the asset column charts
-          do: the count is the vertical dimension, and neither the dates
-          nor the figures say what is being counted. */}
-      <div className="alarm-trend-frame">
-        <div className="alarm-trend-ylabel">Conditions raised</div>
-        <div className={`alarm-trend ${dense ? 'dense' : ''}`} role="img"
-             aria-label={`Conditions raised per ${unit}, ${said}`}>
-          {points.map(({ day, raised: n }, i) => (
-            <div className="col" key={day}
-                 {...bind(<><b>{weekly ? `w/c ${day.slice(5)}` : day.slice(5)}</b>{' '}
-                   {n.toLocaleString()} raised</>)}>
-              <div className="barwrap">
-                <div className="v">{n ? n.toLocaleString() : ''}</div>
-                <div className="bar" style={{ height: `${(n / max) * 100}%` }} />
-              </div>
-              <div className={`k ${dense && i % every !== 0 ? 'hide' : ''}`}>
-                {day.slice(5)}
-              </div>
-            </div>
-          ))}
-          {tipEl}
-        </div>
-      </div>
+    <div>
+      {head(caption, true)}
+      {drawable && <TrendBars data={data} said={said} />}
+      {maxed && (
+        <MaxModal title={title} onClose={() => setMaxed(false)}>
+          {head(caption, false)}
+          {drawable && <TrendBars data={data} said={said} />}
+        </MaxModal>
+      )}
     </div>
   );
 }

@@ -32,7 +32,7 @@ import {
 import { CategoryGlyph } from '../../components/CategoryGlyph';
 import { StatusChip } from '../../components/StatusChip';
 import { Tip } from '../../components/HoverTip';
-import { AlarmTrend, TrendGlyph } from './AlarmTrend';
+import { AlarmTrend, TrendGlyph, maxOpen } from './AlarmTrend';
 import { metaFor } from '../../components/alertMeta';
 import { humanise, relativeTime } from '../../lib/format';
 
@@ -465,7 +465,11 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
   // Escape closes. A surface that covers the page and can only be dismissed
   // with the mouse traps a keyboard user.
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    // Not while a maximized chart is up: that Escape is the modal's, and
+    // taking the sheet down with it would drop two layers on one key.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !maxOpen()) onClose();
+    };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);

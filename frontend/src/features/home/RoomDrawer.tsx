@@ -9,7 +9,7 @@ import { useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { api, type RoomKpi } from '../../api/client';
-import { ALL_CATEGORIES, AlarmTrend } from './AlarmTrend';
+import { ALL_CATEGORIES, AlarmTrend, maxOpen } from './AlarmTrend';
 
 function Tile({ value, unit, caption, note, absent, bar }: {
   value: React.ReactNode; unit?: string; caption: string;
@@ -60,7 +60,10 @@ export function RoomDrawer({ roomId, roomName, onClose }: {
   // Escape closes. A drawer that can only be dismissed with the mouse is a
   // drawer that traps keyboard users behind it.
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    // Not while a maximized chart is up: that Escape is the modal's.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !maxOpen()) onClose();
+    };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);

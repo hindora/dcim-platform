@@ -23,7 +23,7 @@ import {
 } from '../../api/client';
 import { CategoryGlyph, type GlyphKind } from '../../components/CategoryGlyph';
 import { Tip } from '../../components/HoverTip';
-import { ALL_CATEGORIES, AlarmTrend } from './AlarmTrend';
+import { ALL_CATEGORIES, AlarmTrend, maxOpen } from './AlarmTrend';
 import { relativeTime } from '../../lib/format';
 
 function Tile({ value, unit, caption, note, absent, bar }: {
@@ -90,7 +90,10 @@ export function SiteDrawer({ site, onClose }: { site: SiteRow; onClose: () => vo
   // Escape closes. A panel that covers the page and can only be dismissed with
   // the mouse is a panel that traps a keyboard user.
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    // Not while a maximized chart is up: that Escape is the modal's.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !maxOpen()) onClose();
+    };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);

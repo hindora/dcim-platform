@@ -309,6 +309,15 @@
 .drawer-section .alarm-trend,
 .sub-wrap .alarm-trend { height: 150px; }
 
+/* Maximized, the chart takes the window: the modal exists to give it the
+   height, and the values and every date come back at that width. */
+.max-modal-body .alarm-trend { height: 60vh; }
+.max-modal-body .alarm-trend-head { margin-top: 4px; }
+
+/* The maximize glyph sits at the end of the chart's head row, after the
+   range control, in the same corner the asset panels keep theirs. */
+.alarm-trend-head .asset-max { margin-left: 2px; }
+
 .alarm-trend .col {
   flex: 1;
   min-width: 0;
