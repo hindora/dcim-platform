@@ -1,13 +1,21 @@
 /** The raised-over-time chart, and the glyph that opens it.
  *
  *  One chart for every place that asks "is now normal here": the alarm
- *  panel's history tab (whole scope and per room) and the room drawer.
- *  Counted by the server per day or per week; see /estate/alarm-trend.
+ *  panel's history tab (whole scope and per room) and the room and site
+ *  drawers. Counted by the server per day or per week; see
+ *  /estate/alarm-trend.
+ *
+ *  Its form is the Assets page's vertical-columns chart: a SEQUENCE with
+ *  short labels, values riding the column tops, a zero baseline, the
+ *  y-axis named beside it, and the range chosen with the same segmented
+ *  control the asset trends use - one vocabulary across the product, so a
+ *  chart here reads as the same kind of thing as a chart there.
  */
 
 import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api, type AlarmCategory } from '../../api/client';
+import { Seg } from '../../components/estate';
 import { useHoverTip } from '../../components/HoverTip';
 
 /** What the chart is about: the estate when absent, else one site or room. */
@@ -85,22 +93,26 @@ export function AlarmTrend({ categories, scope }: {
     placeholderData: (prev) => prev,
   });
 
+  // The same segmented control the asset trend panels wear, on the title
+  // row, right-aligned: a range is a slice of one series, not a filter on
+  // its dimensions, and the Assets page settled what that looks like.
   const picker = (
-    <div className="trend-range" role="group" aria-label="How far back">
-      {RANGES.map((r) => (
-        <button key={r.label} className={`sort ${range === r ? 'on' : ''}`}
-                aria-pressed={range === r} onClick={() => setRange(r)}>
-          {r.label}
-        </button>
-      ))}
+    <Seg value={range.label} label="How far back"
+         options={RANGES.map((r) => ({ key: r.label, label: r.label }))}
+         onChange={(k) => setRange(RANGES.find((r) => r.label === k) ?? RANGES[0])} />
+  );
+  const head = (caption: React.ReactNode) => (
+    <div className="alarm-trend-head">
+      <p className="muted">{caption}</p>
+      {picker}
     </div>
   );
 
   if (error) {
-    return <div ref={box}>{picker}<p className="muted">Could not load the trend.</p></div>;
+    return <div ref={box}>{head('Could not load the trend.')}</div>;
   }
   if (!data) {
-    return <div ref={box}>{picker}<p className="muted">Loading the trend…</p></div>;
+    return <div ref={box}>{head('Loading the trend…')}</div>;
   }
 
   const points = data.points;
@@ -119,27 +131,33 @@ export function AlarmTrend({ categories, scope }: {
 
   return (
     <div ref={box}>
-      {picker}
-      <p className="muted">
-        {total} condition{total === 1 ? '' : 's'} raised in {range.said}
+      {head(<>
+        <b>{total.toLocaleString()}</b> condition{total === 1 ? '' : 's'} raised in {range.said}
         {scope ? ` in ${scope.label}` : ' on the estate'}
-        {weekly ? ', by week' : ''}.
-      </p>
-      <div className={`alarm-trend ${dense ? 'dense' : ''}`} role="img"
-           aria-label={`Conditions raised per ${unit}, ${range.said}`}>
-        {points.map(({ day, raised: n }, i) => (
-          <div className="col" key={day}
-               {...bind(<><b>{weekly ? `w/c ${day.slice(5)}` : day.slice(5)}</b> {n} raised</>)}>
-            <div className="barwrap">
-              <div className="v">{n || ''}</div>
-              <div className="bar" style={{ height: `${(n / max) * 100}%` }} />
+        {weekly ? ', by week' : ''}
+      </>)}
+      {/* The y axis named beside the columns, as the asset column charts
+          do: the count is the vertical dimension, and neither the dates
+          nor the figures say what is being counted. */}
+      <div className="alarm-trend-frame">
+        <div className="alarm-trend-ylabel">Conditions raised</div>
+        <div className={`alarm-trend ${dense ? 'dense' : ''}`} role="img"
+             aria-label={`Conditions raised per ${unit}, ${range.said}`}>
+          {points.map(({ day, raised: n }, i) => (
+            <div className="col" key={day}
+                 {...bind(<><b>{weekly ? `w/c ${day.slice(5)}` : day.slice(5)}</b>{' '}
+                   {n.toLocaleString()} raised</>)}>
+              <div className="barwrap">
+                <div className="v">{n ? n.toLocaleString() : ''}</div>
+                <div className="bar" style={{ height: `${(n / max) * 100}%` }} />
+              </div>
+              <div className={`k ${dense && i % every !== 0 ? 'hide' : ''}`}>
+                {day.slice(5)}
+              </div>
             </div>
-            <div className={`k ${dense && i % every !== 0 ? 'hide' : ''}`}>
-              {day.slice(5)}
-            </div>
-          </div>
-        ))}
-        {tipEl}
+          ))}
+          {tipEl}
+        </div>
       </div>
     </div>
   );
