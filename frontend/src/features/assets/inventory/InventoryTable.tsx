@@ -12,7 +12,7 @@ import { useColumnWidths, type ColumnWidths } from '../../../lib/useColumnWidths
 import { LifecycleChip } from '../components/LifecycleChip';
 import { BulkBar } from './BulkBar';
 import { ImportDialog } from './ImportDialog';
-import { Pagination } from './Pagination';
+import { Pagination } from '../../../components/Pagination';
 
 /** The asset table.
  *

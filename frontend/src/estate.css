@@ -534,20 +534,10 @@ button.facet.on {
 /* A closed condition is history, not a live reading. */
 .sub-table .cleared-at { font-style: italic; }
 
-/* The pager under an expanded room: a hundred rows at a time out of however
-   many the room holds. Same shape as the sheet's own footer, smaller. */
-.sub-foot {
-  display: flex; align-items: center; gap: 14px; margin-top: 8px;
-  font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums;
-}
-.sub-foot .pager { display: inline-flex; gap: 2px; }
-.sub-foot .pager button {
-  background: none; border: 1px solid var(--border); border-radius: 3px;
-  padding: 1px 7px; cursor: pointer; font: inherit; font-size: 10px;
-  color: var(--text-muted);
-}
-.sub-foot .pager button:hover:not(:disabled) { color: var(--text); border-color: var(--border-strong); }
-.sub-foot .pager button:disabled { opacity: .4; cursor: default; }
+/* The pager under an expanded room is the shared one (components/
+   Pagination.tsx, .asset-pager in index.css): a shade smaller here, since
+   it sits inside a row rather than under a page. */
+.sub-wrap .asset-pager { font-size: 0.8rem; margin-top: 10px; padding-top: 8px; }
 .sub-table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .sub-table thead th {
   text-align: left; font-weight: 500; font-size: 10px; letter-spacing: .08em;

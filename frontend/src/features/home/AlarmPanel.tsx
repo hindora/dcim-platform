@@ -33,6 +33,7 @@ import { CategoryGlyph } from '../../components/CategoryGlyph';
 import { StatusChip } from '../../components/StatusChip';
 import { Tip } from '../../components/HoverTip';
 import { AlarmTrend, TrendGlyph, maxOpen } from './AlarmTrend';
+import { Pagination } from '../../components/Pagination';
 import { metaFor } from '../../components/alertMeta';
 import { humanise, relativeTime } from '../../lib/format';
 
@@ -178,10 +179,12 @@ type Tab = 'live' | 'history';
 
 const HISTORY_STATES = ['ACTIVE', 'ACKNOWLEDGED', 'CLEARED'];
 
-/** Rows per page inside an expanded room. A hall's history runs to
- *  thousands of conditions; they are all fetched, but not all mounted at
- *  once - nine thousand table rows in a sub-row make the whole sheet drag. */
-const SUB_PAGE = 100;
+/** Rows per page inside an expanded room, to start with. A hall's history
+ *  runs to thousands of conditions; they are all fetched, but not all
+ *  mounted at once - nine thousand table rows in a sub-row make the whole
+ *  sheet drag. The pager is the inventory table's, so the reader has the
+ *  same range, rows-per-page, go-to and page numbers here as there. */
+const SUB_PAGE = 25;
 
 /** The pressed facet chips, as the API takes them. */
 interface Facets { severity: string[]; detection: string[] }
@@ -194,6 +197,7 @@ function RoomConditions({ roomId, categories, span, tab, facets }: {
 }) {
   const history = tab === 'history';
   const [page, setPage] = useState(0);
+  const [size, setSize] = useState(SUB_PAGE);
   const { data, isLoading, error } = useQuery({
     queryKey: ['room-conditions', roomId, tab, ...categories,
                'sev', ...facets.severity, 'det', ...facets.detection],
@@ -224,9 +228,9 @@ function RoomConditions({ roomId, categories, span, tab, facets }: {
   const alarms = items.filter((a) => a.response_class !== 'alert').length;
   const alerts = items.length - alarms;
 
-  const pageCount = Math.max(1, Math.ceil(items.length / SUB_PAGE));
+  const pageCount = Math.max(1, Math.ceil(items.length / size));
   const current = Math.min(page, pageCount - 1);
-  const shown = items.slice(current * SUB_PAGE, current * SUB_PAGE + SUB_PAGE);
+  const shown = items.slice(current * size, current * size + size);
 
   return (
     <td className="sub-cell" colSpan={span}>
@@ -302,25 +306,11 @@ function RoomConditions({ roomId, categories, span, tab, facets }: {
                 })}
               </tbody>
             </table>
-            {pageCount > 1 && (
-              <div className="sub-foot">
-                <span>
-                  {current * SUB_PAGE + 1}–{Math.min(items.length, (current + 1) * SUB_PAGE)}
-                  {' of '}{items.length}
-                </span>
-                <span className="pager">
-                  <button onClick={() => setPage(0)} disabled={current === 0}
-                          aria-label="First page">|◀</button>
-                  <button onClick={() => setPage(current - 1)} disabled={current === 0}
-                          aria-label="Previous page">◀</button>
-                  <button onClick={() => setPage(current + 1)}
-                          disabled={current >= pageCount - 1}
-                          aria-label="Next page">▶</button>
-                  <button onClick={() => setPage(pageCount - 1)}
-                          disabled={current >= pageCount - 1}
-                          aria-label="Last page">▶|</button>
-                </span>
-              </div>
+            {items.length > SUB_PAGE && (
+              <Pagination page={current + 1} pageSize={size} shown={shown.length}
+                          total={items.length} hasNext={current < pageCount - 1}
+                          onPage={(p) => setPage(p - 1)}
+                          onSize={(n) => { setSize(n); setPage(0); }} />
             )}
           </>
         )}

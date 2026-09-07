@@ -1,4 +1,10 @@
-/** Paging controls for the inventory table.
+/** Paging controls for every table in the product.
+ *
+ *  Born on the inventory table and shared from there: the range, rows per
+ *  page, go-to-page, and first / previous / a window of numbers / next /
+ *  last. Any table that pages wears this one, so the reader learns the
+ *  control once. It does not care whether the pages come from the server
+ *  (inventory) or from a list already in hand (a room's conditions).
  *
  *  Offset-paged, so any page is reachable directly. The ordering behind it is
  *  a TOTAL order - `name` then `id` - so rows cannot shuffle among themselves
