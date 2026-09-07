@@ -65,6 +65,10 @@ otherwise copy its CSS values verbatim. Never invent a new chart style.
   `.asset-chart-controls` buttons with `.is-current` in accent.
 - A range or filter slices data already fetched wherever the response
   covers it; never refetch to switch a range.
+- A chart never widens its container; a long range thins the bars. The
+  bar row carries `min-width: 0; overflow: hidden` and its frame
+  `contain: inline-size`, because nowrap labels stick out of thin
+  columns and a chart inside a table cell grows the cell to its content.
 - Dense charts decide what to hide from measured pixels per bar
   (ResizeObserver), not from bar count: values into the tooltip under
   ~34px a bar, every k-th date label so each keeps ~46px.
