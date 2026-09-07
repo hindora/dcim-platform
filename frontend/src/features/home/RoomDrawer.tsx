@@ -9,6 +9,7 @@ import { useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { api, type RoomKpi } from '../../api/client';
+import { ALL_CATEGORIES, AlarmTrend } from './AlarmTrend';
 
 function Tile({ value, unit, caption, note, absent, bar }: {
   value: React.ReactNode; unit?: string; caption: string;
@@ -176,6 +177,15 @@ export function RoomDrawer({ roomId, roomName, onClose }: {
                 <Tile absent={ut?.cooling_pct === null} value={num(ut?.cooling_pct, 0)} unit="%"
                       caption="Cooling" bar={pctBar(ut?.cooling_pct)} note={ut?.cooling_basis} />
               </div>
+            </section>
+
+            {/* Whether now is normal for this room: what it has raised
+                over time, every domain at once. The tiles above are the
+                present; this is the run-up to it. */}
+            <section className="drawer-section">
+              <div className="title">ALARMS RAISED</div>
+              <AlarmTrend categories={ALL_CATEGORIES}
+                          scope={{ kind: 'room', id: roomId, label: roomName }} />
             </section>
 
             <div className="drawer-conn">

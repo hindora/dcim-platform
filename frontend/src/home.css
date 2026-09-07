@@ -239,6 +239,11 @@
 }
 
 .alarm-trend.dense { gap: 2px; }
+
+/* In the drawer the chart is one section among five: shorter, and the
+   range chips sit tight under the section title. */
+.drawer-section .alarm-trend { height: 170px; margin-bottom: 4px; }
+.drawer-section .trend-range { margin-top: 2px; }
 .alarm-trend.dense .col .v { visibility: hidden; }
 .alarm-trend .col .k.hide { visibility: hidden; }
 
