@@ -265,7 +265,19 @@
 }
 .alarm-trend-dates .why { color: var(--warn); }
 
-.alarm-trend-frame { display: flex; gap: 8px; }
+/* The chart never widens what holds it. Inside a room's expansion it sits
+   in a table cell, and a cell grows to its content: ninety nowrap dates
+   made the whole estate table wider than the sheet and put a scrollbar
+   under it. `contain: inline-size` tells layout to ignore the chart's own
+   intrinsic width, so the cell keeps the width the table gives it and the
+   bars thin out to fit; the chart clips at its edge for the labels that
+   stick out of thin columns. */
+.alarm-trend-frame {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+  contain: inline-size;
+}
 .alarm-trend-frame > .alarm-trend { flex: 1; min-width: 0; }
 
 .alarm-trend-ylabel {
@@ -284,6 +296,8 @@
   gap: 8px;
   height: 220px;
   margin: 2px 0 6px;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .alarm-trend.dense { gap: 2px; }
