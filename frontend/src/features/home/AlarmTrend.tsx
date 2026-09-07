@@ -5,7 +5,7 @@
  *  Counted by the server per day or per week; see /estate/alarm-trend.
  */
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api, type AlarmCategory } from '../../api/client';
 import { useHoverTip } from '../../components/HoverTip';
@@ -57,6 +57,21 @@ export function AlarmTrend({ categories, scope }: {
 }) {
   const { bind, tipEl } = useHoverTip();
   const [range, setRange] = useState<Range>(RANGES[0]);
+  // How wide the chart actually is. The same 30 bars are readable across a
+  // full-width sheet and a wall of dates in an 800px drawer, so what to hide
+  // is decided from pixels per bar, not from the bar count.
+  const box = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(0);
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      setWidth(entries[0]?.contentRect.width ?? 0);
+    });
+    ro.observe(el);
+    setWidth(el.getBoundingClientRect().width);
+    return () => ro.disconnect();
+  }, []);
   const { data, error } = useQuery({
     queryKey: ['alarm-trend', scope?.kind ?? '', scope?.id ?? '',
                range.days, range.bucket, ...categories],
@@ -81,22 +96,29 @@ export function AlarmTrend({ categories, scope }: {
     </div>
   );
 
-  if (error) return <>{picker}<p className="muted">Could not load the trend.</p></>;
-  if (!data) return <>{picker}<p className="muted">Loading the trend…</p></>;
+  if (error) {
+    return <div ref={box}>{picker}<p className="muted">Could not load the trend.</p></div>;
+  }
+  if (!data) {
+    return <div ref={box}>{picker}<p className="muted">Loading the trend…</p></div>;
+  }
 
   const points = data.points;
   const max = Math.max(1, ...points.map((p) => p.raised));
   const total = data.total;
   const weekly = data.bucket === 'week';
-  // Past ~45 columns the per-bar values collide and the dates run together:
-  // the values move into the tooltip and the axis keeps roughly a dozen
-  // labels, every k-th one.
-  const dense = points.length > 45;
-  const every = Math.max(1, Math.ceil(points.length / 12));
+  // Pixels per bar decide what fits. A value needs ~34px before it collides
+  // with its neighbour; a date label ~46px. Below that the values move into
+  // the tooltip and the axis keeps every k-th date. Until the box has been
+  // measured, assume room - a first paint that hides everything and then
+  // shows it flickers.
+  const per = width > 0 ? width / Math.max(1, points.length) : 999;
+  const dense = per < 34;
+  const every = Math.max(1, Math.ceil(46 / per));
   const unit = weekly ? 'week' : 'day';
 
   return (
-    <>
+    <div ref={box}>
       {picker}
       <p className="muted">
         {total} condition{total === 1 ? '' : 's'} raised in {range.said}
@@ -119,6 +141,6 @@ export function AlarmTrend({ categories, scope }: {
         ))}
         {tipEl}
       </div>
-    </>
+    </div>
   );
 }
