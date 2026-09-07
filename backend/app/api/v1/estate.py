@@ -31,6 +31,10 @@ from app.services import taxonomy
 
 router = APIRouter(prefix="/estate", tags=["estate"])
 
+#: The severities a facet can name. The column is an enum; anything else
+#: would be a cast error deep in the query rather than a bad request.
+SEVERITIES = ("CRITICAL", "MAJOR", "MINOR", "WARNING", "INFO")
+
 
 @router.get("/thermal", summary="Intake temperature and compliance by room and site")
 async def thermal(
@@ -141,6 +145,12 @@ async def alarms(
     lifecycle: str = Query("open", pattern="^(open|all)$", description=(
         "`open` (default) is what the counter counts; `all` adds the cleared "
         "conditions back, for the history behind the same rooms.")),
+    severity: list[str] | None = Query(None, description=(
+        "Only these severities (CRITICAL, MAJOR, MINOR, WARNING, INFO); "
+        "several combine as OR. The pressed chips on the panel.")),
+    detection: list[str] | None = Query(None, description=(
+        "Only these detection methods: " + ", ".join(DETECTIONS)
+        + ". Several combine as OR; with `severity`, AND.")),
     session: AsyncSession = Depends(get_session),
     _: Principal = Depends(current_principal),
 ) -> dict:
@@ -154,8 +164,19 @@ async def alarms(
     if unknown:
         raise HTTPException(status.HTTP_400_BAD_REQUEST,
                             f"unknown category: {', '.join(unknown)}")
+    severities = [s.upper() for s in (severity or [])]
+    bad = sorted(set(severities) - set(SEVERITIES))
+    if bad:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            f"unknown severity: {', '.join(bad)}")
+    bad = sorted(set(detection or []) - set(DETECTIONS))
+    if bad:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            f"unknown detection: {', '.join(bad)}")
     return await service.alarms(session, categories=list(dict.fromkeys(category)),
-                                lifecycle=lifecycle)
+                                lifecycle=lifecycle,
+                                severities=severities or None,
+                                detections=detection or None)
 
 
 @router.get("/alarm-trend", summary="Conditions raised per day in a scope")

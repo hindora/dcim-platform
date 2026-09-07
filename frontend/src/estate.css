@@ -328,11 +328,25 @@
 .estate-table.catalogue tr.is-off { opacity: .55; }
 .estate-table.catalogue .name-cell .n { font-weight: 600; }
 
-/* The facet chips double as the catalogue's filter, so they need a pressed
-   state and a pointer. */
+/* The facet chips double as a filter - on the catalogue and on the alarm
+   panel - so they need a pressed state and a pointer. Pressed keeps the
+   chip's own hue where it has one (critical stays red) and adds the accent
+   ring, so "which is pressed" and "which severity" stay two readable
+   facts. */
 button.facet { font: inherit; cursor: pointer; }
+button.facet:hover { border-color: var(--border-strong); }
 button.facet.on {
   background: var(--bg-raised); border-color: var(--accent); color: var(--text);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+button.facet.critical.on { color: var(--critical); }
+button.facet.major.on { color: var(--major); }
+
+/* "Showing N of M · clear filters", under the chips while any is pressed. */
+.facet-note { margin: -6px 0 12px; }
+.facet-note .as-link {
+  background: none; border: none; padding: 0; font: inherit;
+  color: var(--accent); cursor: pointer; text-decoration: underline;
 }
 
 /* --- the alarm panel ------------------------------------------------------

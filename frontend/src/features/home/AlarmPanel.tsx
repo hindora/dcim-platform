@@ -183,18 +183,27 @@ const HISTORY_STATES = ['ACTIVE', 'ACKNOWLEDGED', 'CLEARED'];
  *  once - nine thousand table rows in a sub-row make the whole sheet drag. */
 const SUB_PAGE = 100;
 
-function RoomConditions({ roomId, categories, span, tab }: {
+/** The pressed facet chips, as the API takes them. */
+interface Facets { severity: string[]; detection: string[] }
+const NO_FACETS: Facets = { severity: [], detection: [] };
+const facetsActive = (f: Facets) => f.severity.length > 0 || f.detection.length > 0;
+
+function RoomConditions({ roomId, categories, span, tab, facets }: {
   roomId: string; categories: AlarmCategory[]; span: number; tab: Tab;
+  facets: Facets;
 }) {
   const history = tab === 'history';
   const [page, setPage] = useState(0);
   const { data, isLoading, error } = useQuery({
-    queryKey: ['room-conditions', roomId, tab, ...categories],
+    queryKey: ['room-conditions', roomId, tab, ...categories,
+               'sev', ...facets.severity, 'det', ...facets.detection],
     // Every condition, walked in pages of 500 until the end: the row above
     // counts them all, and an expansion that stopped at 500 disagreed with
-    // the number it sat under.
+    // the number it sat under. Narrowed by the same chips as the row, so
+    // the two keep agreeing.
     queryFn: () => api.roomConditionsAll(
-      roomId, categories, history ? HISTORY_STATES : undefined),
+      roomId, categories, history ? HISTORY_STATES : undefined,
+      facetsActive(facets) ? facets : undefined),
     staleTime: 15_000,
   });
 
@@ -323,20 +332,35 @@ function RoomConditions({ roomId, categories, span, tab }: {
 type SortKey = 'room' | 'site' | 'qty' | 'alerts' | 'devices';
 
 
-/** Facet chips: the same population the rows total, split two ways. */
-function Facets({ label, entries }: {
+/** Facet chips: the same population the rows total, split two ways - and
+ *  pressed, a filter on it. The counts on the chips are ALWAYS the
+ *  unfiltered population, so a pressed chip can be compared with the
+ *  others and un-pressed; the rows below are the narrowed one. Several
+ *  chips in a row combine as OR, the two rows as AND, and the server does
+ *  the arithmetic for both. */
+function Facets({ label, entries, on, onToggle, tip }: {
   label: string; entries: { key: string; label: string; n: number }[];
+  on: string[]; onToggle: (key: string) => void;
+  /** What a chip means, on hover - the taxonomy's own words. */
+  tip?: (key: string) => string | undefined;
 }) {
   const shown = entries.filter((e) => e.n > 0);
   if (!shown.length) return null;
   return (
     <div className="facet-row">
       <span className="facet-label">{label}</span>
-      {shown.map((e) => (
-        <span key={e.key} className={`facet ${e.key}`}>
-          {e.label}<b>{e.n}</b>
-        </span>
-      ))}
+      {shown.map((e) => {
+        const pressed = on.some((k) => k.toLowerCase() === e.key.toLowerCase());
+        return (
+          <button key={e.key} type="button"
+                  className={`facet ${e.key} ${pressed ? 'on' : ''}`}
+                  aria-pressed={pressed}
+                  title={tip?.(e.key)}
+                  onClick={() => onToggle(e.key)}>
+            {e.label}<b>{e.n}</b>
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -409,6 +433,11 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
   // panel was opened on. Same question as a row's trend button, asked of
   // the scope over the rows rather than of one of them.
   const [overallTrend, setOverallTrend] = useState(false);
+  // The pressed chips. Reset with the tab, like every other expansion:
+  // a filter chosen against the open population is not one the history
+  // was asked for.
+  const [facets, setFacets] = useState<Facets>(NO_FACETS);
+  const filtering = facetsActive(facets);
   const history = tab === 'history';
 
   // Escape closes. A surface that covers the page and can only be dismissed
@@ -425,10 +454,21 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
   // is one device, and only the database can say so.
   // The tab is part of the key: live and history are two populations of the
   // same rooms, and the server does the arithmetic for whichever is asked.
-  const { data, isLoading, error } = useQuery({
+  // This one is UNFILTERED: it is what the chips count, whatever is pressed.
+  const { data: whole, isLoading, error } = useQuery({
     queryKey: ['estate-alarms', tab, ...categories],
     queryFn: () => api.estateAlarms(categories, history ? 'all' : 'open'),
   });
+  // And the narrowed one, only while something is pressed: the rows, the
+  // headline and the device counts come from here then. The chips do not.
+  const { data: narrowed, isFetching: narrowing } = useQuery({
+    queryKey: ['estate-alarms', tab, ...categories,
+               'sev', ...facets.severity, 'det', ...facets.detection],
+    queryFn: () => api.estateAlarms(categories, history ? 'all' : 'open', facets),
+    enabled: filtering,
+    placeholderData: (prev) => prev,
+  });
+  const data = filtering ? narrowed : whole;
 
   const { data: taxonomy } = useQuery<AlarmTaxonomy>({
     queryKey: ['alarm-taxonomy'],
@@ -493,16 +533,32 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
   const current = Math.min(page, pageCount - 1);
   const rows = sorted.slice(current * pageSize, current * pageSize + pageSize);
 
+  // Facet counts come from the WHOLE population, filtered by scope only -
+  // never by the chips themselves, or pressing one would erase the others.
+  const wholeRows: AlarmDrillRow[] = (whole?.rows ?? [])
+    .filter(inScope)
+    .filter((r) => !alarmsOnly || r.qty > 0);
   const severity = SEVERITIES.map((k) => ({
     key: k,
     label: k.toUpperCase(),
-    n: all.reduce((n, r) => n + (r.by_severity?.[k] ?? 0), 0),
+    n: wholeRows.reduce((n, r) => n + (r.by_severity?.[k] ?? 0), 0),
   }));
   const detections = (taxonomy?.detections ?? []).map((d) => ({
     key: d.key as AlarmDetection,
     label: d.label,
-    n: all.reduce((n, r) => n + (r.by_detection?.[d.key] ?? 0), 0),
+    n: wholeRows.reduce((n, r) => n + (r.by_detection?.[d.key] ?? 0), 0),
   }));
+  const detectionTip = (key: string) =>
+    taxonomy?.detections.find((d) => d.key === key)?.description;
+
+  function toggleFacet(row: keyof Facets, key: string) {
+    setFacets((f) => {
+      const cur = f[row];
+      const next = cur.includes(key) ? cur.filter((k) => k !== key) : [...cur, key];
+      return { ...f, [row]: next };
+    });
+    setPage(0);
+  }
 
   // Every category at once. Concatenating seven definitions produced a
   // paragraph nobody would read and pushed the table below the fold; one
@@ -548,6 +604,7 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
     setOpen(new Set());
     setTrendOpen(new Set());
     setOverallTrend(false);
+    setFacets(NO_FACETS);
     setPage(0);
   }
 
@@ -639,7 +696,7 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
 
           <>
 
-          {data && (
+          {whole && (
             <>
               <label className="search wide">
                 <span className="glass" aria-hidden />
@@ -648,8 +705,28 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
                        onChange={(e) => { setSearch(e.target.value); setPage(0); }} />
               </label>
 
-              <Facets label="Severity" entries={severity} />
-              <Facets label="Found by" entries={detections} />
+              <Facets label="Severity" entries={severity}
+                      on={facets.severity}
+                      onToggle={(k) => toggleFacet('severity', k.toUpperCase())}
+                      tip={(k) => `Only ${k} conditions`} />
+              <Facets label="Found by" entries={detections}
+                      on={facets.detection}
+                      onToggle={(k) => toggleFacet('detection', k)}
+                      tip={detectionTip} />
+              {filtering && (
+                <p className="facet-note muted small">
+                  Showing {data ? total : '…'} of {whole
+                    ? (alarmsOnly ? (scope ? wholeRows.reduce((n, r) => n + r.qty, 0) : whole.alarms)
+                                  : (scope ? wholeRows.reduce((n, r) => n + r.qty + r.alerts, 0) : whole.total))
+                    : '…'}
+                  {narrowing ? ' · narrowing…' : ''}
+                  {' · '}
+                  <button type="button" className="as-link"
+                          onClick={() => { setFacets(NO_FACETS); setPage(0); }}>
+                    clear filters
+                  </button>
+                </p>
+              )}
             </>
           )}
 
@@ -768,7 +845,7 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
                         {isOpen && (
                           <tr className="sub-row">
                             <RoomConditions roomId={r.room_id} categories={categories}
-                                            span={span} tab={tab} />
+                                            span={span} tab={tab} facets={facets} />
                           </tr>
                         )}
                         {trendOn && (

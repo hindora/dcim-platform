@@ -368,14 +368,40 @@ def _state_clause(lifecycle: str) -> str:
     return "a.state <> 'CLEARED' AND " if lifecycle == "open" else ""
 
 
+def _facet_clauses(severities: list[str] | None,
+                   detections: list[str] | None,
+                   params: dict[str, Any]) -> str:
+    """The facet filters, as SQL on the alarm row, binding their lists.
+
+    Empty or absent means "no filter", never "match nothing": a chip row
+    with nothing pressed shows everything, which is what the counts on the
+    chips describe.
+    """
+    sql = ""
+    if severities:
+        sql += " AND a.severity::text = ANY(:severities)"
+        params["severities"] = [s.upper() for s in severities]
+    if detections:
+        sql += " AND a.detection = ANY(:detections)"
+        params["detections"] = detections
+    return sql
+
+
 async def alarms_by_room(session: AsyncSession, *,
                          categories: list[str],
-                         lifecycle: str = "open") -> list[dict[str, Any]]:
+                         lifecycle: str = "open",
+                         severities: list[str] | None = None,
+                         detections: list[str] | None = None) -> list[dict[str, Any]]:
     """Root alarms of one category, grouped by room - with the alerts beside them.
 
     `lifecycle` picks the population: `open` (the default, and what every
     counter totals) or `all`, which puts the cleared rows back so a room's
     row says what it has raised rather than what it is raising.
+
+    `severities` and `detections` narrow it further - the facet chips
+    pressed on the panel. Applied here, on the row, so every figure that
+    comes back (the room counts, the device counts, the per-row splits)
+    describes the same narrowed population and still adds up.
 
     The drill-down behind a counter. `qty` is alarms only, exactly the
     population the counter totals: a drill-down that disagrees with the number
@@ -414,6 +440,7 @@ async def alarms_by_room(session: AsyncSession, *,
         for d in DETECTIONS
     )
 
+    params: dict[str, Any] = {"categories": categories}
     rows = (await session.execute(text(f"""
         WITH {_DEV_CTE},
         cat AS (
@@ -423,7 +450,7 @@ async def alarms_by_room(session: AsyncSession, *,
             FROM alarm a
             JOIN dev ON dev.device_id = a.device_id
             WHERE {_state_clause(lifecycle)}a.is_symptom = false
-              AND a.shelved_by_window IS NULL
+              AND a.shelved_by_window IS NULL{_facet_clauses(severities, detections, params)}
         )
         SELECT rm.id::text            AS room_id,
                rm.name                AS room_name,
@@ -453,7 +480,7 @@ async def alarms_by_room(session: AsyncSession, *,
         -- keep the classes apart on the row; the row set no longer does.
         HAVING count(*) > 0
         ORDER BY qty DESC, dc.code, rm.name
-    """), {"categories": categories})).mappings().all()
+    """), params)).mappings().all()
     return [dict(r) for r in rows]
 
 
@@ -521,13 +548,16 @@ async def alarm_trend(session: AsyncSession, *,
 
 async def unlocated_alarms_by_category(session: AsyncSession, *,
                                        categories: list[str],
-                                       lifecycle: str = "open") -> dict[str, int]:
+                                       lifecycle: str = "open",
+                                       severities: list[str] | None = None,
+                                       detections: list[str] | None = None) -> dict[str, int]:
     """Alarms of a category that resolve to no room.
 
     Platform conditions hang off devices with no location. They are counted in
     the strip, so the drill-down has to account for them or the modal will
     appear to have lost rows. Both classes, matching the counter.
     """
+    params: dict[str, Any] = {"categories": categories}
     row = (await session.execute(text(f"""
         WITH {_DEV_CTE},
         cat AS (
@@ -536,13 +566,13 @@ async def unlocated_alarms_by_category(session: AsyncSession, *,
             FROM alarm a
             LEFT JOIN dev ON dev.device_id = a.device_id
             WHERE {_state_clause(lifecycle)}a.is_symptom = false
-              AND a.shelved_by_window IS NULL
+              AND a.shelved_by_window IS NULL{_facet_clauses(severities, detections, params)}
         )
         SELECT count(*)                                       AS n,
                count(*) FILTER (WHERE response_class = '{ALARM}') AS alarms
         FROM cat
         WHERE category = ANY(:categories) AND room_id IS NULL
-    """), {"categories": categories})).mappings().first()
+    """), params)).mappings().first()
     if row is None:
         return {"total": 0, "alarms": 0}
     return {"total": int(row["n"]), "alarms": int(row["alarms"])}

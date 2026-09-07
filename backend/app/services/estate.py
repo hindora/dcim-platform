@@ -526,7 +526,9 @@ def _fold_util_total(rooms: list[dict[str, Any]]) -> dict[str, Any]:
 
 async def alarms(session: AsyncSession, *,
                  categories: list[str],
-                 lifecycle: str = "open") -> dict[str, Any]:
+                 lifecycle: str = "open",
+                 severities: list[str] | None = None,
+                 detections: list[str] | None = None) -> dict[str, Any]:
     """The drill-down behind one counter, by room.
 
     `lifecycle` is `open` for the counter's own population and `all` for the
@@ -549,9 +551,11 @@ async def alarms(session: AsyncSession, *,
     then neither number is usable.
     """
     rows = await repo.alarms_by_room(session, categories=categories,
-                                     lifecycle=lifecycle)
+                                     lifecycle=lifecycle,
+                                     severities=severities, detections=detections)
     unlocated = await repo.unlocated_alarms_by_category(
-        session, categories=categories, lifecycle=lifecycle)
+        session, categories=categories, lifecycle=lifecycle,
+        severities=severities, detections=detections)
 
     def _detect(r: dict[str, Any]) -> dict[str, int]:
         return {d: int(r.get(f"detected_{d}") or 0) for d in DETECTIONS}
@@ -580,6 +584,9 @@ async def alarms(session: AsyncSession, *,
     return {
         "categories": categories,
         "lifecycle": lifecycle,
+        # Echoed so a caller holding two responses can tell which is which.
+        "severities": [s.upper() for s in (severities or [])],
+        "detections": list(detections or []),
         "rows": out_rows,
         # What the counter shows: every open condition in this category, in a
         # room. Platform conditions are NOT in here and are not in the counter

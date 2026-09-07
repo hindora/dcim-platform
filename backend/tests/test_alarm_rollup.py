@@ -229,7 +229,7 @@ async def test_platform_conditions_are_named_but_not_counted(monkeypatch):
 async def test_a_category_is_answered_from_the_stamped_column(monkeypatch):
     seen: dict = {}
 
-    async def _capture(_session, *, categories, lifecycle):
+    async def _capture(_session, *, categories, lifecycle, **_facets):
         seen["categories"] = categories
         seen["lifecycle"] = lifecycle
         return []
@@ -239,9 +239,61 @@ async def test_a_category_is_answered_from_the_stamped_column(monkeypatch):
                         _returns({"total": 0, "alarms": 0}))
 
     await estate_api.alarms(category=["cooling"], lifecycle="open",
+                            severity=None, detection=None,
                             session=_FakeSession())
 
     assert seen == {"categories": ["cooling"], "lifecycle": "open"}
+
+
+async def test_pressed_chips_narrow_both_queries(monkeypatch):
+    """A facet is a filter on the population, not on the rows shown.
+
+    Both the room roll-up and the unlocated count take it, so the rows,
+    the headline and the "not counted above" line describe one narrowed
+    population. Severities arrive in any case and leave uppercase, which
+    is what the enum column holds.
+    """
+    seen: dict = {}
+
+    async def _rooms(_session, *, severities, detections, **_kw):
+        seen["rooms"] = (severities, detections)
+        return []
+
+    async def _unlocated(_session, *, severities, detections, **_kw):
+        seen["unlocated"] = (severities, detections)
+        return {"total": 0, "alarms": 0}
+
+    monkeypatch.setattr(estate_service.repo, "alarms_by_room", _rooms)
+    monkeypatch.setattr(estate_service.repo, "unlocated_alarms_by_category",
+                        _unlocated)
+
+    out = await estate_api.alarms(category=["power"], lifecycle="all",
+                                  severity=["critical", "Major"],
+                                  detection=["absence"],
+                                  session=_FakeSession())
+
+    assert seen["rooms"] == (["CRITICAL", "MAJOR"], ["absence"])
+    assert seen["unlocated"] == (["CRITICAL", "MAJOR"], ["absence"])
+    assert out["severities"] == ["CRITICAL", "MAJOR"]
+    assert out["detections"] == ["absence"]
+
+
+@pytest.mark.parametrize("severity, detection, what", [
+    (["urgent"], None, "severity"),
+    (None, ["guess"], "detection"),
+])
+async def test_an_unknown_facet_is_rejected(monkeypatch, severity, detection, what):
+    async def _never(*_a, **_k):
+        raise AssertionError("the database was asked")
+
+    monkeypatch.setattr(estate_service.repo, "alarms_by_room", _never)
+
+    with pytest.raises(HTTPException) as e:
+        await estate_api.alarms(category=["power"], lifecycle="open",
+                                severity=severity, detection=detection,
+                                session=_FakeSession())
+    assert e.value.status_code == 400
+    assert f"unknown {what}" in e.value.detail
 
 
 async def test_history_asks_for_every_lifecycle(monkeypatch):
@@ -253,11 +305,11 @@ async def test_history_asks_for_every_lifecycle(monkeypatch):
     """
     seen: dict = {}
 
-    async def _rooms(_session, *, categories, lifecycle):
+    async def _rooms(_session, *, categories, lifecycle, **_facets):
         seen["rooms"] = lifecycle
         return []
 
-    async def _unlocated(_session, *, categories, lifecycle):
+    async def _unlocated(_session, *, categories, lifecycle, **_facets):
         seen["unlocated"] = lifecycle
         return {"total": 0, "alarms": 0}
 
@@ -266,6 +318,7 @@ async def test_history_asks_for_every_lifecycle(monkeypatch):
                         _unlocated)
 
     out = await estate_api.alarms(category=["power"], lifecycle="all",
+                                  severity=None, detection=None,
                                   session=_FakeSession())
 
     assert seen == {"rooms": "all", "unlocated": "all"}
@@ -282,7 +335,7 @@ async def test_a_grouped_counter_asks_once(monkeypatch):
     """
     seen: dict = {}
 
-    async def _capture(_session, *, categories, lifecycle):
+    async def _capture(_session, *, categories, lifecycle, **_facets):
         seen["categories"] = categories
         return []
 
@@ -291,6 +344,7 @@ async def test_a_grouped_counter_asks_once(monkeypatch):
                         _returns({"total": 0, "alarms": 0}))
 
     await estate_api.alarms(category=["cooling", "environmental", "cooling"],
+                            severity=None, detection=None,
                             session=_FakeSession())
 
     # Deduplicated, and in the order asked: a repeated parameter is a caller
@@ -450,7 +504,8 @@ async def test_an_unknown_category_is_rejected_rather_than_answered_empty(catego
     as "nothing wrong in this category".
     """
     with pytest.raises(HTTPException) as exc:
-        await estate_api.alarms(category=[category], session=_FakeSession())
+        await estate_api.alarms(category=[category], severity=None, detection=None,
+                                session=_FakeSession())
     assert exc.value.status_code == 400
 
 

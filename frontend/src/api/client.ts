@@ -1580,6 +1580,9 @@ export interface AlarmTrend {
 
 export interface AlarmDrill {
   categories: AlarmCategory[];
+  /** The facet filters this response was narrowed by; empty when none. */
+  severities: string[];
+  detections: AlarmDetection[];
   rows: AlarmDrillRow[];
   /** Every open condition in the category, in a room - exactly what the rows
    *  add up to and exactly what the counter that opened the panel counts. */
@@ -2052,9 +2055,12 @@ export const api = {
   /** The rooms behind a counter. `lifecycle` is `open` for what the counter
    *  is counting and `all` for the history behind the same rooms, cleared
    *  conditions included - one endpoint, one arithmetic, two populations. */
-  estateAlarms: (categories: string[], lifecycle: 'open' | 'all' = 'open') =>
+  estateAlarms: (categories: string[], lifecycle: 'open' | 'all' = 'open',
+                 facets?: { severity?: string[]; detection?: string[] }) =>
     request<AlarmDrill>(`/estate/alarms?lifecycle=${lifecycle}`
-      + categories.map((c) => `&category=${encodeURIComponent(c)}`).join('')),
+      + categories.map((c) => `&category=${encodeURIComponent(c)}`).join('')
+      + (facets?.severity ?? []).map((s) => `&severity=${encodeURIComponent(s)}`).join('')
+      + (facets?.detection ?? []).map((d) => `&detection=${encodeURIComponent(d)}`).join('')),
 
   alarmTaxonomy: () => request<AlarmTaxonomy>('/estate/alarm-categories'),
 
@@ -2083,22 +2089,25 @@ export const api = {
    *  the server answers with the open ones (ACTIVE + ACKNOWLEDGED), which is
    *  what the roll-up counters are counting. */
   roomConditions: (roomId: string, categories: string[], states?: string[],
-                   offset = 0) =>
+                   offset = 0, facets?: { severity?: string[]; detection?: string[] }) =>
     request<{ items: Alarm[] }>(
       `/alarms?limit=500&offset=${offset}&room=${encodeURIComponent(roomId)}`
       + categories.map((c) => `&category=${encodeURIComponent(c)}`).join('')
-      + (states ?? []).map((s) => `&state=${encodeURIComponent(s)}`).join('')),
+      + (states ?? []).map((s) => `&state=${encodeURIComponent(s)}`).join('')
+      + (facets?.severity ?? []).map((s) => `&severity=${encodeURIComponent(s)}`).join('')
+      + (facets?.detection ?? []).map((d) => `&detection=${encodeURIComponent(d)}`).join('')),
 
   /** Every condition in one room, however many. The list endpoint hands
    *  out at most 500 a call; this walks it by offset until a short page
    *  says the end was reached. The order is total server-side, so no row
    *  is seen twice or skipped across the boundaries. */
   roomConditionsAll: async (roomId: string, categories: string[],
-                            states?: string[]) => {
+                            states?: string[],
+                            facets?: { severity?: string[]; detection?: string[] }) => {
     const PAGE = 500;
     const items: Alarm[] = [];
     for (let offset = 0; ; offset += PAGE) {
-      const page = await api.roomConditions(roomId, categories, states, offset);
+      const page = await api.roomConditions(roomId, categories, states, offset, facets);
       items.push(...page.items);
       if (page.items.length < PAGE) break;
     }
