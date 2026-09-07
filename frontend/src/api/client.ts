@@ -2032,9 +2032,12 @@ export const api = {
 
   /** One or more categories in one request: a grouped counter is one question,
    *  and one room must come back as one row. */
-  estateAlarms: (categories: string[]) =>
-    request<AlarmDrill>('/estate/alarms?'
-      + categories.map((c) => `category=${encodeURIComponent(c)}`).join('&')),
+  /** The rooms behind a counter. `lifecycle` is `open` for what the counter
+   *  is counting and `all` for the history behind the same rooms, cleared
+   *  conditions included - one endpoint, one arithmetic, two populations. */
+  estateAlarms: (categories: string[], lifecycle: 'open' | 'all' = 'open') =>
+    request<AlarmDrill>(`/estate/alarms?lifecycle=${lifecycle}`
+      + categories.map((c) => `&category=${encodeURIComponent(c)}`).join('')),
 
   alarmTaxonomy: () => request<AlarmTaxonomy>('/estate/alarm-categories'),
 

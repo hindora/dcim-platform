@@ -525,8 +525,15 @@ def _fold_util_total(rooms: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 async def alarms(session: AsyncSession, *,
-                 categories: list[str]) -> dict[str, Any]:
+                 categories: list[str],
+                 lifecycle: str = "open") -> dict[str, Any]:
     """The drill-down behind one counter, by room.
+
+    `lifecycle` is `open` for the counter's own population and `all` for the
+    history behind it: the same rows, the same arithmetic, with the cleared
+    conditions back in. Every figure below is computed from whichever
+    population was asked for, so a history panel's headline adds up to its
+    rows the way a live one's does.
 
     Takes the counter's whole set of categories - Cooling is two of them - so
     one room is one row whatever opened the panel.
@@ -541,9 +548,10 @@ async def alarms(session: AsyncSession, *,
     a facet fetched separately can disagree with the row it sits under, and
     then neither number is usable.
     """
-    rows = await repo.alarms_by_room(session, categories=categories)
+    rows = await repo.alarms_by_room(session, categories=categories,
+                                     lifecycle=lifecycle)
     unlocated = await repo.unlocated_alarms_by_category(
-        session, categories=categories)
+        session, categories=categories, lifecycle=lifecycle)
 
     def _detect(r: dict[str, Any]) -> dict[str, int]:
         return {d: int(r.get(f"detected_{d}") or 0) for d in DETECTIONS}
@@ -571,6 +579,7 @@ async def alarms(session: AsyncSession, *,
 
     return {
         "categories": categories,
+        "lifecycle": lifecycle,
         "rows": out_rows,
         # What the counter shows: every open condition in this category, in a
         # room. Platform conditions are NOT in here and are not in the counter

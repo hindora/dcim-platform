@@ -352,9 +352,30 @@ async def site_design(session: AsyncSession) -> dict[str, Any]:
     return {r["id"]: r["design_it_kw"] for r in rows}
 
 
+LIFECYCLES = ("open", "all")
+
+
+def _state_clause(lifecycle: str) -> str:
+    """The rows a lifecycle admits.
+
+    `open` is what every counter counts; `all` is the same population with
+    the closed rows back in it - the history behind a room, not its present.
+    Anything else is a caller mistake, and a silent fallback to `open` would
+    make a history panel quietly show the present instead.
+    """
+    if lifecycle not in LIFECYCLES:
+        raise ValueError(f"unknown lifecycle: {lifecycle}")
+    return "a.state <> 'CLEARED' AND " if lifecycle == "open" else ""
+
+
 async def alarms_by_room(session: AsyncSession, *,
-                         categories: list[str]) -> list[dict[str, Any]]:
-    """Open root alarms of one category, grouped by room - with the alerts beside them.
+                         categories: list[str],
+                         lifecycle: str = "open") -> list[dict[str, Any]]:
+    """Root alarms of one category, grouped by room - with the alerts beside them.
+
+    `lifecycle` picks the population: `open` (the default, and what every
+    counter totals) or `all`, which puts the cleared rows back so a room's
+    row says what it has raised rather than what it is raising.
 
     The drill-down behind a counter. `qty` is alarms only, exactly the
     population the counter totals: a drill-down that disagrees with the number
@@ -401,7 +422,7 @@ async def alarms_by_room(session: AsyncSession, *,
                    a.category AS category, a.response_class AS response_class
             FROM alarm a
             JOIN dev ON dev.device_id = a.device_id
-            WHERE a.state <> 'CLEARED' AND a.is_symptom = false
+            WHERE {_state_clause(lifecycle)}a.is_symptom = false
               AND a.shelved_by_window IS NULL
         )
         SELECT rm.id::text            AS room_id,
@@ -437,7 +458,8 @@ async def alarms_by_room(session: AsyncSession, *,
 
 
 async def unlocated_alarms_by_category(session: AsyncSession, *,
-                                       categories: list[str]) -> dict[str, int]:
+                                       categories: list[str],
+                                       lifecycle: str = "open") -> dict[str, int]:
     """Alarms of a category that resolve to no room.
 
     Platform conditions hang off devices with no location. They are counted in
@@ -451,7 +473,7 @@ async def unlocated_alarms_by_category(session: AsyncSession, *,
                    a.response_class AS response_class
             FROM alarm a
             LEFT JOIN dev ON dev.device_id = a.device_id
-            WHERE a.state <> 'CLEARED' AND a.is_symptom = false
+            WHERE {_state_clause(lifecycle)}a.is_symptom = false
               AND a.shelved_by_window IS NULL
         )
         SELECT count(*)                                       AS n,

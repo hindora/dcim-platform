@@ -472,6 +472,17 @@ button.facet.on {
   .estate-table .twist { transition: none; }
 }
 
+/* The history table's per-room trend toggle: the same quiet square as the
+   twist, lit when its fortnight is showing under the row. */
+.estate-table .trend-btn {
+  width: 26px; height: 22px; padding: 0; border-radius: 3px; cursor: pointer;
+  background: none; border: 1px solid transparent; color: var(--text-faint);
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: color .14s ease, border-color .14s ease;
+}
+.estate-table .trend-btn:hover { border-color: var(--border); color: var(--text); }
+.estate-table .trend-btn.on { color: var(--accent); border-color: var(--accent); }
+
 /* The room name is a second, larger hit area for the same toggle - so it must
    not look like the link it is not. */
 .estate-table .name-cell.as-link {

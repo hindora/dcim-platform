@@ -137,6 +137,9 @@ async def alarms(
         "One or more of: " + ", ".join(CATEGORIES)
         + ". Repeat the parameter for a grouped counter - Cooling is cooling "
           "and environmental - so one room comes back as one row.")),
+    lifecycle: str = Query("open", pattern="^(open|all)$", description=(
+        "`open` (default) is what the counter counts; `all` adds the cleared "
+        "conditions back, for the history behind the same rooms.")),
     session: AsyncSession = Depends(get_session),
     _: Principal = Depends(current_principal),
 ) -> dict:
@@ -150,7 +153,8 @@ async def alarms(
     if unknown:
         raise HTTPException(status.HTTP_400_BAD_REQUEST,
                             f"unknown category: {', '.join(unknown)}")
-    return await service.alarms(session, categories=list(dict.fromkeys(category)))
+    return await service.alarms(session, categories=list(dict.fromkeys(category)),
+                                lifecycle=lifecycle)
 
 
 @router.get("/rooms/{room_id}/kpi", summary="Everything the room drawer shows")

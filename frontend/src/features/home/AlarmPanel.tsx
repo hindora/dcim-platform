@@ -162,37 +162,36 @@ function detail(a: Alarm): string | null {
  *  wrong in this room", and the alert that has not crossed its threshold yet is
  *  usually the context for the alarm that has.
  */
-/** Which part of the lifecycle the room list is showing.
+/** Which population the whole panel is about.
  *
- *  `open` is the default and matches the counter the panel was opened from -
- *  a drill-down that disagreed with the number above it would be worse than no
- *  drill-down. The other two answer a different question: what has this room
- *  been doing, and did the thing I fixed actually clear. That history is
- *  already in the table; it was simply unreachable from here.
+ *  `live` is what the counter that opened the panel is counting - a
+ *  drill-down that disagreed with the number above it would be worse than no
+ *  drill-down. `history` is the same rooms with everything they have raised,
+ *  open and cleared alike: what has this room been doing, and did the thing I
+ *  fixed actually clear. One switch, held at the top, so every row, count and
+ *  expansion under a headline describes the same population as the headline.
+ *  A per-row lifecycle switch used to sit inside the expansion, and it put a
+ *  cleared list under an open count.
  */
-type Lifecycle = 'open' | 'cleared' | 'all';
+type Tab = 'live' | 'history';
 
-const LIFECYCLE: { key: Lifecycle; label: string; states?: string[] }[] = [
-  { key: 'open', label: 'Active' },
-  { key: 'cleared', label: 'Cleared', states: ['CLEARED'] },
-  { key: 'all', label: 'All', states: ['ACTIVE', 'ACKNOWLEDGED', 'CLEARED'] },
-];
+const HISTORY_STATES = ['ACTIVE', 'ACKNOWLEDGED', 'CLEARED'];
 
-function RoomConditions({ roomId, categories, span }: {
-  roomId: string; categories: AlarmCategory[]; span: number;
+function RoomConditions({ roomId, categories, span, tab }: {
+  roomId: string; categories: AlarmCategory[]; span: number; tab: Tab;
 }) {
-  const [view, setView] = useState<Lifecycle>('open');
-  const states = LIFECYCLE.find((l) => l.key === view)?.states;
+  const history = tab === 'history';
   const { data, isLoading, error } = useQuery({
-    queryKey: ['room-conditions', roomId, view, ...categories],
-    queryFn: () => api.roomConditions(roomId, categories, states),
+    queryKey: ['room-conditions', roomId, tab, ...categories],
+    queryFn: () => api.roomConditions(
+      roomId, categories, history ? HISTORY_STATES : undefined),
     staleTime: 15_000,
   });
 
   const items = [...(data?.items ?? [])].sort((a, b) => {
     // History reads newest-first: once a condition is closed its severity is
     // no longer a call to action, and "when" is the only ordering that helps.
-    if (view === 'cleared') {
+    if (history) {
       return (b.cleared_at ?? b.last_seen).localeCompare(a.cleared_at ?? a.last_seen);
     }
     const cls = (x: Alarm) => (x.response_class === 'alert' ? 1 : 0);
@@ -209,25 +208,12 @@ function RoomConditions({ roomId, categories, span }: {
   return (
     <td className="sub-cell" colSpan={span}>
       <div className="sub-wrap">
-        {/* Outside the items check on purpose: "no active faults" and "no
-            history" are different answers, and the reader can only tell which
-            one they are looking at if the switch is still there. */}
-        <div className="lifecycle" role="group" aria-label="Which conditions to show">
-          {LIFECYCLE.map((l) => (
-            <button key={l.key}
-                    className={`sort ${view === l.key ? 'on' : ''}`}
-                    aria-pressed={view === l.key}
-                    onClick={() => setView(l.key)}>
-              {l.label}
-            </button>
-          ))}
-        </div>
         {isLoading && <p className="muted small">Loading the conditions…</p>}
         {error && <p className="muted small">Could not load this room.</p>}
         {data && !items.length && (
           <p className="muted small">
-            {view === 'cleared'
-              ? 'Nothing has cleared here in this domain.'
+            {history
+              ? 'Nothing has been raised here in this domain.'
               : 'Nothing open here in this domain.'}
           </p>
         )}
@@ -236,8 +222,7 @@ function RoomConditions({ roomId, categories, span }: {
             <div className="sub-caption">
               {alarms} alarm{alarms === 1 ? '' : 's'}
               {' · '}{alerts} alert{alerts === 1 ? '' : 's'}
-              {view !== 'open' && <span className="muted">{' · '}
-                {view === 'cleared' ? 'closed' : 'open and closed'}</span>}
+              {history && <span className="muted">{' · '}open and closed</span>}
             </div>
             <table className="sub-table">
               <thead>
@@ -302,6 +287,19 @@ function RoomConditions({ roomId, categories, span }: {
 }
 
 type SortKey = 'room' | 'site' | 'qty' | 'alerts' | 'devices';
+
+/** A rising line with its arrowhead: the history table's per-room trend
+ *  toggle. Drawn inline so it takes the button's colour in both themes. */
+function TrendGlyph() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 16 16" fill="none"
+         stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"
+         strokeLinejoin="round" aria-hidden>
+      <polyline points="1.5,12.5 5.5,7.5 8.5,10 14.5,3.5" />
+      <polyline points="10.5,3.5 14.5,3.5 14.5,7.5" />
+    </svg>
+  );
+}
 
 /** Facet chips: the same population the rows total, split two ways. */
 function Facets({ label, entries }: {
@@ -513,12 +511,17 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState<SortKey>('qty');
   const [dir, setDir] = useState<1 | -1>(-1);
-  const [tab, setTab] = useState<'list' | 'trend'>('list');
+  const [tab, setTab] = useState<Tab>('live');
   const [pageSize, setPageSize] = useState(25);
   const [page, setPage] = useState(0);
   // Which rooms are open. A set, not one id: comparing two rooms is the
   // ordinary reason anybody expands anything.
   const [open, setOpen] = useState<Set<string>>(() => new Set());
+  // Which rooms have their trend showing - a second, independent expansion,
+  // so a room's fortnight can sit under its conditions rather than replace
+  // them.
+  const [trendOpen, setTrendOpen] = useState<Set<string>>(() => new Set());
+  const history = tab === 'history';
 
   // Escape closes. A surface that covers the page and can only be dismissed
   // with the mouse traps a keyboard user.
@@ -532,9 +535,11 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
   // and stitching the answers together in the browser gave one room two rows
   // and no honest way to count its devices - a device faulting in two domains
   // is one device, and only the database can say so.
+  // The tab is part of the key: live and history are two populations of the
+  // same rooms, and the server does the arithmetic for whichever is asked.
   const { data, isLoading, error } = useQuery({
-    queryKey: ['estate-alarms', ...categories],
-    queryFn: () => api.estateAlarms(categories),
+    queryKey: ['estate-alarms', tab, ...categories],
+    queryFn: () => api.estateAlarms(categories, history ? 'all' : 'open'),
   });
 
   const { data: taxonomy } = useQuery<AlarmTaxonomy>({
@@ -617,12 +622,18 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
   const everything = categories.length > 2;
   const definitions = (taxonomy?.categories ?? []).filter(
     (c) => categories.includes(c.key));
-  const blurb = everything
-    ? `Every open alarm ${scope ? `in ${scope.label}` : 'on the estate'}, `
-      + 'grouped by the room it is in and the kind of thing that is wrong. '
-      + 'Roots only: one failed uplink is one alarm, not one per device '
-      + 'behind it.'
-    : definitions.map((c) => c.description).join(' ');
+  const where = scope ? `in ${scope.label}` : 'on the estate';
+  const blurb = history
+    ? `Everything ${where} that has been raised in this domain, open and `
+      + 'cleared alike, grouped by the room it is in. Roots only. Open a room '
+      + 'for its conditions; the trend button shows what it raised per day '
+      + 'over the last fortnight.'
+    : everything
+      ? `Every open alarm ${where}, `
+        + 'grouped by the room it is in and the kind of thing that is wrong. '
+        + 'Roots only: one failed uplink is one alarm, not one per device '
+        + 'behind it.'
+      : definitions.map((c) => c.description).join(' ');
 
   function toggle(roomId: string) {
     setOpen((prev) => {
@@ -630,6 +641,25 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
       if (!next.delete(roomId)) next.add(roomId);
       return next;
     });
+  }
+
+  function toggleTrend(roomId: string) {
+    setTrendOpen((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(roomId)) next.add(roomId);
+      return next;
+    });
+  }
+
+  // Switching populations closes every expansion: an open row was answering
+  // the other tab's question, and a stale sub-table under a fresh headline is
+  // exactly the disagreement this panel exists to avoid.
+  function switchTab(next: Tab) {
+    if (next === tab) return;
+    setTab(next);
+    setOpen(new Set());
+    setTrendOpen(new Set());
+    setPage(0);
   }
 
   function onSort(k: SortKey) {
@@ -645,8 +675,8 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
     const a = document.createElement('a');
     a.href = url;
-    const where = scope ? `-${scope.label}` : '';
-    a.download = `${title}${where}-alarms`
+    const site = scope ? `-${scope.label}` : '';
+    a.download = `${title}${site}-alarms-${tab}`
       .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') + '.csv';
     a.click();
     URL.revokeObjectURL(url);
@@ -674,9 +704,11 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
               <span className="count"> {data ? total : '—'}</span>
               {data && !alarmsOnly && (
                 <span className="of-which">
-                  {alarms > 0
-                    ? `${alarms} needing a response`
-                    : 'none needing a response'}
+                  {history
+                    ? `${alarms} raised as alarm${alarms === 1 ? '' : 's'}`
+                    : alarms > 0
+                      ? `${alarms} needing a response`
+                      : 'none needing a response'}
                 </span>
               )}
             </h2>
@@ -689,22 +721,18 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
           {error && <div className="banner">Could not load the rooms behind this counter.</div>}
           {isLoading && <p className="muted">Loading…</p>}
 
-          {/* Two answers to two questions: WHAT is happening (the rooms and
-              their conditions, or the history when quiet) and WHETHER now is
-              normal (the fortnight trend, full-size). */}
+          {/* Two populations of the same rooms: what is open now, and
+              everything that has been raised. The trend lives inside the
+              history, per room, where "is this normal for here" is asked. */}
           <div className="panel-tabs" role="tablist" aria-label="Panel view">
-            <button role="tab" aria-selected={tab === 'list'}
-                    className={tab === 'list' ? 'active' : ''}
-                    onClick={() => setTab('list')}>Conditions</button>
-            <button role="tab" aria-selected={tab === 'trend'}
-                    className={tab === 'trend' ? 'active' : ''}
-                    onClick={() => setTab('trend')}>Trend</button>
+            <button role="tab" aria-selected={tab === 'live'}
+                    className={tab === 'live' ? 'active' : ''}
+                    onClick={() => switchTab('live')}>Live</button>
+            <button role="tab" aria-selected={tab === 'history'}
+                    className={tab === 'history' ? 'active' : ''}
+                    onClick={() => switchTab('history')}>History</button>
           </div>
 
-          {tab === 'trend' && (
-            <AlarmTrend categories={categories} scope={scope} />
-          )}
-          {tab === 'list' && (
           <>
 
           {data && (
@@ -724,6 +752,11 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
           {data && sorted.length === 0 && (
             q ? (
               <p className="muted">No room matches “{search}”.</p>
+            ) : history ? (
+              <p className="muted">
+                Nothing has been raised in {title.toLowerCase()}
+                {scope ? ` in ${scope.label}` : ''}.
+              </p>
             ) : (
               <RecentCleared categories={categories} scope={scope}
                              title={title} />
@@ -749,12 +782,15 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
                               onSort={onSort} className="num" />
                     <th className="num">Critical</th>
                     <th className="num">Major</th>
+                    {history && <th className="mid">Trend</th>}
                     <th />
                   </tr>
                 </thead>
                 <tbody>
                   {rows.map((r) => {
                     const isOpen = open.has(r.room_id);
+                    const trendOn = history && trendOpen.has(r.room_id);
+                    const span = (withAlerts ? 10 : 9) + (history ? 1 : 0);
                     return (
                       <Fragment key={r.room_id}>
                         <tr className={(r.critical ? 'lead-critical' : 'lead-warn')
@@ -801,6 +837,18 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
                       </td>
                       <td className="num">{r.critical || <span className="dash">—</span>}</td>
                       <td className="num">{r.major || <span className="dash">—</span>}</td>
+                      {history && (
+                        <td className="mid">
+                          <button className={`trend-btn ${trendOn ? 'on' : ''}`}
+                                  onClick={() => toggleTrend(r.room_id)}
+                                  aria-pressed={trendOn}
+                                  title="Raised per day, last 14 days"
+                                  aria-label={`${trendOn ? 'Hide' : 'Show'} the`
+                                              + ` trend for ${r.room_name}`}>
+                            <TrendGlyph />
+                          </button>
+                        </td>
+                      )}
                       <td className="num">
                         <Link className="row-btn" to={`/alarms?room=${r.room_id}`}
                               style={{ display: 'inline-block', lineHeight: '26px',
@@ -812,7 +860,18 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
                         {isOpen && (
                           <tr className="sub-row">
                             <RoomConditions roomId={r.room_id} categories={categories}
-                                            span={withAlerts ? 10 : 9} />
+                                            span={span} tab={tab} />
+                          </tr>
+                        )}
+                        {trendOn && (
+                          <tr className="sub-row">
+                            <td className="sub-cell" colSpan={span}>
+                              <div className="sub-wrap">
+                                <AlarmTrend categories={categories}
+                                            scope={{ kind: 'room', id: r.room_id,
+                                                     label: r.room_name }} />
+                              </div>
+                            </td>
                           </tr>
                         )}
                       </Fragment>
@@ -863,7 +922,6 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
             </p>
           )}
           </>
-          )}
         </div>
       </section>
     </div>

@@ -227,17 +227,47 @@ async def test_platform_conditions_are_named_but_not_counted(monkeypatch):
 async def test_a_category_is_answered_from_the_stamped_column(monkeypatch):
     seen: dict = {}
 
-    async def _capture(_session, *, categories):
+    async def _capture(_session, *, categories, lifecycle):
         seen["categories"] = categories
+        seen["lifecycle"] = lifecycle
         return []
 
     monkeypatch.setattr(estate_service.repo, "alarms_by_room", _capture)
     monkeypatch.setattr(estate_service.repo, "unlocated_alarms_by_category",
                         _returns({"total": 0, "alarms": 0}))
 
-    await estate_api.alarms(category=["cooling"], session=_FakeSession())
+    await estate_api.alarms(category=["cooling"], lifecycle="open",
+                            session=_FakeSession())
 
-    assert seen == {"categories": ["cooling"]}
+    assert seen == {"categories": ["cooling"], "lifecycle": "open"}
+
+
+async def test_history_asks_for_every_lifecycle(monkeypatch):
+    """The history tab is the same question with the cleared rows back in.
+
+    Same rooms, same arithmetic, one more population - so it is one parameter
+    on the same endpoint, carried down to both queries, not a second endpoint
+    that could drift from the first.
+    """
+    seen: dict = {}
+
+    async def _rooms(_session, *, categories, lifecycle):
+        seen["rooms"] = lifecycle
+        return []
+
+    async def _unlocated(_session, *, categories, lifecycle):
+        seen["unlocated"] = lifecycle
+        return {"total": 0, "alarms": 0}
+
+    monkeypatch.setattr(estate_service.repo, "alarms_by_room", _rooms)
+    monkeypatch.setattr(estate_service.repo, "unlocated_alarms_by_category",
+                        _unlocated)
+
+    out = await estate_api.alarms(category=["power"], lifecycle="all",
+                                  session=_FakeSession())
+
+    assert seen == {"rooms": "all", "unlocated": "all"}
+    assert out["lifecycle"] == "all"
 
 
 async def test_a_grouped_counter_asks_once(monkeypatch):
@@ -250,7 +280,7 @@ async def test_a_grouped_counter_asks_once(monkeypatch):
     """
     seen: dict = {}
 
-    async def _capture(_session, *, categories):
+    async def _capture(_session, *, categories, lifecycle):
         seen["categories"] = categories
         return []
 

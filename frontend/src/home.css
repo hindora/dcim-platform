@@ -254,6 +254,10 @@
   color: var(--text-faint);
   white-space: nowrap;
 }
+
+/* Under a room row rather than on a tab of its own: shorter, so a reader
+   comparing two rooms can hold both fortnights on one screen. */
+.sub-wrap .alarm-trend { height: 180px; margin-top: 2px; }
 .alert-strip .caption svg { flex: none; }
 
 /* Every counter the same width, whatever its label. Sized to the widest word
