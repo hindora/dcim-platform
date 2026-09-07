@@ -310,10 +310,10 @@ async def test_the_trend_fills_every_day_of_the_window(monkeypatch):
     today = datetime.now(UTC).date()
     seen: dict = {}
 
-    async def _trend(_session, *, categories, since, bucket, room_id,
+    async def _trend(_session, *, categories, since, until, bucket, room_id,
                      datacenter_id):
-        seen.update(categories=categories, since=since, bucket=bucket,
-                    room_id=room_id, datacenter_id=datacenter_id)
+        seen.update(categories=categories, since=since, until=until,
+                    bucket=bucket, room_id=room_id, datacenter_id=datacenter_id)
         return [{"day": today - timedelta(days=2), "n": 3},
                 {"day": today, "n": 1}]
 
@@ -321,12 +321,14 @@ async def test_the_trend_fills_every_day_of_the_window(monkeypatch):
 
     room = "4be69c4a-831e-44ec-a769-65a602153529"
     out = await estate_api.alarm_trend(category=["power"], days=5, bucket="day",
+                                       since=None, until=None,
                                        room=room, site=None,
                                        session=_FakeSession())
 
     assert seen["room_id"] == room and seen["datacenter_id"] is None
     assert seen["bucket"] == "day"
     assert seen["since"].date() == today - timedelta(days=4)
+    assert seen["until"].date() == today + timedelta(days=1)   # exclusive end
     assert [p["day"] for p in out["points"]] == [
         (today - timedelta(days=i)).isoformat() for i in range(4, -1, -1)]
     assert [p["raised"] for p in out["points"]] == [0, 0, 3, 0, 1]
@@ -405,6 +407,7 @@ async def test_a_weekly_trend_starts_on_a_monday_and_steps_by_seven(monkeypatch)
     monkeypatch.setattr(estate_service.repo, "alarm_trend", _trend)
 
     out = await estate_api.alarm_trend(category=["power"], days=30, bucket="week",
+                                       since=None, until=None,
                                        room=None, site=None,
                                        session=_FakeSession())
 
@@ -431,6 +434,7 @@ async def test_a_malformed_trend_scope_is_a_bad_request_not_a_crash(monkeypatch,
 
     with pytest.raises(HTTPException) as e:
         await estate_api.alarm_trend(category=["power"], days=14,
+                                     since=None, until=None,
                                      room=scope.get("room"), site=scope.get("site"),
                                      session=_FakeSession())
     assert e.value.status_code == 400
