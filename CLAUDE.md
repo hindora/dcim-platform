@@ -61,8 +61,14 @@ otherwise copy its CSS values verbatim. Never invent a new chart style.
   var(--accent)`), keys `30D` `90D` `180D` `1Y`, placed on the title row
   right-aligned. A picked window is a fifth cell, `CUSTOM`, that reveals
   From and To `<input type="date">` fields (26px, 0.76rem) under the
-  title row; typing a date selects it. Top-N limits are
-  `.asset-chart-controls` buttons with `.is-current` in accent.
+  title row; typing a date selects it. Categorical facet filters (a
+  severity, a detection method) are ALSO the segmented control, one strip
+  per facet at 28px: an ALL cell first, pressed when nothing else is and
+  the way to clear; the count inside each cell in faint ink; several
+  cells in a strip combine as OR, strips as AND; a hue rides as an 8px
+  dot inside the cell, never as the cell's colour. Never pill chips with
+  a ring for pressed. Top-N limits are `.asset-chart-controls` buttons
+  with `.is-current` in accent.
 - A range or filter slices data already fetched wherever the response
   covers it; never refetch to switch a range.
 - A chart never widens its container; a long range thins the bars. The

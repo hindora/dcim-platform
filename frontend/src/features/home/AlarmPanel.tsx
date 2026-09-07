@@ -684,7 +684,7 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
               {/* Filtered, the headline says what it is a share of; the
                   strips below say which share. */}
               {data && filtering && (
-                <span className="of-which">
+                <span className="of-which filtered">
                   of {wholeTotal.toLocaleString()} · filtered
                   {narrowing ? '…' : ''}
                 </span>

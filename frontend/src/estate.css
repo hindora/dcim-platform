@@ -359,6 +359,10 @@ button.facet.on {
 .facet-seg .sw.warning { background: var(--warn); }
 .facet-seg .sw.minor { background: var(--text-faint); }
 
+/* "of 8,584 · filtered" is context, not a call to action: the muted ink,
+   not the response colour the of-which span otherwise wears. */
+.of-which.filtered { color: var(--text-muted); }
+
 /* --- the alarm panel ------------------------------------------------------
  *
  * A full-window sheet that rises from the bottom. This is a work surface an
