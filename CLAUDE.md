@@ -51,7 +51,11 @@ otherwise copy its CSS values verbatim. Never invent a new chart style.
   letter-spacing .03em, `--text-muted`. A total floats right in
   `--text-faint` with a lowercase unit. The maximize glyph (`.asset-max`)
   sits top-right and `MaxModal` renders the same children, so there is one
-  state.
+  state. Every chart gets the glyph, including charts inside a sheet or a
+  drawer: inline by default, big on demand, never a popup by default (a
+  modal on a modal, and it kills side-by-side comparison). A chart drawn
+  twice measures its own width in each place. While a modal is up, Escape
+  is the modal's - overlays beneath check `maxOpen()` before closing.
 - Filters. Dimension filters are `<select>`s in `.asset-panel-filters`
   (26px tall, 0.76rem, gap 6px, max-width 200px, "All …" as the first
   option; dependent lists follow their parent and a selection the narrowed
