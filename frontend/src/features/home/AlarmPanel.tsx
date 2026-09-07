@@ -332,35 +332,57 @@ function RoomConditions({ roomId, categories, span, tab, facets }: {
 type SortKey = 'room' | 'site' | 'qty' | 'alerts' | 'devices';
 
 
-/** Facet chips: the same population the rows total, split two ways - and
- *  pressed, a filter on it. The counts on the chips are ALWAYS the
- *  unfiltered population, so a pressed chip can be compared with the
- *  others and un-pressed; the rows below are the narrowed one. Several
- *  chips in a row combine as OR, the two rows as AND, and the server does
- *  the arithmetic for both. */
-function Facets({ label, entries, on, onToggle, tip }: {
+/** A facet row: the same population the rows total, split one way - and
+ *  pressed, a filter on it.
+ *
+ *  The form is the segmented control every other filter in the product
+ *  wears (the asset trends' ranges, the scope tabs): one strip, hairline-
+ *  divided, pressed cells filled with the accent underline. An ALL cell
+ *  leads it and is the pressed one when nothing else is - so the strip
+ *  always shows a state, and clearing is a click on the cell that says so
+ *  rather than a link somewhere else. Severity rides as a dot inside the
+ *  cell, not as the cell's colour: the control's colour says "pressed",
+ *  the dot says "critical", and neither has to be read from the other.
+ *
+ *  The counts are ALWAYS the unfiltered population, so a pressed cell can
+ *  be compared with its neighbours and un-pressed; the rows below are the
+ *  narrowed one. Cells in one strip combine as OR, the two strips as AND,
+ *  and the server does the arithmetic for both. */
+function Facets({ label, entries, on, onToggle, onClear, tip, hue }: {
   label: string; entries: { key: string; label: string; n: number }[];
-  on: string[]; onToggle: (key: string) => void;
-  /** What a chip means, on hover - the taxonomy's own words. */
+  on: string[]; onToggle: (key: string) => void; onClear: () => void;
+  /** What a cell means, on hover - the taxonomy's own words. */
   tip?: (key: string) => string | undefined;
+  /** Whether a cell carries a severity dot. */
+  hue?: boolean;
 }) {
   const shown = entries.filter((e) => e.n > 0);
   if (!shown.length) return null;
+  const total = shown.reduce((t, e) => t + e.n, 0);
+  const none = on.length === 0;
   return (
     <div className="facet-row">
       <span className="facet-label">{label}</span>
-      {shown.map((e) => {
-        const pressed = on.some((k) => k.toLowerCase() === e.key.toLowerCase());
-        return (
-          <button key={e.key} type="button"
-                  className={`facet ${e.key} ${pressed ? 'on' : ''}`}
-                  aria-pressed={pressed}
-                  title={tip?.(e.key)}
-                  onClick={() => onToggle(e.key)}>
-            {e.label}<b>{e.n}</b>
-          </button>
-        );
-      })}
+      <div className="seg facet-seg" role="group" aria-label={`${label} filter`}>
+        <button type="button" className={none ? 'active' : ''}
+                aria-pressed={none} onClick={onClear}
+                title={`Every ${label.toLowerCase()}`}>
+          All<b>{total.toLocaleString()}</b>
+        </button>
+        {shown.map((e) => {
+          const pressed = on.some((k) => k.toLowerCase() === e.key.toLowerCase());
+          return (
+            <button key={e.key} type="button"
+                    className={pressed ? 'active' : ''}
+                    aria-pressed={pressed}
+                    title={tip?.(e.key)}
+                    onClick={() => onToggle(e.key)}>
+              {hue && <i className={`sw ${e.key}`} aria-hidden />}
+              {e.label}<b>{e.n.toLocaleString()}</b>
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -559,6 +581,17 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
     });
     setPage(0);
   }
+  function clearFacet(row: keyof Facets) {
+    setFacets((f) => ({ ...f, [row]: [] }));
+    setPage(0);
+  }
+
+  // What the headline is "of" while a filter is pressed: the same figure it
+  // would show with nothing pressed, so the two numbers are the same kind.
+  const wholeTotal = !whole ? 0
+    : scope
+      ? wholeRows.reduce((n, r) => n + r.qty + (alarmsOnly ? 0 : r.alerts), 0)
+      : (alarmsOnly ? whole.alarms : whole.total);
 
   // Every category at once. Concatenating seven definitions produced a
   // paragraph nobody would read and pushed the table below the fold; one
@@ -648,7 +681,15 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
               </span>
               {title}{scope ? ` in ${scope.label}` : ''}:
               <span className="count"> {data ? total : '—'}</span>
-              {data && !alarmsOnly && (
+              {/* Filtered, the headline says what it is a share of; the
+                  strips below say which share. */}
+              {data && filtering && (
+                <span className="of-which">
+                  of {wholeTotal.toLocaleString()} · filtered
+                  {narrowing ? '…' : ''}
+                </span>
+              )}
+              {data && !filtering && !alarmsOnly && (
                 <span className="of-which">
                   {history
                     ? `${alarms} raised as alarm${alarms === 1 ? '' : 's'}`
@@ -705,28 +746,16 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
                        onChange={(e) => { setSearch(e.target.value); setPage(0); }} />
               </label>
 
-              <Facets label="Severity" entries={severity}
+              <Facets label="Severity" entries={severity} hue
                       on={facets.severity}
                       onToggle={(k) => toggleFacet('severity', k.toUpperCase())}
+                      onClear={() => clearFacet('severity')}
                       tip={(k) => `Only ${k} conditions`} />
               <Facets label="Found by" entries={detections}
                       on={facets.detection}
                       onToggle={(k) => toggleFacet('detection', k)}
+                      onClear={() => clearFacet('detection')}
                       tip={detectionTip} />
-              {filtering && (
-                <p className="facet-note muted small">
-                  Showing {data ? total : '…'} of {whole
-                    ? (alarmsOnly ? (scope ? wholeRows.reduce((n, r) => n + r.qty, 0) : whole.alarms)
-                                  : (scope ? wholeRows.reduce((n, r) => n + r.qty + r.alerts, 0) : whole.total))
-                    : '…'}
-                  {narrowing ? ' · narrowing…' : ''}
-                  {' · '}
-                  <button type="button" className="as-link"
-                          onClick={() => { setFacets(NO_FACETS); setPage(0); }}>
-                    clear filters
-                  </button>
-                </p>
-              )}
             </>
           )}
 

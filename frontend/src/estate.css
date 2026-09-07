@@ -328,26 +328,36 @@
 .estate-table.catalogue tr.is-off { opacity: .55; }
 .estate-table.catalogue .name-cell .n { font-weight: 600; }
 
-/* The facet chips double as a filter - on the catalogue and on the alarm
-   panel - so they need a pressed state and a pointer. Pressed keeps the
-   chip's own hue where it has one (critical stays red) and adds the accent
-   ring, so "which is pressed" and "which severity" stay two readable
-   facts. */
+/* The facet chips double as the catalogue's filter, so they need a pressed
+   state and a pointer. */
 button.facet { font: inherit; cursor: pointer; }
-button.facet:hover { border-color: var(--border-strong); }
 button.facet.on {
   background: var(--bg-raised); border-color: var(--accent); color: var(--text);
-  box-shadow: 0 0 0 1px var(--accent);
 }
-button.facet.critical.on { color: var(--critical); }
-button.facet.major.on { color: var(--major); }
 
-/* "Showing N of M · clear filters", under the chips while any is pressed. */
-.facet-note { margin: -6px 0 12px; }
-.facet-note .as-link {
-  background: none; border: none; padding: 0; font: inherit;
-  color: var(--accent); cursor: pointer; text-decoration: underline;
+/* The alarm panel's facet strips: the segmented control, one per facet,
+   at the row's height. The count sits inside each cell in the faint ink
+   until the cell is pressed; a severity dot precedes the word so the
+   control keeps its own colour for "pressed". */
+.facet-row .facet-seg { height: 28px; }
+.facet-seg button {
+  height: 28px; padding: 0 11px;
+  display: inline-flex; align-items: center; gap: 7px;
+  font-size: 11px; letter-spacing: .06em;
 }
+.facet-seg button b {
+  font-weight: 600; font-variant-numeric: tabular-nums;
+  color: var(--text-faint); letter-spacing: 0;
+}
+.facet-seg button.active b { color: var(--text); }
+.facet-seg .sw {
+  display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--text-faint);
+}
+.facet-seg .sw.critical { background: var(--critical); }
+.facet-seg .sw.major { background: var(--major); }
+.facet-seg .sw.warning { background: var(--warn); }
+.facet-seg .sw.minor { background: var(--text-faint); }
 
 /* --- the alarm panel ------------------------------------------------------
  *
