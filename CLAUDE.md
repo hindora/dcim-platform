@@ -59,8 +59,10 @@ otherwise copy its CSS values verbatim. Never invent a new chart style.
   the `Seg` segmented control (`.seg`: hairline-divided, 34px, 11px/600
   uppercase .09em, active cell `--bg-raised` with `inset 0 -2px 0
   var(--accent)`), keys `30D` `90D` `180D` `1Y`, placed on the title row
-  right-aligned. Top-N limits are `.asset-chart-controls` buttons with
-  `.is-current` in accent.
+  right-aligned. A picked window is a fifth cell, `CUSTOM`, that reveals
+  From and To `<input type="date">` fields (26px, 0.76rem) under the
+  title row; typing a date selects it. Top-N limits are
+  `.asset-chart-controls` buttons with `.is-current` in accent.
 - A range or filter slices data already fetched wherever the response
   covers it; never refetch to switch a range.
 - Dense charts decide what to hide from measured pixels per bar
