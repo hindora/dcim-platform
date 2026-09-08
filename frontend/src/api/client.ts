@@ -1435,7 +1435,7 @@ export interface SiteKpi {
 
 export interface EstateRowBase {
   id: string;
-  kind: 'site' | 'room';
+  kind: 'site' | 'room' | 'rack';
   name: string;
   site_id: string;
   site_code: string;
@@ -1460,6 +1460,16 @@ export interface ThermalRow extends EstateRowBase {
   delta_max: number | null;
   /** Why both deltas are null: which window had no readings. */
   delta_note: string | null;
+  /** Rack rows only: where the rack stands and what only a rack has. */
+  room_id?: string;
+  room_name?: string;
+  row?: string | null;
+  u_height?: number | null;
+  /** Distinct devices that reported intake air in the window. */
+  sensors?: number;
+  exhaust_c?: number | null;
+  /** Exhaust minus intake over the focus window. */
+  delta_t_k?: number | null;
   /** Relative humidity from the rack PDU environment probes; null where
    *  no probe reported. Shown beside compliance, never folded into it. */
   rh_avg: number | null;
@@ -1487,6 +1497,8 @@ export interface ThermalPage {
   };
   sites: ThermalRow[];
   rooms: ThermalRow[];
+  /** Every rack in inventory, hottest first within its room. */
+  racks: ThermalRow[];
   notes: string[];
 }
 

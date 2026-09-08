@@ -34,6 +34,12 @@ def _room(room_id: str, dc: str, code: str, *, f_sum=None, f_n=0, f_max=None,
     }
 
 
+@pytest.fixture(autouse=True)
+def _no_racks(monkeypatch):
+    """Thermal tests that only care about rooms get an empty rack tier."""
+    monkeypatch.setattr(estate.repo, "thermal_racks", _returns([]))
+
+
 @pytest.mark.asyncio
 async def test_site_average_is_weighted_by_readings(monkeypatch):
     """A busy sensor must outweigh a quiet one.
@@ -406,3 +412,45 @@ async def test_a_blank_delta_says_which_window_was_empty(monkeypatch):
     out = await estate.thermal(_FakeSession(), mode="daily",
                                focus=date(2026, 9, 6), compare=date(2026, 9, 5))
     assert out["rooms"][0]["delta_note"] == "no readings on 2026-09-05"
+
+
+def _rack(rack_id: str, room_id: str, *, f_sum=None, f_n=0, f_max=None,
+          f_in_band=0, f_sensors=0, e_sum=None, e_n=0, c_sum=None, c_n=0,
+          c_max=None, rh_sum=None, rh_n=0, rh_max=None, rh_probes=0):
+    return {
+        "rack_id": rack_id, "rack_name": f"R-{rack_id}", "row_name": "A",
+        "u_height": 42, "room_id": room_id, "room_name": f"room-{room_id}",
+        "floor": "1", "room_class": "white_space", "datacenter_id": "dc1",
+        "site_code": "DC1", "site_name": "DC1",
+        "f_sum": f_sum, "f_n": f_n, "f_max": f_max, "f_in_band": f_in_band,
+        "f_sensors": f_sensors, "e_sum": e_sum, "e_n": e_n,
+        "c_sum": c_sum, "c_n": c_n, "c_max": c_max,
+        "rh_sum": rh_sum, "rh_n": rh_n, "rh_max": rh_max, "rh_probes": rh_probes,
+    }
+
+
+@pytest.mark.asyncio
+async def test_rack_rows_carry_delta_t_and_sensor_count(monkeypatch):
+    monkeypatch.setattr(estate.repo, "thermal", _returns([
+        _room("a", "dc1", "DC1", f_sum=2000.0, f_n=100, f_max=22.0, f_in_band=100),
+    ]))
+    monkeypatch.setattr(estate.repo, "thermal_racks", _returns([
+        _rack("r1", "a", f_sum=460.0, f_n=20, f_max=24.5, f_in_band=20, f_sensors=4,
+              e_sum=700.0, e_n=20, c_sum=440.0, c_n=20, c_max=23.0,
+              rh_sum=100.0, rh_n=2, rh_max=52.0, rh_probes=1),
+        _rack("r2", "a"),
+    ]))
+    out = await estate.thermal(_FakeSession(), mode="live")
+    racks = {r["id"]: r for r in out["racks"]}
+    hot = racks["r1"]
+    assert hot["kind"] == "rack" and hot["room_id"] == "a"
+    assert hot["avg_c"] == 23.0 and hot["exhaust_c"] == 35.0
+    assert hot["delta_t_k"] == 12.0
+    assert hot["sensors"] == 4 and hot["compliance_pct"] == 100.0
+    assert hot["delta_avg"] == 1.0 and hot["delta_max"] == 1.5
+    assert hot["rh_avg"] == 50.0 and hot["rh_probes"] == 1
+    silent = racks["r2"]
+    assert silent["avg_c"] is None and silent["delta_t_k"] is None
+    assert silent["sensors"] == 0
+    assert "no intake sensor" in silent["note"]
+    assert silent["delta_note"] == "no readings in the last hour"

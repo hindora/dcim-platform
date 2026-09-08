@@ -139,6 +139,95 @@ async def thermal(session: AsyncSession, *, focus_start: datetime,
     return [dict(r) for r in rows]
 
 
+async def thermal_racks(session: AsyncSession, *, focus_start: datetime,
+                        focus_end: datetime, compare_start: datetime,
+                        compare_end: datetime, low_c: float,
+                        high_c: float) -> list[dict[str, Any]]:
+    """Rack intake, exhaust and humidity per rack, over the same two windows.
+
+    Every rack in inventory is a row, readings or not: a rack with no intake
+    sensor is exactly the one an operator should notice. Sums and counts as
+    in `thermal`, so the page's rack rows fold to the same room figures.
+    Exhaust is a focus-window mean only - it exists to give ΔT, and a delta of
+    a delta helps nobody. Ordered hottest first within a room, which is the
+    order the page shows before anyone clicks a header.
+    """
+    rows = (await session.execute(text("""
+        WITH s AS (
+            SELECT d.rack_id, t.device_id, m.key, t.ts, t.value
+            FROM telemetry_sample t
+            JOIN metric m ON m.id = t.metric_id
+            JOIN device d ON d.id = t.device_id
+                         AND d.rack_id IS NOT NULL
+                         AND d.lifecycle <> 'decommissioned'
+            WHERE m.key IN ('inlet_temperature', 'exhaust_temperature',
+                            'relative_humidity')
+              AND ((t.ts >= :f0 AND t.ts < :f1)
+                OR (t.ts >= :c0 AND t.ts < :c1))
+        ),
+        agg AS (
+            SELECT rack_id,
+                   sum(value)   FILTER (WHERE key = 'inlet_temperature'
+                                          AND ts >= :f0 AND ts < :f1) AS f_sum,
+                   count(*)     FILTER (WHERE key = 'inlet_temperature'
+                                          AND ts >= :f0 AND ts < :f1) AS f_n,
+                   max(value)   FILTER (WHERE key = 'inlet_temperature'
+                                          AND ts >= :f0 AND ts < :f1) AS f_max,
+                   count(*)     FILTER (WHERE key = 'inlet_temperature'
+                                          AND ts >= :f0 AND ts < :f1
+                                          AND value >= :low AND value <= :high)
+                                                                        AS f_in_band,
+                   count(DISTINCT device_id)
+                                FILTER (WHERE key = 'inlet_temperature'
+                                          AND ts >= :f0 AND ts < :f1) AS f_sensors,
+                   sum(value)   FILTER (WHERE key = 'exhaust_temperature'
+                                          AND ts >= :f0 AND ts < :f1) AS e_sum,
+                   count(*)     FILTER (WHERE key = 'exhaust_temperature'
+                                          AND ts >= :f0 AND ts < :f1) AS e_n,
+                   sum(value)   FILTER (WHERE key = 'inlet_temperature'
+                                          AND ts >= :c0 AND ts < :c1) AS c_sum,
+                   count(*)     FILTER (WHERE key = 'inlet_temperature'
+                                          AND ts >= :c0 AND ts < :c1) AS c_n,
+                   max(value)   FILTER (WHERE key = 'inlet_temperature'
+                                          AND ts >= :c0 AND ts < :c1) AS c_max,
+                   sum(value)   FILTER (WHERE key = 'relative_humidity'
+                                          AND ts >= :f0 AND ts < :f1) AS rh_sum,
+                   count(*)     FILTER (WHERE key = 'relative_humidity'
+                                          AND ts >= :f0 AND ts < :f1) AS rh_n,
+                   max(value)   FILTER (WHERE key = 'relative_humidity'
+                                          AND ts >= :f0 AND ts < :f1) AS rh_max,
+                   count(DISTINCT device_id)
+                                FILTER (WHERE key = 'relative_humidity'
+                                          AND ts >= :f0 AND ts < :f1) AS rh_probes
+            FROM s GROUP BY rack_id
+        )
+        SELECT r.id::text            AS rack_id,
+               r.name                AS rack_name,
+               rr.name               AS row_name,
+               r.u_height            AS u_height,
+               rm.id::text           AS room_id,
+               rm.name               AS room_name,
+               rm.floor              AS floor,
+               rm.room_class         AS room_class,
+               dc.id::text           AS datacenter_id,
+               dc.code               AS site_code,
+               dc.name               AS site_name,
+               agg.f_sum, agg.f_n, agg.f_max, agg.f_in_band, agg.f_sensors,
+               agg.e_sum, agg.e_n,
+               agg.c_sum, agg.c_n, agg.c_max,
+               agg.rh_sum, agg.rh_n, agg.rh_max, agg.rh_probes
+        FROM rack r
+        JOIN rack_row rr   ON rr.id = r.row_id
+        JOIN room rm       ON rm.id = rr.room_id
+        JOIN datacenter dc ON dc.id = rm.datacenter_id
+        LEFT JOIN agg      ON agg.rack_id = r.id
+        ORDER BY dc.code, rm.name, agg.f_max DESC NULLS LAST, rr.ordinal, r.ordinal, r.name
+    """), {"f0": focus_start, "f1": focus_end,
+           "c0": compare_start, "c1": compare_end,
+           "low": low_c, "high": high_c})).mappings().all()
+    return [dict(r) for r in rows]
+
+
 async def power_window(session: AsyncSession, *, start: datetime, end: datetime,
                        compare_start: datetime, compare_end: datetime,
                        bucket: timedelta) -> list[dict[str, Any]]:

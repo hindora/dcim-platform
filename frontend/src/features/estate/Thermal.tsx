@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { api, type ThermalRow } from '../../api/client';
 import {
   Column, DataTable, Delta, FacilityToggle, Notes, Num, PageHead, ScopeTabs, Seg,
@@ -26,6 +26,12 @@ import { useEstateTable } from './useEstateTable';
  *  above the allowable ceiling (32 C) it is critical. Those are the same two
  *  lines the inlet temperature alarm rules draw, so the table and the alarm
  *  list never disagree about how bad a number is.
+ *
+ *  Three tiers: sites, rooms, racks. A rack is where an engineer actually
+ *  goes, so the table does not stop one level short of it. Rack rows add
+ *  exhaust, ΔT and the sensor count, and a rack row opens its elevation with
+ *  the thermal overlay already on. The room drawer stays one click away from
+ *  the drilled-in header.
  */
 
 type Unit = 'c' | 'f';
@@ -51,6 +57,7 @@ export function Thermal() {
   const [focus, setFocus] = useState<string>('');
   const [compare, setCompare] = useState<string>('');
   const [drawerRoom, setDrawerRoom] = useState<{ id: string; name: string } | null>(null);
+  const navigate = useNavigate();
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['estate-thermal', mode, focus, compare],
@@ -62,7 +69,8 @@ export function Thermal() {
     refetchInterval: mode === 'live' ? 60_000 : false,
   });
 
-  const t = useEstateTable<ThermalRow>(data?.sites ?? [], data?.rooms ?? []);
+  const t = useEstateTable<ThermalRow>(data?.sites ?? [], data?.rooms ?? [], data?.racks ?? []);
+  const rackTier = t.tier === 'racks';
   const u = unit === 'c' ? '°C' : '°F';
   const recommended = data?.band.high_c ?? 27;
   const allowable = data?.band.allowable_high_c ?? 32;
@@ -76,22 +84,30 @@ export function Thermal() {
     return tone(r.compliance_pct === null ? null : 100 - r.compliance_pct);
   }
 
+  const tierLabel = { sites: 'Site', rooms: 'Room', racks: 'Rack' }[t.tier];
   const columns: Column<ThermalRow>[] = [
     {
-      key: 'name', label: t.scope === 'sites' && !t.selected ? 'Site' : 'Room',
+      key: 'name', label: tierLabel,
       sort: (r) => r.name,
       render: (r) => (
         <div className="name-cell">
           <span className="n">{r.name}</span>
           {r.kind === 'room' && <span className="where">{r.site_code}{r.floor ? ` · floor ${r.floor}` : ''}</span>}
+          {r.kind === 'rack' && <span className="where">{r.room_name}{r.row ? ` · row ${r.row}` : ''}{r.u_height ? ` · ${r.u_height}U` : ''}</span>}
         </div>
       ),
     },
-    {
-      key: 'racks', label: 'Racks', align: 'mid', width: 80,
-      sort: (r) => r.rack_count ?? 0,
-      render: (r) => r.rack_count ?? 0,
-    },
+    ...(rackTier ? [{
+      // Distinct devices that spoke for the rack. One sensor is a data point;
+      // a rack full of servers all reporting is evidence.
+      key: 'sensors', label: 'Sensors', align: 'mid' as const, width: 90,
+      sort: (r: ThermalRow) => r.sensors ?? 0,
+      render: (r: ThermalRow) => r.sensors ?? 0,
+    }] : [{
+      key: 'racks', label: 'Racks', align: 'mid' as const, width: 80,
+      sort: (r: ThermalRow) => r.rack_count ?? 0,
+      render: (r: ThermalRow) => r.rack_count ?? 0,
+    }]),
     {
       key: 'avg', label: `Average ${u}`, align: 'num', width: 130,
       sort: (r) => r.avg_c,
@@ -112,6 +128,23 @@ export function Thermal() {
       sort: (r) => r.delta_max,
       render: (r) => <Delta value={convDelta(r.delta_max, unit)} why={r.delta_note} />,
     },
+    ...(rackTier ? [
+      {
+        key: 'exhaust', label: `Exhaust ${u}`, align: 'num' as const, width: 120,
+        sort: (r: ThermalRow) => r.exhaust_c ?? null,
+        render: (r: ThermalRow) => <Num value={conv(r.exhaust_c ?? null, unit)}
+                                        why="no exhaust sensor reported in this window" />,
+      },
+      {
+        key: 'dt', label: 'ΔT K', align: 'num' as const, width: 90,
+        sort: (r: ThermalRow) => r.delta_t_k ?? null,
+        render: (r: ThermalRow) => (
+          <Tip tip="exhaust minus intake - low on a loaded rack is bypass air, not a cooling shortage">
+            <Num value={convDelta(r.delta_t_k ?? null, unit)} />
+          </Tip>
+        ),
+      },
+    ] : []),
     {
       key: 'compliance', label: 'In band', align: 'num', width: 110,
       sort: (r) => r.compliance_pct,
@@ -141,12 +174,14 @@ export function Thermal() {
   function exportCsv() {
     downloadCsv(
       stampedName('thermal', data?.window.label),
-      ['scope', 'name', 'site', 'floor', 'racks', `average_${unit}`, `max_${unit}`,
-       'in_band_pct', 'rh_avg_pct', 'rh_max_pct', 'rh_probes', 'readings',
-       'delta_avg_c', 'delta_max_c', 'note'],
+      ['scope', 'name', 'site', 'room', 'floor', 'racks', 'sensors', `average_${unit}`,
+       `max_${unit}`, `exhaust_${unit}`, 'delta_t_k', 'in_band_pct', 'rh_avg_pct',
+       'rh_max_pct', 'rh_probes', 'readings', 'delta_avg_c', 'delta_max_c', 'note'],
       t.filtered.map((r) => [
-        r.kind, r.name, r.site_code, r.floor ?? '', r.rack_count ?? '',
+        r.kind, r.name, r.site_code, r.room_name ?? '', r.floor ?? '', r.rack_count ?? '',
+        r.sensors ?? '',
         conv(r.avg_c, unit)?.toFixed(1) ?? '', conv(r.max_c, unit)?.toFixed(1) ?? '',
+        conv(r.exhaust_c ?? null, unit)?.toFixed(1) ?? '', r.delta_t_k ?? '',
         r.compliance_pct ?? '', r.rh_avg ?? '', r.rh_max ?? '', r.rh_probes,
         r.samples, r.delta_avg ?? '', r.delta_max ?? '',
         r.note ?? '',
@@ -188,7 +223,8 @@ export function Thermal() {
           <FacilityToggle on={t.includeFacility} count={t.facilityCount}
                           onChange={t.setIncludeFacility} />
         )}
-        <input className="grow" type="search" placeholder="Search sites and rooms"
+        <input className="grow" type="search"
+               placeholder={rackTier ? 'Search racks' : 'Search sites and rooms'}
                aria-label="Search" value={t.search}
                onChange={(e) => t.setSearch(e.target.value)} />
         <Seg label="Unit" value={unit} onChange={setUnit}
@@ -210,40 +246,55 @@ export function Thermal() {
       </div>
 
       <div className="estate-panel">
-        {t.selected && (
-          <div className="estate-selected">
-            <button className="back" onClick={t.clearDrill}>← All sites</button>
-            <span className="who">{t.selected.name}</span>
-            <div className="pairs">
-              <span className="pair"><span className="cap">Average</span>
-                <span className="v"><Num value={conv(t.selected.avg_c, unit)} /> {u}</span></span>
-              <span className="pair"><span className="cap">Max</span>
-                <span className="v"><Num value={conv(t.selected.max_c, unit)} /> {u}</span></span>
-              <span className="pair"><span className="cap">In band</span>
-                <span className="v"><Num value={t.selected.compliance_pct} unit="%" /></span></span>
-              <span className="pair"><span className="cap">RH</span>
-                <span className="v"><Num value={t.selected.rh_avg} unit="%" /></span></span>
+        {(t.selectedRoom ?? t.selected) && (() => {
+          const head = (t.selectedRoom ?? t.selected)!;
+          const back = t.selectedRoom
+            ? (t.selected ? `← ${t.selected.site_code} rooms` : '← All rooms')
+            : '← All sites';
+          return (
+            <div className="estate-selected">
+              <button className="back" onClick={t.clearDrill}>{back}</button>
+              <span className="who">
+                {head.name}
+                {t.selectedRoom && <span className="where"> {head.site_code}{head.floor ? ` · floor ${head.floor}` : ''}</span>}
+              </span>
+              {t.selectedRoom && (
+                <button className="back" title="Devices, alarms and trend for this room"
+                        onClick={() => setDrawerRoom({ id: head.id, name: head.name })}>
+                  ROOM DETAILS
+                </button>
+              )}
+              <div className="pairs">
+                <span className="pair"><span className="cap">Average</span>
+                  <span className="v"><Num value={conv(head.avg_c, unit)} /> {u}</span></span>
+                <span className="pair"><span className="cap">Max</span>
+                  <span className="v"><Num value={conv(head.max_c, unit)} /> {u}</span></span>
+                <span className="pair"><span className="cap">In band</span>
+                  <span className="v"><Num value={head.compliance_pct} unit="%" /></span></span>
+                <span className="pair"><span className="cap">RH</span>
+                  <span className="v"><Num value={head.rh_avg} unit="%" /></span></span>
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         <DataTable
           rows={t.visible}
           columns={columns}
           lead={severity}
-          // A site row drills to its rooms; a room row opens the same drawer
-          // the home page uses, so a warm hall is one click from its racks,
-          // alarms and trend instead of a dead end.
-          onRowClick={(r) => (r.kind === 'site'
-            ? t.drillInto(r)
-            : setDrawerRoom({ id: r.id, name: r.name }))}
+          // Site -> its rooms, room -> its racks, rack -> its elevation with
+          // the thermal overlay on. The room drawer is the button in the
+          // drilled-in header, so it is one click away rather than the click.
+          onRowClick={(r) => (r.kind === 'rack'
+            ? navigate(`/racks/${r.id}?overlay=thermal`)
+            : t.drillInto(r))}
           empty={isLoading ? 'Loading…'
             : error ? 'Could not load thermal data.'
             : 'Nothing matches this search.'}
         />
 
         <TableFoot total={t.filtered.length} page={t.page} pageSize={t.pageSize}
-                   noun={t.selected ? 'rooms' : t.scope}
+                   noun={t.tier}
                    onPage={t.setPage} onPageSize={t.setPageSize} onCsv={exportCsv} />
       </div>
 

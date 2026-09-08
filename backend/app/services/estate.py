@@ -186,6 +186,8 @@ async def thermal(session: AsyncSession, *, focus: date | None = None,
 
     sites = _fold_thermal_sites(rows, absent_now=absent_now, absent_prev=absent_prev)
     totals = _fold_thermal_total(rows)
+    racks = await _thermal_racks(session, f0, f1, c0, c1,
+                                 absent_now=absent_now, absent_prev=absent_prev)
     return {
         "window": window,
         "band": {"low_c": BAND_LOW_C, "high_c": BAND_HIGH_C,
@@ -195,8 +197,62 @@ async def thermal(session: AsyncSession, *, focus: date | None = None,
         "totals": totals,
         "sites": sites,
         "rooms": [_strip(r) for r in rows],
+        "racks": racks,
         "notes": [_humidity_note(totals)],
     }
+
+
+async def _thermal_racks(session: AsyncSession, f0: datetime, f1: datetime,
+                         c0: datetime, c1: datetime, *, absent_now: str,
+                         absent_prev: str) -> list[dict[str, Any]]:
+    """The third tier. Same windows, same fields as a room row, plus what
+    only a rack has: exhaust, ΔT, and how many sensors spoke for it."""
+    raw = await repo.thermal_racks(session, focus_start=f0, focus_end=f1,
+                                   compare_start=c0, compare_end=c1,
+                                   low_c=BAND_LOW_C, high_c=BAND_HIGH_C)
+    out: list[dict[str, Any]] = []
+    for r in raw:
+        n = int(r["f_n"] or 0)
+        prev_n = int(r["c_n"] or 0)
+        e_n = int(r["e_n"] or 0)
+        rh_n = int(r["rh_n"] or 0)
+        avg = round(float(r["f_sum"]) / n, 1) if n else None
+        prev_avg = round(float(r["c_sum"]) / prev_n, 1) if prev_n else None
+        mx = _f(r["f_max"]) and round(_f(r["f_max"]), 1)
+        prev_mx = _f(r["c_max"]) and round(_f(r["c_max"]), 1)
+        exhaust = round(float(r["e_sum"]) / e_n, 1) if e_n else None
+        out.append({
+            "id": r["rack_id"],
+            "kind": "rack",
+            "name": r["rack_name"],
+            "row": r["row_name"],
+            "u_height": r["u_height"],
+            "room_id": r["room_id"],
+            "room_name": r["room_name"],
+            "floor": r["floor"],
+            "room_class": r["room_class"],
+            "site_id": r["datacenter_id"],
+            "site_code": r["site_code"],
+            "site_name": r["site_name"],
+            "avg_c": avg,
+            "max_c": mx,
+            "compliance_pct": _pct(r["f_in_band"], n) if n else None,
+            "samples": n,
+            "sensors": int(r["f_sensors"] or 0),
+            "exhaust_c": exhaust,
+            # Exhaust minus intake: the heat the air actually carried away.
+            # Low on a loaded rack is bypass air, not a cooling shortage.
+            "delta_t_k": (round(exhaust - avg, 1)
+                          if exhaust is not None and avg is not None else None),
+            "delta_avg": _delta(avg, prev_avg),
+            "delta_max": _delta(mx, prev_mx),
+            "delta_note": _delta_note(n, prev_n, absent_now, absent_prev),
+            "rh_avg": round(float(r["rh_sum"]) / rh_n, 1) if rh_n else None,
+            "rh_max": _f(r["rh_max"]) and round(_f(r["rh_max"]), 1),
+            "rh_probes": int(r["rh_probes"] or 0),
+            "note": None if n else "no intake sensor in this rack reported in this window",
+        })
+    return out
 
 
 def _delta_note(n: int, prev_n: int, absent_now: str, absent_prev: str) -> str | None:

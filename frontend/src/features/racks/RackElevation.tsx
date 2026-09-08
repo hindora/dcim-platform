@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { humanise } from '../../lib/format';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useState } from 'react';
 import { api, type ElevationDevice, type RackElevation as Elevation } from '../../api/client';
 import { StatusChip } from '../../components/StatusChip';
@@ -64,7 +64,12 @@ function overlayValue(device: ElevationDevice, overlay: Overlay): string {
 
 export function RackElevationView() {
   const { id = '' } = useParams();
-  const [overlay, setOverlay] = useState<Overlay>('status');
+  // ?overlay=thermal lets the thermal estate page land here with the
+  // intake tint already on; an unknown value falls back to status.
+  const [params] = useSearchParams();
+  const wanted = params.get('overlay');
+  const [overlay, setOverlay] = useState<Overlay>(
+    OVERLAYS.some((o) => o.key === wanted) ? (wanted as Overlay) : 'status');
   const { bind, tipEl } = useHoverTip();
 
   const q = useQuery<Elevation>({
