@@ -144,11 +144,18 @@ export function RoomDrawer({ roomId, roomName, onClose }: {
                       caption="Average intake" />
                 <Tile absent={env?.max_c === null} value={num(env?.max_c)} unit="°C"
                       caption="Hottest intake"
-                      bar={env?.max_c && env.max_c > (env.band?.high_c ?? 27) ? 'critical' : 'ok'} />
+                      // Same two lines as the alarm rules: warn above the
+                      // recommended band, critical above the allowable one.
+                      bar={!env?.max_c ? 'ok'
+                        : env.max_c > (env.band?.allowable_high_c ?? 32) ? 'critical'
+                        : env.max_c > (env.band?.high_c ?? 27) ? 'warn' : 'ok'} />
                 <Tile absent={env?.compliance_pct === null} value={num(env?.compliance_pct)}
                       unit="%" caption="Readings in band"
                       note={env ? `${env.band.low_c}–${env.band.high_c} °C recommended` : null} />
-                <Tile absent value="—" caption="Humidity" note={env?.humidity_note} />
+                <Tile absent={env?.rh_avg == null} value={num(env?.rh_avg)} unit="%"
+                      caption="Humidity" note={env?.humidity_note}
+                      bar={env?.rh_max != null && env.rh_max > (env.band?.rh_high_pct ?? 60)
+                        ? 'warn' : undefined} />
               </div>
             </section>
 

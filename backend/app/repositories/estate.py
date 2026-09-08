@@ -93,6 +93,24 @@ async def thermal(session: AsyncSession, *, focus_start: datetime,
                    max(value)   FILTER (WHERE ts >= :c0 AND ts < :c1) AS c_max
             FROM s GROUP BY room_id
         ),
+        rh AS (
+            -- Relative humidity from RACKED devices only: the PDU
+            -- environment probes hanging at the rack intake. A CRAH's
+            -- humidity sensor sits in its return air, which is the room's
+            -- exhaust, not what the servers breathe, so it stays out.
+            SELECT dev.room_id,
+                   sum(t.value)                AS rh_sum,
+                   count(*)                    AS rh_n,
+                   max(t.value)                AS rh_max,
+                   count(DISTINCT t.device_id) AS rh_probes
+            FROM telemetry_sample t
+            JOIN metric m ON m.id = t.metric_id
+            JOIN dev      ON dev.device_id = t.device_id
+            JOIN device d ON d.id = t.device_id AND d.rack_id IS NOT NULL
+            WHERE m.key = 'relative_humidity'
+              AND t.ts >= :f0 AND t.ts < :f1
+            GROUP BY dev.room_id
+        ),
         racks AS (
             SELECT rr.room_id, count(*) AS rack_count
             FROM rack r JOIN rack_row rr ON rr.id = r.row_id
@@ -108,9 +126,11 @@ async def thermal(session: AsyncSession, *, focus_start: datetime,
                rooms.site_name           AS site_name,
                COALESCE(racks.rack_count, 0) AS rack_count,
                agg.f_sum, agg.f_n, agg.f_max, agg.f_in_band,
-               agg.c_sum, agg.c_n, agg.c_max
+               agg.c_sum, agg.c_n, agg.c_max,
+               rh.rh_sum, rh.rh_n, rh.rh_max, rh.rh_probes
         FROM rooms
         LEFT JOIN agg   ON agg.room_id   = rooms.room_id
+        LEFT JOIN rh    ON rh.room_id    = rooms.room_id
         LEFT JOIN racks ON racks.room_id = rooms.room_id
         ORDER BY rooms.site_code, rooms.room_name
     """), {"f0": focus_start, "f1": focus_end,

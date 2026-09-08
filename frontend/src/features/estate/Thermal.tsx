@@ -6,7 +6,9 @@ import {
   Column, DataTable, Delta, FacilityToggle, Notes, Num, PageHead, ScopeTabs, Seg,
   TableFoot, tone,
 } from '../../components/estate';
+import { Tip } from '../../components/HoverTip';
 import { downloadCsv, stampedName } from '../../lib/csv';
+import { RoomDrawer } from '../home/RoomDrawer';
 import { useEstateTable } from './useEstateTable';
 
 /** Thermal: how warm the estate is running, and how much of it is in band.
@@ -16,9 +18,14 @@ import { useEstateTable } from './useEstateTable';
  *  polled hourly are not equally strong evidence, and weighting them equally
  *  would let a quiet sensor outvote a busy one.
  *
- *  There is no humidity row and no composite score. Nothing in this estate
- *  measures humidity, and a score would be a number we invented sitting beside
- *  four that were measured.
+ *  Relative humidity comes from the rack PDU environment probes and is shown
+ *  beside compliance, not folded into it. There is no composite score: it
+ *  would be a number we invented sitting beside five that were measured.
+ *
+ *  Two ceilings, two tones. Above the recommended band (27 C) a row is warn;
+ *  above the allowable ceiling (32 C) it is critical. Those are the same two
+ *  lines the inlet temperature alarm rules draw, so the table and the alarm
+ *  list never disagree about how bad a number is.
  */
 
 type Unit = 'c' | 'f';
@@ -43,6 +50,7 @@ export function Thermal() {
   const [unit, setUnit] = useState<Unit>('c');
   const [focus, setFocus] = useState<string>('');
   const [compare, setCompare] = useState<string>('');
+  const [drawerRoom, setDrawerRoom] = useState<{ id: string; name: string } | null>(null);
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['estate-thermal', mode, focus, compare],
@@ -56,6 +64,17 @@ export function Thermal() {
 
   const t = useEstateTable<ThermalRow>(data?.sites ?? [], data?.rooms ?? []);
   const u = unit === 'c' ? '°C' : '°F';
+  const recommended = data?.band.high_c ?? 27;
+  const allowable = data?.band.allowable_high_c ?? 32;
+  const rhHigh = data?.band.rh_high_pct ?? 60;
+
+  /** warn above recommended, critical above allowable, else by in-band share. */
+  function severity(r: ThermalRow): 'ok' | 'warn' | 'critical' | 'none' {
+    if (r.avg_c === null) return 'none';
+    if (r.max_c !== null && r.max_c > allowable) return 'critical';
+    if (r.max_c !== null && r.max_c > recommended) return 'warn';
+    return tone(r.compliance_pct === null ? null : 100 - r.compliance_pct);
+  }
 
   const columns: Column<ThermalRow>[] = [
     {
@@ -99,6 +118,20 @@ export function Thermal() {
       render: (r) => <Num value={r.compliance_pct} digits={1} unit="%" why={r.note} />,
     },
     {
+      key: 'rh', label: 'RH %', align: 'num', width: 100,
+      sort: (r) => r.rh_avg,
+      render: (r) => (
+        <Tip tip={r.rh_avg === null
+          ? 'no rack humidity probe reported in this window'
+          : <>max <b>{r.rh_max}%</b> · {r.rh_probes} probe{r.rh_probes === 1 ? '' : 's'}
+               · recommended ceiling {rhHigh}%</>}>
+          <span className={r.rh_max !== null && r.rh_max > rhHigh ? 'warn' : undefined}>
+            <Num value={r.rh_avg} />
+          </span>
+        </Tip>
+      ),
+    },
+    {
       key: 'samples', label: 'Readings', align: 'num', width: 110,
       sort: (r) => r.samples,
       render: (r) => (r.samples ? r.samples.toLocaleString() : <span className="dash">—</span>),
@@ -109,11 +142,13 @@ export function Thermal() {
     downloadCsv(
       stampedName('thermal', data?.window.label),
       ['scope', 'name', 'site', 'floor', 'racks', `average_${unit}`, `max_${unit}`,
-       'in_band_pct', 'readings', 'delta_avg_c', 'delta_max_c', 'note'],
+       'in_band_pct', 'rh_avg_pct', 'rh_max_pct', 'rh_probes', 'readings',
+       'delta_avg_c', 'delta_max_c', 'note'],
       t.filtered.map((r) => [
         r.kind, r.name, r.site_code, r.floor ?? '', r.rack_count ?? '',
         conv(r.avg_c, unit)?.toFixed(1) ?? '', conv(r.max_c, unit)?.toFixed(1) ?? '',
-        r.compliance_pct ?? '', r.samples, r.delta_avg ?? '', r.delta_max ?? '',
+        r.compliance_pct ?? '', r.rh_avg ?? '', r.rh_max ?? '', r.rh_probes,
+        r.samples, r.delta_avg ?? '', r.delta_max ?? '',
         r.note ?? '',
       ]),
     );
@@ -124,16 +159,20 @@ export function Thermal() {
     <div className="estate">
       <PageHead
         title="Thermal"
-        sub={<>Intake air across the estate. Band {data?.band.low_c ?? 18}–{data?.band.high_c ?? 27} °C
-          {' '}({data?.band.basis ?? 'ASHRAE recommended'}).{' '}
-          <Link to="/analytics">Rack-level ΔT and hot spots →</Link></>}
+        sub={<>Intake air across the estate. Band {data?.band.low_c ?? 18}–{recommended} °C,
+          {' '}allowable to {allowable} °C ({data?.band.basis ?? 'ASHRAE recommended'}).{' '}
+          <Link to="/analytics?view=thermal">Rack-level ΔT and hot spots →</Link></>}
         kpis={[
           { caption: 'Average', value: conv(totals?.avg_c ?? null, unit), unit: u,
             why: 'no rack intake sensor reported in this window' },
           { caption: 'Max', value: conv(totals?.max_c ?? null, unit), unit: u,
-            tone: (totals?.max_c ?? 0) > (data?.band.high_c ?? 27) ? 'warn' : undefined },
+            tone: (totals?.max_c ?? 0) > allowable ? 'critical'
+              : (totals?.max_c ?? 0) > recommended ? 'warn' : undefined },
           { caption: 'In band', value: totals?.compliance_pct ?? null, unit: '%',
             tone: (totals?.compliance_pct ?? 100) < 95 ? 'warn' : 'ok' },
+          { caption: 'RH', value: totals?.rh_avg ?? null, unit: '%',
+            tone: (totals?.rh_max ?? 0) > rhHigh ? 'warn' : undefined,
+            why: 'no rack humidity probe reported in this window' },
           // White space only: rack intake sensors exist where racks do, so
           // counting a generator room as a room that failed to report made the
           // ratio read as a fleet of dead sensors.
@@ -182,6 +221,8 @@ export function Thermal() {
                 <span className="v"><Num value={conv(t.selected.max_c, unit)} /> {u}</span></span>
               <span className="pair"><span className="cap">In band</span>
                 <span className="v"><Num value={t.selected.compliance_pct} unit="%" /></span></span>
+              <span className="pair"><span className="cap">RH</span>
+                <span className="v"><Num value={t.selected.rh_avg} unit="%" /></span></span>
             </div>
           </div>
         )}
@@ -189,12 +230,13 @@ export function Thermal() {
         <DataTable
           rows={t.visible}
           columns={columns}
-          lead={(r) => {
-            if (r.avg_c === null) return 'none';
-            if (r.max_c !== null && r.max_c > (data?.band.high_c ?? 27)) return 'critical';
-            return tone(r.compliance_pct === null ? null : 100 - r.compliance_pct);
-          }}
-          onRowClick={(r) => (r.kind === 'site' ? t.drillInto(r) : undefined)}
+          lead={severity}
+          // A site row drills to its rooms; a room row opens the same drawer
+          // the home page uses, so a warm hall is one click from its racks,
+          // alarms and trend instead of a dead end.
+          onRowClick={(r) => (r.kind === 'site'
+            ? t.drillInto(r)
+            : setDrawerRoom({ id: r.id, name: r.name }))}
           empty={isLoading ? 'Loading…'
             : error ? 'Could not load thermal data.'
             : 'Nothing matches this search.'}
@@ -210,6 +252,11 @@ export function Thermal() {
         data ? `Window: ${data.window.label}, compared with ${data.window.compare_label}. `
              + 'Days are UTC so every row covers the same 24 hours.' : '',
       ].filter(Boolean)} />
+
+      {drawerRoom && (
+        <RoomDrawer roomId={drawerRoom.id} roomName={drawerRoom.name}
+                    onClose={() => setDrawerRoom(null)} />
+      )}
     </div>
   );
 }

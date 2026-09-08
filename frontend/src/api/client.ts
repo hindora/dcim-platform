@@ -1458,6 +1458,11 @@ export interface ThermalRow extends EstateRowBase {
   samples: number;
   delta_avg: number | null;
   delta_max: number | null;
+  /** Relative humidity from the rack PDU environment probes; null where
+   *  no probe reported. Shown beside compliance, never folded into it. */
+  rh_avg: number | null;
+  rh_max: number | null;
+  rh_probes: number;
 }
 
 export interface ThermalPage {
@@ -1465,11 +1470,18 @@ export interface ThermalPage {
     mode: string; label: string; compare_label: string;
     focus_start: string; focus_end: string;
   };
-  band: { low_c: number; high_c: number; basis: string };
+  band: {
+    low_c: number; high_c: number;
+    /** Above the recommended ceiling is warn; above this one is critical. */
+    allowable_high_c: number;
+    rh_high_pct: number;
+    basis: string;
+  };
   totals: {
     avg_c: number | null; max_c: number | null; compliance_pct: number | null;
     samples: number; rooms_reporting: number; rooms: number;
     facility_rooms: number;
+    rh_avg: number | null; rh_max: number | null; rh_probes: number;
   };
   sites: ThermalRow[];
   rooms: ThermalRow[];
@@ -1615,8 +1627,10 @@ export interface RoomKpi {
   };
   environmental: {
     avg_c: number | null; max_c: number | null; compliance_pct: number | null;
-    band: { low_c: number; high_c: number };
-    note: string | null; humidity_note: string;
+    band: { low_c: number; high_c: number; allowable_high_c: number; rh_high_pct: number };
+    note: string | null;
+    rh_avg: number | null; rh_max: number | null; rh_probes: number;
+    humidity_note: string;
   };
   power: {
     total_kw: number | null; it_ac_kw: number | null; it_dc_kw: number | null;

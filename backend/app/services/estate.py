@@ -36,6 +36,17 @@ from app.repositories import estate as repo
 BAND_LOW_C = 18.0
 BAND_HIGH_C = 27.0
 
+# The ALLOWABLE ceiling (class A1) is where equipment is at risk rather than
+# merely inefficient. The page paints warn above the recommended band and
+# critical above this one - the same two lines the inlet_temp_high and
+# inlet_temp_critical rules (0006) draw, so a row and its alarm agree.
+ALLOWABLE_HIGH_C = 32.0
+
+# The recommended envelope's humidity leg at the intake. Its low end is a
+# dew point (-9 C), which no probe in this estate reports, so only the
+# ceiling is shown.
+RH_HIGH_PCT = 60.0
+
 # Buckets for windowed power. Short ranges get fine buckets; a month at five
 # minutes would be nine thousand buckets per room for a table that shows one
 # average and one peak.
@@ -127,6 +138,8 @@ async def thermal(session: AsyncSession, *, focus: date | None = None,
         prev_n = int(r["c_n"] or 0)
         avg = round(float(r["f_sum"]) / n, 1) if n else None
         prev_avg = round(float(r["c_sum"]) / prev_n, 1) if prev_n else None
+        rh_n = int(r.get("rh_n") or 0)
+        rh_probes = int(r.get("rh_probes") or 0)
         rows.append({
             "id": r["room_id"],
             "kind": "room",
@@ -145,6 +158,12 @@ async def thermal(session: AsyncSession, *, focus: date | None = None,
             "delta_avg": _delta(avg, prev_avg),
             "delta_max": _delta(_f(r["f_max"]) and round(_f(r["f_max"]), 1),
                                 _f(r["c_max"]) and round(_f(r["c_max"]), 1)),
+            # Humidity rides beside compliance, not inside it: folding RH into
+            # the in-band share would silently change what that number has
+            # meant since the page shipped.
+            "rh_avg": round(float(r["rh_sum"]) / rh_n, 1) if rh_n else None,
+            "rh_max": _f(r.get("rh_max")) and round(_f(r["rh_max"]), 1),
+            "rh_probes": rh_probes,
             # Said once per row, so a reader never has to guess whether a blank
             # cell means "cool" or "nobody is measuring".
             "note": None if n else "no rack intake sensor reported in this window",
@@ -153,6 +172,8 @@ async def thermal(session: AsyncSession, *, focus: date | None = None,
             "_in_band": int(r["f_in_band"] or 0),
             "_prev_sum": _f(r["c_sum"]) or 0.0, "_prev_n": prev_n,
             "_max": _f(r["f_max"]), "_prev_max": _f(r["c_max"]),
+            "_rh_sum": _f(r.get("rh_sum")) or 0.0, "_rh_n": rh_n,
+            "_rh_max": _f(r.get("rh_max")), "_rh_probes": rh_probes,
         })
 
     sites = _fold_thermal_sites(rows)
@@ -160,16 +181,26 @@ async def thermal(session: AsyncSession, *, focus: date | None = None,
     return {
         "window": window,
         "band": {"low_c": BAND_LOW_C, "high_c": BAND_HIGH_C,
+                 "allowable_high_c": ALLOWABLE_HIGH_C,
+                 "rh_high_pct": RH_HIGH_PCT,
                  "basis": "ASHRAE TC 9.9 recommended envelope for intake air"},
         "totals": totals,
         "sites": sites,
         "rooms": [_strip(r) for r in rows],
-        "notes": [
-            "Relative humidity is not shown: no humidity instrument exists "
-            "anywhere in the estate, and deriving one from dry and wet bulb "
-            "would publish a calculation as a reading.",
-        ],
+        "notes": [_humidity_note(totals)],
     }
+
+
+def _humidity_note(totals: dict[str, Any]) -> str:
+    probes = int(totals.get("rh_probes") or 0)
+    if not probes:
+        return ("Relative humidity is not shown: no rack humidity probe reported "
+                "in this window, and deriving one from dry and wet bulb would "
+                "publish a calculation as a reading.")
+    return (f"Relative humidity comes from {probes} rack PDU environment probes "
+            "at the intake. CRAH humidity sensors are excluded: they read the "
+            "return air, which is the room's exhaust. RH sits beside the in-band "
+            "figure and is not folded into it.")
 
 
 def _strip(row: dict[str, Any]) -> dict[str, Any]:
@@ -185,12 +216,14 @@ def _fold_thermal_sites(rooms: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "site_name": r["site_name"], "room_count": 0, "rack_count": 0,
             "_sum": 0.0, "_n": 0, "_in_band": 0, "_prev_sum": 0.0,
             "_prev_n": 0, "_max": None, "_prev_max": None,
+            "_rh_sum": 0.0, "_rh_n": 0, "_rh_max": None, "_rh_probes": 0,
         })
         s["room_count"] += 1
         s["rack_count"] += r["rack_count"]
-        for key in ("_sum", "_n", "_in_band", "_prev_sum", "_prev_n"):
+        for key in ("_sum", "_n", "_in_band", "_prev_sum", "_prev_n",
+                    "_rh_sum", "_rh_n", "_rh_probes"):
             s[key] += r[key]
-        for key in ("_max", "_prev_max"):
+        for key in ("_max", "_prev_max", "_rh_max"):
             if r[key] is not None:
                 s[key] = r[key] if s[key] is None else max(s[key], r[key])
 
@@ -206,6 +239,9 @@ def _fold_thermal_sites(rooms: list[dict[str, Any]]) -> list[dict[str, Any]]:
                            "samples": s["_n"],
                            "delta_avg": _delta(avg, prev),
                            "delta_max": _delta(mx, prev_mx),
+                           "rh_avg": round(s["_rh_sum"] / s["_rh_n"], 1) if s["_rh_n"] else None,
+                           "rh_max": None if s["_rh_max"] is None else round(s["_rh_max"], 1),
+                           "rh_probes": s["_rh_probes"],
                            "note": None if s["_n"] else "no rack intake sensor reported"}))
     return sorted(out, key=lambda r: r["site_code"])
 
@@ -216,11 +252,16 @@ def _fold_thermal_total(rooms: list[dict[str, Any]]) -> dict[str, Any]:
     maxes = [r["_max"] for r in rooms if r["_max"] is not None]
     total = sum(r["_sum"] for r in rooms)
     white = [r for r in rooms if r["room_class"] == "white_space"]
+    rh_n = sum(r["_rh_n"] for r in rooms)
+    rh_maxes = [r["_rh_max"] for r in rooms if r["_rh_max"] is not None]
     return {
         "avg_c": round(total / n, 1) if n else None,
         "max_c": round(max(maxes), 1) if maxes else None,
         "compliance_pct": _pct(in_band, n) if n else None,
         "samples": n,
+        "rh_avg": round(sum(r["_rh_sum"] for r in rooms) / rh_n, 1) if rh_n else None,
+        "rh_max": round(max(rh_maxes), 1) if rh_maxes else None,
+        "rh_probes": sum(r["_rh_probes"] for r in rooms),
         # Reporting is counted over WHITE SPACE only. Rack intake sensors exist
         # where racks do; counting a generator room as a room that failed to
         # report made the ratio read as a fleet of dead sensors.
@@ -725,12 +766,21 @@ async def room_kpi(session: AsyncSession, room_id: str) -> dict[str, Any] | None
             "avg_c": (room_thermal or {}).get("avg_c"),
             "max_c": (room_thermal or {}).get("max_c"),
             "compliance_pct": (room_thermal or {}).get("compliance_pct"),
-            "band": {"low_c": BAND_LOW_C, "high_c": BAND_HIGH_C},
+            "band": {"low_c": BAND_LOW_C, "high_c": BAND_HIGH_C,
+                     "allowable_high_c": ALLOWABLE_HIGH_C,
+                     "rh_high_pct": RH_HIGH_PCT},
             "note": (room_thermal or {}).get("note"),
-            # No humidity instrument exists. Stated here so the drawer can show
-            # the field as absent-with-a-reason instead of omitting it and
-            # leaving a reader to wonder whether it was simply forgotten.
-            "humidity_note": "no humidity instrument in this estate",
+            # From the rack PDU environment probes, same source as the estate
+            # page. Absent-with-a-reason when this room has none, so a reader
+            # never wonders whether the field was simply forgotten.
+            "rh_avg": (room_thermal or {}).get("rh_avg"),
+            "rh_max": (room_thermal or {}).get("rh_max"),
+            "rh_probes": int((room_thermal or {}).get("rh_probes") or 0),
+            "humidity_note": (
+                f"{(room_thermal or {}).get('rh_probes')} rack probes, "
+                f"max {(room_thermal or {}).get('rh_max')} %"
+                if (room_thermal or {}).get("rh_probes")
+                else "no rack humidity probe reported in the last hour"),
         },
         "power": {
             "total_kw": (room_power or {}).get("total_kw"),

@@ -21,7 +21,8 @@ class _FakeSession:
 
 def _room(room_id: str, dc: str, code: str, *, f_sum=None, f_n=0, f_max=None,
           f_in_band=0, c_sum=None, c_n=0, c_max=None, name=None,
-          room_class="white_space"):
+          room_class="white_space", rh_sum=None, rh_n=0, rh_max=None,
+          rh_probes=0):
     return {
         "room_id": room_id, "room_name": name or f"room-{room_id}",
         "floor": "1", "room_type": "data_hall", "room_class": room_class,
@@ -29,6 +30,7 @@ def _room(room_id: str, dc: str, code: str, *, f_sum=None, f_n=0, f_max=None,
         "site_code": code, "site_name": code, "rack_count": 2,
         "f_sum": f_sum, "f_n": f_n, "f_max": f_max, "f_in_band": f_in_band,
         "c_sum": c_sum, "c_n": c_n, "c_max": c_max,
+        "rh_sum": rh_sum, "rh_n": rh_n, "rh_max": rh_max, "rh_probes": rh_probes,
     }
 
 
@@ -337,3 +339,48 @@ def _returns(value):
     async def _fn(*_args, **_kwargs):
         return value
     return _fn
+
+
+@pytest.mark.asyncio
+async def test_humidity_rides_beside_compliance_not_inside_it(monkeypatch):
+    """RH is shown from the rack probes and folded by readings like intake
+    temperature, but a room with no probe reads absent, and the in-band share
+    is unchanged by it."""
+    monkeypatch.setattr(estate.repo, "thermal", _returns([
+        _room("a", "dc1", "DC1", f_sum=2000.0, f_n=100, f_max=22.0, f_in_band=100,
+              rh_sum=4500.0, rh_n=100, rh_max=52.0, rh_probes=4),
+        _room("b", "dc1", "DC1", f_sum=2300.0, f_n=100, f_max=24.0, f_in_band=100,
+              rh_sum=1900.0, rh_n=50, rh_max=40.0, rh_probes=2),
+        _room("c", "dc1", "DC1", f_sum=2300.0, f_n=100, f_max=24.0, f_in_band=100),
+    ]))
+    out = await estate.thermal(_FakeSession(), mode="live")
+    rooms = {r["id"]: r for r in out["rooms"]}
+    assert rooms["a"]["rh_avg"] == 45.0 and rooms["a"]["rh_max"] == 52.0
+    assert rooms["c"]["rh_avg"] is None and rooms["c"]["rh_probes"] == 0
+    assert rooms["c"]["compliance_pct"] == 100.0
+    site = out["sites"][0]
+    assert site["rh_avg"] == round(6400.0 / 150, 1)
+    assert site["rh_max"] == 52.0 and site["rh_probes"] == 6
+    assert out["totals"]["rh_probes"] == 6
+    assert "6 rack PDU environment probes" in out["notes"][0]
+
+
+@pytest.mark.asyncio
+async def test_no_probe_anywhere_says_so_instead_of_inventing_humidity(monkeypatch):
+    monkeypatch.setattr(estate.repo, "thermal", _returns([
+        _room("a", "dc1", "DC1", f_sum=2000.0, f_n=100, f_max=22.0, f_in_band=100),
+    ]))
+    out = await estate.thermal(_FakeSession(), mode="live")
+    assert out["totals"]["rh_avg"] is None
+    assert "no rack humidity probe" in out["notes"][0]
+
+
+@pytest.mark.asyncio
+async def test_the_band_carries_both_ceilings(monkeypatch):
+    """Warn and critical are two different lines - recommended and allowable -
+    and the page must not have to invent the second one."""
+    monkeypatch.setattr(estate.repo, "thermal", _returns([]))
+    out = await estate.thermal(_FakeSession(), mode="live")
+    assert out["band"]["high_c"] == 27.0
+    assert out["band"]["allowable_high_c"] == 32.0
+    assert out["band"]["rh_high_pct"] == 60.0

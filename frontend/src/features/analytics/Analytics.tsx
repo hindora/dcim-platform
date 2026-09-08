@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { useSearchParams } from 'react-router-dom';
 import { api, type RoomSummary } from '../../api/client';
 import { CapacityView } from './CapacityView';
 import { CoolingView } from './CoolingView';
@@ -33,8 +34,20 @@ const TABS: { key: Tab; label: string; blurb: string }[] = [
 
 /** `initialTab` lets the top-level nav land straight on Thermal or Power
  *  without the reader having to find the tab strip. */
+const isTab = (v: string | null): v is Tab => TABS.some((t) => t.key === v);
+
 export function Analytics({ initialTab = 'capacity' }: { initialTab?: Tab }) {
-  const [tab, setTab] = useState<Tab>(initialTab);
+  // The tab lives in the URL (?view=thermal). The estate pages and the home
+  // rail cards link straight to a view, and a tab held only in component
+  // state sent every one of those links to Capacity.
+  const [params, setParams] = useSearchParams();
+  const view = params.get('view');
+  const tab: Tab = isTab(view) ? view : initialTab;
+  const setTab = (next: Tab) => setParams((prev) => {
+    const q = new URLSearchParams(prev);
+    q.set('view', next);
+    return q;
+  });
   const [roomId, setRoomId] = useState<string>('');
 
   const { data: rooms } = useQuery<{ items: RoomSummary[] }>({

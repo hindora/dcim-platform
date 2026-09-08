@@ -123,7 +123,7 @@ export function Power() {
         title="Power"
         sub={<>Metered draw, split the way PUE needs it. PDUs are excluded from every
           total so the servers behind them are not counted twice.{' '}
-          <Link to="/analytics">Redundancy census and single-fed loads →</Link></>}
+          <Link to="/analytics?view=power">Redundancy census and single-fed loads →</Link></>}
         kpis={[
           { caption: 'Total', value: totals?.total_kw ?? null, unit: 'kW' },
           { caption: 'IT (AC)', value: totals?.it_ac_kw ?? null, unit: 'kW' },

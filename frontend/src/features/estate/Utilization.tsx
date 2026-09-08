@@ -153,7 +153,7 @@ export function Utilization() {
         title="Capacity"
         sub={<>Space, power and cooling against what is installed. Every percentage
           carries the basis of its denominator.{' '}
-          <Link to="/analytics">Constraint detail and forecast →</Link></>}
+          <Link to="/analytics?view=capacity">Constraint detail and forecast →</Link></>}
         kpis={[
           { caption: 'Space used', value: totals?.space_pct ?? null, unit: '%',
             tone: headline(totals?.space_pct) },
