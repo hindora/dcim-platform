@@ -8,7 +8,7 @@ number, and nothing downstream would ever notice.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
@@ -384,3 +384,25 @@ async def test_the_band_carries_both_ceilings(monkeypatch):
     assert out["band"]["high_c"] == 27.0
     assert out["band"]["allowable_high_c"] == 32.0
     assert out["band"]["rh_high_pct"] == 60.0
+
+
+@pytest.mark.asyncio
+async def test_a_blank_delta_says_which_window_was_empty(monkeypatch):
+    monkeypatch.setattr(estate.repo, "thermal", _returns([
+        _room("a", "dc1", "DC1", f_sum=200.0, f_n=10, f_max=21.0, f_in_band=10),
+        _room("b", "dc2", "DC2"),
+        _room("c", "dc3", "DC3", f_sum=200.0, f_n=10, f_max=21.0, f_in_band=10,
+              c_sum=190.0, c_n=10, c_max=20.0),
+    ]))
+    out = await estate.thermal(_FakeSession(), mode="live")
+    rooms = {r["id"]: r for r in out["rooms"]}
+    assert rooms["a"]["delta_avg"] is None
+    assert rooms["a"]["delta_note"] == "no readings in the previous hour"
+    assert rooms["b"]["delta_note"] == "no readings in the last hour"
+    assert rooms["c"]["delta_note"] is None and rooms["c"]["delta_avg"] == 1.0
+    sites = {s["site_code"]: s for s in out["sites"]}
+    assert sites["DC1"]["delta_note"] == "no readings in the previous hour"
+
+    out = await estate.thermal(_FakeSession(), mode="daily",
+                               focus=date(2026, 9, 6), compare=date(2026, 9, 5))
+    assert out["rooms"][0]["delta_note"] == "no readings on 2026-09-05"

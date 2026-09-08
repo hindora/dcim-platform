@@ -132,6 +132,13 @@ async def thermal(session: AsyncSession, *, focus: date | None = None,
                              compare_start=c0, compare_end=c1,
                              low_c=BAND_LOW_C, high_c=BAND_HIGH_C)
 
+    # Why a delta is blank, in words. A dot with no reason reads as "the page
+    # has no comparison", when the usual truth is that one window had no
+    # readings - the fleet was down, or the day had no collection.
+    prep = "in the" if mode == "live" else "on"
+    absent_prev = f"no readings {prep} {window['compare_label']}"
+    absent_now = f"no readings {prep} {window['label']}"
+
     rows: list[dict[str, Any]] = []
     for r in raw:
         n = int(r["f_n"] or 0)
@@ -158,6 +165,7 @@ async def thermal(session: AsyncSession, *, focus: date | None = None,
             "delta_avg": _delta(avg, prev_avg),
             "delta_max": _delta(_f(r["f_max"]) and round(_f(r["f_max"]), 1),
                                 _f(r["c_max"]) and round(_f(r["c_max"]), 1)),
+            "delta_note": _delta_note(n, prev_n, absent_now, absent_prev),
             # Humidity rides beside compliance, not inside it: folding RH into
             # the in-band share would silently change what that number has
             # meant since the page shipped.
@@ -176,7 +184,7 @@ async def thermal(session: AsyncSession, *, focus: date | None = None,
             "_rh_max": _f(r.get("rh_max")), "_rh_probes": rh_probes,
         })
 
-    sites = _fold_thermal_sites(rows)
+    sites = _fold_thermal_sites(rows, absent_now=absent_now, absent_prev=absent_prev)
     totals = _fold_thermal_total(rows)
     return {
         "window": window,
@@ -189,6 +197,15 @@ async def thermal(session: AsyncSession, *, focus: date | None = None,
         "rooms": [_strip(r) for r in rows],
         "notes": [_humidity_note(totals)],
     }
+
+
+def _delta_note(n: int, prev_n: int, absent_now: str, absent_prev: str) -> str | None:
+    """None when both windows have readings and the delta stands on its own."""
+    if not n:
+        return absent_now
+    if not prev_n:
+        return absent_prev
+    return None
 
 
 def _humidity_note(totals: dict[str, Any]) -> str:
@@ -207,7 +224,8 @@ def _strip(row: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in row.items() if not k.startswith("_")}
 
 
-def _fold_thermal_sites(rooms: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _fold_thermal_sites(rooms: list[dict[str, Any]], *, absent_now: str,
+                        absent_prev: str) -> list[dict[str, Any]]:
     by_site: dict[str, dict[str, Any]] = {}
     for r in rooms:
         s = by_site.setdefault(r["site_id"], {
@@ -239,6 +257,8 @@ def _fold_thermal_sites(rooms: list[dict[str, Any]]) -> list[dict[str, Any]]:
                            "samples": s["_n"],
                            "delta_avg": _delta(avg, prev),
                            "delta_max": _delta(mx, prev_mx),
+                           "delta_note": _delta_note(s["_n"], s["_prev_n"],
+                                                     absent_now, absent_prev),
                            "rh_avg": round(s["_rh_sum"] / s["_rh_n"], 1) if s["_rh_n"] else None,
                            "rh_max": None if s["_rh_max"] is None else round(s["_rh_max"], 1),
                            "rh_probes": s["_rh_probes"],

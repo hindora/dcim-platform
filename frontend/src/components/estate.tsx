@@ -128,11 +128,14 @@ export function FacilityToggle({ on, count, onChange }: {
  *  The last one is the common case on a fresh install, and rendering it as a
  *  flat arrow would claim a stability nobody measured.
  */
-export function Delta({ value, digits = 1, unit }: {
+export function Delta({ value, digits = 1, unit, why }: {
   value: number | null | undefined; digits?: number; unit?: string;
+  /** Why the delta is absent - which window had no readings. Shown in the
+   *  tooltip instead of the generic text, never as a fake zero. */
+  why?: string | null;
 }) {
   if (value === null || value === undefined) {
-    return <Tip className="delta none" tip="no comparison window">·</Tip>;
+    return <Tip className="delta none" tip={why || 'no comparison window'}>·</Tip>;
   }
   const rounded = Number(value.toFixed(digits));
   if (rounded === 0) return <Tip className="delta flat" tip="unchanged">↔</Tip>;

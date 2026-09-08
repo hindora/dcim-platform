@@ -1458,6 +1458,8 @@ export interface ThermalRow extends EstateRowBase {
   samples: number;
   delta_avg: number | null;
   delta_max: number | null;
+  /** Why both deltas are null: which window had no readings. */
+  delta_note: string | null;
   /** Relative humidity from the rack PDU environment probes; null where
    *  no probe reported. Shown beside compliance, never folded into it. */
   rh_avg: number | null;

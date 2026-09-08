@@ -100,7 +100,7 @@ export function Thermal() {
     {
       key: 'davg', label: 'Δ avg', align: 'num', width: 92,
       sort: (r) => r.delta_avg,
-      render: (r) => <Delta value={convDelta(r.delta_avg, unit)} />,
+      render: (r) => <Delta value={convDelta(r.delta_avg, unit)} why={r.delta_note} />,
     },
     {
       key: 'max', label: `Max ${u}`, align: 'num', width: 120,
@@ -110,7 +110,7 @@ export function Thermal() {
     {
       key: 'dmax', label: 'Δ max', align: 'num', width: 92,
       sort: (r) => r.delta_max,
-      render: (r) => <Delta value={convDelta(r.delta_max, unit)} />,
+      render: (r) => <Delta value={convDelta(r.delta_max, unit)} why={r.delta_note} />,
     },
     {
       key: 'compliance', label: 'In band', align: 'num', width: 110,
