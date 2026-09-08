@@ -106,7 +106,13 @@ if want collector; then
   # the devices were in fact reachable.
   IP_BIN="$(command -v ip || true)"
   [[ -n "$IP_BIN" ]] || IP_BIN=/usr/sbin/ip
-  if [[ ! -x "$IP_BIN" ]] || ! "$IP_BIN" -4 -o addr show 2>/dev/null        | grep -qE '10\.(50|51|52)\.'; then
+  # `grep -c`, not `grep -q`. Under `pipefail`, -q exits at the first match
+  # and closes the pipe while `ip` is still writing the other 950 aliases;
+  # `ip` dies of SIGPIPE, the pipeline reports 141, and the check warned that
+  # no devices were bound on exactly the host where all of them were. It
+  # only showed once the fleet was large enough to overflow the pipe buffer.
+  # -c reads everything and still exits 1 on zero matches.
+  if [[ ! -x "$IP_BIN" ]] || ! "$IP_BIN" -4 -o addr show 2>/dev/null        | grep -cE '10\.(50|51|52)\.' >/dev/null; then
     warn "no 10.50/10.51/10.52 addresses on this host: the collector will not
        reach the simulated devices. Run this inside WSL, where they are bound."
   fi
