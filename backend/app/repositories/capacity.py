@@ -7,6 +7,12 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.ingest.changelog import LAST_KNOWN_WINDOW_S
+
+#: Width of the aggregate coincident_power reads. The service turns a
+#: bucket count back into hours with it, so it lives next to the query.
+BUCKET_MINUTES = 5
+
 # Location join used by every scope filter. device.room_id carries
 # floor-standing plant; the rack chain carries everything else.
 _LOC = """
@@ -59,15 +65,20 @@ async def coincident_power(session: AsyncSession, *, device_ids: list[str],
                            percentile: int) -> dict[str, Any]:
     """p95 and peak of the TOTAL load across a set of devices.
 
-    The sum is taken per one-minute bucket first, and the percentile over those
-    sums. Taking each device's percentile and adding them assumes every device
-    peaks in the same minute, which they do not - that overstates the
+    The sum is taken per five-minute bucket first, and the percentile over
+    those sums. Taking each device's percentile and adding them assumes every
+    device peaks in the same interval, which they do not - that overstates the
     coincident load and strands capacity that is never actually used.
 
-    Read from the 1-minute continuous aggregate rather than raw samples. Its
-    avg_value is already one value per device per minute, which is what this
-    needs; summing raw samples counted a device several times in any minute it
-    reported more than once, and inflated a hall's load from 113 kW to 415.
+    Read from a continuous aggregate rather than raw samples: its avg_value is
+    already one value per device per bucket, which is what this needs. Summing
+    raw samples counted a device several times in any minute it reported more
+    than once, and inflated a hall's load from 113 kW to 415.
+
+    It is the 5-minute aggregate, not the 1-minute one, because 1m is kept for
+    a week (0052) and this reads 30 days by default. A five-minute mean is
+    coarser than a one-minute one by construction, and still finer than the
+    15-minute demand interval a utility bills on.
     """
     if not device_ids:
         return {}
@@ -77,7 +88,7 @@ async def coincident_power(session: AsyncSession, *, device_ids: list[str],
             -- join to metric defeated the (device_id, bucket) index and turned
             -- a 1.5 s query into 58 s.
             SELECT t.bucket, sum(t.avg_value) AS total_w
-              FROM telemetry_1m t
+              FROM telemetry_5m t
              WHERE t.device_id = ANY(CAST(:ids AS uuid[]))
                AND t.metric_id = :mid
                AND t.instance = ''
@@ -190,14 +201,17 @@ async def ports(session: AsyncSession, *, scope: str,
                WHERE tb.device_id = d.id
                  AND m.key = 'if_oper_state'
                  AND tb.instance = i.name
-                 AND tb.ts > now() - interval '30 minutes'
+                 -- last-known window: booleans are stored on change
+                 -- plus a heartbeat (app.ingest.changelog).
+                 AND tb.ts > now() - make_interval(secs => :window_s)
                ORDER BY tb.ts DESC
                LIMIT 1
           ) up ON TRUE
          WHERE d.device_type IN ('switch', 'oob_switch', 'router')
            AND d.lifecycle <> 'decommissioned'
            AND {scope_clause(scope)}
-    """), {"scope_id": scope_id})).mappings().first()
+    """), {"scope_id": scope_id,
+           "window_s": LAST_KNOWN_WINDOW_S})).mappings().first()
     return dict(row) if row else {}
 
 

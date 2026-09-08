@@ -24,6 +24,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.repositories.capacity import BUCKET_MINUTES
+
 # The percentile capacity planning sizes on. Sizing on the momentary peak
 # strands capacity; sizing on the mean under-provisions for the hours that
 # matter.
@@ -187,7 +189,7 @@ async def report(session, *, scope: str, scope_id: str, hours: int = 720,
 
     buckets = int(power.get("buckets") or 0)
     rep = CapacityReport(scope=scope, scope_id=scope_id, name=name,
-                         window_hours=buckets / 60.0)
+                         window_hours=buckets * BUCKET_MINUTES / 60.0)
 
     # --- power ---------------------------------------------------------------
     p95_kw = (power.get("p95_w") or 0) / 1000.0 if power.get("p95_w") else None
@@ -247,9 +249,10 @@ async def report(session, *, scope: str, scope_id: str, hours: int = 720,
     if buckets == 0:
         rep.notes.append("no power telemetry in the window, so the load "
                          "percentile could not be computed")
-    elif buckets < hours * 60 * 0.5:
+    elif buckets < hours * (60 / BUCKET_MINUTES) * 0.5:
         rep.notes.append(
-            f"the {PERCENTILE}th percentile covers {buckets / 60.0:.1f} h of "
+            f"the {PERCENTILE}th percentile covers "
+            f"{buckets * BUCKET_MINUTES / 60.0:.1f} h of "
             f"data, not the {hours} h requested - the fleet has not been "
             f"recording that long")
     return rep.as_dict()

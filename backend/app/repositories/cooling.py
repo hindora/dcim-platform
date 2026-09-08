@@ -7,6 +7,8 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.ingest.changelog import LAST_KNOWN_WINDOW_S
+
 # Metrics the plant view needs. Instance matters: a chiller carries two water
 # loops - CHW on the evaporator and COND on the condenser - and averaging their
 # temperatures together would produce a number describing nothing.
@@ -61,16 +63,22 @@ async def machine_flags(session: AsyncSession) -> dict[str, dict[str, bool]]:
     by the BMS is a healthy decision and a chiller that has tripped is not, but
     both draw almost nothing - so power alone cannot tell them apart, and
     staging analysis that guessed from watts would call a trip "standby".
+
+    Booleans are stored on change plus a heartbeat, so the newest row can be
+    up to a heartbeat old for a machine that is reporting perfectly; the
+    look-back is the last-known window from app.ingest.changelog, not a
+    freshness judgement. Whether the machine is still REPORTING is the
+    endpoint's state, not this table's.
     """
     rows = (await session.execute(text("""
         SELECT DISTINCT ON (t.device_id, m.key)
                t.device_id::text AS device_id, m.key, t.value
           FROM telemetry_bool t
           JOIN metric m ON m.id = t.metric_id
-         WHERE t.ts > now() - interval '10 minutes'
+         WHERE t.ts > now() - make_interval(secs => :window_s)
            AND m.key IN ('equipment_state', 'alarm_state')
          ORDER BY t.device_id, m.key, t.ts DESC
-    """))).mappings().all()
+    """), {"window_s": LAST_KNOWN_WINDOW_S})).mappings().all()
     out: dict[str, dict[str, bool]] = {}
     for r in rows:
         out.setdefault(r["device_id"], {})[r["key"]] = bool(r["value"])

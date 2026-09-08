@@ -550,8 +550,8 @@ ALTER TABLE telemetry_sample SET (
     timescaledb.compress_segmentby = 'device_id, metric_id, instance',
     timescaledb.compress_orderby   = 'ts DESC'
 );
-SELECT add_compression_policy('telemetry_sample', INTERVAL '7 days');
-SELECT add_retention_policy  ('telemetry_sample', INTERVAL '90 days');
+SELECT add_compression_policy('telemetry_sample', INTERVAL '1 day');   -- 0053: was 7 days
+SELECT add_retention_policy  ('telemetry_sample', INTERVAL '30 days');  -- 0051
 ```
 
 The primary key doubles as the idempotency guarantee for at-least-once delivery:
@@ -575,6 +575,11 @@ CREATE TABLE telemetry_bool (
     PRIMARY KEY (device_id, metric_id, instance, ts)
 );
 SELECT create_hypertable('telemetry_bool','ts', chunk_time_interval => INTERVAL '7 days');
+-- 0053: 1-day chunks, compressed after 1 day (same segmentby as telemetry_sample),
+-- retention 30 days (0051). Rows are written ON CHANGE plus a 15-minute
+-- heartbeat (app/ingest/changelog.py, decided atomically in Redis per series
+-- so two workers agree); readers of current state look back the last-known
+-- window (2 x heartbeat), and judge freshness from the endpoint, not this table.
 
 CREATE TABLE telemetry_text (
     ts timestamptz NOT NULL, device_id uuid NOT NULL, metric_id smallint NOT NULL,
@@ -583,6 +588,7 @@ CREATE TABLE telemetry_text (
     PRIMARY KEY (device_id, metric_id, instance, ts)
 );
 SELECT create_hypertable('telemetry_text','ts', chunk_time_interval => INTERVAL '7 days');
+-- 0053: 1-day chunks, compressed after 1 day, retention 30 days (0051).
 ```
 
 Binary points are naturally **sparse** — write on change plus a heartbeat every
@@ -610,18 +616,29 @@ SELECT add_continuous_aggregate_policy('telemetry_1m',
 
 -- and the same shape for telemetry_5m (from 1m) and telemetry_1h (from 5m),
 -- using hierarchical continuous aggregates.
-SELECT add_retention_policy('telemetry_1m', INTERVAL '1 year');
--- telemetry_1h: no retention. It is small and it is what capacity trending needs.
+-- 1m is NOT a rollup at a 60-120 s poll cadence (1.14 samples per bucket): it
+-- was a wider copy of raw. It is kept only for the window the chart router
+-- sends to it (about 3 h) plus the 5m refresh's one-day start_offset (0052).
+SELECT add_retention_policy('telemetry_1m', INTERVAL '7 days');
+SELECT add_retention_policy('telemetry_5m', INTERVAL '2 years');
+-- Both compressed like the raw table, same segmentby: 1m after 1 day, 5m after 2.
+-- telemetry_1h, telemetry_1d: no retention. Small, and what capacity trending needs.
 ```
 
 **Query routing rule** (implemented once in the telemetry repository):
 
+Routing is by point budget (200 points per series), not by window length;
+the raw table is reachable only by asking for `interval=raw`.
+
 | Requested window | Source |
 |---|---|
-| ≤ 6 h | `telemetry_sample` |
-| ≤ 7 d | `telemetry_1m` |
-| ≤ 90 d | `telemetry_5m` |
-| > 90 d | `telemetry_1h` |
+| ≤ ~3 h | `telemetry_1m` |
+| ≤ ~16 h | `telemetry_5m` |
+| ≤ ~8 d | `telemetry_1h` |
+| longer | `telemetry_1d` |
+
+The capacity report and the forecast's daily series read `telemetry_5m`
+directly: they need 30-90 days of one-value-per-device-per-bucket data.
 
 ### 6.5 Poll results and alarm history
 
@@ -639,6 +656,7 @@ CREATE TABLE alarm_history (
     severity severity_t, actor text, detail jsonb NOT NULL DEFAULT '{}'
 );
 SELECT create_hypertable('alarm_history','ts', chunk_time_interval => INTERVAL '30 days');
+SELECT add_retention_policy('alarm_history', INTERVAL '2 years');  -- 0053
 ```
 
 `poll_result` is what makes "why is this device flapping" answerable. It is also

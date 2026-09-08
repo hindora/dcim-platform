@@ -7,6 +7,8 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.ingest.changelog import LAST_KNOWN_WINDOW_S
+
 # Per-rack intake and exhaust over the window.
 #
 # min(inlet) is carried as well as the mean because "sustained" has to be
@@ -90,7 +92,10 @@ async def running_crahs(session: AsyncSession, room_id: str) -> dict[str, bool]:
          WHERE m.key = 'equipment_state'
            AND d.device_type = 'crah'
            AND rm.id = CAST(:room_id AS uuid)
-           AND tb.ts > now() - interval '30 minutes'
+           -- last-known window: booleans are stored on change plus a
+           -- heartbeat (app.ingest.changelog), not every poll.
+           AND tb.ts > now() - make_interval(secs => :window_s)
          ORDER BY tb.device_id, tb.ts DESC
-    """), {"room_id": room_id})).mappings().all()
+    """), {"room_id": room_id,
+           "window_s": LAST_KNOWN_WINDOW_S})).mappings().all()
     return {r["device_id"]: bool(r["value"]) for r in rows}

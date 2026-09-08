@@ -46,7 +46,7 @@ from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
 from app.core.metrics_gen import METRICS
 from app.db.session import dispose_engine, unit_of_work
-from app.ingest import rates, writer
+from app.ingest import changelog, rates, writer
 from app.ingest.enrich import InventoryCache
 from app.ingest.fanout import Fanout
 from app.repositories import alarms as repo_alarms
@@ -510,6 +510,7 @@ class IngestWorker:
 
         sample_rows: list[writer.SampleRow] = []
         bool_rows: list[writer.BoolRow] = []
+        bool_written: list[writer.BoolRow] = []
         text_rows: list[writer.TextRow] = []
         # Gauge samples the threshold rules get to see. Counters are excluded:
         # a rule on a raw counter would compare an ever-growing number against a
@@ -672,7 +673,12 @@ class IngestWorker:
             self._derive_load_pct(sample_rows, rule_inputs, hot, ws_frames)
 
             await writer.copy_samples(session, sample_rows)
-            await writer.insert_bools(session, bool_rows)
+            # Booleans: on change plus a heartbeat, decided in Redis so
+            # two workers agree on who writes (app.ingest.changelog).
+            # Only the row is suppressed - the rules, the hot cache and
+            # the websocket already took every sample above.
+            bool_written = await changelog.admit(self.redis, bool_rows)
+            await writer.insert_bools(session, bool_written)
             await writer.insert_texts(session, text_rows)
             await writer.upsert_device_state(session, list(hot.values()))
             # Which endpoints actually produced something, and when. Staleness
@@ -703,7 +709,8 @@ class IngestWorker:
         # Batch-level counts at INFO: one line per consumed batch is cheap, and
         # without it "the numbers are not moving" is unanswerable.
         log.info("telemetry ingested", received=len(samples),
-                 numeric=len(sample_rows), bools=len(bool_rows),
+                 numeric=len(sample_rows), bools=len(bool_written),
+                 bools_unchanged=len(bool_rows) - len(bool_written),
                  texts=len(text_rows), devices=len(hot),
                  unresolved_interfaces=len(unresolved_interfaces),
                  skipped=len(samples) - len(sample_rows) - len(bool_rows)

@@ -15,10 +15,16 @@ gap is counted and reported rather than interpolated over.
 
 Completeness is measured in HOURS COVERED, not in samples received, and that
 distinction is not academic: it threw away the only complete day this fleet
-had. Power is polled every 120 s, so a flawless day yields about 720 one-minute
-buckets, not 1440 - judged against 1440 it looks 50% collected and is dropped
-as unknown. Counting distinct hours instead is independent of how often a
-device is polled, and a real collector outage still shows up as missing hours.
+had. Power is polled every 120 s, so when this read one-minute buckets a
+flawless day yielded about 720 of them, not 1440 - judged against 1440 it
+looked 50% collected and was dropped as unknown. Counting distinct hours
+instead is independent of how often a device is polled and of the bucket
+width read, and a real collector outage still shows up as missing hours.
+
+**Buckets are five minutes.** `telemetry_1m` is kept for a week (0052) and a
+forecast needs weeks of history, so the daily series reads `telemetry_5m`.
+The coincident sum is taken per bucket either way; `minutes` reports minutes
+of coverage, not a row count, so it means the same thing at either width.
 
 **Days are UTC.** The daily peak of a site whose working day straddles midnight
 UTC is split across two rows. It does not matter for a monthly trend, which is
@@ -45,12 +51,12 @@ HOURS_PER_DAY = 24
 
 _DAILY_POWER = text("""
     WITH per_min AS (
-        -- Coincident load: sum ACROSS devices within each minute first. Taking
+        -- Coincident load: sum ACROSS devices within each bucket first. Taking
         -- each device's daily peak and adding them assumes every device peaks
         -- in the same minute, which overstates the load the room actually
         -- carries.
         SELECT t.bucket AS b, sum(t.avg_value) AS total_w
-          FROM telemetry_1m t
+          FROM telemetry_5m t
          WHERE t.device_id = ANY(CAST(:ids AS uuid[]))
            AND t.metric_id = :mid
            AND t.instance = ''
@@ -65,7 +71,7 @@ _DAILY_POWER = text("""
            percentile_cont(:pct) WITHIN GROUP (ORDER BY total_w) AS p95_w,
            max(total_w)  AS peak_w,
            avg(total_w)  AS mean_w,
-           count(*)      AS minutes,
+           count(*) * 5  AS minutes,
            count(DISTINCT date_trunc('hour', b)) AS hours
       FROM per_min
      GROUP BY 1
