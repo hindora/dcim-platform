@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
 import { api, type SupportContract } from '../../../api/client';
+import { usePaged } from '../../../components/Pagination';
 import { humanise } from '../../../lib/format';
 
 /** One contract and everything it covers. */
@@ -12,6 +13,7 @@ export function ContractDetail() {
     queryFn: () => api.contract(id),
     enabled: Boolean(id),
   });
+  const paged = usePaged(data?.devices ?? [], { noun: 'assets' });
 
   if (error) return <div className="banner">Failed to load: {String(error)}</div>;
   if (isLoading || !data) return <p className="muted">Loading…</p>;
@@ -74,7 +76,7 @@ export function ContractDetail() {
               <tr><th>Asset</th><th>Type</th><th>Serial</th><th>Covered until</th></tr>
             </thead>
             <tbody>
-              {data.devices.map((d) => (
+              {paged.rows.map((d) => (
                 <tr key={d.id}>
                   <td><Link to={`/assets/inventory/${d.id}`}>{d.name}</Link></td>
                   <td className="muted">{humanise(d.device_type)}</td>
@@ -95,6 +97,7 @@ export function ContractDetail() {
       ) : (
         <p className="muted">No assets covered.</p>
       )}
+      {paged.foot}
     </>
   );
 }

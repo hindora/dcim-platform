@@ -8,6 +8,7 @@ import {
   type StockMovement,
   type Store,
 } from '../../../api/client';
+import { usePaged } from '../../../components/Pagination';
 import { humanise, relativeTime } from '../../../lib/format';
 import { Dialog, DialogActions } from '../components/Dialog';
 
@@ -38,6 +39,7 @@ export function PartDetail() {
     queryKey: ['stores'],
     queryFn: api.stores,
   });
+  const pagedLedger = usePaged(ledger?.items ?? [], { noun: 'movements' });
 
   if (error) return <div className="banner">Failed to load: {String(error)}</div>;
   if (isLoading || !data) return <p className="muted">Loading…</p>;
@@ -105,6 +107,7 @@ export function PartDetail() {
 
       <h3>Movement ledger</h3>
       {ledger && ledger.items.length > 0 ? (
+        <>
         <div className="asset-scroll">
           <table>
             <thead>
@@ -114,7 +117,7 @@ export function PartDetail() {
               </tr>
             </thead>
             <tbody>
-              {ledger.items.map((m) => (
+              {pagedLedger.rows.map((m) => (
                 <tr key={m.id}>
                   <td className="muted" title={m.ts}>{relativeTime(m.ts)}</td>
                   <td className={m.delta < 0 ? 'asset-cover is-expired' : ''}>
@@ -138,6 +141,8 @@ export function PartDetail() {
             </tbody>
           </table>
         </div>
+        {pagedLedger.foot}
+        </>
       ) : (
         <p className="muted">Nothing has moved yet.</p>
       )}

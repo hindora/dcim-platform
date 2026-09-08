@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError, type LifecycleHistory } from '../../../api/client';
+import { usePaged } from '../../../components/Pagination';
 import { humanise, relativeTime } from '../../../lib/format';
 import { Tip } from '../../../components/HoverTip';
 import { LifecycleChip } from '../components/LifecycleChip';
@@ -43,6 +44,8 @@ export function LifecycleTab({ deviceId }: { deviceId: string }) {
       setError(e instanceof ApiError ? e.message : String(e));
     },
   });
+
+  const paged = usePaged(data?.events ?? [], { noun: 'transitions' });
 
   if (isLoading || !data) return <p className="muted">Loading…</p>;
 
@@ -101,7 +104,7 @@ export function LifecycleTab({ deviceId }: { deviceId: string }) {
               </tr>
             </thead>
             <tbody>
-              {data.events.map((e) => (
+              {paged.rows.map((e) => (
                 <tr key={e.id}>
                   <td className="muted">
                     <Tip tip={e.ts}>{relativeTime(e.ts)}</Tip>
@@ -123,6 +126,7 @@ export function LifecycleTab({ deviceId }: { deviceId: string }) {
           </table>
         </div>
       )}
+      {paged.foot}
     </>
   );
 }

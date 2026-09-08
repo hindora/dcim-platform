@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
 import { ApiError, api, type MaintenanceWindow } from '../../../api/client';
+import { usePaged } from '../../../components/Pagination';
 import { humanise, relativeTime } from '../../../lib/format';
 
 /** One window: what it covers, and what it is holding back.
@@ -36,6 +37,8 @@ export function WindowDetail() {
     enabled: Boolean(id),
     refetchInterval: 30_000,
   });
+  const pagedTargets = usePaged(data?.targets ?? [], { noun: 'devices' });
+  const pagedShelved = usePaged(data?.shelved ?? [], { noun: 'alarms' });
 
   if (error) return <div className="banner">Failed to load: {String(error)}</div>;
   if (isLoading || !data) return <p className="muted">Loading…</p>;
@@ -109,7 +112,7 @@ export function WindowDetail() {
           <table>
             <thead><tr><th>Device</th><th>Type</th><th>Severity</th></tr></thead>
             <tbody>
-              {data.targets.map((t) => (
+              {pagedTargets.rows.map((t) => (
                 <tr key={t.id}>
                   <td><Link to={`/assets/inventory/${t.id}`}>{t.name}</Link></td>
                   <td className="muted">{humanise(t.device_type)}</td>
@@ -122,6 +125,7 @@ export function WindowDetail() {
       ) : (
         <p className="muted">This window covers no devices, so it silences nothing.</p>
       )}
+      {pagedTargets.foot}
 
       <h3 style={{ marginTop: 24 }}>
         Shelved alarms — {data.shelved?.length ?? 0}
@@ -136,7 +140,7 @@ export function WindowDetail() {
               </tr>
             </thead>
             <tbody>
-              {data.shelved.map((a) => (
+              {pagedShelved.rows.map((a) => (
                 <tr key={a.id}>
                   <td><Link to={`/assets/inventory/${a.device_id}`}>{a.device_name}</Link></td>
                   <td>{humanise(a.alarm_type)}</td>
@@ -153,6 +157,7 @@ export function WindowDetail() {
       ) : (
         <p className="muted">Nothing shelved.</p>
       )}
+      {pagedShelved.foot}
     </>
   );
 }

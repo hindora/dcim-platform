@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { api, type MaintenanceWindow } from '../../../api/client';
+import { usePaged } from '../../../components/Pagination';
 import { humanise, relativeTime } from '../../../lib/format';
 import { WindowForm } from './WindowForm';
 
@@ -53,6 +54,7 @@ export function WindowList() {
 }
 
 function Section({ title, rows }: { title: string; rows: MaintenanceWindow[] }) {
+  const paged = usePaged(rows, { noun: 'windows' });
   return (
     <section style={{ marginBottom: 24 }}>
       <h3>{title} — {rows.length}</h3>
@@ -65,7 +67,7 @@ function Section({ title, rows }: { title: string; rows: MaintenanceWindow[] }) 
             </tr>
           </thead>
           <tbody>
-            {rows.map((w) => (
+            {paged.rows.map((w) => (
               <tr key={w.id}>
                 <td>
                   <Link to={`/assets/maintenance/${w.id}`}>{w.title}</Link>
@@ -90,6 +92,7 @@ function Section({ title, rows }: { title: string; rows: MaintenanceWindow[] }) 
           </tbody>
         </table>
       </div>
+      {paged.foot}
     </section>
   );
 }

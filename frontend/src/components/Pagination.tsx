@@ -1,3 +1,5 @@
+import { useState } from 'react';
+
 /** Paging controls for every table in the product.
  *
  *  Born on the inventory table and shared from there: the range, rows per
@@ -13,6 +15,35 @@
  *  changing estate can see one row twice or miss one. That is the accepted
  *  trade for being able to jump to page 7 without having fetched page 6.
  */
+/** Page a list already in hand.
+ *
+ *  Most tables outside the inventory get their rows in one response - a
+ *  contract's devices, a part's ledger, five hundred candidates - and slice
+ *  them in the browser. This keeps the page and the rows-per-page, returns
+ *  the slice to draw, and returns the pager to put under it: the same
+ *  control as everywhere else, so the reader learns it once.
+ *
+ *  The pager appears when the list is longer than the smallest page, or
+ *  always when asked: a list page always shows it (the range is the count),
+ *  a detail tab with four rows does not need a strip saying 1-4 of 4. */
+export function usePaged<T>(items: T[], opts: { noun?: string; always?: boolean } = {}) {
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(SIZES[0]);
+  const pages = Math.max(1, Math.ceil(items.length / pageSize));
+  const current = Math.min(page, pages);
+  const rows = items.slice((current - 1) * pageSize, current * pageSize);
+  const foot = (opts.always || items.length > SIZES[0]) ? (
+    <Pagination page={current} pageSize={pageSize} shown={rows.length}
+                total={items.length} hasNext={current < pages} noun={opts.noun}
+                onPage={setPage}
+                onSize={(n) => { setPageSize(n); setPage(1); }} />
+  ) : null;
+  return { rows, foot, total: items.length };
+}
+
+/** The rows-per-page choices, smallest first. */
+const SIZES = [25, 50, 100, 200];
+
 export function Pagination({
   page, pageSize, shown, total, hasNext, onPage, onSize, noun,
 }: {
@@ -54,7 +85,7 @@ export function Pagination({
           onChange={(e) => onSize(Number(e.target.value))}
           aria-label="Rows per page"
         >
-          {[25, 50, 100, 200].map((n) => (
+          {SIZES.map((n) => (
             <option key={n} value={n}>{n}</option>
           ))}
         </select>

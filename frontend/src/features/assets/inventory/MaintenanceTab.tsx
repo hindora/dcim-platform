@@ -6,6 +6,7 @@ import {
   type MaintenanceRecord,
   type MaintenanceWindow,
 } from '../../../api/client';
+import { usePaged } from '../../../components/Pagination';
 import { humanise, relativeTime } from '../../../lib/format';
 import { Tip } from '../../../components/HoverTip';
 import { RecordWorkForm } from './RecordWorkForm';
@@ -30,6 +31,8 @@ export function MaintenanceTab({ deviceId }: { deviceId: string }) {
 
   const scheduled = (windows?.items ?? []).filter(
     (w) => w.status === 'scheduled' || w.status === 'active');
+  const pagedWindows = usePaged(scheduled, { noun: 'windows' });
+  const pagedRecords = usePaged(records?.items ?? [], { noun: 'records' });
 
   return (
     <>
@@ -43,7 +46,7 @@ export function MaintenanceTab({ deviceId }: { deviceId: string }) {
               <tr><th>Window</th><th>Status</th><th>Starts</th><th>Ends</th></tr>
             </thead>
             <tbody>
-              {scheduled.map((w) => (
+              {pagedWindows.rows.map((w) => (
                 <tr key={w.id}>
                   <td><Link to={`/assets/maintenance/${w.id}`}>{w.title}</Link></td>
                   <td>
@@ -63,6 +66,7 @@ export function MaintenanceTab({ deviceId }: { deviceId: string }) {
           </table>
         </div>
       )}
+      {pagedWindows.foot}
 
       <h3>Work done</h3>
       <p className="asset-table-note">
@@ -82,7 +86,7 @@ export function MaintenanceTab({ deviceId }: { deviceId: string }) {
               <tr><th>When</th><th>Kind</th><th>Summary</th><th>By</th><th>Window</th></tr>
             </thead>
             <tbody>
-              {records.items.map((r) => (
+              {pagedRecords.rows.map((r) => (
                 <tr key={r.id}>
                   <td className="muted">
                     <Tip tip={r.performed_at}>{relativeTime(r.performed_at)}</Tip>
@@ -103,6 +107,7 @@ export function MaintenanceTab({ deviceId }: { deviceId: string }) {
           </table>
         </div>
       )}
+      {pagedRecords.foot}
     </>
   );
 }

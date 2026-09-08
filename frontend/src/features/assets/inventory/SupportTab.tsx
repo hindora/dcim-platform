@@ -5,6 +5,7 @@ import {
   type DeviceDetail,
   type SupportContract,
 } from '../../../api/client';
+import { usePaged } from '../../../components/Pagination';
 import { humanise } from '../../../lib/format';
 
 /** What this asset cost, who it came from, and what still covers it. */
@@ -15,6 +16,7 @@ export function SupportTab({ device }: { device: DeviceDetail }) {
   });
 
   const contracts = data?.items ?? [];
+  const paged = usePaged(contracts, { noun: 'contracts' });
 
   return (
     <>
@@ -47,7 +49,7 @@ export function SupportTab({ device }: { device: DeviceDetail }) {
               </tr>
             </thead>
             <tbody>
-              {contracts.map((c) => (
+              {paged.rows.map((c) => (
                 <tr key={c.id}>
                   <td>
                     <Link to={`/assets/contracts/${c.id}`} className="asset-tag">
@@ -69,6 +71,7 @@ export function SupportTab({ device }: { device: DeviceDetail }) {
           </table>
         </div>
       )}
+      {paged.foot}
     </>
   );
 }

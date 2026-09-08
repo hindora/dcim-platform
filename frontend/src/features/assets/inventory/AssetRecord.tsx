@@ -7,6 +7,7 @@ import {
   type NetworkInterface,
   type PowerChain,
 } from '../../../api/client';
+import { usePaged } from '../../../components/Pagination';
 import { humanise } from '../../../lib/format';
 import { LifecycleChip } from '../components/LifecycleChip';
 import { LifecycleTab } from './LifecycleTab';
@@ -67,6 +68,9 @@ export function AssetRecord() {
     queryFn: () => api.powerChain(id),
     enabled: Boolean(id) && tab === 'connections',
   });
+
+  // Before the early returns: a hook's order cannot depend on the fetch.
+  const pagedPorts = usePaged(interfaces ?? [], { noun: 'ports' });
 
   if (error) return <div className="banner">Failed to load: {String(error)}</div>;
   if (isLoading || !data) return <p className="muted">Loading…</p>;
@@ -224,7 +228,7 @@ export function AssetRecord() {
                   <tr><th>Port</th><th>Role</th><th>Speed</th><th>MAC</th><th>Peer</th></tr>
                 </thead>
                 <tbody>
-                  {interfaces.map((n) => (
+                  {pagedPorts.rows.map((n) => (
                     <tr key={n.id}>
                       <td>{n.name}</td>
                       <td className="muted">{humanise(n.role)}</td>
@@ -241,6 +245,7 @@ export function AssetRecord() {
           ) : (
             <p className="muted">No ports recorded for this asset.</p>
           )}
+          {pagedPorts.foot}
         </>
       )}
     </>

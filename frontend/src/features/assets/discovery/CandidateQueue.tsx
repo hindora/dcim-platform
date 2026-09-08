@@ -5,6 +5,7 @@ import {
   type AssetSummary,
   type DiscoveryCandidate,
 } from '../../../api/client';
+import { usePaged } from '../../../components/Pagination';
 import { humanise, relativeTime } from '../../../lib/format';
 
 /** The discovery queue.
@@ -81,7 +82,9 @@ export function CandidateQueue() {
 }
 
 function CandidateTable({ rows }: { rows: DiscoveryCandidate[] }) {
+  const paged = usePaged(rows, { noun: 'candidates' });
   return (
+    <>
     <div className="asset-scroll">
       <table>
         <thead>
@@ -91,7 +94,7 @@ function CandidateTable({ rows }: { rows: DiscoveryCandidate[] }) {
           </tr>
         </thead>
         <tbody>
-          {rows.map((c) => (
+          {paged.rows.map((c) => (
             <tr key={c.id}>
               <td className="asset-tag">{c.address ?? '—'}</td>
               <td className="muted">{c.protocol.toUpperCase()}</td>
@@ -119,5 +122,7 @@ function CandidateTable({ rows }: { rows: DiscoveryCandidate[] }) {
         </tbody>
       </table>
     </div>
+    {paged.foot}
+    </>
   );
 }

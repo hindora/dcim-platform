@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { api, type Supplier, type SupportContract } from '../../../api/client';
+import { usePaged } from '../../../components/Pagination';
 import { humanise } from '../../../lib/format';
 import { ContractForm, SupplierForm } from './ContractForm';
 
@@ -100,6 +101,7 @@ export function ContractList() {
 function Table({ title, rows, tone }: {
   title: string; rows: SupportContract[]; tone: string;
 }) {
+  const paged = usePaged(rows, { noun: 'contracts' });
   return (
     <section style={{ marginBottom: 24 }}>
       <h3>{title} — {rows.length}</h3>
@@ -112,7 +114,7 @@ function Table({ title, rows, tone }: {
             </tr>
           </thead>
           <tbody>
-            {rows.map((c) => (
+            {paged.rows.map((c) => (
               <tr key={c.id}>
                 <td>
                   <Link to={`/assets/contracts/${c.id}`} className="asset-tag">
@@ -140,6 +142,7 @@ function Table({ title, rows, tone }: {
           </tbody>
         </table>
       </div>
+      {paged.foot}
     </section>
   );
 }

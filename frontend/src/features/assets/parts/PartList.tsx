@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { ApiError, api, type Part, type Store } from '../../../api/client';
+import { usePaged } from '../../../components/Pagination';
 import { humanise } from '../../../lib/format';
 import { Dialog, DialogActions } from '../components/Dialog';
 
@@ -34,6 +35,9 @@ export function PartList() {
     queryKey: ['stores'],
     queryFn: api.stores,
   });
+
+  // Before the early return: a hook's order cannot depend on the fetch.
+  const paged = usePaged(data?.items ?? [], { noun: 'parts', always: true });
 
   if (error) return <div className="banner">Failed to load: {String(error)}</div>;
 
@@ -94,7 +98,7 @@ export function PartList() {
               </tr>
             </thead>
             <tbody>
-              {items.map((p) => (
+              {paged.rows.map((p) => (
                 <tr key={p.id}>
                   <td>
                     <Link to={`/assets/parts/${p.id}`} className="asset-tag">
@@ -119,6 +123,7 @@ export function PartList() {
           </table>
         </div>
       )}
+      {items.length > 0 && paged.foot}
 
       {stores && stores.items.length > 0 && (
         <section style={{ marginTop: 26 }}>

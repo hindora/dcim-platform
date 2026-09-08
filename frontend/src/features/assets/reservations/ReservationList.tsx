@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { ApiError, api, type Reservation } from '../../../api/client';
+import { usePaged } from '../../../components/Pagination';
 import { Dialog, DialogActions } from '../components/Dialog';
 
 /** Held capacity: rack units and power that nothing occupies yet.
@@ -32,6 +33,9 @@ export function ReservationList() {
       qc.invalidateQueries({ queryKey: ['rack-elevation'] });
     },
   });
+
+  // Before the early return: a hook's order cannot depend on the fetch.
+  const paged = usePaged(data?.items ?? [], { noun: 'reservations', always: true });
 
   if (error) return <div className="banner">Failed to load: {String(error)}</div>;
 
@@ -82,7 +86,7 @@ export function ReservationList() {
               </tr>
             </thead>
             <tbody>
-              {items.map((r) => (
+              {paged.rows.map((r) => (
                 <tr key={r.id}>
                   <td>{r.project}</td>
                   <td className="muted">
@@ -130,6 +134,7 @@ export function ReservationList() {
           </table>
         </div>
       )}
+      {items.length > 0 && paged.foot}
     </>
   );
 }
