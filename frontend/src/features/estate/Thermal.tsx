@@ -287,11 +287,13 @@ export function Thermal() {
     <div className="estate">
       <PageHead
         title="Thermal"
-        sub={<>Intake air across the estate. Band {data?.band.low_c ?? 18}–{recommended} °C,
-          {' '}allowable to {allowable} °C ({data?.band.basis ?? 'ASHRAE recommended'}).{' '}
+        sub={<>Intake air. ASHRAE band {floor}–{recommended} °C, allowable to {allowable} °C.{' '}
           <Link to="/analytics?view=thermal">Rack-level ΔT and hot spots →</Link></>}
-        // Seven KPIs on the title row. The header lets the subtitle wrap
-        // before it lets the band drop under the title.
+        // Six KPIs on the title row; the header lets the subtitle wrap
+        // before it lets the band drop under the title. The below-band
+        // share is a table figure, not a headline: it is sorted on when a
+        // setpoint is being decided, and In band already says how much sits
+        // outside while the spread bar shows which side.
         kpis={[
           { caption: 'Average', value: conv(totals?.avg_c ?? null, unit), unit: u,
             why: 'no rack intake sensor reported in this window' },
@@ -304,8 +306,6 @@ export function Thermal() {
               : (totals?.max_c ?? 0) > recommended ? 'warn' : undefined },
           { caption: 'In band', value: totals?.compliance_pct ?? null, unit: '%',
             tone: (totals?.compliance_pct ?? 100) < 95 ? 'warn' : 'ok' },
-          { caption: 'Below band', value: totals?.below_pct ?? null, unit: '%',
-            why: 'no rack intake sensor reported in this window' },
           { caption: 'RH', value: totals?.rh_avg ?? null, unit: '%',
             tone: (totals?.rh_max ?? 0) > rhHigh ? 'warn' : undefined,
             why: 'no rack humidity probe reported in this window' },
