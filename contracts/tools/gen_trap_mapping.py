@@ -238,6 +238,18 @@ def same_tree(trap_oid: str, measures: tuple[str, str, str]) -> bool:
     return ".".join(trap_oid.split(".")[:7]) == ".".join(value_vb.split(".")[:7])
 
 
+#: Meanings that must sort LAST among equally-specific candidates on one OID.
+#:
+#: Where several conditions share an OID and the same varbinds, the file order
+#: decides which one a receiver reads, and alphabetical order is not a
+#: judgement about anything. Dew point has no sensor type of its own in
+#: PDU2-MIB, so the plane sends it as a temperature and it lands in the same
+#: bucket as a real intake reading - where, spelled with a `d`, it sorted
+#: first and every probe returning to normal closed a dew-point alarm instead
+#: of the temperature one it actually ended.
+LAST_RESORT_EVENTS = frozenset({"dew_point_alert"})
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -428,6 +440,31 @@ def main() -> int:
         TrapType.PDU_OUTLET_CURRENT_HIGH, TrapType.PDU_OUTLET_ON,
         TrapType.PDU_OUTLET_OFF, TrapType.PDU_OUTLET_FAILURE,
     }
+    #: Everything a PX2 reports from its SENSOR PORT. A DPX2 probe has no
+    #: processor and no address - the strip polls it over RJ-12 and publishes
+    #: it - so every one of these arrives as externalSensorStateChange from the
+    #: PDU, and the state column is the external one rather than the inlet one.
+    #:
+    #: Twenty-three conditions ride that single OID. Without a matcher the
+    #: receiver resolved all of them to whichever entry sat first, which was
+    #: `airflowAlert`: a rack probe settling after a restart raised a MAJOR
+    #: AIRFLOW alarm on the host PDU, on kit that reports no airflow at all,
+    #: and - because the clears resolved to the same first entry - it could
+    #: never close. Three of them were open on this estate.
+    _RARITAN_EXTERNAL_TRAPS = {
+        TrapType.PDU_SMOKE_DETECTED, TrapType.PDU_TEMP_HIGH,
+        TrapType.PDU_TEMP_NORMAL, TrapType.PDU_HUMIDITY_HIGH,
+        TrapType.PDU_HUMIDITY_NORMAL, TrapType.SENSOR_AMBIENT_TEMP_HIGH,
+        TrapType.SENSOR_AMBIENT_TEMP_CRITICAL, TrapType.SENSOR_AMBIENT_TEMP_NORMAL,
+        TrapType.SENSOR_MID_TEMP_HIGH, TrapType.SENSOR_MID_TEMP_NORMAL,
+        TrapType.SENSOR_OUTLET_TEMP_HIGH, TrapType.SENSOR_OUTLET_TEMP_NORMAL,
+        TrapType.SENSOR_HIGH_HUMIDITY, TrapType.SENSOR_CRITICAL_HUMIDITY,
+        TrapType.SENSOR_LOW_HUMIDITY, TrapType.SENSOR_HUMIDITY_NORMAL,
+        TrapType.SENSOR_HIGH_AIRFLOW, TrapType.SENSOR_LOW_AIRFLOW,
+        TrapType.SENSOR_AIRFLOW_NORMAL, TrapType.HUMIDITY_ALERT,
+        TrapType.DEWPOINT_ALERT, TrapType.AIRFLOW_ALERT,
+        TrapType.SENSOR_DEWPOINT_NORMAL,
+    }
     _RARITAN_PAIRS = {
         TrapType.PDU_LOAD_HIGH: ("current", "aboveUpperWarning"),
         TrapType.PDU_LOAD_CRITICAL: ("current", "aboveUpperCritical"),
@@ -446,6 +483,41 @@ def main() -> int:
         TrapType.PDU_OUTLET_ON: ("onOff", "on"),
         TrapType.PDU_OUTLET_OFF: ("onOff", "off"),
         TrapType.PDU_OUTLET_FAILURE: ("onOff", "fail"),
+
+        # The sensor port. Read off the plane's own transmit path rather than
+        # from the condition's name: `sensorLowHumidity` is a LOWER excursion
+        # and `sensorCriticalHumidity` an upper CRITICAL one, and a matcher
+        # that guessed either from the name would never fire.
+        TrapType.PDU_SMOKE_DETECTED: ("smokeDetection", "alarmed"),
+        TrapType.PDU_TEMP_HIGH: ("temperature", "aboveUpperWarning"),
+        TrapType.PDU_TEMP_NORMAL: ("temperature", "normal"),
+        TrapType.PDU_HUMIDITY_HIGH: ("humidity", "aboveUpperWarning"),
+        TrapType.PDU_HUMIDITY_NORMAL: ("humidity", "normal"),
+        TrapType.SENSOR_AMBIENT_TEMP_HIGH: ("temperature", "aboveUpperWarning"),
+        TrapType.SENSOR_AMBIENT_TEMP_CRITICAL: ("temperature", "aboveUpperCritical"),
+        TrapType.SENSOR_AMBIENT_TEMP_NORMAL: ("temperature", "normal"),
+        TrapType.SENSOR_MID_TEMP_HIGH: ("temperature", "aboveUpperWarning"),
+        TrapType.SENSOR_MID_TEMP_NORMAL: ("temperature", "normal"),
+        TrapType.SENSOR_OUTLET_TEMP_HIGH: ("temperature", "aboveUpperWarning"),
+        TrapType.SENSOR_OUTLET_TEMP_NORMAL: ("temperature", "normal"),
+        TrapType.SENSOR_HIGH_HUMIDITY: ("humidity", "aboveUpperWarning"),
+        TrapType.SENSOR_CRITICAL_HUMIDITY: ("humidity", "aboveUpperCritical"),
+        TrapType.SENSOR_LOW_HUMIDITY: ("humidity", "belowLowerWarning"),
+        TrapType.SENSOR_HUMIDITY_NORMAL: ("humidity", "normal"),
+        TrapType.SENSOR_HIGH_AIRFLOW: ("airFlow", "aboveUpperWarning"),
+        TrapType.SENSOR_LOW_AIRFLOW: ("airFlow", "belowLowerWarning"),
+        TrapType.SENSOR_AIRFLOW_NORMAL: ("airFlow", "normal"),
+        TrapType.HUMIDITY_ALERT: ("humidity", "aboveUpperWarning"),
+        TrapType.AIRFLOW_ALERT: ("airFlow", "aboveUpperWarning"),
+        # Dew point has no sensor type of its own in PDU2-MIB, so the plane
+        # sends it as a temperature. It therefore cannot be told apart from an
+        # intake temperature, and neither can a mid-rack or exhaust probe be
+        # told from an intake one: separating those needs the sensor's SLOT,
+        # which this plane does not put in the notification. Both are listed
+        # so the state at least resolves the DIRECTION and the clears reach
+        # their raises; which probe on the chain spoke stays unknown.
+        TrapType.DEWPOINT_ALERT: ("temperature", "aboveUpperWarning"),
+        TrapType.SENSOR_DEWPOINT_NORMAL: ("temperature", "normal"),
     }
 
     def varbind_match(vendor: str, trap, defn) -> list[dict] | None:
@@ -466,7 +538,8 @@ def main() -> int:
             # The state lives in a table-specific column - inlet, outlet or
             # unit - and the engine picks the table from the condition, so the
             # matcher has to name the same one.
-            table = ("outlet" if trap in _RARITAN_OUTLET_TRAPS else
+            table = ("external" if trap in _RARITAN_EXTERNAL_TRAPS else
+                     "outlet" if trap in _RARITAN_OUTLET_TRAPS else
                      "unit" if trap == TrapType.PDU_BREAKER_TRIPPED else "inlet")
             return [
                 {"oid": RARITAN["typeOfSensor"], "equals_int": _ST[sensor]},
@@ -603,6 +676,29 @@ def main() -> int:
         "traps:",
     ]
 
+    # A clear must be resolvable wherever its raise is.
+    #
+    # The device types on an entry come from the RULE that dispatches it, and a
+    # recovery rule does not always repeat the restriction its raise carries:
+    # sensorAmbientTempHigh names `sensor`, sensorAmbientTempNormal names
+    # nothing. Where several conditions share one OID that asymmetry decides
+    # which of them the file lists first, so the raise resolved to the intake
+    # temperature and the clear to a mid-rack one - and an alarm whose clear
+    # names a different event type never closes.
+    types_by_event: dict[str, set[str]] = defaultdict(set)
+    for _entries in by_oid.values():
+        for _e in _entries:
+            if not _e["is_clear"] and _e["device_types"]:
+                types_by_event[_e["event_type"]] |= set(_e["device_types"])
+    for _entries in by_oid.values():
+        for _e in _entries:
+            if _e["is_clear"] and not _e["device_types"]:
+                inherited: set[str] = set()
+                for _target in _e["clears"]:
+                    inherited |= types_by_event.get(_target, set())
+                if inherited:
+                    _e["device_types"] = sorted(inherited)
+
     ambiguous = clears = 0
     for oid in sorted(by_oid, key=lambda o: [int(p) for p in o.split(".") if p.isdigit()]):
         entries = by_oid[oid]
@@ -619,7 +715,9 @@ def main() -> int:
         # which.
         ordered = sorted(uniq.values(),
                          key=lambda e: (e["match_varbind"] is None,
-                                        not e["device_types"], e["event_type"]))
+                                        not e["device_types"],
+                                        e["event_type"] in LAST_RESORT_EVENTS,
+                                        e["event_type"]))
         unresolvable = [e for e in ordered
                         if not e["device_types"] and e["match_varbind"] is None]
         if len(ordered) > 1 and len(unresolvable) > 1:

@@ -369,3 +369,51 @@ def test_threshold_crossings_are_classifiable():
     """Nothing in the crossing set is a name the taxonomy cannot place."""
     for alarm_type in tax.THRESHOLD_CROSSINGS:
         assert tax.classify(alarm_type, role="power") in tax.CATEGORIES
+
+# --------------------------------------------- the rack PDU's sensor port
+#
+# A DPX2 probe has no processor and no address: its host strip polls it over an
+# RJ-12 lead and publishes it, so every condition it reports arrives FROM THE
+# PDU. The classifier sees power equipment, and for conditions nobody named it
+# had nothing else to go on - which put a hot rack inlet, a wet aisle and a
+# stalled fan in the electrical queue.
+
+#: What a probe on a strip's sensor port can report, under the names the TRAP
+#: path gives them. Read off contracts/mappings/snmp/traps.yaml, not invented:
+#: the `sensor_*` spellings are what the collector actually emits.
+PROBE_CONDITIONS: set[str] = {
+    "sensor_ambient_temp_high", "sensor_ambient_temp_critical",
+    "sensor_mid_temp_high", "sensor_outlet_temp_high",
+    "sensor_high_humidity", "sensor_critical_humidity", "sensor_low_humidity",
+    "sensor_high_airflow", "sensor_low_airflow",
+    "airflow_alert", "humidity_alert", "dew_point_alert",
+    "pdu_temp_high", "pdu_humidity_high", "smoke_detected",
+}
+
+
+@pytest.mark.parametrize("alarm_type", sorted(PROBE_CONDITIONS))
+def test_a_probe_condition_is_environmental_wherever_it_arrives_from(alarm_type):
+    """The category records the FAILING THING, not the box that spoke.
+
+    A probe reads the air in front of the rack. That it reaches us through a
+    power strip is an artefact of how the sensor is wired, and filing on it
+    sent thermal conditions to the electrical team.
+    """
+    for role in ("pdu.power", "floor_pdu.power", "sensor.environmental"):
+        assert tax.classify(alarm_type=alarm_type, role=role) == tax.ENVIRONMENTAL, (
+            f"{alarm_type} from {role} classified as "
+            f"{tax.classify(alarm_type=alarm_type, role=role)}"
+        )
+
+
+def test_a_probe_reading_is_a_threshold_crossing_not_a_state():
+    """A temperature, a humidity and an airflow are measurements however they
+    travelled. Recorded as `state` they sat in the drill-down beside tripped
+    breakers and failed outlets, which are not."""
+    states = {"smoke_detected"}
+    for alarm_type in PROBE_CONDITIONS - states:
+        assert tax.detection_for("snmp_trap", alarm_type=alarm_type) == tax.THRESHOLD, (
+            f"{alarm_type} recorded as "
+            f"{tax.detection_for('snmp_trap', alarm_type=alarm_type)}"
+        )
+

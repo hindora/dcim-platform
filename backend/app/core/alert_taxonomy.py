@@ -193,6 +193,15 @@ THRESHOLD_CROSSINGS: frozenset[str] = frozenset({
     "ambient_temp_high", "ambient_temp_critical", "humidity_high",
     "humidity_low", "dew_point_alert", "airflow_high", "airflow_low",
     "cpu_high_usage", "memory_high_usage", "cpu_temp_critical",
+    # The same conditions as they arrive from a rack probe. Every one is a
+    # number crossing a limit, however it travelled: without these a probe
+    # reading recorded `state` detection and sat in the drill-down beside
+    # tripped breakers and failed outlets, which are not measurements.
+    "sensor_ambient_temp_high", "sensor_ambient_temp_critical",
+    "sensor_mid_temp_high", "sensor_outlet_temp_high",
+    "sensor_high_humidity", "sensor_critical_humidity", "sensor_low_humidity",
+    "sensor_high_airflow", "sensor_low_airflow",
+    "airflow_alert", "humidity_alert",
 })
 
 
@@ -347,6 +356,26 @@ BY_ALARM_TYPE: dict[str, str] = {
     # them to power and put a thermal condition in the electrical team queue.
     "pdu_temp_high": ENVIRONMENTAL,
     "pdu_humidity_high": ENVIRONMENTAL,
+    # The same probe, under the names the TRAP path gives it. A DPX2 on a
+    # strip's sensor port has no address of its own, so its conditions arrive
+    # from the PDU and resolve to `sensor_*` rather than to the `pdu_*` pair
+    # above or the room's `ambient_*` one. Unnamed here they reached the PDU
+    # role and filed a hot rack inlet, a wet aisle and a stalled fan under
+    # POWER - which is how a MAJOR airflow alarm appeared in the electrical
+    # queue on kit that reports no airflow at all.
+    "sensor_ambient_temp_high": ENVIRONMENTAL,
+    "sensor_ambient_temp_critical": ENVIRONMENTAL,
+    "sensor_mid_temp_high": ENVIRONMENTAL,
+    "sensor_outlet_temp_high": ENVIRONMENTAL,
+    "sensor_high_humidity": ENVIRONMENTAL,
+    "sensor_critical_humidity": ENVIRONMENTAL,
+    "sensor_low_humidity": ENVIRONMENTAL,
+    "sensor_high_airflow": ENVIRONMENTAL,
+    "sensor_low_airflow": ENVIRONMENTAL,
+    # A probe's own vocabulary for the same three, used by the plane's
+    # generic sensor traps and by Liebert's condition descriptions.
+    "airflow_alert": ENVIRONMENTAL,
+    "humidity_alert": ENVIRONMENTAL,
 
     # --- IT equipment: one host
     "cpu_high": IT_EQUIPMENT,
