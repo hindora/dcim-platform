@@ -1534,6 +1534,29 @@ export interface ThermalPage {
   notes: string[];
 }
 
+/** Intake over time in one scope: /estate/thermal-trend. */
+export interface ThermalTrend {
+  days: number;
+  bucket: 'hour' | 'day';
+  /** Which rollup the points came from: a day of hourly points reads the
+   *  five-minute one, anything longer the hourly one. */
+  source: '5m' | '1h';
+  since: string;
+  /** Exclusive: the instant after the last bucket. */
+  until: string;
+  room_id: string | null;
+  datacenter_id: string | null;
+  rack_id: string | null;
+  band: { low_c: number; high_c: number; allowable_high_c: number };
+  /** One per bucket of the window, oldest first; a bucket nothing reported
+   *  in carries nulls so the line breaks there. */
+  points: { t: string; avg_c: number | null; p90_c: number | null;
+            max_c: number | null; sensors: number }[];
+  buckets_with_data: number;
+  /** The most sensors any one bucket heard from. */
+  sensors: number;
+}
+
 export interface PowerRow extends EstateRowBase {
   total_kw: number | null;
   it_ac_kw: number | null;
@@ -2126,6 +2149,15 @@ export const api = {
 
   /** Conditions raised per day in a scope, counted in the database. Every
    *  day of the window is present, zero included, oldest first. */
+  thermalTrend: (scope: { site?: string; room?: string; rack?: string },
+                 days = 7, bucket: 'hour' | 'day' = 'hour',
+                 window?: { since: string; until: string }) =>
+    request<ThermalTrend>(`/estate/thermal-trend?days=${days}&bucket=${bucket}`
+      + (scope.site ? `&site=${encodeURIComponent(scope.site)}` : '')
+      + (scope.room ? `&room=${encodeURIComponent(scope.room)}` : '')
+      + (scope.rack ? `&rack=${encodeURIComponent(scope.rack)}` : '')
+      + (window ? `&since=${window.since}&until=${window.until}` : '')),
+
   alarmTrend: (categories: string[], scope?: { room?: string; site?: string },
                days = 30, bucket: 'day' | 'week' = 'day',
                window?: { since: string; until: string }) =>

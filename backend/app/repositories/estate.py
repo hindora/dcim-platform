@@ -274,6 +274,92 @@ async def thermal_p90(session: AsyncSession, *, focus_start: datetime,
     return out
 
 
+# The rollups a trend may read, by the label the payload reports. The
+# percentile per bucket is taken over the source rows, so it has one value
+# per sensor per five minutes (or per hour) to work from - the time-weighted
+# basis - rather than being a percentile of one number per sensor.
+_TREND_SOURCE = {"5m": "telemetry_5m", "1h": "telemetry_1h"}
+_TREND_WIDTH = {"hour": timedelta(hours=1), "day": timedelta(days=1)}
+
+
+async def thermal_trend(session: AsyncSession, *, start: datetime, end: datetime,
+                        bucket: str, source: str, room_id: str | None = None,
+                        datacenter_id: str | None = None,
+                        rack_id: str | None = None) -> list[dict[str, Any]]:
+    """Intake average, p90 and max per bucket over a window, in one scope.
+
+    The same readings the thermal table is made of, over time: per rack the
+    front probes where any reported in the window, else the servers' BMC
+    inlet, chosen once per rack for the whole window. Per bucket:
+
+      avg  - the sample-weighted mean of the source rows, which is the mean
+             of the readings;
+      p90  - the 90th percentile of the source rows (one per sensor per five
+             minutes, or per hour), interpolated;
+      max  - the largest source max, i.e. the hottest reading.
+
+    `source` is which rollup to read ("5m" or "1h"); the service picks it by
+    window. The five-minute table's newest chunk stays uncompressed for
+    days and its rows for two metrics are scattered across hundreds of
+    megabytes of heap, so a week of it cold is a ten-second read; the hourly
+    table is twelve times smaller for the same week.
+
+    Buckets with nothing in them are absent; the service fills them so the
+    line breaks where nothing was measured instead of bridging it.
+    """
+    table = _TREND_SOURCE[source]
+    width = _TREND_WIDTH[bucket]
+    scope = ""
+    params: dict[str, Any] = {"t0": start, "t1": end, "width": width}
+    if rack_id is not None:
+        scope = "AND d.rack_id = CAST(:rack AS uuid)"
+        params["rack"] = rack_id
+    elif room_id is not None:
+        scope = "AND rr.room_id = CAST(:room AS uuid)"
+        params["room"] = room_id
+    elif datacenter_id is not None:
+        scope = "AND rm.datacenter_id = CAST(:site AS uuid)"
+        params["site"] = datacenter_id
+    rows = (await session.execute(text(f"""
+        WITH s AS (
+            SELECT d.rack_id, t.device_id, m.key,
+                   time_bucket(:width, t.bucket) AS b,
+                   t.avg_value, t.max_value, t.sample_count
+            FROM {table} t
+            JOIN metric m    ON m.id = t.metric_id
+            JOIN device d    ON d.id = t.device_id
+                            AND d.rack_id IS NOT NULL
+                            AND d.lifecycle <> 'decommissioned'
+            JOIN rack r      ON r.id  = d.rack_id
+            JOIN rack_row rr ON rr.id = r.row_id
+            JOIN room rm     ON rm.id = rr.room_id
+            WHERE m.key IN ('inlet_temperature', 'ambient_temperature')
+              AND t.bucket >= :t0 AND t.bucket < :t1
+              {scope}
+        ),
+        src AS (
+            SELECT rack_id, bool_or(key = 'ambient_temperature') AS has_probe
+            FROM s GROUP BY rack_id
+        ),
+        chosen AS (
+            SELECT s.b, s.device_id, s.avg_value, s.max_value, s.sample_count
+            FROM s JOIN src USING (rack_id)
+            WHERE s.key = CASE WHEN src.has_probe
+                               THEN 'ambient_temperature'
+                               ELSE 'inlet_temperature' END
+        )
+        SELECT b,
+               sum(avg_value * sample_count) / NULLIF(sum(sample_count), 0) AS avg_c,
+               percentile_cont(0.9) WITHIN GROUP (ORDER BY avg_value)       AS p90_c,
+               max(max_value)                                               AS max_c,
+               count(DISTINCT device_id)                                    AS sensors
+        FROM chosen
+        GROUP BY b
+        ORDER BY b
+    """), params)).mappings().all()
+    return [dict(r) for r in rows]
+
+
 async def power_window(session: AsyncSession, *, start: datetime, end: datetime,
                        compare_start: datetime, compare_end: datetime,
                        bucket: timedelta) -> list[dict[str, Any]]:

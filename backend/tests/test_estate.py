@@ -575,3 +575,149 @@ async def test_a_silent_row_has_no_spread_and_no_p90(monkeypatch):
     assert out["totals"]["p90_c"] is None
     assert out["totals"]["distribution"] is None
 
+
+# ---------------------------------------------------------- thermal trend
+# The trend is the table's readings over time. The repository is mocked; what
+# is tested is the window, the bucket grid and the fill.
+
+
+def _trend_rows(*rows):
+    async def _fn(session, **kw):
+        _fn.calls.append(kw)
+        return list(rows)
+    _fn.calls = []
+    return _fn
+
+
+@pytest.mark.asyncio
+async def test_hourly_trend_draws_every_hour_in_the_window(monkeypatch):
+    """A day of hourly points is 24 points, oldest first, ending at the top
+    of the NEXT hour so the bucket in progress is on the chart; hours nothing
+    reported in carry nulls rather than being skipped."""
+    from datetime import UTC, datetime, timedelta
+    fake = _trend_rows()
+    monkeypatch.setattr(estate.repo, "thermal_trend", fake)
+    out = await estate.thermal_trend(_FakeSession(), days=1, bucket="hour")
+    assert len(out["points"]) == 24
+    assert out["bucket"] == "hour" and out["days"] == 1
+    now = datetime.now(UTC)
+    top = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+    assert out["until"] == top
+    assert out["since"] == top - timedelta(days=1)
+    assert out["points"][0]["t"] == out["since"]
+    assert out["points"][-1]["t"] == top - timedelta(hours=1)
+    assert all(p["avg_c"] is None and p["sensors"] == 0 for p in out["points"])
+    assert out["buckets_with_data"] == 0 and out["sensors"] == 0
+    kw = fake.calls[0]
+    assert kw["start"] == out["since"] and kw["end"] == out["until"]
+    assert kw["bucket"] == "hour"
+    # A day of hourly points is fine enough to read the five-minute rollup.
+    assert kw["source"] == "5m" and out["source"] == "5m"
+
+
+@pytest.mark.asyncio
+async def test_a_week_of_hourly_points_reads_the_hourly_rollup(monkeypatch):
+    """Beyond two days the five-minute table is too big a cold read; the
+    hourly rollup gives the same hourly points from one value per sensor
+    per hour. Its newest buckets close late, so the last three hours are
+    re-read from the five-minute rollup and fill only what the hourly one
+    lacked."""
+    from datetime import timedelta
+    fake = _trend_rows()
+    monkeypatch.setattr(estate.repo, "thermal_trend", fake)
+    out = await estate.thermal_trend(_FakeSession(), days=7, bucket="hour")
+    assert len(out["points"]) == 168
+    assert fake.calls[0]["source"] == "1h" and out["source"] == "1h"
+    tail = fake.calls[1]
+    assert tail["source"] == "5m"
+    assert tail["end"] == out["until"] and tail["start"] == out["until"] - timedelta(hours=3)
+    # Daily points never need the tail: a day bucket is read late anyway.
+    out = await estate.thermal_trend(_FakeSession(), days=30, bucket="day")
+    assert fake.calls[2]["source"] == "1h" and len(fake.calls) == 3
+
+
+@pytest.mark.asyncio
+async def test_the_tail_fills_only_the_hours_the_hourly_rollup_lacked(monkeypatch):
+    from datetime import UTC, datetime, timedelta
+    now = datetime.now(UTC)
+    top = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+    h1, h2 = top - timedelta(hours=2), top - timedelta(hours=1)
+    calls = []
+
+    async def fake(session, **kw):
+        calls.append(kw)
+        if kw["source"] == "1h":
+            return [{"b": h1, "avg_c": 23.0, "p90_c": 23.3, "max_c": 24.0, "sensors": 80}]
+        return [{"b": h1, "avg_c": 99.0, "p90_c": 99.0, "max_c": 99.0, "sensors": 1},
+                {"b": h2, "avg_c": 23.1, "p90_c": 23.4, "max_c": 24.2, "sensors": 80}]
+    monkeypatch.setattr(estate.repo, "thermal_trend", fake)
+    out = await estate.thermal_trend(_FakeSession(), days=7, bucket="hour")
+    by = {p["t"]: p for p in out["points"]}
+    # The hourly value stands where it exists; the five-minute one only
+    # fills the hour it was missing.
+    assert by[h1]["avg_c"] == 23.0
+    assert by[h2]["avg_c"] == 23.1 and by[h2]["sensors"] == 80
+    assert out["buckets_with_data"] == 2
+
+
+@pytest.mark.asyncio
+async def test_trend_rows_land_on_their_bucket_and_are_rounded(monkeypatch):
+    from datetime import UTC, datetime, timedelta
+    now = datetime.now(UTC)
+    top = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+    b = top - timedelta(hours=3)
+    monkeypatch.setattr(estate.repo, "thermal_trend", _trend_rows(
+        {"b": b, "avg_c": 23.04, "p90_c": 23.66, "max_c": 24.16, "sensors": 40}))
+    out = await estate.thermal_trend(_FakeSession(), days=1, bucket="hour")
+    hit = [p for p in out["points"] if p["avg_c"] is not None]
+    assert len(hit) == 1
+    assert hit[0]["t"] == b
+    assert (hit[0]["avg_c"], hit[0]["p90_c"], hit[0]["max_c"]) == (23.0, 23.7, 24.2)
+    assert hit[0]["sensors"] == 40
+    assert out["sensors"] == 40 and out["buckets_with_data"] == 1
+    assert out["band"] == {"low_c": 18.0, "high_c": 27.0, "allowable_high_c": 32.0}
+
+
+@pytest.mark.asyncio
+async def test_a_picked_window_is_honoured_to_the_day(monkeypatch):
+    from datetime import UTC, date, datetime, timedelta
+    fake = _trend_rows()
+    monkeypatch.setattr(estate.repo, "thermal_trend", fake)
+    out = await estate.thermal_trend(_FakeSession(), bucket="day",
+                                     since=date(2026, 9, 1), until=date(2026, 9, 10))
+    assert out["days"] == 10
+    assert len(out["points"]) == 10
+    assert out["since"] == datetime(2026, 9, 1, tzinfo=UTC)
+    assert out["until"] == datetime(2026, 9, 11, tzinfo=UTC)
+    assert out["points"][-1]["t"] == datetime(2026, 9, 10, tzinfo=UTC)
+    assert out["points"][1]["t"] - out["points"][0]["t"] == timedelta(days=1)
+
+
+@pytest.mark.asyncio
+async def test_trend_window_refusals(monkeypatch):
+    from datetime import date
+    monkeypatch.setattr(estate.repo, "thermal_trend", _trend_rows())
+    with pytest.raises(ValueError):
+        await estate.thermal_trend(_FakeSession(), since=date(2026, 9, 2))
+    with pytest.raises(ValueError):
+        await estate.thermal_trend(_FakeSession(), since=date(2026, 9, 2),
+                                   until=date(2026, 9, 1))
+    with pytest.raises(ValueError):
+        await estate.thermal_trend(_FakeSession(), since=date(2025, 1, 1),
+                                   until=date(2026, 9, 1))
+    with pytest.raises(ValueError):
+        await estate.thermal_trend(_FakeSession(), days=0)
+    with pytest.raises(ValueError):
+        await estate.thermal_trend(_FakeSession(), bucket="week")
+
+
+@pytest.mark.asyncio
+async def test_trend_scope_is_passed_through(monkeypatch):
+    fake = _trend_rows()
+    monkeypatch.setattr(estate.repo, "thermal_trend", fake)
+    out = await estate.thermal_trend(_FakeSession(), days=2, bucket="day",
+                                     room_id="r", datacenter_id="s", rack_id="k")
+    kw = fake.calls[0]
+    assert (kw["room_id"], kw["datacenter_id"], kw["rack_id"]) == ("r", "s", "k")
+    assert (out["room_id"], out["datacenter_id"], out["rack_id"]) == ("r", "s", "k")
+

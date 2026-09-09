@@ -10,6 +10,7 @@ import { Tip } from '../../components/HoverTip';
 import { downloadCsv, stampedName } from '../../lib/csv';
 import { RoomDrawer } from '../home/RoomDrawer';
 import { useEstateTable } from './useEstateTable';
+import { ThermalTrend } from './ThermalTrend';
 
 /** Thermal: how warm the estate is running, and how much of it is in band.
  *
@@ -40,6 +41,11 @@ import { useEstateTable } from './useEstateTable';
  *  printed on its own because it is the evidence a site raises a setpoint
  *  on. p90 is taken over the row's pooled readings in one query per tier,
  *  never summarised from the tier below.
+ *
+ *  Under the table, the same readings over time for whatever the table is
+ *  showing - the estate, a site, a room - as average, p90 and max against
+ *  the ASHRAE band, with the range control every other trend wears. The Δ
+ *  columns say "warmer than yesterday"; the line says since when.
  *
  *  Three tiers: sites, rooms, racks. A rack is where an engineer actually
  *  goes, so the table does not stop one level short of it. Rack rows add
@@ -403,8 +409,19 @@ export function Thermal() {
                    onPage={t.setPage} onPageSize={t.setPageSize} onCsv={exportCsv} />
       </div>
 
+      {/* The chart follows the drill: the estate, then the site, then the
+          room the table is showing. */}
+      <ThermalTrend unit={unit} scope={
+        t.selectedRoom ? { kind: 'room', id: t.selectedRoom.id, label: t.selectedRoom.name }
+        : t.selected ? { kind: 'site', id: t.selected.id, label: t.selected.name }
+        : undefined} />
+
       <Notes items={[
         ...(data?.notes ?? []),
+        'The trend reads the five-minute rollup for a day of hourly points and the '
+        + 'hourly rollup for anything longer, so its p90 is over one value per sensor '
+        + 'per five minutes or per hour and can sit a little off the table\'s '
+        + 'reading-level p90. A gap in the line is a period nothing reported.',
         data ? `Window: ${data.window.label}, compared with ${data.window.compare_label}. `
              + 'Days are UTC so every row covers the same 24 hours.' : '',
       ].filter(Boolean)} />

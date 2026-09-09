@@ -34,7 +34,7 @@ const PAD_B = 24;
  *  Beyond three series identity stops being carryable by hue, so the caller
  *  should facet rather than reach further down this list.
  */
-const LINE_COLORS = [
+export const LINE_COLORS = [
   '#3b82f6', '#db6d28', '#a855f7', '#2ea043', '#22d3ee', '#d29922',
 ];
 

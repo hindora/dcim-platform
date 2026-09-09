@@ -903,6 +903,110 @@ async def alarm_trend(session: AsyncSession, *, categories: list[str],
     }
 
 
+TREND_MAX_DAYS = 366
+_TREND_WIDTH = {"hour": timedelta(hours=1), "day": timedelta(days=1)}
+# A day of hourly points reads the five-minute rollup, so each hour's p90 has
+# twelve values per sensor behind it; anything longer reads the hourly
+# rollup, whose chunks are a twelfth the size - a week of five-minute rows
+# from the uncompressed newest chunk is a ten-second cold read.
+_FINE_SOURCE_UP_TO = timedelta(days=2)
+# The hourly rollup closes an hour late and refreshes every half hour, so
+# its newest one to two buckets are empty while the five-minute one already
+# has them. For hourly points read from it, the tail of the window is
+# re-read from the five-minute rollup and fills only the buckets the hourly
+# one lacked - the line then ends at the current hour, not two hours ago.
+_TAIL_FROM_FINE = timedelta(hours=3)
+
+
+async def thermal_trend(session: AsyncSession, *, days: int = 7,
+                        bucket: str = "hour", since: date | None = None,
+                        until: date | None = None, room_id: str | None = None,
+                        datacenter_id: str | None = None,
+                        rack_id: str | None = None) -> dict[str, Any]:
+    """Intake average, p90 and max per hour or per day, in one scope.
+
+    The table's Δ columns compare two windows and nothing more; this is the
+    run-up. Same readings, same probe-first source rule, drawn against the
+    ASHRAE band so "warm" has a shape - a hall drifting up over a week and a
+    hall that spiked this morning are different problems wearing the same
+    Max.
+
+    The window is the last `days` (hourly: ending at the top of the next
+    hour, so the bucket in progress is drawn; daily: UTC days ending today),
+    or exactly `since`..`until` inclusive when both are given. Every bucket
+    in the window is present, oldest first; one nothing reported in carries
+    nulls, so the line breaks there instead of bridging a period nobody
+    measured.
+    """
+    if bucket not in _TREND_WIDTH:
+        raise ValueError("bucket is hour or day")
+    width = _TREND_WIDTH[bucket]
+    if (since is None) != (until is None):
+        raise ValueError("since and until go together")
+    if since is not None and until is not None:
+        if until < since:
+            raise ValueError("until is before since")
+        if (until - since).days + 1 > TREND_MAX_DAYS:
+            raise ValueError(f"a window is at most {TREND_MAX_DAYS} days")
+        start = datetime.combine(since, time.min, tzinfo=UTC)
+        end = datetime.combine(until + timedelta(days=1), time.min, tzinfo=UTC)
+        days = (until - since).days + 1
+    else:
+        if not 1 <= days <= TREND_MAX_DAYS:
+            raise ValueError(f"days is 1 to {TREND_MAX_DAYS}")
+        now = datetime.now(UTC)
+        if bucket == "hour":
+            end = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+        else:
+            end = datetime.combine(now.date() + timedelta(days=1), time.min, tzinfo=UTC)
+        start = end - timedelta(days=days)
+
+    source = "5m" if bucket == "hour" and end - start <= _FINE_SOURCE_UP_TO else "1h"
+    rows = await repo.thermal_trend(session, start=start, end=end, bucket=bucket,
+                                    source=source, room_id=room_id,
+                                    datacenter_id=datacenter_id, rack_id=rack_id)
+    by = {r["b"]: r for r in rows}
+    if source == "1h" and bucket == "hour":
+        tail = await repo.thermal_trend(session, start=max(start, end - _TAIL_FROM_FINE),
+                                        end=end, bucket=bucket, source="5m",
+                                        room_id=room_id, datacenter_id=datacenter_id,
+                                        rack_id=rack_id)
+        for r in tail:
+            by.setdefault(r["b"], r)
+    points = []
+    t = start
+    while t < end:
+        r = by.get(t)
+        points.append({
+            "t": t,
+            "avg_c": None if r is None or r["avg_c"] is None else round(float(r["avg_c"]), 1),
+            "p90_c": None if r is None or r["p90_c"] is None else round(float(r["p90_c"]), 1),
+            "max_c": None if r is None or r["max_c"] is None else round(float(r["max_c"]), 1),
+            "sensors": int(r["sensors"]) if r is not None else 0,
+        })
+        t += width
+    return {
+        "days": days,
+        "bucket": bucket,
+        # Which rollup the points came from: what one value per sensor per
+        # sub-bucket means for the p90.
+        "source": source,
+        "since": start,
+        # Exclusive: the instant after the last bucket.
+        "until": end,
+        "room_id": room_id,
+        "datacenter_id": datacenter_id,
+        "rack_id": rack_id,
+        "band": {"low_c": BAND_LOW_C, "high_c": BAND_HIGH_C,
+                 "allowable_high_c": ALLOWABLE_HIGH_C},
+        "points": points,
+        "buckets_with_data": sum(1 for p in points if p["avg_c"] is not None),
+        # The most sensors any one bucket heard from, so the caption can say
+        # how much of the scope the line speaks for.
+        "sensors": max((p["sensors"] for p in points), default=0),
+    }
+
+
 # ------------------------------------------------------------------- room view
 
 

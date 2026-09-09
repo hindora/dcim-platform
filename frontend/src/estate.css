@@ -28,6 +28,32 @@
    drops under the title once the title is at its floor. */
 .estate-head .title { min-width: 0; flex: 1 1 360px; }
 .estate-head .kpi-band { flex: 0 0 auto; }
+
+/* A chart panel on an estate page: the asset panels' chrome (assets.css is
+   loaded with the Assets route, so the values are repeated here rather than
+   depended on), the alarm trend's head row and date row from home.css. */
+.trend-panel {
+  position: relative;
+  margin-top: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  padding: 14px 16px;
+}
+.trend-panel > h3 {
+  margin: 0 0 12px;
+  padding-right: 22px;
+  font-size: 0.86rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.trend-panel .asset-max { position: absolute; top: 7px; right: 7px; margin: 0; padding: 4px; }
+/* The plot takes the panel's width; Plot's own cap is for the analytics
+   column. The frame contains the SVG so a long range never widens the page. */
+.trend-panel .chart { max-width: none; display: block; }
+.trend-frame { min-width: 0; contain: inline-size; }
+.trend-panel .legend { margin-bottom: 0; }
 .estate-head h2 {
   margin: 0; font-size: 21px; font-weight: 650; letter-spacing: -.01em;
 }

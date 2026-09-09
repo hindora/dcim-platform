@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 
 /** A small SVG plot: lines, an optional uncertainty band, reference levels.
  *
@@ -10,6 +10,12 @@ import { useMemo } from 'react';
  *  The band is not decoration. A forecast drawn as a single line reads as a
  *  measurement; drawn with its interval it reads as an estimate, which is what
  *  it is.
+ *
+ *  Two options a time series needs and a projection does not: `breakGaps`
+ *  ends a line at a point whose y is null or NaN and starts again at the next
+ *  real one, so a period nobody measured is a hole rather than a bridge; and
+ *  `hover` adds the crosshair TimeChart has - snapped to a real x, never
+ *  interpolated - with every series' value at that x in a tip.
  */
 
 const PAD_L = 56;
@@ -68,6 +74,7 @@ function fmtNum(v: number): string {
 export function Plot({
   series, band, refs = [], unit, xFormat = (v: number) => String(v),
   yFormat = fmtNum, height = 200, width = 720, empty = 'No data.',
+  breakGaps = false, hover = false, xTip,
 }: {
   series: PlotSeries[];
   band?: PlotBand;
@@ -78,7 +85,14 @@ export function Plot({
   height?: number;
   width?: number;
   empty?: string;
+  /** A non-finite y ends the line; the next finite one starts a new run. */
+  breakGaps?: boolean;
+  /** Crosshair snapped to the nearest x that has a point, with a tip. */
+  hover?: boolean;
+  /** How the tip names the x it is on; defaults to xFormat. */
+  xTip?: (v: number) => string;
 }) {
+  const [at, setAt] = useState<number | null>(null);
   const model = useMemo(() => {
     const xs: number[] = [];
     const ys: number[] = [];
@@ -112,11 +126,19 @@ export function Plot({
 
     const paths = series.map((s) => {
       const good = s.points.filter(([x, y]) => Number.isFinite(x) && Number.isFinite(y));
+      // With breakGaps a non-finite y is a gap: the run ends there and the
+      // next finite point moves the pen rather than drawing to it.
+      let d = '';
+      let pen = false;
+      for (const [x, y] of s.points) {
+        if (!Number.isFinite(x)) continue;
+        if (!Number.isFinite(y)) { if (breakGaps) pen = false; continue; }
+        d += `${pen ? 'L' : 'M'}${sx(x).toFixed(1)},${sy(y).toFixed(1)} `;
+        pen = true;
+      }
       return {
         ...s,
-        d: good
-          .map(([x, y], i) => `${i === 0 ? 'M' : 'L'}${sx(x).toFixed(1)},${sy(y).toFixed(1)}`)
-          .join(' '),
+        d: d.trim(),
         // A path with one point draws nothing: "M x,y" with no line after it is
         // an invisible chart that looks like missing data rather than a single
         // reading. One usable bucket out of twelve is exactly the case here.
@@ -134,10 +156,37 @@ export function Plot({
       bandPath = `M${up.join(' L')} L${down.join(' L')} Z`;
     }
 
-    return { paths, bandPath, x0, x1, y0, y1, sx, sy };
-  }, [series, band, refs, height, width]);
+    // Every x any series has a real value at, for the crosshair to snap to.
+    const xAll = Array.from(new Set(
+      series.flatMap((s) => s.points
+        .filter(([x, y]) => Number.isFinite(x) && Number.isFinite(y))
+        .map(([x]) => x)))).sort((a, b) => a - b);
+
+    return { paths, bandPath, x0, x1, y0, y1, sx, sy, xAll };
+  }, [series, band, refs, height, width, breakGaps]);
 
   if (!model) return <p className="muted">{empty}</p>;
+
+  function onMove(e: React.MouseEvent<SVGRectElement>) {
+    if (!model || !model.xAll.length) return;
+    const box = e.currentTarget.getBoundingClientRect();
+    const frac = (e.clientX - box.left) / Math.max(1, box.width);
+    const t = model.x0 + frac * (model.x1 - model.x0);
+    let best = model.xAll[0];
+    for (const c of model.xAll) if (Math.abs(c - t) < Math.abs(best - t)) best = c;
+    setAt(best);
+  }
+  const hoverRows = hover && at !== null
+    ? series.flatMap((s) => {
+        const p = s.points.find(([x, y]) => x === at && Number.isFinite(y));
+        return p ? [{ label: s.label, value: p[1], color: s.color ?? PLOT_COLORS.primary }] : [];
+      })
+    : [];
+  const tipW = 150;
+  const tipH = 16 + hoverRows.length * 14;
+  const tipX = at !== null
+    ? (model.sx(at) + tipW + 8 > width - PAD_R ? model.sx(at) - tipW - 8 : model.sx(at) + 8)
+    : 0;
 
   const yTicks = niceTicks(model.y0, model.y1);
   // Three ticks across a zero-width span print the same label three times,
@@ -193,6 +242,40 @@ export function Plot({
           </g>
         ))}
 
+        {hover && at !== null && hoverRows.length > 0 && (
+          <g pointerEvents="none">
+            <line className="chart-crosshair"
+                  x1={model.sx(at)} x2={model.sx(at)} y1={PAD_T} y2={height - PAD_B} />
+            {hoverRows.map((r) => (
+              <circle key={r.label} r={4} fill={r.color} className="chart-dot"
+                      cx={model.sx(at)} cy={model.sy(r.value)} />
+            ))}
+            <rect className="chart-tip" x={tipX} y={PAD_T} width={tipW} height={tipH} rx={3} />
+            <text className="chart-tip-time" x={tipX + 7} y={PAD_T + 12}>
+              {(xTip ?? xFormat)(at)}
+            </text>
+            {hoverRows.map((r, i) => (
+              <g key={r.label}>
+                <rect x={tipX + 7} y={PAD_T + 20 + i * 14} width={7} height={7} rx={1.5}
+                      fill={r.color} />
+                <text className="chart-tip-label" x={tipX + 19} y={PAD_T + 27 + i * 14}>
+                  {r.label}
+                </text>
+                <text className="chart-tip-value" x={tipX + tipW - 7} y={PAD_T + 27 + i * 14}
+                      textAnchor="end">
+                  {yFormat(r.value)} {unit}
+                </text>
+              </g>
+            ))}
+          </g>
+        )}
+        {hover && (
+          // Last, so it takes the pointer; the plot area only, so the axes
+          // do not move the crosshair.
+          <rect x={PAD_L} y={PAD_T} width={width - PAD_L - PAD_R}
+                height={height - PAD_T - PAD_B} fill="transparent"
+                onMouseMove={onMove} onMouseLeave={() => setAt(null)} />
+        )}
         <text x={4} y={PAD_T + 2} className="chart-unit">{unit}</text>
       </svg>
       {series.length > 1 && (
