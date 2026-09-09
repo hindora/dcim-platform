@@ -53,64 +53,15 @@ _ROOMS = """
 """
 
 
-async def thermal(session: AsyncSession, *, focus_start: datetime,
-                  focus_end: datetime, compare_start: datetime,
-                  compare_end: datetime, low_c: float,
-                  high_c: float) -> list[dict[str, Any]]:
-    """Rack intake temperature per room, over two windows.
+async def thermal_rooms(session: AsyncSession) -> list[dict[str, Any]]:
+    """Every room with its rack count - the skeleton the rack tier folds into.
 
-    Sums and counts rather than averages, so the caller can roll rooms up into
-    a site without averaging averages. `in_band` counts samples inside the
-    recommended envelope the caller passes in - compliance is a share of
-    READINGS, not of racks, because one rack sampled every ten seconds and one
-    sampled hourly do not deserve equal weight.
-
-    Both windows are read in a single pass. Two queries would double the scan
-    of the same hypertable chunks for no benefit.
+    No readings here. Intake is a property of a rack (a probe on its door, or
+    the servers in it), so a room's figure is its racks' figures added up,
+    and a room with no racks is a row of dashes rather than a missing row.
     """
     rows = (await session.execute(text(f"""
-        WITH {_DEV_CTE},
-        rooms AS ({_ROOMS}),
-        s AS (
-            SELECT dev.room_id, t.ts, t.value
-            FROM telemetry_sample t
-            JOIN metric m ON m.id = t.metric_id
-            JOIN dev      ON dev.device_id = t.device_id
-            WHERE m.key = 'inlet_temperature'
-              AND ((t.ts >= :f0 AND t.ts < :f1)
-                OR (t.ts >= :c0 AND t.ts < :c1))
-        ),
-        agg AS (
-            SELECT room_id,
-                   sum(value)   FILTER (WHERE ts >= :f0 AND ts < :f1) AS f_sum,
-                   count(*)     FILTER (WHERE ts >= :f0 AND ts < :f1) AS f_n,
-                   max(value)   FILTER (WHERE ts >= :f0 AND ts < :f1) AS f_max,
-                   count(*)     FILTER (WHERE ts >= :f0 AND ts < :f1
-                                          AND value >= :low AND value <= :high)
-                                                                      AS f_in_band,
-                   sum(value)   FILTER (WHERE ts >= :c0 AND ts < :c1) AS c_sum,
-                   count(*)     FILTER (WHERE ts >= :c0 AND ts < :c1) AS c_n,
-                   max(value)   FILTER (WHERE ts >= :c0 AND ts < :c1) AS c_max
-            FROM s GROUP BY room_id
-        ),
-        rh AS (
-            -- Relative humidity from RACKED devices only: the PDU
-            -- environment probes hanging at the rack intake. A CRAH's
-            -- humidity sensor sits in its return air, which is the room's
-            -- exhaust, not what the servers breathe, so it stays out.
-            SELECT dev.room_id,
-                   sum(t.value)                AS rh_sum,
-                   count(*)                    AS rh_n,
-                   max(t.value)                AS rh_max,
-                   count(DISTINCT t.device_id) AS rh_probes
-            FROM telemetry_sample t
-            JOIN metric m ON m.id = t.metric_id
-            JOIN dev      ON dev.device_id = t.device_id
-            JOIN device d ON d.id = t.device_id AND d.rack_id IS NOT NULL
-            WHERE m.key = 'relative_humidity'
-              AND t.ts >= :f0 AND t.ts < :f1
-            GROUP BY dev.room_id
-        ),
+        WITH rooms AS ({_ROOMS}),
         racks AS (
             SELECT rr.room_id, count(*) AS rack_count
             FROM rack r JOIN rack_row rr ON rr.id = r.row_id
@@ -124,18 +75,11 @@ async def thermal(session: AsyncSession, *, focus_start: datetime,
                rooms.datacenter_id::text AS datacenter_id,
                rooms.site_code           AS site_code,
                rooms.site_name           AS site_name,
-               COALESCE(racks.rack_count, 0) AS rack_count,
-               agg.f_sum, agg.f_n, agg.f_max, agg.f_in_band,
-               agg.c_sum, agg.c_n, agg.c_max,
-               rh.rh_sum, rh.rh_n, rh.rh_max, rh.rh_probes
+               COALESCE(racks.rack_count, 0) AS rack_count
         FROM rooms
-        LEFT JOIN agg   ON agg.room_id   = rooms.room_id
-        LEFT JOIN rh    ON rh.room_id    = rooms.room_id
         LEFT JOIN racks ON racks.room_id = rooms.room_id
         ORDER BY rooms.site_code, rooms.room_name
-    """), {"f0": focus_start, "f1": focus_end,
-           "c0": compare_start, "c1": compare_end,
-           "low": low_c, "high": high_c})).mappings().all()
+    """))).mappings().all()
     return [dict(r) for r in rows]
 
 
@@ -143,63 +87,80 @@ async def thermal_racks(session: AsyncSession, *, focus_start: datetime,
                         focus_end: datetime, compare_start: datetime,
                         compare_end: datetime, low_c: float,
                         high_c: float) -> list[dict[str, Any]]:
-    """Rack intake, exhaust and humidity per rack, over the same two windows.
+    """Rack intake from two sources, exhaust and humidity per rack, two windows.
+
+    Two intake sources come back side by side and the service picks: the
+    rack's environment probes (`ambient_temperature` on a racked device - the
+    PDU's DPX-style probe hung at the front) and the servers' BMC inlet. The
+    probe is what a DCIM calls intake; the BMC is the fallback for a rack with
+    no probe. Both are aggregated here so the choice is made once, in one
+    place, with both sets of counts in hand.
 
     Every rack in inventory is a row, readings or not: a rack with no intake
-    sensor is exactly the one an operator should notice. Sums and counts as
-    in `thermal`, so the page's rack rows fold to the same room figures.
-    Exhaust is a focus-window mean only - it exists to give ΔT, and a delta of
-    a delta helps nobody. Ordered hottest first within a room, which is the
-    order the page shows before anyone clicks a header.
+    sensor is exactly the one an operator should notice. Sums and counts, not
+    averages, so rooms and sites fold without averaging averages. Exhaust is a
+    focus-window mean only - it exists to give ΔT. Ordered hottest first by
+    whichever intake reading the rack has.
     """
     rows = (await session.execute(text("""
         WITH s AS (
+            -- Intake (both windows, for the delta); exhaust and humidity
+            -- (focus only - a delta of a ΔT helps nobody). Naming the window
+            -- per key halves the raw scan on an uncompressed day.
             SELECT d.rack_id, t.device_id, m.key, t.ts, t.value
             FROM telemetry_sample t
             JOIN metric m ON m.id = t.metric_id
             JOIN device d ON d.id = t.device_id
                          AND d.rack_id IS NOT NULL
                          AND d.lifecycle <> 'decommissioned'
-            WHERE m.key IN ('inlet_temperature', 'exhaust_temperature',
-                            'relative_humidity')
-              AND ((t.ts >= :f0 AND t.ts < :f1)
-                OR (t.ts >= :c0 AND t.ts < :c1))
+            WHERE (m.key IN ('inlet_temperature', 'ambient_temperature')
+                     AND ((t.ts >= :f0 AND t.ts < :f1)
+                       OR (t.ts >= :c0 AND t.ts < :c1)))
+               OR (m.key IN ('exhaust_temperature', 'relative_humidity')
+                     AND t.ts >= :f0 AND t.ts < :f1)
+        ),
+        -- Per device first, then per rack. Two cheap hash aggregates instead
+        -- of one count(DISTINCT device_id) that sorted half a million rows
+        -- to disk.
+        per_dev AS (
+            SELECT rack_id, device_id, key,
+                   sum(value) FILTER (WHERE ts >= :f0 AND ts < :f1) AS f_sum,
+                   count(*)   FILTER (WHERE ts >= :f0 AND ts < :f1) AS f_n,
+                   max(value) FILTER (WHERE ts >= :f0 AND ts < :f1) AS f_max,
+                   count(*)   FILTER (WHERE ts >= :f0 AND ts < :f1
+                                        AND value >= :low AND value <= :high) AS f_in_band,
+                   sum(value) FILTER (WHERE ts >= :c0 AND ts < :c1) AS c_sum,
+                   count(*)   FILTER (WHERE ts >= :c0 AND ts < :c1) AS c_n,
+                   max(value) FILTER (WHERE ts >= :c0 AND ts < :c1) AS c_max
+            FROM s GROUP BY rack_id, device_id, key
         ),
         agg AS (
             SELECT rack_id,
-                   sum(value)   FILTER (WHERE key = 'inlet_temperature'
-                                          AND ts >= :f0 AND ts < :f1) AS f_sum,
-                   count(*)     FILTER (WHERE key = 'inlet_temperature'
-                                          AND ts >= :f0 AND ts < :f1) AS f_n,
-                   max(value)   FILTER (WHERE key = 'inlet_temperature'
-                                          AND ts >= :f0 AND ts < :f1) AS f_max,
-                   count(*)     FILTER (WHERE key = 'inlet_temperature'
-                                          AND ts >= :f0 AND ts < :f1
-                                          AND value >= :low AND value <= :high)
-                                                                        AS f_in_band,
-                   count(DISTINCT device_id)
-                                FILTER (WHERE key = 'inlet_temperature'
-                                          AND ts >= :f0 AND ts < :f1) AS f_sensors,
-                   sum(value)   FILTER (WHERE key = 'exhaust_temperature'
-                                          AND ts >= :f0 AND ts < :f1) AS e_sum,
-                   count(*)     FILTER (WHERE key = 'exhaust_temperature'
-                                          AND ts >= :f0 AND ts < :f1) AS e_n,
-                   sum(value)   FILTER (WHERE key = 'inlet_temperature'
-                                          AND ts >= :c0 AND ts < :c1) AS c_sum,
-                   count(*)     FILTER (WHERE key = 'inlet_temperature'
-                                          AND ts >= :c0 AND ts < :c1) AS c_n,
-                   max(value)   FILTER (WHERE key = 'inlet_temperature'
-                                          AND ts >= :c0 AND ts < :c1) AS c_max,
-                   sum(value)   FILTER (WHERE key = 'relative_humidity'
-                                          AND ts >= :f0 AND ts < :f1) AS rh_sum,
-                   count(*)     FILTER (WHERE key = 'relative_humidity'
-                                          AND ts >= :f0 AND ts < :f1) AS rh_n,
-                   max(value)   FILTER (WHERE key = 'relative_humidity'
-                                          AND ts >= :f0 AND ts < :f1) AS rh_max,
-                   count(DISTINCT device_id)
-                                FILTER (WHERE key = 'relative_humidity'
-                                          AND ts >= :f0 AND ts < :f1) AS rh_probes
-            FROM s GROUP BY rack_id
+                   sum(f_sum)     FILTER (WHERE key = 'inlet_temperature') AS f_sum,
+                   sum(f_n)       FILTER (WHERE key = 'inlet_temperature') AS f_n,
+                   max(f_max)     FILTER (WHERE key = 'inlet_temperature') AS f_max,
+                   sum(f_in_band) FILTER (WHERE key = 'inlet_temperature') AS f_in_band,
+                   count(*)       FILTER (WHERE key = 'inlet_temperature'
+                                               AND f_n > 0) AS f_sensors,
+                   sum(c_sum)     FILTER (WHERE key = 'inlet_temperature') AS c_sum,
+                   sum(c_n)       FILTER (WHERE key = 'inlet_temperature') AS c_n,
+                   max(c_max)     FILTER (WHERE key = 'inlet_temperature') AS c_max,
+                   sum(f_sum)     FILTER (WHERE key = 'ambient_temperature') AS p_sum,
+                   sum(f_n)       FILTER (WHERE key = 'ambient_temperature') AS p_n,
+                   max(f_max)     FILTER (WHERE key = 'ambient_temperature') AS p_max,
+                   sum(f_in_band) FILTER (WHERE key = 'ambient_temperature') AS p_in_band,
+                   count(*)       FILTER (WHERE key = 'ambient_temperature'
+                                               AND f_n > 0) AS p_sensors,
+                   sum(c_sum)     FILTER (WHERE key = 'ambient_temperature') AS pc_sum,
+                   sum(c_n)       FILTER (WHERE key = 'ambient_temperature') AS pc_n,
+                   max(c_max)     FILTER (WHERE key = 'ambient_temperature') AS pc_max,
+                   sum(f_sum)     FILTER (WHERE key = 'exhaust_temperature') AS e_sum,
+                   sum(f_n)       FILTER (WHERE key = 'exhaust_temperature') AS e_n,
+                   sum(f_sum)     FILTER (WHERE key = 'relative_humidity') AS rh_sum,
+                   sum(f_n)       FILTER (WHERE key = 'relative_humidity') AS rh_n,
+                   max(f_max)     FILTER (WHERE key = 'relative_humidity') AS rh_max,
+                   count(*)       FILTER (WHERE key = 'relative_humidity' AND f_n > 0) AS rh_probes
+            FROM per_dev GROUP BY rack_id
         )
         SELECT r.id::text            AS rack_id,
                r.name                AS rack_name,
@@ -213,6 +174,8 @@ async def thermal_racks(session: AsyncSession, *, focus_start: datetime,
                dc.code               AS site_code,
                dc.name               AS site_name,
                agg.f_sum, agg.f_n, agg.f_max, agg.f_in_band, agg.f_sensors,
+               agg.p_sum, agg.p_n, agg.p_max, agg.p_in_band, agg.p_sensors,
+               agg.pc_sum, agg.pc_n, agg.pc_max,
                agg.e_sum, agg.e_n,
                agg.c_sum, agg.c_n, agg.c_max,
                agg.rh_sum, agg.rh_n, agg.rh_max, agg.rh_probes
@@ -221,7 +184,9 @@ async def thermal_racks(session: AsyncSession, *, focus_start: datetime,
         JOIN room rm       ON rm.id = rr.room_id
         JOIN datacenter dc ON dc.id = rm.datacenter_id
         LEFT JOIN agg      ON agg.rack_id = r.id
-        ORDER BY dc.code, rm.name, agg.f_max DESC NULLS LAST, rr.ordinal, r.ordinal, r.name
+        ORDER BY dc.code, rm.name,
+                 COALESCE(agg.p_max, agg.f_max) DESC NULLS LAST,
+                 rr.ordinal, r.ordinal, r.name
     """), {"f0": focus_start, "f1": focus_end,
            "c0": compare_start, "c1": compare_end,
            "low": low_c, "high": high_c})).mappings().all()

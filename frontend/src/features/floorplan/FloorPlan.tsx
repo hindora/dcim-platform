@@ -156,9 +156,9 @@ function Plan2D({ plan, overlay }: { plan: Plan; overlay: Overlay }) {
           {racks.map((r) => (
             <g key={r.id} role="button" tabIndex={0} aria-label={r.name}
                className="floor-rack-hit"
-               onClick={() => navigate(`/racks/${r.id}`)}
+               onClick={() => navigate(`/racks/${r.id}?from=floorplan`)}
                onKeyDown={(e) => {
-                 if (e.key === 'Enter' || e.key === ' ') navigate(`/racks/${r.id}`);
+                 if (e.key === 'Enter' || e.key === ' ') navigate(`/racks/${r.id}?from=floorplan`);
                }}>
               <title>{rackTitle(r)}</title>
               <rect

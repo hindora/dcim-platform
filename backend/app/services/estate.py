@@ -108,7 +108,30 @@ def _day_window(d: date) -> tuple[datetime, datetime]:
 async def thermal(session: AsyncSession, *, focus: date | None = None,
                   compare: date | None = None,
                   mode: str = "daily") -> dict[str, Any]:
-    """Intake temperature, spread and compliance per room and per site."""
+    """Intake temperature, spread and compliance per rack, room and site.
+
+    Everything is derived from the RACK. Intake is a property of a rack - a
+    probe on its door, or the servers inside it - so a room's figure is its
+    racks' figures added up and a site's is its rooms', with sums and counts
+    carried so nothing is ever an average of averages. One payload, one
+    instant, three tiers that agree.
+
+    The intake source per rack, in this order:
+
+      1. the rack's environment probes (`ambient_temperature` on a racked
+         device - the PDU's probe hung at the front). This is what a DCIM
+         calls intake: the cold aisle at the rack face, which is what ASHRAE
+         defines, and it survives the servers being decommissioned;
+      2. the servers' BMC inlet, where no probe reported. Behind the bezel,
+         a degree or two warm from faceplate heating, and blind in a rack
+         with no servers - but eighteen of them in a loaded rack are better
+         evidence of spread than one probe, which is why the analytics view
+         keeps using them for hot spots.
+
+    Exhaust and ΔT come from servers only; nothing else has an exhaust sensor.
+    This estate records no probe position, so "front" is inferred from the
+    readings (the probes track inlet, not exhaust), not read from inventory.
+    """
     if mode == "live":
         end = datetime.now(UTC)
         f0, f1 = end - timedelta(hours=1), end
@@ -128,10 +151,6 @@ async def thermal(session: AsyncSession, *, focus: date | None = None,
                   "compare_start": c0, "compare_end": c1,
                   "label": focus.isoformat(), "compare_label": compare.isoformat()}
 
-    raw = await repo.thermal(session, focus_start=f0, focus_end=f1,
-                             compare_start=c0, compare_end=c1,
-                             low_c=BAND_LOW_C, high_c=BAND_HIGH_C)
-
     # Why a delta is blank, in words. A dot with no reason reads as "the page
     # has no comparison", when the usual truth is that one window had no
     # readings - the fleet was down, or the day had no collection.
@@ -139,55 +158,15 @@ async def thermal(session: AsyncSession, *, focus: date | None = None,
     absent_prev = f"no readings {prep} {window['compare_label']}"
     absent_now = f"no readings {prep} {window['label']}"
 
-    rows: list[dict[str, Any]] = []
-    for r in raw:
-        n = int(r["f_n"] or 0)
-        prev_n = int(r["c_n"] or 0)
-        avg = round(float(r["f_sum"]) / n, 1) if n else None
-        prev_avg = round(float(r["c_sum"]) / prev_n, 1) if prev_n else None
-        rh_n = int(r.get("rh_n") or 0)
-        rh_probes = int(r.get("rh_probes") or 0)
-        rows.append({
-            "id": r["room_id"],
-            "kind": "room",
-            "name": r["room_name"],
-            "floor": r["floor"],
-            "room_type": r["room_type"],
-            "room_class": r["room_class"],
-            "site_id": r["datacenter_id"],
-            "site_code": r["site_code"],
-            "site_name": r["site_name"],
-            "rack_count": int(r["rack_count"] or 0),
-            "avg_c": avg,
-            "max_c": _f(r["f_max"]) and round(_f(r["f_max"]), 1),
-            "compliance_pct": _pct(r["f_in_band"], n) if n else None,
-            "samples": n,
-            "delta_avg": _delta(avg, prev_avg),
-            "delta_max": _delta(_f(r["f_max"]) and round(_f(r["f_max"]), 1),
-                                _f(r["c_max"]) and round(_f(r["c_max"]), 1)),
-            "delta_note": _delta_note(n, prev_n, absent_now, absent_prev),
-            # Humidity rides beside compliance, not inside it: folding RH into
-            # the in-band share would silently change what that number has
-            # meant since the page shipped.
-            "rh_avg": round(float(r["rh_sum"]) / rh_n, 1) if rh_n else None,
-            "rh_max": _f(r.get("rh_max")) and round(_f(r["rh_max"]), 1),
-            "rh_probes": rh_probes,
-            # Said once per row, so a reader never has to guess whether a blank
-            # cell means "cool" or "nobody is measuring".
-            "note": None if n else "no rack intake sensor reported in this window",
-            # The parts, so sites can be folded without averaging averages.
-            "_sum": _f(r["f_sum"]) or 0.0, "_n": n,
-            "_in_band": int(r["f_in_band"] or 0),
-            "_prev_sum": _f(r["c_sum"]) or 0.0, "_prev_n": prev_n,
-            "_max": _f(r["f_max"]), "_prev_max": _f(r["c_max"]),
-            "_rh_sum": _f(r.get("rh_sum")) or 0.0, "_rh_n": rh_n,
-            "_rh_max": _f(r.get("rh_max")), "_rh_probes": rh_probes,
-        })
+    skeleton = await repo.thermal_rooms(session)
+    raw_racks = await repo.thermal_racks(session, focus_start=f0, focus_end=f1,
+                                         compare_start=c0, compare_end=c1,
+                                         low_c=BAND_LOW_C, high_c=BAND_HIGH_C)
 
-    sites = _fold_thermal_sites(rows, absent_now=absent_now, absent_prev=absent_prev)
-    totals = _fold_thermal_total(rows)
-    racks = await _thermal_racks(session, f0, f1, c0, c1,
-                                 absent_now=absent_now, absent_prev=absent_prev)
+    racks = [_rack_row(r, absent_now, absent_prev) for r in raw_racks]
+    rooms = _fold_rooms(skeleton, racks, absent_now, absent_prev)
+    sites = _fold_sites(rooms, absent_now, absent_prev)
+    totals = _fold_total(rooms)
     return {
         "window": window,
         "band": {"low_c": BAND_LOW_C, "high_c": BAND_HIGH_C,
@@ -196,63 +175,182 @@ async def thermal(session: AsyncSession, *, focus: date | None = None,
                  "basis": "ASHRAE TC 9.9 recommended envelope for intake air"},
         "totals": totals,
         "sites": sites,
-        "rooms": [_strip(r) for r in rows],
-        "racks": racks,
-        "notes": [_humidity_note(totals)],
+        "rooms": [_strip(r) for r in rooms],
+        "racks": [_strip(r) for r in racks],
+        "notes": [_source_note(totals), _humidity_note(totals)],
     }
 
 
-async def _thermal_racks(session: AsyncSession, f0: datetime, f1: datetime,
-                         c0: datetime, c1: datetime, *, absent_now: str,
-                         absent_prev: str) -> list[dict[str, Any]]:
-    """The third tier. Same windows, same fields as a room row, plus what
-    only a rack has: exhaust, ΔT, and how many sensors spoke for it."""
-    raw = await repo.thermal_racks(session, focus_start=f0, focus_end=f1,
-                                   compare_start=c0, compare_end=c1,
-                                   low_c=BAND_LOW_C, high_c=BAND_HIGH_C)
-    out: list[dict[str, Any]] = []
-    for r in raw:
-        n = int(r["f_n"] or 0)
-        prev_n = int(r["c_n"] or 0)
-        e_n = int(r["e_n"] or 0)
-        rh_n = int(r["rh_n"] or 0)
-        avg = round(float(r["f_sum"]) / n, 1) if n else None
-        prev_avg = round(float(r["c_sum"]) / prev_n, 1) if prev_n else None
-        mx = _f(r["f_max"]) and round(_f(r["f_max"]), 1)
-        prev_mx = _f(r["c_max"]) and round(_f(r["c_max"]), 1)
-        exhaust = round(float(r["e_sum"]) / e_n, 1) if e_n else None
+# The private keys every tier carries so the tier above can fold it. Sums and
+# counts, never averages; maxima; and how many racks each source spoke for.
+_ACC_SUMS = ("_sum", "_n", "_in_band", "_prev_sum", "_prev_n",
+             "_rh_sum", "_rh_n", "_rh_probes", "_probes", "_servers")
+_ACC_MAXES = ("_max", "_prev_max", "_rh_max")
+
+
+def _rack_row(r: dict[str, Any], absent_now: str, absent_prev: str) -> dict[str, Any]:
+    p_n = int(r.get("p_n") or 0)
+    f_n = int(r.get("f_n") or 0)
+    if p_n:
+        source = "probes"
+        n, s_sum, mx, in_band = p_n, r["p_sum"], r["p_max"], r["p_in_band"]
+        sensors = int(r.get("p_sensors") or 0)
+        prev_n, prev_sum, prev_max = int(r.get("pc_n") or 0), r.get("pc_sum"), r.get("pc_max")
+    elif f_n:
+        source = "servers"
+        n, s_sum, mx, in_band = f_n, r["f_sum"], r["f_max"], r["f_in_band"]
+        sensors = int(r.get("f_sensors") or 0)
+        prev_n, prev_sum, prev_max = int(r.get("c_n") or 0), r.get("c_sum"), r.get("c_max")
+    else:
+        source, n, s_sum, mx, in_band, sensors = None, 0, 0.0, None, 0, 0
+        # Nothing this window; whichever source spoke last window names the
+        # comparison for the note, and the delta is None regardless.
+        prev_n = int(r.get("pc_n") or r.get("c_n") or 0)
+        prev_sum, prev_max = None, None
+    e_n = int(r.get("e_n") or 0)
+    rh_n = int(r.get("rh_n") or 0)
+
+    row = {
+        "id": r["rack_id"],
+        "kind": "rack",
+        "name": r["rack_name"],
+        "row": r.get("row_name"),
+        "u_height": r.get("u_height"),
+        "room_id": r["room_id"],
+        "room_name": r["room_name"],
+        "floor": r.get("floor"),
+        "room_class": r.get("room_class"),
+        "site_id": r["datacenter_id"],
+        "site_code": r["site_code"],
+        "site_name": r["site_name"],
+        "source": source,
+        "sensors": sensors,
+        "exhaust_c": round(float(r["e_sum"]) / e_n, 1) if e_n else None,
+        "_sum": float(s_sum or 0.0), "_n": n, "_in_band": int(in_band or 0),
+        "_prev_sum": _f(prev_sum) or 0.0, "_prev_n": prev_n,
+        "_max": _f(mx), "_prev_max": _f(prev_max),
+        "_rh_sum": _f(r.get("rh_sum")) or 0.0, "_rh_n": rh_n,
+        "_rh_max": _f(r.get("rh_max")), "_rh_probes": int(r.get("rh_probes") or 0),
+        "_probes": 1 if source == "probes" else 0,
+        "_servers": 1 if source == "servers" else 0,
+    }
+    row.update(_derive(row, absent_now, absent_prev,
+                       absent="no intake probe or server sensor in this rack "
+                              "reported in this window"))
+    # Exhaust minus intake: the heat the air actually carried away. Low on a
+    # loaded rack is bypass air, not a cooling shortage.
+    row["delta_t_k"] = (round(row["exhaust_c"] - row["avg_c"], 1)
+                        if row["exhaust_c"] is not None and row["avg_c"] is not None
+                        else None)
+    return row
+
+
+def _derive(acc: dict[str, Any], absent_now: str, absent_prev: str, *,
+            absent: str) -> dict[str, Any]:
+    """The public figures from the private sums, identical at every tier."""
+    n, prev_n, rh_n = acc["_n"], acc["_prev_n"], acc["_rh_n"]
+    avg = round(acc["_sum"] / n, 1) if n else None
+    prev_avg = round(acc["_prev_sum"] / prev_n, 1) if prev_n else None
+    mx = None if acc["_max"] is None else round(acc["_max"], 1)
+    prev_mx = None if acc["_prev_max"] is None else round(acc["_prev_max"], 1)
+    return {
+        "avg_c": avg,
+        "max_c": mx,
+        "compliance_pct": _pct(acc["_in_band"], n) if n else None,
+        "samples": n,
+        "delta_avg": _delta(avg, prev_avg),
+        "delta_max": _delta(mx, prev_mx),
+        "delta_note": _delta_note(n, prev_n, absent_now, absent_prev),
+        # Humidity rides beside compliance, not inside it: folding RH into the
+        # in-band share would silently change what that number has meant.
+        "rh_avg": round(acc["_rh_sum"] / rh_n, 1) if rh_n else None,
+        "rh_max": None if acc["_rh_max"] is None else round(acc["_rh_max"], 1),
+        "rh_probes": acc["_rh_probes"],
+        "sources": {"probes": acc["_probes"], "servers": acc["_servers"]},
+        # Said once per row, so a reader never has to guess whether a blank
+        # cell means "cool" or "nobody is measuring".
+        "note": None if n else absent,
+    }
+
+
+def _empty_acc() -> dict[str, Any]:
+    acc: dict[str, Any] = dict.fromkeys(_ACC_SUMS, 0)
+    acc["_sum"] = acc["_prev_sum"] = acc["_rh_sum"] = 0.0
+    for k in _ACC_MAXES:
+        acc[k] = None
+    return acc
+
+
+def _add(acc: dict[str, Any], row: dict[str, Any]) -> None:
+    for k in _ACC_SUMS:
+        acc[k] += row[k]
+    for k in _ACC_MAXES:
+        if row[k] is not None:
+            acc[k] = row[k] if acc[k] is None else max(acc[k], row[k])
+
+
+def _fold_rooms(skeleton: list[dict[str, Any]], racks: list[dict[str, Any]],
+                absent_now: str, absent_prev: str) -> list[dict[str, Any]]:
+    by_room: dict[str, dict[str, Any]] = {}
+    for rack in racks:
+        _add(by_room.setdefault(rack["room_id"], _empty_acc()), rack)
+    out = []
+    for r in skeleton:
+        acc = by_room.get(r["room_id"], _empty_acc())
         out.append({
-            "id": r["rack_id"],
-            "kind": "rack",
-            "name": r["rack_name"],
-            "row": r["row_name"],
-            "u_height": r["u_height"],
-            "room_id": r["room_id"],
-            "room_name": r["room_name"],
-            "floor": r["floor"],
-            "room_class": r["room_class"],
-            "site_id": r["datacenter_id"],
-            "site_code": r["site_code"],
-            "site_name": r["site_name"],
-            "avg_c": avg,
-            "max_c": mx,
-            "compliance_pct": _pct(r["f_in_band"], n) if n else None,
-            "samples": n,
-            "sensors": int(r["f_sensors"] or 0),
-            "exhaust_c": exhaust,
-            # Exhaust minus intake: the heat the air actually carried away.
-            # Low on a loaded rack is bypass air, not a cooling shortage.
-            "delta_t_k": (round(exhaust - avg, 1)
-                          if exhaust is not None and avg is not None else None),
-            "delta_avg": _delta(avg, prev_avg),
-            "delta_max": _delta(mx, prev_mx),
-            "delta_note": _delta_note(n, prev_n, absent_now, absent_prev),
-            "rh_avg": round(float(r["rh_sum"]) / rh_n, 1) if rh_n else None,
-            "rh_max": _f(r["rh_max"]) and round(_f(r["rh_max"]), 1),
-            "rh_probes": int(r["rh_probes"] or 0),
-            "note": None if n else "no intake sensor in this rack reported in this window",
+            "id": r["room_id"], "kind": "room", "name": r["room_name"],
+            "floor": r["floor"], "room_type": r["room_type"],
+            "room_class": r["room_class"], "site_id": r["datacenter_id"],
+            "site_code": r["site_code"], "site_name": r["site_name"],
+            "rack_count": int(r["rack_count"] or 0),
+            **acc,
+            **_derive(acc, absent_now, absent_prev,
+                      absent="no rack intake sensor reported in this window"),
         })
     return out
+
+
+def _fold_sites(rooms: list[dict[str, Any]], absent_now: str,
+                absent_prev: str) -> list[dict[str, Any]]:
+    by_site: dict[str, dict[str, Any]] = {}
+    for r in rooms:
+        s = by_site.setdefault(r["site_id"], {
+            "id": r["site_id"], "kind": "site", "name": r["site_name"],
+            "site_id": r["site_id"], "site_code": r["site_code"],
+            "site_name": r["site_name"], "room_count": 0, "rack_count": 0,
+            **_empty_acc(),
+        })
+        s["room_count"] += 1
+        s["rack_count"] += r["rack_count"]
+        _add(s, r)
+    out = [_strip({**s, **_derive(s, absent_now, absent_prev,
+                                  absent="no rack intake sensor reported")})
+           for s in by_site.values()]
+    return sorted(out, key=lambda r: r["site_code"])
+
+
+def _fold_total(rooms: list[dict[str, Any]]) -> dict[str, Any]:
+    acc = _empty_acc()
+    for r in rooms:
+        _add(acc, r)
+    n, rh_n = acc["_n"], acc["_rh_n"]
+    white = [r for r in rooms if r["room_class"] == "white_space"]
+    return {
+        "avg_c": round(acc["_sum"] / n, 1) if n else None,
+        "max_c": None if acc["_max"] is None else round(acc["_max"], 1),
+        "compliance_pct": _pct(acc["_in_band"], n) if n else None,
+        "samples": n,
+        "rh_avg": round(acc["_rh_sum"] / rh_n, 1) if rh_n else None,
+        "rh_max": None if acc["_rh_max"] is None else round(acc["_rh_max"], 1),
+        "rh_probes": acc["_rh_probes"],
+        "sources": {"probes": acc["_probes"], "servers": acc["_servers"]},
+        # Reporting is counted over WHITE SPACE only. Rack intake sensors exist
+        # where racks do; counting a generator room as a room that failed to
+        # report made the ratio read as a fleet of dead sensors.
+        "rooms_reporting": sum(1 for r in white if r["_n"]),
+        "rooms": len(white),
+        "facility_rooms": len(rooms) - len(white),
+    }
 
 
 def _delta_note(n: int, prev_n: int, absent_now: str, absent_prev: str) -> str | None:
@@ -262,6 +360,16 @@ def _delta_note(n: int, prev_n: int, absent_now: str, absent_prev: str) -> str |
     if not prev_n:
         return absent_prev
     return None
+
+
+def _source_note(totals: dict[str, Any]) -> str:
+    probes = int(totals["sources"]["probes"])
+    servers = int(totals["sources"]["servers"])
+    return (f"Rack intake is the rack's front environment probe where one reported "
+            f"({probes} rack{'s' if probes != 1 else ''}), else the servers' BMC "
+            f"inlet ({servers} rack{'s' if servers != 1 else ''}). Exhaust and ΔT "
+            "come from servers only. This estate records no probe position; front "
+            "is inferred from the readings, which track inlet rather than exhaust.")
 
 
 def _humidity_note(totals: dict[str, Any]) -> str:
@@ -278,73 +386,6 @@ def _humidity_note(totals: dict[str, Any]) -> str:
 
 def _strip(row: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in row.items() if not k.startswith("_")}
-
-
-def _fold_thermal_sites(rooms: list[dict[str, Any]], *, absent_now: str,
-                        absent_prev: str) -> list[dict[str, Any]]:
-    by_site: dict[str, dict[str, Any]] = {}
-    for r in rooms:
-        s = by_site.setdefault(r["site_id"], {
-            "id": r["site_id"], "kind": "site", "name": r["site_name"],
-            "site_id": r["site_id"], "site_code": r["site_code"],
-            "site_name": r["site_name"], "room_count": 0, "rack_count": 0,
-            "_sum": 0.0, "_n": 0, "_in_band": 0, "_prev_sum": 0.0,
-            "_prev_n": 0, "_max": None, "_prev_max": None,
-            "_rh_sum": 0.0, "_rh_n": 0, "_rh_max": None, "_rh_probes": 0,
-        })
-        s["room_count"] += 1
-        s["rack_count"] += r["rack_count"]
-        for key in ("_sum", "_n", "_in_band", "_prev_sum", "_prev_n",
-                    "_rh_sum", "_rh_n", "_rh_probes"):
-            s[key] += r[key]
-        for key in ("_max", "_prev_max", "_rh_max"):
-            if r[key] is not None:
-                s[key] = r[key] if s[key] is None else max(s[key], r[key])
-
-    out = []
-    for s in by_site.values():
-        avg = round(s["_sum"] / s["_n"], 1) if s["_n"] else None
-        prev = round(s["_prev_sum"] / s["_prev_n"], 1) if s["_prev_n"] else None
-        mx = None if s["_max"] is None else round(s["_max"], 1)
-        prev_mx = None if s["_prev_max"] is None else round(s["_prev_max"], 1)
-        out.append(_strip({**s,
-                           "avg_c": avg, "max_c": mx,
-                           "compliance_pct": _pct(s["_in_band"], s["_n"]) if s["_n"] else None,
-                           "samples": s["_n"],
-                           "delta_avg": _delta(avg, prev),
-                           "delta_max": _delta(mx, prev_mx),
-                           "delta_note": _delta_note(s["_n"], s["_prev_n"],
-                                                     absent_now, absent_prev),
-                           "rh_avg": round(s["_rh_sum"] / s["_rh_n"], 1) if s["_rh_n"] else None,
-                           "rh_max": None if s["_rh_max"] is None else round(s["_rh_max"], 1),
-                           "rh_probes": s["_rh_probes"],
-                           "note": None if s["_n"] else "no rack intake sensor reported"}))
-    return sorted(out, key=lambda r: r["site_code"])
-
-
-def _fold_thermal_total(rooms: list[dict[str, Any]]) -> dict[str, Any]:
-    n = sum(r["_n"] for r in rooms)
-    in_band = sum(r["_in_band"] for r in rooms)
-    maxes = [r["_max"] for r in rooms if r["_max"] is not None]
-    total = sum(r["_sum"] for r in rooms)
-    white = [r for r in rooms if r["room_class"] == "white_space"]
-    rh_n = sum(r["_rh_n"] for r in rooms)
-    rh_maxes = [r["_rh_max"] for r in rooms if r["_rh_max"] is not None]
-    return {
-        "avg_c": round(total / n, 1) if n else None,
-        "max_c": round(max(maxes), 1) if maxes else None,
-        "compliance_pct": _pct(in_band, n) if n else None,
-        "samples": n,
-        "rh_avg": round(sum(r["_rh_sum"] for r in rooms) / rh_n, 1) if rh_n else None,
-        "rh_max": round(max(rh_maxes), 1) if rh_maxes else None,
-        "rh_probes": sum(r["_rh_probes"] for r in rooms),
-        # Reporting is counted over WHITE SPACE only. Rack intake sensors exist
-        # where racks do; counting a generator room as a room that failed to
-        # report made the ratio read as a fleet of dead sensors.
-        "rooms_reporting": sum(1 for r in white if r["_n"]),
-        "rooms": len(white),
-        "facility_rooms": len(rooms) - len(white),
-    }
 
 
 # ----------------------------------------------------------------------- power

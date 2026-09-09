@@ -134,6 +134,7 @@ async def list_interfaces(session: AsyncSession, device_id: str) -> list[Interfa
 def _rack_summary(row: dict[str, Any]) -> RackSummary:
     return RackSummary(
         id=row["id"], name=row["name"], row_name=row.get("row_name"),
+        row_ordinal=row.get("row_ordinal"), position=row.get("position"),
         room_id=row.get("room_id"), room_name=row.get("room_name"),
         datacenter_code=row.get("datacenter_code"),
         u_height=row.get("u_height") or 42,

@@ -852,6 +852,10 @@ export interface RackSummary {
   id: string;
   name: string;
   row_name?: string | null;
+  /** Order of the row in the room and of the rack in its row - what a name
+   *  like "R2-04" encodes, spelled out. */
+  row_ordinal?: number | null;
+  position?: number | null;
   room_id?: string | null;
   room_name?: string | null;
   datacenter_code?: string | null;
@@ -1465,8 +1469,15 @@ export interface ThermalRow extends EstateRowBase {
   room_name?: string;
   row?: string | null;
   u_height?: number | null;
-  /** Distinct devices that reported intake air in the window. */
+  /** Distinct devices that reported intake air in the window, from the
+   *  source in `source`. */
   sensors?: number;
+  /** Rack rows: which intake source the row used. The rack's front
+   *  environment probes where any reported, else the servers' BMC inlet;
+   *  null when neither spoke. */
+  source?: 'probes' | 'servers' | null;
+  /** Rooms and sites: how many racks each source spoke for. */
+  sources?: { probes: number; servers: number };
   exhaust_c?: number | null;
   /** Exhaust minus intake over the focus window. */
   delta_t_k?: number | null;
@@ -1494,6 +1505,7 @@ export interface ThermalPage {
     samples: number; rooms_reporting: number; rooms: number;
     facility_rooms: number;
     rh_avg: number | null; rh_max: number | null; rh_probes: number;
+    sources: { probes: number; servers: number };
   };
   sites: ThermalRow[];
   rooms: ThermalRow[];

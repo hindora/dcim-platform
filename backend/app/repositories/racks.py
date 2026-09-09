@@ -15,6 +15,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 _RACK_SUMMARY = """
     SELECT r.id::text, r.name, r.u_height, r.rated_power_kw,
            rr.name AS row_name,
+           -- Where the rack stands, in words the name only encodes: "R2-04"
+           -- is row 2, fourth position. The page spells it out.
+           rr.ordinal AS row_ordinal,
+           r.ordinal  AS position,
            rm.id::text AS room_id, rm.name AS room_name,
            dc.code AS datacenter_code,
            count(d.id) FILTER (WHERE d.id IS NOT NULL)                AS device_count,

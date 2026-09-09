@@ -266,6 +266,11 @@ button.primary { background: var(--accent-dim); border-color: var(--accent); }
 
 /* --- rack elevation ------------------------------------------------------ */
 
+/* A button that reads as a link: for actions that navigate but need a
+   handler (history back) rather than a fixed href. */
+.link-button { background: none; border: 0; padding: 0; margin: 0; font: inherit;
+               color: var(--accent); cursor: pointer; }
+.link-button:hover { text-decoration: underline; }
 .rack-head { display: flex; flex-wrap: wrap; gap: 1.5rem;
              justify-content: space-between; align-items: flex-start; }
 .rack-stats { display: flex; flex-wrap: wrap; gap: 1.5rem; margin: 0; }

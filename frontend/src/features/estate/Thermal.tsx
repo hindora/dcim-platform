@@ -27,6 +27,12 @@ import { useEstateTable } from './useEstateTable';
  *  lines the inlet temperature alarm rules draw, so the table and the alarm
  *  list never disagree about how bad a number is.
  *
+ *  Intake per rack comes from the rack's front environment probe where one
+ *  reported, else from the servers' BMC inlet, and each row says which. That
+ *  is the order a DCIM uses: the probe is the cold aisle at the rack face,
+ *  the BMC is behind the bezel and blind in a rack with no servers. Rooms
+ *  and sites are the racks added up, so the tiers cannot disagree.
+ *
  *  Three tiers: sites, rooms, racks. A rack is where an engineer actually
  *  goes, so the table does not stop one level short of it. Rack rows add
  *  exhaust, ΔT and the sensor count, and a rack row opens its elevation with
@@ -98,15 +104,28 @@ export function Thermal() {
       ),
     },
     ...(rackTier ? [{
-      // Distinct devices that spoke for the rack. One sensor is a data point;
-      // a rack full of servers all reporting is evidence.
-      key: 'sensors', label: 'Sensors', align: 'mid' as const, width: 90,
+      // What spoke for the rack, and how many of them. The word is the
+      // source: a probe is the intake reading, servers are the fallback.
+      key: 'sensors', label: 'Intake from', align: 'mid' as const, width: 120,
       sort: (r: ThermalRow) => r.sensors ?? 0,
-      render: (r: ThermalRow) => r.sensors ?? 0,
+      render: (r: ThermalRow) => r.source ? (
+        <Tip tip={r.source === 'probes'
+          ? 'the rack\'s front environment probe: the cold aisle at the rack face, which is what ASHRAE calls intake'
+          : 'server BMC inlet sensors, used because no rack probe reported; behind the bezel and a degree or two warm'}>
+          {r.sensors} {r.source === 'probes'
+            ? (r.sensors === 1 ? 'probe' : 'probes')
+            : (r.sensors === 1 ? 'server' : 'servers')}
+        </Tip>
+      ) : <Tip className="dash" tip="no probe and no server intake sensor reported">—</Tip>,
     }] : [{
       key: 'racks', label: 'Racks', align: 'mid' as const, width: 80,
       sort: (r: ThermalRow) => r.rack_count ?? 0,
-      render: (r: ThermalRow) => r.rack_count ?? 0,
+      render: (r: ThermalRow) => r.sources ? (
+        <Tip tip={<>{r.sources.probes} by rack probe · {r.sources.servers} by servers
+                  · {(r.rack_count ?? 0) - r.sources.probes - r.sources.servers} silent</>}>
+          {r.rack_count ?? 0}
+        </Tip>
+      ) : (r.rack_count ?? 0),
     }]),
     {
       key: 'avg', label: `Average ${u}`, align: 'num', width: 130,
@@ -139,7 +158,7 @@ export function Thermal() {
         key: 'dt', label: 'ΔT K', align: 'num' as const, width: 90,
         sort: (r: ThermalRow) => r.delta_t_k ?? null,
         render: (r: ThermalRow) => (
-          <Tip tip="exhaust minus intake - low on a loaded rack is bypass air, not a cooling shortage">
+          <Tip tip="server exhaust minus this row's intake - low on a loaded rack is bypass air, not a cooling shortage">
             <Num value={convDelta(r.delta_t_k ?? null, unit)} />
           </Tip>
         ),
@@ -174,12 +193,12 @@ export function Thermal() {
   function exportCsv() {
     downloadCsv(
       stampedName('thermal', data?.window.label),
-      ['scope', 'name', 'site', 'room', 'floor', 'racks', 'sensors', `average_${unit}`,
+      ['scope', 'name', 'site', 'room', 'floor', 'racks', 'source', 'sensors', `average_${unit}`,
        `max_${unit}`, `exhaust_${unit}`, 'delta_t_k', 'in_band_pct', 'rh_avg_pct',
        'rh_max_pct', 'rh_probes', 'readings', 'delta_avg_c', 'delta_max_c', 'note'],
       t.filtered.map((r) => [
         r.kind, r.name, r.site_code, r.room_name ?? '', r.floor ?? '', r.rack_count ?? '',
-        r.sensors ?? '',
+        r.source ?? '', r.sensors ?? '',
         conv(r.avg_c, unit)?.toFixed(1) ?? '', conv(r.max_c, unit)?.toFixed(1) ?? '',
         conv(r.exhaust_c ?? null, unit)?.toFixed(1) ?? '', r.delta_t_k ?? '',
         r.compliance_pct ?? '', r.rh_avg ?? '', r.rh_max ?? '', r.rh_probes,
@@ -286,7 +305,7 @@ export function Thermal() {
           // the thermal overlay on. The room drawer is the button in the
           // drilled-in header, so it is one click away rather than the click.
           onRowClick={(r) => (r.kind === 'rack'
-            ? navigate(`/racks/${r.id}?overlay=thermal`)
+            ? navigate(`/racks/${r.id}?overlay=thermal&from=thermal`)
             : t.drillInto(r))}
           empty={isLoading ? 'Loading…'
             : error ? 'Could not load thermal data.'

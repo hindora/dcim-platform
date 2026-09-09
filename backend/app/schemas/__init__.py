@@ -330,6 +330,10 @@ class RackSummary(BaseModel):
     id: str
     name: str
     row_name: str | None = None
+    # Order of the row in the room and of the rack in its row - what a
+    # name like "R2-04" encodes, spelled out for the page header.
+    row_ordinal: int | None = None
+    position: int | None = None
     room_id: str | None = None
     room_name: str | None = None
     datacenter_code: str | None = None

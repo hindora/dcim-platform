@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { humanise } from '../../lib/format';
-import { Link, useParams, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useState } from 'react';
 import { api, type ElevationDevice, type RackElevation as Elevation } from '../../api/client';
 import { StatusChip } from '../../components/StatusChip';
@@ -62,12 +62,28 @@ function overlayValue(device: ElevationDevice, overlay: Overlay): string {
   return device.status;
 }
 
+/** Where the reader came from, for the back link. The estate pages and the
+ *  floor plan say so in ?from=; anything else is treated as the rack list. */
+const FROM: Record<string, { label: string; path: string }> = {
+  thermal: { label: 'Thermal', path: '/thermal' },
+  floorplan: { label: 'Floor plan', path: '/floorplan' },
+  racks: { label: 'All racks', path: '/racks' },
+};
+
 export function RackElevationView() {
   const { id = '' } = useParams();
+  const navigate = useNavigate();
   // ?overlay=thermal lets the thermal estate page land here with the
   // intake tint already on; an unknown value falls back to status.
   const [params] = useSearchParams();
   const wanted = params.get('overlay');
+  const from = FROM[params.get('from') ?? ''] ?? FROM.racks;
+  // Back is a real history step when there is one (the drilled-in thermal
+  // table, the floor plan with its overlay), so the reader lands where they
+  // were, not on a fresh copy of the page. A deep link with no history goes
+  // to the named page instead.
+  const goBack = () => (
+    (window.history.state?.idx ?? 0) > 0 ? navigate(-1) : navigate(from.path));
   const [overlay, setOverlay] = useState<Overlay>(
     OVERLAYS.some((o) => o.key === wanted) ? (wanted as Overlay) : 'status');
   const { bind, tipEl } = useHoverTip();
@@ -97,9 +113,12 @@ export function RackElevationView() {
     <div className="stack">
       <header className="rack-head">
         <div>
+          <p><button type="button" className="link-button" onClick={goBack}>← {from.label}</button></p>
           <h2>{rack.name}</h2>
           <p className="muted">
-            {[rack.datacenter_code, rack.room_name, rack.row_name]
+            {[rack.datacenter_code, rack.room_name,
+              rack.row_name ? `Row ${rack.row_name}` : null,
+              rack.position != null ? `Rack ${rack.position} in the row` : null]
               .filter(Boolean).join(' · ')}
           </p>
         </div>
