@@ -422,8 +422,8 @@ def _source_note(totals: dict[str, Any]) -> str:
 def _distribution_note() -> str:
     return (f"Spread splits the same intake readings by the ASHRAE lines: below "
             f"{BAND_LOW_C:g} °C is overcooled, the most common finding on a real "
-            f"floor and the evidence for raising a setpoint; {BAND_LOW_C:g}–"
-            f"{BAND_HIGH_C:g} °C recommended; {BAND_HIGH_C:g}–{ALLOWABLE_HIGH_C:g} °C "
+            f"floor and the evidence for raising a setpoint; {BAND_LOW_C:g}-"
+            f"{BAND_HIGH_C:g} °C recommended; {BAND_HIGH_C:g}-{ALLOWABLE_HIGH_C:g} °C "
             f"allowable; above {ALLOWABLE_HIGH_C:g} °C at risk. p90 is the 90th "
             "percentile of the row's pooled readings, interpolated, over the focus "
             "window only: what the row runs at without one sensor's spike deciding, "
