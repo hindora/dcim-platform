@@ -290,17 +290,22 @@ export function Thermal() {
         sub={<>Intake air across the estate. Band {data?.band.low_c ?? 18}–{recommended} °C,
           {' '}allowable to {allowable} °C ({data?.band.basis ?? 'ASHRAE recommended'}).{' '}
           <Link to="/analytics?view=thermal">Rack-level ΔT and hot spots →</Link></>}
-        // Five KPIs: a sixth wraps the band under the title on a wall
-        // display, and p90 and the below-band share are one row down in
-        // every site row anyway.
+        // Seven KPIs on the title row. The header lets the subtitle wrap
+        // before it lets the band drop under the title.
         kpis={[
           { caption: 'Average', value: conv(totals?.avg_c ?? null, unit), unit: u,
+            why: 'no rack intake sensor reported in this window' },
+          { caption: 'p90', value: conv(totals?.p90_c ?? null, unit), unit: u,
+            tone: (totals?.p90_c ?? 0) > allowable ? 'critical'
+              : (totals?.p90_c ?? 0) > recommended ? 'warn' : undefined,
             why: 'no rack intake sensor reported in this window' },
           { caption: 'Max', value: conv(totals?.max_c ?? null, unit), unit: u,
             tone: (totals?.max_c ?? 0) > allowable ? 'critical'
               : (totals?.max_c ?? 0) > recommended ? 'warn' : undefined },
           { caption: 'In band', value: totals?.compliance_pct ?? null, unit: '%',
             tone: (totals?.compliance_pct ?? 100) < 95 ? 'warn' : 'ok' },
+          { caption: 'Below band', value: totals?.below_pct ?? null, unit: '%',
+            why: 'no rack intake sensor reported in this window' },
           { caption: 'RH', value: totals?.rh_avg ?? null, unit: '%',
             tone: (totals?.rh_max ?? 0) > rhHigh ? 'warn' : undefined,
             why: 'no rack humidity probe reported in this window' },

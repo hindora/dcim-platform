@@ -23,7 +23,11 @@
   display: flex; align-items: flex-end; gap: 28px; flex-wrap: wrap;
   padding-bottom: 14px; border-bottom: 1px solid var(--border);
 }
-.estate-head .title { min-width: 0; }
+/* The title gives way before the band does: it shrinks (the subtitle wraps
+   to a second line) so seven KPIs still sit on the title row. The band only
+   drops under the title once the title is at its floor. */
+.estate-head .title { min-width: 0; flex: 1 1 360px; }
+.estate-head .kpi-band { flex: 0 0 auto; }
 .estate-head h2 {
   margin: 0; font-size: 21px; font-weight: 650; letter-spacing: -.01em;
 }
@@ -40,7 +44,7 @@
 }
 .kpi-band .kpi {
   display: flex; flex-direction: column; gap: 3px;
-  padding: 0 22px; border-left: 1px solid var(--border);
+  padding: 0 18px; border-left: 1px solid var(--border);
 }
 .kpi-band .kpi:first-child { border-left: none; padding-left: 0; }
 .kpi-band .cap {
