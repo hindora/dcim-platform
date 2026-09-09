@@ -1093,6 +1093,7 @@ traps:
   - oid: 1.3.6.1.4.1.13742.6.0.66
     event_type: sensor_ambient_temp_critical
     severity: CRITICAL
+    instance_from_varbind: 1.3.6.1.4.1.13742.6.3.6.3.1.1
     display_name: "Sensor Ambient Temp Critical"
     device_types: [sensor]
     match_varbinds:
@@ -1105,6 +1106,7 @@ traps:
   - oid: 1.3.6.1.4.1.13742.6.0.66
     event_type: sensor_ambient_temp_high
     severity: MAJOR
+    instance_from_varbind: 1.3.6.1.4.1.13742.6.3.6.3.1.1
     display_name: "Sensor Ambient Temp High"
     device_types: [sensor]
     match_varbinds:
@@ -1119,6 +1121,7 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [sensor_ambient_temp_high, sensor_ambient_temp_critical]
+    instance_from_varbind: 1.3.6.1.4.1.13742.6.3.6.3.1.1
     display_name: "Sensor Ambient Temp Normal"
     device_types: [sensor]
     match_varbinds:
@@ -1131,6 +1134,7 @@ traps:
   - oid: 1.3.6.1.4.1.13742.6.0.66
     event_type: sensor_critical_humidity
     severity: CRITICAL
+    instance_from_varbind: 1.3.6.1.4.1.13742.6.3.6.3.1.1
     display_name: "Sensor Critical Humidity"
     device_types: [sensor]
     match_varbinds:
@@ -1143,6 +1147,7 @@ traps:
   - oid: 1.3.6.1.4.1.13742.6.0.66
     event_type: sensor_high_airflow
     severity: MAJOR
+    instance_from_varbind: 1.3.6.1.4.1.13742.6.3.6.3.1.1
     display_name: "Sensor High Airflow"
     device_types: [sensor]
     match_varbinds:
@@ -1157,6 +1162,7 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [sensor_high_airflow, sensor_low_airflow, airflow_alert]
+    instance_from_varbind: 1.3.6.1.4.1.13742.6.3.6.3.1.1
     display_name: "Sensor Airflow Normal"
     device_types: [sensor]
     match_varbinds:
@@ -1169,6 +1175,7 @@ traps:
   - oid: 1.3.6.1.4.1.13742.6.0.66
     event_type: sensor_high_humidity
     severity: MAJOR
+    instance_from_varbind: 1.3.6.1.4.1.13742.6.3.6.3.1.1
     display_name: "Sensor High Humidity"
     device_types: [sensor]
     match_varbinds:
@@ -1183,6 +1190,7 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [sensor_high_humidity, sensor_critical_humidity, sensor_low_humidity, humidity_alert]
+    instance_from_varbind: 1.3.6.1.4.1.13742.6.3.6.3.1.1
     display_name: "Sensor Humidity Normal"
     device_types: [sensor]
     match_varbinds:
@@ -1195,6 +1203,7 @@ traps:
   - oid: 1.3.6.1.4.1.13742.6.0.66
     event_type: sensor_low_airflow
     severity: CRITICAL
+    instance_from_varbind: 1.3.6.1.4.1.13742.6.3.6.3.1.1
     display_name: "Sensor Low Airflow"
     device_types: [sensor]
     match_varbinds:
@@ -1207,6 +1216,7 @@ traps:
   - oid: 1.3.6.1.4.1.13742.6.0.66
     event_type: sensor_low_humidity
     severity: MAJOR
+    instance_from_varbind: 1.3.6.1.4.1.13742.6.3.6.3.1.1
     display_name: "Sensor Low Humidity"
     device_types: [sensor]
     match_varbinds:
@@ -1219,6 +1229,7 @@ traps:
   - oid: 1.3.6.1.4.1.13742.6.0.66
     event_type: sensor_mid_temp_high
     severity: MAJOR
+    instance_from_varbind: 1.3.6.1.4.1.13742.6.3.6.3.1.1
     display_name: "Mid-Rack Temp High"
     device_types: [sensor]
     match_varbinds:
@@ -1233,6 +1244,7 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [sensor_mid_temp_high]
+    instance_from_varbind: 1.3.6.1.4.1.13742.6.3.6.3.1.1
     display_name: "Mid-Rack Temp Normal"
     device_types: [sensor]
     match_varbinds:
@@ -1245,6 +1257,7 @@ traps:
   - oid: 1.3.6.1.4.1.13742.6.0.66
     event_type: sensor_outlet_temp_high
     severity: MAJOR
+    instance_from_varbind: 1.3.6.1.4.1.13742.6.3.6.3.1.1
     display_name: "Exhaust Temp High"
     device_types: [sensor]
     match_varbinds:
@@ -1259,6 +1272,7 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [sensor_outlet_temp_high]
+    instance_from_varbind: 1.3.6.1.4.1.13742.6.3.6.3.1.1
     display_name: "Exhaust Temp Normal"
     device_types: [sensor]
     match_varbinds:
@@ -1273,6 +1287,7 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [dew_point_alert]
+    instance_from_varbind: 1.3.6.1.4.1.13742.6.3.6.3.1.1
     display_name: "Sensor Dew Point Normal"
     device_types: [sensor]
     match_varbinds:
@@ -1285,6 +1300,7 @@ traps:
   - oid: 1.3.6.1.4.1.13742.6.0.66
     event_type: airflow_alert
     severity: MAJOR
+    instance_from_varbind: 1.3.6.1.4.1.13742.6.3.6.3.1.1
     display_name: "Airflow Alert"
     match_varbinds:
       - oid: 1.3.6.1.4.1.13742.6.0.0.10
@@ -1296,6 +1312,7 @@ traps:
   - oid: 1.3.6.1.4.1.13742.6.0.66
     event_type: humidity_alert
     severity: MAJOR
+    instance_from_varbind: 1.3.6.1.4.1.13742.6.3.6.3.1.1
     display_name: "Humidity Alert"
     match_varbinds:
       - oid: 1.3.6.1.4.1.13742.6.0.0.10
@@ -1307,6 +1324,7 @@ traps:
   - oid: 1.3.6.1.4.1.13742.6.0.66
     event_type: pdu_humidity_high
     severity: MAJOR
+    instance_from_varbind: 1.3.6.1.4.1.13742.6.3.6.3.1.1
     display_name: "PDU Humidity High"
     match_varbinds:
       - oid: 1.3.6.1.4.1.13742.6.0.0.10
@@ -1320,6 +1338,7 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [pdu_humidity_high]
+    instance_from_varbind: 1.3.6.1.4.1.13742.6.3.6.3.1.1
     display_name: "PDU Humidity Normal"
     match_varbinds:
       - oid: 1.3.6.1.4.1.13742.6.0.0.10
@@ -1331,6 +1350,7 @@ traps:
   - oid: 1.3.6.1.4.1.13742.6.0.66
     event_type: pdu_temp_high
     severity: MAJOR
+    instance_from_varbind: 1.3.6.1.4.1.13742.6.3.6.3.1.1
     display_name: "PDU Temperature High"
     match_varbinds:
       - oid: 1.3.6.1.4.1.13742.6.0.0.10
@@ -1344,6 +1364,7 @@ traps:
     severity: CLEAR
     is_clear: true
     clears: [pdu_temp_high]
+    instance_from_varbind: 1.3.6.1.4.1.13742.6.3.6.3.1.1
     display_name: "PDU Temperature Normal"
     match_varbinds:
       - oid: 1.3.6.1.4.1.13742.6.0.0.10
@@ -1355,6 +1376,7 @@ traps:
   - oid: 1.3.6.1.4.1.13742.6.0.66
     event_type: smoke_detected
     severity: CRITICAL
+    instance_from_varbind: 1.3.6.1.4.1.13742.6.3.6.3.1.1
     display_name: "Smoke Detected"
     match_varbinds:
       - oid: 1.3.6.1.4.1.13742.6.0.0.10
@@ -1366,6 +1388,7 @@ traps:
   - oid: 1.3.6.1.4.1.13742.6.0.66
     event_type: dew_point_alert
     severity: CRITICAL
+    instance_from_varbind: 1.3.6.1.4.1.13742.6.3.6.3.1.1
     display_name: "Dew Point Alert"
     match_varbinds:
       - oid: 1.3.6.1.4.1.13742.6.0.0.10

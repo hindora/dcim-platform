@@ -561,6 +561,12 @@ def main() -> int:
             e = entry_for(trap.value, defn.severity, vendor)
             e["vendor"] = vendor
             e["match_varbind"] = varbind_match(vendor, trap, defn)
+            if vendor == "raritan" and trap in _RARITAN_EXTERNAL_TRAPS:
+                # WHICH probe on the chain spoke. An intake, a mid-rack and an
+                # exhaust reading are three temperatures from one strip; the
+                # slot is the only thing that separates them, and without it
+                # they collapse onto a single alarm key.
+                e["instance_varbind"] = RARITAN["externalNumber"]
             by_oid[oid].append(e)
 
     # ---- the transmit path -------------------------------------------------
@@ -742,7 +748,9 @@ def main() -> int:
                     lines.append(f"    threshold_varbind: {thresh_vb}")
                 if e.get("scale", 1.0) != 1.0:
                     lines.append(f"    value_scale: {e['scale']}")
-            if e["event_type"] in PORT_EVENTS:
+            if e.get("instance_varbind"):
+                lines.append(f"    instance_from_varbind: {e['instance_varbind']}")
+            elif e["event_type"] in PORT_EVENTS:
                 lines.append(f"    instance_from_varbind: {IFDESCR_COLUMN}")
             elif e["event_type"] in OUTLET_EVENTS and e["vendor"] == "apc":
                 lines.append(f"    instance_from_varbind: {APC_OUTLET_NAME}")

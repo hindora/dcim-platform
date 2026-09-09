@@ -154,3 +154,23 @@ func TestAClearReachesTheRaiseItEnds(t *testing.T) {
 		}
 	}
 }
+
+func TestTheSlotSaysWhichProbeOnTheChainSpoke(t *testing.T) {
+	// An intake, a mid-rack and an exhaust reading are three temperatures from
+	// one strip, on one OID, with one sensor type. Only the slot separates
+	// them, so the mapping has to carry it through as the alarm's instance -
+	// without it two probes going hot on one strip collapse onto one alarm.
+	tbl := shippedTable(t)
+	got, ok := tbl.Lookup(raritanExtOID, "pdu", map[string]string{
+		typeOfSensor:  sensorTemperature,
+		externalState: stateAboveUpperWarning,
+	})
+	if !ok {
+		t.Fatal("resolved nothing")
+	}
+	const externalSensorNumber = "1.3.6.1.4.1.13742.6.3.6.3.1.1"
+	if got.InstanceFromVarbind != externalSensorNumber {
+		t.Fatalf("instance_from_varbind = %q, want %q",
+			got.InstanceFromVarbind, externalSensorNumber)
+	}
+}
