@@ -125,3 +125,39 @@ def test_percentile_uses_nearest_rank_not_bankers_rounding():
 def test_percentile_survives_degenerate_input():
     assert t.percentile([], 90) is None
     assert t.percentile([7.0], 90) == 7.0
+
+
+# --- what the unit reads, and whether anybody was told ------------------------
+
+def _units(alarms: dict[str, int]) -> list[dict]:
+    a = t.CrahThermal(device_id="crah-a", name="CRAH1", supply_c=22.0,
+                      return_c=27.0, setpoint_c=22.0, running=True)
+    b = t.CrahThermal(device_id="crah-b", name="CRAH2", supply_c=28.0,
+                      return_c=30.0, setpoint_c=22.0, running=True)
+    return t.RoomThermal(room_id="rm", crahs=[a, b], return_p90=30.0,
+                         alarms=alarms).as_dict()["crah_units"]
+
+
+def test_a_unit_carries_its_own_open_condition_count():
+    by_name = {u["name"]: u for u in _units({"crah-b": 2})}
+    assert by_name["CRAH2"]["alarms_open"] == 2
+
+
+def test_a_quiet_unit_reports_zero_rather_than_nothing():
+    """Absent reads as unknown on the page. Nothing open is a fact, and the
+    units under a hall have to add up to the hall's own figure."""
+    by_name = {u["name"]: u for u in _units({"crah-b": 2})}
+    assert by_name["CRAH1"]["alarms_open"] == 0
+
+
+def test_the_verdict_and_the_alarm_count_are_allowed_to_disagree():
+    """They answer different questions. The verdict is read from this tick's
+    telemetry; the count is whether an alarm was raised. A unit reading OK can
+    carry one raised minutes ago, and one reading Supply high can have nothing
+    raised yet - an operator is worse off if the page hides either case.
+    """
+    by_name = {u["name"]: u for u in _units({"crah-a": 1})}
+    assert by_name["CRAH1"]["state"] == "ok"
+    assert by_name["CRAH1"]["alarms_open"] == 1
+    assert by_name["CRAH2"]["state"] == "high_supply"
+    assert by_name["CRAH2"]["alarms_open"] == 0

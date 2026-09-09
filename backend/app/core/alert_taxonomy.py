@@ -480,6 +480,19 @@ RESERVED: frozenset[str] = frozenset({
 #: the electrical chain; on a server it is the host. Intake air on a rack sensor
 #: is the room; on a server it is that machine's own intake.
 #:
+#: What a thermal view counts as a thermal condition.
+#:
+#: The two categories that describe AIR and the plant that moves it. Kept here
+#: rather than on one page because three views now count against it - the
+#: estate rows, the cooling units under a room, and the drill-down all of them
+#: open - and a copy per caller is a set of numbers that stop adding up.
+#:
+#: An intake alarm on a server is filed under it_equipment, because the
+#: category records the failing thing and that one is a host. It is counted
+#: beside the rest of its kit, not here.
+THERMAL_ALARM_CATEGORIES: tuple[str, ...] = ("cooling", "environmental")
+
+
 #: Keys are (device_type.category, metric_key). The device-type categories in
 #: use are: it, network, cooling, power, environment, facility.
 BY_ROLE_METRIC: dict[tuple[str, str], str] = {}

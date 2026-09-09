@@ -18,6 +18,14 @@
  *  Read from the analytics thermal view, which already classifies each unit
  *  against the room's own return p90 rather than a fixed limit: what counts
  *  as a high return depends on the hall it is in.
+ *
+ *  The VERDICT column is a judgement made here from the unit's own telemetry.
+ *  The ALARMS column is whether anybody has been told, counted with the same
+ *  predicate and the same two categories the rows above the table count with,
+ *  so the units in a hall add up to the hall's figure. The two disagree in
+ *  both directions and an operator needs both: a unit can read OK while
+ *  carrying an open condition raised minutes ago, and one can read Supply
+ *  high with nothing raised yet.
  */
 
 import { useQuery } from '@tanstack/react-query';
@@ -95,6 +103,16 @@ export function RoomCooling({ roomId, roomName, unit }: {
           <Num value={convDelta(r.delta_t_k, unit)} />
         </Tip>
       ),
+    },
+    {
+      key: 'alarms', label: 'Alarms', align: 'num', width: 84,
+      sort: (r) => r.alarms_open ?? 0,
+      render: (r) => {
+        const n = r.alarms_open ?? 0;
+        return n
+          ? <Tip tip={`${n} open cooling or environmental condition${n === 1 ? '' : 's'} on this unit`}>{n}</Tip>
+          : <Tip className="dash" tip="nothing open on this unit">0</Tip>;
+      },
     },
     {
       key: 'verdict', label: 'Verdict', align: 'mid', width: 130,

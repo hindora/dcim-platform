@@ -1091,6 +1091,11 @@ export interface ThermalUnit {
   setpoint_c: number | null;
   delta_t_k: number | null;
   running: boolean;
+  /** Open conditions in the page's thermal categories, on this unit. Zero,
+   *  never absent: nothing open is a fact about the unit. Counted with the
+   *  same predicate and categories as the rows above it, so the units in a
+   *  hall add up to the hall's figure. */
+  alarms_open: number;
 }
 
 export interface ThermalRoom {

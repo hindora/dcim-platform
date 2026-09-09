@@ -570,11 +570,17 @@ async def thermal_alarms(session: AsyncSession, *,
     counts against its room. Both roll up to the site, so a room's figure
     includes what its racks are raising and what nothing in a rack is.
 
-    Returns {"racks": {id: n}, "rooms": {...}, "sites": {...}, "total": n}.
+    Returns {"devices": {id: n}, "racks": {...}, "rooms": {...},
+    "sites": {...}, "total": n}. The device level is what lets a cooling
+    unit say whether anybody has been told about it, using the same
+    predicate and the same categories as the rows above it - so the units
+    in a hall add up to the hall's figure instead of meaning something
+    slightly different.
     """
     rows = (await session.execute(text("""
         WITH located AS (
             SELECT a.id,
+                   d.id AS device_id,
                    d.rack_id,
                    COALESCE(rr.room_id, d.room_id) AS room_id,
                    COALESCE(rm.datacenter_id, rm2.datacenter_id) AS datacenter_id
@@ -595,17 +601,22 @@ async def thermal_alarms(session: AsyncSession, *,
               AND a.category = ANY(:cats)
               AND d.lifecycle <> 'decommissioned'
         )
-        SELECT rack_id::text       AS rack_id,
+        SELECT device_id::text     AS device_id,
+               rack_id::text       AS rack_id,
                room_id::text       AS room_id,
                datacenter_id::text AS datacenter_id,
                count(*)            AS n
         FROM located
-        GROUP BY GROUPING SETS ((rack_id), (room_id), (datacenter_id), ())
+        GROUP BY GROUPING SETS ((device_id), (rack_id), (room_id),
+                                (datacenter_id), ())
     """), {"cats": list(categories)})).mappings().all()
-    out: dict[str, Any] = {"racks": {}, "rooms": {}, "sites": {}, "total": 0}
+    out: dict[str, Any] = {"devices": {}, "racks": {}, "rooms": {},
+                           "sites": {}, "total": 0}
     for r in rows:
         n = int(r["n"] or 0)
-        if r["rack_id"] is not None:
+        if r["device_id"] is not None:
+            out["devices"][r["device_id"]] = n
+        elif r["rack_id"] is not None:
             out["racks"][r["rack_id"]] = n
         elif r["room_id"] is not None:
             out["rooms"][r["room_id"]] = n

@@ -31,6 +31,9 @@ from typing import Any
 
 from sqlalchemy import text
 
+from app.core.alert_taxonomy import THERMAL_ALARM_CATEGORIES
+from app.repositories import estate as estate_repo
+
 # ASHRAE A1: 18-27 C recommended intake, 32 C allowable.
 ASHRAE_RECOMMENDED_MAX = 27.0
 ASHRAE_ALLOWABLE_MAX = 32.0
@@ -188,6 +191,11 @@ class RoomThermal:
     name: str | None = None
     racks: list[RackThermal] = field(default_factory=list)
     crahs: list[CrahThermal] = field(default_factory=list)
+    #: Open thermal conditions per device id. A unit's VERDICT is a judgement
+    #: made from its own telemetry; this is whether anybody has been told.
+    #: A unit can read OK and carry an open condition, or read high with
+    #: nobody yet told, and an operator needs both.
+    alarms: dict[str, int] = field(default_factory=dict)
     inlet_p90: float | None = None
     return_p90: float | None = None
     window_minutes: int = SUSTAINED_MINUTES
@@ -206,6 +214,8 @@ class RoomThermal:
                 "setpoint_c": _r(u.setpoint_c), "delta_t_k": (
                     round(u.delta_t_k, 1) if u.delta_t_k is not None else None),
                 "running": u.running,
+                # Zero, not absent: nothing open is a fact about this unit.
+                "alarms_open": int(self.alarms.get(u.device_id, 0)),
             })
         supplies = [u.supply_c for u in self.crahs if u.supply_c is not None]
         returns = [u.return_c for u in self.crahs if u.return_c is not None]
@@ -311,11 +321,18 @@ async def room_view(session, room_id: str,
         for c in crah_rows
     ]
 
+    # The same query, the same predicate and the same categories the estate
+    # rows count with, so a hall's floor-plant figure and the units listed
+    # under it are the one number seen twice.
+    counts = await estate_repo.thermal_alarms(
+        session, categories=list(THERMAL_ALARM_CATEGORIES))
+
     name = (await session.execute(
         text("SELECT name FROM room WHERE id = CAST(:id AS uuid)"),
         {"id": room_id})).scalar()
     view = RoomThermal(
         room_id=room_id, name=name, racks=racks, crahs=units,
+        alarms=counts["devices"],
         window_minutes=minutes,
         # The room baseline is built from rack MEANS, so one rack's spike does
         # not lift the threshold it is about to be measured against.

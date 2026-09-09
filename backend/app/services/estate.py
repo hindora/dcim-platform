@@ -26,19 +26,8 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.alert_taxonomy import DETECTIONS
+from app.core.alert_taxonomy import DETECTIONS, THERMAL_ALARM_CATEGORIES
 from app.repositories import estate as repo
-
-#: What the thermal page counts as a thermal condition, and what its
-#: drill-down opens with.
-#:
-#: The two categories that describe AIR and the plant that moves it. An
-#: intake alarm on a server is filed under it_equipment, because the category
-#: records the failing thing and that one is a host - it is counted on the
-#: Home page beside the rest of its kit, not here. The count and the panel
-#: take the same list so a number and the rows behind it cannot disagree.
-THERMAL_ALARM_CATEGORIES = ("cooling", "environmental")
-
 
 # ASHRAE TC 9.9 recommended envelope for class A1-A4 equipment intake air.
 # Compliance on this page means "inside the RECOMMENDED band", which is a
