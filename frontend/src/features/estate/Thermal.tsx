@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
-import { api, type ThermalRow, type ThermalSpread } from '../../api/client';
+import { api, type AlarmCategory, type ThermalRow, type ThermalSpread } from '../../api/client';
+import { AlarmPanel } from '../home/AlarmPanel';
 import {
   Column, DataTable, Delta, FacilityToggle, Notes, Num, PageHead, ScopeTabs, Seg,
   TableFoot, tone,
@@ -53,6 +54,14 @@ import { ThermalTrend } from './ThermalTrend';
  *  showing - the estate, a site, a room - as average, p90 and max against
  *  the ASHRAE band, with the range control every other trend wears. The Δ
  *  columns say "warmer than yesterday"; the line says since when.
+ *
+ *  Warm and warm-with-somebody-told are different situations, so each row
+ *  carries its open thermal conditions and a site or a room opens the same
+ *  drill-down the home page uses. The count and the panel take one category
+ *  list from the server, so the number cannot disagree with the rows behind
+ *  it. A rack row shows its count and goes to its elevation on click, which
+ *  is where its story continues; the panel groups by room and could not
+ *  answer for one rack without saying something it does not know.
  *
  *  Three tiers: sites, rooms, racks. A rack is where an engineer actually
  *  goes, so the table does not stop one level short of it. Rack rows add
@@ -115,6 +124,7 @@ export function Thermal() {
   const [focus, setFocus] = useState<string>('');
   const [compare, setCompare] = useState<string>('');
   const [drawerRoom, setDrawerRoom] = useState<{ id: string; name: string } | null>(null);
+  const [drill, setDrill] = useState<{ kind: 'site' | 'room'; id: string; label: string } | null>(null);
   const navigate = useNavigate();
 
   const { data, isLoading, error } = useQuery({
@@ -256,6 +266,44 @@ export function Thermal() {
       render: (r) => <Spread d={r.distribution} low={floor} high={recommended} allowable={allowable} />,
     },
     {
+      key: 'alarms', label: 'Alarms', align: 'num', width: 90,
+      sort: (r) => r.alarms_open ?? 0,
+      render: (r) => {
+        const n = r.alarms_open ?? 0;
+        const where = r.kind === 'rack' ? 'in this rack' : `in ${r.name}`;
+        if (!n) {
+          return <Tip className="dash" tip={`nothing open ${where}`}>0</Tip>;
+        }
+        // A CRAH stands on the floor and belongs to no rack, so a hall can
+        // show two while every rack under it shows none. Every other figure
+        // here folds from the racks; this one does not, and unexplained that
+        // reads as a fault in the page rather than plant doing its job.
+        const inRacks = r.alarms_in_racks ?? n;
+        const onPlant = Math.max(n - inRacks, 0);
+        const split = r.kind === 'rack' || !onPlant ? ''
+          : inRacks
+            ? ` - ${inRacks} in racks, ${onPlant} on floor-standing plant`
+            : ` - none in racks, all ${onPlant} on floor-standing plant such as CRAHs`;
+        const label = `${n} open cooling or environmental condition${n === 1 ? '' : 's'} ${where}${split}`;
+        // A rack has no drill-down of its own: the panel groups by room, and
+        // answering for one rack would mean showing rows that are not it.
+        // The row already goes to the rack's elevation, which is where a
+        // rack's story continues.
+        if (r.kind === 'rack') return <Tip tip={label}>{n}</Tip>;
+        return (
+          <Tip tip={`${label} - open them`}>
+            <button type="button" className="link-button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setDrill({ kind: r.kind as 'site' | 'room', id: r.id, label: r.name });
+                    }}>
+              {n}
+            </button>
+          </Tip>
+        );
+      },
+    },
+    {
       key: 'rh', label: 'RH %', align: 'num', width: 84,
       sort: (r) => r.rh_avg,
       render: (r) => (
@@ -281,8 +329,8 @@ export function Thermal() {
       stampedName('thermal', data?.window.label),
       ['scope', 'name', 'site', 'room', 'floor', 'racks', 'source', 'sensors', `average_${unit}`,
        `p90_${unit}`, `max_${unit}`, `exhaust_${unit}`, 'delta_t_k', 'in_band_pct',
-       'below_band_pct', 'above_recommended_pct', 'above_allowable_pct', 'rh_avg_pct',
-       'rh_max_pct', 'rh_probes', 'readings', 'delta_avg_c', 'delta_max_c', 'note'],
+       'below_band_pct', 'above_recommended_pct', 'above_allowable_pct', 'open_alarms',
+       'rh_avg_pct', 'rh_max_pct', 'rh_probes', 'readings', 'delta_avg_c', 'delta_max_c', 'note'],
       t.filtered.map((r) => [
         r.kind, r.name, r.site_code, r.room_name ?? '', r.floor ?? '', r.rack_count ?? '',
         r.source ?? '', r.sensors ?? '',
@@ -291,6 +339,7 @@ export function Thermal() {
         conv(r.exhaust_c ?? null, unit)?.toFixed(1) ?? '', r.delta_t_k ?? '',
         r.compliance_pct ?? '', r.below_pct ?? '',
         r.distribution?.above_recommended_pct ?? '', r.distribution?.above_allowable_pct ?? '',
+        r.alarms_open ?? 0,
         r.rh_avg ?? '', r.rh_max ?? '', r.rh_probes,
         r.samples, r.delta_avg ?? '', r.delta_max ?? '',
         r.note ?? '',
@@ -446,6 +495,15 @@ export function Thermal() {
       {drawerRoom && (
         <RoomDrawer roomId={drawerRoom.id} roomName={drawerRoom.name}
                     onClose={() => setDrawerRoom(null)} />
+      )}
+
+      {drill && data && (
+        <AlarmPanel
+          categories={data.alarm_categories as AlarmCategory[]}
+          // The panel appends the scope itself, so naming it here says it twice.
+          title="Thermal conditions"
+          scope={drill}
+          onClose={() => setDrill(null)} />
       )}
     </div>
   );

@@ -1477,6 +1477,13 @@ export interface ThermalRow extends EstateRowBase {
   /** Share of readings below the recommended floor: overcooling. */
   below_pct: number | null;
   distribution: ThermalSpread | null;
+  /** Open conditions in the page's thermal categories, on devices in this
+   *  row. Zero, never absent: nothing open is a fact. */
+  alarms_open: number;
+  /** How many of those are on something IN a rack. A room's figure exceeds
+   *  it by whatever its floor-standing plant is raising, which is why a hall
+   *  can show conditions while every rack under it shows none. */
+  alarms_in_racks: number;
   samples: number;
   delta_avg: number | null;
   delta_max: number | null;
@@ -1526,10 +1533,13 @@ export interface ThermalPage {
     compliance_pct: number | null; below_pct: number | null;
     distribution: ThermalSpread | null;
     samples: number; rooms_reporting: number; rooms: number;
-    facility_rooms: number;
+    facility_rooms: number; alarms_open: number; alarms_in_racks: number;
     rh_avg: number | null; rh_max: number | null; rh_probes: number;
     sources: { probes: number; servers: number };
   };
+  /** What the counts were taken over, and what the drill-down opens with,
+   *  so a number and the rows behind it cannot disagree. */
+  alarm_categories: string[];
   sites: ThermalRow[];
   rooms: ThermalRow[];
   /** Every rack in inventory, hottest first within its room. */

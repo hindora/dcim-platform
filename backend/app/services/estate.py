@@ -29,6 +29,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.alert_taxonomy import DETECTIONS
 from app.repositories import estate as repo
 
+#: What the thermal page counts as a thermal condition, and what its
+#: drill-down opens with.
+#:
+#: The two categories that describe AIR and the plant that moves it. An
+#: intake alarm on a server is filed under it_equipment, because the category
+#: records the failing thing and that one is a host - it is counted on the
+#: Home page beside the rest of its kit, not here. The count and the panel
+#: take the same list so a number and the rows behind it cannot disagree.
+THERMAL_ALARM_CATEGORIES = ("cooling", "environmental")
+
+
 # ASHRAE TC 9.9 recommended envelope for class A1-A4 equipment intake air.
 # Compliance on this page means "inside the RECOMMENDED band", which is a
 # tighter test than the allowable envelope a device will survive - the point of
@@ -197,6 +208,29 @@ async def thermal(session: AsyncSession, *, focus: date | None = None,
     rooms = _fold_rooms(skeleton, racks, absent_now, absent_prev)
     sites = _fold_sites(rooms, absent_now, absent_prev)
     totals = _fold_total(rooms)
+    alarms_open = await repo.thermal_alarms(
+        session, categories=list(THERMAL_ALARM_CATEGORIES))
+    _attach_count(racks, alarms_open["racks"])
+    _attach_count(rooms, alarms_open["rooms"])
+    _attach_count(sites, alarms_open["sites"])
+    totals["alarms_open"] = alarms_open["total"]
+    # How many of a row's conditions are on something IN a rack.
+    #
+    # A CRAH stands on the floor and belongs to no rack, so a hall can show
+    # two open conditions while every rack under it shows none - correct, and
+    # unreadable without saying which. Every other figure on this page folds
+    # from the racks; this one does not, and the difference is the plant.
+    _in_racks: dict[str, int] = {}
+    for rack in racks:
+        _in_racks[rack["room_id"]] = _in_racks.get(rack["room_id"], 0) + rack["alarms_open"]
+    for room in rooms:
+        room["alarms_in_racks"] = _in_racks.get(room["id"], 0)
+    _by_site: dict[str, int] = {}
+    for room in rooms:
+        _by_site[room["site_id"]] = _by_site.get(room["site_id"], 0) + room["alarms_in_racks"]
+    for site in sites:
+        site["alarms_in_racks"] = _by_site.get(site["id"], 0)
+    totals["alarms_in_racks"] = sum(r["alarms_in_racks"] for r in rooms)
     _attach_p90(racks, p90["racks"])
     _attach_p90(rooms, p90["rooms"])
     _attach_p90(sites, p90["sites"])
@@ -208,6 +242,9 @@ async def thermal(session: AsyncSession, *, focus: date | None = None,
                  "allowable_high_c": ALLOWABLE_HIGH_C,
                  "rh_high_pct": RH_HIGH_PCT,
                  "basis": "ASHRAE TC 9.9 recommended envelope for intake air"},
+        # Echoed so the page opens its drill-down with the same list the
+        # counts were taken over, rather than a copy that can drift.
+        "alarm_categories": list(THERMAL_ALARM_CATEGORIES),
         "totals": totals,
         "sites": sites,
         "rooms": [_strip(r) for r in rooms],
@@ -334,6 +371,15 @@ def _distribution(acc: dict[str, Any]) -> dict[str, float] | None:
         "above_recommended_pct": _pct(above_rec, n),
         "above_allowable_pct": _pct(hot, n),
     }
+
+
+def _attach_count(rows: list[dict[str, Any]], by_id: dict[str, int]) -> None:
+    """Zero, not absent: a row with nothing open is a fact, and a dash there
+    would read as "not counted"."""
+    for r in rows:
+        r["alarms_open"] = int(by_id.get(r["id"], 0))
+        # A rack has nothing under it, so everything it counts is its own.
+        r.setdefault("alarms_in_racks", r["alarms_open"])
 
 
 def _attach_p90(rows: list[dict[str, Any]], by_id: dict[str, float | None]) -> None:

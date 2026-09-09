@@ -556,6 +556,66 @@ async def thermal_p90_now(session: AsyncSession, *,
     return out
 
 
+async def thermal_alarms(session: AsyncSession, *,
+                         categories: list[str]) -> dict[str, Any]:
+    """Open thermal conditions per rack, room, site and estate.
+
+    Counted by CATEGORY, and by the same categories the drill-down opens
+    with, so the number on a row and the rows behind it can never disagree -
+    a count an operator cannot reconcile with what a click shows is worse
+    than no count.
+
+    A condition is placed where its DEVICE is: a probe or a server in a rack
+    counts against that rack, a CRAH or an air handler standing on the floor
+    counts against its room. Both roll up to the site, so a room's figure
+    includes what its racks are raising and what nothing in a rack is.
+
+    Returns {"racks": {id: n}, "rooms": {...}, "sites": {...}, "total": n}.
+    """
+    rows = (await session.execute(text("""
+        WITH located AS (
+            SELECT a.id,
+                   d.rack_id,
+                   COALESCE(rr.room_id, d.room_id) AS room_id,
+                   COALESCE(rm.datacenter_id, rm2.datacenter_id) AS datacenter_id
+            FROM alarm a
+            JOIN device d      ON d.id = a.device_id
+            LEFT JOIN rack r   ON r.id = d.rack_id
+            LEFT JOIN rack_row rr ON rr.id = r.row_id
+            LEFT JOIN room rm  ON rm.id = rr.room_id
+            LEFT JOIN room rm2 ON rm2.id = d.room_id
+            -- The same population the drill-down shows, to the predicate:
+            -- open is "not cleared", not "active", and a symptom is a
+            -- consequence of a root condition rather than a second thing to
+            -- answer. Counting either differently gives a number that does
+            -- not survive being clicked.
+            WHERE a.state <> 'CLEARED'
+              AND a.shelved_by_window IS NULL
+              AND a.is_symptom = false
+              AND a.category = ANY(:cats)
+              AND d.lifecycle <> 'decommissioned'
+        )
+        SELECT rack_id::text       AS rack_id,
+               room_id::text       AS room_id,
+               datacenter_id::text AS datacenter_id,
+               count(*)            AS n
+        FROM located
+        GROUP BY GROUPING SETS ((rack_id), (room_id), (datacenter_id), ())
+    """), {"cats": list(categories)})).mappings().all()
+    out: dict[str, Any] = {"racks": {}, "rooms": {}, "sites": {}, "total": 0}
+    for r in rows:
+        n = int(r["n"] or 0)
+        if r["rack_id"] is not None:
+            out["racks"][r["rack_id"]] = n
+        elif r["room_id"] is not None:
+            out["rooms"][r["room_id"]] = n
+        elif r["datacenter_id"] is not None:
+            out["sites"][r["datacenter_id"]] = n
+        else:
+            out["total"] = n
+    return out
+
+
 async def power_window(session: AsyncSession, *, start: datetime, end: datetime,
                        compare_start: datetime, compare_end: datetime,
                        bucket: timedelta) -> list[dict[str, Any]]:

@@ -267,6 +267,17 @@ def _returns(value):
 # Everything is derived from racks; rooms are a skeleton the racks fold into.
 
 
+@pytest.fixture(autouse=True)
+def _no_thermal_alarms(monkeypatch):
+    """Open-condition counts are their own query against the alarm table.
+
+    A test about temperature should not have to stub one, so the default is
+    an estate with nothing open; the tests that are about the counts say so.
+    """
+    monkeypatch.setattr(estate.repo, "thermal_alarms", _returns(
+        {"racks": {}, "rooms": {}, "sites": {}, "total": 0}))
+
+
 def _room(room_id: str, dc: str, code: str, *, rack_count=2, name=None,
           room_class="white_space"):
     return {
@@ -814,4 +825,55 @@ async def test_a_silent_rack_is_absent_in_now_too(monkeypatch):
     rack = out["racks"][0]
     assert rack["avg_c"] is None and rack["source"] is None
     assert "ten minutes" in rack["note"]
+
+
+@pytest.mark.asyncio
+async def test_the_alarm_count_lands_on_the_row_that_raised_it(monkeypatch):
+    """A condition is placed where its DEVICE is, and every tier adds up.
+
+    The count and the drill-down take the same category list, so a number an
+    operator clicks cannot disagree with the rows behind it.
+    """
+    monkeypatch.setattr(estate.repo, "thermal_alarms", _returns(
+        {"racks": {"r1": 3}, "rooms": {"a": 5}, "sites": {"dc1": 5}, "total": 5}))
+    _thermal(monkeypatch, [_room("a", "dc1", "DC1")],
+             [_rack("r1", "a", f_sum=2000.0, f_n=100, f_max=24.0, f_in_band=100),
+              _rack("r2", "a")])
+    out = await estate.thermal(_FakeSession(), mode="live")
+
+    racks = {r["id"]: r for r in out["racks"]}
+    assert racks["r1"]["alarms_open"] == 3
+    # Nothing open is zero, not absent: a dash would read as "not counted".
+    assert racks["r2"]["alarms_open"] == 0
+    # The room carries what its racks raised AND what nothing in a rack did.
+    assert out["rooms"][0]["alarms_open"] == 5
+    assert out["sites"][0]["alarms_open"] == 5
+    assert out["totals"]["alarms_open"] == 5
+    assert out["alarm_categories"] == ["cooling", "environmental"]
+    # Where the difference went. A CRAH stands on the floor and belongs to no
+    # rack, so a hall shows five while its racks account for three - correct,
+    # and unreadable unless the row says which is which.
+    assert out["rooms"][0]["alarms_in_racks"] == 3
+    assert out["sites"][0]["alarms_in_racks"] == 3
+    assert out["totals"]["alarms_in_racks"] == 3
+    # A rack has nothing beneath it, so all of its own are in it.
+    assert racks["r1"]["alarms_in_racks"] == 3
+
+
+@pytest.mark.asyncio
+async def test_an_intake_alarm_on_a_server_is_not_a_thermal_page_count(monkeypatch):
+    """The category records the FAILING THING. A hot server is a host, and it
+    is counted beside the rest of its kit on the home page; this page counts
+    the air and the plant that moves it."""
+    seen = {}
+
+    async def counts(session, **kw):
+        seen.update(kw)
+        return {"racks": {}, "rooms": {}, "sites": {}, "total": 0}
+
+    monkeypatch.setattr(estate.repo, "thermal_alarms", counts)
+    _thermal(monkeypatch, [_room("a", "dc1", "DC1")], [_rack("r1", "a")])
+    await estate.thermal(_FakeSession(), mode="live")
+    assert seen["categories"] == ["cooling", "environmental"]
+    assert "it_equipment" not in seen["categories"]
 
