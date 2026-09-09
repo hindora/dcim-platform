@@ -1508,7 +1508,10 @@ export interface ThermalRow extends EstateRowBase {
 
 export interface ThermalPage {
   window: {
-    mode: string; label: string; compare_label: string;
+    /** `now` is an instant, `live` the last hour, `daily` a calendar day. */
+    mode: string; label: string;
+    /** Null in `now` mode: an instant has no window to be compared with. */
+    compare_label: string | null;
     focus_start: string; focus_end: string;
   };
   band: {

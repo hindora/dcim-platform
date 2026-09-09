@@ -132,7 +132,19 @@ async def thermal(session: AsyncSession, *, focus: date | None = None,
     This estate records no probe position, so "front" is inferred from the
     readings (the probes track inlet, not exhaust), not read from inventory.
     """
-    if mode == "live":
+    if mode == "now":
+        # The newest reading from every sensor, and nothing older. A window
+        # cannot answer "what is happening": an hour's mean needs an hour to
+        # show a step change and holds it for an hour after it clears, so a
+        # tripped CRAH read as nothing for ten minutes and as a fault long
+        # after it was fixed.
+        end = datetime.now(UTC)
+        f0, f1 = end - repo.NOW_HORIZON, end
+        c0, c1 = f0, f0
+        window = {"mode": "now", "focus_start": f0, "focus_end": f1,
+                  "compare_start": None, "compare_end": None,
+                  "label": "now", "compare_label": None}
+    elif mode == "live":
         end = datetime.now(UTC)
         f0, f1 = end - timedelta(hours=1), end
         c0, c1 = f0 - timedelta(hours=1), f0
@@ -154,21 +166,34 @@ async def thermal(session: AsyncSession, *, focus: date | None = None,
     # Why a delta is blank, in words. A dot with no reason reads as "the page
     # has no comparison", when the usual truth is that one window had no
     # readings - the fleet was down, or the day had no collection.
-    prep = "in the" if mode == "live" else "on"
-    absent_prev = f"no readings {prep} {window['compare_label']}"
-    absent_now = f"no readings {prep} {window['label']}"
+    if mode == "now":
+        absent_now = "no sensor in this rack has reported in the last ten minutes"
+        absent_prev = "an instant has no window to be compared with"
+    else:
+        prep = "in the" if mode == "live" else "on"
+        absent_prev = f"no readings {prep} {window['compare_label']}"
+        absent_now = f"no readings {prep} {window['label']}"
 
     skeleton = await repo.thermal_rooms(session)
-    raw_racks = await repo.thermal_racks(session, focus_start=f0, focus_end=f1,
-                                         compare_start=c0, compare_end=c1,
-                                         low_c=BAND_LOW_C, high_c=BAND_HIGH_C,
-                                         allowable_c=ALLOWABLE_HIGH_C)
-    # A percentile does not fold from sums, so it is taken over the pooled
-    # readings at every tier in one query and attached afterwards. Same
-    # readings, same source rule, so it agrees with the averages beside it.
-    p90 = await repo.thermal_p90(session, focus_start=f0, focus_end=f1)
+    if mode == "now":
+        raw_racks = await repo.thermal_racks_now(
+            session, since=f0, low_c=BAND_LOW_C, high_c=BAND_HIGH_C,
+            allowable_c=ALLOWABLE_HIGH_C)
+        p90 = await repo.thermal_p90_now(session, since=f0)
+    else:
+        raw_racks = await repo.thermal_racks(session, focus_start=f0, focus_end=f1,
+                                             compare_start=c0, compare_end=c1,
+                                             low_c=BAND_LOW_C, high_c=BAND_HIGH_C,
+                                             allowable_c=ALLOWABLE_HIGH_C)
+        # A percentile does not fold from sums, so it is taken over the pooled
+        # readings at every tier in one query and attached afterwards. Same
+        # readings, same source rule, so it agrees with the averages beside it.
+        p90 = await repo.thermal_p90(session, focus_start=f0, focus_end=f1)
 
-    racks = [_rack_row(r, absent_now, absent_prev) for r in raw_racks]
+    silent = ("no sensor in this rack has reported in the last ten minutes"
+              if mode == "now" else
+              "no intake probe or server sensor in this rack reported in this window")
+    racks = [_rack_row(r, absent_now, absent_prev, silent) for r in raw_racks]
     rooms = _fold_rooms(skeleton, racks, absent_now, absent_prev)
     sites = _fold_sites(rooms, absent_now, absent_prev)
     totals = _fold_total(rooms)
@@ -187,7 +212,8 @@ async def thermal(session: AsyncSession, *, focus: date | None = None,
         "sites": sites,
         "rooms": [_strip(r) for r in rooms],
         "racks": [_strip(r) for r in racks],
-        "notes": [_source_note(totals), _humidity_note(totals), _distribution_note()],
+        "notes": [_source_note(totals), _humidity_note(totals),
+                  _distribution_note(), *_window_note(mode)],
     }
 
 
@@ -198,7 +224,8 @@ _ACC_SUMS = ("_sum", "_n", "_in_band", "_below", "_hot", "_prev_sum", "_prev_n",
 _ACC_MAXES = ("_max", "_prev_max", "_rh_max")
 
 
-def _rack_row(r: dict[str, Any], absent_now: str, absent_prev: str) -> dict[str, Any]:
+def _rack_row(r: dict[str, Any], absent_now: str, absent_prev: str,
+              absent: str) -> dict[str, Any]:
     p_n = int(r.get("p_n") or 0)
     f_n = int(r.get("f_n") or 0)
     if p_n:
@@ -248,9 +275,7 @@ def _rack_row(r: dict[str, Any], absent_now: str, absent_prev: str) -> dict[str,
         "_probes": 1 if source == "probes" else 0,
         "_servers": 1 if source == "servers" else 0,
     }
-    row.update(_derive(row, absent_now, absent_prev,
-                       absent="no intake probe or server sensor in this rack "
-                              "reported in this window"))
+    row.update(_derive(row, absent_now, absent_prev, absent=absent))
     # Exhaust minus intake: the heat the air actually carried away. Low on a
     # loaded rack is bypass air, not a cooling shortage.
     row["delta_t_k"] = (round(row["exhaust_c"] - row["avg_c"], 1)
@@ -417,6 +442,19 @@ def _source_note(totals: dict[str, Any]) -> str:
             f"inlet ({servers} rack{'s' if servers != 1 else ''}). Exhaust and ΔT "
             "come from servers only. This estate records no probe position; front "
             "is inferred from the readings, which track inlet rather than exhaust.")
+
+
+def _window_note(mode: str) -> list[str]:
+    """What a row counts, when that changes what the figures mean."""
+    if mode != "now":
+        return []
+    return ["Now is the newest reading from each sensor, and nothing older than "
+            "ten minutes. Every figure counts one reading per SENSOR rather than "
+            "every reading over a window, so the in-band share is the share of "
+            "sensors in band at this instant. Use it while something is "
+            "happening: an hour's mean needs an hour to show a change and holds "
+            "it for an hour after it clears. There are no deltas, because an "
+            "instant has no window to be compared with."]
 
 
 def _distribution_note() -> str:
@@ -910,6 +948,15 @@ _TREND_WIDTH = {"hour": timedelta(hours=1), "day": timedelta(days=1)}
 # rollup, whose chunks are a twelfth the size - a week of five-minute rows
 # from the uncompressed newest chunk is a ten-second cold read.
 _FINE_SOURCE_UP_TO = timedelta(days=2)
+#: How much of the newest hourly points to redraw from the hypertable.
+#:
+#: A rollup is never more current than its refresh policy: the five-minute
+#: aggregate lands up to ten minutes behind and the hourly one up to ninety.
+#: During an incident that is the bucket somebody is watching, so the tail is
+#: read from the raw table, which is current to the last poll. Two hours is
+#: enough to cover the hourly policy's lag and cheap enough to run every
+#: refresh - the same scan the live table does.
+_RAW_TAIL = timedelta(hours=2)
 # The hourly rollup closes an hour late and refreshes every half hour, so
 # its newest one to two buckets are empty while the five-minute one already
 # has them. For hourly points read from it, the tail of the window is
@@ -973,6 +1020,17 @@ async def thermal_trend(session: AsyncSession, *, days: int = 7,
                                         rack_id=rack_id)
         for r in tail:
             by.setdefault(r["b"], r)
+    if bucket == "hour":
+        # The newest buckets REPLACE what a rollup said about them rather than
+        # filling gaps: the rollup's version of the current hour is not
+        # missing, it is a few minutes short, and a partial bucket drawn as a
+        # finished one is what made a fault look like it had not arrived.
+        fresh = await repo.thermal_trend(session, start=max(start, end - _RAW_TAIL),
+                                         end=end, bucket=bucket, source="raw",
+                                         room_id=room_id, datacenter_id=datacenter_id,
+                                         rack_id=rack_id)
+        for r in fresh:
+            by[r["b"]] = r
     points = []
     t = start
     while t < end:

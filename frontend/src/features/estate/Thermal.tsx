@@ -23,6 +23,13 @@ import { ThermalTrend } from './ThermalTrend';
  *  beside compliance, not folded into it. There is no composite score: it
  *  would be a number we invented sitting beside five that were measured.
  *
+ *  Three windows, and they answer different questions. NOW is the newest
+ *  reading from each sensor, counting one reading per SENSOR: it is what to
+ *  watch while something is happening, because an hour's mean needs an hour
+ *  to show a step change and holds it for an hour after it clears. LAST HOUR
+ *  and BY DAY count every reading over a window, which is what compliance
+ *  means and what a quiet floor should be read on.
+ *
  *  Two ceilings, two tones. Above the recommended band (27 C) a row is warn;
  *  above the allowable ceiling (32 C) it is critical. Those are the same two
  *  lines the inlet temperature alarm rules draw, so the table and the alarm
@@ -103,7 +110,7 @@ function Spread({ d, low, high, allowable }: {
 }
 
 export function Thermal() {
-  const [mode, setMode] = useState<'daily' | 'live'>('live');
+  const [mode, setMode] = useState<'daily' | 'live' | 'now'>('now');
   const [unit, setUnit] = useState<Unit>('c');
   const [focus, setFocus] = useState<string>('');
   const [compare, setCompare] = useState<string>('');
@@ -117,7 +124,10 @@ export function Thermal() {
       focus: mode === 'daily' ? (focus || undefined) : undefined,
       compare: mode === 'daily' ? (compare || undefined) : undefined,
     }),
-    refetchInterval: mode === 'live' ? 60_000 : false,
+    // An instant is worth re-asking often; the probes behind it are polled
+    // every two to four minutes, so half a minute keeps the page ahead of
+    // them without asking for the same answer twice.
+    refetchInterval: mode === 'now' ? 30_000 : mode === 'live' ? 60_000 : false,
   });
 
   const t = useEstateTable<ThermalRow>(data?.sites ?? [], data?.rooms ?? [], data?.racks ?? []);
@@ -337,7 +347,9 @@ export function Thermal() {
         <Seg label="Unit" value={unit} onChange={setUnit}
              options={[{ key: 'c', label: '°C' }, { key: 'f', label: '°F' }]} />
         <Seg label="Window" value={mode} onChange={setMode}
-             options={[{ key: 'live', label: 'LAST HOUR' }, { key: 'daily', label: 'BY DAY' }]} />
+             options={[{ key: 'now', label: 'NOW' },
+                       { key: 'live', label: 'LAST HOUR' },
+                       { key: 'daily', label: 'BY DAY' }]} />
         {mode === 'daily' && (
           <>
             <label className="field">
@@ -421,9 +433,14 @@ export function Thermal() {
         'The trend reads the five-minute rollup for a day of hourly points and the '
         + 'hourly rollup for anything longer, so its p90 is over one value per sensor '
         + 'per five minutes or per hour and can sit a little off the table\'s '
-        + 'reading-level p90. A gap in the line is a period nothing reported.',
-        data ? `Window: ${data.window.label}, compared with ${data.window.compare_label}. `
-             + 'Days are UTC so every row covers the same 24 hours.' : '',
+        + 'reading-level p90. Hourly points redraw their newest two hours from '
+        + 'the readings themselves, because a rollup is never more current than '
+        + 'its refresh. A gap in the line is a period nothing reported.',
+        data ? (data.window.compare_label
+          ? `Window: ${data.window.label}, compared with ${data.window.compare_label}. `
+            + 'Days are UTC so every row covers the same 24 hours.'
+          : 'Window: the newest reading from each sensor, taken '
+            + `${new Date(data.window.focus_end).toLocaleTimeString()}.`) : '',
       ].filter(Boolean)} />
 
       {drawerRoom && (

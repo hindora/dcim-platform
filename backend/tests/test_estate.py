@@ -631,33 +631,51 @@ async def test_a_week_of_hourly_points_reads_the_hourly_rollup(monkeypatch):
     tail = fake.calls[1]
     assert tail["source"] == "5m"
     assert tail["end"] == out["until"] and tail["start"] == out["until"] - timedelta(hours=3)
-    # Daily points never need the tail: a day bucket is read late anyway.
+    # And the newest two hours come from the hypertable, which no refresh
+    # policy stands in front of.
+    fresh = fake.calls[2]
+    assert fresh["source"] == "raw"
+    assert fresh["end"] == out["until"] and fresh["start"] == out["until"] - timedelta(hours=2)
+    # Daily points take neither: a day bucket is read late anyway, and a day
+    # of raw is a scan nobody needs for a month-long line.
     out = await estate.thermal_trend(_FakeSession(), days=30, bucket="day")
-    assert fake.calls[2]["source"] == "1h" and len(fake.calls) == 3
+    assert fake.calls[3]["source"] == "1h" and len(fake.calls) == 4
 
 
 @pytest.mark.asyncio
-async def test_the_tail_fills_only_the_hours_the_hourly_rollup_lacked(monkeypatch):
+async def test_the_five_minute_tail_fills_gaps_and_the_raw_one_replaces(monkeypatch):
+    """Two different jobs on the same tail.
+
+    An hour the hourly rollup has not reached yet is MISSING, so the
+    five-minute rollup fills it. The newest hour is not missing, it is a few
+    minutes short - and a partial bucket drawn as a finished one is what made
+    a fault look like it had not arrived - so the raw table replaces it.
+    """
     from datetime import UTC, datetime, timedelta
     now = datetime.now(UTC)
     top = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
-    h1, h2 = top - timedelta(hours=2), top - timedelta(hours=1)
-    calls = []
+    old = top - timedelta(hours=5)          # outside the two-hour raw tail
+    gap = top - timedelta(hours=2)          # the hourly rollup never wrote it
+    live = top - timedelta(hours=1)         # the hour in progress
 
     async def fake(session, **kw):
-        calls.append(kw)
         if kw["source"] == "1h":
-            return [{"b": h1, "avg_c": 23.0, "p90_c": 23.3, "max_c": 24.0, "sensors": 80}]
-        return [{"b": h1, "avg_c": 99.0, "p90_c": 99.0, "max_c": 99.0, "sensors": 1},
-                {"b": h2, "avg_c": 23.1, "p90_c": 23.4, "max_c": 24.2, "sensors": 80}]
+            return [{"b": old, "avg_c": 23.0, "p90_c": 23.3, "max_c": 24.0, "sensors": 80},
+                    {"b": live, "avg_c": 23.1, "p90_c": 23.4, "max_c": 24.2, "sensors": 80}]
+        if kw["source"] == "5m":
+            return [{"b": gap, "avg_c": 25.0, "p90_c": 25.5, "max_c": 26.0, "sensors": 80},
+                    {"b": live, "avg_c": 30.0, "p90_c": 30.0, "max_c": 30.0, "sensors": 80}]
+        return [{"b": live, "avg_c": 35.0, "p90_c": 36.0, "max_c": 37.0, "sensors": 80}]
     monkeypatch.setattr(estate.repo, "thermal_trend", fake)
     out = await estate.thermal_trend(_FakeSession(), days=7, bucket="hour")
     by = {p["t"]: p for p in out["points"]}
-    # The hourly value stands where it exists; the five-minute one only
-    # fills the hour it was missing.
-    assert by[h1]["avg_c"] == 23.0
-    assert by[h2]["avg_c"] == 23.1 and by[h2]["sensors"] == 80
-    assert out["buckets_with_data"] == 2
+    # Outside every tail, the hourly rollup stands.
+    assert by[old]["avg_c"] == 23.0
+    # A gap the hourly rollup left is filled, not overwritten by raw.
+    assert by[gap]["avg_c"] == 25.0
+    # The hour in progress is the hypertable's, not either rollup's.
+    assert by[live]["avg_c"] == 35.0 and by[live]["max_c"] == 37.0
+    assert out["buckets_with_data"] == 3
 
 
 @pytest.mark.asyncio
@@ -720,4 +738,80 @@ async def test_trend_scope_is_passed_through(monkeypatch):
     kw = fake.calls[0]
     assert (kw["room_id"], kw["datacenter_id"], kw["rack_id"]) == ("r", "s", "k")
     assert (out["room_id"], out["datacenter_id"], out["rack_id"]) == ("r", "s", "k")
+
+
+# ------------------------------------------------------------- now mode
+# An instant, not a window: one reading per SENSOR, nothing older than the
+# horizon, and no comparison.
+
+
+def _rack_now(rack_id, room_id, **kw):
+    """A rack row as thermal_racks_now returns it: the compare columns are
+    always empty, because an instant has nothing to compare with."""
+    row = _rack(rack_id, room_id, **kw)
+    row.update({"pc_sum": None, "pc_n": 0, "pc_max": None,
+                "c_sum": None, "c_n": 0, "c_max": None})
+    return row
+
+
+@pytest.mark.asyncio
+async def test_now_reads_the_newest_reading_from_each_sensor(monkeypatch):
+    """Two probes reporting 30.0 and 34.0 right now is an average of 32.0 over
+    two readings, not two hundred."""
+    seen = {}
+
+    async def racks_now(session, **kw):
+        seen.update(kw)
+        return [_rack_now("r1", "a", p_sum=64.0, p_n=2, p_max=34.0,
+                          p_in_band=0, p_hot=2, p_sensors=2)]
+
+    async def p90_now(session, **kw):
+        seen["p90_since"] = kw["since"]
+        return {"racks": {"r1": 33.6}, "rooms": {"a": 33.6},
+                "sites": {"dc1": 33.6}, "total": 33.6}
+
+    monkeypatch.setattr(estate.repo, "thermal_rooms", _returns([_room("a", "dc1", "DC1")]))
+    monkeypatch.setattr(estate.repo, "thermal_racks_now", racks_now)
+    monkeypatch.setattr(estate.repo, "thermal_p90_now", p90_now)
+    out = await estate.thermal(_FakeSession(), mode="now")
+
+    rack = out["racks"][0]
+    assert rack["avg_c"] == 32.0 and rack["max_c"] == 34.0 and rack["samples"] == 2
+    assert rack["p90_c"] == 33.6
+    assert rack["compliance_pct"] == 0.0
+    assert rack["distribution"]["above_allowable_pct"] == 100.0
+    assert out["window"]["mode"] == "now" and out["window"]["label"] == "now"
+    # The horizon is applied, and both queries read the same instant.
+    assert seen["since"] == out["window"]["focus_start"]
+    assert seen["p90_since"] == seen["since"]
+    assert out["window"]["focus_end"] - seen["since"] == estate.repo.NOW_HORIZON
+
+
+@pytest.mark.asyncio
+async def test_now_has_no_deltas_and_says_why(monkeypatch):
+    """A delta against an instant would be a number with nothing behind it."""
+    monkeypatch.setattr(estate.repo, "thermal_rooms", _returns([_room("a", "dc1", "DC1")]))
+    monkeypatch.setattr(estate.repo, "thermal_racks_now", _returns(
+        [_rack_now("r1", "a", p_sum=46.0, p_n=2, p_max=23.5, p_in_band=2, p_sensors=2)]))
+    monkeypatch.setattr(estate.repo, "thermal_p90_now", _returns(
+        {"racks": {}, "rooms": {}, "sites": {}, "total": None}))
+    out = await estate.thermal(_FakeSession(), mode="now")
+
+    rack = out["racks"][0]
+    assert rack["delta_avg"] is None and rack["delta_max"] is None
+    assert "compared" in rack["delta_note"]
+    assert out["window"]["compare_start"] is None
+    assert any("newest reading from each sensor" in n for n in out["notes"])
+
+
+@pytest.mark.asyncio
+async def test_a_silent_rack_is_absent_in_now_too(monkeypatch):
+    monkeypatch.setattr(estate.repo, "thermal_rooms", _returns([_room("a", "dc1", "DC1")]))
+    monkeypatch.setattr(estate.repo, "thermal_racks_now", _returns([_rack_now("r1", "a")]))
+    monkeypatch.setattr(estate.repo, "thermal_p90_now", _returns(
+        {"racks": {}, "rooms": {}, "sites": {}, "total": None}))
+    out = await estate.thermal(_FakeSession(), mode="now")
+    rack = out["racks"][0]
+    assert rack["avg_c"] is None and rack["source"] is None
+    assert "ten minutes" in rack["note"]
 

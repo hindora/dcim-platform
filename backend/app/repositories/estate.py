@@ -278,7 +278,13 @@ async def thermal_p90(session: AsyncSession, *, focus_start: datetime,
 # percentile per bucket is taken over the source rows, so it has one value
 # per sensor per five minutes (or per hour) to work from - the time-weighted
 # basis - rather than being a percentile of one number per sensor.
-_TREND_SOURCE = {"5m": "telemetry_5m", "1h": "telemetry_1h"}
+#: Where a trend point can be read from. The rollups refresh on a schedule -
+#: five-minute every five minutes, hourly every thirty - so the newest bucket
+#: of either is behind the plane by that much. `raw` is the hypertable itself,
+#: which is current to the last poll and is what the newest bucket is redrawn
+#: from.
+_TREND_SOURCE = {"5m": "telemetry_5m", "1h": "telemetry_1h",
+                 "raw": "telemetry_sample"}
 _TREND_WIDTH = {"hour": timedelta(hours=1), "day": timedelta(days=1)}
 
 
@@ -298,17 +304,28 @@ async def thermal_trend(session: AsyncSession, *, start: datetime, end: datetime
              minutes, or per hour), interpolated;
       max  - the largest source max, i.e. the hottest reading.
 
-    `source` is which rollup to read ("5m" or "1h"); the service picks it by
-    window. The five-minute table's newest chunk stays uncompressed for
+    `source` is which table to read ("5m", "1h" or "raw"); the service picks
+    it by window. The five-minute table's newest chunk stays uncompressed for
     days and its rows for two metrics are scattered across hundreds of
     megabytes of heap, so a week of it cold is a ten-second read; the hourly
-    table is twelve times smaller for the same week.
+    table is twelve times smaller for the same week. `raw` is the hypertable,
+    used for the newest bucket only - a rollup cannot be more current than
+    its refresh policy, and during an incident that is the one bucket
+    somebody is watching.
 
     Buckets with nothing in them are absent; the service fills them so the
     line breaks where nothing was measured instead of bridging it.
     """
     table = _TREND_SOURCE[source]
     width = _TREND_WIDTH[bucket]
+    # The hypertable keeps one reading per row; a rollup keeps the mean, the
+    # maximum and how many readings are behind them. Named here so the rest of
+    # the query does not care which it is reading.
+    if source == "raw":
+        stamp, mean, peak, weight = "t.ts", "t.value", "t.value", "1"
+    else:
+        stamp, mean, peak, weight = ("t.bucket", "t.avg_value", "t.max_value",
+                                     "t.sample_count")
     scope = ""
     params: dict[str, Any] = {"t0": start, "t1": end, "width": width}
     if rack_id is not None:
@@ -323,8 +340,9 @@ async def thermal_trend(session: AsyncSession, *, start: datetime, end: datetime
     rows = (await session.execute(text(f"""
         WITH s AS (
             SELECT d.rack_id, t.device_id, m.key,
-                   time_bucket(:width, t.bucket) AS b,
-                   t.avg_value, t.max_value, t.sample_count
+                   time_bucket(:width, {stamp}) AS b,
+                   {mean} AS avg_value, {peak} AS max_value,
+                   {weight} AS sample_count
             FROM {table} t
             JOIN metric m    ON m.id = t.metric_id
             JOIN device d    ON d.id = t.device_id
@@ -334,7 +352,7 @@ async def thermal_trend(session: AsyncSession, *, start: datetime, end: datetime
             JOIN rack_row rr ON rr.id = r.row_id
             JOIN room rm     ON rm.id = rr.room_id
             WHERE m.key IN ('inlet_temperature', 'ambient_temperature')
-              AND t.bucket >= :t0 AND t.bucket < :t1
+              AND {stamp} >= :t0 AND {stamp} < :t1
               {scope}
         ),
         src AS (
@@ -358,6 +376,184 @@ async def thermal_trend(session: AsyncSession, *, start: datetime, end: datetime
         ORDER BY b
     """), params)).mappings().all()
     return [dict(r) for r in rows]
+
+
+#: How far back a NOW reading may have come from.
+#:
+#: One poll interval is not enough: a rack probe is polled every two to four
+#: minutes and a server every one to three, and a sensor that happened to be
+#: read a moment before the horizon would drop out of the estate and take its
+#: rack with it. Ten minutes covers the slowest cadence several times over
+#: while still excluding a sensor that has genuinely stopped.
+NOW_HORIZON = timedelta(minutes=10)
+
+
+async def thermal_racks_now(session: AsyncSession, *, since: datetime,
+                            low_c: float, high_c: float,
+                            allowable_c: float) -> list[dict[str, Any]]:
+    """The newest reading from every rack sensor, right now.
+
+    Same shape as `thermal_racks` so the service folds it identically, and the
+    same probe-first source rule applies on top. What differs is what a row
+    counts: one reading per SENSOR rather than every reading over a window, so
+    the in-band share is the share of sensors in band at this instant rather
+    than the share of readings over an hour.
+
+    That is the number an operator wants while something is happening. An
+    hour's mean cannot show a step change until an hour has passed, and holds
+    it for an hour after it clears - so a tripped CRAH looked like nothing for
+    ten minutes and like a fault long after it was fixed.
+
+    There is no comparison window: an instant has nothing to be compared with,
+    and inventing one would put a delta on the page that means nothing.
+    """
+    rows = (await session.execute(text("""
+        WITH latest AS (
+            SELECT DISTINCT ON (t.device_id, t.metric_id)
+                   t.device_id, m.key, t.value
+            FROM telemetry_sample t
+            JOIN metric m ON m.id = t.metric_id
+            JOIN device d ON d.id = t.device_id
+                         AND d.rack_id IS NOT NULL
+                         AND d.lifecycle <> 'decommissioned'
+            WHERE m.key IN ('inlet_temperature', 'ambient_temperature',
+                            'exhaust_temperature', 'relative_humidity')
+              AND t.ts >= :t0
+            ORDER BY t.device_id, t.metric_id, t.ts DESC
+        ),
+        per_rack AS (
+            SELECT d.rack_id, l.key,
+                   sum(l.value)                                     AS v_sum,
+                   count(*)                                         AS v_n,
+                   max(l.value)                                     AS v_max,
+                   count(*) FILTER (WHERE l.value >= :low
+                                      AND l.value <= :high)         AS v_in_band,
+                   count(*) FILTER (WHERE l.value < :low)           AS v_below,
+                   count(*) FILTER (WHERE l.value > :allow)         AS v_hot
+            FROM latest l JOIN device d ON d.id = l.device_id
+            GROUP BY d.rack_id, l.key
+        ),
+        agg AS (
+            SELECT rack_id,
+                   sum(v_sum)      FILTER (WHERE key = 'inlet_temperature')   AS f_sum,
+                   sum(v_n)        FILTER (WHERE key = 'inlet_temperature')   AS f_n,
+                   max(v_max)      FILTER (WHERE key = 'inlet_temperature')   AS f_max,
+                   sum(v_in_band)  FILTER (WHERE key = 'inlet_temperature')   AS f_in_band,
+                   sum(v_below)    FILTER (WHERE key = 'inlet_temperature')   AS f_below,
+                   sum(v_hot)      FILTER (WHERE key = 'inlet_temperature')   AS f_hot,
+                   sum(v_n)        FILTER (WHERE key = 'inlet_temperature')   AS f_sensors,
+                   sum(v_sum)      FILTER (WHERE key = 'ambient_temperature') AS p_sum,
+                   sum(v_n)        FILTER (WHERE key = 'ambient_temperature') AS p_n,
+                   max(v_max)      FILTER (WHERE key = 'ambient_temperature') AS p_max,
+                   sum(v_in_band)  FILTER (WHERE key = 'ambient_temperature') AS p_in_band,
+                   sum(v_below)    FILTER (WHERE key = 'ambient_temperature') AS p_below,
+                   sum(v_hot)      FILTER (WHERE key = 'ambient_temperature') AS p_hot,
+                   sum(v_n)        FILTER (WHERE key = 'ambient_temperature') AS p_sensors,
+                   sum(v_sum)      FILTER (WHERE key = 'exhaust_temperature') AS e_sum,
+                   sum(v_n)        FILTER (WHERE key = 'exhaust_temperature') AS e_n,
+                   sum(v_sum)      FILTER (WHERE key = 'relative_humidity')   AS rh_sum,
+                   sum(v_n)        FILTER (WHERE key = 'relative_humidity')   AS rh_n,
+                   max(v_max)      FILTER (WHERE key = 'relative_humidity')   AS rh_max,
+                   sum(v_n)        FILTER (WHERE key = 'relative_humidity')   AS rh_probes
+            FROM per_rack GROUP BY rack_id
+        )
+        SELECT r.id::text            AS rack_id,
+               r.name                AS rack_name,
+               rr.name               AS row_name,
+               r.u_height            AS u_height,
+               rm.id::text           AS room_id,
+               rm.name               AS room_name,
+               rm.floor              AS floor,
+               rm.room_class         AS room_class,
+               dc.id::text           AS datacenter_id,
+               dc.code               AS site_code,
+               dc.name               AS site_name,
+               agg.f_sum, agg.f_n, agg.f_max, agg.f_in_band, agg.f_sensors,
+               agg.f_below, agg.f_hot,
+               agg.p_sum, agg.p_n, agg.p_max, agg.p_in_band, agg.p_sensors,
+               agg.p_below, agg.p_hot,
+               -- An instant has no window to be compared with.
+               NULL::double precision AS pc_sum, 0 AS pc_n,
+               NULL::double precision AS pc_max,
+               agg.e_sum, agg.e_n,
+               NULL::double precision AS c_sum, 0 AS c_n,
+               NULL::double precision AS c_max,
+               agg.rh_sum, agg.rh_n, agg.rh_max, agg.rh_probes
+        FROM rack r
+        JOIN rack_row rr   ON rr.id = r.row_id
+        JOIN room rm       ON rm.id = rr.room_id
+        JOIN datacenter dc ON dc.id = rm.datacenter_id
+        LEFT JOIN agg      ON agg.rack_id = r.id
+        ORDER BY dc.code, rm.name,
+                 COALESCE(agg.p_max, agg.f_max) DESC NULLS LAST,
+                 rr.ordinal, r.ordinal, r.name
+    """), {"t0": since, "low": low_c, "high": high_c,
+           "allow": allowable_c})).mappings().all()
+    return [dict(r) for r in rows]
+
+
+async def thermal_p90_now(session: AsyncSession, *,
+                          since: datetime) -> dict[str, Any]:
+    """The 90th percentile across SENSORS at this instant, per tier.
+
+    The windowed form takes a percentile over every reading in an hour; this
+    one takes it over one reading per sensor, which is what "the ninetieth
+    percentile rack right now" means.
+    """
+    rows = (await session.execute(text("""
+        WITH latest AS (
+            SELECT DISTINCT ON (t.device_id, t.metric_id)
+                   t.device_id, m.key, t.value
+            FROM telemetry_sample t
+            JOIN metric m ON m.id = t.metric_id
+            JOIN device d ON d.id = t.device_id
+                         AND d.rack_id IS NOT NULL
+                         AND d.lifecycle <> 'decommissioned'
+            WHERE m.key IN ('inlet_temperature', 'ambient_temperature')
+              AND t.ts >= :t0
+            ORDER BY t.device_id, t.metric_id, t.ts DESC
+        ),
+        s AS (
+            SELECT d.rack_id, l.key, l.value
+            FROM latest l JOIN device d ON d.id = l.device_id
+        ),
+        src AS (
+            SELECT rack_id, bool_or(key = 'ambient_temperature') AS has_probe
+            FROM s GROUP BY rack_id
+        ),
+        chosen AS (
+            SELECT s.rack_id, s.value
+            FROM s JOIN src USING (rack_id)
+            WHERE s.key = CASE WHEN src.has_probe
+                               THEN 'ambient_temperature'
+                               ELSE 'inlet_temperature' END
+        ),
+        located AS (
+            SELECT c.rack_id, rr.room_id, rm.datacenter_id, c.value
+            FROM chosen c
+            JOIN rack r      ON r.id  = c.rack_id
+            JOIN rack_row rr ON rr.id = r.row_id
+            JOIN room rm     ON rm.id = rr.room_id
+        )
+        SELECT rack_id::text       AS rack_id,
+               room_id::text       AS room_id,
+               datacenter_id::text AS datacenter_id,
+               percentile_cont(0.9) WITHIN GROUP (ORDER BY value) AS p90
+        FROM located
+        GROUP BY GROUPING SETS ((rack_id), (room_id), (datacenter_id), ())
+    """), {"t0": since})).mappings().all()
+    out: dict[str, Any] = {"racks": {}, "rooms": {}, "sites": {}, "total": None}
+    for r in rows:
+        p90 = None if r["p90"] is None else float(r["p90"])
+        if r["rack_id"] is not None:
+            out["racks"][r["rack_id"]] = p90
+        elif r["room_id"] is not None:
+            out["rooms"][r["room_id"]] = p90
+        elif r["datacenter_id"] is not None:
+            out["sites"][r["datacenter_id"]] = p90
+        else:
+            out["total"] = p90
+    return out
 
 
 async def power_window(session: AsyncSession, *, start: datetime, end: datetime,

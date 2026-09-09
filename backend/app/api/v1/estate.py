@@ -41,16 +41,19 @@ async def thermal(
     focus: date | None = Query(None, description="Day to report, UTC. Defaults to yesterday."),
     compare: date | None = Query(
         None, description="Day to compare against. Defaults to the day before focus."),
-    mode: str = Query("daily", pattern="^(daily|live)$"),
+    mode: str = Query("daily", pattern="^(daily|live|now)$"),
     session: AsyncSession = Depends(get_session),
     _: Principal = Depends(current_principal),
 ) -> dict:
     """Rack intake air, averaged by SAMPLE across the estate.
 
-    `live` reports the last hour against the hour before it; `daily` reports a
-    calendar day in UTC against another. The window is echoed back in the
-    response - a temperature without the window it was measured over is not a
-    fact anyone can act on.
+    `now` reports the newest reading from each sensor and nothing older than
+    ten minutes, counting one reading per sensor rather than every reading over
+    a window; `live` reports the last hour against the hour before it; `daily`
+    reports a calendar day in UTC against another. The window is echoed back in
+    the response - a temperature without the window it was measured over is not
+    a fact anyone can act on, and `now` and `live` answer different questions:
+    what is happening, and what has been happening.
     """
     return await service.thermal(session, focus=focus, compare=compare, mode=mode)
 
