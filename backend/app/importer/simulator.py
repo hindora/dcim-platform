@@ -465,6 +465,14 @@ class TopologyImporter:
             # neighbours under the rack-unit exclusion constraint.
             raw_u = dev.get("rack_unit")
             u_start = raw_u if isinstance(raw_u, int) and raw_u > 0 else None
+            # A probe on a strip's sensor port is cable-tied to the front door
+            # at a height, not screwed into the mounting rails. Its rack_unit
+            # is WHERE IT SITS - which is why a pair on one rack reads two
+            # different temperatures - and not a position it occupies. Storing
+            # it as one would block a mounting slot and, on a full rack,
+            # collide with the server already in it.
+            if dev.get("host_pdu_ip"):
+                u_start = None
 
         device_id = await self._scalar("""
             INSERT INTO device (external_id, name, device_type, model_id, vendor_id,
