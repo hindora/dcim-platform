@@ -12,6 +12,7 @@ import { downloadCsv, stampedName } from '../../lib/csv';
 import { RoomDrawer } from '../home/RoomDrawer';
 import { useEstateTable } from './useEstateTable';
 import { ThermalTrend } from './ThermalTrend';
+import { RoomCooling } from './RoomCooling';
 
 /** Thermal: how warm the estate is running, and how much of it is in band.
  *
@@ -469,6 +470,15 @@ export function Thermal() {
                    noun={t.tier}
                    onPage={t.setPage} onPageSize={t.setPageSize} onCsv={exportCsv} />
       </div>
+
+      {/* Drilled into a room, the units cooling it. They stand on the floor,
+          so they are in no rack and appear nowhere in the table above - which
+          is why a hall could show open conditions while every rack under it
+          showed none. Supply against return is also the page's own thesis,
+          and it is invisible until the units are listed. */}
+      {t.selectedRoom && (
+        <RoomCooling roomId={t.selectedRoom.id} roomName={t.selectedRoom.name} unit={unit} />
+      )}
 
       {/* The chart follows the drill: the estate, then the site, then the
           room the table is showing. */}
