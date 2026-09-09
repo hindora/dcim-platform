@@ -256,6 +256,49 @@ func (a *Adapter) checkUptime(ep *models.Endpoint, client *g.GoSNMP,
 	return seen && seconds < previous
 }
 
+// resolveOID fills {placeholders} in a profile OID from the endpoint's
+// addressing.
+//
+// Some devices are not separately addressable: they are one ROW of a table on
+// a device that is. A probe on a rack PDU's sensor port has no IP of its own -
+// the strip polls it over an RJ-45 lead and publishes it at a sensor index -
+// so the endpoint carries the strip's address and the index, and the leaf a
+// poller reads is the profile's column plus that index. Written this way the
+// profile still says which column means what, and the endpoint says which row
+// is this device.
+//
+// An unresolved placeholder yields "", and the caller drops that OID rather
+// than reading a leaf that means something else. Asking for column.0 or for
+// the literal text would return the wrong sensor or nothing at all, and both
+// are worse than not asking.
+func resolveOID(oid string, addressing map[string]any) string {
+	if !strings.Contains(oid, "{") {
+		return oid
+	}
+	out := oid
+	for {
+		i := strings.Index(out, "{")
+		if i < 0 {
+			break
+		}
+		j := strings.Index(out[i:], "}")
+		if j < 0 {
+			return ""
+		}
+		key := out[i+1 : i+j]
+		v, ok := addressing[key]
+		if !ok {
+			return ""
+		}
+		n, ok := toInt(v)
+		if !ok {
+			return ""
+		}
+		out = out[:i] + strconv.FormatInt(n, 10) + out[i+j+1:]
+	}
+	return out
+}
+
 func (a *Adapter) collectScalars(client *g.GoSNMP, profile *mapping.Profile,
 	ep *models.Endpoint, outcome *models.PollOutcome, now int64, reset bool) {
 
@@ -263,11 +306,19 @@ func (a *Adapter) collectScalars(client *g.GoSNMP, profile *mapping.Profile,
 		return
 	}
 	oids := make([]string, 0, len(profile.Scalars))
-	for _, s := range profile.Scalars {
+	// The OID this endpoint actually reads for each scalar, which differs from
+	// the profile's when the device is one row of a table.
+	leaf := make(map[int]string, len(profile.Scalars))
+	for i, s := range profile.Scalars {
 		if s.OID == sysUpTimeOID {
 			continue // already read, and re-reading would double-emit
 		}
-		oids = append(oids, s.OID)
+		o := resolveOID(s.OID, ep.Addressing)
+		if o == "" {
+			continue
+		}
+		leaf[i] = o
+		oids = append(oids, o)
 	}
 	// Derived scalars need their operands fetched even when no plain scalar
 	// maps them.
@@ -297,8 +348,12 @@ func (a *Adapter) collectScalars(client *g.GoSNMP, profile *mapping.Profile,
 	for _, pdu := range result.Variables {
 		byOID[strings.TrimPrefix(pdu.Name, ".")] = pdu
 	}
-	for _, s := range profile.Scalars {
-		pdu, ok := byOID[s.OID]
+	for i, s := range profile.Scalars {
+		o, asked := leaf[i]
+		if !asked {
+			continue
+		}
+		pdu, ok := byOID[o]
 		if !ok || pdu.Type == g.NoSuchObject || pdu.Type == g.NoSuchInstance {
 			// A device that legitimately lacks an OID must not raise a data gap.
 			outcome.Misses = append(outcome.Misses,

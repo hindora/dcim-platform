@@ -293,6 +293,33 @@ def derive_endpoints(
                 addressing={"target": target, "insecure": True},
             ))
 
+    # ------------------------------------------------- probe on a sensor port
+    if "snmp" in include_protocols and dev.get("host_pdu_ip"):
+        # A probe has no address. Its host strip polls it over an RJ-45 lead
+        # and publishes it at a sensor index, so the endpoint carries the
+        # STRIP's address and the index says which probe answered - the same
+        # shape as an RTU slave behind a Modbus gateway.
+        #
+        # Polled as itself rather than read as a column on the strip, so the
+        # reading, the comm status and any alarm belong to the probe. Read at
+        # the strip they were a rack-wide figure whatever was fitted, and a
+        # probe that stopped answering was invisible.
+        index = dev.get("sensor_slot")
+        if index:
+            out.append(EndpointSpec(
+                protocol="snmp", role="field_device",
+                address=dev["host_pdu_ip"], port=161,
+                poll_profile="snmp-probe-120s",
+                addressing={"sensor_index": index},
+                # The community belongs to the AGENT, and the agent is the
+                # strip. Deriving one from the probe - which has no address -
+                # produced an endpoint with no credential at all, and a
+                # request with the wrong community is not refused, it is
+                # dropped: every probe polled, every read empty, and the whole
+                # set sat DEGRADED looking like dead hardware.
+                **_snmp_credential(dev["host_pdu_ip"]),
+                via_address=dev["host_pdu_ip"]))
+
     # ---------------------------------------------------------------- BACnet
     if "bacnet" in include_protocols and dtype in BACNET_TYPES:
         if dev.get("mstp_router_ip"):

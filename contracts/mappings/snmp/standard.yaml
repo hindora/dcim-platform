@@ -303,28 +303,36 @@ profiles:
       - oid: 1.3.6.1.4.1.318.1.1.26.6.3.1.6.1     # rPDU2PhaseStatusVoltage, V
         metric: voltage_ln
         value_type: gauge
-    # rPDU2SensorTempHumidityStatusTable, WALKED.
-    #
-    # An AP8000 has no environmental sensor of its own. It has two RJ-45
-    # sensor ports, and this table carries one row per probe fitted to them -
-    # so a strip with bare ports returns nothing here, which is the difference
-    # between "the rack is 23 C" and "nobody is measuring this rack".
-    #
-    # Read as a table rather than at index 1, because a strip can carry two.
-    # Reading the first row only made a second probe invisible and silently
-    # attributed one height's reading to the whole rack; the row index is the
-    # sensor port, so a bottom and a top probe now arrive as two readings that
-    # can be told apart.
-    tables:
-      - name: apc_rack_probes
-        columns:
-          - oid: 1.3.6.1.4.1.318.1.1.26.10.2.2.1.8   # ...StatusTempC, 0.1 C
-            metric: ambient_temperature
-            value_type: gauge
-            transform: {scale: 0.1}
-          - oid: 1.3.6.1.4.1.318.1.1.26.10.2.2.1.10  # ...StatusRelativeHumidity, %
-            metric: relative_humidity
-            value_type: gauge
+    # The strip publishes no environment of its own. An AP8000 has no
+    # onboard sensor - it has two RJ-45 sensor ports - so a temperature read
+    # here belongs to the PROBE fitted to a port, not to the strip, and it is
+    # collected against that probe by the profile below.
+
+  # A probe on a rack PDU's sensor port.
+  #
+  # It has no address: the strip polls it over the lead and publishes it at a
+  # sensor index, so the endpoint carries the STRIP's address and the index,
+  # and {sensor_index} is filled from the endpoint's addressing. The same
+  # arrangement as an RTU slave behind a Modbus gateway or an MS/TP controller
+  # behind a BACnet router - the carrier is how you reach it, the sub-address
+  # is which one it is.
+  #
+  # Read against the probe rather than the strip so the reading, the comm
+  # status and any alarm belong to the thing that took it. Read at the strip
+  # they were a rack-wide average of whatever was fitted, and a probe that
+  # stopped answering was invisible.
+  - name: pdu_probe_apc
+    scalars:
+      - oid: 1.3.6.1.4.1.318.1.1.26.10.2.2.1.8.{sensor_index}   # ...StatusTempC, 0.1 C
+        metric: ambient_temperature
+        value_type: gauge
+        transform: {scale: 0.1}
+      # An AP9335T carries a thermistor only. Its humidity leaf does not
+      # exist, the agent says so, and no sample is recorded - which is the
+      # difference between a dry rack and an unmeasured one.
+      - oid: 1.3.6.1.4.1.318.1.1.26.10.2.2.1.10.{sensor_index}  # ...RelativeHumidity, %
+        metric: relative_humidity
+        value_type: gauge
 
   # Raritan PX2 - PDU2-MIB measurement tables. 24 units here.
   #

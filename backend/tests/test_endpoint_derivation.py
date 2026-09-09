@@ -378,3 +378,43 @@ def test_retiring_an_endpoint_also_stops_its_state_claiming_a_fault():
     # The history stays: last_success and the poll totals are the record of
     # what the endpoint did while it was in service.
     assert "last_success" not in src.split("UPDATE endpoint_state")[1]
+
+
+def test_a_probe_is_polled_through_the_strip_that_carries_it():
+    """It has no address of its own.
+
+    An AP9335 plugs into a rack PDU's sensor port and is read by the strip
+    over the lead, so the endpoint carries the STRIP's address and the sensor
+    index says which probe answered - the same shape as an RTU slave behind a
+    Modbus gateway. Polled as itself, the reading and the comm status belong
+    to the probe; read as a column on the strip they were a rack-wide figure
+    and a probe that stopped answering was invisible.
+    """
+    specs = derive_endpoints({
+        "name": "SEN2-DC1-HA-R2-01", "device_type": "sensor",
+        "model_name": "APC AP9335T", "ip_address": "", "mgmt_ip": "",
+        "host_pdu_ip": "10.52.11.30", "sensor_slot": 2,
+    })
+    snmp = [s for s in specs if s.protocol == "snmp"]
+    assert len(snmp) == 1, [s.protocol for s in specs]
+    ep = snmp[0]
+    assert ep.address == "10.52.11.30" and ep.port == 161
+    assert ep.addressing == {"sensor_index": 2}
+    assert ep.poll_profile == "snmp-probe-120s"
+    assert ep.via_address == "10.52.11.30"
+    # The community belongs to the agent, and the agent is the strip. A probe
+    # has no address to derive one from, and a request with the wrong
+    # community is dropped rather than refused - so getting this wrong reads
+    # as dead hardware, not as an auth failure.
+    assert ep.credential_name == "snmp-v2c-10.52.11.30"
+
+
+def test_a_probe_with_no_port_recorded_is_not_polled():
+    """Without the index there is no way to say which probe a reading came
+    from, and asking for the column with no row returns the wrong sensor."""
+    specs = derive_endpoints({
+        "name": "SEN9-DC1-HA-R2-01", "device_type": "sensor",
+        "model_name": "APC AP9335T", "ip_address": "", "mgmt_ip": "",
+        "host_pdu_ip": "10.52.11.30", "sensor_slot": 0,
+    })
+    assert not [s for s in specs if s.protocol == "snmp"]
