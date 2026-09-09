@@ -161,12 +161,22 @@ async def thermal(session: AsyncSession, *, focus: date | None = None,
     skeleton = await repo.thermal_rooms(session)
     raw_racks = await repo.thermal_racks(session, focus_start=f0, focus_end=f1,
                                          compare_start=c0, compare_end=c1,
-                                         low_c=BAND_LOW_C, high_c=BAND_HIGH_C)
+                                         low_c=BAND_LOW_C, high_c=BAND_HIGH_C,
+                                         allowable_c=ALLOWABLE_HIGH_C)
+    # A percentile does not fold from sums, so it is taken over the pooled
+    # readings at every tier in one query and attached afterwards. Same
+    # readings, same source rule, so it agrees with the averages beside it.
+    p90 = await repo.thermal_p90(session, focus_start=f0, focus_end=f1)
 
     racks = [_rack_row(r, absent_now, absent_prev) for r in raw_racks]
     rooms = _fold_rooms(skeleton, racks, absent_now, absent_prev)
     sites = _fold_sites(rooms, absent_now, absent_prev)
     totals = _fold_total(rooms)
+    _attach_p90(racks, p90["racks"])
+    _attach_p90(rooms, p90["rooms"])
+    _attach_p90(sites, p90["sites"])
+    totals["p90_c"] = (round(p90["total"], 1)
+                       if p90["total"] is not None and totals["samples"] else None)
     return {
         "window": window,
         "band": {"low_c": BAND_LOW_C, "high_c": BAND_HIGH_C,
@@ -177,13 +187,13 @@ async def thermal(session: AsyncSession, *, focus: date | None = None,
         "sites": sites,
         "rooms": [_strip(r) for r in rooms],
         "racks": [_strip(r) for r in racks],
-        "notes": [_source_note(totals), _humidity_note(totals)],
+        "notes": [_source_note(totals), _humidity_note(totals), _distribution_note()],
     }
 
 
 # The private keys every tier carries so the tier above can fold it. Sums and
 # counts, never averages; maxima; and how many racks each source spoke for.
-_ACC_SUMS = ("_sum", "_n", "_in_band", "_prev_sum", "_prev_n",
+_ACC_SUMS = ("_sum", "_n", "_in_band", "_below", "_hot", "_prev_sum", "_prev_n",
              "_rh_sum", "_rh_n", "_rh_probes", "_probes", "_servers")
 _ACC_MAXES = ("_max", "_prev_max", "_rh_max")
 
@@ -194,15 +204,18 @@ def _rack_row(r: dict[str, Any], absent_now: str, absent_prev: str) -> dict[str,
     if p_n:
         source = "probes"
         n, s_sum, mx, in_band = p_n, r["p_sum"], r["p_max"], r["p_in_band"]
+        below, hot = r.get("p_below"), r.get("p_hot")
         sensors = int(r.get("p_sensors") or 0)
         prev_n, prev_sum, prev_max = int(r.get("pc_n") or 0), r.get("pc_sum"), r.get("pc_max")
     elif f_n:
         source = "servers"
         n, s_sum, mx, in_band = f_n, r["f_sum"], r["f_max"], r["f_in_band"]
+        below, hot = r.get("f_below"), r.get("f_hot")
         sensors = int(r.get("f_sensors") or 0)
         prev_n, prev_sum, prev_max = int(r.get("c_n") or 0), r.get("c_sum"), r.get("c_max")
     else:
         source, n, s_sum, mx, in_band, sensors = None, 0, 0.0, None, 0, 0
+        below = hot = 0
         # Nothing this window; whichever source spoke last window names the
         # comparison for the note, and the delta is None regardless.
         prev_n = int(r.get("pc_n") or r.get("c_n") or 0)
@@ -227,6 +240,7 @@ def _rack_row(r: dict[str, Any], absent_now: str, absent_prev: str) -> dict[str,
         "sensors": sensors,
         "exhaust_c": round(float(r["e_sum"]) / e_n, 1) if e_n else None,
         "_sum": float(s_sum or 0.0), "_n": n, "_in_band": int(in_band or 0),
+        "_below": int(below or 0), "_hot": int(hot or 0),
         "_prev_sum": _f(prev_sum) or 0.0, "_prev_n": prev_n,
         "_max": _f(mx), "_prev_max": _f(prev_max),
         "_rh_sum": _f(r.get("rh_sum")) or 0.0, "_rh_n": rh_n,
@@ -257,6 +271,8 @@ def _derive(acc: dict[str, Any], absent_now: str, absent_prev: str, *,
         "avg_c": avg,
         "max_c": mx,
         "compliance_pct": _pct(acc["_in_band"], n) if n else None,
+        "below_pct": _pct(acc["_below"], n) if n else None,
+        "distribution": _distribution(acc),
         "samples": n,
         "delta_avg": _delta(avg, prev_avg),
         "delta_max": _delta(mx, prev_mx),
@@ -271,6 +287,35 @@ def _derive(acc: dict[str, Any], absent_now: str, absent_prev: str, *,
         # cell means "cool" or "nobody is measuring".
         "note": None if n else absent,
     }
+
+
+def _distribution(acc: dict[str, Any]) -> dict[str, float] | None:
+    """Where the readings fell against the ASHRAE lines, as shares of the row.
+
+    Four bands that partition every reading: below the recommended floor
+    (overcooled - the finding a floor most often pays for), inside the
+    recommended band, above it but inside the allowable envelope, and above
+    the allowable ceiling. Counts fold by addition, so a room's split is its
+    racks' readings pooled, never an average of percentages.
+    """
+    n = acc["_n"]
+    if not n:
+        return None
+    below, in_band, hot = acc["_below"], acc["_in_band"], acc["_hot"]
+    above_rec = max(n - below - in_band - hot, 0)
+    return {
+        "below_pct": _pct(below, n),
+        "in_band_pct": _pct(in_band, n),
+        "above_recommended_pct": _pct(above_rec, n),
+        "above_allowable_pct": _pct(hot, n),
+    }
+
+
+def _attach_p90(rows: list[dict[str, Any]], by_id: dict[str, float | None]) -> None:
+    """p90 rides on the row whose readings it was taken over; None elsewhere."""
+    for r in rows:
+        v = by_id.get(r["id"]) if r["samples"] else None
+        r["p90_c"] = None if v is None else round(v, 1)
 
 
 def _empty_acc() -> dict[str, Any]:
@@ -339,6 +384,8 @@ def _fold_total(rooms: list[dict[str, Any]]) -> dict[str, Any]:
         "avg_c": round(acc["_sum"] / n, 1) if n else None,
         "max_c": None if acc["_max"] is None else round(acc["_max"], 1),
         "compliance_pct": _pct(acc["_in_band"], n) if n else None,
+        "below_pct": _pct(acc["_below"], n) if n else None,
+        "distribution": _distribution(acc),
         "samples": n,
         "rh_avg": round(acc["_rh_sum"] / rh_n, 1) if rh_n else None,
         "rh_max": None if acc["_rh_max"] is None else round(acc["_rh_max"], 1),
@@ -370,6 +417,17 @@ def _source_note(totals: dict[str, Any]) -> str:
             f"inlet ({servers} rack{'s' if servers != 1 else ''}). Exhaust and ΔT "
             "come from servers only. This estate records no probe position; front "
             "is inferred from the readings, which track inlet rather than exhaust.")
+
+
+def _distribution_note() -> str:
+    return (f"Spread splits the same intake readings by the ASHRAE lines: below "
+            f"{BAND_LOW_C:g} °C is overcooled, the most common finding on a real "
+            f"floor and the evidence for raising a setpoint; {BAND_LOW_C:g}–"
+            f"{BAND_HIGH_C:g} °C recommended; {BAND_HIGH_C:g}–{ALLOWABLE_HIGH_C:g} °C "
+            f"allowable; above {ALLOWABLE_HIGH_C:g} °C at risk. p90 is the 90th "
+            "percentile of the row's pooled readings, interpolated, over the focus "
+            "window only: what the row runs at without one sensor's spike deciding, "
+            "which Max lets happen.")
 
 
 def _humidity_note(totals: dict[str, Any]) -> str:

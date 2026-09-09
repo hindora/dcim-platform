@@ -140,6 +140,9 @@
 .estate-table tbody tr.lead-none     { border-left-color: var(--border-strong); }
 
 .estate-table .name-cell { display: flex; align-items: center; gap: 10px; min-width: 0; }
+/* The name never wraps to make room for figures: a wide tier scrolls inside
+   .estate-scroll instead, per the rule that a table never squeezes its label. */
+.estate-table .name-cell .n, .estate-table .name-cell .where { white-space: nowrap; }
 .estate-table .name-cell .n { font-weight: 600; }
 .estate-table .name-cell .where { font-size: 11px; color: var(--text-faint); }
 .estate-table .dash { color: var(--unknown); }

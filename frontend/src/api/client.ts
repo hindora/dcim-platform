@@ -1455,10 +1455,28 @@ export interface EstateRowBase {
   note?: string | null;
 }
 
+/** Where a row's intake readings fell against the ASHRAE lines, as shares
+ *  of the row's readings. The four partition every reading: below the
+ *  recommended floor (overcooled), inside the recommended band, above it but
+ *  inside the allowable envelope, above the allowable ceiling. */
+export interface ThermalSpread {
+  below_pct: number;
+  in_band_pct: number;
+  above_recommended_pct: number;
+  above_allowable_pct: number;
+}
+
 export interface ThermalRow extends EstateRowBase {
   avg_c: number | null;
+  /** 90th percentile of the row's pooled intake readings, focus window
+   *  only, interpolated. What the row runs at without one sensor's spike
+   *  deciding, which Max lets happen. Null where nothing reported. */
+  p90_c: number | null;
   max_c: number | null;
   compliance_pct: number | null;
+  /** Share of readings below the recommended floor: overcooling. */
+  below_pct: number | null;
+  distribution: ThermalSpread | null;
   samples: number;
   delta_avg: number | null;
   delta_max: number | null;
@@ -1501,7 +1519,9 @@ export interface ThermalPage {
     basis: string;
   };
   totals: {
-    avg_c: number | null; max_c: number | null; compliance_pct: number | null;
+    avg_c: number | null; p90_c: number | null; max_c: number | null;
+    compliance_pct: number | null; below_pct: number | null;
+    distribution: ThermalSpread | null;
     samples: number; rooms_reporting: number; rooms: number;
     facility_rooms: number;
     rh_avg: number | null; rh_max: number | null; rh_probes: number;

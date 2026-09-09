@@ -515,6 +515,14 @@ button.primary { background: var(--accent-dim); border-color: var(--accent); }
 .stack-seg.warn { background: var(--warn); }
 .stack-seg.critical { background: var(--critical); }
 .stack-seg.unknown { background: var(--unknown); }
+/* Overcooled: cold is a state of its own, neither fine nor a ceiling. */
+.stack-seg.cool { background: var(--cat-cool); }
+/* A partition bar living in a table cell: no vertical margin, a fixed
+   width so the column does not grow to its content, 10px so it reads as
+   a mark beside figures rather than a chart. */
+.stack-bar.cell { display: inline-flex; width: 96px; height: 10px; margin: 0;
+                  vertical-align: middle; }
+.spread-line { display: block; white-space: nowrap; }
 
 .legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12px;
           color: var(--text-muted); margin: 6px 0 14px; }

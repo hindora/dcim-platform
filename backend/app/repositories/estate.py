@@ -86,7 +86,7 @@ async def thermal_rooms(session: AsyncSession) -> list[dict[str, Any]]:
 async def thermal_racks(session: AsyncSession, *, focus_start: datetime,
                         focus_end: datetime, compare_start: datetime,
                         compare_end: datetime, low_c: float,
-                        high_c: float) -> list[dict[str, Any]]:
+                        high_c: float, allowable_c: float) -> list[dict[str, Any]]:
     """Rack intake from two sources, exhaust and humidity per rack, two windows.
 
     Two intake sources come back side by side and the service picks: the
@@ -129,6 +129,14 @@ async def thermal_racks(session: AsyncSession, *, focus_start: datetime,
                    max(value) FILTER (WHERE ts >= :f0 AND ts < :f1) AS f_max,
                    count(*)   FILTER (WHERE ts >= :f0 AND ts < :f1
                                         AND value >= :low AND value <= :high) AS f_in_band,
+                   -- The two ends of the distribution. Below the band is
+                   -- overcooling, the finding a floor most often pays for;
+                   -- above the allowable ceiling is where hardware is at
+                   -- risk. Between them, above recommended is the remainder.
+                   count(*)   FILTER (WHERE ts >= :f0 AND ts < :f1
+                                        AND value < :low) AS f_below,
+                   count(*)   FILTER (WHERE ts >= :f0 AND ts < :f1
+                                        AND value > :allow) AS f_hot,
                    sum(value) FILTER (WHERE ts >= :c0 AND ts < :c1) AS c_sum,
                    count(*)   FILTER (WHERE ts >= :c0 AND ts < :c1) AS c_n,
                    max(value) FILTER (WHERE ts >= :c0 AND ts < :c1) AS c_max
@@ -140,6 +148,8 @@ async def thermal_racks(session: AsyncSession, *, focus_start: datetime,
                    sum(f_n)       FILTER (WHERE key = 'inlet_temperature') AS f_n,
                    max(f_max)     FILTER (WHERE key = 'inlet_temperature') AS f_max,
                    sum(f_in_band) FILTER (WHERE key = 'inlet_temperature') AS f_in_band,
+                   sum(f_below)   FILTER (WHERE key = 'inlet_temperature') AS f_below,
+                   sum(f_hot)     FILTER (WHERE key = 'inlet_temperature') AS f_hot,
                    count(*)       FILTER (WHERE key = 'inlet_temperature'
                                                AND f_n > 0) AS f_sensors,
                    sum(c_sum)     FILTER (WHERE key = 'inlet_temperature') AS c_sum,
@@ -149,6 +159,8 @@ async def thermal_racks(session: AsyncSession, *, focus_start: datetime,
                    sum(f_n)       FILTER (WHERE key = 'ambient_temperature') AS p_n,
                    max(f_max)     FILTER (WHERE key = 'ambient_temperature') AS p_max,
                    sum(f_in_band) FILTER (WHERE key = 'ambient_temperature') AS p_in_band,
+                   sum(f_below)   FILTER (WHERE key = 'ambient_temperature') AS p_below,
+                   sum(f_hot)     FILTER (WHERE key = 'ambient_temperature') AS p_hot,
                    count(*)       FILTER (WHERE key = 'ambient_temperature'
                                                AND f_n > 0) AS p_sensors,
                    sum(c_sum)     FILTER (WHERE key = 'ambient_temperature') AS pc_sum,
@@ -174,7 +186,9 @@ async def thermal_racks(session: AsyncSession, *, focus_start: datetime,
                dc.code               AS site_code,
                dc.name               AS site_name,
                agg.f_sum, agg.f_n, agg.f_max, agg.f_in_band, agg.f_sensors,
+               agg.f_below, agg.f_hot,
                agg.p_sum, agg.p_n, agg.p_max, agg.p_in_band, agg.p_sensors,
+               agg.p_below, agg.p_hot,
                agg.pc_sum, agg.pc_n, agg.pc_max,
                agg.e_sum, agg.e_n,
                agg.c_sum, agg.c_n, agg.c_max,
@@ -189,8 +203,75 @@ async def thermal_racks(session: AsyncSession, *, focus_start: datetime,
                  rr.ordinal, r.ordinal, r.name
     """), {"f0": focus_start, "f1": focus_end,
            "c0": compare_start, "c1": compare_end,
-           "low": low_c, "high": high_c})).mappings().all()
+           "low": low_c, "high": high_c, "allow": allowable_c})).mappings().all()
     return [dict(r) for r in rows]
+
+
+async def thermal_p90(session: AsyncSession, *, focus_start: datetime,
+                      focus_end: datetime) -> dict[str, Any]:
+    """The 90th percentile of intake readings per rack, room, site and estate.
+
+    A percentile cannot be folded from sums the way the averages are, so it
+    is taken here over the pooled readings at every tier in one pass: a
+    room's p90 is the p90 of its racks' readings, not a summary of their
+    p90s. The source rule is applied first and per rack - the rack's front
+    probes where any reported, else the servers' BMC inlet - so this reads
+    the same readings the averages and the in-band share do.
+
+    Interpolated (`percentile_cont`), focus window only: a delta of a
+    percentile between two days is a number nobody acts on.
+
+    Returns {"racks": {id: p90}, "rooms": {...}, "sites": {...},
+    "total": p90 | None}; a tier with no readings is simply absent.
+    """
+    rows = (await session.execute(text("""
+        WITH s AS (
+            SELECT d.rack_id, m.key, t.value
+            FROM telemetry_sample t
+            JOIN metric m ON m.id = t.metric_id
+            JOIN device d ON d.id = t.device_id
+                         AND d.rack_id IS NOT NULL
+                         AND d.lifecycle <> 'decommissioned'
+            WHERE m.key IN ('inlet_temperature', 'ambient_temperature')
+              AND t.ts >= :f0 AND t.ts < :f1
+        ),
+        src AS (
+            SELECT rack_id, bool_or(key = 'ambient_temperature') AS has_probe
+            FROM s GROUP BY rack_id
+        ),
+        chosen AS (
+            SELECT s.rack_id, s.value
+            FROM s JOIN src USING (rack_id)
+            WHERE s.key = CASE WHEN src.has_probe
+                               THEN 'ambient_temperature'
+                               ELSE 'inlet_temperature' END
+        ),
+        located AS (
+            SELECT c.rack_id, rr.room_id, rm.datacenter_id, c.value
+            FROM chosen c
+            JOIN rack r      ON r.id  = c.rack_id
+            JOIN rack_row rr ON rr.id = r.row_id
+            JOIN room rm     ON rm.id = rr.room_id
+        )
+        SELECT rack_id::text       AS rack_id,
+               room_id::text       AS room_id,
+               datacenter_id::text AS datacenter_id,
+               percentile_cont(0.9) WITHIN GROUP (ORDER BY value) AS p90
+        FROM located
+        GROUP BY GROUPING SETS ((rack_id), (room_id), (datacenter_id), ())
+    """), {"f0": focus_start, "f1": focus_end})).mappings().all()
+    out: dict[str, Any] = {"racks": {}, "rooms": {}, "sites": {}, "total": None}
+    for r in rows:
+        p90 = None if r["p90"] is None else float(r["p90"])
+        if r["rack_id"] is not None:
+            out["racks"][r["rack_id"]] = p90
+        elif r["room_id"] is not None:
+            out["rooms"][r["room_id"]] = p90
+        elif r["datacenter_id"] is not None:
+            out["sites"][r["datacenter_id"]] = p90
+        else:
+            out["total"] = p90
+    return out
 
 
 async def power_window(session: AsyncSession, *, start: datetime, end: datetime,

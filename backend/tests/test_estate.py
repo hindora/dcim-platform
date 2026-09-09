@@ -279,7 +279,9 @@ def _room(room_id: str, dc: str, code: str, *, rack_count=2, name=None,
 
 def _rack(rack_id: str, room_id: str, *, dc="dc1", code="DC1",
           f_sum=None, f_n=0, f_max=None, f_in_band=0, f_sensors=0,
+          f_below=0, f_hot=0,
           p_sum=None, p_n=0, p_max=None, p_in_band=0, p_sensors=0,
+          p_below=0, p_hot=0,
           pc_sum=None, pc_n=0, pc_max=None,
           e_sum=None, e_n=0, c_sum=None, c_n=0, c_max=None,
           rh_sum=None, rh_n=0, rh_max=None, rh_probes=0):
@@ -289,17 +291,20 @@ def _rack(rack_id: str, room_id: str, *, dc="dc1", code="DC1",
         "floor": "1", "room_class": "white_space", "datacenter_id": dc,
         "site_code": code, "site_name": code,
         "f_sum": f_sum, "f_n": f_n, "f_max": f_max, "f_in_band": f_in_band,
-        "f_sensors": f_sensors,
+        "f_sensors": f_sensors, "f_below": f_below, "f_hot": f_hot,
         "p_sum": p_sum, "p_n": p_n, "p_max": p_max, "p_in_band": p_in_band,
-        "p_sensors": p_sensors, "pc_sum": pc_sum, "pc_n": pc_n, "pc_max": pc_max,
+        "p_sensors": p_sensors, "p_below": p_below, "p_hot": p_hot,
+        "pc_sum": pc_sum, "pc_n": pc_n, "pc_max": pc_max,
         "e_sum": e_sum, "e_n": e_n, "c_sum": c_sum, "c_n": c_n, "c_max": c_max,
         "rh_sum": rh_sum, "rh_n": rh_n, "rh_max": rh_max, "rh_probes": rh_probes,
     }
 
 
-def _thermal(monkeypatch, rooms, racks):
+def _thermal(monkeypatch, rooms, racks, p90=None):
     monkeypatch.setattr(estate.repo, "thermal_rooms", _returns(rooms))
     monkeypatch.setattr(estate.repo, "thermal_racks", _returns(racks))
+    monkeypatch.setattr(estate.repo, "thermal_p90", _returns(
+        p90 or {"racks": {}, "rooms": {}, "sites": {}, "total": None}))
 
 
 @pytest.mark.asyncio
@@ -478,3 +483,95 @@ async def test_a_blank_delta_says_which_window_was_empty(monkeypatch):
     out = await estate.thermal(_FakeSession(), mode="daily",
                                focus=date(2026, 9, 6), compare=date(2026, 9, 5))
     assert out["rooms"][0]["delta_note"] == "no readings on 2026-09-05"
+
+
+@pytest.mark.asyncio
+async def test_the_spread_partitions_every_reading_and_folds_by_count(monkeypatch):
+    """Below / in band / above recommended / above allowable sum to 100 at
+    every tier, and a room's split is its racks' readings pooled.
+
+    Rack 1: 100 readings, 40 below, 50 in band, 10 above allowable.
+    Rack 2: 300 readings, all in band. Room = 400: 10 % below, 87.5 % in,
+    0 % above recommended, 2.5 % at risk - not the mean of the two racks'
+    percentages (20 / 75 / 0 / 5).
+    """
+    _thermal(monkeypatch, [_room("a", "dc1", "DC1")], [
+        _rack("r1", "a", f_sum=2000.0, f_n=100, f_max=33.0, f_in_band=50,
+              f_below=40, f_hot=10),
+        _rack("r2", "a", f_sum=6600.0, f_n=300, f_max=23.0, f_in_band=300),
+    ])
+    out = await estate.thermal(_FakeSession(), mode="live")
+    racks = {r["id"]: r for r in out["racks"]}
+    assert racks["r1"]["below_pct"] == 40.0
+    assert racks["r1"]["distribution"] == {
+        "below_pct": 40.0, "in_band_pct": 50.0,
+        "above_recommended_pct": 0.0, "above_allowable_pct": 10.0}
+    room = out["rooms"][0]
+    assert room["below_pct"] == 10.0
+    assert room["distribution"] == {
+        "below_pct": 10.0, "in_band_pct": 87.5,
+        "above_recommended_pct": 0.0, "above_allowable_pct": 2.5}
+    assert sum(room["distribution"].values()) == 100.0
+    assert out["totals"]["distribution"] == room["distribution"]
+    assert out["sites"][0]["below_pct"] == 10.0
+
+
+@pytest.mark.asyncio
+async def test_above_recommended_is_the_remainder(monkeypatch):
+    """The warm-but-allowable share is what is left once the other three are
+    counted, so the four always partition the readings."""
+    _thermal(monkeypatch, [_room("a", "dc1", "DC1")], [
+        _rack("r1", "a", f_sum=2900.0, f_n=100, f_max=30.0, f_in_band=70,
+              f_below=0, f_hot=0),
+    ])
+    out = await estate.thermal(_FakeSession(), mode="live")
+    assert out["racks"][0]["distribution"]["above_recommended_pct"] == 30.0
+
+
+@pytest.mark.asyncio
+async def test_the_spread_follows_the_intake_source(monkeypatch):
+    """A rack with a probe takes the probe's split, not the servers'."""
+    _thermal(monkeypatch, [_room("a", "dc1", "DC1")], [
+        _rack("r1", "a",
+              f_sum=2500.0, f_n=100, f_max=27.0, f_in_band=100, f_below=0,
+              p_sum=1700.0, p_n=100, p_max=19.0, p_in_band=20, p_below=80,
+              p_sensors=1),
+    ])
+    out = await estate.thermal(_FakeSession(), mode="live")
+    r = out["racks"][0]
+    assert r["source"] == "probes"
+    assert r["below_pct"] == 80.0
+
+
+@pytest.mark.asyncio
+async def test_p90_rides_on_the_tier_it_was_taken_over(monkeypatch):
+    """p90 comes from one pooled query per tier and is attached by id; a
+    row with no readings shows none even if the map has a stale entry."""
+    _thermal(monkeypatch,
+             [_room("a", "dc1", "DC1"), _room("b", "dc1", "DC1")],
+             [_rack("r1", "a", f_sum=2000.0, f_n=100, f_max=24.0, f_in_band=100),
+              _rack("r2", "b")],
+             p90={"racks": {"r1": 23.44, "r2": 99.0},
+                  "rooms": {"a": 23.44}, "sites": {"dc1": 23.44},
+                  "total": 23.44})
+    out = await estate.thermal(_FakeSession(), mode="live")
+    racks = {r["id"]: r for r in out["racks"]}
+    assert racks["r1"]["p90_c"] == 23.4
+    assert racks["r2"]["p90_c"] is None
+    rooms = {r["id"]: r for r in out["rooms"]}
+    assert rooms["a"]["p90_c"] == 23.4
+    assert rooms["b"]["p90_c"] is None
+    assert out["sites"][0]["p90_c"] == 23.4
+    assert out["totals"]["p90_c"] == 23.4
+
+
+@pytest.mark.asyncio
+async def test_a_silent_row_has_no_spread_and_no_p90(monkeypatch):
+    _thermal(monkeypatch, [_room("a", "dc1", "DC1")], [_rack("r1", "a")])
+    out = await estate.thermal(_FakeSession(), mode="live")
+    r = out["racks"][0]
+    assert r["below_pct"] is None and r["distribution"] is None
+    assert r["p90_c"] is None
+    assert out["totals"]["p90_c"] is None
+    assert out["totals"]["distribution"] is None
+
