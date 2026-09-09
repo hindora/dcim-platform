@@ -303,16 +303,28 @@ profiles:
       - oid: 1.3.6.1.4.1.318.1.1.26.6.3.1.6.1     # rPDU2PhaseStatusVoltage, V
         metric: voltage_ln
         value_type: gauge
-      - oid: 1.3.6.1.4.1.318.1.1.26.10.2.2.1.8.1  # rPDU2SensorTempHumidityStatusTempC, 0.1 C
-        metric: ambient_temperature
-        value_type: gauge
-        transform: {scale: 0.1}
-        # The strip's own probe, at the back of the rack. Not the same reading
-        # as the room sensor and not a substitute for it - this is where the
-        # hot air actually is.
-      - oid: 1.3.6.1.4.1.318.1.1.26.10.2.2.1.10.1 # ...StatusRelativeHumidity, %
-        metric: relative_humidity
-        value_type: gauge
+    # rPDU2SensorTempHumidityStatusTable, WALKED.
+    #
+    # An AP8000 has no environmental sensor of its own. It has two RJ-45
+    # sensor ports, and this table carries one row per probe fitted to them -
+    # so a strip with bare ports returns nothing here, which is the difference
+    # between "the rack is 23 C" and "nobody is measuring this rack".
+    #
+    # Read as a table rather than at index 1, because a strip can carry two.
+    # Reading the first row only made a second probe invisible and silently
+    # attributed one height's reading to the whole rack; the row index is the
+    # sensor port, so a bottom and a top probe now arrive as two readings that
+    # can be told apart.
+    tables:
+      - name: apc_rack_probes
+        columns:
+          - oid: 1.3.6.1.4.1.318.1.1.26.10.2.2.1.8   # ...StatusTempC, 0.1 C
+            metric: ambient_temperature
+            value_type: gauge
+            transform: {scale: 0.1}
+          - oid: 1.3.6.1.4.1.318.1.1.26.10.2.2.1.10  # ...StatusRelativeHumidity, %
+            metric: relative_humidity
+            value_type: gauge
 
   # Raritan PX2 - PDU2-MIB measurement tables. 24 units here.
   #
