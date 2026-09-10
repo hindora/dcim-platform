@@ -464,3 +464,26 @@ def test_an_instance_filter_still_matches_what_the_source_called_the_point():
     files at the machine unable to select the point it reads."""
     src = inspect.getsource(service.AlarmService.evaluate_samples)
     assert "rule.applies_to_instance(raw_instance)" in src
+
+
+
+def test_the_electrical_estate_has_the_same_backstop():
+    """0060 gave the UPS, generator, transfer switch and metering points a rule
+    under the trap's own name; reconciliation has to know them too, or a lost
+    clear on a charger fault still waits for a timer."""
+    for alarm_type in ("ups_battery_low", "battery_failure", "charger_failure",
+                       "rectifier_failure", "ups_phase_failure",
+                       "generator_temp_high", "generator_low_fuel",
+                       "generator_low_coolant", "generator_battery_failure",
+                       "ats_not_in_auto", "ats_fail_to_transfer",
+                       "phase_imbalance", "input_voltage_low",
+                       "frequency_out_of_range"):
+        assert alarm_type in reconcile.STATE_BACKED, alarm_type
+
+
+def test_one_point_can_carry_two_conditions_on_two_machines():
+    """A UPS battery and a generator's starting battery are the same point name
+    and different failures. They stay two alarm types over one point, and the
+    device type on each rule is what keeps them apart."""
+    assert (reconcile.STATE_BACKED["battery_failure"]
+            == reconcile.STATE_BACKED["generator_battery_failure"])

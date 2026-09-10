@@ -116,6 +116,24 @@ STATE_BACKED: dict[str, tuple[str, str, bool]] = {
     "crah_airflow_loss":      ("alarm_state", "Alarm_AirflowLoss", True),
     "crah_high_temp":         ("alarm_state", "Alarm_HighTemp", True),
     "crah_filter_dirty":      ("alarm_state", "Filter_Dirty", True),
+    # The electrical estate, same shape: a point a trap names, polled as a
+    # boolean beside it. Battery_Fault is two conditions on two machines - a
+    # UPS battery and a generator's starting battery - which is why they are
+    # two alarm types over one point name.
+    "ups_battery_low":        ("alarm_state", "Low_Battery", True),
+    "battery_failure":        ("alarm_state", "Battery_Fault", True),
+    "charger_failure":        ("alarm_state", "Charger_Fault", True),
+    "rectifier_failure":      ("alarm_state", "Rectifier_Fault", True),
+    "ups_phase_failure":      ("alarm_state", "Phase_Fault", True),
+    "generator_temp_high":    ("alarm_state", "Alarm_High_Temp", True),
+    "generator_low_fuel":     ("alarm_state", "Alarm_Low_Fuel", True),
+    "generator_low_coolant":  ("alarm_state", "Alarm_Low_Coolant", True),
+    "generator_battery_failure": ("alarm_state", "Battery_Fault", True),
+    "ats_not_in_auto":        ("alarm_state", "Not_In_Auto", True),
+    "ats_fail_to_transfer":   ("alarm_state", "Fail_To_Transfer", True),
+    "phase_imbalance":        ("alarm_state", "Alarm_VoltageImbalance", True),
+    "input_voltage_low":      ("alarm_state", "Alarm_Undervoltage", True),
+    "frequency_out_of_range": ("alarm_state", "Alarm_UnderFrequency", True),
     # The generic name still carries every point that has no trap of its own -
     # phase loss, battery fault, a CDU's leak - and those file under the point
     # they came from, so the alarm's OWN instance is the one to read.

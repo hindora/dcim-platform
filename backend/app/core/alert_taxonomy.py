@@ -191,7 +191,8 @@ THRESHOLD_CROSSINGS: frozenset[str] = frozenset({
     "ups_frequency_out_range", "ups_battery_low_health",
     # environment and host
     "ambient_temp_high", "ambient_temp_critical", "humidity_high",
-    "humidity_low", "dew_point_alert", "airflow_high", "airflow_low",
+    "humidity_critical", "humidity_low", "dew_point_alert",
+    "airflow_high", "airflow_low",
     "cpu_high_usage", "memory_high_usage", "cpu_temp_critical",
     # The same conditions as they arrive from a rack probe. Every one is a
     # number crossing a limit, however it travelled: without these a probe
@@ -343,6 +344,7 @@ BY_ALARM_TYPE: dict[str, str] = {
     "ambient_temp_high": ENVIRONMENTAL,
     "ambient_temp_critical": ENVIRONMENTAL,
     "humidity_high": ENVIRONMENTAL,
+    "humidity_critical": ENVIRONMENTAL,
     "humidity_low": ENVIRONMENTAL,
     "dew_point_alert": ENVIRONMENTAL,
     "airflow_high": ENVIRONMENTAL,
@@ -711,6 +713,21 @@ CANONICAL_ALARM_TYPE: dict[str, str] = {
     # vendor fires it at its own critical point, not at a warning.
     "temperature_alert": "cpu_temp_critical",
     "cpu_temp_critical_trap": "cpu_temp_critical",
+    # A rack probe reporting its own air. The platform has watched the same
+    # reading all along under its own name, on the ASHRAE lines rather than the
+    # probe's - 27 C and 70 % against the probe's 32 and 70 - and the two names
+    # meant one warm aisle produced two alarms, one from each detector, neither
+    # a duplicate of the other as far as the key was concerned.
+    #
+    # The platform's name wins because the platform's line is the one an
+    # operator is answering to. The trap still decides the SEVERITY when it
+    # arrives, which is the point of it: the device fires at the number it
+    # considers serious.
+    "sensor_ambient_temp_high": "ambient_temp_high",
+    "sensor_ambient_temp_critical": "ambient_temp_critical",
+    "sensor_high_humidity": "humidity_high",
+    "sensor_critical_humidity": "humidity_critical",
+    "sensor_low_humidity": "humidity_low",
 }
 
 
