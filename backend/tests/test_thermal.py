@@ -161,3 +161,27 @@ def test_the_verdict_and_the_alarm_count_are_allowed_to_disagree():
     assert by_name["CRAH1"]["alarms_open"] == 1
     assert by_name["CRAH2"]["state"] == "high_supply"
     assert by_name["CRAH2"]["alarms_open"] == 0
+
+
+# --- is it this machine, or the water it is being fed? -----------------------
+
+def test_a_unit_reports_its_valve_and_its_fan():
+    """The pair that separates a unit fault from a plant one. A valve pinned
+    open with the discharge still warm is water that is not cold enough; the
+    same warm air with the valve half shut is the machine."""
+    u = t.CrahThermal(device_id="x", name="CRAH1", supply_c=28.0, return_c=30.0,
+                      setpoint_c=22.0, running=True, valve_pct=100.0, fan_pct=94.0)
+    out = t.RoomThermal(room_id="rm", crahs=[u], return_p90=30.0).as_dict()
+    unit = out["crah_units"][0]
+    assert unit["valve_pct"] == 100.0
+    assert unit["fan_pct"] == 94.0
+
+
+def test_a_unit_that_publishes_neither_says_so():
+    """Absent, not zero. A valve reading of 0 is a shut valve, which is a
+    finding; no reading at all is a gap in the telemetry and must not be
+    rendered as one."""
+    u = t.CrahThermal(device_id="x", name="CRAH1", supply_c=22.0, return_c=27.0,
+                      setpoint_c=22.0, running=True)
+    unit = t.RoomThermal(room_id="rm", crahs=[u], return_p90=30.0).as_dict()["crah_units"][0]
+    assert unit["valve_pct"] is None and unit["fan_pct"] is None

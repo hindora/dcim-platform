@@ -41,7 +41,9 @@ _CRAH = text("""
     SELECT d.id::text AS device_id, d.name,
            max(v.supply)   AS supply_c,
            max(v.ret)      AS return_c,
-           max(v.setpoint) AS setpoint_c
+           max(v.setpoint) AS setpoint_c,
+           max(v.valve)    AS valve_pct,
+           max(v.fan)      AS fan_pct
       FROM device d
       LEFT JOIN rack r      ON r.id = d.rack_id
       LEFT JOIN rack_row rr ON rr.id = r.row_id
@@ -59,7 +61,19 @@ _CRAH = text("""
             (SELECT t.value FROM telemetry_sample t JOIN metric m ON m.id = t.metric_id
               WHERE t.device_id = d.id AND m.key = 'air_setpoint_temp'
                 AND t.ts > now() - interval '30 minutes'
-              ORDER BY t.ts DESC LIMIT 1) AS setpoint
+              ORDER BY t.ts DESC LIMIT 1) AS setpoint,
+            -- The two that say whether a warm discharge is this machine's
+            -- fault or the plant's. A valve pinned open with the air still
+            -- warm is water that is not cold enough or not arriving; a valve
+            -- modulating gently with the same warm air is the unit itself.
+            (SELECT t.value FROM telemetry_sample t JOIN metric m ON m.id = t.metric_id
+              WHERE t.device_id = d.id AND m.key = 'valve_position_pct'
+                AND t.ts > now() - interval '30 minutes'
+              ORDER BY t.ts DESC LIMIT 1) AS valve,
+            (SELECT t.value FROM telemetry_sample t JOIN metric m ON m.id = t.metric_id
+              WHERE t.device_id = d.id AND m.key = 'fan_speed_pct'
+                AND t.ts > now() - interval '30 minutes'
+              ORDER BY t.ts DESC LIMIT 1) AS fan
       ) v ON TRUE
      WHERE d.device_type = 'crah'
        AND d.lifecycle <> 'decommissioned'

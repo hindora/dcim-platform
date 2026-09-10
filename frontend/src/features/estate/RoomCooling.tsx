@@ -41,6 +41,28 @@ const conv = (c: number | null | undefined, unit: Unit) =>
 const convDelta = (c: number | null | undefined, unit: Unit) =>
   c === null || c === undefined ? null : unit === 'c' ? c : c * 9 / 5;
 
+/** A percentage that is diagnostic near its top end.
+ *
+ *  Both of these are read for HEADROOM rather than for health, so the only
+ *  colour is at the ceiling: a valve that has run out of travel and a fan that
+ *  has run out of speed are the two ways a unit tells you it is doing all it
+ *  can. Anything below that is just where the control loop happens to be
+ *  sitting, and colouring it would invent a problem.
+ */
+function Pct({ v, hi, why }: { v: number | null; hi: number; why: string }) {
+  if (v === null || v === undefined) {
+    return <Tip className="dash" tip={why}>—</Tip>;
+  }
+  const maxed = v >= hi;
+  return (
+    <Tip tip={maxed
+      ? `at ${v.toFixed(0)} %, effectively wide open - this unit has no more to give`
+      : `${v.toFixed(0)} % of full`}>
+      <span className={maxed ? 'warn' : undefined}>{v.toFixed(0)}</span>
+    </Tip>
+  );
+}
+
 /** What each verdict means, in the words an operator would use. */
 const VERDICT: Record<string, { label: string; tone: 'ok' | 'warn' | 'critical' }> = {
   ok: { label: 'OK', tone: 'ok' },
@@ -98,6 +120,29 @@ export function RoomCooling({ roomId, roomName, unit }: {
           <Num value={conv(r.return_c, unit)} why="this unit reported no return air" />
         </Tip>
       ),
+    },
+    {
+      key: 'valve', label: 'Valve %', align: 'num', width: 92,
+      help: <>Chilled-water valve position. This is the unit's own answer to warm
+            discharge air, so it is read <b>against Supply</b>: a valve pinned near
+            100 % with the air still above setpoint means the water arriving is not
+            cold enough or not arriving at all, and the fault is upstream in the
+            plant. A valve modulating gently with the same warm air means this
+            machine - a fouled coil, a failed actuator.</>,
+      sort: (r) => r.valve_pct,
+      render: (r) => <Pct v={r.valve_pct} hi={95}
+                          why="this unit published no valve position" />,
+    },
+    {
+      key: 'fan', label: 'Fan %', align: 'num', width: 84,
+      help: <>Fan speed as a share of full. Headroom, not health: a hall holding
+            its band with fans near 100 % has nothing left for the next unit that
+            trips, while one sitting at the drive's turndown floor has plenty. It
+            is also where a group of units shows its work - lose one and the rest
+            take its share.</>,
+      sort: (r) => r.fan_pct,
+      render: (r) => <Pct v={r.fan_pct} hi={90}
+                          why="this unit published no fan speed" />,
     },
     {
       key: 'dt', label: 'ΔT K', align: 'num', width: 88,

@@ -1091,6 +1091,13 @@ export interface ThermalUnit {
   setpoint_c: number | null;
   delta_t_k: number | null;
   running: boolean;
+  /** Chilled-water valve, % open. The unit's own answer to warm discharge
+   *  air: it opens the valve. Pinned at 100 with the air still warm means the
+   *  water is the problem rather than the machine. */
+  valve_pct: number | null;
+  /** Fan speed, % of full. Headroom: a hall held in band on fans near full
+   *  has none left, and the same hall at the drive floor has plenty. */
+  fan_pct: number | null;
   /** Open conditions in the page's thermal categories, on this unit. Zero,
    *  never absent: nothing open is a fact about the unit. Counted with the
    *  same predicate and categories as the rows above it, so the units in a

@@ -105,6 +105,13 @@ class CrahThermal:
     supply_c: float | None = None
     return_c: float | None = None
     setpoint_c: float | None = None
+    #: Chilled-water valve position, % open. The unit's own answer to a warm
+    #: discharge: it opens the valve. Saturated at 100 with the air still warm
+    #: means the water is the problem, not the machine.
+    valve_pct: float | None = None
+    #: Fan speed, % of full. Headroom: a hall held in band on fans at 90 % is
+    #: one trip from trouble, the same hall at 30 % has somewhere to go.
+    fan_pct: float | None = None
     running: bool | None = None
 
     @property
@@ -214,6 +221,8 @@ class RoomThermal:
                 "setpoint_c": _r(u.setpoint_c), "delta_t_k": (
                     round(u.delta_t_k, 1) if u.delta_t_k is not None else None),
                 "running": u.running,
+                "valve_pct": _r(u.valve_pct),
+                "fan_pct": _r(u.fan_pct),
                 # Zero, not absent: nothing open is a fact about this unit.
                 "alarms_open": int(self.alarms.get(u.device_id, 0)),
             })
@@ -316,6 +325,7 @@ async def room_view(session, room_id: str,
             device_id=c["device_id"], name=c["name"],
             supply_c=_f(c["supply_c"]), return_c=_f(c["return_c"]),
             setpoint_c=_f(c["setpoint_c"]),
+            valve_pct=_f(c.get("valve_pct")), fan_pct=_f(c.get("fan_pct")),
             running=running.get(c["device_id"]),
         )
         for c in crah_rows
