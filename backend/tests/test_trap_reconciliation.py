@@ -390,3 +390,53 @@ def test_the_sweep_asks_the_state_before_it_asks_the_clock():
     before a timer that cannot."""
     src = inspect.getsource(service.AlarmService.sweep_trap_reconciliation)
     assert src.index("state_settled") < src.index("aged_out")
+
+
+
+# ------------------------------------------------- the poll raises it as well
+#
+# A trap is one datagram in each direction. Losing the CLEAR leaves a false
+# alarm somebody can see and argue with; losing the RAISE leaves a stopped
+# machine nobody is told about, which is the worse half - and until this, a
+# stopped cooling unit could only ever be announced by a trap.
+
+
+def test_a_stopped_unit_files_at_the_machine_however_it_was_noticed():
+    """The alarm key is (device, type, instance). A trap files this under no
+    instance and a polled rule would file it under the point it read - so one
+    stopped CRAH would sit on the console twice, neither row a duplicate of the
+    other as far as the key is concerned."""
+    from app.core import alert_taxonomy as tax
+
+    assert tax.alarm_instance("equipment_state", "Unit_Running",
+                              "plant_unit_stopped") == ""
+    assert tax.alarm_instance("equipment_state", "", "plant_unit_stopped") == ""
+
+
+def test_the_metric_itself_stays_per_point():
+    """It has to. equipment_state carries one run point on a CRAH and three
+    separate ones on an ATS - available, on emergency, tie closed - and
+    collapsing those would merge two genuinely different states into one."""
+    from app.core import alert_taxonomy as tax
+
+    assert tax.alarm_instance("equipment_state", "On_Emergency",
+                              "equipment_alarm") == "On_Emergency"
+    assert tax.alarm_instance("equipment_state", "Normal_Available") == "Normal_Available"
+
+
+def test_the_scope_is_decided_per_rule_not_per_sample():
+    """One boolean point can feed a rule that files at the machine and another
+    that files at the point, so the instance cannot be settled before knowing
+    which alarm the reading is being judged for."""
+    src = inspect.getsource(service.AlarmService.evaluate_samples)
+    assert "rule.alarm_type)" in src
+    assert src.index("for rule in self.rules_for_metric") < src.index(
+        "alert_taxonomy.alarm_instance")
+
+
+def test_an_instance_filter_still_matches_what_the_source_called_the_point():
+    """The filter names the POINT; the scope names where the alarm is FILED.
+    Matching the filter against the filed instance would make a rule that
+    files at the machine unable to select the point it reads."""
+    src = inspect.getsource(service.AlarmService.evaluate_samples)
+    assert "rule.applies_to_instance(raw_instance)" in src

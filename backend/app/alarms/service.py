@@ -138,19 +138,29 @@ class AlarmService:
 
         work: list[tuple[Rule, AlarmKey, dict]] = []
         for s in samples:
-            instance = s.get("instance", "") or ""
-            # What the SOURCE called this reading, which is not always a part
-            # of the device: "ALL" is a Cisco CPU table index, "CPU Temp" is a
-            # BMC's label for the only CPU sensor it has. A device-scoped
-            # metric files its alarm at the device so that a trap and a rule
-            # watching the same thing land on the same alarm.
-            instance = alert_taxonomy.alarm_instance(
-                s.get("metric") or s.get("metric_key"), instance)
+            raw_instance = s.get("instance", "") or ""
+            metric = s.get("metric") or s.get("metric_key")
             for rule in self.rules_for_metric(s["metric"], s.get("device_type", "")):
+                # What the SOURCE called this reading, which is not always a
+                # part of the device: "ALL" is a Cisco CPU table index, "CPU
+                # Temp" is a BMC's label for the only CPU sensor it has. A
+                # device-scoped metric files its alarm at the device so that a
+                # trap and a rule watching the same thing land on the same
+                # alarm - and so can the alarm TYPE, for a condition about the
+                # whole machine read from a metric that is not.
+                #
+                # Per RULE rather than per sample, because the second of those
+                # depends on which alarm this reading is being judged for: one
+                # boolean point can feed a rule that files at the machine and
+                # another that files at the point.
+                instance = alert_taxonomy.alarm_instance(
+                    metric, raw_instance, rule.alarm_type)
                 # A branch circuit is part of the feed above it, not a separate
                 # thing that can fail on its own, so a rule that says so is
-                # evaluated on the device total alone.
-                if not rule.applies_to_instance(instance):
+                # evaluated on the device total alone. Matched on what the
+                # SOURCE called the point: an instance filter names the point,
+                # not the alarm it is filed under.
+                if not rule.applies_to_instance(raw_instance):
                     continue
                 key = AlarmKey(s["device_id"], rule.alarm_type, instance)
                 work.append((rule, key, s))

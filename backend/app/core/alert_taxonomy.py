@@ -721,7 +721,22 @@ CANONICAL_ALARM_TYPE: dict[str, str] = {
 DEVICE_SCOPED_METRICS = DEVICE_SCOPED
 
 
-def alarm_instance(metric_key: str | None, instance: str) -> str:
+#: Conditions that belong to the MACHINE, whatever point revealed them.
+#:
+#: Scoping by metric is not enough for these. `equipment_state` carries one
+#: run-status point on a CRAH and three separate ones on an ATS - available,
+#: on emergency, tie closed - so the metric has to stay instance-scoped or two
+#: genuinely different states would merge. But "this unit is stopped" is one
+#: condition about one machine however it was noticed, and the alarm key is
+#: (device, alarm_type, instance): a trap files it under no instance and a
+#: polled rule would file it under "Unit_Running", so the same stopped CRAH
+#: would sit on the console twice, neither row a duplicate of the other as far
+#: as the key is concerned.
+DEVICE_SCOPED_ALARM_TYPES = frozenset({"plant_unit_stopped"})
+
+
+def alarm_instance(metric_key: str | None, instance: str,
+                   alarm_type: str | None = None) -> str:
     """The instance an alarm on this metric should be filed under.
 
     `instance` arrives carrying whatever the source called the reading: "" from
@@ -732,7 +747,13 @@ def alarm_instance(metric_key: str | None, instance: str) -> str:
 
     For an instance-scoped metric the label IS the sub-object - Gi0/1, Rack-A17,
     Ckt02 - and collapsing it would merge two genuine faults into one.
+
+    The alarm TYPE can also decide it, for a condition that is about the whole
+    machine while the metric it is read from is not. See
+    DEVICE_SCOPED_ALARM_TYPES.
     """
+    if alarm_type and alarm_type in DEVICE_SCOPED_ALARM_TYPES:
+        return ""
     if metric_key and metric_key in DEVICE_SCOPED_METRICS:
         return ""
     return instance
