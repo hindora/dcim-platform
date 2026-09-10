@@ -16,7 +16,13 @@ receivers restart, and every NMS that treats traps as authoritative accumulates
 alarms nobody can clear. The standard answer is this one: the trap raises, the
 POLL confirms, and the measurement is what ends it.
 
-Two paths, because two situations:
+Three paths, because three situations:
+
+* the STATE contradicts the alarm, or upholds it. Some conditions are not a
+  number crossing a line, they are a machine being off - and the platform
+  polls that as a boolean beside the trap that announced it. A stopped CRAH
+  keeps publishing "not running" every heartbeat, so there is a measurement
+  here after all, and it is the one that decides.
 
 * the measurement DISAGREES - there is a rule for this metric on this kind of
   device, telemetry has been in its clear band for the rule's own clear dwell,
@@ -32,6 +38,15 @@ about the condition" and "we stopped hearing anything at all" look identical
 from the alarm table, and only the first means the condition ended. A device
 that has genuinely gone dark keeps its alarms, which is the behaviour anyone
 would want at 3am.
+
+And the timer must never outrank a measurement. Three CRAHs stopped by an
+operator raised plant_unit_stopped, the units stayed stopped, and thirty
+minutes later all three alarms aged out - while the polled boolean was still
+reporting "not running" every fifteen minutes and the thermal page was still
+showing them Stopped. The alarm list said the hall was fine and the same
+platform, on the same screen, said three units were down. Ageing out is for
+what nothing can measure; a state-backed alarm can be measured, so it is
+excluded from the timer whether the state clears it or holds it.
 """
 
 from __future__ import annotations
@@ -62,6 +77,34 @@ RECONCILABLE_SOURCES = ("snmp_trap", "state")
 #: of the threshold stands in for it. It is a guess, and a rule's own number is
 #: always preferred when there is one.
 CLEAR_MARGIN = 0.05
+
+#: Conditions the platform also POLLS as a boolean: {alarm_type: (metric key,
+#: instance, the value that means the condition HOLDS)}.
+#:
+#: The instance is load-bearing. One boolean metric carries every alarm point
+#: on a machine - a CRAH publishes alarm_state four times over, once per point
+#: - so without it "is this alarm still true" would be answered by whichever
+#: of its siblings was written last.
+#:
+#: Deliberately short. Every entry is a condition this fleet actually polls and
+#: this reconciliation can therefore decide; a guess here would be worse than
+#: the timer it replaces, because it would clear real alarms with confidence.
+STATE_BACKED: dict[str, tuple[str, str, bool]] = {
+    # A stopped machine, on any plant type that publishes its run status.
+    "plant_unit_stopped":  ("equipment_state", "Unit_Running", False),
+    # Vendor alarm points on a CRAH, each its own instance of one metric.
+    "crah_airflow_loss":   ("alarm_state", "Alarm_AirflowLoss", True),
+    "crah_high_temp":      ("alarm_state", "Alarm_HighTemp", True),
+}
+
+#: How fresh a boolean must be to speak for the condition.
+#:
+#: Booleans are stored on CHANGE plus a heartbeat rather than on every poll
+#: (app.ingest.changelog), and the heartbeat on this fleet runs about every
+#: fifteen minutes - so twice that is the shortest window that cannot mistake
+#: "between heartbeats" for "nothing to say". Older than this and the state is
+#: not evidence either way, and the alarm is left alone.
+STATE_FRESH_S = 1800
 
 #: How long a trap alarm may go un-re-asserted before it is aged out, when no
 #: rule can contest it.
@@ -180,6 +223,44 @@ _MEASURED_CLEAR = text("""
 
 
 # Nothing has re-asserted it, and the device is still talking to us.
+# The polled STATE answers, in either direction.
+#
+# `held` is the newest boolean for the point this alarm is about, per device,
+# within the freshness window. Two uses, and the second is the one that
+# matters: it CLEARS an alarm whose machine is running again and whose clear
+# trap never arrived, and it SHIELDS an alarm whose machine is still stopped
+# from being aged out by a timer that cannot see the state at all.
+_STATE = text("""
+    WITH point AS (
+        SELECT * FROM unnest(
+            CAST(:types AS text[]), CAST(:metrics AS text[]),
+            CAST(:instances AS text[]), CAST(:holds AS boolean[])
+        ) AS t(alarm_type, metric_key, instance, holds)
+    ),
+    latest AS (
+        SELECT DISTINCT ON (tb.device_id, m.key, tb.instance)
+               tb.device_id, m.key AS metric_key, tb.instance,
+               tb.value, tb.ts
+          FROM telemetry_bool tb
+          JOIN metric m ON m.id = tb.metric_id
+         WHERE tb.ts > now() - make_interval(secs => :fresh_s)
+         ORDER BY tb.device_id, m.key, tb.instance, tb.ts DESC
+    )
+    SELECT a.id::text AS id, a.device_id::text AS device_id, d.name AS device_name,
+           a.alarm_type, a.severity::text AS severity,
+           p.metric_key, p.instance, l.value AS state,
+           (l.value IS DISTINCT FROM p.holds) AS ended
+      FROM alarm a
+      JOIN device d ON d.id = a.device_id
+      JOIN point p  ON p.alarm_type = a.alarm_type
+      JOIN latest l ON l.device_id = a.device_id
+                   AND l.metric_key = p.metric_key
+                   AND l.instance = p.instance
+     WHERE a.state <> 'CLEARED'
+       AND a.source = ANY(:sources)
+""")
+
+
 _AGED_OUT = text("""
     WITH candidate AS (
         SELECT a.id, a.device_id, a.alarm_type, a.severity::text AS severity,
@@ -205,6 +286,11 @@ _AGED_OUT = text("""
            -- the last resort it was always meant to be - but a last resort has
            -- to actually catch what falls past everything else.
            AND a.threshold IS NULL
+           -- A state-backed condition is decided by its boolean, above, in
+           -- whichever direction the boolean points. Three CRAHs aged out on
+           -- this timer while the platform was still polling them "not
+           -- running" every heartbeat.
+           AND NOT (a.alarm_type = ANY(:state_types))
            AND NOT EXISTS (
                SELECT 1 FROM alarm_rule r
                 WHERE r.alarm_type = a.alarm_type
@@ -246,8 +332,35 @@ async def aged_out(session: AsyncSession, *,
     rows = (await session.execute(_AGED_OUT, {
         "sources": list(RECONCILABLE_SOURCES),
         "grace_s": grace_s, "fresh_s": fresh_s,
+        "state_types": list(STATE_BACKED),
     })).mappings().all()
     return [dict(r) for r in rows]
+
+
+async def state_settled(session: AsyncSession, *,
+                        fresh_s: int = STATE_FRESH_S) -> list[dict[str, Any]]:
+    """State-backed alarms whose polled boolean says the condition ended.
+
+    The positive half of the same read that shields a still-true alarm from
+    the timer. A machine that is running again is not an alarm, however its
+    clear trap fared on the wire.
+    """
+    if not STATE_BACKED:
+        return []
+    rows = (await session.execute(_STATE, {
+        "sources": list(RECONCILABLE_SOURCES), "fresh_s": fresh_s,
+        "types": list(STATE_BACKED),
+        "metrics": [v[0] for v in STATE_BACKED.values()],
+        "instances": [v[1] for v in STATE_BACKED.values()],
+        "holds": [v[2] for v in STATE_BACKED.values()],
+    })).mappings().all()
+    return [dict(r) for r in rows if r["ended"]]
+
+
+def state_reason(row: dict[str, Any]) -> str:
+    return (f"{row['metric_key']}/{row['instance']} now reads "
+            f"{'true' if row['state'] else 'false'}, so the condition is over "
+            "and the clear was probably lost in transit")
 
 
 def measured_reason(row: dict[str, Any]) -> str:

@@ -297,3 +297,96 @@ def test_the_margin_parameter_is_cast_rather_than_inferred():
     driver reproduces it.
     """
     assert "CAST(:margin AS numeric)" in sql("_MEASURED_CLEAR")
+
+
+
+# ------------------------------------------------ the condition that is a STATE
+#
+# Three CRAHs an operator stopped raised plant_unit_stopped, stayed stopped,
+# and had all three alarms aged out thirty minutes later - while the polled
+# boolean was still reporting "not running" every heartbeat and the thermal
+# page was still showing them Stopped. The alarm list said the hall was fine
+# and the same platform, on the same screen, said three units were down.
+
+
+def test_the_stopped_unit_alarm_is_backed_by_the_polled_state():
+    assert reconcile.STATE_BACKED["plant_unit_stopped"] == (
+        "equipment_state", "Unit_Running", False)
+
+
+def test_a_state_backed_alarm_is_never_aged_out_by_the_timer():
+    """The timer is for what nothing can measure. A boolean IS a measurement,
+    and it can hold the alarm open as well as close it - so the type is out of
+    the timer's reach in both directions, and cannot be closed on a clock
+    while the platform is still being told the machine is off."""
+    assert "NOT (a.alarm_type = ANY(:state_types))" in sql("_AGED_OUT")
+
+
+def test_the_timer_is_given_the_types_it_must_skip():
+    """A guard in the SQL that nothing binds is a guard that does nothing."""
+    src = inspect.getsource(reconcile.aged_out)
+    assert '"state_types": list(STATE_BACKED)' in src
+
+
+def test_the_state_read_is_per_alarm_point_not_per_device():
+    """One boolean metric carries every alarm point on a machine - a CRAH
+    publishes alarm_state four times over, once per point - so a read that
+    ignored the instance would answer "is this alarm still true" with
+    whichever sibling was written last."""
+    q = sql("_STATE")
+    assert "l.instance = p.instance" in q
+    assert "DISTINCT ON (tb.device_id, m.key, tb.instance)" in q
+
+
+def test_a_stale_boolean_speaks_for_nothing():
+    """Booleans are stored on change plus a heartbeat, not on every poll. Past
+    two heartbeats the state is not evidence in either direction, and the
+    alarm is left exactly as it was."""
+    assert "tb.ts > now() - make_interval(secs => :fresh_s)" in sql("_STATE")
+    assert reconcile.STATE_FRESH_S >= 1800
+
+
+@pytest.mark.asyncio
+async def test_only_the_rows_whose_condition_ended_are_cleared():
+    """The same read serves both halves: it shields the alarms whose state
+    still holds and closes the ones whose state has moved on. Only the second
+    set may be handed to the clear."""
+    rows = [
+        {"id": "1", "device_id": "d1", "device_name": "CRAH1", "ended": True,
+         "alarm_type": "plant_unit_stopped", "severity": "MAJOR",
+         "metric_key": "equipment_state", "instance": "Unit_Running",
+         "state": True},
+        {"id": "2", "device_id": "d2", "device_name": "CRAH2", "ended": False,
+         "alarm_type": "plant_unit_stopped", "severity": "MAJOR",
+         "metric_key": "equipment_state", "instance": "Unit_Running",
+         "state": False},
+    ]
+
+    class _Result:
+        def mappings(self):
+            return self
+
+        def all(self):
+            return rows
+
+    class _Session:
+        async def execute(self, *_a, **_k):
+            return _Result()
+
+    out = await reconcile.state_settled(_Session())
+    assert [r["device_name"] for r in out] == ["CRAH1"]
+
+
+def test_the_reason_names_the_point_that_settled_it():
+    reason = reconcile.state_reason({
+        "metric_key": "equipment_state", "instance": "Unit_Running",
+        "state": True})
+    assert "equipment_state/Unit_Running" in reason
+    assert "true" in reason
+
+
+def test_the_sweep_asks_the_state_before_it_asks_the_clock():
+    """Order is the whole fix: a measurement that can decide must decide
+    before a timer that cannot."""
+    src = inspect.getsource(service.AlarmService.sweep_trap_reconciliation)
+    assert src.index("state_settled") < src.index("aged_out")

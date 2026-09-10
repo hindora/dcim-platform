@@ -616,7 +616,13 @@ class AlarmService:
         into a 33-second window while the collector restarted, and three alarms
         stood open on a machine the platform could see was at 39.9%.
 
-        So the poll gets the last word, in the two ways it can have one.
+        So the poll gets the last word, in the three ways it can have one:
+        the reading falls back through the clear point, the polled STATE says
+        the machine is running again, or nothing re-asserts a condition
+        nothing can measure and it ages out. The timer is last for a reason -
+        it is the only one of the three that can be wrong while the platform
+        holds the evidence, which is exactly what it did to three stopped
+        CRAHs whose boolean never stopped saying "not running".
         """
         now = datetime.now(UTC)
         actions: list[AlarmAction] = []
@@ -645,6 +651,11 @@ class AlarmService:
 
         for row in await reconcile.measured_clear(session):
             await close(row, "measured", reconcile.measured_reason(row))
+
+        # The state is a measurement too, for the conditions that are a
+        # machine being off rather than a number crossing a line.
+        for row in await reconcile.state_settled(session):
+            await close(row, "state", reconcile.state_reason(row))
 
         for row in await reconcile.aged_out(session):
             await close(row, "aged", reconcile.aged_reason(row))
