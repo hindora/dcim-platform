@@ -165,9 +165,9 @@ export interface Column<Row> {
    *  carry that themselves, and a reader who has to guess whether a number
    *  is an average of sensors or of readings cannot act on it.
    *
-   *  Marked with a dotted underline so it is discoverable rather than
-   *  hidden, and never with an icon: a row of question marks along a header
-   *  is noise on every visit to pay for one visit's question. */
+   *  Shown on hover, with no underline and no icon. The header row is read
+   *  on every visit and the explanation is wanted on almost none of them, so
+   *  it stays out of the way until asked for. */
   help?: React.ReactNode;
 }
 

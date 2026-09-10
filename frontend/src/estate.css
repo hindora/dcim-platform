@@ -154,11 +154,13 @@
 }
 .estate-table thead th button:hover { color: var(--text); }
 .estate-table thead th .caret { font-size: 9px; color: var(--accent); }
-/* A column header that explains itself. Dotted underline rather than an icon:
-   a row of question marks along a header is noise on every visit, paid for by
-   the one visit that had a question. */
-.estate-table thead th .th-help { border-bottom: 1px dotted var(--border-strong); cursor: help; }
-.estate-table thead th .th-help:hover { color: var(--text); border-bottom-color: var(--accent); }
+/* A column header that explains itself on hover. No underline and no icon:
+   the header row is read on every visit and the explanation is wanted on
+   almost none of them, so it stays out of the way until asked. The cursor is
+   the only tell, which is what a header that is also a sort control can carry
+   without becoming decorated. */
+.estate-table thead th .th-help { cursor: help; }
+.estate-table thead th .th-help:hover { color: var(--text); }
 
 .estate-table tbody td {
   height: 46px; padding: 0 12px; border-bottom: 1px solid var(--border);
