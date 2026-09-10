@@ -157,6 +157,18 @@ export interface Column<Row> {
   sort?: (row: Row) => number | string | null;
   render: (row: Row) => React.ReactNode;
   width?: number;
+  /** What the column means, on the HEADER.
+   *
+   *  A cell tip explains one reading; this explains the measurement - where
+   *  it was taken, over what window, and what a reader is supposed to do
+   *  about it. Columns headed with three letters and a degree sign cannot
+   *  carry that themselves, and a reader who has to guess whether a number
+   *  is an average of sensors or of readings cannot act on it.
+   *
+   *  Marked with a dotted underline so it is discoverable rather than
+   *  hidden, and never with an icon: a row of question marks along a header
+   *  is noise on every visit to pay for one visit's question. */
+  help?: React.ReactNode;
 }
 
 export function DataTable<Row extends { id: string }>({
@@ -197,20 +209,25 @@ export function DataTable<Row extends { id: string }>({
       <table className="estate-table">
         <thead>
           <tr>
-            {columns.map((c) => (
-              <th key={c.key} className={c.align ?? ''}
-                  style={c.width ? { width: c.width, minWidth: c.width } : undefined}>
-                {c.sort ? (
-                  <button onClick={() => {
-                    if (sortKey === c.key) setAsc(!asc);
-                    else { setSortKey(c.key); setAsc(true); }
-                  }}>
-                    {c.label}
-                    {sortKey === c.key && <span className="caret">{asc ? '▲' : '▼'}</span>}
-                  </button>
-                ) : c.label}
-              </th>
-            ))}
+            {columns.map((c) => {
+              const head = c.sort ? (
+                <button onClick={() => {
+                  if (sortKey === c.key) setAsc(!asc);
+                  else { setSortKey(c.key); setAsc(true); }
+                }}>
+                  {c.label}
+                  {sortKey === c.key && <span className="caret">{asc ? '▲' : '▼'}</span>}
+                </button>
+              ) : c.label;
+              return (
+                <th key={c.key} className={c.align ?? ''}
+                    style={c.width ? { width: c.width, minWidth: c.width } : undefined}>
+                  {c.help
+                    ? <Tip className="th-help" tip={c.help}>{head}</Tip>
+                    : head}
+                </th>
+              );
+            })}
           </tr>
         </thead>
         <tbody>

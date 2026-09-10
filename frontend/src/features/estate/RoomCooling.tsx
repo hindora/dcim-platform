@@ -64,6 +64,7 @@ export function RoomCooling({ roomId, roomName, unit }: {
   const columns: Column<ThermalUnit & { id: string }>[] = [
     {
       key: 'name', label: 'Unit',
+      help: 'One cooling unit on this room floor, and whether it is running. These stand in no rack, so they appear nowhere in the rack table above - which is how a hall could show open conditions while every rack under it showed none.',
       sort: (r) => r.name,
       render: (r) => (
         <div className="name-cell">
@@ -74,6 +75,7 @@ export function RoomCooling({ roomId, roomName, unit }: {
     },
     {
       key: 'supply', label: `Supply ${u}`, align: 'num', width: 104,
+      help: 'The air this unit is discharging into the cold aisle - its controlled variable, and the first point to trend. A supply above setpoint means the unit is not making cold air: check chilled water, valve and coil.',
       sort: (r) => r.supply_c,
       render: (r) => (
         <Tip tip="the air this unit is discharging into the cold aisle">
@@ -83,11 +85,13 @@ export function RoomCooling({ roomId, roomName, unit }: {
     },
     {
       key: 'setpoint', label: `Setpoint ${u}`, align: 'num', width: 108,
+      help: 'The discharge temperature this unit is asked to hold. Configuration, not a measurement, so it does not move when the room does - which is exactly what makes any drift of Supply away from it diagnostic.',
       sort: (r) => r.setpoint_c,
       render: (r) => <Num value={conv(r.setpoint_c, unit)} why="no setpoint published" />,
     },
     {
       key: 'return', label: `Return ${u}`, align: 'num', width: 104,
+      help: 'The air arriving back at the unit, which is the room\'s exhaust. A high return with a healthy supply is the hall feeding it hot air - recirculation or load - and not a fault in the machine.',
       sort: (r) => r.return_c,
       render: (r) => (
         <Tip tip="the air arriving back at the unit, which is the room's exhaust">
@@ -97,6 +101,7 @@ export function RoomCooling({ roomId, roomName, unit }: {
     },
     {
       key: 'dt', label: 'ΔT K', align: 'num', width: 88,
+      help: 'Return minus supply: the heat this unit actually carried away. Low on a loaded hall means air is bypassing the racks rather than passing through them, which no amount of extra cooling fixes.',
       sort: (r) => r.delta_t_k,
       render: (r) => (
         <Tip tip="return minus supply: the heat this unit actually carried away. Low on a loaded hall is air bypassing the racks, not a cooling shortage">
@@ -106,6 +111,7 @@ export function RoomCooling({ roomId, roomName, unit }: {
     },
     {
       key: 'alarms', label: 'Alarms', align: 'num', width: 84,
+      help: 'Open cooling and environmental conditions on this unit, counted the same way the rows above count them, so the units in a hall add up to the hall\'s figure. It answers whether anybody has been told, which the verdict beside it cannot.',
       sort: (r) => r.alarms_open ?? 0,
       render: (r) => {
         const n = r.alarms_open ?? 0;
@@ -116,6 +122,7 @@ export function RoomCooling({ roomId, roomName, unit }: {
     },
     {
       key: 'verdict', label: 'Verdict', align: 'mid', width: 130,
+      help: 'Read from this unit\'s own telemetry, right now. Supply high is a unit fault, return high is a room problem, and the two send an engineer to opposite ends of the building. It can disagree with Alarms in both directions, and an operator needs both.',
       sort: (r) => r.state,
       render: (r) => {
         const v = VERDICT[r.state] ?? { label: r.state, tone: 'none' as const };

@@ -180,6 +180,7 @@ export function Thermal() {
   const columns: Column<ThermalRow>[] = [
     {
       key: 'name', label: tierLabel,
+      help: 'One site, one room or one rack, depending on how far you have drilled in. Click a site or a room to go a level deeper; a rack row opens its elevation.',
       sort: (r) => r.name,
       render: (r) => (
         <div className="name-cell">
@@ -195,6 +196,7 @@ export function Thermal() {
       // reading, servers are the fallback, and a rack of switches is graded
       // on its front panels rather than left blank.
       key: 'sensors', label: 'Intake from', align: 'mid' as const, width: 108,
+      help: <>Which sensor spoke for this rack, and how many of them. A front environment <b>probe</b> is the cold aisle at the rack face, which is what ASHRAE means by intake. <b>Servers</b> are their BMC inlets, behind the bezel. <b>Switches</b> are front-panel sensors, used only where a rack has neither, and warmer than both.</>,
       sort: (r: ThermalRow) => r.sensors ?? 0,
       render: (r: ThermalRow) => r.source ? (
         <Tip tip={SOURCE_TIP[r.source] ?? 'intake readings from this rack'}>
@@ -204,6 +206,7 @@ export function Thermal() {
       ) : <Tip className="dash" tip="nothing in this rack reported an intake temperature">—</Tip>,
     }] : [{
       key: 'racks', label: 'Racks', align: 'mid' as const, width: 80,
+      help: 'Racks in this row of the table, and how many of them reported intake air at all. Hover the number for the split by source: a silent rack is one with no probe, no server sensor and no network gear to fall back on.',
       sort: (r: ThermalRow) => r.rack_count ?? 0,
       render: (r: ThermalRow) => r.sources ? (
         <Tip tip={<>{r.sources.probes} by rack probe · {r.sources.servers} by servers
@@ -216,16 +219,19 @@ export function Thermal() {
     }]),
     {
       key: 'avg', label: `Average ${u}`, align: 'num', width: 104,
+      help: 'Mean intake air across every reading this row pooled, not a mean of means. A room folds its racks\' readings, a site folds its rooms\'. In NOW mode it is one reading per sensor; over a window it is every reading in it.',
       sort: (r) => r.avg_c,
       render: (r) => <Num value={conv(r.avg_c, unit)} why={r.note} />,
     },
     {
       key: 'davg', label: 'Δ avg', align: 'num', width: 84,
+      help: 'Change in the average against the comparison window: the hour before, or the previous day. Blank in NOW mode, which is an instant and has nothing to be compared with. A step change from ten minutes ago moves an hourly figure by about a sixth of its real size.',
       sort: (r) => r.delta_avg,
       render: (r) => <Delta value={convDelta(r.delta_avg, unit)} why={r.delta_note} />,
     },
     {
       key: 'p90', label: `p90 ${u}`, align: 'num', width: 92,
+      help: 'The ninetieth percentile of this row\'s pooled intake readings. What the row actually runs at, without one sensor\'s spike deciding for it the way Max does. Taken over the focus window only.',
       sort: (r) => r.p90_c,
       render: (r) => (
         <Tip tip={r.p90_c === null ? (r.note ?? 'no intake readings in this window')
@@ -239,23 +245,27 @@ export function Thermal() {
     },
     {
       key: 'max', label: `Max ${u}`, align: 'num', width: 96,
+      help: 'The single hottest intake reading in the window. One sensor, one moment - read it beside p90, which says whether that reading was the row or was an outlier in it.',
       sort: (r) => r.max_c,
       render: (r) => <Num value={conv(r.max_c, unit)} why={r.note} />,
     },
     {
       key: 'dmax', label: 'Δ max', align: 'num', width: 84,
+      help: 'Change in the hottest reading against the comparison window. Blank in NOW mode for the same reason as the average delta: an instant has no window behind it.',
       sort: (r) => r.delta_max,
       render: (r) => <Delta value={convDelta(r.delta_max, unit)} why={r.delta_note} />,
     },
     ...(rackTier ? [
       {
         key: 'exhaust', label: `Exhaust ${u}`, align: 'num' as const, width: 104,
+      help: 'Mean air leaving the servers in this rack, from their own BMC outlet sensors. Rack tier only, and servers only: a probe measures the cold aisle, not the hot one.',
         sort: (r: ThermalRow) => r.exhaust_c ?? null,
         render: (r: ThermalRow) => <Num value={conv(r.exhaust_c ?? null, unit)}
                                         why="no exhaust sensor reported in this window" />,
       },
       {
         key: 'dt', label: 'ΔT K', align: 'num' as const, width: 76,
+      help: 'Exhaust minus intake: the heat this rack\'s air actually carried away. Low on a loaded rack means air is bypassing the servers rather than passing through them, which is a containment problem and not a cooling shortage.',
         sort: (r: ThermalRow) => r.delta_t_k ?? null,
         render: (r: ThermalRow) => (
           <Tip tip="server exhaust minus this row's intake - low on a loaded rack is bypass air, not a cooling shortage">
@@ -266,11 +276,13 @@ export function Thermal() {
     ] : []),
     {
       key: 'compliance', label: 'In band', align: 'num', width: 96,
+      help: <>Share of readings inside the ASHRAE recommended band, {floor}-{recommended} °C. It counts readings, not racks, and it moves only when air crosses a line - a hall can warm two degrees and stay at 100 % because it never left the band.</>,
       sort: (r) => r.compliance_pct,
       render: (r) => <Num value={r.compliance_pct} digits={1} unit="%" why={r.note} />,
     },
     {
       key: 'below', label: 'Below band', align: 'num', width: 100,
+      help: <>Share of readings under {floor} °C. Overcooled air, which costs fan and chiller energy and buys nothing, and is the evidence for raising a setpoint. A cooling failure never causes it.</>,
       sort: (r) => r.below_pct,
       render: (r) => (
         <Tip tip={r.below_pct === null ? (r.note ?? 'no intake readings in this window')
@@ -281,6 +293,7 @@ export function Thermal() {
     },
     {
       key: 'spread', label: 'Spread', align: 'mid', width: 116,
+      help: <>Where the readings in this row fell against the two ASHRAE lines: under {floor} °C, inside the recommended band, above it but within the allowable envelope, and past {allowable} °C. The four shares partition every reading, so the bar is the whole row rather than a sample of it.</>,
       // Sorted by how much of the row sits OUTSIDE the recommended band,
       // either side, so the rows worth a look come first.
       sort: (r) => (r.compliance_pct === null ? null : 100 - r.compliance_pct),
@@ -288,6 +301,7 @@ export function Thermal() {
     },
     {
       key: 'alarms', label: 'Alarms', align: 'num', width: 90,
+      help: 'Open cooling and environmental conditions on devices in this row, counted with the same rule the drill-down opens with. A site or a room opens them on click. Zero is a fact, not a gap: it means nothing is open here.',
       sort: (r) => r.alarms_open ?? 0,
       render: (r) => {
         const n = r.alarms_open ?? 0;
@@ -326,6 +340,7 @@ export function Thermal() {
     },
     {
       key: 'rh', label: 'RH %', align: 'num', width: 84,
+      help: 'Mean relative humidity from the rack probes in this row, and how many reported it. Probes only - servers do not measure humidity - so a row with no probe is blank however many servers it holds.',
       sort: (r) => r.rh_avg,
       render: (r) => (
         <Tip tip={r.rh_avg === null
@@ -340,6 +355,7 @@ export function Thermal() {
     },
     {
       key: 'samples', label: 'Readings', align: 'num', width: 96,
+      help: 'How many readings this row pooled in the focus window. It is the weight behind every other figure on the row: a percentile over four readings and one over four thousand are not the same claim.',
       sort: (r) => r.samples,
       render: (r) => (r.samples ? r.samples.toLocaleString() : <span className="dash">—</span>),
     },
