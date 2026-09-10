@@ -1492,6 +1492,11 @@ export interface ThermalRow extends EstateRowBase {
   samples: number;
   delta_avg: number | null;
   delta_max: number | null;
+  /** Change per hour against the same sensors read a fixed span ago. Null
+   *  outside the NOW view, and null for a row that had nothing reporting at
+   *  the far end - a rate against nothing would read as a plunge on a rack
+   *  that has simply just arrived. */
+  rate_k_per_h: number | null;
   /** Why both deltas are null: which window had no readings. */
   delta_note: string | null;
   /** Rack rows only: where the rack stands and what only a rack has. */
@@ -1535,6 +1540,15 @@ export interface ThermalPage {
     /** Above the recommended ceiling is warn; above this one is critical. */
     allowable_high_c: number;
     rh_high_pct: number;
+    /** The rate half of the same guidance: kit is rated for a maximum rate of
+     *  temperature change as well as a range, because thermal shock damages
+     *  hardware whether or not the air ever left the band. */
+    rate_limit_k_per_h: number;
+    /** Under this a rate is sensor noise rather than air. */
+    rate_noise_k_per_h: number;
+    /** What the rate was measured over. Null in the modes whose comparison is
+     *  too long for a rate to describe anything. */
+    rate_window_minutes: number | null;
     basis: string;
   };
   totals: {

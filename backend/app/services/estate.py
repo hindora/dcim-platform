@@ -42,6 +42,24 @@ BAND_HIGH_C = 27.0
 # inlet_temp_critical rules (0006) draw, so a row and its alarm agree.
 ALLOWABLE_HIGH_C = 32.0
 
+# The other half of the ASHRAE guidance, and the half this page has never
+# shown: kit is rated for a maximum RATE of temperature change as well as a
+# range, because thermal shock and condensation damage hardware whether or not
+# the air ever leaves the band. 20 K/hour is the figure for the equipment
+# classes in these halls; a floor with tape would be held to 5.
+#
+# It is also the operational number. During a cooling loss the absolute
+# reading is not the decision - a hall at 26 C climbing 8 K/hour and a hall at
+# 26 C holding flat need different answers in the same minute, and they look
+# identical without this.
+RATE_LIMIT_K_PER_H = 20.0
+
+# Below this, a rate is the sensors talking to themselves. Readings carry
+# ~0.3 K of sample noise, which over the fifteen-minute window leaves about
+# 1 K/hour of apparent drift - so anything under a couple of K/hour is flat,
+# and is shown as flat rather than as a small precise-looking movement.
+RATE_NOISE_K_PER_H = 2.0
+
 # The recommended envelope's humidity leg at the intake. Its low end is a
 # dew point (-9 C), which no probe in this estate reports, so only the
 # ceiling is shown.
@@ -140,10 +158,17 @@ async def thermal(session: AsyncSession, *, focus: date | None = None,
         # after it was fixed.
         end = datetime.now(UTC)
         f0, f1 = end - repo.NOW_HORIZON, end
-        c0, c1 = f0, f0
+        # The far end of the rate. Not a window: the same newest-per-sensor
+        # shot, taken as of fifteen minutes ago, so the two ends are the same
+        # measurement of the same sensors and the interval between them is
+        # fixed for every row on the page.
+        was_at = end - repo.RATE_WINDOW
+        c0, c1 = was_at - repo.NOW_HORIZON, was_at
         window = {"mode": "now", "focus_start": f0, "focus_end": f1,
-                  "compare_start": None, "compare_end": None,
-                  "label": "now", "compare_label": None}
+                  "compare_start": c0, "compare_end": c1,
+                  "label": "now",
+                  "compare_label": f"{int(repo.RATE_WINDOW.total_seconds() // 60)} "
+                                   f"minutes ago"}
     elif mode == "live":
         end = datetime.now(UTC)
         f0, f1 = end - timedelta(hours=1), end
@@ -168,7 +193,8 @@ async def thermal(session: AsyncSession, *, focus: date | None = None,
     # readings - the fleet was down, or the day had no collection.
     if mode == "now":
         absent_now = "no sensor in this rack has reported in the last ten minutes"
-        absent_prev = "an instant has no window to be compared with"
+        absent_prev = ("nothing in this rack was reporting fifteen minutes ago, "
+                       "so there is no earlier reading to measure against")
     else:
         prep = "in the" if mode == "live" else "on"
         absent_prev = f"no readings {prep} {window['compare_label']}"
@@ -177,7 +203,8 @@ async def thermal(session: AsyncSession, *, focus: date | None = None,
     skeleton = await repo.thermal_rooms(session)
     if mode == "now":
         raw_racks = await repo.thermal_racks_now(
-            session, since=f0, low_c=BAND_LOW_C, high_c=BAND_HIGH_C,
+            session, since=f0, was_at=was_at,
+            low_c=BAND_LOW_C, high_c=BAND_HIGH_C,
             allowable_c=ALLOWABLE_HIGH_C)
         p90 = await repo.thermal_p90_now(session, since=f0)
     else:
@@ -193,9 +220,14 @@ async def thermal(session: AsyncSession, *, focus: date | None = None,
     silent = ("no sensor in this rack has reported in the last ten minutes"
               if mode == "now" else
               "no intake probe or server sensor in this rack reported in this window")
-    racks = [_rack_row(r, absent_now, absent_prev, silent) for r in raw_racks]
-    rooms = _fold_rooms(skeleton, racks, absent_now, absent_prev)
-    sites = _fold_sites(rooms, absent_now, absent_prev)
+    # Only the NOW view measures over a span short and fixed enough for a
+    # rate to mean anything. See _derive.
+    rate_hours = (repo.RATE_WINDOW.total_seconds() / 3600.0
+                  if mode == "now" else None)
+    racks = [_rack_row(r, absent_now, absent_prev, silent, rate_hours)
+             for r in raw_racks]
+    rooms = _fold_rooms(skeleton, racks, absent_now, absent_prev, rate_hours)
+    sites = _fold_sites(rooms, absent_now, absent_prev, rate_hours)
     totals = _fold_total(rooms)
     alarms_open = await repo.thermal_alarms(
         session, categories=list(THERMAL_ALARM_CATEGORIES))
@@ -230,6 +262,14 @@ async def thermal(session: AsyncSession, *, focus: date | None = None,
         "band": {"low_c": BAND_LOW_C, "high_c": BAND_HIGH_C,
                  "allowable_high_c": ALLOWABLE_HIGH_C,
                  "rh_high_pct": RH_HIGH_PCT,
+                 # The rate half of the same guidance, and the window the NOW
+                 # view measures it over. Null in the other modes, where the
+                 # comparison is too long to be a rate.
+                 "rate_limit_k_per_h": RATE_LIMIT_K_PER_H,
+                 "rate_noise_k_per_h": RATE_NOISE_K_PER_H,
+                 "rate_window_minutes": (
+                     int(repo.RATE_WINDOW.total_seconds() // 60)
+                     if mode == "now" else None),
                  "basis": "ASHRAE TC 9.9 recommended envelope for intake air"},
         # Echoed so the page opens its drill-down with the same list the
         # counts were taken over, rather than a copy that can drift.
@@ -251,7 +291,7 @@ _ACC_MAXES = ("_max", "_prev_max", "_rh_max")
 
 
 def _rack_row(r: dict[str, Any], absent_now: str, absent_prev: str,
-              absent: str) -> dict[str, Any]:
+              absent: str, rate_hours: float | None = None) -> dict[str, Any]:
     p_n = int(r.get("p_n") or 0)
     f_n = int(r.get("f_n") or 0)
     if p_n:
@@ -315,7 +355,8 @@ def _rack_row(r: dict[str, Any], absent_now: str, absent_prev: str,
         "_servers": 1 if source == "servers" else 0,
         "_network": 1 if source == "network" else 0,
     }
-    row.update(_derive(row, absent_now, absent_prev, absent=absent))
+    row.update(_derive(row, absent_now, absent_prev, absent=absent,
+                       rate_hours=rate_hours))
     # Exhaust minus intake: the heat the air actually carried away. Low on a
     # loaded rack is bypass air, not a cooling shortage.
     row["delta_t_k"] = (round(row["exhaust_c"] - row["avg_c"], 1)
@@ -325,8 +366,15 @@ def _rack_row(r: dict[str, Any], absent_now: str, absent_prev: str,
 
 
 def _derive(acc: dict[str, Any], absent_now: str, absent_prev: str, *,
-            absent: str) -> dict[str, Any]:
-    """The public figures from the private sums, identical at every tier."""
+            absent: str, rate_hours: float | None = None) -> dict[str, Any]:
+    """The public figures from the private sums, identical at every tier.
+
+    `rate_hours` is the span the comparison covers, and only the caller knows
+    it: fifteen minutes in the NOW view, a whole day or a whole hour in the
+    others. Without one there is no rate, which is the honest answer for a
+    comparison between two calendar days - the change is real, the rate is a
+    fiction spread over 24 hours of unequal weather and load.
+    """
     n, prev_n, rh_n = acc["_n"], acc["_prev_n"], acc["_rh_n"]
     avg = round(acc["_sum"] / n, 1) if n else None
     prev_avg = round(acc["_prev_sum"] / prev_n, 1) if prev_n else None
@@ -342,6 +390,12 @@ def _derive(acc: dict[str, Any], absent_now: str, absent_prev: str, *,
         "delta_avg": _delta(avg, prev_avg),
         "delta_max": _delta(mx, prev_mx),
         "delta_note": _delta_note(n, prev_n, absent_now, absent_prev),
+        # Per HOUR, whatever window it was measured over, because that is the
+        # unit the ASHRAE limit is written in and the unit an operator
+        # estimates time-to-trouble with. A change of 2 K over fifteen minutes
+        # is 8 K/hour, and 8 K/hour on a hall at 26 C is a different situation
+        # from 26 C holding still.
+        "rate_k_per_h": _rate(avg, prev_avg, rate_hours),
         # Humidity rides beside compliance, not inside it: folding RH into the
         # in-band share would silently change what that number has meant.
         "rh_avg": round(acc["_rh_sum"] / rh_n, 1) if rh_n else None,
@@ -353,6 +407,19 @@ def _derive(acc: dict[str, Any], absent_now: str, absent_prev: str, *,
         # cell means "cool" or "nobody is measuring".
         "note": None if n else absent,
     }
+
+
+def _rate(now_v: float | None, was_v: float | None,
+          hours: float | None) -> float | None:
+    """Change per hour between two readings of the same sensors.
+
+    None where either end is missing or the caller has no interval - a rate
+    over an unknown span is not a rate, and the modes that compare a day with
+    another day have nothing to divide by that would mean anything.
+    """
+    if now_v is None or was_v is None or not hours:
+        return None
+    return round((now_v - was_v) / hours, 1)
 
 
 def _distribution(acc: dict[str, Any]) -> dict[str, float] | None:
@@ -410,7 +477,8 @@ def _add(acc: dict[str, Any], row: dict[str, Any]) -> None:
 
 
 def _fold_rooms(skeleton: list[dict[str, Any]], racks: list[dict[str, Any]],
-                absent_now: str, absent_prev: str) -> list[dict[str, Any]]:
+                absent_now: str, absent_prev: str,
+                rate_hours: float | None = None) -> list[dict[str, Any]]:
     by_room: dict[str, dict[str, Any]] = {}
     for rack in racks:
         _add(by_room.setdefault(rack["room_id"], _empty_acc()), rack)
@@ -424,14 +492,15 @@ def _fold_rooms(skeleton: list[dict[str, Any]], racks: list[dict[str, Any]],
             "site_code": r["site_code"], "site_name": r["site_name"],
             "rack_count": int(r["rack_count"] or 0),
             **acc,
-            **_derive(acc, absent_now, absent_prev,
+            **_derive(acc, absent_now, absent_prev, rate_hours=rate_hours,
                       absent="no rack intake sensor reported in this window"),
         })
     return out
 
 
 def _fold_sites(rooms: list[dict[str, Any]], absent_now: str,
-                absent_prev: str) -> list[dict[str, Any]]:
+                absent_prev: str,
+                rate_hours: float | None = None) -> list[dict[str, Any]]:
     by_site: dict[str, dict[str, Any]] = {}
     for r in rooms:
         s = by_site.setdefault(r["site_id"], {
@@ -444,6 +513,7 @@ def _fold_sites(rooms: list[dict[str, Any]], absent_now: str,
         s["rack_count"] += r["rack_count"]
         _add(s, r)
     out = [_strip({**s, **_derive(s, absent_now, absent_prev,
+                                  rate_hours=rate_hours,
                                   absent="no rack intake sensor reported")})
            for s in by_site.values()]
     return sorted(out, key=lambda r: r["site_code"])
@@ -507,13 +577,22 @@ def _window_note(mode: str) -> list[str]:
     """What a row counts, when that changes what the figures mean."""
     if mode != "now":
         return []
+    mins = int(repo.RATE_WINDOW.total_seconds() // 60)
     return ["Now is the newest reading from each sensor, and nothing older than "
             "ten minutes. Every figure counts one reading per SENSOR rather than "
             "every reading over a window, so the in-band share is the share of "
             "sensors in band at this instant. Use it while something is "
             "happening: an hour's mean needs an hour to show a change and holds "
-            "it for an hour after it clears. There are no deltas, because an "
-            "instant has no window to be compared with."]
+            "it for an hour after it clears.",
+            f"Rate is the same shot taken again as of {mins} minutes ago, "
+            f"divided out to K/hour - the unit ASHRAE writes its "
+            f"{RATE_LIMIT_K_PER_H:g} K/hour limit on rate of change in, and the "
+            "unit an operator estimates time-to-trouble with. Fixed for every "
+            "row, so a rack read by a 120 s probe and one read by 60 s BMCs are "
+            f"the same measurement. Under {RATE_NOISE_K_PER_H:g} K/hour is "
+            "sensor noise rather than air, and reads as flat. A rack with "
+            f"nothing reporting {mins} minutes ago has no rate rather than a "
+            "large one."]
 
 
 def _distribution_note() -> str:

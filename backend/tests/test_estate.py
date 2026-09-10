@@ -815,11 +815,19 @@ async def test_trend_scope_is_passed_through(monkeypatch):
 
 
 def _rack_now(rack_id, room_id, **kw):
-    """A rack row as thermal_racks_now returns it: the compare columns are
-    always empty, because an instant has nothing to compare with."""
+    """A rack row as thermal_racks_now returns it.
+
+    The compare columns are the SAME sensors read as of fifteen minutes ago,
+    which is what the rate is measured against. Left empty unless a test sets
+    them, which is the case of a rack that was reporting nothing back then.
+    """
     row = _rack(rack_id, room_id, **kw)
-    row.update({"pc_sum": None, "pc_n": 0, "pc_max": None,
-                "c_sum": None, "c_n": 0, "c_max": None})
+    row.setdefault("pc_sum", None)
+    row.setdefault("pc_n", 0)
+    row.setdefault("pc_max", None)
+    row.setdefault("c_sum", None)
+    row.setdefault("c_n", 0)
+    row.setdefault("c_max", None)
     return row
 
 
@@ -857,8 +865,9 @@ async def test_now_reads_the_newest_reading_from_each_sensor(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_now_has_no_deltas_and_says_why(monkeypatch):
-    """A delta against an instant would be a number with nothing behind it."""
+async def test_a_rack_that_was_not_reporting_earlier_has_no_rate(monkeypatch):
+    """A probe fitted this morning has nothing behind it, and a rate against
+    nothing would read as a plunge on a rack that has simply just arrived."""
     monkeypatch.setattr(estate.repo, "thermal_rooms", _returns([_room("a", "dc1", "DC1")]))
     monkeypatch.setattr(estate.repo, "thermal_racks_now", _returns(
         [_rack_now("r1", "a", p_sum=46.0, p_n=2, p_max=23.5, p_in_band=2, p_sensors=2)]))
@@ -867,10 +876,61 @@ async def test_now_has_no_deltas_and_says_why(monkeypatch):
     out = await estate.thermal(_FakeSession(), mode="now")
 
     rack = out["racks"][0]
-    assert rack["delta_avg"] is None and rack["delta_max"] is None
-    assert "compared" in rack["delta_note"]
-    assert out["window"]["compare_start"] is None
+    assert rack["delta_avg"] is None and rack["rate_k_per_h"] is None
+    assert "fifteen minutes ago" in rack["delta_note"]
     assert any("newest reading from each sensor" in n for n in out["notes"])
+
+
+@pytest.mark.asyncio
+async def test_now_reports_a_rate_per_hour(monkeypatch):
+    """Two probes at 23.0 now against 21.0 fifteen minutes ago is 2 K in a
+    quarter hour, which is 8 K/hour - the unit the ASHRAE limit is written in
+    and the one an operator estimates time-to-trouble with."""
+    monkeypatch.setattr(estate.repo, "thermal_rooms", _returns([_room("a", "dc1", "DC1")]))
+    monkeypatch.setattr(estate.repo, "thermal_racks_now", _returns(
+        [_rack_now("r1", "a", p_sum=46.0, p_n=2, p_max=23.0, p_in_band=2,
+                   p_sensors=2, pc_sum=42.0, pc_n=2, pc_max=21.0)]))
+    monkeypatch.setattr(estate.repo, "thermal_p90_now", _returns(
+        {"racks": {}, "rooms": {}, "sites": {}, "total": None}))
+    out = await estate.thermal(_FakeSession(), mode="now")
+
+    rack = out["racks"][0]
+    assert rack["delta_avg"] == 2.0
+    assert rack["rate_k_per_h"] == 8.0
+    # And it folds: one rack is the room and the room is the site.
+    assert out["rooms"][0]["rate_k_per_h"] == 8.0
+    assert out["sites"][0]["rate_k_per_h"] == 8.0
+    assert out["band"]["rate_limit_k_per_h"] == 20.0
+    assert out["band"]["rate_window_minutes"] == 15
+
+
+@pytest.mark.asyncio
+async def test_a_falling_hall_reports_a_negative_rate(monkeypatch):
+    """Direction is half the finding. A steep fall is proof a fix worked, and
+    on a floor with tape it is a violation in its own right."""
+    monkeypatch.setattr(estate.repo, "thermal_rooms", _returns([_room("a", "dc1", "DC1")]))
+    monkeypatch.setattr(estate.repo, "thermal_racks_now", _returns(
+        [_rack_now("r1", "a", p_sum=44.0, p_n=2, p_max=22.0, p_in_band=2,
+                   p_sensors=2, pc_sum=50.0, pc_n=2, pc_max=25.0)]))
+    monkeypatch.setattr(estate.repo, "thermal_p90_now", _returns(
+        {"racks": {}, "rooms": {}, "sites": {}, "total": None}))
+    out = await estate.thermal(_FakeSession(), mode="now")
+    assert out["racks"][0]["rate_k_per_h"] == -12.0
+
+
+@pytest.mark.asyncio
+async def test_the_other_modes_have_no_rate(monkeypatch):
+    """A day against another day is a real change and a fictional rate: the
+    hours between them carry different weather and different load, and
+    spreading the difference over 24 of them describes none of it."""
+    _thermal(monkeypatch, [_room("a", "dc1", "DC1")], [
+        _rack("r1", "a", f_sum=450.0, f_n=18, f_max=26.0, f_in_band=18,
+              f_sensors=18, c_sum=440.0, c_n=18, c_max=25.0),
+    ])
+    out = await estate.thermal(_FakeSession(), mode="daily")
+    assert out["racks"][0]["delta_avg"] is not None
+    assert out["racks"][0]["rate_k_per_h"] is None
+    assert out["band"]["rate_window_minutes"] is None
 
 
 @pytest.mark.asyncio

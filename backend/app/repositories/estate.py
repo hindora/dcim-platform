@@ -434,9 +434,23 @@ async def thermal_trend(session: AsyncSession, *, start: datetime, end: datetime
 #: while still excluding a sensor that has genuinely stopped.
 NOW_HORIZON = timedelta(minutes=10)
 
+#: How far back the NOW view looks to say which way the air is going.
+#:
+#: Long enough to clear the sensors: consecutive readings on a settled floor
+#: move 0.1-0.3 K on noise alone, which is the size of a real event's first
+#: minutes, so a rate taken between two samples would flicker constantly and
+#: be least trustworthy exactly when it mattered. Short enough to catch a
+#: cooling loss while it is still developing.
+#:
+#: Fixed, and the same for every row. A rate measured between "the last two
+#: readings" would be a two-minute change on a rack read by a 120 s probe and
+#: a one-minute change on the rack beneath it read by 60 s BMCs - two
+#: different measurements under one heading.
+RATE_WINDOW = timedelta(minutes=15)
+
 
 async def thermal_racks_now(session: AsyncSession, *, since: datetime,
-                            low_c: float, high_c: float,
+                            was_at: datetime, low_c: float, high_c: float,
                             allowable_c: float) -> list[dict[str, Any]]:
     """The newest reading from every rack sensor, right now.
 
@@ -451,8 +465,13 @@ async def thermal_racks_now(session: AsyncSession, *, since: datetime,
     it for an hour after it clears - so a tripped CRAH looked like nothing for
     ten minutes and like a fault long after it was fixed.
 
-    There is no comparison window: an instant has nothing to be compared with,
-    and inventing one would put a delta on the page that means nothing.
+    A second snapshot comes back with it, taken the same way as of
+    RATE_WINDOW ago, and the service turns the pair into a rate of change.
+    Same estimator on both ends - newest reading per sensor - so the interval
+    is the fifteen minutes between them and not an artifact of how often a
+    given rack happens to be polled. A sensor that has no reading that old
+    contributes to neither end, which is what keeps a probe fitted this
+    morning from reading as a plunge.
     """
     rows = (await session.execute(text("""
         WITH latest AS (
@@ -473,6 +492,50 @@ async def thermal_racks_now(session: AsyncSession, *, since: datetime,
                        AND dt.category = 'network'))
               AND t.ts >= :t0
             ORDER BY t.device_id, t.metric_id, t.ts DESC
+        ),
+        -- The same shot, taken as of RATE_WINDOW ago. Bounded below as well
+        -- as above: the newest reading BEFORE the mark, but not one from an
+        -- hour before it, or a sensor that has since gone quiet would supply
+        -- a stale far end and the rate would describe a gap in collection
+        -- rather than a change in the air.
+        earlier AS (
+            SELECT DISTINCT ON (t.device_id, t.metric_id)
+                   t.device_id, t.value,
+                   CASE WHEN m.key = 'component_temperature'
+                        THEN 'network_intake' ELSE m.key END AS key
+            FROM telemetry_sample t
+            JOIN metric m ON m.id = t.metric_id
+            JOIN device d ON d.id = t.device_id
+                         AND d.rack_id IS NOT NULL
+                         AND d.lifecycle <> 'decommissioned'
+            LEFT JOIN device_type dt ON dt.code = d.device_type
+            WHERE (m.key IN ('inlet_temperature', 'ambient_temperature')
+                   OR (m.key = 'component_temperature'
+                       AND t.instance = 'CHASSIS'
+                       AND dt.category = 'network'))
+              AND t.ts <= :was AND t.ts >= :was_floor
+            ORDER BY t.device_id, t.metric_id, t.ts DESC
+        ),
+        per_rack_was AS (
+            SELECT d.rack_id, e.key,
+                   sum(e.value) AS w_sum,
+                   count(*)     AS w_n,
+                   max(e.value) AS w_max
+            FROM earlier e JOIN device d ON d.id = e.device_id
+            GROUP BY d.rack_id, e.key
+        ),
+        was AS (
+            SELECT rack_id,
+                   sum(w_sum) FILTER (WHERE key = 'inlet_temperature')   AS c_sum,
+                   sum(w_n)   FILTER (WHERE key = 'inlet_temperature')   AS c_n,
+                   max(w_max) FILTER (WHERE key = 'inlet_temperature')   AS c_max,
+                   sum(w_sum) FILTER (WHERE key = 'ambient_temperature') AS pc_sum,
+                   sum(w_n)   FILTER (WHERE key = 'ambient_temperature') AS pc_n,
+                   max(w_max) FILTER (WHERE key = 'ambient_temperature') AS pc_max,
+                   sum(w_sum) FILTER (WHERE key = 'network_intake')      AS nc_sum,
+                   sum(w_n)   FILTER (WHERE key = 'network_intake')      AS nc_n,
+                   max(w_max) FILTER (WHERE key = 'network_intake')      AS nc_max
+            FROM per_rack_was GROUP BY rack_id
         ),
         per_rack AS (
             SELECT d.rack_id, l.key,
@@ -534,24 +597,24 @@ async def thermal_racks_now(session: AsyncSession, *, since: datetime,
                agg.p_below, agg.p_hot,
                agg.n_sum, agg.n_n, agg.n_max, agg.n_in_band, agg.n_sensors,
                agg.n_below, agg.n_hot,
-               -- An instant has no window to be compared with.
-               NULL::double precision AS pc_sum, 0 AS pc_n,
-               NULL::double precision AS pc_max,
-               NULL::double precision AS nc_sum, 0 AS nc_n,
-               NULL::double precision AS nc_max,
+               -- The far end of the rate, per source, so the comparison is
+               -- made between two readings of the SAME sensors.
+               was.pc_sum, COALESCE(was.pc_n, 0) AS pc_n, was.pc_max,
+               was.nc_sum, COALESCE(was.nc_n, 0) AS nc_n, was.nc_max,
                agg.e_sum, agg.e_n,
-               NULL::double precision AS c_sum, 0 AS c_n,
-               NULL::double precision AS c_max,
+               was.c_sum, COALESCE(was.c_n, 0) AS c_n, was.c_max,
                agg.rh_sum, agg.rh_n, agg.rh_max, agg.rh_probes
         FROM rack r
         JOIN rack_row rr   ON rr.id = r.row_id
         JOIN room rm       ON rm.id = rr.room_id
         JOIN datacenter dc ON dc.id = rm.datacenter_id
         LEFT JOIN agg      ON agg.rack_id = r.id
+        LEFT JOIN was      ON was.rack_id = r.id
         ORDER BY dc.code, rm.name,
                  COALESCE(agg.p_max, agg.f_max, agg.n_max) DESC NULLS LAST,
                  rr.ordinal, r.ordinal, r.name
-    """), {"t0": since, "low": low_c, "high": high_c,
+    """), {"t0": since, "was": was_at, "was_floor": was_at - NOW_HORIZON,
+           "low": low_c, "high": high_c,
            "allow": allowable_c})).mappings().all()
     return [dict(r) for r in rows]
 

@@ -56,6 +56,13 @@ import { RoomCooling } from './RoomCooling';
  *  the ASHRAE band, with the range control every other trend wears. The Δ
  *  columns say "warmer than yesterday"; the line says since when.
  *
+ *  NOW has no yesterday, so in its place it carries a RATE: the same sensors
+ *  read again fifteen minutes ago, in K per hour. ASHRAE rates equipment for
+ *  a maximum rate of change as well as a range, so the column has a standard
+ *  to be graded against rather than an opinion about what looks fast - and
+ *  during a cooling loss it is the number that says whether there are twenty
+ *  minutes or two, which the absolute reading cannot.
+ *
  *  Warm and warm-with-somebody-told are different situations, so each row
  *  carries its open thermal conditions and a site or a room opens the same
  *  drill-down the home page uses. The count and the panel take one category
@@ -119,6 +126,37 @@ function Spread({ d, low, high, allowable }: {
   );
 }
 
+/** Rate of change, in K per hour.
+ *
+ *  Signed, because direction is half the finding: a steep fall after a fix is
+ *  the proof it worked. Flat under the noise floor rather than a precise-
+ *  looking 0.4, because the sensors cannot tell 0.4 K/h from nothing and a
+ *  column that always wiggles is one people stop reading. Coloured only past
+ *  the ASHRAE limit, which is a standard being broken rather than an opinion
+ *  about what looks fast.
+ */
+function Rate({ v, limit, noise, why }: {
+  v: number | null; limit: number; noise: number; why?: string | null;
+}) {
+  if (v === null || v === undefined) {
+    return <Tip className="dash" tip={why ?? 'no earlier reading to measure against'}>—</Tip>;
+  }
+  if (Math.abs(v) < noise) {
+    return <Tip className="muted" tip={`steady: under ${noise} K/h is sensor noise rather than air`}>flat</Tip>;
+  }
+  const over = Math.abs(v) >= limit;
+  const dir = v > 0 ? 'rising' : 'falling';
+  return (
+    <Tip tip={over
+      ? `${dir} ${Math.abs(v)} K/h, past the ${limit} K/h ASHRAE limit on rate of change`
+      : `${dir} ${Math.abs(v)} K/h`}>
+      <span className={over ? 'critical' : undefined}>
+        {v > 0 ? '+' : ''}{v.toFixed(1)}
+      </span>
+    </Tip>
+  );
+}
+
 /** What spoke for a rack, in the words an operator would use.
  *
  *  Ordered the way the server picks: a probe measures the cold aisle at the
@@ -166,6 +204,11 @@ export function Thermal() {
   const floor = data?.band.low_c ?? 18;
   const recommended = data?.band.high_c ?? 27;
   const allowable = data?.band.allowable_high_c ?? 32;
+  // The rate half of the same guidance. The page grades against the server's
+  // numbers rather than a second copy that can drift from them.
+  const rateLimit = data?.band.rate_limit_k_per_h ?? 20;
+  const rateNoise = data?.band.rate_noise_k_per_h ?? 2;
+  const rateMins = data?.band.rate_window_minutes ?? null;
   const rhHigh = data?.band.rh_high_pct ?? 60;
 
   /** warn above recommended, critical above allowable, else by in-band share. */
@@ -223,12 +266,25 @@ export function Thermal() {
       sort: (r) => r.avg_c,
       render: (r) => <Num value={conv(r.avg_c, unit)} why={r.note} />,
     },
-    {
-      key: 'davg', label: 'Δ avg', align: 'num', width: 84,
+    ...(mode === 'now' ? [{
+      key: 'rate', label: 'K/h', align: 'num' as const, width: 84,
+      help: <>How fast this row is moving: the same sensors read again {rateMins ?? 15} minutes
+            ago, divided out to K per hour. ASHRAE rates equipment for a maximum
+            rate of change as well as a range, and {rateLimit} K/h is that limit -
+            thermal shock damages hardware whether or not the air ever left the
+            band. It is also the number that says whether you have twenty minutes
+            or two. Under {rateNoise} K/h is sensor noise and reads as flat.</>,
+      sort: (r: ThermalRow) => r.rate_k_per_h,
+      render: (r: ThermalRow) => <Rate v={r.rate_k_per_h} limit={rateLimit}
+                                       noise={rateNoise} why={r.delta_note} />,
+    }] : []),
+    ...(mode === 'now' ? [] : [{
+      key: 'davg', label: 'Δ avg', align: 'num' as const, width: 84,
       help: 'Change in the average against the comparison window: the hour before, or the previous day. Blank in NOW mode, which is an instant and has nothing to be compared with. A step change from ten minutes ago moves an hourly figure by about a sixth of its real size.',
-      sort: (r) => r.delta_avg,
-      render: (r) => <Delta value={convDelta(r.delta_avg, unit)} why={r.delta_note} />,
-    },
+      sort: (r: ThermalRow) => r.delta_avg,
+      render: (r: ThermalRow) => <Delta value={convDelta(r.delta_avg, unit)}
+                                        why={r.delta_note} />,
+    }]),
     {
       key: 'p90', label: `p90 ${u}`, align: 'num', width: 92,
       help: 'The ninetieth percentile of this row\'s pooled intake readings. What the row actually runs at, without one sensor\'s spike deciding for it the way Max does. Taken over the focus window only.',
@@ -249,12 +305,13 @@ export function Thermal() {
       sort: (r) => r.max_c,
       render: (r) => <Num value={conv(r.max_c, unit)} why={r.note} />,
     },
-    {
-      key: 'dmax', label: 'Δ max', align: 'num', width: 84,
+    ...(mode === 'now' ? [] : [{
+      key: 'dmax', label: 'Δ max', align: 'num' as const, width: 84,
       help: 'Change in the hottest reading against the comparison window. Blank in NOW mode for the same reason as the average delta: an instant has no window behind it.',
-      sort: (r) => r.delta_max,
-      render: (r) => <Delta value={convDelta(r.delta_max, unit)} why={r.delta_note} />,
-    },
+      sort: (r: ThermalRow) => r.delta_max,
+      render: (r: ThermalRow) => <Delta value={convDelta(r.delta_max, unit)}
+                                        why={r.delta_note} />,
+    }]),
     ...(rackTier ? [
       {
         key: 'exhaust', label: `Exhaust ${u}`, align: 'num' as const, width: 104,
@@ -366,6 +423,7 @@ export function Thermal() {
       stampedName('thermal', data?.window.label),
       ['scope', 'name', 'site', 'room', 'floor', 'racks', 'source', 'sensors', `average_${unit}`,
        `p90_${unit}`, `max_${unit}`, `exhaust_${unit}`, 'delta_t_k', 'in_band_pct',
+       'rate_k_per_h',
        'below_band_pct', 'above_recommended_pct', 'above_allowable_pct', 'open_alarms',
        'rh_avg_pct', 'rh_max_pct', 'rh_probes', 'readings', 'delta_avg_c', 'delta_max_c', 'note'],
       t.filtered.map((r) => [
@@ -375,6 +433,7 @@ export function Thermal() {
         conv(r.max_c, unit)?.toFixed(1) ?? '',
         conv(r.exhaust_c ?? null, unit)?.toFixed(1) ?? '', r.delta_t_k ?? '',
         r.compliance_pct ?? '', r.below_pct ?? '',
+        r.rate_k_per_h ?? '',
         r.distribution?.above_recommended_pct ?? '', r.distribution?.above_allowable_pct ?? '',
         r.alarms_open ?? 0,
         r.rh_avg ?? '', r.rh_max ?? '', r.rh_probes,
