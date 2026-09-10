@@ -43,7 +43,8 @@ _CRAH = text("""
            max(v.ret)      AS return_c,
            max(v.setpoint) AS setpoint_c,
            max(v.valve)    AS valve_pct,
-           max(v.fan)      AS fan_pct
+           max(v.fan)      AS fan_pct,
+           max(v.duty)     AS duty_pct
       FROM device d
       LEFT JOIN rack r      ON r.id = d.rack_id
       LEFT JOIN rack_row rr ON rr.id = r.row_id
@@ -73,7 +74,15 @@ _CRAH = text("""
             (SELECT t.value FROM telemetry_sample t JOIN metric m ON m.id = t.metric_id
               WHERE t.device_id = d.id AND m.key = 'fan_speed_pct'
                 AND t.ts > now() - interval '30 minutes'
-              ORDER BY t.ts DESC LIMIT 1) AS fan
+              ORDER BY t.ts DESC LIMIT 1) AS fan,
+            -- Heat actually being carried away, as a share of what this unit
+            -- is rated for. Not derivable from the columns beside it: air-side
+            -- duty is mass flow times delta-T, so a unit at a wide delta and
+            -- low airflow can be doing the same work as one at the opposite.
+            (SELECT t.value FROM telemetry_sample t JOIN metric m ON m.id = t.metric_id
+              WHERE t.device_id = d.id AND m.key = 'cooling_output_pct'
+                AND t.ts > now() - interval '30 minutes'
+              ORDER BY t.ts DESC LIMIT 1) AS duty
       ) v ON TRUE
      WHERE d.device_type = 'crah'
        AND d.lifecycle <> 'decommissioned'

@@ -170,11 +170,13 @@ def test_a_unit_reports_its_valve_and_its_fan():
     open with the discharge still warm is water that is not cold enough; the
     same warm air with the valve half shut is the machine."""
     u = t.CrahThermal(device_id="x", name="CRAH1", supply_c=28.0, return_c=30.0,
-                      setpoint_c=22.0, running=True, valve_pct=100.0, fan_pct=94.0)
+                      setpoint_c=22.0, running=True, valve_pct=100.0, fan_pct=94.0,
+                      duty_pct=88.0)
     out = t.RoomThermal(room_id="rm", crahs=[u], return_p90=30.0).as_dict()
     unit = out["crah_units"][0]
     assert unit["valve_pct"] == 100.0
     assert unit["fan_pct"] == 94.0
+    assert unit["duty_pct"] == 88.0
 
 
 def test_a_unit_that_publishes_neither_says_so():
@@ -185,3 +187,23 @@ def test_a_unit_that_publishes_neither_says_so():
                       setpoint_c=22.0, running=True)
     unit = t.RoomThermal(room_id="rm", crahs=[u], return_p90=30.0).as_dict()["crah_units"][0]
     assert unit["valve_pct"] is None and unit["fan_pct"] is None
+    assert unit["duty_pct"] is None
+
+
+
+def test_two_units_at_one_duty_can_be_working_differently():
+    """Duty is not readable off the columns beside it. Air-side work is mass
+    flow times the air-side rise, so a unit at a wide delta and low airflow and
+    one at the reverse can be carrying the same heat - which is why the number
+    is published rather than derived."""
+    wide = t.CrahThermal(device_id="a", name="CRAH1", supply_c=18.0,
+                         return_c=32.0, setpoint_c=18.0, running=True,
+                         fan_pct=40.0, duty_pct=60.0)
+    narrow = t.CrahThermal(device_id="b", name="CRAH2", supply_c=18.0,
+                           return_c=25.0, setpoint_c=18.0, running=True,
+                           fan_pct=85.0, duty_pct=60.0)
+    units = t.RoomThermal(room_id="rm", crahs=[wide, narrow],
+                          return_p90=33.0).as_dict()["crah_units"]
+    by_name = {u["name"]: u for u in units}
+    assert by_name["CRAH1"]["delta_t_k"] != by_name["CRAH2"]["delta_t_k"]
+    assert by_name["CRAH1"]["duty_pct"] == by_name["CRAH2"]["duty_pct"]

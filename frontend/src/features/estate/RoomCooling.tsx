@@ -122,6 +122,19 @@ export function RoomCooling({ roomId, roomName, unit }: {
       ),
     },
     {
+      key: 'duty', label: 'Duty %', align: 'num', width: 88,
+      help: <>Cooling this unit is actually delivering, as a share of what it is
+            rated for. It is not readable off the columns beside it: air-side duty
+            is mass flow times the air-side rise, so a unit at a wide ΔT and low
+            airflow can be doing the same work as one at the reverse. Read across
+            the hall rather than down one row - units that should be sharing a load
+            and are not is the common finding, and it is a balance problem rather
+            than a capacity one.</>,
+      sort: (r) => r.duty_pct,
+      render: (r) => <Pct v={r.duty_pct} hi={90}
+                          why="this unit published no delivered cooling" />,
+    },
+    {
       key: 'valve', label: 'Valve %', align: 'num', width: 92,
       help: <>Chilled-water valve position. This is the unit's own answer to warm
             discharge air, so it is read <b>against Supply</b>: a valve pinned near

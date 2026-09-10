@@ -1098,6 +1098,9 @@ export interface ThermalUnit {
   /** Fan speed, % of full. Headroom: a hall held in band on fans near full
    *  has none left, and the same hall at the drive floor has plenty. */
   fan_pct: number | null;
+  /** Delivered cooling as a share of this unit's rating: what it is actually
+   *  carrying away, which the other columns cannot be read off. */
+  duty_pct: number | null;
   /** Open conditions in the page's thermal categories, on this unit. Zero,
    *  never absent: nothing open is a fact about the unit. Counted with the
    *  same predicate and categories as the rows above it, so the units in a

@@ -112,6 +112,11 @@ class CrahThermal:
     #: Fan speed, % of full. Headroom: a hall held in band on fans at 90 % is
     #: one trip from trouble, the same hall at 30 % has somewhere to go.
     fan_pct: float | None = None
+    #: Delivered cooling as a share of this unit's rating. What the machine is
+    #: actually carrying away, which the columns beside it cannot be read off:
+    #: air-side duty is mass flow times the air-side rise, so a unit at a wide
+    #: delta and low flow can be doing the same work as one at the reverse.
+    duty_pct: float | None = None
     running: bool | None = None
 
     @property
@@ -223,6 +228,7 @@ class RoomThermal:
                 "running": u.running,
                 "valve_pct": _r(u.valve_pct),
                 "fan_pct": _r(u.fan_pct),
+                "duty_pct": _r(u.duty_pct),
                 # Zero, not absent: nothing open is a fact about this unit.
                 "alarms_open": int(self.alarms.get(u.device_id, 0)),
             })
@@ -326,6 +332,7 @@ async def room_view(session, room_id: str,
             supply_c=_f(c["supply_c"]), return_c=_f(c["return_c"]),
             setpoint_c=_f(c["setpoint_c"]),
             valve_pct=_f(c.get("valve_pct")), fan_pct=_f(c.get("fan_pct")),
+            duty_pct=_f(c.get("duty_pct")),
             running=running.get(c["device_id"]),
         )
         for c in crah_rows
