@@ -228,7 +228,7 @@ async def thermal(session: AsyncSession, *, focus: date | None = None,
              for r in raw_racks]
     rooms = _fold_rooms(skeleton, racks, absent_now, absent_prev, rate_hours)
     sites = _fold_sites(rooms, absent_now, absent_prev, rate_hours)
-    totals = _fold_total(rooms)
+    totals = _fold_total(rooms, rate_hours)
     alarms_open = await repo.thermal_alarms(
         session, categories=list(THERMAL_ALARM_CATEGORIES))
     _attach_count(racks, alarms_open["racks"])
@@ -519,11 +519,13 @@ def _fold_sites(rooms: list[dict[str, Any]], absent_now: str,
     return sorted(out, key=lambda r: r["site_code"])
 
 
-def _fold_total(rooms: list[dict[str, Any]]) -> dict[str, Any]:
+def _fold_total(rooms: list[dict[str, Any]],
+                rate_hours: float | None = None) -> dict[str, Any]:
     acc = _empty_acc()
     for r in rooms:
         _add(acc, r)
     n, rh_n = acc["_n"], acc["_rh_n"]
+    prev_n = acc["_prev_n"]
     white = [r for r in rooms if r["room_class"] == "white_space"]
     return {
         "avg_c": round(acc["_sum"] / n, 1) if n else None,
@@ -532,6 +534,13 @@ def _fold_total(rooms: list[dict[str, Any]]) -> dict[str, Any]:
         "below_pct": _pct(acc["_below"], n) if n else None,
         "distribution": _distribution(acc),
         "samples": n,
+        # The estate is going somewhere too, and the headline band is where
+        # that is read first. Same arithmetic as every tier below it, so the
+        # figure at the top is the rows added up rather than a second opinion.
+        "rate_k_per_h": _rate(
+            round(acc["_sum"] / n, 1) if n else None,
+            round(acc["_prev_sum"] / prev_n, 1) if prev_n else None,
+            rate_hours),
         "rh_avg": round(acc["_rh_sum"] / rh_n, 1) if rh_n else None,
         "rh_max": None if acc["_rh_max"] is None else round(acc["_rh_max"], 1),
         "rh_probes": acc["_rh_probes"],
