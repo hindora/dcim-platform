@@ -403,8 +403,8 @@ async def test_only_the_rows_whose_condition_ended_are_cleared():
 
 def test_the_reason_names_the_point_that_settled_it():
     reason = reconcile.state_reason({
-        "metric_key": "equipment_state", "instance": "Unit_Running",
-        "state": True})
+        "metric_key": "equipment_state", "point": "Unit_Running",
+        "instance": "", "state": True})
     assert "equipment_state/Unit_Running" in reason
     assert "true" in reason
 

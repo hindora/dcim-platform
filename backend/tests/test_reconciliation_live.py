@@ -184,4 +184,8 @@ async def test_the_candidates_carry_the_instance_they_are_filed_under(session):
     mine = [r for r in rows if r["device_name"] == crah["name"]]
 
     assert mine, "the state says running and nothing was offered for clearing"
+    # The ALARM's key, which is what the clear must name - not the point's
+    # name, and not the wildcard the map uses to mean "whatever this machine
+    # calls its run status".
     assert mine[0]["instance"] == crah["instance"]
+    assert mine[0]["point"] == crah["instance"]

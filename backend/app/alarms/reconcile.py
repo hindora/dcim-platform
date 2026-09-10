@@ -272,9 +272,14 @@ _STATE = text("""
          WHERE tb.ts > now() - make_interval(secs => :fresh_s)
          ORDER BY tb.device_id, m.key, tb.instance, tb.ts DESC
     )
+    -- `instance` is the ALARM's, because that is the key a clear has to name.
+    -- Selecting the point's instead shipped a clear addressed to '*', the
+    -- wildcard this map uses for "whatever the run point is called on this
+    -- machine" - which matches no alarm row anywhere. The point's own name is
+    -- carried separately, for the sentence that explains the clear.
     SELECT a.id::text AS id, a.device_id::text AS device_id, d.name AS device_name,
            a.alarm_type, a.instance, a.severity::text AS severity,
-           p.metric_key, p.instance, l.value AS state,
+           p.metric_key, l.instance AS point, l.value AS state,
            (l.value IS DISTINCT FROM p.holds) AS ended
       FROM alarm a
       JOIN device d ON d.id = a.device_id
@@ -391,7 +396,7 @@ async def state_settled(session: AsyncSession, *,
 
 
 def state_reason(row: dict[str, Any]) -> str:
-    return (f"{row['metric_key']}/{row['instance']} now reads "
+    return (f"{row['metric_key']}/{row['point']} now reads "
             f"{'true' if row['state'] else 'false'}, so the condition is over "
             "and the clear was probably lost in transit")
 
