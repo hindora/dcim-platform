@@ -639,9 +639,15 @@ class AlarmService:
         touched: set[str] = set()
 
         async def close(row: dict, reason: str, note: str) -> None:
+            # The instance the alarm is FILED under, which is not always the
+            # empty string. Clearing "" was a silent miss on every alarm filed
+            # against a point: the sweep reported nothing cleared, the row
+            # stayed open, and the next sweep tried the same wrong key. Three
+            # stopped CRAHs sat ACTIVE that way with the units running again.
             cleared = await repo.clear_alarms(
                 session, device_id=row["device_id"],
-                alarm_types=[row["alarm_type"]], instance="",
+                alarm_types=[row["alarm_type"]],
+                instance=row.get("instance") or "",
                 at=now, by=f"reconciliation:{reason}")
             for c in cleared:
                 touched.add(row["device_id"])

@@ -170,7 +170,8 @@ SEEING_IT_S = 660
 # would hold the alarm until they aged out.
 _MEASURED_CLEAR = text("""
     WITH candidate AS (
-        SELECT a.id, a.device_id, a.alarm_type, a.severity::text AS severity,
+        SELECT a.id, a.device_id, a.alarm_type, a.instance,
+               a.severity::text AS severity,
                d.name AS device_name, a.last_seen,
                coalesce(r.metric_key, a.metric_key)   AS metric_key,
                coalesce(r.operator, '>')              AS operator,
@@ -272,7 +273,7 @@ _STATE = text("""
          ORDER BY tb.device_id, m.key, tb.instance, tb.ts DESC
     )
     SELECT a.id::text AS id, a.device_id::text AS device_id, d.name AS device_name,
-           a.alarm_type, a.severity::text AS severity,
+           a.alarm_type, a.instance, a.severity::text AS severity,
            p.metric_key, p.instance, l.value AS state,
            (l.value IS DISTINCT FROM p.holds) AS ended
       FROM alarm a
@@ -294,8 +295,8 @@ _STATE = text("""
 
 _AGED_OUT = text("""
     WITH candidate AS (
-        SELECT a.id, a.device_id, a.alarm_type, a.severity::text AS severity,
-               d.name AS device_name,
+        SELECT a.id, a.device_id, a.alarm_type, a.instance,
+               a.severity::text AS severity, d.name AS device_name,
                extract(epoch FROM (now() - a.last_seen)) AS quiet_s
           FROM alarm a
           JOIN device d ON d.id = a.device_id
@@ -333,7 +334,7 @@ _AGED_OUT = text("""
            )
     )
     SELECT c.id::text AS id, c.device_id::text AS device_id, c.device_name,
-           c.alarm_type, c.severity, round(c.quiet_s) AS quiet_s
+           c.alarm_type, c.instance, c.severity, round(c.quiet_s) AS quiet_s
       FROM candidate c
      WHERE EXISTS (
          -- The safety condition. Silence only means recovery if we can still
