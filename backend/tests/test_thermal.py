@@ -207,3 +207,26 @@ def test_two_units_at_one_duty_can_be_working_differently():
     by_name = {u["name"]: u for u in units}
     assert by_name["CRAH1"]["delta_t_k"] != by_name["CRAH2"]["delta_t_k"]
     assert by_name["CRAH1"]["duty_pct"] == by_name["CRAH2"]["duty_pct"]
+
+
+
+def test_a_rated_unit_reports_its_cooling_in_kilowatts():
+    """kW is the unit the hall's load is in, so a row can be added to its
+    neighbours and set against the heat the room is making. The share on its
+    own cannot be added to anything."""
+    u = t.CrahThermal(device_id="x", name="CRAH1", supply_c=22.0, return_c=28.0,
+                      setpoint_c=22.0, running=True, duty_pct=65.0,
+                      rated_kw=100.0)
+    unit = t.RoomThermal(room_id="rm", crahs=[u], return_p90=30.0).as_dict()["crah_units"][0]
+    assert unit["duty_kw"] == 65.0
+    assert unit["rated_kw"] == 100.0
+
+
+def test_an_unrated_model_reports_the_share_and_no_kilowatts():
+    """The platform rates the SKUs it knows. For the rest the share is the
+    honest answer, and a kW figure would be one the platform invented."""
+    u = t.CrahThermal(device_id="x", name="CRAH1", supply_c=22.0, return_c=28.0,
+                      setpoint_c=22.0, running=True, duty_pct=65.0)
+    unit = t.RoomThermal(room_id="rm", crahs=[u], return_p90=30.0).as_dict()["crah_units"][0]
+    assert unit["duty_kw"] is None
+    assert unit["duty_pct"] == 65.0

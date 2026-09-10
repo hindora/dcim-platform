@@ -447,7 +447,8 @@ class TopologyImporter:
         # and dropping to NULL there would lose ratings the platform already has.
         model_id = await self._model_id(vendor_id, dev.get("model_name"), dtype,
                                         dev.get("rated_power_w")
-                                        or dev.get("power_draw_w"))
+                                        or dev.get("power_draw_w"),
+                                        dev.get("rated_cooling_w"))
 
         dc_code = dev.get("datacenter")
         room_id = self._room.get((dc_code, dev.get("room"))) if dc_code else None
@@ -889,21 +890,34 @@ class TopologyImporter:
         return vid
 
     async def _model_id(self, vendor_id: str | None, name: str | None,
-                        dtype: str, power_w: Any) -> str | None:
+                        dtype: str, power_w: Any,
+                        cooling_w: Any = None) -> str | None:
         if not vendor_id or not name:
             return None
         key = (vendor_id, name)
         if key in self._model:
             return self._model[key]
+        # Two nameplates, because a cooling machine has two: what it DRAWS and
+        # what it REMOVES. A 100 kW CRAH draws about 6.5 kW, and holding only
+        # the first left the cooling table reporting delivered capacity as a
+        # share of a rating the platform did not have.
+        #
+        # COALESCE on both, so an export that has since lost a rating cannot
+        # blank one the platform already learned.
         mid = await self._scalar("""
-            INSERT INTO model (vendor_id, device_type, name, rated_power_w)
-            VALUES (CAST(:vendor AS uuid), :dtype, :name, :power)
+            INSERT INTO model (vendor_id, device_type, name, rated_power_w,
+                               rated_cooling_w)
+            VALUES (CAST(:vendor AS uuid), :dtype, :name, :power, :cooling)
             ON CONFLICT (vendor_id, name) DO UPDATE SET
                 device_type = EXCLUDED.device_type,
-                rated_power_w = COALESCE(EXCLUDED.rated_power_w, model.rated_power_w)
+                rated_power_w = COALESCE(EXCLUDED.rated_power_w, model.rated_power_w),
+                rated_cooling_w = COALESCE(EXCLUDED.rated_cooling_w,
+                                           model.rated_cooling_w)
             RETURNING id::text
         """, vendor=vendor_id, dtype=dtype, name=name,
-            power=int(power_w) if isinstance(power_w, (int, float)) and power_w else None)
+            power=int(power_w) if isinstance(power_w, (int, float)) and power_w else None,
+            cooling=(int(cooling_w)
+                     if isinstance(cooling_w, (int, float)) and cooling_w else None))
         self._model[key] = mid
         self.report.models += 1
         return mid

@@ -41,6 +41,38 @@ const conv = (c: number | null | undefined, unit: Unit) =>
 const convDelta = (c: number | null | undefined, unit: Unit) =>
   c === null || c === undefined ? null : unit === 'c' ? c : c * 9 / 5;
 
+/** Delivered cooling: kilowatts where the model is rated, a share where it is
+ *  not.
+ *
+ *  kW rather than % because kW is the unit the hall's load is in, so a row can
+ *  be added to its neighbours and compared with the heat the room is making.
+ *  The share is kept in the tip, since "68 kW" and "68 % of this machine" are
+ *  both worth knowing and only one of them fits in a column.
+ */
+function Duty({ kw, pct, rated }: {
+  kw: number | null; pct: number | null; rated: number | null;
+}) {
+  if (kw === null || kw === undefined) {
+    if (pct === null || pct === undefined) {
+      return <Tip className="dash" tip="this unit published no delivered cooling">—</Tip>;
+    }
+    return (
+      <Tip tip={`${pct.toFixed(0)} % of this unit's rating; the platform holds no kW rating for its model`}>
+        <span>{pct.toFixed(0)} %</span>
+      </Tip>
+    );
+  }
+  const share = pct ?? (rated ? (kw / rated) * 100 : null);
+  const maxed = share !== null && share >= 90;
+  return (
+    <Tip tip={rated
+      ? `${kw.toFixed(1)} kW of a ${rated.toFixed(0)} kW rating${share !== null ? `, ${share.toFixed(0)} %` : ''}`
+      : `${kw.toFixed(1)} kW`}>
+      <span className={maxed ? 'warn' : undefined}>{kw.toFixed(1)}</span>
+    </Tip>
+  );
+}
+
 /** A percentage that is diagnostic near its top end.
  *
  *  Both of these are read for HEADROOM rather than for health, so the only
@@ -122,17 +154,17 @@ export function RoomCooling({ roomId, roomName, unit }: {
       ),
     },
     {
-      key: 'duty', label: 'Duty %', align: 'num', width: 88,
-      help: <>Cooling this unit is actually delivering, as a share of what it is
-            rated for. It is not readable off the columns beside it: air-side duty
-            is mass flow times the air-side rise, so a unit at a wide ΔT and low
-            airflow can be doing the same work as one at the reverse. Read across
-            the hall rather than down one row - units that should be sharing a load
-            and are not is the common finding, and it is a balance problem rather
-            than a capacity one.</>,
-      sort: (r) => r.duty_pct,
-      render: (r) => <Pct v={r.duty_pct} hi={90}
-                          why="this unit published no delivered cooling" />,
+      key: 'duty', label: 'Cooling kW', align: 'num', width: 108,
+      help: <>Heat this unit is actually carrying away, against what it is rated to
+            remove. It is not readable off the columns beside it: air-side work is
+            mass flow times the air-side rise, so a unit at a wide ΔT and low
+            airflow can be doing the same as one at the reverse. Read across the
+            hall rather than down one row - units that should be sharing a load and
+            are not is the common finding, and it is a balance problem rather than a
+            capacity one. Shown as a share where the platform holds no rating for
+            the model.</>,
+      sort: (r) => (r.duty_kw ?? r.duty_pct),
+      render: (r) => <Duty kw={r.duty_kw} pct={r.duty_pct} rated={r.rated_kw} />,
     },
     {
       key: 'valve', label: 'Valve %', align: 'num', width: 92,

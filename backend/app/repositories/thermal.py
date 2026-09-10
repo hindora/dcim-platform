@@ -44,8 +44,13 @@ _CRAH = text("""
            max(v.setpoint) AS setpoint_c,
            max(v.valve)    AS valve_pct,
            max(v.fan)      AS fan_pct,
-           max(v.duty)     AS duty_pct
+           max(v.duty)     AS duty_pct,
+           max(md.rated_cooling_w) AS rated_cooling_w
       FROM device d
+      -- The datasheet figure, which lives on the SKU: every PCW 100kW removes
+      -- 100 kW. NULL for a model the platform has no rating for, and the page
+      -- then shows the share rather than inventing kilowatts.
+      LEFT JOIN model md    ON md.id = d.model_id
       LEFT JOIN rack r      ON r.id = d.rack_id
       LEFT JOIN rack_row rr ON rr.id = r.row_id
       LEFT JOIN room rm     ON rm.id = COALESCE(rr.room_id, d.room_id)

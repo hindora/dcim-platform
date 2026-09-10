@@ -117,6 +117,9 @@ class CrahThermal:
     #: air-side duty is mass flow times the air-side rise, so a unit at a wide
     #: delta and low flow can be doing the same work as one at the reverse.
     duty_pct: float | None = None
+    #: What this SKU is rated to remove, in kW. From the model, not the
+    #: reading: it is a datasheet number, the same for every unit of the type.
+    rated_kw: float | None = None
     running: bool | None = None
 
     @property
@@ -229,6 +232,13 @@ class RoomThermal:
                 "valve_pct": _r(u.valve_pct),
                 "fan_pct": _r(u.fan_pct),
                 "duty_pct": _r(u.duty_pct),
+                "rated_kw": _r(u.rated_kw),
+                # The share turned into the thing it is a share OF. Absent
+                # where the platform has no rating for the SKU, so the page
+                # falls back to the percentage rather than showing a kW figure
+                # it had to invent.
+                "duty_kw": (round(u.duty_pct * u.rated_kw / 100.0, 1)
+                            if u.duty_pct is not None and u.rated_kw else None),
                 # Zero, not absent: nothing open is a fact about this unit.
                 "alarms_open": int(self.alarms.get(u.device_id, 0)),
             })
@@ -333,6 +343,7 @@ async def room_view(session, room_id: str,
             setpoint_c=_f(c["setpoint_c"]),
             valve_pct=_f(c.get("valve_pct")), fan_pct=_f(c.get("fan_pct")),
             duty_pct=_f(c.get("duty_pct")),
+            rated_kw=(_f(c.get("rated_cooling_w")) or 0.0) / 1000.0 or None,
             running=running.get(c["device_id"]),
         )
         for c in crah_rows

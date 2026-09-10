@@ -1101,6 +1101,12 @@ export interface ThermalUnit {
   /** Delivered cooling as a share of this unit's rating: what it is actually
    *  carrying away, which the other columns cannot be read off. */
   duty_pct: number | null;
+  /** The same reading in kW, where the platform holds a rating for the SKU.
+   *  Null otherwise, and the page then shows the share rather than a figure
+   *  it had to invent. */
+  duty_kw: number | null;
+  /** What this SKU is rated to remove, kW. A datasheet number from the model. */
+  rated_kw: number | null;
   /** Open conditions in the page's thermal categories, on this unit. Zero,
    *  never absent: nothing open is a fact about the unit. Counted with the
    *  same predicate and categories as the rows above it, so the units in a
