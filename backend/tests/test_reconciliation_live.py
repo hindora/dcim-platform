@@ -103,6 +103,22 @@ async def _raise(s, device_id: str, *, instance: str, source: str = "snmp_trap",
     return row[0]
 
 
+def _service() -> AlarmService:
+    """The service with no Redis behind it.
+
+    Redis holds the dwell counters the rule engine advances per sample. The
+    reconciliation sweep reads alarms and telemetry and touches none of it, so
+    a stub is honest here: if that ever stops being true, this raises rather
+    than quietly passing on a half-wired service.
+    """
+    class _NoRedis:
+        def __getattr__(self, name):
+            raise AssertionError(
+                f"the reconciliation sweep reached Redis for {name!r}")
+
+    return AlarmService(_NoRedis())
+
+
 async def _is_open(s, alarm_id: str) -> bool:
     return (await s.execute(text(
         "SELECT state <> 'CLEARED' FROM alarm WHERE id = CAST(:a AS uuid)"),
@@ -118,7 +134,7 @@ async def test_a_recovered_unit_closes_the_alarm_filed_at_the_device(session):
     await _state(s, crah["id"], crah["instance"], True)
     alarm = await _raise(s, crah["id"], instance="")
 
-    actions = await AlarmService().sweep_trap_reconciliation(s)
+    actions = await _service().sweep_trap_reconciliation(s)
 
     assert not await _is_open(s, alarm), (
         f"{crah['name']} is running and its alarm is still open; "
@@ -136,7 +152,7 @@ async def test_a_recovered_unit_closes_an_alarm_filed_against_a_point(session):
     await _state(s, crah["id"], crah["instance"], True)
     alarm = await _raise(s, crah["id"], instance=crah["instance"])
 
-    await AlarmService().sweep_trap_reconciliation(s)
+    await _service().sweep_trap_reconciliation(s)
 
     assert not await _is_open(s, alarm), (
         f"an alarm filed under {crah['instance']!r} survived the sweep; "
@@ -152,7 +168,7 @@ async def test_a_stopped_unit_keeps_its_alarm(session):
     await _state(s, crah["id"], crah["instance"], False)
     alarm = await _raise(s, crah["id"], instance="", ago_s=7200)
 
-    await AlarmService().sweep_trap_reconciliation(s)
+    await _service().sweep_trap_reconciliation(s)
 
     assert await _is_open(s, alarm), (
         f"{crah['name']} is still stopped and its alarm was cleared anyway")
