@@ -377,11 +377,30 @@ profiles:
         metric: line_frequency
         value_type: gauge
         transform: {scale: 0.1}
-      - oid: 1.3.6.1.4.1.13742.6.5.5.3.1.4.1.1    # external probe 1: temperature, 0.1 C
+      # The external-sensor table is NOT read here. A probe is a device, and
+      # a strip with none has no environment to report - read at the strip it
+      # was a rack-wide figure whatever was fitted, and a probe that stopped
+      # answering was invisible. See pdu_probe_raritan below.
+
+  # ------------------------------------------------- a probe on a PX2 sensor port
+  #
+  # A DPX2 is an RJ-12 lead with a thermistor on the end: no processor, no IP.
+  # The strip polls it and publishes it in measurementsExternalSensorTable at a
+  # slot, so the endpoint carries the STRIP's address and the slot says which
+  # probe answered.
+  #
+  # Raritan puts one VALUE column in that table and gives each channel its own
+  # slot, which is the difference from the APC part above: a T1H1 at slot 1
+  # reads temperature at 1 and humidity at 2. Hence two indices rather than two
+  # columns at one index. A temperature-only probe simply has no row at the
+  # second slot, and an absent row is an absent reading.
+  - name: pdu_probe_raritan
+    scalars:
+      - oid: 1.3.6.1.4.1.13742.6.5.5.3.1.4.1.{sensor_index}
         metric: ambient_temperature
         value_type: gauge
         transform: {scale: 0.1}
-      - oid: 1.3.6.1.4.1.13742.6.5.5.3.1.4.1.2    # external probe 2: humidity, 0.1 %
+      - oid: 1.3.6.1.4.1.13742.6.5.5.3.1.4.1.{humidity_index}
         metric: relative_humidity
         value_type: gauge
         transform: {scale: 0.1}

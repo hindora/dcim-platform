@@ -294,6 +294,8 @@ def _rack(rack_id: str, room_id: str, *, dc="dc1", code="DC1",
           p_sum=None, p_n=0, p_max=None, p_in_band=0, p_sensors=0,
           p_below=0, p_hot=0,
           pc_sum=None, pc_n=0, pc_max=None,
+          n_sum=None, n_n=0, n_max=None, n_in_band=0, n_sensors=0,
+          n_below=0, n_hot=0, nc_sum=None, nc_n=0, nc_max=None,
           e_sum=None, e_n=0, c_sum=None, c_n=0, c_max=None,
           rh_sum=None, rh_n=0, rh_max=None, rh_probes=0):
     return {
@@ -306,6 +308,9 @@ def _rack(rack_id: str, room_id: str, *, dc="dc1", code="DC1",
         "p_sum": p_sum, "p_n": p_n, "p_max": p_max, "p_in_band": p_in_band,
         "p_sensors": p_sensors, "p_below": p_below, "p_hot": p_hot,
         "pc_sum": pc_sum, "pc_n": pc_n, "pc_max": pc_max,
+        "n_sum": n_sum, "n_n": n_n, "n_max": n_max, "n_in_band": n_in_band,
+        "n_sensors": n_sensors, "n_below": n_below, "n_hot": n_hot,
+        "nc_sum": nc_sum, "nc_n": nc_n, "nc_max": nc_max,
         "e_sum": e_sum, "e_n": e_n, "c_sum": c_sum, "c_n": c_n, "c_max": c_max,
         "rh_sum": rh_sum, "rh_n": rh_n, "rh_max": rh_max, "rh_probes": rh_probes,
     }
@@ -402,9 +407,62 @@ async def test_the_rack_probe_is_the_intake_and_the_bmc_is_the_fallback(monkeypa
     assert bmc["source"] == "servers" and bmc["sensors"] == 18
     assert bmc["avg_c"] == 25.0
     room = out["rooms"][0]
-    assert room["sources"] == {"probes": 1, "servers": 1}
+    assert room["sources"] == {"probes": 1, "servers": 1, "network": 0}
     assert room["samples"] == 20
     assert "1 rack), else the servers' BMC inlet (1 rack)" in out["notes"][0]
+
+
+@pytest.mark.asyncio
+async def test_a_rack_of_switches_reports_its_front_panel_sensors(monkeypatch):
+    """A spine or management rack holds no servers and often no probe.
+
+    It used to read as a dash - no temperature, invisible to every column
+    including the in-band share - while the switches in it published a
+    front-panel reading the whole time. Third choice, never above a real
+    intake sensor, and the row says which so nobody mistakes it for one.
+    """
+    _thermal(monkeypatch, [_room("a", "dc1", "DC1")], [
+        _rack("spine", "a", n_sum=54.0, n_n=2, n_max=27.5, n_in_band=2,
+              n_sensors=2, nc_sum=52.0, nc_n=2, nc_max=26.5),
+        _rack("compute", "a", f_sum=450.0, f_n=18, f_max=26.0, f_in_band=18,
+              f_sensors=18),
+    ])
+    out = await estate.thermal(_FakeSession(), mode="live")
+    racks = {r["id"]: r for r in out["racks"]}
+    spine = racks["spine"]
+    assert spine["source"] == "network" and spine["sensors"] == 2
+    assert spine["avg_c"] == 27.0 and spine["max_c"] == 27.5
+    # It compares against itself, not against the compute rack's servers.
+    assert spine["delta_avg"] == 1.0 and spine["delta_max"] == 1.0
+    # And it counts: a silent rack contributed no in-band share at all.
+    assert spine["compliance_pct"] == 100.0
+    assert out["rooms"][0]["sources"] == {"probes": 0, "servers": 1, "network": 1}
+
+
+@pytest.mark.asyncio
+async def test_a_real_intake_sensor_always_wins(monkeypatch):
+    """The front panel is a fallback, not a source. A rack with a probe or
+    with servers must never be graded on a sensor behind a bezel."""
+    _thermal(monkeypatch, [_room("a", "dc1", "DC1")], [
+        _rack("probe", "a", p_sum=46.0, p_n=2, p_max=23.5, p_in_band=2, p_sensors=1,
+              n_sum=60.0, n_n=2, n_max=31.0, n_in_band=0, n_sensors=2),
+        _rack("server", "a", f_sum=50.0, f_n=2, f_max=25.5, f_in_band=2, f_sensors=2,
+              n_sum=60.0, n_n=2, n_max=31.0, n_in_band=0, n_sensors=2),
+    ])
+    out = await estate.thermal(_FakeSession(), mode="live")
+    racks = {r["id"]: r for r in out["racks"]}
+    assert racks["probe"]["source"] == "probes" and racks["probe"]["avg_c"] == 23.0
+    assert racks["server"]["source"] == "servers" and racks["server"]["avg_c"] == 25.0
+
+
+@pytest.mark.asyncio
+async def test_the_note_names_the_third_source(monkeypatch):
+    _thermal(monkeypatch, [_room("a", "dc1", "DC1")], [
+        _rack("spine", "a", n_sum=54.0, n_n=2, n_max=27.5, n_in_band=2, n_sensors=2),
+    ])
+    out = await estate.thermal(_FakeSession(), mode="live")
+    assert "front-panel sensor" in out["notes"][0]
+    assert "1 rack)" in out["notes"][0]
 
 
 @pytest.mark.asyncio

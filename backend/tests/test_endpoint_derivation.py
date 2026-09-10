@@ -399,7 +399,7 @@ def test_a_probe_is_polled_through_the_strip_that_carries_it():
     assert len(snmp) == 1, [s.protocol for s in specs]
     ep = snmp[0]
     assert ep.address == "10.52.11.30" and ep.port == 161
-    assert ep.addressing == {"sensor_index": 2}
+    assert ep.addressing == {"sensor_index": 2, "humidity_index": 3}
     assert ep.poll_profile == "snmp-probe-120s"
     assert ep.via_address == "10.52.11.30"
     # The community belongs to the agent, and the agent is the strip. A probe
@@ -407,6 +407,42 @@ def test_a_probe_is_polled_through_the_strip_that_carries_it():
     # community is dropped rather than refused - so getting this wrong reads
     # as dead hardware, not as an auth failure.
     assert ep.credential_name == "snmp-v2c-10.52.11.30"
+
+
+def test_a_raritan_probe_is_read_with_raritan_oids():
+    """The part has to match the strip, and the two vendors publish an
+    external sensor differently.
+
+    APC gives one index a temperature column and a humidity column. Raritan
+    gives each channel its own SLOT in one value column, so a T1H1 at slot 1
+    reads temperature at 1 and humidity at 2. Reading a DPX2 with the APC
+    profile asks for OIDs the strip does not implement, and an unimplemented
+    OID is not an error - it is silence. The probe would read as fitted,
+    polled and empty, which is the hardest kind of wrong to notice.
+    """
+    specs = derive_endpoints({
+        "name": "SEN1-DC1-HA-R1-01", "device_type": "sensor",
+        "vendor": "Raritan", "model_name": "Raritan DPX2-T1H1",
+        "ip_address": "", "mgmt_ip": "",
+        "host_pdu_ip": "10.52.11.27", "sensor_slot": 1,
+    })
+    ep = next(s for s in specs if s.protocol == "snmp")
+    assert ep.poll_profile == "snmp-probe-raritan-120s"
+    assert ep.addressing == {"sensor_index": 1, "humidity_index": 2}
+    assert ep.address == "10.52.11.27" and ep.via_address == "10.52.11.27"
+
+
+def test_an_apc_probe_keeps_the_apc_profile():
+    """The vendor decides, and nothing else does: same rack shape, same slot,
+    different part."""
+    specs = derive_endpoints({
+        "name": "SEN1-DC1-HA-R2-01", "device_type": "sensor",
+        "vendor": "APC by Schneider Electric", "model_name": "APC AP9335TH",
+        "ip_address": "", "mgmt_ip": "",
+        "host_pdu_ip": "10.52.11.30", "sensor_slot": 1,
+    })
+    ep = next(s for s in specs if s.protocol == "snmp")
+    assert ep.poll_profile == "snmp-probe-120s"
 
 
 def test_a_probe_with_no_port_recorded_is_not_polled():

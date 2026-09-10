@@ -119,6 +119,25 @@ function Spread({ d, low, high, allowable }: {
   );
 }
 
+/** What spoke for a rack, in the words an operator would use.
+ *
+ *  Ordered the way the server picks: a probe measures the cold aisle at the
+ *  rack face, which is what ASHRAE means by intake; a BMC sits behind the
+ *  bezel; a switch's front panel is behind it AND next to the ASIC. Each is
+ *  named on the row because a reading is only as good as where it was taken.
+ */
+const SOURCE_TIP: Record<string, string> = {
+  probes: 'the rack\'s front environment probe: the cold aisle at the rack face, which is what ASHRAE calls intake',
+  servers: 'server BMC inlet sensors, used because no rack probe reported; behind the bezel and a degree or two warm',
+  network: 'the front-panel sensor on this rack\'s switches, used because it has no probe and no servers - a spine or management rack. It reads warm, but it is what this rack has instead of nothing',
+};
+
+const SOURCE_WORD: Record<string, (n: number) => string> = {
+  probes: (n) => (n === 1 ? 'probe' : 'probes'),
+  servers: (n) => (n === 1 ? 'server' : 'servers'),
+  network: (n) => (n === 1 ? 'switch' : 'switches'),
+};
+
 export function Thermal() {
   const [mode, setMode] = useState<'daily' | 'live' | 'now'>('now');
   const [unit, setUnit] = useState<Unit>('c');
@@ -172,24 +191,25 @@ export function Thermal() {
     },
     ...(rackTier ? [{
       // What spoke for the rack, and how many of them. The word is the
-      // source: a probe is the intake reading, servers are the fallback.
+      // source, in the order the server picks them: a probe is the intake
+      // reading, servers are the fallback, and a rack of switches is graded
+      // on its front panels rather than left blank.
       key: 'sensors', label: 'Intake from', align: 'mid' as const, width: 108,
       sort: (r: ThermalRow) => r.sensors ?? 0,
       render: (r: ThermalRow) => r.source ? (
-        <Tip tip={r.source === 'probes'
-          ? 'the rack\'s front environment probe: the cold aisle at the rack face, which is what ASHRAE calls intake'
-          : 'server BMC inlet sensors, used because no rack probe reported; behind the bezel and a degree or two warm'}>
-          {r.sensors} {r.source === 'probes'
-            ? (r.sensors === 1 ? 'probe' : 'probes')
-            : (r.sensors === 1 ? 'server' : 'servers')}
+        <Tip tip={SOURCE_TIP[r.source] ?? 'intake readings from this rack'}>
+          {r.sensors} {SOURCE_WORD[r.source]?.(r.sensors ?? 0)
+            ?? (r.sensors === 1 ? 'sensor' : 'sensors')}
         </Tip>
-      ) : <Tip className="dash" tip="no probe and no server intake sensor reported">—</Tip>,
+      ) : <Tip className="dash" tip="nothing in this rack reported an intake temperature">—</Tip>,
     }] : [{
       key: 'racks', label: 'Racks', align: 'mid' as const, width: 80,
       sort: (r: ThermalRow) => r.rack_count ?? 0,
       render: (r: ThermalRow) => r.sources ? (
         <Tip tip={<>{r.sources.probes} by rack probe · {r.sources.servers} by servers
-                  · {(r.rack_count ?? 0) - r.sources.probes - r.sources.servers} silent</>}>
+                  · {r.sources.network ?? 0} by switch front panel
+                  · {(r.rack_count ?? 0) - r.sources.probes - r.sources.servers
+                     - (r.sources.network ?? 0)} silent</>}>
           {r.rack_count ?? 0}
         </Tip>
       ) : (r.rack_count ?? 0),

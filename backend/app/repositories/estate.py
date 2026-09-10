@@ -87,14 +87,23 @@ async def thermal_racks(session: AsyncSession, *, focus_start: datetime,
                         focus_end: datetime, compare_start: datetime,
                         compare_end: datetime, low_c: float,
                         high_c: float, allowable_c: float) -> list[dict[str, Any]]:
-    """Rack intake from two sources, exhaust and humidity per rack, two windows.
+    """Rack intake from three sources, exhaust and humidity per rack, two windows.
 
-    Two intake sources come back side by side and the service picks: the
+    Three intake sources come back side by side and the service picks: the
     rack's environment probes (`ambient_temperature` on a racked device - the
-    PDU's DPX-style probe hung at the front) and the servers' BMC inlet. The
-    probe is what a DCIM calls intake; the BMC is the fallback for a rack with
-    no probe. Both are aggregated here so the choice is made once, in one
-    place, with both sets of counts in hand.
+    PDU's DPX-style probe hung at the front), the servers' BMC inlet, and the
+    front-panel sensor of network gear. The probe is what a DCIM calls intake;
+    the BMC is the fallback for a rack with no probe; the switch is the last
+    resort for a rack with neither. All three are aggregated here so the
+    choice is made once, in one place, with every set of counts in hand.
+
+    The third source exists because a spine or management rack holds no
+    servers and often no probe, so it read as a dash - no temperature at all -
+    while the switches in it published a front-panel reading the whole time.
+    Cisco, Arista and Juniper all expose one on the standard entity sensor
+    table, and a rack of switches running hot is exactly what an operator
+    needs to see. Ranked last because that sensor sits behind the bezel and
+    reads a degree or two above the air the rack is really breathing.
 
     Every rack in inventory is a row, readings or not: a rack with no intake
     sensor is exactly the one an operator should notice. Sums and counts, not
@@ -107,13 +116,25 @@ async def thermal_racks(session: AsyncSession, *, focus_start: datetime,
             -- Intake (both windows, for the delta); exhaust and humidity
             -- (focus only - a delta of a ΔT helps nobody). Naming the window
             -- per key halves the raw scan on an uncompressed day.
-            SELECT d.rack_id, t.device_id, m.key, t.ts, t.value
+            -- The network sensor is renamed on the way in. Downstream it is
+            -- one more intake source among three; the metric it arrives as
+            -- also carries power-supply and ASIC readings on other kit, and
+            -- only the chassis instance on network gear is air.
+            SELECT d.rack_id, t.device_id, t.ts, t.value,
+                   CASE WHEN m.key = 'component_temperature'
+                        THEN 'network_intake' ELSE m.key END AS key
             FROM telemetry_sample t
             JOIN metric m ON m.id = t.metric_id
             JOIN device d ON d.id = t.device_id
                          AND d.rack_id IS NOT NULL
                          AND d.lifecycle <> 'decommissioned'
+            LEFT JOIN device_type dt ON dt.code = d.device_type
             WHERE (m.key IN ('inlet_temperature', 'ambient_temperature')
+                     AND ((t.ts >= :f0 AND t.ts < :f1)
+                       OR (t.ts >= :c0 AND t.ts < :c1)))
+               OR (m.key = 'component_temperature'
+                     AND t.instance = 'CHASSIS'
+                     AND dt.category = 'network'
                      AND ((t.ts >= :f0 AND t.ts < :f1)
                        OR (t.ts >= :c0 AND t.ts < :c1)))
                OR (m.key IN ('exhaust_temperature', 'relative_humidity')
@@ -166,6 +187,17 @@ async def thermal_racks(session: AsyncSession, *, focus_start: datetime,
                    sum(c_sum)     FILTER (WHERE key = 'ambient_temperature') AS pc_sum,
                    sum(c_n)       FILTER (WHERE key = 'ambient_temperature') AS pc_n,
                    max(c_max)     FILTER (WHERE key = 'ambient_temperature') AS pc_max,
+                   sum(f_sum)     FILTER (WHERE key = 'network_intake') AS n_sum,
+                   sum(f_n)       FILTER (WHERE key = 'network_intake') AS n_n,
+                   max(f_max)     FILTER (WHERE key = 'network_intake') AS n_max,
+                   sum(f_in_band) FILTER (WHERE key = 'network_intake') AS n_in_band,
+                   sum(f_below)   FILTER (WHERE key = 'network_intake') AS n_below,
+                   sum(f_hot)     FILTER (WHERE key = 'network_intake') AS n_hot,
+                   count(*)       FILTER (WHERE key = 'network_intake'
+                                               AND f_n > 0) AS n_sensors,
+                   sum(c_sum)     FILTER (WHERE key = 'network_intake') AS nc_sum,
+                   sum(c_n)       FILTER (WHERE key = 'network_intake') AS nc_n,
+                   max(c_max)     FILTER (WHERE key = 'network_intake') AS nc_max,
                    sum(f_sum)     FILTER (WHERE key = 'exhaust_temperature') AS e_sum,
                    sum(f_n)       FILTER (WHERE key = 'exhaust_temperature') AS e_n,
                    sum(f_sum)     FILTER (WHERE key = 'relative_humidity') AS rh_sum,
@@ -190,6 +222,9 @@ async def thermal_racks(session: AsyncSession, *, focus_start: datetime,
                agg.p_sum, agg.p_n, agg.p_max, agg.p_in_band, agg.p_sensors,
                agg.p_below, agg.p_hot,
                agg.pc_sum, agg.pc_n, agg.pc_max,
+               agg.n_sum, agg.n_n, agg.n_max, agg.n_in_band, agg.n_sensors,
+               agg.n_below, agg.n_hot,
+               agg.nc_sum, agg.nc_n, agg.nc_max,
                agg.e_sum, agg.e_n,
                agg.c_sum, agg.c_n, agg.c_max,
                agg.rh_sum, agg.rh_n, agg.rh_max, agg.rh_probes
@@ -199,7 +234,7 @@ async def thermal_racks(session: AsyncSession, *, focus_start: datetime,
         JOIN datacenter dc ON dc.id = rm.datacenter_id
         LEFT JOIN agg      ON agg.rack_id = r.id
         ORDER BY dc.code, rm.name,
-                 COALESCE(agg.p_max, agg.f_max) DESC NULLS LAST,
+                 COALESCE(agg.p_max, agg.f_max, agg.n_max) DESC NULLS LAST,
                  rr.ordinal, r.ordinal, r.name
     """), {"f0": focus_start, "f1": focus_end,
            "c0": compare_start, "c1": compare_end,
@@ -226,25 +261,37 @@ async def thermal_p90(session: AsyncSession, *, focus_start: datetime,
     """
     rows = (await session.execute(text("""
         WITH s AS (
-            SELECT d.rack_id, m.key, t.value
+            SELECT d.rack_id, t.value,
+                   CASE WHEN m.key = 'component_temperature'
+                        THEN 'network_intake' ELSE m.key END AS key
             FROM telemetry_sample t
             JOIN metric m ON m.id = t.metric_id
             JOIN device d ON d.id = t.device_id
                          AND d.rack_id IS NOT NULL
                          AND d.lifecycle <> 'decommissioned'
-            WHERE m.key IN ('inlet_temperature', 'ambient_temperature')
+            LEFT JOIN device_type dt ON dt.code = d.device_type
+            WHERE (m.key IN ('inlet_temperature', 'ambient_temperature')
+                   OR (m.key = 'component_temperature'
+                       AND t.instance = 'CHASSIS'
+                       AND dt.category = 'network'))
               AND t.ts >= :f0 AND t.ts < :f1
         ),
+        -- One source per rack, in the same order the rows above choose in:
+        -- probe, then server, then the switches' front panel. Pooling two
+        -- sources would take a percentile over readings measured at
+        -- different places.
         src AS (
-            SELECT rack_id, bool_or(key = 'ambient_temperature') AS has_probe
+            SELECT rack_id,
+                   bool_or(key = 'ambient_temperature') AS has_probe,
+                   bool_or(key = 'inlet_temperature')   AS has_server
             FROM s GROUP BY rack_id
         ),
         chosen AS (
             SELECT s.rack_id, s.value
             FROM s JOIN src USING (rack_id)
-            WHERE s.key = CASE WHEN src.has_probe
-                               THEN 'ambient_temperature'
-                               ELSE 'inlet_temperature' END
+            WHERE s.key = CASE WHEN src.has_probe  THEN 'ambient_temperature'
+                               WHEN src.has_server THEN 'inlet_temperature'
+                               ELSE 'network_intake' END
         ),
         located AS (
             SELECT c.rack_id, rr.room_id, rm.datacenter_id, c.value
@@ -410,14 +457,20 @@ async def thermal_racks_now(session: AsyncSession, *, since: datetime,
     rows = (await session.execute(text("""
         WITH latest AS (
             SELECT DISTINCT ON (t.device_id, t.metric_id)
-                   t.device_id, m.key, t.value
+                   t.device_id, t.value,
+                   CASE WHEN m.key = 'component_temperature'
+                        THEN 'network_intake' ELSE m.key END AS key
             FROM telemetry_sample t
             JOIN metric m ON m.id = t.metric_id
             JOIN device d ON d.id = t.device_id
                          AND d.rack_id IS NOT NULL
                          AND d.lifecycle <> 'decommissioned'
-            WHERE m.key IN ('inlet_temperature', 'ambient_temperature',
-                            'exhaust_temperature', 'relative_humidity')
+            LEFT JOIN device_type dt ON dt.code = d.device_type
+            WHERE (m.key IN ('inlet_temperature', 'ambient_temperature',
+                             'exhaust_temperature', 'relative_humidity')
+                   OR (m.key = 'component_temperature'
+                       AND t.instance = 'CHASSIS'
+                       AND dt.category = 'network'))
               AND t.ts >= :t0
             ORDER BY t.device_id, t.metric_id, t.ts DESC
         ),
@@ -449,6 +502,13 @@ async def thermal_racks_now(session: AsyncSession, *, since: datetime,
                    sum(v_below)    FILTER (WHERE key = 'ambient_temperature') AS p_below,
                    sum(v_hot)      FILTER (WHERE key = 'ambient_temperature') AS p_hot,
                    sum(v_n)        FILTER (WHERE key = 'ambient_temperature') AS p_sensors,
+                   sum(v_sum)      FILTER (WHERE key = 'network_intake')      AS n_sum,
+                   sum(v_n)        FILTER (WHERE key = 'network_intake')      AS n_n,
+                   max(v_max)      FILTER (WHERE key = 'network_intake')      AS n_max,
+                   sum(v_in_band)  FILTER (WHERE key = 'network_intake')      AS n_in_band,
+                   sum(v_below)    FILTER (WHERE key = 'network_intake')      AS n_below,
+                   sum(v_hot)      FILTER (WHERE key = 'network_intake')      AS n_hot,
+                   sum(v_n)        FILTER (WHERE key = 'network_intake')      AS n_sensors,
                    sum(v_sum)      FILTER (WHERE key = 'exhaust_temperature') AS e_sum,
                    sum(v_n)        FILTER (WHERE key = 'exhaust_temperature') AS e_n,
                    sum(v_sum)      FILTER (WHERE key = 'relative_humidity')   AS rh_sum,
@@ -472,9 +532,13 @@ async def thermal_racks_now(session: AsyncSession, *, since: datetime,
                agg.f_below, agg.f_hot,
                agg.p_sum, agg.p_n, agg.p_max, agg.p_in_band, agg.p_sensors,
                agg.p_below, agg.p_hot,
+               agg.n_sum, agg.n_n, agg.n_max, agg.n_in_band, agg.n_sensors,
+               agg.n_below, agg.n_hot,
                -- An instant has no window to be compared with.
                NULL::double precision AS pc_sum, 0 AS pc_n,
                NULL::double precision AS pc_max,
+               NULL::double precision AS nc_sum, 0 AS nc_n,
+               NULL::double precision AS nc_max,
                agg.e_sum, agg.e_n,
                NULL::double precision AS c_sum, 0 AS c_n,
                NULL::double precision AS c_max,
@@ -485,7 +549,7 @@ async def thermal_racks_now(session: AsyncSession, *, since: datetime,
         JOIN datacenter dc ON dc.id = rm.datacenter_id
         LEFT JOIN agg      ON agg.rack_id = r.id
         ORDER BY dc.code, rm.name,
-                 COALESCE(agg.p_max, agg.f_max) DESC NULLS LAST,
+                 COALESCE(agg.p_max, agg.f_max, agg.n_max) DESC NULLS LAST,
                  rr.ordinal, r.ordinal, r.name
     """), {"t0": since, "low": low_c, "high": high_c,
            "allow": allowable_c})).mappings().all()
@@ -503,13 +567,19 @@ async def thermal_p90_now(session: AsyncSession, *,
     rows = (await session.execute(text("""
         WITH latest AS (
             SELECT DISTINCT ON (t.device_id, t.metric_id)
-                   t.device_id, m.key, t.value
+                   t.device_id, t.value,
+                   CASE WHEN m.key = 'component_temperature'
+                        THEN 'network_intake' ELSE m.key END AS key
             FROM telemetry_sample t
             JOIN metric m ON m.id = t.metric_id
             JOIN device d ON d.id = t.device_id
                          AND d.rack_id IS NOT NULL
                          AND d.lifecycle <> 'decommissioned'
-            WHERE m.key IN ('inlet_temperature', 'ambient_temperature')
+            LEFT JOIN device_type dt ON dt.code = d.device_type
+            WHERE (m.key IN ('inlet_temperature', 'ambient_temperature')
+                   OR (m.key = 'component_temperature'
+                       AND t.instance = 'CHASSIS'
+                       AND dt.category = 'network'))
               AND t.ts >= :t0
             ORDER BY t.device_id, t.metric_id, t.ts DESC
         ),
@@ -517,16 +587,21 @@ async def thermal_p90_now(session: AsyncSession, *,
             SELECT d.rack_id, l.key, l.value
             FROM latest l JOIN device d ON d.id = l.device_id
         ),
+        -- One source per rack, in the order the rows above choose in: probe,
+        -- then server, then the switches' front panel. Pooling two of them
+        -- would take a percentile over readings measured in different places.
         src AS (
-            SELECT rack_id, bool_or(key = 'ambient_temperature') AS has_probe
+            SELECT rack_id,
+                   bool_or(key = 'ambient_temperature') AS has_probe,
+                   bool_or(key = 'inlet_temperature')   AS has_server
             FROM s GROUP BY rack_id
         ),
         chosen AS (
             SELECT s.rack_id, s.value
             FROM s JOIN src USING (rack_id)
-            WHERE s.key = CASE WHEN src.has_probe
-                               THEN 'ambient_temperature'
-                               ELSE 'inlet_temperature' END
+            WHERE s.key = CASE WHEN src.has_probe  THEN 'ambient_temperature'
+                               WHEN src.has_server THEN 'inlet_temperature'
+                               ELSE 'network_intake' END
         ),
         located AS (
             SELECT c.rack_id, rr.room_id, rm.datacenter_id, c.value

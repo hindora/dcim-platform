@@ -1505,9 +1505,13 @@ export interface ThermalRow extends EstateRowBase {
   /** Rack rows: which intake source the row used. The rack's front
    *  environment probes where any reported, else the servers' BMC inlet;
    *  null when neither spoke. */
-  source?: 'probes' | 'servers' | null;
+  /** Which sensor spoke for this rack: the front environment probe, the
+   *  servers' BMC inlets, or - for a rack of switches with neither - their
+   *  front-panel sensors. Ranked in that order, because that is the order
+   *  of how close the sensor sits to the air the rack breathes. */
+  source?: 'probes' | 'servers' | 'network' | null;
   /** Rooms and sites: how many racks each source spoke for. */
-  sources?: { probes: number; servers: number };
+  sources?: { probes: number; servers: number; network: number };
   exhaust_c?: number | null;
   /** Exhaust minus intake over the focus window. */
   delta_t_k?: number | null;
@@ -1540,7 +1544,7 @@ export interface ThermalPage {
     samples: number; rooms_reporting: number; rooms: number;
     facility_rooms: number; alarms_open: number; alarms_in_racks: number;
     rh_avg: number | null; rh_max: number | null; rh_probes: number;
-    sources: { probes: number; servers: number };
+    sources: { probes: number; servers: number; network: number };
   };
   /** What the counts were taken over, and what the drill-down opens with,
    *  so a number and the rows behind it cannot disagree. */

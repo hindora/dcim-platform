@@ -306,11 +306,22 @@ def derive_endpoints(
         # probe that stopped answering was invisible.
         index = dev.get("sensor_slot")
         if index:
+            # Which OIDs answer for the probe is decided by the STRIP's MIB,
+            # and the part has to match the strip - an APC AP9335 does not
+            # plug into a PX2 sensor port. So the probe's own vendor picks the
+            # profile, and the two cannot disagree.
+            #
+            # APC gives one index a temperature column and a humidity column;
+            # Raritan gives each channel its own slot. The second index is
+            # passed either way and is simply unused by the APC mapping.
+            raritan = "raritan" in str(dev.get("vendor") or "").lower()
             out.append(EndpointSpec(
                 protocol="snmp", role="field_device",
                 address=dev["host_pdu_ip"], port=161,
-                poll_profile="snmp-probe-120s",
-                addressing={"sensor_index": index},
+                poll_profile=("snmp-probe-raritan-120s" if raritan
+                              else "snmp-probe-120s"),
+                addressing={"sensor_index": index,
+                            "humidity_index": int(index) + 1},
                 # The community belongs to the AGENT, and the agent is the
                 # strip. Deriving one from the probe - which has no address -
                 # produced an endpoint with no credential at all, and a

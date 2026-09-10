@@ -246,7 +246,7 @@ async def thermal(session: AsyncSession, *, focus: date | None = None,
 # The private keys every tier carries so the tier above can fold it. Sums and
 # counts, never averages; maxima; and how many racks each source spoke for.
 _ACC_SUMS = ("_sum", "_n", "_in_band", "_below", "_hot", "_prev_sum", "_prev_n",
-             "_rh_sum", "_rh_n", "_rh_probes", "_probes", "_servers")
+             "_rh_sum", "_rh_n", "_rh_probes", "_probes", "_servers", "_network")
 _ACC_MAXES = ("_max", "_prev_max", "_rh_max")
 
 
@@ -266,12 +266,25 @@ def _rack_row(r: dict[str, Any], absent_now: str, absent_prev: str,
         below, hot = r.get("f_below"), r.get("f_hot")
         sensors = int(r.get("f_sensors") or 0)
         prev_n, prev_sum, prev_max = int(r.get("c_n") or 0), r.get("c_sum"), r.get("c_max")
+    elif int(r.get("n_n") or 0):
+        # Last resort: the front-panel sensor on the switches. A spine or
+        # management rack holds no servers and often no probe, and it used to
+        # read as a dash - no temperature at all - while its switches were
+        # publishing this the whole time. Behind the bezel, so it runs a
+        # degree or two above the air the rack is breathing, which is why it
+        # is ranked under both real intake sources and named on the row.
+        source = "network"
+        n, s_sum, mx = int(r["n_n"]), r["n_sum"], r["n_max"]
+        in_band = r["n_in_band"]
+        below, hot = r.get("n_below"), r.get("n_hot")
+        sensors = int(r.get("n_sensors") or 0)
+        prev_n, prev_sum, prev_max = int(r.get("nc_n") or 0), r.get("nc_sum"), r.get("nc_max")
     else:
         source, n, s_sum, mx, in_band, sensors = None, 0, 0.0, None, 0, 0
         below = hot = 0
         # Nothing this window; whichever source spoke last window names the
         # comparison for the note, and the delta is None regardless.
-        prev_n = int(r.get("pc_n") or r.get("c_n") or 0)
+        prev_n = int(r.get("pc_n") or r.get("c_n") or r.get("nc_n") or 0)
         prev_sum, prev_max = None, None
     e_n = int(r.get("e_n") or 0)
     rh_n = int(r.get("rh_n") or 0)
@@ -300,6 +313,7 @@ def _rack_row(r: dict[str, Any], absent_now: str, absent_prev: str,
         "_rh_max": _f(r.get("rh_max")), "_rh_probes": int(r.get("rh_probes") or 0),
         "_probes": 1 if source == "probes" else 0,
         "_servers": 1 if source == "servers" else 0,
+        "_network": 1 if source == "network" else 0,
     }
     row.update(_derive(row, absent_now, absent_prev, absent=absent))
     # Exhaust minus intake: the heat the air actually carried away. Low on a
@@ -333,7 +347,8 @@ def _derive(acc: dict[str, Any], absent_now: str, absent_prev: str, *,
         "rh_avg": round(acc["_rh_sum"] / rh_n, 1) if rh_n else None,
         "rh_max": None if acc["_rh_max"] is None else round(acc["_rh_max"], 1),
         "rh_probes": acc["_rh_probes"],
-        "sources": {"probes": acc["_probes"], "servers": acc["_servers"]},
+        "sources": {"probes": acc["_probes"], "servers": acc["_servers"],
+                    "network": acc["_network"]},
         # Said once per row, so a reader never has to guess whether a blank
         # cell means "cool" or "nobody is measuring".
         "note": None if n else absent,
@@ -450,7 +465,8 @@ def _fold_total(rooms: list[dict[str, Any]]) -> dict[str, Any]:
         "rh_avg": round(acc["_rh_sum"] / rh_n, 1) if rh_n else None,
         "rh_max": None if acc["_rh_max"] is None else round(acc["_rh_max"], 1),
         "rh_probes": acc["_rh_probes"],
-        "sources": {"probes": acc["_probes"], "servers": acc["_servers"]},
+        "sources": {"probes": acc["_probes"], "servers": acc["_servers"],
+                    "network": acc["_network"]},
         # Reporting is counted over WHITE SPACE only. Rack intake sensors exist
         # where racks do; counting a generator room as a room that failed to
         # report made the ratio read as a fleet of dead sensors.
@@ -472,11 +488,19 @@ def _delta_note(n: int, prev_n: int, absent_now: str, absent_prev: str) -> str |
 def _source_note(totals: dict[str, Any]) -> str:
     probes = int(totals["sources"]["probes"])
     servers = int(totals["sources"]["servers"])
+    network = int(totals["sources"].get("network") or 0)
+
+    def _racks(n: int) -> str:
+        return f"{n} rack{'s' if n != 1 else ''}"
+
     return (f"Rack intake is the rack's front environment probe where one reported "
-            f"({probes} rack{'s' if probes != 1 else ''}), else the servers' BMC "
-            f"inlet ({servers} rack{'s' if servers != 1 else ''}). Exhaust and ΔT "
-            "come from servers only. This estate records no probe position; front "
-            "is inferred from the readings, which track inlet rather than exhaust.")
+            f"({_racks(probes)}), else the servers' BMC inlet ({_racks(servers)}), "
+            f"else the front-panel sensor on the rack's network gear "
+            f"({_racks(network)}) - which sits behind the bezel and reads a degree "
+            "or two warm, but is what a rack of switches has instead of nothing. "
+            "Exhaust and ΔT come from servers only. This estate records no probe "
+            "position; front is inferred from the readings, which track inlet "
+            "rather than exhaust.")
 
 
 def _window_note(mode: str) -> list[str]:
