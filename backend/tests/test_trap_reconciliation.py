@@ -310,8 +310,32 @@ def test_the_margin_parameter_is_cast_rather_than_inferred():
 
 
 def test_the_stopped_unit_alarm_is_backed_by_the_polled_state():
+    """Any instance, because the point is named differently on every machine:
+    Unit_Running on a CRAH and a CDU, Chiller_Running, Run_Status on a pump,
+    Fan_Status on a tower cell, Status_Modulating on a valve. Naming one of
+    them left the other five unshielded."""
     assert reconcile.STATE_BACKED["plant_unit_stopped"] == (
-        "equipment_state", "Unit_Running", False)
+        "equipment_state", reconcile.ANY_INSTANCE, False)
+
+
+def test_every_plant_condition_a_trap_names_has_a_polled_backstop():
+    """The estate's plant traps, and the boolean point each one is really
+    reporting. A trap-only condition is one lost datagram from silence."""
+    for alarm_type in ("chiller_high_pressure", "chiller_flow_loss",
+                       "chiller_low_evap_temp", "tower_high_vibration",
+                       "tower_low_basin", "pump_fault", "pump_low_flow",
+                       "valve_actuator_fault", "crah_airflow_loss",
+                       "crah_high_temp", "crah_filter_dirty",
+                       "plant_unit_stopped"):
+        assert alarm_type in reconcile.STATE_BACKED, alarm_type
+
+
+def test_the_generic_equipment_alarm_reads_its_own_point():
+    """It still carries every point with no trap of its own - phase loss, a
+    battery fault, a CDU's leak - and those are filed under the point they
+    came from, so the alarm's own instance is the one to read back."""
+    assert reconcile.STATE_BACKED["equipment_alarm"] == (
+        "alarm_state", reconcile.ANY_INSTANCE, True)
 
 
 def test_a_state_backed_alarm_is_never_aged_out_by_the_timer():

@@ -89,12 +89,37 @@ CLEAR_MARGIN = 0.05
 #: Deliberately short. Every entry is a condition this fleet actually polls and
 #: this reconciliation can therefore decide; a guess here would be worse than
 #: the timer it replaces, because it would clear real alarms with confidence.
+#: `*` as the instance means "whatever instance this metric has on this
+#: device". A stopped machine is published under a different point name on
+#: every plant type - Unit_Running on a CRAH and a CDU, Chiller_Running,
+#: Run_Status on a pump, Fan_Status on a tower cell, Status_Modulating on a
+#: valve - and naming one of them left the other five unshielded. It is safe
+#: HERE and not in general: the machines that raise this condition publish one
+#: run-status point each, while an ATS or an MCC publishes three and is not a
+#: type this alarm is ever raised for.
+ANY_INSTANCE = "*"
+
 STATE_BACKED: dict[str, tuple[str, str, bool]] = {
     # A stopped machine, on any plant type that publishes its run status.
-    "plant_unit_stopped":  ("equipment_state", "Unit_Running", False),
-    # Vendor alarm points on a CRAH, each its own instance of one metric.
-    "crah_airflow_loss":   ("alarm_state", "Alarm_AirflowLoss", True),
-    "crah_high_temp":      ("alarm_state", "Alarm_HighTemp", True),
+    "plant_unit_stopped":     ("equipment_state", ANY_INSTANCE, False),
+    # Vendor alarm points. Each is one instance of one boolean metric, and each
+    # has a trap that names it - which is what makes the poll and the trap two
+    # views of one condition rather than two conditions.
+    "chiller_high_pressure":  ("alarm_state", "Alarm_HighPressure", True),
+    "chiller_flow_loss":      ("alarm_state", "Alarm_FlowLoss", True),
+    "chiller_low_evap_temp":  ("alarm_state", "Alarm_LowEvapTemp", True),
+    "tower_high_vibration":   ("alarm_state", "Alarm_HighVibration", True),
+    "tower_low_basin":        ("alarm_state", "Alarm_LowBasin", True),
+    "pump_fault":             ("alarm_state", "Alarm_PumpFault", True),
+    "pump_low_flow":          ("alarm_state", "Alarm_LowFlow", True),
+    "valve_actuator_fault":   ("alarm_state", "Alarm_ActuatorFault", True),
+    "crah_airflow_loss":      ("alarm_state", "Alarm_AirflowLoss", True),
+    "crah_high_temp":         ("alarm_state", "Alarm_HighTemp", True),
+    "crah_filter_dirty":      ("alarm_state", "Filter_Dirty", True),
+    # The generic name still carries every point that has no trap of its own -
+    # phase loss, battery fault, a CDU's leak - and those file under the point
+    # they came from, so the alarm's OWN instance is the one to read.
+    "equipment_alarm":        ("alarm_state", ANY_INSTANCE, True),
 }
 
 #: How fresh a boolean must be to speak for the condition.
@@ -255,7 +280,13 @@ _STATE = text("""
       JOIN point p  ON p.alarm_type = a.alarm_type
       JOIN latest l ON l.device_id = a.device_id
                    AND l.metric_key = p.metric_key
-                   AND l.instance = p.instance
+                   -- A named point, or - for a condition published under a
+                   -- different point name on every machine - whichever
+                   -- instance of that metric this alarm is filed under, and
+                   -- failing that the only one the device has.
+                   AND (l.instance = p.instance
+                     OR (p.instance = :any_instance
+                         AND (l.instance = a.instance OR a.instance = '')))
      WHERE a.state <> 'CLEARED'
        AND a.source = ANY(:sources)
 """)
@@ -349,6 +380,7 @@ async def state_settled(session: AsyncSession, *,
         return []
     rows = (await session.execute(_STATE, {
         "sources": list(RECONCILABLE_SOURCES), "fresh_s": fresh_s,
+        "any_instance": ANY_INSTANCE,
         "types": list(STATE_BACKED),
         "metrics": [v[0] for v in STATE_BACKED.values()],
         "instances": [v[1] for v in STATE_BACKED.values()],
