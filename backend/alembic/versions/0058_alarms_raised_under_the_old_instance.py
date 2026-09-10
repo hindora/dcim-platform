@@ -24,7 +24,6 @@ from __future__ import annotations
 import sqlalchemy as sa
 
 from alembic import op
-
 from app.core.alert_taxonomy import DEVICE_SCOPED_ALARM_TYPES
 
 revision = "0058"
