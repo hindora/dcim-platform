@@ -213,6 +213,12 @@ export function Thermal() {
   // above as a row of dashes.
   const [params, setParams] = useSearchParams();
   const plantTab = params.get('scope') === 'plant';
+  // A facility room is a drill like any other: opening one replaces the page
+  // below the header, rather than appending to it. It used to leave the halls
+  // table and the intake chart on screen underneath, so "open the UPS room"
+  // produced a screen showing the UPS room AND two server halls AND a trend of
+  // rack air the room has none of.
+  const facilityRoom = params.get('froom');
   const plant = usePlant(plantTab);
   const pt = plant.data?.totals;
 
@@ -586,7 +592,12 @@ export function Thermal() {
             } else {
               setParams((prev) => {
                 const q = new URLSearchParams(prev);
+                // Both drills that belong to the other tabs. A facility room
+                // left open here hid the table AND was not rendered itself,
+                // because the facility list only exists at the room tier -
+                // which is a blank page, the one state no tab should reach.
                 q.delete('stage');
+                q.delete('froom');
                 return q;
               });
               t.setScope(s);
@@ -635,6 +646,7 @@ export function Thermal() {
       {/* One tab, one population. PLANT is the machines; everything below is
           rack intake readings, and nothing in it applies to a chiller. */}
       {plantTab ? <Plant unit={unit} /> : (<>
+      {!facilityRoom && (
       <div className="estate-panel">
         {(t.selectedRoom ?? t.selected) && (() => {
           const head = (t.selectedRoom ?? t.selected)!;
@@ -679,9 +691,22 @@ export function Thermal() {
           // Site -> its rooms, room -> its racks, rack -> its elevation with
           // the thermal overlay on. The room drawer is the button in the
           // drilled-in header, so it is one click away rather than the click.
-          onRowClick={(r) => (r.kind === 'rack'
-            ? navigate(`/racks/${r.id}?overlay=thermal&from=thermal`)
-            : t.drillInto(r))}
+          onRowClick={(r) => {
+            if (r.kind === 'rack') {
+              navigate(`/racks/${r.id}?overlay=thermal&from=thermal`);
+              return;
+            }
+            // Leaving any facility room behind: two drills open at once would
+            // be two answers to "which room am I looking at".
+            if (facilityRoom) {
+              setParams((prev) => {
+                const q = new URLSearchParams(prev);
+                q.delete('froom');
+                return q;
+              });
+            }
+            t.drillInto(r);
+          }}
           empty={isLoading ? 'Loading…'
             : error ? 'Could not load thermal data.'
             : 'Nothing matches this search.'}
@@ -691,6 +716,7 @@ export function Thermal() {
                    noun={t.tier}
                    onPage={t.setPage} onPageSize={t.setPageSize} onCsv={exportCsv} />
       </div>
+      )}
 
       {/* The rooms with no racks in them. They cannot appear in the table
           above - a switchroom has no intake sensor and never will - so they
@@ -706,16 +732,26 @@ export function Thermal() {
           is why a hall could show open conditions while every rack under it
           showed none. Supply against return is also the page's own thesis,
           and it is invisible until the units are listed. */}
-      {t.selectedRoom && (
+      {t.selectedRoom && !facilityRoom && (
         <RoomCooling roomId={t.selectedRoom.id} roomName={t.selectedRoom.name} unit={unit} />
       )}
 
       {/* The chart follows the drill: the estate, then the site, then the
-          room the table is showing. */}
-      <ThermalTrend unit={unit} scope={
-        t.selectedRoom ? { kind: 'room', id: t.selectedRoom.id, label: t.selectedRoom.name }
-        : t.selected ? { kind: 'site', id: t.selected.id, label: t.selected.name }
-        : undefined} />
+          room the table is showing.
+
+          Absent inside a facility room, and not merely hidden: the trend is
+          built from RACK intake, scoped by the rack row's room, so a room with
+          no racks in it could only ever draw an empty chart. Its air is
+          measured - by the transmitter on the wall - but that is a different
+          series from the one this chart is, and an empty axis would read as
+          "nothing is happening" rather than "this is not what is plotted
+          here". */}
+      {!facilityRoom && (
+        <ThermalTrend unit={unit} scope={
+          t.selectedRoom ? { kind: 'room', id: t.selectedRoom.id, label: t.selectedRoom.name }
+          : t.selected ? { kind: 'site', id: t.selected.id, label: t.selected.name }
+          : undefined} />
+      )}
 
       <Notes items={[
         ...(data?.notes ?? []),

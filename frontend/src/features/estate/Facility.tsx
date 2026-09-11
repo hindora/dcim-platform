@@ -153,6 +153,9 @@ export function Facility({ unit, siteId, siteCode }: {
     setParams((prev) => {
       const q = new URLSearchParams(prev);
       q.set('froom', r.id);
+      // A white-space drill and a facility drill are two answers to "which
+      // room am I looking at", so opening one closes the other.
+      q.delete('room');
       return q;
     });
     setPage(0);
@@ -284,7 +287,7 @@ export function Facility({ unit, siteId, siteCode }: {
     <div className="estate-panel">
       <div className="estate-selected">
         {room
-          ? <button className="back" onClick={back}>← Facility rooms</button>
+          ? <button className="back" onClick={back}>← All rooms</button>
           : <span className="who">Facility rooms</span>}
         {room && (
           <span className="who">{room.name}
