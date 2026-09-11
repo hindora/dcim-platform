@@ -377,10 +377,11 @@ def _read_instrument(v: dict, rated: float | None) -> dict[str, Any]:
                 "header": inst,
                 "loop": "water",
             }
+    # A loose sensor with no header: it is reading the air it hangs in.
     return {
-        "supply_c": _val(v, "ambient_temperature"), "return_c": None,
-        "setpoint_c": None, "heat_kw": None, "duty_pct": None,
-        "duty_of": "reading", "loop": "none",
+        "supply_c": None, "return_c": None, "setpoint_c": None,
+        "ambient_c": _val(v, "ambient_temperature"),
+        "heat_kw": None, "duty_pct": None, "duty_of": "reading", "loop": "none",
     }
 
 
@@ -392,8 +393,12 @@ def _read_generic(v: dict, rated: float | None) -> dict[str, Any]:
     the page - which looks like a plant failure and is not one.
     """
     return {
-        "supply_c": _val(v, "component_temperature", "CHASSIS"),
-        "return_c": None, "setpoint_c": None,
+        "supply_c": None, "return_c": None, "setpoint_c": None,
+        # Its own chassis, which is NOT a supply temperature and must never sit
+        # in that column: a switch does not supply air to anything. It runs
+        # warmer than the room it stands in, and in most plant rooms it is the
+        # only thermometer there is.
+        "chassis_c": _val(v, "component_temperature", "CHASSIS"),
         "heat_kw": None,
         "duty_pct": _val(v, "load_pct"),
         "duty_of": "rating",
@@ -521,7 +526,7 @@ def _has_reading(m: dict[str, Any]) -> bool:
     return any(m.get(k) is not None for k in (
         "heat_kw", "supply_c", "return_c", "duty_pct", "power_kw",
         "carried_kw", "flow_l_s", "voltage_v", "fuel_pct",
-        "battery_health_pct", "run_hours"))
+        "battery_health_pct", "run_hours", "chassis_c", "ambient_c"))
 
 
 def _verdict(m: dict[str, Any]) -> tuple[str, str | None]:
@@ -676,7 +681,8 @@ def _machine_row(m: dict[str, Any], v: dict, f: dict, al: dict,
               "filter_dp", "vfd_hz", "vibration", "run_hours",
               "uptime_s", "carried_kw", "battery_health_pct", "battery_minutes",
               "voltage_v", "fuel_pct", "run_minutes", "transfers",
-              "power_factor", "imbalance_pct", "thd_pct", "peak_kw"):
+              "power_factor", "imbalance_pct", "thd_pct", "peak_kw",
+              "chassis_c", "ambient_c"):
         if k in row:
             row[k] = _r(row[k], 2 if k in ("cop", "flow_l_s", "vibration") else 1)
     return row
@@ -810,13 +816,13 @@ def _facility_room(room_id: str, machines: list[dict[str, Any]]) -> dict[str, An
             carrier = kind
             break
 
-    # The only temperature most facility rooms have is a machine's own, or the
-    # chassis of a switch standing in it. Named for what it is rather than
-    # offered as room air, which nothing in these rooms measures.
-    temps = [m["supply_c"] for m in machines
-             if m["device_type"] in ("oob_switch", "sensor")
-             and m.get("supply_c") is not None and m.get("header") is None]
-    chassis = max(temps) if temps else None
+    # The only temperature most facility rooms have is the chassis of a switch
+    # standing in one. A real room-air sensor is preferred where one exists and
+    # said to be what it is; neither is silently offered as the other.
+    ambient = [m.get("ambient_c") for m in machines if m.get("ambient_c") is not None]
+    chassis = [m.get("chassis_c") for m in machines if m.get("chassis_c") is not None]
+    temp = max(ambient) if ambient else (max(chassis) if chassis else None)
+    temp_source = "room sensor" if ambient else ("chassis" if chassis else None)
 
     row: dict[str, Any] = {
         "id": room_id,
@@ -839,7 +845,8 @@ def _facility_room(room_id: str, machines: list[dict[str, Any]]) -> dict[str, An
         # never added to the two above.
         "carried_kw": _r(carried),
         "carried_by": carrier,
-        "chassis_c": _r(chassis),
+        "temp_c": _r(temp),
+        "temp_source": temp_source,
         "alarms_open": sum(m["alarms_open"] for m in machines),
         # Counted, never folded into the verdict. A room is not unhealthy
         # because two panels in it were never wired for monitoring; it is a
@@ -894,12 +901,13 @@ def _notes(stages: list[dict[str, Any]], machines: list[dict[str, Any]],
             + "; ".join(f"{s['site_code']} {s['label'].lower()} - {s['why']}"
                         for s in tight[:3]))
 
-    if facility and not any(r["chassis_c"] is not None for r in facility):
+    if facility and not any(r["temp_source"] == "room sensor" for r in facility):
         notes.append(
             "No facility room in this estate has a room-air sensor. The only "
             "temperatures in them are the machines' own and the chassis of "
-            "whatever switch is standing there, so a warm plant room is "
-            "something a person notices, not something the platform can.")
+            "whatever switch is standing there - which runs warmer than the "
+            "air around it - so a warm plant room is something a person "
+            "notices, not something the platform can.")
 
     silent = [m for m in machines if m["verdict"] == "silent"]
     if silent:

@@ -223,6 +223,13 @@ export function extras(m: PlantMachine, unit: Unit): React.ReactNode[] {
   if (m.vibration !== null && m.vibration !== undefined) {
     push('vib', <>vibration <b>{m.vibration.toFixed(2)} mm/s</b></>);
   }
+  if (m.chassis_c !== null && m.chassis_c !== undefined) {
+    push('chassis', <>chassis <b>{conv(m.chassis_c, unit)!.toFixed(1)} {deg}</b>
+      <span className="muted"> - its own, not the room's</span></>);
+  }
+  if (m.ambient_c !== null && m.ambient_c !== undefined) {
+    push('ambient', <>room air <b>{conv(m.ambient_c, unit)!.toFixed(1)} {deg}</b></>);
+  }
   if (m.run_hours !== null && m.run_hours !== undefined) {
     push('hrs', <span className="muted">{Math.round(m.run_hours).toLocaleString()} run hours</span>);
   }
@@ -240,7 +247,8 @@ export function extras(m: PlantMachine, unit: Unit): React.ReactNode[] {
  *  the per-type word - "On battery", "Energised", "On generator" - rather
  *  than trying to say Running about a switchboard.
  */
-export function machineColumns_(unit: Unit, showType = false): Column<PlantMachine>[] {
+export function machineColumns_(unit: Unit, showType = false,
+                                showWhere = true): Column<PlantMachine>[] {
   const u = unit === 'c' ? '°C' : '°F';
   const dU = unit === 'c' ? 'K' : '°F';
   const cols: Column<PlantMachine>[] = [
@@ -326,9 +334,11 @@ export function machineColumns_(unit: Unit, showType = false): Column<PlantMachi
     render: (m) => <Verdict v={m.verdict} why={m.why} />,
   },
   ];
-  if (!showType) return cols;
+  // Inside one room, every row is in that room; the header already says so.
+  const kept = showWhere ? cols : cols.filter((c) => c.key !== 'where');
+  if (!showType) return kept;
   return [
-    cols[0],
+    kept[0],
     {
       key: 'type', label: 'Kind', width: 120,
       help: 'What the machine is. A facility room mixes several.',
@@ -337,7 +347,7 @@ export function machineColumns_(unit: Unit, showType = false): Column<PlantMachi
         <span className="muted">{TYPE_WORD[m.device_type] ?? m.device_type}</span>
       ),
     },
-    ...cols.slice(1),
+    ...kept.slice(1),
   ];
 }
 

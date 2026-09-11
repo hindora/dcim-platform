@@ -1659,6 +1659,11 @@ export interface PlantMachine {
   peak_kw?: number | null;
   /** Which header a plant instrument is tapped into. */
   header?: string | null;
+  /** A device's own chassis temperature. Not a supply temperature: a switch
+   *  supplies air to nothing. */
+  chassis_c?: number | null;
+  /** Room air, from a sensor that measures it. */
+  ambient_c?: number | null;
   /** What the duty figure is a share OF: rated cooling, fan speed, pump
    *  speed, or valve travel. One column, four meanings, said per row. */
   duty_of: string;
@@ -1721,9 +1726,12 @@ export interface FacilityRoom {
   carried_kw: number | null;
   /** Which class of machine the carried figure was read off. */
   carried_by: string | null;
-  /** The warmest chassis reading in the room. Not room air - no facility room
-   *  in this estate has a room-air sensor. */
-  chassis_c: number | null;
+  /** The warmest temperature anything in the room reports, which in most
+   *  plant rooms is a switch's own chassis rather than the air. */
+  temp_c: number | null;
+  /** Which of the two it is: "room sensor" or "chassis". Never conflated -
+   *  a chassis runs warmer than the room around it. */
+  temp_source: string | null;
   alarms_open: number;
   /** Devices with no monitoring endpoint at all. Inventory, not telemetry:
    *  counted here but deliberately kept out of the room's verdict. */

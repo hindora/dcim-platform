@@ -544,8 +544,11 @@ async def test_gear_with_no_reader_of_its_own_is_still_listed(monkeypatch):
     out = await plant.plant(_FakeSession())
     room = _room(out, "Central Plant")
     assert room["equipment"] == 4
-    # The only temperature a plant room has is a chassis, and it is named as one.
-    assert room["chassis_c"] == 24.9
+    # The only temperature a plant room has is a chassis, and it is named as
+    # one rather than offered as room air - a chassis runs warmer than the
+    # room it stands in.
+    assert room["temp_c"] == 24.9
+    assert room["temp_source"] == "chassis"
     by_name = {m["name"]: m for m in out["equipment"]}
     # Online with nothing this view charts is not silence. Calling it silence
     # would bury the one machine below that really has stopped talking.

@@ -85,7 +85,7 @@ export function Facility({ unit, siteId, siteCode }: {
   const { data, isLoading, error } = usePlant(true);
   const [params, setParams] = useSearchParams();
   const [page, setPage] = useState(0);
-  const [pageSize, setPageSize] = useState(10);
+  const [pageSize, setPageSize] = useState(25);
   const roomId = params.get('froom');
 
   const rooms = useMemo(() => {
@@ -180,15 +180,21 @@ export function Facility({ unit, siteId, siteCode }: {
         )),
     },
     {
-      key: 'chassis', label: `Chassis ${u}`, align: 'num', width: 104,
-      help: 'The warmest chassis in the room. Not room air - nothing here measures that.',
-      sort: (r) => r.chassis_c,
-      render: (r) => (r.chassis_c === null
+      key: 'temp', label: `Temp ${u}`, align: 'num', width: 104,
+      help: 'The warmest thing in the room that reports a temperature at all.',
+      sort: (r) => r.temp_c,
+      render: (r) => (r.temp_c === null
         ? <Tip className="dash" tip="no device in this room reports a temperature">—</Tip>
         : (
-          <Tip tip={"a switch's own chassis sensor, which is the only temperature "
-            + 'most plant rooms have. It runs warmer than the room around it.'}>
-            <span><Num value={conv(r.chassis_c, unit)} digits={1} /></span>
+          <Tip tip={r.temp_source === 'room sensor'
+            ? 'from a sensor that measures room air'
+            : "a device's own chassis sensor, which is the only thermometer most "
+              + 'plant rooms have. It runs warmer than the room around it, so it '
+              + 'is a floor rather than a reading of the air.'}>
+            <span>
+              <Num value={conv(r.temp_c, unit)} digits={1} />
+              {r.temp_source === 'chassis' && <span className="muted"> ch</span>}
+            </span>
           </Tip>
         )),
     },
@@ -233,12 +239,13 @@ export function Facility({ unit, siteId, siteCode }: {
       stampedName(`facility-rooms${siteCode ? `-${siteCode}` : ''}`),
       ['site', 'room', 'purpose', 'equipment', 'unmonitored', 'cooling_running',
        'cooling_machines', 'heat_kw', 'power_kw', 'carried_kw', 'carried_by',
-       `chassis_${unit}`, 'alarms_open', 'verdict', 'why'],
+       `temp_${unit}`, 'temp_source', 'alarms_open', 'verdict', 'why'],
       rooms.map((r) => [
         r.site_code, r.name, r.purpose, r.equipment, r.unmonitored,
         r.cooling_running, r.cooling_machines, r.heat_kw ?? '', r.power_kw ?? '',
         r.carried_kw ?? '', r.carried_by ?? '',
-        conv(r.chassis_c, unit)?.toFixed(1) ?? '', r.alarms_open, r.verdict,
+        conv(r.temp_c, unit)?.toFixed(1) ?? '', r.temp_source ?? '',
+        r.alarms_open, r.verdict,
         r.why ?? '',
       ]));
   }
@@ -278,7 +285,7 @@ export function Facility({ unit, siteId, siteCode }: {
         ? (
           <DataTable<PlantMachine>
             rows={visible as PlantMachine[]}
-            columns={machineColumns_(unit, true)}
+            columns={machineColumns_(unit, true, false)}
             lead={(m) => verdictTone(m.verdict)}
             empty="nothing is imported into this room" />
         )
