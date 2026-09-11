@@ -295,24 +295,23 @@ export function Facility({ unit, siteId, siteCode }: {
               {room.floor ? ` · floor ${room.floor}` : ''} · {room.purpose}</span>
           </span>
         )}
-        <div className="pairs">
-          {room ? (
-            <>
-              <span className="pair"><span className="cap">Equipment</span>
-                <span className="v">{room.equipment}</span></span>
-              <span className="pair"><span className="cap">Running</span>
-                <span className="v">{room.active}/{room.machines_stated}
-                  {room.standby > 0 && <span className="muted"> +{room.standby}</span>}</span></span>
-              <span className="pair"><span className="cap">State</span>
-                <span className="v"><Verdict v={room.verdict} why={room.why} /></span></span>
-              <span className="pair"><span className="cap">Alarms</span>
-                <span className="v">{room.alarms_open}</span></span>
-            </>
-          ) : (
-            <span className="pair"><span className="cap">Rooms with no racks</span>
-              <span className="v">{rooms.length}</span></span>
-          )}
-        </div>
+        {/* Only inside a room. The list itself needs no count in its header:
+            the footer already says how many rows there are, and a number
+            repeated two inches away is a number somebody has to check against
+            the other one. */}
+        {room && (
+          <div className="pairs">
+            <span className="pair"><span className="cap">Equipment</span>
+              <span className="v">{room.equipment}</span></span>
+            <span className="pair"><span className="cap">Running</span>
+              <span className="v">{room.active}/{room.machines_stated}
+                {room.standby > 0 && <span className="muted"> +{room.standby}</span>}</span></span>
+            <span className="pair"><span className="cap">State</span>
+              <span className="v"><Verdict v={room.verdict} why={room.why} /></span></span>
+            <span className="pair"><span className="cap">Alarms</span>
+              <span className="v">{room.alarms_open}</span></span>
+          </div>
+        )}
       </div>
 
       {room
