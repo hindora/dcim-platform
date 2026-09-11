@@ -118,7 +118,7 @@ export function RoomCooling({ roomId, roomName, unit }: {
   const columns: Column<ThermalUnit & { id: string }>[] = [
     {
       key: 'name', label: 'Unit',
-      help: 'One cooling unit on this room floor, and whether it is running. These stand in no rack, so they appear nowhere in the rack table above - which is how a hall could show open conditions while every rack under it showed none.',
+      help: 'The cooling unit, and whether it is running.',
       sort: (r) => r.name,
       render: (r) => (
         <div className="name-cell">
@@ -129,7 +129,7 @@ export function RoomCooling({ roomId, roomName, unit }: {
     },
     {
       key: 'supply', label: `Supply ${u}`, align: 'num', width: 104,
-      help: 'The air this unit is discharging into the cold aisle - its controlled variable, and the first point to trend. A supply above setpoint means the unit is not making cold air: check chilled water, valve and coil.',
+      help: 'Air this unit is blowing into the cold aisle.',
       sort: (r) => r.supply_c,
       render: (r) => (
         <Tip tip="the air this unit is discharging into the cold aisle">
@@ -139,13 +139,13 @@ export function RoomCooling({ roomId, roomName, unit }: {
     },
     {
       key: 'setpoint', label: `Setpoint ${u}`, align: 'num', width: 108,
-      help: 'The discharge temperature this unit is asked to hold. Configuration, not a measurement, so it does not move when the room does - which is exactly what makes any drift of Supply away from it diagnostic.',
+      help: 'The supply temperature it is trying to hold.',
       sort: (r) => r.setpoint_c,
       render: (r) => <Num value={conv(r.setpoint_c, unit)} why="no setpoint published" />,
     },
     {
       key: 'return', label: `Return ${u}`, align: 'num', width: 104,
-      help: 'The air arriving back at the unit, which is the room\'s exhaust. A high return with a healthy supply is the hall feeding it hot air - recirculation or load - and not a fault in the machine.',
+      help: 'Air coming back to the unit from the room.',
       sort: (r) => r.return_c,
       render: (r) => (
         <Tip tip="the air arriving back at the unit, which is the room's exhaust">
@@ -155,43 +155,27 @@ export function RoomCooling({ roomId, roomName, unit }: {
     },
     {
       key: 'duty', label: 'Cooling kW', align: 'num', width: 108,
-      help: <>Heat this unit is actually carrying away, against what it is rated to
-            remove. It is not readable off the columns beside it: air-side work is
-            mass flow times the air-side rise, so a unit at a wide ΔT and low
-            airflow can be doing the same as one at the reverse. Read across the
-            hall rather than down one row - units that should be sharing a load and
-            are not is the common finding, and it is a balance problem rather than a
-            capacity one. Shown as a share where the platform holds no rating for
-            the model.</>,
+      help: 'Heat this unit is carrying out of the hall.',
       sort: (r) => (r.duty_kw ?? r.duty_pct),
       render: (r) => <Duty kw={r.duty_kw} pct={r.duty_pct} rated={r.rated_kw} />,
     },
     {
       key: 'valve', label: 'Valve %', align: 'num', width: 92,
-      help: <>Chilled-water valve position. This is the unit's own answer to warm
-            discharge air, so it is read <b>against Supply</b>: a valve pinned near
-            100 % with the air still above setpoint means the water arriving is not
-            cold enough or not arriving at all, and the fault is upstream in the
-            plant. A valve modulating gently with the same warm air means this
-            machine - a fouled coil, a failed actuator.</>,
+      help: 'How far its chilled-water valve is open.',
       sort: (r) => r.valve_pct,
       render: (r) => <Pct v={r.valve_pct} hi={95}
                           why="this unit published no valve position" />,
     },
     {
       key: 'fan', label: 'Fan %', align: 'num', width: 84,
-      help: <>Fan speed as a share of full. Headroom, not health: a hall holding
-            its band with fans near 100 % has nothing left for the next unit that
-            trips, while one sitting at the drive's turndown floor has plenty. It
-            is also where a group of units shows its work - lose one and the rest
-            take its share.</>,
+      help: 'Fan speed, as a share of full.',
       sort: (r) => r.fan_pct,
       render: (r) => <Pct v={r.fan_pct} hi={90}
                           why="this unit published no fan speed" />,
     },
     {
       key: 'dt', label: 'ΔT K', align: 'num', width: 88,
-      help: 'Return minus supply: the heat this unit actually carried away. Low on a loaded hall means air is bypassing the racks rather than passing through them, which no amount of extra cooling fixes.',
+      help: 'Return minus supply: the heat it carried away.',
       sort: (r) => r.delta_t_k,
       render: (r) => (
         <Tip tip="return minus supply: the heat this unit actually carried away. Low on a loaded hall is air bypassing the racks, not a cooling shortage">
@@ -201,7 +185,7 @@ export function RoomCooling({ roomId, roomName, unit }: {
     },
     {
       key: 'alarms', label: 'Alarms', align: 'num', width: 84,
-      help: 'Open cooling and environmental conditions on this unit, counted the same way the rows above count them, so the units in a hall add up to the hall\'s figure. It answers whether anybody has been told, which the verdict beside it cannot.',
+      help: 'Open cooling alarms on this unit.',
       sort: (r) => r.alarms_open ?? 0,
       render: (r) => {
         const n = r.alarms_open ?? 0;
@@ -212,7 +196,7 @@ export function RoomCooling({ roomId, roomName, unit }: {
     },
     {
       key: 'verdict', label: 'Verdict', align: 'mid', width: 130,
-      help: 'Read from this unit\'s own telemetry, right now. Supply high is a unit fault, return high is a room problem, and the two send an engineer to opposite ends of the building. It can disagree with Alarms in both directions, and an operator needs both.',
+      help: 'What this unit\'s own readings say right now.',
       sort: (r) => r.state,
       render: (r) => {
         const v = VERDICT[r.state] ?? { label: r.state, tone: 'none' as const };
