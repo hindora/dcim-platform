@@ -103,6 +103,8 @@ const (
 	MetricDemandPeakPower      = "demand_peak_power"
 	MetricBatteryRuntime       = "battery_runtime"
 	MetricBatteryHealthPct     = "battery_health_pct"
+	MetricBatteryTemperature   = "battery_temperature"
+	MetricCoolantTemperature   = "coolant_temperature"
 	MetricFuelLevelPct         = "fuel_level_pct"
 	MetricCurrentRunTime       = "current_run_time"
 	MetricStartAttempts        = "start_attempts"
@@ -753,6 +755,22 @@ var MetricDefs = map[string]MetricDef{
 		StaleAfterS: 900, Hot: false,
 		Group: "power", RateOf: "", RateScale: 1,
 	},
+	"battery_temperature": {
+		Key: "battery_temperature", DisplayName: "Battery Temperature", Unit: "C",
+		ValueType: "gauge", Aggregation: "max",
+		MinValid: -20, HasMin: true,
+		MaxValid: 90, HasMax: true,
+		StaleAfterS: 900, Hot: true,
+		Group: "power", RateOf: "", RateScale: 1,
+	},
+	"coolant_temperature": {
+		Key: "coolant_temperature", DisplayName: "Coolant Temperature", Unit: "C",
+		ValueType: "gauge", Aggregation: "max",
+		MinValid: -20, HasMin: true,
+		MaxValid: 130, HasMax: true,
+		StaleAfterS: 900, Hot: true,
+		Group: "power", RateOf: "", RateScale: 1,
+	},
 	"fuel_level_pct": {
 		Key: "fuel_level_pct", DisplayName: "Fuel Level", Unit: "pct",
 		ValueType: "gauge", Aggregation: "min",
@@ -817,7 +835,7 @@ var MetricGroups = map[string][]string{
 	"cooling":     {"water_supply_temp", "water_return_temp", "water_setpoint_temp", "water_flow", "water_pressure", "water_diff_pressure", "valve_position_pct", "compressor_load_pct", "cooling_capacity", "cooling_output_pct", "thermal_load", "cop", "approach_temp", "supply_air_temp", "return_air_temp", "air_setpoint_temp", "filter_diff_pressure", "basin_level_pct", "makeup_water_flow", "vibration", "motor_temp", "vfd_frequency", "pump_speed_pct", "run_hours", "equipment_state", "alarm_state"},
 	"environment": {"ambient_temperature", "relative_humidity", "dew_point", "airflow", "outdoor_dry_bulb_temp", "outdoor_wet_bulb_temp"},
 	"interfaces":  {"if_admin_state", "if_oper_state", "if_speed", "if_in_octets", "if_out_octets", "if_in_bps", "if_out_bps", "if_in_errors", "if_out_errors", "if_in_discards", "if_out_discards", "if_in_error_rate"},
-	"power":       {"power_draw", "psu_input_voltage", "psu_output_power", "psu_state", "energy_consumed", "voltage_ln", "current", "line_frequency", "power_factor", "voltage_thd_pct", "current_thd_pct", "harmonic_current_pct", "voltage_ll", "reactive_power", "apparent_power", "load_pct", "phase_imbalance_pct", "demand_peak_power", "battery_runtime", "battery_health_pct", "fuel_level_pct", "current_run_time", "start_attempts", "transfer_count", "time_on_emergency", "operating_mode"},
+	"power":       {"power_draw", "psu_input_voltage", "psu_output_power", "psu_state", "energy_consumed", "voltage_ln", "current", "line_frequency", "power_factor", "voltage_thd_pct", "current_thd_pct", "harmonic_current_pct", "voltage_ll", "reactive_power", "apparent_power", "load_pct", "phase_imbalance_pct", "demand_peak_power", "battery_runtime", "battery_health_pct", "battery_temperature", "coolant_temperature", "fuel_level_pct", "current_run_time", "start_attempts", "transfer_count", "time_on_emergency", "operating_mode"},
 	"system":      {"sys_uptime", "reachable", "poll_latency"},
 	"thermal":     {"cpu_temperature", "inlet_temperature", "exhaust_temperature", "fan_speed", "fan_speed_pct", "component_temperature"},
 }

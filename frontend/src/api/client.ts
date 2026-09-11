@@ -1664,6 +1664,12 @@ export interface PlantMachine {
   chassis_c?: number | null;
   /** Room air, from a sensor that measures it. */
   ambient_c?: number | null;
+  /** A UPS battery string's own temperature. Never the room's: a battery runs
+   *  warmer than the room it stands in by design. */
+  battery_c?: number | null;
+  /** Engine coolant. On a standby set this is the jacket-water heater holding
+   *  the block ready, not the air around it. */
+  coolant_c?: number | null;
   /** What the duty figure is a share OF: rated cooling, fan speed, pump
    *  speed, or valve travel. One column, four meanings, said per row. */
   duty_of: string;

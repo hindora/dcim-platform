@@ -50,6 +50,7 @@ templates:
       - { space: input, addr: 0x0000, name: Genset_Load_Percent, dtype: u16, scale: 10, metric: load_pct }
       - { space: input, addr: 0x0001, name: Fuel_Level, dtype: u16, scale: 10, metric: fuel_level_pct }
       - { space: input, addr: 0x0002, name: Start_Attempts, dtype: u16, metric: start_attempts }
+      - { space: input, addr: 0x0003, name: Coolant_Temperature, dtype: u16, scale: 10, metric: coolant_temperature }
       - { space: input, addr: 0x0020, name: Active_Power, dtype: s32, metric: power_draw, factor: 1000 }
       - { space: input, addr: 0x0030, name: Total_Run_Hours, dtype: u32, scale: 10, metric: run_hours }
       - { space: input, addr: 0x0032, name: Current_Run_Minutes, dtype: u32, metric: current_run_time, factor: 60 }
@@ -152,6 +153,7 @@ templates:
       - { space: input, addr: 0x0002, name: Output_Load, dtype: u16, scale: 10, metric: load_pct, instance: OUTPUT }
       - { space: input, addr: 0x0003, name: Battery_Health, dtype: u16, scale: 10, metric: battery_health_pct }
       - { space: input, addr: 0x0004, name: Battery_Runtime, dtype: u16, metric: battery_runtime, factor: 60 }
+      - { space: input, addr: 0x0005, name: Battery_Temperature, dtype: u16, scale: 10, metric: battery_temperature }
       - { space: input, addr: 0x0020, name: Output_Power, dtype: s32, metric: power_draw, instance: OUTPUT, factor: 1000 }
       - { space: input, addr: 0x0030, name: Energy_Delivered, dtype: u32, scale: 10, metric: energy_consumed }
       - { space: holding, addr: 0x0100, name: Operating_Mode, dtype: u16, metric: operating_mode, enum: { 1: "online", 2: "battery", 3: "bypass", 4: "eco", 5: "standby" } }

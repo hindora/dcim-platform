@@ -81,6 +81,8 @@ export type MetricKey =
   | 'demand_peak_power'
   | 'battery_runtime'
   | 'battery_health_pct'
+  | 'battery_temperature'
+  | 'coolant_temperature'
   | 'fuel_level_pct'
   | 'current_run_time'
   | 'start_attempts'
@@ -822,6 +824,24 @@ export const METRICS: Record<MetricKey, MetricDef> = {
     minValid: 0,
     maxValid: 100,
     staleAfterS: 900, hot: false,
+    group: 'power',
+  },
+  'battery_temperature': {
+    key: 'battery_temperature', displayName: 'Battery Temperature'.replace(/^'|'$/g, ''),
+    unit: 'C', valueType: 'gauge',
+    aggregation: 'max',
+    minValid: -20,
+    maxValid: 90,
+    staleAfterS: 900, hot: true,
+    group: 'power',
+  },
+  'coolant_temperature': {
+    key: 'coolant_temperature', displayName: 'Coolant Temperature'.replace(/^'|'$/g, ''),
+    unit: 'C', valueType: 'gauge',
+    aggregation: 'max',
+    minValid: -20,
+    maxValid: 130,
+    staleAfterS: 900, hot: true,
     group: 'power',
   },
   'fuel_level_pct': {

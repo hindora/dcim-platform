@@ -73,6 +73,11 @@ PHASE_IMBALANCE_LIMIT_PCT = 3.0
 #: end-of-life at 80 % of rated capacity.
 BATTERY_HEALTH_FLOOR_PCT = 80.0
 
+#: VRLA cells are specified at 25 C and every vendor's warranty is written
+#: against it. Some margin above, because a string sits a degree or two over
+#: the room by design; well below the 45-50 C where runaway becomes the risk.
+BATTERY_HOT_C = 32.0
+
 #: The chain, in the order the heat travels through it. `header` says whether
 #: the machines of a stage share one set of pipes at a site: chillers and
 #: towers do, so their loop temperatures may be pooled; every CRAH and CDU
@@ -294,6 +299,11 @@ def _read_ups(v: dict, rated: float | None) -> dict[str, Any]:
         "duty_of": "rated output",
         "carried_kw": _kw(_val(v, "power_draw", "OUTPUT")),
         "battery_health_pct": _val(v, "battery_health_pct"),
+        # The string's own temperature. Deliberately NOT the room's: a battery
+        # runs warmer than the room it stands in, so a facility room that took
+        # this as its air would read 26 C on a quiet day in a 24 C switchroom
+        # and 33 C during an outage in which the room never moved.
+        "battery_c": _val(v, "battery_temperature"),
         # Published in seconds; minutes is the unit an operator thinks in.
         "battery_minutes": (lambda x: None if x is None else x / 60.0)(
             _val(v, "battery_runtime")),
@@ -310,6 +320,10 @@ def _read_generator(v: dict, rated: float | None) -> dict[str, Any]:
         "duty_of": "rated output",
         "carried_kw": _kw(_val(v, "power_draw")),
         "fuel_pct": _val(v, "fuel_level_pct"),
+        # Jacket-water heater while it sits, thermostat while it runs. Also not
+        # a room reading, for the same reason and by design - NFPA 110 wants
+        # the block warm enough to take load in ten seconds.
+        "coolant_c": _val(v, "coolant_temperature"),
         "run_minutes": (lambda x: None if x is None else x / 60.0)(
             _val(v, "current_run_time")),
         "loop": "none",
@@ -472,6 +486,13 @@ def _electrical_verdict(m: dict[str, Any]) -> tuple[str, str | None] | None:
         if st.get("Bypass_Active"):
             return "on_bypass", (
                 "on static bypass - the load is on raw mains with no ride-through")
+        temp = m.get("battery_c")
+        if temp is not None and temp > BATTERY_HOT_C:
+            return "battery_hot", (
+                f"battery at {temp:.1f} C, above the {BATTERY_HOT_C:.0f} C its "
+                f"life is specified against - capacity and service life halve "
+                f"for roughly each 10 K over, and a string that starts a "
+                f"discharge warm is where thermal runaway begins")
         health = m.get("battery_health_pct")
         if health is not None and health < BATTERY_HEALTH_FLOOR_PCT:
             return "battery_ageing", (
@@ -526,7 +547,8 @@ def _has_reading(m: dict[str, Any]) -> bool:
     return any(m.get(k) is not None for k in (
         "heat_kw", "supply_c", "return_c", "duty_pct", "power_kw",
         "carried_kw", "flow_l_s", "voltage_v", "fuel_pct",
-        "battery_health_pct", "run_hours", "chassis_c", "ambient_c"))
+        "battery_health_pct", "run_hours", "chassis_c", "ambient_c",
+        "battery_c", "coolant_c"))
 
 
 def _verdict(m: dict[str, Any]) -> tuple[str, str | None]:
@@ -682,7 +704,7 @@ def _machine_row(m: dict[str, Any], v: dict, f: dict, al: dict,
               "uptime_s", "carried_kw", "battery_health_pct", "battery_minutes",
               "voltage_v", "fuel_pct", "run_minutes", "transfers",
               "power_factor", "imbalance_pct", "thd_pct", "peak_kw",
-              "chassis_c", "ambient_c"):
+              "chassis_c", "ambient_c", "battery_c", "coolant_c"):
         if k in row:
             row[k] = _r(row[k], 2 if k in ("cop", "flow_l_s", "vibration") else 1)
     return row
@@ -1085,6 +1107,7 @@ STANDBY_LABELS = frozenset({"Standby", "Off"})
 _WORST_FIRST = (
     # The load is one failure from dark.
     "utility_lost", "on_emergency", "on_battery", "de_energised", "no_capacity",
+    "battery_hot",
     # Something is broken.
     "tripped", "alarm", "high_supply", "on_bypass", "breaker_open",
     "engine_running", "low_fuel", "high_approach", "low_basin", "actuator",

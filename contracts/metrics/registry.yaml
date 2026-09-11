@@ -996,6 +996,42 @@ metrics:
     device_types: [ups]
     description: Remaining battery capacity against nameplate. Degrades over years, so it trends rather than alarms.
 
+  - key: battery_temperature
+    display_name: Battery Temperature
+    unit: C
+    value_type: gauge
+    aggregation: max
+    min_valid: -20
+    max_valid: 90
+    stale_after_s: 900
+    hot: true
+    group: power
+    device_types: [ups]
+    description: >-
+      The string's own temperature, not the room's. VRLA capacity and service
+      life halve for roughly each 10 K above the 25 C they are specified at, so
+      this is what decides when a string is replaced - and what catches thermal
+      runaway while it is still a temperature rather than a fire. A battery
+      runs warmer than the room around it, which is why it is a separate key
+      from ambient_temperature and must never be read as one.
+
+  - key: coolant_temperature
+    display_name: Coolant Temperature
+    unit: C
+    value_type: gauge
+    aggregation: max
+    min_valid: -20
+    max_valid: 130
+    stale_after_s: 900
+    hot: true
+    group: power
+    device_types: [generator]
+    description: >-
+      Engine coolant. On a standby set this reads the jacket-water heater, not
+      the room - NFPA 110 wants a Level 1 set taking load ten seconds after a
+      utility failure, which needs the block held near 40 C while it sits. It
+      runs 85-95 C under load and trips engine protection around 100-105 C.
+
   - key: fuel_level_pct
     display_name: Fuel Level
     unit: pct

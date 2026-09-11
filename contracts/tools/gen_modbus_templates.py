@@ -41,6 +41,9 @@ DEFAULT_SIM = ROOT.parent / "DCIM" / "Datacenter_Network_Simulator"
 # sources and a UPS on its input and output; three keys for that would make the
 # same quantity incomparable across devices that happen to name it differently.
 POINT_METRICS: dict[str, tuple[str, str]] = {
+    # --- machine temperatures, each of which is ITS OWN and not the room's ---
+    "Battery_Temperature": ("battery_temperature", ""),
+    "Coolant_Temperature": ("coolant_temperature", ""),
     # --- volts, amps, hertz -------------------------------------------------
     "Voltage_LL_Avg":      ("voltage_ll", "AVG"),
     "Voltage_A_N":         ("voltage_ln", "A"),

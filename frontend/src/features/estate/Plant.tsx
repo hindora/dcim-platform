@@ -223,6 +223,14 @@ export function extras(m: PlantMachine, unit: Unit): React.ReactNode[] {
   if (m.vibration !== null && m.vibration !== undefined) {
     push('vib', <>vibration <b>{m.vibration.toFixed(2)} mm/s</b></>);
   }
+  if (m.battery_c !== null && m.battery_c !== undefined) {
+    push('batt', <>battery <b>{conv(m.battery_c, unit)!.toFixed(1)} {deg}</b>
+      <span className="muted"> - the string, not the room</span></>);
+  }
+  if (m.coolant_c !== null && m.coolant_c !== undefined) {
+    push('cool', <>coolant <b>{conv(m.coolant_c, unit)!.toFixed(1)} {deg}</b>
+      <span className="muted"> - jacket heater while it sits</span></>);
+  }
   if (m.chassis_c !== null && m.chassis_c !== undefined) {
     push('chassis', <>chassis <b>{conv(m.chassis_c, unit)!.toFixed(1)} {deg}</b>
       <span className="muted"> - its own, not the room's</span></>);
