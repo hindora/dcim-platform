@@ -128,6 +128,48 @@ function Spread({ d, low, high, allowable }: {
   );
 }
 
+/** A room's cooling units, in one cell.
+ *
+ *  The count is the cell; the diagnosis is the tip. Supply and return are the
+ *  page's own thesis - a high SUPPLY is the unit failing to make cold air, a
+ *  high RETURN is the room feeding it hot air, and they send an engineer to
+ *  opposite ends of the building - but they are two temperatures and a delta,
+ *  which is three numbers more than a column can hold beside fifteen others.
+ *
+ *  Toned by the worst thing among them, so a hall that needs attention is
+ *  visible without reading the number: stopped or discharging warm is
+ *  critical, a hot return is warn, everything behaving is quiet.
+ */
+function Cooling({ c, unit }: {
+  c: ThermalRow['cooling']; unit: Unit;
+}) {
+  if (!c) {
+    return <Tip className="dash" tip="no cooling unit reports into this room">—</Tip>;
+  }
+  const bad = c.units_stopped + c.units_high_supply;
+  const tone = bad ? 'critical' : c.units_high_return ? 'warn' : undefined;
+  const deg = (v: number | null) => (v === null ? '—' : conv(v, unit)?.toFixed(1));
+  return (
+    <Tip tip={<>
+      <span className="spread-line"><b>{c.units}</b> unit{c.units === 1 ? '' : 's'}
+        {c.units_stopped ? <>, <b>{c.units_stopped}</b> stopped</> : null}
+        {c.units_high_supply ? <>, <b>{c.units_high_supply}</b> discharging warm</> : null}
+        {c.units_high_return ? <>, <b>{c.units_high_return}</b> on hot return</> : null}
+        {!bad && !c.units_high_return ? ', all behaving' : null}</span>
+      {c.supply_c !== null && (
+        <span className="spread-line">supply <b>{deg(c.supply_c)}</b>, return <b>{deg(c.return_c)}</b>
+          {c.delta_t_k !== null ? <> · ΔT <b>{convDelta(c.delta_t_k, unit)?.toFixed(1)}</b></> : null}</span>
+      )}
+      {c.supply_c === null && (
+        <span className="spread-line">no running unit is reporting air temperatures</span>
+      )}
+    </>}>
+      <span className={tone}>{c.units}{bad || c.units_high_return
+        ? ` · ${bad + c.units_high_return}` : ''}</span>
+    </Tip>
+  );
+}
+
 /** What spoke for a rack, in the words an operator would use.
  *
  *  Ordered the way the server picks: a probe measures the cold aisle at the
@@ -341,6 +383,12 @@ export function Thermal() {
       sort: (r) => (r.compliance_pct === null ? null : 100 - r.compliance_pct),
       render: (r) => <Spread d={r.distribution} low={floor} high={recommended} allowable={allowable} />,
     },
+    ...(rackTier ? [] : [{
+      key: 'cooling', label: 'Cooling', align: 'mid' as const, width: 104,
+      help: 'The room\'s cooling units, and how many are not behaving.',
+      sort: (r: ThermalRow) => r.cooling?.units ?? null,
+      render: (r: ThermalRow) => <Cooling c={r.cooling} unit={unit} />,
+    }]),
     {
       key: 'alarms', label: 'Alarms', align: 'num', width: 90,
       help: 'Open cooling and environmental alarms here.',
@@ -410,6 +458,8 @@ export function Thermal() {
        `p90_${unit}`, `max_${unit}`, `exhaust_${unit}`, 'delta_t_k', 'in_band_pct',
        'rate_k_per_h',
        'below_band_pct', 'above_recommended_pct', 'above_allowable_pct', 'open_alarms',
+       'cooling_units', 'cooling_units_not_behaving', 'cooling_supply_c',
+       'cooling_return_c', 'cooling_delta_t_k',
        'rh_avg_pct', 'rh_max_pct', 'rh_probes', 'readings', 'delta_avg_c', 'delta_max_c', 'note'],
       t.filtered.map((r) => [
         r.kind, r.name, r.site_code, r.room_name ?? '', r.floor ?? '', r.rack_count ?? '',
@@ -421,6 +471,11 @@ export function Thermal() {
         r.rate_k_per_h ?? '',
         r.distribution?.above_recommended_pct ?? '', r.distribution?.above_allowable_pct ?? '',
         r.alarms_open ?? 0,
+        r.cooling?.units ?? '',
+        r.cooling ? r.cooling.units_stopped + r.cooling.units_high_supply
+                    + r.cooling.units_high_return : '',
+        r.cooling?.supply_c ?? '', r.cooling?.return_c ?? '',
+        r.cooling?.delta_t_k ?? '',
         r.rh_avg ?? '', r.rh_max ?? '', r.rh_probes,
         r.samples, r.delta_avg ?? '', r.delta_max ?? '',
         r.note ?? '',

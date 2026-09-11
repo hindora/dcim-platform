@@ -1505,6 +1505,19 @@ export interface ThermalRow extends EstateRowBase {
    *  it by whatever its floor-standing plant is raising, which is why a hall
    *  can show conditions while every rack under it shows none. */
   alarms_in_racks: number;
+  /** The room's cooling units, or null where it has none - a plant room, or a
+   *  hall whose units are not imported. Counts fold to the site; the
+   *  temperatures do not, because a mean of two halls' supply air describes
+   *  neither of them. */
+  cooling?: {
+    units: number;
+    units_stopped: number;
+    units_high_supply: number;
+    units_high_return: number;
+    supply_c: number | null;
+    return_c: number | null;
+    delta_t_k: number | null;
+  } | null;
   samples: number;
   delta_avg: number | null;
   delta_max: number | null;
