@@ -23,7 +23,7 @@
  *  chillers with switchgear and the reader needs to see which is which.
  */
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { type FacilityRoom, type PlantMachine } from '../../api/client';
 import { Column, DataTable, Num, TableFoot } from '../../components/estate';
@@ -149,6 +149,10 @@ export function Facility({ unit, siteId, siteCode }: {
     () => (room ? (data?.equipment ?? []).filter((m) => m.room_id === room.id) : []),
     [data, room]);
 
+  // The trail can change which room is open without going through open(), so
+  // the page index follows the room rather than the click that set it.
+  useEffect(() => { setPage(0); }, [roomId]);
+
   function open(r: FacilityRoom) {
     setParams((prev) => {
       const q = new URLSearchParams(prev);
@@ -156,15 +160,6 @@ export function Facility({ unit, siteId, siteCode }: {
       // A white-space drill and a facility drill are two answers to "which
       // room am I looking at", so opening one closes the other.
       q.delete('room');
-      return q;
-    });
-    setPage(0);
-  }
-
-  function back() {
-    setParams((prev) => {
-      const q = new URLSearchParams(prev);
-      q.delete('froom');
       return q;
     });
     setPage(0);
@@ -286,15 +281,11 @@ export function Facility({ unit, siteId, siteCode }: {
   return (
     <div className="estate-panel">
       <div className="estate-selected">
-        {room
-          ? <button className="back" onClick={back}>← All rooms</button>
-          : <span className="who">Facility rooms</span>}
-        {room && (
-          <span className="who">{room.name}
-            <span className="where"> {room.site_code}
-              {room.floor ? ` · floor ${room.floor}` : ''} · {room.purpose}</span>
-          </span>
-        )}
+        {/* Identity and the way back live in the page's trail now. What is
+            left here is the label the LIST needs - a facility table sitting
+            under a hall table has to say which one it is - and, inside a
+            room, the figures for it. */}
+        {!room && <span className="who">Facility rooms</span>}
         {/* Only inside a room. The list itself needs no count in its header:
             the footer already says how many rows there are, and a number
             repeated two inches away is a number somebody has to check against

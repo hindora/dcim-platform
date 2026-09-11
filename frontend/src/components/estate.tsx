@@ -109,6 +109,46 @@ export function ScopeTabs<S extends string = 'sites' | 'rooms'>({
   );
 }
 
+/** Where the reader is, and every level they can step back to.
+ *
+ *  Above the table rather than inside it, because it is not part of the table:
+ *  it is the answer to "what am I looking at", and it has to stay put while
+ *  the rows underneath change. A back button alone could only ever say ONE
+ *  level, so a reader three deep had to press it twice to find out where that
+ *  went - the trail says it before they press anything.
+ *
+ *  The last crumb is where you are and is not a button. Every earlier one is.
+ */
+export interface Crumb {
+  label: string;
+  /** Absent on the last crumb: you cannot navigate to where you already are. */
+  onClick?: () => void;
+  /** Small grey text after the label - a floor, a room type. */
+  note?: string;
+}
+
+export function Crumbs({ items, onBack }: { items: Crumb[]; onBack?: () => void }) {
+  if (items.length < 2) return null;
+  return (
+    <div className="estate-crumbs">
+      {onBack && (
+        <button className="back" onClick={onBack} title="Up one level">← Back</button>
+      )}
+      <nav aria-label="Breadcrumb">
+        {items.map((c, i) => (
+          <span className="step" key={`${c.label}-${i}`}>
+            {i > 0 && <span className="sep" aria-hidden="true">/</span>}
+            {c.onClick
+              ? <button className="crumb" onClick={c.onClick}>{c.label}</button>
+              : <span className="crumb current" aria-current="page">{c.label}</span>}
+            {c.note && <span className="note">{c.note}</span>}
+          </span>
+        ))}
+      </nav>
+    </div>
+  );
+}
+
 /** Show or hide plant, switchrooms and the roof.
  *
  *  Off by default. Those rooms hold no racks and no intake sensors, so they

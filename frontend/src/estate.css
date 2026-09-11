@@ -185,6 +185,29 @@
 .estate-table .dash { color: var(--unknown); }
 .estate-table .why { font-size: 11px; color: var(--text-faint); }
 
+/* The trail, above the panel and outside it. Sits in the page's own space so
+   that changing tier swaps the table without the trail moving. */
+.estate-crumbs {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  margin: 14px 0 -2px;
+}
+.estate-crumbs .back {
+  background: none; border: 1px solid var(--border); border-radius: 4px;
+  color: var(--text-muted); cursor: pointer; height: 28px; padding: 0 10px;
+  font-size: 11px; letter-spacing: .08em; font-weight: 600;
+}
+.estate-crumbs .back:hover { color: var(--text); border-color: var(--border-strong); }
+.estate-crumbs nav { display: flex; align-items: center; flex-wrap: wrap; gap: 2px; }
+.estate-crumbs .step { display: inline-flex; align-items: center; gap: 6px; }
+.estate-crumbs .sep { color: var(--text-faint); margin: 0 4px; }
+.estate-crumbs .crumb {
+  background: none; border: none; padding: 0; font: inherit; font-size: 13px;
+  color: var(--accent); cursor: pointer;
+}
+.estate-crumbs .crumb:hover { text-decoration: underline; }
+.estate-crumbs .crumb.current { color: var(--text); font-weight: 600; cursor: default; }
+.estate-crumbs .note { font-size: 11px; color: var(--text-faint); }
+
 /* The selected-site band above the table when a site has been drilled into. */
 .estate-selected {
   display: flex; align-items: center; gap: 16px; flex-wrap: wrap;

@@ -4,8 +4,8 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api, type AlarmCategory, type ThermalRow, type ThermalSpread } from '../../api/client';
 import { AlarmPanel } from '../home/AlarmPanel';
 import {
-  Column, DataTable, Delta, Notes, Num, PageHead, ScopeTabs, Seg,
-  TableFoot, tone,
+  Column, type Crumb, Crumbs, DataTable, Delta, Notes, Num, PageHead, ScopeTabs,
+  Seg, TableFoot, tone,
 } from '../../components/estate';
 import { Tip } from '../../components/HoverTip';
 import { downloadCsv, stampedName } from '../../lib/csv';
@@ -219,8 +219,14 @@ export function Thermal() {
   // produced a screen showing the UPS room AND two server halls AND a trend of
   // rack air the room has none of.
   const facilityRoom = params.get('froom');
-  const plant = usePlant(plantTab);
+  // Enabled for the facility drill too: the trail has to name the room, and
+  // the room's name lives in this payload. Same cache entry the table reads,
+  // so it costs one request either way.
+  const plant = usePlant(plantTab || !!facilityRoom);
   const pt = plant.data?.totals;
+  const froom = facilityRoom
+    ? plant.data?.facility_rooms.find((r) => r.id === facilityRoom) ?? null
+    : null;
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['estate-thermal', mode, focus, compare, source],
@@ -509,6 +515,55 @@ export function Thermal() {
   }
 
   const totals = data?.totals;
+
+  /** Clear the facility drill, leaving whatever site the reader was in. */
+  function dropFacility() {
+    setParams((prev) => {
+      const q = new URLSearchParams(prev);
+      q.delete('froom');
+      return q;
+    });
+  }
+
+  /** The trail, built from the same state the tables are.
+   *
+   *  Every level the reader can step back to is a button; where they are is
+   *  not. A site's code rather than its name, because that is what the rows
+   *  themselves are labelled with and a trail that renamed things would be a
+   *  second vocabulary to learn. */
+  const crumbs: Crumb[] = [];
+  if (t.selected || t.selectedRoom || froom || t.scope === 'rooms') {
+    crumbs.push({
+      label: 'All sites',
+      onClick: () => {
+        dropFacility();
+        t.setScope('sites');
+      },
+    });
+  }
+  const site = t.selected ?? null;
+  if (site) {
+    const deeper = Boolean(t.selectedRoom || froom);
+    crumbs.push({
+      label: site.site_code,
+      note: deeper ? undefined : site.name !== site.site_code ? site.name : undefined,
+      onClick: deeper ? () => {
+        dropFacility();
+        if (t.selectedRoom) t.clearDrill();
+      } : undefined,
+    });
+  } else if (!site && t.scope === 'rooms' && !froom) {
+    crumbs.push({ label: 'All rooms' });
+  }
+  if (t.selectedRoom) {
+    crumbs.push({
+      label: t.selectedRoom.name,
+      note: t.selectedRoom.floor ? `floor ${t.selectedRoom.floor}` : undefined,
+    });
+  } else if (froom) {
+    crumbs.push({ label: froom.name, note: froom.purpose });
+  }
+
   return (
     <div className="estate">
       <PageHead
@@ -643,6 +698,19 @@ export function Thermal() {
         )}
       </div>
 
+      {/* Where the reader is. Outside the panel, because it answers "what am I
+          looking at" rather than being part of the table - and because a back
+          button alone can only say one level, so somebody three deep had to
+          press it to find out where it went. */}
+      {!plantTab && (
+        <Crumbs
+          onBack={() => {
+            if (facilityRoom) { dropFacility(); return; }
+            t.clearDrill();
+          }}
+          items={crumbs} />
+      )}
+
       {/* One tab, one population. PLANT is the machines; everything below is
           rack intake readings, and nothing in it applies to a chiller. */}
       {plantTab ? <Plant unit={unit} /> : (<>
@@ -650,16 +718,11 @@ export function Thermal() {
       <div className="estate-panel">
         {(t.selectedRoom ?? t.selected) && (() => {
           const head = (t.selectedRoom ?? t.selected)!;
-          const back = t.selectedRoom
-            ? (t.selected ? `← ${t.selected.site_code} rooms` : '← All rooms')
-            : '← All sites';
           return (
+            // Identity and the way back both live in the trail above now, so
+            // this band is what it always was underneath: the figures for
+            // whatever the table is showing.
             <div className="estate-selected">
-              <button className="back" onClick={t.clearDrill}>{back}</button>
-              <span className="who">
-                {head.name}
-                {t.selectedRoom && <span className="where"> {head.site_code}{head.floor ? ` · floor ${head.floor}` : ''}</span>}
-              </span>
               {t.selectedRoom && (
                 <button className="back" title="Devices, alarms and trend for this room"
                         onClick={() => setDrawerRoom({ id: head.id, name: head.name })}>
