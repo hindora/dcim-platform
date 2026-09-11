@@ -1236,7 +1236,8 @@ async def thermal_trend(session: AsyncSession, *, days: int = 7,
                         bucket: str = "hour", since: date | None = None,
                         until: date | None = None, room_id: str | None = None,
                         datacenter_id: str | None = None,
-                        rack_id: str | None = None) -> dict[str, Any]:
+                        rack_id: str | None = None,
+                        source: str = "auto") -> dict[str, Any]:
     """Intake average, p90 and max per hour or per day, in one scope.
 
     The table's Δ columns compare two windows and nothing more; this is the
@@ -1244,6 +1245,11 @@ async def thermal_trend(session: AsyncSession, *, days: int = 7,
     ASHRAE band so "warm" has a shape - a hall drifting up over a week and a
     hall that spiked this morning are different problems wearing the same
     Max.
+
+    `source` pins every rack to one intake source, exactly as it does for the
+    table. It has to: a reader who pinned the table to PROBES and got a chart
+    still drawn the automatic way would be looking at two measurements of one
+    estate, on one screen, with nothing saying they differed.
 
     The window is the last `days` (hourly: ending at the top of the next
     hour, so the bucket in progress is drawn; daily: UTC days ending today),
@@ -1275,15 +1281,20 @@ async def thermal_trend(session: AsyncSession, *, days: int = 7,
             end = datetime.combine(now.date() + timedelta(days=1), time.min, tzinfo=UTC)
         start = end - timedelta(days=days)
 
-    source = "5m" if bucket == "hour" and end - start <= _FINE_SOURCE_UP_TO else "1h"
+    # All three reads below take the same pin. They are one line drawn from
+    # three tables - the rollup, its fine tail and the raw newest bucket - and
+    # a pin honoured by some of them would put a seam in the middle of it.
+    forced = SOURCE_METRIC.get(source, "") if source != "auto" else ""
+    src = "5m" if bucket == "hour" and end - start <= _FINE_SOURCE_UP_TO else "1h"
     rows = await repo.thermal_trend(session, start=start, end=end, bucket=bucket,
-                                    source=source, room_id=room_id,
+                                    source=src, force=forced, room_id=room_id,
                                     datacenter_id=datacenter_id, rack_id=rack_id)
     by = {r["b"]: r for r in rows}
-    if source == "1h" and bucket == "hour":
+    if src == "1h" and bucket == "hour":
         tail = await repo.thermal_trend(session, start=max(start, end - _TAIL_FROM_FINE),
                                         end=end, bucket=bucket, source="5m",
-                                        room_id=room_id, datacenter_id=datacenter_id,
+                                        force=forced, room_id=room_id,
+                                        datacenter_id=datacenter_id,
                                         rack_id=rack_id)
         for r in tail:
             by.setdefault(r["b"], r)
@@ -1294,7 +1305,8 @@ async def thermal_trend(session: AsyncSession, *, days: int = 7,
         # finished one is what made a fault look like it had not arrived.
         fresh = await repo.thermal_trend(session, start=max(start, end - _RAW_TAIL),
                                          end=end, bucket=bucket, source="raw",
-                                         room_id=room_id, datacenter_id=datacenter_id,
+                                         force=forced, room_id=room_id,
+                                         datacenter_id=datacenter_id,
                                          rack_id=rack_id)
         for r in fresh:
             by[r["b"]] = r
@@ -1313,9 +1325,15 @@ async def thermal_trend(session: AsyncSession, *, days: int = 7,
     return {
         "days": days,
         "bucket": bucket,
-        # Which rollup the points came from: what one value per sensor per
-        # sub-bucket means for the p90.
-        "source": source,
+        # Which ROLLUP the points came from: what one value per sensor per
+        # sub-bucket means for the p90. Deliberately still called `source`,
+        # because that is what it has always meant to every reader of this
+        # payload - the intake pin is a different question and gets its own
+        # name below rather than quietly taking this one over.
+        "source": src,
+        # Which INTAKE source the racks were read from: "auto", or the one the
+        # reader pinned. The table beside the chart reports the same field.
+        "intake_source": source,
         "since": start,
         # Exclusive: the instant after the last bucket.
         "until": end,

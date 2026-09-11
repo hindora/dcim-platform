@@ -829,7 +829,7 @@ export function Thermal() {
           "nothing is happening" rather than "this is not what is plotted
           here". */}
       {!facilityRoom && scopeKnown && (
-        <ThermalTrend unit={unit} scope={
+        <ThermalTrend unit={unit} source={source} scope={
           t.selectedRoom ? { kind: 'room', id: t.selectedRoom.id, label: t.selectedRoom.name }
           : t.selected ? { kind: 'site', id: t.selected.id, label: t.selected.name }
           : undefined} />

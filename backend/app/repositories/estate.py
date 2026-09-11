@@ -345,7 +345,8 @@ _TREND_WIDTH = {"hour": timedelta(hours=1), "day": timedelta(days=1)}
 
 
 async def thermal_trend(session: AsyncSession, *, start: datetime, end: datetime,
-                        bucket: str, source: str, room_id: str | None = None,
+                        bucket: str, source: str, force: str = "",
+                        room_id: str | None = None,
                         datacenter_id: str | None = None,
                         rack_id: str | None = None) -> list[dict[str, Any]]:
     """Intake average, p90 and max per bucket over a window, in one scope.
@@ -383,7 +384,8 @@ async def thermal_trend(session: AsyncSession, *, start: datetime, end: datetime
         stamp, mean, peak, weight = ("t.bucket", "t.avg_value", "t.max_value",
                                      "t.sample_count")
     scope = ""
-    params: dict[str, Any] = {"t0": start, "t1": end, "width": width}
+    params: dict[str, Any] = {"t0": start, "t1": end, "width": width,
+                              "force": force}
     if rack_id is not None:
         scope = "AND d.rack_id = CAST(:rack AS uuid)"
         params["rack"] = rack_id
@@ -415,12 +417,17 @@ async def thermal_trend(session: AsyncSession, *, start: datetime, end: datetime
             SELECT rack_id, bool_or(key = 'ambient_temperature') AS has_probe
             FROM s GROUP BY rack_id
         ),
+        -- `force` pins every rack to one source, the same way the table above
+        -- the chart does. Without it a reader who pinned the tables to PROBES
+        -- got a chart still drawn the automatic way, which is two different
+        -- measurements of one estate on one screen with nothing saying so.
         chosen AS (
             SELECT s.b, s.device_id, s.avg_value, s.max_value, s.sample_count
             FROM s JOIN src USING (rack_id)
-            WHERE s.key = CASE WHEN src.has_probe
-                               THEN 'ambient_temperature'
-                               ELSE 'inlet_temperature' END
+            WHERE s.key = CASE
+                      WHEN :force <> '' THEN :force
+                      WHEN src.has_probe THEN 'ambient_temperature'
+                      ELSE 'inlet_temperature' END
         )
         SELECT b,
                sum(avg_value * sample_count) / NULLIF(sum(sample_count), 0) AS avg_c,

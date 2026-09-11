@@ -249,6 +249,9 @@ async def thermal_trend(
     room: str | None = Query(None, description="Only this room."),
     site: str | None = Query(None, description="Only this site (datacenter id)."),
     rack: str | None = Query(None, description="Only this rack."),
+    source: str = Query("auto", pattern="^(auto|probes|servers)$",
+                        description="Pin every rack to one intake source, as "
+                                    "the table does"),
     session: AsyncSession = Depends(get_session),
     _: Principal = Depends(current_principal),
 ) -> dict:
@@ -266,7 +269,7 @@ async def thermal_trend(
     try:
         return await service.thermal_trend(
             session, days=days, bucket=bucket, since=since, until=until,
-            room_id=room, datacenter_id=site, rack_id=rack)
+            room_id=room, datacenter_id=site, rack_id=rack, source=source)
     except ValueError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)) from None
 

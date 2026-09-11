@@ -2470,12 +2470,17 @@ export const api = {
    *  day of the window is present, zero included, oldest first. */
   thermalTrend: (scope: { site?: string; room?: string; rack?: string },
                  days = 7, bucket: 'hour' | 'day' = 'hour',
-                 window?: { since: string; until: string }) =>
+                 window?: { since: string; until: string },
+                 /** The intake pin the tables are using. The chart has to
+                  *  follow it, or the page shows two measurements of one
+                  *  estate with nothing saying they differ. */
+                 source?: string) =>
     request<ThermalTrend>(`/estate/thermal-trend?days=${days}&bucket=${bucket}`
       + (scope.site ? `&site=${encodeURIComponent(scope.site)}` : '')
       + (scope.room ? `&room=${encodeURIComponent(scope.room)}` : '')
       + (scope.rack ? `&rack=${encodeURIComponent(scope.rack)}` : '')
-      + (window ? `&since=${window.since}&until=${window.until}` : '')),
+      + (window ? `&since=${window.since}&until=${window.until}` : '')
+      + (source && source !== 'auto' ? `&source=${source}` : '')),
 
   alarmTrend: (categories: string[], scope?: { room?: string; site?: string },
                days = 30, bucket: 'day' | 'week' = 'day',

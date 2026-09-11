@@ -111,7 +111,15 @@ function TrendPlot({ data, unit }: { data: TrendData; unit: Unit }) {
   );
 }
 
-export function ThermalTrend({ scope, unit }: { scope?: ThermalTrendScope; unit: Unit }) {
+export function ThermalTrend({ scope, unit, source = 'auto' }: {
+  scope?: ThermalTrendScope;
+  unit: Unit;
+  /** The intake pin the tables above are using. The chart follows it because
+   *  it is drawn from the same readings: a page pinned to PROBES with a chart
+   *  still drawn the automatic way shows two measurements of one estate and
+   *  says nothing about the difference. */
+  source?: string;
+}) {
   const [range, setRange] = useState<Range>(RANGES[1]);
   const [maxed, setMaxed] = useState(false);
   const [custom, setCustom] = useState(false);
@@ -127,12 +135,12 @@ export function ThermalTrend({ scope, unit }: { scope?: ThermalTrendScope; unit:
 
   const { data, error } = useQuery({
     queryKey: ['thermal-trend', scope?.kind ?? '', scope?.id ?? '',
-               custom ? `${since}..${until}` : range.days, bucket],
+               custom ? `${since}..${until}` : range.days, bucket, source],
     queryFn: () => api.thermalTrend({
       site: scope?.kind === 'site' ? scope.id : undefined,
       room: scope?.kind === 'room' ? scope.id : undefined,
       rack: scope?.kind === 'rack' ? scope.id : undefined,
-    }, range.days, bucket, custom ? { since, until } : undefined),
+    }, range.days, bucket, custom ? { since, until } : undefined, source),
     enabled: !custom || windowOk,
     // Hourly points move every five minutes; a wall display should follow.
     refetchInterval: bucket === 'hour' ? 300_000 : false,

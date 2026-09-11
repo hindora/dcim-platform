@@ -1192,3 +1192,42 @@ async def test_the_note_says_which_source_is_pinned(monkeypatch):
     out = await estate.thermal(_FakeSession(), mode="live", source="probes")
     assert "Pinned to one source" in out["notes"][0]
     assert "front environment probe" in out["notes"][0]
+
+
+@pytest.mark.asyncio
+async def test_the_trend_follows_the_pin_the_table_is_using(monkeypatch):
+    """One screen, one measurement.
+
+    A reader who pins the table to PROBES and gets a chart still drawn the
+    automatic way is looking at two readings of one estate with nothing
+    saying they differ - which is the failure the pin exists to expose, not
+    one it should introduce.
+    """
+    seen: list[str] = []
+
+    async def _trend(_s, **kw):
+        seen.append(kw.get("force", ""))
+        return []
+
+    monkeypatch.setattr(estate.repo, "thermal_trend", _trend)
+    await estate.thermal_trend(_FakeSession(), days=7, bucket="hour",
+                               source="probes")
+    # Every read behind the one line: the rollup, its fine tail, the raw
+    # newest bucket. A pin honoured by some of them would seam the line.
+    assert seen and all(f == "ambient_temperature" for f in seen)
+
+    seen.clear()
+    await estate.thermal_trend(_FakeSession(), days=7, bucket="hour")
+    assert seen and all(f == "" for f in seen)
+
+
+@pytest.mark.asyncio
+async def test_the_rollup_field_still_means_the_rollup(monkeypatch):
+    """`source` on the trend payload named which ROLLUP the points came from
+    long before there was an intake pin. The pin gets its own name rather
+    than quietly taking that one over."""
+    monkeypatch.setattr(estate.repo, "thermal_trend", _returns([]))
+    out = await estate.thermal_trend(_FakeSession(), days=1, bucket="hour",
+                                     source="servers")
+    assert out["source"] in ("5m", "1h", "raw")
+    assert out["intake_source"] == "servers"
