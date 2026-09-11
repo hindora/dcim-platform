@@ -29,7 +29,8 @@ import { type FacilityRoom, type PlantMachine } from '../../api/client';
 import { Column, DataTable, Num, TableFoot } from '../../components/estate';
 import { Tip } from '../../components/HoverTip';
 import { downloadCsv, stampedName } from '../../lib/csv';
-import { TYPE_WORD, Verdict, machineColumns_, usePlant, verdictTone } from './Plant';
+import { RoomEquipment } from './RoomEquipment';
+import { TYPE_WORD, Verdict, usePlant, verdictTone } from './Plant';
 
 type Unit = 'c' | 'f';
 
@@ -279,6 +280,7 @@ export function Facility({ unit, siteId, siteCode }: {
   if (isLoading || error || rooms.length === 0) return null;
 
   return (
+    <>
     <div className="estate-panel">
       <div className="estate-selected">
         {/* Identity and the way back live in the page's trail now. What is
@@ -305,26 +307,42 @@ export function Facility({ unit, siteId, siteCode }: {
         )}
       </div>
 
-      {room
-        ? (
-          <DataTable<PlantMachine>
-            rows={visible as PlantMachine[]}
-            columns={machineColumns_(unit, true, false)}
-            lead={(m) => verdictTone(m.verdict)}
-            empty="nothing is imported into this room" />
-        )
-        : (
+      {!room && (
+        <>
           <DataTable<FacilityRoom>
             rows={visible as FacilityRoom[]}
             columns={roomColumns}
             lead={(r) => verdictTone(r.verdict)}
             onRowClick={open}
             empty="this site has no room without racks" />
-        )}
-
-      <TableFoot total={total} page={current} pageSize={pageSize}
-                 onPage={setPage} onPageSize={setPageSize} onCsv={csv}
-                 noun={room ? 'machines' : 'rooms'} />
+          <TableFoot total={total} page={current} pageSize={pageSize}
+                     onPage={setPage} onPageSize={setPageSize} onCsv={csv}
+                     noun="rooms" />
+        </>
+      )}
     </div>
+
+    {/* One table per family, each with the columns that family actually has.
+        A single set could not serve them: a BACnet router read as a row of
+        dashes under it, a meter's throughput had nowhere to go, and a valve's
+        commanded-against-measured - the one number that says its actuator is
+        obeying - was invisible. */}
+    {room && <RoomEquipment machines={equipment} unit={unit} />}
+
+    {/* One export for the whole room, not one per family: a spreadsheet wants
+        every machine in the room in one sheet, and the families are a reading
+        aid rather than a division of the data. No pager - the tables above
+        show every row they have. */}
+    {room && (
+      <div className="estate-panel">
+        <div className="estate-foot">
+          <span>{equipment.length} machine{equipment.length === 1 ? '' : 's'} in this room</span>
+          <button className="csv" style={{ marginLeft: 'auto' }} onClick={csv}>
+            DOWNLOAD CSV
+          </button>
+        </div>
+      </div>
+    )}
+    </>
   );
 }
