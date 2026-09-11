@@ -41,6 +41,15 @@ DEFAULT_SIM = ROOT.parent / "DCIM" / "Datacenter_Network_Simulator"
 # sources and a UPS on its input and output; three keys for that would make the
 # same quantity incomparable across devices that happen to name it differently.
 POINT_METRICS: dict[str, tuple[str, str]] = {
+    # --- the room itself ----------------------------------------------------
+    #
+    # ambient_temperature and relative_humidity, the same keys a rack probe
+    # reports, because this measures the same quantity in a room that has no
+    # racks to hang a probe in. That is what lets the estate's existing
+    # room-temperature rules reach a switchroom at all.
+    "Room_Temperature": ("ambient_temperature", ""),
+    "Room_Humidity":    ("relative_humidity", ""),
+
     # --- machine temperatures, each of which is ITS OWN and not the room's ---
     "Battery_Temperature": ("battery_temperature", ""),
     "Coolant_Temperature": ("coolant_temperature", ""),
@@ -250,17 +259,23 @@ def build(m) -> tuple[str, list[str]]:
         a(f"    product: {yaml_str(mm.product)}")
         a(f"    word_order: {mm.word_order}")
         a("    device_types: [sensor]")
-        a("    # A transmitter publishes one nameless process value; what it MEANS")
-        a("    # comes from where it is installed. The probe role carried on the")
-        a("    # endpoint selects the metric, which is how a field instrument")
-        a("    # actually works.")
-        a("    probe_roles:")
-        for role in roles:
-            metric, instance = PROBE_POINTS[role]
-            line = f"      {role}: {{ metric: {metric}"
-            if instance:
-                line += f", instance: {instance}"
-            a(line + " }")
+        # A transmitter with NAMED points needs no role mapping: the names say
+        # what they are, and they are assigned in POINT_METRICS like any other
+        # device's. Only the single-nameless-value kind - an RTD, a flow meter
+        # - takes its meaning from where it is installed.
+        named = [role for role in roles if role in PROBE_POINTS]
+        if named:
+            a("    # A transmitter publishes one nameless process value; what it MEANS")
+            a("    # comes from where it is installed. The probe role carried on the")
+            a("    # endpoint selects the metric, which is how a field instrument")
+            a("    # actually works.")
+            a("    probe_roles:")
+            for role in named:
+                metric, instance = PROBE_POINTS[role]
+                line = f"      {role}: {{ metric: {metric}"
+                if instance:
+                    line += f", instance: {instance}"
+                a(line + " }")
         a("    points:")
         for space_const, space in ((m.SPACE_INPUT, "input"),
                                    (m.SPACE_HOLDING, "holding"),

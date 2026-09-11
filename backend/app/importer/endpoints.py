@@ -62,6 +62,10 @@ MODBUS_NATIVE_TYPES = frozenset({
 # core/device_state_store.py, which derives the same role the same way - the
 # instrument's identity is in its tag, exactly as it is on a real drawing.
 PROBE_ROLE_BY_PREFIX = {
+    # Room air in a room that holds no racks. On the same RS-485 trunk as the
+    # thermowells below, because a switchroom has no rack PDU to hang a probe
+    # off and still has to be monitored.
+    "THR": "room_air",
     "CHWS": "chw_supply",
     "CHWR": "chw_return",
     "CWS": "cw_supply",

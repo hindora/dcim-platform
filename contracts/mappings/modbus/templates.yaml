@@ -209,6 +209,16 @@ templates:
       - { space: input, addr: 0x0000, name: Flow_Rate, dtype: u16, scale: 100, role: process_value }
       - { space: discrete, addr: 0x0000, name: Reading_Valid, role: validity }
 
+  SIM-ROOMTH-TX-v1:
+    vendor: "Generic"
+    product: "Room Temperature / Humidity Transmitter"
+    word_order: big
+    device_types: [sensor]
+    points:
+      - { space: input, addr: 0x0000, name: Room_Temperature, dtype: s16, scale: 10, metric: ambient_temperature }
+      - { space: input, addr: 0x0001, name: Room_Humidity, dtype: u16, scale: 10, metric: relative_humidity }
+      - { space: discrete, addr: 0x0000, name: Reading_Valid, role: validity }
+
   SIM-RTD-TX-v1:
     vendor: "Generic"
     product: "RTD Temperature Transmitter"
