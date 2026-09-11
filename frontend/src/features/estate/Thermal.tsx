@@ -716,19 +716,23 @@ export function Thermal() {
       {plantTab ? <Plant unit={unit} /> : (<>
       {!facilityRoom && (
       <div className="estate-panel">
-        {(t.selectedRoom ?? t.selected) && (() => {
-          const head = (t.selectedRoom ?? t.selected)!;
+        {(t.tier === 'rooms' || t.selectedRoom || t.selected) && (() => {
+          const head = t.selectedRoom ?? t.selected ?? null;
           return (
-            // Identity and the way back both live in the trail above now, so
-            // this band is what it always was underneath: the figures for
-            // whatever the table is showing.
+            // Identity and the way back live in the trail above now. What is
+            // left is the table's NAME - the facility table underneath has
+            // always carried one, and two unlabelled tables stacked leaves a
+            // reader working out which is which from the columns - and the
+            // figures for whatever the table is showing.
             <div className="estate-selected">
-              {t.selectedRoom && (
+              {t.tier === 'rooms' && <span className="who">Server rooms</span>}
+              {t.selectedRoom && head && (
                 <button className="back" title="Devices, alarms and trend for this room"
                         onClick={() => setDrawerRoom({ id: head.id, name: head.name })}>
                   ROOM DETAILS
                 </button>
               )}
+              {head && (
               <div className="pairs">
                 <span className="pair"><span className="cap">Average</span>
                   <span className="v"><Num value={conv(head.avg_c, unit)} /> {u}</span></span>
@@ -743,6 +747,7 @@ export function Thermal() {
                 <span className="pair"><span className="cap">RH</span>
                   <span className="v"><Num value={head.rh_avg} unit="%" /></span></span>
               </div>
+              )}
             </div>
           );
         })()}
