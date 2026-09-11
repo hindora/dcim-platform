@@ -58,9 +58,12 @@ INSERT = sa.text("""
                             operator, threshold, clear_threshold, dwell_samples,
                             clear_dwell_samples, severity, message_tpl,
                             category, detection, metric_kind, raise_on, instances)
+    -- raise_on is a BOOLEAN (the value of a boolean metric that raises), not a
+    -- direction. A numeric rule carries the direction in `operator` and sets
+    -- this true, which is what every existing threshold rule does.
     VALUES (:name, :alarm_type, true, ARRAY['sensor']::text[], 'ambient_temperature',
             '>', :threshold, :clear_threshold, :dwell, 2, CAST(:severity AS severity_t),
-            :message, 'environmental', 'threshold', 'numeric', 'above',
+            :message, 'environmental', 'threshold', 'numeric', true,
             ARRAY['ROOM']::text[])
     ON CONFLICT (name) DO UPDATE
       SET threshold = EXCLUDED.threshold,
