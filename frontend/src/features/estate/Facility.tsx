@@ -201,14 +201,21 @@ export function Facility({ unit, siteId, siteCode }: {
       render: (r) => (r.temp_c === null
         ? <Tip className="dash" tip="no device in this room reports a temperature">—</Tip>
         : (
-          <Tip tip={r.temp_source === 'room sensor'
-            ? 'from a sensor that measures room air'
-            : "a device's own chassis sensor, which is the only thermometer most "
-              + 'plant rooms have. It runs warmer than the room around it, so it '
-              + 'is a floor rather than a reading of the air.'}>
+          <Tip tip={
+            r.temp_source === 'room sensor'
+              ? 'from an instrument that measures room air'
+              : r.temp_source === 'outdoor air'
+                ? 'outdoor air, off the sensor the cooling towers carry. This '
+                  + 'room is outdoors, so that is not a proxy for its air - it '
+                  + 'is its air.'
+                : "a device's own chassis sensor, which is the only thermometer "
+                  + 'most plant rooms have. It runs warmer than the room around '
+                  + 'it, so it is a floor under the room temperature rather than '
+                  + 'a reading of it.'}>
             <span>
               <Num value={conv(r.temp_c, unit)} digits={1} />
               {r.temp_source === 'chassis' && <span className="muted"> ch</span>}
+              {r.temp_source === 'outdoor air' && <span className="muted"> oa</span>}
             </span>
           </Tip>
         )),

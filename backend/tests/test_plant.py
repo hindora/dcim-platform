@@ -663,3 +663,60 @@ async def test_a_board_dead_by_design_counts_as_spare_not_as_a_warning(monkeypat
     room = _room(await plant.plant(_FakeSession()), "Generator Room")
     assert (room["active"], room["standby"], room["attention"]) == (0, 2, 0)
     assert room["verdict"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_the_roof_reads_its_own_outdoor_air(monkeypatch):
+    """A roof is outdoors, and the towers on it carry the site's outdoor sensor.
+
+    A tower's whole job is approach to wet bulb, so its controller has outdoor
+    air wired to it. For that room the reading is not a proxy for the air - it
+    is the air, and the page was ignoring a measurement it already had.
+    """
+    _patch(monkeypatch,
+           [_gear("t1", "CT1", "cooling_tower", room="Roof", room_id="r5",
+                  room_type="plant")],
+           values={"t1": {("water_supply_temp", "COND"): 15.5,
+                          ("water_return_temp", "COND"): 20.5,
+                          ("outdoor_dry_bulb_temp", ""): 16.2,
+                          ("outdoor_wet_bulb_temp", ""): 10.2,
+                          ("fan_speed_pct", ""): 30.0}},
+           flags={"t1": {"running": True, "alarm_points": [],
+                         "states": {"Fan_Status": True}}})
+
+    room = _room(await plant.plant(_FakeSession()), "Roof")
+    assert room["temp_c"] == 16.2
+    assert room["temp_source"] == "outdoor air"
+
+
+@pytest.mark.asyncio
+async def test_a_room_sensor_still_beats_both(monkeypatch):
+    """Order is by how close the instrument is to the air in the room."""
+    _patch(monkeypatch,
+           [_gear("s1", "SNS1", "sensor", room="Central Plant", room_id="r1",
+                  room_type="plant"),
+            _gear("o1", "OOB1", "oob_switch", room="Central Plant", room_id="r1",
+                  room_type="plant")],
+           values={"s1": {("ambient_temperature", ""): 21.4},
+                   "o1": {("component_temperature", "CHASSIS"): 28.9}})
+
+    room = _room(await plant.plant(_FakeSession()), "Central Plant")
+    assert room["temp_c"] == 21.4
+    assert room["temp_source"] == "room sensor"
+
+
+@pytest.mark.asyncio
+async def test_a_room_with_no_thermometer_says_nothing(monkeypatch):
+    """A switchroom with no instrument in it has no temperature to report.
+
+    Inventing one - from a motor winding, a battery, the room next door - would
+    put a number on the page that no sensor in the building measured.
+    """
+    _patch(monkeypatch,
+           [_gear("u1", "UPSA", "ups"), _gear("a1", "ATS1", "ats")],
+           flags={"u1": {"running": None, "alarm_points": [], "states": {}},
+                  "a1": {"running": None, "alarm_points": [], "states": {}}})
+
+    room = _room(await plant.plant(_FakeSession()), "UPS Room")
+    assert room["temp_c"] is None
+    assert room["temp_source"] is None

@@ -816,13 +816,29 @@ def _facility_room(room_id: str, machines: list[dict[str, Any]]) -> dict[str, An
             carrier = kind
             break
 
-    # The only temperature most facility rooms have is the chassis of a switch
-    # standing in one. A real room-air sensor is preferred where one exists and
-    # said to be what it is; neither is silently offered as the other.
+    # Three sources, in order of how close each is to the air in the room, and
+    # each named for what it is. Nothing is ever silently offered as another.
+    #
+    #   room sensor   an instrument that measures room air. None of this
+    #                 estate's facility rooms has one.
+    #   outdoor air   the roof IS outdoors, and the towers standing on it carry
+    #                 the site's outdoor sensor because a tower's whole job is
+    #                 approach to wet bulb. For that room it is not a proxy for
+    #                 the air - it is the air.
+    #   chassis       a switch's own sensor. It runs warmer than the room
+    #                 around it, so it is a floor under the room temperature
+    #                 rather than a reading of it.
     ambient = [m.get("ambient_c") for m in machines if m.get("ambient_c") is not None]
+    outdoor = [m.get("dry_bulb_c") for m in machines if m.get("dry_bulb_c") is not None]
     chassis = [m.get("chassis_c") for m in machines if m.get("chassis_c") is not None]
-    temp = max(ambient) if ambient else (max(chassis) if chassis else None)
-    temp_source = "room sensor" if ambient else ("chassis" if chassis else None)
+    if ambient:
+        temp, temp_source = max(ambient), "room sensor"
+    elif outdoor:
+        temp, temp_source = max(outdoor), "outdoor air"
+    elif chassis:
+        temp, temp_source = max(chassis), "chassis"
+    else:
+        temp, temp_source = None, None
 
     # Three buckets and a fourth that is not a bucket. A meter, a gateway or a
     # power panel publishes no run state at all, and counting those as "off"
@@ -933,12 +949,16 @@ def _notes(stages: list[dict[str, Any]], machines: list[dict[str, Any]],
                         for s in tight[:3]))
 
     if facility and not any(r["temp_source"] == "room sensor" for r in facility):
+        blind = [r["name"] for r in facility if r["temp_c"] is None]
         notes.append(
-            "No facility room in this estate has a room-air sensor. The only "
-            "temperatures in them are the machines' own and the chassis of "
-            "whatever switch is standing there - which runs warmer than the "
-            "air around it - so a warm plant room is something a person "
-            "notices, not something the platform can.")
+            "No facility room in this estate has a room-air sensor. The roof "
+            "reads its own outdoor air, and the plant rooms read the chassis of "
+            "whatever switch is standing in them - which runs warmer than the "
+            "air around it, so it is a floor rather than a measurement."
+            + (f" {len(set(blind))} room type{'s' if len(set(blind)) != 1 else ''} "
+               f"report nothing at all ({', '.join(sorted(set(blind)))}): a warm "
+               f"switchroom there is something a person notices, not something "
+               f"the platform can." if blind else ""))
 
     silent = [m for m in machines if m["verdict"] == "silent"]
     if silent:
