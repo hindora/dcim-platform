@@ -55,6 +55,22 @@ FACILITY_TYPES = [
 #: Both populations, for the queries that do not care which is which.
 ALL_TYPES = PLANT_TYPES + FACILITY_TYPES
 
+#: A facility type is only ever SHOWN where it stands in a room with no racks.
+#: The estate has eighty power strips and thirty-six access switches, nearly
+#: all of them in server halls, and this view never displays one of those - so
+#: asking the telemetry tables about them costs a second of somebody's page
+#: load to fetch rows that are then filtered away. The cooling types carry no
+#: such filter: a CRAH lives in a hall by definition and the PLANT tab needs
+#: every one of them.
+_FACILITY_IN_FACILITY_ROOMS = """
+    ( d.device_type = ANY(:cool_types)
+      OR (d.device_type = ANY(:fac_types) AND rm.room_class = 'facility') )
+"""
+
+#: Which keys belong to which population. A chiller publishes no battery
+#: health and a switchboard no chilled-water temperature, so asking for the
+#: union against every device doubles the rows the index has to walk for
+#: nothing.
 #: The points the plant table reads. Instance matters throughout: a chiller
 #: carries CHW on the evaporator and COND on the condenser, a pump reports
 #: SUCTION and DISCHARGE pressure, a valve reports COMMANDED and MEASURED
@@ -77,17 +93,25 @@ _KEYS = (
     "motor_temp", "run_hours",
     # Weather, which is what a tower's performance has to be judged against
     "outdoor_wet_bulb_temp", "outdoor_dry_bulb_temp",
+)
+
+#: Everything else in a facility room.
+_FACILITY_KEYS = (
     # The electrical spine. `power_draw` means different things on different
     # machines - a chiller CONSUMES it, a utility feed CARRIES it - so the
     # service labels every one of these per type rather than summing them.
-    "load_pct", "power_factor", "voltage_ll", "voltage_ln", "line_frequency",
-    "phase_imbalance_pct", "voltage_thd_pct", "current_thd_pct",
-    "demand_peak_power", "apparent_power", "energy_consumed",
+    "power_draw", "load_pct", "power_factor", "voltage_ll", "voltage_ln",
+    "line_frequency", "phase_imbalance_pct", "voltage_thd_pct",
+    "current_thd_pct", "demand_peak_power", "apparent_power",
+    "energy_consumed",
     # UPS and generator condition, which is what a walk round the room checks.
-    "battery_health_pct", "battery_runtime", "fuel_level_pct",
-    "current_run_time", "transfer_count", "time_on_emergency",
-    # Chassis temperature, the only temperature most facility rooms have.
-    "component_temperature", "ambient_temperature",
+    "battery_health_pct", "battery_runtime", "battery_temperature",
+    "fuel_level_pct", "coolant_temperature", "current_run_time",
+    "transfer_count", "time_on_emergency",
+    # The room's own air, and the chassis that is the next best thing.
+    "ambient_temperature", "relative_humidity", "component_temperature",
+    # A header instrument on the same trunk reads water, not air.
+    "water_supply_temp", "water_return_temp", "water_flow",
     # Evidence of life for a gateway or a router, which publishes nothing else
     # this view reads.
     "sys_uptime",
@@ -127,26 +151,39 @@ _MACHINES = text("""
       LEFT JOIN rack_row rr ON rr.id = r.row_id
       LEFT JOIN room rm     ON rm.id = COALESCE(rr.room_id, d.room_id)
       LEFT JOIN datacenter dc ON dc.id = rm.datacenter_id
-     WHERE d.device_type = ANY(:types)
-       AND d.lifecycle <> 'decommissioned'
+     WHERE d.lifecycle <> 'decommissioned'
+       AND """ + _FACILITY_IN_FACILITY_ROOMS + """
      ORDER BY dc.code, d.name
 """)
 
 #: The newest sample per (device, key, instance) inside a short window.
 #:
-#: Bounded so a machine that stopped reporting half an hour ago does not
-#: present a stale temperature as current: an empty row is a fact about the
-#: machine, a stale one is a lie about the plant.
+#: Bounded so a machine that stopped reporting does not present a stale
+#: temperature as current: an empty row is a fact about the machine, a stale
+#: one is a lie about the plant.
+#:
+#: TEN minutes, matching repositories/cooling.py. Plant points are polled every
+#: thirty to a hundred and twenty seconds, so ten minutes is already five
+#: missed polls - and the window is the scan: at thirty it was two thirds of
+#: this endpoint's entire response time, walking rows that a device reporting
+#: normally had superseded eight times over.
 _LATEST = text("""
     SELECT DISTINCT ON (t.device_id, m.key, t.instance)
            t.device_id::text AS device_id, m.key, t.instance, t.value
       FROM telemetry_sample t
       JOIN metric m ON m.id = t.metric_id
       JOIN device d ON d.id = t.device_id
-     WHERE t.ts > now() - interval '30 minutes'
-       AND m.key = ANY(:keys)
-       AND d.device_type = ANY(:types)
+      LEFT JOIN rack r      ON r.id = d.rack_id
+      LEFT JOIN rack_row rr ON rr.id = r.row_id
+      LEFT JOIN room rm     ON rm.id = COALESCE(rr.room_id, d.room_id)
+     WHERE t.ts > now() - interval '10 minutes'
        AND d.lifecycle <> 'decommissioned'
+       -- Per population: a chiller publishes no battery health and a
+       -- switchboard no chilled-water temperature, so the union against every
+       -- device walks twice the index for nothing.
+       AND ( (d.device_type = ANY(:cool_types) AND m.key = ANY(:cool_keys))
+          OR (d.device_type = ANY(:fac_types) AND m.key = ANY(:fac_keys)
+              AND rm.room_class = 'facility') )
      ORDER BY t.device_id, m.key, t.instance, t.ts DESC
 """)
 
@@ -208,16 +245,20 @@ _OBSERVED_KW = text("""
 """)
 
 
+#: The bind parameters both filtered queries need.
+_SCOPE = {"cool_types": PLANT_TYPES, "fac_types": FACILITY_TYPES}
+
+
 async def machines(session: AsyncSession) -> list[dict[str, Any]]:
-    rows = (await session.execute(
-        _MACHINES, {"types": ALL_TYPES})).mappings().all()
+    rows = (await session.execute(_MACHINES, _SCOPE)).mappings().all()
     return [dict(r) for r in rows]
 
 
 async def latest(session: AsyncSession) -> dict[str, dict[tuple[str, str], float]]:
     """{device_id: {(key, instance): value}} - the newest of each."""
-    rows = (await session.execute(
-        _LATEST, {"keys": list(_KEYS), "types": ALL_TYPES})).mappings().all()
+    rows = (await session.execute(_LATEST, {
+        **_SCOPE, "cool_keys": list(_KEYS), "fac_keys": list(_FACILITY_KEYS),
+    })).mappings().all()
     out: dict[str, dict[tuple[str, str], float]] = {}
     for r in rows:
         out.setdefault(r["device_id"], {})[

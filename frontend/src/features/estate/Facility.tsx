@@ -277,7 +277,31 @@ export function Facility({ unit, siteId, siteCode }: {
       ]));
   }
 
-  if (isLoading || error || rooms.length === 0) return null;
+  // While the plant payload is in flight the block still draws, with its
+  // heading and an empty table. It used to render NOTHING, so the facility
+  // table appeared a second after everything else and the page moved under
+  // whoever was already reading it - and on first paint there was no sign it
+  // was coming at all.
+  if (isLoading) {
+    return (
+      <div className="estate-panel">
+        <div className="estate-selected"><span className="who">Facility rooms</span></div>
+        <DataTable<FacilityRoom>
+          rows={[]} columns={roomColumns} empty="Loading…" />
+      </div>
+    );
+  }
+  if (error) {
+    return (
+      <div className="estate-panel">
+        <div className="estate-selected"><span className="who">Facility rooms</span></div>
+        <DataTable<FacilityRoom>
+          rows={[]} columns={roomColumns}
+          empty={`Could not load the plant: ${String(error)}`} />
+      </div>
+    );
+  }
+  if (rooms.length === 0) return null;
 
   return (
     <>
