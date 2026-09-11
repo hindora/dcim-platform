@@ -1715,6 +1715,22 @@ export interface FacilityRoom {
   by_type: Record<string, number>;
   cooling_machines: number;
   cooling_running: number;
+  /** Machines that publish a state at all. A meter, a gateway or a power panel
+   *  publishes none, and counting those as "off" would report a working plant
+   *  room as half dead. */
+  machines_stated: number;
+  /** Doing their job right now - running, energised, on mains, on the normal
+   *  source. Per-kind words, because none of those is the same as "running". */
+  active: number;
+  /** Not working, and that is the design: a chiller plant runs fewer machines
+   *  than it owns. */
+  standby: number;
+  /** Publishing a state that is neither: on battery, on bypass, on generator,
+   *  a dead bus. The platform holds no alarm rule for most of these, so
+   *  without this count a UPS outage would read as a quiet room. */
+  attention: number;
+  attention_names: string[];
+  no_state: number;
   /** Heat the cooling machines in this room are moving. Empty in a room that
    *  holds none, which is most of them. */
   heat_kw: number | null;

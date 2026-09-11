@@ -561,3 +561,83 @@ async def test_gear_with_no_reader_of_its_own_is_still_listed(monkeypatch):
     assert by_name["PANEL"]["verdict"] == "unmonitored"
     assert room["unmonitored"] == 1
     assert room["verdict"] != "unmonitored"
+
+
+# --- what a room row counts, and what it judges --------------------------------
+
+@pytest.mark.asyncio
+async def test_a_staged_off_machine_is_counted_not_judged(monkeypatch):
+    """"Standby" was the verdict on three of five healthy facility rooms.
+
+    A chiller plant is built to run fewer machines than it owns, so a room whose
+    worst finding is "one of them is deliberately off" has nothing wrong in it.
+    Saying so in a verdict column teaches the reader the column rarely means
+    anything - so the split is counted instead, and the verdict is left for
+    findings.
+    """
+    _patch(monkeypatch,
+           [_gear("c1", "CHL1", "chiller", room="Central Plant", room_id="r1",
+                  room_type="plant"),
+            _gear("c2", "CHL2", "chiller", room="Central Plant", room_id="r1",
+                  room_type="plant"),
+            _gear("p1", "CHWP1", "pump", room="Central Plant", room_id="r1",
+                  room_type="plant"),
+            _gear("m1", "EV21", "energy_monitor", room="Central Plant",
+                  room_id="r1", room_type="plant")],
+           values={"m1": {("power_draw", ""): 34_000.0}},
+           flags={"c1": {"running": True, "alarm_points": [],
+                         "states": {"Chiller_Running": True}},
+                  "c2": {"running": False, "alarm_points": [],
+                         "states": {"Chiller_Running": False}},
+                  "p1": {"running": True, "alarm_points": [],
+                         "states": {"Run_Status": True}}})
+
+    room = _room(await plant.plant(_FakeSession()), "Central Plant")
+    assert (room["active"], room["standby"], room["attention"]) == (2, 1, 0)
+    # The meter publishes no run state; counting it as off would report a
+    # working plant room as half dead.
+    assert room["machines_stated"] == 3 and room["no_state"] == 1
+    assert room["verdict"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_a_ups_on_battery_is_counted_apart_from_both(monkeypatch):
+    """Neither working nor deliberately off, and no alarm rule covers it.
+
+    On battery, on bypass, on generator and a dead bus are states the platform
+    holds no rule for, so the alarm count reads zero through all of them. If the
+    room row only counted working-vs-spare they would vanish.
+    """
+    _patch(monkeypatch,
+           [_gear("u1", "UPSA", "ups"), _gear("u2", "UPSB", "ups"),
+            _gear("f1", "UTIL1", "utility_feed")],
+           flags={"u1": {"running": None, "alarm_points": [],
+                         "states": {"On_Battery": True, "Bypass_Active": False}},
+                  "u2": {"running": None, "alarm_points": [],
+                         "states": {"On_Battery": False, "Bypass_Active": False}},
+                  "f1": {"running": None, "alarm_points": [],
+                         "states": {"Service_Healthy": True}}})
+
+    room = _room(await plant.plant(_FakeSession()), "UPS Room")
+    assert room["alarms_open"] == 0          # nothing raised for it
+    assert room["attention"] == 1            # and it is still visible
+    assert room["attention_names"] == ["UPSA"]
+    assert (room["active"], room["standby"]) == (2, 0)
+    assert room["verdict"] == "on_battery"
+
+
+@pytest.mark.asyncio
+async def test_a_room_of_meters_reports_no_run_state_at_all(monkeypatch):
+    """A meter is read by what it measures, not by whether it is turning."""
+    _patch(monkeypatch,
+           [_gear("m1", "EV21", "energy_monitor", room="Mechanical Room",
+                  room_id="r4"),
+            _gear("m2", "EV22", "energy_monitor", room="Mechanical Room",
+                  room_id="r4")],
+           values={"m1": {("power_draw", ""): 34_000.0},
+                   "m2": {("power_draw", ""): 12_000.0}})
+
+    room = _room(await plant.plant(_FakeSession()), "Mechanical Room")
+    assert room["machines_stated"] == 0
+    assert room["no_state"] == 2
+    assert room["active"] == 0

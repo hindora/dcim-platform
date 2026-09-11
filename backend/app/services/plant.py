@@ -824,6 +824,16 @@ def _facility_room(room_id: str, machines: list[dict[str, Any]]) -> dict[str, An
     temp = max(ambient) if ambient else (max(chassis) if chassis else None)
     temp_source = "room sensor" if ambient else ("chassis" if chassis else None)
 
+    # Three buckets and a fourth that is not a bucket. A meter, a gateway or a
+    # power panel publishes no run state at all, and counting those as "off"
+    # would report a working plant room as half dead.
+    stated = [m for m in machines if m.get("state_label")]
+    active = [m for m in stated if m["state_label"] in ACTIVE_LABELS]
+    standby = [m for m in stated if m["state_label"] in STANDBY_LABELS]
+    attention = [m for m in stated
+                 if m["state_label"] not in ACTIVE_LABELS
+                 and m["state_label"] not in STANDBY_LABELS]
+
     row: dict[str, Any] = {
         "id": room_id,
         "kind": "facility_room",
@@ -837,6 +847,17 @@ def _facility_room(room_id: str, machines: list[dict[str, Any]]) -> dict[str, An
         "by_type": by_type,
         "cooling_machines": len(cooling),
         "cooling_running": len(running),
+        # Machines that publish a state, split by what that state means.
+        "machines_stated": len(stated),
+        "active": len(active),
+        "standby": len(standby),
+        # Publishing a state that is neither working nor deliberately off: on
+        # battery, on bypass, on generator, a dead bus. The platform carries no
+        # alarm rule for most of these, so if this count did not exist a UPS
+        # outage would read as a quiet room.
+        "attention": len(attention),
+        "attention_names": [m["name"] for m in attention][:4],
+        "no_state": len(machines) - len(stated),
         # Heat and own-draw are the cooling machines' alone. Nothing else in
         # these rooms measures either.
         "heat_kw": _r(_sum([m["heat_kw"] for m in running])),
@@ -854,7 +875,13 @@ def _facility_room(room_id: str, machines: list[dict[str, Any]]) -> dict[str, An
         # somebody can decide whether to close it.
         "unmonitored": sum(1 for m in machines if m["verdict"] == "unmonitored"),
     }
-    judged = [m for m in machines if m["verdict"] != "unmonitored"]
+    # Standby joins unmonitored in being counted rather than judged. A room
+    # whose worst finding is "a machine is deliberately staged off" is a room
+    # with nothing wrong in it, and saying "Standby" in the verdict column
+    # taught the reader that the column rarely means anything - three of five
+    # facility rooms read that way on a perfectly healthy plant.
+    judged = [m for m in machines
+              if m["verdict"] not in ("unmonitored", "standby")]
     row["verdict"] = _worst([m["verdict"] for m in judged]) or "ok"
     hit = [m["name"] for m in judged if m["verdict"] == row["verdict"]]
     row["why"] = (f"{len(hit)} of {len(judged)}: "
@@ -1012,6 +1039,18 @@ async def plant(session: AsyncSession) -> dict[str, Any]:
         "totals": totals,
         "notes": _notes(stages, chain, totals, facility),
     }
+
+
+#: The state words that mean "this machine is doing its job right now".
+#: Deliberately per-kind words rather than one boolean: a board is energised, a
+#: transfer switch is on its normal source, a UPS is on mains, and none of those
+#: is "running".
+ACTIVE_LABELS = frozenset({"Running", "On mains", "Normal", "Energised", "Healthy"})
+
+#: Not working, and that is the design. A chiller plant is built to run fewer
+#: machines than it owns, and a generator that is not running is a generator
+#: with nothing to do.
+STANDBY_LABELS = frozenset({"Standby", "Off"})
 
 
 #: Worst to best, for folding several machines' or sites' verdicts into one.

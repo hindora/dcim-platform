@@ -71,6 +71,60 @@ function Holds({ r }: { r: FacilityRoom }) {
   );
 }
 
+/** How much of the room is turning, and how much of it is spare.
+ *
+ *  This replaced a Verdict column that said "Standby" on three of five rooms -
+ *  which is not a finding, it is what a healthy chiller plant looks like. The
+ *  split is the thing worth reading: five running and seven spare is a plant
+ *  with somewhere to go, five running and none spare is not, and both of those
+ *  used to print the same word.
+ *
+ *  The fault word did NOT go with it. A UPS on battery, a bus that has gone
+ *  dead and a generator that has started are states no alarm rule in the
+ *  platform covers, so they would vanish entirely if this cell only counted.
+ *  They are counted separately, shown in warn, and named in the tip.
+ */
+function Running({ r }: { r: FacilityRoom }) {
+  if (!r.machines_stated) {
+    return (
+      <Tip className="dash"
+           tip={`nothing in this room publishes a run state - ${r.no_state} `
+             + 'meter, gateway or panel, all of which are read by what they '
+             + 'measure rather than by whether they are turning'}>—</Tip>
+    );
+  }
+  return (
+    <Tip tip={<>
+      <span className="spread-line">
+        <b>{r.active}</b> of {r.machines_stated} working
+      </span>
+      {r.standby > 0 && (
+        <span className="spread-line">
+          <b>{r.standby}</b> staged off and healthy - capacity available to start
+        </span>
+      )}
+      {r.attention > 0 && (
+        <span className="spread-line">
+          <b>{r.attention}</b> neither working nor deliberately off:{' '}
+          {r.attention_names.join(', ')}
+        </span>
+      )}
+      {r.no_state > 0 && (
+        <span className="spread-line">
+          {r.no_state} more publish no run state - meters, gateways, panels
+        </span>
+      )}
+    </>}>
+      <span>
+        <b>{r.active}</b>
+        <span className="muted">/{r.machines_stated}</span>
+        {r.standby > 0 && <span className="muted"> +{r.standby}</span>}
+        {r.attention > 0 && <span className="warn"> · {r.attention}</span>}
+      </span>
+    </Tip>
+  );
+}
+
 export function Facility({ unit, siteId, siteCode }: {
   unit: Unit;
   /** Limit to one site when the reader has drilled into one. */
@@ -168,10 +222,10 @@ export function Facility({ unit, siteId, siteCode }: {
         : <span className="muted">0</span>),
     },
     {
-      key: 'verdict', label: 'Verdict', align: 'mid', width: 130,
-      help: 'The worst thing standing in the room, in one word.',
-      sort: (r) => r.verdict,
-      render: (r) => <Verdict v={r.verdict} why={r.why} />,
+      key: 'running', label: 'Running', align: 'num', width: 120,
+      help: 'Machines working, of those that publish a state. Spare after the +.',
+      sort: (r) => r.active,
+      render: (r) => <Running r={r} />,
     },
   ];
 
@@ -198,11 +252,13 @@ export function Facility({ unit, siteId, siteCode }: {
     }
     downloadCsv(
       stampedName(`facility-rooms${siteCode ? `-${siteCode}` : ''}`),
-      ['site', 'room', 'purpose', 'equipment', 'unmonitored', 'cooling_running',
+      ['site', 'room', 'purpose', 'equipment', 'unmonitored', 'active',
+       'standby', 'attention', 'machines_stated', 'no_state', 'cooling_running',
        'cooling_machines', 'heat_kw', 'power_kw', 'carried_kw', 'carried_by',
        `temp_${unit}`, 'temp_source', 'alarms_open', 'verdict', 'why'],
       rooms.map((r) => [
         r.site_code, r.name, r.purpose, r.equipment, r.unmonitored,
+        r.active, r.standby, r.attention, r.machines_stated, r.no_state,
         r.cooling_running, r.cooling_machines, r.heat_kw ?? '', r.power_kw ?? '',
         r.carried_kw ?? '', r.carried_by ?? '',
         conv(r.temp_c, unit)?.toFixed(1) ?? '', r.temp_source ?? '',
@@ -230,8 +286,11 @@ export function Facility({ unit, siteId, siteCode }: {
             <>
               <span className="pair"><span className="cap">Equipment</span>
                 <span className="v">{room.equipment}</span></span>
-              <span className="pair"><span className="cap">Cooling</span>
-                <span className="v">{room.cooling_running}/{room.cooling_machines}</span></span>
+              <span className="pair"><span className="cap">Running</span>
+                <span className="v">{room.active}/{room.machines_stated}
+                  {room.standby > 0 && <span className="muted"> +{room.standby}</span>}</span></span>
+              <span className="pair"><span className="cap">State</span>
+                <span className="v"><Verdict v={room.verdict} why={room.why} /></span></span>
               <span className="pair"><span className="cap">Alarms</span>
                 <span className="v">{room.alarms_open}</span></span>
             </>
