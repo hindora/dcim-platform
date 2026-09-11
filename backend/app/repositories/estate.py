@@ -243,7 +243,8 @@ async def thermal_racks(session: AsyncSession, *, focus_start: datetime,
 
 
 async def thermal_p90(session: AsyncSession, *, focus_start: datetime,
-                      focus_end: datetime) -> dict[str, Any]:
+                      focus_end: datetime,
+                      force: str = "") -> dict[str, Any]:
     """The 90th percentile of intake readings per rack, room, site and estate.
 
     A percentile cannot be folded from sums the way the averages are, so it
@@ -289,9 +290,16 @@ async def thermal_p90(session: AsyncSession, *, focus_start: datetime,
         chosen AS (
             SELECT s.rack_id, s.value
             FROM s JOIN src USING (rack_id)
-            WHERE s.key = CASE WHEN src.has_probe  THEN 'ambient_temperature'
-                               WHEN src.has_server THEN 'inlet_temperature'
-                               ELSE 'network_intake' END
+            -- `force` pins every rack to one source, for a reader comparing
+            -- what the probes say against what the servers say. Honoured HERE
+            -- as well as in the rows: a percentile taken over a different
+            -- population from the average beside it is two answers to one
+            -- question.
+            WHERE s.key = CASE
+                      WHEN :force <> '' THEN :force
+                      WHEN src.has_probe  THEN 'ambient_temperature'
+                      WHEN src.has_server THEN 'inlet_temperature'
+                      ELSE 'network_intake' END
         ),
         located AS (
             SELECT c.rack_id, rr.room_id, rm.datacenter_id, c.value
@@ -306,7 +314,8 @@ async def thermal_p90(session: AsyncSession, *, focus_start: datetime,
                percentile_cont(0.9) WITHIN GROUP (ORDER BY value) AS p90
         FROM located
         GROUP BY GROUPING SETS ((rack_id), (room_id), (datacenter_id), ())
-    """), {"f0": focus_start, "f1": focus_end})).mappings().all()
+    """), {"f0": focus_start, "f1": focus_end,
+           "force": force})).mappings().all()
     out: dict[str, Any] = {"racks": {}, "rooms": {}, "sites": {}, "total": None}
     for r in rows:
         p90 = None if r["p90"] is None else float(r["p90"])
@@ -620,7 +629,7 @@ async def thermal_racks_now(session: AsyncSession, *, since: datetime,
 
 
 async def thermal_p90_now(session: AsyncSession, *,
-                          since: datetime) -> dict[str, Any]:
+                          since: datetime, force: str = "") -> dict[str, Any]:
     """The 90th percentile across SENSORS at this instant, per tier.
 
     The windowed form takes a percentile over every reading in an hour; this
@@ -662,9 +671,16 @@ async def thermal_p90_now(session: AsyncSession, *,
         chosen AS (
             SELECT s.rack_id, s.value
             FROM s JOIN src USING (rack_id)
-            WHERE s.key = CASE WHEN src.has_probe  THEN 'ambient_temperature'
-                               WHEN src.has_server THEN 'inlet_temperature'
-                               ELSE 'network_intake' END
+            -- `force` pins every rack to one source, for a reader comparing
+            -- what the probes say against what the servers say. Honoured HERE
+            -- as well as in the rows: a percentile taken over a different
+            -- population from the average beside it is two answers to one
+            -- question.
+            WHERE s.key = CASE
+                      WHEN :force <> '' THEN :force
+                      WHEN src.has_probe  THEN 'ambient_temperature'
+                      WHEN src.has_server THEN 'inlet_temperature'
+                      ELSE 'network_intake' END
         ),
         located AS (
             SELECT c.rack_id, rr.room_id, rm.datacenter_id, c.value
@@ -679,7 +695,7 @@ async def thermal_p90_now(session: AsyncSession, *,
                percentile_cont(0.9) WITHIN GROUP (ORDER BY value) AS p90
         FROM located
         GROUP BY GROUPING SETS ((rack_id), (room_id), (datacenter_id), ())
-    """), {"t0": since})).mappings().all()
+    """), {"t0": since, "force": force})).mappings().all()
     out: dict[str, Any] = {"racks": {}, "rooms": {}, "sites": {}, "total": None}
     for r in rows:
         p90 = None if r["p90"] is None else float(r["p90"])

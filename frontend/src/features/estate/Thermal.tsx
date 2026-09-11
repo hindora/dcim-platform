@@ -191,6 +191,12 @@ const SOURCE_WORD: Record<string, (n: number) => string> = {
 
 export function Thermal() {
   const [mode, setMode] = useState<'daily' | 'live' | 'now'>('now');
+  // Which sensor speaks for a rack. AUTO is the platform's own order - probe,
+  // then servers, then the switches' front panels - and is right every day.
+  // Pinning answers the question it cannot: does this hall read the same by
+  // probe as it does by BMC? There is no "both", because averaging two
+  // sources gives a figure that is neither.
+  const [source, setSource] = useState<'auto' | 'probes' | 'servers'>('auto');
   const [unit, setUnit] = useState<Unit>('c');
   const [focus, setFocus] = useState<string>('');
   const [compare, setCompare] = useState<string>('');
@@ -199,11 +205,12 @@ export function Thermal() {
   const navigate = useNavigate();
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ['estate-thermal', mode, focus, compare],
+    queryKey: ['estate-thermal', mode, focus, compare, source],
     queryFn: () => api.estateThermal({
       mode,
       focus: mode === 'daily' ? (focus || undefined) : undefined,
       compare: mode === 'daily' ? (compare || undefined) : undefined,
+      source: source === 'auto' ? undefined : source,
     }),
     // An instant is worth re-asking often; the probes behind it are polled
     // every two to four minutes, so half a minute keeps the page ahead of
@@ -535,6 +542,10 @@ export function Thermal() {
              options={[{ key: 'now', label: 'NOW' },
                        { key: 'live', label: 'LAST HOUR' },
                        { key: 'daily', label: 'BY DAY' }]} />
+        <Seg label="Intake source" value={source} onChange={setSource}
+             options={[{ key: 'auto', label: 'AUTO' },
+                       { key: 'probes', label: 'PROBES' },
+                       { key: 'servers', label: 'SERVERS' }]} />
         {mode === 'daily' && (
           <>
             <label className="field">

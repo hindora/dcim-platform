@@ -1592,6 +1592,8 @@ export interface ThermalPage {
   /** What the counts were taken over, and what the drill-down opens with,
    *  so a number and the rows behind it cannot disagree. */
   alarm_categories: string[];
+  /** The intake source in force: 'auto', or the one the reader pinned. */
+  source: string;
   sites: ThermalRow[];
   rooms: ThermalRow[];
   /** Every rack in inventory, hottest first within its room. */
@@ -2177,7 +2179,12 @@ export const api = {
   },
 
   /** Estate thermal: one request serves both the SITES and ROOMS scopes. */
-  estateThermal: (params: { focus?: string; compare?: string; mode?: string } = {}) => {
+  estateThermal: (params: {
+    focus?: string; compare?: string; mode?: string;
+    /** Pin every rack to one intake source, for reading a hall by probe and
+     *  again by BMC. Omitted means the platform picks per rack. */
+    source?: string;
+  } = {}) => {
     const q = new URLSearchParams();
     for (const [k, v] of Object.entries(params)) if (v) q.set(k, v);
     const qs = q.toString();

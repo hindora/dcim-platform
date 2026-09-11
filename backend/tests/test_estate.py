@@ -1106,3 +1106,89 @@ async def test_the_estate_row_and_the_room_view_agree_about_one_hall(monkeypatch
     assert row["units_high_supply"] == view["units_high_supply"]
     assert row["units_high_return"] == view["units_high_return"]
     assert row["delta_t_k"] == view["room_delta_t_k"]
+
+
+# ── pinning the page to one source ──────────────────────────────────────────
+#
+# The automatic rule picks the sensor closest to the air a rack breathes, which
+# is the right answer every day. It cannot answer the other question: does this
+# hall read the same by probe as it does by BMC? A probe that has drifted shows
+# up only as a hall disagreeing with itself, and that needs both readings.
+
+
+def _both_sources(rack_id, room_id):
+    """A rack with a probe AND servers, reading differently."""
+    return _rack(rack_id, room_id,
+                 p_sum=40.0, p_n=2, p_max=20.5, p_in_band=2, p_sensors=2,
+                 f_sum=450.0, f_n=18, f_max=26.0, f_in_band=18, f_sensors=18)
+
+
+@pytest.mark.asyncio
+async def test_auto_takes_the_probe_where_there_is_one(monkeypatch):
+    _thermal(monkeypatch, [_room("a", "dc1", "DC1")], [_both_sources("r1", "a")])
+    out = await estate.thermal(_FakeSession(), mode="live")
+    assert out["racks"][0]["source"] == "probes"
+    assert out["racks"][0]["avg_c"] == 20.0
+    assert out["source"] == "auto"
+
+
+@pytest.mark.asyncio
+async def test_pinning_to_servers_reads_the_same_rack_differently(monkeypatch):
+    """The whole point: one hall, two sources, two answers - and the gap
+    between them is the finding."""
+    _thermal(monkeypatch, [_room("a", "dc1", "DC1")], [_both_sources("r1", "a")])
+    out = await estate.thermal(_FakeSession(), mode="live", source="servers")
+    assert out["racks"][0]["source"] == "servers"
+    assert out["racks"][0]["avg_c"] == 25.0
+    assert out["racks"][0]["sensors"] == 18
+    assert out["source"] == "servers"
+
+
+@pytest.mark.asyncio
+async def test_a_pinned_rack_with_no_such_sensor_is_silent(monkeypatch):
+    """It must NOT fall through to another source. "These racks have no probe"
+    is the answer somebody pinned the page to get."""
+    _thermal(monkeypatch, [_room("a", "dc1", "DC1")],
+             [_rack("r1", "a", f_sum=450.0, f_n=18, f_max=26.0, f_in_band=18,
+                    f_sensors=18)])
+    out = await estate.thermal(_FakeSession(), mode="live", source="probes")
+    rack = out["racks"][0]
+    assert rack["source"] is None and rack["avg_c"] is None
+    assert rack["samples"] == 0
+
+
+@pytest.mark.asyncio
+async def test_the_percentile_follows_the_pin(monkeypatch):
+    """A percentile taken over a different population from the average beside
+    it is two answers to one question."""
+    seen = {}
+
+    async def p90(session, **kw):
+        seen.update(kw)
+        return {"racks": {}, "rooms": {}, "sites": {}, "total": None}
+
+    monkeypatch.setattr(estate.repo, "thermal_rooms", _returns([_room("a", "dc1", "DC1")]))
+    monkeypatch.setattr(estate.repo, "thermal_racks", _returns([_both_sources("r1", "a")]))
+    monkeypatch.setattr(estate.repo, "thermal_p90", p90)
+    monkeypatch.setattr(estate.thermal_repo, "crahs_by_room", _returns({}))
+    await estate.thermal(_FakeSession(), mode="live", source="probes")
+    assert seen["force"] == "ambient_temperature"
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_source_falls_back_to_the_rule(monkeypatch):
+    """A stale bookmark or a typed URL must not blank the page."""
+    _thermal(monkeypatch, [_room("a", "dc1", "DC1")], [_both_sources("r1", "a")])
+    out = await estate.thermal(_FakeSession(), mode="live", source="nonsense")
+    assert out["source"] == "auto"
+    assert out["racks"][0]["source"] == "probes"
+
+
+@pytest.mark.asyncio
+async def test_the_note_says_which_source_is_pinned(monkeypatch):
+    """A page pinned to probes and a page choosing per rack are different
+    measurements of the same estate, and a printout of either should say so."""
+    _thermal(monkeypatch, [_room("a", "dc1", "DC1")], [_both_sources("r1", "a")])
+    out = await estate.thermal(_FakeSession(), mode="live", source="probes")
+    assert "Pinned to one source" in out["notes"][0]
+    assert "front environment probe" in out["notes"][0]

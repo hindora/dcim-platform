@@ -42,6 +42,8 @@ async def thermal(
     compare: date | None = Query(
         None, description="Day to compare against. Defaults to the day before focus."),
     mode: str = Query("daily", pattern="^(daily|live|now)$"),
+    source: str = Query("auto", pattern="^(auto|probes|servers|network)$",
+                        description="Pin every rack to one intake source"),
     session: AsyncSession = Depends(get_session),
     _: Principal = Depends(current_principal),
 ) -> dict:
@@ -55,7 +57,8 @@ async def thermal(
     a fact anyone can act on, and `now` and `live` answer different questions:
     what is happening, and what has been happening.
     """
-    return await service.thermal(session, focus=focus, compare=compare, mode=mode)
+    return await service.thermal(session, focus=focus, compare=compare,
+                                 mode=mode, source=source)
 
 
 @router.get("/power", summary="Power split IT / cooling / other, with PUE per row")

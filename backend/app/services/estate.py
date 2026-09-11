@@ -61,6 +61,22 @@ RATE_LIMIT_K_PER_H = 20.0
 # and is shown as flat rather than as a small precise-looking movement.
 RATE_NOISE_K_PER_H = 2.0
 
+#: The intake sources a reader may pin the page to, and the metric each one is.
+#:
+#: Normally the platform picks per rack - probe, else servers, else the
+#: switches' front panels - because one of them is simply the better answer
+#: and letting somebody choose the worse one is not a feature. Pinning exists
+#: for the job the automatic rule cannot do: reading the same hall twice,
+#: once by probe and once by BMC, to see whether a probe has drifted.
+#:
+#: There is no "both". Averaging two sources produces a figure that is
+#: neither, weighted by whichever happens to have more sensors in that rack.
+SOURCE_METRIC = {
+    "probes": "ambient_temperature",
+    "servers": "inlet_temperature",
+    "network": "network_intake",
+}
+
 # The recommended envelope's humidity leg at the intake. Its low end is a
 # dew point (-9 C), which no probe in this estate reports, so only the
 # ceiling is shown.
@@ -126,7 +142,8 @@ def _day_window(d: date) -> tuple[datetime, datetime]:
 
 async def thermal(session: AsyncSession, *, focus: date | None = None,
                   compare: date | None = None,
-                  mode: str = "daily") -> dict[str, Any]:
+                  mode: str = "daily",
+                  source: str = "auto") -> dict[str, Any]:
     """Intake temperature, spread and compliance per rack, room and site.
 
     Everything is derived from the RACK. Intake is a property of a rack - a
@@ -201,13 +218,15 @@ async def thermal(session: AsyncSession, *, focus: date | None = None,
         absent_prev = f"no readings {prep} {window['compare_label']}"
         absent_now = f"no readings {prep} {window['label']}"
 
+    forced = source if source in SOURCE_METRIC else ""
     skeleton = await repo.thermal_rooms(session)
     if mode == "now":
         raw_racks = await repo.thermal_racks_now(
             session, since=f0, was_at=was_at,
             low_c=BAND_LOW_C, high_c=BAND_HIGH_C,
             allowable_c=ALLOWABLE_HIGH_C)
-        p90 = await repo.thermal_p90_now(session, since=f0)
+        p90 = await repo.thermal_p90_now(session, since=f0,
+                                         force=SOURCE_METRIC.get(forced, ""))
     else:
         raw_racks = await repo.thermal_racks(session, focus_start=f0, focus_end=f1,
                                              compare_start=c0, compare_end=c1,
@@ -216,7 +235,8 @@ async def thermal(session: AsyncSession, *, focus: date | None = None,
         # A percentile does not fold from sums, so it is taken over the pooled
         # readings at every tier in one query and attached afterwards. Same
         # readings, same source rule, so it agrees with the averages beside it.
-        p90 = await repo.thermal_p90(session, focus_start=f0, focus_end=f1)
+        p90 = await repo.thermal_p90(session, focus_start=f0, focus_end=f1,
+                                     force=SOURCE_METRIC.get(forced, ""))
 
     silent = ("no sensor in this rack has reported in the last ten minutes"
               if mode == "now" else
@@ -225,7 +245,7 @@ async def thermal(session: AsyncSession, *, focus: date | None = None,
     # rate to mean anything. See _derive.
     rate_hours = (repo.RATE_WINDOW.total_seconds() / 3600.0
                   if mode == "now" else None)
-    racks = [_rack_row(r, absent_now, absent_prev, silent, rate_hours)
+    racks = [_rack_row(r, absent_now, absent_prev, silent, rate_hours, forced)
              for r in raw_racks]
     rooms = _fold_rooms(skeleton, racks, absent_now, absent_prev, rate_hours)
     sites = _fold_sites(rooms, absent_now, absent_prev, rate_hours)
@@ -276,11 +296,12 @@ async def thermal(session: AsyncSession, *, focus: date | None = None,
         # Echoed so the page opens its drill-down with the same list the
         # counts were taken over, rather than a copy that can drift.
         "alarm_categories": list(THERMAL_ALARM_CATEGORIES),
+        "source": forced or "auto",
         "totals": totals,
         "sites": sites,
         "rooms": [_strip(r) for r in rooms],
         "racks": [_strip(r) for r in racks],
-        "notes": [_source_note(totals), _humidity_note(totals),
+        "notes": [_source_note(totals, forced), _humidity_note(totals),
                   _distribution_note(), *_window_note(mode)],
     }
 
@@ -354,11 +375,34 @@ async def _attach_cooling(session: AsyncSession, rooms: list[dict[str, Any]],
     totals["cooling"] = fold(rooms, "estate")
 
 
+#: Which columns in a rack row belong to which source: readings, sensors, and
+#: the same reading from the far end of the comparison.
+_SOURCE_COLUMNS = {
+    "probes":  ("p", "pc"),
+    "servers": ("f", "c"),
+    "network": ("n", "nc"),
+}
+
+
 def _rack_row(r: dict[str, Any], absent_now: str, absent_prev: str,
-              absent: str, rate_hours: float | None = None) -> dict[str, Any]:
+              absent: str, rate_hours: float | None = None,
+              forced: str = "") -> dict[str, Any]:
     p_n = int(r.get("p_n") or 0)
     f_n = int(r.get("f_n") or 0)
-    if p_n:
+    if forced:
+        # Pinned by the reader. A rack with nothing from that source reads as
+        # silent rather than falling through to another one, which is the
+        # whole point: "these fourteen racks have no probe" is the answer
+        # somebody asked for.
+        now, was = _SOURCE_COLUMNS[forced]
+        n = int(r.get(f"{now}_n") or 0)
+        source = forced if n else None
+        s_sum, mx, in_band = r.get(f"{now}_sum"), r.get(f"{now}_max"), r.get(f"{now}_in_band")
+        below, hot = r.get(f"{now}_below"), r.get(f"{now}_hot")
+        sensors = int(r.get(f"{now}_sensors") or 0)
+        prev_n = int(r.get(f"{was}_n") or 0)
+        prev_sum, prev_max = r.get(f"{was}_sum"), r.get(f"{was}_max")
+    elif p_n:
         source = "probes"
         n, s_sum, mx, in_band = p_n, r["p_sum"], r["p_max"], r["p_in_band"]
         below, hot = r.get("p_below"), r.get("p_hot")
@@ -628,10 +672,22 @@ def _delta_note(n: int, prev_n: int, absent_now: str, absent_prev: str) -> str |
     return None
 
 
-def _source_note(totals: dict[str, Any]) -> str:
+def _source_note(totals: dict[str, Any], forced: str = "") -> str:
     probes = int(totals["sources"]["probes"])
     servers = int(totals["sources"]["servers"])
     network = int(totals["sources"].get("network") or 0)
+    if forced:
+        spoke = {"probes": probes, "servers": servers, "network": network}[forced]
+        kind = {"probes": "front environment probe",
+                "servers": "servers' BMC inlet sensors",
+                "network": "front-panel sensor on the network gear"}[forced]
+        return (f"Pinned to one source: every rack is read from its {kind}, "
+                f"and a rack without one reads as silent rather than falling "
+                f"back. {spoke} rack{'s' if spoke != 1 else ''} answered. Use "
+                "this to check one source against another - a probe that has "
+                "drifted shows up as a hall that disagrees with itself - and "
+                "the automatic rule for everything else, because it picks the "
+                "sensor closest to the air the rack actually breathes.")
 
     def _racks(n: int) -> str:
         return f"{n} rack{'s' if n != 1 else ''}"
