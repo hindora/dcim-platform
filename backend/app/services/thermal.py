@@ -169,6 +169,42 @@ def classify_crah(unit: CrahThermal, room_return_p90: float | None
     return "ok", None
 
 
+def room_cooling(units: list[CrahThermal],
+                 return_p90: float | None) -> dict[str, Any]:
+    """What a room's cooling units say, as one summary.
+
+    Shared deliberately. The room view has always shown these figures and the
+    estate table is about to show them beside every hall, and two pieces of
+    code holding one definition of "high return" is how the same room comes to
+    be described two ways on two screens. The margins, the percentile and the
+    verdicts all live in classify_crah; this only counts what it decides.
+
+    The temperatures are over the RUNNING units alone. A stopped unit's
+    discharge soaks up to its return within a few minutes - that is what a unit
+    with no fan does, and what this platform now models - so its air-side delta
+    is near zero and averaging it in drags the room's figure toward nothing at
+    exactly the moment the room is in trouble. It was harmless while a stopped
+    unit published setpoint discharge, which is to say while the plane was
+    lying.
+    """
+    verdicts = [classify_crah(u, return_p90)[0] for u in units]
+    live = [u for u, v in zip(units, verdicts, strict=True) if v != "stopped"]
+    supplies = [u.supply_c for u in live if u.supply_c is not None]
+    returns = [u.return_c for u in live if u.return_c is not None]
+    supply = round(sum(supplies) / len(supplies), 1) if supplies else None
+    ret = round(sum(returns) / len(returns), 1) if returns else None
+    return {
+        "units": len(units),
+        "units_stopped": verdicts.count("stopped"),
+        "units_high_supply": verdicts.count("high_supply"),
+        "units_high_return": verdicts.count("high_return"),
+        "supply_c": supply,
+        "return_c": ret,
+        "delta_t_k": (round(ret - supply, 1)
+                      if supply is not None and ret is not None else None),
+    }
+
+
 def hot_spots(racks: list[RackThermal], p90: float | None,
               margin: float = HOT_SPOT_MARGIN_K) -> list[dict[str, Any]]:
     """Racks running hot relative to the room, sustained.
@@ -242,8 +278,7 @@ class RoomThermal:
                 # Zero, not absent: nothing open is a fact about this unit.
                 "alarms_open": int(self.alarms.get(u.device_id, 0)),
             })
-        supplies = [u.supply_c for u in self.crahs if u.supply_c is not None]
-        returns = [u.return_c for u in self.crahs if u.return_c is not None]
+        cooling = room_cooling(self.crahs, self.return_p90)
         # A room-wide event, which the hot-spot test cannot see: when every
         # rack drifts up together the p90 drifts with them and nothing is
         # "relatively" hot. Losing five of seven CRAHs put this room's whole
@@ -281,12 +316,13 @@ class RoomThermal:
                 if self.inlet_p90 else None),
             "hot_spots": spots,
             "hot_spot_count": len(spots),
-            "room_delta_t_k": (
-                round(sum(returns) / len(returns) - sum(supplies) / len(supplies), 1)
-                if supplies and returns else None),
+            "room_supply_c": cooling["supply_c"],
+            "room_return_c": cooling["return_c"],
+            "room_delta_t_k": cooling["delta_t_k"],
             "crah_units": units,
-            "units_high_supply": sum(1 for u in units if u["state"] == "high_supply"),
-            "units_high_return": sum(1 for u in units if u["state"] == "high_return"),
+            "units_high_supply": cooling["units_high_supply"],
+            "units_high_return": cooling["units_high_return"],
+            "units_stopped": cooling["units_stopped"],
             "racks": [
                 {
                     "rack_id": r.rack_id, "name": r.name,

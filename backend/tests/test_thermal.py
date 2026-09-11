@@ -230,3 +230,61 @@ def test_an_unrated_model_reports_the_share_and_no_kilowatts():
     unit = t.RoomThermal(room_id="rm", crahs=[u], return_p90=30.0).as_dict()["crah_units"][0]
     assert unit["duty_kw"] is None
     assert unit["duty_pct"] == 65.0
+
+
+# --- a room's summary, which two screens now share --------------------------
+
+def test_a_stopped_unit_does_not_flatten_the_rooms_delta():
+    """A unit with no fan has its discharge soak up to its return within
+    minutes, so its air-side delta is near zero. Averaging that into the room
+    drags the figure toward nothing at exactly the moment the room is in
+    trouble - and it was harmless only while a stopped unit was publishing
+    setpoint discharge, which is to say while the plane was lying.
+    """
+    live = t.CrahThermal(device_id="a", name="CRAH1", supply_c=22.0,
+                         return_c=32.0, setpoint_c=22.0, running=True)
+    dead = t.CrahThermal(device_id="b", name="CRAH2", supply_c=31.8,
+                         return_c=32.0, setpoint_c=22.0, running=False)
+    summary = t.room_cooling([live, dead], 33.0)
+    assert summary["delta_t_k"] == 10.0
+    assert summary["units"] == 2 and summary["units_stopped"] == 1
+
+
+def test_a_room_with_every_unit_stopped_has_no_temperatures():
+    """Nothing is moving air, so there is no supply and no return to average -
+    and a delta invented from stale readings would be the one number an
+    operator should not be given during a total loss."""
+    dead = [t.CrahThermal(device_id=str(i), name=f"CRAH{i}", supply_c=30.0,
+                          return_c=30.0, setpoint_c=22.0, running=False)
+            for i in range(3)]
+    summary = t.room_cooling(dead, 31.0)
+    assert summary["supply_c"] is None and summary["delta_t_k"] is None
+    assert summary["units_stopped"] == 3
+
+
+def test_the_summary_counts_what_the_classifier_decides():
+    """One definition of a high return, not two. The estate table is about to
+    show these counts beside every hall, and a second copy of the thresholds is
+    how one room comes to be described two ways on two screens."""
+    hot_supply = t.CrahThermal(device_id="a", name="CRAH1", supply_c=29.0,
+                               return_c=31.0, setpoint_c=22.0, running=True)
+    hot_return = t.CrahThermal(device_id="b", name="CRAH2", supply_c=22.0,
+                               return_c=38.0, setpoint_c=22.0, running=True)
+    fine = t.CrahThermal(device_id="c", name="CRAH3", supply_c=22.0,
+                         return_c=27.0, setpoint_c=22.0, running=True)
+    summary = t.room_cooling([hot_supply, hot_return, fine], 30.0)
+    assert summary["units_high_supply"] == 1
+    assert summary["units_high_return"] == 1
+    assert summary["units"] == 3
+
+
+def test_the_room_view_reports_the_summary_it_shares():
+    """The figures the estate row will carry are the ones the room view has
+    always shown, so the two cannot drift apart."""
+    live = t.CrahThermal(device_id="a", name="CRAH1", supply_c=22.0,
+                         return_c=30.0, setpoint_c=22.0, running=True)
+    out = t.RoomThermal(room_id="rm", crahs=[live], return_p90=31.0).as_dict()
+    assert out["room_supply_c"] == 22.0
+    assert out["room_return_c"] == 30.0
+    assert out["room_delta_t_k"] == 8.0
+    assert out["units_stopped"] == 0
