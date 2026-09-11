@@ -27,6 +27,7 @@ from app.core.alert_taxonomy import (
 from app.core.security import Principal, current_principal
 from app.db.session import get_session
 from app.services import estate as service
+from app.services import plant as plant_service
 from app.services import taxonomy
 
 router = APIRouter(prefix="/estate", tags=["estate"])
@@ -280,3 +281,18 @@ async def room_kpi(
     if result is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "no such room")
     return result
+
+
+@router.get("/plant", summary="The cooling chain: stages, machines, redundancy")
+async def plant(
+    session: AsyncSession = Depends(get_session),
+    _: Principal = Depends(current_principal),
+) -> dict:
+    """Every cooling machine in the estate, folded into the chain it sits in.
+
+    No window parameter. A plant view is a NOW view by definition: what is
+    running, what it is moving, and what would still be there after losing the
+    largest machine. An hour's mean of a chiller that tripped twenty minutes
+    ago would show it half running, which is not a state a chiller has.
+    """
+    return await plant_service.plant(session)

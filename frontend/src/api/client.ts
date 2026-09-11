@@ -1556,6 +1556,140 @@ export interface ThermalRow extends EstateRowBase {
   rh_probes: number;
 }
 
+/** One stage of the cooling chain at ONE site.
+ *
+ *  Never across sites: DC1's chilled-water header is not DC2's, and a mean of
+ *  the two describes no header that exists.
+ */
+export interface PlantStage {
+  id: string;
+  kind: 'stage';
+  /** Machine type behind the stage: crah, cdu, pump, valve, chiller,
+   *  cooling_tower. */
+  stage: string;
+  label: string;
+  /** One line on what this stage does in the chain. */
+  blurb: string;
+  site_id: string;
+  site_code: string;
+  site_name: string;
+  rooms: string[];
+  machines: number;
+  running: number;
+  /** Not running and carrying nothing open: capacity available to stage on. */
+  standby: number;
+  stopped: number;
+  /** Heat the RUNNING machines are moving. */
+  heat_kw: number | null;
+  /** Rated capacity of the running set - what redundancy is judged against. */
+  capacity_kw: number | null;
+  installed_kw: number | null;
+  power_kw: number | null;
+  duty_pct: number | null;
+  alarms_open: number;
+  /** Pooled ΔT, present only where the machines share one header. */
+  delta_t_k: number | null;
+  /** The spread across independent loops, which is a fact where a mean is not. */
+  delta_t_min_k: number | null;
+  delta_t_max_k: number | null;
+  shared_header: boolean;
+  verdict: string;
+  why: string | null;
+}
+
+/** One machine, with whatever its type actually publishes.
+ *
+ *  The optional fields are per type - a tower has a wet bulb and no valve, a
+ *  pump has a differential pressure and no temperatures - rather than a union,
+ *  because every one of them is on the same table and the table decides what
+ *  to show from the row it has.
+ */
+export interface PlantMachine {
+  id: string;
+  device_id: string;
+  name: string;
+  device_type: string;
+  stage: string;
+  model: string | null;
+  status: string | null;
+  room_id: string | null;
+  room_name: string | null;
+  site_id: string;
+  site_code: string;
+  site_name: string;
+  /** From the BACnet binary, never inferred from power draw: a machine staged
+   *  off and one that has tripped both draw almost nothing. */
+  running: boolean | null;
+  rated_kw: number | null;
+  power_kw: number | null;
+  run_hours: number | null;
+  alarms_open: number;
+  alarms_worst: number;
+  /** Fault binaries the machine is asserting right now. A point standing here
+   *  with `alarms_open` at zero means nothing has been raised for it. */
+  alarm_points: string[];
+  supply_c: number | null;
+  return_c: number | null;
+  setpoint_c: number | null;
+  delta_t_k: number | null;
+  heat_kw: number | null;
+  duty_pct: number | null;
+  /** What the duty figure is a share OF: rated cooling, fan speed, pump
+   *  speed, or valve travel. One column, four meanings, said per row. */
+  duty_of: string;
+  loop: string;
+  verdict: string;
+  why: string | null;
+  valve_pct?: number | null;
+  fan_pct?: number | null;
+  pump_pct?: number | null;
+  flow_l_s?: number | null;
+  approach_k?: number | null;
+  wet_bulb_c?: number | null;
+  dry_bulb_c?: number | null;
+  compressor_pct?: number | null;
+  cop?: number | null;
+  basin_pct?: number | null;
+  commanded_pct?: number | null;
+  deviation_pct?: number | null;
+  heat_water_kw?: number | null;
+  heat_electrical_kw?: number | null;
+  diff_pressure?: number | null;
+  motor_temp_c?: number | null;
+  cond_supply_c?: number | null;
+  cond_return_c?: number | null;
+  filter_dp?: number | null;
+  vfd_hz?: number | null;
+  vibration?: number | null;
+}
+
+export interface PlantPage {
+  generated_at: string;
+  stages: PlantStage[];
+  machines: PlantMachine[];
+  totals: {
+    machines: number;
+    running: number;
+    standby: number;
+    stopped: number;
+    silent: number;
+    /** What the CRAHs and CDUs say they are delivering. */
+    air_load_kw: number | null;
+    /** Flow times ΔT at the chillers. The same heat, measured independently. */
+    water_load_kw: number | null;
+    capacity_kw: number | null;
+    installed_kw: number | null;
+    power_kw: number | null;
+    alarms_open: number;
+    /** The chiller stages' worst verdict: the estate reads as well as its
+     *  worst site, not as well as its mean. */
+    redundancy: string | null;
+    utilisation_pct: number | null;
+    sites: number;
+  };
+  notes: string[];
+}
+
 export interface ThermalPage {
   window: {
     /** `now` is an instant, `live` the last hour, `daily` a calendar day. */
@@ -2190,6 +2324,9 @@ export const api = {
     const qs = q.toString();
     return request<ThermalPage>(`/estate/thermal${qs ? `?${qs}` : ''}`);
   },
+
+  /** The cooling chain. No window: a plant view is a NOW view by definition. */
+  estatePlant: () => request<PlantPage>('/estate/plant'),
 
   estatePower: (params: {
     start?: string; end?: string; mode?: string; live?: boolean;

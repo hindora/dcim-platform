@@ -82,19 +82,29 @@ export function Seg<T extends string>({ value, options, onChange, label }: {
   );
 }
 
-export function ScopeTabs({ scope, onChange, roomLabel = 'ROOMS' }: {
-  scope: 'sites' | 'rooms';
-  onChange: (s: 'sites' | 'rooms') => void;
+export function ScopeTabs<S extends string = 'sites' | 'rooms'>({
+  scope, onChange, roomLabel = 'ROOMS', tabs,
+}: {
+  scope: S;
+  onChange: (s: S) => void;
   roomLabel?: string;
+  /** Optional explicit tab list, for a page whose tiers are not the usual
+   *  two. The thermal page adds PLANT, which is not a coarser view of the
+   *  same rows - it is a different population entirely - so it cannot be
+   *  expressed as a third drill level of the same table. */
+  tabs?: { key: S; label: string }[];
 }) {
+  const items = tabs ?? ([
+    { key: 'sites' as S, label: 'SITES' },
+    { key: 'rooms' as S, label: roomLabel },
+  ]);
   return (
     <div className="scope-tabs" role="tablist" aria-label="Scope">
-      <button role="tab" aria-selected={scope === 'sites'}
-              className={scope === 'sites' ? 'active' : ''}
-              onClick={() => onChange('sites')}>SITES</button>
-      <button role="tab" aria-selected={scope === 'rooms'}
-              className={scope === 'rooms' ? 'active' : ''}
-              onClick={() => onChange('rooms')}>{roomLabel}</button>
+      {items.map((i) => (
+        <button key={i.key} role="tab" aria-selected={scope === i.key}
+                className={scope === i.key ? 'active' : ''}
+                onClick={() => onChange(i.key)}>{i.label}</button>
+      ))}
     </div>
   );
 }

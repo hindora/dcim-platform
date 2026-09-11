@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api, type AlarmCategory, type ThermalRow, type ThermalSpread } from '../../api/client';
 import { AlarmPanel } from '../home/AlarmPanel';
 import {
@@ -13,6 +13,7 @@ import { RoomDrawer } from '../home/RoomDrawer';
 import { useEstateTable } from './useEstateTable';
 import { ThermalTrend } from './ThermalTrend';
 import { RoomCooling } from './RoomCooling';
+import { Plant, usePlant, verdictLabel, verdictTone } from './Plant';
 
 /** Thermal: how warm the estate is running, and how much of it is in band.
  *
@@ -203,6 +204,16 @@ export function Thermal() {
   const [drawerRoom, setDrawerRoom] = useState<{ id: string; name: string } | null>(null);
   const [drill, setDrill] = useState<{ kind: 'site' | 'room'; id: string; label: string } | null>(null);
   const navigate = useNavigate();
+
+  // PLANT is a third tab rather than a third drill level, because it is a
+  // different population: the machines that hold the air where it is, none of
+  // which is in a rack and most of which stand in rooms that have no rack
+  // intake sensor at all. Those rooms could only ever appear in the table
+  // above as a row of dashes.
+  const [params, setParams] = useSearchParams();
+  const plantTab = params.get('scope') === 'plant';
+  const plant = usePlant(plantTab);
+  const pt = plant.data?.totals;
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['estate-thermal', mode, focus, compare, source],
@@ -495,14 +506,45 @@ export function Thermal() {
     <div className="estate">
       <PageHead
         title="Thermal"
-        sub={<>Intake air. ASHRAE band {floor}–{recommended} °C, allowable to {allowable} °C.{' '}
-          <Link to="/analytics?view=thermal">Rack-level ΔT and hot spots →</Link></>}
+        sub={plantTab
+          ? <>The cooling chain that holds that air where it is: what is running,
+              what it is moving, and what is spare.{' '}
+              <Link to="/analytics?view=cooling">Chiller staging and loop detail →</Link></>
+          : <>Intake air. ASHRAE band {floor}–{recommended} °C, allowable to {allowable} °C.{' '}
+              <Link to="/analytics?view=thermal">Rack-level ΔT and hot spots →</Link></>}
         // Six KPIs on the title row; the header lets the subtitle wrap
         // before it lets the band drop under the title. The below-band
         // share is a table figure, not a headline: it is sorted on when a
         // setpoint is being decided, and In band already says how much sits
         // outside while the spread bar shows which side.
-        kpis={[
+        kpis={plantTab ? [
+          // The load, measured twice and shown twice. They are two independent
+          // readings of the same heat - what the CRAHs and CDUs say they are
+          // delivering, and flow times ΔT at the chillers - and the gap
+          // between them is the instrument check. Averaging them would report
+          // a number that matches neither.
+          { caption: 'Air side', value: pt?.air_load_kw ?? null, unit: 'kW',
+            why: 'no cooling unit reported a delivered load' },
+          { caption: 'Water side', value: pt?.water_load_kw ?? null, unit: 'kW',
+            why: 'no running chiller reported both loop ends and a flow' },
+          { caption: 'Running capacity', value: pt?.capacity_kw ?? null, unit: 'kW',
+            why: 'no chiller is running' },
+          { caption: 'Utilisation', value: pt?.utilisation_pct ?? null, unit: '%',
+            tone: (pt?.utilisation_pct ?? 0) > 90 ? 'warn' : undefined },
+          { caption: 'Machines',
+            value: pt ? `${pt.running}/${pt.machines}` : null,
+            tone: pt && pt.stopped > pt.standby ? 'warn' : 'ok' },
+          // Judged on the RUNNING set: a standby machine that has to start,
+          // pull down and stage on does not help in the minutes after a trip.
+          { caption: 'Redundancy', value: verdictLabel(pt?.redundancy ?? null),
+            tone: pt?.redundancy ? ({
+              n_plus_1: 'ok', ok: 'ok', tight: 'warn',
+            } as Record<string, 'ok' | 'warn' | 'critical'>)[pt.redundancy]
+              ?? (verdictTone(pt.redundancy) === 'none' ? undefined
+                  : verdictTone(pt.redundancy) as 'ok' | 'warn' | 'critical')
+              : undefined,
+            why: 'no chiller stage has reported' },
+        ] : [
           { caption: 'Average', value: conv(totals?.avg_c ?? null, unit), unit: u,
             why: 'no rack intake sensor reported in this window' },
           { caption: 'p90', value: conv(totals?.p90_c ?? null, unit), unit: u,
@@ -527,26 +569,58 @@ export function Thermal() {
       />
 
       <div className="estate-tools">
-        <ScopeTabs scope={t.scope} onChange={t.setScope} />
-        {(t.scope === 'rooms' || t.selected) && (
+        <ScopeTabs<'sites' | 'rooms' | 'plant'>
+          scope={plantTab ? 'plant' : t.scope}
+          tabs={[{ key: 'sites', label: 'SITES' },
+                 { key: 'rooms', label: 'ROOMS' },
+                 { key: 'plant', label: 'PLANT' }]}
+          onChange={(s) => {
+            if (s === 'plant') {
+              setParams((prev) => {
+                const q = new URLSearchParams(prev);
+                q.set('scope', 'plant');
+                q.delete('site'); q.delete('room');
+                return q;
+              });
+            } else {
+              setParams((prev) => {
+                const q = new URLSearchParams(prev);
+                q.delete('stage');
+                return q;
+              });
+              t.setScope(s);
+            }
+          }} />
+        {!plantTab && (t.scope === 'rooms' || t.selected) && (
           <FacilityToggle on={t.includeFacility} count={t.facilityCount}
                           onChange={t.setIncludeFacility} />
         )}
-        <input className="grow" type="search"
-               placeholder={rackTier ? 'Search racks' : 'Search sites and rooms'}
-               aria-label="Search" value={t.search}
-               onChange={(e) => t.setSearch(e.target.value)} />
+        {!plantTab && (
+          <input className="grow" type="search"
+                 placeholder={rackTier ? 'Search racks' : 'Search sites and rooms'}
+                 aria-label="Search" value={t.search}
+                 onChange={(e) => t.setSearch(e.target.value)} />
+        )}
+        {plantTab && <span className="grow" />}
         <Seg label="Unit" value={unit} onChange={setUnit}
              options={[{ key: 'c', label: '°C' }, { key: 'f', label: '°F' }]} />
-        <Seg label="Window" value={mode} onChange={setMode}
-             options={[{ key: 'now', label: 'NOW' },
-                       { key: 'live', label: 'LAST HOUR' },
-                       { key: 'daily', label: 'BY DAY' }]} />
-        <Seg label="Intake source" value={source} onChange={setSource}
-             options={[{ key: 'auto', label: 'AUTO' },
-                       { key: 'probes', label: 'PROBES' },
-                       { key: 'servers', label: 'SERVERS' }]} />
-        {mode === 'daily' && (
+        {/* Window, intake source and the day pickers all describe rack intake
+            readings. None of them means anything to a chiller: a plant view is
+            a NOW view by definition, and an hour's mean of a machine that
+            tripped twenty minutes ago would show it half running. */}
+        {!plantTab && (
+          <Seg label="Window" value={mode} onChange={setMode}
+               options={[{ key: 'now', label: 'NOW' },
+                         { key: 'live', label: 'LAST HOUR' },
+                         { key: 'daily', label: 'BY DAY' }]} />
+        )}
+        {!plantTab && (
+          <Seg label="Intake source" value={source} onChange={setSource}
+               options={[{ key: 'auto', label: 'AUTO' },
+                         { key: 'probes', label: 'PROBES' },
+                         { key: 'servers', label: 'SERVERS' }]} />
+        )}
+        {!plantTab && mode === 'daily' && (
           <>
             <label className="field">
               <span>Focus day</span>
@@ -560,6 +634,9 @@ export function Thermal() {
         )}
       </div>
 
+      {/* One tab, one population. PLANT is the machines; everything below is
+          rack intake readings, and nothing in it applies to a chiller. */}
+      {plantTab ? <Plant unit={unit} /> : (<>
       <div className="estate-panel">
         {(t.selectedRoom ?? t.selected) && (() => {
           const head = (t.selectedRoom ?? t.selected)!;
@@ -647,6 +724,7 @@ export function Thermal() {
           : 'Window: the newest reading from each sensor, taken '
             + `${new Date(data.window.focus_end).toLocaleTimeString()}.`) : '',
       ].filter(Boolean)} />
+      </>)}
 
       {drawerRoom && (
         <RoomDrawer roomId={drawerRoom.id} roomName={drawerRoom.name}
