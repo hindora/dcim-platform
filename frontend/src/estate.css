@@ -185,6 +185,20 @@
 .estate-table .dash { color: var(--unknown); }
 .estate-table .why { font-size: 11px; color: var(--text-faint); }
 
+/* Two controls that govern one population, said once rather than twice. The
+   caption is what makes the toolbar honest: these steer every rack-intake
+   reading on the page and nothing else on it. */
+.estate-tools .seg-group {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 0 10px 0 12px; border: 1px solid var(--border); border-radius: 6px;
+  height: 34px;
+}
+.estate-tools .seg-group .cap {
+  font-size: 10px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--text-faint); white-space: nowrap;
+}
+.estate-selected .note { font-size: 11px; color: var(--text-faint); }
+
 /* The trail, above the panel and outside it. Sits in the page's own space so
    that changing tier swaps the table without the trail moving. */
 .estate-crumbs {

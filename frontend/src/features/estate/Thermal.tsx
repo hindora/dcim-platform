@@ -686,17 +686,25 @@ export function Thermal() {
             readings. None of them means anything to a chiller: a plant view is
             a NOW view by definition, and an hour's mean of a machine that
             tripped twenty minutes ago would show it half running. */}
+        {/* Captioned as a group, because that is the honest scope. These two
+            do not govern the page - they govern every RACK INTAKE reading on
+            it: the table of server rooms, the figures band above it and the
+            headline KPIs, which is why they cannot move into a table header
+            two screens below the numbers they change. They reach neither the
+            facility table (the newest reading from each machine, by
+            definition) nor the chart's range. */}
         {!plantTab && (
-          <Seg label="Window" value={mode} onChange={setMode}
-               options={[{ key: 'now', label: 'NOW' },
-                         { key: 'live', label: 'LAST HOUR' },
-                         { key: 'daily', label: 'BY DAY' }]} />
-        )}
-        {!plantTab && (
-          <Seg label="Intake source" value={source} onChange={setSource}
-               options={[{ key: 'auto', label: 'AUTO' },
-                         { key: 'probes', label: 'PROBES' },
-                         { key: 'servers', label: 'SERVERS' }]} />
+          <span className="seg-group">
+            <span className="cap">Rack intake</span>
+            <Seg label="Window" value={mode} onChange={setMode}
+                 options={[{ key: 'now', label: 'NOW' },
+                           { key: 'live', label: 'LAST HOUR' },
+                           { key: 'daily', label: 'BY DAY' }]} />
+            <Seg label="Intake source" value={source} onChange={setSource}
+                 options={[{ key: 'auto', label: 'AUTO' },
+                           { key: 'probes', label: 'PROBES' },
+                           { key: 'servers', label: 'SERVERS' }]} />
+          </span>
         )}
         {!plantTab && mode === 'daily' && (
           <>

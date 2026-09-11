@@ -313,7 +313,12 @@ export function Facility({ unit, siteId, siteCode }: {
             left here is the label the LIST needs - a facility table sitting
             under a hall table has to say which one it is - and, inside a
             room, the figures for it. */}
-        {!room && <span className="who">Facility rooms</span>}
+        {!room && (
+          <>
+            <span className="who">Facility rooms</span>
+            <span className="note">newest reading from each machine</span>
+          </>
+        )}
         {/* Only inside a room. The list itself needs no count in its header:
             the footer already says how many rows there are, and a number
             repeated two inches away is a number somebody has to check against
