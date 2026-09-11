@@ -829,10 +829,14 @@ def _facility_room(room_id: str, machines: list[dict[str, Any]]) -> dict[str, An
     # would report a working plant room as half dead.
     stated = [m for m in machines if m.get("state_label")]
     active = [m for m in stated if m["state_label"] in ACTIVE_LABELS]
-    standby = [m for m in stated if m["state_label"] in STANDBY_LABELS]
-    attention = [m for m in stated
-                 if m["state_label"] not in ACTIVE_LABELS
-                 and m["state_label"] not in STANDBY_LABELS]
+    # The verdict has the last word on what counts as deliberately off, because
+    # it knows things the label alone does not: a generator board reads DEAD
+    # whenever the generators feeding it are on standby, which is every day of
+    # a working year. Counting that as "neither working nor off" put a warning
+    # on both healthy generator rooms.
+    standby = [m for m in stated
+               if m["state_label"] in STANDBY_LABELS or m["verdict"] == "standby"]
+    attention = [m for m in stated if m not in active and m not in standby]
 
     row: dict[str, Any] = {
         "id": room_id,

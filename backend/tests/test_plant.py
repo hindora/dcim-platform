@@ -641,3 +641,25 @@ async def test_a_room_of_meters_reports_no_run_state_at_all(monkeypatch):
     assert room["machines_stated"] == 0
     assert room["no_state"] == 2
     assert room["active"] == 0
+
+
+@pytest.mark.asyncio
+async def test_a_board_dead_by_design_counts_as_spare_not_as_a_warning(monkeypatch):
+    """A generator board is dead whenever its generators are on standby.
+
+    Which is every day of a working year. The verdict already knew that; the
+    state count did not, and put a warning on both healthy generator rooms.
+    """
+    _patch(monkeypatch,
+           [_gear("g1", "GEN1", "generator", room="Generator Room", room_id="r3"),
+            _gear("b1", "SWGR2", "switchgear", room="Generator Room", room_id="r3")],
+           values={"g1": {("fuel_level_pct", ""): 83.0}},
+           flags={"g1": {"running": None, "alarm_points": [],
+                         "states": {"Engine_Running": False}},
+                  "b1": {"running": None, "alarm_points": [],
+                         "states": {"Bus_Energized": False,
+                                    "Source_Generator": True}}})
+
+    room = _room(await plant.plant(_FakeSession()), "Generator Room")
+    assert (room["active"], room["standby"], room["attention"]) == (0, 2, 0)
+    assert room["verdict"] == "ok"
