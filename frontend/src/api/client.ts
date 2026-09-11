@@ -2430,8 +2430,13 @@ export const api = {
     return request<ThermalPage>(`/estate/thermal${qs ? `?${qs}` : ''}`);
   },
 
-  /** The cooling chain. No window: a plant view is a NOW view by definition. */
-  estatePlant: () => request<PlantPage>('/estate/plant'),
+  /** The cooling chain. No window: a plant view is a NOW view by definition.
+   *
+   *  `view: 'facility'` reads only the rooms with no racks and what stands in
+   *  them - five rows, where the full payload is 160 KB including every CRAH
+   *  in both halls. */
+  estatePlant: (view: 'all' | 'facility' = 'all') =>
+    request<PlantPage>(`/estate/plant${view === 'all' ? '' : `?view=${view}`}`),
 
   estatePower: (params: {
     start?: string; end?: string; mode?: string; live?: boolean;

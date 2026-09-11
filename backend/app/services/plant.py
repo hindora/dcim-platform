@@ -997,10 +997,24 @@ def _notes(stages: list[dict[str, Any]], machines: list[dict[str, Any]],
     return notes
 
 
-async def plant(session: AsyncSession) -> dict[str, Any]:
-    """Every cooling machine in the estate, folded into the chain it belongs to."""
-    inventory = await repo.machines(session)
-    values = await repo.latest(session)
+async def plant(session: AsyncSession, view: str = "all") -> dict[str, Any]:
+    """Every cooling machine in the estate, folded into the chain it belongs to.
+
+    `view` is what the caller is about to draw, and it decides how much of the
+    estate is read at all:
+
+      all        the chain and the facility rooms. What the PLANT tab needs.
+      facility   the rooms with no racks and their equipment. What the thermal
+                 page's facility table needs - five rows, where "all" hands it
+                 160 KB including every CRAH in both halls.
+
+    A page that asks for what it shows is not an optimisation so much as the
+    absence of a mistake: the facility table was waiting on forty air handlers
+    it has never drawn.
+    """
+    facility_only = view == "facility"
+    inventory = await repo.machines(session, facility_only)
+    values = await repo.latest(session, facility_only)
     flags = await repo.flags(session)
     alarms = await repo.alarms(session)
     observed = await repo.observed_kw(session)
@@ -1076,6 +1090,19 @@ async def plant(session: AsyncSession) -> dict[str, Any]:
             in_rooms.setdefault(m["room_id"], []).append(m)
     facility = [_facility_room(rid, ms) for rid, ms in in_rooms.items()]
     facility.sort(key=lambda r: (r["site_code"] or "", r["name"] or ""))
+
+    if facility_only:
+        # No chain, because none was read. Empty rather than absent: the
+        # payload keeps its shape so one client type describes both views.
+        return {
+            "generated_at": datetime.now(UTC).isoformat(),
+            "stages": [],
+            "machines": [],
+            "facility_rooms": facility,
+            "equipment": [m for ms in in_rooms.values() for m in ms],
+            "totals": totals,
+            "notes": _notes([], [], totals, facility),
+        }
 
     return {
         "generated_at": datetime.now(UTC).isoformat(),

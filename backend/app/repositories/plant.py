@@ -63,8 +63,8 @@ ALL_TYPES = PLANT_TYPES + FACILITY_TYPES
 #: such filter: a CRAH lives in a hall by definition and the PLANT tab needs
 #: every one of them.
 _FACILITY_IN_FACILITY_ROOMS = """
-    ( d.device_type = ANY(:cool_types)
-      OR (d.device_type = ANY(:fac_types) AND rm.room_class = 'facility') )
+    ( (d.device_type = ANY(:cool_types) AND NOT :facility_only)
+      OR (d.device_type = ANY(:all_types) AND rm.room_class = 'facility') )
 """
 
 #: Which keys belong to which population. A chiller publishes no battery
@@ -181,8 +181,14 @@ _LATEST = text("""
        -- Per population: a chiller publishes no battery health and a
        -- switchboard no chilled-water temperature, so the union against every
        -- device walks twice the index for nothing.
-       AND ( (d.device_type = ANY(:cool_types) AND m.key = ANY(:cool_keys))
-          OR (d.device_type = ANY(:fac_types) AND m.key = ANY(:fac_keys)
+       AND ( (d.device_type = ANY(:cool_types) AND m.key = ANY(:cool_keys)
+              AND NOT :facility_only)
+          OR (d.device_type = ANY(:all_types) AND m.key = ANY(:fac_keys)
+              AND rm.room_class = 'facility')
+          -- A cooling machine standing in a facility room still needs its
+          -- cooling points: a chiller is read the same way whichever view
+          -- asked for it.
+          OR (d.device_type = ANY(:cool_types) AND m.key = ANY(:cool_keys)
               AND rm.room_class = 'facility') )
      ORDER BY t.device_id, m.key, t.instance, t.ts DESC
 """)
@@ -246,18 +252,32 @@ _OBSERVED_KW = text("""
 
 
 #: The bind parameters both filtered queries need.
-_SCOPE = {"cool_types": PLANT_TYPES, "fac_types": FACILITY_TYPES}
+#:
+#: `facility_only` is the facility table's view of the estate: the rooms with
+#: no racks and everything standing in them. It leaves out the CRAHs and CDUs
+#: in the halls, which that table never shows and which are most of the
+#: chain - so the page that only wants five room rows stops paying for forty
+#: machines it will not draw.
+_SCOPE = {"cool_types": PLANT_TYPES, "all_types": PLANT_TYPES + FACILITY_TYPES}
 
 
-async def machines(session: AsyncSession) -> list[dict[str, Any]]:
-    rows = (await session.execute(_MACHINES, _SCOPE)).mappings().all()
+def _scope(facility_only: bool) -> dict[str, Any]:
+    return {**_SCOPE, "facility_only": facility_only}
+
+
+async def machines(session: AsyncSession,
+                   facility_only: bool = False) -> list[dict[str, Any]]:
+    rows = (await session.execute(
+        _MACHINES, _scope(facility_only))).mappings().all()
     return [dict(r) for r in rows]
 
 
-async def latest(session: AsyncSession) -> dict[str, dict[tuple[str, str], float]]:
+async def latest(session: AsyncSession, facility_only: bool = False,
+                 ) -> dict[str, dict[tuple[str, str], float]]:
     """{device_id: {(key, instance): value}} - the newest of each."""
     rows = (await session.execute(_LATEST, {
-        **_SCOPE, "cool_keys": list(_KEYS), "fac_keys": list(_FACILITY_KEYS),
+        **_scope(facility_only), "cool_keys": list(_KEYS),
+        "fac_keys": list(_FACILITY_KEYS),
     })).mappings().all()
     out: dict[str, dict[tuple[str, str], float]] = {}
     for r in rows:

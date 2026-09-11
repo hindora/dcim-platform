@@ -222,7 +222,10 @@ export function Thermal() {
   // Enabled for the facility drill too: the trail has to name the room, and
   // the room's name lives in this payload. Same cache entry the table reads,
   // so it costs one request either way.
-  const plant = usePlant(plantTab || !!facilityRoom);
+  // The PLANT tab needs the chain; the trail only needs a facility room's
+  // name, which the smaller view carries - and which the table below has
+  // already fetched, so it costs nothing.
+  const plant = usePlant(plantTab || !!facilityRoom, plantTab ? 'all' : 'facility');
   const pt = plant.data?.totals;
   const froom = facilityRoom
     ? plant.data?.facility_rooms.find((r) => r.id === facilityRoom) ?? null

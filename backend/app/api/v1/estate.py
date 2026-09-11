@@ -285,6 +285,9 @@ async def room_kpi(
 
 @router.get("/plant", summary="The cooling chain: stages, machines, redundancy")
 async def plant(
+    view: str = Query("all", pattern="^(all|facility)$",
+                      description="`facility` reads only the rooms with no "
+                                  "racks and what stands in them"),
     session: AsyncSession = Depends(get_session),
     _: Principal = Depends(current_principal),
 ) -> dict:
@@ -295,4 +298,4 @@ async def plant(
     largest machine. An hour's mean of a chiller that tripped twenty minutes
     ago would show it half running, which is not a state a chiller has.
     """
-    return await plant_service.plant(session)
+    return await plant_service.plant(session, view=view)

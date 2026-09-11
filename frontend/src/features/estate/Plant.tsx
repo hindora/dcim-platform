@@ -609,10 +609,12 @@ export function Plant({ unit }: { unit: Unit }) {
  *  seconds, and a table that moved under the reader's hand while they read it
  *  would be worse than one a minute old.
  */
-export function usePlant(enabled = true) {
+export function usePlant(enabled = true, view: 'all' | 'facility' = 'all') {
   return useQuery<PlantPage>({
-    queryKey: ['estate-plant'],
-    queryFn: () => api.estatePlant(),
+    // The view is part of the key: they are different payloads, and one
+    // served from the other's cache entry would be missing half its rows.
+    queryKey: ['estate-plant', view],
+    queryFn: () => api.estatePlant(view),
     refetchInterval: 60_000,
     // The page header asks for this before the reader has opened the tab, so
     // that the numbers are there the moment they do; on the other tabs it

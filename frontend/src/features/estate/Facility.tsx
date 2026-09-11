@@ -132,7 +132,9 @@ export function Facility({ unit, siteId, siteCode }: {
   siteId?: string | null;
   siteCode?: string | null;
 }) {
-  const { data, isLoading, error } = usePlant(true);
+  // Only the rooms with no racks: this table never draws a hall's CRAHs, and
+  // waiting on them was most of the second it took to appear.
+  const { data, isLoading, error } = usePlant(true, 'facility');
   const [params, setParams] = useSearchParams();
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);

@@ -720,3 +720,45 @@ async def test_a_room_with_no_thermometer_says_nothing(monkeypatch):
     room = _room(await plant.plant(_FakeSession()), "UPS Room")
     assert room["temp_c"] is None
     assert room["temp_source"] is None
+
+
+@pytest.mark.asyncio
+async def test_the_facility_view_reads_only_the_rooms_with_no_racks(monkeypatch):
+    """A table that draws five rooms should not wait on forty air handlers.
+
+    The repository is asked for the narrower population; the service then has
+    no chain to fold, and says so with empty stages rather than a half-built
+    one somebody might read as "the plant has no chillers".
+    """
+    seen: dict[str, bool] = {}
+
+    async def _machines(_s, facility_only=False):
+        seen["machines"] = facility_only
+        return [_gear("u1", "UPSA", "ups")]
+
+    async def _latest(_s, facility_only=False):
+        seen["latest"] = facility_only
+        return {}
+
+    monkeypatch.setattr(plant.repo, "machines", _machines)
+    monkeypatch.setattr(plant.repo, "latest", _latest)
+    monkeypatch.setattr(plant.repo, "flags", _returns({}))
+    monkeypatch.setattr(plant.repo, "alarms", _returns({}))
+    monkeypatch.setattr(plant.repo, "observed_kw", _returns({}))
+
+    out = await plant.plant(_FakeSession(), view="facility")
+    assert seen == {"machines": True, "latest": True}
+    assert out["stages"] == [] and out["machines"] == []
+    assert [r["name"] for r in out["facility_rooms"]] == ["UPS Room"]
+    assert [m["name"] for m in out["equipment"]] == ["UPSA"]
+
+
+@pytest.mark.asyncio
+async def test_the_default_view_still_reads_the_whole_chain(monkeypatch):
+    _patch(monkeypatch,
+           [_machine("c1", "CH1", "chiller", cooling_w=800_000)],
+           flags={"c1": {"running": True, "alarm_points": [], "states": {}}})
+
+    out = await plant.plant(_FakeSession())
+    assert [m["name"] for m in out["machines"]] == ["CH1"]
+    assert {s["stage"] for s in out["stages"]} == {"chiller"}
