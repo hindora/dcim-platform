@@ -47,7 +47,17 @@ POINT_METRICS: dict[str, tuple[str, str]] = {
     # reports, because this measures the same quantity in a room that has no
     # racks to hang a probe in. That is what lets the estate's existing
     # room-temperature rules reach a switchroom at all.
-    "Room_Temperature": ("ambient_temperature", ""),
+    # Instanced ROOM, and that is load-bearing. The alarm engine scopes a rule
+    # by device_type and metric instance, and every one of these is a "sensor",
+    # so without it a plant hall at 27 C trips ambient-temp-high - a rule whose
+    # 27 C line is ASHRAE's limit for RACK INTAKE AIR. A chiller room at 27 C
+    # is a chiller room on a normal day, and an alarm that is always on is an
+    # alarm nobody reads.
+    #
+    # Humidity is NOT instanced: 20-70 % is the right band for any room that
+    # has electronics in it, so those rules should reach a switchroom as they
+    # are.
+    "Room_Temperature": ("ambient_temperature", "ROOM"),
     "Room_Humidity":    ("relative_humidity", ""),
 
     # --- machine temperatures, each of which is ITS OWN and not the room's ---

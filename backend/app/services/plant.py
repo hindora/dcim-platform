@@ -394,7 +394,12 @@ def _read_instrument(v: dict, rated: float | None) -> dict[str, Any]:
     # A loose sensor with no header: it is reading the air it hangs in.
     return {
         "supply_c": None, "return_c": None, "setpoint_c": None,
-        "ambient_c": _val(v, "ambient_temperature"),
+        # ROOM is a transmitter on the BMS trunk; the bare instance is a rack
+        # probe. Both are room air, and the instance exists so the alarm rules
+        # can tell a plant hall from a cold aisle.
+        "ambient_c": (_val(v, "ambient_temperature", "ROOM")
+                      if _val(v, "ambient_temperature", "ROOM") is not None
+                      else _val(v, "ambient_temperature")),
         "heat_kw": None, "duty_pct": None, "duty_of": "reading", "loop": "none",
     }
 

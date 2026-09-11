@@ -215,7 +215,7 @@ templates:
     word_order: big
     device_types: [sensor]
     points:
-      - { space: input, addr: 0x0000, name: Room_Temperature, dtype: s16, scale: 10, metric: ambient_temperature }
+      - { space: input, addr: 0x0000, name: Room_Temperature, dtype: s16, scale: 10, metric: ambient_temperature, instance: ROOM }
       - { space: input, addr: 0x0001, name: Room_Humidity, dtype: u16, scale: 10, metric: relative_humidity }
       - { space: discrete, addr: 0x0000, name: Reading_Valid, role: validity }
 

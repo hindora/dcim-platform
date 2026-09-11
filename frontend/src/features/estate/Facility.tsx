@@ -212,10 +212,14 @@ export function Facility({ unit, siteId, siteCode }: {
                   + 'most plant rooms have. It runs warmer than the room around '
                   + 'it, so it is a floor under the room temperature rather than '
                   + 'a reading of it.'}>
+            {/* Only the CHASSIS reading is marked, because only that one is
+                not the room's air - it is a box heating itself, a few degrees
+                above what is around it. Outdoor air on the roof needs no mark:
+                the roof IS outdoors, so that reading is exactly what the
+                column says it is. The tip carries the source either way. */}
             <span>
               <Num value={conv(r.temp_c, unit)} digits={1} />
               {r.temp_source === 'chassis' && <span className="muted"> ch</span>}
-              {r.temp_source === 'outdoor air' && <span className="muted"> oa</span>}
             </span>
           </Tip>
         )),
