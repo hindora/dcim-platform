@@ -29,14 +29,20 @@ import { type FacilityRoom, type PlantMachine } from '../../api/client';
 import { Column, DataTable, Num, TableFoot } from '../../components/estate';
 import { Tip } from '../../components/HoverTip';
 import { downloadCsv, stampedName } from '../../lib/csv';
-import { Kw, TYPE_WORD, Verdict, machineColumns_, usePlant, verdictTone } from './Plant';
+import { TYPE_WORD, Verdict, machineColumns_, usePlant, verdictTone } from './Plant';
 
 type Unit = 'c' | 'f';
 
 const conv = (c: number | null | undefined, unit: Unit) =>
   c === null || c === undefined ? null : unit === 'c' ? c : c * 9 / 5 + 32;
 
-/** What the room holds, as a sentence rather than a slug list. */
+/** What the room holds, as a sentence rather than a slug list.
+ *
+ *  The cooling count rides here rather than in a column of its own. Two of
+ *  five facility rooms hold any cooling at all, so a column for it was three
+ *  rows of dashes - the same emptiness this table was built to replace, only
+ *  turned on its side.
+ */
 function Holds({ r }: { r: FacilityRoom }) {
   const parts = Object.entries(r.by_type)
     .sort((a, b) => b[1] - a[1])
@@ -44,6 +50,12 @@ function Holds({ r }: { r: FacilityRoom }) {
   return (
     <Tip tip={<>
       {parts.map((p) => <span className="spread-line" key={p}>{p}</span>)}
+      {r.cooling_machines > 0 && (
+        <span className="spread-line">
+          <b>{r.cooling_running}</b> of {r.cooling_machines} cooling machines
+          running{r.heat_kw !== null ? `, moving ${r.heat_kw.toFixed(0)} kW` : ''}
+        </span>
+      )}
       {r.unmonitored > 0 && (
         <span className="spread-line">
           <b>{r.unmonitored}</b> with no monitoring endpoint - in inventory,
@@ -54,23 +66,6 @@ function Holds({ r }: { r: FacilityRoom }) {
       <span>
         <b>{r.equipment}</b>
         {r.unmonitored > 0 && <span className="muted"> ({r.unmonitored} unmet)</span>}
-      </span>
-    </Tip>
-  );
-}
-
-/** Cooling machines running out of installed, or a plain "none" where the
- *  room holds no cooling at all - which is most switchrooms. */
-function Cooling({ r }: { r: FacilityRoom }) {
-  if (!r.cooling_machines) {
-    return <Tip className="dash" tip="no cooling machine stands in this room">—</Tip>;
-  }
-  return (
-    <Tip tip={`${r.cooling_running} of ${r.cooling_machines} cooling machines in `
-      + 'this room are running; the rest are staged off or stopped'}>
-      <span>
-        <b>{r.cooling_running}</b>
-        <span className="muted">/{r.cooling_machines}</span>
       </span>
     </Tip>
   );
@@ -128,56 +123,22 @@ export function Facility({ unit, siteId, siteCode }: {
       render: (r: FacilityRoom) => <span className="muted">{r.site_code}</span>,
     }]),
     {
-      key: 'name', label: 'Room', width: 170,
+      key: 'name', label: 'Room', width: 210,
       help: 'A room with no racks in it.',
       sort: (r) => r.name,
       render: (r) => <b>{r.name}</b>,
     },
     {
-      key: 'purpose', label: 'Purpose', width: 130,
+      key: 'purpose', label: 'Purpose', width: 170,
       help: 'What the room is for, from its type in inventory.',
       sort: (r) => r.purpose,
       render: (r) => <span className="muted">{r.purpose}</span>,
     },
     {
-      key: 'holds', label: 'Equipment', align: 'num', width: 110,
+      key: 'holds', label: 'Equipment', align: 'num', width: 130,
       help: 'How many machines stand in it. Hover for what they are.',
       sort: (r) => r.equipment,
       render: (r) => <Holds r={r} />,
-    },
-    {
-      key: 'cooling', label: 'Cooling', align: 'num', width: 92,
-      help: 'Cooling machines running, of those installed here.',
-      sort: (r) => r.cooling_running,
-      render: (r) => <Cooling r={r} />,
-    },
-    {
-      key: 'heat', label: 'Heat', align: 'num', width: 92,
-      help: 'Heat the cooling machines in this room are moving.',
-      sort: (r) => r.heat_kw,
-      render: (r) => <Kw value={r.heat_kw} why="nothing in this room moves measured heat" />,
-    },
-    {
-      key: 'power', label: 'Power', align: 'num', width: 92,
-      help: 'What those machines consume to do it.',
-      sort: (r) => r.power_kw,
-      render: (r) => <Kw value={r.power_kw}
-                         why="nothing in this room meters its own consumption" />,
-    },
-    {
-      key: 'carried', label: 'Carried', align: 'num', width: 100,
-      help: 'Power measured passing through the room. Never added to the two before it.',
-      sort: (r) => r.carried_kw,
-      render: (r) => (r.carried_kw === null
-        ? <Tip className="dash" tip="no feed, board or UPS in this room meters throughput">—</Tip>
-        : (
-          <Tip tip={`read off the room's ${TYPE_WORD[r.carried_by ?? ''] ?? r.carried_by}. `
-            + 'Power passing through, not power being consumed - the same kilowatt '
-            + 'is metered again at every stage downstream, so it is never added to '
-            + 'the heat or the draw beside it.'}>
-            <span><Num value={r.carried_kw} digits={r.carried_kw >= 100 ? 0 : 1} unit="kW" /></span>
-          </Tip>
-        )),
     },
     {
       key: 'temp', label: `Temp ${u}`, align: 'num', width: 104,
