@@ -352,11 +352,26 @@ export function machineColumns_(unit: Unit, showType = false,
       help: 'What the machine is. A facility room mixes several.',
       sort: (m: PlantMachine) => m.device_type,
       render: (m: PlantMachine) => (
-        <span className="muted">{TYPE_WORD[m.device_type] ?? m.device_type}</span>
+        <span className="muted">{kindWord(m)}</span>
       ),
     },
     ...kept.slice(1),
   ];
+}
+
+/** What to call this machine on screen.
+ *
+ *  Device type alone is not enough for an instrument: a chilled-water
+ *  thermowell and the transmitter on a switchroom wall are both "sensor", and
+ *  calling the second one a header instrument puts it on a pipe it is not
+ *  attached to. What separates them is what each is tapped into - the water
+ *  instruments carry their header, the room one does not.
+ */
+function kindWord(m: PlantMachine): string {
+  if (m.device_type !== 'sensor') return TYPE_WORD[m.device_type] ?? m.device_type;
+  if (m.header) return `${m.header} instrument`;
+  if ((m.model ?? '').startsWith('Plant Room Air')) return 'Room sensor';
+  return 'Instrument';
 }
 
 /** What each device type is called on screen. Inventory's word is a slug. */
