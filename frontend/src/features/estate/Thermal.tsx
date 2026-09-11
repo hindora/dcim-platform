@@ -519,6 +519,17 @@ export function Thermal() {
 
   const totals = data?.totals;
 
+  // The chart's scope comes from the ROW the reader drilled into, and a row
+  // only exists once the payload has arrived. Rendering before then asked for
+  // the whole estate's trend and threw it away a moment later - a query that
+  // takes ten seconds on this data, holding the connection the tables below
+  // were waiting for. So the chart waits until the page knows what it is a
+  // chart OF.
+  const wantsSite = params.get('site');
+  const wantsRoom = params.get('room');
+  const scopeKnown = (!wantsSite || Boolean(t.selected))
+    && (!wantsRoom || Boolean(t.selectedRoom));
+
   /** Clear the facility drill, leaving whatever site the reader was in. */
   function dropFacility() {
     setParams((prev) => {
@@ -817,7 +828,7 @@ export function Thermal() {
           series from the one this chart is, and an empty axis would read as
           "nothing is happening" rather than "this is not what is plotted
           here". */}
-      {!facilityRoom && (
+      {!facilityRoom && scopeKnown && (
         <ThermalTrend unit={unit} scope={
           t.selectedRoom ? { kind: 'room', id: t.selectedRoom.id, label: t.selectedRoom.name }
           : t.selected ? { kind: 'site', id: t.selected.id, label: t.selected.name }
