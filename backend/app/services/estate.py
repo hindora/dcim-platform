@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.alert_taxonomy import DETECTIONS, THERMAL_ALARM_CATEGORIES
 from app.repositories import estate as repo
+from app.repositories import thermal as thermal_repo
 
 # ASHRAE TC 9.9 recommended envelope for class A1-A4 equipment intake air.
 # Compliance on this page means "inside the RECOMMENDED band", which is a
@@ -231,6 +232,7 @@ async def thermal(session: AsyncSession, *, focus: date | None = None,
     totals = _fold_total(rooms, rate_hours)
     alarms_open = await repo.thermal_alarms(
         session, categories=list(THERMAL_ALARM_CATEGORIES))
+    await _attach_cooling(session, rooms, sites, totals)
     _attach_count(racks, alarms_open["racks"])
     _attach_count(rooms, alarms_open["rooms"])
     _attach_count(sites, alarms_open["sites"])
@@ -288,6 +290,68 @@ async def thermal(session: AsyncSession, *, focus: date | None = None,
 _ACC_SUMS = ("_sum", "_n", "_in_band", "_below", "_hot", "_prev_sum", "_prev_n",
              "_rh_sum", "_rh_n", "_rh_probes", "_probes", "_servers", "_network")
 _ACC_MAXES = ("_max", "_prev_max", "_rh_max")
+
+
+async def _attach_cooling(session: AsyncSession, rooms: list[dict[str, Any]],
+                          sites: list[dict[str, Any]],
+                          totals: dict[str, Any]) -> None:
+    """Hang each room's cooling units on its row, and fold the counts upward.
+
+    Everything else on this page is racks added up. This is the floor plant,
+    which belongs to no rack - and until now it was only visible after drilling
+    into a room, so the page's own thesis, that a high SUPPLY and a high RETURN
+    send an engineer to opposite ends of the building, was invisible at the
+    level where an operator starts.
+
+    The verdicts and the summary come from the thermal service, the same
+    function the room view uses, so a hall cannot be described one way here and
+    another way one click deeper.
+    """
+    from app.services import thermal as thermal_svc
+
+    by_room = await thermal_repo.crahs_by_room(session)
+    per_room: dict[str, dict[str, Any]] = {}
+    for room_id, rows in by_room.items():
+        units = [
+            thermal_svc.CrahThermal(
+                device_id=r["device_id"], name=r["name"],
+                supply_c=_f(r["supply_c"]), return_c=_f(r["return_c"]),
+                setpoint_c=_f(r["setpoint_c"]),
+                running=None if r["running"] is None else bool(r["running"]),
+            )
+            for r in rows
+        ]
+        # The room's own baseline, as the room view builds it: what counts as a
+        # high return depends on the hall, not on a number chosen here.
+        p90 = thermal_svc.percentile([u.return_c for u in units if u.return_c], 90)
+        per_room[room_id] = thermal_svc.room_cooling(units, p90)
+
+    for row in rooms:
+        row["cooling"] = per_room.get(row["id"])
+
+    def fold(rows: list[dict[str, Any]], key: str) -> dict[str, Any] | None:
+        """Counts add; temperatures do not.
+
+        A mean of two halls' supply air describes neither of them, and a delta
+        folded across rooms is a number about nowhere. So a site carries how
+        many units it has and how many are misbehaving, and the temperatures
+        stay where they were measured.
+        """
+        found = [r["cooling"] for r in rows if r.get("cooling")]
+        if not found:
+            return None
+        return {
+            "units": sum(c["units"] for c in found),
+            "units_stopped": sum(c["units_stopped"] for c in found),
+            "units_high_supply": sum(c["units_high_supply"] for c in found),
+            "units_high_return": sum(c["units_high_return"] for c in found),
+            "supply_c": None, "return_c": None, "delta_t_k": None,
+        }
+
+    for site in sites:
+        site["cooling"] = fold([r for r in rooms if r["site_id"] == site["id"]],
+                               site["id"])
+    totals["cooling"] = fold(rooms, "estate")
 
 
 def _rack_row(r: dict[str, Any], absent_now: str, absent_prev: str,

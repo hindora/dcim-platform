@@ -316,11 +316,15 @@ def _rack(rack_id: str, room_id: str, *, dc="dc1", code="DC1",
     }
 
 
-def _thermal(monkeypatch, rooms, racks, p90=None):
+def _thermal(monkeypatch, rooms, racks, p90=None, crahs=None):
     monkeypatch.setattr(estate.repo, "thermal_rooms", _returns(rooms))
     monkeypatch.setattr(estate.repo, "thermal_racks", _returns(racks))
     monkeypatch.setattr(estate.repo, "thermal_p90", _returns(
         p90 or {"racks": {}, "rooms": {}, "sites": {}, "total": None}))
+    # The floor plant, which belongs to no rack. Empty unless a test says
+    # otherwise, so a room with no cooling units reads as one - which is what
+    # a plant room or an unimported hall actually is.
+    monkeypatch.setattr(estate.thermal_repo, "crahs_by_room", _returns(crahs or {}))
 
 
 @pytest.mark.asyncio
@@ -850,6 +854,7 @@ async def test_now_reads_the_newest_reading_from_each_sensor(monkeypatch):
     monkeypatch.setattr(estate.repo, "thermal_rooms", _returns([_room("a", "dc1", "DC1")]))
     monkeypatch.setattr(estate.repo, "thermal_racks_now", racks_now)
     monkeypatch.setattr(estate.repo, "thermal_p90_now", p90_now)
+    monkeypatch.setattr(estate.thermal_repo, "crahs_by_room", _returns({}))
     out = await estate.thermal(_FakeSession(), mode="now")
 
     rack = out["racks"][0]
@@ -873,6 +878,7 @@ async def test_a_rack_that_was_not_reporting_earlier_has_no_rate(monkeypatch):
         [_rack_now("r1", "a", p_sum=46.0, p_n=2, p_max=23.5, p_in_band=2, p_sensors=2)]))
     monkeypatch.setattr(estate.repo, "thermal_p90_now", _returns(
         {"racks": {}, "rooms": {}, "sites": {}, "total": None}))
+    monkeypatch.setattr(estate.thermal_repo, "crahs_by_room", _returns({}))
     out = await estate.thermal(_FakeSession(), mode="now")
 
     rack = out["racks"][0]
@@ -892,6 +898,7 @@ async def test_now_reports_a_rate_per_hour(monkeypatch):
                    p_sensors=2, pc_sum=42.0, pc_n=2, pc_max=21.0)]))
     monkeypatch.setattr(estate.repo, "thermal_p90_now", _returns(
         {"racks": {}, "rooms": {}, "sites": {}, "total": None}))
+    monkeypatch.setattr(estate.thermal_repo, "crahs_by_room", _returns({}))
     out = await estate.thermal(_FakeSession(), mode="now")
 
     rack = out["racks"][0]
@@ -914,6 +921,7 @@ async def test_a_falling_hall_reports_a_negative_rate(monkeypatch):
                    p_sensors=2, pc_sum=50.0, pc_n=2, pc_max=25.0)]))
     monkeypatch.setattr(estate.repo, "thermal_p90_now", _returns(
         {"racks": {}, "rooms": {}, "sites": {}, "total": None}))
+    monkeypatch.setattr(estate.thermal_repo, "crahs_by_room", _returns({}))
     out = await estate.thermal(_FakeSession(), mode="now")
     assert out["racks"][0]["rate_k_per_h"] == -12.0
 
@@ -939,6 +947,7 @@ async def test_a_silent_rack_is_absent_in_now_too(monkeypatch):
     monkeypatch.setattr(estate.repo, "thermal_racks_now", _returns([_rack_now("r1", "a")]))
     monkeypatch.setattr(estate.repo, "thermal_p90_now", _returns(
         {"racks": {}, "rooms": {}, "sites": {}, "total": None}))
+    monkeypatch.setattr(estate.thermal_repo, "crahs_by_room", _returns({}))
     out = await estate.thermal(_FakeSession(), mode="now")
     rack = out["racks"][0]
     assert rack["avg_c"] is None and rack["source"] is None
@@ -995,3 +1004,105 @@ async def test_an_intake_alarm_on_a_server_is_not_a_thermal_page_count(monkeypat
     assert seen["categories"] == ["cooling", "environmental"]
     assert "it_equipment" not in seen["categories"]
 
+
+
+# ── the floor plant, beside the racks it serves ──────────────────────────────
+#
+# Everything else on this page is racks added up. Cooling units belong to no
+# rack, so until now a hall's supply-versus-return story - the page's own
+# thesis, and the difference between sending an engineer to the machine or to
+# the plant room - only appeared after drilling into the room.
+
+
+def _crah(device_id, name, supply, ret, setpoint=22.0, running=True):
+    return {"device_id": device_id, "name": name, "supply_c": supply,
+            "return_c": ret, "setpoint_c": setpoint, "running": running}
+
+
+@pytest.mark.asyncio
+async def test_a_room_row_carries_its_cooling_units(monkeypatch):
+    _thermal(monkeypatch, [_room("a", "dc1", "DC1")],
+             [_rack("r1", "a", f_sum=450.0, f_n=18, f_max=26.0, f_in_band=18,
+                    f_sensors=18)],
+             crahs={"a": [_crah("c1", "CRAH1", 22.0, 30.0),
+                          _crah("c2", "CRAH2", 22.0, 30.0)]})
+    out = await estate.thermal(_FakeSession(), mode="live")
+    cooling = out["rooms"][0]["cooling"]
+    assert cooling["units"] == 2
+    assert cooling["supply_c"] == 22.0 and cooling["return_c"] == 30.0
+    assert cooling["delta_t_k"] == 8.0
+
+
+@pytest.mark.asyncio
+async def test_a_stopped_unit_is_counted_and_left_out_of_the_temperatures(monkeypatch):
+    """It is still one of the room's units and it is not cooling anything. Its
+    discharge has soaked up to its return, so averaging it in would report a
+    hall with no air-side delta as a hall with a small one."""
+    _thermal(monkeypatch, [_room("a", "dc1", "DC1")],
+             [_rack("r1", "a", f_sum=450.0, f_n=18, f_max=26.0, f_in_band=18,
+                    f_sensors=18)],
+             crahs={"a": [_crah("c1", "CRAH1", 22.0, 30.0),
+                          _crah("c2", "CRAH2", 29.8, 30.0, running=False)]})
+    out = await estate.thermal(_FakeSession(), mode="live")
+    cooling = out["rooms"][0]["cooling"]
+    assert cooling["units"] == 2 and cooling["units_stopped"] == 1
+    assert cooling["delta_t_k"] == 8.0
+
+
+@pytest.mark.asyncio
+async def test_a_room_with_no_cooling_units_says_nothing(monkeypatch):
+    """A plant room, or a hall whose units are not imported yet. No units and
+    no units misbehaving are different statements, and a zero would be the
+    second one."""
+    _thermal(monkeypatch, [_room("a", "dc1", "DC1")],
+             [_rack("r1", "a", f_sum=450.0, f_n=18, f_max=26.0, f_in_band=18,
+                    f_sensors=18)])
+    out = await estate.thermal(_FakeSession(), mode="live")
+    assert out["rooms"][0]["cooling"] is None
+
+
+@pytest.mark.asyncio
+async def test_a_site_adds_the_counts_and_keeps_the_temperatures_local(monkeypatch):
+    """A mean of two halls' supply air describes neither of them, and a delta
+    folded across rooms is a number about nowhere."""
+    _thermal(monkeypatch,
+             [_room("a", "dc1", "DC1"), _room("b", "dc1", "DC1")],
+             [_rack("r1", "a", f_sum=450.0, f_n=18, f_max=26.0, f_in_band=18,
+                    f_sensors=18),
+              _rack("r2", "b", f_sum=450.0, f_n=18, f_max=26.0, f_in_band=18,
+                    f_sensors=18)],
+             crahs={"a": [_crah("c1", "CRAH1", 18.0, 26.0)],
+                    "b": [_crah("c2", "CRAH2", 24.0, 30.0, running=False)]})
+    out = await estate.thermal(_FakeSession(), mode="live")
+    site = out["sites"][0]["cooling"]
+    assert site["units"] == 2 and site["units_stopped"] == 1
+    assert site["supply_c"] is None and site["delta_t_k"] is None
+
+
+@pytest.mark.asyncio
+async def test_the_estate_row_and_the_room_view_agree_about_one_hall(monkeypatch):
+    """The whole reason the counting lives in one function. A hall described
+    one way on the table and another way one click deeper is worse than a hall
+    described neither way."""
+    from app.services import thermal as thermal_svc
+
+    units = [_crah("c1", "CRAH1", 29.0, 31.0), _crah("c2", "CRAH2", 22.0, 38.0)]
+    _thermal(monkeypatch, [_room("a", "dc1", "DC1")],
+             [_rack("r1", "a", f_sum=450.0, f_n=18, f_max=26.0, f_in_band=18,
+                    f_sensors=18)],
+             crahs={"a": units})
+    out = await estate.thermal(_FakeSession(), mode="live")
+    row = out["rooms"][0]["cooling"]
+
+    modelled = [thermal_svc.CrahThermal(
+        device_id=u["device_id"], name=u["name"], supply_c=u["supply_c"],
+        return_c=u["return_c"], setpoint_c=u["setpoint_c"], running=u["running"])
+        for u in units]
+    view = thermal_svc.RoomThermal(
+        room_id="a", crahs=modelled,
+        return_p90=thermal_svc.percentile([u["return_c"] for u in units], 90),
+    ).as_dict()
+
+    assert row["units_high_supply"] == view["units_high_supply"]
+    assert row["units_high_return"] == view["units_high_return"]
+    assert row["delta_t_k"] == view["room_delta_t_k"]

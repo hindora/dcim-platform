@@ -96,6 +96,58 @@ _CRAH = text("""
 """)
 
 
+#: Cooling units across the estate, latest reading each, with the room they
+#: stand in.
+#:
+#: The room view asks this one room at a time, because that is what it is. The
+#: estate table needs every hall at once, so the filter goes and a room id
+#: comes back instead - one scan of about thirty machines rather than a query
+#: per row.
+#:
+#: Run status is the last-known BOOLEAN, not a temperature: booleans are stored
+#: on change plus a heartbeat, so "the newest row inside the window" is the
+#: only way to read one, and a unit that stopped an hour ago has no fresher row
+#: saying so.
+_ESTATE_CRAH = text("""
+    SELECT d.id::text  AS device_id,
+           d.name      AS name,
+           rm.id::text AS room_id,
+           (SELECT t.value FROM telemetry_sample t JOIN metric m ON m.id = t.metric_id
+             WHERE t.device_id = d.id AND m.key = 'supply_air_temp'
+               AND t.ts > now() - interval '30 minutes'
+             ORDER BY t.ts DESC LIMIT 1) AS supply_c,
+           (SELECT t.value FROM telemetry_sample t JOIN metric m ON m.id = t.metric_id
+             WHERE t.device_id = d.id AND m.key = 'return_air_temp'
+               AND t.ts > now() - interval '30 minutes'
+             ORDER BY t.ts DESC LIMIT 1) AS return_c,
+           (SELECT t.value FROM telemetry_sample t JOIN metric m ON m.id = t.metric_id
+             WHERE t.device_id = d.id AND m.key = 'air_setpoint_temp'
+               AND t.ts > now() - interval '30 minutes'
+             ORDER BY t.ts DESC LIMIT 1) AS setpoint_c,
+           (SELECT tb.value FROM telemetry_bool tb JOIN metric m ON m.id = tb.metric_id
+             WHERE tb.device_id = d.id AND m.key = 'equipment_state'
+               AND tb.ts > now() - make_interval(secs => :window_s)
+             ORDER BY tb.ts DESC LIMIT 1) AS running
+      FROM device d
+      LEFT JOIN rack r      ON r.id = d.rack_id
+      LEFT JOIN rack_row rr ON rr.id = r.row_id
+      LEFT JOIN room rm     ON rm.id = COALESCE(rr.room_id, d.room_id)
+     WHERE d.device_type = 'crah'
+       AND d.lifecycle <> 'decommissioned'
+       AND rm.id IS NOT NULL
+""")
+
+
+async def crahs_by_room(session: AsyncSession) -> dict[str, list[dict[str, Any]]]:
+    """Every cooling unit in the estate, grouped by the room it stands in."""
+    rows = (await session.execute(
+        _ESTATE_CRAH, {"window_s": LAST_KNOWN_WINDOW_S})).mappings().all()
+    out: dict[str, list[dict[str, Any]]] = {}
+    for r in rows:
+        out.setdefault(r["room_id"], []).append(dict(r))
+    return out
+
+
 async def racks(session: AsyncSession, *, room_id: str,
                 minutes: int) -> list[dict[str, Any]]:
     rows = (await session.execute(_RACK, {"room_id": room_id,
