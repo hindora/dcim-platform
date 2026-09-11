@@ -1634,6 +1634,31 @@ export interface PlantMachine {
   delta_t_k: number | null;
   heat_kw: number | null;
   duty_pct: number | null;
+  /** The room it stands in, for the facility view. */
+  room_type?: string | null;
+  room_class?: string | null;
+  /** Whether anything polls this device at all. */
+  monitored?: boolean;
+  /** Every binary the machine publishes, by instance. The electrical spine
+   *  carries several at once and none of them means "running". */
+  states?: Record<string, boolean>;
+  /** What its state is CALLED: "On battery", "Energised", "On generator".
+   *  "Running" is the wrong word for most of the electrical spine. */
+  state_label?: string | null;
+  /** Power measured passing THROUGH it, never its own consumption. */
+  carried_kw?: number | null;
+  battery_health_pct?: number | null;
+  battery_minutes?: number | null;
+  fuel_pct?: number | null;
+  run_minutes?: number | null;
+  voltage_v?: number | null;
+  transfers?: number | null;
+  power_factor?: number | null;
+  imbalance_pct?: number | null;
+  thd_pct?: number | null;
+  peak_kw?: number | null;
+  /** Which header a plant instrument is tapped into. */
+  header?: string | null;
   /** What the duty figure is a share OF: rated cooling, fan speed, pump
    *  speed, or valve travel. One column, four meanings, said per row. */
   duty_of: string;
@@ -1663,10 +1688,60 @@ export interface PlantMachine {
   vibration?: number | null;
 }
 
+/** A room that holds no racks: a plant hall, a switchroom, the roof.
+ *
+ *  It could only ever appear on a rack-intake table as a row of dashes, so it
+ *  gets columns of its own - what stands in it, how much of that is cooling,
+ *  and whether any of it needs a visit.
+ */
+export interface FacilityRoom {
+  id: string;
+  kind: 'facility_room';
+  name: string;
+  room_type: string | null;
+  /** What the room is FOR, in the words a site would use. */
+  purpose: string;
+  floor: string | null;
+  site_id: string;
+  site_code: string;
+  site_name: string;
+  equipment: number;
+  /** How many of each device type stand in it. */
+  by_type: Record<string, number>;
+  cooling_machines: number;
+  cooling_running: number;
+  /** Heat the cooling machines in this room are moving. Empty in a room that
+   *  holds none, which is most of them. */
+  heat_kw: number | null;
+  /** Electrical input to those cooling machines - power being CONSUMED. */
+  power_kw: number | null;
+  /** Power measured PASSING THROUGH the room's incoming feed, board or UPS.
+   *  A different quantity from the two above and never added to them: a UPS
+   *  room meters the same kilowatt three times over. */
+  carried_kw: number | null;
+  /** Which class of machine the carried figure was read off. */
+  carried_by: string | null;
+  /** The warmest chassis reading in the room. Not room air - no facility room
+   *  in this estate has a room-air sensor. */
+  chassis_c: number | null;
+  alarms_open: number;
+  /** Devices with no monitoring endpoint at all. Inventory, not telemetry:
+   *  counted here but deliberately kept out of the room's verdict. */
+  unmonitored: number;
+  verdict: string;
+  why: string | null;
+}
+
 export interface PlantPage {
   generated_at: string;
   stages: PlantStage[];
   machines: PlantMachine[];
+  /** The rooms that hold no racks. */
+  facility_rooms: FacilityRoom[];
+  /** Every machine standing in one of those rooms, cooling or not. Repeats
+   *  the cooling machines that live in a facility room rather than making the
+   *  reader merge two lists. */
+  equipment: PlantMachine[];
   totals: {
     machines: number;
     running: number;

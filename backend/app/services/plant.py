@@ -56,6 +56,23 @@ VALVE_DEVIATION_PCT = 10.0
 #: Watts per kilowatt. Plant points are published in W, the page reads kW.
 W_PER_KW = 1000.0
 
+#: A generator below this is not going to carry a long outage. Sites commonly
+#: alarm at 50 % for a refill order and at 25 % as urgent; this is the line
+#: where somebody should be ringing the fuel supplier.
+LOW_FUEL_PCT = 30.0
+
+#: IEEE 519's voltage distortion limit for a general distribution system.
+#: Above it, transformers and motors run hot for reasons no thermostat can see.
+VOLTAGE_THD_LIMIT_PCT = 5.0
+
+#: NEMA MG-1 derates a motor above 1 % voltage imbalance and forbids operation
+#: above 5 %. Three is the line worth a look on a panel feeding pumps and fans.
+PHASE_IMBALANCE_LIMIT_PCT = 3.0
+
+#: A battery string this far down is near replacement. UPS vendors quote
+#: end-of-life at 80 % of rated capacity.
+BATTERY_HEALTH_FLOOR_PCT = 80.0
+
 #: The chain, in the order the heat travels through it. `header` says whether
 #: the machines of a stage share one set of pipes at a site: chillers and
 #: towers do, so their loop temperatures may be pooled; every CRAH and CDU
@@ -255,10 +272,256 @@ def _read_tower(v: dict, rated: float | None) -> dict[str, Any]:
     }
 
 
+# --------------------------------------------------------------------------
+# The electrical spine and the instruments
+#
+# None of this makes cold. It is here because a facility room is a room
+# somebody walks into, and the question "what is in here and is it healthy"
+# has to have an answer that is not a row of dashes.
+#
+# One rule governs the whole section: `power_draw` is NOT one measurement.
+# A chiller CONSUMES it; a utility feed, a UPS, a switchboard and a panel
+# CARRY it. Summing the two would report the same kilowatt several times and
+# call the total heat. So a machine's own consumption stays in `power_kw` and
+# metered throughput goes in `carried_kw`, and nothing ever adds them.
+# --------------------------------------------------------------------------
+
+def _read_ups(v: dict, rated: float | None) -> dict[str, Any]:
+    return {
+        "supply_c": None, "return_c": None, "setpoint_c": None,
+        "heat_kw": None,
+        "duty_pct": _val(v, "load_pct", "OUTPUT"),
+        "duty_of": "rated output",
+        "carried_kw": _kw(_val(v, "power_draw", "OUTPUT")),
+        "battery_health_pct": _val(v, "battery_health_pct"),
+        # Published in seconds; minutes is the unit an operator thinks in.
+        "battery_minutes": (lambda x: None if x is None else x / 60.0)(
+            _val(v, "battery_runtime")),
+        "voltage_v": _val(v, "voltage_ll", "INPUT"),
+        "loop": "none",
+    }
+
+
+def _read_generator(v: dict, rated: float | None) -> dict[str, Any]:
+    return {
+        "supply_c": None, "return_c": None, "setpoint_c": None,
+        "heat_kw": None,
+        "duty_pct": _val(v, "load_pct"),
+        "duty_of": "rated output",
+        "carried_kw": _kw(_val(v, "power_draw")),
+        "fuel_pct": _val(v, "fuel_level_pct"),
+        "run_minutes": (lambda x: None if x is None else x / 60.0)(
+            _val(v, "current_run_time")),
+        "loop": "none",
+    }
+
+
+def _read_transfer(v: dict, rated: float | None) -> dict[str, Any]:
+    """An automatic transfer switch. It has no load of its own; it has a side."""
+    return {
+        "supply_c": None, "return_c": None, "setpoint_c": None,
+        "heat_kw": None, "duty_pct": None, "duty_of": "transfer",
+        "voltage_v": _val(v, "voltage_ll", "NORMAL"),
+        "transfers": _val(v, "transfer_count"),
+        "loop": "none",
+    }
+
+
+def _read_bus(v: dict, rated: float | None) -> dict[str, Any]:
+    """Switchgear, motor control centre, mechanical panel: a board with a bus."""
+    return {
+        "supply_c": None, "return_c": None, "setpoint_c": None,
+        "heat_kw": None,
+        "duty_pct": _val(v, "load_pct"),
+        "duty_of": "board rating",
+        "carried_kw": _kw(_val(v, "power_draw")),
+        "power_factor": _val(v, "power_factor"),
+        "imbalance_pct": _val(v, "phase_imbalance_pct"),
+        "voltage_v": _val(v, "voltage_ll", "AVG"),
+        "loop": "none",
+    }
+
+
+def _read_meter(v: dict, rated: float | None) -> dict[str, Any]:
+    """A meter or an incoming feed: it measures power passing through it."""
+    return {
+        "supply_c": None, "return_c": None, "setpoint_c": None,
+        "heat_kw": None,
+        "duty_pct": _val(v, "load_pct"),
+        "duty_of": "feed rating",
+        "carried_kw": _kw(_val(v, "power_draw")),
+        "power_factor": _val(v, "power_factor"),
+        "imbalance_pct": _val(v, "phase_imbalance_pct"),
+        "thd_pct": _val(v, "voltage_thd_pct"),
+        "peak_kw": _kw(_val(v, "demand_peak_power")),
+        "voltage_v": _val(v, "voltage_ln", "A"),
+        "loop": "none",
+    }
+
+
+def _read_instrument(v: dict, rated: float | None) -> dict[str, Any]:
+    """A header instrument: a temperature or flow tapping on a pipe.
+
+    It belongs to no machine, which is exactly why it is worth listing - it is
+    what the BMS actually controls the plant from, and a header sensor that
+    has drifted moves every machine downstream of it.
+    """
+    for inst in ("CHW", "COND", "BASIN", "TCS"):
+        sup = _val(v, "water_supply_temp", inst)
+        ret = _val(v, "water_return_temp", inst)
+        if sup is not None or ret is not None:
+            return {
+                "supply_c": sup, "return_c": ret, "setpoint_c": None,
+                "heat_kw": None, "duty_pct": None, "duty_of": "reading",
+                "flow_l_s": _val(v, "water_flow", inst),
+                "header": inst,
+                "loop": "water",
+            }
+    return {
+        "supply_c": _val(v, "ambient_temperature"), "return_c": None,
+        "setpoint_c": None, "heat_kw": None, "duty_pct": None,
+        "duty_of": "reading", "loop": "none",
+    }
+
+
+def _read_generic(v: dict, rated: float | None) -> dict[str, Any]:
+    """Anything else standing in the room: gateways, strips, access switches.
+
+    Listed rather than hidden. "What is in this room" is the question, and a
+    BACnet router that has stopped talking takes every machine behind it off
+    the page - which looks like a plant failure and is not one.
+    """
+    return {
+        "supply_c": _val(v, "component_temperature", "CHASSIS"),
+        "return_c": None, "setpoint_c": None,
+        "heat_kw": None,
+        "duty_pct": _val(v, "load_pct"),
+        "duty_of": "rating",
+        "carried_kw": _kw(_val(v, "power_draw")),
+        "loop": "none",
+    }
+
+
 _READERS = {
     "crah": _read_crah, "cdu": _read_cdu, "pump": _read_pump,
     "valve": _read_valve, "chiller": _read_chiller, "cooling_tower": _read_tower,
+    "ups": _read_ups, "generator": _read_generator, "ats": _read_transfer,
+    "switchgear": _read_bus, "mcc": _read_bus, "mpp": _read_bus,
+    "energy_monitor": _read_meter, "utility_feed": _read_meter,
+    "sensor": _read_instrument,
 }
+
+#: What a machine's state is CALLED, per type, read off the binaries its type
+#: actually publishes. "Running" is wrong for most of the electrical spine: a
+#: switchboard is energised or dead, an ATS is on one source or the other, and
+#: a UPS that has dropped to battery is neither running nor stopped.
+def _state_label(kind: str, states: dict[str, bool],
+                 running: bool | None) -> str | None:
+    if kind == "ups":
+        if states.get("On_Battery"):
+            return "On battery"
+        if states.get("Bypass_Active"):
+            return "Bypass"
+        return "On mains" if states else None
+    if kind == "ats":
+        if states.get("On_Emergency"):
+            return "On generator"
+        if states.get("Normal_Available"):
+            return "Normal"
+        return "No source" if states else None
+    if kind == "generator":
+        if states.get("Engine_Running"):
+            return "Running"
+        return "Standby" if states else None
+    if kind in ("switchgear", "mcc", "mpp"):
+        energised = states.get("Bus_Energized", states.get("Panel_Energized"))
+        if energised is None:
+            return None
+        return "Energised" if energised else "Dead"
+    if kind == "utility_feed":
+        healthy = states.get("Service_Healthy")
+        if healthy is None:
+            return None
+        return "Healthy" if healthy else "Lost"
+    if running is None:
+        return None
+    return "Running" if running else "Off"
+
+
+def _electrical_verdict(m: dict[str, Any]) -> tuple[str, str | None] | None:
+    """The findings that only exist on the electrical side.
+
+    Returns None where this machine's type has nothing of its own to say, and
+    the caller falls through to the general checks.
+    """
+    kind = m["device_type"]
+    st = m["states"]
+
+    if kind == "ups":
+        if st.get("On_Battery"):
+            mins = m.get("battery_minutes")
+            return "on_battery", (
+                "running on battery" + (f" with {mins:.0f} minutes of runtime "
+                                        f"reported" if mins else "")
+                + " - the load is unprotected once it is gone")
+        if st.get("Bypass_Active"):
+            return "on_bypass", (
+                "on static bypass - the load is on raw mains with no ride-through")
+        health = m.get("battery_health_pct")
+        if health is not None and health < BATTERY_HEALTH_FLOOR_PCT:
+            return "battery_ageing", (
+                f"battery health {health:.0f} %, below the {BATTERY_HEALTH_FLOOR_PCT:.0f} % "
+                f"vendors call end of life")
+    if kind == "ats":
+        if st.get("On_Emergency"):
+            return "on_emergency", "transferred to the emergency source"
+        if st.get("Normal_Available") is False:
+            return "utility_lost", "the normal source is not available"
+    if kind == "generator":
+        if st.get("Engine_Running"):
+            return "engine_running", (
+                "engine running - either on test or carrying load; either way "
+                "somebody should know why")
+        fuel = m.get("fuel_pct")
+        if fuel is not None and fuel < LOW_FUEL_PCT:
+            return "low_fuel", f"fuel at {fuel:.0f} % - order a delivery"
+    if kind in ("switchgear", "mcc", "mpp"):
+        energised = st.get("Bus_Energized", st.get("Panel_Energized"))
+        if energised is False:
+            # A board fed from standby generators is dead whenever the
+            # generators are - which is every day of a working year. Calling
+            # that a fault would put a permanent red row in the generator room
+            # and teach everyone to ignore the colour.
+            if st.get("Source_Generator"):
+                return "standby", (
+                    "dead because the generators feeding it are on standby - "
+                    "which is what a healthy generator board looks like")
+            return "de_energised", "the bus is dead - everything behind it is off"
+        if st.get("Breaker_Closed") is False:
+            return "breaker_open", "main breaker open"
+    if kind == "utility_feed" and st.get("Service_Healthy") is False:
+        return "utility_lost", "the incoming service is not healthy"
+
+    thd = m.get("thd_pct")
+    if thd is not None and thd > VOLTAGE_THD_LIMIT_PCT:
+        return "distortion", (
+            f"voltage THD {thd:.1f} %, above the {VOLTAGE_THD_LIMIT_PCT:.0f} % "
+            f"IEEE 519 limit - it heats transformers and motors for reasons no "
+            f"thermostat can see")
+    imbalance = m.get("imbalance_pct")
+    if imbalance is not None and imbalance > PHASE_IMBALANCE_LIMIT_PCT:
+        return "imbalance", (
+            f"phase imbalance {imbalance:.1f} % - motors on this board derate "
+            f"and run hot")
+    return None
+
+
+def _has_reading(m: dict[str, Any]) -> bool:
+    """Did anything analogue arrive for this machine inside the window."""
+    return any(m.get(k) is not None for k in (
+        "heat_kw", "supply_c", "return_c", "duty_pct", "power_kw",
+        "carried_kw", "flow_l_s", "voltage_v", "fuel_pct",
+        "battery_health_pct", "run_hours"))
 
 
 def _verdict(m: dict[str, Any]) -> tuple[str, str | None]:
@@ -286,6 +549,10 @@ def _verdict(m: dict[str, Any]) -> tuple[str, str | None]:
         return "fault_signal", (
             f"asserting {', '.join(sorted(points))} over BACnet with nothing "
             f"raised against it")
+    electrical = _electrical_verdict(m)
+    if electrical:
+        return electrical
+
     if running is False:
         # Staged off means different things at different points in the chain.
         # A chiller plant is DESIGNED to run fewer machines than it owns, so a
@@ -295,8 +562,24 @@ def _verdict(m: dict[str, Any]) -> tuple[str, str | None]:
         if kind in ("crah", "cdu"):
             return "stopped", "not running; its readings are stale"
         return "standby", "healthy and not running - capacity available to stage on"
-    if running is None and m["heat_kw"] is None and m["supply_c"] is None:
-        return "silent", "no run state and no readings inside the window"
+    # Silent means NOTHING arrived: no binary, no reading. A machine that is
+    # publishing its state over BACnet and simply has no analogue points worth
+    # a column - a transfer switch, a gateway - is not silent, and calling it
+    # so would bury the machines that really have stopped talking.
+    if not m["states"] and not m["alarm_points"] and not _has_reading(m):
+        # A gateway or a router publishes an uptime and nothing this page
+        # charts. That is not silence, and calling it silence buries the
+        # machines that really have stopped talking.
+        if m.get("uptime_s") is not None or m.get("status") == "ONLINE":
+            return "ok", ("reporting, with no point this view charts - it is "
+                          "here because it stands in the room")
+        if not m.get("monitored"):
+            # Never polled, so it cannot have gone quiet. This is an inventory
+            # fact about the estate's coverage, not a fault in the room, and
+            # the room's verdict deliberately ignores it.
+            return "unmonitored", ("no monitoring endpoint on this device - it "
+                                   "is in inventory, not in telemetry")
+        return "silent", "nothing reported inside the window: no state, no readings"
 
     if kind == "crah":
         unit = CrahThermal(
@@ -345,10 +628,14 @@ def _machine_row(m: dict[str, Any], v: dict, f: dict, al: dict,
         # Both: `device_id` is what the rest of the platform calls it, `id` is
         # what the table component keys rows on.
         "id": m["device_id"],
+        "room_type": m.get("room_type"),
+        "room_class": m.get("room_class"),
         "device_id": m["device_id"],
         "name": m["name"],
         "device_type": kind,
-        "stage": _STAGE_BY_TYPE[kind],
+        # Cooling machines belong to a stage of the chain. Everything else in
+        # a facility room belongs to the room and to nothing else.
+        "stage": _STAGE_BY_TYPE.get(kind, "facility"),
         "model": m.get("model_name"),
         "status": m.get("status"),
         "room_id": m.get("room_id"), "room_name": m.get("room_name"),
@@ -356,14 +643,28 @@ def _machine_row(m: dict[str, Any], v: dict, f: dict, al: dict,
         "site_name": m.get("site_name"),
         "running": f.get("running"),
         "rated_kw": rated,
-        "power_kw": _kw(_val(v, "power_draw")),
+        # `power_draw` means two different things depending on what publishes
+        # it. On a cooling machine it is consumption; on a meter, a board or a
+        # UPS it is throughput, and the per-type reader puts that in
+        # `carried_kw`. Only consumption is ever called power here, so nothing
+        # downstream can add a kilowatt that is merely passing through to a
+        # kilowatt that is being burnt.
+        "power_kw": _kw(_val(v, "power_draw")) if kind in _STAGE_BY_TYPE else None,
         "run_hours": _val(v, "run_hours"),
+        # Not shown anywhere: it is the proof that a machine with no analogue
+        # points of its own is still talking.
+        "uptime_s": _val(v, "sys_uptime"),
         "alarms_open": al.get("open", 0),
         "alarms_worst": al.get("worst", 0),
+        "monitored": bool(m.get("endpoints")),
         "alarm_points": f.get("alarm_points", []),
+        # Every binary the machine publishes, by instance. The electrical gear
+        # carries several at once and none of them means "running".
+        "states": f.get("states", {}),
     }
-    row.update(_READERS[kind](v, rated))
+    row.update(_READERS.get(kind, _read_generic)(v, rated))
     row["delta_t_k"] = delta_t(row.get("supply_c"), row.get("return_c"))
+    row["state_label"] = _state_label(kind, row["states"], row["running"])
     verdict, why = _verdict(row)
     row["verdict"], row["why"] = verdict, why
     for k in ("supply_c", "return_c", "setpoint_c", "delta_t_k", "heat_kw",
@@ -372,7 +673,10 @@ def _machine_row(m: dict[str, Any], v: dict, f: dict, al: dict,
               "compressor_pct", "cop", "basin_pct", "commanded_pct",
               "deviation_pct", "heat_water_kw", "heat_electrical_kw",
               "diff_pressure", "motor_temp_c", "cond_supply_c", "cond_return_c",
-              "filter_dp", "vfd_hz", "vibration", "run_hours"):
+              "filter_dp", "vfd_hz", "vibration", "run_hours",
+              "uptime_s", "carried_kw", "battery_health_pct", "battery_minutes",
+              "voltage_v", "fuel_pct", "run_minutes", "transfers",
+              "power_factor", "imbalance_pct", "thd_pct", "peak_kw"):
         if k in row:
             row[k] = _r(row[k], 2 if k in ("cop", "flow_l_s", "vibration") else 1)
     return row
@@ -466,11 +770,100 @@ def _stage_verdict(row: dict[str, Any], machines: list[dict[str, Any]],
 
 
 # --------------------------------------------------------------------------
+# One facility room
+# --------------------------------------------------------------------------
+
+#: What a room is FOR, in the words a site would use, keyed by room_type.
+ROOM_PURPOSE = {
+    "plant": "Cooling plant",
+    "electrical": "Electrical",
+    "network": "Network",
+    "data_hall": "White space",
+    "storage": "Storage",
+}
+
+#: Which class of machine a room's throughput should be read off, in priority
+#: order. One class only: a UPS room meters the same kilowatt at the incoming
+#: feed, at the switchboard and at the UPS output, and adding those together
+#: would report three times the power the room actually passes.
+_CARRIER_ORDER = ("utility_feed", "ups", "switchgear", "mcc", "mpp",
+                  "energy_monitor")
+
+
+def _facility_room(room_id: str, machines: list[dict[str, Any]]) -> dict[str, Any]:
+    """One facility room: what stands in it, and whether any of it needs a visit."""
+    first = machines[0]
+    cooling = [m for m in machines if m["device_type"] in _STAGE_BY_TYPE]
+    running = [m for m in cooling if m["running"]]
+
+    by_type: dict[str, int] = {}
+    for m in machines:
+        by_type[m["device_type"]] = by_type.get(m["device_type"], 0) + 1
+
+    carried = None
+    carrier = None
+    for kind in _CARRIER_ORDER:
+        same = [m for m in machines
+                if m["device_type"] == kind and m.get("carried_kw") is not None]
+        if same:
+            carried = _sum([m["carried_kw"] for m in same])
+            carrier = kind
+            break
+
+    # The only temperature most facility rooms have is a machine's own, or the
+    # chassis of a switch standing in it. Named for what it is rather than
+    # offered as room air, which nothing in these rooms measures.
+    temps = [m["supply_c"] for m in machines
+             if m["device_type"] in ("oob_switch", "sensor")
+             and m.get("supply_c") is not None and m.get("header") is None]
+    chassis = max(temps) if temps else None
+
+    row: dict[str, Any] = {
+        "id": room_id,
+        "kind": "facility_room",
+        "name": first["room_name"],
+        "room_type": first.get("room_type"),
+        "purpose": ROOM_PURPOSE.get(first.get("room_type") or "", "Facility"),
+        "floor": first.get("floor"),
+        "site_id": first["site_id"], "site_code": first["site_code"],
+        "site_name": first["site_name"],
+        "equipment": len(machines),
+        "by_type": by_type,
+        "cooling_machines": len(cooling),
+        "cooling_running": len(running),
+        # Heat and own-draw are the cooling machines' alone. Nothing else in
+        # these rooms measures either.
+        "heat_kw": _r(_sum([m["heat_kw"] for m in running])),
+        "power_kw": _r(_sum([m["power_kw"] for m in cooling])),
+        # Metered pass-through, which is a different quantity entirely and is
+        # never added to the two above.
+        "carried_kw": _r(carried),
+        "carried_by": carrier,
+        "chassis_c": _r(chassis),
+        "alarms_open": sum(m["alarms_open"] for m in machines),
+        # Counted, never folded into the verdict. A room is not unhealthy
+        # because two panels in it were never wired for monitoring; it is a
+        # gap in coverage, and it belongs in a column of its own where
+        # somebody can decide whether to close it.
+        "unmonitored": sum(1 for m in machines if m["verdict"] == "unmonitored"),
+    }
+    judged = [m for m in machines if m["verdict"] != "unmonitored"]
+    row["verdict"] = _worst([m["verdict"] for m in judged]) or "ok"
+    hit = [m["name"] for m in judged if m["verdict"] == row["verdict"]]
+    row["why"] = (f"{len(hit)} of {len(judged)}: "
+                  + ", ".join(hit[:3])
+                  + (f" +{len(hit) - 3}" if len(hit) > 3 else "")
+                  ) if row["verdict"] not in ("ok",) else None
+    return row
+
+
+# --------------------------------------------------------------------------
 # The page
 # --------------------------------------------------------------------------
 
 def _notes(stages: list[dict[str, Any]], machines: list[dict[str, Any]],
-           totals: dict[str, Any]) -> list[str]:
+           totals: dict[str, Any],
+           facility: list[dict[str, Any]] | None = None) -> list[str]:
     notes: list[str] = []
     notes.append(
         "The cooling chain, in the direction the heat travels: hall air into "
@@ -501,6 +894,13 @@ def _notes(stages: list[dict[str, Any]], machines: list[dict[str, Any]],
             + "; ".join(f"{s['site_code']} {s['label'].lower()} - {s['why']}"
                         for s in tight[:3]))
 
+    if facility and not any(r["chassis_c"] is not None for r in facility):
+        notes.append(
+            "No facility room in this estate has a room-air sensor. The only "
+            "temperatures in them are the machines' own and the chassis of "
+            "whatever switch is standing there, so a warm plant room is "
+            "something a person notices, not something the platform can.")
+
     silent = [m for m in machines if m["verdict"] == "silent"]
     if silent:
         notes.append(
@@ -530,8 +930,14 @@ async def plant(session: AsyncSession) -> dict[str, Any]:
         if m.get("site_id")
     ]
 
+    # Two populations from one read. The chain is the cooling machines; the
+    # facility rooms are every machine in a room that holds no racks, which
+    # includes the same cooling machines plus the electrical spine standing
+    # beside them.
+    chain = [m for m in rows if m["device_type"] in _STAGE_BY_TYPE]
+
     sites: dict[str, dict[str, Any]] = {}
-    for m in rows:
+    for m in chain:
         sites.setdefault(m["site_id"], {
             "site_id": m["site_id"], "site_code": m["site_code"],
             "site_name": m["site_name"]})
@@ -539,33 +945,33 @@ async def plant(session: AsyncSession) -> dict[str, Any]:
     stages: list[dict[str, Any]] = []
     for site in sites.values():
         for key, label, dtype, header, blurb in STAGES:
-            here = [m for m in rows
+            here = [m for m in chain
                     if m["site_id"] == site["site_id"] and m["device_type"] == dtype]
             if here:
                 stages.append(_stage_row(key, label, header, blurb, site, here))
     stages.sort(key=lambda s: (s["site_code"] or "", _STAGE_ORDER[s["stage"]]))
 
-    air = _sum([m["heat_kw"] for m in rows
+    air = _sum([m["heat_kw"] for m in chain
                 if m["device_type"] in ("crah", "cdu") and m["running"]])
-    water = _sum([m["heat_kw"] for m in rows
+    water = _sum([m["heat_kw"] for m in chain
                   if m["device_type"] == "chiller" and m["running"]])
-    chillers = [m for m in rows if m["device_type"] == "chiller"]
+    chillers = [m for m in chain if m["device_type"] == "chiller"]
     chill_stages = [s for s in stages if s["stage"] == "chiller"]
 
     totals = {
-        "machines": len(rows),
-        "running": sum(1 for m in rows if m["running"]),
-        "standby": sum(1 for m in rows if m["running"] is False and not m["alarms_open"]),
-        "stopped": sum(1 for m in rows if m["running"] is False),
-        "silent": sum(1 for m in rows if m["verdict"] == "silent"),
+        "machines": len(chain),
+        "running": sum(1 for m in chain if m["running"]),
+        "standby": sum(1 for m in chain if m["running"] is False and not m["alarms_open"]),
+        "stopped": sum(1 for m in chain if m["running"] is False),
+        "silent": sum(1 for m in chain if m["verdict"] == "silent"),
         "air_load_kw": _r(air),
         "water_load_kw": _r(water),
         # Capacity is the chillers': a hall's worth of CRAHs cannot cool
         # anything the chillers are not making cold water for.
         "capacity_kw": _r(_sum([m["rated_kw"] for m in chillers if m["running"]])),
         "installed_kw": _r(_sum([m["rated_kw"] for m in chillers])),
-        "power_kw": _r(_sum([m["power_kw"] for m in rows])),
-        "alarms_open": sum(m["alarms_open"] for m in rows),
+        "power_kw": _r(_sum([m["power_kw"] for m in chain])),
+        "alarms_open": sum(m["alarms_open"] for m in chain),
         # The estate reads as well as its worst site, not as well as its mean.
         "redundancy": _worst([s["verdict"] for s in chill_stages]),
         "sites": len(sites),
@@ -574,19 +980,49 @@ async def plant(session: AsyncSession) -> dict[str, Any]:
         water / totals["capacity_kw"] * 100.0
         if water and totals["capacity_kw"] else None)
 
+    # A facility room is one with no racks in it - the plant halls, the
+    # switchrooms, the roof. Everything standing in one is listed, cooling or
+    # not, because the question the room table has to answer is "what is in
+    # here", and half an answer sends somebody to the wrong room.
+    in_rooms: dict[str, list[dict[str, Any]]] = {}
+    for m in rows:
+        if m.get("room_class") == "facility" and m.get("room_id"):
+            in_rooms.setdefault(m["room_id"], []).append(m)
+    facility = [_facility_room(rid, ms) for rid, ms in in_rooms.items()]
+    facility.sort(key=lambda r: (r["site_code"] or "", r["name"] or ""))
+
     return {
         "generated_at": datetime.now(UTC).isoformat(),
         "stages": stages,
-        "machines": rows,
+        "machines": chain,
+        # The rooms that hold no racks, and every machine standing in one.
+        # `equipment` repeats the cooling machines that live in a facility
+        # room rather than cross-referencing them, so the room table is one
+        # list rather than two the reader has to merge.
+        "facility_rooms": facility,
+        "equipment": [m for ms in in_rooms.values() for m in ms],
         "totals": totals,
-        "notes": _notes(stages, rows, totals),
+        "notes": _notes(stages, chain, totals, facility),
     }
 
 
-#: Worst to best, for folding several sites' verdicts into one headline.
-_WORST_FIRST = ("no_capacity", "tripped", "alarm", "high_supply", "high_approach",
-                "low_basin", "actuator", "fault_signal", "tight", "low_delta_t",
-                "high_return", "silent", "unknown", "ok", "n_plus_1")
+#: Worst to best, for folding several machines' or sites' verdicts into one.
+#:
+#: Every verdict the service can produce has to appear here. A room whose worst
+#: finding is missing from this list folds to nothing and reads as healthy,
+#: which is how a UPS sitting on battery would show up as a quiet room.
+_WORST_FIRST = (
+    # The load is one failure from dark.
+    "utility_lost", "on_emergency", "on_battery", "de_energised", "no_capacity",
+    # Something is broken.
+    "tripped", "alarm", "high_supply", "on_bypass", "breaker_open",
+    "engine_running", "low_fuel", "high_approach", "low_basin", "actuator",
+    "battery_ageing", "distortion", "imbalance", "fault_signal",
+    # Something is thin or odd but working.
+    "tight", "low_delta_t", "high_return", "stopped", "silent", "unknown",
+    # Working.
+    "standby", "ok", "n_plus_1", "unmonitored",
+)
 
 
 def _worst(verdicts: list[str]) -> str | None:

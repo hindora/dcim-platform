@@ -38,6 +38,23 @@ from app.ingest.changelog import LAST_KNOWN_WINDOW_S
 #: decides what order the chain reads in.
 PLANT_TYPES = ["crah", "cdu", "pump", "valve", "chiller", "cooling_tower"]
 
+#: Everything ELSE that stands in a facility room: the electrical spine, the
+#: header instruments, the gateways the BMS talks through.
+#:
+#: These are not cooling stages and never appear in the chain. They are here
+#: because a facility room is a room somebody walks into, and "what is in this
+#: room and is it healthy" is a question the room table has to be able to
+#: answer - the alternative, which is what the page did before, is a row of
+#: dashes that drills into racks the room does not have.
+FACILITY_TYPES = [
+    "ups", "generator", "switchgear", "ats", "mcc", "mpp", "energy_monitor",
+    "utility_feed", "sensor", "bacnet_router", "modbus_gateway", "pdu",
+    "rpp", "oob_switch",
+]
+
+#: Both populations, for the queries that do not care which is which.
+ALL_TYPES = PLANT_TYPES + FACILITY_TYPES
+
 #: The points the plant table reads. Instance matters throughout: a chiller
 #: carries CHW on the evaporator and COND on the condenser, a pump reports
 #: SUCTION and DISCHARGE pressure, a valve reports COMMANDED and MEASURED
@@ -60,6 +77,20 @@ _KEYS = (
     "motor_temp", "run_hours",
     # Weather, which is what a tower's performance has to be judged against
     "outdoor_wet_bulb_temp", "outdoor_dry_bulb_temp",
+    # The electrical spine. `power_draw` means different things on different
+    # machines - a chiller CONSUMES it, a utility feed CARRIES it - so the
+    # service labels every one of these per type rather than summing them.
+    "load_pct", "power_factor", "voltage_ll", "voltage_ln", "line_frequency",
+    "phase_imbalance_pct", "voltage_thd_pct", "current_thd_pct",
+    "demand_peak_power", "apparent_power", "energy_consumed",
+    # UPS and generator condition, which is what a walk round the room checks.
+    "battery_health_pct", "battery_runtime", "fuel_level_pct",
+    "current_run_time", "transfer_count", "time_on_emergency",
+    # Chassis temperature, the only temperature most facility rooms have.
+    "component_temperature", "ambient_temperature",
+    # Evidence of life for a gateway or a router, which publishes nothing else
+    # this view reads.
+    "sys_uptime",
 )
 
 #: Inventory: every cooling machine, where it stands, and what it is rated for.
@@ -74,12 +105,21 @@ _MACHINES = text("""
            COALESCE(ds.status::text, 'UNKNOWN') AS status,
            rm.id::text       AS room_id,
            rm.name           AS room_name,
+           rm.room_type::text  AS room_type,
+           rm.room_class::text AS room_class,
+           rm.floor          AS floor,
            dc.id::text       AS site_id,
            dc.code           AS site_code,
            dc.name           AS site_name,
            md.name           AS model_name,
            md.rated_cooling_w AS rated_cooling_w,
-           md.rated_power_w   AS rated_power_w
+           md.rated_power_w   AS rated_power_w,
+           -- Whether anything is even TRYING to read this device. A panel
+           -- with no endpoint is inventory: it has never reported and never
+           -- will, which is a different fact from a machine that has gone
+           -- quiet, and the two must not share a word.
+           (SELECT count(*) FROM device_endpoint de
+             WHERE de.device_id = d.id) AS endpoints
       FROM device d
       LEFT JOIN device_state ds ON ds.device_id = d.id
       LEFT JOIN model md    ON md.id = d.model_id
@@ -170,14 +210,14 @@ _OBSERVED_KW = text("""
 
 async def machines(session: AsyncSession) -> list[dict[str, Any]]:
     rows = (await session.execute(
-        _MACHINES, {"types": PLANT_TYPES})).mappings().all()
+        _MACHINES, {"types": ALL_TYPES})).mappings().all()
     return [dict(r) for r in rows]
 
 
 async def latest(session: AsyncSession) -> dict[str, dict[tuple[str, str], float]]:
     """{device_id: {(key, instance): value}} - the newest of each."""
     rows = (await session.execute(
-        _LATEST, {"keys": list(_KEYS), "types": PLANT_TYPES})).mappings().all()
+        _LATEST, {"keys": list(_KEYS), "types": ALL_TYPES})).mappings().all()
     out: dict[str, dict[tuple[str, str], float]] = {}
     for r in rows:
         out.setdefault(r["device_id"], {})[
@@ -186,28 +226,44 @@ async def latest(session: AsyncSession) -> dict[str, dict[tuple[str, str], float
 
 
 async def flags(session: AsyncSession) -> dict[str, dict[str, Any]]:
-    """{device_id: {"running": bool|None, "alarm_points": [instance, ...]}}."""
+    """{device_id: {"running", "states": {instance: bool}, "alarm_points": [...]}}.
+
+    `running` is only meaningful where equipment_state has ONE instance, which
+    is every cooling machine: Unit_Running, Chiller_Running, Fan_Status,
+    Run_Status, Status_Modulating.
+
+    The electrical gear publishes several at once and none of them means
+    "running": a UPS carries On_Battery and Bypass_Active, an ATS carries
+    On_Emergency, Normal_Available and Emergency_Available. Collapsing those
+    to one boolean would report a UPS that has dropped to battery as either
+    running or stopped, when the fact worth knowing is neither. So every
+    instance is kept and the service reads the ones its type defines.
+    """
     rows = (await session.execute(
         _FLAGS, {"window_s": LAST_KNOWN_WINDOW_S,
-                 "types": PLANT_TYPES})).mappings().all()
+                 "types": ALL_TYPES})).mappings().all()
     out: dict[str, dict[str, Any]] = {}
     for r in rows:
-        d = out.setdefault(r["device_id"], {"running": None, "alarm_points": []})
+        d = out.setdefault(r["device_id"], {
+            "running": None, "states": {}, "alarm_points": []})
         if r["key"] == "equipment_state":
-            d["running"] = bool(r["value"])
+            d["states"][r["instance"] or ""] = bool(r["value"])
         elif r["value"]:
             d["alarm_points"].append(r["instance"] or "alarm")
+    for d in out.values():
+        if len(d["states"]) == 1:
+            d["running"] = next(iter(d["states"].values()))
     return out
 
 
 async def alarms(session: AsyncSession) -> dict[str, dict[str, int]]:
     rows = (await session.execute(
-        _ALARMS, {"types": PLANT_TYPES})).mappings().all()
+        _ALARMS, {"types": ALL_TYPES})).mappings().all()
     return {r["device_id"]: {"open": int(r["n"]), "worst": int(r["worst"])}
             for r in rows}
 
 
 async def observed_kw(session: AsyncSession) -> dict[str, float]:
     rows = (await session.execute(
-        _OBSERVED_KW, {"types": PLANT_TYPES})).mappings().all()
+        _OBSERVED_KW, {"types": ALL_TYPES})).mappings().all()
     return {r["device_id"]: float(r["rated_w"]) / 1000.0 for r in rows}

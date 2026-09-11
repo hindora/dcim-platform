@@ -4,7 +4,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api, type AlarmCategory, type ThermalRow, type ThermalSpread } from '../../api/client';
 import { AlarmPanel } from '../home/AlarmPanel';
 import {
-  Column, DataTable, Delta, FacilityToggle, Notes, Num, PageHead, ScopeTabs, Seg,
+  Column, DataTable, Delta, Notes, Num, PageHead, ScopeTabs, Seg,
   TableFoot, tone,
 } from '../../components/estate';
 import { Tip } from '../../components/HoverTip';
@@ -14,6 +14,7 @@ import { useEstateTable } from './useEstateTable';
 import { ThermalTrend } from './ThermalTrend';
 import { RoomCooling } from './RoomCooling';
 import { Plant, usePlant, verdictLabel, verdictTone } from './Plant';
+import { Facility } from './Facility';
 
 /** Thermal: how warm the estate is running, and how much of it is in band.
  *
@@ -591,10 +592,7 @@ export function Thermal() {
               t.setScope(s);
             }
           }} />
-        {!plantTab && (t.scope === 'rooms' || t.selected) && (
-          <FacilityToggle on={t.includeFacility} count={t.facilityCount}
-                          onChange={t.setIncludeFacility} />
-        )}
+
         {!plantTab && (
           <input className="grow" type="search"
                  placeholder={rackTier ? 'Search racks' : 'Search sites and rooms'}
@@ -693,6 +691,15 @@ export function Thermal() {
                    noun={t.tier}
                    onPage={t.setPage} onPageSize={t.setPageSize} onCsv={exportCsv} />
       </div>
+
+      {/* The rooms with no racks in them. They cannot appear in the table
+          above - a switchroom has no intake sensor and never will - so they
+          get a table measured on what they actually hold. Shown at the room
+          tier, which is where somebody looking at a site's rooms is. */}
+      {t.tier === 'rooms' && (
+        <Facility unit={unit} siteId={t.selected?.site_id ?? null}
+                  siteCode={t.selected?.site_code ?? null} />
+      )}
 
       {/* Drilled into a room, the units cooling it. They stand on the floor,
           so they are in no rack and appear nowhere in the table above - which

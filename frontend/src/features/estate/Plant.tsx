@@ -92,7 +92,7 @@ function verdictTone(v: string) {
   return VERDICT_TONE[v] ?? 'none';
 }
 
-function Verdict({ v, why }: { v: string; why: string | null }) {
+export function Verdict({ v, why }: { v: string; why: string | null }) {
   const label = VERDICT_LABEL[v] ?? v.replace(/_/g, ' ');
   const tone = verdictTone(v);
   return (
@@ -108,7 +108,7 @@ function Verdict({ v, why }: { v: string; why: string | null }) {
  *  measures, because there is no flow meter on it. Printing zero in either
  *  case would read as "doing nothing", which is the opposite of true.
  */
-function Kw({ value, why }: { value: number | null | undefined; why: string }) {
+export function Kw({ value, why }: { value: number | null | undefined; why: string }) {
   if (value === null || value === undefined) {
     return <Tip className="dash" tip={why}>—</Tip>;
   }
@@ -173,7 +173,7 @@ function Count({ s }: { s: PlantStage }) {
  *  differential pressure and no temperatures. The column set is the same for
  *  every machine on the table; this is where the differences live.
  */
-function extras(m: PlantMachine, unit: Unit): React.ReactNode[] {
+export function extras(m: PlantMachine, unit: Unit): React.ReactNode[] {
   const out: React.ReactNode[] = [];
   const deg = unit === 'c' ? '°C' : '°F';
   const push = (k: string, body: React.ReactNode) =>
@@ -232,6 +232,127 @@ function extras(m: PlantMachine, unit: Unit): React.ReactNode[] {
   return out;
 }
 
+/** The machine table's columns.
+ *
+ *  One column set, two callers: the stage drill on the PLANT tab and a
+ *  facility room's equipment list. A room mixes cooling machines with the
+ *  electrical spine, so `showType` adds the kind and the STATE column reads
+ *  the per-type word - "On battery", "Energised", "On generator" - rather
+ *  than trying to say Running about a switchboard.
+ */
+export function machineColumns_(unit: Unit, showType = false): Column<PlantMachine>[] {
+  const u = unit === 'c' ? '°C' : '°F';
+  const dU = unit === 'c' ? 'K' : '°F';
+  const cols: Column<PlantMachine>[] = [
+  {
+    key: 'name', label: 'Machine', width: 210,
+    help: 'The machine, as inventory names it.',
+    sort: (m) => m.name,
+    render: (m) => (
+      <Tip tip={<>{extras(m, unit)}</>}><b>{m.name}</b></Tip>
+    ),
+  },
+  {
+    key: 'where', label: 'Where', width: 170,
+    help: 'Site and room it stands in.',
+    sort: (m) => `${m.site_code} ${m.room_name ?? ''}`,
+    render: (m) => <span className="muted">{m.site_code} · {m.room_name ?? '—'}</span>,
+  },
+  {
+    key: 'state', label: 'State', align: 'mid', width: 92,
+    help: 'From the machine’s own run binary, never guessed from watts.',
+    sort: (m) => (m.running === null ? 2 : m.running ? 0 : 1),
+    render: (m) => (m.running === null
+      ? <Tip className="dash" tip="no run state inside the last-known window">—</Tip>
+      : m.running
+        ? <Tip tip="running">Running</Tip>
+        : <Tip tip="not running"><span className="muted">Off</span></Tip>),
+  },
+  {
+    key: 'duty', label: 'Duty', align: 'num', width: 80,
+    help: 'How hard it is working - of its rating, or of full speed.',
+    sort: (m) => m.duty_pct ?? null,
+    render: (m) => (m.duty_pct === null || m.duty_pct === undefined
+      ? <Tip className="dash" tip="this machine publishes no duty figure">—</Tip>
+      : <Tip tip={`${m.duty_pct.toFixed(0)} % of ${m.duty_of}`}>
+          <span>{m.duty_pct.toFixed(0)} %</span>
+        </Tip>),
+  },
+  {
+    key: 'heat', label: 'Heat', align: 'num', width: 92,
+    help: 'Heat this machine is moving right now.',
+    sort: (m) => m.heat_kw,
+    render: (m) => <Kw value={m.heat_kw} why="this machine does not measure the heat it moves" />,
+  },
+  {
+    key: 'supply', label: `Supply ${u}`, align: 'num', width: 96,
+    help: 'What it is sending out: cold water, or cold air.',
+    sort: (m) => m.supply_c,
+    render: (m) => <Num value={conv(m.supply_c, unit)} digits={1}
+                        why="this machine reports no supply temperature" />,
+  },
+  {
+    key: 'return', label: `Return ${u}`, align: 'num', width: 96,
+    help: 'What is coming back to it, carrying the heat it picked up.',
+    sort: (m) => m.return_c,
+    render: (m) => <Num value={conv(m.return_c, unit)} digits={1}
+                        why="this machine reports no return temperature" />,
+  },
+  {
+    key: 'delta', label: `ΔT ${dU}`, align: 'num', width: 86,
+    help: 'Return minus supply. Low on a moving loop means flow without transfer.',
+    sort: (m) => m.delta_t_k,
+    render: (m) => <Num value={convDelta(m.delta_t_k, unit)} digits={1}
+                        why="needs both ends of the loop" />,
+  },
+  {
+    key: 'power', label: 'Power', align: 'num', width: 88,
+    help: 'Electrical input to this machine.',
+    sort: (m) => m.power_kw,
+    render: (m) => <Kw value={m.power_kw} why="no input power reported" />,
+  },
+  {
+    key: 'alarms', label: 'Alarms', align: 'num', width: 78,
+    help: 'Open conditions on this machine.',
+    sort: (m) => m.alarms_open,
+    render: (m) => (m.alarms_open
+      ? <span className="warn">{m.alarms_open}</span>
+      : <span className="muted">0</span>),
+  },
+  {
+    key: 'verdict', label: 'Verdict', align: 'mid', width: 130,
+    help: 'This machine’s state, judged from its own telemetry.',
+    sort: (m) => m.verdict,
+    render: (m) => <Verdict v={m.verdict} why={m.why} />,
+  },
+  ];
+  if (!showType) return cols;
+  return [
+    cols[0],
+    {
+      key: 'type', label: 'Kind', width: 120,
+      help: 'What the machine is. A facility room mixes several.',
+      sort: (m: PlantMachine) => m.device_type,
+      render: (m: PlantMachine) => (
+        <span className="muted">{TYPE_WORD[m.device_type] ?? m.device_type}</span>
+      ),
+    },
+    ...cols.slice(1),
+  ];
+}
+
+/** What each device type is called on screen. Inventory's word is a slug. */
+export const TYPE_WORD: Record<string, string> = {
+  crah: 'CRAH', cdu: 'CDU', pump: 'Pump', valve: 'Valve',
+  chiller: 'Chiller', cooling_tower: 'Cooling tower',
+  ups: 'UPS', generator: 'Generator', switchgear: 'Switchgear',
+  ats: 'Transfer switch', mcc: 'Motor control centre', mpp: 'Mechanical panel',
+  energy_monitor: 'Meter', utility_feed: 'Incoming feed',
+  sensor: 'Header instrument', bacnet_router: 'BACnet router',
+  modbus_gateway: 'Modbus gateway', pdu: 'Power strip', rpp: 'Power panel',
+  oob_switch: 'Access switch',
+};
+
 export function Plant({ unit }: { unit: Unit }) {
   const [params, setParams] = useSearchParams();
   const [page, setPage] = useState(0);
@@ -287,7 +408,8 @@ export function Plant({ unit }: { unit: Unit }) {
   const current = Math.min(page, Math.max(0, Math.ceil(total / pageSize) - 1));
   const visible = rows.slice(current * pageSize, (current + 1) * pageSize);
 
-  const u = unit === 'c' ? '°C' : '°F';
+  // Only the stage table's ΔT heading needs a unit word here; the machine
+  // columns carry their own.
   const dU = unit === 'c' ? 'K' : '°F';
 
   const stageColumns: Column<PlantStage>[] = [
@@ -364,89 +486,7 @@ export function Plant({ unit }: { unit: Unit }) {
     },
   ];
 
-  const machineColumns: Column<PlantMachine>[] = [
-    {
-      key: 'name', label: 'Machine', width: 210,
-      help: 'The machine, as inventory names it.',
-      sort: (m) => m.name,
-      render: (m) => (
-        <Tip tip={<>{extras(m, unit)}</>}><b>{m.name}</b></Tip>
-      ),
-    },
-    {
-      key: 'where', label: 'Where', width: 170,
-      help: 'Site and room it stands in.',
-      sort: (m) => `${m.site_code} ${m.room_name ?? ''}`,
-      render: (m) => <span className="muted">{m.site_code} · {m.room_name ?? '—'}</span>,
-    },
-    {
-      key: 'state', label: 'State', align: 'mid', width: 92,
-      help: 'From the machine’s own run binary, never guessed from watts.',
-      sort: (m) => (m.running === null ? 2 : m.running ? 0 : 1),
-      render: (m) => (m.running === null
-        ? <Tip className="dash" tip="no run state inside the last-known window">—</Tip>
-        : m.running
-          ? <Tip tip="running">Running</Tip>
-          : <Tip tip="not running"><span className="muted">Off</span></Tip>),
-    },
-    {
-      key: 'duty', label: 'Duty', align: 'num', width: 80,
-      help: 'How hard it is working - of its rating, or of full speed.',
-      sort: (m) => m.duty_pct ?? null,
-      render: (m) => (m.duty_pct === null || m.duty_pct === undefined
-        ? <Tip className="dash" tip="this machine publishes no duty figure">—</Tip>
-        : <Tip tip={`${m.duty_pct.toFixed(0)} % of ${m.duty_of}`}>
-            <span>{m.duty_pct.toFixed(0)} %</span>
-          </Tip>),
-    },
-    {
-      key: 'heat', label: 'Heat', align: 'num', width: 92,
-      help: 'Heat this machine is moving right now.',
-      sort: (m) => m.heat_kw,
-      render: (m) => <Kw value={m.heat_kw} why="this machine does not measure the heat it moves" />,
-    },
-    {
-      key: 'supply', label: `Supply ${u}`, align: 'num', width: 96,
-      help: 'What it is sending out: cold water, or cold air.',
-      sort: (m) => m.supply_c,
-      render: (m) => <Num value={conv(m.supply_c, unit)} digits={1}
-                          why="this machine reports no supply temperature" />,
-    },
-    {
-      key: 'return', label: `Return ${u}`, align: 'num', width: 96,
-      help: 'What is coming back to it, carrying the heat it picked up.',
-      sort: (m) => m.return_c,
-      render: (m) => <Num value={conv(m.return_c, unit)} digits={1}
-                          why="this machine reports no return temperature" />,
-    },
-    {
-      key: 'delta', label: `ΔT ${dU}`, align: 'num', width: 86,
-      help: 'Return minus supply. Low on a moving loop means flow without transfer.',
-      sort: (m) => m.delta_t_k,
-      render: (m) => <Num value={convDelta(m.delta_t_k, unit)} digits={1}
-                          why="needs both ends of the loop" />,
-    },
-    {
-      key: 'power', label: 'Power', align: 'num', width: 88,
-      help: 'Electrical input to this machine.',
-      sort: (m) => m.power_kw,
-      render: (m) => <Kw value={m.power_kw} why="no input power reported" />,
-    },
-    {
-      key: 'alarms', label: 'Alarms', align: 'num', width: 78,
-      help: 'Open conditions on this machine.',
-      sort: (m) => m.alarms_open,
-      render: (m) => (m.alarms_open
-        ? <span className="warn">{m.alarms_open}</span>
-        : <span className="muted">0</span>),
-    },
-    {
-      key: 'verdict', label: 'Verdict', align: 'mid', width: 130,
-      help: 'This machine’s state, judged from its own telemetry.',
-      sort: (m) => m.verdict,
-      render: (m) => <Verdict v={m.verdict} why={m.why} />,
-    },
-  ];
+  const machineColumns = machineColumns_(unit);
 
   function csv() {
     if (!data) return;

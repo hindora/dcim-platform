@@ -24,14 +24,29 @@ def _returns(value):
 
 
 def _machine(device_id: str, name: str, dtype: str, *, site="s1", code="DC1",
-             room="Central Plant", cooling_w=None, power_w=None):
+             room="Central Plant", cooling_w=None, power_w=None,
+             room_class=None, room_type="plant", room_id="r1"):
     return {
         "device_id": device_id, "name": name, "device_type": dtype,
-        "status": "ONLINE", "room_id": "r1", "room_name": room,
+        "status": "ONLINE", "room_id": room_id, "room_name": room,
+        "room_type": room_type, "room_class": room_class, "floor": "1",
         "site_id": site, "site_code": code, "site_name": code,
         "model_name": f"model-{dtype}", "rated_cooling_w": cooling_w,
         "rated_power_w": power_w,
+        # Monitored by default: the interesting cases are the exceptions.
+        "endpoints": 1,
     }
+
+
+def _gear(device_id: str, name: str, dtype: str, *, room="UPS Room",
+          room_id="r2", room_type="electrical"):
+    """A machine in a FACILITY room, which is what grows a room row."""
+    return _machine(device_id, name, dtype, room=room, room_id=room_id,
+                    room_type=room_type, room_class="facility")
+
+
+def _room(out, name: str) -> dict:
+    return next(r for r in out["facility_rooms"] if r["name"] == name)
 
 
 def _patch(monkeypatch, machines, values=None, flags=None, alarms=None,
@@ -347,3 +362,199 @@ async def test_the_chain_reads_in_the_direction_the_heat_travels(monkeypatch):
     out = await plant.plant(_FakeSession())
     assert [s["stage"] for s in out["stages"]] == [
         "crah", "pump", "chiller", "cooling_tower"]
+
+
+# --- the facility rooms -------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_a_ups_on_battery_is_not_a_quiet_room(monkeypatch):
+    """The worst thing in the room is the room's verdict.
+
+    A verdict missing from the ranking folds to nothing and the room reads as
+    healthy, which is exactly how a UPS sitting on battery would disappear.
+    """
+    _patch(monkeypatch,
+           [_gear("u1", "UPS1", "ups"), _gear("u2", "UPS2", "ups")],
+           values={"u1": {("load_pct", "OUTPUT"): 40.0,
+                          ("power_draw", "OUTPUT"): 52_000.0,
+                          ("battery_runtime", ""): 7200.0,
+                          ("battery_health_pct", ""): 94.0}},
+           flags={"u1": {"running": None, "alarm_points": [],
+                         "states": {"On_Battery": True, "Bypass_Active": False}},
+                  "u2": {"running": None, "alarm_points": [],
+                         "states": {"On_Battery": False, "Bypass_Active": False}}})
+
+    out = await plant.plant(_FakeSession())
+    room = _room(out, "UPS Room")
+    assert room["verdict"] == "on_battery"
+    by_name = {m["name"]: m for m in out["equipment"]}
+    assert by_name["UPS1"]["state_label"] == "On battery"
+    assert "120 minutes" in by_name["UPS1"]["why"]
+    assert by_name["UPS2"]["state_label"] == "On mains"
+    assert by_name["UPS2"]["verdict"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_throughput_is_never_added_to_consumption(monkeypatch):
+    """Three meters on one kilowatt is still one kilowatt.
+
+    A UPS room meters the same power at the incoming feed, at the board and at
+    the UPS output. Summing them would report three times what the room passes
+    - and none of it is heat, which is the number beside it.
+    """
+    _patch(monkeypatch,
+           [_gear("f1", "FEED1", "utility_feed"),
+            _gear("s1", "SWGR1", "switchgear"),
+            _gear("u1", "UPS1", "ups")],
+           values={"f1": {("power_draw", ""): 147_000.0},
+                   "s1": {("power_draw", ""): 68_000.0},
+                   "u1": {("power_draw", "OUTPUT"): 52_000.0}},
+           flags={"f1": {"running": None, "alarm_points": [],
+                         "states": {"Service_Healthy": True}},
+                  "s1": {"running": None, "alarm_points": [],
+                         "states": {"Bus_Energized": True, "Breaker_Closed": True}},
+                  "u1": {"running": None, "alarm_points": [], "states": {}}})
+
+    room = _room(await plant.plant(_FakeSession()), "UPS Room")
+    # One class only, the highest upstream one that reported.
+    assert room["carried_kw"] == 147.0
+    assert room["carried_by"] == "utility_feed"
+    # Nothing in the room makes cold or consumes measured power of its own.
+    assert room["heat_kw"] is None
+    assert room["power_kw"] is None
+
+
+@pytest.mark.asyncio
+async def test_a_transferred_ats_and_a_dead_board_say_so(monkeypatch):
+    """"Running" is the wrong word for most of the electrical spine."""
+    _patch(monkeypatch,
+           [_gear("a1", "ATS1", "ats"), _gear("b1", "SWGR1", "switchgear")],
+           flags={"a1": {"running": None, "alarm_points": [],
+                         "states": {"On_Emergency": True,
+                                    "Normal_Available": False,
+                                    "Emergency_Available": True}},
+                  "b1": {"running": None, "alarm_points": [],
+                         "states": {"Bus_Energized": False}}})
+
+    by_name = {m["name"]: m for m in (await plant.plant(_FakeSession()))["equipment"]}
+    assert by_name["ATS1"]["state_label"] == "On generator"
+    assert by_name["ATS1"]["verdict"] == "on_emergency"
+    assert by_name["SWGR1"]["state_label"] == "Dead"
+    assert by_name["SWGR1"]["verdict"] == "de_energised"
+
+
+@pytest.mark.asyncio
+async def test_a_generator_running_is_worth_saying_out_loud(monkeypatch):
+    """On test or on load, somebody should know which."""
+    _patch(monkeypatch,
+           [_gear("g1", "GEN1", "generator", room="Generator Room", room_id="r3"),
+            _gear("g2", "GEN2", "generator", room="Generator Room", room_id="r3")],
+           values={"g1": {("fuel_level_pct", ""): 83.0, ("load_pct", ""): 0.0},
+                   "g2": {("fuel_level_pct", ""): 18.0}},
+           flags={"g1": {"running": None, "alarm_points": [],
+                         "states": {"Engine_Running": True}},
+                  "g2": {"running": None, "alarm_points": [],
+                         "states": {"Engine_Running": False}}})
+
+    by_name = {m["name"]: m for m in (await plant.plant(_FakeSession()))["equipment"]}
+    assert by_name["GEN1"]["verdict"] == "engine_running"
+    assert by_name["GEN2"]["verdict"] == "low_fuel"
+    assert "order a delivery" in by_name["GEN2"]["why"]
+
+
+@pytest.mark.asyncio
+async def test_power_quality_findings_use_the_published_limits(monkeypatch):
+    """THD against IEEE 519, imbalance against what derates a motor."""
+    _patch(monkeypatch,
+           [_gear("m1", "MTR1", "energy_monitor", room="Mechanical Room", room_id="r4"),
+            _gear("m2", "MTR2", "energy_monitor", room="Mechanical Room", room_id="r4")],
+           values={"m1": {("voltage_thd_pct", ""): 7.4,
+                          ("power_draw", ""): 34_000.0},
+                   "m2": {("voltage_thd_pct", ""): 2.1,
+                          ("phase_imbalance_pct", ""): 4.5}},
+           flags={})
+
+    by_name = {m["name"]: m for m in (await plant.plant(_FakeSession()))["equipment"]}
+    assert by_name["MTR1"]["verdict"] == "distortion"
+    assert "IEEE 519" in by_name["MTR1"]["why"]
+    assert by_name["MTR2"]["verdict"] == "imbalance"
+
+
+@pytest.mark.asyncio
+async def test_the_chain_stays_cooling_only(monkeypatch):
+    """A switchboard is not a stage of the cooling chain.
+
+    The PLANT tab's stages, machines and totals are the machines that move
+    heat. The room view is everything standing in the room, which is a
+    different question with a different answer.
+    """
+    _patch(monkeypatch,
+           [_machine("c1", "CH1", "chiller", cooling_w=800_000,
+                     room_class="facility"),
+            _gear("s1", "SWGR1", "switchgear", room="Central Plant", room_id="r1",
+                  room_type="plant")],
+           flags={"c1": {"running": True, "alarm_points": [], "states": {}},
+                  "s1": {"running": None, "alarm_points": [],
+                         "states": {"Bus_Energized": True}}})
+
+    out = await plant.plant(_FakeSession())
+    assert [m["name"] for m in out["machines"]] == ["CH1"]
+    assert out["totals"]["machines"] == 1
+    assert {s["stage"] for s in out["stages"]} == {"chiller"}
+    # The room holds both.
+    room = _room(out, "Central Plant")
+    assert room["equipment"] == 2
+    assert room["cooling_machines"] == 1
+    assert sorted(m["name"] for m in out["equipment"]) == ["CH1", "SWGR1"]
+
+
+@pytest.mark.asyncio
+async def test_a_room_with_no_racks_and_no_class_is_not_a_facility_room(monkeypatch):
+    """Absence of a classification is not a classification.
+
+    Hiding or promoting a room on the strength of a missing field is how a
+    real hall disappears from the estate view.
+    """
+    _patch(monkeypatch, [_machine("c1", "CH1", "chiller", cooling_w=800_000)],
+           flags={"c1": {"running": True, "alarm_points": [], "states": {}}})
+
+    assert (await plant.plant(_FakeSession()))["facility_rooms"] == []
+
+
+@pytest.mark.asyncio
+async def test_gear_with_no_reader_of_its_own_is_still_listed(monkeypatch):
+    """A BACnet router that stops talking takes the plant off the page with it.
+
+    Which looks like a plant failure and is not one - so it is listed, in the
+    room where somebody would go to look at it.
+    """
+    _patch(monkeypatch,
+           [_gear("r1", "BR1", "bacnet_router", room="Central Plant",
+                  room_id="r1", room_type="plant"),
+            dict(_gear("r2", "BR2", "bacnet_router", room="Central Plant",
+                       room_id="r1", room_type="plant"), status="OFFLINE"),
+            _gear("o1", "OOB1", "oob_switch", room="Central Plant",
+                  room_id="r1", room_type="plant"),
+            dict(_gear("p1", "PANEL", "rpp", room="Central Plant",
+                       room_id="r1", room_type="plant"),
+                 status="UNKNOWN", endpoints=0)],
+           values={"o1": {("component_temperature", "CHASSIS"): 24.9}},
+           flags={})
+
+    out = await plant.plant(_FakeSession())
+    room = _room(out, "Central Plant")
+    assert room["equipment"] == 4
+    # The only temperature a plant room has is a chassis, and it is named as one.
+    assert room["chassis_c"] == 24.9
+    by_name = {m["name"]: m for m in out["equipment"]}
+    # Online with nothing this view charts is not silence. Calling it silence
+    # would bury the one machine below that really has stopped talking.
+    assert by_name["BR1"]["verdict"] == "ok"
+    assert "stands in the room" in by_name["BR1"]["why"]
+    # Polled and not answering.
+    assert by_name["BR2"]["verdict"] == "silent"
+    # Never polled. It cannot have gone quiet, so it does not get the word
+    # that means something went quiet - and it does not drag the room down.
+    assert by_name["PANEL"]["verdict"] == "unmonitored"
+    assert room["unmonitored"] == 1
+    assert room["verdict"] != "unmonitored"
