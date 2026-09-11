@@ -56,12 +56,14 @@ import { RoomCooling } from './RoomCooling';
  *  the ASHRAE band, with the range control every other trend wears. The Δ
  *  columns say "warmer than yesterday"; the line says since when.
  *
- *  NOW has no yesterday, so in its place it carries a RATE: the same sensors
- *  read again fifteen minutes ago, in K per hour. ASHRAE rates equipment for
- *  a maximum rate of change as well as a range, so the column has a standard
- *  to be graded against rather than an opinion about what looks fast - and
- *  during a cooling loss it is the number that says whether there are twenty
- *  minutes or two, which the absolute reading cannot.
+ *  NOW has no yesterday, so it carries a RATE instead: the same sensors read
+ *  again fifteen minutes ago, in K per hour, on the tip beside the average.
+ *  It had a column of its own and lost it, deliberately - with this much
+ *  cooling headroom a hall barely moves, so the column said "flat" on every
+ *  row on every visit, and a column people learn to skip costs something
+ *  every day to pay for the rare hour it earns. The measurement is kept,
+ *  because it is the one figure that says whether there are twenty minutes
+ *  or two, and because a denser floor would want it back.
  *
  *  Warm and warm-with-somebody-told are different situations, so each row
  *  carries its open thermal conditions and a site or a room opens the same
@@ -121,37 +123,6 @@ function Spread({ d, low, high, allowable }: {
         {segs.filter(([, v]) => v > 0).map(([k, v]) => (
           <span key={k} className={`stack-seg ${k}`} style={{ width: `${v}%` }} />
         ))}
-      </span>
-    </Tip>
-  );
-}
-
-/** Rate of change, in K per hour.
- *
- *  Signed, because direction is half the finding: a steep fall after a fix is
- *  the proof it worked. Flat under the noise floor rather than a precise-
- *  looking 0.4, because the sensors cannot tell 0.4 K/h from nothing and a
- *  column that always wiggles is one people stop reading. Coloured only past
- *  the ASHRAE limit, which is a standard being broken rather than an opinion
- *  about what looks fast.
- */
-function Rate({ v, limit, noise, why }: {
-  v: number | null; limit: number; noise: number; why?: string | null;
-}) {
-  if (v === null || v === undefined) {
-    return <Tip className="dash" tip={why ?? 'no earlier reading to measure against'}>—</Tip>;
-  }
-  if (Math.abs(v) < noise) {
-    return <Tip className="muted" tip={`steady: under ${noise} K/h is sensor noise rather than air`}>flat</Tip>;
-  }
-  const over = Math.abs(v) >= limit;
-  const dir = v > 0 ? 'rising' : 'falling';
-  return (
-    <Tip tip={over
-      ? `${dir} ${Math.abs(v)} K/h, past the ${limit} K/h ASHRAE limit on rate of change`
-      : `${dir} ${Math.abs(v)} K/h`}>
-      <span className={over ? 'critical' : undefined}>
-        {v > 0 ? '+' : ''}{v.toFixed(1)}
       </span>
     </Tip>
   );
@@ -220,6 +191,25 @@ export function Thermal() {
   }
 
   const tierLabel = { sites: 'Site', rooms: 'Room', racks: 'Rack' }[t.tier];
+  /** Which way this row is going, in words, or nothing to say.
+   *
+   *  NOW only: the other windows compare whole days or hours, which is a real
+   *  change and a fictional rate. Silent below the noise floor, because the
+   *  sensors cannot tell a slow drift from their own jitter and a tip that
+   *  always says something is one nobody reads.
+   */
+  function rateTip(r: ThermalRow): string | null {
+    if (mode !== 'now' || r.rate_k_per_h === null || r.rate_k_per_h === undefined) {
+      return null;
+    }
+    const v = r.rate_k_per_h;
+    if (Math.abs(v) < rateNoise) return `steady over the last ${rateMins ?? 15} minutes`;
+    const dir = v > 0 ? 'rising' : 'falling';
+    const past = Math.abs(v) >= rateLimit
+      ? `, past the ${rateLimit} K/h ASHRAE limit on rate of change` : '';
+    return `${dir} ${Math.abs(v).toFixed(1)} K/h${past}`;
+  }
+
   const columns: Column<ThermalRow>[] = [
     {
       key: 'name', label: tierLabel,
@@ -264,15 +254,17 @@ export function Thermal() {
       key: 'avg', label: `Average ${u}`, align: 'num', width: 104,
       help: 'Mean intake air across this row.',
       sort: (r) => r.avg_c,
-      render: (r) => <Num value={conv(r.avg_c, unit)} why={r.note} />,
+      // Which way it is going rides HERE rather than in a column of its own.
+      // A rate column read "flat" on every row on every visit, because a hall
+      // with this much headroom barely moves - and a column people learn to
+      // skip costs something every day to pay for the rare hour it earns.
+      // Beside the number it describes, it costs nothing and is there when
+      // somebody asks.
+      render: (r) => (
+        rateTip(r) ? <Tip tip={rateTip(r)}><Num value={conv(r.avg_c, unit)} why={r.note} /></Tip>
+                   : <Num value={conv(r.avg_c, unit)} why={r.note} />
+      ),
     },
-    ...(mode === 'now' ? [{
-      key: 'rate', label: 'K/h', align: 'num' as const, width: 84,
-      help: <>How fast the air is moving, per hour, measured over {rateMins ?? 15} minutes. ASHRAE allows {rateLimit}.</>,
-      sort: (r: ThermalRow) => r.rate_k_per_h,
-      render: (r: ThermalRow) => <Rate v={r.rate_k_per_h} limit={rateLimit}
-                                       noise={rateNoise} why={r.delta_note} />,
-    }] : []),
     ...(mode === 'now' ? [] : [{
       key: 'davg', label: 'Δ avg', align: 'num' as const, width: 84,
       help: 'Change in the average since the window before.',
