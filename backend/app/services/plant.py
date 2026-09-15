@@ -696,6 +696,16 @@ def _machine_row(m: dict[str, Any], v: dict, f: dict, al: dict,
     }
     row.update(_READERS.get(kind, _read_generic)(v, rated))
     row["delta_t_k"] = delta_t(row.get("supply_c"), row.get("return_c"))
+    # A tower that is not running has no approach. Approach is how close the
+    # leaving condenser water gets to the wet bulb WHILE the cell is rejecting
+    # heat; on a staged-off cell the fill is dry and the fan is still, so that
+    # temperature is basin water drifting toward ambient. Subtracting wet bulb
+    # from it prints a convincing 4 K on a machine rejecting nothing, and the
+    # standby verdict - "healthy and not running" - gives the reader no reason
+    # to distrust the number beside it. The condenser temperatures stay,
+    # because the water in the basin is real; only the derived figure goes.
+    if kind == "cooling_tower" and row.get("running") is False:
+        row["approach_k"] = None
     row["state_label"] = _state_label(kind, row["states"], row["running"])
     verdict, why = _verdict(row)
     row["verdict"], row["why"] = verdict, why

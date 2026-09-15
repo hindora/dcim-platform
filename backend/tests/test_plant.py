@@ -273,6 +273,39 @@ async def test_a_tower_is_judged_against_the_wet_bulb(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_a_standby_tower_reports_no_approach(monkeypatch):
+    """A cell rejecting nothing cannot have an approach.
+
+    The basin still holds water and the weather station still publishes a wet
+    bulb, so the arithmetic succeeds and prints a healthy-looking 4 K on a
+    tower with a dry fill and a still fan. The condenser temperatures survive
+    - that water is really there - but the derived figure does not.
+    """
+    _patch(monkeypatch,
+           [_machine("t1", "CT1", "cooling_tower", room="Roof", power_w=30_000),
+            _machine("t2", "CT2", "cooling_tower", room="Roof", power_w=0)],
+           values={"t1": {("water_supply_temp", "COND"): 17.7,
+                          ("water_return_temp", "COND"): 22.7,
+                          ("outdoor_wet_bulb_temp", ""): 13.7,
+                          ("fan_speed_pct", ""): 60.0},
+                   # Staged off: the loop is static, so leaving and returning
+                   # water are the same basin sitting at the same temperature.
+                   "t2": {("water_supply_temp", "COND"): 17.7,
+                          ("water_return_temp", "COND"): 17.7,
+                          ("outdoor_wet_bulb_temp", ""): 13.7,
+                          ("fan_speed_pct", ""): 0.0}},
+           flags={"t1": {"running": True, "alarm_points": []},
+                  "t2": {"running": False, "alarm_points": []}})
+
+    by_name = {m["name"]: m for m in (await plant.plant(_FakeSession()))["machines"]}
+    assert by_name["CT1"]["approach_k"] == 4.0
+    assert by_name["CT2"]["verdict"] == "standby"
+    assert by_name["CT2"]["approach_k"] is None
+    assert by_name["CT2"]["supply_c"] == 17.7
+    assert by_name["CT2"]["wet_bulb_c"] == 13.7
+
+
+@pytest.mark.asyncio
 async def test_a_valve_that_is_not_obeying_is_an_actuator_fault(monkeypatch):
     """Commanded and measured are two points for exactly this reason."""
     _patch(monkeypatch,
