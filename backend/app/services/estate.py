@@ -302,13 +302,25 @@ async def thermal(session: AsyncSession, *, focus: date | None = None,
         "rooms": [_strip(r) for r in rooms],
         "racks": [_strip(r) for r in racks],
         "notes": [_source_note(totals, forced), _humidity_note(totals),
-                  _distribution_note(), *_window_note(mode)],
+                  _distribution_note(mode), *_window_note(mode)],
     }
 
 
 # The private keys every tier carries so the tier above can fold it. Sums and
 # counts, never averages; maxima; and how many racks each source spoke for.
-_ACC_SUMS = ("_sum", "_n", "_in_band", "_below", "_hot", "_prev_sum", "_prev_n",
+#
+# EVERY SUM HERE IS PER SENSOR, and `_band_n` - how many sensors spoke - is
+# what all of them divide by. `_sum` is the sum of the sensors' own means, so
+# the quotient is a mean of means; `_in_band`, `_below` and `_hot` are
+# sensor-TIME, each sensor's share of the window it spent in that band, so
+# they run from 0 to `_band_n`. Both shapes fold by plain addition, which is
+# the point: a tier adds its children without a weight travelling beside
+# them, and the answer is still the mean across every sensor underneath.
+#
+# `_n` is the raw reading count and divides nothing. It survives for the
+# Readings column and for the note that says a window was silent.
+_ACC_SUMS = ("_sum", "_n", "_band_n", "_in_band", "_below", "_hot",
+             "_prev_sum", "_prev_n", "_prev_band_n",
              "_rh_sum", "_rh_n", "_rh_probes", "_probes", "_servers", "_network")
 _ACC_MAXES = ("_max", "_prev_max", "_rh_max")
 
@@ -401,6 +413,7 @@ def _rack_row(r: dict[str, Any], absent_now: str, absent_prev: str,
         below, hot = r.get(f"{now}_below"), r.get(f"{now}_hot")
         sensors = int(r.get(f"{now}_sensors") or 0)
         prev_n = int(r.get(f"{was}_n") or 0)
+        prev_sensors = int(r.get(f"{was}_sensors") or 0)
         prev_sum, prev_max = r.get(f"{was}_sum"), r.get(f"{was}_max")
     elif p_n:
         source = "probes"
@@ -408,12 +421,14 @@ def _rack_row(r: dict[str, Any], absent_now: str, absent_prev: str,
         below, hot = r.get("p_below"), r.get("p_hot")
         sensors = int(r.get("p_sensors") or 0)
         prev_n, prev_sum, prev_max = int(r.get("pc_n") or 0), r.get("pc_sum"), r.get("pc_max")
+        prev_sensors = int(r.get("pc_sensors") or 0)
     elif f_n:
         source = "servers"
         n, s_sum, mx, in_band = f_n, r["f_sum"], r["f_max"], r["f_in_band"]
         below, hot = r.get("f_below"), r.get("f_hot")
         sensors = int(r.get("f_sensors") or 0)
         prev_n, prev_sum, prev_max = int(r.get("c_n") or 0), r.get("c_sum"), r.get("c_max")
+        prev_sensors = int(r.get("c_sensors") or 0)
     elif int(r.get("n_n") or 0):
         # Last resort: the front-panel sensor on the switches. A spine or
         # management rack holds no servers and often no probe, and it used to
@@ -427,14 +442,18 @@ def _rack_row(r: dict[str, Any], absent_now: str, absent_prev: str,
         below, hot = r.get("n_below"), r.get("n_hot")
         sensors = int(r.get("n_sensors") or 0)
         prev_n, prev_sum, prev_max = int(r.get("nc_n") or 0), r.get("nc_sum"), r.get("nc_max")
+        prev_sensors = int(r.get("nc_sensors") or 0)
     else:
         source, n, s_sum, mx, in_band, sensors = None, 0, 0.0, None, 0, 0
         below = hot = 0
         # Nothing this window; whichever source spoke last window names the
         # comparison for the note, and the delta is None regardless.
         prev_n = int(r.get("pc_n") or r.get("c_n") or r.get("nc_n") or 0)
+        prev_sensors = int(r.get("pc_sensors") or r.get("c_sensors")
+                           or r.get("nc_sensors") or 0)
         prev_sum, prev_max = None, None
     e_n = int(r.get("e_n") or 0)
+    e_sensors = int(r.get("e_sensors") or 0)
     rh_n = int(r.get("rh_n") or 0)
 
     row = {
@@ -452,10 +471,19 @@ def _rack_row(r: dict[str, Any], absent_now: str, absent_prev: str,
         "site_name": r["site_name"],
         "source": source,
         "sensors": sensors,
-        "exhaust_c": round(float(r["e_sum"]) / e_n, 1) if e_n else None,
-        "_sum": float(s_sum or 0.0), "_n": n, "_in_band": int(in_band or 0),
-        "_below": int(below or 0), "_hot": int(hot or 0),
+        # `e_sum` is the sum of each exhaust sensor's own mean, so the
+        # divisor is how many spoke - not how many times they did.
+        "exhaust_c": (round(float(r["e_sum"]) / e_sensors, 1)
+                      if e_sensors else None),
+        "_sum": float(s_sum or 0.0), "_n": n,
+        # Sensor-time, and its divisor. In the windowed views each term is one
+        # sensor's share of its own window; in the NOW view a sensor is either
+        # in band or not at this instant, which is the same arithmetic with
+        # every share a 0 or a 1.
+        "_band_n": sensors, "_in_band": float(in_band or 0.0),
+        "_below": float(below or 0.0), "_hot": float(hot or 0.0),
         "_prev_sum": _f(prev_sum) or 0.0, "_prev_n": prev_n,
+        "_prev_band_n": prev_sensors,
         "_max": _f(mx), "_prev_max": _f(prev_max),
         "_rh_sum": _f(r.get("rh_sum")) or 0.0, "_rh_n": rh_n,
         "_rh_max": _f(r.get("rh_max")), "_rh_probes": int(r.get("rh_probes") or 0),
@@ -483,16 +511,22 @@ def _derive(acc: dict[str, Any], absent_now: str, absent_prev: str, *,
     comparison between two calendar days - the change is real, the rate is a
     fiction spread over 24 hours of unequal weather and load.
     """
-    n, prev_n, rh_n = acc["_n"], acc["_prev_n"], acc["_rh_n"]
-    avg = round(acc["_sum"] / n, 1) if n else None
-    prev_avg = round(acc["_prev_sum"] / prev_n, 1) if prev_n else None
+    n, prev_n = acc["_n"], acc["_prev_n"]
+    # Every figure here divides by SENSORS. The sums arrive as sums of each
+    # sensor's own mean, so this is a mean of means by construction - the one
+    # shape a tier can fold without a weight travelling beside it. `_n` is
+    # kept for the Readings column and for the note that says a window was
+    # silent, which are the only two questions about readings the page asks.
+    band_n, prev_band_n = acc["_band_n"], acc["_prev_band_n"]
+    avg = round(acc["_sum"] / band_n, 1) if band_n else None
+    prev_avg = round(acc["_prev_sum"] / prev_band_n, 1) if prev_band_n else None
     mx = None if acc["_max"] is None else round(acc["_max"], 1)
     prev_mx = None if acc["_prev_max"] is None else round(acc["_prev_max"], 1)
     return {
         "avg_c": avg,
         "max_c": mx,
-        "compliance_pct": _pct(acc["_in_band"], n) if n else None,
-        "below_pct": _pct(acc["_below"], n) if n else None,
+        "compliance_pct": _pct(acc["_in_band"], band_n) if band_n else None,
+        "below_pct": _pct(acc["_below"], band_n) if band_n else None,
         "distribution": _distribution(acc),
         "samples": n,
         "delta_avg": _delta(avg, prev_avg),
@@ -506,7 +540,10 @@ def _derive(acc: dict[str, Any], absent_now: str, absent_prev: str, *,
         "rate_k_per_h": _rate(avg, prev_avg, rate_hours),
         # Humidity rides beside compliance, not inside it: folding RH into the
         # in-band share would silently change what that number has meant.
-        "rh_avg": round(acc["_rh_sum"] / rh_n, 1) if rh_n else None,
+        # Humidity divides by its probes for the same reason the intake
+        # average divides by its sensors.
+        "rh_avg": (round(acc["_rh_sum"] / acc["_rh_probes"], 1)
+                   if acc["_rh_probes"] else None),
         "rh_max": None if acc["_rh_max"] is None else round(acc["_rh_max"], 1),
         "rh_probes": acc["_rh_probes"],
         "sources": {"probes": acc["_probes"], "servers": acc["_servers"],
@@ -531,24 +568,25 @@ def _rate(now_v: float | None, was_v: float | None,
 
 
 def _distribution(acc: dict[str, Any]) -> dict[str, float] | None:
-    """Where the readings fell against the ASHRAE lines, as shares of the row.
+    """Where the sensors' TIME fell against the ASHRAE lines, as shares.
 
-    Four bands that partition every reading: below the recommended floor
+    Four bands that partition the window: below the recommended floor
     (overcooled - the finding a floor most often pays for), inside the
     recommended band, above it but inside the allowable envelope, and above
-    the allowable ceiling. Counts fold by addition, so a room's split is its
-    racks' readings pooled, never an average of percentages.
+    the allowable ceiling. Each sensor's own window is what gets split, then
+    the splits add, so a room's bar is the mean of its sensors and not a pool
+    of readings in which the fastest-polled sensor drew the widest band.
     """
-    n = acc["_n"]
-    if not n:
+    band_n = acc["_band_n"]
+    if not band_n:
         return None
     below, in_band, hot = acc["_below"], acc["_in_band"], acc["_hot"]
-    above_rec = max(n - below - in_band - hot, 0)
+    above_rec = max(band_n - below - in_band - hot, 0.0)
     return {
-        "below_pct": _pct(below, n),
-        "in_band_pct": _pct(in_band, n),
-        "above_recommended_pct": _pct(above_rec, n),
-        "above_allowable_pct": _pct(hot, n),
+        "below_pct": _pct(below, band_n),
+        "in_band_pct": _pct(in_band, band_n),
+        "above_recommended_pct": _pct(above_rec, band_n),
+        "above_allowable_pct": _pct(hot, band_n),
     }
 
 
@@ -571,6 +609,9 @@ def _attach_p90(rows: list[dict[str, Any]], by_id: dict[str, float | None]) -> N
 def _empty_acc() -> dict[str, Any]:
     acc: dict[str, Any] = dict.fromkeys(_ACC_SUMS, 0)
     acc["_sum"] = acc["_prev_sum"] = acc["_rh_sum"] = 0.0
+    # Sensor-time, so fractional from the first rack rather than after the
+    # first addition promotes it.
+    acc["_in_band"] = acc["_below"] = acc["_hot"] = 0.0
     for k in _ACC_MAXES:
         acc[k] = None
     return acc
@@ -632,24 +673,25 @@ def _fold_total(rooms: list[dict[str, Any]],
     acc = _empty_acc()
     for r in rooms:
         _add(acc, r)
-    n, rh_n = acc["_n"], acc["_rh_n"]
-    prev_n = acc["_prev_n"]
+    n = acc["_n"]
+    band_n, prev_band_n = acc["_band_n"], acc["_prev_band_n"]
     white = [r for r in rooms if r["room_class"] == "white_space"]
     return {
-        "avg_c": round(acc["_sum"] / n, 1) if n else None,
+        "avg_c": round(acc["_sum"] / band_n, 1) if band_n else None,
         "max_c": None if acc["_max"] is None else round(acc["_max"], 1),
-        "compliance_pct": _pct(acc["_in_band"], n) if n else None,
-        "below_pct": _pct(acc["_below"], n) if n else None,
+        "compliance_pct": _pct(acc["_in_band"], band_n) if band_n else None,
+        "below_pct": _pct(acc["_below"], band_n) if band_n else None,
         "distribution": _distribution(acc),
         "samples": n,
         # The estate is going somewhere too, and the headline band is where
         # that is read first. Same arithmetic as every tier below it, so the
         # figure at the top is the rows added up rather than a second opinion.
         "rate_k_per_h": _rate(
-            round(acc["_sum"] / n, 1) if n else None,
-            round(acc["_prev_sum"] / prev_n, 1) if prev_n else None,
+            round(acc["_sum"] / band_n, 1) if band_n else None,
+            round(acc["_prev_sum"] / prev_band_n, 1) if prev_band_n else None,
             rate_hours),
-        "rh_avg": round(acc["_rh_sum"] / rh_n, 1) if rh_n else None,
+        "rh_avg": (round(acc["_rh_sum"] / acc["_rh_probes"], 1)
+                   if acc["_rh_probes"] else None),
         "rh_max": None if acc["_rh_max"] is None else round(acc["_rh_max"], 1),
         "rh_probes": acc["_rh_probes"],
         "sources": {"probes": acc["_probes"], "servers": acc["_servers"],
@@ -708,11 +750,12 @@ def _window_note(mode: str) -> list[str]:
         return []
     mins = int(repo.RATE_WINDOW.total_seconds() // 60)
     return ["Now is the newest reading from each sensor, and nothing older than "
-            "ten minutes. Every figure counts one reading per SENSOR rather than "
-            "every reading over a window, so the in-band share is the share of "
-            "sensors in band at this instant. Use it while something is "
-            "happening: an hour's mean needs an hour to show a change and holds "
-            "it for an hour after it clears.",
+            "ten minutes. Every window on this page weights a sensor once; what "
+            "is different here is that a sensor has one reading rather than a "
+            "window, so the in-band share is the share of sensors in band at "
+            "this instant rather than the time they spent there. Use it while "
+            "something is happening: an hour's mean needs an hour to show a "
+            "change and holds it for an hour after it clears.",
             f"Rate is the same shot taken again as of {mins} minutes ago, "
             f"divided out to K/hour - the unit ASHRAE writes its "
             f"{RATE_LIMIT_K_PER_H:g} K/hour limit on rate of change in, and the "
@@ -724,15 +767,24 @@ def _window_note(mode: str) -> list[str]:
             "large one."]
 
 
-def _distribution_note() -> str:
-    return (f"Spread splits the same intake readings by the ASHRAE lines: below "
+def _distribution_note(mode: str) -> str:
+    # One vote per intake sensor in every mode. Over a window that vote is the
+    # share of the window the sensor spent in each band; at an instant it is
+    # simply where the sensor is. Said differently per mode because "time in
+    # band" is a promise the NOW view cannot keep - it has no time to divide.
+    split = ("splits the intake sensors by the ASHRAE lines, one vote each"
+             if mode == "now" else
+             "splits each intake sensor's TIME by the ASHRAE lines, then "
+             "averages the sensors, so a sensor polled twice as often does "
+             "not count twice")
+    return (f"Spread {split}: below "
             f"{BAND_LOW_C:g} °C is overcooled, the most common finding on a real "
             f"floor and the evidence for raising a setpoint; {BAND_LOW_C:g}-"
             f"{BAND_HIGH_C:g} °C recommended; {BAND_HIGH_C:g}-{ALLOWABLE_HIGH_C:g} °C "
             f"allowable; above {ALLOWABLE_HIGH_C:g} °C at risk. p90 is the 90th "
-            "percentile of the row's pooled readings, interpolated, over the focus "
-            "window only: what the row runs at without one sensor's spike deciding, "
-            "which Max lets happen.")
+            "percentile SENSOR, each taken at its own mean over the focus window, "
+            "interpolated: how hot the warm end of the row runs without one "
+            "sensor's spike deciding, which Max lets happen.")
 
 
 def _humidity_note(totals: dict[str, Any]) -> str:

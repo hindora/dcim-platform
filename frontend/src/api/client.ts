@@ -1476,10 +1476,12 @@ export interface EstateRowBase {
   note?: string | null;
 }
 
-/** Where a row's intake readings fell against the ASHRAE lines, as shares
- *  of the row's readings. The four partition every reading: below the
- *  recommended floor (overcooled), inside the recommended band, above it but
- *  inside the allowable envelope, above the allowable ceiling. */
+/** Where a row's intake sensors spent the window, against the ASHRAE lines.
+ *  The four partition each sensor's window and are then averaged over the
+ *  sensors: below the recommended floor (overcooled), inside the recommended
+ *  band, above it but inside the allowable envelope, above the allowable
+ *  ceiling. In the NOW view a sensor has an instant rather than a window, so
+ *  the four are shares of sensors. */
 export interface ThermalSpread {
   below_pct: number;
   in_band_pct: number;
@@ -1494,8 +1496,14 @@ export interface ThermalRow extends EstateRowBase {
    *  deciding, which Max lets happen. Null where nothing reported. */
   p90_c: number | null;
   max_c: number | null;
+  /** ASHRAE compliance: the share of the window each intake sensor spent
+   *  inside the recommended band, averaged over the sensors in the row - not
+   *  a pool of readings, which weighted a sensor by how often it happened to
+   *  be polled and moved when a collector was re-tuned. In the NOW view a
+   *  sensor is in band or it is not, so the same arithmetic reads as the
+   *  share of sensors in band at this instant. */
   compliance_pct: number | null;
-  /** Share of readings below the recommended floor: overcooling. */
+  /** The same measure below the recommended floor: overcooling. */
   below_pct: number | null;
   distribution: ThermalSpread | null;
   /** Open conditions in the page's thermal categories, on devices in this

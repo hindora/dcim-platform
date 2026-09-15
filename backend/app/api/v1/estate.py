@@ -48,12 +48,16 @@ async def thermal(
     session: AsyncSession = Depends(get_session),
     _: Principal = Depends(current_principal),
 ) -> dict:
-    """Rack intake air, averaged by SAMPLE across the estate.
+    """Rack intake air, averaged by SENSOR across the estate.
+
+    Every figure - the average, the in-band share, the spread, p90, humidity -
+    weights each intake sensor once, so how often a sensor happens to be polled
+    cannot move any of them.
 
     `now` reports the newest reading from each sensor and nothing older than
-    ten minutes, counting one reading per sensor rather than every reading over
-    a window; `live` reports the last hour against the hour before it; `daily`
-    reports a calendar day in UTC against another. The window is echoed back in
+    ten minutes, so a sensor is in band or it is not; `live` reports the last
+    hour against the hour before it and `daily` a calendar day in UTC against
+    another, both giving each sensor its own mean and its own time in band. The window is echoed back in
     the response - a temperature without the window it was measured over is not
     a fact anyone can act on, and `now` and `live` answer different questions:
     what is happening, and what has been happening.

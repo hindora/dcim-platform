@@ -110,6 +110,22 @@ async def thermal_racks(session: AsyncSession, *, focus_start: datetime,
     averages, so rooms and sites fold without averaging averages. Exhaust is a
     focus-window mean only - it exists to give ΔT. Ordered hottest first by
     whichever intake reading the rack has.
+
+    EVERY FIGURE HERE IS PER SENSOR. `*_sum` is the sum of the sensors' own
+    means over the window, not the sum of their readings, and `*_sensors` is
+    what it divides by; `*_in_band`, `*_below` and `*_hot` are sensor TIME,
+    each sensor's share of the window it spent in that band, divided by the
+    same count. `*_n` survives as the raw reading count for one purpose: the
+    Readings column, and the delta note that says a window was silent.
+
+    The reason is that these sensors are not polled alike. A BMC inlet
+    arrives about every 67 seconds on this estate and a rack probe about
+    every 133, so pooling readings let a server-sourced rack cast twice the
+    votes of a probe-sourced one for the same hour of air, and re-tuning a
+    collector moved figures nobody had touched. A sensor polled every thirty
+    seconds and one polled every five minutes now describe their hour with
+    equal authority, which is what ASHRAE compliance is supposed to mean and
+    what a mean temperature has always quietly claimed to be.
     """
     rows = (await session.execute(text("""
         WITH s AS (
@@ -120,7 +136,7 @@ async def thermal_racks(session: AsyncSession, *, focus_start: datetime,
             -- one more intake source among three; the metric it arrives as
             -- also carries power-supply and ASIC readings on other kit, and
             -- only the chassis instance on network gear is air.
-            SELECT d.rack_id, t.device_id, t.ts, t.value,
+            SELECT d.rack_id, t.device_id, t.instance, t.ts, t.value,
                    CASE WHEN m.key = 'component_temperature'
                         THEN 'network_intake' ELSE m.key END AS key
             FROM telemetry_sample t
@@ -140,11 +156,20 @@ async def thermal_racks(session: AsyncSession, *, focus_start: datetime,
                OR (m.key IN ('exhaust_temperature', 'relative_humidity')
                      AND t.ts >= :f0 AND t.ts < :f1)
         ),
-        -- Per device first, then per rack. Two cheap hash aggregates instead
+        -- Per SENSOR first, then per rack. Two cheap hash aggregates instead
         -- of one count(DISTINCT device_id) that sorted half a million rows
         -- to disk.
-        per_dev AS (
-            SELECT rack_id, device_id, key,
+        --
+        -- A sensor is (device, metric, instance) - the same identity the
+        -- rollups group on - and this level exists so the rack above can
+        -- weight each sensor once. Pooling readings instead made the answer
+        -- a function of the poll profile: a BMC inlet arrives about every 67
+        -- seconds on this estate and a rack probe about every 133, so a
+        -- server-sourced rack cast twice the votes of a probe-sourced one for
+        -- the same hour of air, and re-tuning a collector moved a compliance
+        -- figure nobody had touched.
+        per_sensor AS (
+            SELECT rack_id, device_id, instance, key,
                    sum(value) FILTER (WHERE ts >= :f0 AND ts < :f1) AS f_sum,
                    count(*)   FILTER (WHERE ts >= :f0 AND ts < :f1) AS f_n,
                    max(value) FILTER (WHERE ts >= :f0 AND ts < :f1) AS f_max,
@@ -161,50 +186,80 @@ async def thermal_racks(session: AsyncSession, *, focus_start: datetime,
                    sum(value) FILTER (WHERE ts >= :c0 AND ts < :c1) AS c_sum,
                    count(*)   FILTER (WHERE ts >= :c0 AND ts < :c1) AS c_n,
                    max(value) FILTER (WHERE ts >= :c0 AND ts < :c1) AS c_max
-            FROM s GROUP BY rack_id, device_id, key
+            FROM s GROUP BY rack_id, device_id, instance, key
         ),
         agg AS (
             SELECT rack_id,
-                   sum(f_sum)     FILTER (WHERE key = 'inlet_temperature') AS f_sum,
+                   sum(f_sum / f_n)
+                       FILTER (WHERE key = 'inlet_temperature' AND f_n > 0) AS f_sum,
                    sum(f_n)       FILTER (WHERE key = 'inlet_temperature') AS f_n,
                    max(f_max)     FILTER (WHERE key = 'inlet_temperature') AS f_max,
-                   sum(f_in_band) FILTER (WHERE key = 'inlet_temperature') AS f_in_band,
-                   sum(f_below)   FILTER (WHERE key = 'inlet_temperature') AS f_below,
-                   sum(f_hot)     FILTER (WHERE key = 'inlet_temperature') AS f_hot,
+                   -- Time in band, per sensor, added up; `f_sensors` below is
+                   -- what it divides by, so the rack's figure is the MEAN of
+                   -- its sensors' time in band and not a pool of readings.
+                   -- Each term is that sensor's own share of its own window,
+                   -- which is its time in band whatever its cadence.
+                   sum(f_in_band::double precision / f_n)
+                       FILTER (WHERE key = 'inlet_temperature' AND f_n > 0) AS f_in_band,
+                   sum(f_below::double precision / f_n)
+                       FILTER (WHERE key = 'inlet_temperature' AND f_n > 0) AS f_below,
+                   sum(f_hot::double precision / f_n)
+                       FILTER (WHERE key = 'inlet_temperature' AND f_n > 0) AS f_hot,
                    count(*)       FILTER (WHERE key = 'inlet_temperature'
                                                AND f_n > 0) AS f_sensors,
-                   sum(c_sum)     FILTER (WHERE key = 'inlet_temperature') AS c_sum,
+                   sum(c_sum / c_n)
+                       FILTER (WHERE key = 'inlet_temperature' AND c_n > 0) AS c_sum,
                    sum(c_n)       FILTER (WHERE key = 'inlet_temperature') AS c_n,
+                   count(*)       FILTER (WHERE key = 'inlet_temperature'
+                                               AND c_n > 0) AS c_sensors,
                    max(c_max)     FILTER (WHERE key = 'inlet_temperature') AS c_max,
-                   sum(f_sum)     FILTER (WHERE key = 'ambient_temperature') AS p_sum,
+                   sum(f_sum / f_n)
+                       FILTER (WHERE key = 'ambient_temperature' AND f_n > 0) AS p_sum,
                    sum(f_n)       FILTER (WHERE key = 'ambient_temperature') AS p_n,
                    max(f_max)     FILTER (WHERE key = 'ambient_temperature') AS p_max,
-                   sum(f_in_band) FILTER (WHERE key = 'ambient_temperature') AS p_in_band,
-                   sum(f_below)   FILTER (WHERE key = 'ambient_temperature') AS p_below,
-                   sum(f_hot)     FILTER (WHERE key = 'ambient_temperature') AS p_hot,
+                   sum(f_in_band::double precision / f_n)
+                       FILTER (WHERE key = 'ambient_temperature' AND f_n > 0) AS p_in_band,
+                   sum(f_below::double precision / f_n)
+                       FILTER (WHERE key = 'ambient_temperature' AND f_n > 0) AS p_below,
+                   sum(f_hot::double precision / f_n)
+                       FILTER (WHERE key = 'ambient_temperature' AND f_n > 0) AS p_hot,
                    count(*)       FILTER (WHERE key = 'ambient_temperature'
                                                AND f_n > 0) AS p_sensors,
-                   sum(c_sum)     FILTER (WHERE key = 'ambient_temperature') AS pc_sum,
+                   sum(c_sum / c_n)
+                       FILTER (WHERE key = 'ambient_temperature' AND c_n > 0) AS pc_sum,
                    sum(c_n)       FILTER (WHERE key = 'ambient_temperature') AS pc_n,
+                   count(*)       FILTER (WHERE key = 'ambient_temperature'
+                                               AND c_n > 0) AS pc_sensors,
                    max(c_max)     FILTER (WHERE key = 'ambient_temperature') AS pc_max,
-                   sum(f_sum)     FILTER (WHERE key = 'network_intake') AS n_sum,
+                   sum(f_sum / f_n)
+                       FILTER (WHERE key = 'network_intake' AND f_n > 0) AS n_sum,
                    sum(f_n)       FILTER (WHERE key = 'network_intake') AS n_n,
                    max(f_max)     FILTER (WHERE key = 'network_intake') AS n_max,
-                   sum(f_in_band) FILTER (WHERE key = 'network_intake') AS n_in_band,
-                   sum(f_below)   FILTER (WHERE key = 'network_intake') AS n_below,
-                   sum(f_hot)     FILTER (WHERE key = 'network_intake') AS n_hot,
+                   sum(f_in_band::double precision / f_n)
+                       FILTER (WHERE key = 'network_intake' AND f_n > 0) AS n_in_band,
+                   sum(f_below::double precision / f_n)
+                       FILTER (WHERE key = 'network_intake' AND f_n > 0) AS n_below,
+                   sum(f_hot::double precision / f_n)
+                       FILTER (WHERE key = 'network_intake' AND f_n > 0) AS n_hot,
                    count(*)       FILTER (WHERE key = 'network_intake'
                                                AND f_n > 0) AS n_sensors,
-                   sum(c_sum)     FILTER (WHERE key = 'network_intake') AS nc_sum,
+                   sum(c_sum / c_n)
+                       FILTER (WHERE key = 'network_intake' AND c_n > 0) AS nc_sum,
                    sum(c_n)       FILTER (WHERE key = 'network_intake') AS nc_n,
+                   count(*)       FILTER (WHERE key = 'network_intake'
+                                               AND c_n > 0) AS nc_sensors,
                    max(c_max)     FILTER (WHERE key = 'network_intake') AS nc_max,
-                   sum(f_sum)     FILTER (WHERE key = 'exhaust_temperature') AS e_sum,
+                   sum(f_sum / f_n)
+                       FILTER (WHERE key = 'exhaust_temperature' AND f_n > 0) AS e_sum,
                    sum(f_n)       FILTER (WHERE key = 'exhaust_temperature') AS e_n,
-                   sum(f_sum)     FILTER (WHERE key = 'relative_humidity') AS rh_sum,
+                   count(*)       FILTER (WHERE key = 'exhaust_temperature'
+                                               AND f_n > 0) AS e_sensors,
+                   sum(f_sum / f_n)
+                       FILTER (WHERE key = 'relative_humidity' AND f_n > 0) AS rh_sum,
                    sum(f_n)       FILTER (WHERE key = 'relative_humidity') AS rh_n,
                    max(f_max)     FILTER (WHERE key = 'relative_humidity') AS rh_max,
                    count(*)       FILTER (WHERE key = 'relative_humidity' AND f_n > 0) AS rh_probes
-            FROM per_dev GROUP BY rack_id
+            FROM per_sensor GROUP BY rack_id
         )
         SELECT r.id::text            AS rack_id,
                r.name                AS rack_name,
@@ -221,12 +276,12 @@ async def thermal_racks(session: AsyncSession, *, focus_start: datetime,
                agg.f_below, agg.f_hot,
                agg.p_sum, agg.p_n, agg.p_max, agg.p_in_band, agg.p_sensors,
                agg.p_below, agg.p_hot,
-               agg.pc_sum, agg.pc_n, agg.pc_max,
+               agg.pc_sum, agg.pc_n, agg.pc_max, agg.pc_sensors,
                agg.n_sum, agg.n_n, agg.n_max, agg.n_in_band, agg.n_sensors,
                agg.n_below, agg.n_hot,
-               agg.nc_sum, agg.nc_n, agg.nc_max,
-               agg.e_sum, agg.e_n,
-               agg.c_sum, agg.c_n, agg.c_max,
+               agg.nc_sum, agg.nc_n, agg.nc_max, agg.nc_sensors,
+               agg.e_sum, agg.e_n, agg.e_sensors,
+               agg.c_sum, agg.c_n, agg.c_max, agg.c_sensors,
                agg.rh_sum, agg.rh_n, agg.rh_max, agg.rh_probes
         FROM rack r
         JOIN rack_row rr   ON rr.id = r.row_id
@@ -245,14 +300,20 @@ async def thermal_racks(session: AsyncSession, *, focus_start: datetime,
 async def thermal_p90(session: AsyncSession, *, focus_start: datetime,
                       focus_end: datetime,
                       force: str = "") -> dict[str, Any]:
-    """The 90th percentile of intake readings per rack, room, site and estate.
+    """The 90th percentile SENSOR per rack, room, site and estate.
 
     A percentile cannot be folded from sums the way the averages are, so it
-    is taken here over the pooled readings at every tier in one pass: a
-    room's p90 is the p90 of its racks' readings, not a summary of their
-    p90s. The source rule is applied first and per rack - the rack's front
-    probes where any reported, else the servers' BMC inlet - so this reads
-    the same readings the averages and the in-band share do.
+    is taken here over every tier in one pass: a room's p90 is the p90 of its
+    racks' sensors, not a summary of their p90s. The source rule is applied
+    first and per rack - the rack's front probes where any reported, else the
+    servers' BMC inlet - so this reads the same population the averages and
+    the in-band share do.
+
+    Each sensor is collapsed to its own mean over the window BEFORE the
+    percentile, so this ranks places rather than readings. Pooling readings
+    ranked them partly by how often each sensor happened to be polled, and
+    let one busy sensor's bad hour move a figure that exists precisely so
+    that a single sensor cannot decide it - which Max is there to let happen.
 
     Interpolated (`percentile_cont`), focus window only: a delta of a
     percentile between two days is a number nobody acts on.
@@ -262,7 +323,7 @@ async def thermal_p90(session: AsyncSession, *, focus_start: datetime,
     """
     rows = (await session.execute(text("""
         WITH s AS (
-            SELECT d.rack_id, t.value,
+            SELECT d.rack_id, t.device_id, t.instance, t.value,
                    CASE WHEN m.key = 'component_temperature'
                         THEN 'network_intake' ELSE m.key END AS key
             FROM telemetry_sample t
@@ -288,7 +349,7 @@ async def thermal_p90(session: AsyncSession, *, focus_start: datetime,
             FROM s GROUP BY rack_id
         ),
         chosen AS (
-            SELECT s.rack_id, s.value
+            SELECT s.rack_id, s.device_id, s.instance, s.value
             FROM s JOIN src USING (rack_id)
             -- `force` pins every rack to one source, for a reader comparing
             -- what the probes say against what the servers say. Honoured HERE
@@ -301,9 +362,16 @@ async def thermal_p90(session: AsyncSession, *, focus_start: datetime,
                       WHEN src.has_server THEN 'inlet_temperature'
                       ELSE 'network_intake' END
         ),
+        -- One row per sensor, at its own mean over the window, so the
+        -- percentile ranks sensors and a sensor polled twice as often is not
+        -- two of them.
+        per_sensor AS (
+            SELECT rack_id, avg(value) AS value
+            FROM chosen GROUP BY rack_id, device_id, instance
+        ),
         located AS (
             SELECT c.rack_id, rr.room_id, rm.datacenter_id, c.value
-            FROM chosen c
+            FROM per_sensor c
             JOIN rack r      ON r.id  = c.rack_id
             JOIN rack_row rr ON rr.id = r.row_id
             JOIN room rm     ON rm.id = rr.room_id
@@ -311,7 +379,16 @@ async def thermal_p90(session: AsyncSession, *, focus_start: datetime,
         SELECT rack_id::text       AS rack_id,
                room_id::text       AS room_id,
                datacenter_id::text AS datacenter_id,
-               percentile_cont(0.9) WITHIN GROUP (ORDER BY value) AS p90
+               -- A percentile needs a population to rank. One sensor has no
+               -- ninetieth of anything: taken over it, p90 is that sensor's
+               -- own mean, which is the average printed beside it - and the
+               -- two are rounded down different paths, so the column could
+               -- show a p90 a tenth BELOW the average it was repeating.
+               -- Most racks hold exactly one probe, so this is the common
+               -- case at the rack tier, not an edge of it.
+               CASE WHEN count(*) > 1
+                    THEN percentile_cont(0.9) WITHIN GROUP (ORDER BY value)
+               END AS p90
         FROM located
         GROUP BY GROUPING SETS ((rack_id), (room_id), (datacenter_id), ())
     """), {"f0": focus_start, "f1": focus_end,
@@ -474,7 +551,13 @@ async def thermal_racks_now(session: AsyncSession, *, since: datetime,
     same probe-first source rule applies on top. What differs is what a row
     counts: one reading per SENSOR rather than every reading over a window, so
     the in-band share is the share of sensors in band at this instant rather
-    than the share of readings over an hour.
+    than the share of time they spent there over an hour.
+
+    A sensor is (device, metric, instance), the same identity the windowed
+    query weights by, so one sensor is one vote in both and the two views
+    cannot disagree about what the population is. This view has always been
+    per sensor - an instant has no time to weight - which is why it needed no
+    change when the windowed figures stopped pooling readings.
 
     That is the number an operator wants while something is happening. An
     hour's mean cannot show a step change until an hour has passed, and holds
@@ -491,7 +574,7 @@ async def thermal_racks_now(session: AsyncSession, *, since: datetime,
     """
     rows = (await session.execute(text("""
         WITH latest AS (
-            SELECT DISTINCT ON (t.device_id, t.metric_id)
+            SELECT DISTINCT ON (t.device_id, t.metric_id, t.instance)
                    t.device_id, t.value,
                    CASE WHEN m.key = 'component_temperature'
                         THEN 'network_intake' ELSE m.key END AS key
@@ -507,7 +590,7 @@ async def thermal_racks_now(session: AsyncSession, *, since: datetime,
                        AND t.instance = 'CHASSIS'
                        AND dt.category = 'network'))
               AND t.ts >= :t0
-            ORDER BY t.device_id, t.metric_id, t.ts DESC
+            ORDER BY t.device_id, t.metric_id, t.instance, t.ts DESC
         ),
         -- The same shot, taken as of RATE_WINDOW ago. Bounded below as well
         -- as above: the newest reading BEFORE the mark, but not one from an
@@ -515,7 +598,7 @@ async def thermal_racks_now(session: AsyncSession, *, since: datetime,
         -- a stale far end and the rate would describe a gap in collection
         -- rather than a change in the air.
         earlier AS (
-            SELECT DISTINCT ON (t.device_id, t.metric_id)
+            SELECT DISTINCT ON (t.device_id, t.metric_id, t.instance)
                    t.device_id, t.value,
                    CASE WHEN m.key = 'component_temperature'
                         THEN 'network_intake' ELSE m.key END AS key
@@ -530,7 +613,7 @@ async def thermal_racks_now(session: AsyncSession, *, since: datetime,
                        AND t.instance = 'CHASSIS'
                        AND dt.category = 'network'))
               AND t.ts <= :was AND t.ts >= :was_floor
-            ORDER BY t.device_id, t.metric_id, t.ts DESC
+            ORDER BY t.device_id, t.metric_id, t.instance, t.ts DESC
         ),
         per_rack_was AS (
             SELECT d.rack_id, e.key,
@@ -544,12 +627,15 @@ async def thermal_racks_now(session: AsyncSession, *, since: datetime,
             SELECT rack_id,
                    sum(w_sum) FILTER (WHERE key = 'inlet_temperature')   AS c_sum,
                    sum(w_n)   FILTER (WHERE key = 'inlet_temperature')   AS c_n,
+                   sum(w_n)   FILTER (WHERE key = 'inlet_temperature')   AS c_sensors,
                    max(w_max) FILTER (WHERE key = 'inlet_temperature')   AS c_max,
                    sum(w_sum) FILTER (WHERE key = 'ambient_temperature') AS pc_sum,
                    sum(w_n)   FILTER (WHERE key = 'ambient_temperature') AS pc_n,
+                   sum(w_n)   FILTER (WHERE key = 'ambient_temperature') AS pc_sensors,
                    max(w_max) FILTER (WHERE key = 'ambient_temperature') AS pc_max,
                    sum(w_sum) FILTER (WHERE key = 'network_intake')      AS nc_sum,
                    sum(w_n)   FILTER (WHERE key = 'network_intake')      AS nc_n,
+                   sum(w_n)   FILTER (WHERE key = 'network_intake')      AS nc_sensors,
                    max(w_max) FILTER (WHERE key = 'network_intake')      AS nc_max
             FROM per_rack_was GROUP BY rack_id
         ),
@@ -590,6 +676,7 @@ async def thermal_racks_now(session: AsyncSession, *, since: datetime,
                    sum(v_n)        FILTER (WHERE key = 'network_intake')      AS n_sensors,
                    sum(v_sum)      FILTER (WHERE key = 'exhaust_temperature') AS e_sum,
                    sum(v_n)        FILTER (WHERE key = 'exhaust_temperature') AS e_n,
+                   sum(v_n)        FILTER (WHERE key = 'exhaust_temperature') AS e_sensors,
                    sum(v_sum)      FILTER (WHERE key = 'relative_humidity')   AS rh_sum,
                    sum(v_n)        FILTER (WHERE key = 'relative_humidity')   AS rh_n,
                    max(v_max)      FILTER (WHERE key = 'relative_humidity')   AS rh_max,
@@ -615,10 +702,13 @@ async def thermal_racks_now(session: AsyncSession, *, since: datetime,
                agg.n_below, agg.n_hot,
                -- The far end of the rate, per source, so the comparison is
                -- made between two readings of the SAME sensors.
-               was.pc_sum, COALESCE(was.pc_n, 0) AS pc_n, was.pc_max,
-               was.nc_sum, COALESCE(was.nc_n, 0) AS nc_n, was.nc_max,
-               agg.e_sum, agg.e_n,
-               was.c_sum, COALESCE(was.c_n, 0) AS c_n, was.c_max,
+               was.pc_sum, COALESCE(was.pc_n, 0) AS pc_n,
+               COALESCE(was.pc_sensors, 0) AS pc_sensors, was.pc_max,
+               was.nc_sum, COALESCE(was.nc_n, 0) AS nc_n,
+               COALESCE(was.nc_sensors, 0) AS nc_sensors, was.nc_max,
+               agg.e_sum, agg.e_n, agg.e_sensors,
+               was.c_sum, COALESCE(was.c_n, 0) AS c_n,
+               COALESCE(was.c_sensors, 0) AS c_sensors, was.c_max,
                agg.rh_sum, agg.rh_n, agg.rh_max, agg.rh_probes
         FROM rack r
         JOIN rack_row rr   ON rr.id = r.row_id
@@ -639,13 +729,13 @@ async def thermal_p90_now(session: AsyncSession, *,
                           since: datetime, force: str = "") -> dict[str, Any]:
     """The 90th percentile across SENSORS at this instant, per tier.
 
-    The windowed form takes a percentile over every reading in an hour; this
-    one takes it over one reading per sensor, which is what "the ninetieth
-    percentile rack right now" means.
+    Both forms rank sensors: the windowed one collapses each to its mean over
+    the window first, this one has a single reading per sensor to begin with,
+    which is what "the ninetieth percentile rack right now" means.
     """
     rows = (await session.execute(text("""
         WITH latest AS (
-            SELECT DISTINCT ON (t.device_id, t.metric_id)
+            SELECT DISTINCT ON (t.device_id, t.metric_id, t.instance)
                    t.device_id, t.value,
                    CASE WHEN m.key = 'component_temperature'
                         THEN 'network_intake' ELSE m.key END AS key
@@ -660,7 +750,7 @@ async def thermal_p90_now(session: AsyncSession, *,
                        AND t.instance = 'CHASSIS'
                        AND dt.category = 'network'))
               AND t.ts >= :t0
-            ORDER BY t.device_id, t.metric_id, t.ts DESC
+            ORDER BY t.device_id, t.metric_id, t.instance, t.ts DESC
         ),
         s AS (
             SELECT d.rack_id, l.key, l.value
@@ -699,7 +789,16 @@ async def thermal_p90_now(session: AsyncSession, *,
         SELECT rack_id::text       AS rack_id,
                room_id::text       AS room_id,
                datacenter_id::text AS datacenter_id,
-               percentile_cont(0.9) WITHIN GROUP (ORDER BY value) AS p90
+               -- A percentile needs a population to rank. One sensor has no
+               -- ninetieth of anything: taken over it, p90 is that sensor's
+               -- own mean, which is the average printed beside it - and the
+               -- two are rounded down different paths, so the column could
+               -- show a p90 a tenth BELOW the average it was repeating.
+               -- Most racks hold exactly one probe, so this is the common
+               -- case at the rack tier, not an edge of it.
+               CASE WHEN count(*) > 1
+                    THEN percentile_cont(0.9) WITHIN GROUP (ORDER BY value)
+               END AS p90
         FROM located
         GROUP BY GROUPING SETS ((rack_id), (room_id), (datacenter_id), ())
     """), {"t0": since, "force": force})).mappings().all()

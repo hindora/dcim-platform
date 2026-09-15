@@ -18,21 +18,27 @@ import { Facility } from './Facility';
 
 /** Thermal: how warm the estate is running, and how much of it is in band.
  *
- *  Compliance is the share of intake READINGS inside the ASHRAE recommended
- *  envelope, not the share of racks. A rack polled every ten seconds and one
- *  polled hourly are not equally strong evidence, and weighting them equally
- *  would let a quiet sensor outvote a busy one.
+ *  EVERY FIGURE HERE IS PER SENSOR. Compliance is the share of the window
+ *  each intake sensor spent inside the ASHRAE recommended envelope, averaged
+ *  over the sensors; the average is each sensor's own mean, averaged the same
+ *  way. This page used to pool readings, on the argument that a sensor polled
+ *  ten times an hour is stronger evidence than one polled once - which is true
+ *  of confidence and false of temperature. What it produced was an estate
+ *  whose numbers moved when a collector was re-tuned, and a plant room that
+ *  read 8 % compliant because one warm probe was polled twelve times as often
+ *  as the two sensors in band beside it. The Readings column still says how
+ *  much evidence a row rests on; it no longer decides what the row says.
  *
  *  Relative humidity comes from the rack PDU environment probes and is shown
  *  beside compliance, not folded into it. There is no composite score: it
  *  would be a number we invented sitting beside five that were measured.
  *
  *  Three windows, and they answer different questions. NOW is the newest
- *  reading from each sensor, counting one reading per SENSOR: it is what to
- *  watch while something is happening, because an hour's mean needs an hour
- *  to show a step change and holds it for an hour after it clears. LAST HOUR
- *  and BY DAY count every reading over a window, which is what compliance
- *  means and what a quiet floor should be read on.
+ *  reading from each sensor: it is what to watch while something is
+ *  happening, because an hour's mean needs an hour to show a step change and
+ *  holds it for an hour after it clears. LAST HOUR and BY DAY give each
+ *  sensor its mean and its time in band over the window, which is what a
+ *  quiet floor should be read on. All three weight a sensor once.
  *
  *  Two ceilings, two tones. Above the recommended band (27 C) a row is warn;
  *  above the allowable ceiling (32 C) it is critical. Those are the same two
@@ -46,12 +52,12 @@ import { Facility } from './Facility';
  *  and sites are the racks added up, so the tiers cannot disagree.
  *
  *  Average and Max hide the most common real finding, overcooling, so each
- *  row also carries the 90th percentile of its readings and a four-way
- *  spread against the ASHRAE lines: below the recommended floor, in band,
- *  above it but allowable, above the allowable ceiling. The below share is
- *  printed on its own because it is the evidence a site raises a setpoint
- *  on. p90 is taken over the row's pooled readings in one query per tier,
- *  never summarised from the tier below.
+ *  row also carries its 90th percentile SENSOR and a four-way spread against
+ *  the ASHRAE lines: below the recommended floor, in band, above it but
+ *  allowable, above the allowable ceiling. The below share is printed on its
+ *  own because it is the evidence a site raises a setpoint on. p90 is taken
+ *  in one query per tier over the row's sensors, each at its own mean, never
+ *  summarised from the tier below - so it ranks places, not readings.
  *
  *  Under the table, the same readings over time for whatever the table is
  *  showing - the estate, a site, a room - as average, p90 and max against
@@ -328,7 +334,7 @@ export function Thermal() {
     }]),
     {
       key: 'avg', label: `Average ${u}`, align: 'num', width: 104,
-      help: 'Mean intake air across this row.',
+      help: 'Mean intake air across this row: each sensor at its own mean, averaged.',
       sort: (r) => r.avg_c,
       // Which way it is going rides HERE rather than in a column of its own.
       // A rate column read "flat" on every row on every visit, because a hall
@@ -350,11 +356,14 @@ export function Thermal() {
     }]),
     {
       key: 'p90', label: `p90 ${u}`, align: 'num', width: 92,
-      help: 'The 90th percentile intake reading.',
+      help: 'The 90th percentile intake sensor.',
       sort: (r) => r.p90_c,
       render: (r) => (
-        <Tip tip={r.p90_c === null ? (r.note ?? 'no intake readings in this window')
-          : '90th percentile of this row\'s pooled intake readings: what it runs at without one sensor\'s spike deciding'}>
+        <Tip tip={r.p90_c === null
+          ? (r.note ?? ((r.sensors ?? 0) === 1
+              ? 'one intake sensor here, and a percentile needs a population to rank - its reading is the average beside it'
+              : 'no intake readings in this window'))
+          : 'the 90th percentile of this row\'s intake sensors, each at its own mean over the window: how hot the warm end runs without one sensor\'s spike deciding'}>
           <span className={r.p90_c !== null && r.p90_c > allowable ? 'critical'
             : r.p90_c !== null && r.p90_c > recommended ? 'warn' : undefined}>
             <Num value={conv(r.p90_c, unit)} />
@@ -396,24 +405,24 @@ export function Thermal() {
     ] : []),
     {
       key: 'compliance', label: 'In band', align: 'num', width: 96,
-      help: <>Share of readings inside {floor}-{recommended} °C.</>,
+      help: <>Time inside {floor}-{recommended} °C, per sensor, averaged.</>,
       sort: (r) => r.compliance_pct,
       render: (r) => <Num value={r.compliance_pct} digits={1} unit="%" why={r.note} />,
     },
     {
       key: 'below', label: 'Below band', align: 'num', width: 100,
-      help: <>Share of readings under {floor} °C: overcooled.</>,
+      help: <>Time under {floor} °C, per sensor, averaged: overcooled.</>,
       sort: (r) => r.below_pct,
       render: (r) => (
         <Tip tip={r.below_pct === null ? (r.note ?? 'no intake readings in this window')
-          : `share of readings under ${floor} °C: overcooled air, which costs fan and chiller energy and is the evidence for raising a setpoint`}>
+          : `the share of the window this row's intake sensors spent under ${floor} °C, each sensor counted once: overcooled air, which costs fan and chiller energy and is the evidence for raising a setpoint`}>
           <Num value={r.below_pct} digits={1} unit="%" />
         </Tip>
       ),
     },
     {
       key: 'spread', label: 'Spread', align: 'mid', width: 116,
-      help: 'Where the readings fell against the ASHRAE lines.',
+      help: 'Where each sensor\'s time fell against the ASHRAE lines, averaged over sensors.',
       sort: (r) => (r.compliance_pct === null ? null : 100 - r.compliance_pct),
       render: (r) => <Spread d={r.distribution} low={floor} high={recommended} allowable={allowable} />,
     },
@@ -464,7 +473,7 @@ export function Thermal() {
     },
     {
       key: 'rh', label: 'RH %', align: 'num', width: 84,
-      help: 'Mean humidity from this row\'s rack probes.',
+      help: 'Mean humidity from this row\'s rack probes, each probe counted once.',
       sort: (r) => r.rh_avg,
       render: (r) => (
         <Tip tip={r.rh_avg === null
@@ -479,7 +488,7 @@ export function Thermal() {
     },
     {
       key: 'samples', label: 'Readings', align: 'num', width: 96,
-      help: 'How many readings this row is based on.',
+      help: 'How many readings stand behind this row. They no longer weight it - every figure here averages the sensors - but a row built on three readings is worth less trust than one built on three hundred.',
       sort: (r) => r.samples,
       render: (r) => (r.samples ? r.samples.toLocaleString() : <span className="dash">—</span>),
     },

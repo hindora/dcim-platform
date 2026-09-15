@@ -289,15 +289,42 @@ def _room(room_id: str, dc: str, code: str, *, rack_count=2, name=None,
 
 
 def _rack(rack_id: str, room_id: str, *, dc="dc1", code="DC1",
-          f_sum=None, f_n=0, f_max=None, f_in_band=0, f_sensors=0,
+          f_sum=None, f_n=0, f_max=None, f_in_band=0, f_sensors=None,
           f_below=0, f_hot=0,
-          p_sum=None, p_n=0, p_max=None, p_in_band=0, p_sensors=0,
+          p_sum=None, p_n=0, p_max=None, p_in_band=0, p_sensors=None,
           p_below=0, p_hot=0,
-          pc_sum=None, pc_n=0, pc_max=None,
-          n_sum=None, n_n=0, n_max=None, n_in_band=0, n_sensors=0,
-          n_below=0, n_hot=0, nc_sum=None, nc_n=0, nc_max=None,
-          e_sum=None, e_n=0, c_sum=None, c_n=0, c_max=None,
-          rh_sum=None, rh_n=0, rh_max=None, rh_probes=0):
+          pc_sum=None, pc_n=0, pc_max=None, pc_sensors=None,
+          n_sum=None, n_n=0, n_max=None, n_in_band=0, n_sensors=None,
+          n_below=0, n_hot=0, nc_sum=None, nc_n=0, nc_max=None, nc_sensors=None,
+          e_sum=None, e_n=0, e_sensors=None,
+          c_sum=None, c_n=0, c_max=None, c_sensors=None,
+          rh_sum=None, rh_n=0, rh_max=None, rh_probes=None):
+    """A rack row as the repository returns it.
+
+    Every `*_sum` is the sum of the SENSORS' own means and every `*_sensors`
+    is what it divides by, which is the contract the repository now hands up.
+    A sensor count left unset defaults to the matching reading count - one
+    reading per sensor, the shape the NOW query always has - so a fixture that
+    does not care about poll cadence reads exactly as it did when these were
+    pools of readings. Set them apart to say "this sensor was polled more than
+    that one", which is the case the page is built to be indifferent to.
+    """
+    if f_sensors is None:
+        f_sensors = f_n
+    if p_sensors is None:
+        p_sensors = p_n
+    if n_sensors is None:
+        n_sensors = n_n
+    if c_sensors is None:
+        c_sensors = c_n
+    if pc_sensors is None:
+        pc_sensors = pc_n
+    if nc_sensors is None:
+        nc_sensors = nc_n
+    if e_sensors is None:
+        e_sensors = e_n
+    if rh_probes is None:
+        rh_probes = rh_n
     return {
         "rack_id": rack_id, "rack_name": f"R-{rack_id}", "row_name": "A",
         "u_height": 42, "room_id": room_id, "room_name": f"room-{room_id}",
@@ -308,10 +335,13 @@ def _rack(rack_id: str, room_id: str, *, dc="dc1", code="DC1",
         "p_sum": p_sum, "p_n": p_n, "p_max": p_max, "p_in_band": p_in_band,
         "p_sensors": p_sensors, "p_below": p_below, "p_hot": p_hot,
         "pc_sum": pc_sum, "pc_n": pc_n, "pc_max": pc_max,
+        "pc_sensors": pc_sensors,
         "n_sum": n_sum, "n_n": n_n, "n_max": n_max, "n_in_band": n_in_band,
         "n_sensors": n_sensors, "n_below": n_below, "n_hot": n_hot,
         "nc_sum": nc_sum, "nc_n": nc_n, "nc_max": nc_max,
-        "e_sum": e_sum, "e_n": e_n, "c_sum": c_sum, "c_n": c_n, "c_max": c_max,
+        "nc_sensors": nc_sensors,
+        "e_sum": e_sum, "e_n": e_n, "e_sensors": e_sensors,
+        "c_sum": c_sum, "c_n": c_n, "c_max": c_max, "c_sensors": c_sensors,
         "rh_sum": rh_sum, "rh_n": rh_n, "rh_max": rh_max, "rh_probes": rh_probes,
     }
 
@@ -328,22 +358,33 @@ def _thermal(monkeypatch, rooms, racks, p90=None, crahs=None):
 
 
 @pytest.mark.asyncio
-async def test_site_average_is_weighted_by_readings(monkeypatch):
-    """A busy sensor must outweigh a quiet one.
+async def test_site_average_is_weighted_by_sensors_not_readings(monkeypatch):
+    """A busy sensor must NOT outweigh a quiet one.
 
-    Room A's rack contributes 900 readings averaging 20 C; room B's contributes
-    100 averaging 30 C. The site is 21.0, not the 25.0 a mean-of-means gives.
+    Room A holds nine sensors averaging 20 C between them, polled ten times
+    an hour. Room B holds one at 30 C, polled a thousand times. The site is
+    21.0 - nine places cool and one warm - and emphatically not the 29.1 that
+    pooling readings gave, where a single sensor with a fast collector spoke
+    for the estate.
+
+    Compliance reads the same population the same way: nine sensors in band
+    and one out of it is 90 %.
     """
     _thermal(monkeypatch,
              [_room("a", "dc1", "DC1"), _room("b", "dc1", "DC1")],
-             [_rack("r1", "a", f_sum=18000.0, f_n=900, f_max=22.0, f_in_band=900),
-              _rack("r2", "b", f_sum=3000.0, f_n=100, f_max=31.0, f_in_band=0)])
+             [_rack("r1", "a", f_sum=180.0, f_n=90, f_max=22.0,
+                    f_sensors=9, f_in_band=9.0),
+              _rack("r2", "b", f_sum=30.0, f_n=1000, f_max=31.0,
+                    f_sensors=1, f_in_band=0.0)])
     out = await estate.thermal(_FakeSession(), mode="live")
     site = out["sites"][0]
     assert site["avg_c"] == 21.0
     assert site["max_c"] == 31.0
     assert site["compliance_pct"] == 90.0
-    assert site["samples"] == 1000
+    # Readings are still counted and still reported - they are how a reader
+    # judges whether a row is worth believing - they simply no longer decide
+    # what the temperature was.
+    assert site["samples"] == 1090
     rooms = {r["id"]: r for r in out["rooms"]}
     assert rooms["a"]["avg_c"] == 20.0 and rooms["b"]["avg_c"] == 30.0
 
@@ -382,12 +423,46 @@ async def test_delta_is_none_without_a_comparison_window(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_compliance_counts_readings_inside_the_band(monkeypatch):
+async def test_compliance_is_time_in_band_averaged_over_sensors(monkeypatch):
+    """Four sensors, each three quarters of the window in band, is 75 %.
+
+    The repository hands up sensor-time already divided by each sensor's own
+    window - 0.75 four times over - and `f_sensors` is what the tier divides
+    by. Nothing here counts readings.
+    """
     _thermal(monkeypatch, [_room("a", "dc1", "DC1")],
-             [_rack("r1", "a", f_sum=800.0, f_n=40, f_max=29.0, f_in_band=30)])
+             [_rack("r1", "a", f_sum=80.0, f_n=40, f_max=29.0,
+                    f_sensors=4, f_in_band=3.0)])
     out = await estate.thermal(_FakeSession(), mode="live")
+    assert out["racks"][0]["compliance_pct"] == 75.0
     assert out["rooms"][0]["compliance_pct"] == 75.0
     assert out["totals"]["compliance_pct"] == 75.0
+
+
+@pytest.mark.asyncio
+async def test_poll_cadence_cannot_move_compliance(monkeypatch):
+    """The defect this measure was rebuilt to shed.
+
+    Two halls, one sensor each, both spending exactly half the window above
+    the band. Hall A's sensor is polled ten times as often as hall B's. The
+    estate is 50 %, and the old pooled-reading count made it 50 % only by
+    accident - it read A's half as ten times the evidence, so re-tuning a
+    collector moved a compliance figure nobody had touched.
+    """
+    _thermal(monkeypatch,
+             [_room("a", "dc1", "DC1"), _room("b", "dc1", "DC1")],
+             [_rack("r1", "a", f_sum=28.0, f_n=1000, f_max=31.0,
+                    f_sensors=1, f_in_band=0.5),
+              _rack("r2", "b", f_sum=28.0, f_n=100, f_max=31.0,
+                    f_sensors=1, f_in_band=0.5)])
+    out = await estate.thermal(_FakeSession(), mode="live")
+    rooms = {r["id"]: r for r in out["rooms"]}
+    assert rooms["a"]["compliance_pct"] == 50.0
+    assert rooms["b"]["compliance_pct"] == 50.0
+    assert out["totals"]["compliance_pct"] == 50.0
+    # And the busy sensor still carries the average, which is a reading-
+    # weighted figure on purpose and is not what changed.
+    assert out["totals"]["samples"] == 1100
 
 
 @pytest.mark.asyncio
@@ -396,8 +471,9 @@ async def test_the_rack_probe_is_the_intake_and_the_bmc_is_the_fallback(monkeypa
     a rack without one falls back to the servers; each says which."""
     _thermal(monkeypatch, [_room("a", "dc1", "DC1")], [
         _rack("both", "a", f_sum=450.0, f_n=18, f_max=26.0, f_in_band=18, f_sensors=18,
-              p_sum=46.0, p_n=2, p_max=23.5, p_in_band=2, p_sensors=1,
-              pc_sum=44.0, pc_n=2, pc_max=22.5, c_sum=440.0, c_n=18, c_max=25.0),
+              p_sum=23.0, p_n=2, p_max=23.5, p_in_band=1.0, p_sensors=1,
+              pc_sum=22.0, pc_n=2, pc_max=22.5, pc_sensors=1,
+              c_sum=440.0, c_n=18, c_max=25.0),
         _rack("bmc", "a", f_sum=450.0, f_n=18, f_max=26.0, f_in_band=18, f_sensors=18),
     ])
     out = await estate.thermal(_FakeSession(), mode="live")
@@ -448,7 +524,7 @@ async def test_a_real_intake_sensor_always_wins(monkeypatch):
     """The front panel is a fallback, not a source. A rack with a probe or
     with servers must never be graded on a sensor behind a bezel."""
     _thermal(monkeypatch, [_room("a", "dc1", "DC1")], [
-        _rack("probe", "a", p_sum=46.0, p_n=2, p_max=23.5, p_in_band=2, p_sensors=1,
+        _rack("probe", "a", p_sum=23.0, p_n=2, p_max=23.5, p_in_band=1.0, p_sensors=1,
               n_sum=60.0, n_n=2, n_max=31.0, n_in_band=0, n_sensors=2),
         _rack("server", "a", f_sum=50.0, f_n=2, f_max=25.5, f_in_band=2, f_sensors=2,
               n_sum=60.0, n_n=2, n_max=31.0, n_in_band=0, n_sensors=2),
@@ -472,9 +548,9 @@ async def test_the_note_names_the_third_source(monkeypatch):
 @pytest.mark.asyncio
 async def test_rack_rows_carry_delta_t_and_sensor_count(monkeypatch):
     _thermal(monkeypatch, [_room("a", "dc1", "DC1")], [
-        _rack("r1", "a", f_sum=460.0, f_n=20, f_max=24.5, f_in_band=20, f_sensors=4,
+        _rack("r1", "a", f_sum=92.0, f_n=20, f_max=24.5, f_in_band=4.0, f_sensors=4,
               e_sum=700.0, e_n=20, c_sum=440.0, c_n=20, c_max=23.0,
-              rh_sum=100.0, rh_n=2, rh_max=52.0, rh_probes=1),
+              rh_sum=50.0, rh_n=2, rh_max=52.0, rh_probes=1),
         _rack("r2", "a"),
     ])
     out = await estate.thermal(_FakeSession(), mode="live")
@@ -494,16 +570,38 @@ async def test_rack_rows_carry_delta_t_and_sensor_count(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_exhaust_and_delta_t_divide_by_sensors_too(monkeypatch):
+    """ΔT is exhaust minus intake, so a biased exhaust biases the ΔT.
+
+    Four BMCs averaging 35 C between them, but one of them polled forty times
+    and the rest twice. Pooling readings would have let that one server's
+    exhaust stand for the rack and reported a ΔT to match.
+    """
+    _thermal(monkeypatch, [_room("a", "dc1", "DC1")], [
+        _rack("r1", "a", f_sum=92.0, f_n=46, f_max=24.5, f_sensors=4,
+              f_in_band=4.0, e_sum=140.0, e_n=46, e_sensors=4),
+    ])
+    out = await estate.thermal(_FakeSession(), mode="live")
+    rack = out["racks"][0]
+    assert rack["avg_c"] == 23.0
+    assert rack["exhaust_c"] == 35.0
+    assert rack["delta_t_k"] == 12.0
+
+
+@pytest.mark.asyncio
 async def test_humidity_rides_beside_compliance_not_inside_it(monkeypatch):
     """RH is folded by readings like intake, a room with no probe reads
     absent, and the in-band share is unchanged by it."""
     _thermal(monkeypatch,
              [_room("a", "dc1", "DC1"), _room("b", "dc1", "DC1"), _room("c", "dc1", "DC1")],
-             [_rack("r1", "a", f_sum=2000.0, f_n=100, f_max=22.0, f_in_band=100,
-                    rh_sum=4500.0, rh_n=100, rh_max=52.0, rh_probes=4),
-              _rack("r2", "b", f_sum=2300.0, f_n=100, f_max=24.0, f_in_band=100,
-                    rh_sum=1900.0, rh_n=50, rh_max=40.0, rh_probes=2),
-              _rack("r3", "c", f_sum=2300.0, f_n=100, f_max=24.0, f_in_band=100)])
+             [_rack("r1", "a", f_sum=20.0, f_n=100, f_max=22.0,
+                    f_sensors=1, f_in_band=1.0,
+                    rh_sum=180.0, rh_n=100, rh_max=52.0, rh_probes=4),
+              _rack("r2", "b", f_sum=23.0, f_n=100, f_max=24.0,
+                    f_sensors=1, f_in_band=1.0,
+                    rh_sum=76.0, rh_n=50, rh_max=40.0, rh_probes=2),
+              _rack("r3", "c", f_sum=23.0, f_n=100, f_max=24.0,
+                    f_sensors=1, f_in_band=1.0)])
     out = await estate.thermal(_FakeSession(), mode="live")
     rooms = {r["id"]: r for r in out["rooms"]}
     assert rooms["a"]["rh_avg"] == 45.0 and rooms["a"]["rh_max"] == 52.0
@@ -559,19 +657,23 @@ async def test_a_blank_delta_says_which_window_was_empty(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_the_spread_partitions_every_reading_and_folds_by_count(monkeypatch):
+async def test_the_spread_partitions_the_window_and_folds_by_sensor(monkeypatch):
     """Below / in band / above recommended / above allowable sum to 100 at
-    every tier, and a room's split is its racks' readings pooled.
+    every tier, and a room's split is its SENSORS pooled.
 
-    Rack 1: 100 readings, 40 below, 50 in band, 10 above allowable.
-    Rack 2: 300 readings, all in band. Room = 400: 10 % below, 87.5 % in,
-    0 % above recommended, 2.5 % at risk - not the mean of the two racks'
-    percentages (20 / 75 / 0 / 5).
+    Rack 1: one sensor, 40 % of its window below the floor, 50 % in band,
+    10 % above the allowable ceiling. Rack 2: three sensors, all in band the
+    whole time. The room holds four sensors: 10 % below, 87.5 % in, 0 % above
+    recommended, 2.5 % at risk - a sensor-weighted fold, not the mean of the
+    two racks' percentages (20 / 75 / 0 / 5), and not the two racks' readings
+    pooled, which would have let whichever rack is polled hardest draw the
+    widest band.
     """
     _thermal(monkeypatch, [_room("a", "dc1", "DC1")], [
-        _rack("r1", "a", f_sum=2000.0, f_n=100, f_max=33.0, f_in_band=50,
-              f_below=40, f_hot=10),
-        _rack("r2", "a", f_sum=6600.0, f_n=300, f_max=23.0, f_in_band=300),
+        _rack("r1", "a", f_sum=30.0, f_n=100, f_max=33.0,
+              f_sensors=1, f_in_band=0.5, f_below=0.4, f_hot=0.1),
+        _rack("r2", "a", f_sum=66.0, f_n=300, f_max=23.0,
+              f_sensors=3, f_in_band=3.0),
     ])
     out = await estate.thermal(_FakeSession(), mode="live")
     racks = {r["id"]: r for r in out["racks"]}
@@ -592,10 +694,10 @@ async def test_the_spread_partitions_every_reading_and_folds_by_count(monkeypatc
 @pytest.mark.asyncio
 async def test_above_recommended_is_the_remainder(monkeypatch):
     """The warm-but-allowable share is what is left once the other three are
-    counted, so the four always partition the readings."""
+    counted, so the four always partition each sensor's window."""
     _thermal(monkeypatch, [_room("a", "dc1", "DC1")], [
-        _rack("r1", "a", f_sum=2900.0, f_n=100, f_max=30.0, f_in_band=70,
-              f_below=0, f_hot=0),
+        _rack("r1", "a", f_sum=29.0, f_n=100, f_max=30.0,
+              f_sensors=1, f_in_band=0.7, f_below=0.0, f_hot=0.0),
     ])
     out = await estate.thermal(_FakeSession(), mode="live")
     assert out["racks"][0]["distribution"]["above_recommended_pct"] == 30.0
@@ -606,8 +708,9 @@ async def test_the_spread_follows_the_intake_source(monkeypatch):
     """A rack with a probe takes the probe's split, not the servers'."""
     _thermal(monkeypatch, [_room("a", "dc1", "DC1")], [
         _rack("r1", "a",
-              f_sum=2500.0, f_n=100, f_max=27.0, f_in_band=100, f_below=0,
-              p_sum=1700.0, p_n=100, p_max=19.0, p_in_band=20, p_below=80,
+              f_sum=450.0, f_n=100, f_max=27.0, f_sensors=18,
+              f_in_band=18.0, f_below=0.0,
+              p_sum=19.0, p_n=100, p_max=19.0, p_in_band=0.2, p_below=0.8,
               p_sensors=1),
     ])
     out = await estate.thermal(_FakeSession(), mode="live")
