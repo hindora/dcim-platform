@@ -319,7 +319,13 @@ async def thermal(session: AsyncSession, *, focus: date | None = None,
 #
 # `_n` is the raw reading count and divides nothing. It survives for the
 # Readings column and for the note that says a window was silent.
-_ACC_SUMS = ("_sum", "_n", "_band_n", "_in_band", "_below", "_hot",
+#
+# `_grade_n` is `_band_n` again with the UNGRADED rooms taken out, and it is
+# what the ASHRAE figures divide by. The two are different populations on
+# purpose: a generator room has a temperature, and it does not have a
+# compliance. Sharing one divisor cost the room its average the first time
+# this was written.
+_ACC_SUMS = ("_sum", "_n", "_band_n", "_grade_n", "_in_band", "_below", "_hot",
              "_prev_sum", "_prev_n", "_prev_band_n",
              "_rh_sum", "_rh_n", "_rh_probes", "_probes", "_servers", "_network")
 _ACC_MAXES = ("_max", "_prev_max", "_rh_max")
@@ -454,6 +460,7 @@ def _rack_row(r: dict[str, Any], absent_now: str, absent_prev: str,
         prev_sum, prev_max = None, None
     e_sensors = int(r.get("e_sensors") or 0)
     rh_n = int(r.get("rh_n") or 0)
+    _facility = r.get("room_class") == "facility"
 
     row = {
         "id": r["rack_id"],
@@ -479,8 +486,30 @@ def _rack_row(r: dict[str, Any], absent_now: str, absent_prev: str,
         # sensor's share of its own window; in the NOW view a sensor is either
         # in band or not at this instant, which is the same arithmetic with
         # every share a 0 or a 1.
-        "_band_n": sensors, "_in_band": float(in_band or 0.0),
-        "_below": float(below or 0.0), "_hot": float(hot or 0.0),
+        # ASHRAE, or nothing. The recommended envelope is written for IT
+        # equipment INTAKE AIR, classes A1-A4. It does not govern a generator
+        # room, a UPS room, a switchgear room or a chiller hall - those are
+        # ventilated to their own criteria, and a generator room at 27.5 C is
+        # unremarkable rather than 0 % compliant. Grading them put findings on
+        # the page that were not findings.
+        #
+        # It also made the estate figure unreadable. The rooms table hides
+        # facility rooms and the facility table carries no in-band column, so
+        # the three rooms dragging the estate to 98.3 % appeared in NO view:
+        # every room a reader could open said 100 % and the site said 99.1,
+        # with nothing on the page to reconcile them. A number that cannot be
+        # traced to the rows beneath it is worse than one that is merely
+        # wrong, because there is nowhere to go and check.
+        #
+        # They keep every reading they have - average, max, spread of their own
+        # temperatures, alarms - and the per-device inlet rules still fire on
+        # anything in them that runs hot, because those are written against
+        # devices and not rooms. What stops is the SCORING.
+        "_band_n": sensors,
+        "_grade_n": 0 if _facility else sensors,
+        "_in_band": 0.0 if _facility else float(in_band or 0.0),
+        "_below": 0.0 if _facility else float(below or 0.0),
+        "_hot": 0.0 if _facility else float(hot or 0.0),
         "_prev_sum": _f(prev_sum) or 0.0, "_prev_n": prev_n,
         "_prev_band_n": prev_sensors,
         "_max": _f(mx), "_prev_max": _f(prev_max),
@@ -517,6 +546,7 @@ def _derive(acc: dict[str, Any], absent_now: str, absent_prev: str, *,
     # kept for the Readings column and for the note that says a window was
     # silent, which are the only two questions about readings the page asks.
     band_n, prev_band_n = acc["_band_n"], acc["_prev_band_n"]
+    grade_n = acc["_grade_n"]
     avg = round(acc["_sum"] / band_n, 1) if band_n else None
     prev_avg = round(acc["_prev_sum"] / prev_band_n, 1) if prev_band_n else None
     mx = None if acc["_max"] is None else round(acc["_max"], 1)
@@ -524,8 +554,8 @@ def _derive(acc: dict[str, Any], absent_now: str, absent_prev: str, *,
     return {
         "avg_c": avg,
         "max_c": mx,
-        "compliance_pct": _pct(acc["_in_band"], band_n) if band_n else None,
-        "below_pct": _pct(acc["_below"], band_n) if band_n else None,
+        "compliance_pct": _pct(acc["_in_band"], grade_n) if grade_n else None,
+        "below_pct": _pct(acc["_below"], grade_n) if grade_n else None,
         "distribution": _distribution(acc),
         "samples": n,
         "delta_avg": _delta(avg, prev_avg),
@@ -550,6 +580,16 @@ def _derive(acc: dict[str, Any], absent_now: str, absent_prev: str, *,
         # Said once per row, so a reader never has to guess whether a blank
         # cell means "cool" or "nobody is measuring".
         "note": None if n else absent,
+        # And the third thing a blank in-band cell can mean, which the note
+        # above cannot say because the room IS reporting: it is not the kind of
+        # room the envelope is written for. Without this a facility room shows
+        # a bare dash and the reader is back to guessing.
+        "grade_note": (
+            "not graded: ASHRAE's recommended envelope is for IT equipment "
+            "intake air, and this room has no IT load. Its temperatures are "
+            "beside this, and the per-device inlet rules still watch anything "
+            "in it that runs hot"
+            if n and not grade_n else None),
     }
 
 
@@ -576,16 +616,16 @@ def _distribution(acc: dict[str, Any]) -> dict[str, float] | None:
     the splits add, so a room's bar is the mean of its sensors and not a pool
     of readings in which the fastest-polled sensor drew the widest band.
     """
-    band_n = acc["_band_n"]
-    if not band_n:
+    grade_n = acc["_grade_n"]
+    if not grade_n:
         return None
     below, in_band, hot = acc["_below"], acc["_in_band"], acc["_hot"]
-    above_rec = max(band_n - below - in_band - hot, 0.0)
+    above_rec = max(grade_n - below - in_band - hot, 0.0)
     return {
-        "below_pct": _pct(below, band_n),
-        "in_band_pct": _pct(in_band, band_n),
-        "above_recommended_pct": _pct(above_rec, band_n),
-        "above_allowable_pct": _pct(hot, band_n),
+        "below_pct": _pct(below, grade_n),
+        "in_band_pct": _pct(in_band, grade_n),
+        "above_recommended_pct": _pct(above_rec, grade_n),
+        "above_allowable_pct": _pct(hot, grade_n),
     }
 
 
@@ -674,12 +714,13 @@ def _fold_total(rooms: list[dict[str, Any]],
         _add(acc, r)
     n = acc["_n"]
     band_n, prev_band_n = acc["_band_n"], acc["_prev_band_n"]
+    grade_n = acc["_grade_n"]
     white = [r for r in rooms if r["room_class"] == "white_space"]
     return {
         "avg_c": round(acc["_sum"] / band_n, 1) if band_n else None,
         "max_c": None if acc["_max"] is None else round(acc["_max"], 1),
-        "compliance_pct": _pct(acc["_in_band"], band_n) if band_n else None,
-        "below_pct": _pct(acc["_below"], band_n) if band_n else None,
+        "compliance_pct": _pct(acc["_in_band"], grade_n) if grade_n else None,
+        "below_pct": _pct(acc["_below"], grade_n) if grade_n else None,
         "distribution": _distribution(acc),
         "samples": n,
         # The estate is going somewhere too, and the headline band is where

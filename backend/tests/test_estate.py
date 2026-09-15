@@ -289,6 +289,7 @@ def _room(room_id: str, dc: str, code: str, *, rack_count=2, name=None,
 
 
 def _rack(rack_id: str, room_id: str, *, dc="dc1", code="DC1",
+          room_class="white_space",
           f_sum=None, f_n=0, f_max=None, f_in_band=0, f_sensors=None,
           f_below=0, f_hot=0,
           p_sum=None, p_n=0, p_max=None, p_in_band=0, p_sensors=None,
@@ -328,7 +329,7 @@ def _rack(rack_id: str, room_id: str, *, dc="dc1", code="DC1",
     return {
         "rack_id": rack_id, "rack_name": f"R-{rack_id}", "row_name": "A",
         "u_height": 42, "room_id": room_id, "room_name": f"room-{room_id}",
-        "floor": "1", "room_class": "white_space", "datacenter_id": dc,
+        "floor": "1", "room_class": room_class, "datacenter_id": dc,
         "site_code": code, "site_name": code,
         "f_sum": f_sum, "f_n": f_n, "f_max": f_max, "f_in_band": f_in_band,
         "f_sensors": f_sensors, "f_below": f_below, "f_hot": f_hot,
@@ -437,6 +438,38 @@ async def test_compliance_is_time_in_band_averaged_over_sensors(monkeypatch):
     assert out["racks"][0]["compliance_pct"] == 75.0
     assert out["rooms"][0]["compliance_pct"] == 75.0
     assert out["totals"]["compliance_pct"] == 75.0
+
+
+@pytest.mark.asyncio
+async def test_a_facility_room_is_not_graded_against_the_it_envelope(monkeypatch):
+    """ASHRAE's recommended band is for IT equipment intake air.
+
+    A generator room at 27.5 C is unremarkable; scored against 18-27 it read
+    0 % compliant and dragged a site nobody could reconcile - the rooms table
+    hides facility rooms and the facility table has no in-band column, so the
+    rows pulling the estate down appeared in no view at all.
+
+    The room keeps its temperatures. It stops being scored.
+    """
+    _thermal(monkeypatch,
+             [_room("hall", "dc1", "DC1"),
+              _room("gen", "dc1", "DC1", room_class="facility")],
+             [_rack("r1", "hall", f_sum=23.0, f_n=40, f_max=24.0,
+                    f_sensors=1, f_in_band=1.0),
+              _rack("r2", "gen", room_class="facility",
+                    f_sum=27.5, f_n=40, f_max=27.6,
+                    f_sensors=1, f_in_band=0.0, f_hot=0.0)])
+    out = await estate.thermal(_FakeSession(), mode="live")
+    rooms = {r["id"]: r for r in out["rooms"]}
+    assert rooms["hall"]["compliance_pct"] == 100.0
+    assert rooms["gen"]["compliance_pct"] is None
+    assert rooms["gen"]["distribution"] is None
+    # It still reports what it measured - this is not hiding the room.
+    assert rooms["gen"]["avg_c"] == 27.5
+    assert rooms["gen"]["samples"] == 40
+    # And the site is now the fold of the rooms a reader can actually open.
+    assert out["sites"][0]["compliance_pct"] == 100.0
+    assert out["totals"]["compliance_pct"] == 100.0
 
 
 @pytest.mark.asyncio
