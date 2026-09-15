@@ -452,7 +452,6 @@ def _rack_row(r: dict[str, Any], absent_now: str, absent_prev: str,
         prev_sensors = int(r.get("pc_sensors") or r.get("c_sensors")
                            or r.get("nc_sensors") or 0)
         prev_sum, prev_max = None, None
-    e_n = int(r.get("e_n") or 0)
     e_sensors = int(r.get("e_sensors") or 0)
     rh_n = int(r.get("rh_n") or 0)
 

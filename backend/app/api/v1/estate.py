@@ -57,10 +57,12 @@ async def thermal(
     `now` reports the newest reading from each sensor and nothing older than
     ten minutes, so a sensor is in band or it is not; `live` reports the last
     hour against the hour before it and `daily` a calendar day in UTC against
-    another, both giving each sensor its own mean and its own time in band. The window is echoed back in
-    the response - a temperature without the window it was measured over is not
-    a fact anyone can act on, and `now` and `live` answer different questions:
-    what is happening, and what has been happening.
+    another, both giving each sensor its own mean and its own time in band.
+
+    The window is echoed back in the response - a temperature without the
+    window it was measured over is not a fact anyone can act on, and `now`
+    and `live` answer different questions: what is happening, and what has
+    been happening.
     """
     return await service.thermal(session, focus=focus, compare=compare,
                                  mode=mode, source=source)
