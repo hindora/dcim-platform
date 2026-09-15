@@ -1114,6 +1114,46 @@ export interface ThermalUnit {
   alarms_open: number;
 }
 
+/** One coolant distribution unit: the liquid half of a hall's cooling.
+ *
+ *  Every temperature is the SECONDARY (cold-plate) loop, which is the water
+ *  the chips are actually fed. The facility side appears only as the control
+ *  valve, because a CDU cannot make coolant colder than the water it rejects
+ *  into - so a valve with no travel left is how it says the primary loop is
+ *  the problem rather than the exchanger.
+ */
+export interface LiquidUnit {
+  device_id: string;
+  name: string;
+  state: 'ok' | 'high_supply' | 'high_approach' | 'restricted' | 'stopped' | string;
+  reason: string | null;
+  supply_c: number | null;
+  return_c: number | null;
+  setpoint_c: number | null;
+  /** The loop RANGE. A result of the heat and the flow, never a setting: it
+   *  narrows when the secondary pump floors on a lightly loaded loop. */
+  delta_t_k: number | null;
+  running: boolean;
+  /** Secondary flow, L/s. With the range beside it this is the check on the
+   *  heat: Q = flow x range x cp. */
+  flow_l_s: number | null;
+  /** Facility-side control valve, % open. Wide open with warm coolant is the
+   *  plant; modulating with warm coolant is this machine. */
+  valve_pct: number | null;
+  pump_pct: number | null;
+  /** Secondary supply minus the facility water it rejects into. The
+   *  exchanger's own health, and the only column that shows it fouling while
+   *  every other reading still looks well. */
+  approach_k: number | null;
+  filter_dp_kpa: number | null;
+  /** Heat the plates are handing it, kW - metered by the machine, not
+   *  inferred from the loop beside it. */
+  heat_kw: number | null;
+  rated_kw: number | null;
+  duty_pct: number | null;
+  alarms_open: number;
+}
+
 export interface ThermalRoom {
   room_id: string;
   name: string | null;
@@ -1125,6 +1165,15 @@ export interface ThermalRoom {
   room_delta_t_k: number | null;
   thermal_event: { type: string; summary: string; hottest?: string } | null;
   crah_units: ThermalUnit[];
+  /** The hall's CDUs. Empty in a room with no liquid cooling, which is most
+   *  of them. */
+  cdu_units: LiquidUnit[];
+  /** Heat leaving through water rather than air. Deliberately NOT added to
+   *  the CRAH figures: a hall with both is cooled by two chains that fail
+   *  independently, and one total would hide whichever is in trouble. */
+  cdu_heat_kw: number | null;
+  cdu_units_stopped: number;
+  cdu_units_faulted: number;
   units_high_supply: number;
   units_high_return: number;
   racks: ThermalRack[];
@@ -1505,6 +1554,11 @@ export interface ThermalRow extends EstateRowBase {
   compliance_pct: number | null;
   /** The same measure below the recommended floor: overcooling. */
   below_pct: number | null;
+  /** Why this row has no compliance figure despite reporting temperatures:
+   *  it is a room the IT envelope was not written for. Null on a row that is
+   *  graded, and null on one that simply reported nothing - `note` covers
+   *  that case, and the two blanks mean different things. */
+  grade_note?: string | null;
   distribution: ThermalSpread | null;
   /** Open conditions in the page's thermal categories, on devices in this
    *  row. Zero, never absent: nothing open is a fact. */

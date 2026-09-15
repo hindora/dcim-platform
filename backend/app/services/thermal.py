@@ -169,6 +169,117 @@ def classify_crah(unit: CrahThermal, room_return_p90: float | None
     return "ok", None
 
 
+#: How far a CDU's secondary supply may sit above its setpoint before the unit
+#: is failing to hold its loop. Tighter than the air-side margin because a
+#: liquid loop is a tighter control problem: the water has ~4x the heat
+#: capacity of the same mass of air and no mixing volume to smear a control
+#: error over, so a CDU that has lost its setpoint has lost it.
+CDU_SUPPLY_FAULT_MARGIN_K = 2.0
+
+#: Approach - secondary supply minus facility supply - above which the heat
+#: exchanger is not transferring the way it should. Design approach on a
+#: brazed-plate CDU is 2-4 K; past this it is fouling, air-bound, or short of
+#: facility flow. Deliberately loose: the line above which somebody should
+#: look, not a datasheet figure the platform holds.
+CDU_APPROACH_LIMIT_K = 6.0
+
+#: Strainer/filter differential above which the secondary loop is restricted.
+CDU_FILTER_DP_LIMIT_KPA = 55.0
+
+
+@dataclass
+class CduThermal:
+    """One coolant distribution unit, as the room view reads it.
+
+    Every temperature is the SECONDARY (technology-cooling) loop, because that
+    is the water the cold plates are actually fed. The facility side appears
+    only as the control valve: a CDU cannot make coolant colder than the
+    facility water it rejects into, so a valve with no travel left is how it
+    says the primary loop, not the exchanger, is the problem.
+    """
+
+    device_id: str
+    name: str
+    supply_c: float | None = None
+    return_c: float | None = None
+    setpoint_c: float | None = None
+    #: Secondary flow, L/s. With the range beside it this is the check on the
+    #: heat: Q = flow x range x cp.
+    flow_l_s: float | None = None
+    #: Facility-side control valve, % open.
+    valve_pct: float | None = None
+    #: Secondary pump speed, % of full. The loop's headroom.
+    pump_pct: float | None = None
+    #: Heat the plates are handing it, kW, published by the machine.
+    heat_kw: float | None = None
+    #: Secondary supply minus facility supply.
+    approach_k: float | None = None
+    filter_dp_kpa: float | None = None
+    rated_kw: float | None = None
+    running: bool | None = None
+
+    @property
+    def delta_t_k(self) -> float | None:
+        """The loop RANGE. A result of the heat and the flow, not a setting."""
+        if self.supply_c is None or self.return_c is None:
+            return None
+        return self.return_c - self.supply_c
+
+
+def classify_cdu(unit: CduThermal) -> tuple[str, str | None]:
+    """high_supply | high_approach | restricted | ok | unknown, and why.
+
+    The air-side table beside this one splits its faults by SUPPLY against
+    RETURN, because a CRAH's return is the room handing it hot air and says
+    something about the floor rather than the machine. A cold-plate loop is
+    sealed: its return is whatever the plates put in, so a wide range is the
+    servers working, not a fault, and grading it would call a busy loop sick.
+
+    What replaces it is the APPROACH. A CDU makes cold coolant by rejecting
+    into facility water, and the gap between the two is the exchanger's own
+    health - it is the only column here that separates "this unit is fouling"
+    from "the water it was given is too warm", which send an engineer to
+    opposite ends of the building exactly as supply and return do on a CRAH.
+    """
+    if unit.running is False:
+        return "stopped", "not running; its loop temperatures are stale"
+
+    if unit.supply_c is None and unit.return_c is None:
+        return "unknown", "no loop temperatures reported"
+
+    if (unit.supply_c is not None and unit.setpoint_c is not None
+            and unit.supply_c > unit.setpoint_c + CDU_SUPPLY_FAULT_MARGIN_K):
+        # The valve is the discriminator, the same way it is on a CRAH coil.
+        if unit.valve_pct is not None and unit.valve_pct >= 95.0:
+            blame = ("its facility valve is wide open, so the chilled water it "
+                     "is being given is too warm or not arriving - the plant, "
+                     "not this unit")
+        else:
+            blame = (f"its facility valve is at {unit.valve_pct:.0f} % with "
+                     f"travel left, so the exchanger or its own pump is the "
+                     f"place to look" if unit.valve_pct is not None
+                     else "check the exchanger, the facility valve and the pump")
+        return "high_supply", (
+            f"feeding the plates {unit.supply_c:.1f} C against a "
+            f"{unit.setpoint_c:.1f} C setpoint - {blame}")
+
+    if unit.approach_k is not None and unit.approach_k > CDU_APPROACH_LIMIT_K:
+        return "high_approach", (
+            f"{unit.approach_k:.1f} K above the facility water it rejects into, "
+            f"against a design approach of a few kelvin - the exchanger is "
+            f"fouling, air-bound or short of facility flow. It is still holding "
+            f"setpoint, and it will stop being able to")
+
+    if (unit.filter_dp_kpa is not None
+            and unit.filter_dp_kpa > CDU_FILTER_DP_LIMIT_KPA):
+        return "restricted", (
+            f"{unit.filter_dp_kpa:.0f} kPa across the loop strainer - the "
+            f"secondary is restricted, which costs pump energy first and flow "
+            f"to the plates next")
+
+    return "ok", None
+
+
 def room_cooling(units: list[CrahThermal],
                  return_p90: float | None) -> dict[str, Any]:
     """What a room's cooling units say, as one summary.
@@ -242,6 +353,11 @@ class RoomThermal:
     name: str | None = None
     racks: list[RackThermal] = field(default_factory=list)
     crahs: list[CrahThermal] = field(default_factory=list)
+    #: The liquid half of the hall's cooling. Separate from the CRAHs, not
+    #: pooled with them: they remove heat by different physics, are judged on
+    #: different columns, and a hall's air side being healthy says nothing
+    #: about its water side.
+    cdus: list[CduThermal] = field(default_factory=list)
     #: Open thermal conditions per device id. A unit's VERDICT is a judgement
     #: made from its own telemetry; this is whether anybody has been told.
     #: A unit can read OK and carry an open condition, or read high with
@@ -276,6 +392,31 @@ class RoomThermal:
                 "duty_kw": (round(u.duty_pct * u.rated_kw / 100.0, 1)
                             if u.duty_pct is not None and u.rated_kw else None),
                 # Zero, not absent: nothing open is a fact about this unit.
+                "alarms_open": int(self.alarms.get(u.device_id, 0)),
+            })
+        liquid = []
+        for u in self.cdus:
+            kind, why = classify_cdu(u)
+            liquid.append({
+                "device_id": u.device_id, "name": u.name, "state": kind,
+                "reason": why,
+                "supply_c": _r(u.supply_c), "return_c": _r(u.return_c),
+                "setpoint_c": _r(u.setpoint_c),
+                "delta_t_k": (round(u.delta_t_k, 1)
+                              if u.delta_t_k is not None else None),
+                "running": u.running,
+                "flow_l_s": _r(u.flow_l_s, 3),
+                "valve_pct": _r(u.valve_pct),
+                "pump_pct": _r(u.pump_pct),
+                "approach_k": _r(u.approach_k),
+                "filter_dp_kpa": _r(u.filter_dp_kpa, 0),
+                "heat_kw": _r(u.heat_kw),
+                "rated_kw": _r(u.rated_kw),
+                # The share is derived from two MEASURED figures here, unlike
+                # the air side where the machine publishes the share and the
+                # rating turns it into kilowatts. A CDU meters its own heat.
+                "duty_pct": (round(u.heat_kw / u.rated_kw * 100.0, 1)
+                             if u.heat_kw is not None and u.rated_kw else None),
                 "alarms_open": int(self.alarms.get(u.device_id, 0)),
             })
         cooling = room_cooling(self.crahs, self.return_p90)
@@ -320,6 +461,19 @@ class RoomThermal:
             "room_return_c": cooling["return_c"],
             "room_delta_t_k": cooling["delta_t_k"],
             "crah_units": units,
+            "cdu_units": liquid,
+            # Heat leaving this room through water rather than air. Counted
+            # separately from the CRAH totals on purpose: a hall with both is
+            # cooled by two chains that fail independently, and adding them
+            # into one number would hide whichever one is in trouble.
+            "cdu_heat_kw": (round(sum(u["heat_kw"] for u in liquid
+                                      if u["heat_kw"] is not None), 1)
+                            if any(u["heat_kw"] is not None for u in liquid)
+                            else None),
+            "cdu_units_stopped": sum(1 for u in liquid if u["state"] == "stopped"),
+            "cdu_units_faulted": sum(
+                1 for u in liquid
+                if u["state"] in ("high_supply", "high_approach", "restricted")),
             "units_high_supply": cooling["units_high_supply"],
             "units_high_return": cooling["units_high_return"],
             "units_stopped": cooling["units_stopped"],
@@ -362,6 +516,8 @@ async def room_view(session, room_id: str,
     rack_rows = await repo.racks(session, room_id=room_id, minutes=minutes)
     crah_rows = await repo.crahs(session, room_id=room_id)
     running = await repo.running_crahs(session, room_id)
+    cdu_rows = await repo.cdus(session, room_id=room_id)
+    cdu_running = await repo.running_cdus(session, room_id)
 
     racks = [
         RackThermal(
@@ -385,6 +541,24 @@ async def room_view(session, room_id: str,
         for c in crah_rows
     ]
 
+    liquid = [
+        CduThermal(
+            device_id=c["device_id"], name=c["name"],
+            supply_c=_f(c["supply_c"]), return_c=_f(c["return_c"]),
+            setpoint_c=_f(c["setpoint_c"]),
+            flow_l_s=_f(c.get("flow_l_s")), valve_pct=_f(c.get("valve_pct")),
+            pump_pct=_f(c.get("pump_pct")),
+            # Published in watts, read in kilowatts - the unit the hall's load
+            # is in, so a CDU row can be set beside a CRAH row and added.
+            heat_kw=(_f(c.get("heat_w")) or 0.0) / 1000.0 or None,
+            approach_k=_f(c.get("approach_k")),
+            filter_dp_kpa=_f(c.get("filter_dp_kpa")),
+            rated_kw=(_f(c.get("rated_cooling_w")) or 0.0) / 1000.0 or None,
+            running=cdu_running.get(c["device_id"]),
+        )
+        for c in cdu_rows
+    ]
+
     # The same query, the same predicate and the same categories the estate
     # rows count with, so a hall's floor-plant figure and the units listed
     # under it are the one number seen twice.
@@ -395,7 +569,7 @@ async def room_view(session, room_id: str,
         text("SELECT name FROM room WHERE id = CAST(:id AS uuid)"),
         {"id": room_id})).scalar()
     view = RoomThermal(
-        room_id=room_id, name=name, racks=racks, crahs=units,
+        room_id=room_id, name=name, racks=racks, crahs=units, cdus=liquid,
         alarms=counts["devices"],
         window_minutes=minutes,
         # The room baseline is built from rack MEANS, so one rack's spike does

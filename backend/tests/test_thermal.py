@@ -14,10 +14,84 @@ def crah(supply=22.0, ret=27.0, setpoint=22.0, running=True) -> t.CrahThermal:
                          return_c=ret, setpoint_c=setpoint, running=running)
 
 
+def cdu(supply=32.0, ret=45.0, setpoint=32.0, valve=60.0, approach=3.0,
+        dp=35.0, running=True) -> t.CduThermal:
+    return t.CduThermal(device_id="x", name="CDU1", supply_c=supply,
+                        return_c=ret, setpoint_c=setpoint, valve_pct=valve,
+                        approach_k=approach, filter_dp_kpa=dp, running=running)
+
+
 def rack(name: str, inlet: float, exhaust: float | None = None) -> t.RackThermal:
     return t.RackThermal(rack_id=name, name=name, inlet_mean=inlet,
                          inlet_min=inlet, inlet_max=inlet,
                          exhaust_mean=exhaust, samples=30)
+
+
+# --- the liquid side, which fails differently ---------------------------------
+
+def test_a_wide_cdu_range_is_servers_working_not_a_fault():
+    """The air-side test cannot be carried across, and this is why.
+
+    A CRAH's RETURN is the room handing it hot air, so a high one is a finding
+    about the floor. A cold-plate loop is sealed: its return is whatever the
+    plates put in, so a wide range is a busy loop. Grading it would report
+    every rack that is earning its power as a cooling fault.
+    """
+    assert t.classify_cdu(cdu(ret=52.0))[0] == "ok"
+
+
+def test_a_cdu_that_cannot_hold_its_coolant_setpoint_is_a_fault():
+    state, why = t.classify_cdu(cdu(supply=36.0, setpoint=32.0, valve=60.0))
+    assert state == "high_supply"
+    assert "36.0" in why and "32.0" in why
+
+
+def test_the_valve_says_whether_it_is_the_unit_or_the_plant():
+    """The same discriminator the CRAH coil valve provides.
+
+    Wide open with warm coolant means the facility water is the problem. Still
+    modulating with the same warm coolant means the exchanger or the pump is,
+    and those are opposite ends of the building.
+    """
+    _, plant = t.classify_cdu(cdu(supply=36.0, valve=100.0))
+    _, unit = t.classify_cdu(cdu(supply=36.0, valve=45.0))
+    assert "not arriving" in plant or "too warm" in plant
+    assert "exchanger" in unit
+
+
+def test_a_fouling_exchanger_shows_in_the_approach_before_the_setpoint_goes():
+    """The column that exists for the failure nothing else on the row can see.
+
+    The unit is still holding setpoint, so supply, return and range all read
+    healthy. The approach is the only tell, and it is the difference between
+    finding this on a Tuesday and finding it when the loop lets go.
+    """
+    state, why = t.classify_cdu(cdu(approach=8.5))
+    assert state == "high_approach"
+    assert "fouling" in why
+
+
+def test_a_restricted_loop_is_reported_before_it_costs_flow():
+    state, why = t.classify_cdu(cdu(dp=70.0))
+    assert state == "restricted"
+    assert "strainer" in why
+
+
+def test_a_stopped_cdu_is_not_graded_as_healthy():
+    """Its last readings are whatever the loop held when the pump stopped."""
+    state, why = t.classify_cdu(cdu(running=False))
+    assert state == "stopped"
+    assert "stale" in why
+
+
+def test_a_healthy_cdu_is_ok():
+    assert t.classify_cdu(cdu())[0] == "ok"
+
+
+def test_supply_wins_over_approach_on_a_cdu():
+    """Same precedence as the air side: a unit already failing to deliver is
+    not also reported as a slowly fouling one."""
+    assert t.classify_cdu(cdu(supply=38.0, approach=9.0))[0] == "high_supply"
 
 
 # --- the distinction this exists for -----------------------------------------

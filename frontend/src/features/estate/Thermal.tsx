@@ -13,6 +13,7 @@ import { RoomDrawer } from '../home/RoomDrawer';
 import { useEstateTable } from './useEstateTable';
 import { ThermalTrend } from './ThermalTrend';
 import { RoomCooling } from './RoomCooling';
+import { RoomLiquid } from './RoomLiquid';
 import { Plant, usePlant, verdictLabel, verdictTone } from './Plant';
 import { Facility } from './Facility';
 
@@ -306,15 +307,23 @@ export function Thermal() {
       ),
     },
     ...(rackTier ? [{
-      // What spoke for the rack, and how many of them. The word is the
+      // How many sensors spoke for the rack, and which kind. The word is the
       // source, in the order the server picks them: a probe is the intake
       // reading, servers are the fallback, and a rack of switches is graded
       // on its front panels rather than left blank.
-      key: 'sensors', label: 'Intake from', align: 'mid' as const, width: 108,
-      help: 'Which sensor spoke for this rack.',
+      //
+      // Named for the COUNT, which is what it sorts by and what every other
+      // figure in the row divides by. It was "Intake from", which named only
+      // the source word and left the number in the cell unaccounted for - and
+      // that was written when the count really was a footnote about
+      // provenance. It is the weight now, and the column called Readings
+      // beside it is the one that no longer weights anything.
+      key: 'sensors', label: 'Intake sensors', align: 'mid' as const, width: 116,
+      help: 'How many sensors spoke for this rack, and which kind. Every figure in this row is their average, so this is the weight behind it.',
       sort: (r: ThermalRow) => r.sensors ?? 0,
       render: (r: ThermalRow) => r.source ? (
-        <Tip tip={SOURCE_TIP[r.source] ?? 'intake readings from this rack'}>
+        <Tip tip={<>{SOURCE_TIP[r.source] ?? 'intake readings from this rack'}
+                  {' — '}each counted once, whatever its poll rate</>}>
           {r.sensors} {SOURCE_WORD[r.source]?.(r.sensors ?? 0)
             ?? (r.sensors === 1 ? 'sensor' : 'sensors')}
         </Tip>
@@ -407,14 +416,16 @@ export function Thermal() {
       key: 'compliance', label: 'In band', align: 'num', width: 96,
       help: <>Time inside {floor}-{recommended} °C, per sensor, averaged.</>,
       sort: (r) => r.compliance_pct,
-      render: (r) => <Num value={r.compliance_pct} digits={1} unit="%" why={r.note} />,
+      render: (r) => <Num value={r.compliance_pct} digits={1} unit="%"
+                          why={r.grade_note ?? r.note} />,
     },
     {
       key: 'below', label: 'Below band', align: 'num', width: 100,
       help: <>Time under {floor} °C, per sensor, averaged: overcooled.</>,
       sort: (r) => r.below_pct,
       render: (r) => (
-        <Tip tip={r.below_pct === null ? (r.note ?? 'no intake readings in this window')
+        <Tip tip={r.below_pct === null
+          ? (r.grade_note ?? r.note ?? 'no intake readings in this window')
           : `the share of the window this row's intake sensors spent under ${floor} °C, each sensor counted once: overcooled air, which costs fan and chiller energy and is the evidence for raising a setpoint`}>
           <Num value={r.below_pct} digits={1} unit="%" />
         </Tip>
@@ -424,7 +435,9 @@ export function Thermal() {
       key: 'spread', label: 'Spread', align: 'mid', width: 116,
       help: 'Where each sensor\'s time fell against the ASHRAE lines, averaged over sensors.',
       sort: (r) => (r.compliance_pct === null ? null : 100 - r.compliance_pct),
-      render: (r) => <Spread d={r.distribution} low={floor} high={recommended} allowable={allowable} />,
+      render: (r) => (r.distribution === null && r.grade_note
+        ? <Tip className="dash" tip={r.grade_note}>—</Tip>
+        : <Spread d={r.distribution} low={floor} high={recommended} allowable={allowable} />),
     },
     ...(rackTier ? [] : [{
       key: 'cooling', label: 'Cooling', align: 'mid' as const, width: 104,
@@ -831,6 +844,20 @@ export function Thermal() {
           and it is invisible until the units are listed. */}
       {t.selectedRoom && !facilityRoom && (
         <RoomCooling roomId={t.selectedRoom.id} roomName={t.selectedRoom.name} unit={unit} />
+      )}
+
+      {/* And the water side, under the air side, because a hall with
+          direct-to-chip servers is cooled by two chains that fail
+          independently. The CRAH table above describes the heat that leaves
+          through the air; this describes the heat that leaves straight off the
+          die and never touches it - which is why none of it shows in the rack
+          intake temperatures at the top of the page, and why a hall can be
+          perfectly in band while its coolant loop is in trouble.
+
+          Renders nothing at all in a room with no CDUs, which is most rooms.
+          An empty panel would explain an absence nobody asked about. */}
+      {t.selectedRoom && !facilityRoom && (
+        <RoomLiquid roomId={t.selectedRoom.id} roomName={t.selectedRoom.name} unit={unit} />
       )}
 
       {/* The chart follows the drill: the estate, then the site, then the
