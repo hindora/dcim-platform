@@ -344,15 +344,24 @@ class TraceHop(BaseModel):
     oper_state: str = "unknown"
     up_termination: TraceTermination = Field(default_factory=TraceTermination)
     down_termination: TraceTermination = Field(default_factory=TraceTermination)
+    # The other devices feeding ``down`` at this point - a generator beside a
+    # utility on a switchgear board. The walk took one and names the rest here
+    # rather than multiplying the chain out once per combination.
+    alternates: list[ImpactNode] = Field(default_factory=list)
 
 
 class TracePath(BaseModel):
-    """One route to a source, ordered source first."""
+    """One CORD's chain to a source, ordered source first.
+
+    One per cord, not one per route. A dual-corded load has two chains however
+    many ways the switchgear above it can be fed; the ways are ``alternates``
+    on the hop where they occur.
+    """
 
     side: str | None = None
-    # 'complete' reached a device nothing feeds. 'incomplete' ran into a loop
-    # or the hop bound before it got there, which is a fact about the recorded
-    # graph rather than about the wiring.
+    # 'complete' reached a device nothing feeds. 'incomplete' closed on itself
+    # or hit the hop bound before it got there, which is a fact about the
+    # recorded graph rather than about the wiring.
     verdict: str = "complete"
     hops: list[TraceHop] = Field(default_factory=list)
 

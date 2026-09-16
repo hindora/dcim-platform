@@ -67,24 +67,35 @@ def test_every_path_starts_at_a_source_and_ends_at_the_device():
     """
     paths, _ = trace.trace_up(build(), "srv_dual")
     for p in paths:
-        assert p.hops[0].up in {"util", "gen1"}
-        assert p.hops[-1].down == "srv_dual"
+        assert p.hops[0].edge.up in {"util", "gen1"}
+        assert p.hops[-1].edge.down == "srv_dual"
 
 
-def test_a_load_fed_from_two_utilities_reports_both_routes():
-    """The switchgear pair feeds both ATSs, so each side has two routes up.
-
-    Collapsing them to one would hide that losing SWGR1 alone does not drop
-    the A side - which is the entire reason the pair is there.
-    """
+def test_a_dual_corded_load_is_two_chains_not_six():
+    """THE regression. Enumerating every root-to-device route multiplies out
+    every fork above the device: the switchgear pair with a utility and two
+    generators turned two cords into six identical-from-the-ATS-down chains.
+    The operator has two cords, so there are two chains."""
     paths, _ = trace.trace_up(build(), "srv_dual")
-    a_roots = {p.hops[0].up for p in paths if p.side == "A"}
-    assert a_roots == {"util", "gen1"}
+    assert len(paths) == 2
+
+
+def test_a_fork_above_the_device_is_named_on_the_hop_it_happens_at():
+    """The switchgear pair feeds both ATSs. Losing SWGR1 alone does not drop
+    the A side, and that fact has to survive somewhere - it is the entire
+    reason the pair is there."""
+    paths, _ = trace.trace_up(build(), "srv_dual")
+    a = next(p for p in paths if p.side == "A")
+    forks = {h.edge.down: set(h.alternates) for h in a.hops if h.alternates}
+    # Deterministic: the walk stays on the side it started on and then takes
+    # the lowest id, so e3 (swgr1) is the chain and swgr2 is the alternate.
+    assert forks == {"ats1": {"swgr2"}}
 
 
 def test_a_single_corded_load_has_exactly_one_side():
     paths, _ = trace.trace_up(build(), "srv_single_a")
-    assert {p.side for p in paths} == {"A"}
+    assert len(paths) == 1
+    assert paths[0].side == "A"
 
 
 def test_a_source_traces_to_nothing_rather_than_failing():
@@ -111,7 +122,7 @@ def test_a_cycle_terminates_instead_of_enumerating_forever():
     paths, _ = trace.trace_up(trace.build(rows), "load")
     assert paths, "the walk found no route at all through a cycle"
     for p in paths:
-        seen = [h.up for h in p.hops] + [p.hops[-1].down]
+        seen = [h.edge.up for h in p.hops] + [p.hops[-1].edge.down]
         assert len(seen) == len(set(seen)), "a node repeated inside one path"
 
 
@@ -153,6 +164,6 @@ def test_downstream_is_one_hop_not_a_cascade():
 def test_terminations_ride_along_on_the_hop():
     """The label is which socket; the trace is useless without it."""
     paths, _ = trace.trace_up(build(), "srv_dual")
-    cords = [p.hops[-1] for p in paths]
+    cords = [p.hops[-1].edge for p in paths]
     assert {c.up_termination_id for c in cords} == {"o1", "o2"}
     assert {c.down_termination_id for c in cords} == {"p1", "p2"}

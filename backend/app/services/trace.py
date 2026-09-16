@@ -14,10 +14,24 @@ four hundred near-identical lists and answer neither question. The one
 downstream fact worth carrying here is the immediate neighbours - what is
 plugged into this thing - and that is one hop, not a path.
 
-The walk is over SIMPLE paths: a node may not repeat within a path. Power and
-cooling graphs have genuine cycles (a dual-fed rack PDU is reachable two ways,
-a chilled-water loop closes on itself) and without that rule the enumeration
-does not terminate.
+ONE PATH PER CORD, not one per route. This is the whole shape of the thing and
+it was got wrong first: enumerating every root-to-device route multiplies out
+every fork ABOVE the device, and in a normal 2N estate that is a lot of forks.
+A dual-corded server behind a switchgear pair with a utility and two
+generators came back as SIX six-hop paths, identical from the ATS down and
+differing only in which source sat at the top. Nobody can read that, and it
+answers a question nobody asked - the operator has two cords, so there are two
+chains, and the alternative sources are a property of one hop in each.
+
+So the walk follows each cord upward, taking one feeder at a time, and where a
+node has more than one feeder it records the others as ALTERNATES on that hop
+and keeps going. That is also what NetBox does when a cable trace forks, and
+for the same reason: a trace that guesses silently is worse than one that says
+where it chose.
+
+The walk will not revisit a node within a path. Power and cooling graphs have
+genuine cycles - a closed tie breaker, a chilled-water loop - and without that
+rule it does not terminate.
 """
 
 from __future__ import annotations
@@ -26,11 +40,11 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any
 
-# A trace that reaches either of these has stopped being useful as a list.
+# One path per cord, so the bound is on how many cords one device can have.
 # Both are far above anything real - the deepest power chain in the reference
-# estate is six hops and no load has more than two sides - so hitting one means
-# the graph has a shape nobody expected, and saying so is better than returning
-# ten thousand permutations of it.
+# estate is six hops and no load has more than two cords - so hitting one means
+# the graph has a shape nobody expected, and saying so is better than printing
+# it.
 MAX_PATHS = 24
 MAX_HOPS = 24
 
@@ -83,8 +97,19 @@ def build(rows: list[dict[str, Any]]) -> Graph:
 
 
 @dataclass
+class Hop:
+    """One conductor on a path, plus the feeders the walk did not take."""
+
+    edge: Edge
+    # Other devices feeding ``edge.down`` at this point. A generator beside a
+    # utility on a switchgear board, the second core beside the first. Empty on
+    # a chain with one way up, which is most of them.
+    alternates: list[str] = field(default_factory=list)
+
+
+@dataclass
 class Path:
-    """One route from the device to a source, ordered SOURCE FIRST.
+    """One cord's chain to a source, ordered SOURCE FIRST.
 
     Source first because that is the reading order of every one-line diagram
     ever drawn, and the table is the same trace in another form - a reader who
@@ -97,79 +122,58 @@ class Path:
     # chain inherits.
     side: str | None
     verdict: str
-    hops: list[Edge]
-
-
-def _is_source(graph: Graph, node: str) -> bool:
-    """Nothing feeds it: a utility feed, a generator, a core switch."""
-    return not graph.up_of.get(node)
+    hops: list[Hop]
 
 
 def trace_up(graph: Graph, device_id: str) -> tuple[list[Path], bool]:
-    """Every simple path from ``device_id`` to a source.
+    """One chain per cord, walked up to a source.
 
-    Returns the paths and whether the enumeration was cut short. Depth-first
-    with an explicit stack rather than recursion - a cycle plus a deep chain
-    is exactly the shape that blows a Python stack, and the bound has to be
-    the path length rather than the interpreter's patience.
+    Returns the paths and whether there were more cords than the bound allows.
+    Iterative rather than recursive: a deep chain plus a cycle is exactly the
+    shape that blows a Python stack, and the bound should be the hop count
+    rather than the interpreter's patience.
     """
     if device_id not in graph.nodes:
         return [], False
 
+    cords = sorted(graph.up_of.get(device_id, []),
+                   key=lambda e: (e.redundancy_side or "~", e.id))
+    truncated = len(cords) > MAX_PATHS
+
     paths: list[Path] = []
-    truncated = False
+    for cord in cords[:MAX_PATHS]:
+        hops = [Hop(cord)]
+        seen = {device_id, cord.up}
+        node = cord.up
+        verdict = "complete"
 
-    # (node, hops so far). `hops` runs device-ward -> source-ward while we
-    # build it, and is reversed on completion.
-    stack: list[tuple[str, list[Edge]]] = [(device_id, [])]
+        while True:
+            feeders = [e for e in graph.up_of.get(node, []) if e.up not in seen]
+            if not graph.up_of.get(node):
+                break                       # a source: nothing feeds it
+            if not feeders:
+                # Everything above is already on this path. The chain is real
+                # but it closes on itself instead of reaching a source.
+                verdict = "incomplete"
+                break
+            if len(hops) >= MAX_HOPS:
+                verdict = "incomplete"
+                break
 
-    while stack:
-        node, hops = stack.pop()
+            # Stay on the side we started on where the graph offers a choice -
+            # an A cord traced up through the B board would be a fiction. Then
+            # by id, so the same graph gives the same chain every time.
+            chosen = min(feeders,
+                         key=lambda e: (e.redundancy_side != cord.redundancy_side,
+                                        e.id))
+            hops.append(Hop(chosen, [e.up for e in feeders if e is not chosen]))
+            seen.add(chosen.up)
+            node = chosen.up
 
-        if len(paths) >= MAX_PATHS:
-            truncated = True
-            break
+        paths.append(Path(side=cord.redundancy_side, verdict=verdict,
+                          hops=list(reversed(hops))))
 
-        feeders = graph.up_of.get(node, [])
-        if not feeders:
-            # A source, or - for the device itself - something nothing feeds.
-            # Either way the chain ends here and there is nothing above it.
-            if hops:
-                paths.append(_finish(hops, "complete"))
-            continue
-
-        if len(hops) >= MAX_HOPS:
-            truncated = True
-            paths.append(_finish(hops, "incomplete"))
-            continue
-
-        seen = {device_id} | {h.up for h in hops} | {h.down for h in hops}
-        advanced = False
-        for e in feeders:
-            if e.up in seen:
-                # The only way back up is through somewhere we have already
-                # been: a loop, not a route to a source.
-                continue
-            stack.append((e.up, [*hops, e]))
-            advanced = True
-
-        if not advanced and hops:
-            # Every feeder above this node was already on the path. The chain
-            # is real but it does not reach a source from here.
-            paths.append(_finish(hops, "incomplete"))
-
-    # Deterministic: same graph, same list, every time. Side first so A and B
-    # sit together, then the shorter chain, then the id, which is stable.
-    paths.sort(key=lambda p: (p.side or "~", len(p.hops),
-                              p.hops[0].id if p.hops else ""))
     return paths, truncated
-
-
-def _finish(hops: list[Edge], verdict: str) -> Path:
-    # hops[0] is the conductor touching the traced device - the cord, the
-    # patch lead - so its side is the path's side.
-    side = hops[0].redundancy_side if hops else None
-    return Path(side=side, verdict=verdict, hops=list(reversed(hops)))
 
 
 def is_asymmetric(paths: list[Path]) -> bool:
@@ -185,8 +189,9 @@ def is_asymmetric(paths: list[Path]) -> bool:
     for p in paths:
         if p.side:
             by_side[p.side].add(len(p.hops))
-    lengths = {min(v) for v in by_side.values()}
-    return len(by_side) > 1 and len(lengths) > 1
+    if len(by_side) < 2:
+        return False
+    return len({min(v) for v in by_side.values()}) > 1
 
 
 def downstream(graph: Graph, device_id: str) -> list[Edge]:

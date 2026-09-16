@@ -417,8 +417,11 @@ async def get_trace(session: AsyncSession, *, device_id: str,
     # One lookup for every device and every termination the answer mentions,
     # rather than one per hop. A six-hop dual-fed trace touches a dozen of each
     # and the difference is twenty-four round trips.
-    edges = [h for p in paths for h in p.hops] + down[:DOWNSTREAM_CAP]
+    edges = [h.edge for p in paths for h in p.hops] + down[:DOWNSTREAM_CAP]
     device_ids = {device_id}
+    for p in paths:
+        for h in p.hops:
+            device_ids.update(h.alternates)
     by_type: dict[str, list[str]] = {}
     for e in edges:
         device_ids.add(e.up)
@@ -449,20 +452,22 @@ async def get_trace(session: AsyncSession, *, device_id: str,
             rated_watts=row.get("rated_watts"), speed_bps=row.get("speed_bps"),
         )
 
-    def hop(e: trace_svc.Edge) -> TraceHop:
+    def hop(h: trace_svc.Hop) -> TraceHop:
+        e = h.edge
         return TraceHop(
             connection_id=e.id, up=node(e.up), down=node(e.down),
             link_type=e.link_type, redundancy_side=e.redundancy_side,
             oper_state=e.oper_state,
             up_termination=term(e.up_termination_type, e.up_termination_id),
             down_termination=term(e.down_termination_type, e.down_termination_id),
+            alternates=[node(a) for a in h.alternates],
         )
 
     out = TraceOut(
         device=ImpactNode(**subject),
         layer=layer,
         paths=[TracePath(side=p.side, verdict=p.verdict,
-                         hops=[hop(e) for e in p.hops]) for p in paths],
+                         hops=[hop(h) for h in p.hops]) for p in paths],
         truncated=truncated,
         asymmetric=trace_svc.is_asymmetric(paths),
         is_source=not paths and device_id in graph.nodes,
