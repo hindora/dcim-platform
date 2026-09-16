@@ -249,7 +249,7 @@ async def test_an_alarm_on_a_retired_instance_is_swept(session):
     found = {r["id"] for r in await reconcile.orphaned_key(session)}
     assert alarm_id in found, "an alarm no reading can reach was left open"
 
-    await _service().reconcile(session)
+    await _service().sweep_trap_reconciliation(session)
     assert not await _is_open(session, alarm_id)
 
 
