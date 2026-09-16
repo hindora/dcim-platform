@@ -235,6 +235,9 @@ export function Plot({
 
         {model.paths.map((p) => (
           <g key={p.label}>
+            {/* A PLAIN dash is the forecast's: `6 4` says "projected". Series
+                slots wear dash-dot and dotted instead, so the two vocabularies
+                cannot be confused - see DASHES in seriesColors.ts. */}
             <path d={p.d} className="chart-line"
                   stroke={p.color ?? C.primary}
                   strokeDasharray={p.dashed ? '6 4' : p.dash} />
@@ -288,8 +291,11 @@ export function Plot({
               {/* A dashed line gets a dashed swatch. A legend that shows only
                   hue cannot be read in the situation the dash exists for. */}
               {s.dash || s.dashed ? (
-                <svg className="swatch-line" width={14} height={8} aria-hidden>
-                  <line x1={0} y1={4} x2={14} y2={4} strokeWidth={2}
+                // Wide enough for one full cycle of the pattern: dash-dot is
+                // 20 units long, and a 14px swatch showed the dash and clipped
+                // the dot, which is a different pattern.
+                <svg className="swatch-line" width={22} height={8} aria-hidden>
+                  <line x1={0} y1={4} x2={22} y2={4} strokeWidth={2}
                         stroke={s.color ?? C.primary}
                         strokeDasharray={s.dashed ? '6 4' : s.dash} />
                 </svg>

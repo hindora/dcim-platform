@@ -14,10 +14,11 @@
  *  <html>, and a wall display set to follow the system does it at dusk with
  *  nobody there to reload.
  *
- *  COLOUR IS NEVER THE ONLY CHANNEL. From the third series on, the line is
- *  also dashed. Hue fails in more ways than colour blindness - a dim wall
- *  panel, a projector, a greyscale printout in a runbook, a photograph of a
- *  screen in an incident ticket - and a dash pattern survives all of them.
+ *  COLOUR IS NEVER THE ONLY CHANNEL. From the third series on, the line also
+ *  carries a stroke pattern. Hue fails in more ways than colour blindness - a
+ *  dim wall panel, a projector, a greyscale printout in a runbook, a
+ *  photograph of a screen in an incident ticket - and a pattern survives all
+ *  of them.
  */
 import { useEffect, useState } from 'react';
 
@@ -34,8 +35,17 @@ const FALLBACK = {
 /** Solid, solid, then patterns. The first two lines are the common case and
  *  keep the cleanest stroke; a chart only reaches for a pattern once hue is
  *  carrying more than it can. `undefined` rather than `'none'` so the value
- *  can go straight into strokeDasharray. */
-export const DASHES: (string | undefined)[] = [undefined, undefined, '6 3', '2 3'];
+ *  can go straight into strokeDasharray.
+ *
+ *  A PLAIN DASH IS RESERVED. `Plot` draws the projected half of a forecast as
+ *  `6 4`, and that idiom is older and more load-bearing than this one: a
+ *  reader who has learned "dashed means it has not happened yet" on the
+ *  capacity chart must not meet a plain dash here meaning "third series".
+ *  Slot three is therefore dash-DOT and slot four is dotted - patterns nobody
+ *  can mistake for a forecast, and which stay distinct from each other at the
+ *  stroke widths these charts use. `6 3` and `6 4`, which is what this was,
+ *  are the same pattern to the eye. */
+export const DASHES: (string | undefined)[] = [undefined, undefined, '10 4 2 4', '2 3'];
 
 export interface ChartColors {
   /** Four, in slot order. The chart rules say to facet past three series, so

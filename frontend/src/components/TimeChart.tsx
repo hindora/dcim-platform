@@ -283,8 +283,11 @@ export function TimeChart({ series, unit, bucketMs }: {
               {/* The swatch wears the line's pattern as well as its colour:
                   a legend that shows only hue cannot be read in the one
                   situation the pattern exists for. */}
-              <svg className="swatch-line" width={14} height={8} aria-hidden>
-                <line x1={0} y1={4} x2={14} y2={4} stroke={colorOf(i)}
+              {/* Wide enough for a full cycle where there is a pattern to
+                  show: dash-dot runs 20 units, and a clipped cycle reads as a
+                  different pattern. */}
+              <svg className="swatch-line" width={dashOf(i) ? 22 : 14} height={8} aria-hidden>
+                <line x1={0} y1={4} x2={dashOf(i) ? 22 : 14} y2={4} stroke={colorOf(i)}
                       strokeWidth={2} strokeDasharray={dashOf(i)} />
               </svg>
               {p.label}
