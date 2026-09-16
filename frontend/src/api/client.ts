@@ -1013,6 +1013,10 @@ export interface TopologyGraph {
    *  roll-up they are the real devices and conductors behind them. */
   device_count: number;
   conductor_count: number;
+  /** Devices in the scope with no connection on this layer. Not drawn - they
+   *  are not in this layer's graph - but counted, because "nine things in this
+   *  room are on no cooling circuit anyone recorded" is a finding. */
+  unconnected_count: number;
 }
 
 export interface TraceTermination {

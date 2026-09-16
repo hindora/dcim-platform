@@ -211,6 +211,12 @@ class TopologyOut(BaseModel):
     # the difference is what the view has to admit it is hiding.
     device_count: int = 0
     conductor_count: int = 0
+    # Devices in the scope with NO connection on this layer. They are not in
+    # this layer's graph, so they are not drawn - a switch has nothing to do
+    # with the chilled water and floats above a cooling diagram as a box with
+    # no lines. The count stays, because "nine things in this room are on no
+    # cooling circuit anyone recorded" is a finding rather than a blank.
+    unconnected_count: int = 0
 
 
 class RoomExtent(BaseModel):

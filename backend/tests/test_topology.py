@@ -130,6 +130,15 @@ def test_every_alias_the_node_sql_selects_from_is_actually_joined(scope_type):
         f"joins; bound aliases are {sorted(aliases)}")
 
 
+@pytest.mark.parametrize("scope_type", sorted(svc.SCOPE_TYPES))
+def test_node_sql_reports_layer_degree(scope_type):
+    """The service drops devices with no edge on the requested layer, and it
+    needs the degree to know which. A cooling diagram of a server hall was
+    arriving with thirty switches and PDUs floating above it - more boxes with
+    no lines than the seven CRAH the diagram was about."""
+    assert "AS degree" in repo._nodes_sql(scope_type)
+
+
 @pytest.mark.parametrize("scope_type", ["room", "datacenter"])
 def test_containment_seeds_fall_back_to_device_room(scope_type):
     """Floor-standing plant sits in a room but in no rack.

@@ -331,7 +331,22 @@ async def get_topology(session: AsyncSession, *, layer: str, scope: str,
     edge_rows = await repo.graph_edges(session, layer=layer_value, device_ids=ids)
     labels = await _termination_labels(session, edge_rows)
 
-    nodes = [_node_from_row(r) for r in node_rows]
+    # A device with degree 0 on this layer is not in this layer's graph. The
+    # seed is every device in the scope, so a cooling diagram of a server hall
+    # arrived with thirty switches, PDUs and energy monitors floating above it
+    # as boxes with no lines - more boxes than the seven CRAH the diagram was
+    # about. The anchor of a device-scoped request is kept whatever its degree,
+    # because "you asked about this one" outranks "it is connected to nothing"
+    # and an empty answer looks like a failure.
+    keep_isolated = scope_type == "device"
+    connected_rows = [r for r in node_rows
+                      if r["degree"] > 0 or (keep_isolated and r["depth"] == 0)]
+    unconnected = len(node_rows) - len(connected_rows)
+    if unconnected:
+        log.info("topology dropped devices with no edges on this layer",
+                 layer=layer_value, scope=scope, dropped=unconnected)
+
+    nodes = [_node_from_row(r) for r in connected_rows]
     edges = _edges_from_rows(edge_rows, labels)
     if rollup == "rack":
         # After the cap, not before it. The cap is a bound on the QUERY, and a
@@ -345,7 +360,8 @@ async def get_topology(session: AsyncSession, *, layer: str, scope: str,
         edges=edges,
         truncated=truncated,
         node_count=len(nodes), edge_count=len(edges),
-        device_count=len(node_rows), conductor_count=len(edge_rows),
+        device_count=len(connected_rows), conductor_count=len(edge_rows),
+        unconnected_count=unconnected,
     )
     await _cache_set(cache_key, result)
     return result

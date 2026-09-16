@@ -221,6 +221,15 @@ export function Connectivity() {
                 <span className="warn"> · truncated — narrow the scope</span>
               )}
               {depth > 0 && ' · faded nodes were pulled in from outside the room'}
+              {graph.data.unconnected_count > 0 && (
+                <>
+                  {' · '}{graph.data.unconnected_count} device
+                  {graph.data.unconnected_count === 1 ? '' : 's'} in this room
+                  {' '}{graph.data.unconnected_count === 1 ? 'has' : 'have'} no
+                  {' '}{layer} connection recorded and {graph.data.unconnected_count === 1
+                    ? 'is' : 'are'} not drawn
+                </>
+              )}
             </p>
           </div>
 
