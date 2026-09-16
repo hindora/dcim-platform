@@ -1552,6 +1552,29 @@ export interface ThermalRow extends EstateRowBase {
    *  sensor is in band or it is not, so the same arithmetic reads as the
    *  share of sensors in band at this instant. */
   compliance_pct: number | null;
+  /** The full ASHRAE envelope: dry bulb, moisture and rate of change, each leg
+   *  per sensor with the coverage it rests on. `envelope_pct` is the share of
+   *  time a sensor was inside ALL of them, which is what TC 9.9 defines;
+   *  `temp_pct` alone is what `compliance_pct` has always been. A leg nobody
+   *  could measure is null rather than a pass. */
+  envelope: {
+    envelope_pct: number | null;
+    temp_pct: number | null;
+    moisture_pct: number | null;
+    rate_pct: number | null;
+    sensors: number;
+    /** How many sensors can be graded on moisture at all - a probe reporting
+     *  humidity beside temperature in one poll. Usually fewer than `sensors`,
+     *  and a share over two of them is weaker than the same share over forty. */
+    moisture_sensors: number;
+    rate_sensors: number;
+    peak_rate_k_per_h: number | null;
+    /** Rooms only: the class this room was graded against, and whether that
+     *  was recorded or defaulted to A1. */
+    ashrae_class?: string;
+    classified?: boolean;
+    max_rate_k_per_h?: number;
+  } | null;
   /** The same measure below the recommended floor: overcooling. */
   below_pct: number | null;
   /** Why this row has no compliance figure despite reporting temperatures:

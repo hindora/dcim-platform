@@ -31,9 +31,17 @@ import { Facility } from './Facility';
  *  as the two sensors in band beside it. The Readings column still says how
  *  much evidence a row rests on; it no longer decides what the row says.
  *
- *  Relative humidity comes from the rack PDU environment probes and is shown
- *  beside compliance, not folded into it. There is no composite score: it
- *  would be a number we invented sitting beside five that were measured.
+ *  COMPLIANCE IS THE WHOLE ENVELOPE. ASHRAE TC 9.9 writes three limits - dry
+ *  bulb, moisture (a dew-point floor, a dew-point ceiling and a humidity
+ *  ceiling) and rate of change - and the In band column is the share of time a
+ *  sensor was inside all of them. It used to be dry bulb alone, which passed a
+ *  hall holding 22 C at 70 % RH and a hall that got to 26 C at 30 K/hour.
+ *
+ *  The three legs are in the cell's tip with the coverage each rests on, never
+ *  merged into a score of their own: moisture can only be graded where a probe
+ *  reports humidity beside temperature in one poll, so a rack with a bare
+ *  thermistor shows a dash rather than a pass. Relative humidity keeps its own
+ *  column as a reading; what is folded in is the GRADE, not the number.
  *
  *  Three windows, and they answer different questions. NOW is the newest
  *  reading from each sensor: it is what to watch while something is
@@ -137,6 +145,59 @@ function Spread({ d, low, high, allowable }: {
     </Tip>
   );
 }
+
+/** The ASHRAE envelope in one cell: the figure, and the three legs in the tip.
+ *
+ *  ONE number to quote, three to diagnose. The standard is an envelope - dry
+ *  bulb AND moisture AND rate of change - so a hall holding 22 C every hour is
+ *  not compliant if it does it at 70 % RH, and a single figure that only ever
+ *  meant temperature was telling an operator a third of the truth.
+ *
+ *  Coverage rides in the tip beside each leg, because the legs are measured on
+ *  different populations and nothing else on the row can say so. Moisture
+ *  needs a probe reporting humidity beside temperature in one poll; most racks
+ *  have a bare thermistor and can never be graded on it. A rack like that
+ *  shows a dash for moisture, not a pass - missing evidence is not compliance.
+ *
+ *  The lead colour stays the temperature leg's, because that is what the row's
+ *  own tone, its spread bar and the inlet alarm rules are all drawn from; a
+ *  cell that went critical on humidity while the row read warm would be two
+ *  stories in one line.
+ */
+function Envelope({ r }: { r: ThermalRow }) {
+  const e = r.envelope;
+  if (!e || e.envelope_pct === null) {
+    return <Num value={r.compliance_pct} digits={1} unit="%"
+                why={r.grade_note ?? r.note} />;
+  }
+  const leg = (label: string, pct: number | null, n: number, of: string) => (
+    <span className="spread-line">
+      {pct === null
+        ? <><b>—</b> {label}: nothing measures it here</>
+        : <><b>{pct.toFixed(1)}%</b> {label} · {n} {of}{n === 1 ? '' : 's'}</>}
+    </span>
+  );
+  return (
+    <Tip tip={<>
+      {leg('dry bulb', e.temp_pct, e.sensors, 'sensor')}
+      {leg('moisture', e.moisture_pct, e.moisture_sensors, 'probe')}
+      {leg('rate of change', e.rate_pct, e.rate_sensors, 'sensor')}
+      {e.peak_rate_k_per_h !== null && (
+        <span className="spread-line">peak <b>{e.peak_rate_k_per_h}</b> K/h
+          {e.max_rate_k_per_h ? <> against a {e.max_rate_k_per_h} K/h limit</> : null}</span>
+      )}
+      {e.ashrae_class && (
+        <span className="spread-line">
+          graded as class <b>{e.ashrae_class}</b>
+          {e.classified ? null : ' (not classified - held to the tightest)'}
+        </span>
+      )}
+    </>}>
+      <span className="num">{e.envelope_pct.toFixed(1)}%</span>
+    </Tip>
+  );
+}
+
 
 /** A room's cooling units, in one cell.
  *
@@ -419,11 +480,12 @@ export function Thermal() {
       },
     ] : []),
     {
-      key: 'compliance', label: 'In band', align: 'num', width: 96,
-      help: <>Time inside {floor}-{recommended} °C, per sensor, averaged.</>,
-      sort: (r) => r.compliance_pct,
-      render: (r) => <Num value={r.compliance_pct} digits={1} unit="%"
-                          why={r.grade_note ?? r.note} />,
+      key: 'compliance', label: 'In band', align: 'num', width: 104,
+      help: <>Time inside the full ASHRAE envelope - dry bulb, moisture and
+             rate of change - per sensor, averaged. The tip breaks it into the
+             three legs and says what each one was measured on.</>,
+      sort: (r) => r.envelope?.envelope_pct ?? r.compliance_pct,
+      render: (r) => <Envelope r={r} />,
     },
     {
       key: 'below', label: 'Below band', align: 'num', width: 100,
