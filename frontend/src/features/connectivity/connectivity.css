@@ -1,0 +1,109 @@
+/* Connectivity page. Panel chrome copies `.asset-panel` value for value, as
+   the chart rulebook requires of a panel outside /assets - assets.css is
+   imported by the asset workspace alone, so the class cannot simply be
+   reused. */
+
+.conn-panel {
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  padding: 14px 16px;
+}
+
+.conn-panel .asset-max {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  float: none;
+  margin: 0;
+  padding: 4px;
+}
+
+.conn-panel > h3 {
+  margin: 0 0 12px;
+  padding-right: 22px;
+  font-size: 0.86rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.conn-total { float: right; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.conn-total .unit { text-transform: lowercase; letter-spacing: 0; }
+
+.conn-filters {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.conn-filters select {
+  flex: 1;
+  min-width: 0;
+  max-width: 200px;
+  height: 26px;
+  padding: 0 6px;
+  font-size: 0.76rem;
+  background: var(--bg-raised);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.conn-caption { margin: 10px 0 0; font-size: 0.78rem; }
+
+/* The selection summary. A drawer replaces this in phase 1; until then it
+   keeps the click useful - the old view navigated straight to the device page,
+   which lost the diagram every time someone checked what a box was. */
+.conn-selected {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0 10px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  font-size: 0.82rem;
+}
+
+.conn-selected strong { font-family: var(--mono); }
+
+/* --- the diagram --------------------------------------------------------- */
+
+.topo-wrap { overflow: auto; max-height: 75vh; border: 1px solid var(--border);
+             border-radius: var(--radius); background: var(--bg-inset); }
+.topo { width: 100%; min-width: 40rem; height: auto; display: block; }
+
+.topo-box { fill: var(--bg-raised); stroke: var(--border-strong);
+            stroke-width: 1; }
+/* Pulled in from outside the requested scope: present because something in the
+   scope depends on it, not because it lives there. */
+.topo-box.outside { stroke-dasharray: 4 3; opacity: 0.75; }
+.topo-node { cursor: pointer; }
+.topo-node:hover .topo-box,
+.topo-node:focus-visible .topo-box { stroke: var(--accent); }
+.topo-node.is-selected .topo-box { stroke: var(--accent); stroke-width: 2; }
+
+.topo-name { font-size: 10px; fill: var(--text); font-family: var(--mono); }
+.topo-type { font-size: 9px; fill: var(--text-muted); font-family: var(--sans); }
+
+/* A and B are the two distribution paths, and seeing whether a load is fed
+   from both is the whole point of deriving redundancy_side. The stroke and its
+   pattern are set at render from the palette (see Diagram.tsx): they were
+   `#3b82f6` and `#a855f7` here, two call-site hexes that a deuteranope reads
+   as one colour, carrying a distinction that decides whether someone pulls a
+   live feed. */
+.topo-edge { fill: none; stroke: var(--border-strong); }
+.topo-edge.down { stroke: var(--critical); stroke-dasharray: 4 3; }
+
+.topo-legend {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  margin-top: 8px;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.topo-legend span { display: inline-flex; align-items: center; gap: 5px; }

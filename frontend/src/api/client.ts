@@ -1000,6 +1000,36 @@ export interface TopologyGraph {
   edge_count: number;
 }
 
+export interface ImpactNode {
+  id: string;
+  name: string;
+  device_type: string;
+  status: string;
+  room_name?: string | null;
+  rack_name?: string | null;
+}
+
+export interface ImpactLayer {
+  layer: string;
+  /** Plain words, because "cut off" means something different per layer:
+   *  losing power is not the same class of event as losing monitoring. */
+  effect: string;
+  dependents: number;
+  /** No surviving path from any source once the candidate is removed. On the
+   *  power layer this is the answer to "what goes dark". */
+  cut_off: ImpactNode[];
+  /** Still served, but by fewer redundancy sides than before - the usual and
+   *  usually accepted cost of taking one side of a 2N distribution out. */
+  degraded: ImpactNode[];
+}
+
+export interface Impact {
+  device: ImpactNode;
+  layers: ImpactLayer[];
+  total_cut_off: number;
+  total_degraded: number;
+}
+
 
 export interface Series {
   metric: string;
@@ -2475,6 +2505,12 @@ export const api = {
   topology: (layer: string, scope: string, depth: number) =>
     request<TopologyGraph>(
       `/topology?layer=${encodeURIComponent(layer)}&scope=${encodeURIComponent(scope)}&depth=${depth}`),
+
+  /** What breaks if this device is removed - the question asked before every
+   *  maintenance window. The server has answered it since the topology service
+   *  landed; nothing called it. */
+  impact: (deviceId: string) =>
+    request<Impact>(`/topology/impact/${encodeURIComponent(deviceId)}`),
 
   floorplan: (roomId: string) => request<FloorPlan>(`/rooms/${roomId}/floorplan`),
 

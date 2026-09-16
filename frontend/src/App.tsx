@@ -21,7 +21,7 @@ import { DeviceDetail } from './features/devices/DeviceDetail';
 import { RackElevationView } from './features/racks/RackElevation';
 import { RackList } from './features/racks/RackList';
 import { FloorPlanView } from './features/floorplan/FloorPlan';
-import { TopologyView } from './features/topology/TopologyView';
+import { Connectivity } from './features/connectivity/Connectivity';
 import { DeviceList } from './features/devices/DeviceList';
 import { AssetWorkspace } from './features/assets/AssetWorkspace';
 import { AssetOverview } from './features/assets/Overview';
@@ -215,7 +215,11 @@ export default function App() {
           {/* The page's old address. Bookmarks and pasted links outlive a
               rename; a dead one teaches people not to share links. */}
           <Route path="/utilization" element={<Navigate to="/capacity" replace />} />
-          <Route path="/connectivity" element={<Page><PlatformHealth /></Page>} />
+          {/* The nav has promised CONNECTIVITY since the estate pages landed
+              and delivered the platform-health screen - collector lag under a
+              heading about cabling - while the graph itself sat at /topology
+              with nothing linking to it. */}
+          <Route path="/connectivity" element={<Page><Connectivity /></Page>} />
           {/* The asset workspace. Everything it renders lives under this route
               and inside features/assets/ - no page outside /assets changes, and
               this line is the only edit the module makes to the shell
@@ -244,7 +248,7 @@ export default function App() {
           <Route path="/racks" element={<Page><RackList /></Page>} />
           <Route path="/racks/:id" element={<Page><RackElevationView /></Page>} />
           <Route path="/floorplan" element={<Page><FloorPlanView /></Page>} />
-          <Route path="/topology" element={<Page><TopologyView /></Page>} />
+          <Route path="/topology" element={<Navigate to="/connectivity" replace />} />
           <Route path="/alarms" element={<Page><AlarmList /></Page>} />
           <Route path="/analytics" element={<Page><Analytics /></Page>} />
           <Route path="/platform" element={<Page><PlatformHealth /></Page>} />
