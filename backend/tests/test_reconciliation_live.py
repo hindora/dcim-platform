@@ -205,3 +205,85 @@ async def test_the_candidates_carry_the_instance_they_are_filed_under(session):
     # calls its run status".
     assert mine[0]["instance"] == crah["instance"]
     assert mine[0]["point"] == crah["instance"]
+
+
+# ── an alarm on a key the device no longer publishes ─────────────────────────
+
+async def _probe(s) -> dict:
+    """A sensor that is publishing ambient temperature right now."""
+    row = (await s.execute(text("""
+        SELECT DISTINCT ON (d.id) d.id::text AS id, d.name,
+               coalesce(t.instance, '') AS instance
+          FROM device d
+          JOIN telemetry_sample t ON t.device_id = d.id
+          JOIN metric m ON m.id = t.metric_id
+         WHERE m.key = 'ambient_temperature'
+           AND t.ts > now() - interval '20 minutes'
+         ORDER BY d.id, t.ts DESC
+         LIMIT 1
+    """))).mappings().first()
+    assert row, "no sensor is publishing an ambient temperature"
+    return dict(row)
+
+
+@pytest.mark.asyncio
+async def test_an_alarm_on_a_retired_instance_is_swept(session):
+    """The five-day alarm this path was written for.
+
+    THR-DC1-CP raised ambient_temp_high under the blank instance a rack probe
+    uses. Migration 0063 then moved plant-room transmitters to `ROOM`, so every
+    reading after it landed on a different key: the rule engine owns threshold
+    alarms and clears them from the next reading in the clear band, and no such
+    reading could ever arrive. It sat ACTIVE on a healthy transmitter.
+    """
+    probe = await _probe(session)
+    # Filed against an instance this device does not publish.
+    retired = "RETIRED-INSTANCE" if probe["instance"] != "RETIRED-INSTANCE" else "OTHER"
+    alarm_id = await _raise(session, probe["id"], instance=retired,
+                            source="threshold", alarm_type="ambient_temp_high",
+                            ago_s=3 * 86400)
+    await session.execute(text(
+        "UPDATE alarm SET metric_key = 'ambient_temperature', threshold = 27 "
+        "WHERE id = CAST(:a AS uuid)"), {"a": alarm_id})
+
+    found = {r["id"] for r in await reconcile.orphaned_key(session)}
+    assert alarm_id in found, "an alarm no reading can reach was left open"
+
+    await _service().reconcile(session)
+    assert not await _is_open(session, alarm_id)
+
+
+@pytest.mark.asyncio
+async def test_a_key_that_is_merely_slow_is_left_alone(session):
+    """The network profiles poll every 600 s. Two hours of silence is twelve
+    missed polls, not a slow one - but a key that spoke five minutes ago is
+    simply being polled, and taking its alarm would be the sweep inventing a
+    recovery."""
+    probe = await _probe(session)
+    alarm_id = await _raise(session, probe["id"], instance=probe["instance"],
+                            source="threshold", alarm_type="ambient_temp_high",
+                            ago_s=3 * 86400)
+    await session.execute(text(
+        "UPDATE alarm SET metric_key = 'ambient_temperature', threshold = 27 "
+        "WHERE id = CAST(:a AS uuid)"), {"a": alarm_id})
+
+    found = {r["id"] for r in await reconcile.orphaned_key(session)}
+    assert alarm_id not in found
+    assert await _is_open(session, alarm_id)
+
+
+@pytest.mark.asyncio
+async def test_a_device_that_has_gone_dark_keeps_its_alarm(session):
+    """The safety half, and the reason this is not just a timer. "This key
+    stopped" and "this machine went dark" look identical from the alarm table,
+    and only the first means the alarm is stranded rather than true."""
+    probe = await _probe(session)
+    alarm_id = await _raise(session, probe["id"], instance="RETIRED-INSTANCE",
+                            source="threshold", alarm_type="ambient_temp_high",
+                            ago_s=3 * 86400)
+    await session.execute(text(
+        "UPDATE alarm SET metric_key = 'ambient_temperature', threshold = 27 "
+        "WHERE id = CAST(:a AS uuid)"), {"a": alarm_id})
+    # Nothing from this device inside the freshness window: it is dark.
+    rows = await reconcile.orphaned_key(session, fresh_s=1)
+    assert alarm_id not in {r["id"] for r in rows}

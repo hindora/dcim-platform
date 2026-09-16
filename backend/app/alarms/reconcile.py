@@ -370,6 +370,90 @@ _AGED_OUT = text("""
 """)
 
 
+#: How long a metric key must be silent before its alarm is treated as
+#: unclearable rather than merely quiet.
+#:
+#: Two hours is twelve polls of the slowest profile in this estate (the 600 s
+#: network ones) and sixty of the fastest, so a key that has not spoken in that
+#: time is not being polled slowly - it has stopped existing.
+ORPHAN_SILENT_S = 7200
+
+
+#: An alarm on a metric key the device no longer publishes.
+#:
+#: The fourth situation, and the one the other three cannot reach. An alarm is
+#: keyed on (device, type, INSTANCE), and an instance is a vocabulary that can
+#: change under it: migration 0063 moved the plant-room transmitters from the
+#: blank instance a rack probe uses to `ROOM`, so their readings started
+#: landing on a different key from the alarms already open against them.
+#:
+#: THR-DC1-CP raised ambient_temp_high at 27.2 C against the 27 C rack-intake
+#: limit on 11 September - correctly, under the rules of that day - and then
+#: went silent on that key forever. The rule engine owns threshold alarms and
+#: clears them from the next reading in the clear band; no such reading can
+#: ever arrive. `measured_clear` skips threshold alarms for exactly that
+#: reason, and `aged_out` skips anything carrying a threshold. So it sat ACTIVE
+#: for five days on a healthy transmitter that was, the whole time, publishing
+#: 27.7 C under `ROOM` and comfortably inside the 35 C limit its room is
+#: actually held to.
+#:
+#: This is not second-guessing the rule engine. The engine cannot act on this
+#: alarm at all - not "has not yet", but cannot, by construction - and an alarm
+#: nobody can clear is an alarm nobody reads.
+#:
+#: The safety condition is the same one the timer uses and matters more here:
+#: the DEVICE must still be delivering telemetry. "This key stopped" and "this
+#: machine went dark" look identical from the alarm table, and only the first
+#: means the alarm is stranded rather than true.
+_ORPHANED_KEY = text("""
+    SELECT a.id::text AS id, a.device_id::text AS device_id,
+           d.name AS device_name, a.alarm_type, a.instance,
+           a.severity::text AS severity, a.metric_key,
+           extract(epoch FROM (now() - a.last_seen)) AS quiet_s
+      FROM alarm a
+      JOIN device d ON d.id = a.device_id
+     WHERE a.state <> 'CLEARED'
+       AND a.metric_key IS NOT NULL
+       -- A state-backed condition is decided by its boolean wherever that
+       -- points, and a boolean is change-logged: no rows for hours is what a
+       -- healthy one looks like, so silence here would mean the opposite of
+       -- what it means for a numeric key.
+       AND NOT (a.alarm_type = ANY(:state_types))
+       -- Nothing on this key, for long enough that slow polling is not the
+       -- explanation.
+       AND NOT EXISTS (
+           SELECT 1 FROM telemetry_sample t
+            WHERE t.device_id = a.device_id
+              AND t.metric_id = (SELECT m.id FROM metric m
+                                  WHERE m.key = a.metric_key)
+              AND coalesce(t.instance, '') = coalesce(a.instance, '')
+              AND t.ts > now() - make_interval(secs => :silent_s)
+       )
+       -- ...while the device itself is plainly still there.
+       AND EXISTS (
+           SELECT 1 FROM telemetry_sample t
+            WHERE t.device_id = a.device_id
+              AND t.ts > now() - make_interval(secs => :fresh_s)
+       )
+""")
+
+
+async def orphaned_key(session: AsyncSession, *,
+                       silent_s: int = ORPHAN_SILENT_S,
+                       fresh_s: int = SEEING_IT_S) -> list[dict[str, Any]]:
+    """Alarms whose metric key the device has stopped publishing.
+
+    Not "no reading has contradicted it" - no reading CAN, because the key it
+    was raised against no longer exists on that device. Usually an instance
+    vocabulary that moved under an open alarm.
+    """
+    rows = (await session.execute(_ORPHANED_KEY, {
+        "silent_s": silent_s, "fresh_s": fresh_s,
+        "state_types": list(STATE_BACKED),
+    })).mappings().all()
+    return [dict(r) for r in rows]
+
+
 async def measured_clear(session: AsyncSession, *, window_s: int = 1800,
                          margin: float = CLEAR_MARGIN) -> list[dict[str, Any]]:
     """Alarms whose own metric has been in the clear band long enough."""
@@ -424,6 +508,14 @@ def measured_reason(row: dict[str, Any]) -> str:
     return (f"{row['metric_key']} is back past {whose} clear point "
             f"({round(float(row['worst']), 1)} against "
             f"{round(float(row['clear_threshold']), 1)}) and no clear arrived")
+
+
+def orphan_reason(row: dict[str, Any]) -> str:
+    return (f"{row['metric_key']}"
+            f"{'/' + row['instance'] if row['instance'] else ''} has not been "
+            f"published for {int(row['quiet_s']) // 3600} h while the device "
+            "kept reporting, so nothing can ever clear this - the metric or "
+            "its instance moved after the alarm was raised")
 
 
 def aged_reason(row: dict[str, Any]) -> str:

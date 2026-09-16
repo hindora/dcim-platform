@@ -676,6 +676,11 @@ class AlarmService:
         for row in await reconcile.aged_out(session):
             await close(row, "aged", reconcile.aged_reason(row))
 
+        # And the ones no path above can reach: the key itself is gone. Last,
+        # because every other answer is better than "nothing can decide this".
+        for row in await reconcile.orphaned_key(session):
+            await close(row, "orphaned", reconcile.orphan_reason(row))
+
         if touched:
             await repo.refresh_device_alarm_state(session, sorted(touched))
         return actions
