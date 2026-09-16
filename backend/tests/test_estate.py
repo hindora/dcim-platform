@@ -1605,16 +1605,22 @@ async def test_the_rollup_field_still_means_the_rollup(monkeypatch):
 # each leg rests on carried beside it.
 
 
-def _env(rack_id: str, *, temp=1.0, moist=None, rate=None, env=1.0,
-         sensors=1, moisture_sensors=0, rate_sensors=0, peak=None):
-    """One rack as thermal_envelope returns it: SUMS of per-sensor shares and
-    the counts they divide by."""
-    return {"rack_id": rack_id, "temp_sum": temp * sensors,
-            "moist_sum": None if moist is None else moist * moisture_sensors,
+def _env(rack_id: str, *, room_id="r1", temp=1.0, rate=None, env=1.0,
+         sensors=1, rate_sensors=0, peak=None, room_moist=None, probes=0,
+         moisture_graded=0):
+    """One rack as thermal_envelope returns it.
+
+    Temperature and rate are SUMS of per-sensor shares with the counts they
+    divide by. MOISTURE is the room's, repeated on every rack row of that room
+    - it is a property of the air in the hall, not of the rack.
+    """
+    return {"rack_id": rack_id, "room_id": room_id,
+            "temp_sum": temp * sensors,
             "rate_sum": None if rate is None else rate * rate_sensors,
             "env_sum": env * sensors, "sensors": sensors,
-            "moisture_sensors": moisture_sensors, "rate_sensors": rate_sensors,
-            "peak_rate": peak}
+            "rate_sensors": rate_sensors, "moisture_graded": moisture_graded,
+            "peak_rate": peak, "room_moist_ok": room_moist,
+            "room_probes": probes, "room_moist_buckets": 0 if room_moist is None else 10}
 
 
 def _with_envelope(monkeypatch, rows):
@@ -1632,11 +1638,11 @@ async def test_a_rack_with_no_humidity_probe_has_no_moisture_leg(monkeypatch):
     rack that cannot measure moisture must not report 100 % on it."""
     _thermal(monkeypatch, [_room("r1", "dc1", "DC1", rack_count=1)],
              [_rack("k1", "r1", f_sum=23.0, f_n=10, f_sensors=1, f_in_band=1.0)])
-    _with_envelope(monkeypatch, [_env("k1", sensors=1, moisture_sensors=0,
-                                      rate_sensors=1, rate=1.0, peak=3.2)])
+    _with_envelope(monkeypatch, [_env("k1", sensors=1, rate_sensors=1,
+                                      rate=1.0, peak=3.2)])
     out = await estate.thermal(_FakeSession(), mode="live")
     e = out["racks"][0]["envelope"]
-    assert e["moisture_pct"] is None and e["moisture_sensors"] == 0
+    assert e["moisture_pct"] is None and e["moisture_probes"] == 0
     assert e["rate_pct"] == 100.0 and e["rate_sensors"] == 1
     assert e["peak_rate_k_per_h"] == 3.2
 
@@ -1650,15 +1656,15 @@ async def test_the_envelope_folds_from_racks_by_sensor_not_by_rack(monkeypatch):
              [_rack("k1", "r1", f_sum=23.0, f_n=10, f_sensors=1, f_in_band=1.0),
               _rack("k2", "r1", f_sum=23.0, f_n=10, f_sensors=1, f_in_band=1.0)])
     _with_envelope(monkeypatch, [
-        _env("k1", env=1.0, sensors=4, moisture_sensors=4, moist=1.0),
-        _env("k2", env=0.0, sensors=1, moisture_sensors=1, moist=0.0),
+        _env("k1", env=1.0, sensors=4),
+        _env("k2", env=0.0, sensors=1),
     ])
     out = await estate.thermal(_FakeSession(), mode="live")
     room = out["rooms"][0]["envelope"]
     # 4 sensors at 100 % and 1 at 0 % is 80 %, not the 50 % a mean of rack
     # means would produce.
     assert room["envelope_pct"] == 80.0
-    assert room["sensors"] == 5 and room["moisture_sensors"] == 5
+    assert room["sensors"] == 5
     assert out["totals"]["envelope"]["envelope_pct"] == 80.0
 
 
@@ -1694,10 +1700,68 @@ async def test_the_envelope_is_worse_than_its_temperature_leg_when_moisture_fail
     outside the envelope on moisture alone."""
     _thermal(monkeypatch, [_room("r1", "dc1", "DC1", rack_count=1)],
              [_rack("k1", "r1", f_sum=22.0, f_n=10, f_sensors=1, f_in_band=1.0)])
-    _with_envelope(monkeypatch, [_env("k1", temp=1.0, moist=0.4, env=0.4,
-                                      sensors=2, moisture_sensors=2)])
+    _with_envelope(monkeypatch, [_env("k1", temp=1.0, env=0.4, sensors=2,
+                                      room_moist=0.4, probes=2,
+                                      moisture_graded=2)])
     out = await estate.thermal(_FakeSession(), mode="live")
     e = out["racks"][0]["envelope"]
     assert e["temp_pct"] == 100.0
     assert e["moisture_pct"] == 40.0
     assert e["envelope_pct"] == 40.0
+
+
+@pytest.mark.asyncio
+async def test_a_hall_without_probes_everywhere_cannot_dilute_its_moisture(
+        monkeypatch):
+    """The bug this model replaced.
+
+    Moisture used to be scored per rack, so a hall of 44 sensors with 6
+    humidity probes averaged a real breach against 38 sensors that cannot
+    measure moisture at all - and those 38 counted as passing. A 99.4 %
+    moisture reading became a 99.96 % envelope, which prints as 100.0, and the
+    estate fold diluted it a second time.
+
+    Moisture is the ROOM's now: the probes decide, every sensor in the room
+    inherits it, and a sensor that cannot measure the leg cannot vote that the
+    leg passed.
+    """
+    _thermal(monkeypatch, [_room("r1", "dc1", "DC1", rack_count=2)],
+             [_rack("k1", "r1", f_sum=23.0, f_n=10, f_sensors=1, f_in_band=1.0),
+              _rack("k2", "r1", f_sum=23.0, f_n=10, f_sensors=1, f_in_band=1.0)])
+    _with_envelope(monkeypatch, [
+        # Six probes saw the hall out of band 40 % of the window; the other
+        # thirty-eight sensors in it have no humidity element.
+        _env("k1", sensors=6, env=0.6, room_moist=0.6, probes=6, moisture_graded=6),
+        _env("k2", sensors=38, env=0.6, room_moist=0.6, probes=6, moisture_graded=0),
+    ])
+    out = await estate.thermal(_FakeSession(), mode="live")
+    room = out["rooms"][0]["envelope"]
+    assert room["moisture_pct"] == 60.0, "the room's own probes decide"
+    assert room["moisture_probes"] == 6
+    assert room["sensors"] == 44
+    # And the estate says the same thing rather than averaging it away.
+    assert out["totals"]["envelope"]["moisture_pct"] == 60.0
+
+
+@pytest.mark.asyncio
+async def test_a_site_weights_moisture_by_the_sensors_it_applied_to(monkeypatch):
+    """Two halls, one in trouble. The site figure has to weight each room's
+    verdict by the floor it was applied to - not by probe count, which is an
+    accident of how many elements somebody fitted."""
+    _thermal(monkeypatch,
+             [_room("r1", "dc1", "DC1", rack_count=1),
+              _room("r2", "dc1", "DC1", rack_count=1)],
+             [_rack("k1", "r1", f_sum=23.0, f_n=10, f_sensors=1, f_in_band=1.0),
+              _rack("k2", "r2", f_sum=23.0, f_n=10, f_sensors=1, f_in_band=1.0)])
+    _with_envelope(monkeypatch, [
+        _env("k1", room_id="r1", sensors=30, env=0.5, room_moist=0.5,
+             probes=2, moisture_graded=2),
+        _env("k2", room_id="r2", sensors=10, env=1.0, room_moist=1.0,
+             probes=8, moisture_graded=8),
+    ])
+    out = await estate.thermal(_FakeSession(), mode="live")
+    site = out["sites"][0]["envelope"]
+    # 30 sensors at 50 % and 10 at 100 % is 62.5 - not the 80 % that weighting
+    # by the eight probes in the healthy hall against two in the sick one
+    # would have produced.
+    assert site["moisture_pct"] == 62.5

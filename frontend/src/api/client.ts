@@ -1563,9 +1563,13 @@ export interface ThermalRow extends EstateRowBase {
     moisture_pct: number | null;
     rate_pct: number | null;
     sensors: number;
-    /** How many sensors can be graded on moisture at all - a probe reporting
-     *  humidity beside temperature in one poll. Usually fewer than `sensors`,
-     *  and a share over two of them is weaker than the same share over forty. */
+    /** Probes that spoke for the moisture verdict. Moisture is a property of
+     *  the ROOM - air in a hall mixes - so the room's probes decide and every
+     *  sensor in it inherits the result; this says how much evidence that
+     *  rests on. Zero means no probe in the room and no moisture leg. */
+    moisture_probes: number;
+    /** Sensors that carry a humidity element themselves, which is usually far
+     *  fewer than the room's population. */
     moisture_sensors: number;
     rate_sensors: number;
     peak_rate_k_per_h: number | null;

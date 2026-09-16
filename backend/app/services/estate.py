@@ -146,50 +146,78 @@ def _attach_envelope(racks: list[dict[str, Any]], rooms: list[dict[str, Any]],
                      by_rack: dict[str, dict[str, Any]],
                      skeleton: list[dict[str, Any]]) -> None:
     """Hang the three legs on every tier, folding from the racks as everything
-    else on this page does.
+    else on this page does - except moisture, which belongs to the room.
 
-    Each figure arrives as a SUM of per-sensor shares and a sensor COUNT, so a
-    room is the sum of its racks over the count of its racks' sensors - never a
-    mean of rack means, which would weight a rack with one probe like a rack
-    with four.
+    Temperature and rate are per sensor and arrive as SUMS with a sensor
+    COUNT, so a room is the sum of its racks over the count of its racks'
+    sensors, never a mean of rack means.
 
-    COVERAGE travels with the figure. Moisture is measurable only where a probe
-    reports humidity beside temperature at one instant, which on this estate is
-    a minority of racks, and a 100 % moisture figure over two sensors says
-    something far weaker than the same number over forty. A row that reports a
-    share without saying what it rests on invites exactly the wrong reading.
+    MOISTURE IS ROOM-SCOPED. Air in a hall mixes and humidity barely varies
+    across it, which is why no one fits an element to every rack and why
+    ASHRAE writes moisture as a condition of the space. The room's own probes
+    decide its state and every sensor in the room inherits it; a rack reports
+    its room's figure rather than one of its own.
+
+    Scored per rack instead - which this did first - the failure vanished. A
+    hall of 44 sensors with 6 probes averaged a real 99.4 % moisture reading
+    against 38 sensors that cannot measure moisture and therefore "passed",
+    producing a 99.96 % envelope that prints as 100.0, and the estate fold
+    diluted it again. A leg no sensor can measure must never be able to vote
+    that the leg passed.
+
+    Above the room, moisture is weighted by the SENSORS THE VERDICT WAS
+    APPLIED TO - the room's whole population, not its probe count - because
+    that is what the envelope figure beside it is weighted by, and two shares
+    on one row that divide by different things cannot be read together.
     """
-    legs = ("temp", "moist", "rate", "env")
+    per_sensor_legs = ("temp", "rate", "env")
 
-    def _emit(row: dict[str, Any], acc: dict[str, float]) -> None:
+    def _blank() -> dict[str, Any]:
+        return {f"{k}_sum": 0.0 for k in per_sensor_legs} | {
+            "sensors": 0.0, "rate_sensors": 0.0, "moisture_graded": 0.0,
+            "peak_rate": None,
+            # Room moisture, carried up as share x sensors so it folds like
+            # everything else.
+            "moist_weighted": 0.0, "moist_sensors": 0.0, "probes": 0.0}
+
+    def _add(acc: dict[str, Any], src: dict[str, Any]) -> None:
+        for k in per_sensor_legs:
+            v = src.get(f"{k}_sum")
+            if v is not None:
+                acc[f"{k}_sum"] = (acc.get(f"{k}_sum") or 0.0) + float(v)
+        for k in ("sensors", "rate_sensors", "moisture_graded"):
+            acc[k] = acc.get(k, 0.0) + float(src.get(k) or 0.0)
+        peak = src.get("peak_rate")
+        if peak is not None:
+            acc["peak_rate"] = max(acc.get("peak_rate") or 0.0, float(peak))
+
+    def _emit(row: dict[str, Any], acc: dict[str, Any],
+              moisture_pct: float | None, probes: int) -> None:
         sensors = acc.get("sensors", 0.0)
         row["envelope"] = {
             "temp_pct": _leg_pct(acc.get("temp_sum"), sensors),
-            "moisture_pct": _leg_pct(acc.get("moist_sum"), acc.get("moisture_sensors", 0.0)),
+            "moisture_pct": moisture_pct,
             "rate_pct": _leg_pct(acc.get("rate_sum"), acc.get("rate_sensors", 0.0)),
             "envelope_pct": _leg_pct(acc.get("env_sum"), sensors),
             "sensors": int(sensors),
-            "moisture_sensors": int(acc.get("moisture_sensors", 0.0)),
+            # Probes that spoke for the moisture verdict, and how many sensors
+            # it was applied to. A room with no probe has neither.
+            "moisture_probes": int(probes),
+            "moisture_sensors": int(acc.get("moisture_graded", 0.0)),
             "rate_sensors": int(acc.get("rate_sensors", 0.0)),
             "peak_rate_k_per_h": (round(acc["peak_rate"], 1)
                                   if acc.get("peak_rate") is not None else None),
         }
 
-    def _blank() -> dict[str, float]:
-        return {f"{k}_sum": 0.0 for k in legs} | {
-            "sensors": 0.0, "moisture_sensors": 0.0, "rate_sensors": 0.0,
-            "peak_rate": None}
-
-    def _add(acc: dict[str, Any], src: dict[str, Any]) -> None:
-        for k in legs:
-            v = src.get(f"{k}_sum")
-            if v is not None:
-                acc[f"{k}_sum"] = (acc.get(f"{k}_sum") or 0.0) + float(v)
-        for k in ("sensors", "moisture_sensors", "rate_sensors"):
-            acc[k] = acc.get(k, 0.0) + float(src.get(k) or 0.0)
-        peak = src.get("peak_rate")
-        if peak is not None:
-            acc["peak_rate"] = max(acc.get("peak_rate") or 0.0, float(peak))
+    # Room moisture arrives repeated on every rack row of that room; take it
+    # once.
+    room_moist: dict[str, tuple[float | None, int]] = {}
+    for hit in by_rack.values():
+        rid = str(hit.get("room_id") or "")
+        share = hit.get("room_moist_ok")
+        room_moist.setdefault(
+            rid, (None if share is None else round(float(share) * 100.0, 1),
+                  int(hit.get("room_probes") or 0)))
 
     room_acc: dict[str, dict[str, Any]] = {}
     for rack in racks:
@@ -197,7 +225,8 @@ def _attach_envelope(racks: list[dict[str, Any]], rooms: list[dict[str, Any]],
         hit = by_rack.get(str(rack["id"]))
         if hit:
             _add(acc, hit)
-        _emit(rack, acc)
+        moist, probes = room_moist.get(rack["room_id"], (None, 0))
+        _emit(rack, acc, moist, probes)
         room = room_acc.setdefault(rack["room_id"], _blank())
         if hit:
             _add(room, hit)
@@ -208,7 +237,8 @@ def _attach_envelope(racks: list[dict[str, Any]], rooms: list[dict[str, Any]],
                for r in skeleton}
     for room in rooms:
         acc = room_acc.get(room["id"], _blank())
-        _emit(room, acc)
+        moist, probes = room_moist.get(room["id"], (None, 0))
+        _emit(room, acc, moist, probes)
         # The class a room was graded against, said on the row: a reader
         # comparing two halls has to know they were held to different limits.
         klass, rate = classes.get(room["id"], (None, None))
@@ -217,12 +247,27 @@ def _attach_envelope(racks: list[dict[str, Any]], rooms: list[dict[str, Any]],
         room["envelope"]["max_rate_k_per_h"] = (
             float(rate) if rate is not None
             else envelope_for(klass).max_rate_k_per_h)
+        # Carry the room's verdict upward weighted by the sensors it applied
+        # to, so a 44-sensor hall counts for more than a 4-sensor one.
+        if moist is not None and acc.get("sensors"):
+            for up in (site_acc.setdefault(room["site_id"], _blank()), total_acc):
+                up["moist_weighted"] += moist * acc["sensors"]
+                up["moist_sensors"] += acc["sensors"]
+                up["probes"] += probes
         site = site_acc.setdefault(room["site_id"], _blank())
         _add(site, acc)
         _add(total_acc, acc)
+
+    def _rolled(acc: dict[str, Any]) -> tuple[float | None, int]:
+        n = acc.get("moist_sensors", 0.0)
+        if not n:
+            return None, int(acc.get("probes", 0.0))
+        return round(acc["moist_weighted"] / n, 1), int(acc.get("probes", 0.0))
+
     for site in sites:
-        _emit(site, site_acc.get(site["id"], _blank()))
-    _emit(totals, total_acc)
+        acc = site_acc.get(site["id"], _blank())
+        _emit(site, acc, *_rolled(acc))
+    _emit(totals, total_acc, *_rolled(total_acc))
 
 
 def _leg_pct(total: float | None, n: float) -> float | None:

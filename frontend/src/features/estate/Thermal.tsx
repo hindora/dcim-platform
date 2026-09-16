@@ -154,10 +154,15 @@ function Spread({ d, low, high, allowable }: {
  *  meant temperature was telling an operator a third of the truth.
  *
  *  Coverage rides in the tip beside each leg, because the legs are measured on
- *  different populations and nothing else on the row can say so. Moisture
- *  needs a probe reporting humidity beside temperature in one poll; most racks
- *  have a bare thermistor and can never be graded on it. A rack like that
- *  shows a dash for moisture, not a pass - missing evidence is not compliance.
+ *  different populations and nothing else on the row can say so.
+ *
+ *  Moisture is the ROOM's: air in a hall mixes and humidity barely varies
+ *  across it, so the room's probes decide and every rack in it inherits the
+ *  verdict. A rack shows its hall's figure rather than a private one, and a
+ *  hall with no probe at all shows a dash - missing evidence is not
+ *  compliance. Scored per rack it silently disappeared: 38 sensors that
+ *  cannot measure moisture outvoted the 6 that could, and a 99.4 % reading
+ *  printed as 100.0.
  *
  *  The lead colour stays the temperature leg's, because that is what the row's
  *  own tone, its spread bar and the inlet alarm rules are all drawn from; a
@@ -180,7 +185,7 @@ function Envelope({ r }: { r: ThermalRow }) {
   return (
     <Tip tip={<>
       {leg('dry bulb', e.temp_pct, e.sensors, 'sensor')}
-      {leg('moisture', e.moisture_pct, e.moisture_sensors, 'probe')}
+      {leg('moisture', e.moisture_pct, e.moisture_probes, 'probe')}
       {leg('rate of change', e.rate_pct, e.rate_sensors, 'sensor')}
       {e.peak_rate_k_per_h !== null && (
         <span className="spread-line">peak <b>{e.peak_rate_k_per_h}</b> K/h
