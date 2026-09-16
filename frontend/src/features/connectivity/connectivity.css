@@ -94,7 +94,14 @@
    `#3b82f6` and `#a855f7` here, two call-site hexes that a deuteranope reads
    as one colour, carrying a distinction that decides whether someone pulls a
    live feed. */
-.topo-edge { fill: none; stroke: var(--border-strong); }
+/* No `stroke` on the base rule. A presentation attribute loses to ANY CSS
+   declaration that sets the same property, so a `stroke` here would quietly
+   beat the palette value the component puts on the element and every edge
+   would draw in the border colour - which is exactly what it did. The
+   unsided default is passed as the attribute's fallback instead. */
+.topo-edge { fill: none; }
+/* Down is a state rather than a side, so it DOES belong in CSS, where it
+   outranks the attribute and cannot be forgotten at a call site. */
 .topo-edge.down { stroke: var(--critical); stroke-dasharray: 4 3; }
 
 .topo-legend {

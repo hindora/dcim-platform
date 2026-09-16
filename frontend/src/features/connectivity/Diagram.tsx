@@ -196,8 +196,8 @@ function Edge({ e, byId, colors }: {
   return (
     <path className={down ? 'topo-edge down' : 'topo-edge'} d={d}
           strokeWidth={e.count > 1 ? 1.8 : 1}
-          stroke={down ? undefined : st.stroke}
-          strokeDasharray={down ? undefined : st.dash}>
+          stroke={st.stroke ?? 'var(--border-strong)'}
+          strokeDasharray={st.dash}>
       <title>
         {e.count > 1 ? `${e.count} conductors` : '1 connection'}
         {side ? ` · side ${side}` : ''}
