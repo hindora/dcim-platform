@@ -32,6 +32,8 @@
 .conn-total { float: right; color: var(--text-faint); font-variant-numeric: tabular-nums; }
 .conn-total .unit { text-transform: lowercase; letter-spacing: 0; }
 
+.conn-layerbar { display: flex; }
+
 .conn-filters {
   display: flex;
   gap: 6px;

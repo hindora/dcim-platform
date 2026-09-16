@@ -102,9 +102,15 @@ export function Connectivity() {
         structure alone cannot drift when live state arrives.
       </p>
 
-      <Seg value={layer} onChange={(v) => { setLayer(v); setSelected(null); }}
-           label="Layer"
-           options={LAYERS.map((l) => ({ key: l.key, label: l.label }))} />
+      {/* `.seg` is a block-level flex container, so on its own it stretches to
+          the page width and hangs four empty cells' worth of border off the
+          right. Every other use of it sits in a title row that already
+          constrains it. */}
+      <div className="conn-layerbar">
+        <Seg value={layer} onChange={(v) => { setLayer(v); setSelected(null); }}
+             label="Layer"
+             options={LAYERS.map((l) => ({ key: l.key, label: l.label }))} />
+      </div>
 
       <div className="conn-filters">
         <select value={selectedRoom} aria-label="Room"
