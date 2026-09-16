@@ -6,6 +6,7 @@ read, so they are worth pinning without a database.
 
 from __future__ import annotations
 
+import re
 import uuid
 
 import pytest
@@ -102,6 +103,31 @@ def test_node_sql_is_parameterised_and_bounded(scope_type):
     # UNION, not UNION ALL: the power graph has cycles through dual feeds.
     assert "UNION\n" in sql and "UNION ALL" not in sql
     assert "LIMIT :cap" in sql
+
+
+@pytest.mark.parametrize("scope_type", sorted(svc.SCOPE_TYPES))
+def test_every_alias_the_node_sql_selects_from_is_actually_joined(scope_type):
+    """A column read through an alias nothing binds is a 500 at request time.
+
+    This is not hypothetical. `m.rated_power_w` was added to the SELECT list
+    without the `LEFT JOIN model m` under it, the whole suite stayed green
+    because these tests read the SQL rather than run it, and every call to
+    /topology returned 500 until a browser hit it. Postgres is the only thing
+    that can really check this; a cheap structural reading of it is still worth
+    more than the nothing that was here.
+    """
+    sql = repo._nodes_sql(scope_type)
+    bound = set(re.findall(r"(?:FROM|JOIN)\s+(\w+)\s+(\w+)\b", sql))
+    aliases = {alias for _, alias in bound} | {
+        # CTE names used without an alias of their own.
+        "seed", "reach", "agg", "deg",
+    }
+    used = set(re.findall(r"\b([a-z]{1,3})\.[a-z_]+", sql))
+    # Bound parameters look like `:name`, and SQL keywords do not contain dots.
+    unbound = {a for a in used if a not in aliases}
+    assert not unbound, (
+        f"{scope_type} node SQL reads from {sorted(unbound)}, which nothing "
+        f"joins; bound aliases are {sorted(aliases)}")
 
 
 @pytest.mark.parametrize("scope_type", ["room", "datacenter"])

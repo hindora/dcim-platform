@@ -113,13 +113,17 @@ def _nodes_sql(scope_type: str) -> str:
                ds.power_w, ds.inlet_temp_c, ds.cpu_util_pct, ds.humidity_pct,
                -- The datasheet rating, not a reading. A one-line diagram
                -- without capacity is a picture: the number an operator needs
-               -- beside a live draw is what the thing is built to take.
-               d.rated_power_w,
+               -- beside a live draw is what the thing is built to take. It
+               -- belongs to the MODEL, not the device - every R640 draws from
+               -- the same datasheet, and a per-device override would be a
+               -- measurement pretending to be a rating.
+               m.rated_power_w,
                rm.id::text AS room_id, rm.name AS room_name,
                r.id::text  AS rack_id, r.name AS rack_name,
                dc.id::text AS datacenter_id, dc.code AS datacenter_code
           FROM deg g
           JOIN device d             ON d.id = g.device_id
+          LEFT JOIN model m         ON m.id = d.model_id
           LEFT JOIN device_state ds ON ds.device_id = d.id
           LEFT JOIN rack r          ON r.id = d.rack_id
           LEFT JOIN rack_row rr     ON rr.id = r.row_id
