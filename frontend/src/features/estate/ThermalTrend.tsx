@@ -30,6 +30,11 @@
  *  degrees and per cent on one y axis is the second-axis rule every other
  *  chart here keeps.
  *
+ *  A third panel, ΔT, appears with the same window: intake, exhaust and the
+ *  gap between them. It is the page's airflow question rather than its
+ *  temperature question, and it is drawn for a ROOM or a RACK only - a mean
+ *  across halls is a difference along no air path that exists.
+ *
  *  Compliance is drawn as columns, not lines. It is a PARTITION of each
  *  bucket: four shares that add to 100 and cannot cross, which is what a
  *  stacked column says and what four lines would deny. The figure riding
@@ -43,6 +48,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api, type ThermalComplianceTrend as ComplianceData,
+         type ThermalDeltaTrend as DeltaData,
          type ThermalTrend as TrendData } from '../../api/client';
 import { Seg } from '../../components/estate';
 import { useHoverTip } from '../../components/HoverTip';
@@ -447,6 +453,136 @@ export function ThermalCompliance({ scope, unit, source = 'auto', range }: {
                 controls={range.picker} dates={range.dates}>
       {drawable && data
         ? <ComplianceColumns data={data} said={range.said} band={data.band} unit={unit} />
+        : null}
+    </TrendPanel>
+  );
+}
+
+/** A DIFFERENCE in temperature scales by 9/5 with no offset.
+ *
+ *  Running a delta through the absolute conversion adds 32 to a gap, which
+ *  turns an 8 K rise across a rack into a 46-degree one. */
+const convDelta = (k: number | null, unit: Unit) =>
+  k === null ? NaN : unit === 'c' ? k : k * 9 / 5;
+
+function DeltaPlot({ data, unit }: { data: DeltaData; unit: Unit }) {
+  const u = unit === 'c' ? '°C' : '°F';
+  const box = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(720);
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect.width ?? 0;
+      if (w > 0) setWidth(Math.round(w));
+    });
+    ro.observe(el);
+    const w = el.getBoundingClientRect().width;
+    if (w > 0) setWidth(Math.round(w));
+    return () => ro.disconnect();
+  }, []);
+  const pts = data.points.map((p) => ({ ...p, x: Date.parse(p.t) }));
+  // Three series on ONE axis, which is what makes the chart readable: the
+  // gap between the intake and exhaust lines IS the third line's value, so
+  // the eye checks the arithmetic for free. They are the same dimension - a
+  // temperature and a difference of temperatures - so this is not the second
+  // axis the chart rules forbid.
+  const series: PlotSeries[] = [
+    { label: `Intake ${u}`, color: LINE_COLORS[0],
+      points: pts.map((p) => [p.x, conv(p.intake_c, unit)]) },
+    { label: `Exhaust ${u}`, color: LINE_COLORS[1],
+      points: pts.map((p) => [p.x, conv(p.exhaust_c, unit)]) },
+    { label: unit === 'c' ? 'ΔT K' : 'ΔT Δ°F', color: LINE_COLORS[2],
+      points: pts.map((p) => [p.x, convDelta(p.delta_k, unit)]) },
+  ];
+  return (
+    <div className="trend-frame" ref={box}>
+      <Plot
+        series={series}
+        width={width}
+        unit={u}
+        xFormat={(v) => label(v, data.bucket)}
+        xTip={(v) => `${label(v, data.bucket)} UTC`}
+        yFormat={(v) => v.toFixed(1)}
+        height={220}
+        breakGaps
+        hover
+        empty="No intake or exhaust readings in this window."
+      />
+    </div>
+  );
+}
+
+/** What the air is doing, as against how warm it is.
+ *
+ *  Intake says how warm a rack is breathing. ΔT says whether the air it
+ *  breathes does any work: a rack at 23 C discharging 31 C is carrying its
+ *  heat away, and the same rack discharging 26 C is being flushed with air
+ *  that went past the servers rather than through them. The plant pays fan
+ *  power for that air either way. Rising ΔT at flat intake is containment
+ *  working; falling ΔT at flat intake is containment leaking - and the
+ *  intake line reads 23 C in both cases, which is why this chart exists.
+ *
+ *  ROOM OR RACK ONLY. A ΔT is a difference taken along one supply-to-return
+ *  path: a hall has one, a rack has one, an estate has none, and two halls
+ *  with opposite problems average to a healthy number. At a wider scope the
+ *  panel stays on the page and says so, rather than disappearing - a chart
+ *  that is missing teaches nobody why.
+ *
+ *  Exhaust is servers only; nothing else in a rack reports its own
+ *  discharge. The caption says how many racks that covers, because it is
+ *  usually fewer than the room holds and the difference is not a gap to be
+ *  filled.
+ */
+export function ThermalDelta({ scope, unit, source = 'auto', range }: {
+  scope?: ThermalTrendScope;
+  unit: Unit;
+  source?: string;
+  range: TrendRange;
+}) {
+  const drawable = scope?.kind === 'room' || scope?.kind === 'rack';
+  const { data, error } = useQuery({
+    queryKey: ['thermal-delta-trend', scope?.kind ?? '', scope?.id ?? '',
+               range.key, range.bucket, source],
+    queryFn: () => api.thermalDeltaTrend({
+      room: scope?.kind === 'room' ? scope.id : undefined,
+      rack: scope?.kind === 'rack' ? scope.id : undefined,
+    }, range.days, range.bucket, range.window, source),
+    enabled: drawable && (!range.custom || range.windowOk),
+    refetchInterval: range.bucket === 'hour' ? 300_000 : false,
+    staleTime: 60_000,
+    placeholderData: (prev) => prev,
+  });
+
+  const where = whereOf(scope);
+  const per = range.bucket === 'hour' ? 'per hour' : 'per day';
+  const k = (v: number) => (unit === 'c' ? `${v} K` : `${(v * 9 / 5).toFixed(1)} Δ°F`);
+  const caption = !drawable
+    ? <>ΔT is drawn for one room or one rack. A mean across halls describes no
+        air path that exists - two rooms with opposite problems average to a
+        healthy number - so open a room to see it.</>
+    : error ? 'Could not load the trend.'
+      : range.custom && !range.windowOk ? 'Pick a window to draw.'
+        : !data ? 'Loading the trend…'
+          : data.buckets_with_data === 0
+            ? <>No hour {where} {range.said} had both an intake and an exhaust
+                reading{data.exhaust_sensors === 0
+                  ? ', because no rack here holds a server with an exhaust sensor' : ''}.</>
+            : <>
+                <b>{k(data.delta_k as number)}</b> across the racks {where}{' '}
+                {range.said}, {per}, from <b>{data.exhaust_sensors}</b> exhaust
+                {' '}sensor{data.exhaust_sensors === 1 ? '' : 's'} in{' '}
+                <b>{data.racks}</b> rack{data.racks === 1 ? '' : 's'} against{' '}
+                <b>{data.intake_sensors}</b> intake sensor
+                {data.intake_sensors === 1 ? '' : 's'}
+              </>;
+
+  return (
+    <TrendPanel title={`Intake, exhaust and ΔT ${where}`} caption={caption}
+                controls={drawable ? range.picker : undefined}
+                dates={drawable ? range.dates : undefined}>
+      {drawable && data && !error && !(range.custom && !range.windowOk)
+        ? <DeltaPlot data={data} unit={unit} />
         : null}
     </TrendPanel>
   );

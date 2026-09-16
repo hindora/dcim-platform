@@ -949,6 +949,98 @@ async def test_trend_scope_is_passed_through(monkeypatch):
     assert (out["room_id"], out["datacenter_id"], out["rack_id"]) == ("r", "s", "k")
 
 
+# ------------------------------------------------------ thermal delta trend
+# The airflow line: intake, exhaust and the gap. Room or rack only.
+
+
+def _delta_rows(*rows):
+    async def _fn(session, **kw):
+        _fn.calls.append(kw)
+        return list(rows)
+    _fn.calls = []
+    return _fn
+
+
+@pytest.mark.asyncio
+async def test_delta_trend_refuses_a_scope_wider_than_a_room(monkeypatch):
+    """A ΔT is a difference along ONE supply-to-return path. A hall has one,
+    a rack has one, an estate has none - and two halls with opposite problems
+    average to a healthy number, which is worse than no line at all."""
+    fake = _delta_rows()
+    monkeypatch.setattr(estate.repo, "thermal_delta_trend", fake)
+    with pytest.raises(ValueError):
+        await estate.thermal_delta_trend(_FakeSession(), days=1, bucket="hour")
+    assert fake.calls == []
+    # A room is fine, and so is a rack.
+    await estate.thermal_delta_trend(_FakeSession(), days=1, bucket="hour", room_id="r")
+    await estate.thermal_delta_trend(_FakeSession(), days=1, bucket="hour", rack_id="k")
+    assert fake.calls[0]["room_id"] == "r" and fake.calls[-1]["rack_id"] == "k"
+
+
+@pytest.mark.asyncio
+async def test_delta_is_the_gap_between_the_two_legs(monkeypatch):
+    from datetime import UTC, datetime, timedelta
+    now = datetime.now(UTC)
+    top = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+    b = top - timedelta(hours=3)
+    monkeypatch.setattr(estate.repo, "thermal_delta_trend", _delta_rows(
+        {"b": b, "intake_c": 23.24, "exhaust_c": 31.37, "intake_sensors": 44,
+         "exhaust_sensors": 90, "racks": 5}))
+    out = await estate.thermal_delta_trend(_FakeSession(), days=1, bucket="hour",
+                                           room_id="r")
+    hit = [p for p in out["points"] if p["delta_k"] is not None]
+    assert len(hit) == 1 and hit[0]["t"] == b
+    assert (hit[0]["intake_c"], hit[0]["exhaust_c"]) == (23.2, 31.4)
+    # Taken from the ROUNDED legs, so the printed figures add up on screen.
+    assert hit[0]["delta_k"] == 8.2
+    assert (hit[0]["intake_sensors"], hit[0]["exhaust_sensors"]) == (44, 90)
+    assert out["racks"] == 5 and out["delta_k"] == 8.2
+    assert out["buckets_with_data"] == 1
+
+
+@pytest.mark.asyncio
+async def test_a_bucket_missing_one_leg_has_no_delta(monkeypatch):
+    """An hour with intake and no exhaust is a rack with no server reporting,
+    not a rack that stopped heating: the ΔT line breaks rather than reading
+    the intake back as a difference."""
+    from datetime import UTC, datetime, timedelta
+    now = datetime.now(UTC)
+    top = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+    b = top - timedelta(hours=2)
+    monkeypatch.setattr(estate.repo, "thermal_delta_trend", _delta_rows(
+        {"b": b, "intake_c": 23.0, "exhaust_c": None, "intake_sensors": 44,
+         "exhaust_sensors": 0, "racks": 0}))
+    out = await estate.thermal_delta_trend(_FakeSession(), days=1, bucket="hour",
+                                           room_id="r")
+    hit = [p for p in out["points"] if p["intake_c"] is not None]
+    assert len(hit) == 1
+    assert hit[0]["intake_c"] == 23.0 and hit[0]["exhaust_c"] is None
+    assert hit[0]["delta_k"] is None
+    assert out["buckets_with_data"] == 0 and out["delta_k"] is None
+
+
+@pytest.mark.asyncio
+async def test_delta_trend_shares_the_window_and_the_pin(monkeypatch):
+    """Same grid and same intake pin as the other two panels: all three are
+    drawn from one range control, and a reader is entitled to assume they
+    cover the same hours."""
+    from datetime import timedelta
+    fake = _delta_rows()
+    monkeypatch.setattr(estate.repo, "thermal_delta_trend", fake)
+    out = await estate.thermal_delta_trend(_FakeSession(), days=7, bucket="hour",
+                                           room_id="r", source="probes")
+    assert len(out["points"]) == 168
+    assert fake.calls[0]["source"] == "1h" and out["source"] == "1h"
+    assert fake.calls[0]["force"] == "ambient_temperature"
+    assert out["intake_source"] == "probes"
+    tail = fake.calls[1]
+    assert tail["source"] == "5m"
+    assert tail["end"] == out["until"] and tail["start"] == out["until"] - timedelta(hours=3)
+    fresh = fake.calls[2]
+    assert fresh["source"] == "raw"
+    assert fresh["start"] == out["until"] - timedelta(hours=2)
+
+
 # ------------------------------------------------- thermal compliance trend
 # The same window and fill as the intake trend, carrying the table's four-way
 # split instead of temperatures. The repository is mocked.

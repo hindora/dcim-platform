@@ -323,6 +323,46 @@ async def thermal_compliance_trend(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)) from None
 
 
+@router.get("/thermal-delta-trend",
+            summary="Intake, exhaust and ΔT per hour or day in one room or rack")
+async def thermal_delta_trend(
+    days: int = Query(7, ge=1, le=366),
+    bucket: str = Query("hour", pattern="^(hour|day)$"),
+    since: date | None = Query(None, description=(
+        "First day of a picked window (inclusive, UTC). With `until`, "
+        "replaces `days`; at most 366 days apart.")),
+    until: date | None = Query(None, description="Last day of a picked window (inclusive)."),
+    room: str | None = Query(None, description="The room to draw. One of room or rack."),
+    rack: str | None = Query(None, description="The rack to draw. One of room or rack."),
+    source: str = Query("auto", pattern="^(auto|probes|servers)$",
+                        description="Pin every rack to one intake source, as "
+                                    "the table does"),
+    session: AsyncSession = Depends(get_session),
+    _: Principal = Depends(current_principal),
+) -> dict:
+    """Rack ΔT over time, which is the page's airflow question: whether the
+    air a rack breathes is doing any work, as against how warm it is.
+
+    A room or a rack, never wider. ΔT is a difference along one
+    supply-to-return path; an estate has no such path, and two halls with
+    opposite problems average to a healthy number. A request without either
+    is refused rather than answered with a mean of halls."""
+    for name, value in (("room", room), ("rack", rack)):
+        if value is None:
+            continue
+        try:
+            UUID(value)
+        except ValueError:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                                f"{name} is not a uuid: {value}") from None
+    try:
+        return await service.thermal_delta_trend(
+            session, days=days, bucket=bucket, since=since, until=until,
+            room_id=room, rack_id=rack, source=source)
+    except ValueError as e:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)) from None
+
+
 @router.get("/rooms/{room_id}/kpi", summary="Everything the room drawer shows")
 async def room_kpi(
     room_id: str,

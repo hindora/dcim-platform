@@ -1953,6 +1953,32 @@ export interface ThermalComplianceTrend {
   below_pct: number | null;
 }
 
+/** Intake, exhaust and ΔT over time in ONE room or rack:
+ *  /estate/thermal-delta-trend. Never wider - a ΔT is a difference along one
+ *  supply-to-return path, and an estate has none. */
+export interface ThermalDeltaTrend {
+  days: number;
+  bucket: 'hour' | 'day';
+  source: '5m' | '1h';
+  since: string;
+  until: string;
+  room_id: string | null;
+  rack_id: string | null;
+  /** One per bucket, oldest first. `delta_k` is null wherever either leg is
+   *  missing, so the line breaks instead of implying a rack stopped heating. */
+  points: { t: string; intake_c: number | null; exhaust_c: number | null;
+            delta_k: number | null; intake_sensors: number;
+            exhaust_sensors: number; racks: number }[];
+  buckets_with_data: number;
+  intake_sensors: number;
+  /** Servers only - nothing else in a rack reports its own discharge. */
+  exhaust_sensors: number;
+  /** How many racks the exhaust leg speaks for. */
+  racks: number;
+  /** The window's mean ΔT, in kelvin. */
+  delta_k: number | null;
+}
+
 export interface PowerRow extends EstateRowBase {
   total_kw: number | null;
   it_ac_kw: number | null;
@@ -2581,6 +2607,18 @@ export const api = {
     request<ThermalComplianceTrend>(
       `/estate/thermal-compliance-trend?days=${days}&bucket=${bucket}`
       + (scope.site ? `&site=${encodeURIComponent(scope.site)}` : '')
+      + (scope.room ? `&room=${encodeURIComponent(scope.room)}` : '')
+      + (scope.rack ? `&rack=${encodeURIComponent(scope.rack)}` : '')
+      + (window ? `&since=${window.since}&until=${window.until}` : '')
+      + (source && source !== 'auto' ? `&source=${source}` : '')),
+
+  /** ΔT for one room or one rack. The server refuses a wider scope. */
+  thermalDeltaTrend: (scope: { room?: string; rack?: string },
+                      days = 7, bucket: 'hour' | 'day' = 'hour',
+                      window?: { since: string; until: string },
+                      source?: string) =>
+    request<ThermalDeltaTrend>(
+      `/estate/thermal-delta-trend?days=${days}&bucket=${bucket}`
       + (scope.room ? `&room=${encodeURIComponent(scope.room)}` : '')
       + (scope.rack ? `&rack=${encodeURIComponent(scope.rack)}` : '')
       + (window ? `&since=${window.since}&until=${window.until}` : '')

@@ -1556,6 +1556,100 @@ def _mean(values: list[float | None]) -> float | None:
     return round(sum(seen) / len(seen), 1) if seen else None
 
 
+async def thermal_delta_trend(session: AsyncSession, *, days: int = 7,
+                             bucket: str = "hour", since: date | None = None,
+                             until: date | None = None,
+                             room_id: str | None = None,
+                             rack_id: str | None = None,
+                             source: str = "auto") -> dict[str, Any]:
+    """Intake, exhaust and ΔT per hour or per day, in one room or one rack.
+
+    The airflow question. Intake says how warm a rack is breathing; ΔT says
+    whether the air it breathes is doing any work. A rack at 23 C intake
+    discharging 31 C is carrying its heat away; the same rack discharging
+    26 C is being flushed with air that bypassed the servers, and the plant
+    is spending fan power to move it past them. Rising ΔT at flat intake is
+    containment improving, falling ΔT at flat intake is containment leaking,
+    and an intake reading alone cannot tell those apart - it is the same
+    23 C in both.
+
+    ROOM OR RACK ONLY, and this refuses anything wider rather than drawing
+    it. ΔT is a difference taken along one supply-to-return path: a hall has
+    one, a rack has one, an estate has none. Two halls with opposite
+    problems average to a healthy number, which is worse than no line.
+
+    Exhaust comes from servers only - nothing else in a rack reports its own
+    discharge - so a room's ΔT speaks for the racks that hold servers. The
+    payload says how many that is, beside how many intake sensors the room
+    has, so a reader can see when the two legs describe different parts of
+    the floor.
+    """
+    if room_id is None and rack_id is None:
+        raise ValueError("ΔT is drawn per room or per rack, not across halls")
+    start, end, width, days = _trend_window(days=days, bucket=bucket,
+                                            since=since, until=until)
+    forced = SOURCE_METRIC.get(source, "") if source != "auto" else ""
+    src = "5m" if bucket == "hour" and end - start <= _FINE_SOURCE_UP_TO else "1h"
+
+    async def read(roll: str, t0: datetime, t1: datetime) -> list[dict[str, Any]]:
+        return await repo.thermal_delta_trend(
+            session, start=t0, end=t1, bucket=bucket, source=roll,
+            force=forced, room_id=room_id, rack_id=rack_id)
+
+    rows = await read(src, start, end)
+    by = {r["b"]: r for r in rows}
+    if src == "1h" and bucket == "hour":
+        for r in await read("5m", max(start, end - _TAIL_FROM_FINE), end):
+            by.setdefault(r["b"], r)
+    if bucket == "hour":
+        for r in await read("raw", max(start, end - _RAW_TAIL), end):
+            by[r["b"]] = r
+
+    def deg(v: Any) -> float | None:
+        return None if v is None else round(float(v), 1)
+
+    points = []
+    t = start
+    while t < end:
+        r = by.get(t)
+        intake = None if r is None else deg(r["intake_c"])
+        exhaust = None if r is None else deg(r["exhaust_c"])
+        points.append({
+            "t": t,
+            "intake_c": intake,
+            "exhaust_c": exhaust,
+            # A difference, not a temperature: it exists only where both legs
+            # reported. An hour with intake and no exhaust is drawn as a gap
+            # in the ΔT line rather than as a rack that stopped heating.
+            "delta_k": (None if intake is None or exhaust is None
+                        else round(exhaust - intake, 1)),
+            "intake_sensors": int(r["intake_sensors"]) if r is not None else 0,
+            "exhaust_sensors": int(r["exhaust_sensors"]) if r is not None else 0,
+            "racks": int(r["racks"]) if r is not None else 0,
+        })
+        t += width
+    deltas = [p["delta_k"] for p in points if p["delta_k"] is not None]
+    return {
+        "days": days,
+        "bucket": bucket,
+        "source": src,
+        "intake_source": source,
+        "since": start,
+        "until": end,
+        "room_id": room_id,
+        "rack_id": rack_id,
+        "points": points,
+        "buckets_with_data": len(deltas),
+        "intake_sensors": max((p["intake_sensors"] for p in points), default=0),
+        "exhaust_sensors": max((p["exhaust_sensors"] for p in points), default=0),
+        # How many racks the exhaust leg speaks for. Lower than the room's
+        # rack count wherever a rack holds no servers, which is the honest
+        # answer and not a gap to be filled.
+        "racks": max((p["racks"] for p in points), default=0),
+        "delta_k": round(sum(deltas) / len(deltas), 1) if deltas else None,
+    }
+
+
 # ------------------------------------------------------------------- room view
 
 

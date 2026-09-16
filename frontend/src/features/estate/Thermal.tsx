@@ -11,7 +11,8 @@ import { Tip } from '../../components/HoverTip';
 import { downloadCsv, stampedName } from '../../lib/csv';
 import { RoomDrawer } from '../home/RoomDrawer';
 import { useEstateTable } from './useEstateTable';
-import { ThermalCompliance, ThermalTrend, useTrendRange } from './ThermalTrend';
+import { ThermalCompliance, ThermalDelta, ThermalTrend,
+         useTrendRange } from './ThermalTrend';
 import { RoomCooling } from './RoomCooling';
 import { RoomLiquid } from './RoomLiquid';
 import { Plant, usePlant, verdictLabel, verdictTone } from './Plant';
@@ -890,6 +891,13 @@ export function Thermal() {
             <ThermalTrend unit={unit} source={source} scope={chartScope} range={trendRange} />
             <ThermalCompliance unit={unit} source={source} scope={chartScope}
                                range={trendRange} />
+            {/* The airflow question, which the two above cannot answer: a
+                rack breathing 23 C is the same reading whether it discharges
+                31 C or 26 C, and only the second is bypass. Room or rack
+                scope; at estate or site it says why instead of drawing a
+                mean of halls. */}
+            <ThermalDelta unit={unit} source={source} scope={chartScope}
+                          range={trendRange} />
           </>
         );
       })()}

@@ -637,6 +637,104 @@ async def thermal_compliance_trend(session: AsyncSession, *, start: datetime,
     return [dict(r) for r in rows]
 
 
+async def thermal_delta_trend(session: AsyncSession, *, start: datetime,
+                             end: datetime, bucket: str, source: str,
+                             force: str = "", room_id: str | None = None,
+                             rack_id: str | None = None) -> list[dict[str, Any]]:
+    """Intake, exhaust and the gap between them per bucket, in ONE room or rack.
+
+    The table's ΔT column over time. Intake is the page's probe-first rack
+    source; exhaust is `exhaust_temperature`, which only servers report -
+    nothing else in a rack has a sensor in its own discharge. ΔT is the
+    difference of the two means, exactly as the table takes it, so the line
+    and the column cannot disagree.
+
+    What it is for: ΔT is the only airflow diagnosis on this page that intake
+    temperature structurally cannot make. A rack breathing 23 C and
+    discharging 31 C is moving its heat; the same rack discharging 26 C at
+    the same intake is being flushed with air that never crossed a server -
+    bypass - and the cooling plant is paying fan power to move it. Rising ΔT
+    at flat intake is containment working; falling ΔT at flat intake is
+    containment leaking. Both look identical in an intake reading.
+
+    ROOM OR RACK ONLY, enforced by the service. A mean over halls describes
+    no air path that exists: two rooms with opposite problems average to a
+    healthy number, and the estate has no single supply-to-return path to
+    take a difference along.
+
+    Per SENSOR on both legs, weighted once each, the same as everything else
+    on this page - and the same as the table, whose rooms fold from their
+    racks' sensor sums rather than from rack averages. Racks with no server
+    in them contribute intake and no exhaust; they are counted separately so
+    a caption can say how much of the room the ΔT speaks for.
+    """
+    table = _TREND_SOURCE[source]
+    width = _TREND_WIDTH[bucket]
+    if source == "raw":
+        stamp, value, weight = "t.ts", "t.value", "1"
+    else:
+        stamp, value, weight = "t.bucket", "t.avg_value", "t.sample_count"
+    scope = ""
+    params: dict[str, Any] = {"t0": start, "t1": end, "width": width,
+                              "force": force}
+    if rack_id is not None:
+        scope = "AND d.rack_id = CAST(:rack AS uuid)"
+        params["rack"] = rack_id
+    else:
+        scope = "AND rr.room_id = CAST(:room AS uuid)"
+        params["room"] = room_id
+    rows = (await session.execute(text(f"""
+        WITH s AS (
+            SELECT d.rack_id, t.device_id, t.instance, m.key,
+                   time_bucket(:width, {stamp}) AS b,
+                   {value} AS value, {weight} AS weight
+            FROM {table} t
+            JOIN metric m    ON m.id = t.metric_id
+            JOIN device d    ON d.id = t.device_id
+                            AND d.rack_id IS NOT NULL
+                            AND d.lifecycle <> 'decommissioned'
+            JOIN rack r      ON r.id  = d.rack_id
+            JOIN rack_row rr ON rr.id = r.row_id
+            WHERE m.key IN ('inlet_temperature', 'ambient_temperature',
+                            'exhaust_temperature')
+              AND {stamp} >= :t0 AND {stamp} < :t1
+              {scope}
+        ),
+        -- Which intake source each rack is pinned to, decided over the whole
+        -- window as the table and the other trends decide it. The exhaust leg
+        -- takes no part in the decision.
+        src AS (
+            SELECT rack_id, bool_or(key = 'ambient_temperature') AS has_probe
+            FROM s WHERE key <> 'exhaust_temperature' GROUP BY rack_id
+        ),
+        -- Each sensor's own mean for its own bucket, sample-weighted so a
+        -- rollup row standing for twelve readings counts as twelve.
+        per_sensor AS (
+            SELECT s.b, s.rack_id, s.device_id, s.instance,
+                   CASE WHEN s.key = 'exhaust_temperature'
+                        THEN 'exhaust' ELSE 'intake' END AS leg,
+                   sum(s.value * s.weight) / NULLIF(sum(s.weight), 0) AS value
+            FROM s LEFT JOIN src USING (rack_id)
+            WHERE s.key = 'exhaust_temperature'
+               OR s.key = CASE
+                      WHEN :force <> '' THEN :force
+                      WHEN src.has_probe THEN 'ambient_temperature'
+                      ELSE 'inlet_temperature' END
+            GROUP BY s.b, s.rack_id, s.device_id, s.instance, leg
+        )
+        SELECT b,
+               avg(value) FILTER (WHERE leg = 'intake')   AS intake_c,
+               avg(value) FILTER (WHERE leg = 'exhaust')  AS exhaust_c,
+               count(*)   FILTER (WHERE leg = 'intake')   AS intake_sensors,
+               count(*)   FILTER (WHERE leg = 'exhaust')  AS exhaust_sensors,
+               count(DISTINCT rack_id) FILTER (WHERE leg = 'exhaust') AS racks
+        FROM per_sensor
+        GROUP BY b
+        ORDER BY b
+    """), params)).mappings().all()
+    return [dict(r) for r in rows]
+
+
 #: How far back a NOW reading may have come from.
 #:
 #: One poll interval is not enough: a rack probe is polled every two to four
