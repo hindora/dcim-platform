@@ -240,8 +240,12 @@ function ComplianceColumns({ data, said, band, unit }: {
  *  either chart alone.
  *
  *  Returns what a panel needs to ask its question (`days`, `bucket`, the
- *  picked window) and the controls themselves, which the INTAKE panel
- *  renders and the compliance panel does not.
+ *  picked window) and the controls, which BOTH panels render. Two renderings
+ *  of one state, not two states: 7D clicked on either moves both, and the
+ *  cells cannot show different windows because there is only one. A panel
+ *  without its own control looked broken when read on its own - and a
+ *  maximized chart, which is read on its own by definition, had no way to
+ *  change its range at all.
  */
 export function useTrendRange() {
   const [range, setRange] = useState<Range>(RANGES[1]);
@@ -397,11 +401,11 @@ export function ThermalTrend({ scope, unit, source = 'auto', range }: {
 
 /** The same window, read as time in band rather than as temperature.
  *
- *  No range control of its own: the panel above owns the window for both, so
- *  this one is always drawn over exactly the hours the line above it is
- *  drawn over. Its caption still names the window, because a maximized chart
- *  is read on its own and a chart that does not say what it covers says
- *  nothing.
+ *  It wears the range control the panel above wears, driving the same state,
+ *  so the two are always drawn over exactly the same hours however the
+ *  reader gets there. Its caption names the window too, because a maximized
+ *  chart is read on its own and a chart that does not say what it covers
+ *  says nothing.
  */
 export function ThermalCompliance({ scope, unit, source = 'auto', range }: {
   scope?: ThermalTrendScope;
@@ -439,7 +443,8 @@ export function ThermalCompliance({ scope, unit, source = 'auto', range }: {
   const drawable = !error && data && !(range.custom && !range.windowOk);
 
   return (
-    <TrendPanel title={`Time in band ${where}`} caption={caption}>
+    <TrendPanel title={`Time in band ${where}`} caption={caption}
+                controls={range.picker} dates={range.dates}>
       {drawable && data
         ? <ComplianceColumns data={data} said={range.said} band={data.band} unit={unit} />
         : null}

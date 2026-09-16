@@ -474,7 +474,7 @@ async def thermal_trend(session: AsyncSession, *, start: datetime, end: datetime
         params["site"] = datacenter_id
     rows = (await session.execute(text(f"""
         WITH s AS (
-            SELECT d.rack_id, t.device_id, m.key,
+            SELECT d.rack_id, t.device_id, t.instance, m.key,
                    time_bucket(:width, {stamp}) AS b,
                    {mean} AS avg_value, {peak} AS max_value,
                    {weight} AS sample_count
@@ -499,7 +499,8 @@ async def thermal_trend(session: AsyncSession, *, start: datetime, end: datetime
         -- got a chart still drawn the automatic way, which is two different
         -- measurements of one estate on one screen with nothing saying so.
         chosen AS (
-            SELECT s.b, s.device_id, s.avg_value, s.max_value, s.sample_count
+            SELECT s.b, s.device_id, s.instance, s.avg_value, s.max_value,
+                   s.sample_count
             FROM s JOIN src USING (rack_id)
             WHERE s.key = CASE
                       WHEN :force <> '' THEN :force
@@ -510,7 +511,12 @@ async def thermal_trend(session: AsyncSession, *, start: datetime, end: datetime
                sum(avg_value * sample_count) / NULLIF(sum(sample_count), 0) AS avg_c,
                percentile_cont(0.9) WITHIN GROUP (ORDER BY avg_value)       AS p90_c,
                max(max_value)                                               AS max_c,
-               count(DISTINCT device_id)                                    AS sensors
+               -- A sensor is (device, instance), which is what the table
+               -- and the compliance trend both weight by. Counting devices
+               -- undercounted every rack whose probe reports two instances,
+               -- and the two charts sat side by side saying 150 and 154 of
+               -- one population.
+               count(DISTINCT (device_id, instance))                         AS sensors
         FROM chosen
         GROUP BY b
         ORDER BY b

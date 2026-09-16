@@ -212,9 +212,9 @@ export function Thermal() {
   const [drawerRoom, setDrawerRoom] = useState<{ id: string; name: string } | null>(null);
   const [drill, setDrill] = useState<{ kind: 'site' | 'room'; id: string; label: string } | null>(null);
   // ONE window for both chart panels below. Held here rather than in either
-  // of them: a range control per panel lets the two drift, and a temperature
-  // over this week beside a compliance figure over last week is a worse page
-  // than either chart alone.
+  // of them: separate state per panel would let the two drift, and a
+  // temperature over this week beside a compliance figure over last week is
+  // a worse page than either chart alone. Both panels render its control.
   const trendRange = useTrendRange();
   const navigate = useNavigate();
 
@@ -882,8 +882,9 @@ export function Thermal() {
             ? { kind: 'site' as const, id: t.selected.id, label: t.selected.name }
             : undefined;
         // Temperature and time in band are read against each other, so both
-        // are on the page rather than one behind a toggle - over ONE window,
-        // whose control lives on the panel above.
+        // are on the page rather than one behind a toggle - over ONE window.
+        // Each panel wears the range control; they are two renderings of the
+        // same state, so either one moves both.
         return (
           <>
             <ThermalTrend unit={unit} source={source} scope={chartScope} range={trendRange} />
