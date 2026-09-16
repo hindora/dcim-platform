@@ -164,10 +164,10 @@ def _attach_envelope(racks: list[dict[str, Any]], rooms: list[dict[str, Any]],
     def _emit(row: dict[str, Any], acc: dict[str, float]) -> None:
         sensors = acc.get("sensors", 0.0)
         row["envelope"] = {
-            "temp_pct": _pct(acc.get("temp_sum"), sensors),
-            "moisture_pct": _pct(acc.get("moist_sum"), acc.get("moisture_sensors", 0.0)),
-            "rate_pct": _pct(acc.get("rate_sum"), acc.get("rate_sensors", 0.0)),
-            "envelope_pct": _pct(acc.get("env_sum"), sensors),
+            "temp_pct": _leg_pct(acc.get("temp_sum"), sensors),
+            "moisture_pct": _leg_pct(acc.get("moist_sum"), acc.get("moisture_sensors", 0.0)),
+            "rate_pct": _leg_pct(acc.get("rate_sum"), acc.get("rate_sensors", 0.0)),
+            "envelope_pct": _leg_pct(acc.get("env_sum"), sensors),
             "sensors": int(sensors),
             "moisture_sensors": int(acc.get("moisture_sensors", 0.0)),
             "rate_sensors": int(acc.get("rate_sensors", 0.0)),
@@ -225,9 +225,14 @@ def _attach_envelope(racks: list[dict[str, Any]], rooms: list[dict[str, Any]],
     _emit(totals, total_acc)
 
 
-def _pct(total: float | None, n: float) -> float | None:
-    """A share as a percentage, or None when nothing measured it. Zero sensors
-    is not zero compliance."""
+def _leg_pct(total: float | None, n: float) -> float | None:
+    """A leg's share as a percentage, or None when nothing measured it. Zero
+    sensors is not zero compliance.
+
+    Named apart from `_pct` above deliberately: this file already had one, and
+    a second definition of that name silently replaced it for every caller in
+    the module. They happen to agree, which is exactly why it would not have
+    been noticed."""
     if total is None or not n:
         return None
     return round(100.0 * float(total) / float(n), 1)
