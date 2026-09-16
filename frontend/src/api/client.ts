@@ -1910,7 +1910,11 @@ export interface ThermalPage {
   };
   totals: {
     avg_c: number | null; p90_c: number | null; max_c: number | null;
+    /** Dry bulb alone, kept because the CSV and the delta columns are written
+     *  in it. The page's headline is `envelope.envelope_pct`. */
     compliance_pct: number | null; below_pct: number | null;
+    /** The full envelope at estate level - the same measure every row carries. */
+    envelope: ThermalRow['envelope'];
     distribution: ThermalSpread | null;
     samples: number; rooms_reporting: number; rooms: number;
     facility_rooms: number; alarms_open: number; alarms_in_racks: number;

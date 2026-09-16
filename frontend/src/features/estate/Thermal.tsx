@@ -613,6 +613,12 @@ export function Thermal() {
   }
 
   const totals = data?.totals;
+  // ONE definition of "in band" on this page. The headline, the drilled-in
+  // header and the table column are the same measure - the full ASHRAE
+  // envelope - or a reader compares two numbers that are not the same
+  // question and concludes the page is broken. It was: the KPI held 100 %
+  // while the rows under it reported a 91.7 % hall.
+  const envelopeTotal = totals?.envelope?.envelope_pct ?? totals?.compliance_pct ?? null;
 
   // The chart's scope comes from the ROW the reader drilled into, and a row
   // only exists once the payload has arrived. Rendering before then asked for
@@ -725,8 +731,14 @@ export function Thermal() {
           { caption: 'Max', value: conv(totals?.max_c ?? null, unit), unit: u,
             tone: (totals?.max_c ?? 0) > allowable ? 'critical'
               : (totals?.max_c ?? 0) > recommended ? 'warn' : undefined },
-          { caption: 'In band', value: totals?.compliance_pct ?? null, unit: '%',
-            tone: (totals?.compliance_pct ?? 100) < 95 ? 'warn' : 'ok' },
+          // The ENVELOPE, the same measure the table's In band column carries.
+          // It read `compliance_pct` - dry bulb alone - while the column below
+          // it had moved to all three legs, so one screen showed two different
+          // numbers under one word and the headline sat at 100 % through a
+          // humidity breach the rows underneath were reporting at 91.7 %.
+          { caption: 'In band', value: envelopeTotal, unit: '%',
+            tone: (envelopeTotal ?? 100) < 95 ? 'warn' : 'ok',
+            why: 'no rack intake sensor reported in this window' },
           { caption: 'RH', value: totals?.rh_avg ?? null, unit: '%',
             tone: (totals?.rh_max ?? 0) > rhHigh ? 'warn' : undefined,
             why: 'no rack humidity probe reported in this window' },
@@ -856,7 +868,8 @@ export function Thermal() {
                 <span className="pair"><span className="cap">Max</span>
                   <span className="v"><Num value={conv(head.max_c, unit)} /> {u}</span></span>
                 <span className="pair"><span className="cap">In band</span>
-                  <span className="v"><Num value={head.compliance_pct} unit="%" /></span></span>
+                  <span className="v"><Num value={head.envelope?.envelope_pct
+                                               ?? head.compliance_pct} unit="%" /></span></span>
                 <span className="pair"><span className="cap">Below</span>
                   <span className="v"><Num value={head.below_pct} unit="%" /></span></span>
                 <span className="pair"><span className="cap">RH</span>
