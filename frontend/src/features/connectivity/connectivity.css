@@ -32,7 +32,22 @@
 .conn-total { float: right; color: var(--text-faint); font-variant-numeric: tabular-nums; }
 .conn-total .unit { text-transform: lowercase; letter-spacing: 0; }
 
-.conn-layerbar { display: flex; }
+.conn-layerbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.conn-layerbar .spacer { flex: 1; }
+
+/* The diagram and the drawer side by side. The drawer is a fixed column: it
+   holds a chain of names and must not shrink to the point where a device name
+   wraps twice, and the diagram scrolls internally anyway. */
+.conn-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 12px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .conn-body { grid-template-columns: minmax(0, 1fr); }
+}
 
 .conn-filters {
   display: flex;
@@ -70,6 +85,77 @@
 }
 
 .conn-selected strong { font-family: var(--mono); }
+
+/* --- the drawer ---------------------------------------------------------- */
+
+.conn-drawer {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  padding: 12px 14px;
+  font-size: 0.82rem;
+  position: sticky;
+  top: 12px;
+  max-height: 80vh;
+  overflow: auto;
+}
+
+.conn-drawer > header { display: flex; align-items: start; gap: 8px; }
+.conn-drawer > header > div { min-width: 0; flex: 1; }
+.conn-drawer h3 {
+  margin: 0; font-size: 0.86rem; letter-spacing: 0.03em;
+  font-family: var(--mono); color: var(--text); overflow-wrap: anywhere;
+}
+.conn-drawer h4 {
+  margin: 14px 0 6px; font-size: 0.7rem; letter-spacing: .09em;
+  text-transform: uppercase; color: var(--text-faint); font-weight: 700;
+}
+.conn-drawer .asset-max { align-self: start; }
+.conn-drawer .k { font-size: 0.7rem; color: var(--text-faint); margin: 2px 0 0; }
+
+.conn-facts {
+  display: grid; grid-template-columns: auto 1fr; gap: 3px 10px;
+  margin: 12px 0 0; font-size: 0.78rem;
+}
+.conn-facts dt { color: var(--text-faint); }
+.conn-facts dd { margin: 0; font-variant-numeric: tabular-nums; }
+
+.conn-chain { margin-bottom: 12px; }
+.conn-chain-head { display: flex; align-items: center; gap: 8px; }
+.conn-chain ol {
+  list-style: none; margin: 6px 0 4px; padding: 0 0 0 10px;
+  border-left: 1px solid var(--border-strong);
+}
+.conn-chain li { padding: 1px 0; font-size: 0.76rem; }
+.conn-chain li.is-self { font-family: var(--mono); color: var(--text-muted); }
+
+.conn-drawer-actions {
+  display: flex; align-items: center; gap: 12px;
+  margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border);
+}
+
+/* The side badge. Position and pattern carry A/B on the diagram; in a table
+   there is no position to use, so the letter itself is the channel and the
+   tint is only a reinforcement. */
+.conn-side {
+  display: inline-block; min-width: 16px; text-align: center;
+  font-weight: 700; font-size: 0.72rem;
+  border: 1px solid var(--border-strong); border-radius: 3px; padding: 0 3px;
+}
+.conn-side.side-a { border-color: var(--series-1); color: var(--series-1); }
+.conn-side.side-b { border-color: var(--series-2); color: var(--series-2);
+                    border-style: dashed; }
+
+/* --- the trace table ----------------------------------------------------- */
+
+.conn-trace-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+}
+.conn-trace td { vertical-align: top; padding: 6px 12px; }
+.conn-trace .k { font-size: 0.68rem; color: var(--text-faint); }
+.conn-trace .conn-alt { font-style: italic; }
+/* The last hop is the cord someone would actually pull. */
+.conn-trace tr.is-cord td { border-bottom: 1px solid var(--border-strong); }
 
 /* --- the diagram --------------------------------------------------------- */
 

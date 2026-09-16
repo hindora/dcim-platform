@@ -125,7 +125,13 @@ export function Diagram({ placement, edges, layer, onSelect, selected }: {
                 <StatusGlyph status={p.node.status} severity={p.node.max_severity} />
               </g>
               <text x={10} y={12} className="topo-name">{p.node.name}</text>
-              <text x={10} y={23} className="topo-type">{p.node.device_type}</text>
+              <text x={10} y={23} className="topo-type">
+                {p.node.rolled_up > 0
+                  ? `${p.node.rolled_up} × ${p.node.device_type}`
+                  : p.node.device_type}
+                {p.node.rolled_up > 0 && p.node.offline_count > 0
+                  && ` · ${p.node.offline_count} off`}
+              </text>
             </g>
           ))}
         </svg>
@@ -161,6 +167,13 @@ export function Diagram({ placement, edges, layer, onSelect, selected }: {
 
 /** Reads as a sentence, because a screen reader announces it as one. */
 function nodeLabel(n: TopologyNode): string {
+  if (n.rolled_up > 0) {
+    const bits = [`${n.name}, ${n.rolled_up} ${n.device_type.replace(/_/g, ' ')}s`,
+                  n.status.toLowerCase()];
+    if (n.offline_count) bits.push(`${n.offline_count} offline`);
+    if (n.metrics.power_w != null) bits.push(`${Math.round(n.metrics.power_w)} watts`);
+    return bits.join(' · ');
+  }
   const parts = [n.name, n.device_type.replace(/_/g, ' '), n.status.toLowerCase()];
   if (n.max_severity && n.max_severity !== 'CLEAR') {
     parts.push(`${n.max_severity.toLowerCase()} alarm`);

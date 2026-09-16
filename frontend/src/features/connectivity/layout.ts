@@ -61,8 +61,12 @@ export function collapseEdges(edges: TopologyEdge[]): CollapsedEdge[] {
       acc = { source: e.source, target: e.target, count: 0, downCount: 0, sides: [] };
       by.set(key, acc);
     }
-    acc.count += 1;
-    if (e.oper_state === 'down') acc.downCount += 1;
+    // `count` is 1 on a plain edge and the conductor count on one the server
+    // already merged under a roll-up. Adding 1 per row would have reported a
+    // rack's forty cords as one.
+    acc.count += e.count ?? 1;
+    acc.downCount += e.down_count
+      || (e.oper_state === 'down' ? (e.count ?? 1) : 0);
     if (e.redundancy_side && !acc.sides.includes(e.redundancy_side)) {
       acc.sides.push(e.redundancy_side);
     }

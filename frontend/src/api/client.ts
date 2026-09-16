@@ -971,10 +971,17 @@ export interface TopologyNode {
   depth: number;
   location: {
     datacenter_code?: string | null;
+    room_id?: string | null;
     room_name?: string | null;
+    rack_id?: string | null;
     rack_name?: string | null;
   };
   metrics: Record<string, number>;
+  /** How many real devices this node stands for. 0 means it IS one device;
+   *  higher means a rack's worth of leaf equipment collapsed into one box and
+   *  the id is synthetic - it does not resolve to a device page. */
+  rolled_up: number;
+  offline_count: number;
 }
 
 export interface TopologyEdge {
@@ -982,6 +989,9 @@ export interface TopologyEdge {
   source: string;
   target: string;
   layer: string;
+  /** Conductors behind this line. 1 unless a roll-up merged them. */
+  count: number;
+  down_count: number;
   link_type?: string | null;
   redundancy_side?: string | null;
   oper_state: string;
@@ -996,8 +1006,67 @@ export interface TopologyGraph {
   nodes: TopologyNode[];
   edges: TopologyEdge[];
   truncated: boolean;
+  /** What was RETURNED - the boxes and lines to draw. */
   node_count: number;
   edge_count: number;
+  /** What those stand for. Equal to the pair above with rollup=none; under a
+   *  roll-up they are the real devices and conductors behind them. */
+  device_count: number;
+  conductor_count: number;
+}
+
+export interface TraceTermination {
+  type: string;
+  id?: string | null;
+  label?: string | null;
+  connector?: string | null;
+  rated_amps?: number | null;
+  phase?: string | null;
+  branch?: string | null;
+  rated_watts?: number | null;
+  speed_bps?: number | null;
+}
+
+export interface TraceHop {
+  connection_id: string;
+  up: ImpactNode;
+  down: ImpactNode;
+  link_type?: string | null;
+  redundancy_side?: string | null;
+  oper_state: string;
+  up_termination: TraceTermination;
+  down_termination: TraceTermination;
+  /** Other devices feeding `down` here. The walk took one and names the rest
+   *  rather than multiplying the chain out once per combination. */
+  alternates: ImpactNode[];
+}
+
+export interface TracePath {
+  side?: string | null;
+  /** 'complete' reached a device nothing feeds; 'incomplete' closed on itself
+   *  or hit the hop bound first - a fact about the recorded graph, not the
+   *  wiring. */
+  verdict: string;
+  hops: TraceHop[];
+}
+
+export interface TraceNeighbour {
+  device: ImpactNode;
+  redundancy_side?: string | null;
+  oper_state: string;
+  termination: TraceTermination;
+}
+
+export interface Trace {
+  device: ImpactNode;
+  layer: string;
+  /** One per CORD, not one per route. */
+  paths: TracePath[];
+  truncated: boolean;
+  asymmetric: boolean;
+  is_source: boolean;
+  downstream: TraceNeighbour[];
+  downstream_count: number;
 }
 
 export interface ImpactNode {
@@ -2502,9 +2571,16 @@ export const api = {
   interfaces: (deviceId: string) =>
     request<NetworkInterface[]>(`/devices/${deviceId}/interfaces`),
 
-  topology: (layer: string, scope: string, depth: number) =>
+  topology: (layer: string, scope: string, depth: number,
+             rollup: 'none' | 'rack' = 'none') =>
     request<TopologyGraph>(
-      `/topology?layer=${encodeURIComponent(layer)}&scope=${encodeURIComponent(scope)}&depth=${depth}`),
+      `/topology?layer=${encodeURIComponent(layer)}&scope=${encodeURIComponent(scope)}`
+      + `&depth=${depth}&rollup=${rollup}`),
+
+  /** The chain from a device back to its source, hop by hop, source first. */
+  trace: (deviceId: string, layer: string) =>
+    request<Trace>(`/topology/trace/${encodeURIComponent(deviceId)}`
+      + `?layer=${encodeURIComponent(layer)}`),
 
   /** What breaks if this device is removed - the question asked before every
    *  maintenance window. The server has answered it since the topology service

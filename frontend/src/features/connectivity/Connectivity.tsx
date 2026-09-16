@@ -1,11 +1,12 @@
 import { useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
 import { useMemo, useRef, useState } from 'react';
 import { api, type RoomSummary, type TopologyGraph, type TopologyNode }
   from '../../api/client';
 import { Seg } from '../../components/estate';
 import { MaxGlyph, MaxModal } from '../../components/MaxModal';
 import { Diagram } from './Diagram';
+import { Drawer } from './Drawer';
+import { TraceTable } from './TraceTable';
 import { collapseEdges, layout, structureKey } from './layout';
 import './connectivity.css';
 
@@ -34,6 +35,13 @@ const LAYERS = [
 
 type LayerKey = typeof LAYERS[number]['key'];
 
+const VIEWS = [
+  { key: 'diagram', label: 'DIAGRAM' },
+  { key: 'trace', label: 'TRACE TABLE' },
+] as const;
+
+type ViewKey = typeof VIEWS[number]['key'];
+
 /** Depth in words. "1" means nothing to someone who has not read the API spec,
  *  and the difference between 0 and 1 on the power layer is whether the
  *  switchgear feeding the room is in the picture at all. */
@@ -43,10 +51,17 @@ const DEPTHS = [
   { value: 2, label: 'Two hops out' },
 ];
 
+const ROLLUPS = [
+  { value: 'rack', label: 'Group rack equipment' },
+  { value: 'none', label: 'Every device separately' },
+] as const;
+
 export function Connectivity() {
   const [layer, setLayer] = useState<LayerKey>('power');
+  const [view, setView] = useState<ViewKey>('diagram');
   const [roomId, setRoomId] = useState('');
   const [depth, setDepth] = useState(1);
+  const [rollup, setRollup] = useState<'none' | 'rack'>('rack');
   const [selected, setSelected] = useState<TopologyNode | null>(null);
   const [maxOpen, setMaxOpen] = useState(false);
 
@@ -58,8 +73,8 @@ export function Connectivity() {
   const scope = selectedRoom ? `room:${selectedRoom}` : '';
 
   const graph = useQuery<TopologyGraph>({
-    queryKey: ['topology', layer, scope, depth],
-    queryFn: () => api.topology(layer, scope, depth),
+    queryKey: ['topology', layer, scope, depth, rollup],
+    queryFn: () => api.topology(layer, scope, depth, rollup),
     enabled: Boolean(scope),
     // Live state. The layout below is memoised on structure, so this refresh
     // repaints statuses without moving a single node.
@@ -87,6 +102,13 @@ export function Connectivity() {
 
   const title = `${LAYERS.find((l) => l.key === layer)?.label ?? layer} TOPOLOGY`;
 
+  /** Selecting a layer or a scope invalidates the selection: the same device
+   *  may not be on the next layer at all, and a drawer describing a chain that
+   *  is no longer drawn is worse than an empty one. */
+  function reselect<T>(set: (v: T) => void) {
+    return (v: T) => { set(v); setSelected(null); };
+  }
+
   const diagram = graph.data ? (
     <Diagram placement={placement} edges={edges} layer={layer}
              selected={selected?.id ?? null}
@@ -107,14 +129,16 @@ export function Connectivity() {
           right. Every other use of it sits in a title row that already
           constrains it. */}
       <div className="conn-layerbar">
-        <Seg value={layer} onChange={(v) => { setLayer(v); setSelected(null); }}
-             label="Layer"
+        <Seg value={layer} onChange={reselect(setLayer)} label="Layer"
              options={LAYERS.map((l) => ({ key: l.key, label: l.label }))} />
+        <span className="spacer" />
+        <Seg value={view} onChange={setView} label="View"
+             options={VIEWS.map((v) => ({ key: v.key, label: v.label }))} />
       </div>
 
       <div className="conn-filters">
         <select value={selectedRoom} aria-label="Room"
-                onChange={(e) => { setRoomId(e.target.value); setSelected(null); }}>
+                onChange={(e) => reselect(setRoomId)(e.target.value)}>
           {rooms.data?.items.map((r) => (
             <option key={r.id} value={r.id}>
               {r.datacenter_code ? `${r.datacenter_code} · ` : ''}{r.name}
@@ -127,6 +151,12 @@ export function Connectivity() {
             <option key={d.value} value={d.value}>{d.label}</option>
           ))}
         </select>
+        <select value={rollup} aria-label="Grouping"
+                onChange={(e) => reselect(setRollup)(e.target.value as 'none' | 'rack')}>
+          {ROLLUPS.map((r) => (
+            <option key={r.value} value={r.value}>{r.label}</option>
+          ))}
+        </select>
       </div>
 
       {graph.isError && (
@@ -136,45 +166,58 @@ export function Connectivity() {
         </p>
       )}
 
-      {graph.data && (
+      {view === 'trace' && (
         <div className="conn-panel">
-          <h3>
-            {title}
-            <span className="conn-total">
-              {graph.data.node_count}<span className="unit"> devices</span>
-            </span>
-          </h3>
-          <button type="button" className="asset-max" aria-label={`Maximize ${title}`}
-                  onClick={() => setMaxOpen(true)}>
-            <MaxGlyph />
-          </button>
+          <h3>TRACE TABLE</h3>
+          {selected && selected.rolled_up === 0 ? (
+            <TraceTable deviceId={selected.id} deviceName={selected.name}
+                        layer={layer} />
+          ) : (
+            <p className="muted">
+              {selected
+                ? `${selected.name} stands for ${selected.rolled_up} devices. `
+                  + 'Group rack equipment off, or pick one of them, to trace a chain.'
+                : 'Pick a device on the diagram to trace its chain to source.'}
+            </p>
+          )}
+        </div>
+      )}
 
-          {diagram}
+      {view === 'diagram' && graph.data && (
+        <div className="conn-body">
+          <div className="conn-panel">
+            <h3>
+              {title}
+              <span className="conn-total">
+                {graph.data.device_count}<span className="unit"> devices</span>
+              </span>
+            </h3>
+            <button type="button" className="asset-max" aria-label={`Maximize ${title}`}
+                    onClick={() => setMaxOpen(true)}>
+              <MaxGlyph />
+            </button>
 
-          <p className="muted conn-caption">
-            {graph.data.node_count} devices · {edges.length} connections
-            {graph.data.edge_count !== edges.length && (
-              <> (collapsed from {graph.data.edge_count} conductors)</>
-            )}
-            {graph.data.truncated && (
-              <span className="warn"> · truncated — narrow the scope</span>
-            )}
-            {depth > 0 && ' · faded nodes were pulled in from outside the room'}
-          </p>
+            {diagram}
+
+            <p className="muted conn-caption">
+              {graph.data.node_count} boxes
+              {graph.data.device_count !== graph.data.node_count
+                && <> for {graph.data.device_count} devices</>}
+              {' · '}
+              {edges.length} lines
+              {graph.data.conductor_count !== edges.length
+                && <> for {graph.data.conductor_count} conductors</>}
+              {graph.data.truncated && (
+                <span className="warn"> · truncated — narrow the scope</span>
+              )}
+              {depth > 0 && ' · faded nodes were pulled in from outside the room'}
+            </p>
+          </div>
 
           {selected && (
-            <div className="conn-selected">
-              <strong>{selected.name}</strong>
-              <span className="muted">
-                {selected.device_type.replace(/_/g, ' ')} ·{' '}
-                {selected.status.toLowerCase()}
-                {selected.location.rack_name
-                  ? ` · rack ${selected.location.rack_name}`
-                  : selected.location.room_name
-                    ? ` · ${selected.location.room_name}` : ''}
-              </span>
-              <Link to={`/devices/${selected.id}`}>Open device →</Link>
-            </div>
+            <Drawer node={selected} layer={layer}
+                    onFullTrace={() => setView('trace')}
+                    onClose={() => setSelected(null)} />
           )}
         </div>
       )}
