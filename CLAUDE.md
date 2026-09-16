@@ -21,12 +21,24 @@ otherwise copy its CSS values verbatim. Never invent a new chart style.
 
 ### Shared rules
 
-- Colour is tokens only: `var(--accent)` for a single series; `--ok`,
-  `--warn`, `--critical` only when the hue IS the state; `--text-faint`
-  for "absent"; `--border-strong` for "none recorded" or "later". Raw hex
-  appears only in the validated multi-series ramps (`LINE_COLORS`,
-  `PLOT_COLORS`), which are checked with `scripts/validate_palette.js`,
-  never by eye.
+- Colour is tokens only, with NO exception: `var(--accent)` for a single
+  series; `--ok`, `--warn`, `--critical` only when the hue IS the state;
+  `--text-faint` for "absent"; `--border-strong` for "none recorded" or
+  "later". The multi-series ramp is `--series-1..4` per theme, resolved at
+  render by `useChartColors()` in `components/seriesColors.ts` - charts
+  used to hold their own hex array, which is how they stayed on dark-theme
+  values under the light palette. `scripts/validate_palette.js` reads those
+  declarations and fails CI on a pair that collides; it is run by CI and by
+  `npm run validate:palette`. This check is real now. It was cited here for
+  months while the file did not exist, and the ramp it claimed to guarantee
+  shipped `#3b82f6` against `#a855f7` - 0.6 CIEDE2000 apart to a
+  deuteranope, i.e. one colour - in the two busiest slots.
+- Hue is never the only channel. From the third series on, a line is also
+  dashed (`DASHES`), and its legend swatch wears the pattern: charts get
+  read on dim wall panels, in greyscale runbooks and in photographs of
+  screens pasted into tickets. FOUR series is the ramp's limit, and the
+  rules already say to facet past three - no six-hue ramp survives all
+  three dichromacies at a useful distance.
 - One colour per chart unless the hue carries meaning. Never a hue per bar.
 - The axis starts at zero for anything encoded by length (bars, columns).
   Lines may auto-range but must print the range (`lo–hi`) on the axis.

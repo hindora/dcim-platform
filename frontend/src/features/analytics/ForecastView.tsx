@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api, type ForecastResult, type RoomSummary } from '../../api/client';
-import { Plot, PLOT_COLORS, type PlotSeries } from '../../components/Plot';
+import { Plot, type PlotSeries } from '../../components/Plot';
+import { useChartColors } from '../../components/seriesColors';
 
 /** The forecast, and - far more often - the refusal to make one.
  *
@@ -48,6 +49,7 @@ function Refusal({ data }: { data: ForecastResult }) {
 
 export function ForecastView({ room }: { room: RoomSummary }) {
   const [metric, setMetric] = useState('power');
+  const C = useChartColors();
   const [capacity, setCapacity] = useState('');
   const cap = Number(capacity) > 0 ? Number(capacity) : undefined;
 
@@ -70,7 +72,7 @@ export function ForecastView({ room }: { room: RoomSummary }) {
   const projPts: [number, number][] = data.points.map((p) => [p.day, p.value]);
   const series: PlotSeries[] = [];
   if (historyPts.length) {
-    series.push({ label: 'measured', points: historyPts, color: PLOT_COLORS.primary });
+    series.push({ label: 'measured', points: historyPts, color: C.primary });
   }
   if (projPts.length) {
     series.push({
@@ -78,7 +80,7 @@ export function ForecastView({ room }: { room: RoomSummary }) {
       // Joined to the last measured point so the projection starts where the
       // data ends rather than floating a day to the right of it.
       points: lastHistory ? [lastHistory, ...projPts] : projPts,
-      color: PLOT_COLORS.projection,
+      color: C.projection,
       dashed: true,
     });
   }

@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { useChartColors } from './seriesColors';
 
 /** A small SVG plot: lines, an optional uncertainty band, reference levels.
  *
@@ -23,14 +24,10 @@ const PAD_R = 14;
 const PAD_T = 12;
 const PAD_B = 26;
 
-export const PLOT_COLORS = {
-  primary: '#3b82f6',
-  projection: '#a855f7',
-  ok: '#2ea043',
-  warn: '#d29922',
-  critical: '#f85149',
-  muted: '#6e7681',
-};
+/* Colours come from `useChartColors()`, which reads the --series-N and status
+   tokens per theme. They used to be a hex object here, which is how a light
+   theme got the dark theme's status hues and how the ramp's blue and purple
+   came to be indistinguishable to a deuteranope. */
 
 export interface PlotSeries {
   label: string;
@@ -38,6 +35,11 @@ export interface PlotSeries {
   color?: string;
   /** Drawn dashed - used for the projected half of a forecast. */
   dashed?: boolean;
+  /** The stroke pattern that goes with this series' slot, so a chart is
+   *  readable without colour. Supplied by the caller from DASHES, since only
+   *  the caller knows which slot it took. `dashed` wins: a projection is a
+   *  statement about the data, not about which line this is. */
+  dash?: string;
 }
 
 export interface PlotBand {
@@ -93,6 +95,7 @@ export function Plot({
   xTip?: (v: number) => string;
 }) {
   const [at, setAt] = useState<number | null>(null);
+  const C = useChartColors();
   const model = useMemo(() => {
     const xs: number[] = [];
     const ys: number[] = [];
@@ -179,7 +182,7 @@ export function Plot({
   const hoverRows = hover && at !== null
     ? series.flatMap((s) => {
         const p = s.points.find(([x, y]) => x === at && Number.isFinite(y));
-        return p ? [{ label: s.label, value: p[1], color: s.color ?? PLOT_COLORS.primary }] : [];
+        return p ? [{ label: s.label, value: p[1], color: s.color ?? C.primary }] : [];
       })
     : [];
   const tipW = 150;
@@ -214,17 +217,17 @@ export function Plot({
         ))}
 
         {model.bandPath && (
-          <path d={model.bandPath} fill={band?.color ?? PLOT_COLORS.projection}
+          <path d={model.bandPath} fill={band?.color ?? C.projection}
                 fillOpacity={0.16} stroke="none" />
         )}
 
         {refs.map((r) => (
           <g key={r.label}>
             <line x1={PAD_L} x2={width - PAD_R} y1={model.sy(r.value)} y2={model.sy(r.value)}
-                  stroke={r.color ?? PLOT_COLORS.critical} strokeWidth={1}
+                  stroke={r.color ?? C.critical} strokeWidth={1}
                   strokeDasharray="5 4" />
             <text x={width - PAD_R} y={model.sy(r.value) - 4} className="chart-tick-x"
-                  textAnchor="end" fill={r.color ?? PLOT_COLORS.critical}>
+                  textAnchor="end" fill={r.color ?? C.critical}>
               {r.label}
             </text>
           </g>
@@ -233,11 +236,11 @@ export function Plot({
         {model.paths.map((p) => (
           <g key={p.label}>
             <path d={p.d} className="chart-line"
-                  stroke={p.color ?? PLOT_COLORS.primary}
-                  strokeDasharray={p.dashed ? '6 4' : undefined} />
+                  stroke={p.color ?? C.primary}
+                  strokeDasharray={p.dashed ? '6 4' : p.dash} />
             {p.dot && (
               <circle cx={p.dot.x} cy={p.dot.y} r={3}
-                      fill={p.color ?? PLOT_COLORS.primary} />
+                      fill={p.color ?? C.primary} />
             )}
           </g>
         ))}
@@ -282,13 +285,23 @@ export function Plot({
         <div className="legend">
           {series.map((s) => (
             <span key={s.label}>
-              <i style={{ background: s.color ?? PLOT_COLORS.primary }} />
+              {/* A dashed line gets a dashed swatch. A legend that shows only
+                  hue cannot be read in the situation the dash exists for. */}
+              {s.dash || s.dashed ? (
+                <svg className="swatch-line" width={14} height={8} aria-hidden>
+                  <line x1={0} y1={4} x2={14} y2={4} strokeWidth={2}
+                        stroke={s.color ?? C.primary}
+                        strokeDasharray={s.dashed ? '6 4' : s.dash} />
+                </svg>
+              ) : (
+                <i style={{ background: s.color ?? C.primary }} />
+              )}
               {s.label}
             </span>
           ))}
           {band?.label && (
             <span>
-              <i style={{ background: band.color ?? PLOT_COLORS.projection, opacity: 0.35 }} />
+              <i style={{ background: band.color ?? C.projection, opacity: 0.35 }} />
               {band.label}
             </span>
           )}

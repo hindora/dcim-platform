@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { DASHES, useChartColors } from './seriesColors';
 import type { Series } from '../api/client';
 import { metricLabel, unitSymbol } from '../lib/format';
 
@@ -34,9 +35,9 @@ const PAD_B = 24;
  *  Beyond three series identity stops being carryable by hue, so the caller
  *  should facet rather than reach further down this list.
  */
-export const LINE_COLORS = [
-  '#3b82f6', '#db6d28', '#a855f7', '#2ea043', '#22d3ee', '#d29922',
-];
+/* The ramp lives in index.css as --series-N and is resolved at render, so a
+   chart follows the theme and is checked by scripts/validate_palette.js.
+   See components/seriesColors.ts for why hue is not the only channel. */
 
 /** Where a line must be broken rather than drawn through.
  *
@@ -117,6 +118,9 @@ export function TimeChart({ series, unit, bucketMs }: {
 }) {
   /** The time the pointer is nearest, in epoch ms. Null when not hovering. */
   const [at, setAt] = useState<number | null>(null);
+  const chart = useChartColors();
+  const colorOf = (i: number) => chart.series[i % chart.series.length];
+  const dashOf = (i: number) => DASHES[i % DASHES.length];
 
   const model = useMemo(() => {
     const pts = series.flatMap((s) => s.points);
@@ -171,11 +175,11 @@ export function TimeChart({ series, unit, bucketMs }: {
       // and showing its neighbour's would invent one.
       const hit = s.points.find((p) => p[0] === at && Number.isFinite(p[1]));
       return hit
-        ? { label: seriesLabel(s), value: hit[1], color: LINE_COLORS[i % LINE_COLORS.length] }
+        ? { label: seriesLabel(s), value: hit[1], color: colorOf(i) }
         : null;
     }).filter((r): r is { label: string; value: number; color: string } => r !== null);
     return rows.length ? { at, rows } : null;
-  }, [at, model, series]);
+  }, [at, model, series, chart]);
 
   if (!model) return <p className="muted">No data in this window.</p>;
 
@@ -226,7 +230,7 @@ export function TimeChart({ series, unit, bucketMs }: {
         ))}
         {model.paths.map((p, i) => (
           <path key={p.key} d={p.d} className="chart-line"
-                stroke={LINE_COLORS[i % LINE_COLORS.length]} />
+                stroke={colorOf(i)} strokeDasharray={dashOf(i)} />
         ))}
 
         {hover && (
@@ -276,8 +280,13 @@ export function TimeChart({ series, unit, bucketMs }: {
         <ul className="chart-legend">
           {model.paths.map((p, i) => (
             <li key={p.key}>
-              <span className="swatch"
-                    style={{ background: LINE_COLORS[i % LINE_COLORS.length] }} />
+              {/* The swatch wears the line's pattern as well as its colour:
+                  a legend that shows only hue cannot be read in the one
+                  situation the pattern exists for. */}
+              <svg className="swatch-line" width={14} height={8} aria-hidden>
+                <line x1={0} y1={4} x2={14} y2={4} stroke={colorOf(i)}
+                      strokeWidth={2} strokeDasharray={dashOf(i)} />
+              </svg>
               {p.label}
             </li>
           ))}

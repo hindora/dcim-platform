@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { api, type PueResult, type PueSeries, type RoomSummary } from '../../api/client';
-import { Plot, PLOT_COLORS } from '../../components/Plot';
+import { Plot } from '../../components/Plot';
+import { useChartColors } from '../../components/seriesColors';
 
 /** PUE, never as a bare number.
  *
@@ -17,6 +18,7 @@ import { Plot, PLOT_COLORS } from '../../components/Plot';
 
 export function PueView({ room }: { room: RoomSummary }) {
   const dc = room.datacenter_id ?? undefined;
+  const C = useChartColors();
 
   const { data, error, isLoading } = useQuery<PueResult>({
     queryKey: ['pue', dc],
@@ -117,8 +119,8 @@ export function PueView({ room }: { room: RoomSummary }) {
         </p>
       )}
       {pts.length ? (
-        <Plot series={[{ label: 'PUE', points: pts, color: PLOT_COLORS.primary }]}
-              refs={[{ value: 1.0, label: '1.0 — impossible below', color: PLOT_COLORS.critical }]}
+        <Plot series={[{ label: 'PUE', points: pts, color: C.primary }]}
+              refs={[{ value: 1.0, label: '1.0 — impossible below', color: C.critical }]}
               unit="ratio"
               xFormat={xFormat} />
       ) : (

@@ -53,8 +53,8 @@ import { api, type ThermalComplianceTrend as ComplianceData,
 import { Seg } from '../../components/estate';
 import { useHoverTip } from '../../components/HoverTip';
 import { MaxGlyph, MaxModal } from '../../components/MaxModal';
-import { Plot, PLOT_COLORS, type PlotSeries } from '../../components/Plot';
-import { LINE_COLORS } from '../../components/TimeChart';
+import { Plot, type PlotSeries } from '../../components/Plot';
+import { DASHES, useChartColors } from '../../components/seriesColors';
 
 export interface ThermalTrendScope { kind: 'site' | 'room' | 'rack'; id: string; label: string }
 
@@ -92,6 +92,7 @@ function label(ms: number, bucket: 'hour' | 'day'): string {
 
 function TrendPlot({ data, unit }: { data: TrendData; unit: Unit }) {
   const u = unit === 'c' ? '°C' : '°F';
+  const C = useChartColors();
   // The SVG is drawn at the panel's pixel width, not scaled up from a
   // 720px viewBox: scaling scales the tick text with it, and a 10px label
   // at 2.3x reads as a heading. Measured, so the maximized copy and the
@@ -113,9 +114,12 @@ function TrendPlot({ data, unit }: { data: TrendData; unit: Unit }) {
   const bucket = data.bucket;
   const pts = data.points.map((p) => ({ ...p, x: Date.parse(p.t) }));
   const series: PlotSeries[] = [
-    { label: 'Average', color: LINE_COLORS[0], points: pts.map((p) => [p.x, conv(p.avg_c, unit)]) },
-    { label: 'p90', color: LINE_COLORS[1], points: pts.map((p) => [p.x, conv(p.p90_c, unit)]) },
-    { label: 'Max', color: LINE_COLORS[2], points: pts.map((p) => [p.x, conv(p.max_c, unit)]) },
+    { label: 'Average', color: C.series[0], dash: DASHES[0],
+      points: pts.map((p) => [p.x, conv(p.avg_c, unit)]) },
+    { label: 'p90', color: C.series[1], dash: DASHES[1],
+      points: pts.map((p) => [p.x, conv(p.p90_c, unit)]) },
+    { label: 'Max', color: C.series[2], dash: DASHES[2],
+      points: pts.map((p) => [p.x, conv(p.max_c, unit)]) },
   ];
   const x0 = pts[0]?.x ?? 0;
   const x1 = pts[pts.length - 1]?.x ?? 0;
@@ -128,8 +132,8 @@ function TrendPlot({ data, unit }: { data: TrendData; unit: Unit }) {
       series={series}
       width={width}
       band={{ label: `ASHRAE recommended ${lo.toFixed(0)}–${hi.toFixed(0)} ${u}`,
-              color: PLOT_COLORS.ok, points: [[x0, lo, hi], [x1, lo, hi]] }}
-      refs={[{ value: allow, label: `allowable ${allow.toFixed(0)} ${u}`, color: PLOT_COLORS.critical }]}
+              color: C.ok, points: [[x0, lo, hi], [x1, lo, hi]] }}
+      refs={[{ value: allow, label: `allowable ${allow.toFixed(0)} ${u}`, color: C.critical }]}
       unit={u}
       xFormat={(v) => label(v, bucket)}
       xTip={(v) => `${label(v, bucket)} UTC`}
@@ -467,6 +471,7 @@ const convDelta = (k: number | null, unit: Unit) =>
 
 function DeltaPlot({ data, unit }: { data: DeltaData; unit: Unit }) {
   const u = unit === 'c' ? '°C' : '°F';
+  const C = useChartColors();
   const box = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(720);
   useEffect(() => {
@@ -488,11 +493,11 @@ function DeltaPlot({ data, unit }: { data: DeltaData; unit: Unit }) {
   // temperature and a difference of temperatures - so this is not the second
   // axis the chart rules forbid.
   const series: PlotSeries[] = [
-    { label: `Intake ${u}`, color: LINE_COLORS[0],
+    { label: `Intake ${u}`, color: C.series[0], dash: DASHES[0],
       points: pts.map((p) => [p.x, conv(p.intake_c, unit)]) },
-    { label: `Exhaust ${u}`, color: LINE_COLORS[1],
+    { label: `Exhaust ${u}`, color: C.series[1], dash: DASHES[1],
       points: pts.map((p) => [p.x, conv(p.exhaust_c, unit)]) },
-    { label: unit === 'c' ? 'ΔT K' : 'ΔT Δ°F', color: LINE_COLORS[2],
+    { label: unit === 'c' ? 'ΔT K' : 'ΔT Δ°F', color: C.series[2], dash: DASHES[2],
       points: pts.map((p) => [p.x, convDelta(p.delta_k, unit)]) },
   ];
   return (

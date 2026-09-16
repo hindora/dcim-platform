@@ -82,6 +82,11 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
         working-directory: frontend
+      # The chart ramps are colour, and colour is the one thing a reviewer
+      # cannot check by reading a diff. This measures them: CIEDE2000 between
+      # every pair of series tokens, under normal vision and under each of the
+      # three dichromacies, plus contrast against the panel they are drawn on.
+      - run: node scripts/validate_palette.js
       - run: npm run build
         working-directory: frontend
 

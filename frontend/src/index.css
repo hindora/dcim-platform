@@ -45,6 +45,30 @@
      look like it belongs to anybody. */
   --cat-unc: #f778ba;
 
+  /* The multi-series line ramp, in the order the charts take it.
+   *
+   * Okabe-Ito, lightened for a dark panel. The set exists because its members
+   * stay apart under the three dichromacies, which the ramp this replaced did
+   * not: its blue and its purple were #7373f6 and #7575f6 to a deuteranope -
+   * a CIEDE2000 distance of 0.6, which is one colour, and every three-series
+   * chart in the product drew that pair. `scripts/validate_palette.js` reads
+   * these very declarations and fails CI if a future edit closes a gap.
+   *
+   * The luminances differ across the ramp on purpose. Hue is the first
+   * channel, lightness the second, and the dash patterns in seriesColors.ts
+   * the third: a chart has to survive a dim wall display and a greyscale
+   * printout, and three lines of one lightness do not.
+   *
+   * FOUR, not six. No ramp of six hues survives all three dichromacies at a
+   * useful distance - the search that produced these found every six-colour
+   * candidate collided somewhere - and the chart rules already say to facet
+   * past three series rather than add a fifth line. Four is three plus a
+   * spare. A chart that wants a fifth wants two charts. */
+  --series-1: #4aa3df;   /* blue */
+  --series-2: #ef7d2e;   /* vermillion */
+  --series-3: #7fe3c4;   /* bluish green, lifted */
+  --series-4: #b4628f;   /* reddish purple, deepened */
+
   --radius: 6px;
   --mono: ui-monospace, "SFMono-Regular", "Cascadia Code", Consolas, monospace;
   --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -93,6 +117,13 @@
   --cat-vis: #6e7681;
   --cat-cap: #0969da;
   --cat-unc: #bf3989;
+
+  /* Okabe-Ito's published values, which are drawn for a white ground. Same
+     roles, same order, darker so they hold 3:1 against the panel. */
+  --series-1: #0072b2;
+  --series-2: #d55e00;
+  --series-3: #009e73;
+  --series-4: #6e2b53;
 }
 
 @media (prefers-color-scheme: light) {
@@ -105,6 +136,12 @@
     --text: #1f2328;
     --text-muted: #59636e;
     --text-faint: #818b98;
+    /* Without these a light desktop drew the dark ramp on white: #4aa3df is
+       2.6:1 there, and the chart rules ask for 3. */
+    --series-1: #0072b2;
+    --series-2: #d55e00;
+    --series-3: #009e73;
+    --series-4: #6e2b53;
   }
 }
 
@@ -433,6 +470,11 @@ button.primary { background: var(--accent-dim); border-color: var(--accent); }
                 margin: 0.35rem 0 0; padding: 0;
                 font-size: 0.8rem; color: var(--text-muted); }
 .chart-legend li { display: inline-flex; align-items: center; gap: 0.35rem; }
+/* A legend entry for a line that is dashed shows the dash. The block swatch
+   says only "this hue"; on a greyscale printout or a dim wall panel that is
+   the one thing the reader cannot use. */
+.chart-legend .swatch-line,
+.legend .swatch-line { flex: none; overflow: visible; }
 .chart-legend .swatch { width: 9px; height: 9px; border-radius: 2px;
                         display: inline-block; flex: none; }
 
