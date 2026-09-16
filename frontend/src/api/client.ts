@@ -2149,6 +2149,10 @@ export interface RoomKpi {
   };
   environmental: {
     avg_c: number | null; max_c: number | null; compliance_pct: number | null;
+    /** The full ASHRAE envelope for this room - the same object the thermal
+     *  page's rows carry, so the drawer and the page cannot answer "is this
+     *  hall compliant" with two different numbers. */
+    envelope: ThermalRow['envelope'];
     band: { low_c: number; high_c: number; allowable_high_c: number; rh_high_pct: number };
     note: string | null;
     rh_avg: number | null; rh_max: number | null; rh_probes: number;

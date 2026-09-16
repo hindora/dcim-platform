@@ -1874,6 +1874,12 @@ async def room_kpi(session: AsyncSession, room_id: str) -> dict[str, Any] | None
             "avg_c": (room_thermal or {}).get("avg_c"),
             "max_c": (room_thermal or {}).get("max_c"),
             "compliance_pct": (room_thermal or {}).get("compliance_pct"),
+            # The full ASHRAE envelope for this room - the same object and the
+            # same measure the thermal page's rows carry. The drawer used to
+            # show dry bulb alone under "Readings in band", which was honest
+            # about itself but meant the two pages answered "is this hall
+            # compliant" with different numbers.
+            "envelope": (room_thermal or {}).get("envelope"),
             "band": {"low_c": BAND_LOW_C, "high_c": BAND_HIGH_C,
                      "allowable_high_c": ALLOWABLE_HIGH_C,
                      "rh_high_pct": RH_HIGH_PCT},

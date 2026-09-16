@@ -48,6 +48,24 @@ function ago(iso: string | null): string {
   return `${hours} h ago`;
 }
 
+/** What the room's envelope figure was graded on, in one line.
+ *
+ *  A share means nothing without the legs behind it: 100 % on a hall with six
+ *  humidity probes is a stronger statement than 100 % on a hall with none, and
+ *  the second is not a pass on moisture - it is no moisture leg at all. */
+function envelopeNote(env: RoomKpi['environmental'] | undefined): string | null {
+  if (!env) return null;
+  const e = env.envelope;
+  if (!e) return `${env.band.low_c}–${env.band.high_c} °C recommended`;
+  const legs = [`${env.band.low_c}–${env.band.high_c} °C`];
+  legs.push(e.moisture_pct === null
+    ? 'no humidity probe'
+    : `moisture from ${e.moisture_probes} probe${e.moisture_probes === 1 ? '' : 's'}`);
+  if (e.rate_pct !== null) legs.push(`${e.max_rate_k_per_h ?? 20} K/h`);
+  return `ASHRAE ${e.ashrae_class ?? 'A1'}: ${legs.join(' · ')}`;
+}
+
+
 export function RoomDrawer({ roomId, roomName, onClose }: {
   roomId: string; roomName: string; onClose: () => void;
 }) {
@@ -149,9 +167,18 @@ export function RoomDrawer({ roomId, roomName, onClose }: {
                       bar={!env?.max_c ? 'ok'
                         : env.max_c > (env.band?.allowable_high_c ?? 32) ? 'critical'
                         : env.max_c > (env.band?.high_c ?? 27) ? 'warn' : 'ok'} />
-                <Tile absent={env?.compliance_pct === null} value={num(env?.compliance_pct)}
-                      unit="%" caption="Readings in band"
-                      note={env ? `${env.band.low_c}–${env.band.high_c} °C recommended` : null} />
+                {/* The whole envelope, as on the thermal page: dry bulb AND
+                    moisture AND rate of change. This was dry bulb alone under
+                    the caption "Readings in band" - honest about itself, but it
+                    meant the drawer and the page answered the same question
+                    with two different numbers. The note names what the figure
+                    could actually be graded on, because a hall with no
+                    humidity probe has no moisture leg and must not read as
+                    though it passed one. */}
+                <Tile absent={(env?.envelope?.envelope_pct ?? env?.compliance_pct) === null}
+                      value={num(env?.envelope?.envelope_pct ?? env?.compliance_pct)}
+                      unit="%" caption="Time in band"
+                      note={envelopeNote(env)} />
                 <Tile absent={env?.rh_avg == null} value={num(env?.rh_avg)} unit="%"
                       caption="Humidity" note={env?.humidity_note}
                       bar={env?.rh_max != null && env.rh_max > (env.band?.rh_high_pct ?? 60)

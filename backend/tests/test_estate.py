@@ -1765,3 +1765,33 @@ async def test_a_site_weights_moisture_by_the_sensors_it_applied_to(monkeypatch)
     # by the eight probes in the healthy hall against two in the sick one
     # would have produced.
     assert site["moisture_pct"] == 62.5
+
+
+@pytest.mark.asyncio
+async def test_the_room_drawer_carries_the_same_envelope_as_the_page(monkeypatch):
+    """One question, one answer. The drawer showed dry bulb alone while the
+    thermal page showed the envelope, so the two disagreed about whether a hall
+    was compliant - and the drawer is the thing somebody opens FROM an alarm."""
+    _thermal(monkeypatch, [_room("r1", "dc1", "DC1", rack_count=1)],
+             [_rack("k1", "r1", f_sum=22.0, f_n=10, f_sensors=1, f_in_band=1.0)])
+    _with_envelope(monkeypatch, [_env("k1", sensors=4, env=0.75, temp=1.0,
+                                      room_moist=0.75, probes=2,
+                                      moisture_graded=2)])
+    monkeypatch.setattr(estate.repo, "room", _returns(
+        {"id": "r1", "name": "Server Hall A", "room_type": "data_hall",
+         "room_class": "white_space", "floor": "1", "design_it_kw": None,
+         "datacenter_id": "dc1", "site_code": "DC1", "site_name": "DC1",
+         "city": None}))
+    monkeypatch.setattr(estate.repo, "room_census", _returns({}))
+    monkeypatch.setattr(estate.repo, "room_updated", _returns(None))
+    monkeypatch.setattr(estate.repo, "power_live", _returns([]))
+    monkeypatch.setattr(estate.repo, "utilisation", _returns([]))
+    monkeypatch.setattr(estate.repo, "site_design", _returns({}))
+
+    out = await estate.room_kpi(_FakeSession(), "r1")
+    env = out["environmental"]
+    assert env["envelope"]["envelope_pct"] == 75.0
+    assert env["envelope"]["moisture_pct"] == 75.0
+    assert env["envelope"]["moisture_probes"] == 2
+    # Dry bulb survives beside it, because the band note is written in it.
+    assert env["envelope"]["temp_pct"] == 100.0
