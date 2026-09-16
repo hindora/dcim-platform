@@ -175,6 +175,48 @@ _TERM_LABEL_SQL = {
 }
 
 
+# The same three tables again, but carrying the electrical facts rather than
+# just a name. A trace is read by someone about to unplug something: "Out-12"
+# tells them which socket, and "C19, 16 A, phase L2" tells them whether the
+# cord in their hand fits it and what trips if it does not. Fetched only for
+# the terminations on the hops actually returned, which is a few dozen rows
+# even when the layer holds a thousand conductors.
+_TERM_DETAIL_SQL = {
+    "interface": """
+        SELECT id::text AS id, name AS label, NULL::text AS connector,
+               NULL::numeric AS rated_amps, NULL::text AS phase,
+               NULL::text AS branch, speed_bps
+          FROM interface WHERE id = ANY(CAST(:ids AS uuid[]))
+    """,
+    "outlet": """
+        SELECT id::text AS id, 'Out-' || number::text AS label, connector,
+               rated_amps, phase, branch, NULL::bigint AS speed_bps
+          FROM outlet WHERE id = ANY(CAST(:ids AS uuid[]))
+    """,
+    "psu": """
+        SELECT id::text AS id, 'PSU' || number::text AS label, connector,
+               NULL::numeric AS rated_amps, NULL::text AS phase,
+               NULL::text AS branch, NULL::bigint AS speed_bps,
+               rated_watts
+          FROM power_supply WHERE id = ANY(CAST(:ids AS uuid[]))
+    """,
+}
+
+
+async def termination_details(session: AsyncSession,
+                              by_type: dict[str, list[str]]) -> dict[str, dict[str, Any]]:
+    """Resolve termination ids to the facts printed on a trace row."""
+    out: dict[str, dict[str, Any]] = {}
+    for term_type, ids in by_type.items():
+        sql = _TERM_DETAIL_SQL.get(term_type)
+        if not sql or not ids:
+            continue
+        rows = (await session.execute(text(sql), {"ids": ids})).mappings().all()
+        for r in rows:
+            out[r["id"]] = dict(r)
+    return out
+
+
 async def graph_nodes(session: AsyncSession, *, scope_type: str, scope_id: str,
                       layer: str, depth: int, cap: int) -> list[dict[str, Any]]:
     rows = (await session.execute(
@@ -238,6 +280,45 @@ async def layer_edges(session: AsyncSession, layer: str) -> list[dict[str, Any]]
         SELECT c.{up_col}::text   AS up,
                c.{down_col}::text AS down,
                c.redundancy_side
+          FROM connection c
+         WHERE c.layer = CAST(:layer AS layer_t)
+           AND c.admin_state = 'enabled'
+    """), {"layer": layer})).mappings().all()
+    return [dict(r) for r in rows]
+
+
+async def layer_edges_detailed(session: AsyncSession,
+                               layer: str) -> list[dict[str, Any]]:
+    """Every edge on one layer, normalised upstream -> downstream, with the
+    termination at each end.
+
+    ``layer_edges`` above deliberately carries only the three columns impact
+    analysis needs, because it is called once per layer for every candidate.
+    A trace is asked about one device at a time and has to print what the
+    conductor lands on at both ends, so it pays for the wider row.
+
+    Whole-layer for the same reason ``layer_edges`` is: the walk has to reach
+    a SOURCE, which is a global question, and the largest layer here is 1080
+    rows. A recursive query per trace costs more than one fetch.
+    """
+    up_col, down_col = UPSTREAM_COL[layer]
+    # The termination columns are polymorphic on the a/b ends, so they have to
+    # follow whichever end the layer calls upstream. Management is the layer
+    # where this matters: the managed device holds the a end there, so its
+    # upstream termination is the b one.
+    up_side = "a" if up_col == "a_device_id" else "b"
+    down_side = "b" if up_side == "a" else "a"
+    rows = (await session.execute(text(f"""
+        SELECT c.id::text                              AS id,
+               c.{up_col}::text                        AS up,
+               c.{down_col}::text                      AS down,
+               c.link_type,
+               c.redundancy_side,
+               c.oper_state,
+               c.{up_side}_termination_type::text      AS up_termination_type,
+               c.{up_side}_termination_id::text        AS up_termination_id,
+               c.{down_side}_termination_type::text    AS down_termination_type,
+               c.{down_side}_termination_id::text      AS down_termination_id
           FROM connection c
          WHERE c.layer = CAST(:layer AS layer_t)
            AND c.admin_state = 'enabled'

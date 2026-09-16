@@ -15,6 +15,7 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
+from app.core.layers import UPSTREAM_COL
 from app.core.logging import get_logger
 from app.repositories import topology as repo
 from app.schemas import (
@@ -26,8 +27,14 @@ from app.schemas import (
     TopologyEdge,
     TopologyNode,
     TopologyOut,
+    TraceHop,
+    TraceNeighbour,
+    TraceOut,
+    TracePath,
+    TraceTermination,
 )
 from app.services import impact
+from app.services import trace as trace_svc
 
 log = get_logger("topology")
 
@@ -59,6 +66,14 @@ LAYER_ALIASES = {
 # columns rather than the metrics jsonb: a topology view wants load and inlet
 # temperature at a glance, not every sample the device has ever produced.
 _NODE_METRICS = ("power_w", "inlet_temp_c", "cpu_util_pct", "humidity_pct")
+
+
+ROLLUPS = {"none", "rack"}
+
+# A group has to be worth collapsing. One device behind a rack node hides its
+# name and its status behind a synthetic box that says "1 server", which is
+# strictly worse than the device.
+_MIN_ROLLUP_GROUP = 2
 
 
 class TopologyError(ValueError):
@@ -147,13 +162,143 @@ async def _termination_labels(session: AsyncSession,
     return await repo.termination_labels(session, by_type)
 
 
+# Worst-first, so a rolled-up rack inherits the state of its unhappiest member
+# rather than an average nobody could act on.
+_SEVERITY_RANK = {"CLEAR": 0, "INFO": 1, "WARNING": 2, "MINOR": 2,
+                  "MAJOR": 3, "CRITICAL": 4}
+
+
+def _rollup_by_rack(nodes: list[TopologyNode], edges: list[TopologyEdge],
+                    layer_value: str) -> tuple[list[TopologyNode], list[TopologyEdge]]:
+    """Collapse each rack's leaf equipment into one node.
+
+    A server hall's power layer is eight hundred loads and forty feeders. Every
+    one of those loads is a 132px box with a name nobody reads at that scale,
+    and the shape of the distribution - which is the entire question - is
+    invisible underneath them. Collapsed to one node per rack it is sixty
+    boxes and the shape is the picture.
+
+    Only LEAVES collapse: a device that feeds nothing else on this layer. A PDU
+    in the same rack stays a node of its own, because the chain runs through
+    it. That rule is per-layer and not per-device-type on purpose - a server is
+    a leaf on power and on the fabric, but a BMC-fronted server is NOT a leaf
+    on management if something hangs off it.
+    """
+    up_col, _ = UPSTREAM_COL[layer_value]
+    up_is_a = up_col == "a_device_id"
+
+    def ends(e: TopologyEdge) -> tuple[str, str]:
+        """(upstream, downstream) for this layer's orientation."""
+        return (e.source, e.target) if up_is_a else (e.target, e.source)
+
+    feeds_something = {ends(e)[0] for e in edges}
+
+    groups: dict[tuple[str, str], list[TopologyNode]] = {}
+    for n in nodes:
+        if n.location.rack_id and n.id not in feeds_something:
+            groups.setdefault((n.location.rack_id, n.device_type), []).append(n)
+
+    collapsing = {k: v for k, v in groups.items() if len(v) >= _MIN_ROLLUP_GROUP}
+    if not collapsing:
+        return nodes, edges
+
+    member_of: dict[str, str] = {}
+    rolled: list[TopologyNode] = []
+    for (rack_id, device_type), members in collapsing.items():
+        synthetic_id = f"rack:{rack_id}:{device_type}"
+        for m in members:
+            member_of[m.id] = synthetic_id
+
+        offline = sum(1 for m in members if m.status == "OFFLINE")
+        unknown = sum(1 for m in members if m.status == "UNKNOWN")
+        status = ("OFFLINE" if offline == len(members)
+                  else "UNKNOWN" if unknown == len(members) else "ONLINE")
+
+        # Power adds up; temperature does not. A rack's draw is the sum of its
+        # loads, and its inlet is the worst one in it - an average would hide
+        # the single hot server that is the reason anyone is looking.
+        power = sum(m.metrics["power_w"] for m in members if "power_w" in m.metrics)
+        inlets = [m.metrics["inlet_temp_c"] for m in members
+                  if "inlet_temp_c" in m.metrics]
+        metrics: dict[str, float] = {}
+        if power:
+            metrics["power_w"] = power
+        if inlets:
+            metrics["inlet_temp_c"] = max(inlets)
+
+        first = members[0]
+        rolled.append(TopologyNode(
+            id=synthetic_id,
+            name=first.location.rack_name or "Rack",
+            device_type=device_type,
+            status=status,
+            max_severity=max((m.max_severity for m in members),
+                             key=lambda s: _SEVERITY_RANK.get(s, 0)),
+            depth=min(m.depth for m in members),
+            location=LocationRef(
+                datacenter_id=first.location.datacenter_id,
+                datacenter_code=first.location.datacenter_code,
+                room_id=first.location.room_id, room_name=first.location.room_name,
+                rack_id=first.location.rack_id, rack_name=first.location.rack_name,
+            ),
+            metrics=metrics,
+            rolled_up=len(members),
+            offline_count=offline,
+        ))
+
+    kept = [n for n in nodes if n.id not in member_of] + rolled
+
+    # Re-point every edge at the node that swallowed its end, then merge the
+    # duplicates that produces. Forty cords from one RPP into one rack are one
+    # line carrying the number forty, not forty identical lines.
+    merged: dict[tuple[str, str, str | None], TopologyEdge] = {}
+    for e in edges:
+        source = member_of.get(e.source, e.source)
+        target = member_of.get(e.target, e.target)
+        if source == target:
+            # Both ends landed inside the same collapsed group. The link is
+            # real but it is now internal to one box, and drawing it as a
+            # self-loop says nothing.
+            continue
+        key = (source, target, e.redundancy_side)
+        acc = merged.get(key)
+        if acc is None:
+            merged[key] = e.model_copy(update={
+                "source": source, "target": target,
+                "count": e.count,
+                "down_count": e.count if e.oper_state == "down" else 0,
+                # A merged edge does not land on one outlet, so claiming a
+                # termination would be a lie with a label on it.
+                "a_termination": (Termination() if source != e.source or target != e.target
+                                  else e.a_termination),
+                "b_termination": (Termination() if source != e.source or target != e.target
+                                  else e.b_termination),
+            })
+            continue
+        acc.count += e.count
+        if e.oper_state == "down":
+            acc.down_count += e.count
+        acc.a_termination = Termination()
+        acc.b_termination = Termination()
+        if acc.down_count == acc.count:
+            acc.oper_state = "down"
+        elif acc.oper_state == "down":
+            acc.oper_state = "up"
+
+    return kept, list(merged.values())
+
+
 async def get_topology(session: AsyncSession, *, layer: str, scope: str,
-                       depth: int) -> TopologyOut:
+                       depth: int, rollup: str = "none") -> TopologyOut:
     layer_value = resolve_layer(layer)
     scope_type, scope_id = parse_scope(scope)
+    if rollup not in ROLLUPS:
+        raise TopologyError(
+            f"rollup must be one of {sorted(ROLLUPS)}, got {rollup!r}")
 
     version = await repo.graph_version(session)
-    cache_key = f"dcim:topo:{version}:{layer_value}:{scope_type}:{scope_id}:{depth}"
+    cache_key = (f"dcim:topo:{version}:{layer_value}:{scope_type}:{scope_id}"
+                 f":{depth}:{rollup}")
 
     cached = await _cache_get(cache_key)
     if cached is not None:
@@ -175,12 +320,21 @@ async def get_topology(session: AsyncSession, *, layer: str, scope: str,
     edge_rows = await repo.graph_edges(session, layer=layer_value, device_ids=ids)
     labels = await _termination_labels(session, edge_rows)
 
+    nodes = [_node_from_row(r) for r in node_rows]
+    edges = _edges_from_rows(edge_rows, labels)
+    if rollup == "rack":
+        # After the cap, not before it. The cap is a bound on the QUERY, and a
+        # roll-up cannot un-truncate a walk that was already cut short - so a
+        # scope big enough to truncate still says so.
+        nodes, edges = _rollup_by_rack(nodes, edges, layer_value)
+
     result = TopologyOut(
         layer=layer, scope=scope, depth=depth,
-        nodes=[_node_from_row(r) for r in node_rows],
-        edges=_edges_from_rows(edge_rows, labels),
+        nodes=nodes,
+        edges=edges,
         truncated=truncated,
-        node_count=len(node_rows), edge_count=len(edge_rows),
+        node_count=len(nodes), edge_count=len(edges),
+        device_count=len(node_rows), conductor_count=len(edge_rows),
     )
     await _cache_set(cache_key, result)
     return result
@@ -230,6 +384,101 @@ async def _cache_set(key: str, value: TopologyOut) -> None:
         await _client().set(key, value.model_dump_json(), ex=CACHE_TTL_S)
     except Exception as exc:
         log.warning("topology cache write failed", error=str(exc))
+
+
+# A feeder can serve a lot of loads. The list below the trace is "what is
+# plugged into this", which stops being that at a couple of screens; past the
+# cap the count is the honest answer and the diagram is the place to go.
+DOWNSTREAM_CAP = 100
+
+
+async def get_trace(session: AsyncSession, *, device_id: str,
+                    layer: str) -> TraceOut:
+    """The chain from one device back to its source, hop by hop.
+
+    See ``services/trace`` for why this is upstream-only and what the one hop
+    of downstream is for.
+    """
+    layer_value = resolve_layer(layer)
+    try:
+        uuid.UUID(device_id)
+    except ValueError:
+        raise TopologyError(f"device id {device_id!r} is not a UUID") from None
+
+    subject = (await repo.devices_brief(session, [device_id])).get(device_id)
+    if subject is None:
+        raise TopologyError(f"no device {device_id}")
+
+    graph = trace_svc.build(
+        await repo.layer_edges_detailed(session, layer_value))
+    paths, truncated = trace_svc.trace_up(graph, device_id)
+    down = trace_svc.downstream(graph, device_id)
+
+    # One lookup for every device and every termination the answer mentions,
+    # rather than one per hop. A six-hop dual-fed trace touches a dozen of each
+    # and the difference is twenty-four round trips.
+    edges = [h for p in paths for h in p.hops] + down[:DOWNSTREAM_CAP]
+    device_ids = {device_id}
+    by_type: dict[str, list[str]] = {}
+    for e in edges:
+        device_ids.add(e.up)
+        device_ids.add(e.down)
+        for ttype, tid in ((e.up_termination_type, e.up_termination_id),
+                           (e.down_termination_type, e.down_termination_id)):
+            if ttype and ttype != "none" and tid:
+                by_type.setdefault(ttype, []).append(tid)
+
+    brief = await repo.devices_brief(session, sorted(device_ids))
+    terms = await repo.termination_details(session, by_type)
+
+    def node(dev_id: str) -> ImpactNode:
+        row = brief.get(dev_id)
+        # A device on an edge that the brief lookup missed would mean the
+        # connection outlived its device, which the foreign key forbids - but
+        # rendering an id is still better than a 500.
+        return ImpactNode(**row) if row else ImpactNode(
+            id=dev_id, name=dev_id, device_type="unknown")
+
+    def term(ttype: str, tid: str | None) -> TraceTermination:
+        row = terms.get(tid or "") or {}
+        return TraceTermination(
+            type=ttype or "none", id=tid,
+            label=row.get("label"), connector=row.get("connector"),
+            rated_amps=float(row["rated_amps"]) if row.get("rated_amps") is not None else None,
+            phase=row.get("phase"), branch=row.get("branch"),
+            rated_watts=row.get("rated_watts"), speed_bps=row.get("speed_bps"),
+        )
+
+    def hop(e: trace_svc.Edge) -> TraceHop:
+        return TraceHop(
+            connection_id=e.id, up=node(e.up), down=node(e.down),
+            link_type=e.link_type, redundancy_side=e.redundancy_side,
+            oper_state=e.oper_state,
+            up_termination=term(e.up_termination_type, e.up_termination_id),
+            down_termination=term(e.down_termination_type, e.down_termination_id),
+        )
+
+    out = TraceOut(
+        device=ImpactNode(**subject),
+        layer=layer,
+        paths=[TracePath(side=p.side, verdict=p.verdict,
+                         hops=[hop(e) for e in p.hops]) for p in paths],
+        truncated=truncated,
+        asymmetric=trace_svc.is_asymmetric(paths),
+        is_source=not paths and device_id in graph.nodes,
+        downstream=[
+            TraceNeighbour(
+                device=node(e.down), redundancy_side=e.redundancy_side,
+                oper_state=e.oper_state,
+                termination=term(e.down_termination_type, e.down_termination_id))
+            for e in down[:DOWNSTREAM_CAP]
+        ],
+        downstream_count=len(down),
+    )
+    log.info("trace walked", device=subject["name"], layer=layer_value,
+             paths=len(out.paths), truncated=truncated,
+             asymmetric=out.asymmetric, downstream=out.downstream_count)
+    return out
 
 
 async def get_impact(session: AsyncSession, device_id: str) -> ImpactOut:

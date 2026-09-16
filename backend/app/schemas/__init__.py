@@ -168,6 +168,11 @@ class TopologyNode(BaseModel):
     depth: int = 0
     location: LocationRef = Field(default_factory=LocationRef)
     metrics: dict[str, float] = Field(default_factory=dict)
+    # How many real devices this node stands for. 0 means it IS one device;
+    # anything higher means it is a rack's worth of leaf equipment collapsed
+    # into one box, and the id is synthetic - it does not resolve to a device.
+    rolled_up: int = 0
+    offline_count: int = 0
 
 
 class TopologyEdge(BaseModel):
@@ -175,6 +180,11 @@ class TopologyEdge(BaseModel):
     source: str
     target: str
     layer: str
+    # How many conductors this edge stands for. Always 1 unless a roll-up
+    # merged the edges to the devices behind one collapsed node: forty cords
+    # into a rack are one line, and the count is the fact worth keeping.
+    count: int = 1
+    down_count: int = 0
     link_type: str | None = None
     # 'A' or 'B' for power and cooling paths; None on layers where the concept
     # does not apply, and also None wherever the importer has not derived it.
@@ -193,8 +203,14 @@ class TopologyOut(BaseModel):
     # True when the node cap was hit. The client should narrow the scope
     # rather than assume it is looking at the whole graph.
     truncated: bool = False
+    # What was RETURNED - the boxes and lines the client will draw.
     node_count: int = 0
     edge_count: int = 0
+    # What those stand for. Equal to the counts above with rollup=none; under
+    # a roll-up they are the real devices and real conductors behind them, and
+    # the difference is what the view has to admit it is hiding.
+    device_count: int = 0
+    conductor_count: int = 0
 
 
 class RoomExtent(BaseModel):
@@ -293,6 +309,80 @@ class ImpactOut(BaseModel):
     # Totals across layers, deduplicated by device.
     total_cut_off: int = 0
     total_degraded: int = 0
+
+
+class TraceTermination(BaseModel):
+    """A termination as a trace row prints it.
+
+    Wider than ``Termination`` on purpose. A trace is read by someone holding
+    a cord: the label says which socket, and the connector and rating say
+    whether the cord fits it and what trips if it does not. Every electrical
+    field is optional because plenty of gear is recorded as connected without
+    anyone having traced the individual conductor, and an absent rating is a
+    real state - it is not zero amps.
+    """
+
+    type: str = "none"
+    id: str | None = None
+    label: str | None = None
+    connector: str | None = None
+    rated_amps: float | None = None
+    phase: str | None = None
+    branch: str | None = None
+    rated_watts: int | None = None
+    speed_bps: int | None = None
+
+
+class TraceHop(BaseModel):
+    """One conductor, oriented source-ward: ``up`` feeds ``down``."""
+
+    connection_id: str
+    up: ImpactNode
+    down: ImpactNode
+    link_type: str | None = None
+    redundancy_side: str | None = None
+    oper_state: str = "unknown"
+    up_termination: TraceTermination = Field(default_factory=TraceTermination)
+    down_termination: TraceTermination = Field(default_factory=TraceTermination)
+
+
+class TracePath(BaseModel):
+    """One route to a source, ordered source first."""
+
+    side: str | None = None
+    # 'complete' reached a device nothing feeds. 'incomplete' ran into a loop
+    # or the hop bound before it got there, which is a fact about the recorded
+    # graph rather than about the wiring.
+    verdict: str = "complete"
+    hops: list[TraceHop] = Field(default_factory=list)
+
+
+class TraceNeighbour(BaseModel):
+    """One hop down: something plugged into the traced device."""
+
+    device: ImpactNode
+    redundancy_side: str | None = None
+    oper_state: str = "unknown"
+    termination: TraceTermination = Field(default_factory=TraceTermination)
+
+
+class TraceOut(BaseModel):
+    device: ImpactNode
+    layer: str
+    paths: list[TracePath] = Field(default_factory=list)
+    # True when the path enumeration hit its bound. Real estates do not reach
+    # it; a graph that does has a shape worth looking at rather than a longer
+    # list worth printing.
+    truncated: bool = False
+    # The labelled sides disagree about how far away the source is. Not
+    # automatically wrong, but it is the signature of a B side extended during
+    # a build and never squared up.
+    asymmetric: bool = False
+    # Nothing feeds the traced device on this layer: it IS a source here.
+    # Distinct from "no paths were found", which would be a bug.
+    is_source: bool = False
+    downstream: list[TraceNeighbour] = Field(default_factory=list)
+    downstream_count: int = 0
 
 
 class DeviceStateOut(BaseModel):
