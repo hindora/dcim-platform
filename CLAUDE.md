@@ -135,9 +135,9 @@ expansion it is a shade smaller (`.sub-wrap .asset-pager`).
    end dot r3; the axis row reads `start | lo–hi | end · last value`. A
    single point renders as a large value and a "Recording since" sentence.
 6. **Time series** (`TimeChart`): telemetry. 720×180, left pad 52. One
-   chart per unit and never a second y-axis. `LINE_COLORS` in fixed order
-   (blue, orange, purple, green, cyan, amber); facet rather than exceed
-   three series. Lines break across gaps longer than three buckets. Ticks
+   chart per unit and never a second y-axis. The ramp in fixed order
+   (`--series-1..4`: blue, vermillion, bluish green, reddish purple), dashed
+   from the third; facet rather than exceed three series. Lines break across gaps longer than three buckets. Ticks
    10px mono, unit top-left, tooltip an SVG rect that flips left near the
    edge, time printed at the data's precision with no fake seconds.
 7. **Analytics plot** (`Plot`): projections and PUE. Uncertainty band
