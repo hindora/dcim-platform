@@ -151,6 +151,10 @@
 .conn-trace-head {
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
 }
+/* The narrow columns are told their width, or the browser hands the empty
+   space to SIDE and HOP and squeezes the device names that carry the trace. */
+.conn-trace th:first-child, .conn-trace td:first-child { width: 48px; }
+.conn-trace th:nth-child(2), .conn-trace td:nth-child(2) { width: 56px; }
 .conn-trace td { vertical-align: top; padding: 6px 12px; }
 .conn-trace .k { font-size: 0.68rem; color: var(--text-faint); }
 .conn-trace .conn-alt { font-style: italic; }

@@ -113,8 +113,13 @@ export function Drawer({ node, layer, onFullTrace, onClose }: {
                   ))}
                   <li className="is-self">{node.name}</li>
                 </ol>
+                {/* Plenty of gear is cabled without port-level detail - an RPP
+                    into a PDU is recorded as connected and no further - and
+                    "into —" is noise rather than a fact. */}
                 <p className="k">
-                  from {source.up.name} · into {terminationLabel(cord.down_termination)}
+                  from {source.up.name}
+                  {cord.down_termination.type !== 'none'
+                    && <> · into {terminationLabel(cord.down_termination)}</>}
                 </p>
               </div>
             );

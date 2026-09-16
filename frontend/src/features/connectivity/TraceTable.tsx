@@ -28,6 +28,15 @@ export function terminationLabel(t: TraceTermination): string {
   return bits.join(' · ');
 }
 
+/** Where a conductor's operational state is a measurement rather than a blank.
+ *
+ *  Only ethernet reports link state. A power cord terminates on an outlet and
+ *  a pipe on a stub, and neither has anything to say about whether it is "up"
+ *  - which is why `alarms/link_correlation` only watches these two layers as
+ *  well. Printing "unknown" down every row of a power trace teaches the reader
+ *  to ignore the column, on the one layer where it would matter. */
+const PORT_LAYERS = new Set(['network', 'production', 'management']);
+
 interface Row {
   side: string;
   verdict: string;
@@ -60,6 +69,7 @@ export function TraceTable({ deviceId, deviceName, layer }: {
 
   const rows = q.data ? rowsOf(q.data) : [];
   const { rows: page, foot } = usePaged(rows, { noun: 'hops' });
+  const showState = PORT_LAYERS.has(layer);
 
   if (q.isLoading) return <div className="asset-skeleton" style={{ height: 120 }} />;
   if (q.isError) {
@@ -105,13 +115,14 @@ export function TraceTable({ deviceId, deviceName, layer }: {
         <button type="button" onClick={() => downloadCsv(
           stampedName(`trace-${deviceName}-${layer}`),
           ['Side', 'Verdict', 'Hop', 'Of', 'Feeds from', 'Out of',
-           'Into', 'Feeds', 'State', 'Alternate sources'],
+           'Into', 'Feeds', 'Alternate sources',
+           ...(showState ? ['State'] : [])],
           rows.map((r) => [
             r.side, r.verdict, r.hop, r.of,
             r.h.up.name, terminationLabel(r.h.up_termination),
             terminationLabel(r.h.down_termination), r.h.down.name,
-            r.h.oper_state,
             r.h.alternates.map((a) => a.name).join(' / '),
+            ...(showState ? [r.h.oper_state] : []),
           ]),
         )}>Export CSV</button>
       </div>
@@ -126,7 +137,7 @@ export function TraceTable({ deviceId, deviceName, layer }: {
               <th>Out of</th>
               <th>Into</th>
               <th>Feeds</th>
-              <th className="mid">State</th>
+              {showState && <th className="mid">State</th>}
             </tr>
           </thead>
           <tbody>
@@ -156,11 +167,13 @@ export function TraceTable({ deviceId, deviceName, layer }: {
                   <Link to={`/devices/${r.h.down.id}`}>{r.h.down.name}</Link>
                   <div className="k">{r.h.down.device_type.replace(/_/g, ' ')}</div>
                 </td>
-                <td className="mid">
-                  <span className={r.h.oper_state === 'down' ? 'warn' : 'muted'}>
-                    {r.h.oper_state}
-                  </span>
-                </td>
+                {showState && (
+                  <td className="mid">
+                    <span className={r.h.oper_state === 'down' ? 'warn' : 'muted'}>
+                      {r.h.oper_state}
+                    </span>
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>
