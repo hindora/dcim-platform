@@ -816,7 +816,8 @@ async def thermal_envelope(session: AsyncSession, *, start: datetime,
         -- temperature and humidity in the same poll produces one row with both.
         reading AS (
             SELECT d.rack_id, rr.room_id, t.device_id, t.instance, t.ts,
-                   max(t.value) FILTER (WHERE m.key = 'ambient_temperature') AS temp_c,
+                   max(t.value) FILTER (WHERE m.key = 'ambient_temperature') AS probe_c,
+                   max(t.value) FILTER (WHERE m.key = 'inlet_temperature')   AS bmc_c,
                    max(t.value) FILTER (WHERE m.key = 'relative_humidity')   AS rh_pct,
                    max(t.value) FILTER (WHERE m.key = 'dew_point')           AS dp_pub
             FROM telemetry_sample t
@@ -826,13 +827,24 @@ async def thermal_envelope(session: AsyncSession, *, start: datetime,
                             AND d.lifecycle <> 'decommissioned'
             JOIN rack r      ON r.id  = d.rack_id
             JOIN rack_row rr ON rr.id = r.row_id
-            WHERE m.key IN ('ambient_temperature', 'relative_humidity', 'dew_point')
+            WHERE m.key IN ('ambient_temperature', 'inlet_temperature',
+                            'relative_humidity', 'dew_point')
               AND t.ts >= :t0 AND t.ts < :t1
               -- A room transmitter on a wall is not rack intake air. Migration
               -- 0063 split the alarm rules on this same instance for the same
               -- reason: the envelope is written for what equipment breathes.
               AND t.instance <> 'ROOM'
             GROUP BY d.rack_id, rr.room_id, t.device_id, t.instance, t.ts
+        ),
+        -- The page's probe-first rule, decided once per rack over the whole
+        -- window, exactly as the table and the trends decide it. Without this
+        -- the envelope covered only racks with a probe: a rack read by server
+        -- BMCs has no moisture leg, but its TEMPERATURE and its RATE are as
+        -- measurable as anyone's, and leaving it out reported "no data" for a
+        -- third of the floor rather than a partial grade.
+        src AS (
+            SELECT rack_id, bool_or(probe_c IS NOT NULL) AS has_probe
+            FROM reading GROUP BY rack_id
         ),
         -- Dew point: the published one where a probe has it, else Magnus from
         -- this same reading's temperature and humidity.
@@ -846,7 +858,11 @@ async def thermal_envelope(session: AsyncSession, *, start: datetime,
                        / (17.62 - (ln(GREATEST(rh_pct, 0.5) / 100.0)
                                    + (17.62 * temp_c) / (243.12 + temp_c)))
                    END AS dp_c
-            FROM reading
+            FROM (
+                SELECT r.*,
+                       CASE WHEN s.has_probe THEN r.probe_c ELSE r.bmc_c END AS temp_c
+                FROM reading r JOIN src s USING (rack_id)
+            ) chosen
             WHERE temp_c IS NOT NULL
         ),
         -- Rate, over FIFTEEN-MINUTE MEANS rather than consecutive readings.
