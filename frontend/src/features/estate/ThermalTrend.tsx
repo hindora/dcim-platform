@@ -186,7 +186,11 @@ function ComplianceColumns({ data, said, band, unit }: {
 
   return (
     <div className="alarm-trend-frame" ref={box}>
-      <div className="alarm-trend-ylabel">Time in band</div>
+      {/* The vertical dimension is the whole bucket, divided four ways -
+          not the in-band part of it, which is only the green. */}
+      <div className="alarm-trend-ylabel">
+        Share of the {data.bucket === 'hour' ? 'hour' : 'day'}
+      </div>
       <div className={`alarm-trend trend-partition ${dense ? 'dense' : ''}`} role="img"
            aria-label={`Share of each ${data.bucket} spent in each ASHRAE band, ${said}`}>
         {pts.map((p, i) => {
