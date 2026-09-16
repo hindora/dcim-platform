@@ -342,23 +342,46 @@ collapse by `(source, target, redundancy_side)` with a count. Synthetic ids
 are namespaced so the client can tell them from device ids and knows they
 do not link through to `/devices/{id}`.
 
-### 6.3 `GET /topology/trace/{device_id}` — new
+### 6.3 `GET /topology/trace/{device_id}` — SHIPPED, and revised
 
 ```
-GET /topology/trace/{device_id}?layer=power&direction=up|down|both
+GET /topology/trace/{device_id}?layer=power
 ```
 
-Ordered hops from the device to every source (or to every leaf), one entry
-per hop: device, termination at each end, connector, rated amps, phase,
-conductor count, `oper_state`, redundancy side, and a per-path verdict in
-NetBox's vocabulary — `complete`, `split` (the path forks), `asymmetric`
-(the two sides differ in length or class), `incomplete` (terminates on
-nothing). This is the trace table, and it is also what the SLD renderer
-consumes for its A and B columns.
+Ordered hops from the device to its sources: device, termination at each
+end, connector, rated amps, phase, branch, redundancy side, `oper_state`,
+and a per-path verdict — `complete` (reached a device nothing feeds) or
+`incomplete` (closed on itself or hit the hop bound first). This is the
+trace table, and it is also what the SLD renderer will consume for its A
+and B columns.
 
-Implementation: reuse `repo.layer_edges(layer)` — already whole-layer,
-already normalised upstream→downstream via `core/layers.UPSTREAM_COL`, and
-already justified as cheaper than a recursive query per device.
+**Two revisions the live data forced, both worth recording.**
+
+**Upstream only.** The plan said `direction=up|down|both`. Downstream is
+not a path question: `/topology/impact/{id}` already answers it, and in
+the terms that matter — what goes dark versus what merely loses a side.
+Enumerating downstream routes from a UPS would produce four hundred
+near-identical lists and answer neither question. What people mean by
+"what hangs off this" is one hop, so the response carries the immediate
+neighbours and a count, and nothing else.
+
+**One path per CORD, not one per route.** The first implementation
+enumerated every simple path to a source. That multiplies out every fork
+*above* the device, and in a 2N estate that is a lot of forks: a
+dual-corded server behind a switchgear pair with a utility and two
+generators came back as **six** six-hop paths — thirty-six rows, identical
+from the ATS down, differing only in which source sat at the top. The walk
+now follows each cord upward one feeder at a time and records the feeders
+it did not take as `alternates` on that hop. Two cords, two chains, and
+the fact that losing SWGR1 alone does not drop the A side survives at the
+hop where it is true. NetBox does the same thing when a cable trace forks,
+for the same reason: a trace that guesses silently is worse than one that
+says where it chose. The choice is deterministic and stays on the side it
+started on — an A cord traced up through the B board would be a fiction.
+
+Implementation: `repo.layer_edges_detailed(layer)` — whole-layer, already
+normalised upstream→downstream via `core/layers.UPSTREAM_COL`, and cheaper
+to fetch once than to answer with a recursive query per device.
 
 ### 6.4 `GET /topology/redundancy` — new
 
@@ -545,7 +568,11 @@ to get the information.
 
 Each phase ships something usable on its own.
 
-### Phase 0 — make the page honest (0.5 day)
+**Status at 2026-09-16: phases 0 and 1 are shipped, pushed and verified
+against the live estate.** What each one actually cost and what it found is
+recorded under it.
+
+### Phase 0 — make the page honest (0.5 day) — DONE
 
 * Route `/connectivity` to the topology view; `/topology` redirects.
 * Replace `#3b82f6` / `#a855f7` with `useChartColors()` tokens **and** make
@@ -556,18 +583,52 @@ Each phase ships something usable on its own.
   maximise glyph.
 
 *Acceptance:* the nav goes where it says; `npm run validate:palette`
-passes; the page looks like the rest of the product.
+passes; the page looks like the rest of the product. **Met.**
 
-### Phase 1 — roll-up and the trace table (2–3 days)
+*Found on the way:* moving the A/B stroke out of CSS and into the component
+broke it silently. An SVG **presentation attribute loses to any CSS
+declaration that sets the same property**, so `.topo-edge { stroke: … }`
+beat the palette value on every line and the whole diagram drew in the
+border colour. It looked merely pale rather than broken, because the dash
+pattern survived — the one channel that was never meant to carry the
+distinction alone was the only one still carrying it. The base rule now
+sets `fill` only; `down` stays in CSS deliberately, because it is a state
+rather than a side and CSS outranking the attribute is what makes it
+impossible to forget at a call site.
 
-* `rollup=rack` on `GET /topology`.
-* `GET /topology/trace/{id}` with path verdicts.
+### Phase 1 — roll-up and the trace table (2–3 days) — DONE
+
+* `rollup=rack` on `GET /topology`, with `device_count` / `conductor_count`
+  beside `node_count` / `edge_count` so the view can say what it is hiding.
+* `GET /topology/trace/{id}` — see §6.3 for the two revisions.
 * Trace table view tab, paged with `components/Pagination.tsx`, CSV export.
-* Drawer on node select, carrying that node's trace.
+* Drawer on node select, carrying that node's chain per side.
 
 *Acceptance:* Server Hall A on the power layer renders in one screen
 without truncation; any device's chain to source reads as a table an
-engineer can paste into a method statement.
+engineer can paste into a method statement. **Met** — the hall draws as
+"55 boxes for 149 devices · 61 lines for 245 conductors", and SRV01's trace
+prints both cords, source first, down to `Out-2 · C13 · 10 A · L1-L2 · br 1
+→ PSU1 · C14 · 1100 W`.
+
+*Found on the way:*
+
+* The client's edge collapse counted one per row, so a rack's forty merged
+  cords would have drawn as a single conductor. It adds `count` now.
+* Clicking a node used to navigate to the device record, which lost the
+  diagram every time somebody checked what a box was. Selection opens the
+  drawer; the device page is a link inside it.
+* A rolled-up node has a synthetic id. It has no device page and no chain
+  of its own, so it offers the rack elevation rather than asking the server
+  for a trace it would refuse with a 400.
+* The trace table printed `unknown` down a State column on every power and
+  cooling row. **Only ethernet reports link state** — a cord lands on an
+  outlet and a pipe on a stub, which is why `alarms/link_correlation`
+  watches only the two port layers as well. A column that is always
+  `unknown` teaches the reader to skip it on the one layer where it carries
+  a fact, so it now appears only where it is measured.
+* A/B cannot use position in a table row, so the badge prints the letter
+  and the tint only reinforces it.
 
 ### Phase 2 — the one-line diagram (3–4 days)
 
