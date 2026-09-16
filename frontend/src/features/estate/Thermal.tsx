@@ -11,7 +11,7 @@ import { Tip } from '../../components/HoverTip';
 import { downloadCsv, stampedName } from '../../lib/csv';
 import { RoomDrawer } from '../home/RoomDrawer';
 import { useEstateTable } from './useEstateTable';
-import { ThermalTrend } from './ThermalTrend';
+import { ThermalCompliance, ThermalTrend, useTrendRange } from './ThermalTrend';
 import { RoomCooling } from './RoomCooling';
 import { RoomLiquid } from './RoomLiquid';
 import { Plant, usePlant, verdictLabel, verdictTone } from './Plant';
@@ -211,6 +211,11 @@ export function Thermal() {
   const [compare, setCompare] = useState<string>('');
   const [drawerRoom, setDrawerRoom] = useState<{ id: string; name: string } | null>(null);
   const [drill, setDrill] = useState<{ kind: 'site' | 'room'; id: string; label: string } | null>(null);
+  // ONE window for both chart panels below. Held here rather than in either
+  // of them: a range control per panel lets the two drift, and a temperature
+  // over this week beside a compliance figure over last week is a worse page
+  // than either chart alone.
+  const trendRange = useTrendRange();
   const navigate = useNavigate();
 
   // PLANT is a third tab rather than a third drill level, because it is a
@@ -870,12 +875,23 @@ export function Thermal() {
           series from the one this chart is, and an empty axis would read as
           "nothing is happening" rather than "this is not what is plotted
           here". */}
-      {!facilityRoom && scopeKnown && (
-        <ThermalTrend unit={unit} source={source} scope={
-          t.selectedRoom ? { kind: 'room', id: t.selectedRoom.id, label: t.selectedRoom.name }
-          : t.selected ? { kind: 'site', id: t.selected.id, label: t.selected.name }
-          : undefined} />
-      )}
+      {!facilityRoom && scopeKnown && (() => {
+        const chartScope = t.selectedRoom
+          ? { kind: 'room' as const, id: t.selectedRoom.id, label: t.selectedRoom.name }
+          : t.selected
+            ? { kind: 'site' as const, id: t.selected.id, label: t.selected.name }
+            : undefined;
+        // Temperature and time in band are read against each other, so both
+        // are on the page rather than one behind a toggle - over ONE window,
+        // whose control lives on the panel above.
+        return (
+          <>
+            <ThermalTrend unit={unit} source={source} scope={chartScope} range={trendRange} />
+            <ThermalCompliance unit={unit} source={source} scope={chartScope}
+                               range={trendRange} />
+          </>
+        );
+      })()}
 
       <Notes items={[
         ...(data?.notes ?? []),

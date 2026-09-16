@@ -65,6 +65,12 @@
    state tokens, so a column and a row cannot disagree about an hour. Drawn
    bottom-up - coldest at the floor, hottest at the top - because that is the
    order the bands are in on a thermometer and in the row above. */
+/* Shorter than the line above it. Two full-height charts would push the
+   table off the page, and a partition needs less room than a line does: its
+   segments are read as proportions of a column, not against an axis. The
+   maximized copy still takes the window (home.css). */
+.trend-panel .trend-partition { height: 150px; }
+
 .trend-partition .col .stackcol {
   display: flex;
   flex-direction: column-reverse;

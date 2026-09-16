@@ -15,12 +15,20 @@
  *  hour - the time-weighted basis - and can sit a little off the table's
  *  reading-level p90.
  *
- *  A second Seg picks WHICH measurement, over the same window and the same
- *  sensors: INTAKE, the temperature; or COMPLIANCE, the table's four-way
- *  spread bar given a time axis. They are two views and not two panels
- *  because they answer one question - how is this scope running - and a
- *  reader flipping between them is entitled to assume the window did not
- *  change underneath.
+ *  Under it, a second panel over the same window and the same sensors:
+ *  COMPLIANCE, the table's four-way spread bar given a time axis. The two
+ *  are read AGAINST each other - "it got warm on Tuesday" and "Tuesday cost
+ *  four per cent of the band" are one finding in two charts - so they are
+ *  two panels on the page rather than two views behind a toggle, which
+ *  turned the comparison into an act of memory and hid the compliance chart
+ *  from anyone who did not already know it was there.
+ *
+ *  ONE range control, on the intake panel, driving both: `useTrendRange`
+ *  holds the window and hands each panel the same grid. Two controls would
+ *  let the panels drift apart, and two charts of one scope over two
+ *  different weeks is worse than either alone. They cannot share a chart -
+ *  degrees and per cent on one y axis is the second-axis rule every other
+ *  chart here keeps.
  *
  *  Compliance is drawn as columns, not lines. It is a PARTITION of each
  *  bucket: four shares that add to 100 and cannot cross, which is what a
@@ -129,15 +137,6 @@ function TrendPlot({ data, unit }: { data: TrendData; unit: Unit }) {
   );
 }
 
-/** Which measurement the panel is drawing. Two cells, no ALL: they are one
- *  scope read two ways, and a chart showing both at once would need two y
- *  axes for two units - the thing the time-series rule forbids. */
-const VIEWS = [
-  { key: 'intake', label: 'INTAKE' },
-  { key: 'compliance', label: 'COMPLIANCE' },
-] as const;
-type View = typeof VIEWS[number]['key'];
-
 /** The four-way split per bucket, as stacked columns sized to their box.
  *
  *  Its own component because the same points are drawn twice when the panel
@@ -233,18 +232,19 @@ function ComplianceColumns({ data, said, band, unit }: {
   );
 }
 
-export function ThermalTrend({ scope, unit, source = 'auto' }: {
-  scope?: ThermalTrendScope;
-  unit: Unit;
-  /** The intake pin the tables above are using. The chart follows it because
-   *  it is drawn from the same readings: a page pinned to PROBES with a chart
-   *  still drawn the automatic way shows two measurements of one estate and
-   *  says nothing about the difference. */
-  source?: string;
-}) {
+/** The window both panels are drawn on.
+ *
+ *  One piece of state, one control, two charts. Held above the panels rather
+ *  than by either of them because a range control per panel lets them drift,
+ *  and two charts of one scope over two different weeks is a worse page than
+ *  either chart alone.
+ *
+ *  Returns what a panel needs to ask its question (`days`, `bucket`, the
+ *  picked window) and the controls themselves, which the INTAKE panel
+ *  renders and the compliance panel does not.
+ */
+export function useTrendRange() {
   const [range, setRange] = useState<Range>(RANGES[1]);
-  const [view, setView] = useState<View>('intake');
-  const [maxed, setMaxed] = useState(false);
   const [custom, setCustom] = useState(false);
   const [since, setSince] = useState(() => {
     const d = new Date(); d.setDate(d.getDate() - 6); return isoDay(d);
@@ -255,46 +255,6 @@ export function ThermalTrend({ scope, unit, source = 'auto' }: {
   const bucket: 'hour' | 'day' = custom
     ? (span > HOURLY_UP_TO_DAYS ? 'day' : 'hour')
     : range.bucket;
-
-  const { data, error } = useQuery({
-    queryKey: ['thermal-trend', scope?.kind ?? '', scope?.id ?? '',
-               custom ? `${since}..${until}` : range.days, bucket, source],
-    queryFn: () => api.thermalTrend({
-      site: scope?.kind === 'site' ? scope.id : undefined,
-      room: scope?.kind === 'room' ? scope.id : undefined,
-      rack: scope?.kind === 'rack' ? scope.id : undefined,
-    }, range.days, bucket, custom ? { since, until } : undefined, source),
-    // Hourly points move every five minutes; a wall display should follow.
-    refetchInterval: bucket === 'hour' ? 300_000 : false,
-    staleTime: 60_000,
-    // Keep the old line up while the new range loads: a chart that blanks
-    // on every click reads as broken, and the ranges are compared by eye.
-    placeholderData: (prev) => prev,
-    // Only the view on screen is fetched. Both are a scan of the same
-    // window, and a page that reads the estate twice to show one chart is
-    // paying for a click nobody made.
-    enabled: view === 'intake' && (!custom || windowOk),
-  });
-
-  const { data: comp, error: compError } = useQuery({
-    queryKey: ['thermal-compliance-trend', scope?.kind ?? '', scope?.id ?? '',
-               custom ? `${since}..${until}` : range.days, bucket, source],
-    queryFn: () => api.thermalComplianceTrend({
-      site: scope?.kind === 'site' ? scope.id : undefined,
-      room: scope?.kind === 'room' ? scope.id : undefined,
-      rack: scope?.kind === 'rack' ? scope.id : undefined,
-    }, range.days, bucket, custom ? { since, until } : undefined, source),
-    enabled: view === 'compliance' && (!custom || windowOk),
-    refetchInterval: bucket === 'hour' ? 300_000 : false,
-    staleTime: 60_000,
-    placeholderData: (prev) => prev,
-  });
-
-  const views = (
-    <Seg value={view} label="What to draw"
-         options={VIEWS.map((v) => ({ key: v.key, label: v.label }))}
-         onChange={setView} />
-  );
 
   const picker = (
     <Seg value={custom ? CUSTOM : range.label} label="How far back"
@@ -310,7 +270,7 @@ export function ThermalTrend({ scope, unit, source = 'auto' }: {
     set(e.target.value);
     setCustom(true);
   };
-  const dates = custom && (
+  const dates = custom ? (
     <div className="alarm-trend-dates">
       <label>From <input type="date" value={since} max={until} onChange={pick(setSince)} /></label>
       <label>To <input type="date" value={until} min={since} max={isoDay(new Date())}
@@ -321,45 +281,42 @@ export function ThermalTrend({ scope, unit, source = 'auto' }: {
         </span>
       )}
     </div>
-  );
+  ) : null;
 
-  const where = scope ? `in ${scope.label}` : 'across the estate';
-  const compliance = view === 'compliance';
-  const title = `${compliance ? 'Time in band' : 'Intake'} ${where}`;
-  const said = custom
-    ? `from ${shortDay(since)} to ${shortDay(until)}`
-    : range.said;
-  const per = bucket === 'hour' ? 'per hour' : 'per day';
-  // One state machine for both views: the same four answers - the request
-  // failed, the window is not askable, it has not arrived, nothing was
-  // measured - said in the vocabulary of whichever measurement is on.
-  const shown = compliance ? comp : data;
-  const failed = compliance ? compError : error;
-  const caption = failed ? 'Could not load the trend.'
-    : custom && !windowOk ? 'Pick a window to draw.'
-      : !shown ? 'Loading the trend…'
-        : shown.buckets_with_data === 0
-          ? <>No intake readings {where} {said}.</>
-          : compliance && comp
-            ? <>
-                <b>{comp.in_band_pct}%</b> of the time in band {where} {said},
-                {' '}<b>{comp.below_pct}%</b> below it, {per}, from{' '}
-                <b>{comp.sensors}</b> sensor{comp.sensors === 1 ? '' : 's'} at most;
-                {' '}each sensor weighted once
-              </>
-            : data ? <>
-                <b>Intake</b> {where} {said}, {per}, from{' '}
-                <b>{data.sensors}</b> sensor{data.sensors === 1 ? '' : 's'} at most;
-                {' '}p90 over {data.source === '5m' ? 'five-minute' : 'hourly'} sensor values
-              </> : null;
-  const drawable = !failed && shown && !(custom && !windowOk);
+  return {
+    days: range.days,
+    bucket,
+    custom,
+    windowOk,
+    /** The picked window, or undefined on a preset. */
+    window: custom ? { since, until } : undefined,
+    /** For the caption: "in the last 7 days", or the two dates. */
+    said: custom ? `from ${shortDay(since)} to ${shortDay(until)}` : range.said,
+    /** A key that changes with the window, for the query caches. */
+    key: custom ? `${since}..${until}` : String(range.days),
+    picker,
+    dates,
+  };
+}
+export type TrendRange = ReturnType<typeof useTrendRange>;
 
+/** What both panels share: the caption, whatever control the panel owns (the
+ *  range Seg on the intake one, nothing on the other), the maximize glyph,
+ *  and the same children drawn twice - inline and in the modal - so a
+ *  maximized chart is never a stale copy. */
+function TrendPanel({ title, caption, controls, dates, children }: {
+  title: string;
+  caption: React.ReactNode;
+  controls?: React.ReactNode;
+  dates?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  const [maxed, setMaxed] = useState(false);
   const head = (inline: boolean) => (
     <>
       <div className="alarm-trend-head">
         <p className="muted">{caption}</p>
-        {views}
-        {picker}
+        {controls}
         {inline && (
           <button type="button" className="asset-max"
                   aria-label={`Maximize ${title}`} title="Maximize"
@@ -369,27 +326,123 @@ export function ThermalTrend({ scope, unit, source = 'auto' }: {
       {dates}
     </>
   );
-
-  const chart = () => {
-    if (!drawable) return null;
-    if (compliance) {
-      return comp ? <ComplianceColumns data={comp} said={said}
-                                       band={comp.band} unit={unit} /> : null;
-    }
-    return data ? <TrendPlot data={data} unit={unit} /> : null;
-  };
-
   return (
     <div className="trend-panel">
       <h3>{title}</h3>
       {head(true)}
-      {chart()}
+      {children}
       {maxed && (
         <MaxModal title={title} onClose={() => setMaxed(false)}>
           {head(false)}
-          {chart()}
+          {children}
         </MaxModal>
       )}
     </div>
+  );
+}
+
+/** Where the chart is pointed, said the way a caption says it. */
+const whereOf = (scope?: ThermalTrendScope) =>
+  scope ? `in ${scope.label}` : 'across the estate';
+
+export function ThermalTrend({ scope, unit, source = 'auto', range }: {
+  scope?: ThermalTrendScope;
+  unit: Unit;
+  /** The intake pin the tables above are using. The chart follows it because
+   *  it is drawn from the same readings: a page pinned to PROBES with a chart
+   *  still drawn the automatic way shows two measurements of one estate and
+   *  says nothing about the difference. */
+  source?: string;
+  /** The shared window. This panel carries its control. */
+  range: TrendRange;
+}) {
+  const { data, error } = useQuery({
+    queryKey: ['thermal-trend', scope?.kind ?? '', scope?.id ?? '',
+               range.key, range.bucket, source],
+    queryFn: () => api.thermalTrend({
+      site: scope?.kind === 'site' ? scope.id : undefined,
+      room: scope?.kind === 'room' ? scope.id : undefined,
+      rack: scope?.kind === 'rack' ? scope.id : undefined,
+    }, range.days, range.bucket, range.window, source),
+    enabled: !range.custom || range.windowOk,
+    // Hourly points move every five minutes; a wall display should follow.
+    refetchInterval: range.bucket === 'hour' ? 300_000 : false,
+    staleTime: 60_000,
+    // Keep the old line up while the new range loads: a chart that blanks
+    // on every click reads as broken, and the ranges are compared by eye.
+    placeholderData: (prev) => prev,
+  });
+
+  const where = whereOf(scope);
+  const per = range.bucket === 'hour' ? 'per hour' : 'per day';
+  const caption = error ? 'Could not load the trend.'
+    : range.custom && !range.windowOk ? 'Pick a window to draw.'
+      : !data ? 'Loading the trend…'
+        : data.buckets_with_data === 0
+          ? <>No intake readings {where} {range.said}.</>
+          : <>
+              <b>Intake</b> {where} {range.said}, {per}, from{' '}
+              <b>{data.sensors}</b> sensor{data.sensors === 1 ? '' : 's'} at most;
+              {' '}p90 over {data.source === '5m' ? 'five-minute' : 'hourly'} sensor values
+            </>;
+  const drawable = !error && data && !(range.custom && !range.windowOk);
+
+  return (
+    <TrendPanel title={`Intake ${where}`} caption={caption}
+                controls={range.picker} dates={range.dates}>
+      {drawable && data ? <TrendPlot data={data} unit={unit} /> : null}
+    </TrendPanel>
+  );
+}
+
+/** The same window, read as time in band rather than as temperature.
+ *
+ *  No range control of its own: the panel above owns the window for both, so
+ *  this one is always drawn over exactly the hours the line above it is
+ *  drawn over. Its caption still names the window, because a maximized chart
+ *  is read on its own and a chart that does not say what it covers says
+ *  nothing.
+ */
+export function ThermalCompliance({ scope, unit, source = 'auto', range }: {
+  scope?: ThermalTrendScope;
+  unit: Unit;
+  source?: string;
+  range: TrendRange;
+}) {
+  const { data, error } = useQuery({
+    queryKey: ['thermal-compliance-trend', scope?.kind ?? '', scope?.id ?? '',
+               range.key, range.bucket, source],
+    queryFn: () => api.thermalComplianceTrend({
+      site: scope?.kind === 'site' ? scope.id : undefined,
+      room: scope?.kind === 'room' ? scope.id : undefined,
+      rack: scope?.kind === 'rack' ? scope.id : undefined,
+    }, range.days, range.bucket, range.window, source),
+    enabled: !range.custom || range.windowOk,
+    refetchInterval: range.bucket === 'hour' ? 300_000 : false,
+    staleTime: 60_000,
+    placeholderData: (prev) => prev,
+  });
+
+  const where = whereOf(scope);
+  const per = range.bucket === 'hour' ? 'per hour' : 'per day';
+  const caption = error ? 'Could not load the trend.'
+    : range.custom && !range.windowOk ? 'Pick a window to draw.'
+      : !data ? 'Loading the trend…'
+        : data.buckets_with_data === 0
+          ? <>No intake readings {where} {range.said}.</>
+          : <>
+              <b>{data.in_band_pct}%</b> of the time in band {where} {range.said},
+              {' '}<b>{data.below_pct}%</b> below it, {per}, from{' '}
+              <b>{data.sensors}</b> sensor{data.sensors === 1 ? '' : 's'} at most;
+              {' '}each sensor weighted once
+            </>;
+  const drawable = !error && data && !(range.custom && !range.windowOk);
+
+  return (
+    <TrendPanel title={`Time in band ${where}`} caption={caption}>
+      {drawable && data
+        ? <ComplianceColumns data={data} said={range.said} band={data.band} unit={unit} />
+        : null}
+    </TrendPanel>
   );
 }
