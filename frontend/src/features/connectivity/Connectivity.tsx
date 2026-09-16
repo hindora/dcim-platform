@@ -42,6 +42,12 @@ const VIEWS = [
 
 type ViewKey = typeof VIEWS[number]['key'];
 
+/** Layers drawn as a one-line: A down the left, B down the right, shared and
+ *  dual-fed equipment down the middle. Both are directed distribution chains
+ *  with a labelled second path; ethernet has neither, and columns there would
+ *  be two empty gutters around every switch. */
+const ONE_LINE = new Set(['power', 'cooling']);
+
 /** Depth in words. "1" means nothing to someone who has not read the API spec,
  *  and the difference between 0 and 1 on the power layer is whether the
  *  switchgear feeding the room is in the picture at all. */
@@ -86,7 +92,11 @@ export function Connectivity() {
     () => (graph.data ? collapseEdges(graph.data.edges) : []),
     [graph.data]);
 
-  const key = graph.data ? structureKey(graph.data.nodes, graph.data.edges) : '';
+  // The layer is part of the key, not just the structure: it decides whether
+  // the layout draws A and B as columns, and two layers could in principle
+  // return the same node and edge ids.
+  const key = graph.data
+    ? `${layer}:${structureKey(graph.data.nodes, graph.data.edges)}` : '';
 
   // Positions are recomputed ONLY when the structure key changes. A poll that
   // returns the same graph with new statuses reuses the previous placement
@@ -95,10 +105,10 @@ export function Connectivity() {
   const placement = useMemo(() => {
     if (!graph.data) return { placed: [], width: 0, height: 0 };
     if (cache.current?.key === key) return cache.current.value;
-    const value = layout(graph.data.nodes, edges);
+    const value = layout(graph.data.nodes, edges, { oneLine: ONE_LINE.has(layer) });
     cache.current = { key, value };
     return value;
-  }, [graph.data, edges, key]);
+  }, [graph.data, edges, key, layer]);
 
   const title = `${LAYERS.find((l) => l.key === layer)?.label ?? layer} TOPOLOGY`;
 

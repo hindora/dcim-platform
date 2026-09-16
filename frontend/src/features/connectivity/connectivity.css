@@ -179,6 +179,10 @@
 
 .topo-name { font-size: 10px; fill: var(--text); font-family: var(--mono); }
 .topo-type { font-size: 9px; fill: var(--text-muted); font-family: var(--sans); }
+/* The live draw, right-aligned against the node's edge so the figures line up
+   down a column and can be scanned rather than read one at a time. */
+.topo-load { font-size: 9px; fill: var(--text-muted); text-anchor: end;
+             font-variant-numeric: tabular-nums; font-family: var(--mono); }
 
 /* A and B are the two distribution paths, and seeing whether a load is fed
    from both is the whole point of deriving redundancy_side. The stroke and its

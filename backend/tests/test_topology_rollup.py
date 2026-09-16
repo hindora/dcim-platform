@@ -87,6 +87,27 @@ def test_power_adds_up_and_temperature_does_not():
     assert srv.metrics["inlet_temp_c"] == 24.0
 
 
+def test_a_rating_sums_only_when_every_member_has_one():
+    """A part-rated group would print its whole draw against a fraction of its
+    real rating, which reads as overload where there is headroom - and the bar
+    it feeds is the one someone decides a circuit on."""
+    nodes, edges = build()
+    for n in nodes[2:6]:
+        n.metrics["rated_power_w"] = 500.0
+    kept, _ = _rollup_by_rack(nodes, edges, "power")
+    srv = next(n for n in kept if n.id == "rack:r1:server")
+    assert srv.metrics["rated_power_w"] == 2000.0
+
+    nodes, edges = build()
+    for n in nodes[2:5]:                      # three of the four
+        n.metrics["rated_power_w"] = 500.0
+    kept, _ = _rollup_by_rack(nodes, edges, "power")
+    srv = next(n for n in kept if n.id == "rack:r1:server")
+    assert "rated_power_w" not in srv.metrics, (
+        "a partly-rated rack claimed a rating, and the bar would read 1600 of "
+        "1500 W")
+
+
 def test_the_edges_merge_and_carry_the_conductor_count():
     _, edges = _rollup_by_rack(*build(), "power")
     to_servers = [e for e in edges if e.target == "rack:r1:server"]

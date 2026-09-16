@@ -117,6 +117,11 @@ def resolve_layer(layer: str) -> str:
 def _node_from_row(row: dict[str, Any]) -> TopologyNode:
     metrics = {k: float(row[k]) for k in _NODE_METRICS
                if row.get(k) is not None}
+    # Carried alongside the readings rather than as a field of its own: it is
+    # the denominator of one of them, and a node that has no rating recorded
+    # must render as "no limit recorded" rather than as 0 W.
+    if row.get("rated_power_w"):
+        metrics["rated_power_w"] = float(row["rated_power_w"])
     return TopologyNode(
         id=row["id"], name=row["name"], device_type=row["device_type"],
         status=row["status"], max_severity=row["max_severity"],
@@ -225,6 +230,12 @@ def _rollup_by_rack(nodes: list[TopologyNode], edges: list[TopologyEdge],
             metrics["power_w"] = power
         if inlets:
             metrics["inlet_temp_c"] = max(inlets)
+        # The rating sums only if EVERY member has one. A part-rated group
+        # would print a draw against a smaller denominator than it is really
+        # running against, which reads as overload where there is headroom.
+        rated = [m.metrics.get("rated_power_w") for m in members]
+        if all(r is not None for r in rated):
+            metrics["rated_power_w"] = sum(rated)  # type: ignore[arg-type]
 
         first = members[0]
         rolled.append(TopologyNode(

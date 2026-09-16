@@ -111,6 +111,10 @@ def _nodes_sql(scope_type: str) -> str:
                -- cooling graph wants inlet temperature; neither wants every
                -- sample the device has ever produced.
                ds.power_w, ds.inlet_temp_c, ds.cpu_util_pct, ds.humidity_pct,
+               -- The datasheet rating, not a reading. A one-line diagram
+               -- without capacity is a picture: the number an operator needs
+               -- beside a live draw is what the thing is built to take.
+               d.rated_power_w,
                rm.id::text AS room_id, rm.name AS room_name,
                r.id::text  AS rack_id, r.name AS rack_name,
                dc.id::text AS datacenter_id, dc.code AS datacenter_code

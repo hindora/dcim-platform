@@ -55,6 +55,46 @@ function StatusGlyph({ status, severity }: { status: string; severity: string })
   return <circle cx={0} cy={0} r={3} fill={fill} />;          // disc
 }
 
+/** Watts, at the scale the reader is thinking in. */
+function watts(w: number): string {
+  return w >= 1000 ? `${(w / 1000).toFixed(w >= 10_000 ? 0 : 1)} kW`
+                   : `${Math.round(w)} W`;
+}
+
+/** The capacity bar inside a node: live draw against the datasheet rating.
+ *
+ *  Tones at 80 and 95 per cent, the same places `components/Meter` puts them,
+ *  so a bar means the same thing here as it does on every other page.
+ *
+ *  A device with no rating recorded gets a HATCHED track and the draw with no
+ *  percentage. "Nobody wrote down what this is rated for" is not "it is rated
+ *  for zero", and a full-looking bar on an unrated device would be a
+ *  fabrication in the one place where fabrications get acted on.
+ */
+function CapacityBar({ draw, rated }: { draw: number; rated?: number }) {
+  const w = NODE_W - 20;
+  if (!rated) {
+    return (
+      <g>
+        <rect x={10} y={29} width={w} height={4} rx={2}
+              fill="url(#topo-nolimit)" stroke="var(--border)" strokeWidth={0.5} />
+      </g>
+    );
+  }
+  const frac = Math.min(1, draw / rated);
+  const tone = frac >= 0.95 ? 'var(--critical)'
+    : frac >= 0.8 ? 'var(--warn)' : 'var(--accent)';
+  return (
+    <g>
+      <rect x={10} y={29} width={w} height={4} rx={2} fill="var(--bg-inset)" />
+      {/* A hair of width at zero, or an idle device reads as a missing bar
+          rather than as an idle one. */}
+      <rect x={10} y={29} width={Math.max(1.5, frac * w)} height={4} rx={2}
+            fill={tone} />
+    </g>
+  );
+}
+
 /** How a redundancy side is drawn.
  *
  *  Position is the primary channel once the one-line layout lands (A left, B
@@ -83,13 +123,19 @@ export function Diagram({ placement, edges, layer, onSelect, selected }: {
   selected: string | null;
 }) {
   const colors = useChartColors();
+  // Draw is the question on the power layer and a distraction on the fabric,
+  // where a switch's watts say nothing about whether the link is carrying
+  // anything.
+  const showLoad = layer === 'power';
 
   const byId = new Map<string, Placed>();
   for (const p of placement.placed) byId.set(p.node.id, p);
 
   const sides = new Set<string>();
   for (const e of edges) for (const s of e.sides) sides.add(s);
-  const showLegend = sides.size > 1;
+  // A legend only when there is more than one thing to tell apart - either two
+  // distribution sides, or a capacity bar whose hatch needs naming.
+  const showLegend = sides.size > 1 || showLoad;
 
   return (
     <>
@@ -100,6 +146,21 @@ export function Diagram({ placement, edges, layer, onSelect, selected }: {
           role="img"
           aria-label={`${layer} connectivity, ${placement.placed.length} devices`}
         >
+          <defs>
+            {/* Diagonal hatch for "no limit recorded". A pattern rather than a
+                tint, because a tint is just another fill and reads as a value. */}
+            <pattern id="topo-nolimit" width="4" height="4"
+                     patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+              <rect width="4" height="4" fill="var(--bg-inset)" />
+              <line x1="0" y1="0" x2="0" y2="4"
+                    stroke="var(--border-strong)" strokeWidth="1.2" />
+            </pattern>
+            {/* The type label stops before the load figure instead of running
+                under it; SVG text has no ellipsis. */}
+            <clipPath id="topo-type-clip">
+              <rect x={0} y={16} width={NODE_W - 52} height={12} />
+            </clipPath>
+          </defs>
           {edges.map((e) => (
             <Edge key={`${e.source}>${e.target}`} e={e} byId={byId} colors={colors} />
           ))}
@@ -125,13 +186,23 @@ export function Diagram({ placement, edges, layer, onSelect, selected }: {
                 <StatusGlyph status={p.node.status} severity={p.node.max_severity} />
               </g>
               <text x={10} y={12} className="topo-name">{p.node.name}</text>
-              <text x={10} y={23} className="topo-type">
+              <text x={10} y={24} className="topo-type"
+                    clipPath="url(#topo-type-clip)">
                 {p.node.rolled_up > 0
                   ? `${p.node.rolled_up} × ${p.node.device_type}`
                   : p.node.device_type}
                 {p.node.rolled_up > 0 && p.node.offline_count > 0
                   && ` · ${p.node.offline_count} off`}
               </text>
+              {showLoad && p.node.metrics.power_w != null && (
+                <>
+                  <text x={NODE_W - 10} y={24} className="topo-load">
+                    {watts(p.node.metrics.power_w)}
+                  </text>
+                  <CapacityBar draw={p.node.metrics.power_w}
+                               rated={p.node.metrics.rated_power_w} />
+                </>
+              )}
             </g>
           ))}
         </svg>
@@ -159,6 +230,24 @@ export function Diagram({ placement, edges, layer, onSelect, selected }: {
             </svg>
             Down
           </span>
+          {showLoad && (
+            <span>
+              {/* The hatch is drawn out rather than referencing the diagram's
+                  pattern: `url(#id)` is document-scoped, and the maximized
+                  copy of this diagram would put a second element under the
+                  same id. */}
+              <svg width="18" height="9" aria-hidden>
+                <rect x="0" y="2.5" width="18" height="4" rx="2"
+                      fill="var(--bg-inset)" stroke="var(--border)"
+                      strokeWidth="0.5" />
+                {[1, 5, 9, 13].map((x) => (
+                  <line key={x} x1={x} y1="6.5" x2={x + 4} y2="2.5"
+                        stroke="var(--border-strong)" strokeWidth="1" />
+                ))}
+              </svg>
+              No rating recorded
+            </span>
+          )}
         </div>
       )}
     </>
@@ -177,6 +266,11 @@ function nodeLabel(n: TopologyNode): string {
   const parts = [n.name, n.device_type.replace(/_/g, ' '), n.status.toLowerCase()];
   if (n.max_severity && n.max_severity !== 'CLEAR') {
     parts.push(`${n.max_severity.toLowerCase()} alarm`);
+  }
+  if (n.metrics.power_w != null) {
+    parts.push(n.metrics.rated_power_w
+      ? `${watts(n.metrics.power_w)} of ${watts(n.metrics.rated_power_w)}`
+      : `${watts(n.metrics.power_w)}, no rating recorded`);
   }
   if (n.location.rack_name) parts.push(`rack ${n.location.rack_name}`);
   else if (n.location.room_name) parts.push(n.location.room_name);
