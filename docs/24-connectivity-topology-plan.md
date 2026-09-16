@@ -630,7 +630,7 @@ prints both cords, source first, down to `Out-2 · C13 · 10 A · L1-L2 · br 1
 * A/B cannot use position in a table row, so the badge prints the letter
   and the tint only reinforces it.
 
-### Phase 2 — the one-line diagram (3–4 days)
+### Phase 2 — the one-line diagram (3–4 days) — DONE
 
 * `layoutOneLine`: A/B columns, stage ranks, dual-corded loads centred.
 * `Meter` in each node: actual against rated, hatched where no rating is
@@ -639,7 +639,38 @@ prints both cords, source first, down to `Out-2 · C13 · 10 A · L1-L2 · br 1
 
 *Acceptance:* a power one-line for a room that an electrical engineer
 recognises without explanation; no node claims a capacity the data does not
-hold.
+hold. **Met.**
+
+*Built differently from the plan:* the plan said `layoutOneLine` would rank
+by *electrical stage* — utility / switchgear / ATS / UPS / RPP / PDU / load.
+It does not. That is a device-type table, it would need keeping in step with
+the estate, and it would be wrong about exactly the cases worth seeing: the
+RPP that ended up feeding both sides, the load somebody corded twice to A.
+The structural rank already puts sources at the top; the only thing the
+one-line adds is the **column split, and the side is read off the conductors
+touching each node**. A node whose conductors disagree, or carry none, goes
+in the middle where both columns reach it — which is also exactly where a
+dual-corded load belongs. Where nothing carries a side the columns collapse
+back to the centred rank, because two empty gutters around a full middle is
+a worse picture than no columns at all.
+
+*Found on the way, and it is the point of the phase:*
+
+**39 of 90 servers in DC1 Server Hall A draw more than their recorded
+nameplate**, up to 177 %. Every other device class is comfortable — CRAH
+6.6 %, PDU a median 22 %, CDU 49 %, UPS 6 %. The rating is the model's:
+`Supermicro SYS-121H-TNR LCC`, recorded at **800 W**, on a chassis whose own
+PSUs are **2 × 1100 W**. A 1U dual-socket Sapphire Rapids box does not have
+1100 W supplies fitted to run at 800 W, so the nameplate is the number that
+is wrong, not the draw.
+
+This is a real inconsistency between the simulator's power model and the
+DCIM's model catalogue, and it was invisible until a live draw was printed
+next to a rating. It is also a problem for this page as it stands: every
+server rack paints red, and a diagram that is always red stops being read.
+**It needs a decision before phase 3** — correct the catalogue rating (the
+likely fix), or correct the simulator's draw. Not silently suppressed here:
+the bar is telling the truth about what is recorded.
 
 ### Phase 3 — impact on the diagram (2 days)
 
