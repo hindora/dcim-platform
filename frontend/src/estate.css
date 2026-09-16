@@ -54,6 +54,35 @@
 .trend-panel .chart { max-width: none; display: block; }
 .trend-frame { min-width: 0; contain: inline-size; }
 .trend-panel .legend { margin-bottom: 0; }
+
+/* The compliance view's columns. The alarm trend's column chart (home.css)
+   gives the frame, the y-axis label, the value over the bar and the dense
+   rules; what differs is that a column here is a PARTITION of its bucket
+   rather than a magnitude, so it is always full height and its height is
+   divided among four segments instead of scaled against a maximum.
+
+   The segments are the table's spread bar stood up, and they carry the same
+   state tokens, so a column and a row cannot disagree about an hour. Drawn
+   bottom-up - coldest at the floor, hottest at the top - because that is the
+   order the bands are in on a thermometer and in the row above. */
+.trend-partition .col .stackcol {
+  display: flex;
+  flex-direction: column-reverse;
+  height: 100%;
+  min-height: 0;
+  width: 100%;
+  border-radius: 3px;
+  overflow: hidden;
+}
+/* The partition fills its wrapper; the alarm trend's bar is sized by its
+   own value, so the wrapper must let this one take what is left after the
+   value's headroom. */
+.trend-partition .col .barwrap > .stackcol { flex: 1 1 auto; }
+.trend-partition .col .stackcol .seg { width: 100%; }
+.trend-partition .col .stackcol .seg.cool { background: var(--cat-cool); }
+.trend-partition .col .stackcol .seg.ok { background: var(--ok); }
+.trend-partition .col .stackcol .seg.warn { background: var(--warn); }
+.trend-partition .col .stackcol .seg.critical { background: var(--critical); }
 .estate-head h2 {
   margin: 0; font-size: 21px; font-weight: 650; letter-spacing: -.01em;
 }

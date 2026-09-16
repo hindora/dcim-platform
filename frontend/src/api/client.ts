@@ -1925,6 +1925,34 @@ export interface ThermalTrend {
   sensors: number;
 }
 
+/** The four-way ASHRAE split over time in one scope:
+ *  /estate/thermal-compliance-trend. The same window and sensors as
+ *  `ThermalTrend`; the two are the two cells of the chart's view control. */
+export interface ThermalComplianceTrend {
+  days: number;
+  bucket: 'hour' | 'day';
+  source: '5m' | '1h';
+  since: string;
+  /** Exclusive: the instant after the last bucket. */
+  until: string;
+  room_id: string | null;
+  datacenter_id: string | null;
+  rack_id: string | null;
+  band: { low_c: number; high_c: number; allowable_high_c: number };
+  /** One per bucket, oldest first; a bucket nothing reported in carries
+   *  nulls, and the four shares add to 100 in every other one. */
+  points: { t: string; below_pct: number | null; in_band_pct: number | null;
+            above_recommended_pct: number | null;
+            above_allowable_pct: number | null; sensors: number }[];
+  buckets_with_data: number;
+  /** The most sensors any one bucket heard from. */
+  sensors: number;
+  /** The window's own figures: the mean of the buckets that reported, so
+   *  the caption need not add up a hundred columns. */
+  in_band_pct: number | null;
+  below_pct: number | null;
+}
+
 export interface PowerRow extends EstateRowBase {
   total_kw: number | null;
   it_ac_kw: number | null;
@@ -2538,6 +2566,20 @@ export const api = {
                   *  estate with nothing saying they differ. */
                  source?: string) =>
     request<ThermalTrend>(`/estate/thermal-trend?days=${days}&bucket=${bucket}`
+      + (scope.site ? `&site=${encodeURIComponent(scope.site)}` : '')
+      + (scope.room ? `&room=${encodeURIComponent(scope.room)}` : '')
+      + (scope.rack ? `&rack=${encodeURIComponent(scope.rack)}` : '')
+      + (window ? `&since=${window.since}&until=${window.until}` : '')
+      + (source && source !== 'auto' ? `&source=${source}` : '')),
+
+  /** The same scope and window as `thermalTrend`, read as time in band
+   *  rather than as temperature. */
+  thermalComplianceTrend: (scope: { site?: string; room?: string; rack?: string },
+                           days = 7, bucket: 'hour' | 'day' = 'hour',
+                           window?: { since: string; until: string },
+                           source?: string) =>
+    request<ThermalComplianceTrend>(
+      `/estate/thermal-compliance-trend?days=${days}&bucket=${bucket}`
       + (scope.site ? `&site=${encodeURIComponent(scope.site)}` : '')
       + (scope.room ? `&room=${encodeURIComponent(scope.room)}` : '')
       + (scope.rack ? `&rack=${encodeURIComponent(scope.rack)}` : '')

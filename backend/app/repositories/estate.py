@@ -518,6 +518,119 @@ async def thermal_trend(session: AsyncSession, *, start: datetime, end: datetime
     return [dict(r) for r in rows]
 
 
+async def thermal_compliance_trend(session: AsyncSession, *, start: datetime,
+                                   end: datetime, bucket: str, source: str,
+                                   low_c: float, high_c: float, allowable_c: float,
+                                   force: str = "",
+                                   room_id: str | None = None,
+                                   datacenter_id: str | None = None,
+                                   rack_id: str | None = None) -> list[dict[str, Any]]:
+    """The four-way ASHRAE split per bucket over a window, in one scope.
+
+    The table's spread bar is one window wide; this is the same partition per
+    hour or per day, which is what says whether a setpoint change stuck and
+    how much of a floor has been overcooled all week rather than this
+    afternoon. Same source rows and the same probe-first rack rule as
+    `thermal_trend`, so the two cells of the chart's view control are two
+    readings of one measurement and never of two.
+
+    PER SENSOR, like every other figure on this page. Each sensor's share of
+    its own bucket is worked out first and the bucket is the MEAN of those
+    shares, so a BMC polled every 67 seconds and a rack probe polled every
+    133 describe their hour with equal authority. Pooling the rows instead
+    would let the densely polled racks carry the estate's compliance figure,
+    which is the bug the table was rebuilt to remove - it would be a poll
+    profile drawn as a temperature.
+
+    A sensor is (device, instance), inside a rack already pinned to one
+    metric by `chosen` - the same identity the table weights by.
+
+    Resolution follows `source`, exactly as the intake line's p90 does: from
+    the five-minute rollup a sensor's hour is twelve classifications, from
+    the hourly one a day is twenty-four, and from `raw` it is every reading.
+    A sub-bucket is classified by its MEAN, so a five-minute period that
+    crossed the line reads as wherever it spent most of itself; at this
+    resolution that is a rounding of minutes, not of hours.
+
+    The four shares partition the bucket: below the recommended floor, inside
+    it, above it but allowable, above the allowable ceiling. Buckets with
+    nothing in them are absent; the service fills them.
+    """
+    table = _TREND_SOURCE[source]
+    width = _TREND_WIDTH[bucket]
+    if source == "raw":
+        stamp, value = "t.ts", "t.value"
+    else:
+        stamp, value = "t.bucket", "t.avg_value"
+    scope = ""
+    params: dict[str, Any] = {"t0": start, "t1": end, "width": width,
+                              "force": force, "low": low_c, "high": high_c,
+                              "allow": allowable_c}
+    if rack_id is not None:
+        scope = "AND d.rack_id = CAST(:rack AS uuid)"
+        params["rack"] = rack_id
+    elif room_id is not None:
+        scope = "AND rr.room_id = CAST(:room AS uuid)"
+        params["room"] = room_id
+    elif datacenter_id is not None:
+        scope = "AND rm.datacenter_id = CAST(:site AS uuid)"
+        params["site"] = datacenter_id
+    rows = (await session.execute(text(f"""
+        WITH s AS (
+            SELECT d.rack_id, t.device_id, t.instance, m.key,
+                   time_bucket(:width, {stamp}) AS b,
+                   {value} AS value
+            FROM {table} t
+            JOIN metric m    ON m.id = t.metric_id
+            JOIN device d    ON d.id = t.device_id
+                            AND d.rack_id IS NOT NULL
+                            AND d.lifecycle <> 'decommissioned'
+            JOIN rack r      ON r.id  = d.rack_id
+            JOIN rack_row rr ON rr.id = r.row_id
+            JOIN room rm     ON rm.id = rr.room_id
+            WHERE m.key IN ('inlet_temperature', 'ambient_temperature')
+              AND {stamp} >= :t0 AND {stamp} < :t1
+              {scope}
+        ),
+        src AS (
+            SELECT rack_id, bool_or(key = 'ambient_temperature') AS has_probe
+            FROM s GROUP BY rack_id
+        ),
+        chosen AS (
+            SELECT s.b, s.device_id, s.instance, s.value
+            FROM s JOIN src USING (rack_id)
+            WHERE s.key = CASE
+                      WHEN :force <> '' THEN :force
+                      WHEN src.has_probe THEN 'ambient_temperature'
+                      ELSE 'inlet_temperature' END
+              AND s.value IS NOT NULL
+        ),
+        -- Each sensor's own bucket, as four shares of itself.
+        per_sensor AS (
+            SELECT b, device_id, instance,
+                   count(*) FILTER (WHERE value < :low)::double precision
+                       / count(*) AS below,
+                   count(*) FILTER (WHERE value >= :low AND value <= :high)::double precision
+                       / count(*) AS in_band,
+                   count(*) FILTER (WHERE value > :high AND value <= :allow)::double precision
+                       / count(*) AS warm,
+                   count(*) FILTER (WHERE value > :allow)::double precision
+                       / count(*) AS hot
+            FROM chosen GROUP BY b, device_id, instance
+        )
+        SELECT b,
+               avg(below)   AS below,
+               avg(in_band) AS in_band,
+               avg(warm)    AS warm,
+               avg(hot)     AS hot,
+               count(*)     AS sensors
+        FROM per_sensor
+        GROUP BY b
+        ORDER BY b
+    """), params)).mappings().all()
+    return [dict(r) for r in rows]
+
+
 #: How far back a NOW reading may have come from.
 #:
 #: One poll interval is not enough: a rack probe is polled every two to four

@@ -949,6 +949,127 @@ async def test_trend_scope_is_passed_through(monkeypatch):
     assert (out["room_id"], out["datacenter_id"], out["rack_id"]) == ("r", "s", "k")
 
 
+# ------------------------------------------------- thermal compliance trend
+# The same window and fill as the intake trend, carrying the table's four-way
+# split instead of temperatures. The repository is mocked.
+
+
+def _comp_rows(*rows):
+    async def _fn(session, **kw):
+        _fn.calls.append(kw)
+        return list(rows)
+    _fn.calls = []
+    return _fn
+
+
+@pytest.mark.asyncio
+async def test_compliance_trend_shares_are_percentages_that_partition(monkeypatch):
+    """A bucket's four shares come back as percentages of the window and add
+    to a hundred: they are one partition, not four measurements."""
+    from datetime import UTC, datetime, timedelta
+    now = datetime.now(UTC)
+    top = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+    b = top - timedelta(hours=3)
+    monkeypatch.setattr(estate.repo, "thermal_compliance_trend", _comp_rows(
+        {"b": b, "below": 0.125, "in_band": 0.75, "warm": 0.1, "hot": 0.025,
+         "sensors": 40}))
+    out = await estate.thermal_compliance_trend(_FakeSession(), days=1, bucket="hour")
+    hit = [p for p in out["points"] if p["in_band_pct"] is not None]
+    assert len(hit) == 1 and hit[0]["t"] == b
+    assert hit[0]["below_pct"] == 12.5
+    assert hit[0]["in_band_pct"] == 75.0
+    assert hit[0]["above_recommended_pct"] == 10.0
+    assert hit[0]["above_allowable_pct"] == 2.5
+    assert sum(hit[0][k] for k in ("below_pct", "in_band_pct",
+                                   "above_recommended_pct",
+                                   "above_allowable_pct")) == 100.0
+    assert hit[0]["sensors"] == 40 and out["sensors"] == 40
+    assert out["buckets_with_data"] == 1
+    assert out["band"] == {"low_c": 18.0, "high_c": 27.0, "allowable_high_c": 32.0}
+
+
+@pytest.mark.asyncio
+async def test_compliance_trend_passes_the_table_bands_and_scope(monkeypatch):
+    fake = _comp_rows()
+    monkeypatch.setattr(estate.repo, "thermal_compliance_trend", fake)
+    out = await estate.thermal_compliance_trend(
+        _FakeSession(), days=2, bucket="day", room_id="r",
+        datacenter_id="s", rack_id="k", source="probes")
+    kw = fake.calls[0]
+    assert (kw["low_c"], kw["high_c"], kw["allowable_c"]) == (18.0, 27.0, 32.0)
+    assert (kw["room_id"], kw["datacenter_id"], kw["rack_id"]) == ("r", "s", "k")
+    # The intake pin is honoured here too: a reader who pinned the table to
+    # PROBES and got compliance drawn the automatic way would be looking at
+    # two populations on one screen with nothing saying so.
+    assert kw["force"] == "ambient_temperature"
+    assert out["intake_source"] == "probes"
+
+
+@pytest.mark.asyncio
+async def test_compliance_trend_window_matches_the_intake_trend(monkeypatch):
+    """Both views are drawn on one grid. A day of hourly points is 24 buckets
+    ending at the top of the next hour, read from the five-minute rollup;
+    unmeasured buckets carry nulls rather than a zero share, because nothing
+    measured is not an hour spent out of band."""
+    from datetime import UTC, datetime, timedelta
+    fake = _comp_rows()
+    monkeypatch.setattr(estate.repo, "thermal_compliance_trend", fake)
+    out = await estate.thermal_compliance_trend(_FakeSession(), days=1, bucket="hour")
+    now = datetime.now(UTC)
+    top = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+    assert len(out["points"]) == 24
+    assert out["until"] == top and out["since"] == top - timedelta(days=1)
+    assert all(p["in_band_pct"] is None and p["sensors"] == 0 for p in out["points"])
+    assert out["in_band_pct"] is None and out["below_pct"] is None
+    assert fake.calls[0]["source"] == "5m" and out["source"] == "5m"
+
+
+@pytest.mark.asyncio
+async def test_compliance_trend_redraws_its_newest_buckets(monkeypatch):
+    """The rollup tails behave as the intake line's do: the five-minute table
+    FILLS an hour the hourly rollup has not written, the raw table REPLACES
+    the hour in progress."""
+    from datetime import UTC, datetime, timedelta
+    now = datetime.now(UTC)
+    top = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+    old = top - timedelta(hours=5)
+    gap = top - timedelta(hours=2)
+    live = top - timedelta(hours=1)
+
+    def row(b, in_band):
+        return {"b": b, "below": 0.0, "in_band": in_band, "warm": 1 - in_band,
+                "hot": 0.0, "sensors": 80}
+
+    async def fake(session, **kw):
+        if kw["source"] == "1h":
+            return [row(old, 1.0), row(live, 1.0)]
+        if kw["source"] == "5m":
+            return [row(gap, 0.5), row(live, 0.5)]
+        return [row(live, 0.2)]
+    monkeypatch.setattr(estate.repo, "thermal_compliance_trend", fake)
+    out = await estate.thermal_compliance_trend(_FakeSession(), days=7, bucket="hour")
+    by = {p["t"]: p for p in out["points"]}
+    assert by[old]["in_band_pct"] == 100.0
+    assert by[gap]["in_band_pct"] == 50.0
+    assert by[live]["in_band_pct"] == 20.0
+    assert out["buckets_with_data"] == 3
+    # The window's own figure is the mean of the buckets that reported, so a
+    # quiet hour counts once rather than by how many sensors were heard.
+    assert out["in_band_pct"] == round((100.0 + 50.0 + 20.0) / 3, 1)
+
+
+@pytest.mark.asyncio
+async def test_compliance_trend_refuses_the_same_windows(monkeypatch):
+    from datetime import date
+    monkeypatch.setattr(estate.repo, "thermal_compliance_trend", _comp_rows())
+    with pytest.raises(ValueError):
+        await estate.thermal_compliance_trend(_FakeSession(), since=date(2026, 9, 2))
+    with pytest.raises(ValueError):
+        await estate.thermal_compliance_trend(_FakeSession(), days=0)
+    with pytest.raises(ValueError):
+        await estate.thermal_compliance_trend(_FakeSession(), bucket="week")
+
+
 # ------------------------------------------------------------- now mode
 # An instant, not a window: one reading per SENSOR, nothing older than the
 # horizon, and no comparison.

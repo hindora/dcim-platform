@@ -1324,6 +1324,45 @@ _RAW_TAIL = timedelta(hours=2)
 _TAIL_FROM_FINE = timedelta(hours=3)
 
 
+def _trend_window(*, days: int, bucket: str, since: date | None,
+                  until: date | None) -> tuple[datetime, datetime, timedelta, int]:
+    """The grid both thermal trends are drawn on: start, end, bucket width
+    and how many days that came to.
+
+    The last `days` - hourly ending at the top of the NEXT hour, so the
+    bucket in progress is drawn; daily ending at the start of tomorrow, UTC -
+    or exactly `since`..`until` inclusive when both are given.
+
+    Shared because the intake line and the compliance columns are two views
+    of one window: a grid derived twice would eventually drift by an hour in
+    one of them, and the two cells of the chart's view control would stop
+    being comparable.
+    """
+    if bucket not in _TREND_WIDTH:
+        raise ValueError("bucket is hour or day")
+    width = _TREND_WIDTH[bucket]
+    if (since is None) != (until is None):
+        raise ValueError("since and until go together")
+    if since is not None and until is not None:
+        if until < since:
+            raise ValueError("until is before since")
+        if (until - since).days + 1 > TREND_MAX_DAYS:
+            raise ValueError(f"a window is at most {TREND_MAX_DAYS} days")
+        start = datetime.combine(since, time.min, tzinfo=UTC)
+        end = datetime.combine(until + timedelta(days=1), time.min, tzinfo=UTC)
+        days = (until - since).days + 1
+    else:
+        if not 1 <= days <= TREND_MAX_DAYS:
+            raise ValueError(f"days is 1 to {TREND_MAX_DAYS}")
+        now = datetime.now(UTC)
+        if bucket == "hour":
+            end = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+        else:
+            end = datetime.combine(now.date() + timedelta(days=1), time.min, tzinfo=UTC)
+        start = end - timedelta(days=days)
+    return start, end, width, days
+
+
 async def thermal_trend(session: AsyncSession, *, days: int = 7,
                         bucket: str = "hour", since: date | None = None,
                         until: date | None = None, room_id: str | None = None,
@@ -1350,28 +1389,8 @@ async def thermal_trend(session: AsyncSession, *, days: int = 7,
     nulls, so the line breaks there instead of bridging a period nobody
     measured.
     """
-    if bucket not in _TREND_WIDTH:
-        raise ValueError("bucket is hour or day")
-    width = _TREND_WIDTH[bucket]
-    if (since is None) != (until is None):
-        raise ValueError("since and until go together")
-    if since is not None and until is not None:
-        if until < since:
-            raise ValueError("until is before since")
-        if (until - since).days + 1 > TREND_MAX_DAYS:
-            raise ValueError(f"a window is at most {TREND_MAX_DAYS} days")
-        start = datetime.combine(since, time.min, tzinfo=UTC)
-        end = datetime.combine(until + timedelta(days=1), time.min, tzinfo=UTC)
-        days = (until - since).days + 1
-    else:
-        if not 1 <= days <= TREND_MAX_DAYS:
-            raise ValueError(f"days is 1 to {TREND_MAX_DAYS}")
-        now = datetime.now(UTC)
-        if bucket == "hour":
-            end = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
-        else:
-            end = datetime.combine(now.date() + timedelta(days=1), time.min, tzinfo=UTC)
-        start = end - timedelta(days=days)
+    start, end, width, days = _trend_window(days=days, bucket=bucket,
+                                            since=since, until=until)
 
     # All three reads below take the same pin. They are one line drawn from
     # three tables - the rollup, its fine tail and the raw newest bucket - and
@@ -1440,6 +1459,101 @@ async def thermal_trend(session: AsyncSession, *, days: int = 7,
         # how much of the scope the line speaks for.
         "sensors": max((p["sensors"] for p in points), default=0),
     }
+
+
+async def thermal_compliance_trend(session: AsyncSession, *, days: int = 7,
+                                   bucket: str = "hour", since: date | None = None,
+                                   until: date | None = None,
+                                   room_id: str | None = None,
+                                   datacenter_id: str | None = None,
+                                   rack_id: str | None = None,
+                                   source: str = "auto") -> dict[str, Any]:
+    """Time in band per hour or per day, split four ways, in one scope.
+
+    The intake line says how warm a scope ran; this says how much of it was
+    in the envelope, which is the figure a floor is actually judged on and
+    the one a colo owes a customer. It is the table's spread bar given a time
+    axis: below the recommended floor, inside it, above it but allowable,
+    above the allowable ceiling.
+
+    It answers two questions the line cannot. A setpoint raised last Tuesday
+    shows as the below-band share collapsing on Tuesday and STAYING down -
+    an average moves half a degree and says nothing about whether the change
+    held. And overcooling, the finding most floors pay for, is invisible in
+    an average that a cold aisle and a warm one average back into band.
+
+    Same window, same rollups, same probe-first source rule and the same
+    intake pin as `thermal_trend`, because the two are cells of one control:
+    a reader who flips between them is entitled to assume they describe the
+    same sensors over the same hours.
+    """
+    start, end, width, days = _trend_window(days=days, bucket=bucket,
+                                            since=since, until=until)
+    forced = SOURCE_METRIC.get(source, "") if source != "auto" else ""
+    src = "5m" if bucket == "hour" and end - start <= _FINE_SOURCE_UP_TO else "1h"
+    bands = {"low_c": BAND_LOW_C, "high_c": BAND_HIGH_C,
+             "allowable_c": ALLOWABLE_HIGH_C}
+
+    async def read(roll: str, t0: datetime, t1: datetime) -> list[dict[str, Any]]:
+        return await repo.thermal_compliance_trend(
+            session, start=t0, end=t1, bucket=bucket, source=roll,
+            force=forced, room_id=room_id, datacenter_id=datacenter_id,
+            rack_id=rack_id, **bands)
+
+    rows = await read(src, start, end)
+    by = {r["b"]: r for r in rows}
+    if src == "1h" and bucket == "hour":
+        for r in await read("5m", max(start, end - _TAIL_FROM_FINE), end):
+            by.setdefault(r["b"], r)
+    if bucket == "hour":
+        # The newest buckets are replaced, not filled: a partial hour drawn as
+        # a finished one is what made a fault look like it had not arrived.
+        for r in await read("raw", max(start, end - _RAW_TAIL), end):
+            by[r["b"]] = r
+
+    def pct(v: Any) -> float | None:
+        return None if v is None else round(float(v) * 100, 1)
+
+    points = []
+    t = start
+    while t < end:
+        r = by.get(t)
+        points.append({
+            "t": t,
+            "below_pct": None if r is None else pct(r["below"]),
+            "in_band_pct": None if r is None else pct(r["in_band"]),
+            "above_recommended_pct": None if r is None else pct(r["warm"]),
+            "above_allowable_pct": None if r is None else pct(r["hot"]),
+            "sensors": int(r["sensors"]) if r is not None else 0,
+        })
+        t += width
+    return {
+        "days": days,
+        "bucket": bucket,
+        "source": src,
+        "intake_source": source,
+        "since": start,
+        "until": end,
+        "room_id": room_id,
+        "datacenter_id": datacenter_id,
+        "rack_id": rack_id,
+        "band": {"low_c": BAND_LOW_C, "high_c": BAND_HIGH_C,
+                 "allowable_high_c": ALLOWABLE_HIGH_C},
+        "points": points,
+        "buckets_with_data": sum(1 for p in points if p["in_band_pct"] is not None),
+        "sensors": max((p["sensors"] for p in points), default=0),
+        # The window as one figure, so the caption can say what the columns
+        # come to without the reader adding up a hundred of them. Every
+        # bucket that reported counts once, whatever it heard from: a quiet
+        # hour is an hour of this floor's life, not a smaller one.
+        "in_band_pct": _mean([p["in_band_pct"] for p in points]),
+        "below_pct": _mean([p["below_pct"] for p in points]),
+    }
+
+
+def _mean(values: list[float | None]) -> float | None:
+    seen = [v for v in values if v is not None]
+    return round(sum(seen) / len(seen), 1) if seen else None
 
 
 # ------------------------------------------------------------------- room view

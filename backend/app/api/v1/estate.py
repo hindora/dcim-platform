@@ -280,6 +280,49 @@ async def thermal_trend(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)) from None
 
 
+@router.get("/thermal-compliance-trend",
+            summary="Time in band, split four ways, per hour or day in a scope")
+async def thermal_compliance_trend(
+    days: int = Query(7, ge=1, le=366),
+    bucket: str = Query("hour", pattern="^(hour|day)$", description=(
+        "Point width. Hourly points come from the five-minute rollup, daily "
+        "points from the hourly one.")),
+    since: date | None = Query(None, description=(
+        "First day of a picked window (inclusive, UTC). With `until`, "
+        "replaces `days`; at most 366 days apart.")),
+    until: date | None = Query(None, description="Last day of a picked window (inclusive)."),
+    room: str | None = Query(None, description="Only this room."),
+    site: str | None = Query(None, description="Only this site (datacenter id)."),
+    rack: str | None = Query(None, description="Only this rack."),
+    source: str = Query("auto", pattern="^(auto|probes|servers)$",
+                        description="Pin every rack to one intake source, as "
+                                    "the table does"),
+    session: AsyncSession = Depends(get_session),
+    _: Principal = Depends(current_principal),
+) -> dict:
+    """The thermal table's spread bar over time: the share of each bucket a
+    scope's sensors spent below the recommended floor, inside it, above it
+    but allowable, and above the allowable ceiling.
+
+    The same window, sensors and intake pin as `/thermal-trend`; the two are
+    the two cells of one chart's view control. Shares are per sensor and the
+    four add to 100 in any bucket that reported."""
+    for name, value in (("room", room), ("site", site), ("rack", rack)):
+        if value is None:
+            continue
+        try:
+            UUID(value)
+        except ValueError:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                                f"{name} is not a uuid: {value}") from None
+    try:
+        return await service.thermal_compliance_trend(
+            session, days=days, bucket=bucket, since=since, until=until,
+            room_id=room, datacenter_id=site, rack_id=rack, source=source)
+    except ValueError as e:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)) from None
+
+
 @router.get("/rooms/{room_id}/kpi", summary="Everything the room drawer shows")
 async def room_kpi(
     room_id: str,
