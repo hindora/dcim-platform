@@ -27,6 +27,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.alert_taxonomy import DETECTIONS, THERMAL_ALARM_CATEGORIES
+from app.core.ashrae import DEFAULT_CLASS, envelope_for
 from app.repositories import estate as repo
 from app.repositories import thermal as thermal_repo
 
@@ -140,6 +141,134 @@ def _day_window(d: date) -> tuple[datetime, datetime]:
 # --------------------------------------------------------------------- thermal
 
 
+def _attach_envelope(racks: list[dict[str, Any]], rooms: list[dict[str, Any]],
+                     sites: list[dict[str, Any]], totals: dict[str, Any],
+                     by_rack: dict[str, dict[str, Any]],
+                     skeleton: list[dict[str, Any]]) -> None:
+    """Hang the three legs on every tier, folding from the racks as everything
+    else on this page does.
+
+    Each figure arrives as a SUM of per-sensor shares and a sensor COUNT, so a
+    room is the sum of its racks over the count of its racks' sensors - never a
+    mean of rack means, which would weight a rack with one probe like a rack
+    with four.
+
+    COVERAGE travels with the figure. Moisture is measurable only where a probe
+    reports humidity beside temperature at one instant, which on this estate is
+    a minority of racks, and a 100 % moisture figure over two sensors says
+    something far weaker than the same number over forty. A row that reports a
+    share without saying what it rests on invites exactly the wrong reading.
+    """
+    legs = ("temp", "moist", "rate", "env")
+
+    def _emit(row: dict[str, Any], acc: dict[str, float]) -> None:
+        sensors = acc.get("sensors", 0.0)
+        row["envelope"] = {
+            "temp_pct": _pct(acc.get("temp_sum"), sensors),
+            "moisture_pct": _pct(acc.get("moist_sum"), acc.get("moisture_sensors", 0.0)),
+            "rate_pct": _pct(acc.get("rate_sum"), acc.get("rate_sensors", 0.0)),
+            "envelope_pct": _pct(acc.get("env_sum"), sensors),
+            "sensors": int(sensors),
+            "moisture_sensors": int(acc.get("moisture_sensors", 0.0)),
+            "rate_sensors": int(acc.get("rate_sensors", 0.0)),
+            "peak_rate_k_per_h": (round(acc["peak_rate"], 1)
+                                  if acc.get("peak_rate") is not None else None),
+        }
+
+    def _blank() -> dict[str, float]:
+        return {f"{k}_sum": 0.0 for k in legs} | {
+            "sensors": 0.0, "moisture_sensors": 0.0, "rate_sensors": 0.0,
+            "peak_rate": None}
+
+    def _add(acc: dict[str, Any], src: dict[str, Any]) -> None:
+        for k in legs:
+            v = src.get(f"{k}_sum")
+            if v is not None:
+                acc[f"{k}_sum"] = (acc.get(f"{k}_sum") or 0.0) + float(v)
+        for k in ("sensors", "moisture_sensors", "rate_sensors"):
+            acc[k] = acc.get(k, 0.0) + float(src.get(k) or 0.0)
+        peak = src.get("peak_rate")
+        if peak is not None:
+            acc["peak_rate"] = max(acc.get("peak_rate") or 0.0, float(peak))
+
+    room_acc: dict[str, dict[str, Any]] = {}
+    for rack in racks:
+        acc = _blank()
+        hit = by_rack.get(str(rack["id"]))
+        if hit:
+            _add(acc, hit)
+        _emit(rack, acc)
+        room = room_acc.setdefault(rack["room_id"], _blank())
+        if hit:
+            _add(room, hit)
+
+    site_acc: dict[str, dict[str, Any]] = {}
+    total_acc = _blank()
+    classes = {r["room_id"]: (r.get("ashrae_class"), r.get("max_rate_k_per_h"))
+               for r in skeleton}
+    for room in rooms:
+        acc = room_acc.get(room["id"], _blank())
+        _emit(room, acc)
+        # The class a room was graded against, said on the row: a reader
+        # comparing two halls has to know they were held to different limits.
+        klass, rate = classes.get(room["id"], (None, None))
+        room["envelope"]["ashrae_class"] = klass or DEFAULT_CLASS
+        room["envelope"]["classified"] = klass is not None
+        room["envelope"]["max_rate_k_per_h"] = (
+            float(rate) if rate is not None
+            else envelope_for(klass).max_rate_k_per_h)
+        site = site_acc.setdefault(room["site_id"], _blank())
+        _add(site, acc)
+        _add(total_acc, acc)
+    for site in sites:
+        _emit(site, site_acc.get(site["id"], _blank()))
+    _emit(totals, total_acc)
+
+
+def _pct(total: float | None, n: float) -> float | None:
+    """A share as a percentage, or None when nothing measured it. Zero sensors
+    is not zero compliance."""
+    if total is None or not n:
+        return None
+    return round(100.0 * float(total) / float(n), 1)
+
+
+async def _envelope_by_rack(session: AsyncSession, skeleton: list[dict[str, Any]],
+                            *, start: datetime, end: datetime) -> dict[str, dict[str, Any]]:
+    """Moisture and rate per rack, each room against its own ASHRAE class.
+
+    Temperature is graded in the main query because every intake source carries
+    it. The other two legs cannot be: moisture needs a probe that reports
+    humidity at the same instant as temperature, and rate needs a run of
+    readings from one sensor. Both are absent on a rack read by server BMCs -
+    which is missing evidence, not a pass, and the counts returned here say so.
+
+    The limits are resolved per ROOM and handed to the query, because a hall of
+    A3 kit is allowed to 40 C by the same standard that stops A1 at 32; grading
+    both against A1 puts a critical row on equipment running inside its own
+    specification, and an alarm that is always on is one nobody reads.
+    """
+    limits = []
+    for room in skeleton:
+        rate = room.get("max_rate_k_per_h")
+        env = envelope_for(room.get("ashrae_class"),
+                           float(rate) if rate is not None else None)
+        limits.append({
+            "room_id": room["room_id"],
+            "rec_low": env.rec_low_c, "rec_high": env.rec_high_c,
+            "allow_low": env.allow_low_c, "allow_high": env.allow_high_c,
+            "rec_dp_low": env.rec_dp_low_c, "rec_dp_high": env.rec_dp_high_c,
+            "rec_rh_high": env.rec_rh_high_pct,
+            "allow_dp_low": env.allow_dp_low_c, "allow_dp_high": env.allow_dp_high_c,
+            "allow_rh_low": env.allow_rh_low_pct, "allow_rh_high": env.allow_rh_high_pct,
+            "max_rate": env.max_rate_k_per_h,
+        })
+    if not limits:
+        return {}
+    rows = await repo.thermal_envelope(session, start=start, end=end, limits=limits)
+    return {str(r["rack_id"]): r for r in rows}
+
+
 async def thermal(session: AsyncSession, *, focus: date | None = None,
                   compare: date | None = None,
                   mode: str = "daily",
@@ -238,6 +367,12 @@ async def thermal(session: AsyncSession, *, focus: date | None = None,
         p90 = await repo.thermal_p90(session, focus_start=f0, focus_end=f1,
                                      force=SOURCE_METRIC.get(forced, ""))
 
+    # The other two legs of the envelope, per rack, graded against each room's
+    # own class. Temperature is scored above from every intake source; moisture
+    # and rate can only be scored where a probe reports the pair at one instant,
+    # so this is a second pass rather than more columns on the first.
+    envelope = await _envelope_by_rack(session, skeleton, start=f0, end=f1)
+
     silent = ("no sensor in this rack has reported in the last ten minutes"
               if mode == "now" else
               "no intake probe or server sensor in this rack reported in this window")
@@ -274,6 +409,7 @@ async def thermal(session: AsyncSession, *, focus: date | None = None,
     for site in sites:
         site["alarms_in_racks"] = _by_site.get(site["id"], 0)
     totals["alarms_in_racks"] = sum(r["alarms_in_racks"] for r in rooms)
+    _attach_envelope(racks, rooms, sites, totals, envelope, skeleton)
     _attach_p90(racks, p90["racks"])
     _attach_p90(rooms, p90["rooms"])
     _attach_p90(sites, p90["sites"])

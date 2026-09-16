@@ -63,6 +63,15 @@ class Room(Base):
     # inferred from the room's name. NULL means nobody has classified it yet,
     # which the UI shows as unknown rather than filing it under plant.
     room_class: Mapped[str | None] = mapped_column(Text)
+    #: ASHRAE TC 9.9 equipment class - A1..A4 - which decides the ALLOWABLE
+    #: envelope this room's intake air is graded against. NULL means nobody has
+    #: classified it and it is held to A1, the tightest; the page says so
+    #: rather than implying the room was surveyed.
+    ashrae_class: Mapped[str | None] = mapped_column(Text)
+    #: Maximum rate of intake change, K/hour. NULL is the class default of 20.
+    #: A room holding tape is set to 5 by hand: no telemetry can tell you what
+    #: medium is in a rack.
+    max_rate_k_per_h: Mapped[float | None] = mapped_column(Numeric(5, 2))
     #: Rack positions the room was DRAWN with - rows x racks_per_row. The
     #: denominator for build-out, which installed rack count cannot provide.
     designed_racks: Mapped[int | None] = mapped_column(Integer)

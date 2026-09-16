@@ -13,6 +13,7 @@ four sensors ends up outvoting one with four hundred.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -45,6 +46,12 @@ _ROOMS = """
            rm.floor         AS floor,
            rm.room_type     AS room_type,
            rm.room_class    AS room_class,
+           -- The ASHRAE class this room's intake air is graded against, and
+           -- the rate limit that goes with it. NULL means unclassified, which
+           -- is held to A1 and said out loud rather than passed off as a
+           -- survey. See app/core/ashrae.py.
+           rm.ashrae_class  AS ashrae_class,
+           rm.max_rate_k_per_h AS max_rate_k_per_h,
            rm.datacenter_id AS datacenter_id,
            dc.code          AS site_code,
            dc.name          AS site_name
@@ -72,6 +79,8 @@ async def thermal_rooms(session: AsyncSession) -> list[dict[str, Any]]:
                rooms.floor               AS floor,
                rooms.room_type           AS room_type,
                rooms.room_class          AS room_class,
+               rooms.ashrae_class        AS ashrae_class,
+               rooms.max_rate_k_per_h    AS max_rate_k_per_h,
                rooms.datacenter_id::text AS datacenter_id,
                rooms.site_code           AS site_code,
                rooms.site_name           AS site_name,
@@ -732,6 +741,211 @@ async def thermal_delta_trend(session: AsyncSession, *, start: datetime,
         GROUP BY b
         ORDER BY b
     """), params)).mappings().all()
+    return [dict(r) for r in rows]
+
+
+async def thermal_envelope(session: AsyncSession, *, start: datetime,
+                           end: datetime, limits: list[dict[str, Any]],
+                           max_gap_minutes: int = 30) -> list[dict[str, Any]]:
+    """The full ASHRAE envelope per rack over a window: three legs, co-timed.
+
+    The table above this one scores DRY BULB. ASHRAE writes three limits, and
+    the other two are what this adds:
+
+      MOISTURE  a dew-point floor, a dew-point ceiling and a humidity ceiling.
+                Both ceilings bind and the worse one wins - at 20 C, 60 % RH is
+                a 12.0 C dew point and the humidity limit bites first; at 27 C
+                the same 60 % is 18.6 C and the dew point bites four kelvin
+                earlier. A page checking only RH passes a hall ASHRAE fails.
+      RATE      how fast the intake is moving, in K/hour. Thermal shock and
+                condensation damage hardware whether or not the air ever left
+                the band, and a hall at 26 C holding flat and one at 26 C
+                climbing 30 K/hour need different answers in the same minute.
+
+    CO-TIMED, which is the whole difficulty. An envelope grade is a statement
+    about one instant: "this sensor was inside the envelope at this moment".
+    Grading temperature over one population and humidity over another and
+    intersecting the two shares would be arithmetic about no instant that ever
+    existed. So the moisture leg is only computed where a probe reports BOTH
+    readings at the same timestamp - which the Raritan DPX2 does, because one
+    poll of the strip returns every slot.
+
+    A rack whose intake comes from server BMCs therefore has NO moisture leg.
+    That is missing evidence rather than a pass, and `moisture_sensors` says so
+    on every row: a 100 % envelope figure on a floor with no humidity probe
+    means something weaker than the same figure on a floor that has them, and
+    the payload must let a reader tell those apart.
+
+    Dew point is DERIVED here rather than polled. A DPX2 is a thermistor and a
+    humidity element on an RJ-12 lead; no Raritan firmware will give you a dew
+    point for it, and the ones that do publish one (Geist, some Vertiv heads)
+    are a minority of this estate. Magnus-Tetens with the Sonntag coefficients,
+    the same relation the simulator generates its probes with, so the two sides
+    agree to better than 0.1 K.
+
+    `limits` carries one row per ROOM - its class's numbers, resolved in the
+    service - because a hall of A3 kit is allowed to 40 C by the same standard
+    that stops A1 at 32, and grading both against A1 puts an alarm on equipment
+    running inside its own specification.
+
+    Rate is taken between CONSECUTIVE readings of one sensor and divided out to
+    K/hour, skipping any pair more than `max_gap_minutes` apart: a sensor that
+    went quiet for six hours and came back two degrees warmer did not drift at
+    0.3 K/hour, it was not measured, and a gap read as a slow ramp would be
+    invented evidence.
+    """
+    rows = (await session.execute(text("""
+        WITH lim AS (
+            SELECT (l ->> 'room_id')::uuid            AS room_id,
+                   (l ->> 'rec_low')::float           AS rec_low,
+                   (l ->> 'rec_high')::float          AS rec_high,
+                   (l ->> 'allow_low')::float         AS allow_low,
+                   (l ->> 'allow_high')::float        AS allow_high,
+                   (l ->> 'rec_dp_low')::float        AS rec_dp_low,
+                   (l ->> 'rec_dp_high')::float       AS rec_dp_high,
+                   (l ->> 'rec_rh_high')::float       AS rec_rh_high,
+                   (l ->> 'allow_dp_low')::float      AS allow_dp_low,
+                   (l ->> 'allow_dp_high')::float     AS allow_dp_high,
+                   (l ->> 'allow_rh_low')::float      AS allow_rh_low,
+                   (l ->> 'allow_rh_high')::float     AS allow_rh_high,
+                   (l ->> 'max_rate')::float          AS max_rate
+            FROM jsonb_array_elements(CAST(:limits AS jsonb)) AS l
+        ),
+        -- One row per sensor per POLL, with whatever that poll carried. The
+        -- pivot is what makes the moisture leg co-timed: a probe that returned
+        -- temperature and humidity in the same poll produces one row with both.
+        reading AS (
+            SELECT d.rack_id, rr.room_id, t.device_id, t.instance, t.ts,
+                   max(t.value) FILTER (WHERE m.key = 'ambient_temperature') AS temp_c,
+                   max(t.value) FILTER (WHERE m.key = 'relative_humidity')   AS rh_pct,
+                   max(t.value) FILTER (WHERE m.key = 'dew_point')           AS dp_pub
+            FROM telemetry_sample t
+            JOIN metric m    ON m.id = t.metric_id
+            JOIN device d    ON d.id = t.device_id
+                            AND d.rack_id IS NOT NULL
+                            AND d.lifecycle <> 'decommissioned'
+            JOIN rack r      ON r.id  = d.rack_id
+            JOIN rack_row rr ON rr.id = r.row_id
+            WHERE m.key IN ('ambient_temperature', 'relative_humidity', 'dew_point')
+              AND t.ts >= :t0 AND t.ts < :t1
+              -- A room transmitter on a wall is not rack intake air. Migration
+              -- 0063 split the alarm rules on this same instance for the same
+              -- reason: the envelope is written for what equipment breathes.
+              AND t.instance <> 'ROOM'
+            GROUP BY d.rack_id, rr.room_id, t.device_id, t.instance, t.ts
+        ),
+        -- Dew point: the published one where a probe has it, else Magnus from
+        -- this same reading's temperature and humidity.
+        moist AS (
+            SELECT rack_id, room_id, device_id, instance, ts, temp_c, rh_pct,
+                   CASE
+                     WHEN dp_pub IS NOT NULL THEN dp_pub
+                     WHEN temp_c IS NOT NULL AND rh_pct IS NOT NULL THEN
+                       243.12 * (ln(GREATEST(rh_pct, 0.5) / 100.0)
+                                 + (17.62 * temp_c) / (243.12 + temp_c))
+                       / (17.62 - (ln(GREATEST(rh_pct, 0.5) / 100.0)
+                                   + (17.62 * temp_c) / (243.12 + temp_c)))
+                   END AS dp_c
+            FROM reading
+            WHERE temp_c IS NOT NULL
+        ),
+        -- Rate, over FIFTEEN-MINUTE MEANS rather than consecutive readings.
+        --
+        -- Taken between consecutive polls it measures the sensor, not the air:
+        -- a probe carries about 0.3 K of sample noise and is read every 30 to
+        -- 130 seconds, so a wobble of a third of a degree across half a minute
+        -- divides out to 36 K/hour. Measured on this estate the first attempt
+        -- graded healthy halls at 21-32 K/hour peaks and failed a tenth of
+        -- every window - all of it instrument jitter, none of it air.
+        --
+        -- Fifteen minutes is the same baseline the page's NOW rate uses, and
+        -- for the same reason: long enough to clear the sensors, short enough
+        -- to catch a cooling loss while it is developing.
+        bucketed AS (
+            SELECT device_id, instance,
+                   time_bucket(INTERVAL '15 minutes', ts) AS b,
+                   avg(temp_c) AS temp_c
+            FROM moist
+            GROUP BY device_id, instance, time_bucket(INTERVAL '15 minutes', ts)
+        ),
+        paced AS (
+            SELECT device_id, instance, b,
+                   (temp_c - lag(temp_c) OVER w)
+                     / NULLIF(EXTRACT(EPOCH FROM (b - lag(b) OVER w)) / 3600.0, 0)
+                     AS k_per_h,
+                   EXTRACT(EPOCH FROM (b - lag(b) OVER w)) / 60.0 AS gap_min
+            FROM bucketed
+            WINDOW w AS (PARTITION BY device_id, instance ORDER BY b)
+        ),
+        -- Each reading, carrying the rate its own fifteen minutes were moving
+        -- at. The rate is a property of the sensor's recent history, so the
+        -- envelope grade on a reading is "was this sensor inside all three
+        -- limits at this moment", which is what the standard asks.
+        graded AS (
+            SELECT m.rack_id, m.device_id, m.instance,
+                   CASE WHEN m.temp_c BETWEEN l.rec_low AND l.rec_high THEN 0
+                        WHEN m.temp_c BETWEEN l.allow_low AND l.allow_high THEN 1
+                        ELSE 2 END AS g_temp,
+                   CASE WHEN m.dp_c IS NULL AND m.rh_pct IS NULL THEN NULL
+                        ELSE GREATEST(
+                          CASE WHEN m.dp_c IS NULL THEN 0
+                               WHEN m.dp_c BETWEEN l.rec_dp_low AND l.rec_dp_high THEN 0
+                               WHEN m.dp_c BETWEEN l.allow_dp_low AND l.allow_dp_high THEN 1
+                               ELSE 2 END,
+                          CASE WHEN m.rh_pct IS NULL THEN 0
+                               WHEN m.rh_pct <= l.rec_rh_high THEN 0
+                               WHEN m.rh_pct BETWEEN l.allow_rh_low AND l.allow_rh_high THEN 1
+                               ELSE 2 END)
+                   END AS g_moist,
+                   CASE WHEN p.k_per_h IS NULL OR p.gap_min > :max_gap THEN NULL
+                        WHEN abs(p.k_per_h) <= l.max_rate THEN 0
+                        ELSE 2 END AS g_rate,
+                   CASE WHEN p.gap_min > :max_gap THEN NULL ELSE p.k_per_h END AS k_per_h
+            FROM moist m
+            JOIN lim l ON l.room_id = m.room_id
+            LEFT JOIN paced p ON p.device_id = m.device_id
+                             AND p.instance = m.instance
+                             AND p.b = time_bucket(INTERVAL '15 minutes', m.ts)
+        ),
+        -- Per SENSOR first: each sensor's own share of its own window, so a
+        -- probe polled every 133 s and a BMC polled every 67 s describe their
+        -- hour with equal authority. The tier above averages these.
+        per_sensor AS (
+            SELECT rack_id, device_id, instance,
+                   avg(CASE WHEN g_temp = 0 THEN 1.0 ELSE 0.0 END) AS temp_ok,
+                   avg(CASE WHEN g_moist = 0 THEN 1.0 ELSE 0.0 END)
+                     FILTER (WHERE g_moist IS NOT NULL)            AS moist_ok,
+                   avg(CASE WHEN g_rate = 0 THEN 1.0 ELSE 0.0 END)
+                     FILTER (WHERE g_rate IS NOT NULL)             AS rate_ok,
+                   avg(CASE WHEN GREATEST(g_temp, coalesce(g_moist, 0),
+                                          coalesce(g_rate, 0)) = 0
+                            THEN 1.0 ELSE 0.0 END)                 AS env_ok,
+                   count(*) FILTER (WHERE g_moist IS NOT NULL) AS moist_n,
+                   count(*) FILTER (WHERE g_rate IS NOT NULL)  AS rate_n,
+                   max(abs(k_per_h)) FILTER (WHERE g_rate IS NOT NULL) AS peak_rate
+            FROM graded
+            GROUP BY rack_id, device_id, instance
+        )
+        -- SUMS and COUNTS, not averages: a room folds from its racks and a
+        -- site from its rooms, and an average of averages would weight a rack
+        -- with one probe like a rack with four. Each term is one sensor's own
+        -- share of its own window, so the divisor is always a sensor count.
+        SELECT rack_id,
+               sum(temp_ok)  AS temp_sum,
+               sum(moist_ok) FILTER (WHERE moist_ok IS NOT NULL) AS moist_sum,
+               sum(rate_ok)  FILTER (WHERE rate_ok IS NOT NULL)  AS rate_sum,
+               sum(env_ok)   AS env_sum,
+               count(*)                                   AS sensors,
+               count(*) FILTER (WHERE moist_ok IS NOT NULL) AS moisture_sensors,
+               count(*) FILTER (WHERE rate_ok IS NOT NULL)  AS rate_sensors,
+               -- The fastest the air moved anywhere in this rack, which is the
+               -- figure an operator asks for after a trip. Unsigned: the limit
+               -- is on speed, and a collapse and a recovery stress the same kit.
+               max(peak_rate) AS peak_rate
+        FROM per_sensor
+        GROUP BY rack_id
+    """), {"t0": start, "t1": end, "limits": json.dumps(limits),
+           "max_gap": max_gap_minutes})).mappings().all()
     return [dict(r) for r in rows]
 
 

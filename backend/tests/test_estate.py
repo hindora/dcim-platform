@@ -19,6 +19,24 @@ class _FakeSession:
     """Stands in for AsyncSession. The service never touches it directly."""
 
 
+@pytest.fixture(autouse=True)
+def _no_envelope_query(monkeypatch):
+    """The envelope pass is a SECOND query against real telemetry.
+
+    Every test in this module mocks the repository function it is about and
+    hands the service a session that cannot execute anything, so the moisture
+    and rate legs are stubbed empty here by default. A test that is about the
+    envelope overrides this with its own rows.
+
+    Empty is also a real state - an estate whose racks carry bare thermistors
+    has no moisture leg at all - so the rows this produces are a case worth
+    passing through the folding rather than a fiction for the tests' benefit.
+    """
+    async def _none(session, **kw):
+        return []
+    monkeypatch.setattr(estate.repo, "thermal_envelope", _none)
+
+
 def _power_row(room_id: str, dc: str, code: str, *, avg_it=None, peak_it=None,
                avg_cooling=None, peak_cooling=None, avg_total=None,
                peak_total=None, prev_total=None, room_class="white_space"):
@@ -1580,3 +1598,106 @@ async def test_the_rollup_field_still_means_the_rollup(monkeypatch):
                                      source="servers")
     assert out["source"] in ("5m", "1h", "raw")
     assert out["intake_source"] == "servers"
+
+
+# ------------------------------------------------------- the ASHRAE envelope
+# Three legs, folded from the racks like everything else, with the coverage
+# each leg rests on carried beside it.
+
+
+def _env(rack_id: str, *, temp=1.0, moist=None, rate=None, env=1.0,
+         sensors=1, moisture_sensors=0, rate_sensors=0, peak=None):
+    """One rack as thermal_envelope returns it: SUMS of per-sensor shares and
+    the counts they divide by."""
+    return {"rack_id": rack_id, "temp_sum": temp * sensors,
+            "moist_sum": None if moist is None else moist * moisture_sensors,
+            "rate_sum": None if rate is None else rate * rate_sensors,
+            "env_sum": env * sensors, "sensors": sensors,
+            "moisture_sensors": moisture_sensors, "rate_sensors": rate_sensors,
+            "peak_rate": peak}
+
+
+def _with_envelope(monkeypatch, rows):
+    async def _fn(session, **kw):
+        _fn.calls.append(kw)
+        return list(rows)
+    _fn.calls = []
+    monkeypatch.setattr(estate.repo, "thermal_envelope", _fn)
+    return _fn
+
+
+@pytest.mark.asyncio
+async def test_a_rack_with_no_humidity_probe_has_no_moisture_leg(monkeypatch):
+    """Missing evidence, not a pass. Most racks carry a bare thermistor, and a
+    rack that cannot measure moisture must not report 100 % on it."""
+    _thermal(monkeypatch, [_room("r1", "dc1", "DC1", rack_count=1)],
+             [_rack("k1", "r1", f_sum=23.0, f_n=10, f_sensors=1, f_in_band=1.0)])
+    _with_envelope(monkeypatch, [_env("k1", sensors=1, moisture_sensors=0,
+                                      rate_sensors=1, rate=1.0, peak=3.2)])
+    out = await estate.thermal(_FakeSession(), mode="live")
+    e = out["racks"][0]["envelope"]
+    assert e["moisture_pct"] is None and e["moisture_sensors"] == 0
+    assert e["rate_pct"] == 100.0 and e["rate_sensors"] == 1
+    assert e["peak_rate_k_per_h"] == 3.2
+
+
+@pytest.mark.asyncio
+async def test_the_envelope_folds_from_racks_by_sensor_not_by_rack(monkeypatch):
+    """A rack with four probes speaks for four times as much of the hall as a
+    rack with one. Averaging the two rack figures would say otherwise."""
+    _thermal(monkeypatch,
+             [_room("r1", "dc1", "DC1", rack_count=2)],
+             [_rack("k1", "r1", f_sum=23.0, f_n=10, f_sensors=1, f_in_band=1.0),
+              _rack("k2", "r1", f_sum=23.0, f_n=10, f_sensors=1, f_in_band=1.0)])
+    _with_envelope(monkeypatch, [
+        _env("k1", env=1.0, sensors=4, moisture_sensors=4, moist=1.0),
+        _env("k2", env=0.0, sensors=1, moisture_sensors=1, moist=0.0),
+    ])
+    out = await estate.thermal(_FakeSession(), mode="live")
+    room = out["rooms"][0]["envelope"]
+    # 4 sensors at 100 % and 1 at 0 % is 80 %, not the 50 % a mean of rack
+    # means would produce.
+    assert room["envelope_pct"] == 80.0
+    assert room["sensors"] == 5 and room["moisture_sensors"] == 5
+    assert out["totals"]["envelope"]["envelope_pct"] == 80.0
+
+
+@pytest.mark.asyncio
+async def test_a_room_says_which_class_it_was_graded_against(monkeypatch):
+    """Two halls held to different limits cannot be compared without it, and an
+    unclassified room must say it was defaulted rather than surveyed."""
+    rooms = [_room("r1", "dc1", "DC1", rack_count=1),
+             _room("r2", "dc1", "DC1", rack_count=1)]
+    rooms[1]["ashrae_class"] = "A3"
+    rooms[1]["max_rate_k_per_h"] = 5.0
+    _thermal(monkeypatch, rooms,
+             [_rack("k1", "r1", f_sum=23.0, f_n=10, f_sensors=1, f_in_band=1.0),
+              _rack("k2", "r2", f_sum=23.0, f_n=10, f_sensors=1, f_in_band=1.0)])
+    calls = _with_envelope(monkeypatch, [])
+    out = await estate.thermal(_FakeSession(), mode="live")
+    by_id = {r["id"]: r["envelope"] for r in out["rooms"]}
+    assert by_id["r1"]["ashrae_class"] == "A1" and by_id["r1"]["classified"] is False
+    assert by_id["r2"]["ashrae_class"] == "A3" and by_id["r2"]["classified"] is True
+    assert by_id["r2"]["max_rate_k_per_h"] == 5.0
+    # And the query was handed each room's own limits, not one set for all.
+    limits = {lim["room_id"]: lim for lim in calls.calls[0]["limits"]}
+    assert limits["r1"]["allow_high"] == 32.0 and limits["r1"]["max_rate"] == 20.0
+    assert limits["r2"]["allow_high"] == 40.0 and limits["r2"]["max_rate"] == 5.0
+    # The recommended band is the same for both: that is what recommended means.
+    assert limits["r1"]["rec_high"] == limits["r2"]["rec_high"] == 27.0
+
+
+@pytest.mark.asyncio
+async def test_the_envelope_is_worse_than_its_temperature_leg_when_moisture_fails(
+        monkeypatch):
+    """The point of the whole exercise: a hall can hold 22 C every hour and be
+    outside the envelope on moisture alone."""
+    _thermal(monkeypatch, [_room("r1", "dc1", "DC1", rack_count=1)],
+             [_rack("k1", "r1", f_sum=22.0, f_n=10, f_sensors=1, f_in_band=1.0)])
+    _with_envelope(monkeypatch, [_env("k1", temp=1.0, moist=0.4, env=0.4,
+                                      sensors=2, moisture_sensors=2)])
+    out = await estate.thermal(_FakeSession(), mode="live")
+    e = out["racks"][0]["envelope"]
+    assert e["temp_pct"] == 100.0
+    assert e["moisture_pct"] == 40.0
+    assert e["envelope_pct"] == 40.0
