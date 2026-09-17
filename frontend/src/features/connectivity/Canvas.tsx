@@ -31,6 +31,12 @@ import { cutWithin, verdictFor, type ImpactView } from './impact';
  *  every map behaves. */
 const FIT = { padding: 0.16, minZoom: 0.62, duration: 320 } as const;
 
+/** The site view is read as REGIONS first - which room is where, what crosses
+ *  between them - and it does not fit in a window at a zoom where a device
+ *  name is still a word. The room rectangles are legible long after the names
+ *  stop being, so this one is allowed to zoom out to the whole estate. */
+const FIT_SITE = { padding: 0.06, minZoom: 0.06, duration: 320 } as const;
+
 const nodeTypes = { device: DeviceNode, room: RoomNode };
 const edgeTypes = { link: LinkEdge };
 
@@ -193,6 +199,7 @@ function Flow({ placement, edges, layer, layoutKey, selected, onSelect, impact,
     buildEdges(edges, layer, flowing));
 
   const { fitView } = useReactFlow();
+  const fitOpts = placement.rooms?.length ? FIT_SITE : FIT;
   const lastLayout = useRef(layoutKey);
   const [showMap, setShowMap] = useState(false);
 
@@ -201,7 +208,7 @@ function Flow({ placement, edges, layer, layoutKey, selected, onSelect, impact,
       lastLayout.current = layoutKey;
       setNodes(buildNodes(placement, showLoad, selected, impact));
       setEdges(buildEdges(edges, layer, flowing));
-      const t = window.setTimeout(() => fitView(FIT), 30);
+      const t = window.setTimeout(() => fitView(fitOpts), 30);
       return () => window.clearTimeout(t);
     }
     // Same structure, newer state: replace the data, keep every position -
@@ -216,7 +223,7 @@ function Flow({ placement, edges, layer, layoutKey, selected, onSelect, impact,
     setEdges(buildEdges(edges, layer, flowing));
     return undefined;
   }, [layoutKey, placement, edges, layer, showLoad, flowing, selected, impact,
-      setNodes, setEdges, fitView]);
+      setNodes, setEdges, fitView, fitOpts]);
 
   const onNodeClick = useCallback((_: unknown, n: Node) => {
     const d = n.data as { node?: TopologyNode };
@@ -265,8 +272,8 @@ function Flow({ placement, edges, layer, layoutKey, selected, onSelect, impact,
         nodesConnectable={false}
         elementsSelectable
         fitView
-        fitViewOptions={FIT}
-        minZoom={0.08}
+        fitViewOptions={fitOpts}
+        minZoom={0.05}
         maxZoom={2.2}
         onlyRenderVisibleElements
         onMoveStart={onMoveStart}
@@ -283,7 +290,7 @@ function Flow({ placement, edges, layer, layoutKey, selected, onSelect, impact,
         )}
       </ReactFlow>
 
-      <Toolbar onFit={() => fitView(FIT)}
+      <Toolbar onFit={() => fitView(fitOpts)}
                showMap={showMap} canMap={canMap}
                onToggleMap={() => setShowMap((v) => !v)} />
 
