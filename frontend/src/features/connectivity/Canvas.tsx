@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Background, BackgroundVariant, MiniMap, ReactFlow, ReactFlowProvider,
   useEdgesState, useNodesState, useReactFlow, useViewport,
-  type Edge, type Node,
+  type Edge, type Node, type NodeChange,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import type { TopologyNode } from '../../api/client';
@@ -81,15 +81,16 @@ function buildNodes(placement: Placement, showLoad: boolean,
     data: { name: r.name, count: r.count, width: r.width + 28 },
     width: r.width + 28,
     height: r.height + 28,
-    // A room is dragged as a REGION - the devices in it come along, which is
-    // what parenting gets us for free. Not selectable: it is a label for a
-    // part of the estate, not a thing in it.
+    // A room is dragged as a REGION - the devices in it come along. Selectable
+    // so that picking it up also puts the resize grips on it; the selection
+    // means "this room is what I am handling", not "this is the device I am
+    // reading", which is why it leaves the drawer alone.
     draggable: true,
+    selectable: true,
     // By the label, not by the whole rectangle. A room covers a region of
     // canvas the operator still needs to pan across, and a drag surface that
     // size would swallow every pan that started inside a hall.
     dragHandle: '.cn-room-name',
-    selectable: false,
     connectable: false,
     hidden: !showRooms,
     zIndex: 0,
@@ -288,31 +289,49 @@ function Flow({ placement, edges, layer, layoutKey, selected, onSelect, impact,
   /** Dragging a room drags the room's devices.
    *
    *  A room is a region: moving the outline and leaving its contents behind
-   *  would be a lie about what the outline means. Done by hand off the drag
-   *  delta rather than with React Flow's parenting, which would make every
-   *  device position relative to a box and every other coordinate in this
-   *  file a special case. */
-  const dragFrom = useRef<{ id: string; x: number; y: number } | null>(null);
+   *  would be a lie about what the outline means.
+   *
+   *  Done off the position CHANGES rather than off the drag callbacks. React
+   *  Flow moves a node by more routes than a mouse drag - a keyboard nudge, a
+   *  multi-selection, a programmatic change - and a handler wired only to
+   *  onNodeDrag catches one of them. Every route ends up here.
+   */
+  const roomAt = useRef(new Map<string, { x: number; y: number }>());
 
-  const onNodeDragStart = useCallback((_: unknown, n: Node) => {
-    dragFrom.current = n.type === 'room'
-      ? { id: n.id, x: n.position.x, y: n.position.y } : null;
-  }, []);
+  const handleNodesChange = useCallback((changes: NodeChange<Node>[]) => {
+    const moves: { room: string; dx: number; dy: number }[] = [];
+    for (const c of changes) {
+      if (c.type !== 'position' || !c.position || !c.id.startsWith('room:')) continue;
+      const was = roomAt.current.get(c.id);
+      if (was) {
+        const dx = c.position.x - was.x;
+        const dy = c.position.y - was.y;
+        if (dx || dy) moves.push({ room: c.id, dx, dy });
+      }
+      roomAt.current.set(c.id, { x: c.position.x, y: c.position.y });
+    }
 
-  const onNodeDrag = useCallback((_: unknown, n: Node) => {
-    const from = dragFrom.current;
-    if (!from || from.id !== n.id) return;
-    const dx = n.position.x - from.x;
-    const dy = n.position.y - from.y;
-    if (!dx && !dy) return;
-    dragFrom.current = { id: n.id, x: n.position.x, y: n.position.y };
-    setNodes((nds) => nds.map((d) => (
-      (d.data as { roomId?: string }).roomId === n.id
-        ? { ...d, position: { x: d.position.x + dx, y: d.position.y + dy } }
-        : d)));
-  }, [setNodes]);
+    onNodesChange(changes);
 
-  const onNodeDragStop = useCallback(() => { dragFrom.current = null; }, []);
+    if (!moves.length) return;
+    setNodes((nds) => nds.map((n) => {
+      const roomId = (n.data as { roomId?: string }).roomId;
+      const m = roomId ? moves.find((x) => x.room === roomId) : undefined;
+      return m
+        ? { ...n, position: { x: n.position.x + m.dx, y: n.position.y + m.dy } }
+        : n;
+    }));
+  }, [onNodesChange, setNodes]);
+
+  /** Where each room was last seen, so the next change is a delta and not an
+   *  absolute jump. Re-seeded whenever the boxes are rebuilt. */
+  useEffect(() => {
+    const at = new Map<string, { x: number; y: number }>();
+    for (const r of placement.rooms ?? []) {
+      at.set(`room:${r.id}`, { x: r.x - 14, y: r.y - 14 });
+    }
+    roomAt.current = at;
+  }, [placement]);
 
   // Bring an off-canvas selection into view, and only then: clicking a node
   // that is already on screen must not yank the viewport out from under the
@@ -347,12 +366,9 @@ function Flow({ placement, edges, layer, layoutKey, selected, onSelect, impact,
       <ReactFlow
         nodes={nodes}
         edges={rfEdges}
-        onNodesChange={onNodesChange}
+        onNodesChange={handleNodesChange}
         onEdgesChange={onEdgesChange}
         onNodeClick={onNodeClick}
-        onNodeDragStart={onNodeDragStart}
-        onNodeDrag={onNodeDrag}
-        onNodeDragStop={onNodeDragStop}
         onPaneClick={() => onSelect(null)}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}

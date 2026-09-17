@@ -481,6 +481,12 @@
 /* A region, not a thing in the estate: no fill worth the name, a dashed edge
    that cannot be mistaken for a conductor, and a label in the corner rather
    than across the middle where the devices are. */
+/* The whole room node is transparent to the pointer: it lies over a region of
+   canvas the operator still has to pan and click through. Only the label and
+   the resize grips take events back. */
+.react-flow__node-room { pointer-events: none; }
+.react-flow__node-room .react-flow__resize-control { pointer-events: auto; }
+
 .cn-room {
   width: 100%; height: 100%;
   box-sizing: border-box;
@@ -506,6 +512,21 @@
 }
 .cn-room-name:hover { color: var(--text); }
 .cn-room-name:active { cursor: grabbing; }
+
+/* Picked up: the outline firms up and the grips appear on it. */
+.cn-room.is-on {
+  border-style: solid;
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
+.cn-room.is-on .cn-room-name { color: var(--text); }
+
+.cn-room-line { border-color: transparent; }
+.cn-room-grip {
+  border-radius: 2px;
+  background: var(--bg-raised);
+  border-style: solid; border-color: var(--accent);
+}
 .cn-room-count {
   background: var(--bg-inset); color: var(--text-muted);
   font-weight: 600; letter-spacing: 0;

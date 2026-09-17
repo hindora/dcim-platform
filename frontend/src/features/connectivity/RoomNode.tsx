@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import { useStore } from '@xyflow/react';
+import { NodeResizer, useStore } from '@xyflow/react';
 
 /** A room, drawn behind the devices in it.
  *
@@ -8,11 +8,14 @@ import { useStore } from '@xyflow/react';
  *  and the UPS Room begins from the names on 155 boxes. The device plane draws
  *  the same rectangles for the same reason.
  *
- *  Not selectable and not draggable: it is a label for a region, not a thing
- *  in the estate, and dragging it would say otherwise.
+ *  The rectangle takes no pointer events - it lies over a region of canvas the
+ *  operator still has to pan across. The LABEL is the handle: click it to pick
+ *  the room up, or to select it and get the resize grips.
  */
-function RoomNode({ data }: {
+function RoomNode({ data, selected, width }: {
   data: { name: string; count: number; width: number };
+  selected?: boolean;
+  width?: number;
 }) {
   // The canvas scales everything it draws, and a whole site fits at about
   // 15%: a 1px border lands on a sixth of a pixel and an 11px label on under
@@ -22,16 +25,29 @@ function RoomNode({ data }: {
   const zoom = useStore((s) => s.transform[2]);
   const k = 1 / Math.max(zoom, 0.02);
 
-  // ...but only up to the room's own width. Three narrow rooms sit side by
-  // side in a band, and a label that keeps growing while the box it names
-  // shrinks ends up written across its neighbours: UPS ROOM, GENERATOR ROOM
-  // and MECHANICAL ROOM were one illegible line.
+  // ...but only up to the room's own width, which is the LIVE width - a room
+  // that has been resized names itself at the size it is now, not the size the
+  // layout gave it. Three narrow rooms sit side by side in a band, and a label
+  // that keeps growing while the box it names shrinks ends up written across
+  // its neighbours: UPS ROOM, GENERATOR ROOM and MECHANICAL ROOM were one
+  // illegible line.
   const chars = data.name.length + 3;          // the count chip, roughly
-  const fit = ((data.width || 0) * 0.95) / (chars * 0.62);
+  const w = width ?? data.width ?? 0;
+  const fit = (w * 0.95) / (chars * 0.62);
   const size = Math.max(6, Math.min(11 * k, fit || 11 * k, 130));
 
   return (
-    <div className="cn-room" style={{ borderWidth: Math.min(k, 8) }}>
+    <div className={selected ? 'cn-room is-on' : 'cn-room'}
+         style={{ borderWidth: Math.min(k, 8) }}>
+      {/* Grips only while the room is picked: eight rooms all wearing eight
+          handles is a mesh of dots over the drawing. Scaled against the zoom
+          for the same reason everything else here is. */}
+      <NodeResizer isVisible={Boolean(selected)} minWidth={80} minHeight={60}
+                   lineClassName="cn-room-line" handleClassName="cn-room-grip"
+                   handleStyle={{ width: 8 * k, height: 8 * k,
+                                  borderWidth: Math.min(k, 3) }}
+                   lineStyle={{ borderWidth: Math.min(2 * k, 10) }} />
+
       {/* Above the rectangle, not inside it: inside, the label is written
           over the first row of devices at any zoom where it is readable. */}
       <span className="cn-room-name"
