@@ -589,10 +589,14 @@ const ROW_ORDER: Record<string, string[]> = {
   Roof: ['CT'],
 };
 
-/** Rooms as bands of side-by-side cells, top to bottom. */
+/** Rooms as bands of side-by-side cells, top to bottom.
+ *
+ *  The network room shares the halls' band rather than sitting on its own
+ *  above them - it is where the halls' fabric terminates, so the three read
+ *  as one floor of IT with the facility plant underneath. This is the one
+ *  place the port diverges from `core/canvas_layout.py`, which stacks it. */
 const BANDS = [
-  ['Network Room'],
-  ['Server Hall A', 'Server Hall B'],
+  ['Network Room', 'Server Hall A', 'Server Hall B'],
   ['UPS Room', 'Generator Room', 'Mechanical Room'],
   ['Central Plant', 'Roof'],
 ];
