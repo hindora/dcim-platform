@@ -34,7 +34,7 @@ export interface CollapsedEdge {
   sides: string[];
 }
 
-export const NODE_W = 168;
+export const NODE_W = 196;
 /** Three lines: name, type, and the capacity bar. A one-line diagram without
  *  capacity on it is a picture - the number that decides anything is the live
  *  draw against what the thing is built to take. */

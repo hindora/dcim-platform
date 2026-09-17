@@ -149,21 +149,25 @@ function DeviceNode({ data, selected }: NodeProps) {
 
       <span className="cn-chip"><TypeGlyph type={n.device_type} /></span>
 
+      {/* The name gets the card's whole width. It used to share a row with the
+          draw, which left it about 57px - enough for "PDUA-DC1-…" and not for
+          which PDU. The device name is the one thing on this card that has to
+          be readable, so the draw drops to the line below it. */}
       <span className="cn-body">
         <span className="cn-name" title={n.name}>{n.name}</span>
-        <span className="cn-sub">
-          {rolled ? `${n.rolled_up} × ${n.device_type.replace(/_/g, ' ')}`
-                  : n.device_type.replace(/_/g, ' ')}
-          {rolled && n.offline_count > 0 && (
-            <span className="cn-off"> · {n.offline_count} off</span>
-          )}
+        <span className="cn-meta">
+          <span className="cn-sub">
+            {rolled ? `${n.rolled_up} × ${n.device_type.replace(/_/g, ' ')}`
+                    : n.device_type.replace(/_/g, ' ')}
+            {rolled && n.offline_count > 0 && (
+              <span className="cn-off"> · {n.offline_count} off</span>
+            )}
+          </span>
+          {draw != null && <span className="cn-load">{watts(draw)}</span>}
         </span>
       </span>
 
-      <span className="cn-right">
-        <StatusDot status={n.status} severity={n.max_severity} />
-        {draw != null && <span className="cn-load">{watts(draw)}</span>}
-      </span>
+      <StatusDot status={n.status} severity={n.max_severity} />
 
       {draw != null && (
         // A rating nobody recorded is a hatched track with no percentage.

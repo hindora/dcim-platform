@@ -220,7 +220,7 @@
 .cn-node {
   position: relative;
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) auto;
+  grid-template-columns: 28px minmax(0, 1fr);
   align-items: center;
   gap: 9px;
   box-sizing: border-box;
@@ -293,9 +293,21 @@
 
 .cn-body { display: flex; flex-direction: column; min-width: 0; gap: 1px; }
 
+/* Type on the left, draw on the right, sharing the line under the name. The
+   type gives up space to the figure rather than the other way round: a
+   truncated "energy monit…" still reads, a truncated "8.7 k" does not. */
+.cn-meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
 .cn-name {
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 11px;
+  padding-right: 14px;   /* clears the status glyph */
   font-weight: 600;
   color: var(--text);
   white-space: nowrap;
@@ -313,14 +325,13 @@
 
 .cn-off { color: var(--critical); }
 
-.cn-right {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 3px;
-}
+/* The status glyph sits in the card's top-right corner, out of the text's
+   flow entirely - it is the one mark that must never be pushed off by a long
+   name. */
+.cn-status { position: absolute; top: 7px; right: 8px; }
 
 .cn-load {
+  flex: none;
   font-family: var(--mono);
   font-size: 9.5px;
   font-variant-numeric: tabular-nums;
