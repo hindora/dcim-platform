@@ -153,7 +153,14 @@ export function Connectivity() {
     return [...s].sort();
   }, [edges]);
 
-  const diagram = graph.data ? (
+  // A layer the room has nothing on comes back 200 with an empty graph, which
+  // is not an error and was rendering as a blank dot grid with a toolbar on
+  // it. Central Plant has no production connections at all - twenty-nine
+  // devices, none of them cabled to anything on that layer - and the page has
+  // to say so rather than leave someone looking for the zoom control.
+  const empty = Boolean(graph.data) && graph.data!.node_count === 0;
+
+  const diagram = graph.data && !empty ? (
     <>
       {simulating && (
         <SimulationBanner
@@ -270,7 +277,19 @@ export function Connectivity() {
         </div>
       )}
 
-      {view === 'diagram' && graph.data && (
+      {view === 'diagram' && empty && (
+        <p className="muted">
+          Nothing in this room is on the {layer} layer.
+          {graph.data!.unconnected_count > 0 && (
+            <> All {graph.data!.unconnected_count} of its devices are recorded
+              without a {layer} connection.</>
+          )}
+          {' '}Plant and distribution that serves a room often sits elsewhere —
+          widen the scope above, or pick another layer.
+        </p>
+      )}
+
+      {view === 'diagram' && graph.data && !empty && (
         <div className="conn-body">
           <div className="conn-panel">
             <h3>
