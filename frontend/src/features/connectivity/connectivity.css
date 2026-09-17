@@ -105,9 +105,27 @@
 }
 
 .cn-rail-list {
-  flex: 1; min-height: 0; overflow: auto;
+  flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden;
   list-style: none; margin: 0; padding: 0 6px 8px;
+  /* Hold the rail's width open whether the list overflows or not: filtering
+     down to eight rows otherwise drops the bar and every name jumps sideways. */
+  scrollbar-gutter: stable;
+  /* Same treatment as the Assets rails - a thin floating bar rather than the
+     platform trough, which reads as a broken border against the rail edge. */
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
 }
+
+.cn-rail-list::-webkit-scrollbar { width: 10px; }
+.cn-rail-list::-webkit-scrollbar-track { background: transparent; }
+.cn-rail-list::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 99px;
+  /* Inset by a transparent border so the bar floats clear of the rows. */
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+.cn-rail-list:hover::-webkit-scrollbar-thumb { background: var(--text-faint); }
 
 .cn-rail-list > li > button {
   display: flex; align-items: center; gap: 7px; width: 100%;
