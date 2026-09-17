@@ -299,9 +299,20 @@ function Flow({ placement, edges, layer, layoutKey, selected, onSelect, impact,
   const roomAt = useRef(new Map<string, { x: number; y: number }>());
 
   const handleNodesChange = useCallback((changes: NodeChange<Node>[]) => {
+    // A resize from a top or left grip moves the box's origin as well as its
+    // size. That is the box growing, not the room travelling, so the devices
+    // must stay where they are.
+    const resizing = new Set(changes
+      .filter((c) => c.type === 'dimensions' || c.type === 'replace')
+      .map((c) => c.id));
+
     const moves: { room: string; dx: number; dy: number }[] = [];
     for (const c of changes) {
       if (c.type !== 'position' || !c.position || !c.id.startsWith('room:')) continue;
+      if (resizing.has(c.id)) {
+        roomAt.current.set(c.id, { x: c.position.x, y: c.position.y });
+        continue;
+      }
       const was = roomAt.current.get(c.id);
       if (was) {
         const dx = c.position.x - was.x;
