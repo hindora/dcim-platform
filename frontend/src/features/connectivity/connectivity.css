@@ -523,9 +523,10 @@
 
 .cn-room-line { border-color: transparent; }
 .cn-room-grip {
+  width: 7px; height: 7px;
   border-radius: 2px;
   background: var(--bg-raised);
-  border-style: solid; border-color: var(--accent);
+  border: 1px solid var(--accent);
 }
 .cn-room-count {
   background: var(--bg-inset); color: var(--text-muted);

@@ -40,13 +40,12 @@ function RoomNode({ data, selected, width }: {
     <div className={selected ? 'cn-room is-on' : 'cn-room'}
          style={{ borderWidth: Math.min(k, 8) }}>
       {/* Grips only while the room is picked: eight rooms all wearing eight
-          handles is a mesh of dots over the drawing. Scaled against the zoom
-          for the same reason everything else here is. */}
+          handles is a mesh of dots over the drawing. NOT scaled against the
+          zoom - the library already keeps its handles a constant size on
+          screen, and multiplying that by 1/zoom at 15% drew four blue slabs
+          the size of a rack row. */}
       <NodeResizer isVisible={Boolean(selected)} minWidth={80} minHeight={60}
-                   lineClassName="cn-room-line" handleClassName="cn-room-grip"
-                   handleStyle={{ width: 8 * k, height: 8 * k,
-                                  borderWidth: Math.min(k, 3) }}
-                   lineStyle={{ borderWidth: Math.min(2 * k, 10) }} />
+                   lineClassName="cn-room-line" handleClassName="cn-room-grip" />
 
       {/* Above the rectangle, not inside it: inside, the label is written
           over the first row of devices at any zoom where it is readable. */}
