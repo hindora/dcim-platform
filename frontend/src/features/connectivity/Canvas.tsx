@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Background, BackgroundVariant, MiniMap, ReactFlow, ReactFlowProvider,
   useEdgesState, useNodesState, useReactFlow, useViewport,
-  type Edge, type Node, type NodeChange,
+  type Edge, type Node,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import type { TopologyNode } from '../../api/client';
@@ -240,7 +240,7 @@ function Flow({ placement, edges, layer, layoutKey, selected, onSelect, impact,
   const [rfEdges, setEdges, onEdgesChange] = useEdgesState<Edge>(
     buildEdges(edges, layer, flowing));
 
-  const { fitView } = useReactFlow();
+  const { fitView, getNodes } = useReactFlow();
   const fitOpts = placement.rooms?.length ? FIT_SITE : FIT;
   const lastLayout = useRef(layoutKey);
   const [showMap, setShowMap] = useState(false);
@@ -291,76 +291,48 @@ function Flow({ placement, edges, layer, layoutKey, selected, onSelect, impact,
    *  A room is a region: moving the outline and leaving its contents behind
    *  would be a lie about what the outline means.
    *
-   *  Done off the position CHANGES rather than off the drag callbacks. React
-   *  Flow moves a node by more routes than a mouse drag - a keyboard nudge, a
-   *  multi-selection, a programmatic change - and a handler wired only to
-   *  onNodeDrag catches one of them. Every route ends up here.
+   *  Absolute, not incremental. The first version added each drag event's
+   *  delta to wherever the devices currently were, which is only correct if
+   *  every event arrives exactly once - and they do not. A batch that also
+   *  carried a measurement was skipped, a rebuilt box could seed from a stale
+   *  position, and the devices ended up somewhere between where they started
+   *  and where the outline went, or nowhere at all. Here the members are
+   *  snapshotted when the room is picked up and re-placed from that snapshot
+   *  on every event, so a dropped or repeated event changes nothing.
    */
-  const roomAt = useRef(new Map<string, { x: number; y: number }>());
+  const dragging = useRef<{
+    id: string;
+    from: { x: number; y: number };
+    members: { id: string; x: number; y: number }[];
+  } | null>(null);
 
-  const handleNodesChange = useCallback((changes: NodeChange<Node>[]) => {
-    // A resize from a top or left grip moves the box's origin as well as its
-    // size. That is the box growing, not the room travelling, so the devices
-    // must stay where they are.
-    //
-    // Only a REAL resize, though. React Flow reports a `dimensions` change
-    // whenever it measures a node - after a render, when an observer fires,
-    // when a node comes back into view - and treating those as resizes threw
-    // away whatever drag happened to land in the same batch. That is the
-    // "sometimes only the box moves": nothing to do with which room or which
-    // direction, only with whether a measurement arrived on the same tick.
-    // A resize carries `resizing`; a measurement does not.
-    const resizing = new Set(changes.flatMap(
-      (c) => ((c.type === 'dimensions' && c.resizing) || c.type === 'replace'
-        ? [c.id] : [])));
-
-    const moves: { room: string; dx: number; dy: number }[] = [];
-    for (const c of changes) {
-      if (c.type !== 'position' || !c.position || !c.id.startsWith('room:')) continue;
-      if (resizing.has(c.id)) {
-        roomAt.current.set(c.id, { x: c.position.x, y: c.position.y });
-        continue;
-      }
-      const was = roomAt.current.get(c.id);
-      if (was) {
-        const dx = c.position.x - was.x;
-        const dy = c.position.y - was.y;
-        if (dx || dy) moves.push({ room: c.id, dx, dy });
-      }
-      roomAt.current.set(c.id, { x: c.position.x, y: c.position.y });
-    }
-
-    onNodesChange(changes);
-
-    if (!moves.length) return;
-    setNodes((nds) => nds.map((n) => {
-      const roomId = (n.data as { roomId?: string }).roomId;
-      const m = roomId ? moves.find((x) => x.room === roomId) : undefined;
-      return m
-        ? { ...n, position: { x: n.position.x + m.dx, y: n.position.y + m.dy } }
-        : n;
-    }));
-  }, [onNodesChange, setNodes]);
-
-  /** Picking a room up seeds where it started from. The rebuild seeds this
-   *  too, but a room that has already been dragged, or one whose box was
-   *  rebuilt while off screen, would otherwise take its first delta from a
-   *  position it is no longer at. */
   const onNodeDragStart = useCallback((_: unknown, n: Node) => {
-    if (n.type === 'room') {
-      roomAt.current.set(n.id, { x: n.position.x, y: n.position.y });
-    }
-  }, []);
+    if (n.type !== 'room') { dragging.current = null; return; }
+    dragging.current = {
+      id: n.id,
+      from: { x: n.position.x, y: n.position.y },
+      members: getNodes()
+        .filter((d) => (d.data as { roomId?: string }).roomId === n.id)
+        .map((d) => ({ id: d.id, x: d.position.x, y: d.position.y })),
+    };
+  }, [getNodes]);
 
-  /** Where each room was last seen, so the next change is a delta and not an
-   *  absolute jump. Re-seeded whenever the boxes are rebuilt. */
-  useEffect(() => {
-    const at = new Map<string, { x: number; y: number }>();
-    for (const r of placement.rooms ?? []) {
-      at.set(`room:${r.id}`, { x: r.x - 14, y: r.y - 14 });
-    }
-    roomAt.current = at;
-  }, [placement]);
+  const onNodeDrag = useCallback((_: unknown, n: Node) => {
+    const grip = dragging.current;
+    if (!grip || grip.id !== n.id) return;
+    const dx = n.position.x - grip.from.x;
+    const dy = n.position.y - grip.from.y;
+    const at = new Map(grip.members.map((m) => [m.id, m]));
+    setNodes((nds) => nds.map((d) => {
+      const m = at.get(d.id);
+      return m ? { ...d, position: { x: m.x + dx, y: m.y + dy } } : d;
+    }));
+  }, [setNodes]);
+
+  const onNodeDragStop = useCallback((e: unknown, n: Node) => {
+    onNodeDrag(e, n);          // the last position, in case it never arrived
+    dragging.current = null;
+  }, [onNodeDrag]);
 
   // Bring an off-canvas selection into view, and only then: clicking a node
   // that is already on screen must not yank the viewport out from under the
@@ -395,10 +367,12 @@ function Flow({ placement, edges, layer, layoutKey, selected, onSelect, impact,
       <ReactFlow
         nodes={nodes}
         edges={rfEdges}
-        onNodesChange={handleNodesChange}
+        onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onNodeClick={onNodeClick}
         onNodeDragStart={onNodeDragStart}
+        onNodeDrag={onNodeDrag}
+        onNodeDragStop={onNodeDragStop}
         onPaneClick={() => onSelect(null)}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
