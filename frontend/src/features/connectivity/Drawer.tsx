@@ -48,110 +48,113 @@ export function Drawer({ node, layer, onFullTrace, onClose, onSimulate, simulati
                 onClick={onClose}>✕</button>
       </header>
 
-      <dl className="conn-facts">
-        <dt>Status</dt>
-        <dd>
-          {node.status.toLowerCase()}
-          {rolled && node.offline_count > 0
-            && ` · ${node.offline_count} offline`}
-        </dd>
-        {node.location.rack_name && (<><dt>Rack</dt><dd>{node.location.rack_name}</dd></>)}
-        {node.location.room_name && (<><dt>Room</dt><dd>{node.location.room_name}</dd></>)}
-        {node.metrics.power_w != null && (
-          <><dt>Draw</dt><dd>{Math.round(node.metrics.power_w)} W</dd></>)}
-        {node.metrics.inlet_temp_c != null && (
+      {/* The facts scroll with the chains rather than holding the top: with a
+          sheet up the drawer is only ~200px tall, and a fixed header plus a
+          fixed facts list left the scroller nothing - which under
+          `overflow: hidden` clips the chain rather than scrolling it. */}
+      <div className="conn-drawer-scroll">
+        <dl className="conn-facts">
+          <dt>Status</dt>
+          <dd>
+            {node.status.toLowerCase()}
+            {rolled && node.offline_count > 0
+              && ` · ${node.offline_count} offline`}
+          </dd>
+          {node.location.rack_name && (<><dt>Rack</dt><dd>{node.location.rack_name}</dd></>)}
+          {node.location.room_name && (<><dt>Room</dt><dd>{node.location.room_name}</dd></>)}
+          {node.metrics.power_w != null && (
+            <><dt>Draw</dt><dd>{Math.round(node.metrics.power_w)} W</dd></>)}
+          {node.metrics.inlet_temp_c != null && (
+            <>
+              <dt>{rolled ? 'Worst inlet' : 'Inlet'}</dt>
+              <dd>{node.metrics.inlet_temp_c.toFixed(1)} °C</dd>
+            </>)}
+          {node.depth > 0 && (
+            <><dt>Scope</dt><dd>{node.depth} hop{node.depth > 1 ? 's' : ''} outside</dd></>)}
+        </dl>
+
+        {rolled ? (
+          <p className="muted">
+            {node.rolled_up} devices collapsed into one box so the room is
+            readable. Open the rack to see them individually.
+            {node.location.rack_id && (
+              <> <Link to={`/racks/${node.location.rack_id}`}>Rack elevation →</Link></>
+            )}
+          </p>
+        ) : (
           <>
-            <dt>{rolled ? 'Worst inlet' : 'Inlet'}</dt>
-            <dd>{node.metrics.inlet_temp_c.toFixed(1)} °C</dd>
-          </>)}
-        {node.depth > 0 && (
-          <><dt>Scope</dt><dd>{node.depth} hop{node.depth > 1 ? 's' : ''} outside</dd></>)}
-      </dl>
-
-      {/* Everything below the facts scrolls; the name at the top and the
-          actions at the bottom do not. A dual-fed device prints two chains of
-          six hops, and the buttons - which are the whole point of having
-          selected it - were underneath all of it. */}
-      {rolled ? (
-        <div className="conn-drawer-scroll">
-        <p className="muted">
-          {node.rolled_up} devices collapsed into one box so the room is
-          readable. Open the rack to see them individually.
-          {node.location.rack_id && (
-            <> <Link to={`/racks/${node.location.rack_id}`}>Rack elevation →</Link></>
-          )}
-        </p>
-        </div>
-      ) : (
-        <>
-          <div className="conn-drawer-scroll">
-          <h4>Fed by</h4>
-          {trace.isLoading && <div className="asset-skeleton" style={{ height: 60 }} />}
-          {trace.isError && (
-            <p className="muted">No {layer} chain is recorded for this device.</p>
-          )}
-          {trace.data?.is_source && (
-            <p className="muted">
-              Nothing feeds it on this layer — it is a source here.
-            </p>
-          )}
-          {trace.data && !trace.data.is_source && trace.data.paths.map((p, i) => {
-            const cord = p.hops[p.hops.length - 1];
-            const source = p.hops[0];
-            return (
-              <div className="conn-chain" key={`${p.side}-${i}`}>
-                <div className="conn-chain-head">
-                  <span className={`conn-side side-${(p.side || '').toLowerCase()}`}>
-                    {p.side || '—'}
-                  </span>
-                  <span className="k">
-                    {p.hops.length} hops
-                    {p.verdict !== 'complete' && (
-                      <span className="warn"> · {p.verdict}</span>
-                    )}
-                  </span>
-                </div>
-                <ol>
-                  {p.hops.map((h) => (
-                    <li key={h.connection_id}>
-                      <Link to={`/devices/${h.up.id}`}>{h.up.name}</Link>
-                      {h.alternates.length > 0 && (
-                        <span className="k"> or {h.alternates.length} other</span>
+            <h4>Fed by</h4>
+            {trace.isLoading && <div className="asset-skeleton" style={{ height: 60 }} />}
+            {trace.isError && (
+              <p className="muted">No {layer} chain is recorded for this device.</p>
+            )}
+            {trace.data?.is_source && (
+              <p className="muted">
+                Nothing feeds it on this layer — it is a source here.
+              </p>
+            )}
+            {trace.data && !trace.data.is_source && trace.data.paths.map((p, i) => {
+              const cord = p.hops[p.hops.length - 1];
+              const source = p.hops[0];
+              return (
+                <div className="conn-chain" key={`${p.side}-${i}`}>
+                  <div className="conn-chain-head">
+                    <span className={`conn-side side-${(p.side || '').toLowerCase()}`}>
+                      {p.side || '—'}
+                    </span>
+                    <span className="k">
+                      {p.hops.length} hops
+                      {p.verdict !== 'complete' && (
+                        <span className="warn"> · {p.verdict}</span>
                       )}
-                    </li>
-                  ))}
-                  <li className="is-self">{node.name}</li>
-                </ol>
-                {/* Plenty of gear is cabled without port-level detail - an RPP
-                    into a PDU is recorded as connected and no further - and
-                    "into —" is noise rather than a fact. */}
-                <p className="k">
-                  from {source.up.name}
-                  {cord.down_termination.type !== 'none'
-                    && <> · into {terminationLabel(cord.down_termination)}</>}
-                </p>
-              </div>
-            );
-          })}
-          {trace.data?.asymmetric && (
-            <p className="warn">
-              The two sides reach a source at different depths.
-            </p>
-          )}
-          </div>
+                    </span>
+                  </div>
+                  <ol>
+                    {p.hops.map((h) => (
+                      <li key={h.connection_id}>
+                        <Link to={`/devices/${h.up.id}`}>{h.up.name}</Link>
+                        {h.alternates.length > 0 && (
+                          <span className="k"> or {h.alternates.length} other</span>
+                        )}
+                      </li>
+                    ))}
+                    <li className="is-self">{node.name}</li>
+                  </ol>
+                  {/* Plenty of gear is cabled without port-level detail - an RPP
+                      into a PDU is recorded as connected and no further - and
+                      "into —" is noise rather than a fact. */}
+                  <p className="k">
+                    from {source.up.name}
+                    {cord.down_termination.type !== 'none'
+                      && <> · into {terminationLabel(cord.down_termination)}</>}
+                  </p>
+                </div>
+              );
+            })}
+            {trace.data?.asymmetric && (
+              <p className="warn">
+                The two sides reach a source at different depths.
+              </p>
+            )}
+          </>
+        )}
+      </div>
 
-          <div className="conn-drawer-actions">
-            {/* The question asked before every maintenance window, and the
-                server has been able to answer it since the topology service
-                landed. Nothing had ever asked. */}
-            <button type="button" className={simulating ? 'is-on' : undefined}
-                    onClick={() => onSimulate(simulating ? null : node.id)}>
-              {simulating ? 'Stop simulating' : 'Simulate removal'}
-            </button>
-            <button type="button" onClick={onFullTrace}>Full trace</button>
-            <Link to={`/devices/${node.id}`}>Open device →</Link>
-          </div>
-        </>
+      {/* On the drawer's floor rather than at the end of the chains: a
+          dual-fed device prints two chains of six hops, and these three are
+          the whole point of having selected it. */}
+      {!rolled && (
+        <div className="conn-drawer-actions">
+          {/* The question asked before every maintenance window, and the
+              server has been able to answer it since the topology service
+              landed. Nothing had ever asked. */}
+          <button type="button" className={simulating ? 'is-on' : undefined}
+                  onClick={() => onSimulate(simulating ? null : node.id)}>
+            {simulating ? 'Stop simulating' : 'Simulate removal'}
+          </button>
+          <button type="button" onClick={onFullTrace}>Full trace</button>
+          <Link to={`/devices/${node.id}`}>Open device →</Link>
+        </div>
       )}
     </aside>
   );

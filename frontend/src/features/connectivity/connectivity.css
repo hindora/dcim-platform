@@ -603,7 +603,6 @@
 }
 
 .conn-drawer > header,
-.conn-drawer > .conn-facts,
 .conn-drawer > .conn-drawer-actions { flex: none; }
 
 /* The scroller is pulled out to the drawer's own padding so the bar sits
