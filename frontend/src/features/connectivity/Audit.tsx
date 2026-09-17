@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { usePaged } from '../../components/Pagination';
 import { downloadCsv, stampedName } from '../../lib/csv';
@@ -51,6 +51,13 @@ export function Audit({ scope, layer, roomName, onSelectDevice }: {
   // time, and without a permanent range the reader cannot tell four findings
   // from the first four of forty.
   const { rows, foot } = usePaged(shown, { noun: 'findings', always: true });
+
+  // Turning the page puts different findings in the same box; leaving the box
+  // scrolled where the last page left it opens the new page halfway down.
+  const scroller = useRef<HTMLDivElement>(null);
+  const firstKey = rows.length ? `${rows[0].kind}-${rows[0].device.id}` : '';
+  useEffect(() => { if (scroller.current) scroller.current.scrollTop = 0; },
+            [firstKey]);
 
   if (q.isLoading) return <div className="asset-skeleton" style={{ height: 160 }} />;
   if (q.isError) {
@@ -112,7 +119,7 @@ export function Audit({ scope, layer, roomName, onSelectDevice }: {
         of equipment is single-corded on purpose.
       </p>
 
-      <div className="estate-scroll cn-pane-scroll">
+      <div className="estate-scroll cn-pane-scroll" ref={scroller}>
         <table className="estate-table conn-audit">
           <thead>
             <tr>

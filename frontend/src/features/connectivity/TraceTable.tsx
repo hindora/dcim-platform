@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { usePaged } from '../../components/Pagination';
 import { downloadCsv, stampedName } from '../../lib/csv';
@@ -72,6 +73,13 @@ export function TraceTable({ deviceId, deviceName, layer }: {
   // a permanent footer the reader has no idea whether the twelve rows they can
   // scroll are the whole trace or the first page of it.
   const { rows: page, foot } = usePaged(rows, { noun: 'hops', always: true });
+
+  // A new page of hops starts at hop one, not where the last page was left.
+  const scroller = useRef<HTMLDivElement>(null);
+  const firstKey = page.length
+    ? `${page[0].side}-${page[0].h.connection_id}-${page[0].hop}` : '';
+  useEffect(() => { if (scroller.current) scroller.current.scrollTop = 0; },
+            [firstKey]);
   const showState = PORT_LAYERS.has(layer);
 
   if (q.isLoading) return <div className="asset-skeleton" style={{ height: 120 }} />;
@@ -134,7 +142,7 @@ export function TraceTable({ deviceId, deviceName, layer }: {
         )}>Export CSV</button>
       </div>
 
-      <div className="estate-scroll cn-pane-scroll">
+      <div className="estate-scroll cn-pane-scroll" ref={scroller}>
         <table className="estate-table conn-trace">
           <thead>
             <tr>
