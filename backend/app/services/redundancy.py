@@ -107,6 +107,48 @@ def _nearest(graph: Graph, shared: set[str]) -> set[str]:
     return {n for n in shared if not below[n]}
 
 
+def _meet_points(graph: Graph, dev: str) -> set[str]:
+    """Where this device's distribution sides come back together, if they do."""
+    by_side = graph.sides_of(dev)
+    if len(by_side) < 2:
+        return set()
+    shared = set.intersection(*(ancestors(graph, ups) for ups in by_side.values()))
+    shared.discard(dev)
+    return _nearest(graph, shared) if shared else set()
+
+
+def structural(graph: Graph) -> tuple[set[str], dict[str, int]]:
+    """The meet points that are the ESTATE'S SHAPE rather than a mistake.
+
+    Computed over the whole layer, not over the requested scope. The
+    architecture is a property of the estate, and scoping the question to one
+    room makes it unanswerable there: a plant room with two dual-fed switches
+    has no population to generalise from, so the switchgear pair every load in
+    the building shares came back as a finding on both of them. Asking the
+    layer instead gets the same answer from every room.
+
+    A MAJORITY, not unanimity. Requiring every converged load to share a meet
+    point is defeated by a single load with a different one: five loads at the
+    switchgear and a sixth at an RPP leaves the switchgear at five of six,
+    nothing is structural, and the wolf-crying comes straight back.
+    """
+    at: dict[str, int] = defaultdict(int)
+    total = 0
+    for dev in graph.nodes:
+        points = _meet_points(graph, dev)
+        if not points:
+            continue
+        total += 1
+        for p in points:
+            at[p] += 1
+    if total < _MIN_TO_GENERALISE:
+        # Nothing to generalise from. Over-reporting on a graph this small is
+        # the right way to be wrong: two loads that both hang off one bad UPS
+        # must not have that dismissed as the design.
+        return set(), at
+    return {p for p, n in at.items() if n * 2 > total}, at
+
+
 def audit(graph: Graph, candidates: set[str]) -> list[Finding]:
     """Examine every candidate load and report what its feeds are not.
 
@@ -115,6 +157,7 @@ def audit(graph: Graph, candidates: set[str]) -> list[Finding]:
     circuit anyone recorded, and neither is a redundancy finding - the graph
     endpoint already says how many of those a room has.
     """
+    shape, at = structural(graph)
     findings: list[Finding] = []
 
     for dev in sorted(candidates):
@@ -127,8 +170,7 @@ def audit(graph: Graph, candidates: set[str]) -> list[Finding]:
         # One feed, full stop. Whether that is wrong depends on what it is,
         # which is not this service's call to make.
         if len(feeds) == 1:
-            findings.append(Finding(dev, 'single_fed',
-                                    sides=sorted(by_side)))
+            findings.append(Finding(dev, 'single_fed', sides=sorted(by_side)))
             continue
 
         # Several feeds, all on one side. Worse than single-fed in one respect:
@@ -141,74 +183,14 @@ def audit(graph: Graph, candidates: set[str]) -> list[Finding]:
         if len(by_side) < 2:
             continue     # unsided feeds - the importer derived no side here
 
-        # Two or more sides. Do they stay apart? Intersecting the ancestor sets
-        # is the whole test: anything in every side's ancestry is a device that
-        # ALL feeds pass through, which is a single point of failure wearing
-        # two cords.
-        sets = [ancestors(graph, ups) for ups in by_side.values()]
-        shared = set.intersection(*sets)
-        shared.discard(dev)
-        if shared:
+        # Two sides. Do they stay apart? Anything in every side's ancestry is a
+        # device ALL feeds pass through: a single point of failure wearing two
+        # cords. Meet points the whole estate shares are its shape, not a
+        # mistake somebody made in one row.
+        specific = sorted(_meet_points(graph, dev) - shape)
+        if specific:
             findings.append(Finding(
-                dev, 'converged',
-                shared=sorted(_nearest(graph, shared)),
-                sides=sorted(by_side)))
+                dev, 'converged', shared=specific, sides=sorted(by_side),
+                shared_by=min(at[s] for s in specific)))
 
-    return _drop_the_architecture(findings)
-
-
-def _drop_the_architecture(findings: list[Finding]) -> list[Finding]:
-    """Throw away the convergence that every dual-fed load has.
-
-    EVERY 2N estate converges. The A and B sides come off one switchgear pair,
-    which comes off one utility intake and one set of generators, and no amount
-    of downstream separation changes that - 2N means independent BELOW the
-    point of separation, not above it. Reported literally, the audit fired on
-    108 of 137 devices in one hall and named the same switchgear pair on all of
-    them. A finding that fires on everything is read once and then ignored,
-    which costs more than not having it.
-
-    The discriminator is not a device type and not a depth. It is how MANY
-    loads meet at the same place: if more than half the converged loads in
-    scope meet at a device, that device is the estate's shape, and if a handful
-    do it is a mistake somebody made in one row.
-
-    A MAJORITY, not unanimity. Requiring every converged load to share a meet
-    point before calling it structural is defeated by a single load with a
-    different one - in the fixture below, five loads meeting at the switchgear
-    and a sixth meeting at an RPP left the switchgear at five of six, so
-    nothing was dropped and the wolf-crying came straight back.
-
-    The count rides on the findings that survive, so the rarest sort to the
-    top: a convergence one load has is a likelier mistake than one twenty
-    share.
-    """
-    converged = [f for f in findings if f.kind == 'converged']
-    # You cannot call something "the architecture" from one observation. Below
-    # a handful of converged loads there is no population to generalise from,
-    # and over-reporting on a tiny scope is the right way to be wrong: a room
-    # with two dual-fed loads that both hang off one bad UPS must not have that
-    # dismissed as its design.
-    if len(converged) < _MIN_TO_GENERALISE:
-        return findings
-
-    at: dict[str, int] = defaultdict(int)
-    for f in converged:
-        for s in f.shared:
-            at[s] += 1
-
-    universal = {s for s, n in at.items() if n * 2 > len(converged)}
-
-    kept: list[Finding] = []
-    for f in findings:
-        if f.kind != 'converged':
-            kept.append(f)
-            continue
-        specific = [s for s in f.shared if s not in universal]
-        if not specific:
-            # Meets the world only where the world meets. Architecture.
-            continue
-        f.shared = specific
-        f.shared_by = min(at[s] for s in specific)
-        kept.append(f)
-    return kept
+    return findings
