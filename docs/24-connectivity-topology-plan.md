@@ -614,7 +614,7 @@ to get the information.
 
 Each phase ships something usable on its own.
 
-**Status at 2026-09-16: phases 0 and 1 are shipped, pushed and verified
+**Status at 2026-09-17: phases 0 to 6 are shipped, pushed and verified
 against the live estate.** What each one actually cost and what it found is
 recorded under it.
 
@@ -718,7 +718,7 @@ server rack paints red, and a diagram that is always red stops being read.
 likely fix), or correct the simulator's draw. Not silently suppressed here:
 the bar is telling the truth about what is recorded.
 
-### Phase 3 — impact on the diagram (2 days)
+### Phase 3 — impact on the diagram (2 days) — DONE
 
 * *Simulate removal* on the selected node: cut-off set red, degraded set
   amber-outlined, counts in the drawer, list exportable.
@@ -726,33 +726,111 @@ the bar is telling the truth about what is recorded.
   question actually gets asked.
 
 *Acceptance:* removing a UPS in a 2N room shows degraded-not-dark for
-dual-corded loads and dark for every single-corded one, and the list
-matches `services/impact.py` exactly.
+dual-corded loads and dark for every single-corded one, and the list matches
+`services/impact.py` exactly. **Met** — UPSA-DC1-UR removed reads "32 lose
+power, 238 lose a redundancy side", with RPPA and its A-side PDUs dark and
+every dual-corded load amber.
 
-### Phase 4 — redundancy audit (2–3 days)
+*Built beyond the plan:* a rolled-up rack needed `member_ids` on the node.
+Impact is keyed by DEVICE id and a synthetic rack id matches nothing in the
+answer. That also bought the honest verdict for the case in between — **8 OF
+18 DARK** on a rack with half its members on the failing side, because both
+"dark" and "fine" are lies about it and a change gets approved against that
+number.
+
+### Phase 4 — redundancy audit (2–3 days) — DONE
 
 * `GET /topology/redundancy`; the third view tab; findings link into the
   diagram with the offending path highlighted.
 
-*Acceptance:* a seeded convergence (both RPPs off one UPS) is found and
-names the UPS; a correctly 2N room reports nothing.
+*Acceptance:* a seeded convergence (both RPPs off one UPS) is found and names
+the UPS; a correctly 2N room reports nothing. **Met, and the second half was
+the hard one.**
 
-### Phase 5 — cooling loop (3–4 days)
+*Found on the way, and it nearly shipped:* pointed at the real estate the
+audit fired on **108 of 137 devices in Hall A** and named the same switchgear
+pair every time. EVERY 2N estate converges — the A and B sides come off one
+pair, off one utility intake — and 2N means independent BELOW the point of
+separation, not above it. A report that fires on everything is read once and
+then ignored, which costs more than not having it.
+
+Two corrections, neither a device-type table nor a depth constant. Only the
+**meet point** is named, not the trunk above it. And a meet point shared by
+more than half the converged loads **across the layer** is the estate's shape
+and is dropped. Layer-wide, not scope-wide: counted over the scope, a plant
+room with two dual-fed switches has no population to generalise from and got
+the switchgear back as a finding on both. Majority rather than unanimity,
+because one load with a different meet point defeats unanimity entirely.
+
+Both rooms in DC1 now report only `single_fed` — 29 CRAHs and 24 chillers and
+pumps, all alternating A/B, which is N+1 by design. The audit is quiet when
+the estate is right, which is the only reason anyone will believe it when it
+is not.
+
+### Phase 5 — cooling loop (3–4 days) — DONE
 
 * `layoutLoop` on the plant stage template; supply/return distinguished;
   flow arrows; per-stage numbers (ΔT, flow, COP, valve position).
 
-*Acceptance:* the CHW loop reads as a circuit, the return leg does not
-point back up the page, and a stopped tower bank or a flow-interlock-shed
-chiller is visible on the diagram — the two failures the live exhaustion
-campaign found invisible elsewhere.
+*Acceptance:* the CHW loop reads as a circuit and the return leg does not
+point back up the page. **Met** — Hall A's cooling draws CHWS top-left, the
+CRAHs and CDUs and servers it serves across the middle, CHWR top-right, and
+the circuit visibly closes.
 
-### Phase 6 — fabric readability and path (2–3 days)
+*Built differently from the plan, again.* The plan called for a fixed stage
+template — tower, condenser, chiller, primary pump, secondary pump, header,
+terminal. That is a table to keep in step with every estate that differs from
+this one. The shape is already in the graph: breadth-first from the sources
+following the flow, breadth-first from the sinks against it, and compare.
+**Nearer the source is supply, nearer the sink is return, equidistant is where
+the water does its work** — which is the real definition of a terminal, and
+why a CRAH lands there without anybody writing 'crah' anywhere.
 
-* Median-heuristic crossing reduction in `layoutLayered`; measure crossings
-  before and after and record the numbers here.
-* `GET /topology/path` and an "are these independent?" control.
-* Decide elkjs on the measurement, not on taste.
+*Two goes at it.* The first test was "the widest rank, not at either end", and
+it rejected exactly the graph it was written for: CHWR is a sink but the
+longest-path rank puts it on the same row as the servers. The first layout
+then wrapped its middle at twelve like the layered one, which put the supply
+header fifteen hundred pixels from the return header with empty canvas
+between them — a circuit nobody can see both ends of. Six per line, and leg
+bands wrap too.
+
+### Phase 6 — fabric readability and path (2–3 days) — DONE
+
+* Median-heuristic crossing reduction in the layered layout, seeded from the
+  deterministic order so nodes with no neighbours in the reference rank still
+  land somewhere stable. Not applied to the one-line: a rank's order there IS
+  its side, and unpicking a crossing would move a feeder into the wrong
+  column — a worse lie than a crossing.
+* `GET /topology/path`, specified in `docs/10` §6 and never built.
+* `tools/crossings.mjs`, which measures it against the live API.
+
+**The measurement, and it settles elkjs.**
+
+```
+room                      layer        nodes  before   after   saved  floor
+DC1 Server Hall A        management     44     339       0   100%      0
+DC1 Server Hall B        management     44     339       0   100%      0
+DC2 Server Hall A        management     40     278       0   100%      0
+DC1 Network Room         management     29      25       1    96%      1 AT FLOOR
+DC1 Central Plant        fieldbus       16      10       0   100%      0
+DC1 Server Hall A        network        16      66      66     0%     66 AT FLOOR
+DC2 Server Hall A        network        14      21      21     0%     21 AT FLOOR
+DC1 Network Room         network        12       9       9     0%      9 AT FLOOR
+```
+
+Management and fieldbus go to **zero**. The network layer saves nothing — and
+that is not the heuristic giving up. K(a,b) drawn in two rows has
+C(a,2)·C(b,2) crossings whatever order the rows are in, and a dual-homed
+fabric is exactly that shape. Hall A is two leaves against twelve rack groups:
+C(2,2)·C(12,2) = **66**, the number it reports. DC2 is two against seven: 21.
+The network room is three against three: 9.
+
+**Every layer in this estate is now at the theoretical floor.** There is
+nothing left for a layout engine to find, so §7.4's conditional elkjs branch
+closes: it is not adopted, and its EPL-2.0 / GPL-3.0 licence question stays
+unopened. Re-run the tool before reopening it.
+
+*Acceptance:* met, and recorded as a number rather than an opinion.
 
 ---
 
