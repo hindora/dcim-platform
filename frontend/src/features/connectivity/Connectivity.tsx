@@ -148,15 +148,14 @@ export function Connectivity() {
     () => (graph.data ? collapseEdges(graph.data.edges) : []),
     [graph.data]);
 
-  /** More than one room on the canvas means the site view, which is laid out
-   *  by room rather than by rank - see layoutRooms. Read off the DATA, not off
-   *  the scope: a room graph at depth 1 pulls in the plant that feeds it, and
-   *  two rooms is two rooms however it got that way. */
-  const byRoom = useMemo(() => {
-    const seen = new Set<string>();
-    for (const n of graph.data?.nodes ?? []) seen.add(n.location.room_name ?? '');
-    return seen.size > 1;
-  }, [graph.data]);
+  /** The site view is laid out by room rather than by rank - see layoutRooms.
+   *
+   *  Keyed off the SCOPE, not off how many rooms the answer happens to touch.
+   *  A hall at the default depth already pulls in the UPS room and the plant
+   *  that feed it, and those are not a third of the picture - they are the top
+   *  of this hall's chain, and belong on the one-line with it. Anchored on a
+   *  room, the diagram stays a diagram of that room. */
+  const byRoom = !selectedRoom;
 
   // The layer is part of the key, not just the structure: it decides which
   // layout is used, and two layers could in principle return the same ids.
