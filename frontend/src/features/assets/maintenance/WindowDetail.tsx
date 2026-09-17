@@ -110,13 +110,22 @@ export function WindowDetail() {
       {data.targets && data.targets.length > 0 ? (
         <div className="asset-scroll">
           <table>
-            <thead><tr><th>Device</th><th>Type</th><th>Severity</th></tr></thead>
+            {/* "What would this actually take out" is asked HERE, in front of
+                the window, not on a topology page somebody has to go and find.
+                The link lands on the connectivity diagram with the removal
+                already simulated and the room already scoped. */}
+            <thead><tr><th>Device</th><th>Type</th><th>Severity</th><th /></tr></thead>
             <tbody>
               {pagedTargets.rows.map((t) => (
                 <tr key={t.id}>
                   <td><Link to={`/assets/inventory/${t.id}`}>{t.name}</Link></td>
                   <td className="muted">{humanise(t.device_type)}</td>
                   <td className="muted">{t.max_severity}</td>
+                  <td>
+                    <Link to={`/connectivity?simulate=${t.id}&layer=power`}>
+                      What this takes out →
+                    </Link>
+                  </td>
                 </tr>
               ))}
             </tbody>

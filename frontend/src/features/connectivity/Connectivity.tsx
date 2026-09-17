@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { api, type Impact, type RoomSummary, type TopologyGraph, type TopologyNode }
   from '../../api/client';
 import { downloadCsv, stampedName } from '../../lib/csv';
@@ -9,6 +10,7 @@ import { MaxGlyph, MaxModal } from '../../components/MaxModal';
 import { Canvas } from './Canvas';
 import { Legend } from './Legend';
 import { Audit } from './Audit';
+import { Independence } from './Independence';
 import { Drawer } from './Drawer';
 import { TraceTable } from './TraceTable';
 import { collapseEdges, layout, structureKey } from './layout';
@@ -83,6 +85,33 @@ export function Connectivity() {
   /** The device whose removal is being simulated, or null. Kept as an id
    *  rather than a node so that it survives a refetch replacing the objects. */
   const [simulating, setSimulating] = useState<string | null>(null);
+
+  // Deep link. `?simulate=<device>` lands here from wherever the question was
+  // actually asked - a maintenance window, most of the time - and the room is
+  // resolved from the device rather than carried in the URL, because most
+  // callers know a device id and not which hall it is in.
+  const [params, setParams] = useSearchParams();
+  const linked = params.get('simulate');
+
+  const linkedDevice = useQuery({
+    queryKey: ['device', linked],
+    queryFn: () => api.device(linked!),
+    enabled: Boolean(linked),
+    retry: false,
+  });
+
+  useEffect(() => {
+    if (!linked) return;
+    const wanted = params.get('layer');
+    if (wanted && LAYERS.some((l) => l.key === wanted)) setLayer(wanted as LayerKey);
+    setSimulating(linked);
+    const room = linkedDevice.data?.location.room_id;
+    if (room) setRoomId(room);
+    // Consumed: leaving it in the URL would re-apply it every time the
+    // operator changed room afterwards, which fights them.
+    if (!room && linkedDevice.isError) setParams({}, { replace: true });
+    else if (room) setParams({}, { replace: true });
+  }, [linked, linkedDevice.data, linkedDevice.isError, params, setParams]);
 
   const rooms = useQuery<{ items: RoomSummary[] }>({
     queryKey: ['rooms'],
@@ -246,6 +275,7 @@ export function Connectivity() {
       {view === 'audit' && (
         <div className="conn-panel">
           <h3>REDUNDANCY AUDIT</h3>
+          <Independence nodes={graph.data?.nodes ?? []} layer={layer} />
           <Audit
             scope={scope} layer={layer}
             roomName={rooms.data?.items.find((r) => r.id === selectedRoom)?.name

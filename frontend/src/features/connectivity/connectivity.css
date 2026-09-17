@@ -582,3 +582,42 @@
   cursor: pointer;
 }
 .conn-linkish:hover { text-decoration: underline; }
+
+/* --- are these independent? ---------------------------------------------- */
+
+.conn-indep {
+  margin-bottom: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.conn-indep h4 {
+  margin: 0 0 8px;
+  font-size: 0.7rem;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  font-weight: 700;
+}
+
+.conn-indep-pick { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+.conn-indep-pick select {
+  height: 26px;
+  max-width: 260px;
+  padding: 0 6px;
+  font-size: 0.76rem;
+  background: var(--bg-raised);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.conn-indep .k { font-size: 0.72rem; color: var(--text-faint); margin: 4px 0 0; }
+
+/* The verdict is a sentence, and its tone is the answer. Not a badge: "not
+   independent" needs the names of what they share, and a badge has nowhere to
+   put them. */
+.conn-verdict-ok { margin: 10px 0 0; font-size: 0.82rem; color: var(--ok); }
+.conn-verdict-no { margin: 10px 0 0; font-size: 0.82rem; color: var(--text); }
+.conn-verdict-no strong { color: var(--critical); }

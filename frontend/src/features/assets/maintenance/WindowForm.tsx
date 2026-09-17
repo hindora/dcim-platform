@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { ApiError, api, type MaintenancePreview } from '../../../api/client';
 import { Dialog, DialogActions } from '../components/Dialog';
 import { DevicePicker } from '../components/DevicePicker';
@@ -144,7 +144,14 @@ export function WindowForm({ onClose }: { onClose: () => void }) {
                     </strong>
                     <ul>
                       {preview.redundancy_warnings.slice(0, 6).map((w) => (
-                        <li key={w.device_id}>{w.reason}</li>
+                        <li key={w.device_id}>
+                          {w.reason}{' '}
+                          {/* The count says how many; this says which, and
+                              shows it on the chain rather than as a number. */}
+                          <Link to={`/connectivity?simulate=${w.device_id}&layer=power`}>
+                            show on the diagram →
+                          </Link>
+                        </li>
                       ))}
                     </ul>
                     Taking a feeder into a window costs these their power, not

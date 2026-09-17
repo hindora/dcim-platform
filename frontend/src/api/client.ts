@@ -95,6 +95,9 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 export interface LocationRef {
   datacenter_code?: string | null;
+  /** The server has always sent this; the type just never declared it, so
+   *  anything wanting to scope a view to a device's room had to guess. */
+  room_id?: string | null;
   room_name?: string | null;
   row_name?: string | null;
   rack_id?: string | null;
@@ -1075,6 +1078,18 @@ export interface Trace {
   is_source: boolean;
   downstream: TraceNeighbour[];
   downstream_count: number;
+}
+
+export interface Path {
+  layer: string;
+  src: ImpactNode;
+  dst: ImpactNode;
+  /** The walk between them, ignoring flow direction. */
+  hops: ImpactNode[];
+  connected: boolean;
+  /** What they BOTH hang off - the real answer to "are these independent". */
+  shared_upstream: ImpactNode[];
+  independent: boolean;
 }
 
 export interface RedundancyFinding {
@@ -2606,6 +2621,12 @@ export const api = {
     request<TopologyGraph>(
       `/topology?layer=${encodeURIComponent(layer)}&scope=${encodeURIComponent(scope)}`
       + `&depth=${depth}&rollup=${rollup}`),
+
+  /** How two devices are related on one layer, and whether they are
+   *  independent of each other. */
+  path: (src: string, dst: string, layer: string) =>
+    request<Path>(`/topology/path?src=${encodeURIComponent(src)}`
+      + `&dst=${encodeURIComponent(dst)}&layer=${encodeURIComponent(layer)}`),
 
   /** Where the redundancy is not actually there. */
   redundancy: (scope: string, layer: string) =>
