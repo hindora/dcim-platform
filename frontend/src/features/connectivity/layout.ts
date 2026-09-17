@@ -34,7 +34,12 @@ export interface CollapsedEdge {
   sides: string[];
 }
 
-export const NODE_W = 104;
+/** Wide enough for a full device name at 9px mono, and no wider.
+ *
+ *  These names end in the part that distinguishes them - R1-04 from R2-01 -
+ *  so an ellipsis eats the only characters that matter. 104px cut
+ *  "PDUA-DC1-HA-R2-01" by two characters and made a dozen boxes read alike. */
+export const NODE_W = 120;
 /** Three lines: name, type, and the capacity bar. A one-line diagram without
  *  capacity on it is a picture - the number that decides anything is the live
  *  draw against what the thing is built to take. */
