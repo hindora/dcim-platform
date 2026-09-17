@@ -12,7 +12,7 @@ import { Independence } from './Independence';
 import { Legend } from './Legend';
 import { SidePanel } from './SidePanel';
 import { TraceTable } from './TraceTable';
-import { collapseEdges, layout, structureKey } from './layout';
+import { collapseEdges, layout, layoutRooms, structureKey } from './layout';
 import './connectivity.css';
 
 /** Connectivity: how the estate is wired, one layer at a time.
@@ -148,20 +148,33 @@ export function Connectivity() {
     () => (graph.data ? collapseEdges(graph.data.edges) : []),
     [graph.data]);
 
+  /** More than one room on the canvas means the site view, which is laid out
+   *  by room rather than by rank - see layoutRooms. Read off the DATA, not off
+   *  the scope: a room graph at depth 1 pulls in the plant that feeds it, and
+   *  two rooms is two rooms however it got that way. */
+  const byRoom = useMemo(() => {
+    const seen = new Set<string>();
+    for (const n of graph.data?.nodes ?? []) seen.add(n.location.room_name ?? '');
+    return seen.size > 1;
+  }, [graph.data]);
+
   // The layer is part of the key, not just the structure: it decides which
   // layout is used, and two layers could in principle return the same ids.
   const key = graph.data
-    ? `${layer}:${structureKey(graph.data.nodes, graph.data.edges)}` : '';
+    ? `${layer}:${byRoom ? 'rooms' : 'rank'}:`
+      + structureKey(graph.data.nodes, graph.data.edges) : '';
 
   const cache = useRef<{ key: string; value: ReturnType<typeof layout> } | null>(null);
   const placement = useMemo(() => {
     if (!graph.data) return { placed: [], width: 0, height: 0 };
     if (cache.current?.key === key) return cache.current.value;
-    const value = layout(graph.data.nodes, edges, {
-      oneLine: ONE_LINE.has(layer), loop: LOOP.has(layer) });
+    const value = byRoom
+      ? layoutRooms(graph.data.nodes)
+      : layout(graph.data.nodes, edges, {
+          oneLine: ONE_LINE.has(layer), loop: LOOP.has(layer) });
     cache.current = { key, value };
     return value;
-  }, [graph.data, edges, key, layer]);
+  }, [graph.data, edges, key, layer, byRoom]);
 
   /** Changing layer or scope invalidates the selection and the simulation: the
    *  same device may not be on the next layer at all, and a drawer describing

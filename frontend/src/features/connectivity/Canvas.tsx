@@ -8,7 +8,9 @@ import '@xyflow/react/dist/style.css';
 import type { TopologyNode } from '../../api/client';
 import DeviceNode from './DeviceNode';
 import LinkEdge from './LinkEdge';
-import { NODE_H, NODE_W, type CollapsedEdge, type Placed } from './layout';
+import RoomNode from './RoomNode';
+import { NODE_H, NODE_W, type CollapsedEdge, type Placed, type RoomBox }
+  from './layout';
 import { cutWithin, verdictFor, type ImpactView } from './impact';
 
 /** The connectivity canvas — now the page rather than a panel on it.
@@ -29,13 +31,16 @@ import { cutWithin, verdictFor, type ImpactView } from './impact';
  *  every map behaves. */
 const FIT = { padding: 0.16, minZoom: 0.62, duration: 320 } as const;
 
-const nodeTypes = { device: DeviceNode };
+const nodeTypes = { device: DeviceNode, room: RoomNode };
 const edgeTypes = { link: LinkEdge };
 
 export interface Placement {
   placed: Placed[];
   width: number;
   height: number;
+  /** Only the site view has these: one rectangle per room, drawn behind the
+   *  devices standing in it. */
+  rooms?: RoomBox[];
 }
 
 function nodeData(node: Placed['node'], showLoad: boolean,
@@ -53,7 +58,22 @@ function nodeData(node: Placed['node'], showLoad: boolean,
 
 function buildNodes(placement: Placement, showLoad: boolean,
                     selected: string | null, impact: ImpactView | null): Node[] {
-  return placement.placed.map((p) => ({
+  // Rooms first and with a zIndex of their own: React Flow paints in array
+  // order, and a room drawn after its devices would cover them.
+  const rooms: Node[] = (placement.rooms ?? []).map((r) => ({
+    id: `room:${r.id}`,
+    type: 'room',
+    position: { x: r.x - 14, y: r.y - 30 },
+    data: { name: r.name, count: r.count },
+    width: r.width + 28,
+    height: r.height + 44,
+    draggable: false,
+    selectable: false,
+    connectable: false,
+    zIndex: 0,
+  }));
+
+  return rooms.concat(placement.placed.map((p) => ({
     id: p.node.id,
     type: 'device',
     position: { x: p.x, y: p.y },
@@ -64,7 +84,8 @@ function buildNodes(placement: Placement, showLoad: boolean,
     connectable: false,
     width: NODE_W,
     height: NODE_H,
-  }));
+    zIndex: 1,
+  })));
 }
 
 function buildEdges(edges: CollapsedEdge[], layer: string,
@@ -198,7 +219,8 @@ function Flow({ placement, edges, layer, layoutKey, selected, onSelect, impact,
       setNodes, setEdges, fitView]);
 
   const onNodeClick = useCallback((_: unknown, n: Node) => {
-    onSelect((n.data as { node: TopologyNode }).node);
+    const d = n.data as { node?: TopologyNode };
+    if (d.node) onSelect(d.node);
   }, [onSelect]);
 
   // Bring an off-canvas selection into view, and only then: clicking a node

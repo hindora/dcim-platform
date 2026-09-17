@@ -548,3 +548,164 @@ export function layout(nodes: TopologyNode[], edges: CollapsedEdge[],
 
   return { placed, width: width + NODE_W, height: y };
 }
+
+/* -------------------------------------------------------------------------
+ * The site view: the simulator's own canvas layout, ported.
+ *
+ * A whole site is not one chain, it is eight rooms of chains, and ranking the
+ * lot as a single graph interleaves a hall's PDUs with the plant's pumps
+ * because they happen to sit the same number of hops from a source. The
+ * device plane already answers this: `core/canvas_layout.py` gives every room
+ * an exclusive rectangle and every ROLE its own row, upstream-first, and that
+ * is the picture operators here already know.
+ *
+ * Ported rather than approximated, constants and all - the only changes are
+ * the pitches, because these boxes are 120x48 where Qt's are 90x70.
+ * ---------------------------------------------------------------------- */
+
+/** Role is finer than device_type on purpose: `switch` is spine, leaf AND
+ *  core. It is the leading run of letters of the name's first segment, with
+ *  an A/B pair sharing one row. */
+const ROLE_ALIAS: Record<string, string> = {
+  PDUA: 'PDU', PDUB: 'PDU', RPPA: 'RPP', RPPB: 'RPP',
+  MPPA: 'MPP', MPPB: 'MPP', UPSA: 'UPS', UPSB: 'UPS',
+  VCHW: 'VALVE', VCW: 'VALVE',
+  CHWS: 'SENSOR', CHWR: 'SENSOR', CWS: 'SENSOR',
+  CWR: 'SENSOR', CTB: 'SENSOR', FLOW: 'SENSOR',
+};
+
+const ROW_ORDER: Record<string, string[]> = {
+  'Network Room': ['RTR', 'FW', 'LB', 'COR',
+                   'OOBR', 'FWO', 'OOBC', 'FWM', 'OOB', 'JUMP',
+                   'RPP', 'EV', 'PDU'],
+  'Server Hall': ['SP', 'LF', 'SRV', 'OOB', 'OOBM',
+                  'SEN', 'LEAK', 'CDU',
+                  'RPP', 'EV', 'PDU', 'MPP', 'CRAH'],
+  'UPS Room': ['UTIL', 'SWGR', 'ATS', 'UPS', 'EV'],
+  'Generator Room': ['GEN', 'SWGR', 'EV'],
+  'Mechanical Room': ['MCC', 'EV', 'BMSC'],
+  'Central Plant': ['RPP', 'EV', 'PDU', 'OOBM', 'BMSC',
+                    'CHL', 'CHWP', 'CWP', 'VALVE', 'SENSOR'],
+  Roof: ['CT'],
+};
+
+/** Rooms as bands of side-by-side cells, top to bottom. */
+const BANDS = [
+  ['Network Room'],
+  ['Server Hall A', 'Server Hall B'],
+  ['UPS Room', 'Generator Room', 'Mechanical Room'],
+  ['Central Plant', 'Roof'],
+];
+
+const X_PITCH = NODE_W + GAP_X;
+const ROW_PITCH = NODE_H + GAP_Y;
+const MAX_COLS = 20;
+const ROOM_GAP_X = 120;
+const ROOM_GAP_Y = 150;
+
+/** The room rectangles, drawn behind the devices so a cluster says which hall
+ *  it is. Rule 2 of the device plane's layout: exclusive, disjoint. */
+export interface RoomBox {
+  id: string;
+  name: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  count: number;
+}
+
+function roleOf(name: string): string {
+  const head = (name || '').split('-', 1)[0];
+  const m = /^[A-Za-z]+/.exec(head);
+  const r = m ? m[0].toUpperCase() : '?';
+  return ROLE_ALIAS[r] ?? r;
+}
+
+function rowOrderFor(room: string): string[] {
+  if (room.startsWith('Server Hall')) return ROW_ORDER['Server Hall'];
+  return ROW_ORDER[room] ?? [];
+}
+
+/** (rows, cols) for one room. A row wraps into sub-rows past MAX_COLS, and a
+ *  role the order does not name is appended at the bottom rather than
+ *  silently mis-placed. */
+function planRoom(nodes: TopologyNode[], room: string) {
+  const byRole = new Map<string, TopologyNode[]>();
+  for (const n of nodes) {
+    const r = roleOf(n.name);
+    (byRole.get(r) ?? byRole.set(r, []).get(r)!).push(n);
+  }
+  for (const v of byRole.values()) v.sort((a, b) => a.name.localeCompare(b.name));
+
+  const order = rowOrderFor(room);
+  const known = order.filter((r) => byRole.has(r));
+  const extra = [...byRole.keys()].filter((r) => !order.includes(r)).sort();
+  const roles = [...known, ...extra];
+
+  const cols = Math.min(MAX_COLS,
+                        Math.max(...roles.map((r) => byRole.get(r)!.length)));
+  const rows: TopologyNode[][] = [];
+  for (const r of roles) {
+    const group = byRole.get(r)!;
+    for (let i = 0; i < group.length; i += cols) rows.push(group.slice(i, i + cols));
+  }
+  return { rows, cols };
+}
+
+/** The whole site: every room its own rectangle, every role its own row.
+ *
+ *  Left-aligned, not centred - centring a row means adding one device moves
+ *  every device on it, and it is what keeps a meter row under the row it
+ *  meters. */
+export function layoutRooms(nodes: TopologyNode[]): {
+  placed: Placed[];
+  rooms: RoomBox[];
+  width: number;
+  height: number;
+} {
+  const byRoom = new Map<string, TopologyNode[]>();
+  for (const n of nodes) {
+    const key = n.location.room_name || 'Unplaced';
+    (byRoom.get(key) ?? byRoom.set(key, []).get(key)!).push(n);
+  }
+
+  const plans = new Map<string, ReturnType<typeof planRoom>>();
+  for (const [room, list] of byRoom) plans.set(room, planRoom(list, room));
+
+  // Rooms present but not named in BANDS still need a home, on a band of
+  // their own at the bottom.
+  const named = new Set(BANDS.flat());
+  const bands = [...BANDS, ...[...byRoom.keys()].filter((r) => !named.has(r))
+    .map((r) => [r])];
+
+  const placed: Placed[] = [];
+  const rooms: RoomBox[] = [];
+  let y = 0;
+  let width = 0;
+
+  for (const band of bands) {
+    const present = band.filter((r) => byRoom.has(r));
+    if (!present.length) continue;
+    let x = 0;
+    let bandH = 0;
+    for (const room of present) {
+      const { rows, cols } = plans.get(room)!;
+      const w = cols * X_PITCH - GAP_X;
+      const h = rows.length * ROW_PITCH - GAP_Y;
+      rooms.push({ id: room, name: room, x, y, width: w, height: h,
+                   count: byRoom.get(room)!.length });
+      rows.forEach((group, ri) => {
+        group.forEach((n, i) => {
+          placed.push({ node: n, x: x + i * X_PITCH, y: y + ri * ROW_PITCH });
+        });
+      });
+      x += w + ROOM_GAP_X;
+      bandH = Math.max(bandH, h);
+    }
+    width = Math.max(width, x - ROOM_GAP_X);
+    y += bandH + ROOM_GAP_Y;
+  }
+
+  return { placed, rooms, width, height: Math.max(0, y - ROOM_GAP_Y) };
+}

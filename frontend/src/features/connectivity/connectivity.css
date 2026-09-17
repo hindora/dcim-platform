@@ -476,6 +476,33 @@
 .conn-indep:hover::-webkit-scrollbar-thumb,
 .cn-sheet-body:hover::-webkit-scrollbar-thumb { background: var(--text-faint); }
 
+/* --- the room, on the site view ------------------------------------------- */
+
+/* A region, not a thing in the estate: no fill worth the name, a dashed edge
+   that cannot be mistaken for a conductor, and a label in the corner rather
+   than across the middle where the devices are. */
+.cn-room {
+  width: 100%; height: 100%;
+  box-sizing: border-box;
+  border: 1px dashed var(--border-strong);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-raised) 45%, transparent);
+  pointer-events: none;
+}
+
+.cn-room-name {
+  position: absolute; top: 6px; left: 12px;
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 0.66rem; font-weight: 700; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--text-faint);
+}
+.cn-room-count {
+  padding: 0 5px; border-radius: 8px;
+  background: var(--bg-inset); color: var(--text-muted);
+  font-weight: 600; letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+}
+
 /* --- the node ------------------------------------------------------------- */
 
 .cn-node {
