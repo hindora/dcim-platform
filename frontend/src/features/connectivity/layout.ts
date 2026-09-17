@@ -154,6 +154,101 @@ export function sideOf(nodes: TopologyNode[], edges: CollapsedEdge[]):
   return out;
 }
 
+/** Count the edge crossings between two adjacent ranks, given an ordering.
+ *
+ *  Two edges cross when one starts left of the other and ends right of it.
+ *  Exported so the readability of a change can be MEASURED rather than argued
+ *  about: `tools/crossings.mjs` prints the count before and after.
+ */
+export function countCrossings(order: Map<string, number>,
+                               pairs: [string, string][]): number {
+  const ranked = pairs
+    .map(([a, b]) => [order.get(a), order.get(b)] as [number?, number?])
+    .filter((p): p is [number, number] => p[0] !== undefined && p[1] !== undefined)
+    .sort((x, y) => x[0] - y[0] || x[1] - y[1]);
+  let crossings = 0;
+  for (let i = 0; i < ranked.length; i += 1) {
+    for (let j = i + 1; j < ranked.length; j += 1) {
+      if (ranked[i][1] > ranked[j][1]) crossings += 1;
+    }
+  }
+  return crossings;
+}
+
+/** Order each rank so its edges cross as little as possible.
+ *
+ *  The median heuristic, from the Sugiyama framework: put a node where the
+ *  middle of its neighbours in the previous rank is. Sweeping down then up and
+ *  keeping whichever pass was better is the standard refinement, and it is
+ *  most of what a full layout engine buys on a graph this size - which is why
+ *  elkjs is still unadopted and still carries a licence question.
+ *
+ *  A node with no neighbours in the reference rank keeps its current place
+ *  rather than collapsing to zero: it has no opinion, and giving it one drags
+ *  everything with an opinion out of position.
+ */
+function orderRanks(byRank: Map<number, TopologyNode[]>, ranks: number[],
+                    edges: CollapsedEdge[]): void {
+  const neighbours = new Map<string, string[]>();
+  const push = (a: string, b: string) =>
+    (neighbours.get(a) ?? neighbours.set(a, []).get(a)!).push(b);
+  for (const e of edges) { push(e.source, e.target); push(e.target, e.source); }
+
+  const positions = () => {
+    const pos = new Map<string, number>();
+    for (const r of ranks) byRank.get(r)!.forEach((n, i) => pos.set(n.id, i));
+    return pos;
+  };
+
+  const sweep = (order: number[]) => {
+    for (let k = 1; k < order.length; k += 1) {
+      const pos = positions();
+      const row = byRank.get(order[k])!;
+      const fixed = new Set(byRank.get(order[k - 1])!.map((n) => n.id));
+      const median = new Map<string, number>();
+      row.forEach((n, i) => {
+        const ns = (neighbours.get(n.id) ?? [])
+          .filter((m) => fixed.has(m))
+          .map((m) => pos.get(m)!)
+          .sort((a, b) => a - b);
+        // No opinion: keep the place it already has.
+        median.set(n.id, ns.length ? ns[(ns.length - 1) >> 1] : i);
+      });
+      row.sort((a, b) => median.get(a.id)! - median.get(b.id)!);
+    }
+  };
+
+  const total = () => {
+    const pos = positions();
+    let sum = 0;
+    for (let k = 1; k < ranks.length; k += 1) {
+      const upper = new Set(byRank.get(ranks[k - 1])!.map((n) => n.id));
+      const lower = new Set(byRank.get(ranks[k])!.map((n) => n.id));
+      sum += countCrossings(pos, edges
+        .filter((e) => (upper.has(e.source) && lower.has(e.target))
+                    || (upper.has(e.target) && lower.has(e.source)))
+        .map((e) => (upper.has(e.source) ? [e.source, e.target] : [e.target, e.source])));
+    }
+    return sum;
+  };
+
+  let best = total();
+  let bestOrder = new Map(ranks.map((r) => [r, byRank.get(r)!.slice()]));
+  const down = [...ranks];
+  const up = [...ranks].reverse();
+  // Four passes. The heuristic converges fast and a fifth has never moved the
+  // number on anything in this estate.
+  for (let pass = 0; pass < 4; pass += 1) {
+    sweep(pass % 2 === 0 ? down : up);
+    const now = total();
+    if (now < best) {
+      best = now;
+      bestOrder = new Map(ranks.map((r) => [r, byRank.get(r)!.slice()]));
+    }
+  }
+  for (const r of ranks) byRank.set(r, bestOrder.get(r)!);
+}
+
 /** A cooling circuit drawn as one: supply down the left, the units it serves
  *  across the bottom, the return back up the right.
  *
@@ -358,15 +453,29 @@ export function layout(nodes: TopologyNode[], edges: CollapsedEdge[],
   const anySided = side ? [...side.values()].some(Boolean) : false;
   const columns = Boolean(side && anySided);
 
+  const ranks = [...byRank.keys()].sort((a, b) => a - b);
+
+  // Start from a deterministic order - same graph, same picture, every time -
+  // then let the median heuristic reduce the crossings from there. Seeding it
+  // rather than leaving the insertion order matters: the heuristic keeps a
+  // node with no neighbours in the reference rank where it already is, so the
+  // seed is what those nodes end up sorted by.
+  for (const r of ranks) {
+    byRank.get(r)!.sort((a, b) =>
+      a.device_type.localeCompare(b.device_type) || a.name.localeCompare(b.name));
+  }
+  // Only on the plain layered picture. The one-line's order within a rank is
+  // its SIDE - A left, B right - and re-ordering to unpick crossings would
+  // move a feeder into the wrong column, which is a worse lie than a crossing.
+  if (!columns) orderRanks(byRank, ranks, edges);
+
   const placed: Placed[] = [];
   let y = 0;
   let width = 0;
   const step = NODE_W + GAP_X;
 
-  for (const r of [...byRank.keys()].sort((a, b) => a - b)) {
-    // Deterministic order within a rank: same graph, same picture, every time.
-    const row = byRank.get(r)!.slice().sort((a, b) =>
-      a.device_type.localeCompare(b.device_type) || a.name.localeCompare(b.name));
+  for (const r of ranks) {
+    const row = byRank.get(r)!;
 
     if (!columns) {
       const lines = Math.ceil(row.length / MAX_PER_LINE);
