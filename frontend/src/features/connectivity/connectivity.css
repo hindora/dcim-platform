@@ -70,22 +70,6 @@
 
 .conn-caption { margin: 10px 0 0; font-size: 0.78rem; }
 
-/* The selection summary. A drawer replaces this in phase 1; until then it
-   keeps the click useful - the old view navigated straight to the device page,
-   which lost the diagram every time someone checked what a box was. */
-.conn-selected {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 0 10px;
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid var(--border);
-  font-size: 0.82rem;
-}
-
-.conn-selected strong { font-family: var(--mono); }
-
 /* --- the drawer ---------------------------------------------------------- */
 
 .conn-drawer {
@@ -161,52 +145,269 @@
 /* The last hop is the cord someone would actually pull. */
 .conn-trace tr.is-cord td { border-bottom: 1px solid var(--border-strong); }
 
-/* --- the diagram --------------------------------------------------------- */
 
-.topo-wrap { overflow: auto; max-height: 75vh; border: 1px solid var(--border);
-             border-radius: var(--radius); background: var(--bg-inset); }
-.topo { width: 100%; min-width: 40rem; height: auto; display: block; }
+/* --- the canvas ---------------------------------------------------------- */
 
-.topo-box { fill: var(--bg-raised); stroke: var(--border-strong);
-            stroke-width: 1; }
+.cn-canvas {
+  position: relative;
+  height: 62vh;
+  min-height: 380px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--cn-surface);
+  overflow: hidden;
+}
+
+/* React Flow paints its own background colour on the pane. Ours is on the
+   wrapper, so the pane has to get out of the way or the dot grid sits on the
+   library's default grey. */
+.cn-canvas .react-flow__pane,
+.cn-canvas .react-flow__renderer { background: transparent; }
+
+/* The library's focus ring is drawn for its own node chrome; ours is a card
+   with its own selected state, and two rings on one box reads as an error. */
+.cn-canvas .react-flow__node:focus,
+.cn-canvas .react-flow__node:focus-visible { outline: none; }
+.cn-canvas .react-flow__node.selected .cn-node { /* handled by .is-selected */ }
+
+.cn-canvas .react-flow__node { cursor: pointer; }
+
+/* --- the floating toolbar ------------------------------------------------ */
+
+.cn-toolbar {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg-raised);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.28);
+}
+
+[data-theme='light'] .cn-toolbar { box-shadow: 0 1px 6px rgba(31, 35, 40, 0.1); }
+
+.cn-toolbar button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.cn-toolbar button:hover { background: var(--bg-inset); color: var(--text); }
+.cn-toolbar button.is-on { background: var(--bg-inset); color: var(--accent); }
+.cn-toolbar-sep { width: 1px; height: 16px; background: var(--border); margin: 0 3px; }
+
+.cn-minimap {
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg-raised);
+}
+
+/* --- the node card ------------------------------------------------------- */
+
+.cn-node {
+  position: relative;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  box-sizing: border-box;
+  padding: 0 9px 0 13px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-raised);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+  transition: box-shadow .12s, border-color .12s, transform .12s;
+}
+
+[data-theme='light'] .cn-node { box-shadow: 0 1px 2px rgba(31, 35, 40, 0.09); }
+
+.cn-node:hover {
+  border-color: var(--border-strong);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+  transform: translateY(-1px);
+}
+
+[data-theme='light'] .cn-node:hover { box-shadow: 0 4px 12px rgba(31, 35, 40, 0.14); }
+
+.cn-node.is-selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-dim), 0 4px 14px rgba(0, 0, 0, 0.4);
+}
+
 /* Pulled in from outside the requested scope: present because something in the
    scope depends on it, not because it lives there. */
-.topo-box.outside { stroke-dasharray: 4 3; opacity: 0.75; }
-.topo-node { cursor: pointer; }
-.topo-node:hover .topo-box,
-.topo-node:focus-visible .topo-box { stroke: var(--accent); }
-.topo-node.is-selected .topo-box { stroke: var(--accent); stroke-width: 2; }
+.cn-node.is-outside { border-style: dashed; opacity: 0.72; }
+.cn-node.is-off { opacity: 0.55; filter: grayscale(0.5); }
 
-.topo-name { font-size: 10px; fill: var(--text); font-family: var(--mono); }
-.topo-type { font-size: 9px; fill: var(--text-muted); font-family: var(--sans); }
-/* The live draw, right-aligned against the node's edge so the figures line up
-   down a column and can be scanned rather than read one at a time. */
-.topo-load { font-size: 9px; fill: var(--text-muted); text-anchor: end;
-             font-variant-numeric: tabular-nums; font-family: var(--mono); }
+/* A rolled-up box stands for a rack's worth of equipment, so it wears the
+   stack: a second card peeking out behind it. Shape, not a label - the count
+   is already in the text and this is what says "there is more in here". */
+.cn-node.is-rolled::after {
+  content: '';
+  position: absolute;
+  inset: auto -4px -4px 8px;
+  height: 4px;
+  border: 1px solid var(--border);
+  border-top: none;
+  border-radius: 0 0 8px 8px;
+  background: var(--bg-inset);
+  z-index: -1;
+}
 
-/* A and B are the two distribution paths, and seeing whether a load is fed
-   from both is the whole point of deriving redundancy_side. The stroke and its
-   pattern are set at render from the palette (see Diagram.tsx): they were
-   `#3b82f6` and `#a855f7` here, two call-site hexes that a deuteranope reads
-   as one colour, carrying a distinction that decides whether someone pulls a
-   live feed. */
-/* No `stroke` on the base rule. A presentation attribute loses to ANY CSS
-   declaration that sets the same property, so a `stroke` here would quietly
-   beat the palette value the component puts on the element and every edge
-   would draw in the border colour - which is exactly what it did. The
-   unsided default is passed as the attribute's fallback instead. */
-.topo-edge { fill: none; }
-/* Down is a state rather than a side, so it DOES belong in CSS, where it
-   outranks the attribute and cannot be forgotten at a call site. */
-.topo-edge.down { stroke: var(--critical); stroke-dasharray: 4 3; }
+/* The status rail, full height down the left edge. */
+.cn-rail { position: absolute; left: 0; top: 0; bottom: 0; width: 4px; }
 
-.topo-legend {
+/* The class tint lives here rather than on the whole card. Forty saturated
+   blocks on a white page is a different picture from forty on a dark one, and
+   this product has both themes. */
+.cn-chip {
   display: flex;
-  gap: 14px;
   align-items: center;
-  margin-top: 8px;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  background: var(--bg-inset);
+  color: var(--text-muted);
+}
+
+.cn-node.is-power   .cn-chip { color: var(--cat-pwr);  background: color-mix(in srgb, var(--cat-pwr) 15%, transparent); }
+.cn-node.is-cooling .cn-chip { color: var(--cat-cool); background: color-mix(in srgb, var(--cat-cool) 15%, transparent); }
+.cn-node.is-net     .cn-chip { color: var(--cat-cap);  background: color-mix(in srgb, var(--cat-cap) 15%, transparent); }
+.cn-node.is-it      .cn-chip { color: var(--cat-it);   background: color-mix(in srgb, var(--cat-it) 15%, transparent); }
+.cn-node.is-sensor  .cn-chip { color: var(--cat-vis);  background: color-mix(in srgb, var(--cat-vis) 18%, transparent); }
+
+.cn-body { display: flex; flex-direction: column; min-width: 0; gap: 1px; }
+
+.cn-name {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cn-sub {
+  font-size: 9.5px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cn-off { color: var(--critical); }
+
+.cn-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+}
+
+.cn-load {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+
+/* Draw against rating, along the bottom edge of the card. A rating nobody
+   recorded is hatched and has no fill: "no limit recorded" is not 0 %. */
+.cn-meter {
+  position: absolute;
+  left: 4px;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  background: var(--bg-inset);
+}
+
+.cn-meter-fill { display: block; height: 100%; }
+
+.cn-meter.is-unrated {
+  background-image: repeating-linear-gradient(
+    45deg,
+    var(--border-strong) 0 1px,
+    transparent 1px 4px
+  );
+}
+
+/* Invisible: the graph is derived, so there is nothing to wire up by hand. */
+.cn-handle { opacity: 0; pointer-events: none; }
+
+/* --- edges --------------------------------------------------------------- */
+
+.cn-edge { transition: stroke-width .12s; }
+
+/* Cooling flows; a cord does not. The dash marches source to target, which is
+   the direction of the water. */
+.cn-edge.is-flowing { animation: cn-flow 0.9s linear infinite; }
+
+@keyframes cn-flow { to { stroke-dashoffset: -14; } }
+
+.cn-edge.is-flowing { stroke-dasharray: 7 5; }
+
+/* Paused while the viewport moves: a per-frame stroke repaint fights the
+   transform and the whole canvas judders. */
+.cn-canvas.is-moving .cn-edge.is-flowing { animation: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .cn-edge.is-flowing { animation: none; }
+}
+
+.cn-edge-label {
+  position: absolute;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  color: var(--text-faint);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+.cn-edge-label.is-down {
+  background: var(--critical);
+  border-color: var(--critical);
+  color: var(--bg);
+  font-weight: 700;
+  letter-spacing: .04em;
+}
+
+/* --- legend -------------------------------------------------------------- */
+
+.cn-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  align-items: center;
+  margin-top: 10px;
   font-size: 0.72rem;
   color: var(--text-muted);
 }
 
-.topo-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.cn-legend span { display: inline-flex; align-items: center; gap: 6px; }
+
+.cn-swatch {
+  width: 20px;
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(to right, var(--accent) 60%, var(--bg-inset) 60%);
+}

@@ -69,6 +69,15 @@
   --series-3: #7fe3c4;   /* bluish green, lifted */
   --series-4: #b4628f;   /* reddish purple, deepened */
 
+  /* The connectivity canvas. Not chart colour: these are the surface a graph
+     is drawn ON, and they have to sit behind node cards without competing
+     with them. The dot grid is the only thing that makes panning legible -
+     without it a canvas of evenly spaced cards gives the eye nothing to tell
+     movement against. */
+  --cn-surface: #0c1016;
+  --cn-dot: #232a35;
+  --cn-mask: rgba(8, 11, 16, 0.72);
+
   --radius: 6px;
   --mono: ui-monospace, "SFMono-Regular", "Cascadia Code", Consolas, monospace;
   --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -124,6 +133,13 @@
   --series-2: #d55e00;
   --series-3: #009e73;
   --series-4: #6e2b53;
+
+  /* The canvas is a shade BELOW the page here, not above it. On the dark
+     theme a recessed surface reads as depth; on white, a card floats on grey
+     and drowns on white. */
+  --cn-surface: #f0f3f6;
+  --cn-dot: #c9d1da;
+  --cn-mask: rgba(240, 243, 246, 0.72);
 }
 
 @media (prefers-color-scheme: light) {
@@ -142,6 +158,11 @@
     --series-2: #d55e00;
     --series-3: #009e73;
     --series-4: #6e2b53;
+    /* Same reason: a system-light desktop was getting the dark canvas, which
+       is a near-black rectangle in the middle of a white page. */
+    --cn-surface: #f0f3f6;
+    --cn-dot: #c9d1da;
+    --cn-mask: rgba(240, 243, 246, 0.72);
   }
 }
 

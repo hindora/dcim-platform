@@ -4,7 +4,8 @@ import { api, type RoomSummary, type TopologyGraph, type TopologyNode }
   from '../../api/client';
 import { Seg } from '../../components/estate';
 import { MaxGlyph, MaxModal } from '../../components/MaxModal';
-import { Diagram } from './Diagram';
+import { Canvas } from './Canvas';
+import { Legend } from './Legend';
 import { Drawer } from './Drawer';
 import { TraceTable } from './TraceTable';
 import { collapseEdges, layout, structureKey } from './layout';
@@ -119,10 +120,18 @@ export function Connectivity() {
     return (v: T) => { set(v); setSelected(null); };
   }
 
+  const sides = useMemo(() => {
+    const s = new Set<string>();
+    for (const e of edges) for (const x of e.sides) s.add(x);
+    return [...s].sort();
+  }, [edges]);
+
   const diagram = graph.data ? (
-    <Diagram placement={placement} edges={edges} layer={layer}
-             selected={selected?.id ?? null}
-             onSelect={(n) => setSelected(n)} />
+    <>
+      <Canvas placement={placement} edges={edges} layer={layer} layoutKey={key}
+              selected={selected?.id ?? null} onSelect={setSelected} />
+      <Legend sides={sides} showLoad={layer === 'power'} />
+    </>
   ) : null;
 
   return (
