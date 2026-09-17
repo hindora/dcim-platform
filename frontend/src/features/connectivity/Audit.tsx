@@ -47,7 +47,10 @@ export function Audit({ scope, layer, roomName, onSelectDevice }: {
 
   const all = q.data?.findings ?? [];
   const shown = kind === 'all' ? all : all.filter((f) => f.kind === kind);
-  const { rows, foot } = usePaged(shown, { noun: 'findings' });
+  // `always`, as on the trace: the sheet shows three or four findings at a
+  // time, and without a permanent range the reader cannot tell four findings
+  // from the first four of forty.
+  const { rows, foot } = usePaged(shown, { noun: 'findings', always: true });
 
   if (q.isLoading) return <div className="asset-skeleton" style={{ height: 160 }} />;
   if (q.isError) {
@@ -71,7 +74,9 @@ export function Audit({ scope, layer, roomName, onSelectDevice }: {
   }
 
   return (
-    <div className="stack" style={{ gap: 10 }}>
+    // Same pane as the trace: the filters and the pager hold still, the
+    // findings scroll between them.
+    <div className="cn-pane">
       <div className="conn-trace-head">
         <div className="conn-audit-filters">
           <button type="button" className={kind === 'all' ? 'is-current' : undefined}
@@ -101,13 +106,13 @@ export function Audit({ scope, layer, roomName, onSelectDevice }: {
         )}>Export CSV</button>
       </div>
 
-      <p className="muted" style={{ margin: 0, fontSize: '0.78rem' }}>
+      <p className="muted cn-pane-note" style={{ margin: 0, fontSize: '0.78rem' }}>
         {q.data.examined} device{q.data.examined === 1 ? '' : 's'} examined on
         the {layer} layer. A finding is what the wiring IS, not a grade — plenty
         of equipment is single-corded on purpose.
       </p>
 
-      <div className="estate-scroll">
+      <div className="estate-scroll cn-pane-scroll">
         <table className="estate-table conn-audit">
           <thead>
             <tr>

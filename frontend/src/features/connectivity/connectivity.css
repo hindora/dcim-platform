@@ -357,8 +357,20 @@
   padding-top: 8px; border-top: 1px solid var(--border);
 }
 
-/* The head row keeps its place while the rows move under it. */
-.cn-pane > .conn-trace-head { flex: none; }
+/* The head row - and the audit's one-line preamble - keep their place while
+   the rows move under them. */
+.cn-pane > .conn-trace-head,
+.cn-pane > .cn-pane-note { flex: none; }
+
+/* The redundancy sheet puts the pair question ABOVE the findings table, so it
+   is a fixed block over the pane rather than the first thing you scroll past
+   to reach the pager. Capped, because the verdict prints the whole walk
+   between the two devices and that can run to several lines. */
+.cn-sheet-body:has(.cn-pane) > .conn-indep {
+  flex: none;
+  max-height: 42%;
+  overflow: auto;
+}
 
 /* A sticky header needs an opaque background, or rows scroll through it. */
 .cn-pane-scroll thead th {
@@ -384,6 +396,7 @@
    that appears and disappears shifts every line under it sideways. */
 .cn-rail-list,
 .conn-drawer,
+.conn-indep,
 .cn-sheet-body {
   scrollbar-gutter: stable;
   scrollbar-width: thin;
@@ -392,14 +405,17 @@
 
 .cn-rail-list::-webkit-scrollbar,
 .conn-drawer::-webkit-scrollbar,
+.conn-indep::-webkit-scrollbar,
 .cn-sheet-body::-webkit-scrollbar { width: 10px; height: 10px; }
 
 .cn-rail-list::-webkit-scrollbar-track,
 .conn-drawer::-webkit-scrollbar-track,
+.conn-indep::-webkit-scrollbar-track,
 .cn-sheet-body::-webkit-scrollbar-track { background: transparent; }
 
 .cn-rail-list::-webkit-scrollbar-thumb,
 .conn-drawer::-webkit-scrollbar-thumb,
+.conn-indep::-webkit-scrollbar-thumb,
 .cn-sheet-body::-webkit-scrollbar-thumb {
   background: var(--border-strong);
   border-radius: 99px;
@@ -409,6 +425,7 @@
 
 .cn-rail-list:hover::-webkit-scrollbar-thumb,
 .conn-drawer:hover::-webkit-scrollbar-thumb,
+.conn-indep:hover::-webkit-scrollbar-thumb,
 .cn-sheet-body:hover::-webkit-scrollbar-thumb { background: var(--text-faint); }
 
 /* --- the node ------------------------------------------------------------- */
@@ -593,7 +610,9 @@
 /* The sheet owns the bottom half; the drawer takes what is left rather than
    sliding under it. Both are capped so neither can squeeze the other into a
    letterbox - a 110px drawer is a scrollbar with a title on it. */
-.cn-canvas:has(.cn-sheet) .conn-drawer { bottom: calc(52% + 22px); }
+/* Tracks the sheet's own cap: raising the sheet to 64% without moving this
+   put the drawer's bottom 12% INSIDE it. */
+.cn-canvas:has(.cn-sheet) .conn-drawer { bottom: calc(64% + 22px); }
 
 /* A simulation banner is centred at the same height the drawer starts, so the
    drawer drops below it rather than fighting it for the corner. */
