@@ -62,36 +62,63 @@ function nodeData(node: Placed['node'], showLoad: boolean,
   };
 }
 
+/** Which room box a device stands in, by the name the layout grouped on. */
+function roomIdOf(node: TopologyNode): string {
+  return `room:${node.location.room_name || 'Unplaced'}`;
+}
+
 function buildNodes(placement: Placement, showLoad: boolean,
-                    selected: string | null, impact: ImpactView | null): Node[] {
+                    selected: string | null, impact: ImpactView | null,
+                    showRooms: boolean): Node[] {
   // Rooms first and with a zIndex of their own: React Flow paints in array
-  // order, and a room drawn after its devices would cover them.
-  const rooms: Node[] = (placement.rooms ?? []).map((r) => ({
+  // order, a parent must be declared before its children, and a room drawn
+  // after its devices would cover them.
+  const boxes = placement.rooms ?? [];
+  const rooms: Node[] = boxes.map((r) => ({
     id: `room:${r.id}`,
     type: 'room',
     position: { x: r.x - 14, y: r.y - 14 },
     data: { name: r.name, count: r.count, width: r.width + 28 },
     width: r.width + 28,
     height: r.height + 28,
-    draggable: false,
+    // A room is dragged as a REGION - the devices in it come along, which is
+    // what parenting gets us for free. Not selectable: it is a label for a
+    // part of the estate, not a thing in it.
+    draggable: true,
+    // By the label, not by the whole rectangle. A room covers a region of
+    // canvas the operator still needs to pan across, and a drag surface that
+    // size would swallow every pan that started inside a hall.
+    dragHandle: '.cn-room-name',
     selectable: false,
     connectable: false,
+    hidden: !showRooms,
     zIndex: 0,
   }));
 
-  return rooms.concat(placement.placed.map((p) => ({
-    id: p.node.id,
-    type: 'device',
-    position: { x: p.x, y: p.y },
-    data: nodeData(p.node, showLoad, impact),
-    selected: p.node.id === selected,
-    // Dragging rearranges the picture, which is welcome; connecting two nodes
-    // by hand would invent a cable, which is not.
-    connectable: false,
-    width: NODE_W,
-    height: NODE_H,
-    zIndex: 1,
-  })));
+  const at = new Map(rooms.map((r) => [r.id, r.position]));
+
+  return rooms.concat(placement.placed.map((p) => {
+    const roomId = roomIdOf(p.node);
+    // Parented only while the rooms are shown. A hidden parent hides its
+    // children with it, so when the outlines are off the devices go back to
+    // standing on the canvas in their own right.
+    const parent = showRooms ? at.get(roomId) : undefined;
+    return {
+      id: p.node.id,
+      type: 'device',
+      position: parent ? { x: p.x - parent.x, y: p.y - parent.y }
+                       : { x: p.x, y: p.y },
+      ...(parent ? { parentId: roomId, extent: 'parent' as const } : {}),
+      data: { ...nodeData(p.node, showLoad, impact), roomId },
+      selected: p.node.id === selected,
+      // Dragging rearranges the picture, which is welcome; connecting two
+      // nodes by hand would invent a cable, which is not.
+      connectable: false,
+      width: NODE_W,
+      height: NODE_H,
+      zIndex: 1,
+    };
+  }));
 }
 
 function buildEdges(edges: CollapsedEdge[], layer: string,
@@ -126,6 +153,7 @@ const PATH = {
   zoomOut: 'M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14M20 20l-4-4M8 11h6',
   fit: 'M3 8V5a2 2 0 0 1 2-2h3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M21 16v3a2 2 0 0 1-2 2h-3',
   map: 'M3 6l6-3 6 3 6-3v15l-6 3-6-3-6 3zM9 3v15M15 6v15',
+  rooms: 'M3 4h8v6H3zM13 4h8v6h-8zM3 14h8v6H3zM13 14h8v6h-8z',
 };
 
 /** The zoom, printed. A canvas that can be panned off its own content has to
@@ -140,11 +168,16 @@ function ZoomLevel({ onFit }: { onFit: () => void }) {
   );
 }
 
-function Toolbar({ onFit, showMap, onToggleMap, canMap }: {
+function Toolbar({ onFit, showMap, onToggleMap, canMap,
+                  showRooms, onToggleRooms, canRooms }: {
   onFit: () => void;
   showMap: boolean;
   onToggleMap: () => void;
   canMap: boolean;
+  showRooms: boolean;
+  onToggleRooms: () => void;
+  /** Only the site view has rooms to show, so only it gets the button. */
+  canRooms: boolean;
 }) {
   const { zoomIn, zoomOut } = useReactFlow();
   return (
@@ -160,6 +193,13 @@ function Toolbar({ onFit, showMap, onToggleMap, canMap }: {
       <button type="button" title="Fit to view" onClick={onFit}>
         <Icon d={PATH.fit} />
       </button>
+      {canRooms && (
+        <button type="button" aria-pressed={showRooms}
+                title={showRooms ? 'Hide room outlines' : 'Show room outlines'}
+                className={showRooms ? 'is-on' : undefined} onClick={onToggleRooms}>
+          <Icon d={PATH.rooms} />
+        </button>
+      )}
       {canMap && (
         <button type="button" title="Minimap" aria-pressed={showMap}
                 className={showMap ? 'is-on' : undefined} onClick={onToggleMap}>
@@ -193,8 +233,12 @@ function Flow({ placement, edges, layer, layoutKey, selected, onSelect, impact,
   const showLoad = layer === 'power';
   const flowing = layer === 'cooling';
 
+  // Outlines on by default where there are any: on the site view they are the
+  // only thing that says where one room ends and the next begins.
+  const [showRooms, setShowRooms] = useState(true);
+
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>(
-    buildNodes(placement, showLoad, selected, impact));
+    buildNodes(placement, showLoad, selected, impact, showRooms));
   const [rfEdges, setEdges, onEdgesChange] = useEdgesState<Edge>(
     buildEdges(edges, layer, flowing));
 
@@ -206,7 +250,7 @@ function Flow({ placement, edges, layer, layoutKey, selected, onSelect, impact,
   useEffect(() => {
     if (lastLayout.current !== layoutKey) {
       lastLayout.current = layoutKey;
-      setNodes(buildNodes(placement, showLoad, selected, impact));
+      setNodes(buildNodes(placement, showLoad, selected, impact, showRooms));
       setEdges(buildEdges(edges, layer, flowing));
       const t = window.setTimeout(() => fitView(fitOpts), 30);
       return () => window.clearTimeout(t);
@@ -222,6 +266,9 @@ function Flow({ placement, edges, layer, layoutKey, selected, onSelect, impact,
     }));
     setEdges(buildEdges(edges, layer, flowing));
     return undefined;
+    // showRooms is deliberately not a dependency: the toggle re-parents in
+    // place, and rebuilding here would undo every room that had been moved.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [layoutKey, placement, edges, layer, showLoad, flowing, selected, impact,
       setNodes, setEdges, fitView, fitOpts]);
 
@@ -229,6 +276,38 @@ function Flow({ placement, edges, layer, layoutKey, selected, onSelect, impact,
     const d = n.data as { node?: TopologyNode };
     if (d.node) onSelect(d.node);
   }, [onSelect]);
+
+  /** Show or hide the outlines without losing where anything has been put.
+   *
+   *  Parenting is what makes a room draggable as a region, and a child's
+   *  position is relative to its parent, so the toggle has to convert in both
+   *  directions rather than rebuild from the layout - which would throw away
+   *  every room the operator had moved. */
+  const onToggleRooms = useCallback(() => {
+    setShowRooms((on) => {
+      const show = !on;
+      setNodes((nds) => {
+        const at = new Map(nds.filter((n) => n.type === 'room')
+          .map((n) => [n.id, n.position]));
+        return nds.map((n) => {
+          if (n.type === 'room') return { ...n, hidden: !show };
+          const roomId = (n.data as { roomId?: string }).roomId;
+          const p = roomId ? at.get(roomId) : undefined;
+          if (!p) return n;
+          if (show && !n.parentId) {
+            return { ...n, parentId: roomId, extent: 'parent' as const,
+                     position: { x: n.position.x - p.x, y: n.position.y - p.y } };
+          }
+          if (!show && n.parentId) {
+            return { ...n, parentId: undefined, extent: undefined,
+                     position: { x: n.position.x + p.x, y: n.position.y + p.y } };
+          }
+          return n;
+        });
+      });
+      return show;
+    });
+  }, [setNodes]);
 
   // Bring an off-canvas selection into view, and only then: clicking a node
   // that is already on screen must not yank the viewport out from under the
@@ -292,7 +371,9 @@ function Flow({ placement, edges, layer, layoutKey, selected, onSelect, impact,
 
       <Toolbar onFit={() => fitView(fitOpts)}
                showMap={showMap} canMap={canMap}
-               onToggleMap={() => setShowMap((v) => !v)} />
+               onToggleMap={() => setShowMap((v) => !v)}
+               showRooms={showRooms} canRooms={Boolean(placement.rooms?.length)}
+               onToggleRooms={onToggleRooms} />
 
       {children}
     </div>

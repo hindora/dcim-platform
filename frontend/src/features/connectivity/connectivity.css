@@ -493,13 +493,19 @@
   pointer-events: none;
 }
 
+/* The label is also the handle: the room moves by it, and the devices in it
+   come along. */
 .cn-room-name {
   position: absolute;
   display: inline-flex; align-items: center;
   font-weight: 700; letter-spacing: .08em; line-height: 1;
   text-transform: uppercase; color: var(--text-muted);
   white-space: nowrap;
+  pointer-events: auto;
+  cursor: grab;
 }
+.cn-room-name:hover { color: var(--text); }
+.cn-room-name:active { cursor: grabbing; }
 .cn-room-count {
   background: var(--bg-inset); color: var(--text-muted);
   font-weight: 600; letter-spacing: 0;
