@@ -671,8 +671,15 @@
    drawer drops below it rather than fighting it for the corner. */
 .cn-canvas:has(.cn-sim) .conn-drawer { top: 86px; }
 
-@media (max-width: 820px) {
+/* Below this the canvas cannot host both a drawing and a 310px drawer, so the
+   drawer takes the width. Against the CANVAS, not the window: the same 780px
+   window is a 570px canvas with the device rail open and a 780px one without,
+   and only one of those is short of room. */
+@container canvas (max-width: 560px) {
   .conn-drawer { width: auto; left: 12px; }
+  /* Full width, the drawer is over the legend whatever the legend is told
+     about its own width - so the legend goes, as it does under a sheet. */
+  .cn-canvas:has(.conn-drawer) .cn-caption { display: none; }
 }
 
 .conn-drawer > header { display: flex; align-items: start; gap: 8px; }
