@@ -302,9 +302,17 @@ function Flow({ placement, edges, layer, layoutKey, selected, onSelect, impact,
     // A resize from a top or left grip moves the box's origin as well as its
     // size. That is the box growing, not the room travelling, so the devices
     // must stay where they are.
-    const resizing = new Set(changes
-      .filter((c) => c.type === 'dimensions' || c.type === 'replace')
-      .map((c) => c.id));
+    //
+    // Only a REAL resize, though. React Flow reports a `dimensions` change
+    // whenever it measures a node - after a render, when an observer fires,
+    // when a node comes back into view - and treating those as resizes threw
+    // away whatever drag happened to land in the same batch. That is the
+    // "sometimes only the box moves": nothing to do with which room or which
+    // direction, only with whether a measurement arrived on the same tick.
+    // A resize carries `resizing`; a measurement does not.
+    const resizing = new Set(changes.flatMap(
+      (c) => ((c.type === 'dimensions' && c.resizing) || c.type === 'replace'
+        ? [c.id] : [])));
 
     const moves: { room: string; dx: number; dy: number }[] = [];
     for (const c of changes) {
@@ -333,6 +341,16 @@ function Flow({ placement, edges, layer, layoutKey, selected, onSelect, impact,
         : n;
     }));
   }, [onNodesChange, setNodes]);
+
+  /** Picking a room up seeds where it started from. The rebuild seeds this
+   *  too, but a room that has already been dragged, or one whose box was
+   *  rebuilt while off screen, would otherwise take its first delta from a
+   *  position it is no longer at. */
+  const onNodeDragStart = useCallback((_: unknown, n: Node) => {
+    if (n.type === 'room') {
+      roomAt.current.set(n.id, { x: n.position.x, y: n.position.y });
+    }
+  }, []);
 
   /** Where each room was last seen, so the next change is a delta and not an
    *  absolute jump. Re-seeded whenever the boxes are rebuilt. */
@@ -380,6 +398,7 @@ function Flow({ placement, edges, layer, layoutKey, selected, onSelect, impact,
         onNodesChange={handleNodesChange}
         onEdgesChange={onEdgesChange}
         onNodeClick={onNodeClick}
+        onNodeDragStart={onNodeDragStart}
         onPaneClick={() => onSelect(null)}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
