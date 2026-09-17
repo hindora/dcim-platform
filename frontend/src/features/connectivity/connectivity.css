@@ -199,13 +199,19 @@
 }
 .cn-float button:hover { color: var(--text); }
 
-.cn-sep { width: 1px; align-self: stretch; margin: 5px 3px; background: var(--border); }
+/* A rule across the column: the toolbar stands up, so its divider lies down. */
+.cn-sep { height: 1px; align-self: stretch; margin: 3px 4px; background: var(--border); }
 
 /* --- top left: the viewport controls ------------------------------------- */
 
 .cn-toolbar {
   top: 10px; left: 10px;
-  display: flex; align-items: center; gap: 1px; padding: 2px;
+  /* A column. Along the top edge it competed with the layer strip for the
+     one band of canvas the drawing also wants; down the left it runs beside
+     the drawing instead, and costs it 32px of width rather than 30px of the
+     height every diagram here is short of. */
+  display: flex; flex-direction: column; align-items: stretch; gap: 1px;
+  padding: 2px;
 }
 
 .cn-toolbar button {
@@ -216,7 +222,7 @@
 .cn-toolbar button.is-on { background: var(--bg-inset); color: var(--accent); }
 
 .cn-zoom {
-  min-width: 38px; height: 24px; padding: 0 3px; border-radius: 5px;
+  min-width: 0; height: 24px; padding: 0 3px; border-radius: 5px;
   font-size: 0.66rem; font-variant-numeric: tabular-nums;
   color: var(--text-muted);
 }
@@ -228,11 +234,11 @@
   top: 10px; left: 50%; transform: translateX(-50%);
   display: flex; gap: 1px; padding: 2px;
   /* Centred between two islands it must never touch: the viewport controls
-     are ~152px on the left, the sheet tabs ~148px on the right. Being
-     centred, the strip has to keep clear of BOTH by the larger of the two,
-     which is what this reserve is. At 900px the strip and the zoom controls
-     were sitting on top of each other. */
-  max-width: calc(100% - 340px);
+     are ~32px on the left now they stand in a column, the sheet tabs ~148px
+     on the right. Being centred, the strip has to keep clear of BOTH by the
+     larger of the two, which is what this reserve is. At 900px the strip and
+     the zoom controls were sitting on top of each other. */
+  max-width: calc(100% - 330px);
   overflow-x: auto;
   scrollbar-width: none;      /* the strip is five items; a bar under them
                                  would be louder than the thing it scrolls */
