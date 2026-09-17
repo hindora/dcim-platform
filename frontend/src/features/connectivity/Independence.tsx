@@ -23,6 +23,7 @@ export function Independence({ nodes, layer }: {
 }) {
   const [src, setSrc] = useState('');
   const [dst, setDst] = useState('');
+  const [open, setOpen] = useState(false);
 
   // Rolled-up boxes are synthetic ids the endpoint would refuse, so the
   // pickers offer real devices only - which means that with grouping on, the
@@ -54,8 +55,13 @@ export function Independence({ nodes, layer }: {
   );
 
   return (
-    <div className="conn-indep">
-      <h4>Are two devices independent?</h4>
+    // Folded away until it is asked. The audit below is what the tab is for
+    // and the sheet is only so tall; an open pair-picker was costing the
+    // findings table a third of the rows it could show, to answer a question
+    // nobody had asked yet.
+    <details className="conn-indep" open={open}
+             onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}>
+      <summary>Are two devices independent?</summary>
       <div className="conn-indep-pick">
         {pick(src, setSrc, 'First device')}
         <span className="muted">and</span>
@@ -117,6 +123,6 @@ export function Independence({ nodes, layer }: {
           )}
         </>
       )}
-    </div>
+    </details>
   );
 }

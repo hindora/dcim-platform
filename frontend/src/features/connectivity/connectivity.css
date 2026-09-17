@@ -752,14 +752,20 @@
   border-bottom: 1px solid var(--border);
 }
 
-.conn-indep h4 {
+/* Closed it is one line; the marker is the only affordance it needs. */
+.conn-indep > summary {
   margin: 0 0 8px;
   font-size: 0.7rem;
   letter-spacing: .09em;
   text-transform: uppercase;
   color: var(--text-faint);
   font-weight: 700;
+  cursor: pointer;
+  list-style-position: inside;
 }
+.conn-indep > summary:hover { color: var(--text-muted); }
+.conn-indep[open] > summary { margin-bottom: 8px; }
+.conn-indep:not([open]) { margin-bottom: 10px; padding-bottom: 8px; }
 
 .conn-indep-pick { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 
