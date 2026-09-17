@@ -77,6 +77,74 @@
   --cn-surface: #0c1016;
   --cn-dot: #2c3442;
   --cn-mask: rgba(8, 11, 16, 0.72);
+  /* The canvas is lit from the middle, like the simulator's. A flat field of
+     dots reads as graph paper; a vignette reads as depth and pushes the eye
+     to the centre where the diagram is. */
+  --cn-vignette: #131a21;
+
+  /* --- the connectivity canvas -------------------------------------------
+   *
+   * Device-type identity, taken VERBATIM from the simulator's palette so the
+   * two products colour the same machine the same way. Someone who has learnt
+   * that brass is electrical and teal is cooling on one canvas must not have
+   * to learn it again on the other.
+   *
+   * These are FILLS, dark enough to carry white text, which is why they are
+   * the same values in both themes: a saturated fill works on a light page as
+   * well as a dark one, and inventing a second set would be inventing a second
+   * identity. Never used as text - a fill dark enough for white type is far
+   * too dark to be type itself.
+   */
+  /* network - data plane */
+  --node-switch:         #1060b1;
+  --node-router:         #13688c;
+  --node-server:         #2957d1;
+  --node-firewall:       #5e44df;
+  --node-lb:             #7b38d4;
+  --node-storage:        #3b4fd1;
+  /* management - out of band */
+  --node-oob:            #9030bf;
+  /* electrical */
+  --node-utility-feed:   #8e5035;
+  --node-switchgear:     #85552b;
+  --node-mcc:            #7c5a2b;
+  --node-ats:            #7b5b1d;
+  --node-generator:      #964d1d;
+  --node-ups:            #755e10;
+  --node-rpp:            #6c611b;
+  --node-pdu:            #795c0b;
+  --node-mpp:            #9a482e;
+  /* cooling */
+  --node-crah:           #106b79;
+  --node-chiller:        #136b66;
+  --node-pump:           #1a6884;
+  --node-cooling-tower:  #1b6d5b;
+  --node-valve:          #2d658b;
+  --node-cdu:            #1a6b6c;
+  /* passive sensing and gateways */
+  --node-sensor:         #4d646e;
+  --node-energy-monitor: #486471;
+  --node-modbus-gateway: #5a5a7a;
+  --node-bacnet-router:  #4a5a7c;
+  --node-default:        #50646c;
+
+  /* Node chrome: the parts that are not the fill. */
+  --node-label:     rgba(255, 255, 255, 0.74);
+  --node-label-dim: rgba(255, 255, 255, 0.54);
+  --node-meter:     rgba(0, 0, 0, 0.42);
+  --on-solid:       #ffffff;
+
+  /* Layer identity, also the simulator's. One layer is drawn at a time here,
+   * so this is the base stroke - A and B keep the colour-blind-safe chart ramp
+   * on top of it, because which side a feeder is on decides whether a load
+   * survives losing one. */
+  --layer-prod:     #4a9eff;
+  --layer-mgmt:     #94a3b8;
+  --layer-power:    #f59e0b;
+  --layer-cooling:  #22d3ee;
+  --layer-fieldbus: #34d399;
+  --flow-cold:      #22d3ee;
+  --flow-hot:       #fb923c;
 
   --radius: 6px;
   --mono: ui-monospace, "SFMono-Regular", "Cascadia Code", Consolas, monospace;
@@ -140,6 +208,11 @@
   --cn-surface: #f0f3f6;
   --cn-dot: #c9d1da;
   --cn-mask: rgba(240, 243, 246, 0.72);
+  /* Lighter than the surface rather than darker: a vignette is a centre that
+     is BRIGHTER than its edges, and inverting that on white makes a hole. */
+  --cn-vignette: #ffffff;
+  /* The node fills do not change. They are saturated and dark enough to carry
+     white text on any ground, and a second set would be a second identity. */
 }
 
 @media (prefers-color-scheme: light) {
@@ -163,6 +236,7 @@
     --cn-surface: #f0f3f6;
     --cn-dot: #c9d1da;
     --cn-mask: rgba(240, 243, 246, 0.72);
+    --cn-vignette: #ffffff;
   }
 }
 

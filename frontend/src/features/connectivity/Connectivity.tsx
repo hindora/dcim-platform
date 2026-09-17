@@ -5,66 +5,54 @@ import { api, type Impact, type RoomSummary, type TopologyGraph, type TopologyNo
   from '../../api/client';
 import { downloadCsv, stampedName } from '../../lib/csv';
 import { projectImpact, type ImpactView } from './impact';
-import { Seg } from '../../components/estate';
-import { MaxGlyph, MaxModal } from '../../components/MaxModal';
-import { Canvas } from './Canvas';
-import { Legend } from './Legend';
 import { Audit } from './Audit';
-import { Independence } from './Independence';
+import { Canvas } from './Canvas';
 import { Drawer } from './Drawer';
+import { Independence } from './Independence';
+import { Legend } from './Legend';
 import { TraceTable } from './TraceTable';
 import { collapseEdges, layout, structureKey } from './layout';
 import './connectivity.css';
 
 /** Connectivity: how the estate is wired, one layer at a time.
  *
- *  This page used to be the nav entry that led to the platform-health screen -
- *  CONNECTIVITY promised in the top row, collector lag delivered - while the
- *  graph itself sat at /topology with nothing linking to it. The nav now goes
- *  where it says, and /topology redirects here.
+ *  THE CANVAS IS THE PAGE. Everything else — the layer strip, the scope, the
+ *  trace table, the audit, the selection — floats on top of it. A diagram
+ *  boxed into a panel under a heading and three rows of filters spends most of
+ *  the screen on furniture, and the furniture is not what anybody came for.
  *
- *  The layers are not five views of one graph. Power and cooling are directed
- *  distribution chains with a reading order; ethernet is an undirected fabric.
- *  This renders all five as layered diagrams for now - the one-line and loop
- *  renderings land with docs/24 phases 2 and 5.
+ *  It follows that a table cannot REPLACE the diagram, which is what the view
+ *  tabs used to do. The trace and the audit are answers ABOUT what is on the
+ *  canvas, and reading one while the thing it describes is gone is the same
+ *  mistake as a modal over a diagram. They open as a sheet along the bottom
+ *  and the graph stays where it was.
  */
 
 // The API accepts 'network' as an alias for the production enum; the operator's
-// word is the one worth showing.
+// word is the one worth showing. The ink is the layer's own colour, so the
+// strip and the lines on the canvas agree.
 const LAYERS = [
-  { key: 'power', label: 'POWER' },
-  { key: 'cooling', label: 'COOLING' },
-  { key: 'network', label: 'NETWORK' },
-  { key: 'management', label: 'MANAGEMENT' },
-  { key: 'fieldbus', label: 'FIELDBUS' },
+  { key: 'power', label: 'POWER', ink: 'var(--layer-power)' },
+  { key: 'cooling', label: 'COOLING', ink: 'var(--layer-cooling)' },
+  { key: 'network', label: 'NETWORK', ink: 'var(--layer-prod)' },
+  { key: 'management', label: 'MANAGEMENT', ink: 'var(--layer-mgmt)' },
+  { key: 'fieldbus', label: 'FIELDBUS', ink: 'var(--layer-fieldbus)' },
 ] as const;
 
 type LayerKey = typeof LAYERS[number]['key'];
 
-const VIEWS = [
-  { key: 'diagram', label: 'DIAGRAM' },
-  { key: 'trace', label: 'TRACE TABLE' },
-  { key: 'audit', label: 'REDUNDANCY' },
-] as const;
-
-type ViewKey = typeof VIEWS[number]['key'];
+/** Sheets, not tabs. `null` is the canvas on its own. */
+type Sheet = 'trace' | 'audit' | null;
 
 /** Layers drawn as a one-line: A down the left, B down the right, shared and
- *  dual-fed equipment down the middle. A directed distribution chain with a
- *  labelled second path; ethernet has neither, and columns there would be two
- *  empty gutters around every switch. */
+ *  dual-fed equipment down the middle. */
 const ONE_LINE = new Set(['power']);
 
-/** Cooling is the layer that is a CIRCUIT rather than a chain: supply down one
- *  side, the units it serves across the bottom, the return back up the other.
- *  Falls back to the layered rank where the graph is not that shape. */
+/** Cooling is the layer that is a CIRCUIT rather than a chain. */
 const LOOP = new Set(['cooling']);
 
-/** Depth in words. "1" means nothing to someone who has not read the API spec,
- *  and the difference between 0 and 1 on the power layer is whether the
- *  switchgear feeding the room is in the picture at all. */
 const DEPTHS = [
-  { value: 0, label: 'Only what is in this room' },
+  { value: 0, label: 'Only this room' },
   { value: 1, label: 'Also what feeds it' },
   { value: 2, label: 'Two hops out' },
 ];
@@ -76,14 +64,12 @@ const ROLLUPS = [
 
 export function Connectivity() {
   const [layer, setLayer] = useState<LayerKey>('power');
-  const [view, setView] = useState<ViewKey>('diagram');
+  const [sheet, setSheet] = useState<Sheet>(null);
+  const [scopeOpen, setScopeOpen] = useState(false);
   const [roomId, setRoomId] = useState('');
   const [depth, setDepth] = useState(1);
   const [rollup, setRollup] = useState<'none' | 'rack'>('rack');
   const [selected, setSelected] = useState<TopologyNode | null>(null);
-  const [maxOpen, setMaxOpen] = useState(false);
-  /** The device whose removal is being simulated, or null. Kept as an id
-   *  rather than a node so that it survives a refetch replacing the objects. */
   const [simulating, setSimulating] = useState<string | null>(null);
 
   // Deep link. `?simulate=<device>` lands here from wherever the question was
@@ -107,10 +93,9 @@ export function Connectivity() {
     setSimulating(linked);
     const room = linkedDevice.data?.location.room_id;
     if (room) setRoomId(room);
-    // Consumed: leaving it in the URL would re-apply it every time the
-    // operator changed room afterwards, which fights them.
-    if (!room && linkedDevice.isError) setParams({}, { replace: true });
-    else if (room) setParams({}, { replace: true });
+    // Consumed: leaving it in the URL re-applies it every time the operator
+    // changes room afterwards, which fights them.
+    if (room || linkedDevice.isError) setParams({}, { replace: true });
   }, [linked, linkedDevice.data, linkedDevice.isError, params, setParams]);
 
   const rooms = useQuery<{ items: RoomSummary[] }>({
@@ -119,13 +104,14 @@ export function Connectivity() {
   });
   const selectedRoom = roomId || rooms.data?.items[0]?.id || '';
   const scope = selectedRoom ? `room:${selectedRoom}` : '';
+  const room = rooms.data?.items.find((r) => r.id === selectedRoom);
 
   const graph = useQuery<TopologyGraph>({
     queryKey: ['topology', layer, scope, depth, rollup],
     queryFn: () => api.topology(layer, scope, depth, rollup),
     enabled: Boolean(scope),
-    // Live state. The layout below is memoised on structure, so this refresh
-    // repaints statuses without moving a single node.
+    // Live state. The layout is memoised on structure, so this repaints
+    // statuses without moving a single node.
     refetchInterval: 15_000,
     retry: false,
   });
@@ -134,15 +120,11 @@ export function Connectivity() {
     () => (graph.data ? collapseEdges(graph.data.edges) : []),
     [graph.data]);
 
-  // The layer is part of the key, not just the structure: it decides whether
-  // the layout draws A and B as columns, and two layers could in principle
-  // return the same node and edge ids.
+  // The layer is part of the key, not just the structure: it decides which
+  // layout is used, and two layers could in principle return the same ids.
   const key = graph.data
     ? `${layer}:${structureKey(graph.data.nodes, graph.data.edges)}` : '';
 
-  // Positions are recomputed ONLY when the structure key changes. A poll that
-  // returns the same graph with new statuses reuses the previous placement
-  // object, so nothing on screen moves.
   const cache = useRef<{ key: string; value: ReturnType<typeof layout> } | null>(null);
   const placement = useMemo(() => {
     if (!graph.data) return { placed: [], width: 0, height: 0 };
@@ -153,18 +135,16 @@ export function Connectivity() {
     return value;
   }, [graph.data, edges, key, layer]);
 
-  const title = `${LAYERS.find((l) => l.key === layer)?.label ?? layer} TOPOLOGY`;
-
-  /** Selecting a layer or a scope invalidates the selection: the same device
-   *  may not be on the next layer at all, and a drawer describing a chain that
-   *  is no longer drawn is worse than an empty one. */
+  /** Changing layer or scope invalidates the selection and the simulation: the
+   *  same device may not be on the next layer at all, and a drawer describing
+   *  a chain that is no longer drawn is worse than an empty one. */
   function reselect<T>(set: (v: T) => void) {
     return (v: T) => { set(v); setSelected(null); setSimulating(null); };
   }
 
   // Not polled. A simulation is a question asked at one moment about one
-  // hypothetical, and an answer that changed under the operator while they
-  // read it would be worse than a stale one.
+  // hypothetical, and an answer that changed under the operator mid-read would
+  // be worse than a stale one.
   const impactQ = useQuery<Impact>({
     queryKey: ['impact', simulating],
     queryFn: () => api.impact(simulating!),
@@ -182,209 +162,221 @@ export function Connectivity() {
     return [...s].sort();
   }, [edges]);
 
-  // A layer the room has nothing on comes back 200 with an empty graph, which
-  // is not an error and was rendering as a blank dot grid with a toolbar on
-  // it. Central Plant has no production connections at all - twenty-nine
-  // devices, none of them cabled to anything on that layer - and the page has
-  // to say so rather than leave someone looking for the zoom control.
   const empty = Boolean(graph.data) && graph.data!.node_count === 0;
-
-  const diagram = graph.data && !empty ? (
-    <>
-      {simulating && (
-        <SimulationBanner
-          name={impactQ.data?.device.name ?? '…'}
-          view={impact}
-          loading={impactQ.isLoading}
-          error={impactQ.isError}
-          layerLabel={LAYERS.find((l) => l.key === layer)?.label.toLowerCase() ?? layer}
-          onExport={() => {
-            const d = impactQ.data;
-            if (!d) return;
-            downloadCsv(
-              stampedName(`impact-${d.device.name}`),
-              ['Layer', 'Effect', 'Outcome', 'Device', 'Type', 'Rack', 'Room'],
-              d.layers.flatMap((l) => [
-                ...l.cut_off.map((n) => [l.layer, l.effect, 'cut off', n.name,
-                                         n.device_type, n.rack_name, n.room_name]),
-                ...l.degraded.map((n) => [l.layer, l.effect, 'degraded', n.name,
-                                          n.device_type, n.rack_name, n.room_name]),
-              ]),
-            );
-          }}
-          onClear={() => setSimulating(null)} />
-      )}
-      <Canvas placement={placement} edges={edges} layer={layer} layoutKey={key}
-              selected={selected?.id ?? null} onSelect={setSelected}
-              impact={impact} />
-      <Legend sides={sides} showLoad={layer === 'power'} simulating={Boolean(simulating)} />
-    </>
-  ) : null;
+  const layerLabel = LAYERS.find((l) => l.key === layer)?.label.toLowerCase() ?? layer;
 
   return (
-    <div className="stack">
-      <h2>Connectivity</h2>
-      <p className="muted">
-        Drawn as layers, not a force graph: a power chain has a reading order —
-        source at the top, load at the bottom — and positions computed from
-        structure alone cannot drift when live state arrives.
-      </p>
-
-      {/* `.seg` is a block-level flex container, so on its own it stretches to
-          the page width and hangs four empty cells' worth of border off the
-          right. Every other use of it sits in a title row that already
-          constrains it. */}
-      <div className="conn-layerbar">
-        <Seg value={layer} onChange={reselect(setLayer)} label="Layer"
-             options={LAYERS.map((l) => ({ key: l.key, label: l.label }))} />
-        <span className="spacer" />
-        <Seg value={view} onChange={setView} label="View"
-             options={VIEWS.map((v) => ({ key: v.key, label: v.label }))} />
-      </div>
-
-      <div className="conn-filters">
-        <select value={selectedRoom} aria-label="Room"
-                onChange={(e) => reselect(setRoomId)(e.target.value)}>
-          {rooms.data?.items.map((r) => (
-            <option key={r.id} value={r.id}>
-              {r.datacenter_code ? `${r.datacenter_code} · ` : ''}{r.name}
-            </option>
-          ))}
-        </select>
-        <select value={depth} aria-label="How far out to look"
-                onChange={(e) => setDepth(Number(e.target.value))}>
-          {DEPTHS.map((d) => (
-            <option key={d.value} value={d.value}>{d.label}</option>
-          ))}
-        </select>
-        <select value={rollup} aria-label="Grouping"
-                onChange={(e) => reselect(setRollup)(e.target.value as 'none' | 'rack')}>
-          {ROLLUPS.map((r) => (
-            <option key={r.value} value={r.value}>{r.label}</option>
-          ))}
-        </select>
-      </div>
-
-      {graph.isError && (
-        <p className="muted">
-          No {layer} connections are recorded in this room. Plant serving a hall
-          often sits elsewhere — widen the scope above to pull it in.
-        </p>
-      )}
-
-      {view === 'audit' && (
-        <div className="conn-panel">
-          <h3>REDUNDANCY AUDIT</h3>
-          <Independence nodes={graph.data?.nodes ?? []} layer={layer} />
-          <Audit
-            scope={scope} layer={layer}
-            roomName={rooms.data?.items.find((r) => r.id === selectedRoom)?.name
-                      ?? 'this room'}
-            onSelectDevice={(id) => {
-              // Put it on the diagram. The finding is about where the device
-              // sits in a chain, and the chain is what is worth seeing next.
-              const node = graph.data?.nodes.find(
-                (n) => n.id === id || n.member_ids.includes(id));
-              if (node) { setSelected(node); setView('diagram'); }
-            }} />
-        </div>
-      )}
-
-      {view === 'trace' && (
-        <div className="conn-panel">
-          <h3>TRACE TABLE</h3>
-          {selected && selected.rolled_up === 0 ? (
-            <TraceTable deviceId={selected.id} deviceName={selected.name}
-                        layer={layer} />
-          ) : (
-            <p className="muted">
-              {selected
-                ? `${selected.name} stands for ${selected.rolled_up} devices. `
-                  + 'Group rack equipment off, or pick one of them, to trace a chain.'
-                : 'Pick a device on the diagram to trace its chain to source.'}
-            </p>
-          )}
-        </div>
-      )}
-
-      {view === 'diagram' && empty && (
-        <p className="muted">
-          Nothing in this room is on the {layer} layer.
-          {graph.data!.unconnected_count > 0 && (
-            <> All {graph.data!.unconnected_count} of its devices are recorded
-              without a {layer} connection.</>
-          )}
-          {' '}Plant and distribution that serves a room often sits elsewhere —
-          widen the scope above, or pick another layer.
-        </p>
-      )}
-
-      {view === 'diagram' && graph.data && !empty && (
-        <div className="conn-body">
-          <div className="conn-panel">
-            <h3>
-              {title}
-              <span className="conn-total">
-                {graph.data.device_count}<span className="unit"> devices</span>
-              </span>
-            </h3>
-            <button type="button" className="asset-max" aria-label={`Maximize ${title}`}
-                    onClick={() => setMaxOpen(true)}>
-              <MaxGlyph />
+    <div className="conn-app">
+      <Canvas
+        placement={placement} edges={edges} layer={layer} layoutKey={key}
+        selected={selected?.id ?? null} onSelect={setSelected} impact={impact}
+      >
+        {/* ---- top centre: the layer, which is what the canvas IS --------- */}
+        <div className="cn-float cn-layers" role="group" aria-label="Layer">
+          {LAYERS.map((l) => (
+            <button key={l.key} type="button"
+                    className={layer === l.key ? 'is-on' : undefined}
+                    style={layer === l.key
+                      ? { background: l.ink, borderColor: l.ink } : undefined}
+                    onClick={() => reselect(setLayer)(l.key)}>
+              {l.label}
             </button>
+          ))}
+        </div>
 
-            {diagram}
+        {/* ---- top right: scope, and the two answers about it ------------- */}
+        <div className="cn-topright">
+          <div className="cn-float cn-scope">
+            <button type="button" className="cn-scope-btn"
+                    aria-expanded={scopeOpen}
+                    onClick={() => setScopeOpen((v) => !v)}>
+              <span className="cn-scope-room">
+                {room ? `${room.datacenter_code ?? ''} ${room.name}`.trim() : 'Scope'}
+              </span>
+              <span className="cn-scope-sub">
+                {DEPTHS.find((d) => d.value === depth)?.label}
+                {rollup === 'rack' && ' · grouped'}
+              </span>
+            </button>
+            {scopeOpen && (
+              <div className="cn-pop">
+                <label>
+                  Room
+                  <select value={selectedRoom}
+                          onChange={(e) => reselect(setRoomId)(e.target.value)}>
+                    {rooms.data?.items.map((r) => (
+                      <option key={r.id} value={r.id}>
+                        {r.datacenter_code ? `${r.datacenter_code} · ` : ''}{r.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  How far out
+                  <select value={depth}
+                          onChange={(e) => setDepth(Number(e.target.value))}>
+                    {DEPTHS.map((d) => (
+                      <option key={d.value} value={d.value}>{d.label}</option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Grouping
+                  <select value={rollup}
+                          onChange={(e) => reselect(setRollup)(
+                            e.target.value as 'none' | 'rack')}>
+                    {ROLLUPS.map((r) => (
+                      <option key={r.value} value={r.value}>{r.label}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            )}
+          </div>
 
-            <p className="muted conn-caption">
-              {graph.data.node_count} boxes
+          <div className="cn-float cn-sheets" role="group" aria-label="Views">
+            <button type="button" className={sheet === 'trace' ? 'is-on' : undefined}
+                    onClick={() => setSheet(sheet === 'trace' ? null : 'trace')}>
+              TRACE
+            </button>
+            <button type="button" className={sheet === 'audit' ? 'is-on' : undefined}
+                    onClick={() => setSheet(sheet === 'audit' ? null : 'audit')}>
+              REDUNDANCY
+            </button>
+          </div>
+        </div>
+
+        {/* ---- the hypothetical, across the top ---------------------------- */}
+        {simulating && (
+          <SimulationBanner
+            name={impactQ.data?.device.name ?? '…'}
+            view={impact}
+            loading={impactQ.isLoading}
+            error={impactQ.isError}
+            layerLabel={layerLabel}
+            onExport={() => {
+              const d = impactQ.data;
+              if (!d) return;
+              downloadCsv(
+                stampedName(`impact-${d.device.name}`),
+                ['Layer', 'Effect', 'Outcome', 'Device', 'Type', 'Rack', 'Room'],
+                d.layers.flatMap((l) => [
+                  ...l.cut_off.map((n) => [l.layer, l.effect, 'cut off', n.name,
+                                           n.device_type, n.rack_name, n.room_name]),
+                  ...l.degraded.map((n) => [l.layer, l.effect, 'degraded', n.name,
+                                            n.device_type, n.rack_name, n.room_name]),
+                ]),
+              );
+            }}
+            onClear={() => setSimulating(null)} />
+        )}
+
+        {/* ---- bottom left: what is on screen, and what is not ------------ */}
+        {graph.data && !empty && (
+          <div className="cn-float cn-caption">
+            <span>
+              <b>{graph.data.node_count}</b> boxes
               {graph.data.device_count !== graph.data.node_count
                 && <> for {graph.data.device_count} devices</>}
               {' · '}
-              {edges.length} lines
+              <b>{edges.length}</b> lines
               {graph.data.conductor_count !== edges.length
                 && <> for {graph.data.conductor_count} conductors</>}
-              {graph.data.truncated && (
-                <span className="warn"> · truncated — narrow the scope</span>
-              )}
-              {depth > 0 && ' · faded nodes were pulled in from outside the room'}
-              {graph.data.unconnected_count > 0 && (
-                <>
-                  {' · '}{graph.data.unconnected_count} device
-                  {graph.data.unconnected_count === 1 ? '' : 's'} in this room
-                  {' '}{graph.data.unconnected_count === 1 ? 'has' : 'have'} no
-                  {' '}{layer} connection recorded and {graph.data.unconnected_count === 1
-                    ? 'is' : 'are'} not drawn
-                </>
+            </span>
+            {graph.data.truncated && (
+              <span className="warn">truncated — narrow the scope</span>
+            )}
+            {graph.data.unconnected_count > 0 && (
+              <span>{graph.data.unconnected_count} not on this layer, not drawn</span>
+            )}
+            <Legend sides={sides} showLoad={layer === 'power'}
+                    simulating={Boolean(simulating)} />
+          </div>
+        )}
+
+        {/* ---- states ------------------------------------------------------ */}
+        {graph.isLoading && (
+          <div className="cn-centre"><p className="muted">Reading the graph…</p></div>
+        )}
+        {graph.isError && (
+          <div className="cn-centre">
+            <p className="muted">
+              No {layerLabel} connections are recorded in this room. Plant that
+              serves a hall often sits elsewhere — widen the scope.
+            </p>
+          </div>
+        )}
+        {empty && (
+          <div className="cn-centre">
+            <p className="muted">
+              Nothing in this room is on the {layerLabel} layer.
+              {graph.data!.unconnected_count > 0 && (
+                <> All {graph.data!.unconnected_count} of its devices are
+                  recorded without one.</>
               )}
             </p>
           </div>
+        )}
 
-          {selected && (
-            <Drawer node={selected} layer={layer}
-                    onFullTrace={() => setView('trace')}
-                    onSimulate={setSimulating}
-                    simulating={simulating === selected.id}
-                    onClose={() => setSelected(null)} />
-          )}
-        </div>
-      )}
+        {/* ---- right: the selection --------------------------------------- */}
+        {selected && (
+          <Drawer node={selected} layer={layer}
+                  onFullTrace={() => setSheet('trace')}
+                  onSimulate={setSimulating}
+                  simulating={simulating === selected.id}
+                  onClose={() => setSelected(null)} />
+        )}
 
-      {maxOpen && (
-        <MaxModal title={title} onClose={() => setMaxOpen(false)}>
-          {diagram}
-        </MaxModal>
-      )}
+        {/* ---- bottom: the answers ABOUT the canvas, not instead of it ----- */}
+        {sheet && (
+          <section className="cn-sheet" aria-label={
+            sheet === 'trace' ? 'Trace table' : 'Redundancy audit'}>
+            <header>
+              <h3>{sheet === 'trace' ? 'TRACE TABLE' : 'REDUNDANCY AUDIT'}</h3>
+              <button type="button" className="asset-max" aria-label="Close"
+                      onClick={() => setSheet(null)}>✕</button>
+            </header>
+            <div className="cn-sheet-body">
+              {sheet === 'trace' && (
+                selected && selected.rolled_up === 0 ? (
+                  <TraceTable deviceId={selected.id} deviceName={selected.name}
+                              layer={layer} />
+                ) : (
+                  <p className="muted">
+                    {selected
+                      ? `${selected.name} stands for ${selected.rolled_up} devices. `
+                        + 'Ungroup, or pick one of them, to trace a chain.'
+                      : 'Pick a device on the canvas to trace its chain to source.'}
+                  </p>
+                )
+              )}
+              {sheet === 'audit' && (
+                <>
+                  <Independence nodes={graph.data?.nodes ?? []} layer={layer} />
+                  <Audit
+                    scope={scope} layer={layer}
+                    roomName={room?.name ?? 'this room'}
+                    onSelectDevice={(id) => {
+                      const node = graph.data?.nodes.find(
+                        (n) => n.id === id || n.member_ids.includes(id));
+                      if (node) { setSelected(node); setSheet(null); }
+                    }} />
+                </>
+              )}
+            </div>
+          </section>
+        )}
+      </Canvas>
     </div>
   );
 }
 
 /** The strip that says what is being pretended, and how bad it is.
  *
- *  Above the canvas rather than inside the drawer, because the diagram is
- *  showing a HYPOTHETICAL and somebody glancing at the screen has to be able
- *  to tell that from the estate as it stands. A picture of a failure that
- *  looks like a picture of the present is the most dangerous thing this page
- *  could render.
+ *  Over the canvas rather than in the drawer, because the diagram is showing a
+ *  HYPOTHETICAL and somebody glancing at the screen has to be able to tell
+ *  that from the estate as it stands. A picture of a failure that looks like a
+ *  picture of the present is the most dangerous thing this page could render.
  */
 function SimulationBanner({ name, view, loading, error, layerLabel, onExport, onClear }: {
   name: string;
@@ -396,9 +388,9 @@ function SimulationBanner({ name, view, loading, error, layerLabel, onExport, on
   onClear: () => void;
 }) {
   return (
-    <div className="conn-sim" role="status">
-      <span className="conn-sim-tag">SIMULATING</span>
-      <span className="conn-sim-text">
+    <div className="cn-float cn-sim" role="status">
+      <span className="cn-sim-tag">SIMULATING</span>
+      <span className="cn-sim-text">
         {error ? <>Could not work out what depends on <b>{name}</b>.</>
           : loading ? <>Working out what depends on <b>{name}</b>…</>
           : view?.empty || (view?.cutCount === 0 && view?.degradedCount === 0) ? (
@@ -411,7 +403,7 @@ function SimulationBanner({ name, view, loading, error, layerLabel, onExport, on
             </>
           )}
       </span>
-      {!loading && !error && <button type="button" onClick={onExport}>Export list</button>}
+      {!loading && !error && <button type="button" onClick={onExport}>Export</button>}
       <button type="button" className="is-clear" onClick={onClear}>Clear</button>
     </div>
   );

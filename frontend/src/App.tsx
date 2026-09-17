@@ -233,15 +233,18 @@ export default function App() {
               and delivered the platform-health screen - collector lag under a
               heading about cabling - while the graph itself sat at /topology
               with nothing linking to it. */}
+          {/* No <Page>: the canvas IS the page, edge to edge, and the 18/28px
+              padding a Page adds would put a grey margin around a drawing that
+              is supposed to fill the window. Suspense is here rather than
+              around the whole router because the other routes are already in
+              the bundle and do not need a boundary that could flash between
+              them. */}
           <Route path="/connectivity" element={
-            <Page>
-              {/* Wrapped here rather than around the whole router: the other
-                  routes are already in the bundle and do not need a boundary
-                  that could flash on every navigation between them. */}
-              <Suspense fallback={<p className="muted">Loading the diagram…</p>}>
-                <Connectivity />
-              </Suspense>
-            </Page>
+            <Suspense fallback={
+              <div className="page"><p className="muted">Loading the diagram…</p></div>
+            }>
+              <Connectivity />
+            </Suspense>
           } />
           {/* The asset workspace. Everything it renders lives under this route
               and inside features/assets/ - no page outside /assets changes, and

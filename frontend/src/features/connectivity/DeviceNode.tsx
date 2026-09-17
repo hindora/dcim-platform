@@ -6,18 +6,53 @@ import type { Verdict } from './impact';
 
 /** One device on the canvas.
  *
- *  A card rather than a filled block. The simulator fills each node with its
- *  device-type colour, which works on one fixed dark canvas; this product has a
- *  light theme as its default and a palette check in CI, and forty saturated
- *  blocks on white is a different picture entirely. The colour moves to a
- *  tinted chip behind the glyph, so the class is still readable at a glance and
- *  the card itself stays neutral - which also leaves the status rail and the
- *  capacity bar somewhere to be seen.
+ *  Filled with its device-type colour, the way the simulator draws it, so the
+ *  same machine is the same colour in both products: brass is electrical, teal
+ *  is cooling, blue is fabric, and nobody has to learn it twice. Every fill is
+ *  solved to roughly one luminance, which is what lets a FAULT win - a canvas
+ *  of healthy equipment has no hot spots for a red node to compete with.
+ *
+ *  The fills are identical in both themes. They are saturated and dark enough
+ *  to carry white text on any ground, and a second set for the light palette
+ *  would be a second identity for the same machine.
  */
 
-/** Device class, for the icon tint. Coarser than device_type on purpose: an
- *  operator scanning a diagram is looking for "is that the power chain or the
- *  cooling plant", not for the difference between an RPP and an MPP. */
+/** device_type -> fill. The token values live in index.css; see the note there
+ *  about why they are copied from the simulator rather than re-derived. */
+const FILL: Record<string, string> = {
+  switch: 'var(--node-switch)',
+  router: 'var(--node-router)',
+  server: 'var(--node-server)',
+  storage: 'var(--node-storage)',
+  firewall: 'var(--node-firewall)',
+  load_balancer: 'var(--node-lb)',
+  oob_switch: 'var(--node-oob)',
+  utility_feed: 'var(--node-utility-feed)',
+  switchgear: 'var(--node-switchgear)',
+  mcc: 'var(--node-mcc)',
+  ats: 'var(--node-ats)',
+  generator: 'var(--node-generator)',
+  ups: 'var(--node-ups)',
+  rpp: 'var(--node-rpp)',
+  pdu: 'var(--node-pdu)',
+  mpp: 'var(--node-mpp)',
+  crah: 'var(--node-crah)',
+  chiller: 'var(--node-chiller)',
+  pump: 'var(--node-pump)',
+  cooling_tower: 'var(--node-cooling-tower)',
+  valve: 'var(--node-valve)',
+  cdu: 'var(--node-cdu)',
+  sensor: 'var(--node-sensor)',
+  energy_monitor: 'var(--node-energy-monitor)',
+  modbus_gateway: 'var(--node-modbus-gateway)',
+  bacnet_router: 'var(--node-bacnet-router)',
+};
+
+const fillOf = (t: string) => FILL[t] ?? 'var(--node-default)';
+
+/** Class, for the glyph only. Coarser than device_type on purpose: scanning a
+ *  diagram you look for "is that the power chain or the cooling plant", not
+ *  for the difference between an RPP and an MPP. */
 type Klass = 'power' | 'cooling' | 'net' | 'it' | 'sensor';
 
 const KLASS: Record<string, Klass> = {
@@ -33,41 +68,36 @@ const KLASS: Record<string, Klass> = {
 };
 
 /** Drawn, not a dingbat. An emoji font that fails to load leaves a grid of
- *  tofu where the estate is supposed to be, and the same glyph renders at a
- *  different size on every platform. */
+ *  tofu where the estate is supposed to be, and renders at a different size on
+ *  every platform. */
 function TypeGlyph({ type }: { type: string }) {
-  const p = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.6,
+  const p = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.7,
               strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const };
   const svg = (children: React.ReactNode) => (
-    <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden>{children}</svg>
+    <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden>{children}</svg>
   );
   switch (KLASS[type]) {
-    // A bolt: everything on the electrical chain.
     case 'power':
       return svg(<path d="M9 1.5 3.5 9h3.2l-.7 5.5L12.5 7H9.3L9 1.5Z"
                        fill="currentColor" stroke="none" />);
-    // A snowflake, matching the alarm taxonomy's cooling glyph.
     case 'cooling':
       return svg(<g {...p}>
         <line x1="8" y1="1.5" x2="8" y2="14.5" />
         <line x1="2.4" y1="4.7" x2="13.6" y2="11.3" />
         <line x1="2.4" y1="11.3" x2="13.6" y2="4.7" />
       </g>);
-    // Two nodes and a link: the fabric.
     case 'net':
       return svg(<g {...p}>
         <rect x="1.5" y="2" width="13" height="4" rx="1" />
         <rect x="1.5" y="10" width="13" height="4" rx="1" />
         <line x1="8" y1="6" x2="8" y2="10" />
       </g>);
-    // A chassis with a drive bay: compute.
     case 'it':
       return svg(<g {...p}>
         <rect x="1.5" y="4" width="13" height="8" rx="1.2" />
         <line x1="4" y1="8" x2="7" y2="8" />
         <circle cx="11.5" cy="8" r="0.9" fill="currentColor" stroke="none" />
       </g>);
-    // A probe on a stem.
     case 'sensor':
       return svg(<g {...p}>
         <circle cx="8" cy="11.5" r="2.6" />
@@ -90,20 +120,20 @@ function statusColor(status: string, severity: string): string {
   }
 }
 
-/** Colour is never the only channel: a shape as well as a hue, because this
+/** Colour is never the only channel. The pip carries a shape too, because this
  *  diagram gets printed into method statements and photographed into tickets
  *  more than most screens here. */
-function StatusDot({ status, severity }: { status: string; severity: string }) {
+function StatusPip({ status, severity }: { status: string; severity: string }) {
   const fill = statusColor(status, severity);
   const bad = status === 'OFFLINE' || severity === 'CRITICAL' || severity === 'MAJOR';
   const warn = severity === 'MINOR' || severity === 'WARNING';
   return (
-    <svg width="9" height="9" viewBox="-5 -5 10 10" aria-hidden className="cn-status">
+    <svg width="9" height="9" viewBox="-5 -5 10 10" aria-hidden className="cn-pip">
       {status === 'UNKNOWN'
-        ? <circle r="3.4" fill="none" stroke={fill} strokeWidth="1.5" />
+        ? <circle r="3.3" fill="none" stroke={fill} strokeWidth="1.6" />
         : bad ? <path d="M0,-4.2 L4.2,3.2 L-4.2,3.2 Z" fill={fill} />
         : warn ? <path d="M0,-4.2 L4.2,0 L0,4.2 L-4.2,0 Z" fill={fill} />
-        : <circle r="3.4" fill={fill} />}
+        : <circle r="3.3" fill={fill} />}
     </svg>
   );
 }
@@ -116,12 +146,8 @@ function watts(w: number): string {
 export interface DeviceNodeData extends Record<string, unknown> {
   node: TopologyNode;
   showLoad: boolean;
-  /** Set only while a removal is being simulated. */
   verdict: Verdict;
-  /** How many real devices behind this box go dark - the "8 of 18" on a rack
-   *  that is only partly affected. */
   cutWithin: number;
-  /** True for the device whose removal is being simulated. */
   isCandidate: boolean;
 }
 
@@ -134,13 +160,14 @@ function DeviceNode({ data, selected }: NodeProps) {
   const frac = draw != null && rated ? Math.min(1, draw / rated) : null;
   const tone = frac == null ? null
     : frac >= 0.95 ? 'var(--critical)'
-    : frac >= 0.8 ? 'var(--warn)' : 'var(--accent)';
+    : frac >= 0.8 ? 'var(--warn)' : 'var(--on-solid)';
+
+  const fill = fillOf(n.device_type);
 
   return (
     <div
       className={[
         'cn-node',
-        `is-${KLASS[n.device_type] ?? 'other'}`,
         selected ? 'is-selected' : '',
         n.depth > 0 ? 'is-outside' : '',
         n.status === 'OFFLINE' ? 'is-off' : '',
@@ -148,22 +175,22 @@ function DeviceNode({ data, selected }: NodeProps) {
         verdict ? `is-${verdict}` : '',
         isCandidate ? 'is-candidate' : '',
       ].filter(Boolean).join(' ')}
-      style={{ width: NODE_W, height: NODE_H }}
+      style={{
+        width: NODE_W,
+        height: NODE_H,
+        background: fill,
+        // A dashed border in the fill colour would be invisible, so the
+        // out-of-scope variant borrows the label colour instead.
+        borderColor: n.depth > 0 ? 'var(--node-label)' : fill,
+      }}
     >
-      {/* Connection points, invisible: the graph is derived, so there is
-          nothing here for anyone to wire up by hand. They exist only to give
-          React Flow somewhere to anchor an edge. */}
+      {/* The graph is derived, so there is nothing here to wire by hand. These
+          exist only to give React Flow somewhere to anchor an edge. */}
       <Handle type="target" position={Position.Top} className="cn-handle" />
       <Handle type="source" position={Position.Bottom} className="cn-handle" />
 
-      <span className="cn-rail" style={{ background: statusColor(n.status, n.max_severity) }} />
+      <span className="cn-glyph"><TypeGlyph type={n.device_type} /></span>
 
-      <span className="cn-chip"><TypeGlyph type={n.device_type} /></span>
-
-      {/* The name gets the card's whole width. It used to share a row with the
-          draw, which left it about 57px - enough for "PDUA-DC1-…" and not for
-          which PDU. The device name is the one thing on this card that has to
-          be readable, so the draw drops to the line below it. */}
       <span className="cn-body">
         <span className="cn-name" title={n.name}>{n.name}</span>
         <span className="cn-meta">
@@ -178,12 +205,22 @@ function DeviceNode({ data, selected }: NodeProps) {
         </span>
       </span>
 
-      <StatusDot status={n.status} severity={n.max_severity} />
+      <StatusPip status={n.status} severity={n.max_severity} />
+
+      {draw != null && (
+        // A rating nobody recorded is a hatched groove with no fill. "No limit
+        // recorded" is not 0 %, and a full bar on an unrated device would be a
+        // fabrication in the one place fabrications get acted on.
+        <span className={`cn-meter${frac == null ? ' is-unrated' : ''}`}>
+          {frac != null && (
+            <span className="cn-meter-fill"
+                  style={{ width: `${Math.max(2, frac * 100)}%`, background: tone! }} />
+          )}
+        </span>
+      )}
 
       {/* While a removal is simulated the verdict outranks everything else on
-          the card: it is the reason the operator is looking at it. A rack that
-          is only partly affected says WHICH part, because "8 of 18 go dark" is
-          the true answer and both "dark" and "fine" are lies about it. */}
+          the card: it is the reason the operator is looking at it. */}
       {verdict && (
         <span className="cn-verdict">
           {verdict === 'cut' ? 'goes dark'
@@ -192,19 +229,6 @@ function DeviceNode({ data, selected }: NodeProps) {
         </span>
       )}
       {isCandidate && <span className="cn-verdict is-candidate">removed</span>}
-
-      {draw != null && (
-        // A rating nobody recorded is a hatched track with no percentage.
-        // "Nobody wrote down what this is rated for" is not "it is rated for
-        // zero", and a full bar on an unrated device would be a fabrication in
-        // the one place fabrications get acted on.
-        <span className={`cn-meter${frac == null ? ' is-unrated' : ''}`}>
-          {frac != null && (
-            <span className="cn-meter-fill"
-                  style={{ width: `${Math.max(2, frac * 100)}%`, background: tone! }} />
-          )}
-        </span>
-      )}
     </div>
   );
 }

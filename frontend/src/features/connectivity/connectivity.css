@@ -1,87 +1,436 @@
-/* Connectivity page. Panel chrome copies `.asset-panel` value for value, as
-   the chart rulebook requires of a panel outside /assets - assets.css is
-   imported by the asset workspace alone, so the class cannot simply be
-   reused. */
+/* Connectivity. THE CANVAS IS THE PAGE.
+ *
+ * Everything else floats on it: the layer strip, the scope, the selection, the
+ * trace table, the audit. A diagram boxed into a panel under a heading and
+ * three rows of filters spends most of the screen on furniture, and the
+ * furniture is not what anybody came for.
+ *
+ * Every floating control shares `.cn-float`: one surface, one border, one
+ * shadow, one radius. Chrome over a drawing has to read as ONE layer hovering
+ * above it, or the eye sees six unrelated boxes and starts hunting for the
+ * relationship between them.
+ */
 
-.conn-panel {
+/* Full bleed. `:has` scopes this to the connectivity route so no other page
+   gets a flex column it did not ask for, and `min-height: 0` is what lets the
+   canvas shrink inside it instead of overflowing the viewport. */
+.shell:has(.conn-app) > main { display: flex; flex-direction: column; }
+
+.conn-app { flex: 1; min-height: 0; display: flex; }
+
+/* --- the canvas ---------------------------------------------------------- */
+
+.cn-canvas {
   position: relative;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg-raised);
-  padding: 14px 16px;
-}
-
-.conn-panel .asset-max {
-  position: absolute;
-  top: 7px;
-  right: 7px;
-  float: none;
-  margin: 0;
-  padding: 4px;
-}
-
-.conn-panel > h3 {
-  margin: 0 0 12px;
-  padding-right: 22px;
-  font-size: 0.86rem;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
-  color: var(--text-muted);
-}
-
-.conn-total { float: right; color: var(--text-faint); font-variant-numeric: tabular-nums; }
-.conn-total .unit { text-transform: lowercase; letter-spacing: 0; }
-
-.conn-layerbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.conn-layerbar .spacer { flex: 1; }
-
-/* The diagram and the drawer side by side. The drawer is a fixed column: it
-   holds a chain of names and must not shrink to the point where a device name
-   wraps twice, and the diagram scrolls internally anyway. */
-.conn-body {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 300px;
-  gap: 12px;
-  align-items: start;
-}
-
-@media (max-width: 900px) {
-  .conn-body { grid-template-columns: minmax(0, 1fr); }
-}
-
-.conn-filters {
-  display: flex;
-  gap: 6px;
-  margin-bottom: 10px;
-}
-
-.conn-filters select {
   flex: 1;
   min-width: 0;
-  max-width: 200px;
-  height: 26px;
-  padding: 0 6px;
-  font-size: 0.76rem;
-  background: var(--bg-raised);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 4px;
+  min-height: 0;
+  overflow: hidden;
+  /* Lit from the middle rather than flat. A uniform field of dots reads as
+     graph paper; a vignette reads as depth and pushes the eye to the centre,
+     which is where the diagram is. */
+  background:
+    radial-gradient(ellipse at 50% 42%, var(--cn-vignette) 0%, var(--cn-surface) 72%);
 }
 
-.conn-caption { margin: 10px 0 0; font-size: 0.78rem; }
+.cn-canvas .react-flow__pane,
+.cn-canvas .react-flow__renderer { background: transparent; }
+
+/* The library's focus ring is drawn for its own node chrome; ours is a filled
+   card with its own selected state, and two rings on one box reads as a bug. */
+.cn-canvas .react-flow__node:focus,
+.cn-canvas .react-flow__node:focus-visible { outline: none; }
+.cn-canvas .react-flow__node { cursor: pointer; }
+
+/* --- the one floating surface -------------------------------------------- */
+
+.cn-float {
+  position: absolute;
+  z-index: 5;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-raised);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.42);
+}
+
+[data-theme='light'] .cn-float { box-shadow: 0 4px 16px rgba(31, 35, 40, 0.13); }
+
+.cn-float button {
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  cursor: pointer;
+}
+.cn-float button:hover { color: var(--text); }
+
+.cn-sep { width: 1px; align-self: stretch; margin: 5px 3px; background: var(--border); }
+
+/* --- top left: the viewport controls ------------------------------------- */
+
+.cn-toolbar {
+  top: 12px; left: 12px;
+  display: flex; align-items: center; gap: 1px; padding: 3px;
+}
+
+.cn-toolbar button {
+  display: flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; padding: 0; border-radius: 6px;
+}
+.cn-toolbar button:hover { background: var(--bg-inset); }
+.cn-toolbar button.is-on { background: var(--bg-inset); color: var(--accent); }
+
+.cn-zoom {
+  min-width: 44px; height: 28px; padding: 0 4px; border-radius: 6px;
+  font-size: 0.72rem; font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+.cn-zoom:hover { background: var(--bg-inset); }
+
+/* --- top centre: the layer ------------------------------------------------ */
+
+.cn-layers {
+  top: 12px; left: 50%; transform: translateX(-50%);
+  display: flex; gap: 2px; padding: 3px;
+}
+
+.cn-layers button {
+  padding: 5px 12px; border-radius: 6px;
+  border: 1px solid transparent;
+  font-size: 0.68rem; font-weight: 700; letter-spacing: .08em;
+}
+.cn-layers button:hover { background: var(--bg-inset); }
+
+/* The active pill wears the layer's own colour - the same value the edges are
+   stroked with - so the strip is also the legend for the lines below it. */
+.cn-layers button.is-on { color: var(--on-solid); }
+.cn-layers button.is-on:hover { filter: brightness(1.08); }
+
+/* --- top right: scope and the sheets -------------------------------------- */
+
+.cn-topright {
+  position: absolute; top: 12px; right: 12px; z-index: 6;
+  display: flex; align-items: flex-start; gap: 8px;
+}
+
+.cn-scope, .cn-sheets { position: relative; top: 0; right: 0; }
+
+.cn-scope-btn {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 1px;
+  padding: 5px 12px; border-radius: 8px; max-width: 230px;
+}
+.cn-scope-btn:hover { background: var(--bg-inset); }
+.cn-scope-room {
+  font-size: 0.78rem; font-weight: 600; color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 206px;
+}
+.cn-scope-sub { font-size: 0.66rem; color: var(--text-faint); }
+
+.cn-pop {
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: 7;
+  display: flex; flex-direction: column; gap: 9px;
+  width: 244px; padding: 11px 12px;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg-raised);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.46);
+}
+[data-theme='light'] .cn-pop { box-shadow: 0 8px 24px rgba(31, 35, 40, 0.16); }
+
+.cn-pop label {
+  display: flex; flex-direction: column; gap: 3px;
+  font-size: 0.66rem; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--text-faint);
+}
+.cn-pop select {
+  height: 28px; padding: 0 6px; font-size: 0.78rem;
+  background: var(--bg-inset); color: var(--text);
+  border: 1px solid var(--border); border-radius: 5px;
+}
+
+.cn-sheets { display: flex; gap: 2px; padding: 3px; }
+.cn-sheets button {
+  padding: 7px 11px; border-radius: 6px;
+  font-size: 0.68rem; font-weight: 700; letter-spacing: .08em;
+}
+.cn-sheets button:hover { background: var(--bg-inset); }
+.cn-sheets button.is-on {
+  background: var(--bg-inset); color: var(--text);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+/* --- the simulation banner ------------------------------------------------ */
+
+.cn-sim {
+  top: 58px; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 10px;
+  max-width: min(760px, calc(100% - 32px));
+  padding: 7px 10px;
+  border-color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 12%, var(--bg-raised));
+  font-size: 0.8rem;
+}
+
+.cn-sim-tag {
+  flex: none; padding: 1px 6px; border-radius: 3px;
+  background: var(--warn); color: var(--bg);
+  font-size: 0.62rem; font-weight: 700; letter-spacing: .08em;
+}
+.cn-sim-text { flex: 1; min-width: 0; color: var(--text); }
+.cn-sim button {
+  flex: none; padding: 3px 9px; border-radius: 5px;
+  border: 1px solid var(--border-strong); color: var(--text);
+  font-size: 0.72rem;
+}
+.cn-sim button:hover { border-color: var(--accent); background: var(--bg-inset); }
+.cn-sim button.is-clear { color: var(--text-muted); }
+
+/* --- bottom left: what is drawn, and what is not -------------------------- */
+
+.cn-caption {
+  bottom: 12px; left: 12px;
+  max-width: calc(100% - 24px);
+  display: flex; align-items: center; flex-wrap: wrap; gap: 4px 14px;
+  padding: 7px 12px;
+  font-size: 0.72rem; color: var(--text-muted);
+}
+.cn-caption b { color: var(--text); font-variant-numeric: tabular-nums; }
+.cn-caption .warn { color: var(--warn); }
+.cn-caption .cn-legend { margin: 0; }
+
+/* --- empty and loading, dead centre --------------------------------------- */
+
+.cn-centre {
+  position: absolute; inset: 0; z-index: 4;
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px; pointer-events: none;
+}
+.cn-centre p {
+  max-width: 44ch; text-align: center; margin: 0;
+  padding: 14px 18px;
+  border: 1px dashed var(--border-strong); border-radius: 8px;
+  background: var(--bg-raised);
+}
+
+/* --- the sheet: an answer ABOUT the canvas, not instead of it -------------- */
+
+.cn-sheet {
+  position: absolute; left: 12px; right: 12px; bottom: 12px; z-index: 8;
+  display: flex; flex-direction: column;
+  max-height: min(62%, 560px);
+  border: 1px solid var(--border); border-radius: 10px;
+  background: var(--bg-raised);
+  box-shadow: 0 -8px 34px rgba(0, 0, 0, 0.5);
+  animation: cn-rise .16s ease-out;
+}
+[data-theme='light'] .cn-sheet { box-shadow: 0 -6px 26px rgba(31, 35, 40, 0.16); }
+
+@keyframes cn-rise { from { transform: translateY(12px); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .cn-sheet { animation: none; } }
+
+.cn-sheet > header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px 8px; border-bottom: 1px solid var(--border);
+}
+.cn-sheet > header h3 {
+  margin: 0; font-size: 0.78rem; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--text-muted);
+}
+.cn-sheet-body { overflow: auto; padding: 12px 14px 14px; }
+
+/* The sheet covers the bottom of the canvas, so the caption moves out from
+   under it rather than being hidden by it. */
+.cn-canvas:has(.cn-sheet) .cn-caption { display: none; }
+
+/* --- the node ------------------------------------------------------------- */
+
+.cn-node {
+  position: relative;
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  padding: 0 9px;
+  border: 2px solid transparent;   /* colour set inline, matches the fill */
+  border-radius: 6px;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+  transition: filter .13s, box-shadow .13s, transform .13s;
+}
+
+/* Brightening beats a background swap: the fill is a different colour on every
+   node, so one hover colour cannot work for all of them. */
+.cn-node:hover { filter: brightness(1.16); transform: translateY(-1px); }
+
+.cn-node.is-selected {
+  box-shadow: 0 0 0 2px var(--accent), 0 6px 18px rgba(0, 0, 0, 0.5);
+}
+
+/* Pulled in from outside the requested scope: present because something in the
+   scope depends on it, not because it lives there. */
+.cn-node.is-outside { border-style: dashed; opacity: 0.74; }
+.cn-node.is-off { opacity: 0.5; filter: grayscale(0.75); }
+
+/* A rolled-up box stands for a rack's worth of equipment, so it wears the
+   stack: a second card peeking out behind it. */
+.cn-node.is-rolled::after {
+  content: '';
+  position: absolute; inset: auto 6px -4px 6px; height: 4px;
+  border-radius: 0 0 6px 6px;
+  background: inherit; filter: brightness(0.8);
+  z-index: -1;
+}
+
+.cn-glyph { display: flex; align-items: center; color: var(--on-solid); opacity: .92; }
+
+.cn-body { display: flex; flex-direction: column; min-width: 0; gap: 1px; }
+
+.cn-name {
+  font-family: var(--mono);
+  font-size: 11px; font-weight: 700;
+  color: var(--on-solid);
+  padding-right: 12px;   /* clears the status pip */
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+.cn-meta {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 8px; min-width: 0;
+}
+
+.cn-sub {
+  font-size: 9.5px; color: var(--node-label);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.cn-off { color: var(--on-solid); font-weight: 700; }
+
+.cn-load {
+  flex: none;
+  font-family: var(--mono); font-size: 9.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--node-label);
+}
+
+.cn-pip { position: absolute; top: 6px; right: 7px; }
+
+/* Draw against rating along the bottom edge. A rating nobody recorded is a
+   hatched groove with no fill: "no limit recorded" is not 0 %. */
+.cn-meter {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 3px;
+  background: var(--node-meter);
+}
+.cn-meter-fill { display: block; height: 100%; }
+.cn-meter.is-unrated {
+  background-image: repeating-linear-gradient(
+    45deg, var(--node-label-dim) 0 1px, transparent 1px 4px);
+}
+
+.cn-handle { opacity: 0; pointer-events: none; }
+
+/* --- simulated removal, on the node --------------------------------------- */
+
+.cn-node.is-cut { box-shadow: 0 0 0 2px var(--critical), 0 4px 14px rgba(0,0,0,.5); }
+.cn-node.is-partial { box-shadow: 0 0 0 2px var(--major), 0 4px 14px rgba(0,0,0,.5); }
+.cn-node.is-degraded { box-shadow: 0 0 0 2px var(--warn); }
+.cn-node.is-candidate { opacity: .45; filter: grayscale(.7); }
+
+.cn-verdict {
+  position: absolute; right: 0; bottom: 3px;
+  padding: 0 5px 0 6px; border-radius: 3px 0 0 3px;
+  font-size: 8.5px; font-weight: 700; letter-spacing: .03em;
+  text-transform: uppercase;
+  color: var(--bg); background: var(--critical);
+}
+.cn-node.is-partial .cn-verdict { background: var(--major); }
+.cn-node.is-degraded .cn-verdict { background: var(--warn); }
+.cn-verdict.is-candidate { background: var(--text-muted); }
+.cn-node.is-candidate .cn-verdict:not(.is-candidate) { display: none; }
+
+/* --- edges ---------------------------------------------------------------- */
+
+.cn-edge { transition: stroke-width .12s; }
+.cn-edge.is-flowing { animation: cn-flow .9s linear infinite; }
+@keyframes cn-flow { to { stroke-dashoffset: -24; } }
+
+/* Paused while the viewport moves: a per-frame stroke repaint fights the
+   transform and the whole canvas judders. */
+.cn-canvas.is-moving .cn-edge.is-flowing { animation: none; }
+@media (prefers-reduced-motion: reduce) { .cn-edge.is-flowing { animation: none; } }
+
+.cn-edge-label {
+  position: absolute;
+  padding: 0 4px; border-radius: 3px;
+  background: var(--bg-raised); border: 1px solid var(--border);
+  color: var(--text-faint);
+  font-size: 9px; font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+.cn-edge-label.is-down {
+  background: var(--critical); border-color: var(--critical);
+  color: var(--bg); font-weight: 700; letter-spacing: .04em;
+}
+
+/* --- legend --------------------------------------------------------------- */
+
+.cn-legend {
+  display: flex; flex-wrap: wrap; gap: 4px 13px; align-items: center;
+  font-size: 0.7rem; color: var(--text-muted);
+}
+.cn-legend span { display: inline-flex; align-items: center; gap: 5px; }
+
+.cn-swatch {
+  width: 18px; height: 4px; border-radius: 2px;
+  background: linear-gradient(to right, var(--accent) 60%, var(--node-meter) 60%);
+}
+
+.cn-key { width: 12px; height: 12px; border-radius: 3px;
+          border: 1px solid var(--border-strong); }
+.cn-key.is-cut { border-color: var(--critical);
+                 background: color-mix(in srgb, var(--critical) 30%, transparent); }
+.cn-key.is-partial { border-color: var(--major);
+                     background: color-mix(in srgb, var(--major) 30%, transparent); }
+.cn-key.is-degraded { border-color: var(--warn); border-style: dashed; }
+
+.cn-minimap {
+  border: 1px solid var(--border); border-radius: 6px; background: var(--bg-raised);
+}
 
 /* --- the drawer ---------------------------------------------------------- */
 
 .conn-drawer {
+  /* Floats over the canvas on the right, like every other control here. It
+     used to be a grid column, which meant selecting a node narrowed the
+     diagram - the picture flinched away from the thing you had just clicked
+     on it. */
+  position: absolute;
+  top: 58px; right: 12px; bottom: 12px;
+  z-index: 6;
+  width: 306px;
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: 10px;
   background: var(--bg-raised);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.48);
   padding: 12px 14px;
   font-size: 0.82rem;
-  position: sticky;
-  top: 12px;
-  max-height: 80vh;
   overflow: auto;
+  animation: cn-slide .16s ease-out;
+}
+
+[data-theme='light'] .conn-drawer { box-shadow: 0 6px 22px rgba(31, 35, 40, 0.15); }
+
+@keyframes cn-slide { from { transform: translateX(14px); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .conn-drawer { animation: none; } }
+
+/* The sheet owns the bottom of the canvas when it is up; the drawer stops
+   above it rather than sliding underneath. */
+.cn-canvas:has(.cn-sheet) .conn-drawer { bottom: calc(62% + 20px); }
+
+/* A simulation banner is centred at the same height the drawer starts, so the
+   drawer drops below it rather than fighting it for the corner. */
+.cn-canvas:has(.cn-sim) .conn-drawer { top: 104px; }
+
+@media (max-width: 820px) {
+  .conn-drawer { width: auto; left: 12px; }
 }
 
 .conn-drawer > header { display: flex; align-items: start; gap: 8px; }
