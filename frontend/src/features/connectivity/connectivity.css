@@ -671,9 +671,13 @@
 .conn-chain li.is-self { font-family: var(--mono); color: var(--text-muted); }
 
 .conn-drawer-actions {
-  display: flex; align-items: center; gap: 12px;
+  display: flex; align-items: center; gap: 8px;
   margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border);
+  /* Two words per control in 246px: a shade smaller keeps all three on one
+     line instead of building a three-storey footer inside a 274px drawer. */
+  font-size: 0.76rem;
 }
+.conn-drawer-actions button { padding: 3px 8px; }
 
 /* The side badge. Position and pattern carry A/B on the diagram; in a table
    there is no position to use, so the letter itself is the channel and the
