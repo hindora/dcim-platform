@@ -95,20 +95,17 @@ function buildNodes(placement: Placement, showLoad: boolean,
     zIndex: 0,
   }));
 
-  const at = new Map(rooms.map((r) => [r.id, r.position]));
-
   return rooms.concat(placement.placed.map((p) => {
+    // Which room it stands in, carried on the node so a room drag knows what
+    // to take with it. Deliberately NOT React Flow's own parenting: a child's
+    // position is relative to its parent, which turns every other thing this
+    // canvas does with coordinates - the layout, the focus fit, a dragged
+    // node - into two cases.
     const roomId = roomIdOf(p.node);
-    // Parented only while the rooms are shown. A hidden parent hides its
-    // children with it, so when the outlines are off the devices go back to
-    // standing on the canvas in their own right.
-    const parent = showRooms ? at.get(roomId) : undefined;
     return {
       id: p.node.id,
       type: 'device',
-      position: parent ? { x: p.x - parent.x, y: p.y - parent.y }
-                       : { x: p.x, y: p.y },
-      ...(parent ? { parentId: roomId, extent: 'parent' as const } : {}),
+      position: { x: p.x, y: p.y },
       data: { ...nodeData(p.node, showLoad, impact), roomId },
       selected: p.node.id === selected,
       // Dragging rearranges the picture, which is welcome; connecting two
@@ -277,37 +274,45 @@ function Flow({ placement, edges, layer, layoutKey, selected, onSelect, impact,
     if (d.node) onSelect(d.node);
   }, [onSelect]);
 
-  /** Show or hide the outlines without losing where anything has been put.
-   *
-   *  Parenting is what makes a room draggable as a region, and a child's
-   *  position is relative to its parent, so the toggle has to convert in both
-   *  directions rather than rebuild from the layout - which would throw away
-   *  every room the operator had moved. */
+  /** Show or hide the outlines. Nothing else moves: the devices were never
+   *  inside the boxes as far as the canvas is concerned, so the rectangles
+   *  come and go on their own. */
   const onToggleRooms = useCallback(() => {
     setShowRooms((on) => {
-      const show = !on;
-      setNodes((nds) => {
-        const at = new Map(nds.filter((n) => n.type === 'room')
-          .map((n) => [n.id, n.position]));
-        return nds.map((n) => {
-          if (n.type === 'room') return { ...n, hidden: !show };
-          const roomId = (n.data as { roomId?: string }).roomId;
-          const p = roomId ? at.get(roomId) : undefined;
-          if (!p) return n;
-          if (show && !n.parentId) {
-            return { ...n, parentId: roomId, extent: 'parent' as const,
-                     position: { x: n.position.x - p.x, y: n.position.y - p.y } };
-          }
-          if (!show && n.parentId) {
-            return { ...n, parentId: undefined, extent: undefined,
-                     position: { x: n.position.x + p.x, y: n.position.y + p.y } };
-          }
-          return n;
-        });
-      });
-      return show;
+      setNodes((nds) => nds.map(
+        (n) => (n.type === 'room' ? { ...n, hidden: on } : n)));
+      return !on;
     });
   }, [setNodes]);
+
+  /** Dragging a room drags the room's devices.
+   *
+   *  A room is a region: moving the outline and leaving its contents behind
+   *  would be a lie about what the outline means. Done by hand off the drag
+   *  delta rather than with React Flow's parenting, which would make every
+   *  device position relative to a box and every other coordinate in this
+   *  file a special case. */
+  const dragFrom = useRef<{ id: string; x: number; y: number } | null>(null);
+
+  const onNodeDragStart = useCallback((_: unknown, n: Node) => {
+    dragFrom.current = n.type === 'room'
+      ? { id: n.id, x: n.position.x, y: n.position.y } : null;
+  }, []);
+
+  const onNodeDrag = useCallback((_: unknown, n: Node) => {
+    const from = dragFrom.current;
+    if (!from || from.id !== n.id) return;
+    const dx = n.position.x - from.x;
+    const dy = n.position.y - from.y;
+    if (!dx && !dy) return;
+    dragFrom.current = { id: n.id, x: n.position.x, y: n.position.y };
+    setNodes((nds) => nds.map((d) => (
+      (d.data as { roomId?: string }).roomId === n.id
+        ? { ...d, position: { x: d.position.x + dx, y: d.position.y + dy } }
+        : d)));
+  }, [setNodes]);
+
+  const onNodeDragStop = useCallback(() => { dragFrom.current = null; }, []);
 
   // Bring an off-canvas selection into view, and only then: clicking a node
   // that is already on screen must not yank the viewport out from under the
@@ -345,6 +350,9 @@ function Flow({ placement, edges, layer, layoutKey, selected, onSelect, impact,
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onNodeClick={onNodeClick}
+        onNodeDragStart={onNodeDragStart}
+        onNodeDrag={onNodeDrag}
+        onNodeDragStop={onNodeDragStop}
         onPaneClick={() => onSelect(null)}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
