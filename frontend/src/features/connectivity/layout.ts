@@ -257,23 +257,49 @@ function layoutLoop(nodes: TopologyNode[], edges: CollapsedEdge[]): {
   // the whole loop roughly square, which is the shape that reads as a loop.
   const perLine = Math.min(LOOP_PER_LINE, Math.max(...midBands.map((b) => b.length)));
   const midWidth = perLine * step;
-  const legs = Math.max(supplyBands.length, retBands.length);
+
   // One step clear of the middle, so a pipe never runs under a unit it does
   // not serve.
   const legX = midWidth / 2 + step * 0.7;
 
   const placed: Placed[] = [];
-  supplyBands.forEach((row, i) => row.forEach((n, j) => placed.push({
-    node: n, x: -legX - (row.length - 1 - j) * step, y: i * rowH,
+
+  // A leg band wraps like the middle does. A scoped view can put a lot on one
+  // leg - the plant room's cooling graph is cut off before its return header,
+  // so every CRAH it feeds is a sink and lands on the return leg - and a band
+  // of fourteen strung out in one row is a mile of canvas with a hairball of
+  // pipe across the top of it.
+  const leg = (bands: TopologyNode[][]) => {
+    let cursor = 0;
+    const rows: { row: TopologyNode[]; line: number }[] = [];
+    for (const band of bands) {
+      const lines = Math.ceil(band.length / LOOP_PER_LINE);
+      for (let l = 0; l < lines; l += 1) {
+        rows.push({
+          row: band.slice(l * LOOP_PER_LINE, (l + 1) * LOOP_PER_LINE),
+          line: cursor,
+        });
+        cursor += 1;
+      }
+    }
+    return { rows, height: cursor };
+  };
+
+  const supplyLeg = leg(supplyBands);
+  const retLeg = leg(retBands);
+  const legRows = Math.max(supplyLeg.height, retLeg.height);
+
+  supplyLeg.rows.forEach(({ row, line }) => row.forEach((n, j) => placed.push({
+    node: n, x: -legX - (row.length - 1 - j) * step, y: line * rowH,
   })));
   // Ascending: the band nearest the units sits at the BOTTOM of the right-hand
   // leg and the sink at the top, so the water reads as coming back to where it
   // started.
-  retBands.forEach((row, i) => row.forEach((n, j) => placed.push({
-    node: n, x: legX + j * step, y: (legs - 1 - i) * rowH,
+  retLeg.rows.forEach(({ row, line }) => row.forEach((n, j) => placed.push({
+    node: n, x: legX + j * step, y: (legRows - 1 - line) * rowH,
   })));
 
-  let y = legs * rowH;
+  let y = legRows * rowH;
   midBands.forEach((row) => {
     const lines = Math.ceil(row.length / perLine);
     row.forEach((n, i) => {
