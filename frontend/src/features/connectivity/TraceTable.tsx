@@ -68,7 +68,10 @@ export function TraceTable({ deviceId, deviceName, layer }: {
   });
 
   const rows = q.data ? rowsOf(q.data) : [];
-  const { rows: page, foot } = usePaged(rows, { noun: 'hops' });
+  // `always`, because this table lives in a sheet that is 250px tall: without
+  // a permanent footer the reader has no idea whether the twelve rows they can
+  // scroll are the whole trace or the first page of it.
+  const { rows: page, foot } = usePaged(rows, { noun: 'hops', always: true });
   const showState = PORT_LAYERS.has(layer);
 
   if (q.isLoading) return <div className="asset-skeleton" style={{ height: 120 }} />;
@@ -99,7 +102,11 @@ export function TraceTable({ deviceId, deviceName, layer }: {
   }
 
   return (
-    <div className="stack" style={{ gap: 10 }}>
+    // A pane, not a stack: the head and the pager stay put and the ROWS
+    // scroll. Scrolling the whole sheet put the pager below twelve rows of
+    // trace, so the one control that says how much trace there is could only
+    // be found by scrolling past it.
+    <div className="cn-pane">
       <div className="conn-trace-head">
         <p className="muted" style={{ margin: 0 }}>
           {q.data.paths.length} chain{q.data.paths.length === 1 ? '' : 's'} to
@@ -127,7 +134,7 @@ export function TraceTable({ deviceId, deviceName, layer }: {
         )}>Export CSV</button>
       </div>
 
-      <div className="estate-scroll">
+      <div className="estate-scroll cn-pane-scroll">
         <table className="estate-table conn-trace">
           <thead>
             <tr>
@@ -178,11 +185,9 @@ export function TraceTable({ deviceId, deviceName, layer }: {
             ))}
           </tbody>
         </table>
-      </div>
-      {foot}
 
-      {q.data.downstream_count > 0 && (
-        <p className="muted" style={{ margin: 0, fontSize: '0.78rem' }}>
+        {q.data.downstream_count > 0 && (
+        <p className="muted" style={{ margin: '8px 0 0', fontSize: '0.78rem' }}>
           {deviceName} also feeds {q.data.downstream_count} device
           {q.data.downstream_count === 1 ? '' : 's'} directly
           {q.data.downstream.length < q.data.downstream_count
@@ -190,7 +195,10 @@ export function TraceTable({ deviceId, deviceName, layer }: {
           What would break if it were removed is a different question —
           impact analysis answers it.
         </p>
-      )}
+        )}
+      </div>
+
+      {foot}
     </div>
   );
 }

@@ -331,6 +331,38 @@
 }
 .cn-sheet-body { overflow: auto; padding: 12px 6px 14px 14px; }
 
+/* A pane owns its own scrolling, so the sheet stops doing it. A sheet is
+   ~250px tall; letting the whole thing scroll buries the pager and the
+   Export button under the rows they describe. */
+.cn-sheet-body:has(.cn-pane) {
+  display: flex; flex-direction: column;
+  min-height: 0; overflow: hidden;
+}
+
+.cn-pane {
+  flex: 1; min-height: 0;
+  display: flex; flex-direction: column; gap: 10px;
+}
+
+/* The one part that scrolls. */
+.cn-pane-scroll { flex: 1; min-height: 0; overflow: auto; }
+
+/* The pager sits on the sheet's own floor rather than at the end of the rows,
+   so it reads as a fixed footer and not as one more thing in the list. */
+.cn-pane > .asset-pager {
+  flex: none; margin: 0;
+  padding-top: 8px; border-top: 1px solid var(--border);
+}
+
+/* The head row keeps its place while the rows move under it. */
+.cn-pane > .conn-trace-head { flex: none; }
+
+/* A sticky header needs an opaque background, or rows scroll through it. */
+.cn-pane-scroll thead th {
+  position: sticky; top: 0; z-index: 1;
+  background: var(--bg-raised);
+}
+
 /* The sheet covers the bottom of the canvas, so the caption moves out from
    under it rather than being hidden by it. */
 .cn-canvas:has(.cn-sheet) .cn-caption { display: none; }
