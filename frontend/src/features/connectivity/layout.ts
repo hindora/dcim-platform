@@ -683,20 +683,35 @@ export function layoutRooms(nodes: TopologyNode[]): {
   const bands = [...BANDS, ...[...byRoom.keys()].filter((r) => !named.has(r))
     .map((r) => [r])];
 
+  // Measure every band before placing any of it: the bands are CENTRED on
+  // each other, and the IT floor across the top is much the widest, so the
+  // plant below it hangs under the middle of the halls rather than trailing
+  // off the left edge of a drawing five times its own width.
+  const sized = bands
+    .map((band) => band.filter((r) => byRoom.has(r))
+      .map((room) => {
+        const { rows, cols } = plans.get(room)!;
+        return { room, rows,
+                 w: cols * X_PITCH - GAP_X,
+                 h: rows.length * ROW_PITCH - GAP_Y };
+      }))
+    .filter((band) => band.length)
+    .map((band) => ({
+      band,
+      width: band.reduce((sum, r) => sum + r.w, 0)
+        + ROOM_GAP_X * (band.length - 1),
+    }));
+
+  const width = Math.max(0, ...sized.map((b) => b.width));
+
   const placed: Placed[] = [];
   const rooms: RoomBox[] = [];
   let y = 0;
-  let width = 0;
 
-  for (const band of bands) {
-    const present = band.filter((r) => byRoom.has(r));
-    if (!present.length) continue;
-    let x = 0;
+  for (const { band, width: bandW } of sized) {
+    let x = Math.round((width - bandW) / 2);
     let bandH = 0;
-    for (const room of present) {
-      const { rows, cols } = plans.get(room)!;
-      const w = cols * X_PITCH - GAP_X;
-      const h = rows.length * ROW_PITCH - GAP_Y;
+    for (const { room, rows, w, h } of band) {
       rooms.push({ id: room, name: room, x, y, width: w, height: h,
                    count: byRoom.get(room)!.length });
       rows.forEach((group, ri) => {
@@ -707,7 +722,6 @@ export function layoutRooms(nodes: TopologyNode[]): {
       x += w + ROOM_GAP_X;
       bandH = Math.max(bandH, h);
     }
-    width = Math.max(width, x - ROOM_GAP_X);
     y += bandH + ROOM_GAP_Y;
   }
 
