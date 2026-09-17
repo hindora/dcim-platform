@@ -673,7 +673,7 @@
 .conn-chain li.is-self { font-family: var(--mono); color: var(--text-muted); }
 
 .conn-drawer-actions {
-  display: flex; align-items: center; gap: 8px;
+  display: flex; align-items: center; gap: 6px;
   margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border);
   /* Two words per control in 246px: a shade smaller keeps all three on one
      line instead of building a three-storey footer inside a 274px drawer. */
