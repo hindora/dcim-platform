@@ -484,20 +484,23 @@
 .cn-room {
   width: 100%; height: 100%;
   box-sizing: border-box;
-  border: 1px dashed var(--border-strong);
+  /* Dashed, and in the muted ink: a solid line in a conductor colour would be
+     read as a conductor. Width is set inline, against the zoom. */
+  border-style: dashed;
+  border-color: var(--text-faint);
   border-radius: 10px;
-  background: color-mix(in srgb, var(--bg-raised) 45%, transparent);
+  background: color-mix(in srgb, var(--text-faint) 7%, transparent);
   pointer-events: none;
 }
 
 .cn-room-name {
-  position: absolute; top: 6px; left: 12px;
-  display: inline-flex; align-items: center; gap: 6px;
-  font-size: 0.66rem; font-weight: 700; letter-spacing: .08em;
-  text-transform: uppercase; color: var(--text-faint);
+  position: absolute;
+  display: inline-flex; align-items: center;
+  font-weight: 700; letter-spacing: .08em; line-height: 1;
+  text-transform: uppercase; color: var(--text-muted);
+  white-space: nowrap;
 }
 .cn-room-count {
-  padding: 0 5px; border-radius: 8px;
   background: var(--bg-inset); color: var(--text-muted);
   font-weight: 600; letter-spacing: 0;
   font-variant-numeric: tabular-nums;
