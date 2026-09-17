@@ -7,7 +7,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import Principal, current_principal
 from app.db.session import get_session
-from app.schemas import ImpactOut, RedundancyOut, TopologyOut, TraceOut
+from app.schemas import (
+    ImpactOut,
+    PathOut,
+    RedundancyOut,
+    TopologyOut,
+    TraceOut,
+)
 from app.services import topology as service
 
 router = APIRouter(prefix="/topology", tags=["topology"])
@@ -76,6 +82,29 @@ async def get_trace(
     """
     try:
         return await service.get_trace(session, device_id=device_id, layer=layer)
+    except service.TopologyError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from None
+
+
+@router.get("/path", response_model=PathOut,
+            summary="How two devices are related on one layer")
+async def get_path(
+    src: str = Query(..., description="Device id"),
+    dst: str = Query(..., description="Device id"),
+    layer: str = Query("power", description="power | cooling | network | …"),
+    session: AsyncSession = Depends(get_session),
+    _: Principal = Depends(current_principal),
+) -> PathOut:
+    """Asked when deciding whether two racks can share a maintenance window.
+
+    Returns the walk between them AND what they both hang off, because only
+    the second answers the question. On a power layer two loads are leaves:
+    any connection runs up from one and back down to the other, so the
+    existence of a walk says little more than that they are in the same
+    building. `independent` is true when nothing is upstream of both.
+    """
+    try:
+        return await service.get_path(session, src=src, dst=dst, layer=layer)
     except service.TopologyError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from None
 

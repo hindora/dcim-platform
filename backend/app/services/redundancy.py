@@ -94,7 +94,7 @@ class Finding:
     shared_by: int = 0
 
 
-def _nearest(graph: Graph, shared: set[str]) -> set[str]:
+def nearest_shared(graph: Graph, shared: set[str]) -> set[str]:
     """The MEET POINT: the shared ancestors closest to the load.
 
     Everything above a meet point is also shared, so the raw intersection
@@ -114,7 +114,7 @@ def _meet_points(graph: Graph, dev: str) -> set[str]:
         return set()
     shared = set.intersection(*(ancestors(graph, ups) for ups in by_side.values()))
     shared.discard(dev)
-    return _nearest(graph, shared) if shared else set()
+    return nearest_shared(graph, shared) if shared else set()
 
 
 def structural(graph: Graph) -> tuple[set[str], dict[str, int]]:

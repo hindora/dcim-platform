@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections import defaultdict
 from typing import Any
 
 from redis.asyncio import Redis
@@ -23,6 +24,7 @@ from app.schemas import (
     ImpactNode,
     ImpactOut,
     LocationRef,
+    PathOut,
     RedundancyFinding,
     RedundancyOut,
     Termination,
@@ -585,6 +587,89 @@ async def get_redundancy(session: AsyncSession, *, layer: str,
     out.findings.sort(key=lambda f: (order.get(f.kind, 9), f.device.name))
     log.info("redundancy audited", layer=layer_value, scope=scope,
              examined=out.examined, **counts)
+    return out
+
+
+async def get_path(session: AsyncSession, *, src: str, dst: str,
+                   layer: str) -> PathOut:
+    """How two devices are related on one layer.
+
+    Specified in docs/10 section 6 and never built. The question behind it is
+    asked when someone is deciding whether two racks can take the same
+    maintenance window: ARE THESE INDEPENDENT.
+
+    A walk between them does not answer that, which is why this returns both.
+    On a power layer two loads are leaves - any connection between them runs up
+    from one and back down to the other, and the fact that one exists says only
+    that they are in the same building. What answers the question is what they
+    both hang off, so the shared upstream is computed as well and named
+    nearest-first.
+    """
+    layer_value = resolve_layer(layer)
+    for ident in (src, dst):
+        try:
+            uuid.UUID(ident)
+        except ValueError:
+            raise TopologyError(f"device id {ident!r} is not a UUID") from None
+
+    brief = await repo.devices_brief(session, sorted({src, dst}))
+    for ident in (src, dst):
+        if ident not in brief:
+            raise TopologyError(f"no device {ident}")
+
+    graph = redundancy_svc.Graph()
+    for e in await repo.layer_edges(session, layer_value):
+        graph.add(e["up"], e["down"], e.get("redundancy_side"))
+
+    # Undirected breadth-first, because the connection is not a flow.
+    adjacent: dict[str, set[str]] = defaultdict(set)
+    for node, ups in graph.upstream.items():
+        for up in ups:
+            adjacent[node].add(up)
+            adjacent[up].add(node)
+
+    prev: dict[str, str | None] = {src: None}
+    queue = [src]
+    for cur in queue:
+        if cur == dst:
+            break
+        for nxt in sorted(adjacent.get(cur, ())):
+            if nxt not in prev:
+                prev[nxt] = cur
+                queue.append(nxt)
+
+    walk: list[str] = []
+    if dst in prev:
+        node: str | None = dst
+        while node is not None:
+            walk.append(node)
+            node = prev[node]
+        walk.reverse()
+
+    shared = (redundancy_svc.ancestors(graph, {src})
+              & redundancy_svc.ancestors(graph, {dst}))
+    shared -= {src, dst}
+    nearest = redundancy_svc.nearest_shared(graph, shared) if shared else set()
+
+    wanted = set(walk) | nearest | {src, dst}
+    brief = await repo.devices_brief(session, sorted(wanted))
+
+    def node_of(dev_id: str) -> ImpactNode:
+        row = brief.get(dev_id)
+        return ImpactNode(**row) if row else ImpactNode(
+            id=dev_id, name=dev_id, device_type="unknown")
+
+    out = PathOut(
+        layer=layer, src=node_of(src), dst=node_of(dst),
+        hops=[node_of(i) for i in walk],
+        connected=bool(walk),
+        shared_upstream=sorted((node_of(i) for i in nearest),
+                               key=lambda n: n.name),
+        independent=not nearest,
+    )
+    log.info("path walked", layer=layer_value, src=out.src.name,
+             dst=out.dst.name, hops=len(out.hops),
+             independent=out.independent)
     return out
 
 

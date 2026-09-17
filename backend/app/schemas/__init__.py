@@ -433,6 +433,25 @@ class RedundancyOut(BaseModel):
     counts: dict[str, int] = Field(default_factory=dict)
 
 
+class PathOut(BaseModel):
+    layer: str
+    src: ImpactNode
+    dst: ImpactNode
+    # The shortest walk between them, ignoring flow direction: on a power
+    # layer two loads are both leaves, so any connection runs UP from one and
+    # back DOWN to the other and there is no directed path at all.
+    hops: list[ImpactNode] = Field(default_factory=list)
+    connected: bool = False
+    # The real answer to "are these two independent". Two racks on separate
+    # feeders can still be one breaker away from each other, and a walk
+    # between them says nothing about that - what says it is what they both
+    # hang off. Nearest-first, so the closest common point is the one named.
+    shared_upstream: list[ImpactNode] = Field(default_factory=list)
+    # No equipment upstream of both. On a directed layer this is the whole
+    # question; on ethernet there is no upstream and it is always false.
+    independent: bool = False
+
+
 class DeviceStateOut(BaseModel):
     device_id: str
     status: str
