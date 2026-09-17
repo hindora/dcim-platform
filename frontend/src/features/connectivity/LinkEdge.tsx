@@ -54,11 +54,17 @@ function LinkEdge(props: EdgeProps) {
     : d.side === 'A' ? colors.series[0]
     : d.side === 'B' ? colors.series[1]
     : layerStroke;
-  // A plain dash is reserved for `down`: a B-side feeder that has failed must
-  // not look like a B-side feeder that is fine.
-  const dash = down ? '5 3'
-    : d.side === 'B' ? '10 4 2 4'
-    : d.animated ? '7 5' : undefined;
+
+  // A DASH MEANS FLOW, and nothing else. It was doing three jobs at once -
+  // side B, a failed link, and the cooling loop - and an idiom that means
+  // three things means none of them. It belongs to the loop, where it is
+  // animated and reads as water moving; everything else is a solid line.
+  //
+  // What the other two lose it in, they keep elsewhere. A failed link is
+  // critical red AND carries the word DOWN. Side B is the chart ramp's second
+  // colour AND sits in its own column on the one-line - position was always
+  // the primary channel there, the dash was the third.
+  const dash = d.animated && !down ? '7 5' : undefined;
 
   const [path, labelX, labelY] = getBezierPath({
     sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition,

@@ -189,20 +189,25 @@ function DeviceNode({ data, selected }: NodeProps) {
       <Handle type="target" position={Position.Top} className="cn-handle" />
       <Handle type="source" position={Position.Bottom} className="cn-handle" />
 
+      {/* Stacked and centred, the way the simulator draws one: glyph, name,
+          one line of detail. A wide horizontal card carried more text and cost
+          twice the canvas per device, which is the wrong trade on a diagram
+          whose whole problem is fitting a hall on a screen. */}
       <span className="cn-glyph"><TypeGlyph type={n.device_type} /></span>
 
-      <span className="cn-body">
-        <span className="cn-name" title={n.name}>{n.name}</span>
-        <span className="cn-meta">
-          <span className="cn-sub">
-            {rolled ? `${n.rolled_up} × ${n.device_type.replace(/_/g, ' ')}`
-                    : n.device_type.replace(/_/g, ' ')}
-            {rolled && n.offline_count > 0 && (
-              <span className="cn-off"> · {n.offline_count} off</span>
-            )}
-          </span>
-          {draw != null && <span className="cn-load">{watts(draw)}</span>}
-        </span>
+      <span className="cn-name" title={n.name}>{n.name}</span>
+
+      {/* One line, and the load wins it where there is one: on the power layer
+          the draw is the number being read, and the type is already in the
+          colour and the glyph. */}
+      <span className="cn-sub">
+        {draw != null ? watts(draw)
+          : rolled ? `${n.rolled_up} × ${n.device_type.replace(/_/g, ' ')}`
+          : n.device_type.replace(/_/g, ' ')}
+        {rolled && draw != null && ` · ${n.rolled_up}`}
+        {rolled && n.offline_count > 0 && (
+          <span className="cn-off"> · {n.offline_count} off</span>
+        )}
       </span>
 
       <StatusPip status={n.status} severity={n.max_severity} />

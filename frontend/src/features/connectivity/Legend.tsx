@@ -2,9 +2,12 @@ import { useChartColors } from '../../components/seriesColors';
 
 /** What the lines and the bar mean.
  *
- *  Only shown when there is more than one thing to tell apart. The A/B
- *  swatches carry their pattern as well as their hue, because that is the
- *  distinction the diagram is making and hue is its weakest channel.
+ *  Only shown when there is more than one thing to tell apart.
+ *
+ *  The swatches are solid, because the lines are. A dash on this canvas means
+ *  FLOW and belongs to the cooling loop alone; A and B are told apart by
+ *  colour here and by which column they sit in on the diagram, which was
+ *  always the stronger channel of the two.
  */
 export function Legend({ sides, showLoad, simulating }: {
   sides: string[]; showLoad: boolean; simulating?: boolean;
@@ -23,11 +26,11 @@ export function Legend({ sides, showLoad, simulating }: {
     <div className="cn-legend">
       {sides.length > 1 && sides.map((s) => (
         <span key={s}>
-          {s === 'A' ? line(colors.series[0]) : line(colors.series[1], '10 4 2 4')}
+          {line(s === 'A' ? colors.series[0] : colors.series[1])}
           Side {s}
         </span>
       ))}
-      <span>{line('var(--critical)', '5 3')}Down</span>
+      <span>{line('var(--critical)')}Down</span>
       {simulating && (
         <>
           <span><span className="cn-key is-cut" />Goes dark</span>

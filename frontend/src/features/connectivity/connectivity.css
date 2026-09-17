@@ -69,20 +69,20 @@
 /* --- top left: the viewport controls ------------------------------------- */
 
 .cn-toolbar {
-  top: 12px; left: 12px;
-  display: flex; align-items: center; gap: 1px; padding: 3px;
+  top: 10px; left: 10px;
+  display: flex; align-items: center; gap: 1px; padding: 2px;
 }
 
 .cn-toolbar button {
   display: flex; align-items: center; justify-content: center;
-  width: 28px; height: 28px; padding: 0; border-radius: 6px;
+  width: 24px; height: 24px; padding: 0; border-radius: 5px;
 }
 .cn-toolbar button:hover { background: var(--bg-inset); }
 .cn-toolbar button.is-on { background: var(--bg-inset); color: var(--accent); }
 
 .cn-zoom {
-  min-width: 44px; height: 28px; padding: 0 4px; border-radius: 6px;
-  font-size: 0.72rem; font-variant-numeric: tabular-nums;
+  min-width: 38px; height: 24px; padding: 0 3px; border-radius: 5px;
+  font-size: 0.66rem; font-variant-numeric: tabular-nums;
   color: var(--text-muted);
 }
 .cn-zoom:hover { background: var(--bg-inset); }
@@ -90,14 +90,14 @@
 /* --- top centre: the layer ------------------------------------------------ */
 
 .cn-layers {
-  top: 12px; left: 50%; transform: translateX(-50%);
-  display: flex; gap: 2px; padding: 3px;
+  top: 10px; left: 50%; transform: translateX(-50%);
+  display: flex; gap: 1px; padding: 2px;
 }
 
 .cn-layers button {
-  padding: 5px 12px; border-radius: 6px;
+  padding: 4px 9px; border-radius: 5px;
   border: 1px solid transparent;
-  font-size: 0.68rem; font-weight: 700; letter-spacing: .08em;
+  font-size: 0.6rem; font-weight: 700; letter-spacing: .07em;
 }
 .cn-layers button:hover { background: var(--bg-inset); }
 
@@ -109,27 +109,27 @@
 /* --- top right: scope and the sheets -------------------------------------- */
 
 .cn-topright {
-  position: absolute; top: 12px; right: 12px; z-index: 6;
-  display: flex; align-items: flex-start; gap: 8px;
+  position: absolute; top: 10px; right: 10px; z-index: 6;
+  display: flex; align-items: flex-start; gap: 6px;
 }
 
 .cn-scope, .cn-sheets { position: relative; top: 0; right: 0; }
 
 .cn-scope-btn {
   display: flex; flex-direction: column; align-items: flex-start; gap: 1px;
-  padding: 5px 12px; border-radius: 8px; max-width: 230px;
+  padding: 4px 10px; border-radius: 7px; max-width: 200px;
 }
 .cn-scope-btn:hover { background: var(--bg-inset); }
 .cn-scope-room {
-  font-size: 0.78rem; font-weight: 600; color: var(--text);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 206px;
+  font-size: 0.7rem; font-weight: 600; color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px;
 }
-.cn-scope-sub { font-size: 0.66rem; color: var(--text-faint); }
+.cn-scope-sub { font-size: 0.6rem; color: var(--text-faint); }
 
 .cn-pop {
   position: absolute; top: calc(100% + 6px); right: 0; z-index: 7;
   display: flex; flex-direction: column; gap: 9px;
-  width: 244px; padding: 11px 12px;
+  width: 218px; padding: 9px 10px;
   border: 1px solid var(--border); border-radius: 8px;
   background: var(--bg-raised);
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.46);
@@ -138,19 +138,19 @@
 
 .cn-pop label {
   display: flex; flex-direction: column; gap: 3px;
-  font-size: 0.66rem; letter-spacing: .06em; text-transform: uppercase;
+  font-size: 0.6rem; letter-spacing: .06em; text-transform: uppercase;
   color: var(--text-faint);
 }
 .cn-pop select {
-  height: 28px; padding: 0 6px; font-size: 0.78rem;
+  height: 24px; padding: 0 5px; font-size: 0.7rem;
   background: var(--bg-inset); color: var(--text);
   border: 1px solid var(--border); border-radius: 5px;
 }
 
-.cn-sheets { display: flex; gap: 2px; padding: 3px; }
+.cn-sheets { display: flex; gap: 1px; padding: 2px; }
 .cn-sheets button {
-  padding: 7px 11px; border-radius: 6px;
-  font-size: 0.68rem; font-weight: 700; letter-spacing: .08em;
+  padding: 6px 9px; border-radius: 5px;
+  font-size: 0.6rem; font-weight: 700; letter-spacing: .07em;
 }
 .cn-sheets button:hover { background: var(--bg-inset); }
 .cn-sheets button.is-on {
@@ -161,25 +161,25 @@
 /* --- the simulation banner ------------------------------------------------ */
 
 .cn-sim {
-  top: 58px; left: 50%; transform: translateX(-50%);
-  display: flex; align-items: center; gap: 10px;
-  max-width: min(760px, calc(100% - 32px));
-  padding: 7px 10px;
+  top: 44px; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 8px;
+  max-width: min(700px, calc(100% - 28px));
+  padding: 5px 8px;
   border-color: var(--warn);
   background: color-mix(in srgb, var(--warn) 12%, var(--bg-raised));
-  font-size: 0.8rem;
+  font-size: 0.72rem;
 }
 
 .cn-sim-tag {
   flex: none; padding: 1px 6px; border-radius: 3px;
   background: var(--warn); color: var(--bg);
-  font-size: 0.62rem; font-weight: 700; letter-spacing: .08em;
+  font-size: 0.56rem; font-weight: 700; letter-spacing: .08em;
 }
 .cn-sim-text { flex: 1; min-width: 0; color: var(--text); }
 .cn-sim button {
-  flex: none; padding: 3px 9px; border-radius: 5px;
+  flex: none; padding: 2px 8px; border-radius: 4px;
   border: 1px solid var(--border-strong); color: var(--text);
-  font-size: 0.72rem;
+  font-size: 0.66rem;
 }
 .cn-sim button:hover { border-color: var(--accent); background: var(--bg-inset); }
 .cn-sim button.is-clear { color: var(--text-muted); }
@@ -187,11 +187,11 @@
 /* --- bottom left: what is drawn, and what is not -------------------------- */
 
 .cn-caption {
-  bottom: 12px; left: 12px;
-  max-width: calc(100% - 24px);
-  display: flex; align-items: center; flex-wrap: wrap; gap: 4px 14px;
-  padding: 7px 12px;
-  font-size: 0.72rem; color: var(--text-muted);
+  bottom: 10px; left: 10px;
+  max-width: calc(100% - 20px);
+  display: flex; align-items: center; flex-wrap: wrap; gap: 3px 12px;
+  padding: 5px 10px;
+  font-size: 0.66rem; color: var(--text-muted);
 }
 .cn-caption b { color: var(--text); font-variant-numeric: tabular-nums; }
 .cn-caption .warn { color: var(--warn); }
@@ -214,7 +214,7 @@
 /* --- the sheet: an answer ABOUT the canvas, not instead of it -------------- */
 
 .cn-sheet {
-  position: absolute; left: 12px; right: 12px; bottom: 12px; z-index: 8;
+  position: absolute; left: 10px; right: 10px; bottom: 10px; z-index: 8;
   display: flex; flex-direction: column;
   max-height: min(52%, 470px);
   border: 1px solid var(--border); border-radius: 10px;
@@ -245,14 +245,16 @@
 
 .cn-node {
   position: relative;
-  display: grid;
-  grid-template-columns: 22px minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 8px;
+  justify-content: center;
+  gap: 1px;
   box-sizing: border-box;
-  padding: 0 9px;
+  padding: 3px 6px;
+  text-align: center;
   border: 2px solid transparent;   /* colour set inline, matches the fill */
-  border-radius: 6px;
+  border-radius: 5px;
   overflow: hidden;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
   transition: filter .13s, box-shadow .13s, transform .13s;
@@ -267,51 +269,45 @@
 }
 
 /* Pulled in from outside the requested scope: present because something in the
-   scope depends on it, not because it lives there. */
-.cn-node.is-outside { border-style: dashed; opacity: 0.74; }
+   scope depends on it, not because it lives there. Said with weight and a
+   lighter edge rather than a dashed one - on this canvas a dash means FLOW,
+   and one idiom cannot mean two things. */
+.cn-node.is-outside { opacity: 0.6; }
 .cn-node.is-off { opacity: 0.5; filter: grayscale(0.75); }
 
 /* A rolled-up box stands for a rack's worth of equipment, so it wears the
    stack: a second card peeking out behind it. */
 .cn-node.is-rolled::after {
   content: '';
-  position: absolute; inset: auto 6px -4px 6px; height: 4px;
-  border-radius: 0 0 6px 6px;
+  position: absolute; inset: auto 5px -3px 5px; height: 3px;
+  border-radius: 0 0 5px 5px;
   background: inherit; filter: brightness(0.8);
   z-index: -1;
 }
 
-.cn-glyph { display: flex; align-items: center; color: var(--on-solid); opacity: .92; }
-
-.cn-body { display: flex; flex-direction: column; min-width: 0; gap: 1px; }
+.cn-glyph {
+  display: flex; color: var(--on-solid); opacity: .9;
+  line-height: 1; margin-bottom: 1px;
+}
 
 .cn-name {
+  max-width: 100%;
   font-family: var(--mono);
-  font-size: 11px; font-weight: 700;
+  font-size: 9px; font-weight: 700; line-height: 1.15;
   color: var(--on-solid);
-  padding-right: 12px;   /* clears the status pip */
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
-.cn-meta {
-  display: flex; align-items: baseline; justify-content: space-between;
-  gap: 8px; min-width: 0;
-}
-
 .cn-sub {
-  font-size: 9.5px; color: var(--node-label);
+  max-width: 100%;
+  font-size: 8px; line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+  color: var(--node-label);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .cn-off { color: var(--on-solid); font-weight: 700; }
 
-.cn-load {
-  flex: none;
-  font-family: var(--mono); font-size: 9.5px;
-  font-variant-numeric: tabular-nums;
-  color: var(--node-label);
-}
-
-.cn-pip { position: absolute; top: 6px; right: 7px; }
+.cn-pip { position: absolute; top: 3px; right: 3px; }
 
 /* Draw against rating along the bottom edge. A rating nobody recorded is a
    hatched groove with no fill: "no limit recorded" is not 0 %. */
@@ -335,9 +331,9 @@
 .cn-node.is-candidate { opacity: .45; filter: grayscale(.7); }
 
 .cn-verdict {
-  position: absolute; right: 0; bottom: 3px;
-  padding: 0 5px 0 6px; border-radius: 3px 0 0 3px;
-  font-size: 8.5px; font-weight: 700; letter-spacing: .03em;
+  position: absolute; left: 0; right: 0; bottom: 0;
+  padding: 0 2px; border-radius: 0;
+  font-size: 7.5px; font-weight: 700; letter-spacing: .02em;
   text-transform: uppercase;
   color: var(--bg); background: var(--critical);
 }
@@ -373,8 +369,8 @@
 /* --- legend --------------------------------------------------------------- */
 
 .cn-legend {
-  display: flex; flex-wrap: wrap; gap: 4px 13px; align-items: center;
-  font-size: 0.7rem; color: var(--text-muted);
+  display: flex; flex-wrap: wrap; gap: 3px 11px; align-items: center;
+  font-size: 0.64rem; color: var(--text-muted);
 }
 .cn-legend span { display: inline-flex; align-items: center; gap: 5px; }
 
@@ -403,9 +399,9 @@
      diagram - the picture flinched away from the thing you had just clicked
      on it. */
   position: absolute;
-  top: 66px; right: 12px; bottom: 12px;
+  top: 46px; right: 10px; bottom: 10px;
   z-index: 6;
-  width: 306px;
+  width: 274px;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--bg-raised);
@@ -430,7 +426,7 @@
 
 /* A simulation banner is centred at the same height the drawer starts, so the
    drawer drops below it rather than fighting it for the corner. */
-.cn-canvas:has(.cn-sim) .conn-drawer { top: 112px; }
+.cn-canvas:has(.cn-sim) .conn-drawer { top: 86px; }
 
 @media (max-width: 820px) {
   .conn-drawer { width: auto; left: 12px; }
@@ -479,8 +475,7 @@
   border: 1px solid var(--border-strong); border-radius: 3px; padding: 0 3px;
 }
 .conn-side.side-a { border-color: var(--series-1); color: var(--series-1); }
-.conn-side.side-b { border-color: var(--series-2); color: var(--series-2);
-                    border-style: dashed; }
+.conn-side.side-b { border-color: var(--series-2); color: var(--series-2); }
 
 /* --- the trace table ----------------------------------------------------- */
 

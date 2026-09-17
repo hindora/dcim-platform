@@ -34,13 +34,13 @@ export interface CollapsedEdge {
   sides: string[];
 }
 
-export const NODE_W = 196;
+export const NODE_W = 104;
 /** Three lines: name, type, and the capacity bar. A one-line diagram without
  *  capacity on it is a picture - the number that decides anything is the live
  *  draw against what the thing is built to take. */
-export const NODE_H = 56;
-const GAP_X = 26;
-const GAP_Y = 68;
+export const NODE_H = 48;
+const GAP_X = 22;
+const GAP_Y = 56;
 /** Widest a rank may get before it wraps onto another line. A rank holding a
  *  hall's worth of servers is 140 wide; strung out in one row it would be
  *  13000 px and unreadable. */
