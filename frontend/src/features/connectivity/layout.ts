@@ -152,6 +152,103 @@ export function sideOf(nodes: TopologyNode[], edges: CollapsedEdge[]):
   return out;
 }
 
+/** A cooling circuit drawn as one: supply down the left, the units it serves
+ *  across the bottom, the return back up the right.
+ *
+ *  Chilled water is a CYCLE, and the layered rank strings it out as a ladder
+ *  with the return header stranded at the bottom as though it were another
+ *  load. It is not a load - it is the same pipe coming back, and an operator
+ *  reading a cooling diagram is looking for a circuit. Bending the ranks
+ *  around a U puts the supply header and the return header next to each other
+ *  at the top, where the loop visibly closes.
+ *
+ *  Structural, not a device-type template. The plan called for a fixed stage
+ *  list - tower, condenser, chiller, primary pump, secondary pump, header,
+ *  terminal - and that is a table to keep in step with every estate that ever
+ *  differs from this one. The shape is already in the graph: the widest rank
+ *  is where the plant fans out into the units it serves, everything above it
+ *  is supply and everything below it is return.
+ *
+ *  Returns null when the graph is not that shape - too few ranks, or the
+ *  widest rank at one end, which is a tree and not a circuit. The caller falls
+ *  back to the layered layout rather than bending a ladder into a U and
+ *  claiming it is a loop.
+ */
+function layoutLoop(nodes: TopologyNode[], edges: CollapsedEdge[]): {
+  placed: Placed[]; width: number; height: number;
+} | null {
+  const rank = rankNodes(nodes, edges);
+  const byRank = new Map<number, TopologyNode[]>();
+  for (const n of nodes) {
+    const r = rank.get(n.id) ?? 0;
+    (byRank.get(r) ?? byRank.set(r, []).get(r)!).push(n);
+  }
+  const ranks = [...byRank.keys()].sort((a, b) => a - b);
+  if (ranks.length < 3) return null;
+
+  let widest = ranks[0];
+  for (const r of ranks) {
+    if (byRank.get(r)!.length > byRank.get(widest)!.length) widest = r;
+  }
+  if (widest === ranks[0] || widest === ranks[ranks.length - 1]) return null;
+
+  const step = NODE_W + GAP_X;
+  const rowH = NODE_H + GAP_Y;
+  const ordered = (r: number) => byRank.get(r)!.slice().sort((a, b) =>
+    a.device_type.localeCompare(b.device_type) || a.name.localeCompare(b.name));
+
+  const terminals = ordered(widest);
+  const perLine = Math.min(MAX_PER_LINE, terminals.length);
+  const termWidth = perLine * step;
+  const supply = ranks.filter((r) => r < widest);
+  const ret = ranks.filter((r) => r > widest);
+  const legs = Math.max(supply.length, ret.length);
+
+  // The legs sit outside the terminal row, one step clear of it, so a pipe
+  // never runs underneath a unit it does not serve.
+  const legX = termWidth / 2 + step * 0.6;
+  const placed: Placed[] = [];
+
+  supply.forEach((r, i) => {
+    const row = ordered(r);
+    row.forEach((n, j) => placed.push({
+      node: n,
+      x: -legX - (row.length - 1 - j) * step,
+      y: i * rowH,
+    }));
+  });
+
+  // Ascending: the rank just below the terminals sits at the BOTTOM of the
+  // right-hand leg and the final sink at the top, so the water is read as
+  // coming back up to where it started.
+  ret.forEach((r, i) => {
+    const row = ordered(r);
+    row.forEach((n, j) => placed.push({
+      node: n,
+      x: legX + j * step,
+      y: (legs - 1 - i) * rowH,
+    }));
+  });
+
+  const termLines = Math.ceil(terminals.length / perLine);
+  terminals.forEach((n, i) => {
+    const line = Math.floor(i / perLine);
+    const col = i % perLine;
+    const inLine = Math.min(perLine, terminals.length - line * perLine);
+    placed.push({
+      node: n,
+      x: col * step - (inLine * step) / 2,
+      y: legs * rowH + line * (NODE_H + 12),
+    });
+  });
+
+  return {
+    placed,
+    width: 2 * legX + termWidth,
+    height: legs * rowH + termLines * (NODE_H + 12),
+  };
+}
+
 /** The layered layout, in two flavours.
  *
  *  `oneLine` splits each rank into an A column and a B column with the shared
@@ -165,12 +262,18 @@ export function sideOf(nodes: TopologyNode[], edges: CollapsedEdge[]):
  *  concept does not apply.
  */
 export function layout(nodes: TopologyNode[], edges: CollapsedEdge[],
-                       opts: { oneLine?: boolean } = {}): {
+                       opts: { oneLine?: boolean; loop?: boolean } = {}): {
   placed: Placed[];
   width: number;
   height: number;
 } {
   if (!nodes.length) return { placed: [], width: 0, height: 0 };
+
+  if (opts.loop) {
+    const circuit = layoutLoop(nodes, edges);
+    if (circuit) return circuit;
+    // Not a circuit shape. Fall through rather than bend a ladder into a U.
+  }
 
   const rank = rankNodes(nodes, edges);
   const side = opts.oneLine ? sideOf(nodes, edges) : null;

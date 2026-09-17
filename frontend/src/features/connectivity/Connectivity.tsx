@@ -48,10 +48,15 @@ const VIEWS = [
 type ViewKey = typeof VIEWS[number]['key'];
 
 /** Layers drawn as a one-line: A down the left, B down the right, shared and
- *  dual-fed equipment down the middle. Both are directed distribution chains
- *  with a labelled second path; ethernet has neither, and columns there would
- *  be two empty gutters around every switch. */
-const ONE_LINE = new Set(['power', 'cooling']);
+ *  dual-fed equipment down the middle. A directed distribution chain with a
+ *  labelled second path; ethernet has neither, and columns there would be two
+ *  empty gutters around every switch. */
+const ONE_LINE = new Set(['power']);
+
+/** Cooling is the layer that is a CIRCUIT rather than a chain: supply down one
+ *  side, the units it serves across the bottom, the return back up the other.
+ *  Falls back to the layered rank where the graph is not that shape. */
+const LOOP = new Set(['cooling']);
 
 /** Depth in words. "1" means nothing to someone who has not read the API spec,
  *  and the difference between 0 and 1 on the power layer is whether the
@@ -113,7 +118,8 @@ export function Connectivity() {
   const placement = useMemo(() => {
     if (!graph.data) return { placed: [], width: 0, height: 0 };
     if (cache.current?.key === key) return cache.current.value;
-    const value = layout(graph.data.nodes, edges, { oneLine: ONE_LINE.has(layer) });
+    const value = layout(graph.data.nodes, edges, {
+      oneLine: ONE_LINE.has(layer), loop: LOOP.has(layer) });
     cache.current = { key, value };
     return value;
   }, [graph.data, edges, key, layer]);
