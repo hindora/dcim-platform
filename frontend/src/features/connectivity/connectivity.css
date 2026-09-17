@@ -284,9 +284,15 @@
 /* --- the simulation banner ------------------------------------------------ */
 
 .cn-sim {
-  top: 44px; left: 50%; transform: translateX(-50%);
+  /* Centred over the DRAWING, not over the canvas: the banner wraps to two
+     lines on a narrow window, and centred on the canvas its second line went
+     behind the drawer - which is a z-index above it, so the sentence simply
+     stopped mid-way. Anchoring it between 10px and the drawer's edge keeps it
+     clear however tall it grows. */
+  top: 44px; left: 10px; right: var(--cn-right); transform: none;
+  width: fit-content; margin-inline: auto;
   display: flex; align-items: center; gap: 8px;
-  max-width: min(700px, calc(100% - 28px));
+  max-width: min(700px, 100%);
   padding: 5px 8px;
   border-color: var(--warn);
   background: color-mix(in srgb, var(--warn) 12%, var(--bg-raised));
@@ -688,10 +694,6 @@
 /* Tracks the sheet's own cap: raising the sheet to 64% without moving this
    put the drawer's bottom 12% INSIDE it. */
 .cn-canvas:has(.cn-sheet) .conn-drawer { bottom: calc(64% + 22px); }
-
-/* A simulation banner is centred at the same height the drawer starts, so the
-   drawer drops below it rather than fighting it for the corner. */
-.cn-canvas:has(.cn-sim) .conn-drawer { top: 86px; }
 
 /* Below this the canvas cannot host both a drawing and a 310px drawer, so the
    drawer takes the width. Against the CANVAS, not the window: the same 780px
