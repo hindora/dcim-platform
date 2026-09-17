@@ -210,7 +210,10 @@
      one band of canvas the drawing also wants; down the left it runs beside
      the drawing instead, and costs it 32px of width rather than 30px of the
      height every diagram here is short of. */
-  display: flex; flex-direction: column; align-items: stretch; gap: 1px;
+  /* CENTRE, not stretch. The buttons are a fixed 24px square and the zoom
+     readout is 32; stretched, the square ones sat against the left edge and
+     the column read as ragged the moment the readout went to three digits. */
+  display: flex; flex-direction: column; align-items: center; gap: 1px;
   padding: 2px;
 }
 
