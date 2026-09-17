@@ -129,10 +129,59 @@ def test_a_cycle_in_the_ancestry_terminates():
     assert isinstance(findings, list)
 
 
-def test_the_estate_tree_finds_the_switchgear_pair_under_the_dual_load():
-    """srv_dual IS dual fed, and both sides still pass through both boards.
-    That is a true fact and the audit says it rather than grading the load."""
+def test_only_the_meet_point_is_named_not_the_whole_trunk_above_it():
+    """Everything above a meet point is also shared, so the raw intersection
+    reports the switchgear AND the generators AND the utility. Naming four
+    devices when one of them is the answer buries it."""
     f = find(redundancy.audit(build(), {"srv_dual"}), "srv_dual")
     assert f and f.kind == "converged"
-    assert set(f.shared) == {"swgr1", "swgr2", "util", "gen1"}
+    assert set(f.shared) == {"swgr1", "swgr2"}, (
+        "the trunk above the meet point was reported as well")
     assert f.sides == ["A", "B"]
+
+
+# --- not crying wolf ---------------------------------------------------------
+
+def test_the_convergence_every_load_shares_is_the_architecture_not_a_finding():
+    """EVERY 2N estate converges - the A and B sides come off one switchgear
+    pair off one utility intake, and no downstream separation changes that.
+    Reported literally this fired on 108 of 137 devices in one hall and named
+    the same pair every time. A report that fires on everything is read once."""
+    loads = [(f"srv{i}", "A", "B") for i in range(6)]
+    extra = []
+    for name, a, b in loads:
+        extra += [("pdua", name, a), ("pdub", name, b)]
+    findings = redundancy.audit(build(extra), {n for n, _, _ in loads})
+    assert [f for f in findings if f.kind == "converged"] == []
+
+
+def test_a_convergence_only_one_load_has_survives_the_cull():
+    """The whole point. Five loads converge where everybody converges; the
+    sixth ALSO meets at an RPP of its own, and that one is the mistake."""
+    loads = [(f"srv{i}") for i in range(6)]
+    extra = []
+    for name in loads[:5]:
+        extra += [("pdua", name, "A"), ("pdub", name, "B")]
+    # srv5's two "sides" both hang off RPPA.
+    extra += [("rppa", "pduX", "B"), ("pduX", "srv5", "B"),
+              ("pdua", "srv5", "A")]
+    findings = redundancy.audit(build(extra), set(loads))
+    bad = [f for f in findings if f.kind == "converged"]
+    assert [f.device for f in bad] == ["srv5"]
+    assert "rppa" in bad[0].shared
+    assert bad[0].shared_by == 1
+
+
+def test_a_tiny_scope_is_not_generalised_from():
+    """Two dual-fed loads that both hang off one bad UPS must not have that
+    dismissed as the design. One observation is not a population."""
+    g = redundancy.Graph()
+    for up, down, side in [
+        ("ups", "rppa", "A"), ("ups", "rppb", "B"),
+        ("rppa", "srv1", "A"), ("rppb", "srv1", "B"),
+        ("rppa", "srv2", "A"), ("rppb", "srv2", "B"),
+    ]:
+        g.add(up, down, side)
+    findings = redundancy.audit(g, {"srv1", "srv2"})
+    assert {f.device for f in findings} == {"srv1", "srv2"}
+    assert all(f.shared == ["ups"] for f in findings)

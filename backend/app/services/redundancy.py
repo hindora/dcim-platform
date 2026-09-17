@@ -28,6 +28,11 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass, field
 
+#: Below this many converged loads there is no population to generalise from,
+#: so nothing is dismissed as the estate's architecture. See
+#: `_drop_the_architecture`.
+_MIN_TO_GENERALISE = 3
+
 
 @dataclass
 class Graph:
@@ -83,6 +88,23 @@ class Finding:
     shared: list[str] = field(default_factory=list)
     #: The sides actually present on the device's feeds.
     sides: list[str] = field(default_factory=list)
+    #: How many other examined devices meet at the same place. A convergence
+    #: everybody shares is the estate's architecture; one a handful share is
+    #: the defect. Ordering on this is what puts the defect at the top.
+    shared_by: int = 0
+
+
+def _nearest(graph: Graph, shared: set[str]) -> set[str]:
+    """The MEET POINT: the shared ancestors closest to the load.
+
+    Everything above a meet point is also shared, so the raw intersection
+    reports the whole trunk above it - the switchgear, then the generators,
+    then the utility intake. Naming four devices when one of them is the
+    answer buries it. A shared node is kept only if nothing else in the shared
+    set sits below it.
+    """
+    below = {n: graph.downstream.get(n, set()) & shared for n in shared}
+    return {n for n in shared if not below[n]}
 
 
 def audit(graph: Graph, candidates: set[str]) -> list[Finding]:
@@ -127,11 +149,66 @@ def audit(graph: Graph, candidates: set[str]) -> list[Finding]:
         shared = set.intersection(*sets)
         shared.discard(dev)
         if shared:
-            # Report the ones nearest the load first: the closer a convergence
-            # is, the more of the chain it takes with it.
             findings.append(Finding(
                 dev, 'converged',
-                shared=sorted(shared),
+                shared=sorted(_nearest(graph, shared)),
                 sides=sorted(by_side)))
 
-    return findings
+    return _drop_the_architecture(findings)
+
+
+def _drop_the_architecture(findings: list[Finding]) -> list[Finding]:
+    """Throw away the convergence that every dual-fed load has.
+
+    EVERY 2N estate converges. The A and B sides come off one switchgear pair,
+    which comes off one utility intake and one set of generators, and no amount
+    of downstream separation changes that - 2N means independent BELOW the
+    point of separation, not above it. Reported literally, the audit fired on
+    108 of 137 devices in one hall and named the same switchgear pair on all of
+    them. A finding that fires on everything is read once and then ignored,
+    which costs more than not having it.
+
+    The discriminator is not a device type and not a depth. It is how MANY
+    loads meet at the same place: if more than half the converged loads in
+    scope meet at a device, that device is the estate's shape, and if a handful
+    do it is a mistake somebody made in one row.
+
+    A MAJORITY, not unanimity. Requiring every converged load to share a meet
+    point before calling it structural is defeated by a single load with a
+    different one - in the fixture below, five loads meeting at the switchgear
+    and a sixth meeting at an RPP left the switchgear at five of six, so
+    nothing was dropped and the wolf-crying came straight back.
+
+    The count rides on the findings that survive, so the rarest sort to the
+    top: a convergence one load has is a likelier mistake than one twenty
+    share.
+    """
+    converged = [f for f in findings if f.kind == 'converged']
+    # You cannot call something "the architecture" from one observation. Below
+    # a handful of converged loads there is no population to generalise from,
+    # and over-reporting on a tiny scope is the right way to be wrong: a room
+    # with two dual-fed loads that both hang off one bad UPS must not have that
+    # dismissed as its design.
+    if len(converged) < _MIN_TO_GENERALISE:
+        return findings
+
+    at: dict[str, int] = defaultdict(int)
+    for f in converged:
+        for s in f.shared:
+            at[s] += 1
+
+    universal = {s for s, n in at.items() if n * 2 > len(converged)}
+
+    kept: list[Finding] = []
+    for f in findings:
+        if f.kind != 'converged':
+            kept.append(f)
+            continue
+        specific = [s for s in f.shared if s not in universal]
+        if not specific:
+            # Meets the world only where the world meets. Architecture.
+            continue
+        f.shared = specific
+        f.shared_by = min(at[s] for s in specific)
+        kept.append(f)
+    return kept
