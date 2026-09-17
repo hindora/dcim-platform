@@ -14,7 +14,16 @@
 /* Full bleed. `:has` scopes this to the connectivity route so no other page
    gets a flex column it did not ask for, and `min-height: 0` is what lets the
    canvas shrink inside it instead of overflowing the viewport. */
-.shell:has(.conn-app) > main { display: flex; flex-direction: column; }
+.shell:has(.conn-app) { height: 100vh; overflow: hidden; }
+.shell:has(.conn-app) > main {
+  display: flex; flex-direction: column;
+  /* HEIGHT, not min-height. The shell is min-height: 100vh everywhere else so a
+     long page can push past the fold; here the rail is a list of every device
+     in the room, and a min-height lets that list stretch the row - which grew
+     the canvas to 2000px and pushed the diagram off the bottom of the window.
+     Pinned to the viewport, the rail scrolls inside itself instead. */
+  min-height: 0;
+}
 
 .conn-app { flex: 1; min-height: 0; display: flex; }
 

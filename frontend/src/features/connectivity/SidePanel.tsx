@@ -22,9 +22,11 @@ const DEPTHS = [
   { value: 2, label: 'Two hops out' },
 ];
 
+// Short labels: these two sit in a half-width select in the rail, and a label
+// the control cuts off mid-word is worse than a terse one.
 const ROLLUPS = [
-  { value: 'rack', label: 'Group rack equipment' },
-  { value: 'none', label: 'Every device separately' },
+  { value: 'rack', label: 'Group by rack' },
+  { value: 'none', label: 'Every device' },
 ] as const;
 
 function statusColor(status: string, severity: string): string {
