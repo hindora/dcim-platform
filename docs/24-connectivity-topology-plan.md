@@ -614,11 +614,11 @@ to get the information.
 
 Each phase ships something usable on its own.
 
-**Status at 2026-09-17: phases 0 to 6 are shipped, pushed and verified
-against the live estate — with TWO BULLETS NOT BUILT**, one in phase 3 and one
-in phase 6, listed under each and repeated in §14 so they are not lost. Both
-are the same shape: the machinery exists and one surface does not call it yet.
-What each phase actually cost and what it found is recorded under it.
+**Status at 2026-09-17: phases 0 to 6 are complete, shipped, pushed and
+verified against the live estate.** Two bullets were outstanding for part of
+the day - the impact overlay from the maintenance screens, and the "are these
+independent?" control - and both are now built; §14 records what they cost.
+What each phase cost and what it found is recorded under it.
 
 ### Phase 0 — make the page honest (0.5 day) — DONE
 
@@ -724,12 +724,14 @@ the bar is telling the truth about what is recorded.
 
 * *Simulate removal* on the selected node: cut-off set red, degraded set
   amber-outlined, counts in the drawer, list exportable.
-* **NOT BUILT: the same control from the maintenance-window screens**, which
-  is where the question actually gets asked. `api.impact` is wired and the
-  overlay works from the connectivity page only.
-  `features/assets/maintenance/WindowForm.tsx` already carries a comment about
-  showing "the impact graph and the power chain what this selection would
-  actually" affect — that is the hook point.
+* The same control from the maintenance-window screens, which is where the
+  question actually gets asked. Built as a deep link: every target row in a
+  window, and every redundancy warning in the scheduling form, carries
+  `?simulate=<device>&layer=power` into the connectivity page. The room is
+  resolved from the device rather than carried in the URL — a caller knows
+  which device it means and rarely which hall it is in — and the parameter is
+  consumed once and cleared, or it re-applies itself every time the operator
+  changes room afterwards.
 
 *Acceptance:* removing a UPS in a 2N room shows degraded-not-dark for
 dual-corded loads and dark for every single-corded one, and the list matches
@@ -809,10 +811,17 @@ bands wrap too.
   column — a worse lie than a crossing.
 * `GET /topology/path`, specified in `docs/10` §6 and never built.
 * `tools/crossings.mjs`, which measures it against the live API.
-* **NOT BUILT: the "are these independent?" control.** The endpoint answers
-  it; nothing in the UI asks. This bullet was quietly dropped when these were
-  rewritten after the fact — the plan was edited to match what shipped, which
-  is the wrong direction, and it is restored here.
+* The "are these independent?" control. Two pickers and a verdict at the top
+  of the redundancy tab — the same question as the audit below it, asked about
+  a pair rather than about everything. **The verdict is the shared upstream,
+  not the walk:** on a power layer two loads are leaves, a walk exists between
+  almost any pair in a building and says almost nothing, and what decides
+  whether they can share a window is what they both hang off. The walk prints
+  underneath as supporting detail.
+
+  This bullet was quietly dropped when these were rewritten after the fact —
+  the plan edited to match what shipped, which is the wrong direction. Noting
+  it because the edit was a worse mistake than the omission.
 
 **The measurement, and it settles elkjs.**
 
@@ -855,22 +864,28 @@ unopened. Re-run the tool before reopening it.
 | A 30 s cache + 15 s poll means acting on a 45 s-old picture | Print the graph's age on the diagram; drop this endpoint's TTL if operators object |
 | elkjs licence | Review before it lands; the default path does not need it |
 
-## 14. Still owed from phases 0–6
+## 14. The two bullets that were finished last
 
-Neither is a gap in the analysis; both are a surface that does not yet call
-machinery that exists and is tested.
+Both were a surface not calling machinery that already existed and was tested,
+and both are now built and verified live.
 
-1. **Impact from the maintenance-window screens** (phase 3). The window is
-   where "what breaks if I pull this" is actually asked; today it is only
-   askable from the connectivity page, which is not where somebody planning a
-   window is standing.
-2. **An "are these independent?" control** (phase 6). `GET /topology/path`
-   returns the walk, the shared upstream and an `independent` flag; no screen
-   calls it. Two rack pickers and a verdict line is the whole job.
+1. **Impact from the maintenance-window screens** (phase 3). Deep link from
+   every window target and every redundancy warning. Verified: opening
+   `?simulate=<RPPA>` lands on Server Hall A with "RPPA-DC1-HA-R1-04 removed —
+   9 lose power, 108 lose a redundancy side", the A-side PDUs dark and the
+   loads amber.
+2. **The "are these independent?" control** (phase 6). Verified: a CDU and a
+   CRAH in Hall A come back "Not independent. Both hang off ATS1-DC1-UR — one
+   window can take them both", with the six-device walk underneath.
 
-Also outstanding and cheaper: **code-split the connectivity route**. React
-Flow took the bundle from 655 kB to 856 kB (180 → 246 kB gzipped) and this is
-the only route that needs it.
+   One limit, stated in the UI rather than left to be discovered: the pickers
+   offer real devices only, because a rolled-up rack is a synthetic id the
+   endpoint would refuse. With grouping on the servers are therefore not in
+   the list, and the control says so and says which control to change.
+
+Still outstanding, and the only thing left on this page: **code-split the
+connectivity route**. React Flow took the bundle from 655 kB to 856 kB
+(180 → 246 kB gzipped) and this is the only route that needs it.
 
 ## 11. Deferred, deliberately
 

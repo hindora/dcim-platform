@@ -25,11 +25,14 @@ export function Independence({ nodes, layer }: {
   const [dst, setDst] = useState('');
 
   // Rolled-up boxes are synthetic ids the endpoint would refuse, so the
-  // pickers offer real devices only.
+  // pickers offer real devices only - which means that with grouping on, the
+  // servers are not in the list. Said out loud below rather than left as a
+  // list that mysteriously has no servers in it.
   const options = nodes
     .filter((n) => n.rolled_up === 0)
     .slice()
     .sort((a, b) => a.name.localeCompare(b.name));
+  const hidden = nodes.reduce((sum, n) => sum + n.rolled_up, 0);
 
   const q = useQuery<Path>({
     queryKey: ['path', src, dst, layer],
@@ -58,6 +61,14 @@ export function Independence({ nodes, layer }: {
         <span className="muted">and</span>
         {pick(dst, setDst, 'Second device')}
       </div>
+
+      {hidden > 0 && (
+        <p className="k">
+          {hidden} devices are grouped into racks and cannot be compared one to
+          one. Switch the grouping above to “Every device separately” to pick
+          them.
+        </p>
+      )}
 
       {src && dst && src === dst && (
         <p className="muted">Pick two different devices.</p>
