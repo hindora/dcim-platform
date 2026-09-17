@@ -222,8 +222,11 @@
 .cn-toolbar button.is-on { background: var(--bg-inset); color: var(--accent); }
 
 .cn-zoom {
-  min-width: 0; height: 24px; padding: 0 3px; border-radius: 5px;
-  font-size: 0.66rem; font-variant-numeric: tabular-nums;
+  /* Four characters at full zoom - "106%" - and in a column the readout is
+     the widest thing in the bar rather than a cell in a row, so it sets the
+     bar's width and must be told how much it needs. */
+  min-width: 32px; height: 24px; padding: 0 2px; border-radius: 5px;
+  font-size: 0.6rem; font-variant-numeric: tabular-nums;
   color: var(--text-muted);
 }
 .cn-zoom:hover { background: var(--bg-inset); }
