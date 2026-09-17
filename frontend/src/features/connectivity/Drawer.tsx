@@ -68,7 +68,12 @@ export function Drawer({ node, layer, onFullTrace, onClose, onSimulate, simulati
           <><dt>Scope</dt><dd>{node.depth} hop{node.depth > 1 ? 's' : ''} outside</dd></>)}
       </dl>
 
+      {/* Everything below the facts scrolls; the name at the top and the
+          actions at the bottom do not. A dual-fed device prints two chains of
+          six hops, and the buttons - which are the whole point of having
+          selected it - were underneath all of it. */}
       {rolled ? (
+        <div className="conn-drawer-scroll">
         <p className="muted">
           {node.rolled_up} devices collapsed into one box so the room is
           readable. Open the rack to see them individually.
@@ -76,8 +81,10 @@ export function Drawer({ node, layer, onFullTrace, onClose, onSimulate, simulati
             <> <Link to={`/racks/${node.location.rack_id}`}>Rack elevation →</Link></>
           )}
         </p>
+        </div>
       ) : (
         <>
+          <div className="conn-drawer-scroll">
           <h4>Fed by</h4>
           {trace.isLoading && <div className="asset-skeleton" style={{ height: 60 }} />}
           {trace.isError && (
@@ -131,6 +138,8 @@ export function Drawer({ node, layer, onFullTrace, onClose, onSimulate, simulati
               The two sides reach a source at different depths.
             </p>
           )}
+          </div>
+
           <div className="conn-drawer-actions">
             {/* The question asked before every maintenance window, and the
                 server has been able to answer it since the topology service

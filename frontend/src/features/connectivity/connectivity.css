@@ -395,7 +395,7 @@
    filtering the list, picking a shorter device, switching sheet - and a bar
    that appears and disappears shifts every line under it sideways. */
 .cn-rail-list,
-.conn-drawer,
+.conn-drawer-scroll,
 .conn-indep,
 .cn-sheet-body {
   scrollbar-gutter: stable;
@@ -404,17 +404,17 @@
 }
 
 .cn-rail-list::-webkit-scrollbar,
-.conn-drawer::-webkit-scrollbar,
+.conn-drawer-scroll::-webkit-scrollbar,
 .conn-indep::-webkit-scrollbar,
 .cn-sheet-body::-webkit-scrollbar { width: 10px; height: 10px; }
 
 .cn-rail-list::-webkit-scrollbar-track,
-.conn-drawer::-webkit-scrollbar-track,
+.conn-drawer-scroll::-webkit-scrollbar-track,
 .conn-indep::-webkit-scrollbar-track,
 .cn-sheet-body::-webkit-scrollbar-track { background: transparent; }
 
 .cn-rail-list::-webkit-scrollbar-thumb,
-.conn-drawer::-webkit-scrollbar-thumb,
+.conn-drawer-scroll::-webkit-scrollbar-thumb,
 .conn-indep::-webkit-scrollbar-thumb,
 .cn-sheet-body::-webkit-scrollbar-thumb {
   background: var(--border-strong);
@@ -424,7 +424,7 @@
 }
 
 .cn-rail-list:hover::-webkit-scrollbar-thumb,
-.conn-drawer:hover::-webkit-scrollbar-thumb,
+.conn-drawer-scroll:hover::-webkit-scrollbar-thumb,
 .conn-indep:hover::-webkit-scrollbar-thumb,
 .cn-sheet-body:hover::-webkit-scrollbar-thumb { background: var(--text-faint); }
 
@@ -593,11 +593,24 @@
   border-radius: 10px;
   background: var(--bg-raised);
   box-shadow: 0 8px 30px rgba(0, 0, 0, 0.48);
-  padding: 12px 6px 12px 14px;   /* right trimmed: the scrollbar gutter is
-                                    reserved inside the padding box */
+  padding: 12px 14px;
   font-size: 0.82rem;
-  overflow: auto;
+  /* A pane, like the sheets: the name and the actions hold still and the
+     chains move between them. */
+  display: flex; flex-direction: column;
+  overflow: hidden;
   animation: cn-slide .16s ease-out;
+}
+
+.conn-drawer > header,
+.conn-drawer > .conn-facts,
+.conn-drawer > .conn-drawer-actions { flex: none; }
+
+/* The scroller is pulled out to the drawer's own padding so the bar sits
+   where a bar belongs - on the panel edge - while the text keeps its inset. */
+.conn-drawer-scroll {
+  flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden;
+  margin-right: -8px; padding-right: 8px;
 }
 
 [data-theme='light'] .conn-drawer { box-shadow: 0 6px 22px rgba(31, 35, 40, 0.15); }
