@@ -286,20 +286,16 @@ export function Connectivity() {
         {/* ---- bottom left: what is on screen, and what is not ------------ */}
         {graph.data && !empty && (
           <div className="cn-float cn-caption">
-            <span>
-              <b>{graph.data.node_count}</b> boxes
-              {graph.data.device_count !== graph.data.node_count
-                && <> for {graph.data.device_count} devices</>}
-              {' · '}
-              <b>{edges.length}</b> lines
-              {graph.data.conductor_count !== edges.length
-                && <> for {graph.data.conductor_count} conductors</>}
-            </span>
+            {/* Just the key now. The box and line totals were a tally of what
+                is already on screen, and the rail says how many devices are on
+                the canvas; the key is the part that cannot be worked out by
+                looking at the drawing.
+
+                Truncation stays, and only truncation: a graph cut off at the
+                node cap is showing LESS than it appears to, which is the one
+                thing here the picture cannot say about itself. */}
             {graph.data.truncated && (
               <span className="warn">truncated — narrow the scope</span>
-            )}
-            {graph.data.unconnected_count > 0 && (
-              <span>{graph.data.unconnected_count} not on this layer, not drawn</span>
             )}
             <Legend sides={sides} showLoad={layer === 'power'}
                     simulating={Boolean(simulating)} />
