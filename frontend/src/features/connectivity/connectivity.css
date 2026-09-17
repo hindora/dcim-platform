@@ -596,9 +596,11 @@
   padding: 12px 14px;
   font-size: 0.82rem;
   /* A pane, like the sheets: the name and the actions hold still and the
-     chains move between them. */
+     chains move between them. `auto` rather than `hidden` is the safety net
+     for the letterbox case below - when there is not even room for the pane,
+     the drawer goes back to scrolling as one block rather than clipping. */
   display: flex; flex-direction: column;
-  overflow: hidden;
+  overflow: auto;
   animation: cn-slide .16s ease-out;
 }
 
@@ -608,8 +610,13 @@
 /* The scroller is pulled out to the drawer's own padding so the bar sits
    where a bar belongs - on the panel edge - while the text keeps its inset. */
 .conn-drawer-scroll {
-  flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden;
+  flex: 1; overflow-y: auto; overflow-x: hidden;
   margin-right: -8px; padding-right: 8px;
+  /* A floor, not zero. With a sheet up on a short window the drawer is ~130px
+     - about what the header and the actions need on their own - and a pane
+     whose middle has collapsed to nothing shows none of the chain at all.
+     Below this the drawer stops being a pane and scrolls as one block. */
+  min-height: 90px;
 }
 
 [data-theme='light'] .conn-drawer { box-shadow: 0 6px 22px rgba(31, 35, 40, 0.15); }
