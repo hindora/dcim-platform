@@ -151,10 +151,12 @@ export interface DeviceNodeData extends Record<string, unknown> {
   verdict: Verdict;
   cutWithin: number;
   isCandidate: boolean;
+  /** The room box this device belongs to, on the site view. */
+  roomId?: string;
 }
 
 function DeviceNode({ data, selected }: NodeProps) {
-  const { node: n, showLoad, verdict, cutWithin, isCandidate } =
+  const { node: n, showLoad, verdict, cutWithin, isCandidate, roomId } =
     data as unknown as DeviceNodeData;
   const rolled = n.rolled_up > 0;
   const draw = showLoad ? n.metrics.power_w : undefined;
@@ -168,6 +170,10 @@ function DeviceNode({ data, selected }: NodeProps) {
 
   return (
     <div
+      // Which room box owns it on the site view. Carried into the DOM because
+      // it decides what a room drag takes with it, and a rule that can only
+      // be checked by eye is a rule nobody can test.
+      data-room={roomId}
       className={[
         'cn-node',
         selected ? 'is-selected' : '',
