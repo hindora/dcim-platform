@@ -588,7 +588,9 @@
   position: absolute;
   top: 46px; right: 10px; bottom: 10px;
   z-index: 6;
-  width: 274px;
+  /* Wide enough for the three actions to sit on one line without any of them
+     wrapping mid-label, which is what 274px forced. */
+  width: 310px;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--bg-raised);
@@ -677,7 +679,9 @@
      line instead of building a three-storey footer inside a 274px drawer. */
   font-size: 0.76rem;
 }
-.conn-drawer-actions button { padding: 3px 8px; }
+.conn-drawer-actions button,
+.conn-drawer-actions a { padding: 3px 8px; white-space: nowrap; }
+.conn-drawer-actions a { padding-left: 0; }
 
 /* The side badge. Position and pattern carry A/B on the diagram; in a table
    there is no position to use, so the letter itself is the channel and the
