@@ -1077,6 +1077,28 @@ export interface Trace {
   downstream_count: number;
 }
 
+export interface RedundancyFinding {
+  device: ImpactNode;
+  /** single_fed | same_side | converged. Named, not graded: whether a
+   *  single-corded sensor is a defect is the operator's call. */
+  kind: string;
+  detail: string;
+  /** For `converged`: the devices BOTH sides pass through. */
+  shared: ImpactNode[];
+  sides: string[];
+  /** How many loads across the layer meet at the same place. Rarest first is
+   *  likeliest-mistake first. */
+  shared_by: number;
+}
+
+export interface Redundancy {
+  layer: string;
+  scope: string;
+  examined: number;
+  findings: RedundancyFinding[];
+  counts: Record<string, number>;
+}
+
 export interface ImpactNode {
   id: string;
   name: string;
@@ -2584,6 +2606,11 @@ export const api = {
     request<TopologyGraph>(
       `/topology?layer=${encodeURIComponent(layer)}&scope=${encodeURIComponent(scope)}`
       + `&depth=${depth}&rollup=${rollup}`),
+
+  /** Where the redundancy is not actually there. */
+  redundancy: (scope: string, layer: string) =>
+    request<Redundancy>(`/topology/redundancy?scope=${encodeURIComponent(scope)}`
+      + `&layer=${encodeURIComponent(layer)}`),
 
   /** The chain from a device back to its source, hop by hop, source first. */
   trace: (deviceId: string, layer: string) =>

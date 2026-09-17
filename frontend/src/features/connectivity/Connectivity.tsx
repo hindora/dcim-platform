@@ -8,6 +8,7 @@ import { Seg } from '../../components/estate';
 import { MaxGlyph, MaxModal } from '../../components/MaxModal';
 import { Canvas } from './Canvas';
 import { Legend } from './Legend';
+import { Audit } from './Audit';
 import { Drawer } from './Drawer';
 import { TraceTable } from './TraceTable';
 import { collapseEdges, layout, structureKey } from './layout';
@@ -41,6 +42,7 @@ type LayerKey = typeof LAYERS[number]['key'];
 const VIEWS = [
   { key: 'diagram', label: 'DIAGRAM' },
   { key: 'trace', label: 'TRACE TABLE' },
+  { key: 'audit', label: 'REDUNDANCY' },
 ] as const;
 
 type ViewKey = typeof VIEWS[number]['key'];
@@ -226,6 +228,23 @@ export function Connectivity() {
           No {layer} connections are recorded in this room. Plant serving a hall
           often sits elsewhere — widen the scope above to pull it in.
         </p>
+      )}
+
+      {view === 'audit' && (
+        <div className="conn-panel">
+          <h3>REDUNDANCY AUDIT</h3>
+          <Audit
+            scope={scope} layer={layer}
+            roomName={rooms.data?.items.find((r) => r.id === selectedRoom)?.name
+                      ?? 'this room'}
+            onSelectDevice={(id) => {
+              // Put it on the diagram. The finding is about where the device
+              // sits in a chain, and the chain is what is worth seeing next.
+              const node = graph.data?.nodes.find(
+                (n) => n.id === id || n.member_ids.includes(id));
+              if (node) { setSelected(node); setView('diagram'); }
+            }} />
+        </div>
       )}
 
       {view === 'trace' && (

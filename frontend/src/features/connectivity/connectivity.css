@@ -528,3 +528,57 @@
 .cn-key.is-partial { border-color: var(--major);
                      background: color-mix(in srgb, var(--major) 30%, transparent); }
 .cn-key.is-degraded { border-color: var(--warn); border-style: dashed; }
+
+/* --- redundancy audit ---------------------------------------------------- */
+
+.conn-audit-filters { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.conn-audit-filters button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-inset);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 0.74rem;
+  cursor: pointer;
+}
+
+.conn-audit-filters button.is-current {
+  background: var(--bg-raised);
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+/* The count in faint ink inside the cell, as the facet strips elsewhere do. */
+.conn-audit-filters button > span:last-child {
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.conn-audit td { vertical-align: top; padding: 7px 12px; }
+.conn-audit .k { font-size: 0.68rem; color: var(--text-faint); }
+.conn-audit .conn-side { margin-right: 4px; }
+
+.conn-kind { font-weight: 600; font-size: 0.78rem; }
+.conn-kind.is-converged { color: var(--critical); }
+.conn-kind.is-same_side { color: var(--major); }
+.conn-kind.is-single_fed { color: var(--warn); }
+
+.conn-shared { list-style: none; margin: 0; padding: 0; }
+.conn-shared li { font-size: 0.78rem; }
+
+/* A button that reads as a link: the action is "show me this on the diagram",
+   which is not a navigation and must not look like one in the address bar. */
+.conn-linkish {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+.conn-linkish:hover { text-decoration: underline; }
