@@ -152,6 +152,11 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+  /* The chrome floating on the canvas has to size itself against the CANVAS,
+     not the window: opening the device rail takes 250px off the drawing
+     without the viewport changing at all. */
+  container-type: inline-size;
+  container-name: canvas;
   /* Lit from the middle rather than flat. A uniform field of dots reads as
      graph paper; a vignette reads as depth and pushes the eye to the centre,
      which is where the diagram is. */
@@ -218,12 +223,32 @@
 .cn-layers {
   top: 10px; left: 50%; transform: translateX(-50%);
   display: flex; gap: 1px; padding: 2px;
+  /* Centred between two islands it must never touch: the viewport controls
+     are ~152px on the left, the sheet tabs ~148px on the right. Being
+     centred, the strip has to keep clear of BOTH by the larger of the two,
+     which is what this reserve is. At 900px the strip and the zoom controls
+     were sitting on top of each other. */
+  max-width: calc(100% - 340px);
+  overflow-x: auto;
+  scrollbar-width: none;      /* the strip is five items; a bar under them
+                                 would be louder than the thing it scrolls */
 }
+.cn-layers::-webkit-scrollbar { display: none; }
 
 .cn-layers button {
+  flex: none;
   padding: 4px 9px; border-radius: 5px;
   border: 1px solid transparent;
   font-size: 0.6rem; font-weight: 700; letter-spacing: .07em;
+}
+
+/* Tightened before it has to scroll: the labels are the layer names and a
+   reader should be able to see all five at once. */
+@container canvas (max-width: 900px) {
+  .cn-layers button { padding: 4px 6px; letter-spacing: .04em; }
+}
+@container canvas (max-width: 760px) {
+  .cn-layers button { padding: 4px 5px; font-size: 0.56rem; letter-spacing: .02em; }
 }
 .cn-layers button:hover { background: var(--bg-inset); }
 
@@ -283,6 +308,8 @@
 .cn-caption {
   bottom: 10px; left: 10px;
   max-width: calc(100% - 20px);
+  /* Wraps rather than runs on, so it grows upward from the corner it is
+     anchored to and never pushes into anything. */
   display: flex; align-items: center; flex-wrap: wrap; gap: 3px 12px;
   padding: 5px 10px;
   font-size: 0.66rem; color: var(--text-muted);
@@ -381,6 +408,11 @@
 /* The sheet covers the bottom of the canvas, so the caption moves out from
    under it rather than being hidden by it. */
 .cn-canvas:has(.cn-sheet) .cn-caption { display: none; }
+
+/* The drawer occupies the right edge down to the floor, so the caption stops
+   short of it instead of running underneath - it was sliding behind the
+   drawer from 1120px down, taking the conductor counts with it. */
+.cn-canvas:has(.conn-drawer) .cn-caption { max-width: calc(100% - 334px); }
 
 /* --- scrollers ------------------------------------------------------------ */
 
