@@ -107,25 +107,7 @@
 .cn-rail-list {
   flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden;
   list-style: none; margin: 0; padding: 0 6px 8px;
-  /* Hold the rail's width open whether the list overflows or not: filtering
-     down to eight rows otherwise drops the bar and every name jumps sideways. */
-  scrollbar-gutter: stable;
-  /* Same treatment as the Assets rails - a thin floating bar rather than the
-     platform trough, which reads as a broken border against the rail edge. */
-  scrollbar-width: thin;
-  scrollbar-color: var(--border-strong) transparent;
 }
-
-.cn-rail-list::-webkit-scrollbar { width: 10px; }
-.cn-rail-list::-webkit-scrollbar-track { background: transparent; }
-.cn-rail-list::-webkit-scrollbar-thumb {
-  background: var(--border-strong);
-  border-radius: 99px;
-  /* Inset by a transparent border so the bar floats clear of the rows. */
-  border: 3px solid transparent;
-  background-clip: content-box;
-}
-.cn-rail-list:hover::-webkit-scrollbar-thumb { background: var(--text-faint); }
 
 .cn-rail-list > li > button {
   display: flex; align-items: center; gap: 7px; width: 100%;
@@ -347,11 +329,52 @@
   margin: 0; font-size: 0.78rem; letter-spacing: .08em;
   text-transform: uppercase; color: var(--text-muted);
 }
-.cn-sheet-body { overflow: auto; padding: 12px 14px 14px; }
+.cn-sheet-body { overflow: auto; padding: 12px 6px 14px 14px; }
 
 /* The sheet covers the bottom of the canvas, so the caption moves out from
    under it rather than being hidden by it. */
 .cn-canvas:has(.cn-sheet) .cn-caption { display: none; }
+
+/* --- scrollers ------------------------------------------------------------ */
+
+/* Every scroller on this page wears one bar: the device list, the selection
+   drawer and the trace/audit sheets. The platform trough is 17px of flat grey
+   hard against a panel's own border, which reads as a second border that has
+   gone wrong - and this page puts three of them within 300px of each other.
+   Same treatment as the Assets rails: thin, transparent track, a rounded thumb
+   inset by a transparent border so it floats clear of the content.
+
+   `scrollbar-gutter: stable` because all three change length in place -
+   filtering the list, picking a shorter device, switching sheet - and a bar
+   that appears and disappears shifts every line under it sideways. */
+.cn-rail-list,
+.conn-drawer,
+.cn-sheet-body {
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+.cn-rail-list::-webkit-scrollbar,
+.conn-drawer::-webkit-scrollbar,
+.cn-sheet-body::-webkit-scrollbar { width: 10px; height: 10px; }
+
+.cn-rail-list::-webkit-scrollbar-track,
+.conn-drawer::-webkit-scrollbar-track,
+.cn-sheet-body::-webkit-scrollbar-track { background: transparent; }
+
+.cn-rail-list::-webkit-scrollbar-thumb,
+.conn-drawer::-webkit-scrollbar-thumb,
+.cn-sheet-body::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 99px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+.cn-rail-list:hover::-webkit-scrollbar-thumb,
+.conn-drawer:hover::-webkit-scrollbar-thumb,
+.cn-sheet-body:hover::-webkit-scrollbar-thumb { background: var(--text-faint); }
 
 /* --- the node ------------------------------------------------------------- */
 
@@ -518,7 +541,8 @@
   border-radius: 10px;
   background: var(--bg-raised);
   box-shadow: 0 8px 30px rgba(0, 0, 0, 0.48);
-  padding: 12px 14px;
+  padding: 12px 6px 12px 14px;   /* right trimmed: the scrollbar gutter is
+                                    reserved inside the padding box */
   font-size: 0.82rem;
   overflow: auto;
   animation: cn-slide .16s ease-out;
