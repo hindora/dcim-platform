@@ -177,76 +177,111 @@ export function sideOf(nodes: TopologyNode[], edges: CollapsedEdge[]):
 function layoutLoop(nodes: TopologyNode[], edges: CollapsedEdge[]): {
   placed: Placed[]; width: number; height: number;
 } | null {
-  const rank = rankNodes(nodes, edges);
-  const byRank = new Map<number, TopologyNode[]>();
-  for (const n of nodes) {
-    const r = rank.get(n.id) ?? 0;
-    (byRank.get(r) ?? byRank.set(r, []).get(r)!).push(n);
+  const ids = new Set(nodes.map((n) => n.id));
+  const down = new Map<string, string[]>();
+  const up = new Map<string, string[]>();
+  for (const e of edges) {
+    if (!ids.has(e.source) || !ids.has(e.target) || e.source === e.target) continue;
+    (down.get(e.source) ?? down.set(e.source, []).get(e.source)!).push(e.target);
+    (up.get(e.target) ?? up.set(e.target, []).get(e.target)!).push(e.source);
   }
-  const ranks = [...byRank.keys()].sort((a, b) => a - b);
-  if (ranks.length < 3) return null;
 
-  let widest = ranks[0];
-  for (const r of ranks) {
-    if (byRank.get(r)!.length > byRank.get(widest)!.length) widest = r;
+  const sources = nodes.filter((n) => !up.get(n.id)?.length).map((n) => n.id);
+  const sinks = nodes.filter((n) => !down.get(n.id)?.length).map((n) => n.id);
+  if (!sources.length || !sinks.length) return null;
+
+  /** Hops to the nearest source, and to the nearest sink, both following the
+   *  flow. Breadth-first and visited-guarded: the graph really is a cycle. */
+  const bfs = (from: string[], edgesOf: Map<string, string[]>) => {
+    const d = new Map<string, number>(from.map((i) => [i, 0]));
+    const queue = [...from];
+    for (let i = 0; i < queue.length; i += 1) {
+      const cur = queue[i];
+      for (const nxt of edgesOf.get(cur) ?? []) {
+        if (!d.has(nxt)) { d.set(nxt, d.get(cur)! + 1); queue.push(nxt); }
+      }
+    }
+    return d;
+  };
+  const dSource = bfs(sources, down);
+  const dSink = bfs(sinks, up);
+
+  // Nearer the source than the sink is supply; nearer the sink is return;
+  // equidistant is where the water does its work. That last one is the real
+  // definition of a terminal in a circuit and it needs no device-type table:
+  // a CRAH is one hop from the supply header and one hop from the return.
+  const supply: TopologyNode[] = [];
+  const middle: TopologyNode[] = [];
+  const ret: TopologyNode[] = [];
+  for (const n of nodes) {
+    const a = dSource.get(n.id);
+    const b = dSink.get(n.id);
+    if (a === undefined || b === undefined) { middle.push(n); continue; }
+    if (a < b) supply.push(n);
+    else if (b < a) ret.push(n);
+    else middle.push(n);
   }
-  if (widest === ranks[0] || widest === ranks[ranks.length - 1]) return null;
+  if (!supply.length || !ret.length || !middle.length) return null;
 
   const step = NODE_W + GAP_X;
   const rowH = NODE_H + GAP_Y;
-  const ordered = (r: number) => byRank.get(r)!.slice().sort((a, b) =>
-    a.device_type.localeCompare(b.device_type) || a.name.localeCompare(b.name));
+  const byName = (a: TopologyNode, b: TopologyNode) =>
+    a.device_type.localeCompare(b.device_type) || a.name.localeCompare(b.name);
 
-  const terminals = ordered(widest);
-  const perLine = Math.min(MAX_PER_LINE, terminals.length);
-  const termWidth = perLine * step;
-  const supply = ranks.filter((r) => r < widest);
-  const ret = ranks.filter((r) => r > widest);
-  const legs = Math.max(supply.length, ret.length);
-
-  // The legs sit outside the terminal row, one step clear of it, so a pipe
-  // never runs underneath a unit it does not serve.
-  const legX = termWidth / 2 + step * 0.6;
-  const placed: Placed[] = [];
-
-  supply.forEach((r, i) => {
-    const row = ordered(r);
-    row.forEach((n, j) => placed.push({
-      node: n,
-      x: -legX - (row.length - 1 - j) * step,
-      y: i * rowH,
-    }));
-  });
-
-  // Ascending: the rank just below the terminals sits at the BOTTOM of the
-  // right-hand leg and the final sink at the top, so the water is read as
-  // coming back up to where it started.
-  ret.forEach((r, i) => {
-    const row = ordered(r);
-    row.forEach((n, j) => placed.push({
-      node: n,
-      x: legX + j * step,
-      y: (legs - 1 - i) * rowH,
-    }));
-  });
-
-  const termLines = Math.ceil(terminals.length / perLine);
-  terminals.forEach((n, i) => {
-    const line = Math.floor(i / perLine);
-    const col = i % perLine;
-    const inLine = Math.min(perLine, terminals.length - line * perLine);
-    placed.push({
-      node: n,
-      x: col * step - (inLine * step) / 2,
-      y: legs * rowH + line * (NODE_H + 12),
-    });
-  });
-
-  return {
-    placed,
-    width: 2 * legX + termWidth,
-    height: legs * rowH + termLines * (NODE_H + 12),
+  // Each leg is banded by its distance, so a chain of plant reads down the
+  // page in the order the water goes through it.
+  const band = (list: TopologyNode[], dist: Map<string, number>) => {
+    const out = new Map<number, TopologyNode[]>();
+    for (const n of list) {
+      const d = dist.get(n.id) ?? 0;
+      (out.get(d) ?? out.set(d, []).get(d)!).push(n);
+    }
+    return [...out.entries()].sort((x, y) => x[0] - y[0])
+      .map(([, v]) => v.slice().sort(byName));
   };
+  const supplyBands = band(supply, dSource);
+  const retBands = band(ret, dSink);
+
+  // The middle keeps its own layering so a CDU sits above the servers it
+  // serves rather than beside them.
+  const midRank = rankNodes(middle, edges.filter(
+    (e) => middle.some((m) => m.id === e.source) && middle.some((m) => m.id === e.target)));
+  const midBands = band(middle, midRank);
+
+  const perLine = Math.min(MAX_PER_LINE, Math.max(...midBands.map((b) => b.length)));
+  const midWidth = perLine * step;
+  const legs = Math.max(supplyBands.length, retBands.length);
+  // One step clear of the middle, so a pipe never runs under a unit it does
+  // not serve.
+  const legX = midWidth / 2 + step * 0.7;
+
+  const placed: Placed[] = [];
+  supplyBands.forEach((row, i) => row.forEach((n, j) => placed.push({
+    node: n, x: -legX - (row.length - 1 - j) * step, y: i * rowH,
+  })));
+  // Ascending: the band nearest the units sits at the BOTTOM of the right-hand
+  // leg and the sink at the top, so the water reads as coming back to where it
+  // started.
+  retBands.forEach((row, i) => row.forEach((n, j) => placed.push({
+    node: n, x: legX + j * step, y: (legs - 1 - i) * rowH,
+  })));
+
+  let y = legs * rowH;
+  midBands.forEach((row) => {
+    const lines = Math.ceil(row.length / perLine);
+    row.forEach((n, i) => {
+      const line = Math.floor(i / perLine);
+      const col = i % perLine;
+      const inLine = Math.min(perLine, row.length - line * perLine);
+      placed.push({
+        node: n, x: col * step - (inLine * step) / 2,
+        y: y + line * (NODE_H + 12),
+      });
+    });
+    y += lines * (NODE_H + 12) + GAP_Y * 0.55;
+  });
+
+  return { placed, width: 2 * legX + midWidth, height: y };
 }
 
 /** The layered layout, in two flavours.
