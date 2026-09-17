@@ -157,6 +157,10 @@
      without the viewport changing at all. */
   container-type: inline-size;
   container-name: canvas;
+  /* Where the right-hand edge of the drawing ends. The drawer is the only
+     thing that moves it, and everything anchored bottom-right - the minimap,
+     the legend - reads it rather than each knowing about the drawer. */
+  --cn-right: 10px;
   /* Lit from the middle rather than flat. A uniform field of dots reads as
      graph paper; a vignette reads as depth and pushes the eye to the centre,
      which is where the diagram is. */
@@ -412,7 +416,13 @@
 /* The drawer occupies the right edge down to the floor, so the caption stops
    short of it instead of running underneath - it was sliding behind the
    drawer from 1120px down, taking the conductor counts with it. */
-.cn-canvas:has(.conn-drawer) .cn-caption { max-width: calc(100% - 334px); }
+.cn-canvas:has(.conn-drawer) { --cn-right: 334px; }
+.cn-caption { max-width: calc(100% - 10px - var(--cn-right)); }
+
+/* The minimap shares the bottom edge; the legend stops before it too. */
+.cn-canvas:has(.cn-minimap) .cn-caption {
+  max-width: calc(100% - 10px - var(--cn-right) - 214px);
+}
 
 /* --- scrollers ------------------------------------------------------------ */
 
@@ -606,8 +616,20 @@
                      background: color-mix(in srgb, var(--major) 30%, transparent); }
 .cn-key.is-degraded { border-color: var(--warn); border-style: dashed; }
 
-.cn-minimap {
+/* The library parks its minimap bottom-right with a 15px margin, which is
+   underneath the drawer and a z-index below it: turning the map on while a
+   device was selected put it somewhere you could not see at all. */
+.cn-canvas .react-flow__minimap.cn-minimap {
+  margin: 0;
+  bottom: 10px;
+  right: var(--cn-right);
   border: 1px solid var(--border); border-radius: 6px; background: var(--bg-raised);
+}
+
+/* Narrow enough that the drawer takes the whole canvas, there is nowhere for
+   the map to go. */
+@container canvas (max-width: 560px) {
+  .cn-canvas:has(.conn-drawer) .react-flow__minimap.cn-minimap { display: none; }
 }
 
 /* --- the drawer ---------------------------------------------------------- */
