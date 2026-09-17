@@ -221,12 +221,15 @@
 .cn-toolbar button:hover { background: var(--bg-inset); }
 .cn-toolbar button.is-on { background: var(--bg-inset); color: var(--accent); }
 
-.cn-zoom {
-  /* Four characters at full zoom - "106%" - and in a column the readout is
+/* `.cn-toolbar` on the front, because `.cn-float button` sets the `font`
+   SHORTHAND, which resets font-size along with everything else and outranks a
+   single class. The readout was rendering at 14px whatever this said. */
+.cn-toolbar .cn-zoom {
+  /* Four characters at full zoom - "118%" - and in a column the readout is
      the widest thing in the bar rather than a cell in a row, so it sets the
      bar's width and must be told how much it needs. */
-  min-width: 32px; height: 24px; padding: 0 2px; border-radius: 5px;
-  font-size: 0.6rem; font-variant-numeric: tabular-nums;
+  min-width: 32px; height: 24px; padding: 0 3px; border-radius: 5px;
+  font-size: 0.62rem; font-variant-numeric: tabular-nums;
   color: var(--text-muted);
 }
 .cn-zoom:hover { background: var(--bg-inset); }
