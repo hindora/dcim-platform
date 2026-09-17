@@ -469,7 +469,7 @@ one**. React Flow, for instance, positions nothing — every React Flow
 layout tutorial pairs it with dagre or elkjs. "Adopt React Flow" does not
 remove the layout work; it adds a renderer on top of it.
 
-### 7.4 Decision
+### 7.4 Decision — SUPERSEDED 2026-09-17, see §7.5
 
 **Render: hand-rolled SVG + React. No graph library.**
 
@@ -511,6 +511,52 @@ theming and accessibility, which swapping to a canvas library would not.
 **Revisit triggers:** sustained >3,000 rendered elements; a requirement for
 user-editable diagrams; or a need for graph algorithms heavier than BFS
 (community detection, centrality) on the client.
+
+### 7.5 What was actually built: React Flow, and why §7.4 was wrong
+
+Shipped 2026-09-17. The canvas is **`@xyflow/react` v12** — the same library
+the simulator's own topology view uses, so the two products behave the same
+way under the same hands.
+
+**Where §7.4 reasoned badly.** It scored the options on whether they could
+*draw* 664 nodes, decided SVG could, and stopped. Drawing was never the
+constraint. What a hand-rolled SVG could not give without reinventing each of
+them: pan and zoom, a node that is a real focusable hoverable element rather
+than a `<rect>`, a label that stays upright while the picture scales, and a
+minimap. §7.4 listed React Flow as "the closest fit" and then rejected it for
+being a node editor — but its editing behaviour is four props to switch off,
+and that is a much smaller cost than the four features it replaces. The
+"generic renderer gives us none of the diagram grammars" argument was the
+soundest part and it survives: see below.
+
+**What did not change, and this is the point.** React Flow lays nothing out.
+Every layout example it ships pairs it with dagre or elkjs, so adopting it
+removes none of the layout work and none of the domain content:
+
+* `layout.ts` is unchanged in substance — the structural rank, the A/B column
+  split derived from the conductors, the middle gutter for dual-fed loads.
+* Positions are still a pure function of structure, and **a live update still
+  cannot move a node**: positions are rebuilt only when the layout key
+  changes, and a fifteen-second poll walks the existing nodes and swaps their
+  `data`. That now also means a node someone dragged stays where they put it,
+  which the SVG could not offer at all.
+* Colour is still tokens only, and the palette check still passes — nodes are
+  DOM elements, so they take the same CSS variables as the rest of the
+  product and follow the theme.
+
+**Costs, stated.** The bundle goes 655 kB → 856 kB (180 → 246 kB gzipped);
+the connectivity route is the obvious thing to code-split and has not been.
+The node card is bigger than the old box (196×56 against 132×30), so a hall
+is wider and is panned rather than seen at once — mitigated by a zoom floor
+of 0.62, below which fit-to-view stops shrinking and the canvas pans instead,
+because a diagram whose every label is five pixels of grey is not a fit.
+
+**What §7.4 still gets right, and what the escape hatch becomes.** The three
+diagram grammars are still ours to write, and no library would have produced
+the one-line. `elkjs` is still unadopted and still needs a licence review
+before it is. The canvas escape hatch is no longer "add a `<canvas>` edge
+layer" — it is React Flow's own `onlyRenderVisibleElements`, which is already
+on.
 
 ---
 

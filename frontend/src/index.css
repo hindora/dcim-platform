@@ -75,7 +75,7 @@
      without it a canvas of evenly spaced cards gives the eye nothing to tell
      movement against. */
   --cn-surface: #0c1016;
-  --cn-dot: #232a35;
+  --cn-dot: #2c3442;
   --cn-mask: rgba(8, 11, 16, 0.72);
 
   --radius: 6px;
