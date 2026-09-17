@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from 'react';
+import { Fragment, Suspense, lazy, useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { NavLink, Navigate, Route, Routes, useLocation, useNavigate }
   from 'react-router-dom';
@@ -21,7 +21,6 @@ import { DeviceDetail } from './features/devices/DeviceDetail';
 import { RackElevationView } from './features/racks/RackElevation';
 import { RackList } from './features/racks/RackList';
 import { FloorPlanView } from './features/floorplan/FloorPlan';
-import { Connectivity } from './features/connectivity/Connectivity';
 import { DeviceList } from './features/devices/DeviceList';
 import { AssetWorkspace } from './features/assets/AssetWorkspace';
 import { AssetOverview } from './features/assets/Overview';
@@ -40,6 +39,21 @@ import { PartList } from './features/assets/parts/PartList';
 import { PartDetail } from './features/assets/parts/PartDetail';
 import { ReservationList } from './features/assets/reservations/ReservationList';
 import { useSocketStatus } from './ws/useSocket';
+
+/** The one route that is split out of the main bundle.
+ *
+ *  Connectivity is the only page that uses React Flow, and React Flow is 200
+ *  kB of the 856 kB everybody downloads to look at the home page. Nothing
+ *  outside features/connectivity/ imports from it, so the chunk comes away
+ *  clean.
+ *
+ *  Only this route. Code-splitting every page would trade one download for a
+ *  spinner on every navigation, and the rest of them are a few kB each - the
+ *  bundle is one heavy dependency and five routes' worth of components, not
+ *  five heavy routes.
+ */
+const Connectivity = lazy(() => import('./features/connectivity/Connectivity')
+  .then((m) => ({ default: m.Connectivity })));
 
 function Login({ onDone, returnTo }: { onDone: () => void; returnTo?: string }) {
   const [username, setUsername] = useState('admin');
@@ -219,7 +233,16 @@ export default function App() {
               and delivered the platform-health screen - collector lag under a
               heading about cabling - while the graph itself sat at /topology
               with nothing linking to it. */}
-          <Route path="/connectivity" element={<Page><Connectivity /></Page>} />
+          <Route path="/connectivity" element={
+            <Page>
+              {/* Wrapped here rather than around the whole router: the other
+                  routes are already in the bundle and do not need a boundary
+                  that could flash on every navigation between them. */}
+              <Suspense fallback={<p className="muted">Loading the diagram…</p>}>
+                <Connectivity />
+              </Suspense>
+            </Page>
+          } />
           {/* The asset workspace. Everything it renders lives under this route
               and inside features/assets/ - no page outside /assets changes, and
               this line is the only edit the module makes to the shell
