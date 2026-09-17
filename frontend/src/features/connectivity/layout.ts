@@ -45,6 +45,8 @@ const GAP_Y = 68;
  *  hall's worth of servers is 140 wide; strung out in one row it would be
  *  13000 px and unreadable. */
 const MAX_PER_LINE = 12;
+/** The loop layout wraps its middle narrower: see `layoutLoop`. */
+const LOOP_PER_LINE = 6;
 
 /** Identity of the STRUCTURE, ignoring anything that changes with live state.
  *  Positions are memoised on this, so status and metric updates cannot move a
@@ -248,7 +250,12 @@ function layoutLoop(nodes: TopologyNode[], edges: CollapsedEdge[]): {
     (e) => middle.some((m) => m.id === e.source) && middle.some((m) => m.id === e.target)));
   const midBands = band(middle, midRank);
 
-  const perLine = Math.min(MAX_PER_LINE, Math.max(...midBands.map((b) => b.length)));
+  // Narrower than the layered layout wraps at. A U is as wide as its middle
+  // plus two legs, and wrapping twenty-one terminals in one row of twelve put
+  // the supply header fifteen hundred pixels from the return header with
+  // nothing between them - a circuit nobody can see both ends of. Six keeps
+  // the whole loop roughly square, which is the shape that reads as a loop.
+  const perLine = Math.min(LOOP_PER_LINE, Math.max(...midBands.map((b) => b.length)));
   const midWidth = perLine * step;
   const legs = Math.max(supplyBands.length, retBands.length);
   // One step clear of the middle, so a pipe never runs under a unit it does
