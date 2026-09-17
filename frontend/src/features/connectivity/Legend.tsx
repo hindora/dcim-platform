@@ -6,9 +6,11 @@ import { useChartColors } from '../../components/seriesColors';
  *  swatches carry their pattern as well as their hue, because that is the
  *  distinction the diagram is making and hue is its weakest channel.
  */
-export function Legend({ sides, showLoad }: { sides: string[]; showLoad: boolean }) {
+export function Legend({ sides, showLoad, simulating }: {
+  sides: string[]; showLoad: boolean; simulating?: boolean;
+}) {
   const colors = useChartColors();
-  if (sides.length < 2 && !showLoad) return null;
+  if (sides.length < 2 && !showLoad && !simulating) return null;
 
   const line = (stroke: string, dash?: string) => (
     <svg width="20" height="9" aria-hidden>
@@ -26,6 +28,13 @@ export function Legend({ sides, showLoad }: { sides: string[]; showLoad: boolean
         </span>
       ))}
       <span>{line('var(--critical)', '5 3')}Down</span>
+      {simulating && (
+        <>
+          <span><span className="cn-key is-cut" />Goes dark</span>
+          <span><span className="cn-key is-partial" />Partly dark</span>
+          <span><span className="cn-key is-degraded" />Loses a side</span>
+        </>
+      )}
       {showLoad && (
         <>
           <span>

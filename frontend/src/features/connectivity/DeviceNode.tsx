@@ -2,6 +2,7 @@ import { memo } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import type { TopologyNode } from '../../api/client';
 import { NODE_H, NODE_W } from './layout';
+import type { Verdict } from './impact';
 
 /** One device on the canvas.
  *
@@ -115,10 +116,18 @@ function watts(w: number): string {
 export interface DeviceNodeData extends Record<string, unknown> {
   node: TopologyNode;
   showLoad: boolean;
+  /** Set only while a removal is being simulated. */
+  verdict: Verdict;
+  /** How many real devices behind this box go dark - the "8 of 18" on a rack
+   *  that is only partly affected. */
+  cutWithin: number;
+  /** True for the device whose removal is being simulated. */
+  isCandidate: boolean;
 }
 
 function DeviceNode({ data, selected }: NodeProps) {
-  const { node: n, showLoad } = data as unknown as DeviceNodeData;
+  const { node: n, showLoad, verdict, cutWithin, isCandidate } =
+    data as unknown as DeviceNodeData;
   const rolled = n.rolled_up > 0;
   const draw = showLoad ? n.metrics.power_w : undefined;
   const rated = n.metrics.rated_power_w;
@@ -136,6 +145,8 @@ function DeviceNode({ data, selected }: NodeProps) {
         n.depth > 0 ? 'is-outside' : '',
         n.status === 'OFFLINE' ? 'is-off' : '',
         rolled ? 'is-rolled' : '',
+        verdict ? `is-${verdict}` : '',
+        isCandidate ? 'is-candidate' : '',
       ].filter(Boolean).join(' ')}
       style={{ width: NODE_W, height: NODE_H }}
     >
@@ -168,6 +179,19 @@ function DeviceNode({ data, selected }: NodeProps) {
       </span>
 
       <StatusDot status={n.status} severity={n.max_severity} />
+
+      {/* While a removal is simulated the verdict outranks everything else on
+          the card: it is the reason the operator is looking at it. A rack that
+          is only partly affected says WHICH part, because "8 of 18 go dark" is
+          the true answer and both "dark" and "fine" are lies about it. */}
+      {verdict && (
+        <span className="cn-verdict">
+          {verdict === 'cut' ? 'goes dark'
+            : verdict === 'partial' ? `${cutWithin} of ${n.rolled_up} dark`
+            : 'loses a side'}
+        </span>
+      )}
+      {isCandidate && <span className="cn-verdict is-candidate">removed</span>}
 
       {draw != null && (
         // A rating nobody recorded is a hatched track with no percentage.

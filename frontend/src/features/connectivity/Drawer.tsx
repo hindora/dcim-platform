@@ -13,11 +13,13 @@ import { terminationLabel } from './TraceTable';
  *  in the table, because they are what gets pasted into a ticket and this is
  *  what gets glanced at.
  */
-export function Drawer({ node, layer, onFullTrace, onClose }: {
+export function Drawer({ node, layer, onFullTrace, onClose, onSimulate, simulating }: {
   node: TopologyNode;
   layer: string;
   onFullTrace: () => void;
   onClose: () => void;
+  onSimulate: (deviceId: string | null) => void;
+  simulating: boolean;
 }) {
   // A rolled-up node is a synthetic id standing for a rack's worth of leaf
   // equipment. It has no device page and no trace of its own, and asking the
@@ -130,6 +132,13 @@ export function Drawer({ node, layer, onFullTrace, onClose }: {
             </p>
           )}
           <div className="conn-drawer-actions">
+            {/* The question asked before every maintenance window, and the
+                server has been able to answer it since the topology service
+                landed. Nothing had ever asked. */}
+            <button type="button" className={simulating ? 'is-on' : undefined}
+                    onClick={() => onSimulate(simulating ? null : node.id)}>
+              {simulating ? 'Stop simulating' : 'Simulate removal'}
+            </button>
             <button type="button" onClick={onFullTrace}>Full trace</button>
             <Link to={`/devices/${node.id}`}>Open device →</Link>
           </div>

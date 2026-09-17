@@ -9,6 +9,7 @@ import type { TopologyNode } from '../../api/client';
 import DeviceNode from './DeviceNode';
 import LinkEdge from './LinkEdge';
 import { NODE_H, NODE_W, type CollapsedEdge, type Placed } from './layout';
+import { cutWithin, verdictFor, type ImpactView } from './impact';
 
 /** The connectivity canvas.
  *
@@ -43,13 +44,26 @@ export interface Placement {
   height: number;
 }
 
+function nodeData(node: Placed['node'], showLoad: boolean,
+                  impact: ImpactView | null) {
+  return {
+    node,
+    showLoad,
+    verdict: impact ? verdictFor(node, impact) : null,
+    cutWithin: impact ? cutWithin(node, impact) : 0,
+    isCandidate: impact
+      ? node.id === impact.candidate || node.member_ids.includes(impact.candidate)
+      : false,
+  };
+}
+
 function buildNodes(placement: Placement, showLoad: boolean,
-                    selected: string | null): Node[] {
+                    selected: string | null, impact: ImpactView | null): Node[] {
   return placement.placed.map((p) => ({
     id: p.node.id,
     type: 'device',
     position: { x: p.x, y: p.y },
-    data: { node: p.node, showLoad },
+    data: nodeData(p.node, showLoad, impact),
     selected: p.node.id === selected,
     // The graph is derived from the connection table. Dragging rearranges the
     // picture, which is welcome; connecting two nodes by hand would invent a
@@ -121,10 +135,12 @@ function Toolbar({ onFit, showMap, onToggleMap, canMap }: {
   );
 }
 
-function Flow({ placement, edges, layer, layoutKey, selected, onSelect }: {
+function Flow({ placement, edges, layer, layoutKey, selected, onSelect, impact }: {
   placement: Placement;
   edges: CollapsedEdge[];
   layer: string;
+  /** Non-null while a removal is being simulated. */
+  impact: ImpactView | null;
   /** Changes only when the STRUCTURE does. Positions are rebuilt on it and on
    *  nothing else, which is what keeps a status poll from moving the picture. */
   layoutKey: string;
@@ -135,7 +151,7 @@ function Flow({ placement, edges, layer, layoutKey, selected, onSelect }: {
   const flowing = layer === 'cooling';
 
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>(
-    buildNodes(placement, showLoad, selected));
+    buildNodes(placement, showLoad, selected, impact));
   const [rfEdges, setEdges, onEdgesChange] = useEdgesState<Edge>(
     buildEdges(edges, flowing));
 
@@ -146,7 +162,7 @@ function Flow({ placement, edges, layer, layoutKey, selected, onSelect }: {
   useEffect(() => {
     if (lastLayout.current !== layoutKey) {
       lastLayout.current = layoutKey;
-      setNodes(buildNodes(placement, showLoad, selected));
+      setNodes(buildNodes(placement, showLoad, selected, impact));
       setEdges(buildEdges(edges, flowing));
       // One frame for the new nodes to measure, then frame them.
       const t = window.setTimeout(() => fitView(FIT), 30);
@@ -158,12 +174,12 @@ function Flow({ placement, edges, layer, layoutKey, selected, onSelect }: {
     setNodes((nds) => nds.map((n) => {
       const fresh = byId.get(n.id);
       return fresh
-        ? { ...n, data: { node: fresh, showLoad }, selected: n.id === selected }
+        ? { ...n, data: nodeData(fresh, showLoad, impact), selected: n.id === selected }
         : n;
     }));
     setEdges(buildEdges(edges, flowing));
     return undefined;
-  }, [layoutKey, placement, edges, showLoad, flowing, selected,
+  }, [layoutKey, placement, edges, showLoad, flowing, selected, impact,
       setNodes, setEdges, fitView]);
 
   const onNodeClick = useCallback((_: unknown, n: Node) => {

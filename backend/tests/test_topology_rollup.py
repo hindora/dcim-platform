@@ -71,6 +71,25 @@ def test_the_collapsed_node_says_how_many_it_stands_for():
     assert srv.name == "R01"
 
 
+def test_a_collapsed_node_carries_the_devices_it_stands_for():
+    """Anything that answers a question about DEVICES comes back keyed by
+    device id - impact analysis first among them - and a synthetic rack id
+    matches none of them. Without the membership the overlay cannot tell
+    whether a rack is dark, and cannot tell a rack that is HALF dark at all."""
+    nodes, _ = _rollup_by_rack(*build(), "power")
+    srv = next(n for n in nodes if n.id == "rack:r1:server")
+    assert set(srv.member_ids) == {"srv1", "srv2", "srv3", "srv4"}
+
+
+def test_a_device_node_claims_no_members():
+    """Empty, not a list of one. A node that IS a device must not look like a
+    group of one to anything reading the field."""
+    nodes, _ = _rollup_by_rack(*build(), "power")
+    pdu = next(n for n in nodes if n.id == "pdua")
+    assert pdu.member_ids == []
+    assert pdu.rolled_up == 0
+
+
 def test_device_types_do_not_get_mixed_into_one_box():
     """Twenty servers and two sensors in a rack are two facts, not one."""
     nodes, _ = _rollup_by_rack(*build(), "power")

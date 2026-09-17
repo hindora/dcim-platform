@@ -173,6 +173,13 @@ class TopologyNode(BaseModel):
     # into one box, and the id is synthetic - it does not resolve to a device.
     rolled_up: int = 0
     offline_count: int = 0
+    # The real devices behind a rolled-up node. Empty when the node IS a
+    # device. Carried because anything that answers a question about DEVICES -
+    # impact analysis first among them - comes back keyed by device id, and a
+    # synthetic rack node has no way to tell whether the answer is about it
+    # without them. A rack that is half dark is also the true answer, and only
+    # the membership can say so.
+    member_ids: list[str] = Field(default_factory=list)
 
 
 class TopologyEdge(BaseModel):

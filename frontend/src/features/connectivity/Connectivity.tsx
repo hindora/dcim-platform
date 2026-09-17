@@ -1,7 +1,9 @@
 import { useQuery } from '@tanstack/react-query';
 import { useMemo, useRef, useState } from 'react';
-import { api, type RoomSummary, type TopologyGraph, type TopologyNode }
+import { api, type Impact, type RoomSummary, type TopologyGraph, type TopologyNode }
   from '../../api/client';
+import { downloadCsv, stampedName } from '../../lib/csv';
+import { projectImpact, type ImpactView } from './impact';
 import { Seg } from '../../components/estate';
 import { MaxGlyph, MaxModal } from '../../components/MaxModal';
 import { Canvas } from './Canvas';
@@ -71,6 +73,9 @@ export function Connectivity() {
   const [rollup, setRollup] = useState<'none' | 'rack'>('rack');
   const [selected, setSelected] = useState<TopologyNode | null>(null);
   const [maxOpen, setMaxOpen] = useState(false);
+  /** The device whose removal is being simulated, or null. Kept as an id
+   *  rather than a node so that it survives a refetch replacing the objects. */
+  const [simulating, setSimulating] = useState<string | null>(null);
 
   const rooms = useQuery<{ items: RoomSummary[] }>({
     queryKey: ['rooms'],
@@ -117,8 +122,22 @@ export function Connectivity() {
    *  may not be on the next layer at all, and a drawer describing a chain that
    *  is no longer drawn is worse than an empty one. */
   function reselect<T>(set: (v: T) => void) {
-    return (v: T) => { set(v); setSelected(null); };
+    return (v: T) => { set(v); setSelected(null); setSimulating(null); };
   }
+
+  // Not polled. A simulation is a question asked at one moment about one
+  // hypothetical, and an answer that changed under the operator while they
+  // read it would be worse than a stale one.
+  const impactQ = useQuery<Impact>({
+    queryKey: ['impact', simulating],
+    queryFn: () => api.impact(simulating!),
+    enabled: Boolean(simulating),
+    retry: false,
+  });
+
+  const impact = useMemo(
+    () => (impactQ.data ? projectImpact(impactQ.data, layer) : null),
+    [impactQ.data, layer]);
 
   const sides = useMemo(() => {
     const s = new Set<string>();
@@ -128,9 +147,33 @@ export function Connectivity() {
 
   const diagram = graph.data ? (
     <>
+      {simulating && (
+        <SimulationBanner
+          name={impactQ.data?.device.name ?? '…'}
+          view={impact}
+          loading={impactQ.isLoading}
+          error={impactQ.isError}
+          layerLabel={LAYERS.find((l) => l.key === layer)?.label.toLowerCase() ?? layer}
+          onExport={() => {
+            const d = impactQ.data;
+            if (!d) return;
+            downloadCsv(
+              stampedName(`impact-${d.device.name}`),
+              ['Layer', 'Effect', 'Outcome', 'Device', 'Type', 'Rack', 'Room'],
+              d.layers.flatMap((l) => [
+                ...l.cut_off.map((n) => [l.layer, l.effect, 'cut off', n.name,
+                                         n.device_type, n.rack_name, n.room_name]),
+                ...l.degraded.map((n) => [l.layer, l.effect, 'degraded', n.name,
+                                          n.device_type, n.rack_name, n.room_name]),
+              ]),
+            );
+          }}
+          onClear={() => setSimulating(null)} />
+      )}
       <Canvas placement={placement} edges={edges} layer={layer} layoutKey={key}
-              selected={selected?.id ?? null} onSelect={setSelected} />
-      <Legend sides={sides} showLoad={layer === 'power'} />
+              selected={selected?.id ?? null} onSelect={setSelected}
+              impact={impact} />
+      <Legend sides={sides} showLoad={layer === 'power'} simulating={Boolean(simulating)} />
     </>
   ) : null;
 
@@ -245,6 +288,8 @@ export function Connectivity() {
           {selected && (
             <Drawer node={selected} layer={layer}
                     onFullTrace={() => setView('trace')}
+                    onSimulate={setSimulating}
+                    simulating={simulating === selected.id}
                     onClose={() => setSelected(null)} />
           )}
         </div>
@@ -255,6 +300,44 @@ export function Connectivity() {
           {diagram}
         </MaxModal>
       )}
+    </div>
+  );
+}
+
+/** The strip that says what is being pretended, and how bad it is.
+ *
+ *  Above the canvas rather than inside the drawer, because the diagram is
+ *  showing a HYPOTHETICAL and somebody glancing at the screen has to be able
+ *  to tell that from the estate as it stands. A picture of a failure that
+ *  looks like a picture of the present is the most dangerous thing this page
+ *  could render.
+ */
+function SimulationBanner({ name, view, loading, error, layerLabel, onExport, onClear }: {
+  name: string;
+  view: ImpactView | null;
+  loading: boolean;
+  error: boolean;
+  layerLabel: string;
+  onExport: () => void;
+  onClear: () => void;
+}) {
+  return (
+    <div className="conn-sim" role="status">
+      <span className="conn-sim-tag">SIMULATING</span>
+      <span className="conn-sim-text">
+        {error ? <>Could not work out what depends on <b>{name}</b>.</>
+          : loading ? <>Working out what depends on <b>{name}</b>…</>
+          : view?.empty || (view?.cutCount === 0 && view?.degradedCount === 0) ? (
+            <>Nothing on the {layerLabel} layer depends on <b>{name}</b>.</>
+          ) : (
+            <>
+              <b>{name}</b> removed — <b>{view!.cutCount}</b>{' '}
+              {view!.effect}, <b>{view!.degradedCount}</b> lose a redundancy side
+            </>
+          )}
+      </span>
+      {!loading && !error && <button type="button" onClick={onExport}>Export list</button>}
+      <button type="button" className="is-clear" onClick={onClear}>Clear</button>
     </div>
   );
 }

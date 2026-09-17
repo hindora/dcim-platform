@@ -982,6 +982,10 @@ export interface TopologyNode {
    *  the id is synthetic - it does not resolve to a device page. */
   rolled_up: number;
   offline_count: number;
+  /** The real devices behind a rolled-up node; empty when the node IS one.
+   *  Anything keyed by device id - impact analysis above all - needs these to
+   *  say whether a rack is affected, or half affected. */
+  member_ids: string[];
 }
 
 export interface TopologyEdge {

@@ -422,3 +422,109 @@
   border-radius: 2px;
   background: linear-gradient(to right, var(--accent) 60%, var(--bg-inset) 60%);
 }
+
+/* --- simulated removal --------------------------------------------------- */
+
+/* The strip sits ABOVE the canvas, not inside the drawer. The diagram is
+   showing a hypothetical, and somebody glancing at the screen has to be able
+   to tell that from the estate as it stands - a picture of a failure that
+   looks like a picture of the present is the most dangerous thing this page
+   could render. */
+.conn-sim {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--warn);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--warn) 10%, var(--bg-raised));
+  font-size: 0.8rem;
+}
+
+.conn-sim-tag {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--warn);
+  color: var(--bg);
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: .08em;
+}
+
+.conn-sim-text { flex: 1; min-width: 0; }
+.conn-sim button {
+  flex: none;
+  padding: 2px 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--bg-raised);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.74rem;
+  cursor: pointer;
+}
+.conn-sim button:hover { border-color: var(--accent); }
+.conn-sim button.is-clear { color: var(--text-muted); }
+
+.conn-drawer-actions button.is-on {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+/* The verdict outranks everything else on the card while a removal is being
+   simulated: it is the reason the operator is looking at it. Shape and a word
+   as well as colour - "goes dark" reads in a greyscale printout, a red border
+   does not. */
+.cn-node.is-cut {
+  border-color: var(--critical);
+  background: color-mix(in srgb, var(--critical) 9%, var(--bg-raised));
+}
+.cn-node.is-partial {
+  border-color: var(--major);
+  background: color-mix(in srgb, var(--major) 9%, var(--bg-raised));
+}
+.cn-node.is-degraded {
+  border-color: var(--warn);
+  border-style: dashed;
+}
+.cn-node.is-candidate {
+  border-color: var(--text-muted);
+  border-style: dotted;
+  opacity: 0.6;
+}
+
+.cn-verdict {
+  position: absolute;
+  right: 0;
+  bottom: 4px;
+  padding: 0 5px 0 6px;
+  border-radius: 3px 0 0 3px;
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: .03em;
+  text-transform: uppercase;
+  color: var(--bg);
+  background: var(--critical);
+}
+
+.cn-node.is-partial .cn-verdict { background: var(--major); }
+.cn-node.is-degraded .cn-verdict { background: var(--warn); }
+.cn-verdict.is-candidate { background: var(--text-muted); }
+
+/* A device that is both the candidate and nothing else keeps only the
+   "removed" tag; the two would otherwise stack on the same corner. */
+.cn-node.is-candidate .cn-verdict:not(.is-candidate) { display: none; }
+
+.cn-key {
+  width: 13px;
+  height: 13px;
+  border-radius: 3px;
+  border: 1px solid var(--border-strong);
+}
+.cn-key.is-cut { border-color: var(--critical);
+                 background: color-mix(in srgb, var(--critical) 30%, transparent); }
+.cn-key.is-partial { border-color: var(--major);
+                     background: color-mix(in srgb, var(--major) 30%, transparent); }
+.cn-key.is-degraded { border-color: var(--warn); border-style: dashed; }

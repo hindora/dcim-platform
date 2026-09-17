@@ -255,6 +255,7 @@ def _rollup_by_rack(nodes: list[TopologyNode], edges: list[TopologyEdge],
             metrics=metrics,
             rolled_up=len(members),
             offline_count=offline,
+            member_ids=[m.id for m in members],
         ))
 
     kept = [n for n in nodes if n.id not in member_of] + rolled
