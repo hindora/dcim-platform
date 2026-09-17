@@ -162,11 +162,31 @@ if want ingest; then
   # out silently wrong. The baseline exchange is now a single atomic step, so
   # each worker gets a different previous value and the deltas chain.
   #
-  # Still one by default. Measured on this fleet, a single worker sits 0.3 s
-  # behind the newest entry and advances 66.7 s per 66 s of wall clock; there
-  # is no throughput deficit to spend a process on. Raise it when the
-  # measurement says to, not in advance.
-  for i in $(seq 1 "${INGEST_WORKERS:-1}"); do
+  # TWO by default since 2026-09-17, because the measurement finally said so.
+  #
+  # It was one, on this reasoning: "a single worker sits 0.3 s behind the
+  # newest entry and advances 66.7 s per 66 s of wall clock; there is no
+  # throughput deficit to spend a process on. Raise it when the measurement
+  # says to, not in advance." That was true when it was written and the fleet
+  # has outgrown it.
+  #
+  # What the measurement says now, over a two-minute window on a quiet stack:
+  #
+  #   group dcim-ingest   pending=200 (constant)   undelivered 1601 -> 1619
+  #   drain rate -0.15 entries/s
+  #
+  # `pending` pinned at exactly 200 is the worker's in-flight read cap, and it
+  # is the ceiling. Production is slightly above it, so the slope is NEGATIVE:
+  # one worker cannot claw back an offset once it exists, and every restart
+  # creates one - the collector keeps polling while the worker is down. A day
+  # of restarts left the platform reading 195 s behind the datacenter with no
+  # path back. Two workers took the same backlog from 285 s to 1.3 s in about
+  # two minutes.
+  #
+  # Raise it again when the measurement says to. Check it with
+  # `XINFO GROUPS telemetry.v1`: a constant `pending` at the cap with a lag
+  # that is not shrinking is this same condition.
+  for i in $(seq 1 "${INGEST_WORKERS:-2}"); do
     start "ingest${i}" env PYTHONPATH="$ROOT/backend" "$PY" -m app.ingest.worker
   done
 fi
