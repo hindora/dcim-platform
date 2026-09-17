@@ -150,8 +150,8 @@
 
 .cn-canvas {
   position: relative;
-  height: 62vh;
-  min-height: 380px;
+  height: 70vh;
+  min-height: 460px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--cn-surface);

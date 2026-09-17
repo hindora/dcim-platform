@@ -27,6 +27,13 @@ import { NODE_H, NODE_W, type CollapsedEdge, type Placed } from './layout';
  *  also means a node the operator has dragged stays where they put it.
  */
 
+/** Frame the graph, but never below the zoom at which a device name stops
+ *  being a word. Fitting a two-thousand-pixel-wide hall into a panel puts it
+ *  at about 0.45, where a 10.5px name is five pixels of grey - the whole
+ *  picture visible and none of it readable. Below this the view lands at the
+ *  top-left of the graph and pans, which is how every map behaves. */
+const FIT = { padding: 0.14, minZoom: 0.62, duration: 320 } as const;
+
 const nodeTypes = { device: DeviceNode };
 const edgeTypes = { link: LinkEdge };
 
@@ -142,8 +149,7 @@ function Flow({ placement, edges, layer, layoutKey, selected, onSelect }: {
       setNodes(buildNodes(placement, showLoad, selected));
       setEdges(buildEdges(edges, flowing));
       // One frame for the new nodes to measure, then frame them.
-      const t = window.setTimeout(
-        () => fitView({ padding: 0.12, duration: 320 }), 30);
+      const t = window.setTimeout(() => fitView(FIT), 30);
       return () => window.clearTimeout(t);
     }
     // Same structure, newer state: replace the data, keep every position -
@@ -197,7 +203,7 @@ function Flow({ placement, edges, layer, layoutKey, selected, onSelect }: {
         nodesConnectable={false}
         elementsSelectable
         fitView
-        fitViewOptions={{ padding: 0.12 }}
+        fitViewOptions={FIT}
         minZoom={0.08}
         maxZoom={2.2}
         onlyRenderVisibleElements
@@ -215,7 +221,7 @@ function Flow({ placement, edges, layer, layoutKey, selected, onSelect }: {
         )}
       </ReactFlow>
 
-      <Toolbar onFit={() => fitView({ padding: 0.12, duration: 320 })}
+      <Toolbar onFit={() => fitView(FIT)}
                showMap={showMap} canMap={canMap}
                onToggleMap={() => setShowMap((v) => !v)} />
     </div>
