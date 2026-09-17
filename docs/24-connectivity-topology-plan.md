@@ -615,8 +615,10 @@ to get the information.
 Each phase ships something usable on its own.
 
 **Status at 2026-09-17: phases 0 to 6 are shipped, pushed and verified
-against the live estate.** What each one actually cost and what it found is
-recorded under it.
+against the live estate — with TWO BULLETS NOT BUILT**, one in phase 3 and one
+in phase 6, listed under each and repeated in §14 so they are not lost. Both
+are the same shape: the machinery exists and one surface does not call it yet.
+What each phase actually cost and what it found is recorded under it.
 
 ### Phase 0 — make the page honest (0.5 day) — DONE
 
@@ -722,8 +724,12 @@ the bar is telling the truth about what is recorded.
 
 * *Simulate removal* on the selected node: cut-off set red, degraded set
   amber-outlined, counts in the drawer, list exportable.
-* The same control from the maintenance-window screens, which is where the
-  question actually gets asked.
+* **NOT BUILT: the same control from the maintenance-window screens**, which
+  is where the question actually gets asked. `api.impact` is wired and the
+  overlay works from the connectivity page only.
+  `features/assets/maintenance/WindowForm.tsx` already carries a comment about
+  showing "the impact graph and the power chain what this selection would
+  actually" affect — that is the hook point.
 
 *Acceptance:* removing a UPS in a 2N room shows degraded-not-dark for
 dual-corded loads and dark for every single-corded one, and the list matches
@@ -803,6 +809,10 @@ bands wrap too.
   column — a worse lie than a crossing.
 * `GET /topology/path`, specified in `docs/10` §6 and never built.
 * `tools/crossings.mjs`, which measures it against the live API.
+* **NOT BUILT: the "are these independent?" control.** The endpoint answers
+  it; nothing in the UI asks. This bullet was quietly dropped when these were
+  rewritten after the fact — the plan was edited to match what shipped, which
+  is the wrong direction, and it is restored here.
 
 **The measurement, and it settles elkjs.**
 
@@ -844,6 +854,23 @@ unopened. Re-run the tool before reopening it.
 | `redundancy` endpoint is expensive at DC scope | Cache on `graph_version`; compute at room scope by default; DC scope is an explicit, slower request |
 | A 30 s cache + 15 s poll means acting on a 45 s-old picture | Print the graph's age on the diagram; drop this endpoint's TTL if operators object |
 | elkjs licence | Review before it lands; the default path does not need it |
+
+## 14. Still owed from phases 0–6
+
+Neither is a gap in the analysis; both are a surface that does not yet call
+machinery that exists and is tested.
+
+1. **Impact from the maintenance-window screens** (phase 3). The window is
+   where "what breaks if I pull this" is actually asked; today it is only
+   askable from the connectivity page, which is not where somebody planning a
+   window is standing.
+2. **An "are these independent?" control** (phase 6). `GET /topology/path`
+   returns the walk, the shared upstream and an `independent` flag; no screen
+   calls it. Two rack pickers and a verdict line is the whole job.
+
+Also outstanding and cheaper: **code-split the connectivity route**. React
+Flow took the bundle from 655 kB to 856 kB (180 → 246 kB gzipped) and this is
+the only route that needs it.
 
 ## 11. Deferred, deliberately
 
