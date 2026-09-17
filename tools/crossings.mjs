@@ -113,7 +113,30 @@ function orderRanks(byRank, ranks, edges) {
 }
 
 const rooms = (await get('/rooms')).items;
-console.log('room                      layer        nodes  before   after   saved');
+/** The fewest crossings ANY ordering can achieve between two ranks that are
+ *  completely connected. K(a,b) drawn in two rows has C(a,2)*C(b,2) crossings
+ *  whatever order you put the rows in - a dual-homed fabric is exactly that
+ *  shape, and a layout engine cannot beat arithmetic. Reported so a 0% saving
+ *  can be told from a failure. */
+function bipartiteFloor(byRank, ranks, edges) {
+  let floor = 0;
+  for (let k = 1; k < ranks.length; k += 1) {
+    const upper = byRank.get(ranks[k - 1]);
+    const lower = byRank.get(ranks[k]);
+    const u = new Set(upper.map((n) => n.id));
+    const l = new Set(lower.map((n) => n.id));
+    const between = edges.filter(
+      (e) => (u.has(e.source) && l.has(e.target)) || (u.has(e.target) && l.has(e.source)));
+    // Only meaningful where the two ranks really are fully connected.
+    if (between.length === upper.length * lower.length && upper.length > 1 && lower.length > 1) {
+      const c2 = (n) => (n * (n - 1)) / 2;
+      floor += c2(upper.length) * c2(lower.length);
+    }
+  }
+  return floor;
+}
+
+console.log('room                      layer        nodes  before   after   saved  floor');
 for (const room of rooms) {
   for (const layer of ['network', 'management', 'fieldbus']) {
     let g;
@@ -133,9 +156,12 @@ for (const room of rooms) {
     const before = total(byRank, ranks, edges);
     const after = orderRanks(byRank, ranks, edges);
     const pct = before ? Math.round((1 - after / before) * 100) : 0;
+    const floor = bipartiteFloor(byRank, ranks, edges);
+    const atFloor = floor > 0 && after === floor ? ' AT FLOOR' : '';
     console.log(
       `${(room.datacenter_code + ' ' + room.name).padEnd(24)} ${layer.padEnd(12)}`
       + `${String(g.node_count).padStart(5)} ${String(before).padStart(7)} `
-      + `${String(after).padStart(7)} ${String(pct).padStart(5)}%`);
+      + `${String(after).padStart(7)} ${String(pct).padStart(5)}% ${String(floor).padStart(6)}`
+      + atFloor);
   }
 }
