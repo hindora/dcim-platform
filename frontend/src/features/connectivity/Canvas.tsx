@@ -258,8 +258,16 @@ function Flow({ placement, edges, layer, layoutKey, selected, onSelect, impact,
     const byId = new Map(placement.placed.map((p) => [p.node.id, p.node]));
     setNodes((nds) => nds.map((n) => {
       const fresh = byId.get(n.id);
+      // `roomId` is carried across, not recomputed: it says which room box
+      // owns this device, and nodeData knows nothing about rooms. Dropping it
+      // here is what made a room drag stop taking its devices after the first
+      // poll - fifteen seconds in, every device silently lost its room and a
+      // drag had nothing to move.
       return fresh
-        ? { ...n, data: nodeData(fresh, showLoad, impact), selected: n.id === selected }
+        ? { ...n,
+            data: { ...nodeData(fresh, showLoad, impact),
+                    roomId: (n.data as { roomId?: string }).roomId },
+            selected: n.id === selected }
         : n;
     }));
     setEdges(buildEdges(edges, layer, flowing));
