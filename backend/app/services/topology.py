@@ -23,6 +23,8 @@ from app.schemas import (
     ImpactNode,
     ImpactOut,
     LocationRef,
+    RedundancyFinding,
+    RedundancyOut,
     Termination,
     TopologyEdge,
     TopologyNode,
@@ -34,6 +36,7 @@ from app.schemas import (
     TraceTermination,
 )
 from app.services import impact
+from app.services import redundancy as redundancy_svc
 from app.services import trace as trace_svc
 
 log = get_logger("topology")
@@ -511,6 +514,77 @@ async def get_trace(session: AsyncSession, *, device_id: str,
     log.info("trace walked", device=subject["name"], layer=layer_value,
              paths=len(out.paths), truncated=truncated,
              asymmetric=out.asymmetric, downstream=out.downstream_count)
+    return out
+
+
+# One sentence per finding, so a reader who has not met the vocabulary still
+# gets the point. The wording says what IS, never what to do about it: whether
+# a single-corded sensor matters is the operator's call.
+_DETAIL = {
+    "single_fed": "Fed from one place. Losing it takes this device with it.",
+    "same_side": ("More than one feed, all on the same distribution side. It "
+                  "looks redundant on a cord count and is not."),
+    "converged": ("Both sides pass back through the same equipment. Nominally "
+                  "dual fed, actually one device away from dark."),
+}
+
+
+async def get_redundancy(session: AsyncSession, *, layer: str,
+                         scope: str) -> RedundancyOut:
+    """Where the redundancy is not actually there.
+
+    The audit walks the WHOLE layer - a convergence can be six hops above the
+    room and still be the thing that takes it out - but reports only on the
+    devices in the requested scope, because a finding about a rack in another
+    hall is somebody else's list.
+    """
+    layer_value = resolve_layer(layer)
+    scope_type, scope_id = parse_scope(scope)
+
+    graph = redundancy_svc.Graph()
+    for e in await repo.layer_edges(session, layer_value):
+        graph.add(e["up"], e["down"], e.get("redundancy_side"))
+
+    # Scope the candidates with the same seed the graph endpoint uses, so the
+    # audit and the diagram are talking about the same population.
+    rows = await repo.graph_nodes(
+        session, scope_type=scope_type, scope_id=scope_id,
+        layer=layer_value, depth=0, cap=NODE_CAP)
+    candidates = {r["id"] for r in rows} & graph.nodes
+
+    findings = redundancy_svc.audit(graph, candidates)
+
+    wanted = {f.device for f in findings}
+    for f in findings:
+        wanted.update(f.shared)
+    brief = await repo.devices_brief(session, sorted(wanted))
+
+    def node(dev_id: str) -> ImpactNode:
+        row = brief.get(dev_id)
+        return ImpactNode(**row) if row else ImpactNode(
+            id=dev_id, name=dev_id, device_type="unknown")
+
+    counts: dict[str, int] = {}
+    for f in findings:
+        counts[f.kind] = counts.get(f.kind, 0) + 1
+
+    out = RedundancyOut(
+        layer=layer, scope=scope,
+        examined=len(candidates),
+        counts=counts,
+        findings=[
+            RedundancyFinding(
+                device=node(f.device), kind=f.kind, detail=_DETAIL[f.kind],
+                shared=[node(s) for s in f.shared], sides=f.sides)
+            for f in findings
+        ],
+    )
+    # Worst first: a convergence is the one nothing else in the product can
+    # show, and a single-corded sensor is the one most likely to be by design.
+    order = {"converged": 0, "same_side": 1, "single_fed": 2}
+    out.findings.sort(key=lambda f: (order.get(f.kind, 9), f.device.name))
+    log.info("redundancy audited", layer=layer_value, scope=scope,
+             examined=out.examined, **counts)
     return out
 
 

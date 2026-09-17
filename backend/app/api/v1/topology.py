@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import Principal, current_principal
 from app.db.session import get_session
-from app.schemas import ImpactOut, TopologyOut, TraceOut
+from app.schemas import ImpactOut, RedundancyOut, TopologyOut, TraceOut
 from app.services import topology as service
 
 router = APIRouter(prefix="/topology", tags=["topology"])
@@ -76,6 +76,34 @@ async def get_trace(
     """
     try:
         return await service.get_trace(session, device_id=device_id, layer=layer)
+    except service.TopologyError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from None
+
+
+@router.get("/redundancy", response_model=RedundancyOut,
+            summary="Where the redundancy is not actually there")
+async def get_redundancy(
+    scope: str = Query(..., description="Anchor as '<type>:<id>'",
+                       examples=["room:8f1c2b7e-0a4d-4c31-9f77-2c9a1b6d5e10"]),
+    layer: str = Query("power", description="power | cooling | network | …"),
+    session: AsyncSession = Depends(get_session),
+    _: Principal = Depends(current_principal),
+) -> RedundancyOut:
+    """Three findings, none of which any per-device page can show.
+
+    ``single_fed`` one feed. ``same_side`` several feeds, all on one side -
+    which looks redundant on a cord count and is not. ``converged`` two sides
+    that meet again at a shared ancestor: nominally dual fed, actually one
+    device away from dark, and the reason 2N estates lose loads everybody
+    believed were safe.
+
+    The walk covers the whole layer, because a convergence can be six hops
+    above the room and still be the thing that takes it out; the findings are
+    limited to the scope, because a rack in another hall is somebody else's
+    list.
+    """
+    try:
+        return await service.get_redundancy(session, layer=layer, scope=scope)
     except service.TopologyError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from None
 

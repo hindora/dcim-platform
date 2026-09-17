@@ -332,7 +332,8 @@ function SimulationBanner({ name, view, loading, error, layerLabel, onExport, on
           ) : (
             <>
               <b>{name}</b> removed — <b>{view!.cutCount}</b>{' '}
-              {view!.effect}, <b>{view!.degradedCount}</b> lose a redundancy side
+              {view!.effectPlural}, <b>{view!.degradedCount}</b> lose a
+              redundancy side
             </>
           )}
       </span>

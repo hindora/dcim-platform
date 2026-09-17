@@ -32,8 +32,13 @@ export type Verdict = 'cut' | 'degraded' | 'partial' | null;
 export interface ImpactView {
   /** The device whose removal is being simulated. */
   candidate: string;
-  /** Plain words for this layer: "loses power", "loses monitoring". */
+  /** Plain words for this layer, written for ONE device: "loses power",
+   *  "loses monitoring". */
   effect: string;
+  /** The same phrase with a plural subject. The server writes the effect for a
+   *  single device because that is how it reads in a list; the banner counts
+   *  them, and "32 loses power" is not a sentence. */
+  effectPlural: string;
   cutOff: Set<string>;
   degraded: Set<string>;
   /** Totals for THIS layer, which is what the diagram is showing. A device
@@ -45,12 +50,22 @@ export interface ImpactView {
   empty: boolean;
 }
 
+/** "loses power" -> "lose power", "is removed" -> "are removed". Every effect
+ *  the server defines is one of these two shapes, and a phrase that is neither
+ *  is passed through rather than mangled. */
+function plural(effect: string): string {
+  if (effect.startsWith('loses ')) return `lose ${effect.slice(6)}`;
+  if (effect.startsWith('is ')) return `are ${effect.slice(3)}`;
+  return effect;
+}
+
 export function projectImpact(impact: Impact, layer: string): ImpactView {
   const want = ENUM_LAYER[layer] ?? layer;
   const found = impact.layers.find((l) => l.layer === want);
   return {
     candidate: impact.device.id,
     effect: found?.effect ?? 'is removed',
+    effectPlural: plural(found?.effect ?? 'is removed'),
     cutOff: new Set(found?.cut_off.map((n) => n.id) ?? []),
     degraded: new Set(found?.degraded.map((n) => n.id) ?? []),
     cutCount: found?.cut_off.length ?? 0,

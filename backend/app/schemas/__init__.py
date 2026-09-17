@@ -407,6 +407,32 @@ class TraceOut(BaseModel):
     downstream_count: int = 0
 
 
+class RedundancyFinding(BaseModel):
+    device: ImpactNode
+    # single_fed | same_side | converged. Named rather than graded: whether a
+    # single-corded sensor is a defect is the operator's call, not the
+    # service's, and burying that decision in a threshold here would make the
+    # audit unreadable at every other site.
+    kind: str
+    # One sentence saying what the finding means, so a reader who has not met
+    # the vocabulary still gets the point.
+    detail: str
+    # For `converged`: the devices BOTH sides pass through - the common mode.
+    # Nearest the load first, because the closer a convergence is the more of
+    # the chain it takes with it.
+    shared: list[ImpactNode] = Field(default_factory=list)
+    sides: list[str] = Field(default_factory=list)
+
+
+class RedundancyOut(BaseModel):
+    layer: str
+    scope: str
+    # Devices examined: those in scope with at least one feed on this layer.
+    examined: int = 0
+    findings: list[RedundancyFinding] = Field(default_factory=list)
+    counts: dict[str, int] = Field(default_factory=dict)
+
+
 class DeviceStateOut(BaseModel):
     device_id: str
     status: str
