@@ -27,8 +27,8 @@ function RoomNode({ data }: {
   // shrinks ends up written across its neighbours: UPS ROOM, GENERATOR ROOM
   // and MECHANICAL ROOM were one illegible line.
   const chars = data.name.length + 3;          // the count chip, roughly
-  const fit = (data.width * 0.95) / (chars * 0.62);
-  const size = Math.max(6, Math.min(11 * k, fit, 130));
+  const fit = ((data.width || 0) * 0.95) / (chars * 0.62);
+  const size = Math.max(6, Math.min(11 * k, fit || 11 * k, 130));
 
   return (
     <div className="cn-room" style={{ borderWidth: Math.min(k, 8) }}>
