@@ -152,6 +152,8 @@ const PATH = {
   fit: 'M3 8V5a2 2 0 0 1 2-2h3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M21 16v3a2 2 0 0 1-2 2h-3',
   map: 'M3 6l6-3 6 3 6-3v15l-6 3-6-3-6 3zM9 3v15M15 6v15',
   rooms: 'M3 4h8v6H3zM13 4h8v6h-8zM3 14h8v6H3zM13 14h8v6h-8z',
+  reset: 'M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8M3 3v5h5'
+       + 'M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16M16 16h5v5',
 };
 
 /** The zoom, printed. A canvas that can be panned off its own content has to
@@ -166,9 +168,10 @@ function ZoomLevel({ onFit }: { onFit: () => void }) {
   );
 }
 
-function Toolbar({ onFit, showMap, onToggleMap, canMap,
+function Toolbar({ onFit, onReset, showMap, onToggleMap, canMap,
                   showRooms, onToggleRooms, canRooms }: {
   onFit: () => void;
+  onReset: () => void;
   showMap: boolean;
   onToggleMap: () => void;
   canMap: boolean;
@@ -188,8 +191,14 @@ function Toolbar({ onFit, showMap, onToggleMap, canMap,
         <Icon d={PATH.zoomIn} />
       </button>
       <span className="cn-sep" />
-      <button type="button" title="Fit to view" onClick={onFit}>
-        <Icon d={PATH.fit} />
+      {/* Reset, not fit: the percentage above already fits, and a control that
+          only reframes is a second button for something already one click
+          away. This one puts every box back where the layout put it - rooms
+          that were dragged, boxes that were resized, a device somebody moved -
+          and frames the result, because a reset nobody can see has not
+          obviously happened. */}
+      <button type="button" title="Reset layout" onClick={onReset}>
+        <Icon d={PATH.reset} />
       </button>
       {canRooms && (
         <button type="button" aria-pressed={showRooms}
@@ -353,6 +362,16 @@ function Flow({ placement, edges, layer, layoutKey, selected, onSelect, impact,
     fitView({ nodes: [{ id: selected }], padding: 2.2, maxZoom: 1.1, duration: 320 });
   }, [focusNonce, selected, fitView]);
 
+  /** Back to the drawn layout: positions, room boxes, sizes and all, then
+   *  framed. Everything here is a pure function of the graph, so this is a
+   *  rebuild rather than an undo stack. */
+  const onReset = useCallback(() => {
+    setNodes(buildNodes(placement, showLoad, selected, impact, showRooms));
+    setEdges(buildEdges(edges, layer, flowing));
+    window.setTimeout(() => fitView(fitOpts), 30);
+  }, [placement, showLoad, selected, impact, showRooms, edges, layer, flowing,
+      setNodes, setEdges, fitView, fitOpts]);
+
   const canMap = placement.placed.length > 25;
 
   // The flow animation is a per-frame stroke repaint and it fights the
@@ -405,7 +424,7 @@ function Flow({ placement, edges, layer, layoutKey, selected, onSelect, impact,
         )}
       </ReactFlow>
 
-      <Toolbar onFit={() => fitView(fitOpts)}
+      <Toolbar onFit={() => fitView(fitOpts)} onReset={onReset}
                showMap={showMap} canMap={canMap}
                onToggleMap={() => setShowMap((v) => !v)}
                showRooms={showRooms} canRooms={Boolean(placement.rooms?.length)}
