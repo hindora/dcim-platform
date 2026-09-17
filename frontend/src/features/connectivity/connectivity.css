@@ -316,12 +316,14 @@
 /* --- bottom left: what is drawn, and what is not -------------------------- */
 
 .cn-caption {
-  bottom: 10px; left: 10px;
-  max-width: calc(100% - 20px);
-  /* Wraps rather than runs on, so it grows upward from the corner it is
-     anchored to and never pushes into anything. */
-  display: flex; align-items: center; flex-wrap: wrap; gap: 3px 12px;
-  padding: 5px 10px;
+  /* Bottom RIGHT, stacked. A key is looked up item by item, and a column is
+     read that way; a row of nine items strung along the foot of the drawing
+     is read as a sentence and scanned like one. Anchored to --cn-right so it
+     sits beside the drawer rather than under it. */
+  bottom: 10px; left: auto; right: var(--cn-right);
+  max-width: 240px;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
+  padding: 6px 10px;
   font-size: 0.66rem; color: var(--text-muted);
 }
 .cn-caption b { color: var(--text); font-variant-numeric: tabular-nums; }
@@ -425,10 +427,10 @@
 .cn-canvas:has(.conn-drawer) { --cn-right: 334px; }
 .cn-caption { max-width: calc(100% - 10px - var(--cn-right)); }
 
-/* The minimap shares the bottom edge; the legend stops before it too. */
-.cn-canvas:has(.cn-minimap) .cn-caption {
-  max-width: calc(100% - 10px - var(--cn-right) - 214px);
-}
+/* The minimap owns the same corner, so the key sits above it rather than
+   beside it - side by side, the two of them would reach halfway across the
+   drawing. */
+.cn-canvas:has(.cn-minimap) .cn-caption { bottom: 172px; }
 
 /* --- scrollers ------------------------------------------------------------ */
 
@@ -662,7 +664,7 @@
 /* --- legend --------------------------------------------------------------- */
 
 .cn-legend {
-  display: flex; flex-wrap: wrap; gap: 3px 11px; align-items: center;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 3px;
   font-size: 0.64rem; color: var(--text-muted);
 }
 .cn-legend span { display: inline-flex; align-items: center; gap: 5px; }
