@@ -636,6 +636,9 @@
    the map to go. */
 @container canvas (max-width: 560px) {
   .cn-canvas:has(.conn-drawer) .react-flow__minimap.cn-minimap { display: none; }
+  /* And the button with it: a pressed toggle whose effect is nowhere on
+     screen reads as a broken control. */
+  .cn-canvas:has(.conn-drawer) .cn-toolbar button[title='Minimap'] { display: none; }
 }
 
 /* --- the drawer ---------------------------------------------------------- */
