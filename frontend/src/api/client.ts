@@ -94,6 +94,9 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 // ---------------------------------------------------------------- types
 
 export interface LocationRef {
+  /** Declared for the same reason room_id was: the server sends it, and a
+   *  view that wants to scope itself to a device's SITE had to guess. */
+  datacenter_id?: string | null;
   datacenter_code?: string | null;
   /** The server has always sent this; the type just never declared it, so
    *  anything wanting to scope a view to a device's room had to guess. */

@@ -59,6 +59,11 @@ export function Connectivity() {
   /** Bumped only when a selection comes from OFF the canvas, so the viewport
    *  moves for the device list and not for a node somebody just clicked. */
   const [focusNonce, setFocusNonce] = useState(0);
+  const [siteId, setSiteId] = useState('');
+  /** Empty means the WHOLE SITE. A room is a narrowing of a site, not a
+   *  required choice: the question "how is this hall wired" and the question
+   *  "how does this site hang together" are both real, and the second one had
+   *  no way to be asked. */
   const [roomId, setRoomId] = useState('');
   const [depth, setDepth] = useState(1);
   const [rollup, setRollup] = useState<'none' | 'rack'>('rack');
@@ -85,6 +90,8 @@ export function Connectivity() {
     if (wanted && LAYERS.some((l) => l.key === wanted)) setLayer(wanted as LayerKey);
     setSimulating(linked);
     const room = linkedDevice.data?.location.room_id;
+    const site = linkedDevice.data?.location.datacenter_id;
+    if (site) setSiteId(site);
     if (room) setRoomId(room);
     // Consumed: leaving it in the URL re-applies it every time the operator
     // changes room afterwards, which fights them.
@@ -95,9 +102,37 @@ export function Connectivity() {
     queryKey: ['rooms'],
     queryFn: () => api.rooms(),
   });
-  const selectedRoom = roomId || rooms.data?.items[0]?.id || '';
-  const scope = selectedRoom ? `room:${selectedRoom}` : '';
+
+  // The sites come out of the room list rather than from a call of their own -
+  // every room already carries the datacenter it is in, and a second request
+  // to learn the same two facts would be a second thing to go stale.
+  const sites = useMemo(() => {
+    const seen = new Map<string, { id: string; code: string }>();
+    for (const r of rooms.data?.items ?? []) {
+      if (r.datacenter_id && !seen.has(r.datacenter_id)) {
+        seen.set(r.datacenter_id,
+                 { id: r.datacenter_id, code: r.datacenter_code || 'Site' });
+      }
+    }
+    return [...seen.values()].sort((a, b) => a.code.localeCompare(b.code));
+  }, [rooms.data]);
+
+  const selectedSite = siteId || sites[0]?.id || '';
+  const siteRooms = useMemo(
+    () => (rooms.data?.items ?? []).filter((r) => r.datacenter_id === selectedSite),
+    [rooms.data, selectedSite]);
+
+  // A room from another site is not a narrowing of this one, so changing site
+  // drops it rather than asking for a scope that contradicts itself.
+  const selectedRoom = siteRooms.some((r) => r.id === roomId) ? roomId : '';
+
+  // Whole site when no room is picked. Both are anchors the topology endpoint
+  // already understood; nothing had ever asked it for the larger one.
+  const scope = selectedRoom ? `room:${selectedRoom}`
+    : selectedSite ? `datacenter:${selectedSite}` : '';
   const room = rooms.data?.items.find((r) => r.id === selectedRoom);
+  const site = sites.find((s) => s.id === selectedSite);
+  const scopeName = room?.name ?? (site ? `${site.code}, every room` : 'this room');
 
   const graph = useQuery<TopologyGraph>({
     queryKey: ['topology', layer, scope, depth, rollup],
@@ -168,7 +203,8 @@ export function Connectivity() {
   return (
     <div className="conn-app">
       <SidePanel
-        rooms={rooms.data?.items ?? []}
+        sites={sites} siteId={selectedSite} onSite={reselect(setSiteId)}
+        rooms={siteRooms}
         roomId={selectedRoom} onRoom={reselect(setRoomId)}
         depth={depth} onDepth={setDepth}
         rollup={rollup} onRollup={reselect(setRollup)}
@@ -319,7 +355,7 @@ export function Connectivity() {
                   <Independence nodes={graph.data?.nodes ?? []} layer={layer} />
                   <Audit
                     scope={scope} layer={layer}
-                    roomName={room?.name ?? 'this room'}
+                    roomName={scopeName}
                     onSelectDevice={(id) => {
                       const node = graph.data?.nodes.find(
                         (n) => n.id === id || n.member_ids.includes(id));

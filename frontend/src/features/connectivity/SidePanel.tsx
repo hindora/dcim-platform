@@ -42,9 +42,13 @@ function statusColor(status: string, severity: string): string {
 }
 
 export function SidePanel({
-  rooms, roomId, onRoom, depth, onDepth, rollup, onRollup,
+  sites, siteId, onSite, rooms, roomId, onRoom,
+  depth, onDepth, rollup, onRollup,
   nodes, selected, onSelect, open, onToggle, loading,
 }: {
+  sites: { id: string; code: string }[];
+  siteId: string;
+  onSite: (id: string) => void;
   rooms: RoomSummary[];
   roomId: string;
   onRoom: (id: string) => void;
@@ -92,12 +96,22 @@ export function SidePanel({
     <aside className="cn-rail" aria-label="Scope and devices">
       <div className="cn-rail-scope">
         <label>
+          Site
+          <select value={siteId} onChange={(e) => onSite(e.target.value)}>
+            {sites.map((s) => (
+              <option key={s.id} value={s.id}>{s.code}</option>
+            ))}
+          </select>
+        </label>
+        <label>
           Room
+          {/* Blank is a real choice, and the first one: a site is a thing to
+              look at, not a folder you have to open. Picking no room draws
+              the whole site. */}
           <select value={roomId} onChange={(e) => onRoom(e.target.value)}>
+            <option value="">Every room in the site</option>
             {rooms.map((r) => (
-              <option key={r.id} value={r.id}>
-                {r.datacenter_code ? `${r.datacenter_code} · ` : ''}{r.name}
-              </option>
+              <option key={r.id} value={r.id}>{r.name}</option>
             ))}
           </select>
         </label>
