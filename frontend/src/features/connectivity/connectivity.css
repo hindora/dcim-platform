@@ -18,6 +18,123 @@
 
 .conn-app { flex: 1; min-height: 0; display: flex; }
 
+/* --- the left rail: scope, and everything in it --------------------------- */
+
+/* Docked rather than floating. A list is read down its length and a floating
+   panel over a drawing has to be dismissed to see what is behind it; a rail
+   just makes the canvas narrower, which is the honest trade. It collapses to a
+   tab when the drawing needs the width. */
+.cn-rail {
+  flex: none;
+  width: 250px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--border);
+  background: var(--bg-raised);
+}
+
+.cn-rail-scope {
+  display: flex; flex-direction: column; gap: 7px;
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* Depth and grouping share a row: they are both "how much", and stacking
+   three full-width selects makes the scope look like a form to fill in
+   rather than a state to glance at. */
+.cn-rail-pair { display: flex; gap: 6px; }
+.cn-rail-pair label { flex: 1; min-width: 0; }
+
+.cn-rail label {
+  display: flex; flex-direction: column; gap: 3px;
+  font-size: 0.58rem; letter-spacing: .07em; text-transform: uppercase;
+  color: var(--text-faint);
+}
+.cn-rail select {
+  height: 25px; padding: 0 4px; font-size: 0.7rem; min-width: 0;
+  background: var(--bg-inset); color: var(--text);
+  border: 1px solid var(--border); border-radius: 5px;
+}
+
+.cn-rail-head {
+  display: flex; align-items: center; gap: 4px;
+  padding: 8px 10px 6px;
+}
+.cn-rail-head input {
+  flex: 1; min-width: 0; height: 25px; padding: 0 7px;
+  font: inherit; font-size: 0.72rem;
+  background: var(--bg-inset); color: var(--text);
+  border: 1px solid var(--border); border-radius: 5px;
+}
+.cn-rail-head input::placeholder { color: var(--text-faint); }
+
+.cn-rail-hide, .cn-rail-open {
+  display: flex; align-items: center; justify-content: center;
+  border: 1px solid var(--border); border-radius: 5px;
+  background: var(--bg-inset); color: var(--text-muted);
+  cursor: pointer; padding: 0;
+}
+.cn-rail-hide { width: 25px; height: 25px; flex: none; }
+.cn-rail-hide:hover, .cn-rail-open:hover { color: var(--text); border-color: var(--border-strong); }
+
+/* Collapsed, the rail leaves a tab that still says how many devices are on
+   the canvas - the one fact worth keeping when the list itself is away. */
+.cn-rail-open {
+  flex: none; align-self: flex-start;
+  margin: 10px 0 0 10px;
+  flex-direction: column; gap: 2px;
+  width: 28px; padding: 6px 0;
+  border-radius: 6px; background: var(--bg-raised);
+  font-size: 0.6rem; font-variant-numeric: tabular-nums;
+}
+
+.cn-rail-count {
+  margin: 0; padding: 0 10px 6px;
+  font-size: 0.62rem; color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.cn-rail-list {
+  flex: 1; min-height: 0; overflow: auto;
+  list-style: none; margin: 0; padding: 0 6px 8px;
+}
+
+.cn-rail-list > li > button {
+  display: flex; align-items: center; gap: 7px; width: 100%;
+  padding: 4px 6px; border: none; border-radius: 5px;
+  background: none; color: inherit; font: inherit;
+  text-align: left; cursor: pointer;
+}
+.cn-rail-list > li > button:hover { background: var(--bg-inset); }
+.cn-rail-list > li > button.is-on {
+  background: var(--bg-inset);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+/* The same device-type colour the canvas fills a node with. A second palette
+   for the same machine would be a second identity. */
+.cn-rail-chip { flex: none; width: 8px; height: 18px; border-radius: 2px; }
+
+.cn-rail-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.cn-rail-name {
+  font-family: var(--mono); font-size: 0.68rem; color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.cn-rail-sub {
+  font-size: 0.6rem; color: var(--text-faint);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.cn-rail-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; }
+
+.cn-rail-empty {
+  padding: 10px 8px; font-size: 0.7rem; color: var(--text-faint);
+}
+
+@media (max-width: 900px) {
+  .cn-rail { width: 210px; }
+}
+
 /* --- the canvas ---------------------------------------------------------- */
 
 .cn-canvas {
@@ -113,39 +230,7 @@
   display: flex; align-items: flex-start; gap: 6px;
 }
 
-.cn-scope, .cn-sheets { position: relative; top: 0; right: 0; }
-
-.cn-scope-btn {
-  display: flex; flex-direction: column; align-items: flex-start; gap: 1px;
-  padding: 4px 10px; border-radius: 7px; max-width: 200px;
-}
-.cn-scope-btn:hover { background: var(--bg-inset); }
-.cn-scope-room {
-  font-size: 0.7rem; font-weight: 600; color: var(--text);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px;
-}
-.cn-scope-sub { font-size: 0.6rem; color: var(--text-faint); }
-
-.cn-pop {
-  position: absolute; top: calc(100% + 6px); right: 0; z-index: 7;
-  display: flex; flex-direction: column; gap: 9px;
-  width: 218px; padding: 9px 10px;
-  border: 1px solid var(--border); border-radius: 8px;
-  background: var(--bg-raised);
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.46);
-}
-[data-theme='light'] .cn-pop { box-shadow: 0 8px 24px rgba(31, 35, 40, 0.16); }
-
-.cn-pop label {
-  display: flex; flex-direction: column; gap: 3px;
-  font-size: 0.6rem; letter-spacing: .06em; text-transform: uppercase;
-  color: var(--text-faint);
-}
-.cn-pop select {
-  height: 24px; padding: 0 5px; font-size: 0.7rem;
-  background: var(--bg-inset); color: var(--text);
-  border: 1px solid var(--border); border-radius: 5px;
-}
+.cn-sheets { position: relative; top: 0; right: 0; }
 
 .cn-sheets { display: flex; gap: 1px; padding: 2px; }
 .cn-sheets button {

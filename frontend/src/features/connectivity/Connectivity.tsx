@@ -10,6 +10,7 @@ import { Canvas } from './Canvas';
 import { Drawer } from './Drawer';
 import { Independence } from './Independence';
 import { Legend } from './Legend';
+import { SidePanel } from './SidePanel';
 import { TraceTable } from './TraceTable';
 import { collapseEdges, layout, structureKey } from './layout';
 import './connectivity.css';
@@ -51,21 +52,13 @@ const ONE_LINE = new Set(['power']);
 /** Cooling is the layer that is a CIRCUIT rather than a chain. */
 const LOOP = new Set(['cooling']);
 
-const DEPTHS = [
-  { value: 0, label: 'Only this room' },
-  { value: 1, label: 'Also what feeds it' },
-  { value: 2, label: 'Two hops out' },
-];
-
-const ROLLUPS = [
-  { value: 'rack', label: 'Group rack equipment' },
-  { value: 'none', label: 'Every device separately' },
-] as const;
-
 export function Connectivity() {
   const [layer, setLayer] = useState<LayerKey>('power');
   const [sheet, setSheet] = useState<Sheet>(null);
-  const [scopeOpen, setScopeOpen] = useState(false);
+  const [railOpen, setRailOpen] = useState(true);
+  /** Bumped only when a selection comes from OFF the canvas, so the viewport
+   *  moves for the device list and not for a node somebody just clicked. */
+  const [focusNonce, setFocusNonce] = useState(0);
   const [roomId, setRoomId] = useState('');
   const [depth, setDepth] = useState(1);
   const [rollup, setRollup] = useState<'none' | 'rack'>('rack');
@@ -162,14 +155,33 @@ export function Connectivity() {
     return [...s].sort();
   }, [edges]);
 
+  /** Select and bring into view. Used by the list and by an audit finding -
+   *  anything whose click happens somewhere other than the canvas itself. */
+  function reveal(node: TopologyNode) {
+    setSelected(node);
+    setFocusNonce((n) => n + 1);
+  }
+
   const empty = Boolean(graph.data) && graph.data!.node_count === 0;
   const layerLabel = LAYERS.find((l) => l.key === layer)?.label.toLowerCase() ?? layer;
 
   return (
     <div className="conn-app">
+      <SidePanel
+        rooms={rooms.data?.items ?? []}
+        roomId={selectedRoom} onRoom={reselect(setRoomId)}
+        depth={depth} onDepth={setDepth}
+        rollup={rollup} onRollup={reselect(setRollup)}
+        nodes={graph.data?.nodes ?? []}
+        selected={selected?.id ?? null}
+        onSelect={reveal}
+        open={railOpen} onToggle={() => setRailOpen((v) => !v)}
+        loading={graph.isLoading} />
+
       <Canvas
         placement={placement} edges={edges} layer={layer} layoutKey={key}
         selected={selected?.id ?? null} onSelect={setSelected} impact={impact}
+        focusNonce={focusNonce}
       >
         {/* ---- top centre: the layer, which is what the canvas IS --------- */}
         <div className="cn-float cn-layers" role="group" aria-label="Layer">
@@ -184,56 +196,8 @@ export function Connectivity() {
           ))}
         </div>
 
-        {/* ---- top right: scope, and the two answers about it ------------- */}
+        {/* ---- top right: the two answers about what is on the canvas ---- */}
         <div className="cn-topright">
-          <div className="cn-float cn-scope">
-            <button type="button" className="cn-scope-btn"
-                    aria-expanded={scopeOpen}
-                    onClick={() => setScopeOpen((v) => !v)}>
-              <span className="cn-scope-room">
-                {room ? `${room.datacenter_code ?? ''} ${room.name}`.trim() : 'Scope'}
-              </span>
-              <span className="cn-scope-sub">
-                {DEPTHS.find((d) => d.value === depth)?.label}
-                {rollup === 'rack' && ' · grouped'}
-              </span>
-            </button>
-            {scopeOpen && (
-              <div className="cn-pop">
-                <label>
-                  Room
-                  <select value={selectedRoom}
-                          onChange={(e) => reselect(setRoomId)(e.target.value)}>
-                    {rooms.data?.items.map((r) => (
-                      <option key={r.id} value={r.id}>
-                        {r.datacenter_code ? `${r.datacenter_code} · ` : ''}{r.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  How far out
-                  <select value={depth}
-                          onChange={(e) => setDepth(Number(e.target.value))}>
-                    {DEPTHS.map((d) => (
-                      <option key={d.value} value={d.value}>{d.label}</option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Grouping
-                  <select value={rollup}
-                          onChange={(e) => reselect(setRollup)(
-                            e.target.value as 'none' | 'rack')}>
-                    {ROLLUPS.map((r) => (
-                      <option key={r.value} value={r.value}>{r.label}</option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-            )}
-          </div>
-
           <div className="cn-float cn-sheets" role="group" aria-label="Views">
             <button type="button" className={sheet === 'trace' ? 'is-on' : undefined}
                     onClick={() => setSheet(sheet === 'trace' ? null : 'trace')}>
@@ -359,7 +323,7 @@ export function Connectivity() {
                     onSelectDevice={(id) => {
                       const node = graph.data?.nodes.find(
                         (n) => n.id === id || n.member_ids.includes(id));
-                      if (node) { setSelected(node); setSheet(null); }
+                      if (node) { reveal(node); setSheet(null); }
                     }} />
                 </>
               )}

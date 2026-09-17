@@ -48,7 +48,9 @@ const FILL: Record<string, string> = {
   bacnet_router: 'var(--node-bacnet-router)',
 };
 
-const fillOf = (t: string) => FILL[t] ?? 'var(--node-default)';
+/** Exported so the side list can wear the same identity as the canvas. A
+ *  second colour table for the same machine is a second identity. */
+export const fillOf = (t: string) => FILL[t] ?? 'var(--node-default)';
 
 /** Class, for the glyph only. Coarser than device_type on purpose: scanning a
  *  diagram you look for "is that the power chain or the cooling plant", not

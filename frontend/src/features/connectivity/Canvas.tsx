@@ -144,7 +144,7 @@ function Toolbar({ onFit, showMap, onToggleMap, canMap }: {
 }
 
 function Flow({ placement, edges, layer, layoutKey, selected, onSelect, impact,
-                children }: {
+                focusNonce, children }: {
   placement: Placement;
   edges: CollapsedEdge[];
   layer: string;
@@ -155,6 +155,10 @@ function Flow({ placement, edges, layer, layoutKey, selected, onSelect, impact,
   onSelect: (node: TopologyNode | null) => void;
   /** Non-null while a removal is being simulated. */
   impact: ImpactView | null;
+  /** Bumped when something OFF the canvas picks a node - the device list, a
+   *  finding in the audit. The canvas then brings it into view, because a
+   *  selection you cannot see is not a selection. */
+  focusNonce: number;
   /** The floating chrome. Rendered inside the canvas so it sits over the
    *  graph, and after ReactFlow so it stacks above without a z-index war. */
   children?: React.ReactNode;
@@ -196,6 +200,17 @@ function Flow({ placement, edges, layer, layoutKey, selected, onSelect, impact,
   const onNodeClick = useCallback((_: unknown, n: Node) => {
     onSelect((n.data as { node: TopologyNode }).node);
   }, [onSelect]);
+
+  // Bring an off-canvas selection into view, and only then: clicking a node
+  // that is already on screen must not yank the viewport out from under the
+  // hand that clicked it, which is why this keys off a nonce the list bumps
+  // rather than off `selected`.
+  const lastFocus = useRef(focusNonce);
+  useEffect(() => {
+    if (focusNonce === lastFocus.current || !selected) return;
+    lastFocus.current = focusNonce;
+    fitView({ nodes: [{ id: selected }], padding: 2.2, maxZoom: 1.1, duration: 320 });
+  }, [focusNonce, selected, fitView]);
 
   const canMap = placement.placed.length > 25;
 
