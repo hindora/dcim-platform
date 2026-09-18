@@ -812,6 +812,14 @@
 }
 .conn-chain li { padding: 1px 0; font-size: 0.76rem; }
 .conn-chain li.is-self { font-family: var(--mono); color: var(--text-muted); }
+.conn-chain li + li { margin-top: 3px; }
+/* The ports a hop leaves by and lands on: what gets read out in front of the
+   PDU, so it is the drawer's second line and not a table somewhere else. */
+.conn-chain .conn-port {
+  font-family: var(--mono); font-size: 0.68rem; color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+.conn-chain .conn-alt { font-style: italic; margin: 0; }
 
 .conn-drawer-actions {
   display: flex; align-items: center; gap: 6px;
@@ -835,20 +843,11 @@
 .conn-side.side-a { border-color: var(--series-1); color: var(--series-1); }
 .conn-side.side-b { border-color: var(--series-2); color: var(--series-2); }
 
-/* --- the trace table ----------------------------------------------------- */
+/* --- a sheet's head row (the audit) -------------------------------------- */
 
 .conn-trace-head {
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
 }
-/* The narrow columns are told their width, or the browser hands the empty
-   space to SIDE and HOP and squeezes the device names that carry the trace. */
-.conn-trace th:first-child, .conn-trace td:first-child { width: 48px; }
-.conn-trace th:nth-child(2), .conn-trace td:nth-child(2) { width: 56px; }
-.conn-trace td { vertical-align: top; padding: 6px 12px; }
-.conn-trace .k { font-size: 0.68rem; color: var(--text-faint); }
-.conn-trace .conn-alt { font-style: italic; }
-/* The last hop is the cord someone would actually pull. */
-.conn-trace tr.is-cord td { border-bottom: 1px solid var(--border-strong); }
 
 
 /* The Simulate-removal button, while it is on. Survives the cull of the old

@@ -11,22 +11,22 @@ import { Drawer } from './Drawer';
 import { Independence } from './Independence';
 import { Legend } from './Legend';
 import { SidePanel } from './SidePanel';
-import { TraceTable } from './TraceTable';
 import { collapseEdges, layout, layoutRooms, structureKey } from './layout';
 import './connectivity.css';
 
 /** Connectivity: how the estate is wired, one layer at a time.
  *
  *  THE CANVAS IS THE PAGE. Everything else — the layer strip, the scope, the
- *  trace table, the audit, the selection — floats on top of it. A diagram
- *  boxed into a panel under a heading and three rows of filters spends most of
- *  the screen on furniture, and the furniture is not what anybody came for.
+ *  audit, the selection — floats on top of it. A diagram boxed into a panel
+ *  under a heading and three rows of filters spends most of the screen on
+ *  furniture, and the furniture is not what anybody came for.
  *
  *  It follows that a table cannot REPLACE the diagram, which is what the view
- *  tabs used to do. The trace and the audit are answers ABOUT what is on the
- *  canvas, and reading one while the thing it describes is gone is the same
- *  mistake as a modal over a diagram. They open as a sheet along the bottom
- *  and the graph stays where it was.
+ *  tabs used to do. The audit is an answer ABOUT what is on the canvas, and
+ *  reading it while the thing it describes is gone is the same mistake as a
+ *  modal over a diagram. It opens as a sheet along the bottom and the graph
+ *  stays where it was. The trace lives in the selection drawer, hop by hop
+ *  with its ports, rather than in a second sheet saying the same thing.
  */
 
 // The API accepts 'network' as an alias for the production enum; the operator's
@@ -43,7 +43,7 @@ const LAYERS = [
 type LayerKey = typeof LAYERS[number]['key'];
 
 /** Sheets, not tabs. `null` is the canvas on its own. */
-type Sheet = 'trace' | 'audit' | null;
+type Sheet = 'audit' | null;
 
 /** Layers drawn as a one-line: A down the left, B down the right, shared and
  *  dual-fed equipment down the middle. */
@@ -244,13 +244,9 @@ export function Connectivity() {
           ))}
         </div>
 
-        {/* ---- top right: the two answers about what is on the canvas ---- */}
+        {/* ---- top right: the answer about what is on the canvas --------- */}
         <div className="cn-topright">
           <div className="cn-float cn-sheets" role="group" aria-label="Views">
-            <button type="button" className={sheet === 'trace' ? 'is-on' : undefined}
-                    onClick={() => setSheet(sheet === 'trace' ? null : 'trace')}>
-              TRACE
-            </button>
             <button type="button" className={sheet === 'audit' ? 'is-on' : undefined}
                     onClick={() => setSheet(sheet === 'audit' ? null : 'audit')}>
               REDUNDANCY
@@ -323,7 +319,6 @@ export function Connectivity() {
         {/* ---- right: the selection --------------------------------------- */}
         {selected && (
           <Drawer node={selected} layer={layer}
-                  onFullTrace={() => setSheet('trace')}
                   onSimulate={setSimulating}
                   simulating={simulating === selected.id}
                   onClose={() => setSelected(null)} />
@@ -331,40 +326,22 @@ export function Connectivity() {
 
         {/* ---- bottom: the answers ABOUT the canvas, not instead of it ----- */}
         {sheet && (
-          <section className="cn-sheet" aria-label={
-            sheet === 'trace' ? 'Trace table' : 'Redundancy audit'}>
+          <section className="cn-sheet" aria-label="Redundancy audit">
             <header>
-              <h3>{sheet === 'trace' ? 'TRACE TABLE' : 'REDUNDANCY AUDIT'}</h3>
+              <h3>REDUNDANCY AUDIT</h3>
               <button type="button" className="asset-max" aria-label="Close"
                       onClick={() => setSheet(null)}>✕</button>
             </header>
             <div className="cn-sheet-body">
-              {sheet === 'trace' && (
-                selected && selected.rolled_up === 0 ? (
-                  <TraceTable deviceId={selected.id} deviceName={selected.name}
-                              layer={layer} />
-                ) : (
-                  <p className="muted">
-                    {selected
-                      ? `${selected.name} stands for ${selected.rolled_up} devices. `
-                        + 'Ungroup, or pick one of them, to trace a chain.'
-                      : 'Pick a device on the canvas to trace its chain to source.'}
-                  </p>
-                )
-              )}
-              {sheet === 'audit' && (
-                <>
-                  <Independence nodes={graph.data?.nodes ?? []} layer={layer} />
-                  <Audit
-                    scope={scope} layer={layer}
-                    roomName={scopeName}
-                    onSelectDevice={(id) => {
-                      const node = graph.data?.nodes.find(
-                        (n) => n.id === id || n.member_ids.includes(id));
-                      if (node) { reveal(node); setSheet(null); }
-                    }} />
-                </>
-              )}
+              <Independence nodes={graph.data?.nodes ?? []} layer={layer} />
+              <Audit
+                scope={scope} layer={layer}
+                roomName={scopeName}
+                onSelectDevice={(id) => {
+                  const node = graph.data?.nodes.find(
+                    (n) => n.id === id || n.member_ids.includes(id));
+                  if (node) { reveal(node); setSheet(null); }
+                }} />
             </div>
           </section>
         )}

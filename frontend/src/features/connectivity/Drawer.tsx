@@ -1,22 +1,21 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { api, type TopologyNode, type Trace } from '../../api/client';
-import { terminationLabel } from './TraceTable';
+import { exportTraceCsv, PORT_LAYERS, terminationLabel } from './trace';
 
 /** What is selected, and what feeds it.
  *
  *  A drawer rather than a modal. The diagram is there to be compared against,
- *  and a modal over it hides the one thing the reader is holding in their head
- *  - which is also why the full hop table is a view tab and not a popup.
+ *  and a modal over it hides the one thing the reader is holding in their head.
  *
- *  The chain here is names and sides only. The outlet numbers and ratings are
- *  in the table, because they are what gets pasted into a ticket and this is
- *  what gets glanced at.
+ *  This is the whole trace, not a summary of one kept elsewhere: every hop
+ *  carries the port it leaves by and the port it lands on, because the outlet
+ *  number and rating are what a technician needs in front of the PDU, and the
+ *  CSV is what gets pasted into the change ticket.
  */
-export function Drawer({ node, layer, onFullTrace, onClose, onSimulate, simulating }: {
+export function Drawer({ node, layer, onClose, onSimulate, simulating }: {
   node: TopologyNode;
   layer: string;
-  onFullTrace: () => void;
   onClose: () => void;
   onSimulate: (deviceId: string | null) => void;
   simulating: boolean;
@@ -32,6 +31,7 @@ export function Drawer({ node, layer, onFullTrace, onClose, onSimulate, simulati
     enabled: !rolled,
     retry: false,
   });
+  const showState = PORT_LAYERS.has(layer);
 
   return (
     <aside className="conn-drawer" aria-label="Selected device">
@@ -93,48 +93,58 @@ export function Drawer({ node, layer, onFullTrace, onClose, onSimulate, simulati
                 Nothing feeds it on this layer — it is a source here.
               </p>
             )}
-            {trace.data && !trace.data.is_source && trace.data.paths.map((p, i) => {
-              const cord = p.hops[p.hops.length - 1];
-              const source = p.hops[0];
-              return (
-                <div className="conn-chain" key={`${p.side}-${i}`}>
-                  <div className="conn-chain-head">
-                    <span className={`conn-side side-${(p.side || '').toLowerCase()}`}>
-                      {p.side || '—'}
-                    </span>
-                    <span className="k">
-                      {p.hops.length} hops
-                      {p.verdict !== 'complete' && (
-                        <span className="warn"> · {p.verdict}</span>
-                      )}
-                    </span>
-                  </div>
-                  <ol>
-                    {p.hops.map((h) => (
+            {trace.data && !trace.data.is_source && trace.data.paths.map((p, i) => (
+              <div className="conn-chain" key={`${p.side}-${i}`}>
+                <div className="conn-chain-head">
+                  <span className={`conn-side side-${(p.side || '').toLowerCase()}`}>
+                    {p.side || '—'}
+                  </span>
+                  <span className="k">
+                    {p.hops.length} hops
+                    {p.verdict !== 'complete' && (
+                      <span className="warn"> · {p.verdict}</span>
+                    )}
+                  </span>
+                </div>
+                <ol>
+                  {p.hops.map((h) => {
+                    // Plenty of gear is cabled without port-level detail - an
+                    // RPP into a PDU is recorded as connected and no further -
+                    // and "— → —" is noise rather than a fact.
+                    const ported = h.up_termination.type !== 'none'
+                      || h.down_termination.type !== 'none';
+                    const down = showState && h.oper_state === 'down';
+                    return (
                       <li key={h.connection_id}>
                         <Link to={`/devices/${h.up.id}`}>{h.up.name}</Link>
                         {h.alternates.length > 0 && (
-                          <span className="k"> or {h.alternates.length} other</span>
+                          // The fork lives on the hop where it happens rather
+                          // than multiplying the chain out once per source.
+                          <div className="k conn-alt">
+                            or {h.alternates.map((a) => a.name).join(', ')}
+                          </div>
+                        )}
+                        {(ported || down) && (
+                          <div className="conn-port">
+                            {ported && <>{terminationLabel(h.up_termination)}
+                              {' → '}{terminationLabel(h.down_termination)}</>}
+                            {down && <span className="warn"> · link down</span>}
+                          </div>
                         )}
                       </li>
-                    ))}
-                    <li className="is-self">{node.name}</li>
-                  </ol>
-                  {/* Plenty of gear is cabled without port-level detail - an RPP
-                      into a PDU is recorded as connected and no further - and
-                      "into —" is noise rather than a fact. */}
-                  <p className="k">
-                    from {source.up.name}
-                    {cord.down_termination.type !== 'none'
-                      && <> · into {terminationLabel(cord.down_termination)}</>}
-                  </p>
-                </div>
-              );
-            })}
+                    );
+                  })}
+                  <li className="is-self">{node.name}</li>
+                </ol>
+              </div>
+            ))}
             {trace.data?.asymmetric && (
               <p className="warn">
                 The two sides reach a source at different depths.
               </p>
+            )}
+            {trace.data?.truncated && (
+              <p className="warn">More cords than can be listed.</p>
             )}
           </>
         )}
@@ -152,7 +162,11 @@ export function Drawer({ node, layer, onFullTrace, onClose, onSimulate, simulati
                   onClick={() => onSimulate(simulating ? null : node.id)}>
             {simulating ? 'Stop simulating' : 'Simulate removal'}
           </button>
-          <button type="button" onClick={onFullTrace}>Full trace</button>
+          <button type="button" disabled={!trace.data?.paths.length}
+                  onClick={() => trace.data
+                    && exportTraceCsv(trace.data, node.name, layer)}>
+            Export CSV
+          </button>
           <Link to={`/devices/${node.id}`}>Open device →</Link>
         </div>
       )}
