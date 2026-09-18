@@ -100,7 +100,7 @@ export function Impact({ node, layer, windows, ctx }: {
 
       {layers.filter((l) => l.cut_off.length || l.degraded.length).map((l) => (
         <section key={l.layer} className="cd-impact-layer">
-          <h5>{l.layer} <span className="k">· {l.effect}</span></h5>
+          <h4>{l.layer} · {l.effect}</h4>
           <ImpactList title="Cut off" tone="critical" items={l.cut_off} ctx={ctx} />
           <ImpactList title="Lose a side" tone="warn" items={l.degraded} ctx={ctx} />
         </section>
