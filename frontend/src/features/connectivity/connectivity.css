@@ -854,13 +854,17 @@
 /* Underline tabs, not a segmented pill: the strip is navigation between
    panes, and the pill control is already spoken for by the in-tab filters. */
 .cd-tabs {
-  flex: none; display: flex; gap: 2px;
+  flex: none; display: flex; gap: 0;
   margin: 12px -14px 0; padding: 0 10px;
   border-bottom: 1px solid var(--border);
+  /* Fallback only: with both count badges up the strip is at the edge of
+     340px, and a label that wraps or clips is worse than a strip that slides. */
+  overflow-x: auto; scrollbar-width: none;
 }
+.cd-tabs::-webkit-scrollbar { display: none; }
 .cd-tabs button {
   display: inline-flex; align-items: center; gap: 5px;
-  padding: 7px 5px 8px; margin-bottom: -1px;
+  padding: 7px 4px 8px; margin-bottom: -1px;
   border: none; border-bottom: 2px solid transparent; background: none;
   /* Square: the global button radius bends the underline up at both ends. */
   border-radius: 0;
@@ -868,7 +872,7 @@
      as one system. A touch less tracking than the titles: five labels and
      their counts still have to fit 340px on the network layer. */
   font: inherit; font-size: 0.68rem; font-weight: 700;
-  text-transform: uppercase; letter-spacing: .06em;
+  text-transform: uppercase; letter-spacing: .03em;
   color: var(--text-muted); cursor: pointer;
   white-space: nowrap;
 }
