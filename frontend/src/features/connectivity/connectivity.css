@@ -888,7 +888,17 @@
    its own. */
 .cd-body .conn-facts { grid-template-columns: 124px 1fr; }
 .cd-body .seg button { padding: 3px 9px; font-size: 0.72rem; }
-.cd-body h4:first-child { margin-top: 2px; }
+/* Every section is a box, the meter's box: a tab reads as a stack of
+   separate answers rather than one run of text with headings in it. */
+.cd-body > section {
+  border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 9px 11px;
+}
+.cd-body > * + * { margin-top: 8px; }
+.cd-body > section > h4:first-child,
+.cd-body > section > h5:first-child { margin-top: 0; }
+.cd-body > section > :last-child { margin-bottom: 0; }
+.cd-body > section > .cd-toolbar:first-child { margin-top: 0; }
 .cd-body h5 {
   margin: 12px 0 4px; font-size: 0.72rem; text-transform: capitalize;
   color: var(--text);

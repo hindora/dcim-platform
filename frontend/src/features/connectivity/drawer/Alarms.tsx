@@ -79,7 +79,7 @@ export function Alarms({ open, openLoading, deviceIds, name, roomId, ctx }: {
   const { rows, foot } = usePaged(items, { noun: 'alarms' });
 
   return (
-    <>
+    <section>
       <div className="cd-toolbar">
         <Seg label="Which alarms" value={view} onChange={setView}
              options={[{ key: 'open', label: `Open ${open.length}` },
@@ -129,6 +129,6 @@ export function Alarms({ open, openLoading, deviceIds, name, roomId, ctx }: {
       </ul>
       {ack.isError && <p className="warn">Could not acknowledge: {String(ack.error)}</p>}
       {foot}
-    </>
+    </section>
   );
 }

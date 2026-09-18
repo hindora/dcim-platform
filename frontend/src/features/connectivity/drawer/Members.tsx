@@ -50,7 +50,8 @@ export function Members({ node, ctx }: { node: TopologyNode; ctx: DrawerCtx }) {
   if (q.isLoading) return <Loading h={120} />;
 
   return (
-    <>
+    <section>
+      <h4>Members</h4>
       <p className="k">
         {node.rolled_up} × {node.device_type.replace(/_/g, ' ')} in one box so the
         room is readable. Switch grouping to "Every device" to draw them.
@@ -79,6 +80,6 @@ export function Members({ node, ctx }: { node: TopologyNode; ctx: DrawerCtx }) {
         ))}
       </ul>
       {foot}
-    </>
+    </section>
   );
 }

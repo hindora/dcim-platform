@@ -73,6 +73,7 @@ export function Impact({ node, layer, windows, ctx }: {
         </section>
       )}
 
+      <section>
       <h4>If removed</h4>
       {q.isLoading && <Loading h={100} />}
       {q.isError && <p className="muted">Could not work out what depends on it.</p>}
@@ -89,6 +90,13 @@ export function Impact({ node, layer, windows, ctx }: {
       {d && !d.total_cut_off && !d.total_degraded && (
         <p className="muted">Nothing depends on it on any layer.</p>
       )}
+      {d && (
+        <p className="k">
+          Worked out from the recorded topology, not from live load: a
+          surviving side is still served, not necessarily able to carry it.
+        </p>
+      )}
+      </section>
 
       {layers.filter((l) => l.cut_off.length || l.degraded.length).map((l) => (
         <section key={l.layer} className="cd-impact-layer">
@@ -97,12 +105,6 @@ export function Impact({ node, layer, windows, ctx }: {
           <ImpactList title="Lose a side" tone="warn" items={l.degraded} ctx={ctx} />
         </section>
       ))}
-      {d && (
-        <p className="k">
-          Worked out from the recorded topology, not from live load: a
-          surviving side is still served, not necessarily able to carry it.
-        </p>
-      )}
     </>
   );
 }

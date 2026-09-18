@@ -51,6 +51,7 @@ export function Chain({ node, layer, ctx }: {
         </div>
       )}
 
+      <section>
       <h4>Fed by</h4>
       {trace.isLoading && <Loading />}
       {trace.isError && <p className="muted">No {layer} chain is recorded for this device.</p>}
@@ -104,6 +105,7 @@ export function Chain({ node, layer, ctx }: {
         <p className="warn">The two sides reach a source at different depths.</p>
       )}
       {t?.truncated && <p className="warn">More cords than can be listed.</p>}
+      </section>
 
       {t && t.downstream_count > 0 && (
         <section>

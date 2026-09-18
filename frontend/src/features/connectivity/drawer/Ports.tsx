@@ -42,7 +42,8 @@ export function Ports({ node, ctx }: { node: TopologyNode; ctx: DrawerCtx }) {
   if (q.isError || !all) return <p className="muted">No ports are recorded for it.</p>;
 
   return (
-    <>
+    <section>
+      <h4>Ports</h4>
       <div className="cd-toolbar">
         <Seg label="Which ports" value={show} onChange={setShow}
              options={[{ key: 'used', label: `In use ${used.length}` },
@@ -70,6 +71,6 @@ export function Ports({ node, ctx }: { node: TopologyNode; ctx: DrawerCtx }) {
         ))}
       </ul>
       {foot}
-    </>
+    </section>
   );
 }
