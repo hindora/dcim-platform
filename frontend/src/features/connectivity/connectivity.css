@@ -879,7 +879,15 @@
 .cd-count.critical { background: var(--critical); color: var(--on-solid); }
 
 .cd-body { padding-top: 10px; }
-.cd-body > .meter { margin-bottom: 4px; }
+/* The shared meter is sized for a page grid; in a 340px drawer it is a
+   headline, not a card. */
+.cd-body > .meter { margin-bottom: 4px; padding: 8px 10px; font-size: 0.76rem; }
+.cd-body > .meter .meter-track { height: 6px; }
+/* One label column across every facts list in the drawer, so readings,
+   asset facts and the fold below them line up instead of each list sizing
+   its own. */
+.cd-body .conn-facts { grid-template-columns: 124px 1fr; }
+.cd-body .seg button { padding: 3px 9px; font-size: 0.72rem; }
 .cd-body h4:first-child { margin-top: 2px; }
 .cd-body h5 {
   margin: 12px 0 4px; font-size: 0.72rem; text-transform: capitalize;

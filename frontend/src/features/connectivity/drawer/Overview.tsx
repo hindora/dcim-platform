@@ -55,7 +55,7 @@ export function Overview({ node, layer, detail, state, ctx }: {
   return (
     <>
       {draw !== null && detail.rated_power_w ? (
-        <Meter label="Draw vs nameplate" used={draw} capacity={detail.rated_power_w}
+        <Meter label="Power draw" note="against the chassis nameplate" used={draw} capacity={detail.rated_power_w}
                unit="W" />
       ) : loadPct !== null ? (
         <Meter label="Load" used={loadPct} capacity={100} unit="%" />
@@ -87,7 +87,7 @@ export function Overview({ node, layer, detail, state, ctx }: {
           <ul className="cd-list">
             {detail.psus.map((p) => (
               <li key={p.number}>
-                <span className="cd-mono">PSU{p.number}</span>
+                <span className="cd-mono">PSU{p.number}</span>{' '}
                 <span className="k">
                   {[p.connector, p.rated_watts != null && `${p.rated_watts} W`]
                     .filter(Boolean).join(' · ')}
