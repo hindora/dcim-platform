@@ -858,20 +858,20 @@
   margin: 12px -14px 0; padding: 0 10px;
   border-bottom: 1px solid var(--border);
   /* No overflow here: the active underline sits ON this border (margin -1px),
-     and any overflow value clips it. Five tabs with both count badges measure
-     338px of 338 - re-measure before adding a sixth. */
+     and any overflow value clips it. Five tabs with both count badges fit
+     338px - re-measure before adding a sixth. */
 }
 .cd-tabs button {
   display: inline-flex; align-items: center; gap: 5px;
-  padding: 7px 4px 8px; margin-bottom: -1px;
+  padding: 7px 8px 8px; margin-bottom: -1px;
   border: none; border-bottom: 2px solid transparent; background: none;
   /* Square: the global button radius bends the underline up at both ends. */
   border-radius: 0;
-  /* Set like the panel titles below them, so the strip and the panels read
-     as one system. A touch less tracking than the titles: five labels and
-     their counts still have to fit 340px on the network layer. */
-  font: inherit; font-size: 0.68rem; font-weight: 700;
-  text-transform: uppercase; letter-spacing: .03em;
+  /* Title case, not the panels' uppercase. Uppercase with tracking needs a
+     quarter more width, and five tabs with both counts at 340px left no air
+     between them; measured, only title case fits with padding. It also keeps
+     the hierarchy honest: the tabs navigate, the panel titles label. */
+  font: inherit; font-size: 0.72rem; font-weight: 600;
   color: var(--text-muted); cursor: pointer;
   white-space: nowrap;
 }
