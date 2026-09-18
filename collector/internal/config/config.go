@@ -68,6 +68,10 @@ type Config struct {
 		// liveness row. Zero uses the default. Effective freshness is
 		// max(pollInterval, this).
 		RefreshInterval time.Duration `yaml:"refresh_interval"`
+		// How often every endpoint polled LESS often than this gets a liveness
+		// probe (Pinger). Zero disables it. Detection of a dead device is then
+		// offline_threshold x this, not x its poll interval.
+		AvailabilityInterval time.Duration `yaml:"availability_interval"`
 	} `yaml:"health"`
 
 	Mappings struct {
@@ -268,6 +272,11 @@ func Default() *Config {
 	// ~15 rows a second, and the slower-polled ones report at their own
 	// interval rather than this one.
 	c.Health.RefreshInterval = 60 * time.Second
+	// 30 s x the offline threshold of 3 puts a dark rack on the console in
+	// 1.5-2 minutes, which is what a host check does on any NMS. It is one GET
+	// per slow-polled endpoint per 30 s - about 30 requests a second across
+	// this estate, next to a metric load of thousands.
+	c.Health.AvailabilityInterval = 30 * time.Second
 	c.Mappings.Dir = "../contracts/mappings"
 	c.Observability.LogLevel = "info"
 	c.Observability.LogFormat = "json"

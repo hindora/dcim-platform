@@ -116,7 +116,9 @@ func UseAnySourceSocket(client *g.GoSNMP, address string, port int) error {
 	return nil
 }
 
-func (a *Adapter) Poll(ctx context.Context, ep *models.Endpoint) (*models.PollOutcome, error) {
+// dial opens a session to the endpoint's agent. The caller closes client.Conn.
+func (a *Adapter) dial(ctx context.Context, ep *models.Endpoint,
+	retries int) (*g.GoSNMP, error) {
 	community := ep.Credential.Community()
 	if community == "" {
 		// Fail loudly: with a wildcard-listener agent plane, an empty community
@@ -136,20 +138,47 @@ func (a *Adapter) Poll(ctx context.Context, ep *models.Endpoint) (*models.PollOu
 		Community:          community,
 		Version:            g.Version2c,
 		Timeout:            ep.Poll.Timeout(),
-		Retries:            ep.Poll.Retries,
+		Retries:            retries,
 		MaxRepetitions:     uint32(a.maxRepetitions),
 		ExponentialTimeout: false,
 		Context:            ctx,
 	}
-
-	started := time.Now()
 	if err := client.Connect(); err != nil {
 		return nil, fmt.Errorf("%w: %v", models.ErrUnreachable, err)
 	}
 	if a.anySourceReply {
 		if err := UseAnySourceSocket(client, ep.Address, port); err != nil {
+			client.Conn.Close()
 			return nil, fmt.Errorf("%w: %v", models.ErrUnreachable, err)
 		}
+	}
+	return client, nil
+}
+
+// Ping asks the agent for sysUpTime and nothing else. One retry, not the
+// profile's: a liveness check that retries like a poll takes as long to say
+// "gone" as the poll it exists to get ahead of.
+func (a *Adapter) Ping(ctx context.Context, ep *models.Endpoint) error {
+	client, err := a.dial(ctx, ep, 1)
+	if err != nil {
+		return err
+	}
+	defer client.Conn.Close()
+	result, err := client.Get([]string{sysUpTimeOID})
+	if err != nil {
+		return fmt.Errorf("%w: %v", models.ErrTimeout, err)
+	}
+	if len(result.Variables) == 0 {
+		return fmt.Errorf("%w: empty response from %s", models.ErrDecode, ep.Address)
+	}
+	return nil
+}
+
+func (a *Adapter) Poll(ctx context.Context, ep *models.Endpoint) (*models.PollOutcome, error) {
+	started := time.Now()
+	client, err := a.dial(ctx, ep, ep.Poll.Retries)
+	if err != nil {
+		return nil, err
 	}
 	defer client.Conn.Close()
 

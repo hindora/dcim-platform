@@ -193,6 +193,11 @@ health:
   # One failure is DEGRADED. OFFLINE needs this many consecutive failures AND
   # more than two intervals since the last success.
   offline_threshold: 3
+  # Liveness probe (one SNMP GET of sysUpTime, one GET of the Redfish service
+  # root) for every endpoint polled less often than this. Detection of a dead
+  # device becomes offline_threshold x this instead of x its poll interval - a
+  # leaf polled every 600 s goes OFFLINE in ~90 s, not ~30 min. 0 disables.
+  availability_interval: 30s
 
 mappings:
   dir: ../contracts/mappings

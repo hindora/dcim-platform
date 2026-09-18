@@ -312,3 +312,68 @@ func TestTransitionPublishesEvenInsideTheRefreshWindow(t *testing.T) {
 		t.Error("a real status change was marked is_refresh")
 	}
 }
+
+// A leaf polled every 600 s, probed every 30 s: three failed probes a minute
+// and a half after the last success condemn it. Measured against the poll
+// interval, the "two intervals since success" half of the rule would hold it
+// DEGRADED for twenty minutes - a whole rack dark and nothing on the console.
+func TestTheCheckIntervalGovernsOfflineWhenFasterThanThePoll(t *testing.T) {
+	tr, _ := newTracker(t, 3)
+	ep := endpoint()
+	ep.Poll.IntervalS = 600
+	tr.Register(ep)
+	tr.Success(ep, 5)
+	tr.SetCheckInterval(ep, 30*time.Second)
+
+	tr.mu.Lock()
+	tr.state[ep.ID].LastSuccess = time.Now().Add(-90 * time.Second)
+	tr.mu.Unlock()
+	for i := 0; i < 3; i++ {
+		tr.Failure(ep, errors.New("timeout"))
+	}
+
+	tr.mu.RLock()
+	got := tr.state[ep.ID].Status
+	tr.mu.RUnlock()
+	if got != models.CommStatusOffline {
+		t.Fatalf("status = %v, want OFFLINE after 3 probes 90 s past success", got)
+	}
+}
+
+func TestWithoutAFasterCheckThePollIntervalStillGoverns(t *testing.T) {
+	tr, _ := newTracker(t, 3)
+	ep := endpoint()
+	ep.Poll.IntervalS = 600
+	tr.Register(ep)
+	tr.Success(ep, 5)
+
+	tr.mu.Lock()
+	tr.state[ep.ID].LastSuccess = time.Now().Add(-90 * time.Second)
+	tr.mu.Unlock()
+	for i := 0; i < 3; i++ {
+		tr.Failure(ep, errors.New("timeout"))
+	}
+
+	tr.mu.RLock()
+	got := tr.state[ep.ID].Status
+	tr.mu.RUnlock()
+	if got != models.CommStatusDegraded {
+		t.Fatalf("status = %v, want DEGRADED: 90 s is inside two 600 s polls", got)
+	}
+}
+
+// A check interval slower than the poll is ignored - the poll already checks
+// more often, and loosening the rule to the slower one would delay OFFLINE.
+func TestASlowerCheckIntervalDoesNotLoosenTheRule(t *testing.T) {
+	tr, _ := newTracker(t, 3)
+	ep := endpoint() // polled every 30 s
+	tr.Register(ep)
+	tr.SetCheckInterval(ep, 5*time.Minute)
+
+	tr.mu.RLock()
+	got := tr.state[ep.ID].Interval
+	tr.mu.RUnlock()
+	if got != 30*time.Second {
+		t.Fatalf("interval = %v, want the 30 s poll", got)
+	}
+}

@@ -104,6 +104,22 @@ func (t *Tracker) Register(ep *models.Endpoint) {
 	}
 }
 
+// SetCheckInterval records that this endpoint is checked more often than it
+// is polled, so the OFFLINE rule's "two intervals since the last success" is
+// measured against the check that actually runs. Left at the poll interval, a
+// switch polled every 600 s could not go OFFLINE for twenty minutes however
+// many liveness checks failed in between.
+func (t *Tracker) SetCheckInterval(ep *models.Endpoint, d time.Duration) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	st := t.get(ep)
+	if d > 0 && d < ep.Poll.Interval() {
+		st.Interval = d
+	} else {
+		st.Interval = ep.Poll.Interval()
+	}
+}
+
 func (t *Tracker) Forget(endpointID string) {
 	t.mu.Lock()
 	delete(t.state, endpointID)

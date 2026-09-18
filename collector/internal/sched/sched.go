@@ -100,7 +100,12 @@ func (s *Scheduler) Wait() { s.wg.Wait() }
 // within one interval so that 664 endpoints on a 30 s schedule fire ~22 per
 // second instead of all at t=0.
 func (s *Scheduler) Add(ep *models.Endpoint) {
-	interval := ep.Poll.Interval()
+	s.AddEvery(ep, ep.Poll.Interval())
+}
+
+// AddEvery registers an endpoint on an interval other than its poll profile's.
+// The availability scheduler uses it: liveness runs on its own cadence.
+func (s *Scheduler) AddEvery(ep *models.Endpoint, interval time.Duration) {
 	offset := phaseOffset(ep.ID, interval)
 
 	s.mu.Lock()

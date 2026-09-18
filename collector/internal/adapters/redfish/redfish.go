@@ -141,6 +141,18 @@ func (a *Adapter) Poll(ctx context.Context, ep *models.Endpoint) (*models.PollOu
 	return outcome, nil
 }
 
+// Ping reads the service root. It is unauthenticated per the spec and is the
+// cheapest thing a BMC serves, and a BMC that has lost its standby power does
+// not serve it at all.
+func (a *Adapter) Ping(ctx context.Context, ep *models.Endpoint) error {
+	s, err := a.ensureSession(ctx, ep)
+	if err != nil {
+		return err
+	}
+	_, err = a.getOnce(ctx, ep, s, "/redfish/v1")
+	return err
+}
+
 // ------------------------------------------------------------- session
 
 func (a *Adapter) ensureSession(ctx context.Context, ep *models.Endpoint) (*session, error) {

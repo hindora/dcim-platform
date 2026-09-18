@@ -39,6 +39,11 @@ type App struct {
 	sched   *sched.Scheduler
 	assign  *assign.Client
 
+	// Liveness, on its own wheel and its own cadence: a Pinger probe for every
+	// endpoint polled less often than availEvery. Nil when disabled.
+	avail      *sched.Scheduler
+	availEvery time.Duration
+
 	snmp     *snmp.Adapter
 	redfish  *redfish.Adapter
 	rfEvents *redfish.EventReceiver
@@ -230,6 +235,22 @@ func New(cfg *config.Config, version string) (*App, error) {
 		},
 	}, a.poll, log, mets)
 
+	if every := cfg.Health.AvailabilityInterval; every > 0 {
+		a.availEvery = every
+		// Small and separate. A probe is one request, and sharing the poll
+		// pool would put a 30 s liveness check behind a 600 s ifTable walk -
+		// the exact wait it exists to avoid. Per-host 1: two probes at one
+		// agent at once would only measure each other.
+		a.avail = sched.New(sched.Options{
+			Workers:   16,
+			QueueSize: 16 * 64,
+			ProtoLimits: map[string]int{
+				"snmp": 8, "redfish": 16,
+			},
+			PerHostLimits: map[string]int{"snmp": 1, "redfish": 1},
+		}, a.ping, log, mets)
+	}
+
 	a.assign = assign.New(cfg, log, mets)
 	a.assign.OnChange = a.applyDiff
 	a.cfg.Collector.Version = version
@@ -317,6 +338,9 @@ func (a *App) Run(ctx context.Context) error {
 	}
 
 	a.sched.Start(ctx)
+	if a.avail != nil {
+		a.avail.Start(ctx)
+	}
 	go a.heartbeatLoop(ctx)
 	go a.gaugeLoop(ctx)
 
@@ -334,7 +358,13 @@ func (a *App) Run(ctx context.Context) error {
 	if a.gnmiSubs != nil {
 		a.gnmiSubs.Stop()
 	}
-	go func() { a.sched.Wait(); close(done) }()
+	go func() {
+		a.sched.Wait()
+		if a.avail != nil {
+			a.avail.Wait()
+		}
+		close(done)
+	}()
 	select {
 	case <-done:
 	case <-time.After(15 * time.Second):
@@ -395,6 +425,40 @@ func (a *App) poll(ctx context.Context, ep *models.Endpoint) {
 	}
 }
 
+// ping runs one liveness probe and feeds the same health tracker the poll
+// does: a device is OFFLINE when it stops answering, whichever check noticed.
+func (a *App) ping(ctx context.Context, ep *models.Endpoint) {
+	pinger, ok := a.adapters[ep.Protocol].(models.Pinger)
+	if !ok {
+		return
+	}
+	started := time.Now()
+	if err := pinger.Ping(ctx, ep); err != nil {
+		a.tracker.Failure(ep, err)
+		a.log.Debug("liveness probe failed", "endpoint_id", ep.ID,
+			"device", ep.DeviceName, "error", err)
+		return
+	}
+	a.tracker.Success(ep, int(time.Since(started).Milliseconds()))
+}
+
+// watchAvailability puts an endpoint on the liveness wheel when its adapter
+// can probe and its poll is slower than the probe - otherwise the poll already
+// is the liveness check - and takes it off again when neither holds.
+func (a *App) watchAvailability(ep *models.Endpoint) {
+	if a.avail == nil {
+		return
+	}
+	_, pingable := a.adapters[ep.Protocol].(models.Pinger)
+	if pingable && ep.Poll.Interval() > a.availEvery {
+		a.avail.AddEvery(ep, a.availEvery)
+		a.tracker.SetCheckInterval(ep, a.availEvery)
+		return
+	}
+	a.avail.Remove(ep.ID)
+	a.tracker.SetCheckInterval(ep, 0)
+}
+
 // streamCount is how many endpoints the subscriber holds, and 0 when this
 // build has no subscriber - so `owned` stays the scheduler alone rather than
 // silently gaining a phantom population.
@@ -438,17 +502,25 @@ func (a *App) applyDiff(diff assign.Diff) {
 		}
 		a.tracker.Register(ep)
 		a.sched.Add(ep)
+		a.watchAvailability(ep)
 	}
 	for _, ep := range diff.Changed {
 		if a.streamed(ep) {
 			// A profile change can turn a polled endpoint into a streamed one.
 			a.sched.Remove(ep.ID)
+			if a.avail != nil {
+				a.avail.Remove(ep.ID)
+			}
 			continue
 		}
 		a.sched.Add(ep)
+		a.watchAvailability(ep)
 	}
 	for _, ep := range diff.Removed {
 		a.sched.Remove(ep.ID)
+		if a.avail != nil {
+			a.avail.Remove(ep.ID)
+		}
 		a.tracker.Forget(ep.ID)
 		if a.snmp != nil {
 			a.snmp.Forget(ep.ID)

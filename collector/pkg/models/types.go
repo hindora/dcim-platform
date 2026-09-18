@@ -170,6 +170,22 @@ type Adapter interface {
 	Close(ctx context.Context) error
 }
 
+// Pinger is an adapter that can answer "is it there" far more cheaply than a
+// full poll: one SNMP GET of sysUpTime, one unauthenticated GET of a Redfish
+// service root.
+//
+// It exists because a poll's interval is chosen for the METRICS, and the
+// metrics of a leaf switch are fine at ten minutes while its absence is not.
+// When both PDUs under a rack tripped, every device in it went dark and the
+// platform said nothing about them for as long as the outage lasted - their
+// next polls were minutes away. A separate, fast liveness check is what every
+// NMS runs for this (Zabbix/PRTG/Nagios host checks), usually as ICMP. Here it
+// is a protocol probe, because the device's own agent going silent is the
+// signal, and an address that answers ping says nothing about the agent.
+type Pinger interface {
+	Ping(ctx context.Context, ep *Endpoint) error
+}
+
 // Sink is where normalised telemetry goes. Adapters never touch Redis or the
 // database directly.
 type Sink interface {
