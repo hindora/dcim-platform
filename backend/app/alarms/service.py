@@ -652,6 +652,15 @@ class AlarmService:
                             "root_device": sym["root_device"],
                             "reason": "adopted by the late-root sweep"})
             adopted_total += len(adopted)
+        # And the other end of a power incident: what a cleared root has held
+        # through the boot, released if it is still open after the hold.
+        for sym in await correlation.release_after_hold(session):
+            touched.add(sym["device_id"])
+            await repo.record_history(
+                session, alarm_id=sym["id"], device_id=sym["device_id"],
+                action="released", severity=sym["severity"], actor="system",
+                detail={"root": sym["root"],
+                        "reason": "still open after the restoration hold"})
         if touched:
             await repo.refresh_device_alarm_state(session, sorted(touched))
             log.info("late-root sweep adopted alarms", count=adopted_total)

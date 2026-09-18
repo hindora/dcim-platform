@@ -517,3 +517,104 @@ async def test_a_boot_on_an_unfed_device_is_never_attributed(db_session, cable):
     assert await correlation.correlate(
         db_session, alarm_id=boot, device_id=cable["sp"],
         alarm_type="device_restarted") is None
+
+
+# --- the hold-down after power comes back ------------------------------------
+#
+# Live: both trips cleared at 10:08:50 and in the same second every symptom was
+# released - eighteen servers still booting read as eighteen unreachable roots,
+# the restart that had been folded popped out as a root 1.2 s later, and the
+# leaf, up first, reported eighteen links down to servers not yet up.
+
+
+async def _unreachable(session, device_id):
+    return await session.scalar(text("""
+        INSERT INTO alarm (device_id, alarm_type, instance, severity, message,
+                           source, state, first_seen, last_seen)
+        VALUES (CAST(:d AS uuid), 'endpoint_unreachable', 'ep', 'MAJOR',
+                'No response', 'comm', 'ACTIVE', now(), now())
+        RETURNING id::text
+    """), {"d": device_id})
+
+
+async def _fold(session, alarm_id, root_id):
+    await correlation.mark_symptom(session, alarm_id=alarm_id, root_alarm_id=root_id)
+
+
+async def test_clearing_a_trip_holds_its_symptoms(db_session, fed_cable):
+    c = fed_cable
+    ta = await _trip(db_session, c["pdu_a"])
+    dark = await _unreachable(db_session, c["lf"])
+    await _fold(db_session, dark, ta)
+    await _clear(db_session, ta, 0)
+
+    assert await correlation.release_symptoms(db_session, ta) == []
+    assert (await _row(db_session, dark))["is_symptom"] is True
+
+
+async def test_what_outlives_the_hold_is_released_but_a_restart_is_not(
+        db_session, fed_cable):
+    c = fed_cable
+    ta = await _trip(db_session, c["pdu_a"])
+    still_dark = await _unreachable(db_session, c["lf"])
+    boot = await _restart(db_session, c["lf"])
+    await _fold(db_session, still_dark, ta)
+    await _fold(db_session, boot, ta)
+    await _clear(db_session, ta, correlation.RESTORE_HOLD_S + 30)
+
+    released = {r["id"] for r in await correlation.release_after_hold(db_session)}
+    assert still_dark in released, "still down three minutes on is a real fault"
+    assert boot not in released, "the restart is the restoration itself"
+    assert (await _row(db_session, boot))["is_symptom"] is True
+
+
+async def test_nothing_is_released_inside_the_hold(db_session, fed_cable):
+    c = fed_cable
+    ta = await _trip(db_session, c["pdu_a"])
+    dark = await _unreachable(db_session, c["lf"])
+    await _fold(db_session, dark, ta)
+    await _clear(db_session, ta, 30)
+
+    assert dark not in {r["id"] for r in await correlation.release_after_hold(db_session)}
+
+
+async def test_a_device_still_booting_is_held_under_the_cleared_trip(
+        db_session, fed_cable):
+    c = fed_cable
+    ta = await _trip(db_session, c["pdu_a"])
+    tb = await _trip(db_session, c["pdu_b"])
+    await _clear(db_session, ta, 20)
+    await _clear(db_session, tb, 10)
+    late = await _unreachable(db_session, c["lf"])
+
+    root = await correlation.correlate(
+        db_session, alarm_id=late, device_id=c["lf"],
+        alarm_type="endpoint_unreachable")
+    assert root is not None and root["id"] == tb
+
+
+async def test_a_link_to_a_device_still_booting_is_held_too(db_session, fed_cable):
+    c = fed_cable
+    ta = await _trip(db_session, c["pdu_a"])
+    tb = await _trip(db_session, c["pdu_b"])
+    await _clear(db_session, ta, 20)
+    await _clear(db_session, tb, 10)
+    spine = await _alarm(db_session, c["sp"], c["sp_port"])
+
+    root = await correlation.correlate(
+        db_session, alarm_id=spine, device_id=c["sp"],
+        alarm_type="link_down", instance=c["sp_port"])
+    assert root is not None and root["id"] == tb
+
+
+async def test_after_the_hold_a_new_failure_is_its_own(db_session, fed_cable):
+    c = fed_cable
+    ta = await _trip(db_session, c["pdu_a"])
+    tb = await _trip(db_session, c["pdu_b"])
+    await _clear(db_session, ta, correlation.RESTORE_HOLD_S + 60)
+    await _clear(db_session, tb, correlation.RESTORE_HOLD_S + 60)
+    late = await _unreachable(db_session, c["lf"])
+
+    assert await correlation.correlate(
+        db_session, alarm_id=late, device_id=c["lf"],
+        alarm_type="endpoint_unreachable") is None

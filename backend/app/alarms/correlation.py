@@ -97,6 +97,14 @@ RESTART_TYPES = frozenset({"device_restarted"})
 # reboot next morning.
 RESTORE_WINDOW_S = 600
 
+# The hold-down after a power root clears. Its symptoms are NOT released the
+# instant it clears: a server is still booting for another half-minute, a leaf
+# that came up first still sees its server ports down, and releasing them made
+# thirty-six momentary roots out of one restoration. Anything still open this
+# long after the power came back is a genuine fault and is released then, by
+# the sweep. Restarts are never released - they ARE the restoration.
+RESTORE_HOLD_S = 180
+
 # Which end of a connection is upstream is NOT uniform across layers, and
 # assuming it is produces a correlation engine that silently explains nothing -
 # the traversal walks away from the cause instead of towards it. The map lives
@@ -218,6 +226,28 @@ async def power_dead_root(session: AsyncSession,
     return root
 
 
+async def restored_root(session: AsyncSession,
+                        device_id: str) -> dict[str, Any] | None:
+    """The power fault this device is still coming back from, if any.
+
+    Every feed side had a de-energising root that cleared within the hold-down
+    - so the device was dark and its power returned moments ago. What it says
+    while it boots (silent endpoints, links not yet up) belongs to that fault.
+    """
+    rows = (await session.execute(_RECENT_POWER_ROOTS, {
+        "device": device_id, "max_hops": MAX_HOPS,
+        "root_types": list(root_types("power")),
+        "any_instance": list(_ANY_INSTANCE), "window_s": RESTORE_HOLD_S,
+    })).mappings().all()
+    sides = {r["side"] for r in rows}
+    hit = [r for r in rows if r["id"] and r["cleared_at"] is not None]
+    if not sides or {r["side"] for r in hit} != sides:
+        return None
+    root = max(hit, key=lambda r: r["cleared_at"])
+    return {"id": root["id"], "device_name": root["device_name"],
+            "alarm_type": root["alarm_type"], "hop": 0}
+
+
 async def _correlate_link(session: AsyncSession, *, alarm_id: str,
                           device_id: str, instance: str) -> dict[str, Any] | None:
     """A port down because the device on the far end lost power.
@@ -235,7 +265,8 @@ async def _correlate_link(session: AsyncSession, *, alarm_id: str,
         session, device_id=device_id, instance=instance)
     if not link or not link["peer_device_id"]:
         return None
-    root = await power_dead_root(session, link["peer_device_id"])
+    root = (await power_dead_root(session, link["peer_device_id"])
+            or await restored_root(session, link["peer_device_id"]))
     if not root:
         return None
     await mark_symptom(session, alarm_id=alarm_id, root_alarm_id=root["id"])
@@ -322,6 +353,18 @@ async def correlate(session: AsyncSession, *, alarm_id: str, device_id: str,
                                      device_id=device_id, instance=instance)
     if alarm_type not in SUPPRESSIBLE_TYPES:
         return None
+
+    # Still booting from a power fault that has just cleared: its silence is
+    # part of that fault, not a new one. Checked first - if the device were
+    # still dark, power_dead_root below would find the open root anyway.
+    restored = await restored_root(session, device_id)
+    if restored:
+        await mark_symptom(session, alarm_id=alarm_id,
+                           root_alarm_id=restored["id"])
+        log.info("alarm held under a just-cleared power root",
+                 alarm_id=alarm_id, root_alarm=restored["id"],
+                 root_device=restored["device_name"])
+        return {**restored, "layer": "power"}
 
     for layer in LAYER_ORDER:
         root = await _upstream_root(session, device_id, layer)
@@ -637,6 +680,36 @@ async def collapse_unqualified(session: AsyncSession, *, alarm_id: str,
     return None
 
 
+async def release_after_hold(session: AsyncSession) -> list[dict[str, Any]]:
+    """Release what a cleared power root still holds, once the hold is over.
+
+    Still open three minutes after the power came back is not a boot: it is a
+    server that did not come up, a link that stayed down. Those become roots
+    of their own. Restarts stay folded - they are the restoration itself, and
+    they age out on their own.
+    """
+    rows = (await session.execute(text("""
+        UPDATE alarm s
+           SET is_symptom = false, root_cause_alarm_id = NULL
+          FROM alarm r
+         WHERE s.root_cause_alarm_id = r.id
+           AND s.state <> 'CLEARED'
+           AND NOT (s.alarm_type = ANY(:keep))
+           AND r.state = 'CLEARED'
+           AND r.alarm_type = ANY(:held)
+           AND r.cleared_at < now() - make_interval(secs => :hold_s)
+        RETURNING s.id::text AS id, s.device_id::text AS device_id,
+                  s.alarm_type, s.severity::text AS severity,
+                  r.id::text AS root
+    """), {"keep": list(RESTART_TYPES),
+          "held": [t for t in root_types("power") if t not in _UNREACHABLE],
+          "hold_s": RESTORE_HOLD_S})).mappings().all()
+    out = [dict(r) for r in rows]
+    if out:
+        log.info("held symptoms released after restoration", count=len(out))
+    return out
+
+
 async def release_symptoms(session: AsyncSession,
                            root_alarm_id: str) -> list[dict[str, Any]]:
     """Un-suppress everything a now-cleared root was explaining.
@@ -645,6 +718,16 @@ async def release_symptoms(session: AsyncSession,
     operator is left with a device that is still broken and an alarm list that
     says nothing is wrong.
     """
+    # A de-energising power root is held down rather than released: what it
+    # explained is still booting. The sweep releases what outlives the hold.
+    held = (await session.execute(text("""
+        SELECT 1 FROM alarm
+         WHERE id = CAST(:root AS uuid)
+           AND alarm_type = ANY(:held) AND instance = ''
+    """), {"root": root_alarm_id,
+          "held": [t for t in root_types("power") if t not in _UNREACHABLE]})).first()
+    if held:
+        return []
     rows = (await session.execute(text("""
         UPDATE alarm
            SET is_symptom = false, root_cause_alarm_id = NULL
