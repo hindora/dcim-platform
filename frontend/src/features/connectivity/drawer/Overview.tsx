@@ -1,6 +1,6 @@
 import type { DeviceDetail, DeviceState, TopologyNode } from '../../../api/client';
 import { Meter } from '../../../components/Meter';
-import { formatMetric, humanise, metricLabel, relativeTime } from '../../../lib/format';
+import { formatMetric, humanise, metricLabel } from '../../../lib/format';
 import { METRICS, type MetricKey } from '../../../lib/metrics.gen';
 import { DeviceRef, Loading, type DrawerCtx } from './shared';
 
@@ -77,7 +77,6 @@ export function Overview({ node, layer, detail, state, ctx }: {
               ))}
             </dl>
           ))}
-          <p className="k">as of {relativeTime(state.last_seen)}</p>
         </section>
       )}
 
