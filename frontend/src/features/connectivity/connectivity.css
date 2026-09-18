@@ -857,11 +857,10 @@
   flex: none; display: flex; gap: 0;
   margin: 12px -14px 0; padding: 0 10px;
   border-bottom: 1px solid var(--border);
-  /* Fallback only: with both count badges up the strip is at the edge of
-     340px, and a label that wraps or clips is worse than a strip that slides. */
-  overflow-x: auto; scrollbar-width: none;
+  /* No overflow here: the active underline sits ON this border (margin -1px),
+     and any overflow value clips it. Five tabs with both count badges measure
+     338px of 338 - re-measure before adding a sixth. */
 }
-.cd-tabs::-webkit-scrollbar { display: none; }
 .cd-tabs button {
   display: inline-flex; align-items: center; gap: 5px;
   padding: 7px 4px 8px; margin-bottom: -1px;
