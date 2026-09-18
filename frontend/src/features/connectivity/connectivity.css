@@ -864,7 +864,12 @@
   border: none; border-bottom: 2px solid transparent; background: none;
   /* Square: the global button radius bends the underline up at both ends. */
   border-radius: 0;
-  font: inherit; font-size: 0.74rem; color: var(--text-muted); cursor: pointer;
+  /* Set like the panel titles below them, so the strip and the panels read
+     as one system. A touch less tracking than the titles: five labels and
+     their counts still have to fit 340px on the network layer. */
+  font: inherit; font-size: 0.68rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .06em;
+  color: var(--text-muted); cursor: pointer;
   white-space: nowrap;
 }
 .cd-tabs button:hover { color: var(--text); }
