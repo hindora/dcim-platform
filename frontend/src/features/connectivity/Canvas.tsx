@@ -34,8 +34,10 @@ const FIT = { padding: 0.16, minZoom: 0.62, duration: 320 } as const;
 /** The site view is read as REGIONS first - which room is where, what crosses
  *  between them - and it does not fit in a window at a zoom where a device
  *  name is still a word. The room rectangles are legible long after the names
- *  stop being, so this one is allowed to zoom out to the whole estate. */
-const FIT_SITE = { padding: 0.06, minZoom: 0.06, duration: 320 } as const;
+ *  stop being, so this one is allowed to zoom out to the whole estate. Capped
+ *  at 18% so it opens with a margin round the estate rather than filling the
+ *  window edge to edge. */
+const FIT_SITE = { padding: 0.06, minZoom: 0.06, maxZoom: 0.18, duration: 320 } as const;
 
 const nodeTypes = { device: DeviceNode, room: RoomNode };
 const edgeTypes = { link: LinkEdge };
