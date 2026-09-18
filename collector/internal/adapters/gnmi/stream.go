@@ -88,7 +88,12 @@ func NewSubscriber(a *Adapter, conns *ConnPool, maps *mapping.GNMIMap,
 		log: log, mets: mets, graceFactor: graceFactor,
 		minGrace:      30 * time.Second,
 		firstResponse: 15 * time.Second,
-		minBackoff:    time.Second, maxBackoff: 2 * time.Minute,
+		// 30 s, not minutes. A leaf whose rack lost power reconnected two and
+		// a half minutes after the power came back - its backoff had grown to
+		// a two-minute cap through the outage - and outlived the three-minute
+		// restoration hold on its own. gnmic retries every 10 s by default;
+		// forty-six streams re-dialling a dead host every 30 s is nothing.
+		minBackoff: time.Second, maxBackoff: 30 * time.Second,
 		sessions: make(map[string]*session),
 		rnd:      rand.New(rand.NewSource(time.Now().UnixNano())), //nolint:gosec // jitter, not crypto
 	}
@@ -329,6 +334,11 @@ func (s *Subscriber) subscribe(ctx context.Context, ep *models.Endpoint) error {
 			if resp.GetSyncResponse() {
 				synced = true
 				s.log.Debug("gnmi initial snapshot complete", "endpoint", ep.ID)
+				// The snapshot is in: the device is up and delivering. Health
+				// used to wait for the first update AFTER sync, a whole sample
+				// interval later - a reconnected leaf sat unreachable for 66 s
+				// with its data already on the wire.
+				s.tracker.Success(ep, 0)
 				continue
 			}
 			n := resp.GetUpdate()

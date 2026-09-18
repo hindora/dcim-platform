@@ -904,3 +904,37 @@ func TestAFailedAttemptForgetsItsConnection(t *testing.T) {
 		t.Fatalf("%d connection(s) still cached after a failed attempt", n)
 	}
 }
+
+// A stream is healthy once its initial snapshot is in, not a sample interval
+// later. With an hour between samples, the endpoint must still read ONLINE
+// within moments of the stream opening.
+func TestAStreamIsHealthyOnceItsSnapshotIsIn(t *testing.T) {
+	f := newFakeTarget(t)
+	f.mu.Lock()
+	f.streamEvery = time.Hour
+	f.mu.Unlock()
+
+	a := newAdapter(t)
+	sub := newSubscriber(t, a, &captureSink{})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sub.Manage(ctx, []*models.Endpoint{streamEndpoint(f)})
+	defer sub.Stop()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for sub.tracker.OnlineCount() == 0 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if sub.tracker.OnlineCount() != 1 {
+		t.Fatal("endpoint not ONLINE after its initial snapshot arrived")
+	}
+}
+
+func TestReconnectBackoffIsCappedWellInsideTheRestoreHold(t *testing.T) {
+	sub := newSubscriber(t, newAdapter(t), &captureSink{})
+	// Worst case with jitter is 1.5x the cap; the platform holds a power
+	// incident's symptoms for three minutes after restoration.
+	if worst := time.Duration(float64(sub.maxBackoff) * 1.5); worst >= time.Minute {
+		t.Fatalf("worst-case reconnect wait %v", worst)
+	}
+}
