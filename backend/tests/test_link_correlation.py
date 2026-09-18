@@ -368,3 +368,81 @@ async def test_a_dark_load_is_explained_by_its_tripped_feeds(db_session, fed_cab
         db_session, alarm_id=unreachable, device_id=c["lf"],
         alarm_type="endpoint_unreachable")
     assert root is not None and root["alarm_type"] == "breaker_tripped"
+
+
+# --- the root that arrives last ----------------------------------------------
+#
+# Live, the second time: the four linkDown traps and both breaker traps landed
+# within 0.2 s, link-downs first, on two workers. Raise-time correlation saw no
+# root and left all four standing.
+
+
+async def test_a_late_trip_adopts_the_link_down_raised_before_it(db_session, fed_cable):
+    c = fed_cable
+    spine = await _alarm(db_session, c["sp"], c["sp_port"])          # first
+    await _trip(db_session, c["pdu_a"])
+    await _trip(db_session, c["pdu_b"])                              # last
+
+    adopted = await correlation.adopt_orphans(
+        db_session, alarm_type="breaker_tripped", device_id=c["pdu_b"],
+        instance="")
+
+    assert [a["id"] for a in adopted] == [spine]
+    assert (await _row(db_session, spine))["is_symptom"] is True
+
+
+async def test_a_late_trip_on_one_side_adopts_nothing(db_session, fed_cable):
+    """The leaf is still fed from B, so its neighbours' link-downs are not
+    explained - the veto applies to adoption exactly as to raise time."""
+    c = fed_cable
+    spine = await _alarm(db_session, c["sp"], c["sp_port"])
+    await _trip(db_session, c["pdu_a"])
+
+    assert await correlation.adopt_orphans(
+        db_session, alarm_type="breaker_tripped", device_id=c["pdu_a"],
+        instance="") == []
+    assert (await _row(db_session, spine))["is_symptom"] is False
+
+
+async def test_a_late_trip_adopts_the_dark_loads_own_unreachable(db_session, fed_cable):
+    c = fed_cable
+    unreachable = await db_session.scalar(text("""
+        INSERT INTO alarm (device_id, alarm_type, instance, severity, message,
+                           source, state, first_seen, last_seen)
+        VALUES (CAST(:d AS uuid), 'endpoint_unreachable', 'ep', 'MAJOR',
+                'No response', 'comm', 'ACTIVE', now(), now())
+        RETURNING id::text
+    """), {"d": c["lf"]})
+    await _trip(db_session, c["pdu_a"])
+    await _trip(db_session, c["pdu_b"])
+
+    adopted = await correlation.adopt_orphans(
+        db_session, alarm_type="breaker_tripped", device_id=c["pdu_a"],
+        instance="")
+    assert unreachable in {a["id"] for a in adopted}
+
+
+async def test_the_sweep_finds_trips_that_raced_each_other(db_session, fed_cable):
+    """Two trips on two workers: neither adopted at raise time. The sweep's
+    worklist must hold both, and adoption from it must succeed."""
+    c = fed_cable
+    spine = await _alarm(db_session, c["sp"], c["sp_port"])
+    ta = await _trip(db_session, c["pdu_a"])
+    tb = await _trip(db_session, c["pdu_b"])
+
+    roots = {r["id"] for r in await correlation.open_deenergising_roots(db_session)}
+    assert {ta, tb} <= roots
+
+    for r in await correlation.open_deenergising_roots(db_session):
+        await correlation.adopt_orphans(
+            db_session, alarm_type=r["alarm_type"], device_id=r["device_id"],
+            instance=r["instance"])
+    assert (await _row(db_session, spine))["is_symptom"] is True
+
+
+async def test_a_named_bank_trip_adopts_nothing(db_session, fed_cable):
+    c = fed_cable
+    await _alarm(db_session, c["sp"], c["sp_port"])
+    assert await correlation.adopt_orphans(
+        db_session, alarm_type="breaker_tripped", device_id=c["pdu_a"],
+        instance="Breaker 1") == []

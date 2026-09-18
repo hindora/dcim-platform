@@ -269,6 +269,109 @@ async def correlate(session: AsyncSession, *, alarm_id: str, device_id: str,
     return None
 
 
+# ------------------------------------------------------- late roots
+#
+# correlate() runs when an alarm is raised, so it can only fold a symptom under
+# a root that already exists. A power event does not arrive in that order. When
+# both PDUs under a leaf tripped, the four spine linkDown traps and the two
+# breaker traps landed within 0.2 s of each other, the link-downs first - and
+# with two ingest workers a root one worker has raised is not even visible to
+# the other until it commits. Every link-down stayed a root.
+#
+# So a power root looks back when it is raised: every load it has taken dark
+# (both halves of power_dead_root, the redundancy veto included) has its open
+# unreachable alarms and the link-downs facing it folded under the root. This
+# is what Netcool and Smarts do with a late parent - re-correlate the children
+# that arrived first.
+
+_DOWNSTREAM = text("""
+    WITH RECURSIVE down AS (
+        SELECT CAST(:device AS uuid) AS dev, 0 AS hop
+        UNION
+        SELECT c.b_device_id, d.hop + 1
+          FROM down d
+          JOIN connection c ON c.a_device_id = d.dev
+           AND c.layer = CAST('power' AS layer_t)
+           AND c.admin_state = 'enabled'
+         WHERE d.hop < :max_hops
+    )
+    SELECT DISTINCT dev::text AS id FROM down WHERE hop > 0
+""")
+
+# Open, not already explained, and of a kind a dead device produces: its own
+# endpoints going silent, and the ports on its neighbours that face it.
+_ORPHANS_OF = text("""
+    SELECT a.id::text AS id, a.device_id::text AS device_id,
+           a.alarm_type, a.severity::text AS severity
+      FROM alarm a
+     WHERE a.device_id = CAST(:load AS uuid)
+       AND a.alarm_type = ANY(:suppressible)
+       AND a.state <> 'CLEARED' AND NOT a.is_symptom
+    UNION ALL
+    SELECT a.id::text, a.device_id::text, a.alarm_type, a.severity::text
+      FROM alarm a
+      JOIN interface i ON i.device_id = a.device_id AND i.name = a.instance
+      JOIN connection c ON c.layer::text = ANY(:port_layers)
+                       AND (c.a_termination_id = i.id OR c.b_termination_id = i.id)
+     WHERE a.alarm_type = ANY(:link_types)
+       AND a.state <> 'CLEARED' AND NOT a.is_symptom
+       AND CASE WHEN c.a_termination_id = i.id THEN c.b_device_id
+                ELSE c.a_device_id END = CAST(:load AS uuid)
+""")
+
+
+async def adopt_orphans(session: AsyncSession, *, alarm_type: str,
+                        device_id: str, instance: str) -> list[dict[str, Any]]:
+    """Fold alarms raised BEFORE this power root under it, where it explains
+    them. Returns the adopted alarms."""
+    if alarm_type not in root_types("power"):
+        return []
+    if instance and alarm_type not in _ANY_INSTANCE:
+        # A named bank does not take the whole strip down - see _ANY_INSTANCE.
+        return []
+    # Local import, as in _correlate_link.
+    from app.alarms import link_correlation
+
+    loads = (await session.execute(_DOWNSTREAM, {
+        "device": device_id, "max_hops": MAX_HOPS})).scalars().all()
+    adopted: list[dict[str, Any]] = []
+    for load in loads:
+        root = await power_dead_root(session, load)
+        if not root:
+            continue                      # still fed on a surviving side
+        rows = (await session.execute(_ORPHANS_OF, {
+            "load": load, "suppressible": list(SUPPRESSIBLE_TYPES),
+            "link_types": list(LINK_TYPES),
+            "port_layers": list(link_correlation.PORT_LAYERS),
+        })).mappings().all()
+        for row in rows:
+            await mark_symptom(session, alarm_id=row["id"], root_alarm_id=root["id"])
+            adopted.append({**dict(row), "root": root["id"],
+                            "root_device": root["device_name"]})
+    if adopted:
+        log.info("late root adopted earlier alarms", root_device=device_id,
+                 alarm_type=alarm_type, count=len(adopted))
+    return adopted
+
+
+async def open_deenergising_roots(session: AsyncSession) -> list[dict[str, Any]]:
+    """Open whole-device power roots that are not visibility failures.
+
+    The sweep's worklist. endpoint_unreachable is left out on purpose: there
+    can be hundreds open at once, and adoption at raise time covers it - the
+    race the sweep exists for is two breaker trips landing on two workers in
+    the same instant, each seeing the other side as still fed.
+    """
+    types = [t for t in root_types("power") if t not in _UNREACHABLE]
+    rows = (await session.execute(text("""
+        SELECT id::text, device_id::text, alarm_type, instance
+          FROM alarm
+         WHERE state <> 'CLEARED' AND NOT is_symptom
+           AND alarm_type = ANY(:types) AND instance = ''
+    """), {"types": types})).mappings().all()
+    return [dict(r) for r in rows]
+
+
 # ---------------------------------------------------------------- bands
 #
 # A warning rule and a critical rule on ONE measurement are two views of one

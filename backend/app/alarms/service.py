@@ -350,6 +350,10 @@ class AlarmService:
                 detail={"root": root["id"], "layer": root["layer"],
                         "root_device": root["device_name"]})
 
+        await self._adopt_orphans(session, alarm, device_id=device_id,
+                                  alarm_type=alarm_type, instance=instance,
+                                  actor="device")
+
         # A trap and a poll rule can raise different bands of one measurement -
         # the trap fires at the vendor's threshold, the rule at ours - so the
         # collapse has to happen on both paths or the console shows one row
@@ -485,6 +489,30 @@ class AlarmService:
             action="suppressed", severity=alarm["severity"], actor=actor,
             detail={"root": root["id"], "reason": reason})
 
+    async def _adopt_orphans(self, session, alarm: dict, *, device_id: str,
+                             alarm_type: str, instance: str, actor: str) -> None:
+        """A power root raised after the alarms it explains takes them in.
+
+        Only for a freshly created root: a re-raise of one already open has
+        nothing new to explain, and walking its loads again would be the whole
+        cost for nothing.
+        """
+        if alarm.get("change") != "created" or alarm.get("is_symptom"):
+            return
+        adopted = await correlation.adopt_orphans(
+            session, alarm_type=alarm_type, device_id=device_id,
+            instance=instance)
+        for sym in adopted:
+            await repo.record_history(
+                session, alarm_id=sym["id"], device_id=sym["device_id"],
+                action="suppressed", severity=sym["severity"], actor=actor,
+                detail={"root": sym["root"], "layer": "power",
+                        "root_device": sym["root_device"],
+                        "reason": "root raised after this alarm"})
+        if adopted:
+            await repo.refresh_device_alarm_state(
+                session, sorted({s["device_id"] for s in adopted}))
+
     async def _pair_link_ends(self, session, alarm: dict, *, device_id: str,
                               alarm_type: str, instance: str,
                               actor: str) -> None:
@@ -553,6 +581,10 @@ class AlarmService:
                 detail={"root": root["id"], "layer": root["layer"],
                         "root_device": root["device_name"]})
 
+        await self._adopt_orphans(session, alarm, device_id=c.key.device_id,
+                                  alarm_type=c.key.alarm_type,
+                                  instance=c.key.instance, actor="system")
+
         # Bands, once the dependency question is settled. A warning and a
         # critical on ONE measurement are two views of one condition, and an
         # alarm already folded under an upstream root is not folded again.
@@ -591,6 +623,39 @@ class AlarmService:
         return AlarmAction("alarm_cleared", cleared[0])
 
 
+
+    async def sweep_late_roots(self, session: AsyncSession) -> list[AlarmAction]:
+        """Re-run late-root adoption for every open breaker trip.
+
+        Adoption at raise time misses one case: both strips under a load trip
+        together, the two traps land on two workers, and each worker - unable
+        to see the other's uncommitted trip - finds the load still fed on the
+        other side. Neither adopts anything. By the next pass both trips are
+        committed, and the load reads as dark.
+
+        Returns no actions: the adopted alarms change only in whether they are
+        shown, and the console re-reads that on its own poll.
+        """
+        adopted_total = 0
+        touched: set[str] = set()
+        for root in await correlation.open_deenergising_roots(session):
+            adopted = await correlation.adopt_orphans(
+                session, alarm_type=root["alarm_type"],
+                device_id=root["device_id"], instance=root["instance"])
+            for sym in adopted:
+                touched.add(sym["device_id"])
+                await repo.record_history(
+                    session, alarm_id=sym["id"], device_id=sym["device_id"],
+                    action="suppressed", severity=sym["severity"],
+                    actor="system",
+                    detail={"root": sym["root"], "layer": "power",
+                            "root_device": sym["root_device"],
+                            "reason": "adopted by the late-root sweep"})
+            adopted_total += len(adopted)
+        if touched:
+            await repo.refresh_device_alarm_state(session, sorted(touched))
+            log.info("late-root sweep adopted alarms", count=adopted_total)
+        return []
 
     async def sweep_dead_endpoints(self, session: AsyncSession) -> list[AlarmAction]:
         """Clear alarms whose endpoint has been retired or removed.

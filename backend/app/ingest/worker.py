@@ -375,6 +375,8 @@ class IngestWorker:
                 # freshest possible view of what is arriving, which is exactly
                 # what deciding "the condition is over" depends on.
                 actions += await self.alarms.sweep_trap_reconciliation(session)
+                # A power root whose symptoms landed first, on another worker.
+                actions += await self.alarms.sweep_late_roots(session)
             for action in actions:
                 await self.fanout.alarm(action.kind, action.alarm)
         except Exception as exc:
