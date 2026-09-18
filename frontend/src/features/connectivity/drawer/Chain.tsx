@@ -49,6 +49,15 @@ export function Chain({ node, layer, ctx }: {
           && chain.data.live_paths === chain.data.total_paths ? 'ok' : 'warn'}>
           <b>{humanise(chain.data.redundancy)}</b>
           <span>{chain.data.reason}</span>
+          {/* 2N holds only below the point where the sides diverge. Whatever
+              both still hang off is a single point of failure no amount of
+              dual-cording fixes, and a 2N badge that does not name it is half
+              the answer. */}
+          {chain.data.paths.length > 1 && chain.data.shared_upstream.length > 0 && (
+            <span className="k">
+              Both sides share {chain.data.shared_upstream.map((h) => h.name).join(', ')}
+            </span>
+          )}
         </div>
       )}
 

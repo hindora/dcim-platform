@@ -267,7 +267,7 @@ GET /api/v1/analytics/power?scope=&window=7d
 
 `GET /api/v1/power/chain/{device_id}` answers "what feeds this server, and is it
 still redundant" in one call. It returns both paths (A and B) with the state of
-each hop, and a `redundancy: "N+1" | "single_feed" | "no_feed"` verdict. That
+each hop, and a `redundancy: "2N" | "single_feed" | "no_feed"` verdict. That
 verdict is the thing an operator actually needs during an event.
 
 ---

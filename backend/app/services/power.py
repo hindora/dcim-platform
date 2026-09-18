@@ -24,7 +24,13 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 # Verdicts, in the words the API spec uses.
-N_PLUS_1 = "N+1"
+#
+# Two live paths on independent sides is 2N, not N+1. N+1 is one spare unit
+# inside a single system (four UPS modules carrying a three-module load); 2N is
+# two complete systems each able to carry the whole load, which is what an A
+# feed and a B feed are. An operator reads the two very differently: N+1
+# survives one module, 2N survives a whole side being switched off for work.
+TWO_N = "2N"
 SINGLE_FEED = "single_feed"
 NO_FEED = "no_feed"
 
@@ -111,7 +117,7 @@ def verdict(paths: list[Path]) -> tuple[str, str]:
 
     sides = {p.side for p in live if p.side in ("A", "B")}
     if len(sides) >= 2:
-        return N_PLUS_1, (
+        return TWO_N, (
             f"fed from {len(live)} live paths across sides "
             f"{', '.join(sorted(sides))}")
 
@@ -135,7 +141,7 @@ def shared_hops(paths: list[Path], hop_of: dict[str, Hop] | None = None) -> list
 
     A 2N load is only 2N below the point where its paths diverge. The switchgear
     both sides hang off is a single point of failure no amount of dual-cording
-    fixes, and an audit that reports "N+1" without naming it is telling half the
+    fixes, and an audit that reports "2N" without naming it is telling half the
     story.
     """
     if len(paths) < 2:
@@ -311,14 +317,14 @@ async def scope_summary(session) -> dict[str, Any]:
             load_w=float(load_w) if load_w is not None else None,
             load_source=src)
 
-    census = {N_PLUS_1: 0, SINGLE_FEED: 0, NO_FEED: 0}
+    census = {TWO_N: 0, SINGLE_FEED: 0, NO_FEED: 0}
     at_risk: list[dict[str, Any]] = []
     # Only real loads: gear that is fed by something. Sources feed and are not
     # fed, and counting them as "no_feed" would be nonsense.
     for dev_id in feeders:
         kind, reason = verdict(build_paths(dev_id, feeders, hop_of, sources))
         census[kind] = census.get(kind, 0) + 1
-        if kind != N_PLUS_1 and hop_of[dev_id].device_type in _CRITICAL_TYPES:
+        if kind != TWO_N and hop_of[dev_id].device_type in _CRITICAL_TYPES:
             at_risk.append({"device_id": dev_id, "name": hop_of[dev_id].name,
                             "device_type": hop_of[dev_id].device_type,
                             "redundancy": kind, "reason": reason})

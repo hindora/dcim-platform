@@ -117,7 +117,7 @@ leaving the UI.
 
 | # | Deliverable | Exit criterion |
 |---|---|---|
-| 5.1 | Power analytics: per-chain load, redundancy verdict, phase balance | `/power/chain/{id}` returns `N+1 / single_feed / no_feed` |
+| 5.1 | Power analytics: per-chain load, redundancy verdict, phase balance | `/power/chain/{id}` returns `2N / single_feed / no_feed` |
 | 5.2 | Cooling analytics: loop ΔT, plant capacity vs load, chiller staging | plant view matches the simulator's own plant health |
 | 5.3 | PUE (energy-based, with method and level reported) | plausible 1.2–2.0; degrades gracefully to `method=power` |
 | 5.4 | Capacity: power/cooling/space/ports, p95-based, per rack/room/DC | `/capacity` returns all four constraints with the binding one flagged |

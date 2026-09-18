@@ -1,7 +1,7 @@
 """Redundancy verdicts.
 
 The exit criterion for this phase is one of three words, and each way of
-getting it wrong has a cost: a false N+1 tells someone a maintenance window is
+getting it wrong has a cost: a false 2N tells someone a maintenance window is
 safe when it is not, and a false single_feed sends them chasing a problem that
 does not exist.
 """
@@ -26,7 +26,8 @@ def path(side: str | None, *names: str, status: str = "ONLINE",
 
 def test_two_live_sides_are_redundant():
     v, why = p.verdict([path("A", "PDUA", "UPSA"), path("B", "PDUB", "UPSB")])
-    assert v == p.N_PLUS_1
+    assert v == p.TWO_N
+    assert v == "2N", "an A and a B feed are two systems, not one plus a spare"
     assert "A, B" in why
 
 
@@ -48,7 +49,7 @@ def test_two_cords_on_the_same_side_are_not_redundant():
     """The finding worth having.
 
     A server cabled to two PDUs that are both on the A side looks dual-corded
-    on an elevation and survives nothing. Calling that N+1 tells someone a
+    on an elevation and survives nothing. Calling that 2N tells someone a
     UPS swap is safe when it will drop the load.
     """
     v, why = p.verdict([path("A", "PDUA1", "UPSA"), path("A", "PDUA2", "UPSA")])
@@ -85,7 +86,7 @@ def test_a_path_that_reaches_no_source_is_not_a_feed():
 
 def test_undetermined_sides_do_not_establish_redundancy():
     """Two feeds whose paths could not be sided might be independent or might
-    be the same path twice. Claiming N+1 on that is a guess."""
+    be the same path twice. Claiming 2N on that is a guess."""
     v, why = p.verdict([path(None, "X"), path(None, "Y")])
     assert v == p.SINGLE_FEED
     assert "undetermined" in why

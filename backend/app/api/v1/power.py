@@ -37,7 +37,7 @@ async def power_chain(
 ) -> dict[str, Any]:
     """grid -> switchgear -> ATS -> UPS -> PDU -> device, per path.
 
-    ``redundancy`` is the answer an operator needs during an event: N+1,
+    ``redundancy`` is the answer an operator needs during an event: 2N,
     single_feed or no_feed. ``reason`` says why, because "single_feed" on a
     server someone believes is dual-corded is only actionable if the response
     explains whether that is one cord or two cords on the same side.

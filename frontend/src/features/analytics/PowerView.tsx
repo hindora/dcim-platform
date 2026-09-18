@@ -15,7 +15,7 @@ import { api, type PowerFleet, type RoomSummary } from '../../api/client';
  */
 
 const TONE: Record<string, string> = {
-  'N+1': 'ok',
+  '2N': 'ok',
   single_feed: 'warn',
   no_feed: 'critical',
 };
