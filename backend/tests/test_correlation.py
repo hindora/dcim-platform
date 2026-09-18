@@ -152,3 +152,15 @@ async def test_a_link_down_that_names_no_port_is_never_explained():
     """No port, no cable, no far end: returns before touching the database."""
     assert await c.correlate(None, alarm_id="x", device_id="y",
                              alarm_type="link_down", instance="") is None
+
+
+# --- restarts ----------------------------------------------------------------
+
+def test_a_restart_is_a_point_event_with_a_short_life():
+    from app.alarms import reconcile
+    assert "device_restarted" in reconcile.EVENT_TYPES
+    assert reconcile.EVENT_GRACE_S < reconcile.REASSERT_GRACE_S
+
+
+def test_the_restore_window_covers_a_slow_boot_and_not_the_next_day():
+    assert 300 <= c.RESTORE_WINDOW_S <= 1800

@@ -85,6 +85,18 @@ _ANY_INSTANCE = _UNREACHABLE
 def root_types(layer: str) -> tuple[str, ...]:
     return ROOT_TYPES_BY_LAYER.get(layer, _UNREACHABLE)
 
+
+# A device that boots when its power comes back is not a second incident. Every
+# switch and PDU sends coldStart and every BMC announces itself, and after rack
+# R2-02's two PDUs were reset nineteen of them stood on the console as roots.
+RESTART_TYPES = frozenset({"device_restarted"})
+
+# How recently a power fault must have been open for a restart to be its
+# consequence. A BMC is up within a minute of power; a host OS and its SNMP
+# agent can take several. Ten minutes covers a slow POST without claiming a
+# reboot next morning.
+RESTORE_WINDOW_S = 600
+
 # Which end of a connection is upstream is NOT uniform across layers, and
 # assuming it is produces a correlation engine that silently explains nothing -
 # the traversal walks away from the cause instead of towards it. The map lives
@@ -233,12 +245,78 @@ async def _correlate_link(session: AsyncSession, *, alarm_id: str,
     return {**root, "layer": "power", "via_peer": link["peer_device_id"]}
 
 
+_RECENT_POWER_ROOTS = text("""
+    WITH RECURSIVE up AS (
+        -- Each direct feed carries its side; everything above it inherits it.
+        SELECT c.a_device_id AS dev, COALESCE(c.redundancy_side, '?') AS side,
+               1 AS hop
+          FROM connection c
+         WHERE c.layer = CAST('power' AS layer_t)
+           AND c.admin_state = 'enabled'
+           AND c.b_device_id = CAST(:device AS uuid)
+        UNION
+        SELECT c.a_device_id, u.side, u.hop + 1
+          FROM up u
+          JOIN connection c ON c.b_device_id = u.dev
+           AND c.layer = CAST('power' AS layer_t)
+           AND c.admin_state = 'enabled'
+         WHERE u.hop < :max_hops
+    )
+    SELECT u.side, a.id::text AS id, d.name AS device_name, a.alarm_type,
+           a.severity::text AS severity, a.cleared_at
+      FROM up u
+      LEFT JOIN alarm a ON a.device_id = u.dev
+            AND a.alarm_type = ANY(:root_types)
+            AND (a.instance = '' OR a.alarm_type = ANY(:any_instance))
+            AND (a.state <> 'CLEARED'
+                 OR a.cleared_at > now() - make_interval(secs => :window_s))
+      LEFT JOIN device d ON d.id = a.device_id
+""")
+
+
+async def _correlate_restart(session: AsyncSession, *, alarm_id: str,
+                             device_id: str) -> dict[str, Any] | None:
+    """A boot that followed its power coming back, folded under that fault.
+
+    Only when EVERY feed side had a de-energising fault open inside the window.
+    A dual-corded server that reboots while one side was down and the other
+    healthy was never unpowered: that reboot is its own fault - a PSU that did
+    not carry the load, a firmware watchdog - and hiding it under the one strip
+    that tripped is the veto's whole reason for existing.
+
+    Folded under the fault that cleared LAST, since that is the restoration
+    that actually brought the device back.
+    """
+    rows = (await session.execute(_RECENT_POWER_ROOTS, {
+        "device": device_id, "max_hops": MAX_HOPS,
+        "root_types": list(root_types("power")),
+        "any_instance": list(_ANY_INSTANCE), "window_s": RESTORE_WINDOW_S,
+    })).mappings().all()
+    sides = {r["side"] for r in rows}
+    hit = [r for r in rows if r["id"]]
+    if not sides or {r["side"] for r in hit} != sides:
+        return None
+    # Still-open roots sort last: an open fault did not restore anything, but
+    # if one is all there is, it is still the explanation.
+    root = max(hit, key=lambda r: (r["cleared_at"] is not None,
+                                   r["cleared_at"] or 0))
+    await mark_symptom(session, alarm_id=alarm_id, root_alarm_id=root["id"])
+    log.info("restart folded under the power fault it followed",
+             alarm_id=alarm_id, device_id=device_id, root_alarm=root["id"],
+             root_device=root["device_name"])
+    return {"id": root["id"], "device_name": root["device_name"],
+            "alarm_type": root["alarm_type"], "layer": "power"}
+
+
 async def correlate(session: AsyncSession, *, alarm_id: str, device_id: str,
                     alarm_type: str, instance: str = "") -> dict[str, Any] | None:
     """Fold a new alarm under an upstream root, if one explains it.
 
     Returns the root alarm when suppressed, otherwise None.
     """
+    if alarm_type in RESTART_TYPES:
+        return await _correlate_restart(session, alarm_id=alarm_id,
+                                        device_id=device_id)
     if alarm_type in LINK_TYPES:
         return await _correlate_link(session, alarm_id=alarm_id,
                                      device_id=device_id, instance=instance)

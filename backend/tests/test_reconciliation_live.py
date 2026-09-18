@@ -287,3 +287,31 @@ async def test_a_device_that_has_gone_dark_keeps_its_alarm(session):
     # Nothing from this device inside the freshness window: it is dark.
     rows = await reconcile.orphaned_key(session, fresh_s=1)
     assert alarm_id not in {r["id"] for r in rows}
+
+
+# ── a restart is an event, not a condition ───────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_a_restart_ages_out_before_a_condition_would(session):
+    """Twenty minutes quiet: past the event grace, inside the condition one.
+
+    The restart closes; an unmeasured condition raised at the same moment on
+    the same device does not - the short life is for point events only.
+    """
+    s = session
+    dev = (await s.execute(text("""
+        SELECT t.device_id::text FROM telemetry_sample t
+         WHERE t.ts > now() - interval '5 minutes' LIMIT 1
+    """))).scalar()
+    assert dev, "no device is delivering telemetry"
+    quiet = reconcile.EVENT_GRACE_S + 300
+    assert quiet < reconcile.REASSERT_GRACE_S
+    boot = await _raise(s, dev, instance="", alarm_type="device_restarted",
+                        ago_s=quiet)
+    held = await _raise(s, dev, instance="", alarm_type="a_condition_nothing_measures",
+                        ago_s=quiet)
+
+    aged = {r["id"] for r in await reconcile.aged_out(s)}
+    assert boot in aged, "a finished restart was held for the condition timer"
+    assert held not in aged, "a condition aged out on the event timer"

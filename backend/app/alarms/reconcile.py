@@ -165,6 +165,17 @@ REASSERT_GRACE_S = 1800
 #: fleet except the 600 s network one, which is exactly at it.
 SEEING_IT_S = 660
 
+#: Point events, not conditions. A cold start happened and is over: there is
+#: nothing still wrong and nothing that will ever send a clear, so the only
+#: honest life for the alarm is a short one. Still subject to the telemetry
+#: gate below - a device that restarted and then went dark again keeps it.
+#:
+#: Nineteen of these sat open after rack R2-02's power came back, each a
+#: device that had booted normally and was polling fine, waiting out the
+#: thirty-minute condition timer that was never meant for them.
+EVENT_TYPES = frozenset({"device_restarted"})
+EVENT_GRACE_S = 900
+
 
 # The measurement contradicts the alarm.
 #
@@ -325,7 +336,10 @@ _AGED_OUT = text("""
           JOIN device d ON d.id = a.device_id
          WHERE a.state <> 'CLEARED'
            AND a.source = ANY(:sources)
-           AND a.last_seen < now() - make_interval(secs => :grace_s)
+           AND a.last_seen < now() - make_interval(secs =>
+                   CASE WHEN a.alarm_type = ANY(:event_types)
+                        THEN CAST(:event_grace_s AS double precision)
+                        ELSE CAST(:grace_s AS double precision) END)
            -- Only what nothing can MEASURE. An alarm that CAN be decided by a
            -- reading is decided by the query above, and ageing it out on a
            -- timer would pre-empt the better answer.
@@ -472,6 +486,7 @@ async def aged_out(session: AsyncSession, *,
         "sources": list(RECONCILABLE_SOURCES),
         "grace_s": grace_s, "fresh_s": fresh_s,
         "state_types": list(STATE_BACKED),
+        "event_types": list(EVENT_TYPES), "event_grace_s": EVENT_GRACE_S,
     })).mappings().all()
     return [dict(r) for r in rows]
 

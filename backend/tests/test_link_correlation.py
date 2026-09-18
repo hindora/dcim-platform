@@ -446,3 +446,74 @@ async def test_a_named_bank_trip_adopts_nothing(db_session, fed_cable):
     assert await correlation.adopt_orphans(
         db_session, alarm_type="breaker_tripped", device_id=c["pdu_a"],
         instance="Breaker 1") == []
+
+
+# --- the restart after power comes back --------------------------------------
+
+
+async def _restart(session, device_id):
+    return await session.scalar(text("""
+        INSERT INTO alarm (device_id, alarm_type, instance, severity, message,
+                           source, state, first_seen, last_seen)
+        VALUES (CAST(:d AS uuid), 'device_restarted', '', 'INFO', 'Cold Start',
+                'snmp_trap', 'ACTIVE', now(), now())
+        RETURNING id::text
+    """), {"d": device_id})
+
+
+async def _clear(session, alarm_id, seconds_ago):
+    await session.execute(text("""
+        UPDATE alarm SET state = 'CLEARED',
+               cleared_at = now() - make_interval(secs => :ago)
+         WHERE id = CAST(:id AS uuid)
+    """), {"id": alarm_id, "ago": seconds_ago})
+
+
+async def test_a_boot_after_both_feeds_return_folds_under_the_last_restore(
+        db_session, fed_cable):
+    c = fed_cable
+    ta = await _trip(db_session, c["pdu_a"])
+    tb = await _trip(db_session, c["pdu_b"])
+    await _clear(db_session, ta, 120)
+    await _clear(db_session, tb, 60)            # B came back last
+    boot = await _restart(db_session, c["lf"])
+
+    root = await correlation.correlate(
+        db_session, alarm_id=boot, device_id=c["lf"],
+        alarm_type="device_restarted")
+    assert root is not None and root["id"] == tb
+    assert (await _row(db_session, boot))["is_symptom"] is True
+
+
+async def test_a_boot_with_one_side_healthy_is_its_own_fault(db_session, fed_cable):
+    """The leaf never lost power - B was fine - so a reboot is a real fault."""
+    c = fed_cable
+    ta = await _trip(db_session, c["pdu_a"])
+    await _clear(db_session, ta, 60)
+    boot = await _restart(db_session, c["lf"])
+
+    assert await correlation.correlate(
+        db_session, alarm_id=boot, device_id=c["lf"],
+        alarm_type="device_restarted") is None
+    assert (await _row(db_session, boot))["is_symptom"] is False
+
+
+async def test_a_boot_long_after_the_outage_is_not_attributed(db_session, fed_cable):
+    c = fed_cable
+    ta = await _trip(db_session, c["pdu_a"])
+    tb = await _trip(db_session, c["pdu_b"])
+    await _clear(db_session, ta, correlation.RESTORE_WINDOW_S + 300)
+    await _clear(db_session, tb, correlation.RESTORE_WINDOW_S + 300)
+    boot = await _restart(db_session, c["lf"])
+
+    assert await correlation.correlate(
+        db_session, alarm_id=boot, device_id=c["lf"],
+        alarm_type="device_restarted") is None
+
+
+async def test_a_boot_on_an_unfed_device_is_never_attributed(db_session, cable):
+    """No power connections in the model: no evidence, no explanation."""
+    boot = await _restart(db_session, cable["sp"])
+    assert await correlation.correlate(
+        db_session, alarm_id=boot, device_id=cable["sp"],
+        alarm_type="device_restarted") is None
