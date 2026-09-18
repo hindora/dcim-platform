@@ -55,8 +55,14 @@ type Subscriber struct {
 	// Some operators want one staleness rule for the whole estate rather than
 	// one that varies with whatever each mapping asked the device for.
 	graceWindow time.Duration
-	minBackoff  time.Duration
-	maxBackoff  time.Duration
+	// How long a freshly opened stream may take to say ANYTHING. A live
+	// target answers a Subscribe with its initial snapshot at once; waiting
+	// the full mid-stream grace window for it is what let a reconnect into a
+	// dead, firewalled switch sit silent for two minutes per attempt, so the
+	// endpoint stayed DEGRADED for as long as the outage lasted.
+	firstResponse time.Duration
+	minBackoff    time.Duration
+	maxBackoff    time.Duration
 
 	mu       sync.Mutex
 	sessions map[string]*session
@@ -80,8 +86,9 @@ func NewSubscriber(a *Adapter, conns *ConnPool, maps *mapping.GNMIMap,
 	return &Subscriber{
 		adapter: a, conns: conns, maps: maps, sink: sink, tracker: tracker,
 		log: log, mets: mets, graceFactor: graceFactor,
-		minGrace:   30 * time.Second,
-		minBackoff: time.Second, maxBackoff: 2 * time.Minute,
+		minGrace:      30 * time.Second,
+		firstResponse: 15 * time.Second,
+		minBackoff:    time.Second, maxBackoff: 2 * time.Minute,
 		sessions: make(map[string]*session),
 		rnd:      rand.New(rand.NewSource(time.Now().UnixNano())), //nolint:gosec // jitter, not crypto
 	}
@@ -151,7 +158,7 @@ func (s *Subscriber) run(ctx context.Context, ep *models.Endpoint) {
 			return
 		}
 		started := time.Now()
-		err := s.subscribe(ctx, ep)
+		err := s.attempt(ctx, ep)
 		if ctx.Err() != nil {
 			return
 		}
@@ -176,6 +183,21 @@ func (s *Subscriber) run(ctx context.Context, ep *models.Endpoint) {
 			backoff *= 2
 		}
 	}
+}
+
+// attempt runs one subscription and, if it fails, drops the connection it used.
+//
+// A cached connection to a device that has lost power is not a connection: its
+// packets vanish, no reset ever arrives, and gRPC goes on believing the
+// transport is up. Reusing it sent every reconnect into the void. Forgetting it
+// makes the next attempt dial afresh, and a dial to a dead host fails at the
+// dial timeout - which is the fast, honest answer.
+func (s *Subscriber) attempt(ctx context.Context, ep *models.Endpoint) error {
+	err := s.subscribe(ctx, ep)
+	if err != nil && ctx.Err() == nil {
+		s.conns.ForgetEndpoint(ep.ID)
+	}
+	return err
 }
 
 // jitter spreads reconnects so 46 devices coming back from one outage do not
@@ -249,8 +271,15 @@ func (s *Subscriber) subscribe(ctx context.Context, ep *models.Endpoint) error {
 			grace = s.minGrace
 		}
 	}
-	deadline := time.NewTimer(grace)
+	// Until the first message, the shorter first-response window: see the
+	// field. After it, the interval-derived grace governs silence.
+	first := grace
+	if s.firstResponse > 0 && s.firstResponse < first {
+		first = s.firstResponse
+	}
+	deadline := time.NewTimer(first)
 	defer deadline.Stop()
+	heard := false
 
 	recv := make(chan *gpb.SubscribeResponse)
 	errCh := make(chan error, 1)
@@ -280,11 +309,15 @@ func (s *Subscriber) subscribe(ctx context.Context, ep *models.Endpoint) error {
 			}
 			return err
 		case <-deadline.C:
+			if !heard {
+				return errors.New("no response to subscribe within " + first.String())
+			}
 			// Nothing arrived within the grace window. The connection may well
 			// be fine, which is exactly the point: a silent stream delivers no
 			// telemetry and must not be reported as a healthy endpoint.
 			return errors.New("no updates within " + grace.String())
 		case resp := <-recv:
+			heard = true
 			if !deadline.Stop() {
 				select {
 				case <-deadline.C:

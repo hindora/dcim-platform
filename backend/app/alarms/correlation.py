@@ -51,6 +51,13 @@ SUPPRESSIBLE_TYPES = frozenset({"endpoint_unreachable"})
 # the cable, the optic or the far end's port is the fault.
 LINK_TYPES = frozenset({"link_down"})
 
+# A port flapping is the other thing a switch says as it boots: its links come
+# up and bounce while the ASIC and the far ends settle. Folded under a power
+# fault only inside the hold-down - the device's own power just returned, or
+# the device across the cable is dark or just back. Anywhere else a flap is a
+# bad optic or cable and stays a root.
+FLAP_TYPES = frozenset({"link_flap"})
+
 # What counts as a root on an upstream device, per layer.
 #
 # endpoint_unreachable is a root everywhere: a switch that cannot be seen
@@ -339,6 +346,25 @@ async def _correlate_restart(session: AsyncSession, *, alarm_id: str,
             "alarm_type": root["alarm_type"], "layer": "power"}
 
 
+async def _correlate_flap(session: AsyncSession, *, alarm_id: str,
+                          device_id: str, instance: str) -> dict[str, Any] | None:
+    """A flap that is the boot of this device, or of the one across the cable."""
+    root = await restored_root(session, device_id)
+    if not root and instance:
+        from app.alarms import link_correlation
+        link = await link_correlation.find_link(
+            session, device_id=device_id, instance=instance)
+        if link and link["peer_device_id"]:
+            root = (await power_dead_root(session, link["peer_device_id"])
+                    or await restored_root(session, link["peer_device_id"]))
+    if not root:
+        return None
+    await mark_symptom(session, alarm_id=alarm_id, root_alarm_id=root["id"])
+    log.info("link flap folded under a power incident", alarm_id=alarm_id,
+             device_id=device_id, root_alarm=root["id"])
+    return {**root, "layer": "power"}
+
+
 async def correlate(session: AsyncSession, *, alarm_id: str, device_id: str,
                     alarm_type: str, instance: str = "") -> dict[str, Any] | None:
     """Fold a new alarm under an upstream root, if one explains it.
@@ -348,6 +374,9 @@ async def correlate(session: AsyncSession, *, alarm_id: str, device_id: str,
     if alarm_type in RESTART_TYPES:
         return await _correlate_restart(session, alarm_id=alarm_id,
                                         device_id=device_id)
+    if alarm_type in FLAP_TYPES:
+        return await _correlate_flap(session, alarm_id=alarm_id,
+                                     device_id=device_id, instance=instance)
     if alarm_type in LINK_TYPES:
         return await _correlate_link(session, alarm_id=alarm_id,
                                      device_id=device_id, instance=instance)

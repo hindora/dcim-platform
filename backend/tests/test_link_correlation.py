@@ -618,3 +618,54 @@ async def test_after_the_hold_a_new_failure_is_its_own(db_session, fed_cable):
     assert await correlation.correlate(
         db_session, alarm_id=late, device_id=c["lf"],
         alarm_type="endpoint_unreachable") is None
+
+
+# --- a port flapping as the power returns ------------------------------------
+
+
+async def _flap(session, device_id, instance):
+    return await session.scalar(text("""
+        INSERT INTO alarm (device_id, alarm_type, instance, severity, message,
+                           source, state, first_seen, last_seen)
+        VALUES (CAST(:d AS uuid), 'link_flap', :i, 'WARNING', 'Link Flap',
+                'snmp_trap', 'ACTIVE', now(), now())
+        RETURNING id::text
+    """), {"d": device_id, "i": instance})
+
+
+async def test_a_switch_flapping_as_it_boots_is_part_of_the_restore(
+        db_session, fed_cable):
+    c = fed_cable
+    ta = await _trip(db_session, c["pdu_a"])
+    tb = await _trip(db_session, c["pdu_b"])
+    await _clear(db_session, ta, 20)
+    await _clear(db_session, tb, 10)
+    flap = await _flap(db_session, c["lf"], c["lf_port"])
+
+    root = await correlation.correlate(
+        db_session, alarm_id=flap, device_id=c["lf"], alarm_type="link_flap",
+        instance=c["lf_port"])
+    assert root is not None and root["id"] == tb
+
+
+async def test_a_port_flapping_towards_a_booting_neighbour_is_folded(
+        db_session, fed_cable):
+    c = fed_cable
+    ta = await _trip(db_session, c["pdu_a"])
+    tb = await _trip(db_session, c["pdu_b"])
+    await _clear(db_session, ta, 20)
+    await _clear(db_session, tb, 10)
+    flap = await _flap(db_session, c["sp"], c["sp_port"])
+
+    assert await correlation.correlate(
+        db_session, alarm_id=flap, device_id=c["sp"], alarm_type="link_flap",
+        instance=c["sp_port"]) is not None
+
+
+async def test_a_flap_with_no_power_event_near_it_is_a_real_fault(
+        db_session, fed_cable):
+    c = fed_cable
+    flap = await _flap(db_session, c["lf"], c["lf_port"])
+    assert await correlation.correlate(
+        db_session, alarm_id=flap, device_id=c["lf"], alarm_type="link_flap",
+        instance=c["lf_port"]) is None

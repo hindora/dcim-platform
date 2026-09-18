@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"math"
 	"net"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -851,5 +852,55 @@ func TestWholeDocumentDeliveryDoesNotDuplicate(t *testing.T) {
 	}
 	if len(seen) == 0 {
 		t.Fatal("nothing was published")
+	}
+}
+
+// A fresh stream that says nothing at all fails at the first-response window,
+// not the mid-stream grace. A live target answers a Subscribe at once; one that
+// has lost power behind a firewall never will, and waiting the full grace for
+// it held a dark leaf DEGRADED for the whole outage.
+func TestAStreamThatNeverAnswersFailsAtTheFirstResponseWindow(t *testing.T) {
+	f := newFakeTarget(t)
+	f.mu.Lock()
+	f.silent = true
+	f.mu.Unlock()
+
+	a := newAdapter(t)
+	sub := newSubscriber(t, a, &captureSink{})
+	sub.SetGraceWindow(time.Minute)
+	sub.firstResponse = 200 * time.Millisecond
+
+	started := time.Now()
+	err := sub.subscribe(context.Background(), streamEndpoint(f))
+	if err == nil {
+		t.Fatal("a stream that never answered returned no error")
+	}
+	if took := time.Since(started); took > 5*time.Second {
+		t.Fatalf("took %v: waited the grace window, not the first-response one", took)
+	}
+	if !strings.Contains(err.Error(), "no response to subscribe") {
+		t.Errorf("error %q does not say the subscribe went unanswered", err)
+	}
+}
+
+// A failed attempt must not leave its connection cached: to a dead host that
+// connection is a black hole gRPC still believes in, and the next attempt has
+// to dial afresh to find out the truth.
+func TestAFailedAttemptForgetsItsConnection(t *testing.T) {
+	f := newFakeTarget(t)
+	f.mu.Lock()
+	f.silent = true
+	f.mu.Unlock()
+
+	a := newAdapter(t)
+	sub := newSubscriber(t, a, &captureSink{})
+	sub.SetGraceWindow(time.Minute)
+	sub.firstResponse = 100 * time.Millisecond
+
+	if err := sub.attempt(context.Background(), streamEndpoint(f)); err == nil {
+		t.Fatal("expected the silent stream to fail")
+	}
+	if n := a.conns.Connections(); n != 0 {
+		t.Fatalf("%d connection(s) still cached after a failed attempt", n)
 	}
 }
