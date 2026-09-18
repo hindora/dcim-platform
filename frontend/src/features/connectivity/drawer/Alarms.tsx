@@ -35,6 +35,9 @@ export function Alarms({ open, openLoading, deviceIds, name, roomId, ctx }: {
   ctx: DrawerCtx;
 }) {
   const [view, setView] = useState<'open' | 'cleared'>('open');
+  // Symptoms hidden by default: the alarm page folds them under their root,
+  // and one broken fan should not read as two rows to acknowledge.
+  const [showSymptoms, setShowSymptoms] = useState(false);
   const qc = useQueryClient();
   const single = deviceIds.length === 1;
 
@@ -58,7 +61,7 @@ export function Alarms({ open, openLoading, deviceIds, name, roomId, ctx }: {
   // Memoised, not just tidy: the exporter below is keyed on this array, and a
   // fresh array every render re-registers it, which re-renders the shell,
   // which renders this again.
-  const items = useMemo(() => {
+  const all = useMemo(() => {
     if (view === 'open') {
       return [...open].sort((a, b) => (SEVERITY_RANK[a.severity] ?? 5)
         - (SEVERITY_RANK[b.severity] ?? 5) || b.last_seen.localeCompare(a.last_seen));
@@ -68,6 +71,11 @@ export function Alarms({ open, openLoading, deviceIds, name, roomId, ctx }: {
     return (cleared.data?.items ?? []).filter((a) => members.has(a.device_id)
       && a.cleared_at && new Date(a.cleared_at).getTime() >= since);
   }, [view, open, cleared.data, deviceIds]);
+  const hidden = all.filter((a) => a.is_symptom).length;
+  const items = useMemo(
+    () => (showSymptoms ? all : all.filter((a) => !a.is_symptom)),
+    [all, showSymptoms]);
+  const openRoots = open.filter((a) => !a.is_symptom).length;
   const loading = view === 'open' ? openLoading : cleared.isLoading;
 
   const exporter = useCallback(() => downloadCsv(
@@ -87,7 +95,7 @@ export function Alarms({ open, openLoading, deviceIds, name, roomId, ctx }: {
       <h4>{view === 'open' ? 'Open alarms' : 'Cleared in 24h'}</h4>
       <div className="cd-toolbar">
         <Seg label="Which alarms" value={view} onChange={setView}
-             options={[{ key: 'open', label: `Open ${open.length}` },
+             options={[{ key: 'open', label: `Open ${openRoots}` },
                        { key: 'cleared', label: 'Cleared 24h' }]} />
         <Link to="/alarms" className="k">All alarms →</Link>
       </div>
@@ -95,8 +103,14 @@ export function Alarms({ open, openLoading, deviceIds, name, roomId, ctx }: {
       {loading && <Loading />}
       {!loading && items.length === 0 && (
         <p className="muted">
-          {view === 'open' ? 'Nothing open on it.' : 'Nothing cleared in the last 24 hours.'}
+          {view === 'open' ? 'Nothing open on it' : 'Nothing cleared in the last 24 hours'}
+          {hidden > 0 && !showSymptoms ? ' but symptoms of a fault elsewhere.' : '.'}
         </p>
+      )}
+      {hidden > 0 && (
+        <button type="button" className="cd-link" onClick={() => setShowSymptoms((v) => !v)}>
+          {showSymptoms ? 'Hide' : 'Show'} {hidden} symptom{hidden === 1 ? '' : 's'}
+        </button>
       )}
 
       <ul className="cd-alarms">

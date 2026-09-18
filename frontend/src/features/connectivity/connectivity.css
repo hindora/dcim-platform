@@ -973,6 +973,13 @@
 .cd-alarm-head { display: flex; justify-content: space-between; align-items: center; }
 .cd-alarm-msg { margin: 3px 0 2px; font-size: 0.76rem; color: var(--text); }
 .cd-ack { margin-top: 5px; font-size: 0.7rem; padding: 2px 8px; }
+/* A text toggle, not a button: it changes what the list shows, it does not
+   act on anything. */
+.cd-link {
+  display: block; margin: 0 0 8px; padding: 0; border: none; background: none;
+  font: inherit; font-size: 0.72rem; color: var(--accent); cursor: pointer;
+}
+.cd-link:hover { text-decoration: underline; }
 
 .cd-impact-sum { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .cd-impact-sum > div {

@@ -116,7 +116,15 @@ export function Drawer({ node, layer, tab, onTab, canvasIds, onReveal,
   const ctx: DrawerCtx = useMemo(
     () => ({ canvasIds, onReveal, setExport }), [canvasIds, onReveal, setExport]);
 
-  const worst = openAlarms.reduce<string | null>((w, a) =>
+  // Roots count; symptoms do not. One fault raises an equipment alarm AND a
+  // derived symptom, and a badge of 2 for one broken fan reads as two
+  // problems. Symptoms are still counted, separately, because on a device fed
+  // by something that failed they may be the ONLY thing open on it - and a
+  // drawer with no badge for a server that has lost power is the wrong answer.
+  const roots = useMemo(() => openAlarms.filter((a) => !a.is_symptom), [openAlarms]);
+  const symptomCount = openAlarms.length - roots.length;
+
+  const worst = roots.reduce<string | null>((w, a) =>
     (w === null || (SEVERITY_RANK[a.severity] ?? 5) < (SEVERITY_RANK[w] ?? 5)
       ? a.severity : w), null);
 
@@ -166,10 +174,16 @@ export function Drawer({ node, layer, tab, onTab, canvasIds, onReveal,
               ? 'OFFLINE' : node.status)}`}>
               <span className="dot" aria-hidden="true" />{status}
             </span>
-            {openAlarms.length > 0 && (
+            {roots.length > 0 ? (
               <button type="button" className={`cd-badge ${statusClass(worst ?? '')}`}
                       onClick={() => onTab('alarms')}>
-                ▲ {openAlarms.length} alarm{openAlarms.length === 1 ? '' : 's'}
+                ▲ {roots.length} alarm{roots.length === 1 ? '' : 's'}
+              </button>
+            ) : symptomCount > 0 && (
+              <button type="button" className="cd-badge"
+                      title="Caused by a fault elsewhere - open Alarms to see them"
+                      onClick={() => onTab('alarms')}>
+                {symptomCount} symptom{symptomCount === 1 ? '' : 's'}
               </button>
             )}
             {windows.length > 0 && (
@@ -188,7 +202,7 @@ export function Drawer({ node, layer, tab, onTab, canvasIds, onReveal,
       <div className="cd-tabs" role="tablist" aria-label="Device details"
            onKeyDown={onTabKey}>
         {tabs.map((t) => {
-          const count = t === 'alarms' ? openAlarms.length
+          const count = t === 'alarms' ? roots.length
             : t === 'impact' ? impactCount : undefined;
           return (
             <button key={t} type="button" role="tab" id={`cd-tab-${t}`}
