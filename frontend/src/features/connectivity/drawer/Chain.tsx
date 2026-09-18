@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useCallback } from 'react';
 import { api, type PowerChain, type TopologyNode, type Trace } from '../../../api/client';
 import { usePaged } from '../../../components/Pagination';
+import { humanise } from '../../../lib/format';
 import { exportTraceCsv, PORT_LAYERS, terminationLabel } from '../trace';
 import { DeviceRef, Loading, useExport, type DrawerCtx } from './shared';
 
@@ -46,7 +47,7 @@ export function Chain({ node, layer, ctx }: {
         // one: a single-corded load is "fine" until the day it is not.
         <div className="cd-verdict" data-tone={chain.data.live_paths >= 2
           && chain.data.live_paths === chain.data.total_paths ? 'ok' : 'warn'}>
-          <b>{chain.data.redundancy}</b>
+          <b>{humanise(chain.data.redundancy)}</b>
           <span>{chain.data.reason}</span>
         </div>
       )}
