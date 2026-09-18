@@ -862,6 +862,8 @@
   display: inline-flex; align-items: center; gap: 5px;
   padding: 7px 7px 8px; margin-bottom: -1px;
   border: none; border-bottom: 2px solid transparent; background: none;
+  /* Square: the global button radius bends the underline up at both ends. */
+  border-radius: 0;
   font: inherit; font-size: 0.74rem; color: var(--text-muted); cursor: pointer;
   white-space: nowrap;
 }
