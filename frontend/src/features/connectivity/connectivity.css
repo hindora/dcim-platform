@@ -888,17 +888,30 @@
    its own. */
 .cd-body .conn-facts { grid-template-columns: 124px 1fr; }
 .cd-body .seg button { padding: 3px 9px; font-size: 0.72rem; }
-/* Every section is a box, the meter's box: a tab reads as a stack of
-   separate answers rather than one run of text with headings in it. */
+/* Every section is a panel: its own fill, a shade off the drawer, with the
+   title set INTO the top border like a fieldset legend. A tab then reads as a
+   stack of separate answers, and the heading costs no row of its own. */
 .cd-body > section {
+  position: relative;
   border: 1px solid var(--border); border-radius: var(--radius);
-  padding: 9px 11px;
+  background: var(--bg-inset);
+  padding: 13px 11px 9px;
 }
+.cd-body > .meter { background: var(--bg-inset); }
 .cd-body > * + * { margin-top: 8px; }
-.cd-body > section > h4:first-child,
-.cd-body > section > h5:first-child { margin-top: 0; }
+/* The legend stands half above the box, so a section needs the extra room. */
+.cd-body > * + section { margin-top: 17px; }
+.cd-body > section:first-child { margin-top: 7px; }
+.cd-body > section > :is(h4, h5):first-child {
+  position: absolute; top: 0; left: 8px; transform: translateY(-50%);
+  margin: 0; padding: 0 6px; line-height: 1.5;
+  /* Split down the middle: drawer above the border, panel below it, so the
+     title cuts the line without a stripe of the wrong colour behind it. */
+  background: linear-gradient(to bottom, var(--bg-raised) 50%, var(--bg-inset) 50%);
+  white-space: nowrap; max-width: calc(100% - 16px);
+  overflow: hidden; text-overflow: ellipsis;
+}
 .cd-body > section > :last-child { margin-bottom: 0; }
-.cd-body > section > .cd-toolbar:first-child { margin-top: 0; }
 .cd-body h5 {
   margin: 12px 0 4px; font-size: 0.72rem; text-transform: capitalize;
   color: var(--text);
@@ -942,7 +955,7 @@
 .cd-alarms { list-style: none; margin: 0; padding: 0; }
 .cd-alarms > li {
   padding: 7px 9px; margin-bottom: 6px; border-radius: 6px;
-  background: var(--bg-inset); border-left: 3px solid var(--unknown);
+  background: var(--bg-raised); border-left: 3px solid var(--unknown);
 }
 .cd-alarms > li[data-tone=warn]     { border-left-color: var(--warn); }
 .cd-alarms > li[data-tone=major]    { border-left-color: var(--major); }
@@ -954,7 +967,7 @@
 .cd-impact-sum { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .cd-impact-sum > div {
   display: flex; flex-direction: column; padding: 7px 10px; border-radius: 6px;
-  background: var(--bg-inset); border-left: 3px solid var(--ok);
+  background: var(--bg-raised); border-left: 3px solid var(--ok);
 }
 .cd-impact-sum > div[data-tone=warn] { border-left-color: var(--warn); }
 .cd-impact-sum > div[data-tone=critical] { border-left-color: var(--critical); }

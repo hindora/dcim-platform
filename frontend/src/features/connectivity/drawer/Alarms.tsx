@@ -80,6 +80,7 @@ export function Alarms({ open, openLoading, deviceIds, name, roomId, ctx }: {
 
   return (
     <section>
+      <h4>{view === 'open' ? 'Open alarms' : 'Cleared in 24h'}</h4>
       <div className="cd-toolbar">
         <Seg label="Which alarms" value={view} onChange={setView}
              options={[{ key: 'open', label: `Open ${open.length}` },
