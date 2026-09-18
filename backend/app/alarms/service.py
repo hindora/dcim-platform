@@ -334,14 +334,30 @@ class AlarmService:
                                   else alarm["change"],
                                   severity=alarm["severity"], actor="device")
 
+        # Dependency first, as on the poll path. The trap path never asked, and
+        # a linkDown trap is exactly how a dead far end announces itself: a
+        # rack losing both PDUs lit four spine ports as four independent roots.
+        # correlate() returns at once for any type it cannot explain.
+        root = await correlation.correlate(
+            session, alarm_id=alarm["id"], device_id=device_id,
+            alarm_type=alarm_type, instance=instance)
+        if root:
+            alarm["is_symptom"] = True
+            alarm["root_cause_alarm_id"] = root["id"]
+            await repo.record_history(
+                session, alarm_id=alarm["id"], device_id=device_id,
+                action="suppressed", severity=alarm["severity"], actor="device",
+                detail={"root": root["id"], "layer": root["layer"],
+                        "root_device": root["device_name"]})
+
         # A trap and a poll rule can raise different bands of one measurement -
         # the trap fires at the vendor's threshold, the rule at ours - so the
         # collapse has to happen on both paths or the console shows one row
-        # from each.
-        await self._collapse_bands(
-            session, alarm, device_id=device_id,
-            alarm_type=alert_taxonomy.canonical_alarm_type(ev["event_type"]),
-            instance=instance, actor="device")
+        # from each. An alarm already folded under a root is not folded again.
+        if not alarm.get("is_symptom"):
+            await self._collapse_bands(
+                session, alarm, device_id=device_id,
+                alarm_type=alarm_type, instance=instance, actor="device")
         await self._pair_link_ends(
             session, alarm, device_id=device_id,
             alarm_type=alert_taxonomy.canonical_alarm_type(ev["event_type"]),
@@ -527,7 +543,7 @@ class AlarmService:
         # database, so a temperature threshold pays nothing for this.
         root = await correlation.correlate(
             session, alarm_id=alarm["id"], device_id=c.key.device_id,
-            alarm_type=c.key.alarm_type)
+            alarm_type=c.key.alarm_type, instance=c.key.instance)
         if root:
             alarm["is_symptom"] = True
             alarm["root_cause_alarm_id"] = root["id"]

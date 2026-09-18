@@ -15,7 +15,7 @@ import pytest_asyncio
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.alarms import link_correlation
+from app.alarms import correlation, link_correlation
 
 DB_URL = os.getenv("DCIM_TEST_DATABASE_URL")
 
@@ -256,3 +256,115 @@ async def test_power_and_cooling_connections_are_not_links(db_session):
 
     assert await link_correlation.find_link(
         db_session, device_id=pdu, instance="port1") is None
+
+
+# --- a far end with no power -------------------------------------------------
+#
+# Live, 2026-09-18: both rack PDUs feeding LF1-DC1-HA-R2-02 tripped, and four
+# spine ports facing it went down three seconds later. The console showed six
+# roots for one incident - two trips and four link-downs - because nothing
+# asked whether the far end of those cables still had power.
+
+
+async def _feed(session, feeder, load, side):
+    await session.execute(text("""
+        INSERT INTO connection (layer, link_type, a_device_id, b_device_id,
+                                redundancy_side)
+        VALUES (CAST('power' AS layer_t), 'power_cord',
+                CAST(:a AS uuid), CAST(:b AS uuid), :s)
+    """), {"a": feeder, "b": load, "s": side})
+
+
+async def _trip(session, device_id, instance=""):
+    return await session.scalar(text("""
+        INSERT INTO alarm (device_id, alarm_type, instance, severity, message,
+                           source, state, first_seen, last_seen)
+        VALUES (CAST(:d AS uuid), 'breaker_tripped', :i, 'CRITICAL',
+                'Breaker Tripped', 'snmp_trap', 'ACTIVE',
+                now() - interval '5 seconds', now() - interval '5 seconds')
+        RETURNING id::text
+    """), {"d": device_id, "i": instance})
+
+
+@pytest_asyncio.fixture
+async def fed_cable(db_session, cable):
+    """The cable above, with the leaf dual-corded to an A and a B strip."""
+    pa = await _device(db_session, "PDUA-TEST", "pdu")
+    pb = await _device(db_session, "PDUB-TEST", "pdu")
+    await _feed(db_session, pa, cable["lf"], "A")
+    await _feed(db_session, pb, cable["lf"], "B")
+    return {**cable, "pdu_a": pa, "pdu_b": pb}
+
+
+async def test_link_down_folds_when_the_far_end_lost_both_feeds(db_session, fed_cable):
+    c = fed_cable
+    root_a = await _trip(db_session, c["pdu_a"])
+    await _trip(db_session, c["pdu_b"])
+    spine = await _alarm(db_session, c["sp"], c["sp_port"])
+
+    root = await correlation.correlate(
+        db_session, alarm_id=spine, device_id=c["sp"],
+        alarm_type="link_down", instance=c["sp_port"])
+
+    assert root is not None, "the far end is dark; its power loss explains the port"
+    assert root["alarm_type"] == "breaker_tripped"
+    assert root["id"] == root_a, "nearest, then oldest"
+    assert (await _row(db_session, spine))["is_symptom"] is True
+
+
+async def test_link_down_stays_a_root_while_the_far_end_is_still_fed(
+        db_session, fed_cable):
+    """One strip gone, the other healthy: the leaf is up, so the cable is the
+    question, and hiding the alarm under a PDU would hide it."""
+    c = fed_cable
+    await _trip(db_session, c["pdu_a"])
+    spine = await _alarm(db_session, c["sp"], c["sp_port"])
+
+    assert await correlation.correlate(
+        db_session, alarm_id=spine, device_id=c["sp"],
+        alarm_type="link_down", instance=c["sp_port"]) is None
+    assert (await _row(db_session, spine))["is_symptom"] is False
+
+
+async def test_link_down_with_a_powered_far_end_is_never_folded(db_session, fed_cable):
+    c = fed_cable
+    spine = await _alarm(db_session, c["sp"], c["sp_port"])
+    assert await correlation.correlate(
+        db_session, alarm_id=spine, device_id=c["sp"],
+        alarm_type="link_down", instance=c["sp_port"]) is None
+
+
+async def test_a_named_breaker_bank_does_not_take_the_whole_strip_dark(
+        db_session, fed_cable):
+    """A multi-bank rack PDU trips one bank at a time, and the model does not
+    know which outlets are on which bank. A trip that names its breaker is not
+    taken as de-energising everything corded to the strip."""
+    c = fed_cable
+    await _trip(db_session, c["pdu_a"], instance="Breaker 1")
+    await _trip(db_session, c["pdu_b"], instance="Breaker 1")
+    spine = await _alarm(db_session, c["sp"], c["sp_port"])
+
+    assert await correlation.correlate(
+        db_session, alarm_id=spine, device_id=c["sp"],
+        alarm_type="link_down", instance=c["sp_port"]) is None
+
+
+async def test_a_dark_load_is_explained_by_its_tripped_feeds(db_session, fed_cable):
+    """The same rule for the load's own unreachable alarm: with both strips
+    tripped it folds under a trip, where before only an UNREACHABLE feeder
+    counted as a power root."""
+    c = fed_cable
+    await _trip(db_session, c["pdu_a"])
+    await _trip(db_session, c["pdu_b"])
+    unreachable = await db_session.scalar(text("""
+        INSERT INTO alarm (device_id, alarm_type, instance, severity, message,
+                           source, state, first_seen, last_seen)
+        VALUES (CAST(:d AS uuid), 'endpoint_unreachable', 'ep', 'MAJOR',
+                'No response', 'comm', 'ACTIVE', now(), now())
+        RETURNING id::text
+    """), {"d": c["lf"]})
+
+    root = await correlation.correlate(
+        db_session, alarm_id=unreachable, device_id=c["lf"],
+        alarm_type="endpoint_unreachable")
+    assert root is not None and root["alarm_type"] == "breaker_tripped"

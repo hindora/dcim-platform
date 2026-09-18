@@ -110,3 +110,45 @@ def test_direction_columns_are_never_caller_supplied():
     """They are interpolated into SQL, so they must come from this fixed map."""
     for up, down in c._UPSTREAM_COL.values():
         assert {up, down} == {"a_device_id", "b_device_id"}
+
+
+# --- what counts as a root, per layer ----------------------------------------
+
+def test_a_breaker_trip_is_a_power_root():
+    """It opens the circuit: everything corded to it is off, however healthy
+    the PDU's own controller still looks."""
+    assert "breaker_tripped" in c.root_types("power")
+    assert "switchgear_breaker_trip" in c.root_types("power")
+
+
+def test_an_unreachable_feeder_is_still_a_power_root():
+    assert "endpoint_unreachable" in c.root_types("power")
+
+
+def test_a_breaker_trip_explains_nothing_on_the_management_plane():
+    """A tripped strip says nothing about which switch a device is watched
+    through; only visibility failures are management roots."""
+    assert c.root_types("management") == ("endpoint_unreachable",)
+    assert c.root_types("fieldbus") == ("endpoint_unreachable",)
+
+
+def test_a_degraded_feed_is_not_a_dead_one():
+    """On battery, overloaded or out of voltage, the load is still fed. Taking
+    any of those as a root would fold live faults under a feed that is still
+    delivering."""
+    for alarm_type in ("ups_on_battery", "ups_output_overload",
+                       "voltage_low", "load_high"):
+        assert alarm_type not in c.root_types("power")
+
+
+def test_link_down_is_explained_only_through_its_far_end():
+    """Not by the upstream walk - nothing upstream of a spine explains its
+    port - so it is not in the generic suppressible set."""
+    assert "link_down" in c.LINK_TYPES
+    assert "link_down" not in c.SUPPRESSIBLE_TYPES
+
+
+async def test_a_link_down_that_names_no_port_is_never_explained():
+    """No port, no cable, no far end: returns before touching the database."""
+    assert await c.correlate(None, alarm_id="x", device_id="y",
+                             alarm_type="link_down", instance="") is None

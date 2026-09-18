@@ -44,11 +44,46 @@ log = get_logger("alarms.correlation")
 # to surface.
 SUPPRESSIBLE_TYPES = frozenset({"endpoint_unreachable"})
 
-# What counts as a root on an upstream device. Today the fleet's only
-# infrastructure-failure alarm is endpoint_unreachable; a dedicated pdu_tripped
-# or ups_on_battery rule would slot in here for the power layer without any
-# other change.
-ROOT_TYPES = ("endpoint_unreachable",)
+# Link-down is suppressible too, but NOT by the upstream walk: a port going
+# down on a spine is not explained by anything upstream OF THE SPINE. It is
+# explained when the device on the far end of the cable has lost power - see
+# correlate(). A link whose far end is still powered stays a root, because then
+# the cable, the optic or the far end's port is the fault.
+LINK_TYPES = frozenset({"link_down"})
+
+# What counts as a root on an upstream device, per layer.
+#
+# endpoint_unreachable is a root everywhere: a switch that cannot be seen
+# explains the devices seen through it, and a feeder whose management card has
+# gone dark has usually lost its own input.
+#
+# The power layer adds the events that DE-ENERGISE a feeder's output. A rack
+# PDU's breaker trip and a switchgear breaker trip open the circuit; everything
+# corded to it is off, however healthy its controller still looks. Missing them
+# is how one PDU trip showed up as three unrelated kinds of root - the trip,
+# four spine link-downs, and eighteen unreachable servers once the poll landed.
+#
+# Deliberately NOT here: ups_on_battery (the load is still fed), overloads and
+# voltage excursions (degraded, not dead). A root has to mean "nothing is
+# coming out of this", or the redundancy veto below is fed a lie.
+_UNREACHABLE = ("endpoint_unreachable",)
+ROOT_TYPES_BY_LAYER: dict[str, tuple[str, ...]] = {
+    "management": _UNREACHABLE,
+    "fieldbus": _UNREACHABLE,
+    "power": (*_UNREACHABLE, "breaker_tripped", "switchgear_breaker_trip"),
+}
+
+# A breaker alarm that NAMES a breaker (one bank of a multi-bank rack PDU)
+# opens only the outlets on that bank, and the model does not map outlets to
+# banks. Only a whole-device trip (empty instance) is taken as de-energising
+# everything behind it; a named one stays a root of its own and explains
+# nothing. endpoint_unreachable's instance is an endpoint id, not a part, so
+# it is exempt.
+_ANY_INSTANCE = _UNREACHABLE
+
+
+def root_types(layer: str) -> tuple[str, ...]:
+    return ROOT_TYPES_BY_LAYER.get(layer, _UNREACHABLE)
 
 # Which end of a connection is upstream is NOT uniform across layers, and
 # assuming it is produces a correlation engine that silently explains nothing -
@@ -106,13 +141,15 @@ async def _upstream_root(session: AsyncSession, device_id: str,
          WHERE u.hop > 0
            AND a.state <> 'CLEARED'
            AND a.alarm_type = ANY(:root_types)
+           AND (a.instance = '' OR a.alarm_type = ANY(:any_instance))
          -- Nearest first, then oldest: the upstream failure that started it.
          ORDER BY u.hop, a.first_seen
          LIMIT 1
     """
     row = (await session.execute(text(sql), {
         "device": device_id, "layer": layer, "max_hops": MAX_HOPS,
-        "root_types": list(ROOT_TYPES),
+        "root_types": list(root_types(layer)),
+        "any_instance": list(_ANY_INSTANCE),
     })).mappings().first()
     return dict(row) if row else None
 
@@ -134,11 +171,13 @@ async def feed_side_status(session: AsyncSession,
                  ON root.device_id = c.a_device_id
                 AND root.state <> 'CLEARED'
                 AND root.alarm_type = ANY(:root_types)
+                AND (root.instance = '' OR root.alarm_type = ANY(:any_instance))
          WHERE c.layer = CAST('power' AS layer_t)
            AND c.admin_state = 'enabled'
            AND c.b_device_id = CAST(:device AS uuid)
          GROUP BY 1
-    """), {"device": device_id, "root_types": list(ROOT_TYPES)})).all()
+    """), {"device": device_id, "root_types": list(root_types("power")),
+          "any_instance": list(_ANY_INSTANCE)})).all()
     return {side: bool(compromised) for side, compromised in rows}
 
 
@@ -151,12 +190,58 @@ async def mark_symptom(session: AsyncSession, *, alarm_id: str,
     """), {"id": alarm_id, "root": root_alarm_id})
 
 
+async def power_dead_root(session: AsyncSession,
+                          device_id: str) -> dict[str, Any] | None:
+    """The power root that has taken this device dark, if one has.
+
+    Both halves are required: an upstream de-energising root, AND no surviving
+    feed. A dual-corded load that lost its A strip is still running, so the A
+    strip explains nothing about it.
+    """
+    root = await _upstream_root(session, device_id, "power")
+    if not root:
+        return None
+    if has_surviving_feed(await feed_side_status(session, device_id)):
+        return None
+    return root
+
+
+async def _correlate_link(session: AsyncSession, *, alarm_id: str,
+                          device_id: str, instance: str) -> dict[str, Any] | None:
+    """A port down because the device on the far end lost power.
+
+    The spine's port is fine and so is the cable; the leaf at the other end is
+    dark. That is one incident - the power event - and the spine's report is
+    its symptom. If the far end still has power the link-down stays a root:
+    then it IS about the cable, the optic or the far port.
+    """
+    # Local import: link_correlation knows which interface a cable lands on,
+    # and it has no reason to import this module back.
+    from app.alarms import link_correlation
+
+    link = await link_correlation.find_link(
+        session, device_id=device_id, instance=instance)
+    if not link or not link["peer_device_id"]:
+        return None
+    root = await power_dead_root(session, link["peer_device_id"])
+    if not root:
+        return None
+    await mark_symptom(session, alarm_id=alarm_id, root_alarm_id=root["id"])
+    log.info("link-down suppressed; far end lost power", alarm_id=alarm_id,
+             port=instance, peer=link["peer_device_id"], root_alarm=root["id"],
+             root_device=root["device_name"])
+    return {**root, "layer": "power", "via_peer": link["peer_device_id"]}
+
+
 async def correlate(session: AsyncSession, *, alarm_id: str, device_id: str,
-                    alarm_type: str) -> dict[str, Any] | None:
+                    alarm_type: str, instance: str = "") -> dict[str, Any] | None:
     """Fold a new alarm under an upstream root, if one explains it.
 
     Returns the root alarm when suppressed, otherwise None.
     """
+    if alarm_type in LINK_TYPES:
+        return await _correlate_link(session, alarm_id=alarm_id,
+                                     device_id=device_id, instance=instance)
     if alarm_type not in SUPPRESSIBLE_TYPES:
         return None
 
