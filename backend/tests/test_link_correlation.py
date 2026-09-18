@@ -669,3 +669,32 @@ async def test_a_flap_with_no_power_event_near_it_is_a_real_fault(
     assert await correlation.correlate(
         db_session, alarm_id=flap, device_id=c["lf"], alarm_type="link_flap",
         instance=c["lf_port"]) is None
+
+
+async def test_a_flap_processed_before_the_trips_clear_still_folds(
+        db_session, fed_cable):
+    """The clears arrive in the same burst and can land after the flap."""
+    c = fed_cable
+    await _trip(db_session, c["pdu_a"])
+    await _trip(db_session, c["pdu_b"])              # both still open
+    flap = await _flap(db_session, c["lf"], "")
+
+    root = await correlation.correlate(
+        db_session, alarm_id=flap, device_id=c["lf"], alarm_type="link_flap",
+        instance="")
+    assert root is not None and root["alarm_type"] == "breaker_tripped"
+
+
+async def test_a_device_just_back_is_held_but_a_dark_one_is_not(db_session, fed_cable):
+    """restored_root is the staleness sweep's test: it must find a fault that
+    has CLEARED within the hold, and nothing while the power is still off -
+    an open fault cannot explain a device that is polling successfully."""
+    c = fed_cable
+    ta = await _trip(db_session, c["pdu_a"])
+    tb = await _trip(db_session, c["pdu_b"])
+    assert await correlation.restored_root(db_session, c["lf"]) is None
+
+    await _clear(db_session, ta, 20)
+    await _clear(db_session, tb, 10)
+    root = await correlation.restored_root(db_session, c["lf"])
+    assert root is not None and root["id"] == tb

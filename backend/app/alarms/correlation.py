@@ -348,8 +348,18 @@ async def _correlate_restart(session: AsyncSession, *, alarm_id: str,
 
 async def _correlate_flap(session: AsyncSession, *, alarm_id: str,
                           device_id: str, instance: str) -> dict[str, Any] | None:
-    """A flap that is the boot of this device, or of the one across the cable."""
-    root = await restored_root(session, device_id)
+    """A flap that is the boot of this device, or of the one across the cable.
+
+    The device's own feeds may still read DEAD when its flap is processed: the
+    trips' clear traps are observed before the flap but, in the burst a
+    restoration produces, can be processed after it. Rack R2-02's leaf flapped
+    at 12:26:10, both trips were observed clear by 12:26:23, and at 12:26:41,
+    when the flap was correlated, neither clear had landed - so "just
+    restored" found nothing and the flap stood as a root. Either reading of
+    the same power event explains it.
+    """
+    root = (await power_dead_root(session, device_id)
+            or await restored_root(session, device_id))
     if not root and instance:
         from app.alarms import link_correlation
         link = await link_correlation.find_link(

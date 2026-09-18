@@ -810,9 +810,30 @@ class AlarmService:
                 action="raised", severity=alarm["severity"], actor="system",
                 detail={"silent_s": row["silent_s"], "grace_s": row["grace_s"]})
 
-            # Not correlated, on purpose. Every endpoint in this list is
-            # polling successfully, so no upstream visibility failure explains
-            # its silence - and folding it under one would hide the fault.
+            # Not correlated with a visibility root, on purpose. Every endpoint
+            # in this list is polling successfully, so no upstream visibility
+            # failure explains its silence - and folding it under one would
+            # hide the fault.
+            #
+            # A device that booted a moment ago is a different explanation: it
+            # answers its liveness check and has not yet delivered its first
+            # full poll. Nine servers raised this a minute after rack R2-02's
+            # power came back. Held under the just-cleared power fault only -
+            # never an open one - and the hold-down sweep releases it if the
+            # device is still silent three minutes on, so a real silence is
+            # delayed, not hidden.
+            restored = await correlation.restored_root(session, row["device_id"])
+            if restored:
+                await correlation.mark_symptom(
+                    session, alarm_id=alarm["id"], root_alarm_id=restored["id"])
+                alarm["is_symptom"] = True
+                alarm["root_cause_alarm_id"] = restored["id"]
+                await repo.record_history(
+                    session, alarm_id=alarm["id"], device_id=row["device_id"],
+                    action="suppressed", severity=alarm["severity"],
+                    actor="system",
+                    detail={"root": restored["id"], "layer": "power",
+                            "reason": "first poll after power was restored"})
             actions.append(AlarmAction("alarm_created", alarm))
 
         # Clear the ones that started talking again. Scoped to alarms this
