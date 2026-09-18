@@ -10,6 +10,10 @@ import { Loading, SEVERITY_RANK, useExport, type DrawerCtx } from './shared';
 
 const DAY_MS = 86_400_000;
 
+/** An instance that is a database id (an endpoint's UUID) says nothing to
+ *  the person reading the drawer; "Outlet 31" or "Alarm_AirflowLoss" does. */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /** What is wrong with it now, and what was wrong with it today.
  *
  *  Symptoms are included: the alarm page folds them under their root cause so
@@ -113,7 +117,7 @@ export function Alarms({ open, openLoading, deviceIds, name, roomId, ctx }: {
             <div className="k">
               {!single && <>{a.device_name} · </>}
               {humanise(a.alarm_type)}
-              {a.instance && <> · {a.instance}</>}
+              {a.instance && !UUID.test(a.instance) && <> · {a.instance}</>}
               {a.instance_feeds && <> → {a.instance_feeds}</>}
               {a.is_symptom && <> · <i>symptom</i></>}
               {a.state === 'ACKNOWLEDGED' && <> · acknowledged</>}
