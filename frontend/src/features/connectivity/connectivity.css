@@ -439,7 +439,7 @@
 /* The drawer occupies the right edge down to the floor, so the caption stops
    short of it instead of running underneath - it was sliding behind the
    drawer from 1120px down, taking the conductor counts with it. */
-.cn-canvas:has(.conn-drawer) { --cn-right: 334px; }
+.cn-canvas:has(.conn-drawer) { --cn-right: 364px; }
 .cn-caption { max-width: calc(100% - 10px - var(--cn-right)); }
 
 /* The minimap owns the same corner, so the key sits above it rather than
@@ -726,9 +726,10 @@
   position: absolute;
   top: 46px; right: 10px; bottom: 10px;
   z-index: 6;
-  /* Wide enough for the three actions to sit on one line without any of them
-     wrapping mid-label, which is what 274px forced. */
-  width: 310px;
+  /* Wide enough for a hop's port line - "Out-8 · C13 · 10 A · L2-L3 · br 2
+     -> PSU1 · C14" - to sit on one or two lines rather than three, and for
+     the five tabs to fit without scrolling. */
+  width: 340px;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--bg-raised);
@@ -773,7 +774,7 @@
    put the drawer's bottom 12% INSIDE it. */
 .cn-canvas:has(.cn-sheet) .conn-drawer { bottom: calc(64% + 22px); }
 
-/* Below this the canvas cannot host both a drawing and a 310px drawer, so the
+/* Below this the canvas cannot host both a drawing and a 340px drawer, so the
    drawer takes the width. Against the CANVAS, not the window: the same 780px
    window is a 570px canvas with the device rail open and a 780px one without,
    and only one of those is short of room. */
@@ -831,6 +832,119 @@
 .conn-drawer-actions button,
 .conn-drawer-actions a { padding: 3px 8px; white-space: nowrap; }
 .conn-drawer-actions a { padding-left: 0; }
+
+/* --- the drawer's tabs --------------------------------------------------- */
+
+.cd-head .cd-badges {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 7px;
+}
+.cd-head .chip { font-size: 0.7rem; }
+/* A badge is a shortcut to the tab that explains it, so it is a button - but
+   it reads as a label until hovered. */
+.cd-badge {
+  font: inherit; font-size: 0.68rem; cursor: pointer;
+  padding: 1px 7px; border-radius: 999px;
+  border: 1px solid var(--border-strong); background: none; color: var(--text-muted);
+}
+.cd-badge:hover { color: var(--text); }
+.cd-badge.warn     { color: var(--warn);     border-color: var(--warn); }
+.cd-badge.major    { color: var(--major);    border-color: var(--major); }
+.cd-badge.critical { color: var(--critical); border-color: var(--critical); }
+
+/* Underline tabs, not a segmented pill: the strip is navigation between
+   panes, and the pill control is already spoken for by the in-tab filters. */
+.cd-tabs {
+  flex: none; display: flex; gap: 2px;
+  margin: 12px -14px 0; padding: 0 10px;
+  border-bottom: 1px solid var(--border);
+}
+.cd-tabs button {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 7px 7px 8px; margin-bottom: -1px;
+  border: none; border-bottom: 2px solid transparent; background: none;
+  font: inherit; font-size: 0.74rem; color: var(--text-muted); cursor: pointer;
+  white-space: nowrap;
+}
+.cd-tabs button:hover { color: var(--text); }
+.cd-tabs button.is-on { color: var(--text); border-bottom-color: var(--accent); }
+.cd-tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.cd-count {
+  min-width: 16px; padding: 0 4px; border-radius: 8px;
+  font-size: 0.62rem; font-weight: 700; line-height: 15px; text-align: center;
+  background: var(--bg-inset); color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.cd-count.warn     { background: var(--warn);     color: var(--on-solid); }
+.cd-count.major    { background: var(--major);    color: var(--on-solid); }
+.cd-count.critical { background: var(--critical); color: var(--on-solid); }
+
+.cd-body { padding-top: 10px; }
+.cd-body > .meter { margin-bottom: 4px; }
+.cd-body h4:first-child { margin-top: 2px; }
+.cd-body h5 {
+  margin: 12px 0 4px; font-size: 0.72rem; text-transform: capitalize;
+  color: var(--text);
+}
+
+.cd-pair { display: contents; }
+.cd-fold { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border); }
+
+.cd-mono { font-family: var(--mono); }
+.cd-sub { font-size: 0.72rem; margin-top: 1px; }
+
+.cd-list { list-style: none; margin: 4px 0 0; padding: 0; }
+.cd-list > li { padding: 5px 0; border-bottom: 1px solid var(--border); font-size: 0.76rem; }
+.cd-list > li:last-child { border-bottom: none; }
+.cd-list > li .conn-side { margin-right: 6px; }
+.cd-list > li.is-off { opacity: 0.7; }
+.cd-list.cd-compact > li { padding: 3px 0; }
+.cd-port-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.cd-port-head .chip { margin-right: 6px; }
+
+/* A device name that selects on the canvas looks like the link it replaces. */
+.cd-ref {
+  border: none; background: none; padding: 0; font: inherit;
+  color: var(--accent); cursor: pointer; text-align: left;
+}
+.cd-ref:hover { text-decoration: underline; }
+
+.cd-toolbar {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  margin-bottom: 8px;
+}
+
+.cd-verdict {
+  display: flex; flex-direction: column; gap: 1px;
+  padding: 7px 10px; margin-bottom: 4px; border-radius: 6px;
+  border-left: 3px solid var(--ok); background: var(--bg-inset); font-size: 0.74rem;
+}
+.cd-verdict[data-tone=warn] { border-left-color: var(--warn); }
+.cd-verdict span { color: var(--text-muted); }
+
+.cd-alarms { list-style: none; margin: 0; padding: 0; }
+.cd-alarms > li {
+  padding: 7px 9px; margin-bottom: 6px; border-radius: 6px;
+  background: var(--bg-inset); border-left: 3px solid var(--unknown);
+}
+.cd-alarms > li[data-tone=warn]     { border-left-color: var(--warn); }
+.cd-alarms > li[data-tone=major]    { border-left-color: var(--major); }
+.cd-alarms > li[data-tone=critical] { border-left-color: var(--critical); }
+.cd-alarm-head { display: flex; justify-content: space-between; align-items: center; }
+.cd-alarm-msg { margin: 3px 0 2px; font-size: 0.76rem; color: var(--text); }
+.cd-ack { margin-top: 5px; font-size: 0.7rem; padding: 2px 8px; }
+
+.cd-impact-sum { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.cd-impact-sum > div {
+  display: flex; flex-direction: column; padding: 7px 10px; border-radius: 6px;
+  background: var(--bg-inset); border-left: 3px solid var(--ok);
+}
+.cd-impact-sum > div[data-tone=warn] { border-left-color: var(--warn); }
+.cd-impact-sum > div[data-tone=critical] { border-left-color: var(--critical); }
+.cd-impact-sum b { font-size: 1.15rem; font-variant-numeric: tabular-nums; }
+.cd-impact-sum span { font-size: 0.68rem; color: var(--text-muted); }
+.cd-impact-title { font-size: 0.68rem; font-weight: 700; margin-top: 6px; }
+.cd-impact-title[data-tone=critical] { color: var(--critical); }
+.cd-impact-title[data-tone=warn] { color: var(--warn); }
 
 /* The side badge. Position and pattern carry A/B on the diagram; in a table
    there is no position to use, so the letter itself is the channel and the

@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api, type Impact, type RoomSummary, type TopologyGraph, type TopologyNode }
   from '../../api/client';
@@ -7,7 +7,7 @@ import { downloadCsv, stampedName } from '../../lib/csv';
 import { projectImpact, type ImpactView } from './impact';
 import { Audit } from './Audit';
 import { Canvas } from './Canvas';
-import { Drawer } from './Drawer';
+import { Drawer, type DrawerTab } from './Drawer';
 import { Independence } from './Independence';
 import { Legend } from './Legend';
 import { SidePanel } from './SidePanel';
@@ -69,6 +69,8 @@ export function Connectivity() {
   const [rollup, setRollup] = useState<'none' | 'rack'>('rack');
   const [selected, setSelected] = useState<TopologyNode | null>(null);
   const [simulating, setSimulating] = useState<string | null>(null);
+  /** Held here, not in the drawer, so it survives moving from node to node. */
+  const [drawerTab, setDrawerTab] = useState<DrawerTab>('overview');
 
   // Deep link. `?simulate=<device>` lands here from wherever the question was
   // actually asked - a maintenance window, most of the time - and the room is
@@ -209,6 +211,18 @@ export function Connectivity() {
     setFocusNonce((n) => n + 1);
   }
 
+  /** Devices drawn as themselves, which a name in the drawer can select. A
+   *  rack box's members are not: they are one box, not a place to go. */
+  const canvasIds = useMemo(
+    () => new Set((graph.data?.nodes ?? []).filter((n) => n.rolled_up === 0)
+      .map((n) => n.id)),
+    [graph.data]);
+  const nodes = graph.data?.nodes;
+  const revealById = useCallback((id: string) => {
+    const node = nodes?.find((n) => n.id === id);
+    if (node) { setSelected(node); setFocusNonce((n) => n + 1); }
+  }, [nodes]);
+
   const empty = Boolean(graph.data) && graph.data!.node_count === 0;
   const layerLabel = LAYERS.find((l) => l.key === layer)?.label.toLowerCase() ?? layer;
 
@@ -319,6 +333,8 @@ export function Connectivity() {
         {/* ---- right: the selection --------------------------------------- */}
         {selected && (
           <Drawer node={selected} layer={layer}
+                  tab={drawerTab} onTab={setDrawerTab}
+                  canvasIds={canvasIds} onReveal={revealById}
                   onSimulate={setSimulating}
                   simulating={simulating === selected.id}
                   onClose={() => setSelected(null)} />
