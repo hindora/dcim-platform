@@ -162,9 +162,68 @@ export function Connectivity() {
   });
   const listNodes = (rolled ? flat.data?.nodes : graph.data?.nodes) ?? [];
 
+  /** Racks the operator has opened, by node id.
+   *
+   *  A roll-up is a default, not a verdict. "Which of these eighteen is the
+   *  one on the tripped strip" is a question about one rack, and answering it
+   *  by un-rolling the whole hall trades a readable diagram for a hairball -
+   *  so a rack opens where it stands and the rest of the room keeps its
+   *  boxes.
+   */
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  /** The graph as drawn: the rolled one, with the opened racks replaced by
+   *  what is inside them.
+   *
+   *  Rebuilt from the UN-ROLLED graph rather than by grafting members onto
+   *  the rolled one, because an edge is the part that cannot be grafted: a
+   *  cord from a server to its PDU exists only in the flat answer, and the
+   *  rolled answer's rack-to-rack edge is several cords added up. Every flat
+   *  edge is re-pointed at whatever node now stands for each of its ends -
+   *  itself if its rack is open, the rack if it is not - and the ones that
+   *  collapse onto a single node disappear, which is exactly the cords inside
+   *  a closed rack.
+   */
+  const view = useMemo(() => {
+    const g = graph.data;
+    if (!g) return null;
+    if (!expanded.size || !flat.data) return { nodes: g.nodes, edges: g.edges };
+
+    const rackOf = new Map<string, string>();
+    for (const n of g.nodes) for (const m of n.member_ids) rackOf.set(m, n.id);
+    const flatById = new Map(flat.data.nodes.map((n) => [n.id, n]));
+
+    const nodes: TopologyNode[] = [];
+    const open = new Set<string>();
+    for (const n of g.nodes) {
+      if (n.rolled_up > 0 && expanded.has(n.id)) {
+        for (const id of n.member_ids) {
+          const m = flatById.get(id);
+          if (m) { nodes.push(m); open.add(id); }
+        }
+      } else {
+        nodes.push(n);
+      }
+    }
+
+    const at = (id: string) => (open.has(id) ? id : rackOf.get(id) ?? id);
+    const drawn = new Set(nodes.map((n) => n.id));
+    const edges = flat.data.edges.reduce<typeof g.edges>((acc, e) => {
+      const source = at(e.source);
+      const target = at(e.target);
+      // Both ends inside one closed rack, or an end that is not on this
+      // canvas at all - the flat answer can reach a device the rolled one
+      // capped away.
+      if (source === target || !drawn.has(source) || !drawn.has(target)) return acc;
+      acc.push({ ...e, source, target });
+      return acc;
+    }, []);
+    return { nodes, edges };
+  }, [graph.data, flat.data, expanded]);
+
   const edges = useMemo(
-    () => (graph.data ? collapseEdges(graph.data.edges) : []),
-    [graph.data]);
+    () => (view ? collapseEdges(view.edges) : []),
+    [view]);
 
   /** The site view is laid out by room rather than by rank - see layoutRooms.
    *
@@ -177,27 +236,29 @@ export function Connectivity() {
 
   // The layer is part of the key, not just the structure: it decides which
   // layout is used, and two layers could in principle return the same ids.
-  const key = graph.data
+  const key = view
     ? `${layer}:${byRoom ? 'rooms' : 'rank'}:`
-      + structureKey(graph.data.nodes, graph.data.edges) : '';
+      + structureKey(view.nodes, view.edges) : '';
 
   const cache = useRef<{ key: string; value: ReturnType<typeof layout> } | null>(null);
   const placement = useMemo(() => {
-    if (!graph.data) return { placed: [], width: 0, height: 0 };
+    if (!view) return { placed: [], width: 0, height: 0 };
     if (cache.current?.key === key) return cache.current.value;
     const value = byRoom
-      ? layoutRooms(graph.data.nodes)
-      : layout(graph.data.nodes, edges, {
+      ? layoutRooms(view.nodes)
+      : layout(view.nodes, edges, {
           oneLine: ONE_LINE.has(layer), loop: LOOP.has(layer) });
     cache.current = { key, value };
     return value;
-  }, [graph.data, edges, key, layer, byRoom]);
+  }, [view, edges, key, layer, byRoom]);
 
   /** Changing layer or scope invalidates the selection and the simulation: the
    *  same device may not be on the next layer at all, and a drawer describing
    *  a chain that is no longer drawn is worse than an empty one. */
   function reselect<T>(set: (v: T) => void) {
-    return (v: T) => { set(v); setSelected(null); setSimulating(null); };
+    return (v: T) => {
+      set(v); setSelected(null); setSimulating(null); setExpanded(new Set());
+    };
   }
 
   // Not polled. A simulation is a question asked at one moment about one
@@ -228,9 +289,31 @@ export function Connectivity() {
    *  bring up the rack it is in rather than nothing at all: that is where it
    *  is on this drawing, and the drawer names its members.
    */
+  /** Double-clicked a node.
+   *
+   *  A rolled-up rack opens. A device inside an open rack shuts the rack it
+   *  belongs to, which is how it closes again without a second control: the
+   *  thing you opened is gone, and what you see instead is what shuts it.
+   *  Anything else - a UPS, a chiller, a rack drawn as itself - is not a
+   *  container and does nothing.
+   */
+  function toggleExpand(node: TopologyNode) {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (node.rolled_up > 0) {
+        next.has(node.id) ? next.delete(node.id) : next.add(node.id);
+        return next;
+      }
+      const owner = graph.data?.nodes.find((n) => n.member_ids.includes(node.id));
+      if (owner && next.has(owner.id)) next.delete(owner.id);
+      return next;
+    });
+  }
+
   function revealDevice(node: TopologyNode) {
-    const onCanvas = graph.data?.nodes.find(
-      (n) => n.id === node.id || n.member_ids.includes(node.id));
+    // Its own box when its rack is open, the rack when it is not.
+    const onCanvas = view?.nodes.find((n) => n.id === node.id)
+      ?? view?.nodes.find((n) => n.member_ids.includes(node.id));
     reveal(onCanvas ?? node);
   }
 
@@ -265,6 +348,7 @@ export function Connectivity() {
         focusNonce={focusNonce}
         showFilters={filtersOpen}
         onToggleFilters={() => setFiltersOpen((v) => !v)}
+        onToggleExpand={toggleExpand}
       >
         {/* ---- top left, under the toolbar: what the canvas is drawing ---- */}
         {filtersOpen && (

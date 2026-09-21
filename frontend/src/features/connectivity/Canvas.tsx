@@ -233,7 +233,8 @@ function Toolbar({ onFit, onReset, showMap, onToggleMap, canMap,
 }
 
 function Flow({ placement, edges, layer, layoutKey, selected, onSelect, impact,
-                focusNonce, showFilters, onToggleFilters, children }: {
+                focusNonce, showFilters, onToggleFilters, onToggleExpand,
+                children }: {
   placement: Placement;
   edges: CollapsedEdge[];
   layer: string;
@@ -253,6 +254,10 @@ function Flow({ placement, edges, layer, layoutKey, selected, onSelect, impact,
    *  and only the button that opens it is in here. */
   showFilters: boolean;
   onToggleFilters: () => void;
+  /** Double-clicked a node: open a rolled-up rack, or shut the rack the
+   *  device belongs to. The page owns which racks are open - the canvas only
+   *  reports the gesture. */
+  onToggleExpand?: (node: TopologyNode) => void;
   /** The floating chrome. Rendered inside the canvas so it sits over the
    *  graph, and after ReactFlow so it stacks above without a z-index war. */
   children?: React.ReactNode;
@@ -311,6 +316,17 @@ function Flow({ placement, edges, layer, layoutKey, selected, onSelect, impact,
     const d = n.data as { node?: TopologyNode };
     if (d.node) onSelect(d.node);
   }, [onSelect]);
+
+  /** Double-click opens a rack, or shuts the one a device is in.
+   *
+   *  The gesture every tree in every file manager uses for the same thing,
+   *  and the only one on this canvas that is not already taken: a single
+   *  click selects, a drag moves, a wheel zooms.
+   */
+  const onNodeDoubleClick = useCallback((_: unknown, n: Node) => {
+    const d = n.data as { node?: TopologyNode };
+    if (d.node) onToggleExpand?.(d.node);
+  }, [onToggleExpand]);
 
   /** Show or hide the outlines. Nothing else moves: the devices were never
    *  inside the boxes as far as the canvas is concerned, so the rectangles
@@ -417,6 +433,7 @@ function Flow({ placement, edges, layer, layoutKey, selected, onSelect, impact,
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onNodeClick={onNodeClick}
+        onNodeDoubleClick={onNodeDoubleClick}
         onNodeDragStart={onNodeDragStart}
         onNodeDrag={onNodeDrag}
         onNodeDragStop={onNodeDragStop}

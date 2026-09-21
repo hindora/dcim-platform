@@ -54,7 +54,8 @@ export function Members({ node, ctx }: { node: TopologyNode; ctx: DrawerCtx }) {
       <h4>Members</h4>
       <p className="k">
         {node.rolled_up} × {node.device_type.replace(/_/g, ' ')} in one box so the
-        room is readable. Switch grouping to "Every device" to draw them.
+        room is readable. Double-click the box to draw them here, or switch
+        grouping to "Every device" to open every rack at once.
         {' '}<Link to={`/racks/${rackId}`}>Rack elevation →</Link>
       </p>
       <ul className="cd-list">
