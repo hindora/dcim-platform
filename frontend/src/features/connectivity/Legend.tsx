@@ -1,19 +1,16 @@
-import { useChartColors } from '../../components/seriesColors';
-
 /** What the lines and the bar mean.
  *
  *  Only shown when there is more than one thing to tell apart.
  *
  *  The swatches are solid, because the lines are. A dash on this canvas means
- *  FLOW and belongs to the cooling loop alone; A and B are told apart by
- *  colour here and by which column they sit in on the diagram, which was
- *  always the stronger channel of the two.
+ *  FLOW and belongs to the cooling loop alone. There are no A and B swatches:
+ *  every conductor on a layer is drawn in that layer's one colour, and side is
+ *  read off the column a feeder sits in on the one-line.
  */
-export function Legend({ sides, showLoad, simulating }: {
-  sides: string[]; showLoad: boolean; simulating?: boolean;
+export function Legend({ showLoad, simulating }: {
+  showLoad: boolean; simulating?: boolean;
 }) {
-  const colors = useChartColors();
-  if (sides.length < 2 && !showLoad && !simulating) return null;
+  if (!showLoad && !simulating) return null;
 
   const line = (stroke: string, dash?: string) => (
     <svg width="20" height="9" aria-hidden>
@@ -24,12 +21,6 @@ export function Legend({ sides, showLoad, simulating }: {
 
   return (
     <div className="cn-legend">
-      {sides.length > 1 && sides.map((s) => (
-        <span key={s}>
-          {line(s === 'A' ? colors.series[0] : colors.series[1])}
-          Side {s}
-        </span>
-      ))}
       <span>{line('var(--critical)')}Down</span>
       {simulating && (
         <>

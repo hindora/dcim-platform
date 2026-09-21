@@ -190,12 +190,6 @@ export function Connectivity() {
     () => (impactQ.data ? projectImpact(impactQ.data, layer) : null),
     [impactQ.data, layer]);
 
-  const sides = useMemo(() => {
-    const s = new Set<string>();
-    for (const e of edges) for (const x of e.sides) s.add(x);
-    return [...s].sort();
-  }, [edges]);
-
   /** Select and bring into view. Used by the device list - anything whose
    *  click happens somewhere other than the canvas itself. */
   function reveal(node: TopologyNode) {
@@ -291,7 +285,7 @@ export function Connectivity() {
                 truncation warning went with them at the operator's call, so a
                 graph cut off at the node cap now says so nowhere on this
                 canvas. */}
-            <Legend sides={sides} showLoad={layer === 'power'}
+            <Legend showLoad={layer === 'power'}
                     simulating={Boolean(simulating)} />
           </div>
         )}

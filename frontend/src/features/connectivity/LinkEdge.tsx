@@ -2,7 +2,6 @@ import { memo } from 'react';
 import {
   BaseEdge, EdgeLabelRenderer, getBezierPath, type EdgeProps,
 } from '@xyflow/react';
-import { useChartColors } from '../../components/seriesColors';
 
 /** One line on the canvas, standing for one conductor or a bundle of them.
  *
@@ -10,14 +9,17 @@ import { useChartColors } from '../../components/seriesColors';
  *  a node and arrives at the top of the next, coloured by LAYER, with the
  *  cooling loop's dashes marching in the direction the water flows.
  *
- *  One departure, and it is deliberate. The simulator shows every layer at
- *  once, so layer IS the only thing its edge colour can carry. This page shows
- *  one layer at a time, which frees the colour for something the simulator has
- *  no room for: on a layer with labelled sides, A and B take the chart ramp on
- *  top of the layer's hue. Which side a feeder is on decides whether a load
- *  survives losing one, that ramp is the colour-blind-safe one the palette
- *  check enforces, and hue is never the only channel anyway - A is solid, B is
- *  dash-dot, and the one-line puts them in separate columns.
+ *  ONE LAYER, ONE COLOUR. The A and B feeders on the power layer used to take
+ *  the chart ramp's first two colours on top of the layer's hue, which made a
+ *  power diagram three colours before anything was wrong with it and left the
+ *  layer's own amber reading as "neither side". Side is still on the canvas,
+ *  and on the channel that always carried it better: the one-line puts A down
+ *  the left, B down the right and the dual-fed equipment between them, and the
+ *  selection drawer names the side of every hop.
+ *
+ *  A DOWN line stays critical red. That is not a label on a conductor, it is
+ *  the state of one, and a fault that draws the same as a healthy cord is the
+ *  one thing this canvas must never do.
  */
 
 const LAYER_STROKE: Record<string, string> = {
@@ -46,14 +48,10 @@ function LinkEdge(props: EdgeProps) {
     data, selected, markerEnd,
   } = props;
   const d = (data ?? {}) as LinkEdgeData;
-  const colors = useChartColors();
 
   const down = d.downCount > 0 && d.downCount === d.count;
   const layerStroke = LAYER_STROKE[d.layer] ?? 'var(--layer-prod)';
-  const stroke = down ? 'var(--critical)'
-    : d.side === 'A' ? colors.series[0]
-    : d.side === 'B' ? colors.series[1]
-    : layerStroke;
+  const stroke = down ? 'var(--critical)' : layerStroke;
 
   // A DASH MEANS FLOW, and nothing else. It was doing three jobs at once -
   // side B, a failed link, and the cooling loop - and an idiom that means
@@ -61,9 +59,8 @@ function LinkEdge(props: EdgeProps) {
   // animated and reads as water moving; everything else is a solid line.
   //
   // What the other two lose it in, they keep elsewhere. A failed link is
-  // critical red AND carries the word DOWN. Side B is the chart ramp's second
-  // colour AND sits in its own column on the one-line - position was always
-  // the primary channel there, the dash was the third.
+  // critical red AND carries the word DOWN. Side B sits in its own column on
+  // the one-line - position was always the primary channel there.
   const dash = d.animated && !down ? '7 5' : undefined;
 
   const [path, labelX, labelY] = getBezierPath({
