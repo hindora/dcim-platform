@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import type { TopologyNode } from '../../api/client';
 import { fillOf } from './DeviceNode';
 
-/** The left rail: everything on the canvas, one row each.
+/** The left rail: every DEVICE on this layer, one row each.
  *
  *  A device TABLE, in the simulator's form - the same columns in the same
  *  order, a dot in the type's colour against the name, the type as a pill, the
@@ -15,10 +15,16 @@ import { fillOf } from './DeviceNode';
  *  and the alternative - dropping the columns that do not fit - is how the
  *  list came to be missing them in the first place.
  *
- *  The list is the same graph the canvas is drawing - not a device search.
- *  Every row is a box on screen, which is what makes it useful for finding one
- *  in a hall that has been panned off the edge, and what stops it becoming a
- *  second, subtly different inventory.
+ *  DEVICES, EVEN WHERE THE CANVAS DRAWS RACKS. A roll-up is a drawing
+ *  decision - twenty servers in a rack are one box because twenty boxes and
+ *  forty cords make a hall unreadable - and a list has no such problem. One
+ *  that answered "where is SRV07-DC1-HA-R2-02" with a rack called R2-02 hid
+ *  eighteen of every twenty devices behind the one nobody asked about.
+ *
+ *  It is still the same graph, not a device search: every row is somewhere on
+ *  this canvas, and clicking one reveals the box that holds it. What it is
+ *  not is a second, subtly different inventory - that is the Assets page, and
+ *  it is one click away.
  */
 
 type SortKey = 'name' | 'type' | 'vendor' | 'mgmt' | 'prod' | 'iface'
@@ -77,10 +83,15 @@ function ipKey(ip: string | null): string {
 }
 
 export function SidePanel({
-  nodes, selected, onSelect, open, onToggle, loading,
+  nodes, selected, selectedMembers, onSelect, open, onToggle, loading,
 }: {
   nodes: TopologyNode[];
   selected: string | null;
+  /** The devices behind the selected node, when the canvas has a rack
+   *  selected and this list is showing what is inside it. A row is on if it
+   *  IS the selection or if it is part of it - otherwise picking a server
+   *  highlights nothing, because the thing that got selected was its rack. */
+  selectedMembers: string[];
   onSelect: (node: TopologyNode) => void;
   open: boolean;
   onToggle: () => void;
@@ -171,8 +182,8 @@ export function SidePanel({
               and the number on the canvas are different facts, and only one
               of them is what the diagram is drawing. */}
           <span className="cn-rail-badge"
-                title={sifted ? `${rows.length} shown of ${nodes.length} on the canvas`
-                              : `${nodes.length} on the canvas`}>
+                title={sifted ? `${rows.length} shown of ${nodes.length} devices`
+                              : `${nodes.length} devices on this layer`}>
             {loading ? '…' : sifted ? `${rows.length} / ${nodes.length}` : nodes.length}
           </span>
           <button type="button" className="cn-rail-hide" onClick={onToggle}
@@ -233,7 +244,9 @@ export function SidePanel({
           </thead>
           <tbody>
             {rows.map((n) => (
-              <tr key={n.id} className={selected === n.id ? 'is-on' : undefined}
+              <tr key={n.id}
+                  className={selected === n.id || selectedMembers.includes(n.id)
+                    ? 'is-on' : undefined}
                   onClick={() => onSelect(n)}
                   tabIndex={0}
                   onKeyDown={(e) => {

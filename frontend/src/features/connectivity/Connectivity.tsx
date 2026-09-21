@@ -138,6 +138,30 @@ export function Connectivity() {
     retry: false,
   });
 
+  /** The same graph, un-rolled, for the device list.
+   *
+   *  A roll-up is a drawing decision: twenty servers in a rack are one box
+   *  because twenty boxes and forty cords make the hall unreadable, not
+   *  because the rack is the thing anyone is looking for. The LIST has no
+   *  such problem - it is a list - and one that answers "where is
+   *  SRV07-DC1-HA-R2-02" with a rack called R2-02 is an index that hides
+   *  eighteen of every twenty devices behind the one you did not ask about.
+   *
+   *  A second call rather than expanding the members client-side, because the
+   *  collapsed node carries its members' IDS and nothing else: no name, no
+   *  vendor, no address, none of the columns this table is made of. Cheap
+   *  enough - same scope, same depth, and the endpoint caches on both.
+   */
+  const rolled = rollup === 'rack';
+  const flat = useQuery<TopologyGraph>({
+    queryKey: ['topology', layer, scope, depth, 'none'],
+    queryFn: () => api.topology(layer, scope, depth, 'none'),
+    enabled: Boolean(scope) && rolled,
+    refetchInterval: 15_000,
+    retry: false,
+  });
+  const listNodes = (rolled ? flat.data?.nodes : graph.data?.nodes) ?? [];
+
   const edges = useMemo(
     () => (graph.data ? collapseEdges(graph.data.edges) : []),
     [graph.data]);
@@ -197,6 +221,19 @@ export function Connectivity() {
     setFocusNonce((n) => n + 1);
   }
 
+  /** Reveal the BOX that holds this device.
+   *
+   *  The list is of devices and the canvas may be drawing racks, so a row
+   *  and a node are not always the same thing. Selecting a server should
+   *  bring up the rack it is in rather than nothing at all: that is where it
+   *  is on this drawing, and the drawer names its members.
+   */
+  function revealDevice(node: TopologyNode) {
+    const onCanvas = graph.data?.nodes.find(
+      (n) => n.id === node.id || n.member_ids.includes(node.id));
+    reveal(onCanvas ?? node);
+  }
+
   /** Devices drawn as themselves, which a name in the drawer can select. A
    *  rack box's members are not: they are one box, not a place to go. */
   const canvasIds = useMemo(
@@ -215,11 +252,12 @@ export function Connectivity() {
   return (
     <div className="conn-app">
       <SidePanel
-        nodes={graph.data?.nodes ?? []}
+        nodes={listNodes}
         selected={selected?.id ?? null}
-        onSelect={reveal}
+        selectedMembers={selected?.member_ids ?? []}
+        onSelect={revealDevice}
         open={railOpen} onToggle={() => setRailOpen((v) => !v)}
-        loading={graph.isLoading} />
+        loading={graph.isLoading || (rolled && flat.isLoading)} />
 
       <Canvas
         placement={placement} edges={edges} layer={layer} layoutKey={key}
