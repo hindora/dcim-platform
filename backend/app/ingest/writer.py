@@ -10,7 +10,7 @@ incident.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -61,6 +61,11 @@ class HotUpdate:
     inlet_temp_c: float | None = None
     cpu_util_pct: float | None = None
     humidity_pct: float | None = None
+    # Metrics whose value above came from the device's OWN total rather than
+    # from one of its sub-instances. Not written anywhere: it is how a batch
+    # remembers that the whole-device figure has already spoken, so a circuit
+    # arriving later in the same poll cannot overwrite it. See `_note_hot`.
+    from_total: set[str] = field(default_factory=set)
 
 
 async def _raw_asyncpg(session: AsyncSession):

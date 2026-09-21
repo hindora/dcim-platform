@@ -607,7 +607,7 @@ class IngestWorker:
                         ts=observed, device_id=s.device_id, metric_id=metric_id,
                         instance=s.instance, value=s.text_value, quality=quality))
                     self._note_hot(hot, ws_frames, s.device_id, s.metric,
-                                   s.text_value, observed, quality)
+                                   s.text_value, observed, quality, s.instance)
                     continue
 
                 if s.value_type == int(ValueType.BOOL):
@@ -615,7 +615,8 @@ class IngestWorker:
                         ts=observed, device_id=s.device_id, metric_id=metric_id,
                         instance=s.instance, value=bool(s.bool_value), quality=quality))
                     self._note_hot(hot, ws_frames, s.device_id, s.metric,
-                                   bool(s.bool_value), observed, quality)
+                                   bool(s.bool_value), observed, quality,
+                                   s.instance)
                     # Booleans reach the rules too. Equipment publishes its own
                     # faults as binary points - a BACnet Alarm_Leak, a Modbus
                     # breaker bit - and until now they were stored and never
@@ -650,7 +651,8 @@ class IngestWorker:
                                 metric_id=rate_metric_id, instance=s.instance,
                                 value=rate.value, quality=quality))
                             self._note_hot(hot, ws_frames, s.device_id, rate.metric,
-                                           rate.value, observed, quality)
+                                           rate.value, observed, quality,
+                                           s.instance)
                     elif reason not in (rates.DiscardReason.NO_BASELINE,
                                         rates.DiscardReason.NO_RATE_TARGET):
                         log.debug("rate discarded", metric=s.metric, reason=reason,
@@ -665,7 +667,7 @@ class IngestWorker:
                     ts=observed, device_id=s.device_id, metric_id=metric_id,
                     instance=s.instance, value=value, quality=quality))
                 self._note_hot(hot, ws_frames, s.device_id, s.metric, value,
-                               observed, quality)
+                               observed, quality, s.instance)
                 rule_inputs.append({
                     "device_id": s.device_id, "device_type": ctx.device_type,
                     "metric": s.metric, "instance": s.instance, "value": value,
@@ -719,20 +721,41 @@ class IngestWorker:
                  - len(text_rows))
 
     def _note_hot(self, hot: dict, frames: dict, device_id: str, metric: str,
-                  value, observed: datetime, quality: str) -> None:
+                  value, observed: datetime, quality: str,
+                  instance: str = "") -> None:
+        """Carry one sample into the device's hot state.
+
+        THE DEVICE'S OWN TOTAL WINS. A metric arrives once per instance, and
+        for anything with sub-metering that is many samples of one metric in
+        one poll: a branch-circuit monitor sends `power_draw` for the panel
+        AND for each of its 42 ways. This took whichever landed last, so the
+        last spare way - 0 W - decided the panel's figure, and twelve energy
+        monitors reporting 115 W read as 0 W on every page that trusts
+        `device_state.power_w`: the canvas, the power page, PUE, capacity.
+
+        A total (empty instance) therefore sets the column and locks it for
+        the rest of the batch. A sub-instance sets it only while no total has
+        spoken - a device that meters per-sensor and never sends a total keeps
+        the behaviour it had, which is the only thing that can be said for a
+        reading with no whole-device figure behind it.
+        """
         if metric not in self.cache.hot_metrics:
             return
         entry = hot.get(device_id)
         if entry is None:
             entry = writer.HotUpdate(device_id=device_id, last_seen=observed, metrics={})
             hot[device_id] = entry
-        entry.metrics[metric] = {"v": value, "t": observed.isoformat(), "q": quality}
+        total = not instance
+        if total or metric not in entry.from_total:
+            entry.metrics[metric] = {"v": value, "t": observed.isoformat(), "q": quality}
+            column = _HOT_COLUMNS.get(metric)
+            if column and isinstance(value, (int, float)):
+                setattr(entry, column, float(value))
+            frames.setdefault(device_id, {})[metric] = {
+                "v": value, "u": METRICS[metric].unit, "q": quality}
+        if total:
+            entry.from_total.add(metric)
         entry.last_seen = max(entry.last_seen, observed)
-        column = _HOT_COLUMNS.get(metric)
-        if column and isinstance(value, (int, float)):
-            setattr(entry, column, float(value))
-        frames.setdefault(device_id, {})[metric] = {
-            "v": value, "u": METRICS[metric].unit, "q": quality}
 
     async def _handle_events(self, payloads: list[dict]) -> None:
         """Persist events, then drive the alarm lifecycle from them.
@@ -982,7 +1005,7 @@ class IngestWorker:
                 ts=row.ts, device_id=row.device_id, metric_id=metric_id,
                 instance=row.instance, value=pct, quality=row.quality))
             self._note_hot(hot, ws_frames, row.device_id, LOAD_PCT_METRIC,
-                           pct, row.ts, row.quality)
+                           pct, row.ts, row.quality, row.instance)
             rule_inputs.append({
                 "device_id": row.device_id, "device_type": ctx.device_type,
                 "metric": LOAD_PCT_METRIC, "instance": row.instance,
