@@ -185,6 +185,9 @@ class TopologyNode(BaseModel):
     # DOES measure it. Never merged into `metrics`: a figure that came from
     # somewhere else has to be able to say so on screen.
     derived_power_w: float | None = None
+    # 'channel'    - a CT clamped on this device's own conductor, named by the
+    #                panel schedule its meter was commissioned with. A
+    #                measurement, not an inference.
     # 'metered'    - an energy meter on this device's own bus, named below.
     # 'downstream' - the sum of what it feeds, every one of which reported.
     derived_power_kind: str | None = None

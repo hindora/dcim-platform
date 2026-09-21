@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.core.layers import UPSTREAM_COL
 from app.core.logging import get_logger
+from app.repositories import meter_channels
 from app.repositories import topology as repo
 from app.schemas import (
     ImpactLayerOut,
@@ -150,7 +151,8 @@ def _node_from_row(row: dict[str, Any]) -> TopologyNode:
 _METER_TYPES = frozenset({"energy_monitor"})
 
 
-def _derive_power(nodes: list[TopologyNode], edges: list[TopologyEdge]) -> None:
+def _derive_power(nodes: list[TopologyNode], edges: list[TopologyEdge],
+                  metered: dict[str, dict] | None = None) -> None:
     """Give a figure to the devices that do not meter themselves.
 
     A remote power panel is a cabinet of breakers and an ASCO transfer switch
@@ -159,7 +161,13 @@ def _derive_power(nodes: list[TopologyNode], edges: list[TopologyEdge]) -> None:
     it left eight panels and two transfer switches per datacenter drawing a
     blank beside a meter that was reading 36 kW.
 
-    Two derivations, in order of how strong the claim is:
+    Three derivations, in order of how strong the claim is:
+
+    `channel`     a CT clamped on THIS device's conductor, named by the panel
+                  schedule the meter was commissioned with. Not an inference
+                  at all - it is a measurement of this machine, taken by an
+                  instrument that is not part of it, which is what metering a
+                  transfer switch has always meant.
 
     `metered`     the reading of an energy meter fed FROM this device - the
                   Verdigris EV2 bolted to the panel it measures. This is a
@@ -187,6 +195,17 @@ def _derive_power(nodes: list[TopologyNode], edges: list[TopologyEdge]) -> None:
     for n in nodes:
         if n.rolled_up or "power_w" in n.metrics:
             continue
+
+        # A CT on this device's own conductor, if one was commissioned onto
+        # it. Checked before the graph is walked at all: nothing derived from
+        # the shape of the wiring beats an instrument on the wire.
+        ch = (metered or {}).get(n.id)
+        if ch and ch.get("power_w") is not None:
+            n.derived_power_w = round(float(ch["power_w"]), 2)
+            n.derived_power_kind = "channel"
+            n.derived_power_from = f"{ch['meter_name']} {ch['instance']}"
+            continue
+
         downstream = feeds.get(n.id, [])
         if not downstream:
             continue
@@ -421,7 +440,11 @@ async def get_topology(session: AsyncSession, *, layer: str, scope: str,
 
     nodes = [_node_from_row(r) for r in connected_rows]
     edges = _edges_from_rows(edge_rows, labels)
-    _derive_power(nodes, edges)
+    # Only the nodes that need one are looked up: a device that meters itself
+    # has no use for a channel, and most of a graph does.
+    _unmetered = [n.id for n in nodes if not n.rolled_up and "power_w" not in n.metrics]
+    _channels = await meter_channels.for_branches(session, _unmetered)
+    _derive_power(nodes, edges, _channels)
     if rollup == "rack":
         # After the cap, not before it. The cap is a bound on the QUERY, and a
         # roll-up cannot un-truncate a walk that was already cut short - so a

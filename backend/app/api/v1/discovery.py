@@ -12,7 +12,9 @@ from app.core import audit
 from app.core.security import Principal, current_principal, require_role
 from app.db.session import get_session
 from app.repositories import discovery as repo
+from app.repositories import meter_channels as meter_repo
 from app.services import discovery as service
+from app.services import meter_commissioning
 
 router = APIRouter(prefix="/discovery", tags=["discovery"])
 
@@ -121,3 +123,53 @@ async def ignore(candidate_id: str, request: Request,
         return result
     except service.DiscoveryError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from None
+
+
+# ── meter channel schedules ──────────────────────────────────────────────────
+#
+# A branch-circuit monitor stores which breaker each CT is clamped to, written
+# in at commissioning. Importing it is what lets a reading on channel 1 be
+# attributed to the transfer switch it measures rather than being one of
+# forty-two anonymous numbers.
+#
+# Under discovery because that is what it is: asking the equipment what it
+# knows about itself. It is not a poll - a schedule changes when somebody
+# moves a CT - so it runs on request, not on a timer.
+
+
+@router.post("/meter-channels", summary="Import panel schedules from the meters")
+async def import_meter_channels(
+    request: Request,
+    timeout: float = Query(2.0, ge=0.2, le=10.0,
+                           description="Per-channel read timeout, seconds"),
+    session: AsyncSession = Depends(get_session),
+    principal: Principal = Depends(require_role("operator")),
+) -> dict[str, Any]:
+    """Read every meter's channel descriptions and record the schedule.
+
+    Synchronous, unlike a discovery sweep: this talks to meters already in the
+    inventory on the management network, and an operator running it wants to
+    see what it made of the labels - above all which ones it could not resolve.
+    """
+    result = await meter_commissioning.import_all(session, timeout=timeout)
+    ip, agent = audit.client_of(request)
+    # Who re-read the schedules, and what came back. A panel schedule decides
+    # whose load a reading is, so a change to it is worth the same record as a
+    # change to the wiring it describes.
+    await audit.record(session, actor=audit.actor_of(principal),
+                       action="meter_channels.import",
+                       target_type="meter_channel", ip=ip, user_agent=agent,
+                       after={"meters_read": result["meters_read"],
+                              "channels": result["channels"],
+                              "clamped": result["clamped"],
+                              "unresolved": len(result["unresolved"])})
+    await session.commit()
+    return result
+
+
+@router.get("/meter-channels", summary="What the meters said they measure")
+async def meter_channel_stats(
+    session: AsyncSession = Depends(get_session),
+    principal: Principal = Depends(current_principal),
+) -> dict[str, Any]:
+    return await meter_repo.stats(session)

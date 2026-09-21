@@ -165,15 +165,25 @@ function DeviceNode({ data, selected }: NodeProps) {
   // they feed, and it is drawn with a ~ so it can never be read as the
   // device's own telemetry.
   const borrowed = showLoad && own == null ? n.derived_power_w : null;
+  // The tilde marks an INFERENCE. A channel reading is measured, just not by
+  // this device, so it prints as a number like any other and explains itself
+  // in the title.
+  const inferred = borrowed != null && n.derived_power_kind !== 'channel';
   const draw = own ?? borrowed ?? undefined;
   const rated = n.metrics.rated_power_w;
   const frac = draw != null && rated ? Math.min(1, draw / rated) : null;
-  const drawTitle = borrowed != null
-    ? `${watts(borrowed)} — not measured here: ${
-        n.derived_power_kind === 'metered'
-          ? `metered by ${n.derived_power_from}`
-          : `the sum of what it feeds (${n.derived_power_from})`}`
-    : undefined;
+  // A channel reading is a MEASUREMENT of this machine - a CT on its own
+  // conductor - so it does not carry the "not measured here" caveat the two
+  // inferences do. It still says whose instrument took it: the operator who
+  // wants to know why a transfer switch reports a load needs to know it came
+  // off the board's meter and not out of the switch.
+  const drawTitle = borrowed == null ? undefined
+    : n.derived_power_kind === 'channel'
+      ? `${watts(borrowed)} — measured by ${n.derived_power_from}`
+      : n.derived_power_kind === 'metered'
+        ? `${watts(borrowed)} — not measured here: metered by ${n.derived_power_from}`
+        : `${watts(borrowed)} — not measured here: the sum of what it feeds `
+          + `(${n.derived_power_from})`;
   const tone = frac == null ? null
     : frac >= 0.95 ? 'var(--critical)'
     : frac >= 0.8 ? 'var(--warn)' : 'var(--on-solid)';
@@ -220,9 +230,9 @@ function DeviceNode({ data, selected }: NodeProps) {
       {/* One line, and the load wins it where there is one: on the power layer
           the draw is the number being read, and the type is already in the
           colour and the glyph. */}
-      <span className={`cn-sub${borrowed != null ? ' is-borrowed' : ''}`}
+      <span className={`cn-sub${inferred ? ' is-borrowed' : ''}`}
             title={drawTitle}>
-        {draw != null ? `${borrowed != null ? '~' : ''}${watts(draw)}`
+        {draw != null ? `${inferred ? '~' : ''}${watts(draw)}`
           : rolled ? `${n.rolled_up} × ${n.device_type.replace(/_/g, ' ')}`
           : n.device_type.replace(/_/g, ' ')}
         {rolled && draw != null && ` · ${n.rolled_up}`}
@@ -238,7 +248,7 @@ function DeviceNode({ data, selected }: NodeProps) {
         // recorded" is not 0 %, and a full bar on an unrated device would be a
         // fabrication in the one place fabrications get acted on.
         <span className={`cn-meter${frac == null ? ' is-unrated' : ''}`
-                         + `${borrowed != null ? ' is-borrowed' : ''}`}>
+                         + `${inferred ? ' is-borrowed' : ''}`}>
           {frac != null && (
             <span className="cn-meter-fill"
                   style={{ width: `${Math.max(2, frac * 100)}%`, background: tone! }} />

@@ -998,7 +998,7 @@ export interface TopologyNode {
    *  be able to say so on screen. `metered` is a meter on this device's own
    *  bus; `downstream` is the sum of what it feeds. */
   derived_power_w: number | null;
-  derived_power_kind: 'metered' | 'downstream' | null;
+  derived_power_kind: 'channel' | 'metered' | 'downstream' | null;
   derived_power_from: string | null;
   /** How many real devices this node stands for. 0 means it IS one device;
    *  higher means a rack's worth of leaf equipment collapsed into one box and
