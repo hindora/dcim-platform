@@ -983,6 +983,16 @@ export interface TopologyNode {
     rack_name?: string | null;
   };
   metrics: Record<string, number>;
+  /** The nameplate, for the device list beside the canvas. All null on a
+   *  rolled-up node - a rack's worth of equipment has no one vendor and no
+   *  one address. */
+  vendor: string | null;
+  model: string | null;
+  mgmt_ip: string | null;
+  primary_ip: string | null;
+  iface_count: number;
+  /** Protocol and port the collector polls it on, e.g. `snmp:161`. */
+  polled_on: string | null;
   /** How many real devices this node stands for. 0 means it IS one device;
    *  higher means a rack's worth of leaf equipment collapsed into one box and
    *  the id is synthetic - it does not resolve to a device page. */

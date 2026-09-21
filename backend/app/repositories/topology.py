@@ -118,11 +118,31 @@ def _nodes_sql(scope_type: str) -> str:
                -- the same datasheet, and a per-device override would be a
                -- measurement pretending to be a rating.
                m.rated_power_w,
+               -- The nameplate facts a device list is read for. They are not
+               -- graph structure and nothing on the canvas draws with them,
+               -- but the rail beside it IS a device list, and one that has to
+               -- open a device page to say who made the thing is a worse
+               -- index than the page it sits next to.
+               v.name                                    AS vendor,
+               m.name                                    AS model,
+               host(d.mgmt_ip)                           AS mgmt_ip,
+               host(d.primary_ip)                        AS primary_ip,
+               (SELECT count(*) FROM interface i
+                 WHERE i.device_id = d.id)               AS iface_count,
+               -- What the collector actually TALKS to it on, primary endpoint
+               -- first. A single SNMP column would read as a blank for every
+               -- BACnet controller and Modbus meter in the estate, which is
+               -- most of the facility plant.
+               (SELECT string_agg(DISTINCT e.protocol::text
+                                    || COALESCE(':' || e.port::text, ''), ' ')
+                  FROM device_endpoint e
+                 WHERE e.device_id = d.id AND e.enabled) AS polled_on,
                rm.id::text AS room_id, rm.name AS room_name,
                r.id::text  AS rack_id, r.name AS rack_name,
                dc.id::text AS datacenter_id, dc.code AS datacenter_code
           FROM deg g
           JOIN device d             ON d.id = g.device_id
+          LEFT JOIN vendor v        ON v.id = d.vendor_id
           LEFT JOIN model m         ON m.id = d.model_id
           LEFT JOIN device_state ds ON ds.device_id = d.id
           LEFT JOIN rack r          ON r.id = d.rack_id

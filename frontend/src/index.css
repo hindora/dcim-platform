@@ -81,6 +81,10 @@
      dots reads as graph paper; a vignette reads as depth and pushes the eye
      to the centre where the diagram is. */
   --cn-vignette: #131a21;
+  /* The rule between two rows of the device table. Lighter than `--border`:
+     at a 26px row a full-strength line every row reads as a grid of boxes
+     rather than as a list. */
+  --cn-rule: #1b232c;
 
   /* --- the connectivity canvas -------------------------------------------
    *
@@ -211,6 +215,7 @@
   /* Lighter than the surface rather than darker: a vignette is a centre that
      is BRIGHTER than its edges, and inverting that on white makes a hole. */
   --cn-vignette: #ffffff;
+  --cn-rule: #e4e9ee;
   /* The node fills do not change. They are saturated and dark enough to carry
      white text on any ground, and a second set would be a second identity. */
 }

@@ -85,78 +85,108 @@
    nothing here truncates at 250px - a filter whose own label is cut off is
    worse than no filter. */
 .cn-rail-sift {
-  display: flex; align-items: center; gap: 5px;
+  display: flex; align-items: center; gap: 7px;
   padding: 0 10px 7px;
 }
-.cn-rail-sift select:first-child { flex: 1.35; }
-.cn-rail-sift select:nth-child(2) { flex: 1; }
-
-.cn-rail-dir {
-  flex: none;
-  display: flex; align-items: center; justify-content: center;
-  width: 25px; height: 25px; padding: 0;
-  border: 1px solid var(--border); border-radius: 5px;
-  background: var(--bg-inset); color: var(--text-muted);
-  cursor: pointer;
-}
-.cn-rail-dir:hover { color: var(--text); border-color: var(--border-strong); }
+.cn-rail-sift select { flex: none; max-width: 132px; }
 
 .cn-rail-count {
-  margin: 0; padding: 0 10px 6px;
+  margin: 0; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font-size: 0.62rem; color: var(--text-faint);
   font-variant-numeric: tabular-nums;
 }
 
-.cn-rail-list {
-  flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden;
-  list-style: none; margin: 0; padding: 0 6px 8px;
+/* The list is a TABLE, in the simulator's form: the same columns in the same
+   order, 9px uppercase heads on a sticky row, 11px cells, a 26px row. It is
+   wider than the rail and scrolls sideways inside it - which is what the
+   simulator's own list does at this width. Dropping the columns that do not
+   fit is how this list came to be missing them. */
+.cn-rail-scroll {
+  flex: 1; min-height: 0;
+  overflow: auto;
+  scrollbar-gutter: stable;
 }
 
-.cn-rail-list > li > button {
-  display: flex; align-items: center; gap: 7px; width: 100%;
-  padding: 4px 6px; border: none; border-radius: 5px;
-  background: none; color: inherit; font: inherit;
-  text-align: left; cursor: pointer;
+.cn-rail-table {
+  /* Fixed, so a long vendor name truncates in its own cell rather than
+     dragging every column after it sideways. */
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-size: 0.69rem;
 }
-.cn-rail-list > li > button:hover { background: var(--bg-inset); }
-.cn-rail-list > li > button.is-on {
+
+.cn-rail-table th {
+  position: sticky; top: 0; z-index: 1;
+  padding: 0;
+  text-align: left; white-space: nowrap;
+  background: var(--bg-inset);
+  border-bottom: 1px solid var(--border);
+}
+.cn-rail-table th.right { text-align: right; }
+
+/* The head is the sort control. A button inside the cell rather than a click
+   handler on it, so it is reachable from a keyboard and says what it does. */
+.cn-rail-table th button,
+.cn-rail-table th {
+  font-size: 0.55rem; font-weight: 600; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--text-faint);
+}
+.cn-rail-table th button {
+  display: block; width: 100%;
+  padding: 5px 6px; border: none; background: none;
+  font-family: inherit; text-align: inherit; cursor: pointer;
+}
+.cn-rail-table th:not(:has(button)) { padding: 5px 6px; }
+.cn-rail-table th button:hover { color: var(--text-muted); }
+.cn-rail-table th.is-sorted, .cn-rail-table th.is-sorted button { color: var(--text); }
+
+.cn-rail-table td {
+  padding: 4px 6px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  border-bottom: 1px solid var(--cn-rule);
+  color: var(--text);
+}
+.cn-rail-table td.right { text-align: right; }
+.cn-rail-table td.muted { color: var(--text-faint); }
+.cn-rail-table td.mono {
+  font-family: var(--mono); font-size: 0.65rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.cn-rail-table tbody tr { cursor: pointer; }
+.cn-rail-table tbody tr:hover { background: var(--bg-inset); }
+.cn-rail-table tbody tr.is-on {
   background: var(--bg-inset);
   box-shadow: inset 2px 0 0 var(--accent);
 }
-
-/* The same device-type colour the canvas fills a node with. A second palette
-   for the same machine would be a second identity. */
-.cn-rail-chip { flex: none; width: 8px; height: 18px; border-radius: 2px; }
-
-.cn-rail-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.cn-rail-name {
-  font-family: var(--mono); font-size: 0.68rem; color: var(--text);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+.cn-rail-table tbody tr:focus-visible {
+  outline: 1px solid var(--accent); outline-offset: -1px;
 }
-.cn-rail-sub {
-  display: flex; align-items: center; gap: 5px;
-  margin-top: 1px;
-  font-size: 0.6rem; color: var(--text-faint);
-  white-space: nowrap; overflow: hidden;
+
+/* The status against the NAME and the type against the TYPE: the two facts a
+   row is scanned for, each beside what it is about. */
+.cn-rail-dot {
+  display: inline-block; flex: none;
+  width: 6px; height: 6px; border-radius: 50%;
+  margin-right: 5px; vertical-align: 1px;
 }
-/* The type as a pill in its own colour. Outlined rather than filled: the
-   left bar is already a solid block of that colour and two of them on one row
-   reads as a status, not as a kind. */
+
+/* Outlined rather than filled: a solid block of the type's colour is what the
+   canvas fills a NODE with, and the same block in a cell reads as a second
+   status light. */
 .cn-rail-type {
-  flex: none;
+  display: inline-block;
   padding: 0 4px;
   border: 1px solid currentColor; border-radius: 3px;
   font-size: 0.53rem; font-weight: 700; letter-spacing: .04em;
-  line-height: 1.5;
   max-width: 100%; overflow: hidden; text-overflow: ellipsis;
+  vertical-align: 1px;
 }
 
-.cn-rail-where { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-
-.cn-rail-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; }
-
-.cn-rail-empty {
+.cn-rail-empty td {
   padding: 10px 8px; font-size: 0.7rem; color: var(--text-faint);
+  white-space: normal;
 }
 
 @media (max-width: 900px) {

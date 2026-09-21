@@ -168,6 +168,17 @@ class TopologyNode(BaseModel):
     depth: int = 0
     location: LocationRef = Field(default_factory=LocationRef)
     metrics: dict[str, float] = Field(default_factory=dict)
+    # The nameplate, for the device list beside the canvas. All null on a
+    # rolled-up node: a rack's worth of equipment has no one vendor, no one
+    # address, and printing the first member's would be a lie about the rest.
+    vendor: str | None = None
+    model: str | None = None
+    mgmt_ip: str | None = None
+    primary_ip: str | None = None
+    iface_count: int = 0
+    # Protocol and port the collector polls it on, primary endpoint first,
+    # e.g. "snmp:161" or "bacnet:47808 modbus:502".
+    polled_on: str | None = None
     # How many real devices this node stands for. 0 means it IS one device;
     # anything higher means it is a rack's worth of leaf equipment collapsed
     # into one box, and the id is synthetic - it does not resolve to a device.

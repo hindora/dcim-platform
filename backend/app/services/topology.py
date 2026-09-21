@@ -138,6 +138,10 @@ def _node_from_row(row: dict[str, Any]) -> TopologyNode:
             rack_id=row.get("rack_id"), rack_name=row.get("rack_name"),
         ),
         metrics=metrics,
+        vendor=row.get("vendor"), model=row.get("model"),
+        mgmt_ip=row.get("mgmt_ip"), primary_ip=row.get("primary_ip"),
+        iface_count=int(row.get("iface_count") or 0),
+        polled_on=row.get("polled_on"),
     )
 
 
