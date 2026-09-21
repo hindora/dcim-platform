@@ -97,36 +97,53 @@ async def replace_for_meter(session: AsyncSession, meter_id: str,
 
 async def for_branches(session: AsyncSession,
                        device_ids: list[str]) -> dict[str, dict[str, Any]]:
-    """Branch device id -> the channel measuring it, and its latest reading.
+    """Branch device id -> what the CTs on it add up to, and whose they are.
 
-    One row per branch: the newest `power_draw` sample on the meter, at that
-    channel's instance, inside a window. Bounded because a meter that stopped
-    reporting an hour ago must not present a stale reading as the live one -
-    the same rule the rest of the platform reads last-known state under.
+    SUMMED ACROSS CHANNELS, not picked from them. A branch is metered more
+    than once whenever it has more than one source, and both readings are
+    true: a transfer switch has a CT on the utility board and another on the
+    paralleling board, and the board that is not carrying it reads zero. A
+    genuinely dual-fed load reads half on each. In both cases the sum is what
+    the branch is drawing, and in both cases choosing ONE channel is wrong -
+    picking the fresher of two samples reported the standby board's zero for a
+    switch that was passing 102 kW.
 
-    A branch metered by two monitors (the two sides of a 2N pair) yields the
-    channel with the newest sample; both are true, and the fresher one is the
-    one worth showing.
+    The reading per channel is the newest inside a window, because a meter
+    that stopped reporting an hour ago must not present a stale figure as the
+    live one - the same rule the rest of the platform reads last-known state
+    under. A channel with nothing recent contributes nothing rather than
+    zeroing the branch.
     """
     if not device_ids:
         return {}
     rows = (await session.execute(text("""
-        SELECT DISTINCT ON (mc.branch_device_id)
-               mc.branch_device_id::text AS branch_id,
-               mc.instance,
-               md.name                   AS meter_name,
-               t.value                   AS power_w,
-               t.ts
-          FROM meter_channel mc
-          JOIN device md ON md.id = mc.meter_device_id
-          JOIN metric m  ON m.key = 'power_draw'
-          JOIN telemetry_sample t
-            ON t.device_id = mc.meter_device_id
-           AND t.metric_id = m.id
-           AND t.instance  = mc.instance
-           AND t.ts > now() - interval '15 minutes'
-         WHERE mc.branch_device_id = ANY(CAST(:ids AS uuid[]))
-         ORDER BY mc.branch_device_id, t.ts DESC
+        WITH latest AS (
+            SELECT DISTINCT ON (mc.id)
+                   mc.id, mc.branch_device_id, mc.instance,
+                   md.name AS meter_name, t.value, t.ts
+              FROM meter_channel mc
+              JOIN device md ON md.id = mc.meter_device_id
+              JOIN metric m  ON m.key = 'power_draw'
+              JOIN telemetry_sample t
+                ON t.device_id = mc.meter_device_id
+               AND t.metric_id = m.id
+               AND t.instance  = mc.instance
+               AND t.ts > now() - interval '15 minutes'
+             WHERE mc.branch_device_id = ANY(CAST(:ids AS uuid[]))
+             ORDER BY mc.id, t.ts DESC
+        )
+        SELECT branch_device_id::text AS branch_id,
+               sum(value)             AS power_w,
+               max(ts)                AS ts,
+               count(*)               AS channels,
+               -- Whose instrument, for the tooltip. One channel names itself;
+               -- several say how many, because "EV21-DC1-UR Ckt01" on a figure
+               -- that also includes the other board's CT would be a lie about
+               -- where the number came from.
+               min(meter_name)        AS meter_name,
+               min(instance)          AS instance
+          FROM latest
+         GROUP BY branch_device_id
     """), {"ids": device_ids})).mappings().all()
     return {r["branch_id"]: dict(r) for r in rows}
 

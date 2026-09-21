@@ -203,7 +203,10 @@ def _derive_power(nodes: list[TopologyNode], edges: list[TopologyEdge],
         if ch and ch.get("power_w") is not None:
             n.derived_power_w = round(float(ch["power_w"]), 2)
             n.derived_power_kind = "channel"
-            n.derived_power_from = f"{ch['meter_name']} {ch['instance']}"
+            count = int(ch.get("channels") or 1)
+            n.derived_power_from = (
+                f"{ch['meter_name']} {ch['instance']}" if count == 1
+                else f"{count} CTs")
             continue
 
         downstream = feeds.get(n.id, [])

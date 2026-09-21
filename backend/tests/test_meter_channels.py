@@ -89,7 +89,7 @@ def edge(src, dst):
 
 
 CHANNEL = {"ats": {"power_w": 102335.0, "instance": "Ckt01",
-                   "meter_name": "EV21-DC1-UR"}}
+                   "meter_name": "EV21-DC1-UR", "channels": 1}}
 
 
 def test_a_measured_channel_is_what_the_switch_reports():
@@ -152,3 +152,20 @@ def test_a_device_that_meters_itself_ignores_the_channel():
                                       "meter_name": "EV21-DC1-UR"}})
     assert ups.derived_power_w is None
     assert ups.metrics["power_w"] == 75000.0
+
+
+def test_two_cts_on_one_branch_say_how_many_rather_than_which():
+    """A summed figure must not name one of the instruments that made it.
+
+    A transfer switch is metered on both source boards - the one carrying it
+    and the one that is not - and the sum is what it draws. Printing
+    "EV21-DC1-UR Ckt01" on a number that also includes the other board's CT
+    would be a lie about where it came from.
+    """
+    ats = node("ats", "ATS1-DC1-UR", "ats")
+    ups = node("ups", "UPSA-DC1-UR", "ups", 75000.0)
+    _derive_power([ats, ups], [edge("ats", "ups")],
+                  {"ats": {"power_w": 102335.0, "instance": "Ckt01",
+                           "meter_name": "EV21-DC1-GR", "channels": 2}})
+    assert ats.derived_power_w == 102335.0
+    assert ats.derived_power_from == "2 CTs"
