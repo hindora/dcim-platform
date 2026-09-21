@@ -647,6 +647,11 @@
 }
 .cn-off { color: var(--on-solid); font-weight: 700; }
 
+/* A figure this device did not measure. The `~` says it and the dimmer ink
+   backs it up: on a diagram where every other number came off the thing it is
+   printed on, a borrowed one has to look borrowed. */
+.cn-sub.is-borrowed { color: var(--node-label-dim); font-style: italic; }
+
 .cn-pip { position: absolute; top: 3px; right: 3px; }
 
 /* Draw against rating along the bottom edge. A rating nobody recorded is a
@@ -660,6 +665,11 @@
   background-image: repeating-linear-gradient(
     45deg, var(--node-label-dim) 0 1px, transparent 1px 4px);
 }
+
+/* The bar is drawn from a borrowed figure, so it is drawn at half strength.
+   The panel really is at 31 % of its rating - the reading just came from the
+   meter next to it rather than from the panel. */
+.cn-meter.is-borrowed { opacity: 0.55; }
 
 .cn-handle { opacity: 0; pointer-events: none; }
 

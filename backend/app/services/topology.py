@@ -145,6 +145,69 @@ def _node_from_row(row: dict[str, Any]) -> TopologyNode:
     )
 
 
+# A meter is the only thing on this graph that exists to measure something
+# else, so it is the only device type a reading may be borrowed FROM.
+_METER_TYPES = frozenset({"energy_monitor"})
+
+
+def _derive_power(nodes: list[TopologyNode], edges: list[TopologyEdge]) -> None:
+    """Give a figure to the devices that do not meter themselves.
+
+    A remote power panel is a cabinet of breakers and an ASCO transfer switch
+    is a switch: neither has metering unless it was ordered with it, and this
+    estate ordered neither. That is the hardware being modelled honestly, but
+    it left eight panels and two transfer switches per datacenter drawing a
+    blank beside a meter that was reading 36 kW.
+
+    Two derivations, in order of how strong the claim is:
+
+    `metered`     the reading of an energy meter fed FROM this device - the
+                  Verdigris EV2 bolted to the panel it measures. This is a
+                  measurement of this device's bus, taken one enclosure away.
+
+    `downstream`  the sum of what it feeds, and only when every one of them
+                  reported. A transfer switch has no meter anywhere near it;
+                  what it passes is what its loads draw. One silent load and
+                  the sum under-reads with no sign that it has, so a partial
+                  answer is refused rather than published.
+
+    Never written into `metrics`. A borrowed figure that cannot be told from a
+    measured one is worse than no figure: it is the same mistake as a rack
+    node printing the first server's vendor for all twenty.
+    """
+    by_id = {n.id: n for n in nodes}
+    # `source` is the feeder and `target` the load - the conductor is directed
+    # the way the current runs.
+    feeds: dict[str, list[TopologyNode]] = {}
+    for e in edges:
+        load = by_id.get(e.target)
+        if load is not None and e.source in by_id:
+            feeds.setdefault(e.source, []).append(load)
+
+    for n in nodes:
+        if n.rolled_up or "power_w" in n.metrics:
+            continue
+        downstream = feeds.get(n.id, [])
+        if not downstream:
+            continue
+
+        meters = [d for d in downstream
+                  if d.device_type in _METER_TYPES and "power_w" in d.metrics]
+        if meters:
+            n.derived_power_w = round(sum(m.metrics["power_w"] for m in meters), 2)
+            n.derived_power_kind = "metered"
+            n.derived_power_from = (meters[0].name if len(meters) == 1
+                                    else f"{len(meters)} meters")
+            continue
+
+        loads = [d for d in downstream if d.device_type not in _METER_TYPES]
+        if loads and all("power_w" in d.metrics for d in loads):
+            n.derived_power_w = round(sum(d.metrics["power_w"] for d in loads), 2)
+            n.derived_power_kind = "downstream"
+            n.derived_power_from = (loads[0].name if len(loads) == 1
+                                    else f"{len(loads)} loads")
+
+
 def _edges_from_rows(rows: list[dict[str, Any]],
                      labels: dict[str, str]) -> list[TopologyEdge]:
     out = []
@@ -358,6 +421,7 @@ async def get_topology(session: AsyncSession, *, layer: str, scope: str,
 
     nodes = [_node_from_row(r) for r in connected_rows]
     edges = _edges_from_rows(edge_rows, labels)
+    _derive_power(nodes, edges)
     if rollup == "rack":
         # After the cap, not before it. The cap is a bound on the QUERY, and a
         # roll-up cannot un-truncate a walk that was already cut short - so a

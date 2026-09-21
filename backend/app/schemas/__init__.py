@@ -179,6 +179,16 @@ class TopologyNode(BaseModel):
     # Protocol and port the collector polls it on, primary endpoint first,
     # e.g. "snmp:161" or "bacnet:47808 modbus:502".
     polled_on: str | None = None
+    # What this device draws when it does not measure itself. A panel of
+    # breakers and a transfer switch have no metering of their own - that is
+    # the hardware, not a gap in the platform - so the load is taken from what
+    # DOES measure it. Never merged into `metrics`: a figure that came from
+    # somewhere else has to be able to say so on screen.
+    derived_power_w: float | None = None
+    # 'metered'    - an energy meter on this device's own bus, named below.
+    # 'downstream' - the sum of what it feeds, every one of which reported.
+    derived_power_kind: str | None = None
+    derived_power_from: str | None = None
     # How many real devices this node stands for. 0 means it IS one device;
     # anything higher means it is a rack's worth of leaf equipment collapsed
     # into one box, and the id is synthetic - it does not resolve to a device.
