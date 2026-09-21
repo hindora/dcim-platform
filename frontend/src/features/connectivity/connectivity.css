@@ -35,7 +35,11 @@
    tab when the drawing needs the width. */
 .cn-rail {
   flex: none;
-  width: 250px;
+  /* Wide enough for the search and the type filter to sit side by side, and
+     for four of the eight columns to be in view before anybody scrolls. The
+     canvas gives up 110px it was using for whitespace either side of the
+     drawing. */
+  width: 360px;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -49,17 +53,52 @@
   border: 1px solid var(--border); border-radius: 5px;
 }
 
+/* The panel says what it is, and how much of it there is. A list that opens
+   with a search box and no title is a control whose subject you have to infer
+   from what is in it. */
+.cn-rail-title {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 9px 10px 7px;
+  border-bottom: 1px solid var(--border);
+}
+.cn-rail-title h2 {
+  margin: 0; font-size: 0.66rem; font-weight: 700; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--text);
+}
+.cn-rail-title .cn-rail-actions { display: flex; align-items: center; gap: 6px; }
+
+/* The count as a pill rather than a line of its own: it is a property of the
+   heading, and under a filter it says both halves - 14 of 155 - because the
+   number on screen and the number on the canvas are different facts. */
+.cn-rail-badge {
+  flex: none; padding: 1px 8px; border-radius: 99px;
+  background: var(--bg-inset); border: 1px solid var(--border);
+  font-size: 0.62rem; color: var(--text-muted);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+
 .cn-rail-head {
-  display: flex; align-items: center; gap: 4px;
-  padding: 8px 10px 6px;
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px 10px 7px;
+}
+
+/* 3. The magnifier sits IN the field, as it does on the simulator's: a search
+   box with no glyph reads as a text input that happens to be first. */
+.cn-rail-search { position: relative; flex: 1; min-width: 0; }
+.cn-rail-search svg {
+  position: absolute; left: 7px; top: 50%; transform: translateY(-50%);
+  color: var(--text-faint); pointer-events: none;
 }
 .cn-rail-head input {
-  flex: 1; min-width: 0; height: 25px; padding: 0 7px;
+  width: 100%; height: 26px; padding: 0 7px 0 24px;
   font: inherit; font-size: 0.72rem;
   background: var(--bg-inset); color: var(--text);
   border: 1px solid var(--border); border-radius: 5px;
 }
 .cn-rail-head input::placeholder { color: var(--text-faint); }
+.cn-rail-head select {
+  flex: none; width: 104px; height: 26px;
+}
 
 .cn-rail-hide, .cn-rail-open {
   display: flex; align-items: center; justify-content: center;
@@ -84,19 +123,6 @@
 /* Type and order, under the search. Two selects and the direction, sized so
    nothing here truncates at 250px - a filter whose own label is cut off is
    worse than no filter. */
-.cn-rail-sift {
-  display: flex; align-items: center; gap: 7px;
-  padding: 0 10px 7px;
-}
-.cn-rail-sift select { flex: none; max-width: 132px; }
-
-.cn-rail-count {
-  margin: 0; min-width: 0;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-size: 0.62rem; color: var(--text-faint);
-  font-variant-numeric: tabular-nums;
-}
-
 /* The list is a TABLE, in the simulator's form: the same columns in the same
    order, 9px uppercase heads on a sticky row, 11px cells, a 26px row. It is
    wider than the rail and scrolls sideways inside it - which is what the
@@ -189,8 +215,11 @@
   white-space: normal;
 }
 
+@media (max-width: 1200px) {
+  .cn-rail { width: 300px; }
+}
 @media (max-width: 900px) {
-  .cn-rail { width: 210px; }
+  .cn-rail { width: 240px; }
 }
 
 /* --- the canvas ---------------------------------------------------------- */
@@ -466,20 +495,20 @@
    `scrollbar-gutter: stable` because all three change length in place -
    filtering the list, picking a shorter device, switching sheet - and a bar
    that appears and disappears shifts every line under it sideways. */
-.cn-rail-list,
+.cn-rail-scroll,
 .conn-drawer-scroll {
   scrollbar-gutter: stable;
   scrollbar-width: thin;
   scrollbar-color: var(--border-strong) transparent;
 }
 
-.cn-rail-list::-webkit-scrollbar,
+.cn-rail-scroll::-webkit-scrollbar,
 .conn-drawer-scroll::-webkit-scrollbar { width: 10px; height: 10px; }
 
-.cn-rail-list::-webkit-scrollbar-track,
+.cn-rail-scroll::-webkit-scrollbar-track,
 .conn-drawer-scroll::-webkit-scrollbar-track { background: transparent; }
 
-.cn-rail-list::-webkit-scrollbar-thumb,
+.cn-rail-scroll::-webkit-scrollbar-thumb,
 .conn-drawer-scroll::-webkit-scrollbar-thumb {
   background: var(--border-strong);
   border-radius: 99px;
@@ -487,8 +516,12 @@
   background-clip: content-box;
 }
 
-.cn-rail-list:hover::-webkit-scrollbar-thumb,
+.cn-rail-scroll:hover::-webkit-scrollbar-thumb,
 .conn-drawer-scroll:hover::-webkit-scrollbar-thumb { background: var(--text-faint); }
+
+/* Both bars meet in this one. Left as the platform default it is a pale
+   square in the corner of a dark panel. */
+.cn-rail-scroll::-webkit-scrollbar-corner { background: transparent; }
 
 /* --- the room, on the site view ------------------------------------------- */
 

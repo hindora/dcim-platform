@@ -164,22 +164,41 @@ export function SidePanel({
 
   return (
     <aside className="cn-rail" aria-label="Devices on the canvas">
-      <div className="cn-rail-head">
-        <input value={q} onChange={(e) => setQ(e.target.value)}
-               placeholder="Search name, IP, vendor" aria-label="Find a device" />
-        <button type="button" className="cn-rail-hide" onClick={onToggle}
-                title="Hide the panel" aria-label="Hide the panel">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
-               stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden>
-            <path d="M15 6l-6 6 6 6" />
-          </svg>
-        </button>
+      <div className="cn-rail-title">
+        <h2>Device list</h2>
+        <div className="cn-rail-actions">
+          {/* Under a filter the badge says both halves: the number on screen
+              and the number on the canvas are different facts, and only one
+              of them is what the diagram is drawing. */}
+          <span className="cn-rail-badge"
+                title={sifted ? `${rows.length} shown of ${nodes.length} on the canvas`
+                              : `${nodes.length} on the canvas`}>
+            {loading ? '…' : sifted ? `${rows.length} / ${nodes.length}` : nodes.length}
+          </span>
+          <button type="button" className="cn-rail-hide" onClick={onToggle}
+                  title="Hide the panel" aria-label="Hide the panel">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                 stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden>
+              <path d="M15 6l-6 6 6 6" />
+            </svg>
+          </button>
+        </div>
       </div>
 
-      {/* A canvas of 155 boxes is read by kind - "just the CDUs" - long before
-          it is read by name, and the search box cannot answer that without
-          knowing the exact word. */}
-      <div className="cn-rail-sift">
+      {/* The search and the type filter on one row. A canvas of 155 boxes is
+          read by kind - "just the CDUs" - long before it is read by name, and
+          the search box cannot answer that without knowing the exact word. */}
+      <div className="cn-rail-head">
+        <span className="cn-rail-search">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
+               stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden>
+            <circle cx="10.5" cy="10.5" r="6.5" />
+            <path d="M20 20l-4.7-4.7" />
+          </svg>
+          <input value={q} onChange={(e) => setQ(e.target.value)}
+                 placeholder="Search name, IP, vendor, location…"
+                 aria-label="Find a device" />
+        </span>
         <select value={liveType} onChange={(e) => setType(e.target.value)}
                 aria-label="Device type">
           <option value="">All types</option>
@@ -187,11 +206,6 @@ export function SidePanel({
             <option key={t} value={t}>{typeLabel(t)} ({c})</option>
           ))}
         </select>
-        <p className="cn-rail-count">
-          {loading ? 'Reading…'
-            : sifted ? `${rows.length} of ${nodes.length}`
-            : `${nodes.length} on the canvas`}
-        </p>
       </div>
 
       <div className="cn-rail-scroll">
