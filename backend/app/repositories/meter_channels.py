@@ -27,9 +27,15 @@ async def meters(session: AsyncSession) -> list[dict[str, Any]]:
           FROM device d
           LEFT JOIN model m ON m.id = d.model_id
           LEFT JOIN LATERAL (
+               -- Any enabled BACnet endpoint. `role` on this table is the
+               -- TRANSPORT role - os_agent, bmc, field_device, gateway - not a
+               -- precedence, so there is nothing to rank by. Ordered by
+               -- address only so a meter with two of them picks the same one
+               -- on every import.
                SELECT address FROM device_endpoint
                 WHERE device_id = d.id AND protocol = 'bacnet' AND enabled
-                ORDER BY (role = 'primary') DESC LIMIT 1
+                  AND address IS NOT NULL
+                ORDER BY address LIMIT 1
           ) e ON true
          WHERE d.device_type = ANY(:types)
            AND d.lifecycle <> 'decommissioned'
