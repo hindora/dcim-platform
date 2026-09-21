@@ -30,7 +30,10 @@ import './connectivity.css';
 // strip and the lines on the canvas agree.
 const LAYERS = [
   { key: 'power', label: 'POWER', ink: 'var(--layer-power)' },
-  { key: 'cooling', label: 'COOLING', ink: 'var(--layer-cooling)' },
+  // `flow` draws this layer's stub dashed, because that is how its lines are
+  // drawn: a dash on this canvas means FLOW and belongs to the cooling loop
+  // alone. The key renders the way the thing it describes renders.
+  { key: 'cooling', label: 'COOLING', ink: 'var(--layer-cooling)', flow: true },
   { key: 'network', label: 'NETWORK', ink: 'var(--layer-prod)' },
   { key: 'management', label: 'MANAGEMENT', ink: 'var(--layer-mgmt)' },
   { key: 'fieldbus', label: 'FIELDBUS', ink: 'var(--layer-fieldbus)' },
@@ -361,13 +364,39 @@ export function Connectivity() {
             onClose={() => setFiltersOpen(false)} />
         )}
 
-        {/* ---- top centre: the layer, which is what the canvas IS --------- */}
-        <div className="cn-float cn-layers" role="group" aria-label="Layer">
-          {LAYERS.map((l) => (
-            <button key={l.key} type="button"
-                    className={layer === l.key ? 'is-on' : undefined}
-                    style={layer === l.key
-                      ? { background: l.ink, borderColor: l.ink } : undefined}
+        {/* ---- top centre: the layer, which is what the canvas IS ---------
+            Each plane carries a stub of its own conductor, lit whether or not
+            it is the one being drawn, so the strip is a key at rest and not
+            only once you have already chosen. Selecting one is weight and
+            brightness rather than a flooded chip: five saturated fills would
+            make the whole control change character with the layer.
+
+            A tablist, because that is what it behaves like - arrow keys walk
+            the planes without aiming at a 70px target over a diagram. */}
+        <div className="cn-float cn-layers" role="tablist" aria-label="Layer">
+          {LAYERS.map((l, i) => (
+            <button key={l.key} type="button" role="tab"
+                    aria-selected={layer === l.key}
+                    tabIndex={layer === l.key ? 0 : -1}
+                    className={[layer === l.key ? 'is-on' : '',
+                                'flow' in l && l.flow ? 'is-flow' : '']
+                      .filter(Boolean).join(' ') || undefined}
+                    style={{ '--ink': l.ink } as React.CSSProperties}
+                    onKeyDown={(e) => {
+                      const step = e.key === 'ArrowRight' ? 1
+                        : e.key === 'ArrowLeft' ? -1 : 0;
+                      const to = step ? (i + step + LAYERS.length) % LAYERS.length
+                        : e.key === 'Home' ? 0
+                        : e.key === 'End' ? LAYERS.length - 1 : -1;
+                      if (to < 0) return;
+                      e.preventDefault();
+                      reselect(setLayer)(LAYERS[to].key);
+                      // The roving focus follows the selection, or the next
+                      // arrow key starts from a button that is no longer the
+                      // one in hand.
+                      const strip = e.currentTarget.parentElement;
+                      (strip?.children[to] as HTMLElement | undefined)?.focus();
+                    }}
                     onClick={() => reselect(setLayer)(l.key)}>
               {l.label}
             </button>

@@ -388,26 +388,62 @@
 .cn-layers::-webkit-scrollbar { display: none; }
 
 .cn-layers button {
-  flex: none;
-  padding: 4px 9px; border-radius: 5px;
+  flex: none; position: relative;
+  padding: 5px 11px 8px; border-radius: 5px;
   border: 1px solid transparent;
   font-size: 0.6rem; font-weight: 700; letter-spacing: .07em;
+  /* Muted, not faint: faint is right for a caption and wrong for something
+     you are meant to click. The layer you are NOT on still has to be read. */
+  color: var(--text-muted);
+}
+
+/* The conductor. Lit on every plane, not only the one being drawn: this strip
+   is the key to the lines below it, and a key that describes only the choice
+   already made is a label. `--ink` is set per button from the same token the
+   canvas strokes that layer with, so the two cannot drift apart. */
+.cn-layers button::after {
+  content: ''; position: absolute; left: 11px; right: 11px; bottom: 4px;
+  height: 2px; border-radius: 1px;
+  background: var(--ink);
+  opacity: 0.5;
+  transition: opacity .14s ease, height .14s ease;
+}
+
+/* A dash means FLOW and belongs to the cooling loop alone - the rule the
+   edges themselves are drawn under. The key renders the way the thing it
+   describes renders. */
+.cn-layers button.is-flow::after {
+  border-radius: 0;
+  background: repeating-linear-gradient(
+    90deg, var(--ink) 0 5px, transparent 5px 9px);
+}
+
+.cn-layers button:focus-visible {
+  outline: 1px solid var(--ink); outline-offset: -1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cn-layers button::after { transition: none; }
 }
 
 /* Tightened before it has to scroll: the labels are the layer names and a
    reader should be able to see all five at once. */
 @container canvas (max-width: 900px) {
-  .cn-layers button { padding: 4px 6px; letter-spacing: .04em; }
+  .cn-layers button { padding: 5px 6px 8px; letter-spacing: .04em; }
+  .cn-layers button::after { left: 6px; right: 6px; }
 }
 @container canvas (max-width: 760px) {
-  .cn-layers button { padding: 4px 5px; font-size: 0.56rem; letter-spacing: .02em; }
+  .cn-layers button { padding: 5px 5px 8px; font-size: 0.56rem; letter-spacing: .02em; }
+  .cn-layers button::after { left: 5px; right: 5px; }
 }
-.cn-layers button:hover { background: var(--bg-inset); }
+.cn-layers button:hover { background: var(--bg-inset); color: var(--text); }
+.cn-layers button:hover::after { opacity: 0.85; }
 
-/* The active pill wears the layer's own colour - the same value the edges are
-   stroked with - so the strip is also the legend for the lines below it. */
-.cn-layers button.is-on { color: var(--on-solid); }
-.cn-layers button.is-on:hover { filter: brightness(1.08); }
+/* Selected is weight and brightness, not a flooded chip: five saturated fills
+   make the control change character with the layer - an amber slab, then a
+   cyan one - and the canvas underneath is already carrying that hue. */
+.cn-layers button.is-on { color: var(--text); background: var(--bg-inset); }
+.cn-layers button.is-on::after { opacity: 1; height: 3px; }
 
 /* --- the simulation banner ------------------------------------------------ */
 
