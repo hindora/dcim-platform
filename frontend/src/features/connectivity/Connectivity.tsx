@@ -5,10 +5,8 @@ import { api, type Impact, type RoomSummary, type TopologyGraph, type TopologyNo
   from '../../api/client';
 import { downloadCsv, stampedName } from '../../lib/csv';
 import { projectImpact, type ImpactView } from './impact';
-import { Audit } from './Audit';
 import { Canvas } from './Canvas';
 import { Drawer, type DrawerTab } from './Drawer';
-import { Independence } from './Independence';
 import { Legend } from './Legend';
 import { SidePanel } from './SidePanel';
 import { collapseEdges, layout, layoutRooms, structureKey } from './layout';
@@ -17,16 +15,13 @@ import './connectivity.css';
 /** Connectivity: how the estate is wired, one layer at a time.
  *
  *  THE CANVAS IS THE PAGE. Everything else — the layer strip, the scope, the
- *  audit, the selection — floats on top of it. A diagram boxed into a panel
- *  under a heading and three rows of filters spends most of the screen on
- *  furniture, and the furniture is not what anybody came for.
+ *  selection — floats on top of it. A diagram boxed into a panel under a
+ *  heading and three rows of filters spends most of the screen on furniture,
+ *  and the furniture is not what anybody came for.
  *
  *  It follows that a table cannot REPLACE the diagram, which is what the view
- *  tabs used to do. The audit is an answer ABOUT what is on the canvas, and
- *  reading it while the thing it describes is gone is the same mistake as a
- *  modal over a diagram. It opens as a sheet along the bottom and the graph
- *  stays where it was. The trace lives in the selection drawer, hop by hop
- *  with its ports, rather than in a second sheet saying the same thing.
+ *  tabs used to do. The trace lives in the selection drawer, hop by hop with
+ *  its ports, rather than in a sheet over the thing it describes.
  */
 
 // The API accepts 'network' as an alias for the production enum; the operator's
@@ -42,9 +37,6 @@ const LAYERS = [
 
 type LayerKey = typeof LAYERS[number]['key'];
 
-/** Sheets, not tabs. `null` is the canvas on its own. */
-type Sheet = 'audit' | null;
-
 /** Layers drawn as a one-line: A down the left, B down the right, shared and
  *  dual-fed equipment down the middle. */
 const ONE_LINE = new Set(['power']);
@@ -54,7 +46,6 @@ const LOOP = new Set(['cooling']);
 
 export function Connectivity() {
   const [layer, setLayer] = useState<LayerKey>('power');
-  const [sheet, setSheet] = useState<Sheet>(null);
   const [railOpen, setRailOpen] = useState(true);
   /** Bumped only when a selection comes from OFF the canvas, so the viewport
    *  moves for the device list and not for a node somebody just clicked. */
@@ -132,10 +123,6 @@ export function Connectivity() {
   // already understood; nothing had ever asked it for the larger one.
   const scope = selectedRoom ? `room:${selectedRoom}`
     : selectedSite ? `datacenter:${selectedSite}` : '';
-  const room = rooms.data?.items.find((r) => r.id === selectedRoom);
-  const site = sites.find((s) => s.id === selectedSite);
-  const scopeName = room?.name ?? (site ? `${site.code}, every room` : 'this room');
-
   const graph = useQuery<TopologyGraph>({
     queryKey: ['topology', layer, scope, depth, rollup],
     queryFn: () => api.topology(layer, scope, depth, rollup),
@@ -204,8 +191,8 @@ export function Connectivity() {
     return [...s].sort();
   }, [edges]);
 
-  /** Select and bring into view. Used by the list and by an audit finding -
-   *  anything whose click happens somewhere other than the canvas itself. */
+  /** Select and bring into view. Used by the device list - anything whose
+   *  click happens somewhere other than the canvas itself. */
   function reveal(node: TopologyNode) {
     setSelected(node);
     setFocusNonce((n) => n + 1);
@@ -256,16 +243,6 @@ export function Connectivity() {
               {l.label}
             </button>
           ))}
-        </div>
-
-        {/* ---- top right: the answer about what is on the canvas --------- */}
-        <div className="cn-topright">
-          <div className="cn-float cn-sheets" role="group" aria-label="Views">
-            <button type="button" className={sheet === 'audit' ? 'is-on' : undefined}
-                    onClick={() => setSheet(sheet === 'audit' ? null : 'audit')}>
-              REDUNDANCY
-            </button>
-          </div>
         </div>
 
         {/* ---- the hypothetical, across the top ---------------------------- */}
@@ -340,27 +317,6 @@ export function Connectivity() {
                   onClose={() => setSelected(null)} />
         )}
 
-        {/* ---- bottom: the answers ABOUT the canvas, not instead of it ----- */}
-        {sheet && (
-          <section className="cn-sheet" aria-label="Redundancy audit">
-            <header>
-              <h3>REDUNDANCY AUDIT</h3>
-              <button type="button" className="asset-max" aria-label="Close"
-                      onClick={() => setSheet(null)}>✕</button>
-            </header>
-            <div className="cn-sheet-body">
-              <Independence nodes={graph.data?.nodes ?? []} layer={layer} />
-              <Audit
-                scope={scope} layer={layer}
-                roomName={scopeName}
-                onSelectDevice={(id) => {
-                  const node = graph.data?.nodes.find(
-                    (n) => n.id === id || n.member_ids.includes(id));
-                  if (node) { reveal(node); setSheet(null); }
-                }} />
-            </div>
-          </section>
-        )}
       </Canvas>
     </div>
   );

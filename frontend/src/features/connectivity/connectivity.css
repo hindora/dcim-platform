@@ -276,26 +276,6 @@
 .cn-layers button.is-on { color: var(--on-solid); }
 .cn-layers button.is-on:hover { filter: brightness(1.08); }
 
-/* --- top right: scope and the sheets -------------------------------------- */
-
-.cn-topright {
-  position: absolute; top: 10px; right: 10px; z-index: 6;
-  display: flex; align-items: flex-start; gap: 6px;
-}
-
-.cn-sheets { position: relative; top: 0; right: 0; }
-
-.cn-sheets { display: flex; gap: 1px; padding: 2px; }
-.cn-sheets button {
-  padding: 6px 9px; border-radius: 5px;
-  font-size: 0.6rem; font-weight: 700; letter-spacing: .07em;
-}
-.cn-sheets button:hover { background: var(--bg-inset); }
-.cn-sheets button.is-on {
-  background: var(--bg-inset); color: var(--text);
-  box-shadow: inset 0 -2px 0 var(--accent);
-}
-
 /* --- the simulation banner ------------------------------------------------ */
 
 .cn-sim {
@@ -359,83 +339,6 @@
   background: var(--bg-raised);
 }
 
-/* --- the sheet: an answer ABOUT the canvas, not instead of it -------------- */
-
-.cn-sheet {
-  position: absolute; left: 10px; right: 10px; bottom: 10px; z-index: 8;
-  display: flex; flex-direction: column;
-  /* Taller than it was. With the pager pinned to the floor, 52% of the canvas
-     left about two rows of trace between the header and the footer, which
-     reads as a broken table rather than a short one. */
-  max-height: min(64%, 520px);
-  border: 1px solid var(--border); border-radius: 10px;
-  background: var(--bg-raised);
-  box-shadow: 0 -8px 34px rgba(0, 0, 0, 0.5);
-  animation: cn-rise .16s ease-out;
-}
-[data-theme='light'] .cn-sheet { box-shadow: 0 -6px 26px rgba(31, 35, 40, 0.16); }
-
-@keyframes cn-rise { from { transform: translateY(12px); opacity: 0; } }
-@media (prefers-reduced-motion: reduce) { .cn-sheet { animation: none; } }
-
-.cn-sheet > header {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 10px 14px 8px; border-bottom: 1px solid var(--border);
-}
-.cn-sheet > header h3 {
-  margin: 0; font-size: 0.78rem; letter-spacing: .08em;
-  text-transform: uppercase; color: var(--text-muted);
-}
-.cn-sheet-body { overflow: auto; padding: 12px 6px 14px 14px; }
-
-/* A pane owns its own scrolling, so the sheet stops doing it. A sheet is
-   ~250px tall; letting the whole thing scroll buries the pager and the
-   Export button under the rows they describe. */
-.cn-sheet-body:has(.cn-pane) {
-  display: flex; flex-direction: column;
-  min-height: 0; overflow: hidden;
-}
-
-.cn-pane {
-  flex: 1; min-height: 0;
-  display: flex; flex-direction: column; gap: 10px;
-}
-
-/* The one part that scrolls. */
-.cn-pane-scroll { flex: 1; min-height: 0; overflow: auto; }
-
-/* The pager sits on the sheet's own floor rather than at the end of the rows,
-   so it reads as a fixed footer and not as one more thing in the list. */
-.cn-pane > .asset-pager {
-  flex: none; margin: 0;
-  padding-top: 8px; border-top: 1px solid var(--border);
-}
-
-/* The head row - and the audit's one-line preamble - keep their place while
-   the rows move under them. */
-.cn-pane > .conn-trace-head,
-.cn-pane > .cn-pane-note { flex: none; }
-
-/* The redundancy sheet puts the pair question ABOVE the findings table, so it
-   is a fixed block over the pane rather than the first thing you scroll past
-   to reach the pager. Capped, because the verdict prints the whole walk
-   between the two devices and that can run to several lines. */
-.cn-sheet-body:has(.cn-pane) > .conn-indep {
-  flex: none;
-  max-height: 42%;
-  overflow: auto;
-}
-
-/* A sticky header needs an opaque background, or rows scroll through it. */
-.cn-pane-scroll thead th {
-  position: sticky; top: 0; z-index: 1;
-  background: var(--bg-raised);
-}
-
-/* The sheet covers the bottom of the canvas, so the caption moves out from
-   under it rather than being hidden by it. */
-.cn-canvas:has(.cn-sheet) .cn-caption { display: none; }
-
 /* The drawer occupies the right edge down to the floor, so the caption stops
    short of it instead of running underneath - it was sliding behind the
    drawer from 1120px down, taking the conductor counts with it. */
@@ -460,28 +363,20 @@
    filtering the list, picking a shorter device, switching sheet - and a bar
    that appears and disappears shifts every line under it sideways. */
 .cn-rail-list,
-.conn-drawer-scroll,
-.conn-indep,
-.cn-sheet-body {
+.conn-drawer-scroll {
   scrollbar-gutter: stable;
   scrollbar-width: thin;
   scrollbar-color: var(--border-strong) transparent;
 }
 
 .cn-rail-list::-webkit-scrollbar,
-.conn-drawer-scroll::-webkit-scrollbar,
-.conn-indep::-webkit-scrollbar,
-.cn-sheet-body::-webkit-scrollbar { width: 10px; height: 10px; }
+.conn-drawer-scroll::-webkit-scrollbar { width: 10px; height: 10px; }
 
 .cn-rail-list::-webkit-scrollbar-track,
-.conn-drawer-scroll::-webkit-scrollbar-track,
-.conn-indep::-webkit-scrollbar-track,
-.cn-sheet-body::-webkit-scrollbar-track { background: transparent; }
+.conn-drawer-scroll::-webkit-scrollbar-track { background: transparent; }
 
 .cn-rail-list::-webkit-scrollbar-thumb,
-.conn-drawer-scroll::-webkit-scrollbar-thumb,
-.conn-indep::-webkit-scrollbar-thumb,
-.cn-sheet-body::-webkit-scrollbar-thumb {
+.conn-drawer-scroll::-webkit-scrollbar-thumb {
   background: var(--border-strong);
   border-radius: 99px;
   border: 3px solid transparent;
@@ -489,9 +384,7 @@
 }
 
 .cn-rail-list:hover::-webkit-scrollbar-thumb,
-.conn-drawer-scroll:hover::-webkit-scrollbar-thumb,
-.conn-indep:hover::-webkit-scrollbar-thumb,
-.cn-sheet-body:hover::-webkit-scrollbar-thumb { background: var(--text-faint); }
+.conn-drawer-scroll:hover::-webkit-scrollbar-thumb { background: var(--text-faint); }
 
 /* --- the room, on the site view ------------------------------------------- */
 
@@ -765,15 +658,6 @@
 @keyframes cn-slide { from { transform: translateX(14px); opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .conn-drawer { animation: none; } }
 
-/* The sheet owns the bottom of the canvas when it is up; the drawer stops
-   above it rather than sliding underneath. */
-/* The sheet owns the bottom half; the drawer takes what is left rather than
-   sliding under it. Both are capped so neither can squeeze the other into a
-   letterbox - a 110px drawer is a scrollbar with a title on it. */
-/* Tracks the sheet's own cap: raising the sheet to 64% without moving this
-   put the drawer's bottom 12% INSIDE it. */
-.cn-canvas:has(.cn-sheet) .conn-drawer { bottom: calc(64% + 22px); }
-
 /* Below this the canvas cannot host both a drawing and a 340px drawer, so the
    drawer takes the width. Against the CANVAS, not the window: the same 780px
    window is a 570px canvas with the device rail open and a 780px one without,
@@ -1005,115 +889,9 @@
 .conn-side.side-a { border-color: var(--series-1); color: var(--series-1); }
 .conn-side.side-b { border-color: var(--series-2); color: var(--series-2); }
 
-/* --- a sheet's head row (the audit) -------------------------------------- */
-
-.conn-trace-head {
-  display: flex; align-items: center; justify-content: space-between; gap: 10px;
-}
-
-
 /* The Simulate-removal button, while it is on. Survives the cull of the old
    canvas block because the drawer still uses it. */
 .conn-drawer-actions button.is-on {
   border-color: var(--warn);
   color: var(--warn);
 }
-
-/* --- redundancy audit ---------------------------------------------------- */
-
-.conn-audit-filters { display: flex; flex-wrap: wrap; gap: 6px; }
-
-.conn-audit-filters button {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 9px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--bg-inset);
-  color: var(--text-muted);
-  font: inherit;
-  font-size: 0.74rem;
-  cursor: pointer;
-}
-
-.conn-audit-filters button.is-current {
-  background: var(--bg-raised);
-  border-color: var(--accent);
-  color: var(--text);
-}
-
-/* The count in faint ink inside the cell, as the facet strips elsewhere do. */
-.conn-audit-filters button > span:last-child {
-  color: var(--text-faint);
-  font-variant-numeric: tabular-nums;
-}
-
-.conn-audit td { vertical-align: top; padding: 7px 12px; }
-.conn-audit .k { font-size: 0.68rem; color: var(--text-faint); }
-.conn-audit .conn-side { margin-right: 4px; }
-
-.conn-kind { font-weight: 600; font-size: 0.78rem; }
-.conn-kind.is-converged { color: var(--critical); }
-.conn-kind.is-same_side { color: var(--major); }
-.conn-kind.is-single_fed { color: var(--warn); }
-
-.conn-shared { list-style: none; margin: 0; padding: 0; }
-.conn-shared li { font-size: 0.78rem; }
-
-/* A button that reads as a link: the action is "show me this on the diagram",
-   which is not a navigation and must not look like one in the address bar. */
-.conn-linkish {
-  padding: 0;
-  border: none;
-  background: none;
-  color: var(--accent);
-  font: inherit;
-  cursor: pointer;
-}
-.conn-linkish:hover { text-decoration: underline; }
-
-/* --- are these independent? ---------------------------------------------- */
-
-.conn-indep {
-  margin-bottom: 16px;
-  padding-bottom: 14px;
-  border-bottom: 1px solid var(--border);
-}
-
-/* Closed it is one line; the marker is the only affordance it needs. */
-.conn-indep > summary {
-  margin: 0 0 8px;
-  font-size: 0.7rem;
-  letter-spacing: .09em;
-  text-transform: uppercase;
-  color: var(--text-faint);
-  font-weight: 700;
-  cursor: pointer;
-  list-style-position: inside;
-}
-.conn-indep > summary:hover { color: var(--text-muted); }
-.conn-indep[open] > summary { margin-bottom: 8px; }
-.conn-indep:not([open]) { margin-bottom: 10px; padding-bottom: 8px; }
-
-.conn-indep-pick { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-
-.conn-indep-pick select {
-  height: 26px;
-  max-width: 260px;
-  padding: 0 6px;
-  font-size: 0.76rem;
-  background: var(--bg-raised);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-}
-
-.conn-indep .k { font-size: 0.72rem; color: var(--text-faint); margin: 4px 0 0; }
-
-/* The verdict is a sentence, and its tone is the answer. Not a badge: "not
-   independent" needs the names of what they share, and a badge has nowhere to
-   put them. */
-.conn-verdict-ok { margin: 10px 0 0; font-size: 0.82rem; color: var(--ok); }
-.conn-verdict-no { margin: 10px 0 0; font-size: 0.82rem; color: var(--text); }
-.conn-verdict-no strong { color: var(--critical); }
