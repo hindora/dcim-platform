@@ -171,8 +171,6 @@
   --layer-power:    #f59e0b;
   --layer-cooling:  #22d3ee;
   --layer-fieldbus: #34d399;
-  --flow-cold:      #22d3ee;
-  --flow-hot:       #fb923c;
 
   --radius: 6px;
   --mono: ui-monospace, "SFMono-Regular", "Cascadia Code", Consolas, monospace;
@@ -240,6 +238,22 @@
      is BRIGHTER than its edges, and inverting that on white makes a hole. */
   --cn-vignette: #ffffff;
   --cn-rule: #e4e9ee;
+
+  /* The conductors DO change, for the same reason the chart ramp above does:
+     they are drawn ON the surface rather than filled behind text, and the
+     surface has just flipped. Measured against this canvas, the dark theme's
+     inks land at 1.6 to 2.9 to 1 - cooling worst at 1.62 - so a 1.4px cord on
+     a white ground was a rumour of a line. Same hues, same order, dark enough
+     to hold the 3:1 that a graphic you have to read is owed.
+
+     Only the STROKES. The node fills below stay as they are: they carry white
+     text and work on either ground, and a second set of those would be a
+     second identity rather than the same one in another light. */
+  --layer-prod:     #2389fe;
+  --layer-mgmt:     #ab4ed9;
+  --layer-power:    #be7803;
+  --layer-cooling:  #0998ae;
+  --layer-fieldbus: #1d996c;
   /* The node fills do not change. They are saturated and dark enough to carry
      white text on any ground, and a second set would be a second identity. */
 }
