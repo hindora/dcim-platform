@@ -143,7 +143,17 @@
    * on top of it, because which side a feeder is on decides whether a load
    * survives losing one. */
   --layer-prod:     #4a9eff;
-  --layer-mgmt:     #94a3b8;
+  /* Violet, not the grey it was. Two things were wrong with #94a3b8: it was
+     hue 215 at 20% saturation - the production blue with the colour taken
+     out, so the two planes were one hue at two saturations - and it left the
+     management strip's key showing a grey stub, which reads as "no colour"
+     rather than as a plane.
+     Every other layer's ink is the lighter sibling of that plane's own gear:
+     amber conductors over amber power gear, cyan over the teal plant, blue
+     over the blue switches. Management's gear is the OOB switch, drawn
+     #9030bf, and this is that hue at the production blue's lightness - so the
+     rule holds for all five and the hues sit 68 degrees or more apart. */
+  --layer-mgmt:     #ba72de;
   --layer-power:    #f59e0b;
   --layer-cooling:  #22d3ee;
   --layer-fieldbus: #34d399;
