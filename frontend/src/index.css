@@ -125,11 +125,25 @@
   --node-cooling-tower:  #1b6d5b;
   --node-valve:          #2d658b;
   --node-cdu:            #1a6b6c;
-  /* passive sensing and gateways */
-  --node-sensor:         #4d646e;
-  --node-energy-monitor: #486471;
-  --node-modbus-gateway: #5a5a7a;
-  --node-bacnet-router:  #4a5a7c;
+  /* fieldbus - the instruments, and what carries them
+   *
+   * These were slate: 15-25% saturation at hues 198-240, which is the cooling
+   * and network band. Every other plane's subject sits at 60-83% in its own
+   * hue - a PDU is amber on the power one-line, a chiller teal on the cooling
+   * one - and these four were the exception, drawn as furniture on the one
+   * plane where they ARE the subject. A fieldbus diagram is 17 sensors and
+   * two gateways; it was rendering them quieter than the PDUs they hang off.
+   *
+   * Now the green of their own conductor. The instrument reads darker than
+   * the gateway that carries it, which is the one distinction worth keeping
+   * inside the family - on every other plane these are still the smallest
+   * boxes on the drawing, so the family has no need to be five colours. */
+  --node-sensor:         #2c765b;
+  --node-energy-monitor: #27714e;
+  --node-modbus-gateway: #478a77;
+  --node-bacnet-router:  #418577;
+  /* A device whose type this palette has no entry for. Neutral on purpose:
+     an unknown thing must not borrow a plane's colour. */
   --node-default:        #50646c;
 
   /* Node chrome: the parts that are not the fill. */
