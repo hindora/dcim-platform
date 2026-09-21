@@ -156,6 +156,7 @@ const PATH = {
   rooms: 'M3 4h8v6H3zM13 4h8v6h-8zM3 14h8v6H3zM13 14h8v6h-8z',
   reset: 'M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8M3 3v5h5'
        + 'M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16M16 16h5v5',
+  filter: 'M4 5h16l-6.2 7.3V19l-3.6-2v-4.7z',
 };
 
 /** The zoom, printed. A canvas that can be panned off its own content has to
@@ -171,7 +172,8 @@ function ZoomLevel({ onFit }: { onFit: () => void }) {
 }
 
 function Toolbar({ onFit, onReset, showMap, onToggleMap, canMap,
-                  showRooms, onToggleRooms, canRooms }: {
+                  showRooms, onToggleRooms, canRooms,
+                  showFilters, onToggleFilters }: {
   onFit: () => void;
   onReset: () => void;
   showMap: boolean;
@@ -181,10 +183,21 @@ function Toolbar({ onFit, onReset, showMap, onToggleMap, canMap,
   onToggleRooms: () => void;
   /** Only the site view has rooms to show, so only it gets the button. */
   canRooms: boolean;
+  showFilters: boolean;
+  onToggleFilters: () => void;
 }) {
   const { zoomIn, zoomOut } = useReactFlow();
   return (
     <div className="cn-float cn-toolbar">
+      {/* First, and on its own: everything below it moves the view, and this
+          one changes what there is to look at. */}
+      <button type="button" aria-pressed={showFilters}
+              title={showFilters ? 'Hide what to draw' : 'What to draw'}
+              className={showFilters ? 'is-on' : undefined}
+              onClick={onToggleFilters}>
+        <Icon d={PATH.filter} />
+      </button>
+      <span className="cn-sep" />
       <button type="button" title="Zoom out" onClick={() => zoomOut({ duration: 180 })}>
         <Icon d={PATH.zoomOut} />
       </button>
@@ -220,7 +233,7 @@ function Toolbar({ onFit, onReset, showMap, onToggleMap, canMap,
 }
 
 function Flow({ placement, edges, layer, layoutKey, selected, onSelect, impact,
-                focusNonce, children }: {
+                focusNonce, showFilters, onToggleFilters, children }: {
   placement: Placement;
   edges: CollapsedEdge[];
   layer: string;
@@ -235,6 +248,11 @@ function Flow({ placement, edges, layer, layoutKey, selected, onSelect, impact,
    *  finding in the audit. The canvas then brings it into view, because a
    *  selection you cannot see is not a selection. */
   focusNonce: number;
+  /** The scope panel behind the toolbar's funnel. The state is the page's
+   *  rather than the canvas's: the panel's own controls belong to the page,
+   *  and only the button that opens it is in here. */
+  showFilters: boolean;
+  onToggleFilters: () => void;
   /** The floating chrome. Rendered inside the canvas so it sits over the
    *  graph, and after ReactFlow so it stacks above without a z-index war. */
   children?: React.ReactNode;
@@ -430,7 +448,8 @@ function Flow({ placement, edges, layer, layoutKey, selected, onSelect, impact,
                showMap={showMap} canMap={canMap}
                onToggleMap={() => setShowMap((v) => !v)}
                showRooms={showRooms} canRooms={Boolean(placement.rooms?.length)}
-               onToggleRooms={onToggleRooms} />
+               onToggleRooms={onToggleRooms}
+               showFilters={showFilters} onToggleFilters={onToggleFilters} />
 
       {children}
     </div>

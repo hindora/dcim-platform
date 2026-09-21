@@ -7,6 +7,7 @@ import { downloadCsv, stampedName } from '../../lib/csv';
 import { projectImpact, type ImpactView } from './impact';
 import { Canvas } from './Canvas';
 import { Drawer, type DrawerTab } from './Drawer';
+import { Filters } from './Filters';
 import { Legend } from './Legend';
 import { SidePanel } from './SidePanel';
 import { collapseEdges, layout, layoutRooms, structureKey } from './layout';
@@ -47,6 +48,10 @@ const LOOP = new Set(['cooling']);
 export function Connectivity() {
   const [layer, setLayer] = useState<LayerKey>('power');
   const [railOpen, setRailOpen] = useState(true);
+  /** The scope panel, behind the toolbar's funnel. Shut by default: the page
+   *  opens on a scope somebody already chose, and a panel over the diagram on
+   *  arrival hides the thing they came for. */
+  const [filtersOpen, setFiltersOpen] = useState(false);
   /** Bumped only when a selection comes from OFF the canvas, so the viewport
    *  moves for the device list and not for a node somebody just clicked. */
   const [focusNonce, setFocusNonce] = useState(0);
@@ -216,11 +221,6 @@ export function Connectivity() {
   return (
     <div className="conn-app">
       <SidePanel
-        sites={sites} siteId={selectedSite} onSite={reselect(setSiteId)}
-        rooms={siteRooms}
-        roomId={selectedRoom} onRoom={reselect(setRoomId)}
-        depth={depth} onDepth={setDepth}
-        rollup={rollup} onRollup={reselect(setRollup)}
         nodes={graph.data?.nodes ?? []}
         selected={selected?.id ?? null}
         onSelect={reveal}
@@ -231,7 +231,20 @@ export function Connectivity() {
         placement={placement} edges={edges} layer={layer} layoutKey={key}
         selected={selected?.id ?? null} onSelect={setSelected} impact={impact}
         focusNonce={focusNonce}
+        showFilters={filtersOpen}
+        onToggleFilters={() => setFiltersOpen((v) => !v)}
       >
+        {/* ---- top left, under the toolbar: what the canvas is drawing ---- */}
+        {filtersOpen && (
+          <Filters
+            sites={sites} siteId={selectedSite} onSite={reselect(setSiteId)}
+            rooms={siteRooms}
+            roomId={selectedRoom} onRoom={reselect(setRoomId)}
+            depth={depth} onDepth={setDepth}
+            rollup={rollup} onRollup={reselect(setRollup)}
+            onClose={() => setFiltersOpen(false)} />
+        )}
+
         {/* ---- top centre: the layer, which is what the canvas IS --------- */}
         <div className="cn-float cn-layers" role="group" aria-label="Layer">
           {LAYERS.map((l) => (

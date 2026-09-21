@@ -1,33 +1,21 @@
 import { useMemo, useState } from 'react';
-import type { RoomSummary, TopologyNode } from '../../api/client';
+import type { TopologyNode } from '../../api/client';
 import { fillOf } from './DeviceNode';
 
-/** The left rail: what you are looking at, and everything in it.
+/** The left rail: everything on the canvas, one row each.
  *
- *  The scope controls live here rather than in a popover over the canvas,
- *  because scope and contents are one question. "Which room, how far out, and
- *  what is in it" was split across a button in one corner and a diagram in the
- *  middle, so changing the room meant opening a popover, choosing, closing it,
- *  and then hunting the canvas for what had appeared.
+ *  A list, and only a list. The scope - site, room, how far out, grouping -
+ *  used to head it, which made the rail a form with a list underneath and cost
+ *  the list a third of its height before the first device. Those four rebuild
+ *  the GRAPH rather than narrow this list, so they sit behind the toolbar's
+ *  funnel now, on the canvas they change. What is left here narrows the rows:
+ *  the search, the type, the order.
  *
  *  The list is the same graph the canvas is drawing - not a device search.
  *  Every row is a box on screen, which is what makes it useful for finding one
  *  in a hall that has been panned off the edge, and what stops it becoming a
  *  second, subtly different inventory.
  */
-
-const DEPTHS = [
-  { value: 0, label: 'Only this room' },
-  { value: 1, label: 'Also what feeds it' },
-  { value: 2, label: 'Two hops out' },
-];
-
-// Short labels: these two sit in a half-width select in the rail, and a label
-// the control cuts off mid-word is worse than a terse one.
-const ROLLUPS = [
-  { value: 'rack', label: 'Group by rack' },
-  { value: 'none', label: 'Every device' },
-] as const;
 
 // Three orders, and the default is the one the canvas is read in: a hall's
 // equipment is scanned looking for a KIND first - "where are the PDUs" - and
@@ -57,20 +45,8 @@ function statusColor(status: string, severity: string): string {
 }
 
 export function SidePanel({
-  sites, siteId, onSite, rooms, roomId, onRoom,
-  depth, onDepth, rollup, onRollup,
   nodes, selected, onSelect, open, onToggle, loading,
 }: {
-  sites: { id: string; code: string }[];
-  siteId: string;
-  onSite: (id: string) => void;
-  rooms: RoomSummary[];
-  roomId: string;
-  onRoom: (id: string) => void;
-  depth: number;
-  onDepth: (d: number) => void;
-  rollup: 'none' | 'rack';
-  onRollup: (r: 'none' | 'rack') => void;
   nodes: TopologyNode[];
   selected: string | null;
   onSelect: (node: TopologyNode) => void;
@@ -137,49 +113,7 @@ export function SidePanel({
   }
 
   return (
-    <aside className="cn-rail" aria-label="Scope and devices">
-      <div className="cn-rail-scope">
-        <label>
-          Site
-          <select value={siteId} onChange={(e) => onSite(e.target.value)}>
-            {sites.map((s) => (
-              <option key={s.id} value={s.id}>{s.code}</option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Room
-          {/* Blank is a real choice, and the first one: a site is a thing to
-              look at, not a folder you have to open. Picking no room draws
-              the whole site. */}
-          <select value={roomId} onChange={(e) => onRoom(e.target.value)}>
-            <option value="">Every room in the site</option>
-            {rooms.map((r) => (
-              <option key={r.id} value={r.id}>{r.name}</option>
-            ))}
-          </select>
-        </label>
-        <div className="cn-rail-pair">
-          <label>
-            How far out
-            <select value={depth} onChange={(e) => onDepth(Number(e.target.value))}>
-              {DEPTHS.map((d) => (
-                <option key={d.value} value={d.value}>{d.label}</option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Grouping
-            <select value={rollup}
-                    onChange={(e) => onRollup(e.target.value as 'none' | 'rack')}>
-              {ROLLUPS.map((r) => (
-                <option key={r.value} value={r.value}>{r.label}</option>
-              ))}
-            </select>
-          </label>
-        </div>
-      </div>
-
+    <aside className="cn-rail" aria-label="Devices on the canvas">
       <div className="cn-rail-head">
         <input value={q} onChange={(e) => setQ(e.target.value)}
                placeholder="Find a device" aria-label="Find a device" />

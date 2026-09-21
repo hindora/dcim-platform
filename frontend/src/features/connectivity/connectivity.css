@@ -43,23 +43,6 @@
   background: var(--bg-raised);
 }
 
-.cn-rail-scope {
-  display: flex; flex-direction: column; gap: 7px;
-  padding: 9px 10px;
-  border-bottom: 1px solid var(--border);
-}
-
-/* Depth and grouping share a row: they are both "how much", and stacking
-   three full-width selects makes the scope look like a form to fill in
-   rather than a state to glance at. */
-.cn-rail-pair { display: flex; gap: 6px; }
-.cn-rail-pair label { flex: 1; min-width: 0; }
-
-.cn-rail label {
-  display: flex; flex-direction: column; gap: 3px;
-  font-size: 0.58rem; letter-spacing: .07em; text-transform: uppercase;
-  color: var(--text-faint);
-}
 .cn-rail select {
   height: 25px; padding: 0 4px; font-size: 0.7rem; min-width: 0;
   background: var(--bg-inset); color: var(--text);
@@ -272,6 +255,61 @@
   color: var(--text-muted);
 }
 .cn-zoom:hover { background: var(--bg-inset); }
+
+/* --- top left, under the toolbar: what to draw ---------------------------- */
+
+/* Beside the toolbar rather than under it: the funnel is the third button
+   down a 7-button column, and a panel hung below the whole column would open
+   140px away from the thing that was clicked. Level with the button, one
+   gutter to its right. */
+.cn-filters {
+  top: 10px; left: 44px;
+  width: 232px;
+  display: flex; flex-direction: column;
+  animation: cn-slide .14s ease-out;
+}
+
+@keyframes cn-slide { from { transform: translateX(-6px); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .cn-filters { animation: none; } }
+
+.cn-filters > header {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; padding: 7px 8px 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.cn-filters > header h3 {
+  margin: 0; font-size: 0.6rem; letter-spacing: .09em;
+  text-transform: uppercase; color: var(--text-muted);
+}
+.cn-filters > header button {
+  flex: none; width: 20px; height: 20px; border-radius: 4px;
+  font-size: 0.72rem; line-height: 1;
+}
+.cn-filters > header button:hover { background: var(--bg-inset); }
+
+.cn-filters-body {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 10px;
+}
+
+.cn-filters label {
+  display: flex; flex-direction: column; gap: 3px;
+  font-size: 0.58rem; letter-spacing: .07em; text-transform: uppercase;
+  color: var(--text-faint);
+}
+.cn-filters select {
+  height: 26px; padding: 0 5px; font-size: 0.72rem; min-width: 0;
+  background: var(--bg-inset); color: var(--text);
+  border: 1px solid var(--border); border-radius: 5px;
+  font-family: inherit;
+}
+
+/* Under the panel the canvas is 232px narrower on the left. The caption sits
+   bottom-left and is not in its way; the layer strip is centred and is, on a
+   narrow canvas - it gives ground rather than sliding under. */
+@container canvas (max-width: 780px) {
+  .cn-canvas:has(.cn-filters) .cn-layers { left: auto; right: 10px; transform: none; }
+}
 
 /* --- top centre: the layer ------------------------------------------------ */
 
