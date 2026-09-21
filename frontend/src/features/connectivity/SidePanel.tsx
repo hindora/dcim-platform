@@ -29,6 +29,21 @@ const ROLLUPS = [
   { value: 'none', label: 'Every device' },
 ] as const;
 
+// Three orders, and the default is the one the canvas is read in: a hall's
+// equipment is scanned looking for a KIND first - "where are the PDUs" - and
+// an alphabetical mix of every type answers that worst.
+const SORTS = [
+  { value: 'type', label: 'Type' },
+  { value: 'name', label: 'Name' },
+  { value: 'rack', label: 'Rack' },
+] as const;
+
+type Sort = typeof SORTS[number]['value'];
+
+/** `oob_switch` is not a word. The list, the filter and the chip all say it
+ *  the same way or they read as three different facts. */
+const typeLabel = (t: string) => t.replace(/_/g, ' ').toUpperCase();
+
 function statusColor(status: string, severity: string): string {
   if (status === 'OFFLINE') return 'var(--critical)';
   if (status === 'UNKNOWN') return 'var(--unknown)';
@@ -64,20 +79,49 @@ export function SidePanel({
   loading: boolean;
 }) {
   const [q, setQ] = useState('');
+  const [type, setType] = useState('');
+  const [sort, setSort] = useState<Sort>('type');
+  const [desc, setDesc] = useState(false);
+
+  /** What is actually on the canvas, with counts. Built from the nodes rather
+   *  than from a fixed list of every type the estate knows, because a filter
+   *  offering CHILLER on a network layer is offering nothing. */
+  const types = useMemo(() => {
+    const by = new Map<string, number>();
+    for (const n of nodes) by.set(n.device_type, (by.get(n.device_type) ?? 0) + 1);
+    return [...by.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  }, [nodes]);
+
+  // Changing layer or room can take the filtered type off the canvas. Read as
+  // "all" when that happens rather than showing an empty list with a filter
+  // naming something that is no longer there.
+  const liveType = types.some(([t]) => t === type) ? type : '';
 
   const rows = useMemo(() => {
     const needle = q.trim().toLowerCase();
-    const matched = needle
-      ? nodes.filter((n) => n.name.toLowerCase().includes(needle)
+    const matched = nodes.filter((n) =>
+      (!liveType || n.device_type === liveType)
+      && (!needle
+          || n.name.toLowerCase().includes(needle)
           || n.device_type.toLowerCase().includes(needle)
-          || (n.location.rack_name ?? '').toLowerCase().includes(needle))
-      : nodes;
-    // Grouped by type, then by name: a list of a hall's equipment is read
-    // looking for a KIND first - "where are the PDUs" - and an alphabetical
-    // mix of every type answers that worst.
-    return matched.slice().sort((a, b) =>
-      a.device_type.localeCompare(b.device_type) || a.name.localeCompare(b.name));
-  }, [nodes, q]);
+          || (n.location.rack_name ?? '').toLowerCase().includes(needle)));
+
+    // Racks last when there is no rack: a facility machine has no elevation,
+    // and sorting it under the empty string puts the plant above every rack.
+    const byRack = (n: TopologyNode) => n.location.rack_name ?? '￿';
+    const cmp = sort === 'name'
+      ? (a: TopologyNode, b: TopologyNode) => a.name.localeCompare(b.name)
+      : sort === 'rack'
+        ? (a: TopologyNode, b: TopologyNode) =>
+            byRack(a).localeCompare(byRack(b)) || a.name.localeCompare(b.name)
+        : (a: TopologyNode, b: TopologyNode) =>
+            a.device_type.localeCompare(b.device_type) || a.name.localeCompare(b.name);
+
+    const out = matched.slice().sort(cmp);
+    return desc ? out.reverse() : out;
+  }, [nodes, q, liveType, sort, desc]);
+
+  const sifted = Boolean(q.trim()) || Boolean(liveType);
 
   if (!open) {
     return (
@@ -148,9 +192,38 @@ export function SidePanel({
         </button>
       </div>
 
+      {/* Type and order on one line under the search. A canvas of 155 boxes is
+          read by kind - "just the CDUs" - long before it is read by name, and
+          the search box cannot answer that without knowing the exact word. */}
+      <div className="cn-rail-sift">
+        <select value={liveType} onChange={(e) => setType(e.target.value)}
+                aria-label="Device type">
+          <option value="">All types</option>
+          {types.map(([t, c]) => (
+            <option key={t} value={t}>{typeLabel(t)} ({c})</option>
+          ))}
+        </select>
+        <select value={sort} onChange={(e) => setSort(e.target.value as Sort)}
+                aria-label="Sort by">
+          {SORTS.map((o) => (
+            <option key={o.value} value={o.value}>{o.label}</option>
+          ))}
+        </select>
+        <button type="button" className="cn-rail-dir"
+                onClick={() => setDesc((d) => !d)}
+                title={desc ? 'Descending' : 'Ascending'}
+                aria-label={desc ? 'Sort descending' : 'Sort ascending'}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
+               stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"
+               strokeLinejoin="round" aria-hidden>
+            <path d={desc ? 'M6 9l6 6 6-6' : 'M6 15l6-6 6 6'} />
+          </svg>
+        </button>
+      </div>
+
       <p className="cn-rail-count">
         {loading ? 'Reading the graph…'
-          : q ? `${rows.length} of ${nodes.length}`
+          : sifted ? `${rows.length} of ${nodes.length}`
           : `${nodes.length} on the canvas`}
       </p>
 
@@ -165,11 +238,18 @@ export function SidePanel({
               <span className="cn-rail-text">
                 <span className="cn-rail-name">{n.name}</span>
                 <span className="cn-rail-sub">
-                  {n.rolled_up > 0
-                    ? `${n.rolled_up} × ${n.device_type.replace(/_/g, ' ')}`
-                    : n.device_type.replace(/_/g, ' ')}
+                  {/* The type in the type's own colour, as the canvas fills
+                      the box with it - so a row and its node are the same
+                      fact twice, not two. */}
+                  <span className="cn-rail-type"
+                        style={{ color: fillOf(n.device_type),
+                                 borderColor: fillOf(n.device_type) }}>
+                    {n.rolled_up > 0
+                      ? `${n.rolled_up} × ${typeLabel(n.device_type)}`
+                      : typeLabel(n.device_type)}
+                  </span>
                   {n.location.rack_name && n.rolled_up === 0
-                    && ` · ${n.location.rack_name}`}
+                    && <span className="cn-rail-where">{n.location.rack_name}</span>}
                 </span>
               </span>
               <span className="cn-rail-dot"
@@ -180,7 +260,7 @@ export function SidePanel({
         ))}
         {!loading && !rows.length && (
           <li className="cn-rail-empty">
-            {q ? 'Nothing here matches that.' : 'Nothing on this layer.'}
+            {sifted ? 'Nothing here matches that.' : 'Nothing on this layer.'}
           </li>
         )}
       </ul>

@@ -98,6 +98,26 @@
   font-size: 0.6rem; font-variant-numeric: tabular-nums;
 }
 
+/* Type and order, under the search. Two selects and the direction, sized so
+   nothing here truncates at 250px - a filter whose own label is cut off is
+   worse than no filter. */
+.cn-rail-sift {
+  display: flex; align-items: center; gap: 5px;
+  padding: 0 10px 7px;
+}
+.cn-rail-sift select:first-child { flex: 1.35; }
+.cn-rail-sift select:nth-child(2) { flex: 1; }
+
+.cn-rail-dir {
+  flex: none;
+  display: flex; align-items: center; justify-content: center;
+  width: 25px; height: 25px; padding: 0;
+  border: 1px solid var(--border); border-radius: 5px;
+  background: var(--bg-inset); color: var(--text-muted);
+  cursor: pointer;
+}
+.cn-rail-dir:hover { color: var(--text); border-color: var(--border-strong); }
+
 .cn-rail-count {
   margin: 0; padding: 0 10px 6px;
   font-size: 0.62rem; color: var(--text-faint);
@@ -131,9 +151,25 @@
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .cn-rail-sub {
+  display: flex; align-items: center; gap: 5px;
+  margin-top: 1px;
   font-size: 0.6rem; color: var(--text-faint);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; overflow: hidden;
 }
+/* The type as a pill in its own colour. Outlined rather than filled: the
+   left bar is already a solid block of that colour and two of them on one row
+   reads as a status, not as a kind. */
+.cn-rail-type {
+  flex: none;
+  padding: 0 4px;
+  border: 1px solid currentColor; border-radius: 3px;
+  font-size: 0.53rem; font-weight: 700; letter-spacing: .04em;
+  line-height: 1.5;
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis;
+}
+
+.cn-rail-where { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+
 .cn-rail-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; }
 
 .cn-rail-empty {
