@@ -24,20 +24,24 @@ import { fillOf } from './DeviceNode';
 type SortKey = 'name' | 'type' | 'vendor' | 'mgmt' | 'prod' | 'iface'
   | 'poll' | 'where';
 
-/** The columns, in the simulator's order. `w` is the fixed track width: the
- *  table is `table-layout: fixed`, so a long vendor name truncates in its own
- *  cell instead of dragging the rest of the row sideways. */
+/** The columns, in the simulator's order and at the simulator's track widths -
+ *  the same eight tracks, so the same three are in view before anybody
+ *  scrolls. `table-layout: fixed`, so a long vendor name truncates in its own
+ *  cell instead of dragging the rest of the row sideways.
+ *
+ *  Polled is the one that is wider than its counterpart: the simulator's
+ *  column holds a port and this one holds `modbus:502 snmp:161`. */
 const COLS: {
   key: SortKey; label: string; w: number; sortable: boolean; num?: boolean;
 }[] = [
-  { key: 'name',   label: 'Name',     w: 152, sortable: true },
-  { key: 'type',   label: 'Type',     w: 88,  sortable: true },
-  { key: 'vendor', label: 'Vendor',   w: 108, sortable: true },
-  { key: 'mgmt',   label: 'Mgmt IP',  w: 96,  sortable: true },
-  { key: 'prod',   label: 'Prod IP',  w: 96,  sortable: true },
+  { key: 'name',   label: 'Name',     w: 110, sortable: true },
+  { key: 'type',   label: 'Type',     w: 70,  sortable: true },
+  { key: 'vendor', label: 'Vendor',   w: 60,  sortable: true },
+  { key: 'mgmt',   label: 'Mgmt IP',  w: 95,  sortable: true },
+  { key: 'prod',   label: 'Prod IP',  w: 95,  sortable: true },
   { key: 'iface',  label: 'Iface',    w: 44,  sortable: true, num: true },
-  { key: 'poll',   label: 'Polled',   w: 104, sortable: true },
-  { key: 'where',  label: 'Location', w: 150, sortable: true },
+  { key: 'poll',   label: 'Polled',   w: 110, sortable: true },
+  { key: 'where',  label: 'Location', w: 180, sortable: true },
 ];
 
 
