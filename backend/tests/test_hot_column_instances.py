@@ -13,15 +13,14 @@ read `device_state.power_w` rather than the samples behind it.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
 from app.ingest import writer
 from app.ingest.worker import IngestWorker
 
-
-TS = datetime(2026, 9, 21, 10, 0, tzinfo=timezone.utc)
+TS = datetime(2026, 9, 21, 10, 0, tzinfo=UTC)
 DEV = "11111111-1111-1111-1111-111111111111"
 
 
