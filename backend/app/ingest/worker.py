@@ -867,15 +867,16 @@ class IngestWorker:
 
     async def _handle_endpoint_state(self, payloads: list[dict]) -> None:
         comm_actions = []
-        async with unit_of_work() as session:
-            # Sorted, for the reason the writer's batches are sorted: two
-            # workers walking the same endpoints in arrival order take each
-            # other's row locks in whatever order the messages happened to
-            # land in.
-            for raw in sorted(payloads, key=lambda r: str(r.get("endpoint_id") or "")):
-                st = EndpointState.from_dict(raw)
-                status = _COMM_STATUS.get(st.status, "UNKNOWN")
-                await writer.apply_endpoint_state(session, {
+        # Built first, written in three passes below. Two workers share these
+        # rows, so the order they take locks in has to be a property of the
+        # data rather than of whichever order the messages happened to land
+        # in - otherwise each holds what the other is waiting for and
+        # Postgres kills one of the ticks.
+        rows = []
+        for raw in payloads:
+            st = EndpointState.from_dict(raw)
+            status = _COMM_STATUS.get(st.status, "UNKNOWN")
+            rows.append((st, status, {
                     "endpoint_id": st.endpoint_id,
                     "status": status,
                     "last_success": ts_to_dt(st.last_success),
@@ -894,13 +895,36 @@ class IngestWorker:
                     "timeout_count": st.timeout_count,
                     "auth_fail_count": st.auth_fail_count,
                     "is_refresh": st.is_refresh,
-                })
+            }))
 
-                # A refresh means the status did NOT change. Broadcasting it
-                # would push a websocket update per endpoint per minute to
-                # every connected browser, and re-running the alarm engine on
-                # an unchanged status is at best wasted work and at worst a
-                # re-notification of an alarm the operator already saw.
+        async with unit_of_work() as session:
+            # Pass 1: endpoint_state, keyed and ordered by endpoint id.
+            for _st, _status, s in sorted(rows, key=lambda r: r[2]["endpoint_id"]):
+                await writer.upsert_endpoint_state(session, s)
+
+            # Pass 2: device_state, ordered by DEVICE id - the key of the row
+            # actually locked. Endpoint order would not order these: a device
+            # has several endpoints, so the two orders are unrelated.
+            #
+            # Every endpoint_state lock is now held before the first
+            # device_state lock, which is the order _handle_telemetry uses.
+            # Interleaving them per endpoint is what no amount of sorting
+            # could have fixed.
+            for _st, _status, s in sorted(
+                    rows, key=lambda r: (str(r[0].device_id or ""),
+                                         r[2]["endpoint_id"])):
+                await writer.apply_device_status(session, s)
+
+            # Pass 3: alarms, once both state tables are settled.
+            #
+            # A refresh means the status did NOT change. Broadcasting it would
+            # push a websocket update per endpoint per minute to every
+            # connected browser, and re-running the alarm engine on an
+            # unchanged status is at best wasted work and at worst a
+            # re-notification of an alarm the operator already saw.
+            for st, status, _s in sorted(
+                    rows, key=lambda r: (str(r[0].device_id or ""),
+                                         r[2]["endpoint_id"])):
                 if st.is_refresh:
                     continue
 

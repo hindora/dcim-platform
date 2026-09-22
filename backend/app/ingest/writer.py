@@ -242,8 +242,21 @@ _TOUCH_DEVICE_SEEN = text("""
 """)
 
 
-async def apply_endpoint_state(session: AsyncSession, s: dict) -> None:
-    """Persist communication state and, on a real transition, re-derive device status.
+async def upsert_endpoint_state(session: AsyncSession, s: dict) -> None:
+    """The endpoint_state half, on its own.
+
+    Split from the device_state half so a batch can take EVERY endpoint_state
+    lock before it takes any device_state lock. Doing both per endpoint
+    interleaves the two tables - es, ds, es, ds - and an interleave cannot be
+    fixed by sorting: the telemetry path takes all of one table then all of
+    the other, so it need only hold a device_state row and want an
+    endpoint_state row that this path already holds, and the two deadlock.
+    """
+    await session.execute(_UPSERT_ENDPOINT_STATE, s)
+
+
+async def apply_device_status(session: AsyncSession, s: dict) -> None:
+    """Re-derive device status from its endpoints, or just touch last_seen.
 
     Device status is the best of its endpoints: a server whose BMC is
     unreachable but whose OS agent answers is DEGRADED, not OFFLINE. Reporting
@@ -254,9 +267,13 @@ async def apply_endpoint_state(session: AsyncSession, s: dict) -> None:
     device, and running it for all 1386 endpoints once a minute would be
     thousands of pointless aggregates an hour to recompute a status that by
     definition did not change.
-    """
-    await session.execute(_UPSERT_ENDPOINT_STATE, s)
 
+    Callers must walk a batch of these in device_id order. The row locked is
+    a device_state row, reached THROUGH the endpoint by the subquery below,
+    so ordering by endpoint id does not order the locks: a device has several
+    endpoints (a server has a BMC and an OS agent) and endpoint order says
+    nothing about device order.
+    """
     if s.get("is_refresh"):
         await session.execute(_TOUCH_DEVICE_SEEN,
                               {"endpoint_id": s["endpoint_id"],

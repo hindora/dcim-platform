@@ -99,12 +99,50 @@ def test_telemetry_locks_endpoint_state_before_device_state():
         "deadlock under two workers")
 
 
-def test_endpoint_state_payloads_are_processed_in_key_order():
+def test_endpoint_state_finishes_one_table_before_starting_the_other():
+    """The inversion sorting cannot fix.
+
+    Writing both tables per endpoint interleaves them - es, ds, es, ds - so
+    this handler can hold a device_state row while waiting for an
+    endpoint_state row that the telemetry handler already holds, and the
+    telemetry handler is waiting for that device_state row. Neither batch is
+    out of order; the interleave alone is enough.
+    """
     import inspect
 
     from app.ingest.worker import IngestWorker
 
     body = inspect.getsource(IngestWorker._handle_endpoint_state)
-    assert "sorted(payloads" in body, (
-        "endpoint payloads are walked in arrival order, so two workers can "
-        "take the same rows in opposite orders")
+    first = body.index("upsert_endpoint_state(session")
+    second = body.index("apply_device_status(session")
+    assert first < second, (
+        "device_state is written before endpoint_state is finished, which "
+        "interleaves the two tables against _handle_telemetry's order")
+    # And the two must be separate passes, not two calls in one loop.
+    assert body.count("for ") >= 3, "the passes have been merged back together"
+
+
+def test_the_device_pass_is_ordered_by_device_not_endpoint():
+    """A device has several endpoints - a server has a BMC and an OS agent -
+    so endpoint order says nothing about the order of the device_state rows
+    those endpoints resolve to, and device_state is the row being locked."""
+    import inspect
+
+    from app.ingest.worker import IngestWorker
+
+    body = inspect.getsource(IngestWorker._handle_endpoint_state)
+    tail = body[body.index("apply_device_status(session") - 400:
+                body.index("apply_device_status(session")]
+    assert "device_id" in tail, (
+        "the device_state pass is not ordered by device id")
+
+
+def test_the_endpoint_parameters_carry_only_what_the_statement_binds():
+    """The sort key comes off the message, not the parameter dict, so the
+    dict handed to the endpoint_state upsert gains no stray column."""
+    import inspect
+
+    from app.ingest.worker import IngestWorker
+
+    body = inspect.getsource(IngestWorker._handle_endpoint_state)
+    assert '"device_id": st.device_id' not in body
