@@ -220,6 +220,16 @@ async def raise_alarm(session) -> str:
 
 
 async def cleanup(session) -> None:
+    """Leave the database exactly as it was found - INCLUDING the estate.
+
+    Not merely tidy. In CI this test shares its database with the
+    `alembic downgrade base` gate that runs immediately after it, and the
+    seed-data migration's downgrade DELETES the `device_type` rows. A device
+    left behind still references one, so the downgrade fails on a foreign key
+    and the migration gate goes red over a test that passed.
+
+    Ordered child-first for the same reason.
+    """
     from sqlalchemy import text
     for sql in (
         "DELETE FROM integration_outbox",
@@ -228,8 +238,18 @@ async def cleanup(session) -> None:
         "DELETE FROM alarm_history WHERE device_id = :d",
         "DELETE FROM alarm WHERE device_id = :d",
         "DELETE FROM integration",
+        "DELETE FROM device WHERE id = :d",
+        "DELETE FROM room WHERE id = :room",
+        "DELETE FROM datacenter WHERE id = :dc",
     ):
-        await session.execute(text(sql), {"d": DEVICE} if ":d" in sql else {})
+        params = {}
+        if ":d" in sql:
+            params["d"] = DEVICE
+        if ":room" in sql:
+            params["room"] = ROOM
+        if ":dc" in sql:
+            params["dc"] = DC
+        await session.execute(text(sql), params)
 
 
 # ------------------------------------------------------------- the loop
