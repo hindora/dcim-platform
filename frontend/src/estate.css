@@ -675,4 +675,18 @@ button.facet.on {
 .modal-scrim.over-sheet { z-index: 70; }
 .modal.alarm-modal { width: min(680px, 100%); }
 .sub-table tr.row-open { cursor: pointer; }
-.sub-table tr.row-open:hover > td { background: var(--bg-inset); }
+/* --bg-raised, not --bg-inset. The cell these rows sit in IS --bg-inset, so
+   the first attempt painted the hovered row exactly the colour it already
+   was: the rule matched, the style applied, and nothing whatsoever changed
+   on screen. Raised reads as lifted against that surface, and matches the
+   convention every other table in the app already uses. */
+.sub-table tr.row-open:hover > td,
+.sub-table tr.row-open:focus-visible > td { background: var(--bg-raised); }
+/* The row takes focus now, so it has to show it - and a focus ring on a <tr>
+   is clipped by the cells, which is why the marker is on the first one. */
+.sub-table tr.row-open:focus-visible {
+  outline: none;
+}
+.sub-table tr.row-open:focus-visible > td:first-child {
+  box-shadow: inset 2px 0 0 0 var(--accent);
+}
