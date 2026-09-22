@@ -146,6 +146,12 @@ async def upsert_device_state(session: AsyncSession, updates: list[HotUpdate]) -
 
     The ``WHERE ... <= EXCLUDED.updated_at`` guard is what stops a late
     redelivery from overwriting newer state with older values.
+
+    Sorted by ``device_id``, and that is not cosmetic. Two ingest workers reach
+    this with overlapping device sets in whatever order their messages arrived,
+    and an unordered batch lets each take a row lock the other is waiting on -
+    a genuine deadlock, which Postgres resolves by killing one tick outright.
+    A total order over the key makes the inversion impossible to construct.
     """
     if not updates:
         return 0
@@ -173,7 +179,8 @@ async def upsert_device_state(session: AsyncSession, updates: list[HotUpdate]) -
           "metrics": json.dumps(u.metrics),
           "power_w": u.power_w, "inlet_temp_c": u.inlet_temp_c,
           "cpu_util_pct": u.cpu_util_pct, "humidity_pct": u.humidity_pct,
-          "now": now} for u in updates],
+          "now": now}
+         for u in sorted(updates, key=lambda u: u.device_id)],
     )
     return len(updates)
 
@@ -296,10 +303,14 @@ async def touch_endpoint_telemetry(session: AsyncSession,
 
     GREATEST, because batches can arrive slightly out of order and the newest
     observation must not be walked backwards by a straggler.
+
+    Sorted by endpoint id for the reason ``upsert_device_state`` is sorted by
+    device id: concurrent workers updating the same rows in different orders
+    deadlock.
     """
     if not seen:
         return 0
-    rows = [{"id": eid, "ts": ts} for eid, ts in seen.items()]
+    rows = [{"id": eid, "ts": ts} for eid, ts in sorted(seen.items())]
     await session.execute(text("""
         UPDATE endpoint_state
            SET last_telemetry_at = GREATEST(

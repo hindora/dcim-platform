@@ -694,11 +694,19 @@ class IngestWorker:
             bool_written = await changelog.admit(self.redis, bool_rows)
             await writer.insert_bools(session, bool_written)
             await writer.insert_texts(session, text_rows)
-            await writer.upsert_device_state(session, list(hot.values()))
             # Which endpoints actually produced something, and when. Staleness
             # detection reads this against the endpoint's poll success to tell
             # "reachable and reporting" from "reachable and silent".
+            #
+            # endpoint_state BEFORE device_state, and that order is load
+            # bearing. `_handle_endpoint_state` locks the two tables in that
+            # order because each of its rows reaches device_state THROUGH an
+            # endpoint. Touching device_state first here put the two handlers
+            # in opposite orders over the same rows, which is a deadlock
+            # Postgres resolves by killing whichever tick it likes less. One
+            # order estate-wide, so there is nothing to invert.
             await writer.touch_endpoint_telemetry(session, produced)
+            await writer.upsert_device_state(session, list(hot.values()))
             alarm_actions = await self.alarms.evaluate_samples(session, rule_inputs)
             await integration_outbox.enqueue_actions(session, alarm_actions)
 
@@ -860,7 +868,11 @@ class IngestWorker:
     async def _handle_endpoint_state(self, payloads: list[dict]) -> None:
         comm_actions = []
         async with unit_of_work() as session:
-            for raw in payloads:
+            # Sorted, for the reason the writer's batches are sorted: two
+            # workers walking the same endpoints in arrival order take each
+            # other's row locks in whatever order the messages happened to
+            # land in.
+            for raw in sorted(payloads, key=lambda r: str(r.get("endpoint_id") or "")):
                 st = EndpointState.from_dict(raw)
                 status = _COMM_STATUS.get(st.status, "UNKNOWN")
                 await writer.apply_endpoint_state(session, {
