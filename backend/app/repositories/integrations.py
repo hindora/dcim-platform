@@ -267,6 +267,19 @@ async def claim(session: AsyncSession, *, consumer: str, limit: int
     check happens to filter them - a correctness argument nobody should have
     to make.
 
+    `claimed_by IS NULL` is the other half, and SKIP LOCKED does not survive
+    without it. The claim commits before the HTTP call - it has to, because a
+    Jira call must never run inside a transaction - and at that moment the row
+    is unlocked and still `pending`, so the next worker's tick selects the very
+    row somebody is mid-POST on. Both create a ticket for the same condition
+    seconds apart, and the recovery search only catches it when Jira's search
+    index happens to have caught up in between.
+
+    Every terminal path already clears `claimed_by`, and
+    `release_stale_claims` exists to hand back rows a worker died holding -
+    both of which are only meaningful if a claimed row is off limits until
+    then. This is the clause that makes that true.
+
     Ordered by id, which is the delivery order: a clear must never overtake
     its own raise, and `id` is the only monotonic column here (two rows can
     share `created_at` to the microsecond when one tick raises and clears).
@@ -277,6 +290,7 @@ async def claim(session: AsyncSession, *, consumer: str, limit: int
          WHERE id IN (
              SELECT id FROM integration_outbox
               WHERE state = 'pending' AND not_before <= now()
+                AND claimed_by IS NULL
               ORDER BY id
               FOR UPDATE SKIP LOCKED
               LIMIT :limit)

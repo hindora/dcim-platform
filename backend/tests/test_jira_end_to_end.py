@@ -564,6 +564,73 @@ async def test_a_bad_custom_field_goes_dead_rather_than_retrying(jira):
             await cleanup(session)
 
 
+async def test_a_claimed_row_is_invisible_to_the_other_worker(jira):
+    """Two workers, one row, one ticket.
+
+    Found against a real tenant, not here: the same alarm produced KAN-5 and
+    KAN-6 0.64s apart. The claim commits BEFORE the HTTP call - it has to,
+    because a Jira call must never run inside a transaction - and at that
+    moment the row is unlocked and still `pending`, so the next worker's tick
+    selected the row the first was mid-POST on. SKIP LOCKED cannot help: there
+    is no lock left to skip.
+
+    The recovery search is not a defence. It only caught the earlier duplicate
+    because Jira's search index happened to catch up within the second; when
+    both creates land inside it, both workers search, both find nothing, and
+    both create.
+    """
+    os.environ["DCIM_DATABASE_URL"] = DB_URL
+
+    from sqlalchemy import text
+
+    from app.core.security import encrypt_secret
+    from app.db.session import unit_of_work
+    from app.repositories import integrations as repo
+
+    async with unit_of_work() as session:
+        await cleanup(session)
+        await seed(session)
+        alarm_id = await raise_alarm(session)
+        integration = await repo.create_integration(
+            session, kind="jira_cloud", name="claim", base_url=jira.base_url,
+            cloud_id=None, config={"project_key": "DCOPS"},
+            blob=encrypt_secret(CREDENTIAL["jira_cloud"][1]),
+            secret_hint="token", secret_kind="api_token",
+            secret_expires_at=None, actor="e2e")
+        await session.execute(text("""
+            INSERT INTO integration_outbox (integration_id, kind, fingerprint,
+                                            alarm_id, payload)
+            VALUES (CAST(:i AS uuid), 'alarm_raised', 'deadbeefdeadbeef',
+                    CAST(:a AS uuid), '{}'::jsonb)"""),
+            {"i": integration["id"], "a": alarm_id})
+
+    try:
+        async with unit_of_work() as session:
+            first = await repo.claim(session, consumer="worker-a", limit=10)
+        assert len(first) == 1, "the first worker did not get the row"
+
+        async with unit_of_work() as session:
+            second = await repo.claim(session, consumer="worker-b", limit=10)
+        assert second == [], (
+            "the second worker claimed a row the first is still delivering - "
+            "this is how one alarm becomes two tickets")
+
+        # And it must not be stranded: the sweep is what hands back a row
+        # whose worker died holding it.
+        async with unit_of_work() as session:
+            released = await repo.release_stale_claims(session, older_than_s=0)
+            assert released == 1
+        async with unit_of_work() as session:
+            third = await repo.claim(session, consumer="worker-c", limit=10)
+        assert len(third) == 1, "a stale claim was never handed back"
+        # The claim counts, so a row that reliably kills its worker still
+        # walks towards dead rather than retrying for ever.
+        assert third[0]["attempts"] == 2
+    finally:
+        async with unit_of_work() as session:
+            await cleanup(session)
+
+
 def test_this_file_is_not_a_substitute_for_a_real_tenant():
     """Stated as an assertion so it survives being skimmed.
 
