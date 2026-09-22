@@ -32,7 +32,7 @@ import pytest
 # against the MODULE's globals. Imported inside the method, `Request` is
 # unresolvable and FastAPI silently treats the parameter as a query string -
 # which answers 422 to every call and reads as a Jira that hates the payload.
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import APIRouter, FastAPI, HTTPException, Request
 
 DB_URL = os.environ.get("DCIM_TEST_DATABASE_URL")
 pytestmark = pytest.mark.skipif(
@@ -54,17 +54,22 @@ class FakeJira:
         self.issues: dict[str, dict[str, Any]] = {}
         self.comments: dict[str, list[Any]] = {}
         self.remote_links: dict[str, list[Any]] = {}
+        self.properties: dict[str, dict[str, Any]] = {}
         self.counter = 0
         self.known_fields = {"customfield_10101"}
 
     def app(self) -> FastAPI:
-        api = FastAPI()
+        # One router, mounted under BOTH REST versions, because a real site is
+        # one or the other and this product has to be right about which. The
+        # routes are otherwise identical, so mounting twice is what keeps the
+        # difference down to the prefix and the search path.
+        api = APIRouter()
 
-        @api.get("/rest/api/3/myself")
+        @api.get("/myself")
         async def myself():
             return {"displayName": "DCIM bot", "accountId": "svc-1"}
 
-        @api.post("/rest/api/3/issue", status_code=201)
+        @api.post("/issue", status_code=201)
         async def create(request: Request):
             body = await request.json()
             fields = body.get("fields") or {}
@@ -86,14 +91,14 @@ class FakeJira:
                                 "category": "new", "resolution": None}
             return {"key": key, "id": self.issues[key]["id"]}
 
-        @api.post("/rest/api/3/issue/{key}/comment", status_code=201)
+        @api.post("/issue/{key}/comment", status_code=201)
         async def comment(key: str, request: Request):
             if key not in self.issues:
                 raise HTTPException(404, "no such issue")
             self.comments.setdefault(key, []).append((await request.json())["body"])
             return {"id": "1"}
 
-        @api.put("/rest/api/3/issue/{key}", status_code=204)
+        @api.put("/issue/{key}", status_code=204)
         async def update(key: str, request: Request):
             if key not in self.issues:
                 raise HTTPException(404, "no such issue")
@@ -101,7 +106,7 @@ class FakeJira:
             self.issues[key]["fields"].update(body.get("fields") or {})
             return None
 
-        @api.post("/rest/api/3/issue/{key}/remotelink", status_code=201)
+        @api.post("/issue/{key}/remotelink", status_code=201)
         async def remotelink(key: str, request: Request):
             body = await request.json()
             links = self.remote_links.setdefault(key, [])
@@ -110,13 +115,13 @@ class FakeJira:
             links.append(body)
             return {"id": len(links)}
 
-        @api.get("/rest/api/3/issue/{key}/transitions")
+        @api.get("/issue/{key}/transitions")
         async def transitions(key: str):
             return {"transitions": [
                 {"id": "31", "name": "Done",
                  "to": {"name": "Done", "statusCategory": {"key": "done"}}}]}
 
-        @api.post("/rest/api/3/issue/{key}/transitions", status_code=204)
+        @api.post("/issue/{key}/transitions", status_code=204)
         async def do_transition(key: str, request: Request):
             body = await request.json()
             if (body.get("transition") or {}).get("id") != "31":
@@ -124,7 +129,8 @@ class FakeJira:
             self.issues[key].update(status="Done", category="done")
             return None
 
-        @api.post("/rest/api/3/search/jql")
+        @api.post("/search/jql")          # Cloud, since October 2025
+        @api.post("/search")               # Data Center, and Cloud before that
         async def search(request: Request):
             body = await request.json()
             jql = body.get("jql") or ""
@@ -133,12 +139,41 @@ class FakeJira:
                            for label in (i["fields"].get("labels") or []))]
             return {"issues": [{"key": i["key"], "id": i["id"]} for i in hits]}
 
-        @api.post("/rest/api/3/issueLink", status_code=201)
+        @api.post("/issueLink", status_code=201)
         async def link(request: Request):
             await request.json()
             return None
 
-        return api
+        @api.put("/issue/{key}/properties/{prop}", status_code=200)
+        async def set_property(key: str, prop: str, request: Request):
+            if key not in self.issues:
+                raise HTTPException(404, "no such issue")
+            self.properties.setdefault(key, {})[prop] = await request.json()
+            return None
+
+        app = FastAPI()
+        app.include_router(api, prefix="/rest/api/3")
+        app.include_router(api, prefix="/rest/api/2")
+        return app
+
+
+#: What a `kind` implies about its credential. Cloud authenticates an API
+#: token as Basic with the account email; Data Center sends a PAT as Bearer.
+CREDENTIAL = {
+    "jira_cloud": ("api_token", {"username": "bot@acme.com",
+                                 "token": "e2e-token"}),
+    "jira_dc": ("pat", {"token": "e2e-token"}),
+}
+
+
+def text_of(body: Any) -> str:
+    """A comment body as text, whichever deployment wrote it.
+
+    ADF on Cloud, a plain string on Data Center. Asserting on the text rather
+    than the structure is what lets one assertion cover both.
+    """
+    from app.integrations import adf
+    return body if isinstance(body, str) else adf.to_text(body)
 
 
 def free_port() -> int:
@@ -254,11 +289,18 @@ async def cleanup(session) -> None:
 
 # ------------------------------------------------------------- the loop
 
-async def test_the_whole_loop(jira):
+@pytest.mark.parametrize("deployment", ["jira_cloud", "jira_dc"])
+async def test_the_whole_loop(jira, deployment):
     """Alarm -> ticket -> webhook -> acknowledged, over real HTTP.
 
     The assertions walk the loop in order, so a failure names the hop that
     broke rather than the end state.
+
+    Run on BOTH deployments. This file used to create a `jira_dc` integration
+    while every path in the target was hardcoded v3, so it proved Cloud's wire
+    format under a Data Center label and would not have noticed either being
+    wrong. Now that the version, the search endpoint and the body format all
+    follow the kind, each one needs its own pass.
     """
     os.environ["DCIM_DATABASE_URL"] = DB_URL
     os.environ.setdefault("DCIM_PUBLIC_BASE_URL", "https://dcim.e2e.test")
@@ -276,12 +318,13 @@ async def test_the_whole_loop(jira):
         await seed(session)
         alarm_id = await raise_alarm(session)
         integration = await repo.create_integration(
-            session, kind="jira_dc", name="E2E", base_url=jira.base_url,
+            session, kind=deployment, name="E2E", base_url=jira.base_url,
             cloud_id=None,
             config={"project_key": "DCOPS", "issue_type": "Incident",
                     "policy": {"dwell_s": 0}, "close_on_clear": "transition"},
-            blob=encrypt_secret({"token": "e2e-token"}),
-            secret_hint="token (9 chars)", secret_kind="pat",
+            blob=encrypt_secret(CREDENTIAL[deployment][1]),
+            secret_hint="token (9 chars)",
+            secret_kind=CREDENTIAL[deployment][0],
             secret_expires_at=datetime.now(UTC) + timedelta(days=365),
             actor="e2e")
         await repo.update_integration(session, integration["id"],
@@ -401,8 +444,7 @@ async def test_the_whole_loop(jira):
                 "payload": {**wide[alarm_id], "cleared_at": str(datetime.now(UTC))}}])
         await dispatcher.run_once()
 
-        from app.integrations import adf
-        bodies = [adf.to_text(b) for b in jira.comments[key]]
+        bodies = [text_of(b) for b in jira.comments[key]]
         assert any("confirms the fault is actually gone" in b for b in bodies), \
             "the clear did not confirm the fault was gone"
         assert jira.remote_links[key][-1]["object"]["status"] == {"resolved": True}

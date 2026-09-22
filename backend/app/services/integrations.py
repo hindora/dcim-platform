@@ -39,8 +39,7 @@ from app.core.security import (
 )
 from app.integrations.config import IntegrationConfigError, resolved, validate
 from app.integrations.jira.client import JiraClient, JiraError
-from app.integrations.jira.target import (SERVICEDESK, IssueTarget,
-                                          api_for)
+from app.integrations.jira.target import SERVICEDESK, IssueTarget, api_for
 from app.repositories import integrations as repo
 
 log = get_logger("integrations.service")
