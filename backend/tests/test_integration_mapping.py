@@ -183,7 +183,18 @@ def test_the_dcim_link_is_omitted_when_no_public_url_is_configured():
     assert mapping.alarm_url(None, ALARM) is None
     assert mapping.alarm_url("", ALARM) is None
     assert mapping.alarm_url("https://dcim.example.com/", ALARM) \
-        == f"https://dcim.example.com/alarms?alarm={ALARM['id']}"
+        == f"https://dcim.example.com/alarms/{ALARM['id']}"
+
+
+def test_the_dcim_link_addresses_the_alarm_as_a_path():
+    """It was `/alarms?alarm=<id>`, and the alarm list read `view` and `room`
+    from the URL and that parameter not at all - so the link every ticket
+    carries opened an unfiltered list with nothing selected, and on the
+    default `open` view a condition that had since cleared was not even in
+    it. The route is what makes the link resolve."""
+    url = mapping.alarm_url("https://dcim.example.com", ALARM)
+    assert url.endswith(f"/alarms/{ALARM['id']}")
+    assert "?" not in url
 
 
 # ------------------------------------------------------------ remote link

@@ -1179,3 +1179,29 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .ticket-chip:hover { border-color: var(--accent); }
 .ticket-chip .s { color: var(--text-faint); text-transform: lowercase; }
 .ticket-chip.closed { color: var(--text-muted); }
+
+/* Alarms: master-detail.
+   The list stays beside the detail because alarms are SCANNED, not read one
+   at a time - comparing twenty in a room is the job, and a full-page
+   navigation per row turns that into back-forward-back. Below the breakpoint
+   there is no room for both, so the detail takes the column and the list
+   waits behind the browser's own back button. */
+.alarm-split { display: grid; gap: 20px; align-items: start; }
+.alarm-split.with-detail { grid-template-columns: minmax(0, 1fr) 380px; }
+.alarm-master { min-width: 0; overflow-x: auto; }
+.alarm-detail {
+  border: 1px solid var(--border);
+  background: var(--bg-raised);
+  border-radius: 8px;
+  padding: 16px;
+  position: sticky;
+  top: 16px;
+}
+.alarm-detail h3 { margin: 0 0 12px; }
+tr.is-selected > td { background: var(--bg-inset); }
+
+@media (max-width: 1100px) {
+  .alarm-split.with-detail { grid-template-columns: minmax(0, 1fr); }
+  .alarm-split.with-detail .alarm-master { display: none; }
+  .alarm-detail { position: static; }
+}

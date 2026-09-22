@@ -277,6 +277,11 @@ export default function App() {
           <Route path="/floorplan" element={<Page><FloorPlanView /></Page>} />
           <Route path="/topology" element={<Navigate to="/connectivity" replace />} />
           <Route path="/alarms" element={<Page><AlarmList /></Page>} />
+          {/* Same component: the id selects, it does not replace the
+              list. An alarm has to be addressable - a Jira back-link,
+              a line pasted into an incident channel - without costing
+              the triage view it was found in. */}
+          <Route path="/alarms/:id" element={<Page><AlarmList /></Page>} />
           <Route path="/analytics" element={<Page><Analytics /></Page>} />
           <Route path="/platform" element={<Page><PlatformHealth /></Page>} />
           {/* One shell, one section today. A nested route rather than a flat

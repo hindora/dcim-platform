@@ -261,7 +261,13 @@ def alarm_url(dcim_base: str | None, alarm: dict[str, Any]) -> str | None:
     """
     if not dcim_base or not alarm.get("id"):
         return None
-    return f"{dcim_base.rstrip('/')}/alarms?alarm={alarm['id']}"
+    # A path, not a query parameter. `?alarm=` was read by nothing: the list
+    # honours `view` and `room` and ignored this one entirely, so the link
+    # landed on an unfiltered list with nothing selected - and on the default
+    # `open` view a condition that had since cleared was not even present.
+    # It looked like it worked, which is the failure this function's own
+    # docstring warns about.
+    return f"{dcim_base.rstrip('/')}/alarms/{alarm['id']}"
 
 
 # ------------------------------------------------------------------ pieces

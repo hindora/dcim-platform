@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { api, type Alarm } from '../../api/client';
 import { StatusChip } from '../../components/StatusChip';
 import { humanise, relativeTime } from '../../lib/format';
@@ -21,7 +21,13 @@ const VIEWS: Record<string, string[] | undefined> = {
 export function AlarmList() {
   const [severity, setSeverity] = useState('');
   const [includeSymptoms, setIncludeSymptoms] = useState(false);
-  const [selected, setSelected] = useState<Alarm | null>(null);
+  // The selected alarm is the URL, not component state. A condition somebody
+  // is looking at has to be something they can send to somebody else: a Jira
+  // ticket's back-link, a line pasted into an incident channel, a refresh
+  // that lands where it left off. Held in useState none of those work, and
+  // the ticket link looked correct while teaching its reader nothing.
+  const { id: selectedId } = useParams();
+  const navigate = useNavigate();
   // In the URL, so "the history" is a link somebody pastes - and so the
   // Home page can open it directly on a quiet day.
   const [params, setParams] = useSearchParams();
@@ -44,6 +50,27 @@ export function AlarmList() {
     }),
   });
 
+  const inList = data?.items.find((a) => a.id === selectedId);
+  // Only when the list does not already hold it. Arriving from a ticket, the
+  // condition may have cleared, be a suppressed symptom, or sit outside
+  // whichever filter is set - and all three would otherwise read as "no such
+  // alarm" rather than "not in this view".
+  const fetched = useQuery({
+    queryKey: ['alarm', selectedId],
+    queryFn: () => api.alarm(selectedId as string),
+    enabled: Boolean(selectedId) && !inList,
+  });
+  const selected: Alarm | null = inList ?? fetched.data ?? null;
+
+  const openAlarm = (id: string) => {
+    const qs = params.toString();
+    navigate(`/alarms/${id}${qs ? `?${qs}` : ''}`);
+  };
+  const closeAlarm = () => {
+    const qs = params.toString();
+    navigate(`/alarms${qs ? `?${qs}` : ''}`);
+  };
+
   function setView(next: string) {
     const q = new URLSearchParams(params);
     if (next === 'open') q.delete('view');
@@ -61,7 +88,10 @@ export function AlarmList() {
     mutationFn: (id: string) => api.clearAlarm(id),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['alarms'] });
-      setSelected(null);
+      // The single-alarm cache too, or a clear made here leaves the pane
+      // showing ACTIVE for whoever arrived by direct link.
+      qc.invalidateQueries({ queryKey: ['alarm'] });
+      closeAlarm();
     },
   });
 
@@ -126,6 +156,8 @@ export function AlarmList() {
       {isLoading && <p className="muted">Loading…</p>}
       {error && <div className="banner">Failed to load: {String(error)}</div>}
 
+      <div className={`alarm-split${selectedId ? ' with-detail' : ''}`}>
+      <div className="alarm-master">
       {data && (
         <table>
           <thead>
@@ -136,7 +168,9 @@ export function AlarmList() {
           </thead>
           <tbody>
             {data.items.map((a) => (
-              <tr key={a.id} onClick={() => setSelected(a)} style={{ cursor: 'pointer' }}>
+              <tr key={a.id} onClick={() => openAlarm(a.id)}
+                  className={a.id === selectedId ? 'is-selected' : undefined}
+                  style={{ cursor: 'pointer' }}>
                 <td><StatusChip status={a.severity} /></td>
                 <td><Link to={`/devices/${a.device_id}`} onClick={(e) => e.stopPropagation()}>
                   {a.device_name}
@@ -166,10 +200,33 @@ export function AlarmList() {
       {data && data.items.length === 0 && (
         <p className="muted">No alarms match. Quiet is the correct default.</p>
       )}
+      </div>
+
+      {selectedId && !selected && fetched.isLoading && (
+        <aside className="alarm-detail"><p className="muted">Loading…</p></aside>
+      )}
+
+      {selectedId && !selected && !fetched.isLoading && (
+        <aside className="alarm-detail">
+          <div className="banner">
+            No alarm with that id. It may have been purged by retention, or
+            the link may be truncated.
+          </div>
+          <div className="toolbar">
+            <button onClick={closeAlarm}>Back to the list</button>
+          </div>
+        </aside>
+      )}
 
       {selected && (
-        <section className="stack" style={{ marginTop: 24 }}>
+        <aside className="alarm-detail">
           <h3>{humanise(selected.alarm_type)} on {selected.device_name}</h3>
+          {!inList && (
+            <p className="muted">
+              Not in the current view — shown because you arrived with a
+              direct link.
+            </p>
+          )}
           <dl className="kv">
             <dt>Severity</dt><dd><StatusChip status={selected.severity} /></dd>
             <dt>State</dt><dd>{selected.state}</dd>
@@ -188,10 +245,11 @@ export function AlarmList() {
           </dl>
           <div className="toolbar">
             <button onClick={() => clear.mutate(selected.id)}>Clear manually</button>
-            <button onClick={() => setSelected(null)}>Close</button>
+            <button onClick={closeAlarm}>Close</button>
           </div>
-        </section>
+        </aside>
       )}
+      </div>
     </>
   );
 }

@@ -2897,6 +2897,16 @@ export const api = {
     return request<{ items: Alarm[] }>(`/alarms${qs ? `?${qs}` : ''}`);
   },
 
+  /** One alarm, by id.
+   *
+   *  The list cannot stand in for this. Somebody arriving from a Jira ticket
+   *  has a condition that may have cleared, or be a suppressed symptom, or
+   *  sit outside whichever filter the list happens to hold - and every one of
+   *  those reads as "that alarm does not exist" rather than "it is not in
+   *  this view".
+   */
+  alarm: (id: string) => request<Alarm>(`/alarms/${id}`),
+
   alarmSummary: () => request<AlarmSummary>('/alarms/summary'),
 
   acknowledgeAlarm: (id: string) =>
