@@ -5,8 +5,21 @@ Written 2026-09-21 against the working tree at `644f7b9`.
 
 Scope: outbound alarm → ticket, inbound ticket → alarm, JSM change request ↔
 maintenance window, and DCIM inventory → JSM Assets. Jira Cloud is the primary
-target; Jira Data Center is supported by a different auth mode and the same
-code path.
+target; Jira Data Center shares the decision tree and differs in three things
+that are not optional (2026-09-22):
+
+| | Cloud | Data Center |
+|---|---|---|
+| REST version | `/rest/api/3` | `/rest/api/2` — there is no v3 |
+| JQL search | `/search/jql` (v3 `/search` was removed Oct 2025, 410 Gone) | `/search` — `/search/jql` does not exist |
+| `description`, `comment.body` | ADF document | plain string |
+| issue property | inline on create | a `PUT .../properties/{key}` after create |
+
+`api_for()` and `search_for()` in `jira/target.py` own the first two;
+`IssueTarget.rich()` owns the third. The original claim that Data Center
+differed "by a different auth mode and the same code path" was wrong: the auth
+mode was the only part that had been done, and a v3 path against Data Center
+404s on every call.
 
 ---
 

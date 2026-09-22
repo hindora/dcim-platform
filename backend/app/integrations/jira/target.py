@@ -40,14 +40,42 @@ from app.integrations.jira.client import JiraClient, JiraError
 
 log = get_logger("integrations.jira.target")
 
-API = "/rest/api/3"
 SERVICEDESK = "/rest/servicedeskapi"
 
-#: `POST /rest/api/3/search` and its GET twin were removed in October 2025 and
-#: answer 410 Gone. This is the replacement, and it differs in two ways that
-#: break a naive port: `fields` is no longer defaulted, and paging is a cursor
-#: on `nextPageToken` rather than startAt/total.
-SEARCH = f"{API}/search/jql"
+#: The REST version is a property of the DEPLOYMENT, not of this product.
+#: Cloud serves v3; Data Center serves v2 and has no v3 at all, so a v3 path
+#: against Data Center is a 404 on every single call.
+API_FOR = {"jira_cloud": "/rest/api/3", "jira_dc": "/rest/api/2"}
+
+#: Cloud's default. Kept as a module constant because callers outside the
+#: target - the connection test - need it before an IssueTarget exists.
+API = API_FOR["jira_cloud"]
+
+
+def api_for(deployment: str | None) -> str:
+    """Unknown deployments get Cloud, which is the only one with a working
+    ticket path today."""
+    return API_FOR.get(deployment or "", API)
+
+
+def search_for(deployment: str | None) -> str:
+    """Where a JQL search lives, which is NOT the same endpoint on both.
+
+    `POST /rest/api/3/search` and its GET twin were removed from Cloud in
+    October 2025 and answer 410 Gone; `/search/jql` is the replacement, and it
+    differs in two ways that break a naive port: `fields` is no longer
+    defaulted, and paging is a cursor on `nextPageToken` rather than
+    startAt/total.
+
+    Data Center had none of that. It still serves `/rest/api/2/search` and has
+    no `/search/jql` at all, so pointing it at the replacement 404s.
+    """
+    base = api_for(deployment)
+    return f"{base}/search/jql" if base == API else f"{base}/search"
+
+
+#: Cloud's default search path, for the same reason `API` is kept.
+SEARCH = search_for("jira_cloud")
 
 #: Status categories Jira reports. Only `done` is branched on, because status
 #: NAMES are per-workflow and a customer who renamed Done to Resolved would
@@ -85,11 +113,29 @@ class IssueTarget:
     """Jira issues, on either Jira Software or a JSM service project."""
 
     def __init__(self, client: JiraClient, cfg: dict[str, Any], *,
-                 base_url: str, dcim_base: str | None = None) -> None:
+                 base_url: str, dcim_base: str | None = None,
+                 deployment: str = "jira_cloud") -> None:
         self.client = client
         self.cfg = cfg
         self.base_url = base_url
         self.dcim_base = dcim_base
+        self.deployment = deployment
+        self.api = api_for(deployment)
+        self.search = search_for(deployment)
+
+    @property
+    def adf_bodies(self) -> bool:
+        """Whether rich text goes as ADF or as flat text.
+
+        ADF is a v3 concept. Data Center's v2 takes `description` and
+        `comment.body` as STRINGS, and handing it an ADF document there does
+        not render badly - it is rejected, or stored as the literal JSON.
+        """
+        return self.api == API
+
+    def rich(self, body: dict[str, Any]) -> Any:
+        """Render one built document for whichever deployment this is."""
+        return body if self.adf_bodies else adf.to_text(body)
 
     @property
     def is_servicedesk(self) -> bool:
@@ -265,8 +311,8 @@ class IssueTarget:
         fields = mapping.fields_for(alarm, self.cfg, print_, dcim_url=dcim_url)
         fields["project"] = {"key": self.cfg["project_key"]}
         fields["issuetype"] = {"name": self.cfg.get("issue_type") or "Task"}
-        fields["description"] = body
-        payload = {
+        fields["description"] = self.rich(body)
+        payload: dict[str, Any] = {
             "fields": fields,
             # Structured, invisible in the UI, and searchable from JQL as
             # issue.property["dcim.alarm"].fingerprint. The label carries the
@@ -284,7 +330,28 @@ class IssueTarget:
                 },
             }],
         }
-        return await self.client.post(f"{API}/issue", json_body=payload)
+        prop = None
+        if not self.adf_bodies:
+            # Data Center's v2 create is not documented to accept `properties`
+            # inline, and a create rejected over a field nobody reads loses
+            # the ticket entirely. The dedicated property endpoint exists on
+            # both deployments, so set it after the issue is safely created.
+            prop = payload.pop("properties")[0]
+
+        created = await self.client.post(f"{self.api}/issue",
+                                         json_body=payload)
+
+        if prop and created.get("key"):
+            try:
+                await self.client.put(
+                    f"{self.api}/issue/{created['key']}/properties/"
+                    f"{prop['key']}", json_body=prop["value"])
+            except JiraError as exc:
+                # The label carries the same fingerprint and the search reads
+                # THAT, so the integration still de-duplicates without this.
+                log.info("could not set the issue property",
+                         issue=created.get("key"), error=str(exc))
+        return created
 
     async def _create_request(self, alarm: dict[str, Any], print_: str,
                               body: dict[str, Any]) -> dict[str, Any]:
@@ -297,7 +364,8 @@ class IssueTarget:
         """
         values: dict[str, Any] = {
             "summary": mapping.summary(alarm),
-            "description": (body if self.cfg.get("jsm_description_adf")
+            "description": (body if (self.adf_bodies
+                                     and self.cfg.get("jsm_description_adf"))
                             else adf.to_text(body)),
         }
         values.update(mapping.custom_fields(alarm, self.cfg))
@@ -387,7 +455,8 @@ class IssueTarget:
         if self.is_servicedesk:
             values: dict[str, Any] = {
                 "summary": change.summary(window),
-                "description": (body if self.cfg.get("jsm_description_adf")
+                "description": (body if (self.adf_bodies
+                                         and self.cfg.get("jsm_description_adf"))
                                 else adf.to_text(body)),
             }
             created = await self.client.post(
@@ -409,7 +478,7 @@ class IssueTarget:
                 "labels": [self.cfg["labels"].get("prefix") or "dcim",
                            "dcim-change"],
             }
-            created = await self.client.post(f"{API}/issue", json_body={
+            created = await self.client.post(f"{self.api}/issue", json_body={
                 "fields": fields,
                 "properties": [{"key": "dcim.window",
                                 "value": {"window_id": window.get("id"),
@@ -427,7 +496,7 @@ class IssueTarget:
         if dcim_url:
             try:
                 await self.client.post(
-                    f"{API}/issue/{issue_key}/remotelink", json_body={
+                    f"{self.api}/issue/{issue_key}/remotelink", json_body={
                         "globalId": f"system={self.dcim_base}&window={window.get('id')}",
                         "application": {"type": "com.hindora.dcim",
                                         "name": "DCIM Platform"},
@@ -445,8 +514,9 @@ class IssueTarget:
 
     async def _comment_raw(self, issue_key: str,
                            body: dict[str, Any]) -> None:
-        await self.client.post(f"{API}/issue/{issue_key}/comment",
-                               json_body={"body": body}, issue_key=issue_key)
+        await self.client.post(f"{self.api}/issue/{issue_key}/comment",
+                               json_body={"body": self.rich(body)},
+                               issue_key=issue_key)
 
     # ------------------------------------------------------------ pieces
 
@@ -467,7 +537,7 @@ class IssueTarget:
         # which reads as "the issue has no status".
         payload = {"jql": f"{jql} ORDER BY created DESC", "maxResults": 1,
                    "fields": ["key", "status", "resolution"]}
-        result = await self.client.post(SEARCH, json_body=payload)
+        result = await self.client.post(self.search, json_body=payload)
         issues = (result or {}).get("issues") or []
         return issues[0] if issues else None
 
@@ -475,13 +545,13 @@ class IssueTarget:
                        alarm: dict[str, Any]) -> None:
         body = mapping.comment_for(
             kind, alarm, dcim_url=mapping.alarm_url(self.dcim_base, alarm))
-        payload: dict[str, Any] = {"body": body}
-        await self.client.post(f"{API}/issue/{issue_key}/comment",
+        payload: dict[str, Any] = {"body": self.rich(body)}
+        await self.client.post(f"{self.api}/issue/{issue_key}/comment",
                                json_body=payload, issue_key=issue_key)
 
     async def _update_fields(self, issue_key: str,
                              fields: dict[str, Any]) -> None:
-        await self.client.put(f"{API}/issue/{issue_key}",
+        await self.client.put(f"{self.api}/issue/{issue_key}",
                               json_body={"fields": fields},
                               issue_key=issue_key)
 
@@ -502,7 +572,7 @@ class IssueTarget:
         account's permissions. A cached id is a 400 waiting for the first
         customer who edits their workflow.
         """
-        result = await self.client.get(f"{API}/issue/{issue_key}/transitions",
+        result = await self.client.get(f"{self.api}/issue/{issue_key}/transitions",
                                        issue_key=issue_key)
         return (result or {}).get("transitions") or []
 
@@ -532,7 +602,7 @@ class IssueTarget:
         return False
 
     async def _do_transition(self, issue_key: str, transition_id: str) -> None:
-        await self.client.post(f"{API}/issue/{issue_key}/transitions",
+        await self.client.post(f"{self.api}/issue/{issue_key}/transitions",
                                json_body={"transition": {"id": transition_id}},
                                issue_key=issue_key)
 
@@ -544,7 +614,7 @@ class IssueTarget:
         must not cost them the ticket.
         """
         try:
-            await self.client.post(f"{API}/issueLink", json_body={
+            await self.client.post(f"{self.api}/issueLink", json_body={
                 "type": {"name": "Relates"},
                 "inwardIssue": {"key": issue_key},
                 "outwardIssue": {"key": other},
@@ -570,7 +640,7 @@ class IssueTarget:
         payload = mapping.remote_link(alarm, print_, base_url=self.dcim_base or "",
                                       dcim_url=dcim_url, resolved=resolved)
         try:
-            await self.client.post(f"{API}/issue/{key}/remotelink",
+            await self.client.post(f"{self.api}/issue/{key}/remotelink",
                                    json_body=payload, issue_key=key)
         except JiraError as exc:
             log.info("could not attach the back-link", issue=key,

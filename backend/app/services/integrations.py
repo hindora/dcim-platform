@@ -39,7 +39,8 @@ from app.core.security import (
 )
 from app.integrations.config import IntegrationConfigError, resolved, validate
 from app.integrations.jira.client import JiraClient, JiraError
-from app.integrations.jira.target import API, SERVICEDESK, IssueTarget
+from app.integrations.jira.target import (SERVICEDESK, IssueTarget,
+                                          api_for)
 from app.repositories import integrations as repo
 
 log = get_logger("integrations.service")
@@ -209,7 +210,8 @@ async def build_target(session: AsyncSession, integration: dict[str, Any], *,
                                       dcim_base=dcim_base)
 
     target = IssueTarget(client, cfg, base_url=integration["base_url"],
-                         dcim_base=dcim_base)
+                         dcim_base=dcim_base,
+                         deployment=integration["kind"])
     return client, target
 
 
@@ -240,10 +242,14 @@ async def run_test(integration: dict[str, Any], client: JiraClient
     cfg = resolved(integration.get("config"))
     checks: list[dict[str, Any]] = []
     discovered: dict[str, Any] = {}
+    # Data Center serves v2 and has no v3, so a connection test on Cloud's
+    # paths would report "authentication failed" for a credential that is
+    # perfectly good and send the operator after the wrong thing.
+    api = api_for(integration.get("kind"))
 
     try:
         me = await _check(checks, "Authentication",
-                          client.get(f"{API}/myself"))
+                          client.get(f"{api}/myself"))
         if me is None:
             # Nothing else can succeed and every further call would be one
             # more failed authentication against a tenant that may be
@@ -254,7 +260,7 @@ async def run_test(integration: dict[str, Any], client: JiraClient
         project_key = cfg.get("project_key")
         if project_key:
             project = await _check(checks, f"Project {project_key}",
-                                   client.get(f"{API}/project/{project_key}"))
+                                   client.get(f"{api}/project/{project_key}"))
             if project:
                 discovered["project_name"] = project.get("name")
                 discovered["issue_types"] = sorted(
@@ -275,7 +281,7 @@ async def run_test(integration: dict[str, Any], client: JiraClient
                            "detail": "no project key is configured"})
 
         priorities = await _check(checks, "Priorities",
-                                  client.get(f"{API}/priority"))
+                                  client.get(f"{api}/priority"))
         if priorities is not None:
             names = {p.get("name") for p in priorities if p.get("name")}
             discovered["priorities"] = sorted(n for n in names if n)
@@ -295,7 +301,7 @@ async def run_test(integration: dict[str, Any], client: JiraClient
                                "detail": ""})
 
         fields = await _check(checks, "Custom fields",
-                              client.get(f"{API}/field"))
+                              client.get(f"{api}/field"))
         if fields is not None:
             discovered["fields"] = [
                 {"id": f.get("id"), "name": f.get("name")}
