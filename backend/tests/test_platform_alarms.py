@@ -194,3 +194,125 @@ def test_a_healthy_verdict_says_so_in_words():
     verdict = p.summarise([])
     assert verdict["healthy"] is True
     assert verdict["severity"] is None
+
+
+# ------------------------------------------------------- outbound integrations
+#
+# An integration is a promise that somebody else will be told. Every way it can
+# quietly stop keeping that promise belongs on this console, because the
+# symptom is SILENCE - the row still reads "enabled", the outbox still fills,
+# and the first anybody knows is a fault nobody was told about.
+
+def integration(**kw) -> p.Integration:
+    base = {"id": "i1", "name": "Acme Jira"}
+    base.update(kw)
+    return p.Integration(**base)
+
+
+def test_a_healthy_integration_raises_nothing():
+    assert types(p.evaluate(sig(integrations=[integration(days_left=200.0)]))) == set()
+
+
+def test_no_expiry_recorded_raises_nothing():
+    """Atlassian does not expose a token's expiry over the API, so this is a
+    date somebody typed in. Absent means unknown, not imminent."""
+    assert types(p.evaluate(sig(integrations=[integration()]))) == set()
+
+
+def test_a_credential_a_month_out_warns():
+    found = p.evaluate(sig(integrations=[integration(days_left=20.0)]))
+    assert types(found) == {"integration_credential_expiring"}
+    assert found[0].severity == p.WARNING
+
+
+def test_a_credential_a_week_out_is_major():
+    found = p.evaluate(sig(integrations=[integration(days_left=5.0)]))
+    assert found[0].severity == p.MAJOR
+
+
+def test_a_credential_that_has_already_lapsed_is_critical():
+    """The case that actually happens. Atlassian force-expired the whole
+    pre-December-2024 generation of API tokens in spring 2026, and an install
+    configured before that simply stopped opening tickets."""
+    found = p.evaluate(sig(integrations=[integration(days_left=-3.0)]))
+    assert found[0].severity == p.CRITICAL
+    assert "expired 3 days ago" in found[0].message
+
+
+def test_the_expiry_alarm_is_keyed_per_integration():
+    """Two Jiras must not clear each other's alarm."""
+    found = p.evaluate(sig(integrations=[
+        integration(days_left=5.0),
+        integration(id="i2", name="Other", days_left=2.0)]))
+    assert {f.instance for f in found} == {"i1", "i2"}
+
+
+def test_one_dead_letter_is_a_mapping_mistake_not_an_outage():
+    """One is something a human can fix on the row. It does not deserve a
+    console alarm, or the console fills with them."""
+    assert types(p.evaluate(sig(integrations=[integration(dead_letters=1)]))) == set()
+
+
+def test_a_queue_of_dead_letters_means_the_integration_is_broken():
+    found = p.evaluate(sig(integrations=[integration(dead_letters=7)]))
+    assert types(found) == {"integration_degraded"}
+    assert "7 outbound messages" in found[0].message
+
+
+def test_both_conditions_can_be_open_on_one_integration():
+    found = p.evaluate(sig(integrations=[
+        integration(days_left=2.0, dead_letters=9)]))
+    assert types(found) == {"integration_credential_expiring",
+                            "integration_degraded"}
+
+
+def test_every_integration_finding_declares_its_type():
+    """`PLATFORM_ALARM_TYPES` is what the API uses to separate platform alarms
+    from device alarms without string-matching on prefixes, so a type missing
+    from it is an alarm that reads as a device fault on a device that does not
+    exist."""
+    found = p.evaluate(sig(integrations=[integration(days_left=-1.0,
+                                                     dead_letters=9)]))
+    assert {f.alarm_type for f in found} <= set(p.PLATFORM_ALARM_TYPES)
+
+
+def test_a_hand_registered_webhook_never_expires_and_never_alarms():
+    """Jira Cloud restricts the webhook REST API to Connect and OAuth apps, so
+    an install using an API token registers by hand - and a hand-registered
+    webhook has no deadline. None here means "nothing to watch", not
+    "overdue"."""
+    assert types(p.evaluate(sig(integrations=[integration()]))) == set()
+
+
+def test_a_dynamic_registration_about_to_lapse_warns():
+    found = p.evaluate(sig(integrations=[integration(webhook_days_left=4.0)]))
+    assert types(found) == {"integration_webhook_expiring"}
+    assert found[0].severity == p.WARNING
+
+
+def test_a_registration_lapsing_within_two_days_is_major():
+    found = p.evaluate(sig(integrations=[integration(webhook_days_left=1.0)]))
+    assert found[0].severity == p.MAJOR
+
+
+def test_a_lapsed_registration_says_what_it_costs():
+    """Nothing errors when a registration expires - no bounce, no log line.
+    Closing a ticket simply stops acknowledging its alarm."""
+    found = p.evaluate(sig(integrations=[integration(webhook_days_left=-6.0)]))
+    assert found[0].severity == p.MAJOR
+    assert "lapsed 6 days ago" in found[0].message
+    assert "stops acknowledging" in found[0].message
+
+
+def test_the_webhook_alarm_is_keyed_per_integration():
+    found = p.evaluate(sig(integrations=[
+        integration(webhook_days_left=1.0),
+        integration(id="i2", name="Other", webhook_days_left=0.5)]))
+    assert {f.instance for f in found} == {"i1", "i2"}
+
+
+def test_a_credential_and_a_webhook_can_both_be_expiring():
+    found = p.evaluate(sig(integrations=[
+        integration(days_left=3.0, webhook_days_left=1.0)]))
+    assert types(found) == {"integration_credential_expiring",
+                            "integration_webhook_expiring"}

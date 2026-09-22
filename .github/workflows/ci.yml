@@ -119,6 +119,21 @@ jobs:
           DCIM_JWT_SECRET: ci-secret
           DCIM_COLLECTOR_TOKEN: ci-collector-token
           DCIM_CREDENTIAL_KEY: MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=
+      # The whole Jira loop over real HTTP against this database: a real
+      # alarm row, the real outbox, the real dispatcher, a Jira answering on a
+      # socket, a real signature, the real inbox applier. It runs HERE rather
+      # than in the Backend job because it is the only job with a database.
+      - name: jira integration loop
+        run: pytest -q tests/test_jira_end_to_end.py
+        working-directory: backend
+        env:
+          DCIM_TEST_DATABASE_URL: postgresql+asyncpg://dcim:dcim@localhost:5432/dcim
+          DCIM_DATABASE_URL: postgresql+asyncpg://dcim:dcim@localhost:5432/dcim
+          DCIM_JWT_SECRET: ci-secret
+          DCIM_COLLECTOR_TOKEN: ci-collector-token
+          DCIM_CREDENTIAL_KEY: MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=
+          DCIM_PUBLIC_BASE_URL: https://dcim.ci.test
+
       # A migration that cannot be rolled back is a migration you cannot deploy
       # on a Friday.
       - name: alembic downgrade base

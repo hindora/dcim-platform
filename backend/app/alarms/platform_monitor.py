@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.alarms import platform as rules
 from app.core import metrics
 from app.core.logging import get_logger
+from app.repositories import integrations as repo_integrations
 
 log = get_logger("platform")
 
@@ -159,6 +160,7 @@ async def gather(session: AsyncSession, redis: Redis, *,
     which is a second-hand reading of the same number and is treated as such.
     """
     age, present = await _telemetry_freshness(session)
+    integrations = await _integrations(session)
     collectors = await _collectors(session)
     pending = await _stream_pending(redis, streams, group)
     hb = await read_heartbeat(redis)
@@ -193,7 +195,45 @@ async def gather(session: AsyncSession, redis: Redis, *,
         collectors=collectors,
         collectors_expected=collectors_expected,
         stream_pending=pending,
+        integrations=integrations,
     )
+
+
+async def _integrations(session: AsyncSession) -> list[rules.Integration]:
+    """Enabled integrations, with the two ways they fail silently.
+
+    Both queries are partial-index reads over a table with a handful of rows,
+    so this costs nothing on the monitor's cadence and is worth asking every
+    time: the failure being watched for is one where everything still LOOKS
+    configured.
+    """
+    expiring = await repo_integrations.expiring_credentials(
+        session, within_days=rules.CREDENTIAL_WARNING_DAYS)
+    dead = await repo_integrations.dead_count(session)
+    webhooks = await repo_integrations.webhooks_needing_refresh(
+        session, within_days=rules.WEBHOOK_WARNING_DAYS)
+
+    out: dict[str, rules.Integration] = {}
+    for row in expiring:
+        out[row["id"]] = rules.Integration(
+            id=row["id"], name=row["name"],
+            days_left=float(row["days_left"]) if row["days_left"] is not None
+            else None)
+    for row in webhooks:
+        found = out.setdefault(
+            row["id"], rules.Integration(id=row["id"], name=row["name"]))
+        found.webhook_days_left = (float(row["days_left"])
+                                   if row["days_left"] is not None else None)
+    if dead:
+        # A dead-letter count belongs to an integration that may be in neither
+        # set above, so its name has to come from somewhere. One extra read of
+        # a tiny table beats carrying the name on every outbox row.
+        for row in await repo_integrations.active(session):
+            if row["id"] in dead:
+                found = out.setdefault(
+                    row["id"], rules.Integration(id=row["id"], name=row["name"]))
+                found.dead_letters = dead[row["id"]]
+    return sorted(out.values(), key=lambda i: i.name)
 
 
 async def apply(session: AsyncSession, findings: list[rules.Finding]

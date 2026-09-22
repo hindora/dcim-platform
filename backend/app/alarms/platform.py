@@ -76,7 +76,33 @@ PLATFORM_ALARM_TYPES = (
     "collector_degraded",
     "assignment_stale",
     "db_pool_exhausted",
+    "integration_credential_expiring",
+    "integration_degraded",
+    "integration_webhook_expiring",
 )
+
+#: An Atlassian Cloud API token expires within a year of being minted, and the
+#: whole pre-December-2024 generation was force-expired in spring 2026. A
+#: lapsed credential means this platform stops opening tickets and NOTHING
+#: says so - the integration still reads "enabled", the outbox still fills,
+#: and the first anyone knows is a fault nobody was told about. So it is
+#: treated as what it is: a visibility failure, on the same console as every
+#: other one.
+CREDENTIAL_WARNING_DAYS = 30
+CREDENTIAL_MAJOR_DAYS = 7
+
+#: Dead letters that mean the integration is not working, as opposed to one
+#: malformed row. One is a mapping mistake somebody can fix; five in the queue
+#: is a project key that no longer exists or a credential that was revoked.
+DEAD_LETTER_MAJOR = 5
+
+#: A Jira Cloud webhook registered through the REST API expires 30 days after
+#: it is created, and the dispatcher refreshes it a week ahead. This is the
+#: line for when that refresh has been failing: nothing errors when a
+#: registration lapses, no bounce and no log line - the tickets simply stop
+#: answering back, and the alarm an engineer closed stays ACTIVE forever.
+WEBHOOK_WARNING_DAYS = 5
+WEBHOOK_MAJOR_DAYS = 2
 
 
 @dataclass
@@ -105,6 +131,22 @@ class Collector:
 
 
 @dataclass
+class Integration:
+    """One configured outbound integration, as the monitor sees it."""
+
+    id: str
+    name: str
+    #: Days until the stored credential lapses. Negative means it already has,
+    #: which is the case that actually happens and the one that sorts first.
+    days_left: float | None = None
+    dead_letters: int = 0
+    #: Days until the INBOUND registration lapses. None for a hand-registered
+    #: webhook, which never expires, and for an integration with no inbound
+    #: half at all - both of which are "nothing to watch", not "overdue".
+    webhook_days_left: float | None = None
+
+
+@dataclass
 class Signals:
     """Everything the evaluator is allowed to look at.
 
@@ -126,6 +168,7 @@ class Signals:
     collectors_expected: int = 0
     db_pool_saturated_for_s: float = 0.0
     stream_pending: dict[str, int] = field(default_factory=dict)
+    integrations: list[Integration] = field(default_factory=list)
 
 
 def _lag_severity(lag: float) -> str | None:
@@ -316,6 +359,62 @@ def evaluate(signals: Signals) -> list[Finding]:
                 f"Every database connection has been in use for "
                 f"{signals.db_pool_saturated_for_s:.0f}s. Requests are queueing "
                 f"for a connection before they even reach a query")))
+
+    # --- outbound integrations ------------------------------------------------
+    #
+    # An integration is a promise that somebody else will be told. Every way it
+    # can quietly stop keeping that promise belongs on this console, because
+    # the symptom is silence and silence is exactly what nobody investigates.
+    for integration in signals.integrations:
+        days = integration.days_left
+        if days is not None and days <= CREDENTIAL_WARNING_DAYS:
+            severity = MAJOR if days <= CREDENTIAL_MAJOR_DAYS else WARNING
+            if days < 0:
+                severity = CRITICAL
+                detail = (f"expired {abs(days):.0f} days ago. No ticket has "
+                          f"been opened since")
+            else:
+                detail = f"expires in {days:.0f} days"
+            out.append(Finding(
+                alarm_type="integration_credential_expiring",
+                instance=integration.id, severity=severity,
+                value=round(days, 1), threshold=CREDENTIAL_WARNING_DAYS,
+                message=(
+                    f"The credential for the {integration.name} integration "
+                    f"{detail}. Atlassian Cloud API tokens last at most a "
+                    f"year; when this one lapses, alarms stop reaching the "
+                    f"service desk and nothing else will say so")))
+
+        webhook_days = integration.webhook_days_left
+        if webhook_days is not None and webhook_days <= WEBHOOK_WARNING_DAYS:
+            if webhook_days < 0:
+                severity, detail = MAJOR, (
+                    f"lapsed {abs(webhook_days):.0f} days ago. Nothing from "
+                    f"Jira has reached this platform since")
+            else:
+                severity = (MAJOR if webhook_days <= WEBHOOK_MAJOR_DAYS
+                            else WARNING)
+                detail = f"expires in {webhook_days:.0f} days"
+            out.append(Finding(
+                alarm_type="integration_webhook_expiring",
+                instance=integration.id, severity=severity,
+                value=round(webhook_days, 1), threshold=WEBHOOK_WARNING_DAYS,
+                message=(
+                    f"The Jira webhook registration for {integration.name} "
+                    f"{detail}, and this platform has not been able to renew "
+                    f"it. When it lapses, closing a ticket stops "
+                    f"acknowledging its alarm and nothing else will say so")))
+
+        if integration.dead_letters >= DEAD_LETTER_MAJOR:
+            out.append(Finding(
+                alarm_type="integration_degraded", instance=integration.id,
+                severity=MAJOR, value=integration.dead_letters,
+                threshold=DEAD_LETTER_MAJOR,
+                message=(
+                    f"{integration.dead_letters} outbound messages to "
+                    f"{integration.name} have been given up on. Conditions "
+                    f"that should have raised a ticket did not, and the "
+                    f"reason is on each one in Settings > Integrations")))
 
     return out
 

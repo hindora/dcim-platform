@@ -39,7 +39,11 @@ def test_only_the_recompute_writes_warranty_expires():
     for path in sorted(APP.rglob("*.py")):
         src = path.read_text(encoding="utf-8")
         for match in re.finditer(r"SET\s+warranty_expires\s*=", src):
-            writers.append(f"{path.relative_to(APP)}:"
+            # as_posix(), because the assertion below compares against a
+            # forward-slashed path: on Windows this read
+            # "repositories\contracts.py" and the guard failed on the one
+            # machine the code is written on.
+            writers.append(f"{path.relative_to(APP).as_posix()}:"
                            f"{src[:match.start()].count(chr(10)) + 1}")
 
     assert len(writers) == 1, writers

@@ -49,6 +49,8 @@ from app.db.session import dispose_engine, unit_of_work
 from app.ingest import changelog, rates, writer
 from app.ingest.enrich import InventoryCache
 from app.ingest.fanout import Fanout
+from app.integrations import outbox as integration_outbox
+from app.integrations.dispatcher import Dispatcher
 from app.repositories import alarms as repo_alarms
 from app.repositories import snapshots as snapshot_repo
 from app.services import maintenance as maintenance_service
@@ -152,6 +154,9 @@ class IngestWorker:
         self.cache = InventoryCache()
         self.fanout = Fanout(self.redis)
         self.alarms = AlarmService(self.redis)
+        # Outbound ticketing. Cheap when nothing is configured: its first
+        # question each pass is whether any integration is enabled.
+        self.integrations = Dispatcher(self.consumer)
         self._stop = asyncio.Event()
 
     # ------------------------------------------------------------- lifecycle
@@ -171,6 +176,7 @@ class IngestWorker:
                 log.error("ingest tick failed", error=str(exc), exc_info=True)
                 await asyncio.sleep(1.0)
 
+        await self.integrations.aclose()
         await self.redis.aclose()
         await dispose_engine()
         log.info("ingest worker stopped")
@@ -199,6 +205,7 @@ class IngestWorker:
         await self._maybe_sweep_staleness()
         await self._maybe_advance_maintenance()
         await self._maybe_snapshot()
+        await self.integrations.maybe_run()
 
         # Before the early return below: the worker is alive whether or not
         # anything arrived, and an idle pipeline must not look like a dead one.
@@ -377,6 +384,9 @@ class IngestWorker:
                 actions += await self.alarms.sweep_trap_reconciliation(session)
                 # A power root whose symptoms landed first, on another worker.
                 actions += await self.alarms.sweep_late_roots(session)
+                # Inside the transaction, deliberately: the alarm and the
+                # intent to ticket it commit together or not at all.
+                await integration_outbox.enqueue_actions(session, actions)
             for action in actions:
                 await self.fanout.alarm(action.kind, action.alarm)
         except Exception as exc:
@@ -690,6 +700,7 @@ class IngestWorker:
             # "reachable and reporting" from "reachable and silent".
             await writer.touch_endpoint_telemetry(session, produced)
             alarm_actions = await self.alarms.evaluate_samples(session, rule_inputs)
+            await integration_outbox.enqueue_actions(session, alarm_actions)
 
         # after commit
         await self.fanout.telemetry(ws_frames)
@@ -819,6 +830,7 @@ class IngestWorker:
                 if action:
                     actions.append(action)
             await repo_alarms.insert_events(session, rows)
+            await integration_outbox.enqueue_actions(session, actions)
 
         for action in actions:
             await self.fanout.alarm(action.kind, action.alarm)

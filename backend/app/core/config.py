@@ -83,6 +83,20 @@ class Settings(BaseSettings):
     cors_origins: list[str] = ["http://localhost:5173"]
     api_prefix: str = "/api/v1"
 
+    # --- integrations -------------------------------------------------------
+    #: Where this DCIM is reachable from OUTSIDE, e.g. https://dcim.acme.com.
+    #:
+    #: Needed by anything that hands a URL to a third party: the "open in the
+    #: DCIM" link on a Jira ticket, the remote link posted back to an issue,
+    #: and the callback address a webhook is registered against. It has no
+    #: sensible default and is deliberately not guessed from the request host,
+    #: because a link to localhost on somebody else's service desk is worse
+    #: than no link - it looks like it works.
+    #:
+    #: Empty means links are omitted rather than wrong, and enabling an
+    #: integration that needs a callback refuses until it is set.
+    public_base_url: str = ""
+
     @field_validator("credential_key")
     @classmethod
     def _key_must_be_32_bytes(cls, v: SecretStr) -> SecretStr:

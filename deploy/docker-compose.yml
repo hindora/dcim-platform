@@ -72,6 +72,14 @@ services:
       # in the browser tab, so two instances open side by side are tellable
       # apart. Unset falls back to the product name.
       DCIM_ORG_NAME: ${DCIM_ORG_NAME:-}
+      # Where this DCIM is reachable from OUTSIDE, e.g. https://dcim.acme.com.
+      # Needed by anything that hands a URL to a third party: the "open in the
+      # DCIM" link on a Jira ticket, the remote link posted back to an issue,
+      # and the callback a webhook is registered against. Deliberately not
+      # guessed from the request host - a link to localhost on somebody else's
+      # service desk is worse than no link, because it looks like it works.
+      # Empty omits the links rather than getting them wrong.
+      DCIM_PUBLIC_BASE_URL: ${DCIM_PUBLIC_BASE_URL:-}
     ports:
       - "8000:8000"
     depends_on:

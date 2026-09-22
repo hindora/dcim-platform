@@ -27,6 +27,13 @@ ALLOWED_SECRET_READERS = {
     "importer/simulator.py",       # writes it at import time
     "models/endpoints.py",         # declares it
     "core/security.py",            # encrypt/decrypt themselves
+    # The second chain, added with outbound ticketing: an integration holds a
+    # credential to somebody else's service desk. It is allowed here and
+    # NOWHERE else - `secrets_of` renames the columns on the way out (`blob`,
+    # `webhook_blob`), so the service that decrypts, the worker that uses it
+    # and the handlers that configure it all name neither column. That is why
+    # this list gains one entry rather than four.
+    "repositories/integrations.py",
 }
 
 

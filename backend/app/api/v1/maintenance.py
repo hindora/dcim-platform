@@ -34,6 +34,11 @@ class WindowCreate(BaseModel):
     #: wants on the calendar but not in the alarm path.
     suppress: bool = True
     device_ids: list[str] = Field(default_factory=list)
+    #: Open a change request for this window, carrying its impact.
+    create_change: bool = False
+    #: Hold the window shut until that change request is approved. The ticker
+    #: will not start it, and says out loud when the clock has passed it by.
+    require_approval: bool = False
 
 
 class TargetsBody(BaseModel):
@@ -96,13 +101,32 @@ async def create_window(
     if body.ends_at <= body.starts_at:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
                             "a window must end after it starts")
+    if body.require_approval and not body.create_change:
+        # Otherwise the window is held shut waiting for a decision on a change
+        # request that does not exist, and nothing in either system would ever
+        # say why it failed to open.
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "a window cannot require approval without a change request to "
+            "approve; set create_change as well")
     actor = audit.actor_of(principal)
     window_id = await repo.create_window(
         session, title=body.title, description=body.description,
         change_ref=body.change_ref, kind=body.kind, starts_at=body.starts_at,
-        ends_at=body.ends_at, suppress=body.suppress, created_by=actor)
+        ends_at=body.ends_at, suppress=body.suppress, created_by=actor,
+        require_approval=body.require_approval)
     if body.device_ids:
         await repo.set_targets(session, window_id, body.device_ids)
+
+    change_result: dict[str, Any] | None = None
+    if body.create_change:
+        try:
+            change_result = await service.request_change(session, window_id)
+        except service.MaintenanceError as exc:
+            # The window is real and already scheduled; refusing it now over a
+            # ticketing problem would lose work somebody has just described.
+            # The change request can be asked for again from the window.
+            raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
 
     ip, agent = audit.client_of(request)
     # A window silences alarms on real equipment. Who scheduled it, over what,
@@ -114,9 +138,14 @@ async def create_window(
                               "starts_at": body.starts_at.isoformat(),
                               "ends_at": body.ends_at.isoformat(),
                               "suppress": body.suppress,
+                              "require_approval": body.require_approval,
+                              "change_requested": bool(body.create_change),
                               "targets": len(body.device_ids)})
     await session.commit()
-    return await repo.get_window(session, window_id)
+    window = await repo.get_window(session, window_id)
+    if change_result:
+        window["change"] = change_result
+    return window
 
 
 @router.get("/windows/{window_id}", summary="One window, its targets and what it shelved")
@@ -178,6 +207,18 @@ async def _advance(session: AsyncSession, principal: Principal, request: Request
             f"a {window['status']} window cannot be {action}ed; "
             f"expected one of {', '.join(legal)}")
 
+    gated = (window.get("require_approval")
+             and window.get("jira_approval_state") != "approved")
+    if action == "start" and gated:
+        # The gate applies to the button as well as to the ticker. Starting by
+        # hand is exactly what somebody does when a window will not open, and
+        # letting it through here would make `require_approval` mean "the
+        # ticker waits" rather than "this needs permission".
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"{window.get('jira_issue_key') or 'the change request'} has not "
+            f"been approved")
+
     if action == "start":
         shelved = await service.activate(session, window_id)
         result = {"status": "active", "shelved_alarms": shelved}
@@ -192,6 +233,35 @@ async def _advance(session: AsyncSession, principal: Principal, request: Request
                        target_type="maintenance_window", target_id=window_id,
                        ip=ip, user_agent=agent,
                        before={"status": window["status"]}, after=result)
+    await session.commit()
+    return result
+
+
+@router.post("/windows/{window_id}/change",
+             summary="Open a change request for this window")
+async def request_change(
+    window_id: str, request: Request,
+    integration_id: str | None = None,
+    session: AsyncSession = Depends(get_session),
+    principal: Principal = Depends(require_role("operator")),
+) -> dict[str, Any]:
+    """Put this window in front of a change advisory board.
+
+    The change request carries what the window actually costs - how many
+    alarms it silences, how many machines it darkens, which redundant side it
+    removes - which is the number a board needs and the one only a DCIM can
+    compute. Without it a board is approving a title and a time range.
+    """
+    try:
+        result = await service.request_change(session, window_id,
+                                              integration_id=integration_id)
+    except service.MaintenanceError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    ip, agent = audit.client_of(request)
+    await audit.record(session, actor=audit.actor_of(principal),
+                       action="maintenance.change.request",
+                       target_type="maintenance_window", target_id=window_id,
+                       ip=ip, user_agent=agent, after=result)
     await session.commit()
     return result
 

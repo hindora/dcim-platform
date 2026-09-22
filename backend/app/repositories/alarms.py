@@ -411,6 +411,33 @@ async def get_alarm(session: AsyncSession, alarm_id: str) -> dict[str, Any] | No
     return dict(row) if row else None
 
 
+async def open_alarm_for(session: AsyncSession, *, device_id: str,
+                         alarm_type: str, instance: str = ""
+                         ) -> dict[str, Any] | None:
+    """The open alarm for one condition, by its identity rather than its id.
+
+    Reads the key `alarm_active_key` already enforces - (device, alarm_type,
+    instance) while the row is not CLEARED - so it is one index probe and it
+    can return at most one row by construction.
+
+    It exists for the inbound ticketing path, which is given a ticket and has
+    to find the alarm that ticket is ABOUT. That is not the alarm row the
+    ticket was opened for: a condition clears at 02:00 and raises again at
+    06:00 as a new row with a new uuid, and an engineer closing the ticket at
+    09:00 means the one that is open now.
+    """
+    row = (await session.execute(
+        text(_ALARM_SELECT + """
+         WHERE a.device_id = CAST(:device_id AS uuid)
+           AND a.alarm_type = :alarm_type
+           AND a.instance = :instance
+           AND a.state <> 'CLEARED'
+         LIMIT 1
+        """), {"device_id": device_id, "alarm_type": alarm_type,
+               "instance": instance})).mappings().first()
+    return dict(row) if row else None
+
+
 async def acknowledge(session: AsyncSession, alarm_id: str, actor: str,
                       note: str | None) -> dict[str, Any] | None:
     row = (await session.execute(text("""
