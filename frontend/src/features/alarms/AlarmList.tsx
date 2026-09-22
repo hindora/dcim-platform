@@ -5,6 +5,7 @@ import { api, type Alarm } from '../../api/client';
 import { StatusChip } from '../../components/StatusChip';
 import { humanise, relativeTime } from '../../lib/format';
 import { useInvalidateOn, useTopics } from '../../ws/useSocket';
+import { TicketChip } from './TicketChip';
 
 const ALARM_EVENTS = ['alarm_created', 'alarm_updated', 'alarm_cleared'];
 
@@ -183,6 +184,7 @@ export function AlarmList() {
             <dt>First seen</dt><dd>{relativeTime(selected.first_seen)}</dd>
             <dt>Last seen</dt><dd>{relativeTime(selected.last_seen)}</dd>
             <dt>Occurrences</dt><dd>{selected.occurrence_count}</dd>
+            <dt>Ticket</dt><dd><TicketChip alarmId={selected.id} /></dd>
           </dl>
           <div className="toolbar">
             <button onClick={() => clear.mutate(selected.id)}>Clear manually</button>

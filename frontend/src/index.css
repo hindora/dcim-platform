@@ -415,6 +415,14 @@ button { cursor: pointer; }
 button:hover { border-color: var(--border-strong); }
 button.primary { background: var(--accent-dim); border-color: var(--accent); }
 
+/* A disabled button has to LOOK disabled.
+ *
+ * Three separate rules covered a pager, a picker and a form field, and
+ * everything else was left looking pressable - so the gated "Start now" on a
+ * maintenance window read as a button that did nothing when clicked rather
+ * than as a decision somebody had not made yet. One rule, globally. */
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+
 .banner {
   background: var(--bg-raised); border: 1px solid var(--critical);
   border-left-width: 3px; border-radius: var(--radius);
@@ -1067,3 +1075,107 @@ button.primary { background: var(--accent-dim); border-color: var(--accent); }
 /* A disabled pager button is a fact about where you are, not a fault - so it
    recedes rather than looking broken. */
 .asset-pager-buttons button:disabled { opacity: 0.45; cursor: default; }
+
+/* -------------------------------------------------------------- ticketing
+ *
+ * The settings page for outbound ticketing, and the chip that shows one
+ * alarm's ticket. Everything here is a token: `validate_palette.js` fails CI
+ * on a literal, and a hue that does not follow the theme is a hue that is
+ * unreadable in one of them.
+ */
+
+/* Tabs inside an edit sheet. The five questions an integration answers have
+   different audiences - the connection is set once, Delivery is opened at
+   03:00 - so they are sections rather than one long scroll. */
+.sheet-tabs {
+  display: flex; gap: 2px; padding: 0 34px;
+  border-bottom: 1px solid var(--border);
+}
+.sheet-tabs button {
+  background: none; border: none; border-radius: 0;
+  padding: 9px 14px; font-size: 12px; font-weight: 600;
+  letter-spacing: .06em; text-transform: uppercase;
+  color: var(--text-muted); cursor: pointer;
+}
+.sheet-tabs button:hover { color: var(--text); }
+.sheet-tabs button.active {
+  color: var(--text); box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+/* A group of controls inside a form grid.
+ *
+ * Not a <label>: a label wrapping several buttons makes its own click target
+ * absorb the FIRST one, so the leading cell of every strip - CRITICAL, ALL,
+ * POWER - disappeared from the accessibility tree while still rendering. It
+ * gets the label's appearance and `role="group"` instead. */
+.form-grid .group { display: grid; gap: 5px; }
+.form-grid .group > span {
+  font-size: 12px; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+/* The switch's help text is a SIBLING of its caption, because
+   `.form-grid label > span` is uppercase and a hint nested inside one was
+   being shouted at the reader. */
+.form-grid label.switch .hint { grid-column: 2; text-transform: none; }
+
+/* What a policy left out, ranked. A list rather than a chart: the reasons are
+   sentences, and six of them sorted by count is already the whole answer. */
+.excluded { margin-top: 12px; }
+.excluded h4 {
+  margin: 0 0 6px; font-size: 12px; letter-spacing: .04em;
+  text-transform: uppercase; color: var(--text-muted);
+}
+.excluded ul { margin: 0; padding: 0; list-style: none; }
+.excluded li {
+  font-size: 13px; color: var(--text-muted); padding: 2px 0;
+}
+.excluded li .n {
+  display: inline-block; min-width: 3.5em; margin-right: 8px;
+  text-align: right; color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The connection test, one line per question. A single pass/fail would tell
+   an operator nothing: "authentication works but the project key is wrong"
+   and "the credential is wrong" need completely different fixes. */
+.checks { margin: 0; padding: 0; list-style: none; display: grid; gap: 4px; }
+.checks li {
+  display: grid; grid-template-columns: 220px 1fr; gap: 10px;
+  align-items: baseline; font-size: 13px;
+  padding: 5px 10px; border-radius: var(--radius);
+  background: var(--bg-inset);
+}
+.checks li .name { color: var(--text); }
+.checks li .detail { color: var(--text-muted); }
+.checks li.ok .name::before { content: '✓ '; color: var(--ok); }
+.checks li.bad .name::before { content: '✕ '; color: var(--critical); }
+.checks li.bad { box-shadow: inset 2px 0 0 var(--critical); }
+
+/* A value somebody has to paste somewhere else. The button is beside it
+   rather than a hover affordance, because the one thing worse than an ugly
+   copy button is a secret shown once that nobody managed to copy. */
+.copyable { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.copyable code {
+  flex: 1; min-width: 0; overflow-wrap: anywhere;
+  padding: 4px 7px; border-radius: var(--radius);
+  background: var(--bg-inset); color: var(--text);
+  font-size: 12px;
+}
+
+/* Two buttons in a table cell, without the 8px the toolbar would add. */
+.row-actions { display: flex; gap: 6px; }
+
+/* One alarm's ticket, linked out. Closed goes faint rather than green: the
+   ticket being finished is not a claim about the fault, and colouring it as
+   success would say it was. */
+.ticket-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 2px 8px; border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg-inset); color: var(--accent);
+  font-size: 12px; text-decoration: none;
+}
+.ticket-chip:hover { border-color: var(--accent); }
+.ticket-chip .s { color: var(--text-faint); text-transform: lowercase; }
+.ticket-chip.closed { color: var(--text-muted); }

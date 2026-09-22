@@ -261,6 +261,16 @@ export interface MaintenanceWindow {
   /** Alarms this window is holding out of the active list. The number that
    *  tells an operator the window was scoped too widely. */
   shelved_alarms: number;
+  /** The change request this platform opened, as opposed to `change_ref`,
+   *  which is whatever a human typed. When the two disagree the page shows
+   *  both rather than picking one. */
+  jira_issue_key?: string | null;
+  jira_approval_state?: 'pending' | 'approved' | 'declined' | null;
+  require_approval?: boolean;
+  /** Why the window has not opened although its time has come. Computed by
+   *  the server, because a window that silently fails to start reads as a
+   *  DCIM fault and the engineer is already at the door. */
+  blocked_reason?: string | null;
   targets?: { id: string; name: string; device_type: string; max_severity: string }[];
   shelved?: {
     id: string; alarm_type: string; severity: string; state: string;
@@ -2334,6 +2344,204 @@ export interface RoomKpi {
   as_of: string;
 }
 
+/* ---------------------------------------------------------- integrations */
+
+export interface IntegrationPolicy {
+  response_classes: string[];
+  min_severity: string;
+  categories: string[];
+  exclude_symptoms: boolean;
+  exclude_shelved: boolean;
+  dwell_s: number;
+}
+
+/** The resolved document: what is stored, layered over the defaults.
+ *
+ *  Both halves are sent, because they answer different questions. `config` is
+ *  what somebody actually set - a save must send only that, or every default
+ *  freezes at the version the integration was created under. `effective` is
+ *  what is in force, which is what the form has to show.
+ */
+export interface IntegrationConfig {
+  project_key: string;
+  issue_type: string;
+  service_desk_id: string;
+  request_type_id: string;
+  policy: IntegrationPolicy;
+  priority_map: Record<string, string>;
+  labels: { prefix: string; site: boolean; room: boolean; category: boolean };
+  fields: Record<string, string>;
+  components_enabled: boolean;
+  jsm_description_adf: boolean;
+  ops_priority_map: Record<string, string>;
+  ops_responders: string[];
+  change_issue_type: string;
+  change_request_type_id: string;
+  change_approved_statuses: string[];
+  change_declined_statuses: string[];
+  reopen_window_h: number;
+  wont_reopen_resolutions: string[];
+  close_on_clear: 'comment' | 'transition' | 'none';
+  clear_transition: string;
+  allow_clear_on_transition: boolean;
+  suppress_window_s: number;
+  storm_threshold: number;
+  storm_window_s: number;
+  rate_limit_rps: number;
+  max_attempts: number;
+}
+
+export interface Integration {
+  id: string;
+  kind: 'jira_cloud' | 'jira_dc' | 'jsm_ops';
+  name: string;
+  enabled: boolean;
+  base_url: string;
+  cloud_id: string | null;
+  config: Partial<IntegrationConfig>;
+  effective: IntegrationConfig;
+  version: number;
+  /** What KIND of secret exists and how long it is. Never the value. */
+  secret_hint: string | null;
+  secret_kind: string;
+  secret_expires_at: string | null;
+  webhook_token: string | null;
+  webhook_id: string | null;
+  webhook_expires_at: string | null;
+  webhook_configured: boolean;
+  pending: number;
+  dead: number;
+  open_tickets: number;
+  last_delivered: string | null;
+  updated_at: string;
+  updated_by: string | null;
+}
+
+export interface AssetsState {
+  workspace_id: string | null;
+  schema_id: string | null;
+  import_id: string | null;
+  import_token_set: boolean;
+  type_map: Record<string, unknown>;
+  last_cursor: string | null;
+  last_run_at: string | null;
+  last_run_status: string | null;
+  last_error: string | null;
+  objects_pushed: number;
+  runs: number;
+  /** What this platform WOULD send, so the object types an administrator has
+   *  to create in Jira are listed rather than described in documentation. */
+  schema: { type: string; attributes: string[] }[];
+  one_way: true;
+}
+
+export interface IntegrationsPage {
+  items: Integration[];
+  defaults: IntegrationConfig;
+  /** Empty means every ticket ships without a link back here. */
+  public_base_url: string;
+}
+
+export interface IntegrationCheck {
+  name: string;
+  ok: boolean;
+  detail: string;
+}
+
+export interface IntegrationTest {
+  ok: boolean;
+  checks: IntegrationCheck[];
+  discovered: {
+    account?: string;
+    project_name?: string;
+    issue_types?: string[];
+    priorities?: string[];
+    fields?: { id: string; name: string }[];
+    request_types?: { id: string; name: string }[];
+    request_fields?: { id: string; name: string; required: boolean }[];
+  };
+}
+
+export interface PolicyPreview {
+  considered: number;
+  matched: number;
+  /** Distinct conditions, which is what a ticket count actually is. */
+  tickets: number;
+  per_day: Record<string, number>;
+  /** Distinct CONDITIONS per facet, not rows - the same fault raised four
+   *  times is one ticket. These are the counts the facet strips carry. */
+  by_category: Record<string, number>;
+  by_severity: Record<string, number>;
+  /** [reason, count], worst first. */
+  excluded: [string, number][];
+  sample: {
+    alarm_id: string; device_name: string | null; severity: string;
+    alarm_type: string; first_seen: string; fingerprint: string;
+  }[];
+}
+
+export interface OutboxRow {
+  id: number;
+  kind: string;
+  fingerprint: string;
+  alarm_id: string | null;
+  state: 'pending' | 'done' | 'dead';
+  attempts: number;
+  created_at: string;
+  not_before: string;
+  last_error: string | null;
+  device_name: string | null;
+  message: string | null;
+  severity: string | null;
+}
+
+export interface InboundRow {
+  id: number;
+  event: string;
+  issue_key: string | null;
+  state: 'pending' | 'done' | 'dead';
+  attempts: number;
+  received_at: string;
+  last_error: string | null;
+}
+
+export interface TicketLink {
+  fingerprint: string;
+  issue_key: string;
+  status: string | null;
+  status_category: string | null;
+  resolution: string | null;
+  opened_at: string;
+  closed_at: string | null;
+  push_count: number;
+  wont_reopen: boolean;
+  alarm_type: string | null;
+  severity: string | null;
+  state: string | null;
+  device_name: string | null;
+  url: string;
+}
+
+export interface WebhookProvision {
+  url: string;
+  /** Shown ONCE, in this response. An administrator pastes it into Jira. */
+  secret: string;
+  events: string[];
+  jql: string;
+  registered: { automatic: boolean; detail: string };
+  instructions: string;
+}
+
+export interface AlarmTicket {
+  linked: boolean;
+  issue_key?: string;
+  status?: string | null;
+  status_category?: string | null;
+  closed_at?: string | null;
+  url?: string;
+  name?: string;
+}
+
 export const api = {
   login: (username: string, password: string) =>
     request<{ token: string; expires_in: number; username: string; role: string }>(
@@ -2443,6 +2651,7 @@ export const api = {
     title: string; description?: string; change_ref?: string;
     kind: string; starts_at: string; ends_at: string;
     suppress: boolean; device_ids: string[];
+    create_change?: boolean; require_approval?: boolean;
   }) => request<MaintenanceWindow>('/maintenance/windows', {
     method: 'POST', body: JSON.stringify(body),
   }),
@@ -2907,4 +3116,104 @@ export const api = {
     request<{ ticket: string; expires_in: number }>('/ws/ticket', {
       method: 'POST', body: '{}',
     }),
+  // ---- ticketing integrations (docs/25) ----
+
+  integrations: () => request<IntegrationsPage>('/integrations'),
+
+  createIntegration: (body: {
+    kind: string; name: string; base_url: string; cloud_id?: string | null;
+    config?: Record<string, unknown>;
+    secret: { username?: string; token: string; expires_at?: string | null };
+  }) => request<Integration>('/integrations', {
+    method: 'POST', body: JSON.stringify(body),
+  }),
+
+  /** Patch. Only what is named moves - and `config` must carry ONLY what the
+   *  operator overrode, never the resolved document, or every default freezes
+   *  at today's value. */
+  patchIntegration: (id: string, body: Record<string, unknown>) =>
+    request<Integration>(`/integrations/${id}`, {
+      method: 'PATCH', body: JSON.stringify(body),
+    }),
+
+  deleteIntegration: (id: string) =>
+    request<{ ok: boolean }>(`/integrations/${id}`, { method: 'DELETE' }),
+
+  testIntegration: (id: string) =>
+    request<IntegrationTest>(`/integrations/${id}/test`, {
+      method: 'POST', body: '{}',
+    }),
+
+  previewPolicy: (id: string, policy: Partial<IntegrationPolicy>, days = 7) =>
+    request<PolicyPreview>(`/integrations/${id}/policy/preview`, {
+      method: 'POST', body: JSON.stringify({ policy, days }),
+    }),
+
+  integrationOutbox: (id: string, params: {
+    state?: string; limit?: number; offset?: number;
+  } = {}) => {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) if (v != null) q.set(k, String(v));
+    const qs = q.toString();
+    return request<{ items: OutboxRow[] }>(
+      `/integrations/${id}/outbox${qs ? `?${qs}` : ''}`);
+  },
+
+  retryOutbox: (id: string, row: number) =>
+    request<{ ok: boolean }>(`/integrations/${id}/outbox/${row}/retry`, {
+      method: 'POST', body: '{}',
+    }),
+
+  integrationInbox: (id: string, params: {
+    state?: string; limit?: number; offset?: number;
+  } = {}) => {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) if (v != null) q.set(k, String(v));
+    const qs = q.toString();
+    return request<{ items: InboundRow[] }>(
+      `/integrations/${id}/inbox${qs ? `?${qs}` : ''}`);
+  },
+
+  integrationLinks: (id: string, params: { limit?: number; offset?: number } = {}) => {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) if (v != null) q.set(k, String(v));
+    const qs = q.toString();
+    return request<{ items: TicketLink[] }>(
+      `/integrations/${id}/links${qs ? `?${qs}` : ''}`);
+  },
+
+  registerWebhook: (id: string) =>
+    request<WebhookProvision>(`/integrations/${id}/webhooks/register`, {
+      method: 'POST', body: '{}',
+    }),
+
+  alarmTicket: (alarmId: string) =>
+    request<AlarmTicket>(`/integrations/alarms/${alarmId}/ticket`),
+
+  assetsState: (id: string) =>
+    request<AssetsState>(`/integrations/${id}/assets`),
+
+  configureAssets: (id: string, body: {
+    schema_id?: string | null; import_id?: string | null;
+    import_token?: string | null;
+  }) => request<AssetsState>(`/integrations/${id}/assets`, {
+    method: 'PUT', body: JSON.stringify(body),
+  }),
+
+  syncAssets: (id: string, full = false) =>
+    request<{ pushed: number; devices_changed: number; skipped?: boolean }>(
+      `/integrations/${id}/assets/sync?full=${full}`,
+      { method: 'POST', body: '{}' }),
+
+  requestChange: (windowId: string) =>
+    request<{ queued: boolean; integration: string; targets: number;
+              preview: MaintenancePreview }>(
+      `/maintenance/windows/${windowId}/change`,
+      { method: 'POST', body: '{}' }),
+
+  ticketAlarm: (alarmId: string) =>
+    request<{ ok: boolean; queued?: boolean; already?: boolean;
+              issue_key?: string; integration?: string }>(
+      `/integrations/alarms/${alarmId}/ticket`,
+      { method: 'POST', body: '{}' }),
 };

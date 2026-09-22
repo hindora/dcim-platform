@@ -3,7 +3,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
 import { ApiError, api, type MaintenanceWindow } from '../../../api/client';
 import { usePaged } from '../../../components/Pagination';
-import { humanise, relativeTime } from '../../../lib/format';
+import { humanise, oneLine, relativeTime, untilTime } from '../../../lib/format';
+import { Tip } from '../../../components/HoverTip';
 
 /** One window: what it covers, and what it is holding back.
  *
@@ -31,6 +32,15 @@ export function WindowDetail() {
     onError: (e) => setActionError(e instanceof ApiError ? e.message : String(e)),
   });
 
+  const askChange = useMutation({
+    mutationFn: () => api.requestChange(id),
+    onSuccess: () => {
+      setActionError(null);
+      qc.invalidateQueries({ queryKey: ['maintenance-window', id] });
+    },
+    onError: (e) => setActionError(e instanceof ApiError ? e.message : String(e)),
+  });
+
   const { data, isLoading, error } = useQuery<MaintenanceWindow>({
     queryKey: ['maintenance-window', id],
     queryFn: () => api.maintenanceWindow(id),
@@ -54,12 +64,42 @@ export function WindowDetail() {
         <span className={`asset-life is-${data.status}`}>{humanise(data.status)}</span>
       </div>
 
+      {data.blocked_reason && (
+        <div className="banner">
+          <b>This window has not opened:</b> {data.blocked_reason}. Its start
+          time has passed; nothing is shelved and nothing is being worked on.
+        </div>
+      )}
+
       <p className="asset-table-note">
         {data.status === 'scheduled' && (
-          <button type="button" disabled={act.isPending}
-                  onClick={() => act.mutate('start')}>
-            Start now
-          </button>
+          <Tip tip={data.require_approval
+                    && data.jira_approval_state !== 'approved'
+                    ? oneLine(`Held: this window requires approval and its
+                        change request has not been approved. The gate applies
+                        to this button as well as to the clock.`)
+                    : undefined}>
+            <button type="button"
+                    disabled={act.isPending
+                              || (Boolean(data.require_approval)
+                                  && data.jira_approval_state !== 'approved')}
+                    onClick={() => act.mutate('start')}>
+              Start now
+            </button>
+          </Tip>
+        )}
+        {data.status === 'scheduled' && !data.jira_issue_key
+          && !data.jira_approval_state && !askChange.isSuccess && (
+          <Tip tip={oneLine(`The change request carries what the window
+                  actually costs - how many alarms it silences, how many
+                  machines it darkens, which redundant side it removes. That
+                  is the number a change advisory board needs and the one only
+                  a DCIM can compute.`)}>
+            <button type="button" disabled={askChange.isPending}
+                    onClick={() => askChange.mutate()}>
+              {askChange.isPending ? 'Requesting…' : 'Request change'}
+            </button>
+          </Tip>
         )}
         {data.status === 'active' && (
           <button type="button" disabled={act.isPending}
@@ -77,23 +117,46 @@ export function WindowDetail() {
 
       {actionError && <div className="banner">{actionError}</div>}
 
+      {data.change_ref && data.jira_issue_key
+        && data.change_ref !== data.jira_issue_key && (
+        <div className="banner soft">
+          Two change references disagree: somebody typed{' '}
+          <b>{data.change_ref}</b>, and this platform opened{' '}
+          <b>{data.jira_issue_key}</b>. The approval gate follows the second.
+        </div>
+      )}
+
       <div className="asset-facts" style={{ marginBottom: 20 }}>
         <div className="asset-fact">
           <div className="k">Kind</div><div className="v">{humanise(data.kind)}</div>
         </div>
         <div className="asset-fact">
           <div className="k">Starts</div>
-          <div className="v" title={data.starts_at}>{relativeTime(data.starts_at)}</div>
+          <div className="v" title={data.starts_at}>{untilTime(data.starts_at)}</div>
         </div>
         <div className="asset-fact">
           <div className="k">Ends</div>
-          <div className="v" title={data.ends_at}>{relativeTime(data.ends_at)}</div>
+          <div className="v" title={data.ends_at}>{untilTime(data.ends_at)}</div>
         </div>
         <div className="asset-fact">
           <div className="k">Change reference</div>
           <div className="v asset-tag">
             {data.change_ref ?? <span className="asset-none">—</span>}
           </div>
+        </div>
+        <div className="asset-fact">
+          <div className="k">Change request</div>
+          <div className="v asset-tag">
+            {data.jira_issue_key ?? (
+              askChange.isSuccess
+                ? <span className="asset-none">queued…</span>
+                : <span className="asset-none">—</span>
+            )}
+          </div>
+        </div>
+        <div className="asset-fact">
+          <div className="k">Approval</div>
+          <div className="v"><Approval window={data} /></div>
         </div>
         <div className="asset-fact">
           <div className="k">Scheduled by</div><div className="v">{data.created_by}</div>
@@ -168,5 +231,38 @@ export function WindowDetail() {
       )}
       {pagedShelved.foot}
     </>
+  );
+}
+
+
+/** Whether anybody is waiting on a decision, and what it was.
+ *
+ *  NULL is not "not yet approved". A window that never asked for approval has
+ *  no approval state, and showing both the same way would make every window
+ *  look like it was stuck behind somebody.
+ */
+function Approval({ window }: { window: MaintenanceWindow }) {
+  const state = window.jira_approval_state;
+  if (!state) {
+    return window.require_approval
+      ? <span className="warn">required, not yet requested</span>
+      : <span className="asset-none">not required</span>;
+  }
+  if (state === 'approved') return <span className="muted">approved</span>;
+  if (state === 'declined') {
+    return (
+      <Tip className="critical" tip={oneLine(`A declined change cancels its
+              window: the work is not happening, and a window left scheduled
+              would open at 02:00 and shelve alarms on equipment nobody is
+              touching.`)}>
+        declined
+      </Tip>
+    );
+  }
+  return (
+    <Tip className="warn" tip={oneLine(`The window will not start until the
+            change request is approved - by the clock or by the button.`)}>
+      awaiting approval
+    </Tip>
   );
 }

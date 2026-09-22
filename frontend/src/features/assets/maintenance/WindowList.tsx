@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { api, type MaintenanceWindow } from '../../../api/client';
 import { usePaged } from '../../../components/Pagination';
-import { humanise, relativeTime } from '../../../lib/format';
+import { humanise, untilTime } from '../../../lib/format';
 import { WindowForm } from './WindowForm';
 
 /** Maintenance windows, and what each is holding out of the alarm console.
@@ -78,8 +78,8 @@ function Section({ title, rows }: { title: string; rows: MaintenanceWindow[] }) 
                   )}
                 </td>
                 <td className="muted">{humanise(w.kind)}</td>
-                <td className="muted" title={w.starts_at}>{relativeTime(w.starts_at)}</td>
-                <td className="muted" title={w.ends_at}>{relativeTime(w.ends_at)}</td>
+                <td className="muted" title={w.starts_at}>{untilTime(w.starts_at)}</td>
+                <td className="muted" title={w.ends_at}>{untilTime(w.ends_at)}</td>
                 <td className="muted">{w.target_count}</td>
                 <td className={w.shelved_alarms ? 'asset-shelved' : 'muted'}>
                   {w.shelved_alarms || '—'}

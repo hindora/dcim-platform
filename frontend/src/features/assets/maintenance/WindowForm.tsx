@@ -23,6 +23,8 @@ export function WindowForm({ onClose }: { onClose: () => void }) {
   const [description, setDescription] = useState('');
   const [kind, setKind] = useState('planned');
   const [suppress, setSuppress] = useState(true);
+  const [createChange, setCreateChange] = useState(false);
+  const [requireApproval, setRequireApproval] = useState(false);
   const [startsAt, setStartsAt] = useState(defaultStart());
   const [endsAt, setEndsAt] = useState(defaultEnd());
   const [deviceIds, setDeviceIds] = useState<string[]>([]);
@@ -42,6 +44,11 @@ export function WindowForm({ onClose }: { onClose: () => void }) {
       starts_at: new Date(startsAt).toISOString(),
       ends_at: new Date(endsAt).toISOString(),
       suppress,
+      create_change: createChange,
+      // The server refuses approval without a change request to approve, and
+      // so does the checkbox below - otherwise the window is held shut
+      // waiting on a decision about something that does not exist.
+      require_approval: createChange && requireApproval,
       device_ids: deviceIds,
     }),
     onSuccess: (window) => {
@@ -105,6 +112,29 @@ export function WindowForm({ onClose }: { onClose: () => void }) {
               {!suppress && ' Off: this is a calendar entry and silences nothing.'}
             </span>
           </label>
+          <label className="asset-form-wide asset-check">
+            <input type="checkbox" checked={createChange}
+                   onChange={(e) => {
+                     setCreateChange(e.target.checked);
+                     if (!e.target.checked) setRequireApproval(false);
+                   }} />
+            <span>
+              Open a change request, carrying what this window costs — the
+              alarms it silences, the machines it darkens, the redundancy it
+              removes.
+            </span>
+          </label>
+          {createChange && (
+            <label className="asset-form-wide asset-check">
+              <input type="checkbox" checked={requireApproval}
+                     onChange={(e) => setRequireApproval(e.target.checked)} />
+              <span>
+                Hold the window shut until that change is approved.
+                {requireApproval
+                  && ' It will not start on the clock or by hand until then.'}
+              </span>
+            </label>
+          )}
           {!datesValid && (startsAt || endsAt) && (
             <p className="asset-form-error asset-form-wide">
               A window has to end after it starts.

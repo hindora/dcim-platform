@@ -7,6 +7,14 @@ import { apply, getMode, watchSystem } from './lib/theme';
 import './index.css';
 import './home.css';
 import './estate.css';
+// The chart furniture - .asset-panel, .asset-vcols, .asset-max, the pager -
+// is the house set, reused by every chart in the product, so it is loaded
+// globally rather than by whichever page happens to be the one it grew up on.
+//
+// It used to be imported only by AssetWorkspace, which meant the alarm trend
+// on the HOME page rendered unstyled for anybody who had not visited Assets
+// first in that session.
+import './features/assets/assets.css';
 
 // Before anything renders: a light-mode machine should not be shown the dark
 // palette for a frame on its way in, and a wall display left on "sync with

@@ -78,6 +78,26 @@ export function relativeTime(iso: string | null | undefined): string {
   return `${Math.round(seconds / 86400)}d ago`;
 }
 
+/** How long until a moment in the FUTURE, or how long since it passed.
+ *
+ *  `relativeTime` clamps at zero on purpose - it reads timestamps the platform
+ *  RECORDED, and a server clock a few seconds ahead should print "0s ago"
+ *  rather than "in 3 seconds". A deadline is the opposite case: a credential
+ *  or a webhook registration that lapses in eighteen days rendered as "0s ago"
+ *  through that clamp, which reads as "it has already gone".
+ */
+export function untilTime(iso: string | null | undefined): string {
+  if (!iso) return 'never';
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return 'never';
+  const seconds = Math.round((then - Date.now()) / 1000);
+  if (seconds < 0) return relativeTime(iso);
+  if (seconds < 60) return 'in under a minute';
+  if (seconds < 3600) return `in ${Math.round(seconds / 60)}m`;
+  if (seconds < 172800) return `in ${Math.round(seconds / 3600)}h`;
+  return `in ${Math.round(seconds / 86400)}d`;
+}
+
 // Status classes. Colour is never the only signal - callers pair this with a
 // glyph or the status text itself.
 export function statusClass(status: string): string {

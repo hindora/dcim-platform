@@ -18,6 +18,11 @@ export const SETTINGS_NAV = [
     blurb: 'Which planes each collector runs, and where it listens',
   },
   {
+    to: 'integrations',
+    label: 'Ticketing',
+    blurb: 'Which conditions reach a service desk, and what happened to them',
+  },
+  {
     to: 'appearance',
     label: 'Appearance',
     blurb: 'Light or dark, for this browser',
