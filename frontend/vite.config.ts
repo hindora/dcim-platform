@@ -5,6 +5,17 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
+    // Vite 5.4.12 added a Host-header check, and it rejects anything not
+    // listed here with a bare "Blocked request. This host is not allowed."
+    // That is served BEFORE any application code, so a tunnelled DCIM looks
+    // dead rather than misconfigured. A leading dot matches subdomains, which
+    // is what makes an ephemeral ngrok hostname work without editing this
+    // file every time the tunnel restarts.
+    //
+    // Listed explicitly rather than `true`: the check exists to stop a remote
+    // page rebinding DNS at this dev server, and switching it off wholesale
+    // would give that up for every host, not just the tunnel's.
+    allowedHosts: ['.ngrok-free.app', '.ngrok.app', '.ngrok-free.dev'],
     // The API is proxied in development so the browser sees one origin and
     // there is no CORS or cookie-domain difference between dev and production.
     proxy: {
