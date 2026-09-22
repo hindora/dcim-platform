@@ -5,7 +5,7 @@ import { api, type Alarm } from '../../api/client';
 import { StatusChip } from '../../components/StatusChip';
 import { humanise, relativeTime } from '../../lib/format';
 import { useInvalidateOn, useTopics } from '../../ws/useSocket';
-import { TicketChip } from './TicketChip';
+import { AlarmDetailBody } from './AlarmDetail';
 
 const ALARM_EVENTS = ['alarm_created', 'alarm_updated', 'alarm_cleared'];
 
@@ -227,22 +227,7 @@ export function AlarmList() {
               direct link.
             </p>
           )}
-          <dl className="kv">
-            <dt>Severity</dt><dd><StatusChip status={selected.severity} /></dd>
-            <dt>State</dt><dd>{selected.state}</dd>
-            <dt>Message</dt><dd>{selected.message}</dd>
-            <dt>Source</dt><dd className="mono">{selected.source}</dd>
-            <dt>Metric</dt>
-            <dd className="mono">
-              {selected.metric_key
-                ? `${selected.metric_key} = ${selected.trigger_value} (limit ${selected.threshold})`
-                : '—'}
-            </dd>
-            <dt>First seen</dt><dd>{relativeTime(selected.first_seen)}</dd>
-            <dt>Last seen</dt><dd>{relativeTime(selected.last_seen)}</dd>
-            <dt>Occurrences</dt><dd>{selected.occurrence_count}</dd>
-            <dt>Ticket</dt><dd><TicketChip alarmId={selected.id} /></dd>
-          </dl>
+          <AlarmDetailBody alarm={selected} />
           <div className="toolbar">
             <button onClick={() => clear.mutate(selected.id)}>Clear manually</button>
             <button onClick={closeAlarm}>Close</button>

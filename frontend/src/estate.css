@@ -668,3 +668,11 @@ button.facet.on {
 .cls-pill.alert {
   background: none; border-color: var(--border-strong); color: var(--text-muted);
 }
+
+/* A condition opened from the alarm panel.
+   The panel's own scrim sits at z-index 60, so a modal at the shared 50
+   renders BEHIND it and reads as a click that did nothing. */
+.modal-scrim.over-sheet { z-index: 70; }
+.modal.alarm-modal { width: min(680px, 100%); }
+.sub-table tr.row-open { cursor: pointer; }
+.sub-table tr.row-open:hover > td { background: var(--bg-inset); }

@@ -33,6 +33,7 @@ import { CategoryGlyph } from '../../components/CategoryGlyph';
 import { StatusChip } from '../../components/StatusChip';
 import { Tip } from '../../components/HoverTip';
 import { AlarmTrend, TrendGlyph, maxOpen } from './AlarmTrend';
+import { AlarmDetailModal } from '../alarms/AlarmDetail';
 import { Pagination } from '../../components/Pagination';
 import { metaFor } from '../../components/alertMeta';
 import { humanise, relativeTime } from '../../lib/format';
@@ -191,9 +192,9 @@ interface Facets { severity: string[]; detection: string[] }
 const NO_FACETS: Facets = { severity: [], detection: [] };
 const facetsActive = (f: Facets) => f.severity.length > 0 || f.detection.length > 0;
 
-function RoomConditions({ roomId, categories, span, tab, facets }: {
+function RoomConditions({ roomId, categories, span, tab, facets, onOpen }: {
   roomId: string; categories: AlarmCategory[]; span: number; tab: Tab;
-  facets: Facets;
+  facets: Facets; onOpen: (a: Alarm) => void;
 }) {
   const history = tab === 'history';
   const [page, setPage] = useState(0);
@@ -263,7 +264,9 @@ function RoomConditions({ roomId, categories, span, tab, facets }: {
                 {shown.map((a) => {
                   const alert = a.response_class === 'alert';
                   return (
-                    <tr key={a.id}>
+                    <tr key={a.id} className="row-open"
+                        onClick={() => onOpen(a)}
+                        title="Open the full condition">
                       <td>
                         <span className={`cls-pill ${alert ? 'alert' : 'alarm'}`}>
                           {alert ? 'ALERT' : 'ALARM'}
@@ -278,7 +281,10 @@ function RoomConditions({ roomId, categories, span, tab, facets }: {
                       </td>
                       <td>
                         {a.device_id
-                          ? <Link to={`/devices/${a.device_id}`}>{a.device_name}</Link>
+                          ? <Link to={`/devices/${a.device_id}`}
+                                  onClick={(e) => e.stopPropagation()}>
+                              {a.device_name}
+                            </Link>
                           : <span className="muted">platform</span>}
                         {a.rack_name && (
                           <span className="muted small"> · {a.rack_name}</span>
@@ -449,6 +455,10 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
   // a filter chosen against the open population is not one the history
   // was asked for.
   const [facets, setFacets] = useState<Facets>(NO_FACETS);
+  // The condition somebody clicked. The panel already lists the estate's
+  // alarms room by room, so the detail belongs on top of that view rather
+  // than on a page that replaces it.
+  const [openAlarm, setOpenAlarm] = useState<Alarm | null>(null);
   const filtering = facetsActive(facets);
   const history = tab === 'history';
 
@@ -458,11 +468,12 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
     // Not while a maximized chart is up: that Escape is the modal's, and
     // taking the sheet down with it would drop two layers on one key.
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !maxOpen()) onClose();
+      // Nor while a condition is open on top, for the same reason.
+      if (e.key === 'Escape' && !maxOpen() && !openAlarm) onClose();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [onClose, openAlarm]);
 
   // One query, however many categories the counter covers. Asking per category
   // and stitching the answers together in the browser gave one room two rows
@@ -791,14 +802,15 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
                     <th className="num">Critical</th>
                     <th className="num">Major</th>
                     {history && <th className="mid">Trend</th>}
-                    <th />
                   </tr>
                 </thead>
                 <tbody>
                   {rows.map((r) => {
                     const isOpen = open.has(r.room_id);
                     const trendOn = history && trendOpen.has(r.room_id);
-                    const span = (withAlerts ? 10 : 9) + (history ? 1 : 0);
+                    // One narrower than it was: the ENTER column went with
+                    // the page it opened.
+                    const span = (withAlerts ? 9 : 8) + (history ? 1 : 0);
                     return (
                       <Fragment key={r.room_id}>
                         <tr className={(r.critical ? 'lead-critical' : 'lead-warn')
@@ -857,18 +869,12 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
                           </button>
                         </td>
                       )}
-                      <td className="num">
-                        <Link className="row-btn" to={`/alarms?room=${r.room_id}`}
-                              style={{ display: 'inline-block', lineHeight: '26px',
-                                       textAlign: 'center' }}>
-                          ENTER
-                        </Link>
-                      </td>
                         </tr>
                         {isOpen && (
                           <tr className="sub-row">
                             <RoomConditions roomId={r.room_id} categories={categories}
-                                            span={span} tab={tab} facets={facets} />
+                                            span={span} tab={tab} facets={facets}
+                                            onOpen={setOpenAlarm} />
                           </tr>
                         )}
                         {trendOn && (
@@ -919,6 +925,10 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
           </>
         </div>
       </section>
+      {openAlarm && (
+        <AlarmDetailModal alarm={openAlarm}
+                          onClose={() => setOpenAlarm(null)} />
+      )}
     </div>
   );
 }
