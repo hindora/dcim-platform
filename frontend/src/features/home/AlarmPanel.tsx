@@ -266,6 +266,20 @@ function RoomConditions({ roomId, categories, span, tab, facets, onOpen }: {
                   return (
                     <tr key={a.id} className="row-open"
                         onClick={() => onOpen(a)}
+                        // A click handler on a <tr> is invisible to the
+                        // accessibility tree and unreachable from the
+                        // keyboard: the row is not focusable and Enter does
+                        // nothing, so the detail simply does not exist for
+                        // anyone not using a mouse.
+                        role="button" tabIndex={0}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            onOpen(a);
+                          }
+                        }}
+                        aria-label={`${humanise(a.alarm_type)} on `
+                                    + `${a.device_name ?? 'the platform'}`}
                         title="Open the full condition">
                       <td>
                         <span className={`cls-pill ${alert ? 'alert' : 'alarm'}`}>

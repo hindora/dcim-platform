@@ -169,6 +169,14 @@ export function AlarmList() {
           <tbody>
             {data.items.map((a) => (
               <tr key={a.id} onClick={() => openAlarm(a.id)}
+                  role="button" tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      openAlarm(a.id);
+                    }
+                  }}
+                  aria-label={`${humanise(a.alarm_type)} on ${a.device_name}`}
                   className={a.id === selectedId ? 'is-selected' : undefined}
                   style={{ cursor: 'pointer' }}>
                 <td><StatusChip status={a.severity} /></td>
