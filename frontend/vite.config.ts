@@ -7,15 +7,24 @@ export default defineConfig({
     port: 5173,
     // Vite 5.4.12 added a Host-header check, and it rejects anything not
     // listed here with a bare "Blocked request. This host is not allowed."
-    // That is served BEFORE any application code, so a tunnelled DCIM looks
-    // dead rather than misconfigured. A leading dot matches subdomains, which
-    // is what makes an ephemeral ngrok hostname work without editing this
-    // file every time the tunnel restarts.
+    // That is served BEFORE any application code, so reaching this dev server
+    // under any name but localhost looks dead rather than misconfigured.
     //
-    // Listed explicitly rather than `true`: the check exists to stop a remote
-    // page rebinding DNS at this dev server, and switching it off wholesale
-    // would give that up for every host, not just the tunnel's.
-    allowedHosts: ['.ngrok-free.app', '.ngrok.app', '.ngrok-free.dev'],
+    // Configured, not hardcoded. Which hostnames are legitimate is a property
+    // of where someone is running this, not of the product, and a specific
+    // vendor's domain has no business being committed here. Set
+    // VITE_ALLOWED_HOSTS to a comma-separated list; a leading dot matches
+    // subdomains.
+    //
+    // Empty by default, which leaves Vite's own localhost-only behaviour in
+    // place. Never `true`: the check exists to stop a remote page rebinding
+    // DNS at this dev server, and switching it off wholesale would give that
+    // up for every host rather than the intended one.
+    //
+    // Dev-server only. A real deployment serves the built assets from
+    // `build.outDir` and this setting does nothing there.
+    allowedHosts: (process.env.VITE_ALLOWED_HOSTS || '')
+      .split(',').map((h) => h.trim()).filter(Boolean),
     // The API is proxied in development so the browser sees one origin and
     // there is no CORS or cookie-domain difference between dev and production.
     proxy: {
