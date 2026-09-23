@@ -685,11 +685,32 @@ button.ind:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px
 .drawer-id .val { font-size: 16px; font-weight: 600; margin-top: 4px; }
 .drawer-id .sub { font-size: 11px; color: var(--text-faint); margin-top: 3px; }
 
+/* The drawer's primary action.
+ *
+ * `flex: none` is the whole fix for its height. `.drawer` is a column flex
+ * container and its content overflows on every room worth opening, so every
+ * child with the default flex-shrink:1 gets squeezed - this one declared 44px
+ * and had been rendering at 19.5px since it shipped.
+ *
+ * The rest is chrome an <a> never gets. The shared control rule is
+ * `input, select, button`, which is element-typed, so when this stopped being
+ * a (dead) <button> and became a real link it also stopped inheriting the
+ * border, the radius and the padding, and rendered as a flat blue rectangle.
+ * Stated here rather than by widening that selector, because a link is not a
+ * form control and should not pick up form-control styling everywhere.
+ */
 .drawer .enter {
-  margin: 20px 26px 22px; height: 44px; width: calc(100% - 52px);
-  background: var(--accent); border-color: var(--accent); color: #fff;
+  flex: none;
+  display: flex; align-items: center; justify-content: center;
+  margin: 18px 26px 20px; height: 40px; width: calc(100% - 52px);
+  background: var(--accent); border: 1px solid var(--accent);
+  border-radius: var(--radius); color: #fff; text-decoration: none;
   font-weight: 600; letter-spacing: .12em; font-size: 13px;
+  transition: filter 120ms;
 }
+.drawer .enter:hover { filter: brightness(1.12); }
+.drawer .enter:active { filter: brightness(0.94); }
+.drawer .enter:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 
 .drawer-head { display: flex; align-items: baseline; gap: 16px; padding: 0 26px 14px; }
 .drawer-head h3 { margin: 0; font-size: 18px; }
@@ -833,30 +854,6 @@ button.ind:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px
 .fac-reads em { font-style: normal; color: var(--text-muted); margin-right: 3px; }
 .fac-reads .unset { color: var(--text-faint); font-style: italic; }
 
-/* The drawer's identity strip.
-   Replaces three stacked .drawer-id cards plus a full-width primary button,
-   which together spent ~300 px restating the row the reader had just clicked
-   and pushed every live figure below the fold. One line of identity, one of
-   scale, and ENTER demoted to a bordered button: it is navigation, not the
-   panel's purpose, and as a 772 px primary bar it was the loudest element on
-   a screen made of measurements. */
-.drawer-top { display: grid; grid-template-columns: 1fr auto; gap: 2px 16px;
-              padding: 18px 26px 14px; border-bottom: 1px solid var(--border);
-              align-items: center; }
-.drawer-top-main { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px;
-                   min-width: 0; }
-.drawer-top-main h2 { font-size: 20px; font-weight: 650; margin: 0; }
-.drawer-top-main .loc { font-size: 12px; color: var(--text-muted); }
-.drawer-top-main .sep { font-size: 12px; color: var(--text-faint); }
-.drawer-top-main .unset { color: var(--text-faint); font-style: italic; }
-.drawer-top-meta { grid-column: 1; font-size: 11px; color: var(--text-faint); }
-.drawer-top-enter { grid-column: 2; grid-row: 1 / span 2; align-self: center;
-                    font-size: 11px; font-weight: 600; letter-spacing: 0.08em;
-                    padding: 7px 18px; border-radius: 5px;
-                    border: 1px solid var(--accent); color: var(--accent);
-                    text-decoration: none; white-space: nowrap; }
-.drawer-top-enter:hover { background: var(--accent); color: var(--bg-base); }
-
 /* The design figure a measurement is read against, and the gap. Deliberately
    uncoloured: on this fleet the design PUE is a cooling-only anchor while the
    measurement is Category 1 and carries distribution losses the anchor never
@@ -876,38 +873,6 @@ button.ind:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px
             border: 1px solid var(--border-strong, var(--border));
             color: var(--text-faint); font-size: 9px; line-height: 1; }
 .tile-why:hover { color: var(--text); border-color: var(--text-muted); }
-
-/* Power as a composition, not four tiles.
-   Total and its parts: total = IT + cooling + other, which four equal tiles
-   made the reader work out for themselves every time. The bar is drawn against
-   the segments' own sum so it always fills; where the reported total exceeds
-   them the remainder gets its own hatched segment rather than being absorbed
-   into a rounding error nobody can see. */
-.power-split { padding: 0 26px; }
-.power-total { display: flex; align-items: baseline; gap: 6px; }
-.power-total .n { font-size: 27px; font-weight: 650; font-variant-numeric: tabular-nums; }
-.power-total .u { font-size: 12px; color: var(--text-muted); }
-.power-total .cap { font-size: 11px; color: var(--text-muted); margin-left: 8px; }
-.power-bar { display: flex; height: 10px; border-radius: 5px; overflow: hidden;
-             margin-top: 10px; background: var(--bg-inset); }
-.power-bar .seg { display: block; min-width: 2px; }
-/* Hatched, never a flat colour: it is a residue, not a category. */
-.power-bar .seg.unaccounted,
-.power-legend .leg i.unaccounted {
-  background: repeating-linear-gradient(45deg, var(--text-faint) 0 2px,
-                                        transparent 2px 5px); }
-.power-legend { display: flex; flex-wrap: wrap; gap: 6px 20px; margin-top: 10px; }
-.power-legend .leg { display: flex; align-items: baseline; gap: 6px; font-size: 11px; }
-.power-legend .leg i { width: 8px; height: 8px; border-radius: 2px; flex: none;
-                       transform: translateY(1px); }
-.power-legend .leg b { font-weight: 500; color: var(--text-muted); }
-.power-legend .leg .v { font-variant-numeric: tabular-nums; }
-.power-legend .leg .p { color: var(--text-faint); }
-/* A segment with nothing in it stays listed, greyed, with its reason: absent
-   and zero are different claims and this panel does not conflate them. */
-.power-legend .leg.none b,
-.power-legend .leg.none .v { color: var(--text-faint); }
-.power-note { margin-top: 8px; font-size: 10px; color: var(--text-faint); }
 
 /* A tile whose figure counts a population you can go and look at. */
 .tile-link { text-decoration: none; color: inherit; display: block; }

@@ -17,7 +17,6 @@ import { Link } from 'react-router-dom';
 import { Tip } from '../../components/HoverTip';
 import { api, type RoomKpi } from '../../api/client';
 import { RoomFacility } from './RoomFacility';
-import { PowerSplit } from './PowerSplit';
 import { ALL_CATEGORIES, AlarmTrend, maxOpen } from './AlarmTrend';
 
 function Tile({ value, unit, caption, note, absent, bar, detail, to }: {
@@ -123,38 +122,32 @@ export function RoomDrawer({ roomId, roomName, onClose }: {
       <aside className="drawer" aria-label={`${roomName} detail`}>
         <button className="close" onClick={onClose} aria-label="Close">×</button>
 
-        {/* Same compact strip as the site drawer: the reader came from this
-            room's row and does not need it restated in three stacked cards.
-            The last-reading age travels here because it qualifies everything
-            below it - a panel of figures from nine minutes ago is a different
-            claim from the same panel now. */}
-        <header className="drawer-top">
-          <div className="drawer-top-main">
-            <h2>{roomName}</h2>
-            {data && (
-              <>
-                <span className="loc">{data.room.site_code}</span>
-                {data.room.floor && (
-                  <><span className="sep">·</span>
-                    <span className="loc">floor {data.room.floor}</span></>
-                )}
-                {data.room.room_type && (
-                  <><span className="sep">·</span>
-                    <span className="loc">{data.room.room_type.replace(/_/g, ' ')}</span></>
-                )}
-              </>
-            )}
+        <div className="drawer-id">
+          <div style={{ flex: 1 }}>
+            <div className="cap">ROOM</div>
+            <div className="val">{roomName}</div>
+            <div className="sub">
+              {data ? `${data.room.site_code}${data.room.floor ? ` · floor ${data.room.floor}` : ''}`
+                    : 'loading…'}
+            </div>
           </div>
-          <div className="drawer-top-meta">
-            {data ? `last reading ${ago(data.last_sample)}` : 'loading…'}
+          <div style={{ flex: 1 }}>
+            <div className="cap">LAST READING</div>
+            <div className="val">{data ? ago(data.last_sample) : '—'}</div>
+            <div className="sub">
+              {data?.room.room_type ? data.room.room_type.replace(/_/g, ' ') : ''}
+            </div>
           </div>
-          {/* ENTER, not "OPEN FLOOR PLAN": the room row's ENTER already goes to
-              this exact URL, and one destination under two names in one table
-              reads as two places. */}
-          <Link className="drawer-top-enter" to={`/floorplan?room=${roomId}`}>
-            ENTER
-          </Link>
-        </header>
+        </div>
+
+        {/* ENTER, not "OPEN FLOOR PLAN": this is the same destination the row's
+            ENTER already goes to, and the site drawer's primary action is
+            called ENTER too. One link with two names in the same table reads
+            as two different places. What ENTER means is "go into this scope" -
+            for a site that is its device list, for a room its floor plan. */}
+        <Link className="enter primary" to={`/floorplan?room=${roomId}`}>
+          ENTER
+        </Link>
 
         {error && <div className="banner" style={{ margin: '0 26px 16px' }}>
           Could not load this room.
@@ -243,18 +236,13 @@ export function RoomDrawer({ roomId, roomName, onClose }: {
                 POWER
                 {pw?.note && <span className="why">{pw.note}</span>}
               </div>
-              <PowerSplit
-                caption="Room total"
-                total={pw?.total_kw}
-                segments={[
-                  { key: 'it', label: 'IT (AC)', kw: pw?.it_ac_kw, tone: 'accent' },
-                  { key: 'cooling', label: 'Cooling', kw: pw?.cooling_kw,
-                    tone: 'cool',
-                    absentNote: 'no air handler in this room' },
-                  { key: 'other', label: 'Other', kw: pw?.other_kw, tone: 'warn',
-                    absentNote: 'nothing metered outside IT and cooling' },
-                ]} />
-              <div className="drawer-grid" style={{ marginTop: 14 }}>
+              <div className="drawer-grid">
+                <Tile absent={pw?.total_kw === null} value={num(pw?.total_kw)} unit="kW"
+                      caption="Room total" />
+                <Tile absent={pw?.it_ac_kw === null} value={num(pw?.it_ac_kw)} unit="kW"
+                      caption="IT (AC)" />
+                <Tile absent={pw?.cooling_kw === null} value={num(pw?.cooling_kw)} unit="kW"
+                      caption="Cooling" />
                 {/* "In-room", never "Room PUE". This boundary holds only the
                     air handlers standing in the room; the chillers and towers
                     that actually reject the heat are in the plant rooms. A

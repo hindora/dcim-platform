@@ -31,7 +31,6 @@ import {
 import { CategoryGlyph, type GlyphKind } from '../../components/CategoryGlyph';
 import { Tip } from '../../components/HoverTip';
 import { ALL_CATEGORIES, AlarmTrend, maxOpen } from './AlarmTrend';
-import { PowerSplit } from './PowerSplit';
 import { relativeTime } from '../../lib/format';
 
 function Tile({ value, unit, caption, note, absent, bar, against, detail }: {
@@ -170,30 +169,58 @@ export function SiteDrawer({ site, onClose }: { site: SiteRow; onClose: () => vo
             rides in the strip because it is navigation, not the panel's
             purpose: as a 772 px primary bar it was the loudest thing on a
             screen full of measurements. */}
-        <header className="drawer-top">
-          <div className="drawer-top-main">
-            <h2>{site.code}</h2>
-            <span className="loc">
+        <div className="drawer-id">
+          <svg className="glyph" width="24" height="24" viewBox="0 0 24 24" aria-hidden
+               fill="none" stroke="currentColor" strokeWidth="1.4">
+            <rect x="2" y="4" width="9" height="18" /><rect x="13" y="9" width="9" height="13" />
+          </svg>
+          <div>
+            <div className="cap">SITE</div>
+            <div className="val">{site.code}</div>
+            {site.name !== site.code && <div className="sub">{site.name}</div>}
+          </div>
+        </div>
+
+        <div className="drawer-id">
+          <svg className="glyph" width="24" height="24" viewBox="0 0 24 24" aria-hidden
+               fill="none" stroke="currentColor" strokeWidth="1.4">
+            <circle cx="12" cy="10" r="6" /><line x1="12" y1="16" x2="12" y2="22" />
+          </svg>
+          <div>
+            <div className="cap">LOCATION</div>
+            <div className="val">
               {site.city || site.country
                 ? [site.city, site.country].filter(Boolean).join(', ')
-                : <span className="unset">location not set</span>}
-            </span>
-            <span className="sep">·</span>
-            <span className="loc">{site.timezone}</span>
-            {site.name !== site.code && (
-              <><span className="sep">·</span><span className="loc">{site.name}</span></>
+                : <span className="unset">not set</span>}
+            </div>
+            <div className="sub">{site.timezone}</div>
+          </div>
+        </div>
+
+        <div className="drawer-id">
+          <svg className="glyph" width="24" height="24" viewBox="0 0 24 24" aria-hidden
+               fill="none" stroke="currentColor" strokeWidth="1.4">
+            <rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" />
+            <rect x="3" y="14" width="7" height="7" /><rect x="14" y="14" width="7" height="7" />
+          </svg>
+          <div>
+            <div className="cap">ITEMS MONITORED</div>
+            <div className="val">{data ? `${data.monitored.devices} devices` : '—'}</div>
+            {data && (
+              <div className="sub">
+                {data.monitored.endpoints} endpoints across {data.monitored.protocols} protocols
+                {' · '}{data.monitored.racks} racks
+              </div>
             )}
           </div>
-          <div className="drawer-top-meta">
-            {data ? (
-              <>{data.monitored.devices} devices · {data.monitored.endpoints} endpoints
-                 across {data.monitored.protocols} protocols · {data.monitored.racks} racks</>
-            ) : 'loading…'}
-          </div>
-          <Link className="drawer-top-enter" to={`/devices?datacenter=${site.code}`}>
-            ENTER
-          </Link>
-        </header>
+        </div>
+
+        {/* A <button> with no handler, which is what this was, looks exactly
+            like a working one and silently does nothing. Same destination as
+            the site row's ENTER. */}
+        <Link className="primary enter" to={`/devices?datacenter=${site.code}`}>
+          ENTER
+        </Link>
 
         <div className="drawer-head">
           <h3>Live Data</h3>
@@ -223,20 +250,14 @@ export function SiteDrawer({ site, onClose }: { site: SiteRow; onClose: () => vo
 
             <section className="drawer-section">
               <div className="title">SITE POWER</div>
-              {/* A total and its parts, not four measurements. See PowerSplit. */}
-              <PowerSplit
-                caption="Site total"
-                total={data.power.total_kw}
-                segments={[
-                  { key: 'it', label: 'IT', kw: data.power.it_load_kw,
-                    tone: 'accent' },
-                  { key: 'cooling', label: 'Cooling', kw: data.power.cooling_kw,
-                    tone: 'cool' },
-                  { key: 'other', label: 'Facility other',
-                    kw: data.power.facility_other_kw, tone: 'warn',
-                    absentNote: 'nothing metered outside IT and cooling' },
-                ]}
-                note={`IT from ${data.power.reporting_devices} devices reporting`} />
+              <div className="drawer-grid">
+                <Tile value={data.power.total_kw.toFixed(1)} unit="kW" caption="Site Total" />
+                <Tile value={data.power.it_load_kw.toFixed(1)} unit="kW" caption="IT Load"
+                      note={`${data.power.reporting_devices} devices reporting`} />
+                <Tile value={data.power.cooling_kw.toFixed(1)} unit="kW" caption="Cooling" />
+                <Tile value={data.power.facility_other_kw.toFixed(1)} unit="kW"
+                      caption="Facility Other" />
+              </div>
             </section>
 
             <section className="drawer-section">
