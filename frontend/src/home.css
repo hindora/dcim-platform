@@ -685,37 +685,38 @@ button.ind:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px
 .drawer-id .val { font-size: 16px; font-weight: 600; margin-top: 4px; }
 .drawer-id .sub { font-size: 11px; color: var(--text-faint); margin-top: 3px; }
 
-/* The drawer's secondary action.
+/* The drawer's primary action, at the panel's own scale.
  *
- * Small, outlined and right-aligned. It was a full-width solid blue bar, which
- * made the least informative thing on the panel the loudest: the reader opens
- * this drawer to read measurements, and a 787 px block of accent colour sat
- * above every one of them taking the eye first. Navigation should be findable,
- * not shouted.
+ * Two earlier attempts bracket this one. Full-bleed accent - 787 px of solid
+ * colour above every measurement - made the way OUT of the panel the loudest
+ * thing on it. A 28 px outlined chip was the opposite problem: on an 840 px
+ * panel of 20 px headings and 23 px figures it read as a stray tag rather than
+ * a control, and floated unanchored in its own row.
+ *
+ * So: the product's own primary button, at a size that belongs beside this
+ * panel's type. `button.primary` elsewhere is accent-dim filled with an accent
+ * border, and reusing that is what makes this look like part of the product
+ * instead of a third invention.
  *
  * `flex: none` because `.drawer` is a column flex container whose content
- * overflows on every room worth opening - without it every child with the
- * default flex-shrink:1 is squeezed, which is why this drew at 19.5px for a
- * long time while its rule said 44.
+ * overflows, and every child with the default flex-shrink:1 gets squeezed -
+ * that is why this drew at 19.5 px while its rule said 44.
  *
- * Border, radius and padding are stated here rather than inherited: the shared
- * control rule is `input, select, button`, which is element-typed, so an <a>
- * picks up none of it. Widening that selector would put form-control chrome on
- * every link in the product.
+ * Border, radius and padding are stated rather than inherited: the shared
+ * control rule is `input, select, button`, element-typed, so an <a> picks up
+ * none of it and widening that selector would put form chrome on every link.
  */
 .drawer .enter {
   flex: none; align-self: flex-end;
   display: inline-flex; align-items: center; justify-content: center;
-  margin: 2px 26px 18px; height: 28px; width: auto; padding: 0 16px;
-  background: transparent; border: 1px solid var(--border-strong);
-  border-radius: var(--radius); color: var(--text-muted); text-decoration: none;
-  font-weight: 600; letter-spacing: .1em; font-size: 10px;
-  transition: color 120ms, border-color 120ms, background 120ms;
+  margin: 6px 26px 20px; height: 36px; width: auto; min-width: 132px;
+  padding: 0 24px;
+  background: var(--accent-dim); border: 1px solid var(--accent);
+  border-radius: var(--radius); color: var(--text); text-decoration: none;
+  font-weight: 600; letter-spacing: .1em; font-size: 12px;
+  transition: background 120ms, border-color 120ms;
 }
-/* It earns its colour on approach, not at rest. */
-.drawer .enter:hover {
-  background: var(--accent); border-color: var(--accent); color: #fff;
-}
+.drawer .enter:hover { background: var(--accent); color: #fff; }
 .drawer .enter:active { filter: brightness(0.94); }
 .drawer .enter:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
