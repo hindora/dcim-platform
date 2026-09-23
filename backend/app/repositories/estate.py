@@ -1866,14 +1866,27 @@ async def room_census(session: AsyncSession, room_id: str) -> dict[str, Any]:
 async def room_updated(session: AsyncSession, room_id: str) -> datetime | None:
     """Newest telemetry timestamp anywhere in the room.
 
-    The room-level answer to "is this data worth reading". Bounded to a day so
-    the query stays on recent chunks; a room silent for longer reports None,
-    which the UI renders as unknown rather than as a stale date.
+    The room-level answer to "is this data worth reading".
+
+    Read from `endpoint_state`, which the ingest maintains, NOT by scanning
+    `telemetry_sample`. The scan version aggregated a day of raw samples for
+    every device in the room and took 15.9 s on a 145-device hall - the whole
+    of the room drawer's load time - because there is no index that answers
+    max(ts) per device cheaply: the primary key leads with device_id but then
+    metric_id, so a per-device maximum still has to walk every metric.
+
+    This is not an approximation of that scan. Telemetry reaches the platform
+    only through an endpoint - the collector polls endpoints and writes what
+    they return - so the newest `last_telemetry_at` across the room's endpoints
+    IS the newest sample in the room, from the record the writer keeps as it
+    writes. A device with no endpoint has no route by which a sample could
+    arrive.
     """
     return (await session.execute(text(f"""
         WITH {_DEV_CTE}
-        SELECT max(t.ts) FROM telemetry_sample t
-        JOIN dev ON dev.device_id = t.device_id
-        WHERE dev.room_id = CAST(:id AS uuid)
-          AND t.ts > now() - interval '24 hours'
+        SELECT max(es.last_telemetry_at)
+          FROM device_endpoint de
+          JOIN dev ON dev.device_id = de.device_id
+          JOIN endpoint_state es ON es.endpoint_id = de.id
+         WHERE dev.room_id = CAST(:id AS uuid)
     """), {"id": room_id})).scalar()
