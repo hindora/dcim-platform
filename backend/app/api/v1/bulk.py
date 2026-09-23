@@ -27,6 +27,7 @@ from app.core import audit
 from app.core.logging import get_logger
 from app.core.security import Principal, current_principal, require_role
 from app.db.session import get_session
+from app.models.enums import Lifecycle
 from app.repositories import devices as device_repo
 from app.repositories import lifecycle as lifecycle_repo
 from app.repositories import reservations as res_repo
@@ -47,8 +48,7 @@ EDITABLE = ("owner_group", "cost_centre", "supplier_id", "purchase_order",
 class BulkLifecycle(BaseModel):
     model_config = {"extra": "forbid"}
     device_ids: list[str] = Field(min_length=1, max_length=1000)
-    to_state: str = Field(pattern="^(planned|in_stock|installed|in_service"
-                                  "|maintenance|decommissioned|retired)$")
+    to_state: str = Field(pattern=Lifecycle.pattern())
     reason: str | None = Field(None, max_length=500)
     change_ref: str | None = Field(None, max_length=100)
 

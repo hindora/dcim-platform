@@ -14,6 +14,7 @@ from app.core import audit
 from app.core.logging import get_logger
 from app.core.security import Principal, current_principal, require_role
 from app.db.session import get_session
+from app.models.enums import Lifecycle
 from app.repositories import contracts as contracts_repo
 from app.repositories import lifecycle as lifecycle_repo
 from app.repositories import maintenance as maintenance_repo
@@ -217,8 +218,7 @@ class LifecycleTransition(BaseModel):
 
     model_config = {"extra": "forbid"}
 
-    to_state: str = Field(pattern="^(planned|in_stock|installed|in_service"
-                                  "|maintenance|decommissioned|retired)$")
+    to_state: str = Field(pattern=Lifecycle.pattern())
     reason: str | None = Field(None, max_length=500)
     change_ref: str | None = Field(None, max_length=100)
 

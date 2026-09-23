@@ -24,12 +24,17 @@ MIGRATIONS = Path(__file__).resolve().parents[1] / "alembic" / "versions"
 # ------------------------------------------------------------------ shelving
 
 def test_every_open_alarm_query_excludes_shelved():
-    """One predicate, six queries, and no way to add a seventh without noticing.
+    """One predicate, thirteen queries, and no way to add a fourteenth unnoticed.
 
     A query that reads open alarms and forgets the shelve clause puts planned
     work back on the console - or worse, leaves a room red while the alarm list
     that explains it is empty, which reads as a platform bug and burns the
     operator's trust in both.
+
+    The predicate is `shelved_reason`, not `shelved_by_window`: migration 0075
+    added a second thing that shelves, and a query testing the window column
+    alone now pages for every machine still being commissioned. Accepting the
+    old spelling here is how that would go unnoticed, so it is NOT accepted.
 
     A query that genuinely needs shelved rows says so with a `shelve-exempt`
     comment, so the exemption is a decision somebody wrote down rather than an
@@ -41,13 +46,35 @@ def test_every_open_alarm_query_excludes_shelved():
         for match in re.finditer(r"WHERE a\.state <> 'CLEARED'", src):
             # The predicate may continue onto following lines.
             window = src[max(0, match.start() - 400):match.start() + 400]
-            if "shelved_by_window" in window or "shelve-exempt" in window:
+            if "shelved_reason" in window or "shelve-exempt" in window:
                 continue
             missed.append(f"{path.name}:{src[:match.start()].count(chr(10)) + 1}")
     assert not missed, (
         f"open-alarm queries missing the shelve clause: {missed}. "
-        "Add `AND a.shelved_by_window IS NULL`, or a `shelve-exempt` comment "
+        "Add `AND a.shelved_reason IS NULL`, or a `shelve-exempt` comment "
         "saying why this one wants them.")
+
+
+def test_no_query_still_reads_the_window_column_as_liveness():
+    """`shelved_by_window IS NULL` stopped meaning "live" in migration 0075.
+
+    It is now the DETAIL behind one of two reasons, and a query that tests it
+    instead of the reason is quietly half a predicate: correct for windows,
+    wrong for every device that is racked but not yet accepted. The column is
+    still legitimately read to say WHICH window shelved something, which is what
+    maintenance.py does, so that one file is exempt.
+    """
+    offenders = []
+    for path in sorted(REPOS.glob("*.py")):
+        if path.name == "maintenance.py":
+            continue
+        for lineno, line in enumerate(
+                path.read_text(encoding="utf-8").splitlines(), start=1):
+            if "shelved_by_window IS" in line and not line.lstrip().startswith("#"):
+                offenders.append(f"{path.name}:{lineno}")
+    assert not offenders, (
+        f"liveness tested on the window column: {offenders}. "
+        "Use `shelved_reason IS NULL` - see migration 0075.")
 
 
 def test_the_roll_up_excludes_shelved_but_not_symptoms():
@@ -65,7 +92,7 @@ def test_the_roll_up_excludes_shelved_but_not_symptoms():
     start = src.index("async def refresh_device_alarm_state")
     body = src[start:src.index("# ---", start)]
 
-    assert "a.shelved_by_window IS NULL" in body
+    assert "a.shelved_reason IS NULL" in body
     assert "is_symptom" not in body
 
 
@@ -83,6 +110,11 @@ def test_shelving_is_stamped_at_raise_time():
     assert "maintenance_window w" in insert
     assert "w.status = 'active'" in insert
     assert "w.suppress" in insert
+    # Both halves of the mark, in the same statement. The reason is what every
+    # query reads, so a stamp that set only the window id would shelve nothing.
+    assert "'maintenance_window'" in insert
+    assert "d.lifecycle = 'installed'" in insert
+    assert "'not_commissioned'" in insert
 
 
 def test_touching_an_alarm_does_not_unshelve_it():
@@ -97,6 +129,7 @@ def test_touching_an_alarm_does_not_unshelve_it():
     conflict = conflict[:conflict.index("RETURNING")]
 
     assert "shelved_by_window" not in conflict
+    assert "shelved_reason" not in conflict
 
 
 def test_only_open_alarms_are_unshelved():

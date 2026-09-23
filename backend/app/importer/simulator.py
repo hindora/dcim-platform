@@ -26,10 +26,12 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import audit
 from app.core.logging import get_logger
 from app.core.security import encrypt_secret
 from app.importer.endpoints import EndpointSpec, derive_endpoints
 from app.importer.redundancy import recompute_power_sides
+from app.repositories import lifecycle as lifecycle_repo
 
 log = get_logger("importer")
 
@@ -65,6 +67,9 @@ class ImportReport:
     racks_rated: int = 0
     credentials: int = 0
     decommissioned: int = 0
+    #: Devices this importer had swept for being absent, now back in
+    #: the export and restored to the state they were swept from.
+    resurrected: int = 0
     # Outcome of the post-import A/B derivation: how many device pairs got a
     # side, and how many devices are shared between both paths.
     redundancy: dict[str, Any] = field(default_factory=dict)
@@ -151,7 +156,12 @@ class TopologyImporter:
             if dev:
                 await self._upsert_device(dev, node.get("position") or {})
 
-        await self._decommission_missing({d.get("id") for d in devices if d.get("id")})
+        # Both importer-owned lifecycle moves, over the same set: what is in this
+        # export and what is not. Resurrect first so a device that returns is
+        # restored before anything downstream reads its state.
+        present = {d.get("id") for d in devices if d.get("id")}
+        await self._resurrect(present)
+        await self._decommission_missing(present)
 
         for dev in devices:
             await self._upsert_terminations(dev)
@@ -505,8 +515,23 @@ class TopologyImporter:
                 primary_ip = EXCLUDED.primary_ip,
                 mgmt_ip = EXCLUDED.mgmt_ip,
                 attributes = device.attributes || EXCLUDED.attributes,
-                lifecycle = 'in_service',
-                decommissioned_at = NULL,
+                -- NO lifecycle here, and no decommissioned_at. Nothing in the
+                -- export says anything about either: the simulator has no such
+                -- field, so presence in the file is evidence the hardware EXISTS
+                -- and evidence of nothing else.
+                --
+                -- This statement used to write `in_service` unconditionally,
+                -- which made a re-import silently undo every operator decision
+                -- on the estate - a device held as `installed` during
+                -- commissioning, or parked in `maintenance` for rework, snapped
+                -- back to the one state that pages.
+                --
+                -- The importer does still make two lifecycle moves, and they are
+                -- both real transitions rather than a column assignment buried
+                -- in an upsert: `_decommission_missing` and `_resurrect`. Each
+                -- goes through `lifecycle.record_transition`, so each leaves the
+                -- history an operator reads and the audit row every other
+                -- privileged action leaves.
                 updated_at = now()
             RETURNING id::text
         """, ext=ext, name=dev.get("name") or ext, dtype=dtype,
@@ -549,18 +574,170 @@ class TopologyImporter:
         self._device_name[device_id] = dev.get("name") or ext
         self.report.devices += 1
 
+    #: States where absence from the export means the hardware is GONE, and so
+    #: the sweep below applies. Every other state already says the device is not
+    #: expected in the device plane, and decommissioning it for being missing
+    #: would be the importer overruling a decision somebody made:
+    #:
+    #:   planned   not delivered yet. It has never been in an export.
+    #:   in_stock  on a shelf. Being absent is what in_stock MEANS.
+    #:   retired   terminal, and already out of the estate.
+    #:
+    #: `in_stock -> decommissioned` is not even a legal move in
+    #: `repositories.lifecycle.TRANSITIONS`, so the old unfiltered sweep put rows
+    #: into states the matrix would have refused an operator.
+    _SWEEPABLE = ("installed", "in_service", "maintenance")
+
+    #: The actor on every lifecycle event this importer writes. Not a person, and
+    #: deliberately not `import` either - that is what migration 0045 used when
+    #: it backfilled history out of `commissioned_at` and `decommissioned_at`,
+    #: rows whose provenance nobody knows. `_resurrect` tells the two apart, so
+    #: they have to stay two different strings.
+    _ACTOR = "importer"
+    _LEGACY_ACTOR = "import"
+
+    async def _move(self, device_id: str, *, to_state: str, from_state: str,
+                    reason: str) -> None:
+        """One lifecycle move, with the two records every other one writes.
+
+        Through `lifecycle.record_transition` rather than an UPDATE of its own,
+        which is the whole point of doing this at all: that function moves the
+        device, writes the `device_lifecycle_event` an operator reads on the
+        Lifecycle tab, keeps `commissioned_at`/`decommissioned_at` in step, and
+        re-syncs alarm shelving. An importer with its own UPDATE was a second
+        writer that did the first of those four and none of the rest.
+
+        It does NOT consult `TRANSITIONS`, and that seam is used on purpose: the
+        matrix governs what an OPERATOR may do, and neither of these moves is
+        one. The sweep is a fact about an export, and the resurrect is the
+        importer correcting its own sweep - `decommissioned -> in_service` is not
+        a move a person may make, and it must not become one just because the
+        importer needs to undo itself.
+        """
+        await lifecycle_repo.record_transition(
+            self.s, device_id=device_id, from_state=from_state,
+            to_state=to_state, actor=self._ACTOR, reason=reason)
+        # The generic evidence trail, on the same table as every other
+        # privileged action. `audit.record` never raises.
+        await audit.record(
+            self.s, actor=self._ACTOR, action="device.lifecycle",
+            target_type="device", target_id=device_id,
+            before={"lifecycle": from_state},
+            after={"lifecycle": to_state, "reason": reason})
+
     async def _decommission_missing(self, present: set[str]) -> None:
-        """Anything previously imported but absent now is decommissioned."""
-        result = await self.s.execute(text("""
-            UPDATE device SET lifecycle = 'decommissioned',
-                              decommissioned_at = now(), updated_at = now()
-            WHERE external_id IS NOT NULL
-              AND lifecycle <> 'decommissioned'
-              AND attributes->>'source' = 'simulator'
-              AND external_id <> ALL(:present)
-            RETURNING id
-        """), {"present": list(present)})
-        self.report.decommissioned = len(result.all())
+        """Anything previously imported but absent now is decommissioned.
+
+        Read first and move one at a time, rather than one bulk UPDATE. The set
+        is a DELTA - what disappeared since the last run, normally nothing and
+        occasionally a rack - so the cost is bounded by the change, and in
+        exchange every row swept gets its own event and its own audit row. That
+        is the rule `bulk.py` states for operator bulk moves, and it is the same
+        reason: "17 devices decommissioned" is not something anybody can act on
+        six months later.
+        """
+        victims = (await self.s.execute(text("""
+            SELECT id::text AS id, lifecycle::text AS lifecycle
+              FROM device
+             WHERE external_id IS NOT NULL
+               AND lifecycle::text = ANY(:sweepable)
+               AND attributes->>'source' = 'simulator'
+               AND external_id <> ALL(:present)
+        """), {"present": list(present),
+               "sweepable": list(self._SWEEPABLE)})).mappings().all()
+
+        for row in victims:
+            await self._move(
+                row["id"], to_state="decommissioned",
+                from_state=row["lifecycle"],
+                reason="absent from the simulator topology export")
+        self.report.decommissioned = len(victims)
+
+    async def _resurrect(self, present: set[str]) -> None:
+        """Put back what this importer itself swept, in the state it swept it.
+
+        The old code flipped any decommissioned device that reappeared straight
+        to `in_service`, which was wrong twice over. It overruled a person - a
+        device somebody had decommissioned on purpose came back to life on every
+        import while it was still in the export - and even where the importer HAD
+        done the sweeping, `in_service` was a guess: a device swept out of
+        `installed` or `maintenance` came back as something that pages.
+
+        The event log answers both questions now, which is what it is for. A
+        device's most recent lifecycle event says who moved it last and what it
+        was before:
+
+          this importer  restore `from_state`. A truncated export or a restarted
+                         simulator is the ordinary cause, and the machine never
+                         left the state it was in.
+          nobody, or the
+          0045 backfill  provenance unknown, so fall back to `in_service` - what
+                         this code has always done, and so no regression for an
+                         estate whose history predates these events.
+          a person       leave it alone, and say nothing. A device answering on
+                         the wire while the record says somebody retired it is a
+                         discrepancy for discovery to surface, not something an
+                         importer should quietly paper over.
+        """
+        if not present:
+            return
+        rows = (await self.s.execute(text("""
+            WITH cand AS (
+                SELECT id, external_id
+                  FROM device
+                 WHERE lifecycle = 'decommissioned'
+                   AND external_id = ANY(:present)
+            ), decommission AS (
+                -- Who decommissioned each candidate, and what it was before.
+                --
+                -- Scoped to the candidates on purpose: an unscoped DISTINCT ON
+                -- over device_lifecycle_event reads the whole history of the
+                -- estate to answer a question about the handful of rows that
+                -- came back.
+                --
+                -- Filtered to `to_state = 'decommissioned'` rather than taking
+                -- the newest event of any kind. Every candidate IS
+                -- decommissioned right now, so its newest decommission is by
+                -- definition the move that put it where it is - any later event
+                -- would have moved it somewhere else. Reading "the newest event"
+                -- instead relies on `ts` to order them, and `ts` defaults to
+                -- `now()`, which in PostgreSQL is TRANSACTION start time: two
+                -- events written in one transaction tie, and the tie-break falls
+                -- through to a random uuid. This filter removes the question.
+                -- The tie-break leans toward NOT resurrecting. Two
+                -- decommissions of one device inside a single transaction still
+                -- share a `ts`, and `e.id` is a random uuid, so something has to
+                -- decide. Sorting a non-importer actor first means an
+                -- unresolvable tie is read as "a person did this", the device is
+                -- left alone, and the worst case is an operator clicking one
+                -- button - rather than an import quietly undoing a decision
+                -- every time it runs.
+                SELECT DISTINCT ON (e.device_id)
+                       e.device_id, e.actor,
+                       e.from_state::text AS from_state
+                  FROM device_lifecycle_event e
+                  JOIN cand c ON c.id = e.device_id
+                 WHERE e.to_state = 'decommissioned'
+                 ORDER BY e.device_id, e.ts DESC,
+                          (e.actor IN (:actor, :legacy)) ASC, e.id
+            )
+            SELECT c.id::text AS id,
+                   CASE WHEN l.actor = :actor AND l.from_state IS NOT NULL
+                        THEN l.from_state
+                        ELSE 'in_service' END AS restore_to
+              FROM cand c
+              LEFT JOIN decommission l ON l.device_id = c.id
+             WHERE l.device_id IS NULL
+                OR l.actor IN (:actor, :legacy)
+        """), {"present": list(present), "actor": self._ACTOR,
+               "legacy": self._LEGACY_ACTOR})).mappings().all()
+
+        for row in rows:
+            await self._move(
+                row["id"], to_state=row["restore_to"],
+                from_state="decommissioned",
+                reason="present in the simulator topology export again")
+        self.report.resurrected = len(rows)
 
     # -------------------------------------------------------- terminations
 

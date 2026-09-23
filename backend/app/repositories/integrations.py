@@ -205,7 +205,9 @@ _EXPORT_SELECT = """
            a.acknowledged_at, a.acknowledged_by,
            a.category, a.detection, a.response_class,
            a.is_symptom, a.root_cause_alarm_id::text AS root_cause_alarm_id,
-           (a.shelved_by_window IS NOT NULL) AS shelved,
+           (a.shelved_reason IS NOT NULL) AS shelved,
+           -- WHY, so the policy can say which rule declined the ticket.
+           a.shelved_reason,
            d.name AS device_name, d.device_type, d.mgmt_ip::text AS mgmt_ip,
            d.serial_number, d.asset_tag,
            dc.code AS datacenter_code, rm.name AS room_name, r.name AS rack_name,

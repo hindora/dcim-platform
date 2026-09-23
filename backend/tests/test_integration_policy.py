@@ -26,6 +26,7 @@ def alarm(**over):
         "id": "a1", "device_id": "d1", "alarm_type": "inlet_temp_high",
         "instance": "", "severity": "MAJOR", "category": "environmental",
         "response_class": "alarm", "is_symptom": False, "shelved": False,
+        "shelved_reason": None,
         "first_seen": NOW - timedelta(hours=1),
     }
     base.update(over)
@@ -72,8 +73,32 @@ def test_a_symptom_is_not_ticketed():
 def test_a_shelved_alarm_is_not_ticketed():
     """Planned work does not page anyone and does not open tickets either -
     the maintenance window already has a change record."""
-    why = policy.explain(alarm(shelved=True), DEFAULT, now=NOW)
+    why = policy.explain(
+        alarm(shelved=True, shelved_reason="maintenance_window"),
+        DEFAULT, now=NOW)
     assert "maintenance window" in why
+
+
+def test_an_uncommissioned_machine_is_not_ticketed_and_says_why():
+    """The other thing that shelves, since migration 0075.
+
+    "No ticket, it is shelved by a maintenance window" is a wrong answer for a
+    machine that is racked and waiting to be accepted: it sends whoever reads it
+    looking for a window that does not exist.
+    """
+    why = policy.explain(
+        alarm(shelved=True, shelved_reason="not_commissioned"),
+        DEFAULT, now=NOW)
+    assert "not yet accepted" in why
+    assert "maintenance window" not in why
+
+
+def test_a_reason_the_exporter_has_not_heard_of_still_declines():
+    """A reason added to the database ahead of this table must degrade to a
+    vaguer sentence, never to a KeyError that fails the whole export run."""
+    why = policy.explain(
+        alarm(shelved=True, shelved_reason="something_new"), DEFAULT, now=NOW)
+    assert why and "shelved" in why
 
 
 def test_a_category_outside_the_list_is_not_ticketed():

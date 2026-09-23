@@ -1337,7 +1337,7 @@ async def thermal_alarms(session: AsyncSession, *,
             -- answer. Counting either differently gives a number that does
             -- not survive being clicked.
             WHERE a.state <> 'CLEARED'
-              AND a.shelved_by_window IS NULL
+              AND a.shelved_reason IS NULL
               AND a.is_symptom = false
               AND a.category = ANY(:cats)
               AND d.lifecycle <> 'decommissioned'
@@ -1699,7 +1699,7 @@ async def alarms_by_room(session: AsyncSession, *,
             FROM alarm a
             JOIN dev ON dev.device_id = a.device_id
             WHERE {_state_clause(lifecycle)}a.is_symptom = false
-              AND a.shelved_by_window IS NULL{_facet_clauses(severities, detections, params)}
+              AND a.shelved_reason IS NULL{_facet_clauses(severities, detections, params)}
         )
         SELECT rm.id::text            AS room_id,
                rm.name                AS room_name,
@@ -1765,7 +1765,7 @@ async def alarm_trend(session: AsyncSession, *,
     if bucket not in TREND_BUCKETS:
         raise ValueError(f"unknown bucket: {bucket}")
     where = ["a.is_symptom = false",
-             "a.shelved_by_window IS NULL",
+             "a.shelved_reason IS NULL",
              "a.category = ANY(:categories)",
              "a.first_seen >= :since",
              "dev.room_id IS NOT NULL"]
@@ -1815,7 +1815,7 @@ async def unlocated_alarms_by_category(session: AsyncSession, *,
             FROM alarm a
             LEFT JOIN dev ON dev.device_id = a.device_id
             WHERE {_state_clause(lifecycle)}a.is_symptom = false
-              AND a.shelved_by_window IS NULL{_facet_clauses(severities, detections, params)}
+              AND a.shelved_reason IS NULL{_facet_clauses(severities, detections, params)}
         )
         SELECT count(*)                                       AS n,
                count(*) FILTER (WHERE response_class = '{ALARM}') AS alarms

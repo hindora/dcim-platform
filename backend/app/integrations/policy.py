@@ -74,7 +74,10 @@ def explain(alarm: dict[str, Any], policy: dict[str, Any], *,
         return "it is a symptom of another alarm, which carries the ticket"
 
     if policy.get("exclude_shelved", True) and alarm.get("shelved"):
-        return "it is shelved by a maintenance window"
+        # Two things shelve, and an engineer reading "no ticket was opened"
+        # needs to know which: work in progress on a live machine is a very
+        # different answer from a machine nobody has accepted yet.
+        return _SHELVE_REASONS.get(alarm.get("shelved_reason"), "it is shelved")
 
     dwell = int(policy.get("dwell_s") or 0)
     if dwell:
@@ -89,6 +92,17 @@ def explain(alarm: dict[str, Any], policy: dict[str, Any], *,
             return f"it has been open {int(age)}s, less than the {dwell}s dwell"
 
     return MATCH
+
+
+#: Why a shelved alarm was passed over, in words a ticket comment can carry.
+#: Keyed by `alarm.shelved_reason`; an unknown key falls back to the bare fact,
+#: so a reason added to the database without being added here degrades to a
+#: less specific sentence rather than to a KeyError.
+_SHELVE_REASONS = {
+    "maintenance_window": "it is shelved by a maintenance window",
+    "not_commissioned": ("it is shelved: the device is installed but not yet "
+                         "accepted into service"),
+}
 
 
 def _age_s(first_seen: Any, now: datetime | None) -> float | None:

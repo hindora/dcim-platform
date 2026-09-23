@@ -92,10 +92,35 @@ class AdminState(StrEnum):
 
 
 class Lifecycle(StrEnum):
+    """Declared in the order `lifecycle_t` declares them, which is the order the
+    state is read as a progression.
+
+    All seven, not the original four. `in_stock`, `installed` and `retired` were
+    added to the database by migration 0043 and to `TRANSITIONS` with it, but not
+    here - so this enum described a type that had not existed for thirty
+    migrations. Nothing broke only because every read of the column goes through
+    raw SQL and comes back as a string: the first `select(Device)` anybody writes
+    would have got `'in_stock' is not among the defined enum values` on a row
+    that is perfectly valid.
+    """
+
     PLANNED = "planned"
+    IN_STOCK = "in_stock"
+    INSTALLED = "installed"
     IN_SERVICE = "in_service"
     MAINTENANCE = "maintenance"
     DECOMMISSIONED = "decommissioned"
+    RETIRED = "retired"
+
+    @classmethod
+    def pattern(cls) -> str:
+        """The request-validation pattern, built from the states themselves.
+
+        The two transition endpoints each carried this list spelled out by hand,
+        which is how a state gets added to the database and then rejected at the
+        API with a 422 that says nothing about why.
+        """
+        return "^(" + "|".join(m.value for m in cls) + ")$"
 
 
 # Declaration order == severity precedence. Do not reorder.

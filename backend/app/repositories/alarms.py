@@ -92,7 +92,8 @@ async def raise_alarm(session: AsyncSession, *, device_id: str, alarm_type: str,
         INSERT INTO alarm (device_id, endpoint_id, alarm_type, instance, rule_id,
                            severity, state, message, metric_key, trigger_value,
                            threshold, source, first_seen, last_seen,
-                           category, detection, response_class, shelved_by_window)
+                           category, detection, response_class, shelved_by_window,
+                           shelved_reason)
         SELECT CAST(:device_id AS uuid), CAST(:endpoint_id AS uuid), :alarm_type,
                :instance, CAST(:rule_id AS uuid), CAST(:severity AS severity_t),
                'ACTIVE', :message, :metric_key, :value, :threshold, :source,
@@ -121,7 +122,33 @@ async def raise_alarm(session: AsyncSession, *, device_id: str, alarm_type: str,
                   JOIN maintenance_window w ON w.id = t.window_id
                  WHERE t.device_id = CAST(:device_id AS uuid)
                    AND w.status = 'active' AND w.suppress
-                 LIMIT 1)
+                 LIMIT 1),
+               -- WHY it is shelved, and the column every open-alarm query now
+               -- reads. Two sources, checked in this order because the window is
+               -- the more specific and more actionable answer: an engineer is in
+               -- the machine right now, versus it has not been accepted yet.
+               --
+               -- `installed` means racked, cabled and not yet handed over
+               -- (migration 0043). The alarm is still RAISED and still recorded:
+               -- burn-in failures are the point of burn-in, and dropping them
+               -- would lose the evidence that the commissioning went badly. It
+               -- is held out of "what is wrong right now" until somebody accepts
+               -- the machine into service.
+               --
+               -- The other lifecycle states need nothing here. `planned` and
+               -- `in_stock` have no endpoints for a detector to fire from,
+               -- `decommissioned` is filtered out of the collector's assignment
+               -- before it is ever polled, and `maintenance` is scheduled work,
+               -- which is what a window is for.
+               CASE
+                 WHEN EXISTS (SELECT 1
+                                FROM maintenance_target t
+                                JOIN maintenance_window w ON w.id = t.window_id
+                               WHERE t.device_id = CAST(:device_id AS uuid)
+                                 AND w.status = 'active' AND w.suppress)
+                      THEN 'maintenance_window'
+                 WHEN d.lifecycle = 'installed' THEN 'not_commissioned'
+               END
           -- One row ALWAYS, whatever the joins find. Selecting FROM device
           -- instead would insert nothing at all when an alarm has no device
           -- behind it - the alarm would vanish rather than be classified, and
@@ -275,6 +302,9 @@ _ALARM_SELECT = """
            a.acknowledged_at, a.acknowledged_by, a.cleared_at,
            a.is_symptom, a.root_cause_alarm_id::text,
            a.category, a.detection, a.response_class,
+           -- Why this alarm is not on the console, for the one view that shows
+           -- shelved rows. NULL on everything an operator sees by default.
+           a.shelved_reason,
            dc.code AS datacenter_code, rm.name AS room_name, r.name AS rack_name,
            fed.name AS instance_feeds,
            -- The absolute load behind a percentage, from the SAME number the
@@ -461,16 +491,41 @@ async def manual_clear(session: AsyncSession, alarm_id: str,
 
 
 # Shelved alarms are REAL and STORED - raised by the engine exactly as normal,
-# then marked because a maintenance window was running over the device. They are
-# excluded from anything an operator reads as "what is wrong right now", which is
-# every query below and the roll-ups in estate.py and sites.py.
+# then marked because the device was not somewhere an alarm should page from.
+# They are excluded from anything an operator reads as "what is wrong right now",
+# which is every query below and the roll-ups in estate.py and sites.py.
+#
+# Two things shelve, and the reason says which:
+#
+#   maintenance_window  an engineer is in the machine right now (migration 0046).
+#   not_commissioned    it is racked and cabled but nobody has accepted it into
+#                       service yet - lifecycle `installed` (migrations 0043,
+#                       0075). Burn-in failures are still recorded; they just do
+#                       not page a shift that does not own the machine.
+#
+# The predicate is the REASON being null, not either source being null, and that
+# is the whole point of the column: one clause covers both and covers whatever
+# third reason arrives later. Do not write `shelved_by_window IS NULL` in a new
+# query - it silently stopped meaning "live" in 0075.
 #
 # Not the same rule as is_symptom. A symptom is a genuine fault downstream of
-# another one, so it still raises the device's severity; a shelved alarm is
-# expected consequence of planned work and must not colour a room red for a
-# filter change. That is why this predicate also appears in
-# refresh_device_alarm_state, where is_symptom deliberately does not.
-NOT_SHELVED = "a.shelved_by_window IS NULL"
+# another one, so it still raises the device's severity; a shelved alarm must not
+# colour a room red for a filter change or for a machine that is still being
+# built. That is why this predicate also appears in refresh_device_alarm_state,
+# where is_symptom deliberately does not.
+NOT_SHELVED = "a.shelved_reason IS NULL"
+
+#: Every reason a row may carry, mirroring the CHECK constraint in migration
+#: 0075. Imported by the code that shelves, so a reason cannot be spelled two
+#: ways in two files.
+SHELVE_REASON_WINDOW = "maintenance_window"
+SHELVE_REASON_NOT_COMMISSIONED = "not_commissioned"
+SHELVE_REASONS = (SHELVE_REASON_WINDOW, SHELVE_REASON_NOT_COMMISSIONED)
+
+#: The lifecycle state that shelves on its own. A tuple because the set is the
+#: kind of thing that grows, and because the shelve/unshelve pair either side of
+#: a transition has to agree with the stamp in `raise_alarm` about what it is.
+SHELVED_LIFECYCLES = ("installed",)
 
 
 async def summary(session: AsyncSession) -> dict[str, Any]:
@@ -489,7 +544,7 @@ async def summary(session: AsyncSession) -> dict[str, Any]:
                -- hours later when it closes.
                count(*) FILTER (WHERE open AND NOT live)                   AS shelved
         FROM (SELECT *, state <> 'CLEARED' AS open,
-                     shelved_by_window IS NULL AS live
+                     shelved_reason IS NULL AS live
                 FROM alarm) a
     """))).mappings().first()
     return dict(row) if row else {}
@@ -511,10 +566,10 @@ async def refresh_device_alarm_state(session: AsyncSession,
                    -- a symptom is a real fault on a real device.
                    COALESCE(MAX(a.severity) FILTER (
                                 WHERE a.state <> 'CLEARED'
-                                  AND a.shelved_by_window IS NULL),
+                                  AND a.shelved_reason IS NULL),
                             'CLEAR')::severity_t AS max_sev,
                    count(a.id) FILTER (WHERE a.state <> 'CLEARED'
-                                         AND a.shelved_by_window IS NULL) AS open_count
+                                         AND a.shelved_reason IS NULL) AS open_count
             FROM device d
             LEFT JOIN alarm a ON a.device_id = d.id
             WHERE d.id = ANY(CAST(:ids AS uuid[]))

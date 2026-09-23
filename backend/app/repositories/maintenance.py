@@ -14,6 +14,12 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.repositories.alarms import (
+    SHELVE_REASON_NOT_COMMISSIONED,
+    SHELVE_REASON_WINDOW,
+    SHELVED_LIFECYCLES,
+)
+
 _WINDOW_SELECT = """
     SELECT w.id::text, w.title, w.description, w.change_ref, w.kind,
            w.starts_at, w.ends_at, w.status, w.suppress,
@@ -151,12 +157,17 @@ async def shelve_open_alarms(session: AsyncSession, window_id: str) -> int:
     """
     return (await session.execute(text("""
         UPDATE alarm a
-           SET shelved_by_window = CAST(:wid AS uuid)
+           SET shelved_by_window = CAST(:wid AS uuid),
+               shelved_reason = :reason
          WHERE a.state <> 'CLEARED'
+           -- Deliberately the WINDOW column and not the reason: this claims
+           -- anything no OTHER window already holds, including a row shelved
+           -- because its device is `installed`. A window is the more specific
+           -- answer while it runs, and `unshelve` puts the weaker reason back.
            AND a.shelved_by_window IS NULL
            AND a.device_id IN (SELECT device_id FROM maintenance_target
                                WHERE window_id = CAST(:wid AS uuid))
-    """), {"wid": window_id})).rowcount or 0
+    """), {"wid": window_id, "reason": SHELVE_REASON_WINDOW})).rowcount or 0
 
 
 async def unshelve(session: AsyncSession, window_id: str) -> list[str]:
@@ -170,11 +181,27 @@ async def unshelve(session: AsyncSession, window_id: str) -> list[str]:
     """
     rows = (await session.execute(text("""
         UPDATE alarm a
-           SET shelved_by_window = NULL
+           SET shelved_by_window = NULL,
+               -- Re-derived, not cleared. A device can be in a window AND not
+               -- yet commissioned - which is the normal shape of commissioning
+               -- work - and the window ending does not accept it into service.
+               -- Blanking the reason here put every burn-in alarm on the
+               -- console the moment the engineers signed off their window.
+               --
+               -- A correlated subquery rather than `FROM device d`: joining
+               -- would drop any row whose device_id is NULL from the UPDATE
+               -- entirely, and a platform alarm that somehow carried a window
+               -- would then stay shelved for good.
+               shelved_reason = CASE
+                   WHEN (SELECT d.lifecycle::text FROM device d
+                          WHERE d.id = a.device_id) = ANY(:shelved_states)
+                   THEN :not_comm
+               END
          WHERE a.shelved_by_window = CAST(:wid AS uuid)
            AND a.state <> 'CLEARED'
         RETURNING a.device_id::text
-    """), {"wid": window_id})).scalars().all()
+    """), {"wid": window_id, "shelved_states": list(SHELVED_LIFECYCLES),
+           "not_comm": SHELVE_REASON_NOT_COMMISSIONED})).scalars().all()
     return list(set(rows))
 
 

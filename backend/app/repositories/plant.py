@@ -228,7 +228,7 @@ _ALARMS = text("""
       FROM alarm a
       JOIN device d ON d.id = a.device_id
      WHERE a.state <> 'CLEARED'
-       AND a.shelved_by_window IS NULL
+       AND a.shelved_reason IS NULL
        AND a.is_symptom = false
        AND d.device_type = ANY(:types)
        AND d.lifecycle <> 'decommissioned'

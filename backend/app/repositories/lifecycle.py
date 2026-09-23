@@ -7,6 +7,12 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.repositories.alarms import (
+    SHELVE_REASON_NOT_COMMISSIONED,
+    SHELVED_LIFECYCLES,
+    refresh_device_alarm_state,
+)
+
 # What may follow what. Small enough to state, and stating it is the point: an
 # operator who is refused needs to be told what IS allowed, and a matrix in one
 # place can answer that.
@@ -91,4 +97,53 @@ async def record_transition(session: AsyncSession, *, device_id: str,
     """), {"id": device_id, "from_state": from_state, "to_state": to_state,
            "reason": reason, "change_ref": change_ref,
            "actor": actor})).mappings().one()
+
+    await _resync_shelving(session, device_id=device_id,
+                           from_state=from_state, to_state=to_state)
     return dict(row)
+
+
+async def _resync_shelving(session: AsyncSession, *, device_id: str,
+                           from_state: str, to_state: str) -> None:
+    """Shelve or release what the new state says about paging.
+
+    `installed` means racked and cabled and not yet accepted (migration 0043),
+    and the whole reason that state exists is that such a machine must appear in
+    elevations and capacity while paging nobody. `raise_alarm` stamps the reason
+    on anything raised WHILE the device sits there; this is the other half - the
+    alarms that were already standing when it moved.
+
+    Both directions matter and the asymmetry is deliberate:
+
+      into `installed`   shelve what is open. A machine pulled back for rework
+                         should go quiet immediately, not at the next raise.
+      out of `installed` release only what THIS reason holds. A window running
+                         over the same device keeps its own mark, and an alarm
+                         that cleared while the machine was being built stays
+                         marked - releasing it would fill the console, the
+                         moment somebody accepts the machine, with things that
+                         already broke and already recovered. Same rule as
+                         `maintenance.unshelve`, same reasoning.
+
+    Then the roll-up, always. Shelving without recomputing `device_state` leaves
+    racks and rooms reading a severity from an alarm nobody can see - a red room
+    over an empty alarm list, which is worse than not shelving at all.
+    """
+    was, now = from_state in SHELVED_LIFECYCLES, to_state in SHELVED_LIFECYCLES
+    if was == now:
+        return
+    if now:
+        await session.execute(text("""
+            UPDATE alarm SET shelved_reason = :reason
+             WHERE device_id = CAST(:id AS uuid)
+               AND state <> 'CLEARED'
+               AND shelved_reason IS NULL
+        """), {"id": device_id, "reason": SHELVE_REASON_NOT_COMMISSIONED})
+    else:
+        await session.execute(text("""
+            UPDATE alarm SET shelved_reason = NULL
+             WHERE device_id = CAST(:id AS uuid)
+               AND state <> 'CLEARED'
+               AND shelved_reason = :reason
+        """), {"id": device_id, "reason": SHELVE_REASON_NOT_COMMISSIONED})
+    await refresh_device_alarm_state(session, [device_id])
