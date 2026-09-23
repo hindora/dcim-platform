@@ -5,13 +5,20 @@
  * here comes from one call to `/sites/{id}/kpi`.
  *
  * The rule this panel exists to keep: a metric the platform cannot compute
- * renders as an em dash WITH THE REASON, never as a plausible number. PUE and
- * CER fall out of the load split; WUE needs a makeup-water meter and CUE needs
- * a grid carbon feed, and neither is instrumented. Guessing at those two is how
- * an invented figure ends up in a sustainability report.
+ * renders as an em dash WITH THE REASON, never as a plausible number. Guessing
+ * is how an invented figure ends up in a sustainability report.
+ *
+ * Its twin, for the metrics that DO compute: every tile shows how it was
+ * arrived at. PUE and CER fall out of the load split; WUE is integrated off
+ * the cooling-tower makeup meters; CUE is PUE times a published grid emission
+ * factor, because carbon intensity is not something a site can measure;
+ * outdoor humidity is DERIVED from the dry/wet bulb pair, not read off a
+ * hygrometer. A reader must be able to tell those four apart at a glance,
+ * which is why `method` rides beside the value and never gets dropped.
  */
 
 import { useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
   api,
@@ -45,12 +52,21 @@ function Tile({ value, unit, caption, note, absent, bar }: {
   );
 }
 
-function metricTile(m: MaybeMetric, caption: string, digits = 2) {
+function metricTile(m: MaybeMetric, caption: string,
+                    { digits = 2, unit }: { digits?: number; unit?: string } = {}) {
   const absent = m.value === null || m.value === undefined;
+  // Method and reason are DIFFERENT claims and the tile needs both. Showing
+  // only the note loses how the figure was arrived at, which for a derived
+  // ratio like CUE is the whole of its credibility; showing only the method
+  // loses why a missing one is missing.
+  const method = m.method
+    ? (m.category != null ? `${m.method} method · category ${m.category}` : m.method)
+    : null;
+  const note = [method, m.note].filter(Boolean).join(' · ') || null;
   return (
-    <Tile absent={absent} caption={caption}
+    <Tile absent={absent} caption={caption} unit={unit}
           value={absent ? '—' : m.value!.toFixed(digits)}
-          note={m.note ?? (m.method ? `${m.method} method · category ${m.category ?? '?'}` : null)} />
+          note={note} />
   );
 }
 
@@ -59,10 +75,15 @@ function utilTile(u: Utilisation, caption: string) {
   // Colour follows headroom, not aesthetics: past 85% a constraint is close
   // enough to binding that it should be reading as a warning.
   const bar = absent ? 'unknown' : u.pct! >= 85 ? 'critical' : u.pct! >= 70 ? 'warn' : 'ok';
+  // Basis AND note, not one or the other. The basis is the denominator; the
+  // note is how that denominator was arrived at and what is wrong with it -
+  // a plant with two chillers whose nameplate is unknown reads HIGH, and a
+  // capacity percentage nobody can explain is one nobody should plan against.
+  const note = [absent ? null : u.basis, u.note].filter(Boolean).join(' · ') || null;
   return (
     <Tile absent={absent} bar={bar} caption={caption}
           value={absent ? '—' : String(u.pct)} unit="%"
-          note={absent ? u.note : u.basis} />
+          note={note} />
   );
 }
 
@@ -157,7 +178,14 @@ export function SiteDrawer({ site, onClose }: { site: SiteRow; onClose: () => vo
           </div>
         </div>
 
-        <button className="primary enter">ENTER</button>
+        {/* A <button> with no handler, which is what this was, looks exactly
+            like a working one and silently does nothing. Same destination as
+            the site row's ENTER. */}
+        <Link className="primary enter" to={`/devices?datacenter=${site.code}`}
+              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center',
+                       textDecoration: 'none' }}>
+          ENTER
+        </Link>
 
         <div className="drawer-head">
           <h3>Live Data</h3>
@@ -178,8 +206,10 @@ export function SiteDrawer({ site, onClose }: { site: SiteRow; onClose: () => vo
               <div className="drawer-grid">
                 {metricTile(data.efficiency.pue, 'Site PUE (Power)')}
                 {metricTile(data.efficiency.cer, 'Site CER (Cooling)')}
-                {metricTile(data.efficiency.wue, 'Site WUE (Water)')}
-                {metricTile(data.efficiency.cue, 'Site CUE (Carbon)')}
+                {metricTile(data.efficiency.wue, 'Site WUE (Water)',
+                            { unit: 'L/kWh' })}
+                {metricTile(data.efficiency.cue, 'Site CUE (Carbon)',
+                            { unit: 'kgCO₂e/kWh' })}
               </div>
             </section>
 
@@ -228,9 +258,15 @@ export function SiteDrawer({ site, onClose }: { site: SiteRow; onClose: () => vo
                       value={data.weather.wet_bulb_c?.toFixed(1) ?? '—'}
                       note={data.weather.wet_bulb_c === null
                         ? null : 'sets cooling-tower approach'} />
-                <Tile absent caption="Humidity"
-                      value="—"
-                      note="no humidity sensor at this site" />
+                {/* Derived, and it says so on the tile. The pair of
+                    thermometers beside it IS a psychrometer, so the moisture
+                    is genuinely carried in the reading - but a derivation
+                    printed like an instrument reading is how an assumption
+                    ends up quoted as a measurement. */}
+                <Tile absent={data.weather.humidity_pct === null}
+                      caption="Humidity" unit="%"
+                      value={data.weather.humidity_pct?.toFixed(0) ?? '—'}
+                      note={data.weather.humidity_note} />
               </div>
             </section>
 

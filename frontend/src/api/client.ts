@@ -1662,8 +1662,15 @@ export interface SiteKpi {
     source?: string | null;
     dry_bulb_c: number | null;
     wet_bulb_c: number | null;
-    /** Neither is instrumented at any site; present so absence is explicit. */
+    /**
+     * DERIVED from the dry/wet bulb pair, never measured - no site has a
+     * hygrometer. `humidity_derived` is what the tile marks; render it so a
+     * reader cannot mistake it for an instrument reading.
+     */
     humidity_pct: number | null;
+    humidity_derived?: boolean;
+    humidity_note?: string | null;
+    /** No source at all: nothing on a cooling tower reads wind. */
     wind_speed_ms: number | null;
     as_of?: string | null;
     /** Slow-polled points, so age travels with the value. */
