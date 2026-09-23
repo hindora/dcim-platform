@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { humanise } from '../../lib/format';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useState } from 'react';
 import { api, type FloorPlan as Plan, type FloorRack, type RoomSummary } from '../../api/client';
 import { StatusChip } from '../../components/StatusChip';
@@ -65,7 +65,12 @@ function rackTitle(r: FloorRack): string {
 }
 
 export function FloorPlanView() {
-  const [roomId, setRoomId] = useState<string>('');
+  // The room lives in the URL, not in component state. `OPEN FLOOR PLAN` on the
+  // room drawer links to /floorplan?room=<id>, and a page that kept the choice
+  // in useState ignored it and silently drew whichever room happened to sort
+  // first - the link appeared to work and showed the wrong hall. Keeping it in
+  // the query string also makes the view linkable and survives a back button.
+  const [params, setParams] = useSearchParams();
   const [overlay, setOverlay] = useState<Overlay>('thermal');
 
   const rooms = useQuery<{ items: RoomSummary[] }>({
@@ -73,7 +78,18 @@ export function FloorPlanView() {
     queryFn: () => api.rooms(),
   });
 
-  const selected = roomId || rooms.data?.items[0]?.id || '';
+  const requested = params.get('room') || '';
+  // A stale or hand-typed id must not leave the picker showing a room the list
+  // does not contain: fall back to the first room, the same as no parameter.
+  const known = rooms.data?.items.some((r) => r.id === requested) ?? false;
+  const selected = (known ? requested : '') || rooms.data?.items[0]?.id || '';
+
+  const setRoomId = (id: string) => {
+    // `replace` so paging through rooms does not build a back-button trail the
+    // reader has to click through to leave the page.
+    params.set('room', id);
+    setParams(params, { replace: true });
+  };
 
   const plan = useQuery<Plan>({
     queryKey: ['floorplan', selected],
