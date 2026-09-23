@@ -14,13 +14,17 @@
 import { useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
+import { Tip } from '../../components/HoverTip';
 import { api, type RoomKpi } from '../../api/client';
 import { RoomFacility } from './RoomFacility';
 import { ALL_CATEGORIES, AlarmTrend, maxOpen } from './AlarmTrend';
 
-function Tile({ value, unit, caption, note, absent, bar }: {
+function Tile({ value, unit, caption, note, absent, bar, detail }: {
   value: React.ReactNode; unit?: string; caption: string;
   note?: string | null; absent?: boolean; bar?: string;
+  /** Long provenance, behind a hover mark. Nothing is hidden from a reader who
+   *  wants it; the tile just stops spending four lines on it. */
+  detail?: string | null;
 }) {
   return (
     <div className={`kpi-tile ${absent ? 'absent' : ''}`}>
@@ -30,7 +34,14 @@ function Tile({ value, unit, caption, note, absent, bar }: {
           <span className="n">{absent ? '—' : value}</span>
           {unit && !absent && <span className="u">{unit}</span>}
         </div>
-        <div className="cap">{caption}</div>
+        <div className="cap">
+          {caption}
+          {detail && (
+            <Tip tip={detail} className="tile-why">
+              <span aria-label="How this is measured">?</span>
+            </Tip>
+          )}
+        </div>
         {note && <div className="note">{note}</div>}
       </div>
     </div>
@@ -104,34 +115,38 @@ export function RoomDrawer({ roomId, roomName, onClose }: {
       <aside className="drawer" aria-label={`${roomName} detail`}>
         <button className="close" onClick={onClose} aria-label="Close">×</button>
 
-        <div className="drawer-id">
-          <div style={{ flex: 1 }}>
-            <div className="cap">ROOM</div>
-            <div className="val">{roomName}</div>
-            <div className="sub">
-              {data ? `${data.room.site_code}${data.room.floor ? ` · floor ${data.room.floor}` : ''}`
-                    : 'loading…'}
-            </div>
+        {/* Same compact strip as the site drawer: the reader came from this
+            room's row and does not need it restated in three stacked cards.
+            The last-reading age travels here because it qualifies everything
+            below it - a panel of figures from nine minutes ago is a different
+            claim from the same panel now. */}
+        <header className="drawer-top">
+          <div className="drawer-top-main">
+            <h2>{roomName}</h2>
+            {data && (
+              <>
+                <span className="loc">{data.room.site_code}</span>
+                {data.room.floor && (
+                  <><span className="sep">·</span>
+                    <span className="loc">floor {data.room.floor}</span></>
+                )}
+                {data.room.room_type && (
+                  <><span className="sep">·</span>
+                    <span className="loc">{data.room.room_type.replace(/_/g, ' ')}</span></>
+                )}
+              </>
+            )}
           </div>
-          <div style={{ flex: 1 }}>
-            <div className="cap">LAST READING</div>
-            <div className="val">{data ? ago(data.last_sample) : '—'}</div>
-            <div className="sub">
-              {data?.room.room_type ? data.room.room_type.replace(/_/g, ' ') : ''}
-            </div>
+          <div className="drawer-top-meta">
+            {data ? `last reading ${ago(data.last_sample)}` : 'loading…'}
           </div>
-        </div>
-
-        {/* ENTER, not "OPEN FLOOR PLAN": this is the same destination the row's
-            ENTER already goes to, and the site drawer's primary action is
-            called ENTER too. One link with two names in the same table reads
-            as two different places. What ENTER means is "go into this scope" -
-            for a site that is its device list, for a room its floor plan. */}
-        <Link className="enter primary" to={`/floorplan?room=${roomId}`}
-              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center',
-                       textDecoration: 'none' }}>
-          ENTER
-        </Link>
+          {/* ENTER, not "OPEN FLOOR PLAN": the room row's ENTER already goes to
+              this exact URL, and one destination under two names in one table
+              reads as two places. */}
+          <Link className="drawer-top-enter" to={`/floorplan?room=${roomId}`}>
+            ENTER
+          </Link>
+        </header>
 
         {error && <div className="banner" style={{ margin: '0 26px 16px' }}>
           Could not load this room.
@@ -212,8 +227,18 @@ export function RoomDrawer({ roomId, roomName, onClose }: {
                       caption="IT (AC)" />
                 <Tile absent={pw?.cooling_kw === null} value={num(pw?.cooling_kw)} unit="kW"
                       caption="Cooling" />
-                <Tile absent={pw?.pue === null} value={num(pw?.pue, 3)} caption="Room PUE"
-                      note={pw?.pue === null ? 'no IT load here to divide by' : null} />
+                {/* "In-room", never "Room PUE". This boundary holds only the
+                    air handlers standing in the room; the chillers and towers
+                    that actually reject the heat are in the plant rooms. A
+                    hall reads ~1.09 here while its site reads ~1.31 on the
+                    panel one click away, and a reader who compares those
+                    without being told is being misled by us. */}
+                <Tile absent={pw?.pue === null} value={num(pw?.pue, 3)}
+                      caption="In-room PUE"
+                      note={pw?.pue === null
+                        ? 'no IT load here to divide by'
+                        : 'this room only · not the site PUE'}
+                      detail={pw?.pue === null ? null : pw?.pue_note} />
               </div>
             </section>
 

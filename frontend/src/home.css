@@ -832,3 +832,47 @@ button.ind:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px
              font-size: 11px; font-variant-numeric: tabular-nums; }
 .fac-reads em { font-style: normal; color: var(--text-muted); margin-right: 3px; }
 .fac-reads .unset { color: var(--text-faint); font-style: italic; }
+
+/* The drawer's identity strip.
+   Replaces three stacked .drawer-id cards plus a full-width primary button,
+   which together spent ~300 px restating the row the reader had just clicked
+   and pushed every live figure below the fold. One line of identity, one of
+   scale, and ENTER demoted to a bordered button: it is navigation, not the
+   panel's purpose, and as a 772 px primary bar it was the loudest element on
+   a screen made of measurements. */
+.drawer-top { display: grid; grid-template-columns: 1fr auto; gap: 2px 16px;
+              padding: 18px 26px 14px; border-bottom: 1px solid var(--border);
+              align-items: center; }
+.drawer-top-main { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px;
+                   min-width: 0; }
+.drawer-top-main h2 { font-size: 20px; font-weight: 650; margin: 0; }
+.drawer-top-main .loc { font-size: 12px; color: var(--text-muted); }
+.drawer-top-main .sep { font-size: 12px; color: var(--text-faint); }
+.drawer-top-main .unset { color: var(--text-faint); font-style: italic; }
+.drawer-top-meta { grid-column: 1; font-size: 11px; color: var(--text-faint); }
+.drawer-top-enter { grid-column: 2; grid-row: 1 / span 2; align-self: center;
+                    font-size: 11px; font-weight: 600; letter-spacing: 0.08em;
+                    padding: 7px 18px; border-radius: 5px;
+                    border: 1px solid var(--accent); color: var(--accent);
+                    text-decoration: none; white-space: nowrap; }
+.drawer-top-enter:hover { background: var(--accent); color: var(--bg-base); }
+
+/* The design figure a measurement is read against, and the gap. Deliberately
+   uncoloured: on this fleet the design PUE is a cooling-only anchor while the
+   measurement is Category 1 and carries distribution losses the anchor never
+   counted, so a "win" against it is partly a difference of boundary. Stating
+   the gap is honest; painting it green would not be. */
+.kpi-tile .vs { font-size: 10px; color: var(--text-faint); margin-left: 8px;
+                white-space: nowrap; }
+.kpi-tile .vs em { font-style: normal; margin-left: 5px; color: var(--text-muted);
+                   font-variant-numeric: tabular-nums; }
+
+/* The hover mark that carries a tile's long provenance. Nothing is hidden
+   from a reader who wants it - the tile just stops spending four lines on
+   arithmetic nobody reads until they doubt the number. */
+.kpi-tile .cap { display: flex; align-items: center; gap: 5px; }
+.tile-why { display: inline-flex; align-items: center; justify-content: center;
+            width: 13px; height: 13px; border-radius: 50%; cursor: help;
+            border: 1px solid var(--border-strong, var(--border));
+            color: var(--text-faint); font-size: 9px; line-height: 1; }
+.tile-why:hover { color: var(--text); border-color: var(--text-muted); }

@@ -18,10 +18,14 @@
  *  white-space sections rather than sitting beside them.
  */
 import type { FacilityMachine, FacilityRoom } from '../../api/client';
+import { Tip } from '../../components/HoverTip';
 
-function Tile({ value, unit, caption, note, absent, bar }: {
+function Tile({ value, unit, caption, note, absent, bar, detail }: {
   value: React.ReactNode; unit?: string; caption: string;
   note?: string | null; absent?: boolean; bar?: string;
+  /** Long provenance, behind a hover mark. Nothing is hidden from a reader who
+   *  wants it; the tile just stops spending four lines on it. */
+  detail?: string | null;
 }) {
   return (
     <div className={`kpi-tile ${absent ? 'absent' : ''}`}>
@@ -31,7 +35,14 @@ function Tile({ value, unit, caption, note, absent, bar }: {
           <span className="n">{absent ? '—' : value}</span>
           {unit && !absent && <span className="u">{unit}</span>}
         </div>
-        <div className="cap">{caption}</div>
+        <div className="cap">
+          {caption}
+          {detail && (
+            <Tip tip={detail} className="tile-why">
+              <span aria-label="How this is measured">?</span>
+            </Tip>
+          )}
+        </div>
         {note && <div className="note">{note}</div>}
       </div>
     </div>

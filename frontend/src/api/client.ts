@@ -1625,9 +1625,25 @@ export interface SitesOverview {
 /** A number the platform may legitimately not have. `note` says why not. */
 export interface MaybeMetric {
   value: number | null;
+  /** Short, and ALWAYS rendered. When the value is null this is the reason it
+   *  is null; when it is present this is what changes how it should be read. */
   note?: string | null;
+  /** The long provenance - arithmetic, meter counts, scope caveats. Hover
+   *  only: true, and not worth a line of the panel until somebody doubts the
+   *  number, at which point it is the first thing they want. */
+  detail?: string | null;
   method?: string | null;
   category?: number | null;
+  /** Whether the figure can be true at all (a PUE below 1.0 cannot be).
+   *  A different judgement from whether it is good. */
+  plausible?: boolean | null;
+  /** The design figure to read the measurement against, if the site has one. */
+  target?: number | null;
+  target_label?: string | null;
+  /** What that design figure was derived from, and how it differs in scope
+   *  from the measurement. The gap is shown; it is deliberately not coloured,
+   *  because the two are not the same boundary. */
+  target_note?: string | null;
 }
 
 export interface Utilisation {
@@ -2341,7 +2357,14 @@ export interface RoomKpi {
   };
   power: {
     total_kw: number | null; it_ac_kw: number | null; it_dc_kw: number | null;
-    cooling_kw: number | null; pue: number | null; note: string | null;
+    cooling_kw: number | null;
+    /** IN-ROOM: this room's metered total over its own IT, so the only cooling
+     *  in it is the air handlers standing here. Not comparable with the site
+     *  PUE, which contains the chiller plant. Always render it with its scope. */
+    pue: number | null;
+    pue_scope?: string | null;
+    pue_note?: string | null;
+    note: string | null;
   };
   utilisation: {
     space_pct: number | null; power_pct: number | null; power_basis: string;

@@ -1911,7 +1911,20 @@ async def room_kpi(session: AsyncSession, room_id: str) -> dict[str, Any] | None
             "it_ac_kw": (room_power or {}).get("it_ac_kw"),
             "it_dc_kw": None,
             "cooling_kw": (room_power or {}).get("cooling_kw"),
+            # IN-ROOM, and it has to be labelled that way wherever it is shown.
+            # This is the room's own metered total over its own IT, so the only
+            # cooling in it is the air handlers standing in the room. The
+            # chillers, towers and pumps that actually reject the heat are in
+            # the plant rooms and are not in this figure, which is why a hall
+            # reads 1.09 while its site reads 1.31 on the panel one click away.
+            # Neither is wrong; they are different boundaries, and a reader who
+            # compares them without being told that is being misled by us.
             "pue": (room_power or {}).get("pue"),
+            "pue_scope": "in-room",
+            "pue_note": ("air handlers in this room only - the chiller plant "
+                         "that rejects this heat is not in this boundary, so "
+                         "it reads lower than the site PUE and the two are not "
+                         "comparable"),
             "note": (room_power or {}).get("note"),
         },
         "utilisation": {

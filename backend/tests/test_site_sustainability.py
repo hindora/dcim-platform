@@ -32,12 +32,28 @@ def test_wue_says_what_it_counted_and_over_what_window():
     """The denominator and the window are the whole meaning of the ratio.
 
     Two sites quoting WUE over different periods are not comparable, and a
-    reader cannot tell without being told.
+    reader cannot tell without being told - but the arithmetic belongs in the
+    hover, not on the face of the tile. What stays visible is the SCOPE, which
+    changes how the number should be read.
     """
-    note = s._wue(_water(340.0), 136.0)["note"]
-    assert "340 L makeup" in note
-    assert "136 kWh IT" in note
-    assert "1 h" in note
+    wue = s._wue(_water(340.0), 136.0)
+    # Nothing on the note line when there is no caveat: the scope already rides
+    # in `method`, and repeating it read as two different statements.
+    assert wue["note"] is None
+    detail = wue["detail"]
+    assert "340 L makeup" in detail
+    assert "136 kWh IT" in detail
+    assert "1 h" in detail
+
+
+def test_wue_scope_rides_in_the_method_and_is_not_repeated_in_the_note():
+    """Counting tower makeup alone is not a full Green Grid site WUE. The tile
+    states that once, in `method`; saying it again in the note rendered as
+    "tower makeup, flow-integrated - tower makeup only"."""
+    wue = s._wue(_water(340.0), 136.0)
+    assert wue["method"] == "tower makeup, flow-integrated"
+    assert wue["note"] is None
+    assert "not a full Green Grid site WUE" in wue["detail"]
 
 
 def test_wue_names_its_method_so_it_is_not_read_as_a_totaliser():
@@ -58,9 +74,12 @@ def test_an_excluded_gap_makes_the_figure_a_lower_bound_and_says_so():
 
 
 def test_a_high_wue_is_explained_by_low_load_not_reported_as_a_leak():
+    """The explanation stays VISIBLE - a reader seeing 9 L/kWh must not have to
+    hover to learn it is a load artefact rather than a burst main."""
     wue = s._wue(_water(900.0), 100.0)
     assert wue["value"] == 9.0
-    assert "IT load is low" in wue["note"]
+    assert "high on low IT load" in wue["note"]
+    assert "not a leak" in wue["detail"]
 
 
 def test_wue_without_it_energy_is_null_with_a_reason():
@@ -106,8 +125,24 @@ def test_cue_carries_the_factor_and_where_it_came_from():
 
 def test_cue_states_that_on_site_generation_is_excluded():
     """Scope 2 only. A month spent on diesel would under-report here, and the
-    tile has to say so rather than let the figure stand unqualified."""
-    assert "excludes on-site generation" in s._cue({"pue": 1.3}, _dc())["note"]
+    panel has to say so rather than let the figure stand unqualified. The
+    caveat is long, so it sits in the hover; what stays on the tile is the
+    factor and its source, because an unattributed carbon number is worse than
+    no carbon number."""
+    cue = s._cue({"pue": 1.3}, _dc())
+    assert "scope 2" in cue["detail"]
+    assert "under-report" in cue["detail"]
+    assert "0.441 kg CO2e/kWh" in cue["note"]
+    assert "eGRID subregion RFCW" in cue["note"]
+
+
+def test_an_absent_metric_has_no_hover_only_a_visible_reason():
+    """The reason a figure is missing is never demoted to a hover: it is the
+    only thing the tile has left to say."""
+    for m in (s._wue(_water(340.0), None), s._cue({"pue": 1.3}, _dc(factor=None))):
+        assert m["value"] is None
+        assert m["detail"] is None
+        assert m["note"]
 
 
 def test_cue_without_a_factor_is_null_and_says_it_is_published_data():

@@ -254,6 +254,29 @@ async def overview(session: AsyncSession) -> dict[str, Any]:
     }
 
 
+def _pue_detail(pue: dict[str, Any]) -> str | None:
+    """The measurement's own provenance, for the hover rather than the tile.
+
+    Everything here is true and none of it is worth a line of the panel until
+    somebody doubts the number - at which point all of it is the first thing
+    they ask for.
+    """
+    bits: list[str] = []
+    point = pue.get("measurement_point")
+    if point:
+        bits.append(f"IT measured at the {point}")
+    if pue.get("total_facility_kwh") is not None:
+        bits.append(f"{pue['total_facility_kwh']:.0f} kWh facility over "
+                    f"{pue.get('it_kwh', 0):.0f} kWh IT")
+    meters = pue.get("meters") or {}
+    if meters:
+        bits.append(f"{meters.get('facility', 0)} facility meter(s), "
+                    f"{meters.get('it', 0)} IT")
+    if pue.get("counter_resets"):
+        bits.append(f"{pue['counter_resets']} counter reset(s) in the window")
+    return " · ".join(bits) or None
+
+
 # A WUE this large means the denominator is small, not that the towers are
 # leaking: fixed evaporation from a basin does not scale down with IT load, so
 # a site running at 14 % of design reports a worse ratio than the same plant
@@ -275,28 +298,43 @@ def _wue(water: dict[str, Any], it_kwh: float | None) -> dict[str, Any]:
     """
     litres = float(water.get("litres") or 0.0)
     if it_kwh is None or it_kwh <= 0:
-        return {"value": None, "method": None,
+        return {"value": None, "method": None, "detail": None,
                 "note": "IT energy for the window is unavailable, so there is "
                         "nothing to divide the metered water by"}
     if not water.get("samples"):
-        return {"value": None, "method": None,
+        return {"value": None, "method": None, "detail": None,
                 "note": "no makeup-water meter reported in the window"}
 
     value = litres / it_kwh
-    notes = [f"{litres:.0f} L makeup over {it_kwh:.0f} kWh IT, "
-             f"{water.get('towers', 0)} tower(s), 1 h"]
+    # What the tile says, and what it says only when asked. The split is by
+    # WHO NEEDS IT: the scope caveat changes how the number should be read and
+    # stays visible; the arithmetic behind it is for somebody checking the
+    # number and belongs in the hover.
+    detail = [f"{litres:.0f} L makeup over {it_kwh:.0f} kWh IT, "
+              f"{water.get('towers', 0)} tower(s), 1 h"]
+    # The scope is already on the tile in `method` ("tower makeup,
+    # flow-integrated"), so the note carries only what that does not say: the
+    # caveats that change how THIS reading should be read. Repeating the scope
+    # here printed "tower makeup, flow-integrated - tower makeup only".
+    caveats: list[str] = []
     if water.get("gaps"):
-        # Not a footnote. A gap is water the integration did NOT count, so the
-        # ratio is a floor, and a reader comparing it with last week needs to
+        # Stays VISIBLE. A gap is water the integration did not count, so the
+        # ratio is a floor, and a reader comparing it with last week has to
         # know the meter went quiet rather than the plant got thrifty.
-        notes.append(f"{water['gaps']} gap(s) over "
-                     f"{repo.MAKEUP_GAP_MAX_S:.0f} s excluded - "
-                     "the figure is a lower bound")
+        caveats.append(f"lower bound, {water['gaps']} gap(s) excluded")
+        detail.append(f"gaps longer than {repo.MAKEUP_GAP_MAX_S:.0f} s are not "
+                      "integrated across - a tower staged off did not keep "
+                      "drawing water")
     if value > WUE_HIGH_L_PER_KWH:
-        notes.append("high because IT load is low, not because draw is high - "
-                     "basin evaporation is largely fixed")
+        caveats.append("high on low IT load")
+        detail.append("basin evaporation is largely fixed, so the ratio rises "
+                      "as IT load falls - this is not a leak")
+    detail.append("counts cooling-tower makeup only, not humidification, "
+                  "domestic supply or water embedded in purchased chilled "
+                  "water, so it is not a full Green Grid site WUE")
     return {"value": round(value, 3), "method": "tower makeup, flow-integrated",
-            "note": " · ".join(notes)}
+            "note": " · ".join(caveats) or None,
+            "detail": " · ".join(detail)}
 
 
 def _cue(pue: dict[str, Any], dc: dict[str, Any]) -> dict[str, Any]:
@@ -315,11 +353,11 @@ def _cue(pue: dict[str, Any], dc: dict[str, Any]) -> dict[str, Any]:
     basis = (dc.get("attributes") or {}).get("grid_carbon_basis")
     value = _f(pue.get("pue"))
     if factor is None:
-        return {"value": None, "method": None,
+        return {"value": None, "method": None, "detail": None,
                 "note": "no grid carbon intensity is set for this site - it is "
                         "published data, not something the site can meter"}
     if value is None:
-        return {"value": None, "method": None,
+        return {"value": None, "method": None, "detail": None,
                 "note": "PUE is unavailable for the window, and CUE is PUE "
                         "times the grid factor"}
     # Scope 2 only, and said so: on-site diesel burned during a utility outage
@@ -327,9 +365,17 @@ def _cue(pue: dict[str, Any], dc: dict[str, Any]) -> dict[str, Any]:
     # its generators all month would under-report here.
     return {"value": round(value * factor, 3),
             "method": "PUE x published grid factor",
+            # Visible: the factor and where it came from. An unattributed
+            # carbon number is worse than none, so the source never moves to
+            # the hover - only the scope caveat does.
             "note": f"{factor:.3f} kg CO2e/kWh · "
-                    f"{basis or 'factor source not recorded'} · "
-                    "grid electricity only, excludes on-site generation"}
+                    f"{basis or 'factor source not recorded'}",
+            "detail": ("grid electricity only: scope 2. Diesel burnt during an "
+                       "outage or a generator test is scope 1 and is not in "
+                       "this figure, so a month spent on generators would "
+                       "under-report · an annual published factor cannot "
+                       "distinguish 3 a.m. wind from 6 p.m. gas; an hourly "
+                       "feed would")}
 
 
 async def kpi(session: AsyncSession, datacenter_id: str) -> dict[str, Any] | None:
@@ -399,9 +445,30 @@ async def kpi(session: AsyncSession, datacenter_id: str) -> dict[str, Any] | Non
                 "method": pue.get("method"),
                 "category": pue.get("category"),
                 "note": pue.get("note"),
+                "detail": _pue_detail(pue),
+                # The design figure to read the measurement against, and the
+                # health of the measurement itself. They are different
+                # judgements and the tile keeps them apart: `plausible` is
+                # whether this number can be true at all (below 1.0 it cannot),
+                # `target` is whether it is good.
+                "plausible": pue.get("plausible"),
+                "target": _f(dc.get("design_pue")),
+                "target_label": "design",
+                # NOT like for like, and the panel has to say so rather than
+                # print a flattering gap. See migration 0074: the design figure
+                # is a cooling-only anchor, the measurement is Category 1 and
+                # carries distribution losses the anchor never counted.
+                "target_note": (
+                    (dc.get("attributes") or {}).get("design_pue_basis")
+                    if dc.get("design_pue") else None),
             },
-            "cer": {"value": cer, "note": None if cer is not None
-                    else "no IT load is reporting"},
+            "cer": {"value": cer,
+                    "note": None if cer is not None
+                    else "no IT load is reporting",
+                    "detail": ("facility cooling kW per IT kW. Unlike PUE it "
+                               "isolates the cooling plant from the rest of "
+                               "the facility load"
+                               if cer is not None else None)},
             "wue": wue,
             "cue": cue,
         },

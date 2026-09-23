@@ -33,9 +33,14 @@ import { Tip } from '../../components/HoverTip';
 import { ALL_CATEGORIES, AlarmTrend, maxOpen } from './AlarmTrend';
 import { relativeTime } from '../../lib/format';
 
-function Tile({ value, unit, caption, note, absent, bar }: {
+function Tile({ value, unit, caption, note, absent, bar, against, detail }: {
   value: string; unit?: string; caption: string; note?: string | null;
   absent?: boolean; bar?: string;
+  /** A design figure to read the value against, already formatted. */
+  against?: React.ReactNode;
+  /** Long provenance. Rendered behind a hover mark so the tile stays scannable
+   *  while nothing is actually hidden from somebody who wants it. */
+  detail?: string | null;
 }) {
   return (
     <div className={`kpi-tile ${absent ? 'absent' : ''}`}>
@@ -44,8 +49,16 @@ function Tile({ value, unit, caption, note, absent, bar }: {
         <div className="v">
           <span className="n">{value}</span>
           {unit && !absent && <span className="u">{unit}</span>}
+          {against}
         </div>
-        <div className="cap">{caption}</div>
+        <div className="cap">
+          {caption}
+          {detail && (
+            <Tip tip={detail} className="tile-why">
+              <span aria-label="How this is measured">?</span>
+            </Tip>
+          )}
+        </div>
         {note && <div className="note">{note}</div>}
       </div>
     </div>
@@ -55,18 +68,35 @@ function Tile({ value, unit, caption, note, absent, bar }: {
 function metricTile(m: MaybeMetric, caption: string,
                     { digits = 2, unit }: { digits?: number; unit?: string } = {}) {
   const absent = m.value === null || m.value === undefined;
-  // Method and reason are DIFFERENT claims and the tile needs both. Showing
-  // only the note loses how the figure was arrived at, which for a derived
-  // ratio like CUE is the whole of its credibility; showing only the method
-  // loses why a missing one is missing.
   const method = m.method
     ? (m.category != null ? `${m.method} method · category ${m.category}` : m.method)
     : null;
+  // Visible line: how it was measured, then what changes how it should be
+  // read. The long provenance goes to the hover - see `detail` on Tile.
   const note = [method, m.note].filter(Boolean).join(' · ') || null;
+  const detail = [m.detail, m.target_note && `${m.target_label ?? 'design'} figure: ${m.target_note}`]
+    .filter(Boolean).join(' · ') || null;
+
+  // The design figure rides beside the value, and the gap is stated without
+  // being coloured. Colouring it would claim a verdict the comparison cannot
+  // support: the design PUE on this fleet is a cooling-only anchor while the
+  // measurement is Category 1 and carries distribution losses the anchor never
+  // counted, so a "win" against it is partly a difference of boundary.
+  const against = (!absent && m.target != null) ? (
+    <span className="vs">
+      {m.target_label ?? 'design'} {m.target.toFixed(digits)}
+      <em>{m.value! >= m.target ? '+' : '−'}{Math.abs(m.value! - m.target).toFixed(digits)}</em>
+    </span>
+  ) : undefined;
+
+  // The one judgement the panel CAN make on its own: whether the figure is
+  // possible. A PUE below 1.0 is not an efficient site, it is a broken meter.
+  const bar = m.plausible === false ? 'critical' : undefined;
+
   return (
-    <Tile absent={absent} caption={caption} unit={unit}
+    <Tile absent={absent} caption={caption} unit={unit} bar={bar}
           value={absent ? '—' : m.value!.toFixed(digits)}
-          note={note} />
+          against={against} detail={detail} note={note} />
   );
 }
 
@@ -132,60 +162,37 @@ export function SiteDrawer({ site, onClose }: { site: SiteRow; onClose: () => vo
              aria-label={`Site KPIs for ${site.code}`}>
         <button className="close" onClick={onClose} aria-label="Close">✕</button>
 
-        <div className="drawer-id">
-          <svg className="glyph" width="24" height="24" viewBox="0 0 24 24" aria-hidden
-               fill="none" stroke="currentColor" strokeWidth="1.4">
-            <rect x="2" y="4" width="9" height="18" /><rect x="13" y="9" width="9" height="13" />
-          </svg>
-          <div>
-            <div className="cap">SITE</div>
-            <div className="val">{site.code}</div>
-            {site.name !== site.code && <div className="sub">{site.name}</div>}
-          </div>
-        </div>
-
-        <div className="drawer-id">
-          <svg className="glyph" width="24" height="24" viewBox="0 0 24 24" aria-hidden
-               fill="none" stroke="currentColor" strokeWidth="1.4">
-            <circle cx="12" cy="10" r="6" /><line x1="12" y1="16" x2="12" y2="22" />
-          </svg>
-          <div>
-            <div className="cap">LOCATION</div>
-            <div className="val">
+        {/* One strip, not three stacked identity cards plus a full-width
+            button. The reader clicked this site's row - they know which site
+            it is - and the old header spent about 300 px and the whole fold
+            restating it, pushing every live figure below the crease. ENTER
+            rides in the strip because it is navigation, not the panel's
+            purpose: as a 772 px primary bar it was the loudest thing on a
+            screen full of measurements. */}
+        <header className="drawer-top">
+          <div className="drawer-top-main">
+            <h2>{site.code}</h2>
+            <span className="loc">
               {site.city || site.country
                 ? [site.city, site.country].filter(Boolean).join(', ')
-                : <span className="unset">not set</span>}
-            </div>
-            <div className="sub">{site.timezone}</div>
-          </div>
-        </div>
-
-        <div className="drawer-id">
-          <svg className="glyph" width="24" height="24" viewBox="0 0 24 24" aria-hidden
-               fill="none" stroke="currentColor" strokeWidth="1.4">
-            <rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" />
-            <rect x="3" y="14" width="7" height="7" /><rect x="14" y="14" width="7" height="7" />
-          </svg>
-          <div>
-            <div className="cap">ITEMS MONITORED</div>
-            <div className="val">{data ? `${data.monitored.devices} devices` : '—'}</div>
-            {data && (
-              <div className="sub">
-                {data.monitored.endpoints} endpoints across {data.monitored.protocols} protocols
-                {' · '}{data.monitored.racks} racks
-              </div>
+                : <span className="unset">location not set</span>}
+            </span>
+            <span className="sep">·</span>
+            <span className="loc">{site.timezone}</span>
+            {site.name !== site.code && (
+              <><span className="sep">·</span><span className="loc">{site.name}</span></>
             )}
           </div>
-        </div>
-
-        {/* A <button> with no handler, which is what this was, looks exactly
-            like a working one and silently does nothing. Same destination as
-            the site row's ENTER. */}
-        <Link className="primary enter" to={`/devices?datacenter=${site.code}`}
-              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center',
-                       textDecoration: 'none' }}>
-          ENTER
-        </Link>
+          <div className="drawer-top-meta">
+            {data ? (
+              <>{data.monitored.devices} devices · {data.monitored.endpoints} endpoints
+                 across {data.monitored.protocols} protocols · {data.monitored.racks} racks</>
+            ) : 'loading…'}
+          </div>
+          <Link className="drawer-top-enter" to={`/devices?datacenter=${site.code}`}>
+            ENTER
+          </Link>
+        </header>
 
         <div className="drawer-head">
           <h3>Live Data</h3>
