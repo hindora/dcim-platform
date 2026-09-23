@@ -2347,8 +2347,83 @@ export interface RoomKpi {
     space_pct: number | null; power_pct: number | null; power_basis: string;
     cooling_pct: number | null; cooling_basis: string;
   };
+  /**
+   * Present ONLY for a facility room (plant, electrical), null for a data
+   * hall. When it is present the drawer renders it INSTEAD of environmental /
+   * power / utilisation above, because those three describe white space: a
+   * generator room has no server intake to grade against ASHRAE, no IT load
+   * to divide a PUE by, and its racks hold controls rather than load.
+   */
+  facility: FacilityRoom | null;
   last_sample: string | null;
   as_of: string;
+}
+
+/** One machine standing in a facility room, as the PLANT tab reads it. */
+export interface FacilityMachine {
+  id: string; name: string; device_type: string; stage: string;
+  status: string | null; running: boolean | null;
+  /** What the machine's own binaries say it is doing, in plain words. */
+  state_label?: string | null;
+  verdict: string; why?: string | null;
+  monitored: boolean; alarms_open: number;
+  /** Consumption. Only ever set on a machine that BURNS power. */
+  power_kw?: number | null;
+  /**
+   * Metered throughput. Never added to `power_kw`: a utility feed, a board and
+   * a UPS all meter the same kilowatt on its way past.
+   */
+  carried_kw?: number | null;
+  heat_kw?: number | null;
+  duty_pct?: number | null; duty_of?: string | null;
+  run_hours?: number | null;
+  // Water side
+  supply_c?: number | null; return_c?: number | null; delta_t_k?: number | null;
+  flow_l_s?: number | null; cop?: number | null; compressor_pct?: number | null;
+  // Tower
+  approach_k?: number | null; wet_bulb_c?: number | null; dry_bulb_c?: number | null;
+  fan_pct?: number | null; basin_pct?: number | null; vibration?: number | null;
+  // Pump / valve
+  pump_pct?: number | null; vfd_hz?: number | null; diff_pressure?: number | null;
+  valve_pct?: number | null; commanded_pct?: number | null; deviation_pct?: number | null;
+  motor_temp_c?: number | null;
+  // UPS / generator
+  battery_health_pct?: number | null; battery_c?: number | null;
+  battery_minutes?: number | null;
+  fuel_pct?: number | null; coolant_c?: number | null; run_minutes?: number | null;
+  // Boards, feeds, meters
+  power_factor?: number | null; imbalance_pct?: number | null;
+  thd_pct?: number | null; peak_kw?: number | null; voltage_v?: number | null;
+  transfers?: number | null;
+  // Instruments
+  ambient_c?: number | null; header?: string | null;
+}
+
+export interface FacilityRoom {
+  summary: {
+    id: string; name: string; room_type: string | null;
+    /** What the room is FOR, in the words a site would use. */
+    purpose: string;
+    equipment: number; by_type: Record<string, number>;
+    cooling_machines: number; cooling_running: number;
+    machines_stated: number; active: number; standby: number;
+    /**
+     * Publishing a state that is neither working nor deliberately off: on
+     * battery, on bypass, on generator, a dead bus. Most carry no alarm rule,
+     * so without this a UPS outage reads as a quiet room.
+     */
+    attention: number; attention_names: string[];
+    no_state: number; unmonitored: number;
+    heat_kw: number | null; power_kw: number | null;
+    /** Throughput, read off ONE class of machine so it is not counted twice. */
+    carried_kw: number | null; carried_by: string | null;
+    temp_c: number | null;
+    /** room sensor | outdoor air | chassis - never silently interchanged. */
+    temp_source: string | null;
+    alarms_open: number;
+    verdict: string; why: string | null;
+  };
+  machines: FacilityMachine[];
 }
 
 /* ---------------------------------------------------------- integrations */

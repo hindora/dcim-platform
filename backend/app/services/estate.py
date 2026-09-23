@@ -30,6 +30,7 @@ from app.core.alert_taxonomy import DETECTIONS, THERMAL_ALARM_CATEGORIES
 from app.core.ashrae import DEFAULT_CLASS, envelope_for
 from app.repositories import estate as repo
 from app.repositories import thermal as thermal_repo
+from app.services import plant as plant_service
 
 # ASHRAE TC 9.9 recommended envelope for class A1-A4 equipment intake air.
 # Compliance on this page means "inside the RECOMMENDED band", which is a
@@ -1848,6 +1849,12 @@ async def room_kpi(session: AsyncSession, room_id: str) -> dict[str, Any] | None
     census = await repo.room_census(session, room_id)
     updated = await repo.room_updated(session, room_id)
 
+    # A facility room gets the plant view instead of the white-space one. See
+    # plant_service.room for why the white-space tiles are wrong here rather
+    # than merely empty. None for a data hall, which keeps the layout below.
+    facility = (None if ident.get("room_class") == "white_space"
+                else await plant_service.room(session, room_id))
+
     th = await thermal(session, mode="live")
     room_thermal = next((r for r in th["rooms"] if r["id"] == room_id), None)
 
@@ -1860,6 +1867,9 @@ async def room_kpi(session: AsyncSession, room_id: str) -> dict[str, Any] | None
     return {
         "room": ident,
         "is_white_space": ident.get("room_class") == "white_space",
+        # Present only for a facility room. The drawer renders this INSTEAD of
+        # environmental/power/utilisation, which describe a data hall.
+        "facility": facility,
         "monitored": {
             "devices": int(census.get("devices") or 0),
             "online": int(census.get("online") or 0),

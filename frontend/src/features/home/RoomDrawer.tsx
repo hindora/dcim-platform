@@ -4,11 +4,18 @@
  *  it is running, what it draws, and how full it is. Every figure that has no
  *  instrument behind it renders as a dash with the reason attached, because on
  *  this screen a zero and an absence look identical until someone acts on one.
+ *
+ *  TWO layouts, chosen by what the room is. The tiles below describe WHITE
+ *  SPACE - server intakes against ASHRAE, a room PUE, rack U used. A plant
+ *  room or a switchroom gets `RoomFacility` instead, which is not a reduced
+ *  version of this one but a different set of questions; see that file for
+ *  why the white-space tiles were wrong there rather than merely empty.
  */
 import { useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { api, type RoomKpi } from '../../api/client';
+import { RoomFacility } from './RoomFacility';
 import { ALL_CATEGORIES, AlarmTrend, maxOpen } from './AlarmTrend';
 
 function Tile({ value, unit, caption, note, absent, bar }: {
@@ -115,10 +122,15 @@ export function RoomDrawer({ roomId, roomName, onClose }: {
           </div>
         </div>
 
+        {/* ENTER, not "OPEN FLOOR PLAN": this is the same destination the row's
+            ENTER already goes to, and the site drawer's primary action is
+            called ENTER too. One link with two names in the same table reads
+            as two different places. What ENTER means is "go into this scope" -
+            for a site that is its device list, for a room its floor plan. */}
         <Link className="enter primary" to={`/floorplan?room=${roomId}`}
               style={{ display: 'flex', alignItems: 'center', justifyContent: 'center',
                        textDecoration: 'none' }}>
-          OPEN FLOOR PLAN
+          ENTER
         </Link>
 
         {error && <div className="banner" style={{ margin: '0 26px 16px' }}>
@@ -134,6 +146,8 @@ export function RoomDrawer({ roomId, roomName, onClose }: {
                 as of {new Date(data.as_of).toLocaleTimeString()}
               </span>
             </div>
+
+            {data.facility ? <RoomFacility fac={data.facility} /> : <>
 
             <section className="drawer-section">
               <div className="title">MONITORED</div>
@@ -215,6 +229,8 @@ export function RoomDrawer({ roomId, roomName, onClose }: {
                       caption="Cooling" bar={pctBar(ut?.cooling_pct)} note={ut?.cooling_basis} />
               </div>
             </section>
+
+            </>}
 
             {/* Whether now is normal for this room: what it has raised
                 over time, every domain at once. The tiles above are the

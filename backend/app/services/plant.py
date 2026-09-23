@@ -1007,6 +1007,51 @@ def _notes(stages: list[dict[str, Any]], machines: list[dict[str, Any]],
     return notes
 
 
+async def room(session: AsyncSession, room_id: str) -> dict[str, Any] | None:
+    """One facility room, for the room drawer.
+
+    The room drawer used to render every room with the white-space layout:
+    ASHRAE intake compliance, a room PUE and rack-space utilisation. In a
+    generator room all three are category errors. 27 C is a normal plant room
+    and a warning on a server intake; PUE divides by an IT load that is not
+    there; and the racks in these rooms hold controls, not load.
+
+    Worse, the POWER block read 0.0 kW in every electrical room. That is the
+    estate power split doing its job - it excludes the `power` category so a
+    PDU's throughput is not added to the servers it already meters - but every
+    device in a UPS room IS that category, so the room whose whole purpose is
+    power reported none. A confident zero over a 195 kW incoming feed.
+
+    So this returns what the PLANT tab already knows about the room instead.
+    `carried_kw` is throughput read off ONE class of machine (see
+    `_CARRIER_ORDER`), never a sum across the room: a UPS room meters the same
+    kilowatt at the feed, the board and the UPS output.
+
+    None when the room is not a facility room, which is the caller's signal to
+    keep the white-space layout.
+    """
+    inventory = await repo.machines(session, facility_only=True)
+    here = [m for m in inventory if m.get("room_id") == room_id and m.get("site_id")]
+    if not here:
+        return None
+
+    values = await repo.latest(session, facility_only=True)
+    flags = await repo.flags(session)
+    alarms = await repo.alarms(session)
+    observed = await repo.observed_kw(session)
+
+    rows = [
+        _machine_row(m, values.get(m["device_id"], {}),
+                     flags.get(m["device_id"], {}),
+                     alarms.get(m["device_id"], {}), observed)
+        for m in here
+    ]
+    # Cooling machines first, then the electrical spine, then the instruments:
+    # the order somebody walking the room would look at it in.
+    rows.sort(key=lambda r: (r["stage"] == "facility", r["device_type"], r["name"]))
+    return {"summary": _facility_room(room_id, rows), "machines": rows}
+
+
 async def plant(session: AsyncSession, view: str = "all") -> dict[str, Any]:
     """Every cooling machine in the estate, folded into the chain it belongs to.
 

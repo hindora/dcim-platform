@@ -806,3 +806,29 @@ button.ind:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px
    count and the urgency are two readings of one tile rather than two tiles. */
 .ind.has-alarm { box-shadow: inset 0 -2px 0 var(--critical); }
 
+
+/* The facility room's equipment list.
+   A row per machine: what it is and what it says on the first line, its own
+   readings on the second. Deliberately not a table - the columns differ by
+   machine class (a tower has an approach, a switchboard has phase imbalance)
+   and forcing them into shared headings would be a grid of dashes. */
+.fac-list { display: flex; flex-direction: column; gap: 1px;
+            background: var(--border); border: 1px solid var(--border);
+            border-radius: 6px; overflow: hidden; }
+.fac-row { background: var(--bg-panel); padding: 8px 12px; }
+/* The tone rides on a left edge rather than a background wash: these rows sit
+   in a long list and a filled row reads as selected. */
+.fac-row.warn { box-shadow: inset 2px 0 0 var(--warn); }
+.fac-row.critical { box-shadow: inset 2px 0 0 var(--critical); }
+.fac-head { display: flex; align-items: baseline; gap: 8px; }
+.fac-name { font-weight: 600; font-size: 12px; }
+.fac-type { font-size: 10px; color: var(--text-muted); text-transform: uppercase;
+            letter-spacing: 0.04em; }
+.fac-spacer { flex: 1; }
+.fac-state { font-size: 11px; color: var(--text-muted); }
+.fac-state.unset { color: var(--text-faint); font-style: italic; }
+.fac-alm { font-size: 10px; color: var(--critical); font-weight: 600; }
+.fac-reads { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 4px;
+             font-size: 11px; font-variant-numeric: tabular-nums; }
+.fac-reads em { font-style: normal; color: var(--text-muted); margin-right: 3px; }
+.fac-reads .unset { color: var(--text-faint); font-style: italic; }
