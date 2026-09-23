@@ -17,17 +17,24 @@ import { Link } from 'react-router-dom';
 import { Tip } from '../../components/HoverTip';
 import { api, type RoomKpi } from '../../api/client';
 import { RoomFacility } from './RoomFacility';
+import { PowerSplit } from './PowerSplit';
 import { ALL_CATEGORIES, AlarmTrend, maxOpen } from './AlarmTrend';
 
-function Tile({ value, unit, caption, note, absent, bar, detail }: {
+function Tile({ value, unit, caption, note, absent, bar, detail, to }: {
   value: React.ReactNode; unit?: string; caption: string;
   note?: string | null; absent?: boolean; bar?: string;
   /** Long provenance, behind a hover mark. Nothing is hidden from a reader who
    *  wants it; the tile just stops spending four lines on it. */
   detail?: string | null;
+  /** Where the subset this figure counts can be seen. A tile that says
+   *  "20/22 power units online" and cannot show you the two is a dead end:
+   *  the reader has to close the drawer and rebuild the question somewhere
+   *  else. Only set this where the destination really is THIS tile's
+   *  population - a link that lands on something broader is worse than none. */
+  to?: string;
 }) {
-  return (
-    <div className={`kpi-tile ${absent ? 'absent' : ''}`}>
+  const body = (
+    <div className={`kpi-tile ${absent ? 'absent' : ''}${to ? ' linked' : ''}`}>
       {bar && <span className="bar" style={{ background: `var(--${bar})` }} />}
       <div>
         <div className="v">
@@ -46,6 +53,7 @@ function Tile({ value, unit, caption, note, absent, bar, detail }: {
       </div>
     </div>
   );
+  return to ? <Link className="tile-link" to={to}>{body}</Link> : body;
 }
 
 function num(v: number | null | undefined, digits = 1): React.ReactNode {
@@ -166,18 +174,29 @@ export function RoomDrawer({ roomId, roomName, onClose }: {
 
             <section className="drawer-section">
               <div className="title">MONITORED</div>
+              {/* Each of these counts a population, so each one opens it. The
+                  offline counts go straight to the offline machines rather
+                  than the whole room: "2 offline" is only useful as a
+                  question, and the answer was four clicks and a rebuilt
+                  filter away on another page. */}
               <div className="drawer-grid">
                 <Tile value={mon?.devices ?? 0} caption="Devices"
-                      note={mon?.offline ? `${mon.offline} offline` : 'all reporting'} />
-                <Tile value={mon?.racks ?? 0} caption="Racks" />
+                      note={mon?.offline ? `${mon.offline} offline` : 'all reporting'}
+                      to={mon?.offline
+                        ? `/devices?room=${roomId}&status=OFFLINE`
+                        : `/devices?room=${roomId}`} />
+                <Tile value={mon?.racks ?? 0} caption="Racks"
+                      to={`/floorplan?room=${roomId}`} />
                 <Tile value={`${mon?.cooling_online ?? 0}/${mon?.cooling_units ?? 0}`}
                       caption="Cooling units online"
                       bar={mon && mon.cooling_units && mon.cooling_online < mon.cooling_units
-                        ? 'warn' : 'ok'} />
+                        ? 'warn' : 'ok'}
+                      to={`/devices?room=${roomId}&category=cooling`} />
                 <Tile value={`${mon?.power_online ?? 0}/${mon?.power_units ?? 0}`}
                       caption="Power units online"
                       bar={mon && mon.power_units && mon.power_online < mon.power_units
-                        ? 'warn' : 'ok'} />
+                        ? 'warn' : 'ok'}
+                      to={`/devices?room=${roomId}&category=power`} />
               </div>
             </section>
 
@@ -189,8 +208,12 @@ export function RoomDrawer({ roomId, roomName, onClose }: {
               <div className="drawer-grid">
                 <Tile absent={env?.avg_c === null} value={num(env?.avg_c)} unit="°C"
                       caption="Average intake" />
+                {/* The rack behind the number. Without this the reader has to
+                    leave, find the thermal page and rebuild the same drill. */}
                 <Tile absent={env?.max_c === null} value={num(env?.max_c)} unit="°C"
                       caption="Hottest intake"
+                      to={data ? `/thermal?scope=rooms&site=${data.room.datacenter_id}`
+                                 + `&room=${roomId}` : undefined}
                       // Same two lines as the alarm rules: warn above the
                       // recommended band, critical above the allowable one.
                       bar={!env?.max_c ? 'ok'
@@ -220,13 +243,18 @@ export function RoomDrawer({ roomId, roomName, onClose }: {
                 POWER
                 {pw?.note && <span className="why">{pw.note}</span>}
               </div>
-              <div className="drawer-grid">
-                <Tile absent={pw?.total_kw === null} value={num(pw?.total_kw)} unit="kW"
-                      caption="Room total" />
-                <Tile absent={pw?.it_ac_kw === null} value={num(pw?.it_ac_kw)} unit="kW"
-                      caption="IT (AC)" />
-                <Tile absent={pw?.cooling_kw === null} value={num(pw?.cooling_kw)} unit="kW"
-                      caption="Cooling" />
+              <PowerSplit
+                caption="Room total"
+                total={pw?.total_kw}
+                segments={[
+                  { key: 'it', label: 'IT (AC)', kw: pw?.it_ac_kw, tone: 'accent' },
+                  { key: 'cooling', label: 'Cooling', kw: pw?.cooling_kw,
+                    tone: 'cool',
+                    absentNote: 'no air handler in this room' },
+                  { key: 'other', label: 'Other', kw: pw?.other_kw, tone: 'warn',
+                    absentNote: 'nothing metered outside IT and cooling' },
+                ]} />
+              <div className="drawer-grid" style={{ marginTop: 14 }}>
                 {/* "In-room", never "Room PUE". This boundary holds only the
                     air handlers standing in the room; the chillers and towers
                     that actually reject the heat are in the plant rooms. A

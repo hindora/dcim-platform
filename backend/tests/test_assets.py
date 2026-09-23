@@ -280,3 +280,43 @@ async def test_the_count_and_the_list_share_one_predicate_builder():
                       "d.warranty_expires < CURRENT_DATE"):
         assert predicate in listing.sql, predicate
         assert predicate in counting.sql, predicate
+
+
+# --- scoping a device list by site code --------------------------------------
+#
+# Every link in the product is written with the site CODE - ENTER on a site row
+# and on the site drawer have both pointed at /devices?datacenter=DC1 since they
+# shipped - and until now the list took only a uuid, so the parameter was
+# dropped and the page returned the whole estate looking as though it had
+# filtered.
+
+@pytest.mark.asyncio
+async def test_a_device_list_can_be_scoped_by_site_code():
+    session = _FakeSession()
+
+    await device_repo.list_devices(session, datacenter_code="DC1")
+
+    assert "dc.code = :datacenter_code" in session.sql
+    assert session.params["datacenter_code"] == "DC1"
+
+
+@pytest.mark.asyncio
+async def test_scoping_by_site_id_still_works():
+    """The uuid path is what the asset views use and must not move."""
+    session = _FakeSession()
+
+    await device_repo.list_devices(
+        session, datacenter_id="11111111-1111-1111-1111-111111111111")
+
+    assert "dc.id = CAST(:datacenter_id AS uuid)" in session.sql
+    assert "dc.code = :datacenter_code" not in session.sql
+
+
+@pytest.mark.asyncio
+async def test_no_site_filter_scopes_nothing():
+    session = _FakeSession()
+
+    await device_repo.list_devices(session)
+
+    assert "dc.code = :datacenter_code" not in session.sql
+    assert "dc.id = CAST(:datacenter_id AS uuid)" not in session.sql

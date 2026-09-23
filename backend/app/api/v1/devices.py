@@ -42,6 +42,12 @@ async def list_devices(
     room_id: str | None = None,
     rack_id: str | None = None,
     datacenter_id: str | None = None,
+    # `?datacenter=DC1`. Every link in this product is written with the site
+    # CODE - it is what a person reads, types and bookmarks - and the row
+    # actions and drawers have linked that way since they shipped. The
+    # parameter simply had nowhere to land, so it was dropped and the list
+    # came back unfiltered.
+    datacenter_code: str | None = Query(None, alias="datacenter"),
     search: str | None = Query(None, max_length=128),
     include_decommissioned: bool = False,
     # Asset-view filters (docs/21 §2). All optional and AND-combined, so a
@@ -94,7 +100,8 @@ async def list_devices(
     items, next_cursor, total = await service.list_devices(
         session, with_total=with_total,
         device_types=device_type, status=status_filter, room_id=room_id,
-        rack_id=rack_id, datacenter_id=datacenter_id, search=search,
+        rack_id=rack_id, datacenter_id=datacenter_id,
+        datacenter_code=datacenter_code, search=search,
         include_decommissioned=include_decommissioned, lifecycle=lifecycle,
         category=category, vendor_id=vendor_id, asset_tag=asset_tag,
         serial_number=serial_number, has_serial=has_serial,

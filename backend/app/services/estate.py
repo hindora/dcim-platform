@@ -1911,6 +1911,11 @@ async def room_kpi(session: AsyncSession, room_id: str) -> dict[str, Any] | None
             "it_ac_kw": (room_power or {}).get("it_ac_kw"),
             "it_dc_kw": None,
             "cooling_kw": (room_power or {}).get("cooling_kw"),
+            # The remainder of the room's metered total. Carried so the
+            # composition bar can account for the whole of it - a stacked bar
+            # whose segments do not sum to its own total is worse than four
+            # separate numbers.
+            "other_kw": (room_power or {}).get("other_kw"),
             # IN-ROOM, and it has to be labelled that way wherever it is shown.
             # This is the room's own metered total over its own IT, so the only
             # cooling in it is the air handlers standing in the room. The

@@ -2358,6 +2358,8 @@ export interface RoomKpi {
   power: {
     total_kw: number | null; it_ac_kw: number | null; it_dc_kw: number | null;
     cooling_kw: number | null;
+    /** The remainder of the metered total, so the split accounts for all of it. */
+    other_kw?: number | null;
     /** IN-ROOM: this room's metered total over its own IT, so the only cooling
      *  in it is the air handlers standing here. Not comparable with the site
      *  PUE, which contains the chiller plant. Always render it with its scope. */

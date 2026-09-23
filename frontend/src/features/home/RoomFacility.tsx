@@ -18,17 +18,20 @@
  *  white-space sections rather than sitting beside them.
  */
 import type { FacilityMachine, FacilityRoom } from '../../api/client';
+import { Link } from 'react-router-dom';
 import { Tip } from '../../components/HoverTip';
 
-function Tile({ value, unit, caption, note, absent, bar, detail }: {
+function Tile({ value, unit, caption, note, absent, bar, detail, to }: {
   value: React.ReactNode; unit?: string; caption: string;
   note?: string | null; absent?: boolean; bar?: string;
   /** Long provenance, behind a hover mark. Nothing is hidden from a reader who
    *  wants it; the tile just stops spending four lines on it. */
   detail?: string | null;
+  /** Where the population this figure counts can be seen. */
+  to?: string;
 }) {
-  return (
-    <div className={`kpi-tile ${absent ? 'absent' : ''}`}>
+  const body = (
+    <div className={`kpi-tile ${absent ? 'absent' : ''}${to ? ' linked' : ''}`}>
       {bar && <span className="bar" style={{ background: `var(--${bar})` }} />}
       <div>
         <div className="v">
@@ -47,6 +50,7 @@ function Tile({ value, unit, caption, note, absent, bar, detail }: {
       </div>
     </div>
   );
+  return to ? <Link className="tile-link" to={to}>{body}</Link> : body;
 }
 
 function num(v: number | null | undefined, digits = 1): React.ReactNode {
@@ -160,7 +164,8 @@ export function RoomFacility({ fac }: { fac: FacilityRoom }) {
         </div>
         <div className="drawer-grid">
           <Tile value={s.equipment} caption="Machines"
-                note={byType.map(([t, c]) => `${c} ${t.replace(/_/g, ' ')}`).join(' · ')} />
+                note={byType.map(([t, c]) => `${c} ${t.replace(/_/g, ' ')}`).join(' · ')}
+                to={`/devices?room=${s.id}`} />
           <Tile value={s.active} caption="Running"
                 note={`${s.machines_stated} of ${s.equipment} publish a run state`} />
           {/* Standby is counted, never judged. A plant with machines staged off

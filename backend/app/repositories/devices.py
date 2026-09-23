@@ -97,6 +97,7 @@ def _filters(
     room_id: str | None = None,
     rack_id: str | None = None,
     datacenter_id: str | None = None,
+    datacenter_code: str | None = None,
     search: str | None = None,
     include_decommissioned: bool = False,
     lifecycle: list[str] | None = None,
@@ -148,6 +149,12 @@ def _filters(
     if datacenter_id:
         where.append("dc.id = CAST(:datacenter_id AS uuid)")
         params["datacenter_id"] = datacenter_id
+    # By CODE as well as by id. Every link a human writes or reads says DC1,
+    # not a uuid, and the drawers and row actions have always linked that way -
+    # the parameter simply had nowhere to land.
+    if datacenter_code:
+        where.append("dc.code = :datacenter_code")
+        params["datacenter_code"] = datacenter_code
     if category:
         where.append("dt.category = ANY(:category)")
         params["category"] = category
@@ -219,6 +226,7 @@ async def list_devices(
     room_id: str | None = None,
     rack_id: str | None = None,
     datacenter_id: str | None = None,
+    datacenter_code: str | None = None,
     search: str | None = None,
     include_decommissioned: bool = False,
     lifecycle: list[str] | None = None,
@@ -241,7 +249,8 @@ async def list_devices(
 ) -> tuple[list[dict[str, Any]], str | None]:
     where, params = _filters(
         device_types=device_types, status=status, room_id=room_id,
-        rack_id=rack_id, datacenter_id=datacenter_id, search=search,
+        rack_id=rack_id, datacenter_id=datacenter_id,
+        datacenter_code=datacenter_code, search=search,
         include_decommissioned=include_decommissioned, lifecycle=lifecycle,
         category=category, vendor_id=vendor_id, asset_tag=asset_tag,
         serial_number=serial_number, has_serial=has_serial,

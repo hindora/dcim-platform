@@ -31,6 +31,7 @@ import {
 import { CategoryGlyph, type GlyphKind } from '../../components/CategoryGlyph';
 import { Tip } from '../../components/HoverTip';
 import { ALL_CATEGORIES, AlarmTrend, maxOpen } from './AlarmTrend';
+import { PowerSplit } from './PowerSplit';
 import { relativeTime } from '../../lib/format';
 
 function Tile({ value, unit, caption, note, absent, bar, against, detail }: {
@@ -222,14 +223,20 @@ export function SiteDrawer({ site, onClose }: { site: SiteRow; onClose: () => vo
 
             <section className="drawer-section">
               <div className="title">SITE POWER</div>
-              <div className="drawer-grid">
-                <Tile value={data.power.total_kw.toFixed(1)} unit="kW" caption="Site Total" />
-                <Tile value={data.power.it_load_kw.toFixed(1)} unit="kW" caption="IT Load"
-                      note={`${data.power.reporting_devices} devices reporting`} />
-                <Tile value={data.power.cooling_kw.toFixed(1)} unit="kW" caption="Cooling" />
-                <Tile value={data.power.facility_other_kw.toFixed(1)} unit="kW"
-                      caption="Facility Other" />
-              </div>
+              {/* A total and its parts, not four measurements. See PowerSplit. */}
+              <PowerSplit
+                caption="Site total"
+                total={data.power.total_kw}
+                segments={[
+                  { key: 'it', label: 'IT', kw: data.power.it_load_kw,
+                    tone: 'accent' },
+                  { key: 'cooling', label: 'Cooling', kw: data.power.cooling_kw,
+                    tone: 'cool' },
+                  { key: 'other', label: 'Facility other',
+                    kw: data.power.facility_other_kw, tone: 'warn',
+                    absentNote: 'nothing metered outside IT and cooling' },
+                ]}
+                note={`IT from ${data.power.reporting_devices} devices reporting`} />
             </section>
 
             <section className="drawer-section">

@@ -876,3 +876,51 @@ button.ind:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px
             border: 1px solid var(--border-strong, var(--border));
             color: var(--text-faint); font-size: 9px; line-height: 1; }
 .tile-why:hover { color: var(--text); border-color: var(--text-muted); }
+
+/* Power as a composition, not four tiles.
+   Total and its parts: total = IT + cooling + other, which four equal tiles
+   made the reader work out for themselves every time. The bar is drawn against
+   the segments' own sum so it always fills; where the reported total exceeds
+   them the remainder gets its own hatched segment rather than being absorbed
+   into a rounding error nobody can see. */
+.power-split { padding: 0 26px; }
+.power-total { display: flex; align-items: baseline; gap: 6px; }
+.power-total .n { font-size: 27px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.power-total .u { font-size: 12px; color: var(--text-muted); }
+.power-total .cap { font-size: 11px; color: var(--text-muted); margin-left: 8px; }
+.power-bar { display: flex; height: 10px; border-radius: 5px; overflow: hidden;
+             margin-top: 10px; background: var(--bg-inset); }
+.power-bar .seg { display: block; min-width: 2px; }
+/* Hatched, never a flat colour: it is a residue, not a category. */
+.power-bar .seg.unaccounted,
+.power-legend .leg i.unaccounted {
+  background: repeating-linear-gradient(45deg, var(--text-faint) 0 2px,
+                                        transparent 2px 5px); }
+.power-legend { display: flex; flex-wrap: wrap; gap: 6px 20px; margin-top: 10px; }
+.power-legend .leg { display: flex; align-items: baseline; gap: 6px; font-size: 11px; }
+.power-legend .leg i { width: 8px; height: 8px; border-radius: 2px; flex: none;
+                       transform: translateY(1px); }
+.power-legend .leg b { font-weight: 500; color: var(--text-muted); }
+.power-legend .leg .v { font-variant-numeric: tabular-nums; }
+.power-legend .leg .p { color: var(--text-faint); }
+/* A segment with nothing in it stays listed, greyed, with its reason: absent
+   and zero are different claims and this panel does not conflate them. */
+.power-legend .leg.none b,
+.power-legend .leg.none .v { color: var(--text-faint); }
+.power-note { margin-top: 8px; font-size: 10px; color: var(--text-faint); }
+
+/* A tile whose figure counts a population you can go and look at. */
+.tile-link { text-decoration: none; color: inherit; display: block; }
+.kpi-tile.linked { cursor: pointer; border-radius: 5px; margin: -4px -6px;
+                   padding: 4px 6px; transition: background 120ms; }
+.kpi-tile.linked:hover { background: var(--bg-inset); }
+.kpi-tile.linked .cap::after { content: '\2192'; margin-left: 5px; opacity: 0;
+                               transition: opacity 120ms; }
+.kpi-tile.linked:hover .cap::after { opacity: 0.55; }
+
+/* What a pre-filtered list is filtered BY. A device list that arrives scoped
+   and does not say so is how somebody concludes the estate has 145 devices. */
+.scope-strip { display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+               margin: -4px 0 14px; font-size: 11px; }
+.scope-strip .chip { padding: 2px 9px; border-radius: 10px;
+                     border: 1px solid var(--border); color: var(--text-muted); }
