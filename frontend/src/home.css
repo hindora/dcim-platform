@@ -715,10 +715,10 @@ button.ind:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px
      Left edge on the drawer's own 26 px gutter, so it lines up with every
      section title and tile below it rather than floating on its own axis. */
   margin: 18px 26px; height: 38px;
-  /* Wide enough to be the panel's action without returning to the full-bleed
-     bar that drowned the measurements. Bounded at both ends so it neither
-     collapses on a narrow drawer nor stretches to a banner on a wide one. */
-  width: min(720px, calc(100% - 52px)); padding: 0 24px;
+  /* Exactly the drawer's content width, so the gutter on its right matches the
+     26 px on its left and on every section beside it. It reads as part of the
+     panel's grid rather than as a block that happens to sit near it. */
+  width: calc(100% - 52px); padding: 0 24px;
   background: var(--accent-dim); border: 1px solid var(--accent);
   border-radius: var(--radius); color: var(--text); text-decoration: none;
   font-weight: 600; letter-spacing: .1em; font-size: 12px;
