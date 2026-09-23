@@ -125,6 +125,59 @@ def dew_point_c(dry_bulb_c: float, rh_pct: float) -> float:
     return (_MAGNUS_C * gamma) / (_MAGNUS_B - gamma)
 
 
+#: Saturation vapour pressure at sea level, in hPa, from the same Magnus
+#: relation the dew point uses. Kept private: every caller here wants a ratio
+#: of two of these, and the absolute value is only meaningful alongside a
+#: station pressure nobody at these sites measures.
+_ES_0 = 6.112
+
+#: Psychrometer constant, K⁻¹. The value depends on how the wet bulb is
+#: ventilated: 6.53e-4 is the WMO figure for an ASPIRATED psychrometer, which
+#: is what a cooling-tower wet-bulb sensor is - it sits in the tower's own
+#: airstream. A sling psychrometer read by hand is 6.62e-4, and using the
+#: wrong one biases RH by roughly a point.
+_PSYCHROMETER_A = 6.53e-4
+
+#: Station pressure, hPa. ASSUMED, not measured: no site here has a barometer.
+#: The sensitivity is mild - a 30 hPa swing, which is most of the range real
+#: weather covers, moves RH by about a point - but it is an assumption and the
+#: caller is expected to say so rather than publish the result as a reading.
+_ASSUMED_STATION_HPA = 1013.25
+
+
+def _saturation_hpa(t_c: float) -> float:
+    return _ES_0 * math.exp((_MAGNUS_B * t_c) / (_MAGNUS_C + t_c))
+
+
+def rh_from_wet_bulb(dry_bulb_c: float, wet_bulb_c: float,
+                     station_hpa: float = _ASSUMED_STATION_HPA) -> float | None:
+    """Relative humidity (%) from a dry/wet bulb pair.
+
+    This is a DERIVATION, not a measurement, and callers must label it as one.
+    A hygrometer measures moisture; this infers it from the evaporative
+    depression between two thermometers, which is the same physics a sling
+    psychrometer uses and is how a BMS graphic shows RH at a site whose only
+    moisture instrument is the tower's wet bulb.
+
+    Returns None when the pair cannot be believed. Wet bulb above dry bulb is
+    thermodynamically impossible - the wet bulb is depressed BY evaporation -
+    so it means a swapped sensor, a dry wick, or two points read at different
+    moments, and every one of those is a fault to investigate rather than a
+    number to publish.
+    """
+    t, tw = float(dry_bulb_c), float(wet_bulb_c)
+    # Half a kelvin of tolerance: at saturation the two genuinely converge, and
+    # a pair of sensors with ordinary calibration error will cross over.
+    if tw > t + 0.5:
+        return None
+    es_t = _saturation_hpa(t)
+    if es_t <= 0:
+        return None
+    # Actual vapour pressure, by the psychrometric equation.
+    e = _saturation_hpa(min(tw, t)) - _PSYCHROMETER_A * station_hpa * (t - tw)
+    return max(0.0, min(100.0, e / es_t * 100.0))
+
+
 # -------------------------------------------------------------------- grading
 #: What a reading can be, worst last. The page paints `warn` for allowable and
 #: `critical` for outside it, the same two tones the inlet alarm rules use.

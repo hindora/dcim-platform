@@ -29,6 +29,7 @@ _LATEST = text("""
            t.device_id::text AS device_id, d.name, d.device_type::text AS device_type,
            COALESCE(ds.status::text, 'UNKNOWN') AS status,
            rm.id::text AS room_id, rm.name AS room_name,
+           rm.datacenter_id::text AS datacenter_id,
            m.key, t.instance, t.value, t.ts
       FROM telemetry_sample t
       JOIN metric m  ON m.id = t.metric_id
@@ -86,20 +87,36 @@ async def machine_flags(session: AsyncSession) -> dict[str, dict[str, bool]]:
 
 
 async def nameplate_kw(session: AsyncSession) -> dict[str, float]:
-    """Rated cooling capacity per machine, as the highest value ever observed.
+    """Rated cooling capacity per machine, in kW. Inventory first.
 
-    The obvious source would be inventory, but model.rated_capacity is null on
-    this fleet - the rating lives only in the model NAME ("Carrier 19DV 800kW"),
-    and parsing capacity out of a marketing string is not a foundation to put
-    capacity planning on.
+    A nameplate is an INVENTORY fact. It is read off the machine's plate or its
+    submittal at commissioning and it does not change while the plant runs, so
+    capacity planning divides by the asset record - never by what the equipment
+    happened to report. `model.rated_cooling_w` carries it and the importer
+    resolves it from the simulator's SKU catalog.
 
-    So: the reported cooling_capacity point, which reads the machine's rating
-    while it runs and drops to zero when it stops. A stopped chiller's nameplate
-    has not changed, so the highest value seen over a day is its rating. The
-    cost is that a machine which has not run all day has no nameplate here, and
-    the caller is told rather than shown a confident zero.
+    (`model.rated_capacity` is a different, still-null column, and an earlier
+    version of this function read that one, concluded inventory was empty and
+    fell back to telemetry for everything. It is not empty.)
+
+    The observed fallback is kept for machines whose SKU the catalog does not
+    rate: `cooling_capacity` reads the machine's rating while it runs and drops
+    to zero when it stops, so the highest value over a day is its rating. The
+    cost is that a machine which has not run all day has no nameplate that way -
+    which is exactly why inventory has to be tried first, since standby plant is
+    the capacity a headroom figure most needs to count.
     """
-    rows = (await session.execute(text("""
+    rated = (await session.execute(text("""
+        SELECT d.id::text AS device_id, md.rated_cooling_w AS rated_w
+          FROM device d
+          JOIN model md ON md.id = d.model_id
+         WHERE d.lifecycle <> 'decommissioned'
+           AND md.rated_cooling_w IS NOT NULL
+           AND md.rated_cooling_w > 0
+    """))).mappings().all()
+    out = {r["device_id"]: float(r["rated_w"]) / 1000.0 for r in rated}
+
+    observed = (await session.execute(text("""
         SELECT d.id::text AS device_id, max(t.value) AS rated_w
           FROM telemetry_sample t
           JOIN metric m ON m.id = t.metric_id
@@ -109,4 +126,6 @@ async def nameplate_kw(session: AsyncSession) -> dict[str, float]:
          GROUP BY d.id
         HAVING max(t.value) > 0
     """))).mappings().all()
-    return {r["device_id"]: float(r["rated_w"]) / 1000.0 for r in rows}
+    for r in observed:
+        out.setdefault(r["device_id"], float(r["rated_w"]) / 1000.0)
+    return out

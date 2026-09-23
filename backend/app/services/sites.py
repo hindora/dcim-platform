@@ -7,6 +7,16 @@ Where a number cannot be computed from what is instrumented, this returns null
 WITH A REASON rather than a plausible-looking figure. A DCIM that guesses at
 WUE is worse than one that admits it has no water meter, because the guess ends
 up in a sustainability report.
+
+The corollary, which matters just as much: where a number CAN be computed, it
+must also carry how. WUE is integrated off the tower makeup meters, CUE is PUE
+times a published grid factor, and outdoor humidity is derived from the
+dry/wet bulb pair - three different kinds of claim, and each says which it is
+in its own `method` and `note`. Cooling headroom is DELEGATED to the cooling
+service rather than computed twice: that module owns nameplate, staging and
+what counts as a machine, and two answers to "how full is the plant" differing
+by which chillers each counted is how a hall gets promised capacity that is not
+there.
 """
 
 from __future__ import annotations
@@ -16,8 +26,10 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import ashrae
 from app.core.alert_taxonomy import ALARM, CATEGORIES, DETECTIONS
 from app.repositories import sites as repo
+from app.services import cooling as cooling_service
 from app.services import pue as pue_service
 
 
@@ -74,6 +86,21 @@ def _alarms(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _rh_absent_reason(dry: float | None, wet: float | None) -> str | None:
+    """Why humidity could not be derived - never a bare blank.
+
+    The two cases are different problems. No wet bulb is missing
+    instrumentation; a wet bulb ABOVE the dry bulb is a fault, because
+    evaporation can only depress it, and saying so on the tile is how a
+    swapped or dry-wicked sensor gets noticed instead of quietly zeroing a
+    sustainability figure.
+    """
+    if dry is None or wet is None:
+        return "no hygrometer, and no dry/wet bulb pair to derive from"
+    return ("wet bulb reads above dry bulb - the pair cannot be believed, so "
+            "no humidity is derived from it")
+
+
 def _weather(rows: dict[str, Any]) -> dict[str, Any]:
     """Shape the outdoor-air block, including its own staleness.
 
@@ -86,15 +113,27 @@ def _weather(rows: dict[str, Any]) -> dict[str, Any]:
     wet = rows.get("outdoor_wet_bulb_temp")
     newest = max((r["ts"] for r in (dry, wet) if r and r.get("ts")), default=None)
     age = (datetime.now(UTC) - newest).total_seconds() if newest else None
+    rh = (ashrae.rh_from_wet_bulb(_f(dry["value"]), _f(wet["value"]))
+          if dry and wet and _f(dry["value"]) is not None
+          and _f(wet["value"]) is not None else None)
     return {
         "available": bool(dry or wet),
         "note": (None if (dry or wet) else
                  "no cooling tower at this site is reporting outdoor air"),
         "dry_bulb_c": _f(dry["value"]) if dry else None,
         "wet_bulb_c": _f(wet["value"]) if wet else None,
-        # Named so a reader cannot mistake absence for zero. Nothing at this
-        # site measures either one.
-        "humidity_pct": None,
+        # DERIVED, and flagged as such all the way to the tile. No site here
+        # has a hygrometer; what it has is the pair of thermometers a
+        # psychrometer is made of, and the evaporative depression between them
+        # carries the moisture. A BMS graphic shows RH from exactly this.
+        "humidity_pct": (round(rh, 1) if rh is not None else None),
+        "humidity_derived": rh is not None,
+        "humidity_note": (
+            "derived from dry/wet bulb at an assumed 1013 hPa - no hygrometer "
+            "at this site" if rh is not None else
+            _rh_absent_reason(_f(dry["value"]) if dry else None,
+                              _f(wet["value"]) if wet else None)),
+        # No source at all: nothing on a cooling tower reads wind.
         "wind_speed_ms": None,
         "source": "cooling tower controller (BACnet)" if (dry or wet) else None,
         "as_of": newest,
@@ -215,6 +254,84 @@ async def overview(session: AsyncSession) -> dict[str, Any]:
     }
 
 
+# A WUE this large means the denominator is small, not that the towers are
+# leaking: fixed evaporation from a basin does not scale down with IT load, so
+# a site running at 14 % of design reports a worse ratio than the same plant
+# fully loaded. Worth saying on the tile, because the opposite reading - "our
+# water efficiency collapsed" - is the one a reader reaches for.
+WUE_HIGH_L_PER_KWH = 3.0
+
+
+def _wue(water: dict[str, Any], it_kwh: float | None) -> dict[str, Any]:
+    """Water Usage Effectiveness: litres of site water per IT kWh.
+
+    Green Grid WUE is a SITE ratio - all water consumed by the facility over
+    IT energy. On this fleet the only metered water crossing the boundary is
+    cooling-tower makeup, which is the dominant term at any evaporatively
+    cooled site but is not the whole of it: humidification, domestic supply
+    and the water embedded in purchased chilled water are all outside what is
+    instrumented here. The value is labelled by what it actually counted so
+    nobody reads it as a full site WUE.
+    """
+    litres = float(water.get("litres") or 0.0)
+    if it_kwh is None or it_kwh <= 0:
+        return {"value": None, "method": None,
+                "note": "IT energy for the window is unavailable, so there is "
+                        "nothing to divide the metered water by"}
+    if not water.get("samples"):
+        return {"value": None, "method": None,
+                "note": "no makeup-water meter reported in the window"}
+
+    value = litres / it_kwh
+    notes = [f"{litres:.0f} L makeup over {it_kwh:.0f} kWh IT, "
+             f"{water.get('towers', 0)} tower(s), 1 h"]
+    if water.get("gaps"):
+        # Not a footnote. A gap is water the integration did NOT count, so the
+        # ratio is a floor, and a reader comparing it with last week needs to
+        # know the meter went quiet rather than the plant got thrifty.
+        notes.append(f"{water['gaps']} gap(s) over "
+                     f"{repo.MAKEUP_GAP_MAX_S:.0f} s excluded - "
+                     "the figure is a lower bound")
+    if value > WUE_HIGH_L_PER_KWH:
+        notes.append("high because IT load is low, not because draw is high - "
+                     "basin evaporation is largely fixed")
+    return {"value": round(value, 3), "method": "tower makeup, flow-integrated",
+            "note": " · ".join(notes)}
+
+
+def _cue(pue: dict[str, Any], dc: dict[str, Any]) -> dict[str, Any]:
+    """Carbon Usage Effectiveness: kg CO2e per IT kWh.
+
+    CUE is total facility CO2e over IT energy, and since every kWh here comes
+    off one grid connection that reduces exactly to PUE x the grid emission
+    factor. The factor is not measurable at the site - it is published, it
+    lives on the datacenter row, and migration 0073 explains why.
+
+    The factor's provenance travels with the value in every case. A carbon
+    figure whose source is not on the page beside it is the kind of number
+    that ends up in a report nobody can defend.
+    """
+    factor = _f((dc.get("attributes") or {}).get("grid_carbon_kg_per_kwh"))
+    basis = (dc.get("attributes") or {}).get("grid_carbon_basis")
+    value = _f(pue.get("pue"))
+    if factor is None:
+        return {"value": None, "method": None,
+                "note": "no grid carbon intensity is set for this site - it is "
+                        "published data, not something the site can meter"}
+    if value is None:
+        return {"value": None, "method": None,
+                "note": "PUE is unavailable for the window, and CUE is PUE "
+                        "times the grid factor"}
+    # Scope 2 only, and said so: on-site diesel burned during a utility outage
+    # or a generator test is scope 1 and is not in this number. A site that ran
+    # its generators all month would under-report here.
+    return {"value": round(value * factor, 3),
+            "method": "PUE x published grid factor",
+            "note": f"{factor:.3f} kg CO2e/kWh · "
+                    f"{basis or 'factor source not recorded'} · "
+                    "grid electricity only, excludes on-site generation"}
+
+
 async def kpi(session: AsyncSession, datacenter_id: str) -> dict[str, Any] | None:
     """The site KPI drawer: efficiency, load, utilisation, alerts."""
     dc = await repo.datacenter(session, datacenter_id)
@@ -241,6 +358,20 @@ async def kpi(session: AsyncSession, datacenter_id: str) -> dict[str, Any] | Non
     # straight out of the same two sums PUE uses, and unlike PUE it isolates
     # the cooling plant from the rest of the facility load.
     cer = round(cooling_kw / it_kw, 3) if it_kw > 0 else None
+
+    # WUE and CUE ride on the SAME window and the SAME IT energy denominator as
+    # PUE. That is not tidiness: three efficiency ratios on one panel that were
+    # measured over different periods invite arithmetic between them that does
+    # not hold, and PUE x carbon-factor IS how CUE is defined.
+    it_kwh = _f(pue.get("it_kwh"))
+    water = await repo.site_makeup_water(session, datacenter_id,
+                                         start=end - timedelta(hours=1), end=end)
+    # ASK the cooling service rather than recompute: it owns nameplate, staging
+    # and what counts as a machine, and a second implementation here would
+    # disagree with /cooling the first time either changed.
+    plant = await cooling_service.plant_view(session, datacenter_id=datacenter_id)
+    wue = _wue(water, it_kwh)
+    cue = _cue(pue, dc)
 
     return {
         "site": {
@@ -271,20 +402,8 @@ async def kpi(session: AsyncSession, datacenter_id: str) -> dict[str, Any] | Non
             },
             "cer": {"value": cer, "note": None if cer is not None
                     else "no IT load is reporting"},
-            # Both need instrumentation this platform does not have. Named
-            # anyway so the gap is visible on the page rather than silently
-            # absent from it.
-            # The towers DO meter makeup water (`makeup_water_flow`, mapped off
-            # the tower controller). What is missing is the integration: WUE is
-            # litres per IT kWh over a window, so it needs the flow accumulated
-            # against IT energy the way PUE accumulates facility energy. Until
-            # that exists this stays null rather than publishing an
-            # instantaneous flow rate dressed up as an efficiency ratio.
-            "wue": {"value": None,
-                    "note": "makeup-water flow is metered but not yet "
-                            "integrated against IT energy"},
-            "cue": {"value": None,
-                    "note": "no grid carbon-intensity feed"},
+            "wue": wue,
+            "cue": cue,
         },
         "power": {
             "total_kw": round(total_kw, 1),
@@ -314,13 +433,12 @@ async def kpi(session: AsyncSession, datacenter_id: str) -> dict[str, Any] | Non
                          f"{int(space.get('rack_count') or 0)} racks",
                 "note": None,
             },
-            # Plant capacity lives behind /cooling, which stages chillers and
-            # reasons about nameplate. Duplicating that here would give two
-            # different answers for the same question.
-            "cooling": {
-                "pct": None, "basis": None,
-                "note": "see /cooling for plant capacity against load",
-            },
+            # Computed BY the cooling service, not here. Note it answers a
+            # different question from the staging figure on /cooling: this is
+            # load against installed capacity with the N+1 machine reserved -
+            # room to grow - where /cooling divides by what is running, which
+            # is whether the plant is staged correctly now.
+            "cooling": cooling_service.headroom(plant["plant"]),
         },
         # Outdoor air, read off the cooling-tower controllers over BACnet.
         #

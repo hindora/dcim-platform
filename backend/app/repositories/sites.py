@@ -25,6 +25,7 @@ up twenty-one downstream devices is one alert on this page, not twenty-two.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import text
@@ -455,6 +456,75 @@ async def site_weather(session: AsyncSession, datacenter_id: str) -> dict[str, A
         ORDER BY m.key, t.ts DESC
     """), {"dc": datacenter_id})).mappings().all()
     return {r["metric"]: dict(r) for r in rows}
+
+
+#: Longest gap across which a flow reading may be believed, in seconds. It is
+#: the registry's own `stale_after_s` for `makeup_water_flow`: past that the
+#: sample is stale by definition, and carrying it forward would invent water
+#: for a tower that was staged off - the exact direction that flatters WUE.
+MAKEUP_GAP_MAX_S = 600.0
+
+
+async def site_makeup_water(session: AsyncSession, datacenter_id: str, *,
+                            start: datetime, end: datetime) -> dict[str, Any]:
+    """Litres of makeup water drawn by one site's towers over a window.
+
+    The meter on this fleet is a FLOW TRANSMITTER, not a totaliser. A real
+    makeup line is usually metered by a pulse-output totaliser the BMS reads as
+    a counter, and if one of those ever appears here the arithmetic should move
+    to counter differences the way PUE's energy does - summing positive
+    increments is robust to a poll being missed, and integrating a rate is not.
+
+    Until then this integrates the rate by the trapezoid rule, which is what a
+    BMS trend does with the same signal. Two things it refuses to do:
+
+    * integrate across a gap longer than `MAKEUP_GAP_MAX_S`, because a tower
+      that went quiet for an hour did not necessarily keep drawing water;
+    * treat a standby tower's zero as missing. A staged-off tower reporting
+      0 L/s is information, and its zero belongs in the total.
+
+    Every tower at the site contributes: makeup is a site-level consumption and
+    the cell that matters is the sum across the basin loop, not any one cell.
+    """
+    rows = (await session.execute(text(f"""
+        WITH {_DEV_CTE},
+        stepped AS (
+            SELECT d.id AS device_id, d.name,
+                   t.value AS v,
+                   LAG(t.value) OVER w AS prev_v,
+                   EXTRACT(EPOCH FROM t.ts - LAG(t.ts) OVER w) AS dt_s
+              FROM telemetry_sample t
+              JOIN metric m ON m.id = t.metric_id
+              JOIN device d ON d.id = t.device_id
+              JOIN dev      ON dev.device_id = t.device_id
+             WHERE m.key = 'makeup_water_flow'
+               AND dev.datacenter_id = CAST(:dc AS uuid)
+               AND t.ts >= :start AND t.ts < :end
+             WINDOW w AS (PARTITION BY t.device_id, t.instance ORDER BY t.ts)
+        )
+        SELECT device_id::text AS device_id, name,
+               COALESCE(sum(
+                   -- Trapezoid: mean of the two rates over the interval they
+                   -- span. L/s x s = litres.
+                   ((v + prev_v) / 2.0) * dt_s
+               ) FILTER (WHERE dt_s IS NOT NULL
+                           AND dt_s > 0
+                           AND dt_s <= :gap_max), 0) AS litres,
+               count(*) FILTER (WHERE dt_s IS NOT NULL
+                                  AND dt_s > :gap_max)  AS gaps,
+               count(*)                                 AS samples
+          FROM stepped
+         GROUP BY device_id, name
+    """), {"dc": datacenter_id, "start": start, "end": end,
+           "gap_max": MAKEUP_GAP_MAX_S})).mappings().all()
+
+    return {
+        "litres": float(sum(float(r["litres"]) for r in rows)),
+        "towers": len(rows),
+        "gaps": sum(int(r["gaps"]) for r in rows),
+        "samples": sum(int(r["samples"]) for r in rows),
+        "by_tower": [dict(r) for r in rows],
+    }
 
 
 async def datacenter(session: AsyncSession, datacenter_id: str) -> dict[str, Any] | None:

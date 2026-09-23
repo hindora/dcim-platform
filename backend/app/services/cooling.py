@@ -222,6 +222,60 @@ def data_quality(plant: PlantView) -> list[str]:
     return out
 
 
+def headroom(plant: PlantView) -> dict[str, Any]:
+    """Cooling capacity used, for a tile that sits beside power and space.
+
+    A DIFFERENT question from `summarise`'s `utilisation_pct`, and the reason
+    this exists rather than reusing it. That figure divides load by the RUNNING
+    capacity and answers "is the plant staged correctly right now" - it rises
+    when a chiller is staged off, which is the plant working properly. A
+    capacity tile answers "how much room is left to grow into", so the
+    denominator has to be capacity that is INSTALLED, running or not.
+
+    And not all of it. N+1 is the design, so the largest machine is held in
+    reserve and cannot be planned into - the same logic as the power tile,
+    which is design IT at the UPS's 80% selector target rather than raw
+    nameplate. A cooling headroom figure that counted the redundant chiller
+    would promise a hall the plant cannot cool through a single failure.
+
+    Returns None with a reason wherever the denominator cannot be trusted,
+    because nameplate here is the highest capacity ever OBSERVED - a machine
+    that has never run has none, and quietly leaving it out of the installed
+    total would overstate how full the plant is.
+    """
+    if not plant.chillers:
+        return {"pct": None, "basis": None,
+                "note": "no chiller at this site is reporting"}
+
+    unknown = [c for c in plant.chillers if c.rated_kw is None]
+    rated = [c for c in plant.chillers if c.rated_kw is not None]
+    if not rated:
+        return {"pct": None, "basis": None,
+                "note": f"none of the {len(plant.chillers)} chillers has a "
+                        "nameplate yet - capacity is the highest output ever "
+                        "observed, so a machine that has not run has none"}
+
+    installed = plant.installed_capacity_kw
+    largest = max(c.rated_kw or 0.0 for c in rated)
+    usable = installed - largest
+    load = plant.load_kw
+
+    if usable <= 0:
+        return {"pct": None, "basis": None,
+                "note": f"only one chiller ({largest:.0f} kW) has a nameplate, "
+                        "so there is no N+1 capacity to measure against"}
+
+    note = (f"{len(rated)} chiller(s), largest ({largest:.0f} kW) held as N+1 "
+            f"spare and not planned into")
+    if unknown:
+        # Understated denominator, overstated percentage. Say which direction.
+        note += (f" · {len(unknown)} machine(s) have no nameplate yet, so "
+                 "installed capacity is understated and this reads high")
+    return {"pct": round(load / usable * 100.0, 1),
+            "basis": f"of {usable:.0f} kW usable, {installed:.0f} kW installed",
+            "note": note}
+
+
 def summarise(plant: PlantView) -> dict[str, Any]:
     kind, reason = staging_verdict(plant)
     return {
@@ -243,8 +297,15 @@ def summarise(plant: PlantView) -> dict[str, Any]:
     }
 
 
-async def plant_view(session, room_id: str | None = None) -> dict[str, Any]:
-    """Assemble the plant picture from the latest stored telemetry."""
+async def plant_view(session, room_id: str | None = None,
+                     datacenter_id: str | None = None) -> dict[str, Any]:
+    """Assemble the plant picture from the latest stored telemetry.
+
+    Scoped by room OR by site. The site scope exists so the home drawer can ask
+    THIS service for a site's cooling headroom instead of computing its own:
+    two answers to "how much plant is left" differing by which machines each
+    counted is worse than one answer in one place.
+    """
     from app.repositories import cooling as repo
 
     rows = await repo.latest(session)
@@ -257,6 +318,8 @@ async def plant_view(session, room_id: str | None = None) -> dict[str, Any]:
     by_dev: dict[str, dict[str, Any]] = {}
     for r in rows:
         if room_id and r.get("room_id") != room_id:
+            continue
+        if datacenter_id and r.get("datacenter_id") != datacenter_id:
             continue
         d = by_dev.setdefault(r["device_id"], {
             "name": r["name"], "device_type": r["device_type"],
