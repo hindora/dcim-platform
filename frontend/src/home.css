@@ -685,32 +685,39 @@ button.ind:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px
 .drawer-id .val { font-size: 16px; font-weight: 600; margin-top: 4px; }
 .drawer-id .sub { font-size: 11px; color: var(--text-faint); margin-top: 3px; }
 
-/* The drawer's primary action.
+/* The drawer's secondary action.
  *
- * `flex: none` is the whole fix for its height. `.drawer` is a column flex
- * container and its content overflows on every room worth opening, so every
- * child with the default flex-shrink:1 gets squeezed - this one declared 44px
- * and had been rendering at 19.5px since it shipped.
+ * Small, outlined and right-aligned. It was a full-width solid blue bar, which
+ * made the least informative thing on the panel the loudest: the reader opens
+ * this drawer to read measurements, and a 787 px block of accent colour sat
+ * above every one of them taking the eye first. Navigation should be findable,
+ * not shouted.
  *
- * The rest is chrome an <a> never gets. The shared control rule is
- * `input, select, button`, which is element-typed, so when this stopped being
- * a (dead) <button> and became a real link it also stopped inheriting the
- * border, the radius and the padding, and rendered as a flat blue rectangle.
- * Stated here rather than by widening that selector, because a link is not a
- * form control and should not pick up form-control styling everywhere.
+ * `flex: none` because `.drawer` is a column flex container whose content
+ * overflows on every room worth opening - without it every child with the
+ * default flex-shrink:1 is squeezed, which is why this drew at 19.5px for a
+ * long time while its rule said 44.
+ *
+ * Border, radius and padding are stated here rather than inherited: the shared
+ * control rule is `input, select, button`, which is element-typed, so an <a>
+ * picks up none of it. Widening that selector would put form-control chrome on
+ * every link in the product.
  */
 .drawer .enter {
-  flex: none;
-  display: flex; align-items: center; justify-content: center;
-  margin: 18px 26px 20px; height: 40px; width: calc(100% - 52px);
-  background: var(--accent); border: 1px solid var(--accent);
-  border-radius: var(--radius); color: #fff; text-decoration: none;
-  font-weight: 600; letter-spacing: .12em; font-size: 13px;
-  transition: filter 120ms;
+  flex: none; align-self: flex-end;
+  display: inline-flex; align-items: center; justify-content: center;
+  margin: 2px 26px 18px; height: 28px; width: auto; padding: 0 16px;
+  background: transparent; border: 1px solid var(--border-strong);
+  border-radius: var(--radius); color: var(--text-muted); text-decoration: none;
+  font-weight: 600; letter-spacing: .1em; font-size: 10px;
+  transition: color 120ms, border-color 120ms, background 120ms;
 }
-.drawer .enter:hover { filter: brightness(1.12); }
+/* It earns its colour on approach, not at rest. */
+.drawer .enter:hover {
+  background: var(--accent); border-color: var(--accent); color: #fff;
+}
 .drawer .enter:active { filter: brightness(0.94); }
-.drawer .enter:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+.drawer .enter:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .drawer-head { display: flex; align-items: baseline; gap: 16px; padding: 0 26px 14px; }
 .drawer-head h3 { margin: 0; font-size: 18px; }
