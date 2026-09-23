@@ -707,10 +707,18 @@ button.ind:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px
  * none of it and widening that selector would put form chrome on every link.
  */
 .drawer .enter {
-  flex: none; align-self: flex-end;
+  flex: none; align-self: flex-start;
   display: inline-flex; align-items: center; justify-content: center;
-  margin: 6px 26px 20px; height: 36px; width: auto; min-width: 132px;
-  padding: 0 24px;
+  /* Equal air above and below. It was 6 px under the identity card's border
+     and 20 px over the next heading, which read as though it belonged to the
+     card above rather than sitting between the two sections.
+     Left edge on the drawer's own 26 px gutter, so it lines up with every
+     section title and tile below it rather than floating on its own axis. */
+  margin: 18px 26px; height: 38px;
+  /* Wide enough to be the panel's action without returning to the full-bleed
+     bar that drowned the measurements. Bounded at both ends so it neither
+     collapses on a narrow drawer nor stretches to a banner on a wide one. */
+  width: min(720px, calc(100% - 52px)); padding: 0 24px;
   background: var(--accent-dim); border: 1px solid var(--accent);
   border-radius: var(--radius); color: var(--text); text-decoration: none;
   font-weight: 600; letter-spacing: .1em; font-size: 12px;
