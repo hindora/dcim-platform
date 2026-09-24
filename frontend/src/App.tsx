@@ -31,6 +31,7 @@ import { EstateTree } from './features/assets/estate/EstateTree';
 import { RoomView } from './features/assets/estate/RoomView';
 import { AssetElevation } from './features/assets/estate/AssetElevation';
 import { CandidateQueue } from './features/assets/discovery/CandidateQueue';
+import { ReadyQueue } from './features/assets/commissioning/ReadyQueue';
 import { WindowList } from './features/assets/maintenance/WindowList';
 import { WindowDetail } from './features/assets/maintenance/WindowDetail';
 import { ContractList } from './features/assets/contracts/ContractList';
@@ -259,6 +260,7 @@ export default function App() {
             <Route path="estate/rooms/:id" element={<RoomView />} />
             <Route path="estate/racks/:id" element={<AssetElevation />} />
             <Route path="discovery" element={<CandidateQueue />} />
+            <Route path="commissioning" element={<ReadyQueue />} />
             <Route path="maintenance" element={<WindowList />} />
             <Route path="maintenance/:id" element={<WindowDetail />} />
             <Route path="contracts" element={<ContractList />} />

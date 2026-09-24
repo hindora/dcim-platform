@@ -20,6 +20,7 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.repositories import commissioning as commissioning_repo
 from app.repositories.contracts import EXPIRING_DAYS
 
 # Lifecycle states that mean "this is part of the estate right now". Used as
@@ -92,6 +93,11 @@ async def summary(session: AsyncSession) -> dict[str, Any]:
         FROM discovery_candidate
     """))).mappings().one()
 
+    # How many devices are waiting on a commissioning decision, for the nav
+    # badge. Counted here rather than fetched from /commissioning/queue so the
+    # number costs one aggregate instead of 500 rows on every asset page.
+    commissioning = await commissioning_repo.counts(session)
+
     warranty = (await session.execute(text("""
         SELECT count(*) FILTER (WHERE warranty_expires IS NULL)        AS unknown,
                count(*) FILTER (WHERE warranty_expires < CURRENT_DATE) AS expired,
@@ -140,6 +146,7 @@ async def summary(session: AsyncSession) -> dict[str, Any]:
         "estate": dict(estate),
         "by_category": [dict(r) for r in category_rows],
         "discovery": dict(discovery),
+        "commissioning": commissioning,
         # Present now that migration 0047 gives them something to count. Before
         # it they were ABSENT rather than zero - a tile reading "0 expiring"
         # with no contract table is a statement an operator would act on.

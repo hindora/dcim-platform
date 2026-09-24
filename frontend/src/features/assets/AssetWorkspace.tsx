@@ -63,6 +63,11 @@ export function AssetWorkspace() {
       items: [
         { to: '/assets/discovery', label: 'Discovery',
           count: data?.discovery.new_candidates },
+        // Next to Discovery because both are intake, and deliberately separate
+        // because they answer different questions: Discovery finds devices in no
+        // record at all, this one finds records the hardware has moved ahead of.
+        { to: '/assets/commissioning', label: 'Commissioning',
+          count: data?.commissioning?.total || undefined },
         { to: '/assets/reservations', label: 'Reservations',
           count: data?.reservations?.overdue || undefined },
       ],

@@ -168,6 +168,9 @@ export interface AssetSummary {
   };
   by_category: { category: string; n: number }[];
   discovery: { new_candidates: number; unmatched: number };
+  /** Devices whose hardware has moved ahead of their record, by signal. */
+  commissioning?: { racked: number; ready: number; discrepancy: number;
+    total: number };
   /** Absent until migration 0047 - a tile reading "0 expiring" with no
    *  contract table is a statement an operator would act on, and false. */
   warranty?: { unknown: number; expired: number; expiring: number; active: number };
@@ -210,6 +213,45 @@ export interface PowerChain {
 }
 
 /** A responder a sweep found, and whether inventory already claims it. */
+/** A device whose hardware has moved ahead of its record.
+ *
+ *  Deliberately not a DiscoveryCandidate. Discovery finds devices that appear
+ *  nowhere in inventory; every row here is already an asset, already placed and
+ *  already polled - what changed is the metal.
+ */
+export interface CommissioningRow {
+  device_id: string;
+  name: string;
+  device_type: string;
+  lifecycle: string;
+  serial_number?: string | null;
+  asset_tag?: string | null;
+  mgmt_ip?: string | null;
+  datacenter_code?: string | null;
+  room_name?: string | null;
+  rack_name?: string | null;
+  u_start?: number | null;
+  bmc_up?: boolean | null;
+  os_up?: boolean | null;
+  any_up?: boolean | null;
+  last_success?: string | null;
+  /** Which endpoints are talking, as `role:protocol`. The evidence. */
+  live_roles: string[];
+  state_since?: string | null;
+  hours_in_state?: number | null;
+  /** 'racked' | 'ready' | 'discrepancy'. */
+  signal: string;
+  /** The move an operator is being offered. Null for a discrepancy, which needs
+   *  somebody to go and look rather than a button. */
+  proposed_state?: string | null;
+}
+
+export interface CommissioningQueue {
+  soak_hours: number;
+  counts: { racked: number; ready: number; discrepancy: number; total: number };
+  items: CommissioningRow[];
+}
+
 export interface DiscoveryCandidate {
   id: string;
   run_id: string;
@@ -2856,6 +2898,14 @@ export const api = {
   assetCharts: () => request<AssetCharts>('/assets/charts'),
   assetTrends: (days = 90) =>
     request<AssetTrends>(`/assets/trends?days=${days}`),
+
+  commissioningQueue: (params: Record<string, string | undefined> = {}) => {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) if (v) q.set(k, v);
+    const qs = q.toString();
+    return request<CommissioningQueue>(
+      `/commissioning/queue${qs ? `?${qs}` : ''}`);
+  },
 
   discoveryCandidates: (params: Record<string, string | undefined> = {}) => {
     const q = new URLSearchParams();
