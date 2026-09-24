@@ -124,7 +124,8 @@ async def record_results(session: AsyncSession, run_id: str,
 
 
 async def promote(session: AsyncSession, candidate_id: str,
-                  payload: dict[str, Any]) -> dict[str, Any]:
+                  payload: dict[str, Any],
+                  actor: str | None = None) -> dict[str, Any]:
     """Turn a candidate into a device.
 
     The payload is the operator's, not the sweep's. The suggestions travel with
@@ -147,9 +148,18 @@ async def promote(session: AsyncSession, candidate_id: str,
     if not name or not device_type:
         raise DiscoveryError("promotion needs at least a name and a device_type")
 
+    # `installed`, not `in_service`. A sweep found a box answering on the
+    # management network, which is evidence somebody RACKED it and nothing more.
+    # Accepting it into service is a cut-over with a change record and a workload
+    # owner, and promoting a candidate is not that decision.
+    #
+    # Landing on `in_service` also skipped the commissioning queue entirely - the
+    # device would arrive already live, already paging, with nobody having looked
+    # at it. Now it appears there as "ready to accept" and somebody presses the
+    # button, which is the whole point of that screen.
     row = (await session.execute(text("""
         INSERT INTO device (name, device_type, mgmt_ip, lifecycle, attributes)
-        VALUES (:name, :dtype, CAST(:ip AS inet), 'in_service',
+        VALUES (:name, :dtype, CAST(:ip AS inet), 'installed',
                 CAST(:attrs AS jsonb))
         RETURNING id::text, name
     """), {
@@ -162,6 +172,18 @@ async def promote(session: AsyncSession, candidate_id: str,
             "discovery_identity": cand["identity"],
         }),
     })).mappings().first()
+
+    # The first lifecycle event, so the device has a history from the moment it
+    # enters inventory - and so the commissioning queue's soak clock has something
+    # to measure from. Without it the clock falls back to `updated_at`, which any
+    # later edit would reset.
+    await session.execute(text("""
+        INSERT INTO device_lifecycle_event (device_id, from_state, to_state,
+                                            reason, actor)
+        VALUES (CAST(:id AS uuid), NULL, 'installed', :reason, :actor)
+    """), {"id": row["id"], "actor": actor or "discovery",
+           "reason": f"promoted from a discovery sweep; answered at "
+                     f"{cand['address']}"})
 
     await repo.set_candidate_status(session, candidate_id, "promoted")
     log.info("candidate promoted", candidate_id=candidate_id,

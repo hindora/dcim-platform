@@ -85,28 +85,31 @@ def test_the_repository_only_reads():
         assert verb not in sql, f"the queue repository issues {verb.strip()}"
 
 
-def test_the_api_moves_no_device():
-    """The queue must not grow a way to confirm a row.
-
-    It has exactly one write, and it is the sync - which reads the device plane
-    and does not transition anything. Confirming a proposal stays with the
-    ordinary transition endpoint, which is what keeps the audit trail honest and
-    the matrix the only judge of a legal move.
-    """
+def test_the_api_is_read_only():
+    """No writes at all, so there is no way to confirm a row except through the
+    ordinary transition endpoint - which is what keeps the audit trail honest and
+    the matrix the only judge of a legal move."""
     tree = ast.parse(API)
-    routes = [(d.func.attr, d.args[0].value)
-              for n in ast.walk(tree)
-              if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)
-              for d in n.decorator_list
-              if isinstance(d, ast.Call) and isinstance(d.func, ast.Attribute)
-              and isinstance(getattr(d.func, "value", None), ast.Name)
-              and d.func.value.id == "router" and d.args]
-    writes = sorted(path for verb, path in routes if verb != "get")
+    verbs = {n.func.attr for n in ast.walk(tree)
+             if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+             and isinstance(getattr(n.func, "value", None), ast.Name)
+             and n.func.value.id == "router"}
 
-    assert writes == ["/sync"], f"the queue router writes at {writes}"
-    # And nothing in it reaches for the transition machinery.
+    assert verbs == {"get"}, f"the queue router exposes {verbs}"
     assert "record_transition" not in API
-    assert "lifecycle" not in {v for v, _ in routes}
+
+
+def test_the_queue_never_calls_the_device_plane():
+    """The DCIM must not know what is generating its telemetry.
+
+    This router briefly carried a sync that logged into the simulator's REST API
+    and read its topology export - one product reading another's database through
+    its front door. Finding hardware is discovery's job, over the management
+    network, and the importer is a fixture loader that belongs on a command line.
+    """
+    for bad in ("sim_import", "simulator_base_url", "fetch_topology",
+                "TopologyImporter"):
+        assert bad not in API, f"the queue router reaches for {bad}"
 
 
 def test_the_ui_confirms_through_the_shared_transition_endpoint():
@@ -175,102 +178,69 @@ def test_disabled_endpoints_are_not_evidence():
     assert "e.admin_state = 'enabled'" in sql
 
 
-# ------------------------------------------------------------------- the sync
 
-SYNC_SVC = (APP / "services" / "sim_import.py").read_text(encoding="utf-8")
-SYNC_REPO = (APP / "repositories" / "sim_import.py").read_text(encoding="utf-8")
-SYNC_MIG = (Path(__file__).resolve().parents[1] / "alembic" / "versions"
-            / "0076_a_sync_nobody_can_see_ran_or_it_did_not.py"
-            ).read_text(encoding="utf-8")
+# ----------------------------------------------------- how hardware is found
+
+DISCOVERY_SVC = (APP / "services" / "discovery.py").read_text(encoding="utf-8")
+SWEEP_UI = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "features"
+            / "assets" / "discovery" / "SweepPanel.tsx").read_text(encoding="utf-8")
 
 
-def test_two_syncs_cannot_overlap_and_the_database_says_so():
-    """A SELECT-then-INSERT races, and this is the one thing that must not.
+def test_a_promoted_candidate_is_installed_not_in_service():
+    """A sweep found a box answering on the management network. That is evidence
+    somebody RACKED it and nothing more.
 
-    Two imports writing the whole estate at once interleave their decommission
-    sweeps, and each reads the other's half-written devices as absent - so the
-    second retires hardware the first had not finished importing.
+    Landing on `in_service` skipped the commissioning queue entirely - the device
+    arrived already live and already paging, with nobody having looked at it.
+    Acceptance is a cut-over with a change record and a workload owner, and
+    promoting a candidate is not that decision.
     """
-    assert "CREATE UNIQUE INDEX ix_sim_import_run_one_at_a_time" in SYNC_MIG
-    assert "WHERE status = 'running'" in SYNC_MIG
-    # Enforced by the index, caught as an integrity error, not pre-checked.
-    assert "IntegrityError" in SYNC_REPO
-    assert "AlreadyRunningError" in SYNC_REPO
+    body = DISCOVERY_SVC[DISCOVERY_SVC.index("async def promote("):
+                         DISCOVERY_SVC.index("async def ignore(")]
+
+    assert "'installed'," in body
+    assert "'in_service'" not in body
 
 
-def test_a_crashed_sync_does_not_block_every_later_one():
-    """The importer runs in the API process, so a restart mid-import leaves a row
-    `running` with nothing behind it - and the unique index would then refuse
-    syncing for ever. The worst outcome of this feature must not be permanent."""
-    assert "release_stale" in SYNC_REPO
-    assert "release_stale" in SYNC_SVC
-    assert "STALE_AFTER_S" in SYNC_SVC
+def test_promotion_writes_the_first_lifecycle_event():
+    """So the device has a history from the moment it enters inventory, and so the
+    commissioning queue's soak clock has something to measure from. Without it the
+    clock falls back to `updated_at`, which any later edit would reset."""
+    body = DISCOVERY_SVC[DISCOVERY_SVC.index("async def promote("):
+                         DISCOVERY_SVC.index("async def ignore(")]
+
+    assert "INSERT INTO device_lifecycle_event" in body
+    assert "to_state, reason, actor" in body or "'installed', :reason, :actor" in body
 
 
-def test_the_run_is_always_closed():
-    """A failure has to reach the row. If it escapes, the run stays `running`."""
-    body = SYNC_SVC[SYNC_SVC.index("async def _run("):]
+def test_promotion_does_not_invent_placement():
+    """A sweep cannot know which rack a box is in, and a guessed U would put a
+    wrong row in the elevation. The reservation carries placement; discovery does
+    not."""
+    body = DISCOVERY_SVC[DISCOVERY_SVC.index("async def promote("):
+                         DISCOVERY_SVC.index("async def ignore(")]
 
-    assert "finally:" in body
-    assert "except Exception" in body, "a broad catch, on purpose"
-    assert "repo.finish(" in body
-
-
-def test_the_background_task_is_referenced():
-    """asyncio holds only a weak reference to a task, so a fire-and-forget import
-    with nothing keeping it alive can be collected half way through - leaving a
-    partly-written estate and no error anywhere."""
-    assert "_TASKS.add(task)" in SYNC_SVC
-    assert "add_done_callback(_TASKS.discard)" in SYNC_SVC
+    for column in ("rack_id", "u_start", "room_id"):
+        assert column not in body, f"promotion is guessing {column}"
 
 
-def test_the_task_does_not_borrow_the_request_session():
-    """It outlives the request, whose session is closed when the response is
-    sent - so borrowing it fails somewhere in the middle of the estate."""
-    body = SYNC_SVC[SYNC_SVC.index("async def _run("):]
-
-    assert "unit_of_work()" in body
-
-
-def test_missing_configuration_names_the_setting():
-    """"Connection refused" for a URL the operator never saw is the least useful
-    error this can produce, and `host.docker.internal` resolving nowhere outside a
-    container is exactly the default that survives in a .env for months."""
-    assert "DCIM_SIMULATOR_BASE_URL" in SYNC_SVC
-    assert "DCIM_SIMULATOR_PASSWORD" in SYNC_SVC
-    assert "NotConfiguredError" in API
-    assert "HTTP_503_SERVICE_UNAVAILABLE" in API
+def test_the_sweep_is_queued_for_the_collector_not_run_by_the_api():
+    """The sweep happens on the management network, which is where the collector
+    is and the API is not. The UI queues a run; nothing in the browser or the API
+    process touches a device."""
+    assert "startDiscoveryRun" in SWEEP_UI
+    assert "/discovery/runs" not in SWEEP_UI, "the UI goes through the client, not a raw URL"
+    # And it never reaches for the other product.
+    for bad in ("8001", "simulator", "topology/export"):
+        assert bad not in SWEEP_UI.lower()
 
 
-def test_the_sync_is_audited():
-    """It adds devices, decommissions the ones that have gone and rewrites
-    endpoints across the estate. That is a privileged action."""
-    assert 'action="inventory.sync"' in API
-
-
-def test_the_button_polls_only_while_a_sync_runs():
-    """A fixed interval would either feel unresponsive against a 90-second import
-    or poll the API all day for the 23 hours nothing is syncing."""
-    src = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "features"
-           / "assets" / "commissioning" / "SyncBar.tsx").read_text(encoding="utf-8")
-
-    assert "refetchInterval: (q) => (q.state.data?.running ? 3_000 : false)" in src
-    # And a finished run refreshes the queue it just changed.
-    assert "commissioning-queue" in src
-
-
-def test_every_parameter_in_the_close_is_cast():
-    """`CASE WHEN :error IS NULL` gives PostgreSQL nothing to infer a type from
-    and it refuses the statement outright.
-
-    Found live: an import that read 685 devices perfectly could not then record
-    that it had finished, so the row stayed `running` and every later sync was
-    refused until the stale sweep released it. The failure was in the ONE
-    statement whose job is to survive a failure.
-    """
-    body = SYNC_REPO[SYNC_REPO.index("async def finish("):
-                     SYNC_REPO.index("async def get(")]
-
-    assert "CAST(:error AS text) IS NULL" in body
-    assert "error = CAST(:error AS text)" in body
-    assert "CAST(:report AS jsonb)" in body
+def test_the_subnets_are_suggested_from_inventory():
+    """An operator should not have to know the site's addressing by heart to run
+    an audit, and a free-text box invites both typos and a /16 - which the sweeper
+    refuses outright rather than truncating, so the run just fails."""
+    assert "discoverySubnets" in SWEEP_UI
+    repo_src = (APP / "repositories" / "discovery.py").read_text(encoding="utf-8")
+    assert "async def mgmt_subnets" in repo_src
+    # The count is what makes a result readable.
+    assert "count(*) AS known" in repo_src

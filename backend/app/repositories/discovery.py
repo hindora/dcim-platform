@@ -167,3 +167,23 @@ async def get_candidate(session: AsyncSession,
           FROM discovery_candidate WHERE id = CAST(:id AS uuid)
     """), {"id": candidate_id})).mappings().first()
     return dict(row) if row else None
+
+
+async def mgmt_subnets(session: AsyncSession) -> list[dict[str, Any]]:
+    """Distinct /24s of the estate's management addresses, with what is in them.
+
+    The count is the point: "10.51.11.0/24 — 96 known" tells an operator that a
+    sweep finding 97 responders has found one thing worth looking at. A bare list
+    of subnets does not.
+    """
+    rows = (await session.execute(text("""
+        SELECT host(network(set_masklen(mgmt_ip, 24)))::text || '/24' AS cidr,
+               count(*) AS known
+          FROM device
+         WHERE mgmt_ip IS NOT NULL
+           AND lifecycle <> 'decommissioned'
+         GROUP BY 1
+         ORDER BY count(*) DESC, 1
+         LIMIT 32
+    """))).mappings().all()
+    return [dict(r) for r in rows]

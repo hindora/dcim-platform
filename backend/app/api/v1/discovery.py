@@ -59,6 +59,22 @@ async def create_run(req: RunRequest,
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from None
 
 
+@router.get("/subnets", summary="Management subnets worth sweeping")
+async def suggest_subnets(
+    session: AsyncSession = Depends(get_session),
+    _: Principal = Depends(current_principal),
+) -> dict[str, Any]:
+    """The /24s the estate's management addresses already sit in.
+
+    An operator should not have to know the site's addressing by heart to run an
+    audit, and a free-text box invites both typos and a /16 - which the sweeper
+    refuses outright rather than truncating, so the run just fails. These are
+    derived from what inventory already holds, so a sweep of one of them is asking
+    "is there anything here we do not know about" rather than guessing.
+    """
+    return {"subnets": await repo.mgmt_subnets(session)}
+
+
 @router.get("/runs", summary="List discovery runs")
 async def list_runs(limit: int = Query(25, ge=1, le=100),
                     session: AsyncSession = Depends(get_session),
@@ -90,7 +106,8 @@ async def promote(candidate_id: str, req: PromoteRequest, request: Request,
                   principal: Principal = Depends(require_role("operator")),
                   ) -> dict[str, Any]:
     try:
-        result = await service.promote(session, candidate_id, req.model_dump())
+        result = await service.promote(session, candidate_id, req.model_dump(),
+                                       actor=audit.actor_of(principal))
         ip, agent = audit.client_of(request)
         # Promotion creates an inventory device from something found on the
         # wire. scrub() runs over the payload on the way in, because a promote

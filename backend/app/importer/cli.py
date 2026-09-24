@@ -1,7 +1,20 @@
-"""Seed the DCIM inventory from a running simulator.
+"""Seed a DEVELOPMENT DCIM inventory from a simulator fixture.
 
-    python -m app.importer.cli --base-url http://127.0.0.1:8001 \
-                               --username admin --password admin1234
+    python -m app.importer.cli --base-url http://127.0.0.1:8001 --username admin
+
+A FIXTURE LOADER, and deliberately not an operational path. It reads another
+product's REST API to populate this one's inventory, which is fine for standing
+up a dev or demo estate in one step and wrong as the way a DCIM learns that
+hardware exists. A DCIM must not know what is generating its telemetry.
+
+How a racked device is SUPPOSED to be found: discovery. A sweep over the
+management network, run by the collector because that is what sits on it, staging
+whatever answered as a candidate for somebody to promote - migration 0012,
+`collector/internal/discovery`, and the Discovery screen. That path talks to
+devices over SNMP/Redfish/gNMI and to no other product's API.
+
+This was briefly wired to a Sync button in the operator UI. Migration 0077 undid
+it; that file says why.
 
 Idempotent: re-run it after any fleet change. Use --protocols to widen beyond
 SNMP as the other adapters land.
@@ -64,8 +77,11 @@ async def _run(args: argparse.Namespace) -> int:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__,
+        epilog=("Seeding only. To find hardware that has been racked, run a "
+                "discovery sweep from Assets -> Discovery instead."),
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     src = ap.add_mutually_exclusive_group()
     src.add_argument("--base-url", default=None,
                      help="simulator API base URL (default: DCIM_SIMULATOR_BASE_URL)")

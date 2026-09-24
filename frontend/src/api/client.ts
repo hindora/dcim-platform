@@ -246,33 +246,27 @@ export interface CommissioningRow {
   proposed_state?: string | null;
 }
 
-/** One read of the device plane: when, by whom, and what it changed. */
-export interface SyncRun {
-  id: string;
-  started_at: string;
-  finished_at?: string | null;
-  status: 'running' | 'completed' | 'failed';
-  actor: string;
-  source?: string | null;
-  /** The importer's own report. Shape belongs to the importer, not to this UI. */
-  report?: Record<string, unknown> | null;
-  error?: string | null;
-  seconds?: number | null;
-}
-
-export interface SyncStatus {
-  /** False when the simulator address or credentials are unset - the button is
-   *  then disabled and says which setting is missing, rather than failing. */
-  configured: boolean;
-  not_configured_reason?: string | null;
-  running?: SyncRun | null;
-  recent: SyncRun[];
-}
-
 export interface CommissioningQueue {
   soak_hours: number;
   counts: { racked: number; ready: number; discrepancy: number; total: number };
   items: CommissioningRow[];
+}
+
+/** One sweep of the management network. */
+export interface DiscoveryRun {
+  id: string;
+  method: string;
+  /** What was asked for: `{ subnets: [...] }`. */
+  scope?: { subnets?: string[] } | null;
+  /** pending → running → completed | failed. */
+  status: string;
+  /** Responders the sweep found, once it has finished. */
+  found?: number | null;
+  /** How many of those have since been promoted into inventory. */
+  promoted?: number | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  error?: string | null;
 }
 
 export interface DiscoveryCandidate {
@@ -2922,9 +2916,6 @@ export const api = {
   assetTrends: (days = 90) =>
     request<AssetTrends>(`/assets/trends?days=${days}`),
 
-  syncStatus: () => request<SyncStatus>('/commissioning/sync'),
-  startSync: () => request<SyncRun>('/commissioning/sync', { method: 'POST' }),
-
   commissioningQueue: (params: Record<string, string | undefined> = {}) => {
     const q = new URLSearchParams();
     for (const [k, v] of Object.entries(params)) if (v) q.set(k, v);
@@ -2932,6 +2923,32 @@ export const api = {
     return request<CommissioningQueue>(
       `/commissioning/queue${qs ? `?${qs}` : ''}`);
   },
+
+  /** The /24s the estate's management addresses sit in, with how many devices
+   *  inventory already holds in each - so "97 responders in a subnet with 96
+   *  known" is a readable result. */
+  discoverySubnets: () =>
+    request<{ subnets: { cidr: string; known: number }[] }>('/discovery/subnets'),
+
+  discoveryRuns: (params: Record<string, string | undefined> = {}) => {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) if (v) q.set(k, v);
+    const qs = q.toString();
+    return request<{ items: DiscoveryRun[] }>(`/discovery/runs${qs ? `?${qs}` : ''}`);
+  },
+
+  startDiscoveryRun: (body: { method?: string; subnets: string[] }) =>
+    request<DiscoveryRun>('/discovery/runs', {
+      method: 'POST', body: JSON.stringify({ method: 'snmp_sweep', ...body }),
+    }),
+
+  promoteCandidate: (id: string, body: { name: string; device_type?: string }) =>
+    request<{ device_id: string; name: string }>(
+      `/discovery/candidates/${id}/promote`,
+      { method: 'POST', body: JSON.stringify(body) }),
+
+  ignoreCandidate: (id: string) =>
+    request<unknown>(`/discovery/candidates/${id}/ignore`, { method: 'POST' }),
 
   discoveryCandidates: (params: Record<string, string | undefined> = {}) => {
     const q = new URLSearchParams();
