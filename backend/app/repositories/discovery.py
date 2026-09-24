@@ -20,10 +20,40 @@ async def create_run(session: AsyncSession, *, method: str,
 
 
 async def list_runs(session: AsyncSession, limit: int = 25) -> list[dict[str, Any]]:
+    """Recent sweeps, each with what it actually concluded.
+
+    `found` alone is not a result. "105 answered" says nothing about whether that
+    is good news; "105 answered, 105 expected, 0 new, 1 moved" is the audit. The
+    counts are per run rather than over open candidates, because the question is
+    what THAT sweep saw - a later promotion should not rewrite the history of the
+    run that found it.
+    """
     rows = (await session.execute(text("""
-        SELECT id::text, method, scope, status, found, promoted,
-               started_at, finished_at, error
-          FROM discovery_run ORDER BY started_at DESC LIMIT :limit
+        SELECT r.id::text, r.method, r.scope, r.status, r.found, r.promoted,
+               r.started_at, r.finished_at, r.error,
+               COALESCE(c.known, 0)    AS known,
+               COALESCE(c.unknown, 0)  AS unknown,
+               COALESCE(c.moved, 0)    AS moved,
+               COALESCE(c.with_serial, 0) AS with_serial
+          FROM discovery_run r
+          LEFT JOIN (
+            SELECT dc.run_id,
+                   count(*) FILTER (WHERE dc.matched_device_id IS NOT NULL) AS known,
+                   count(*) FILTER (WHERE dc.matched_device_id IS NULL)     AS unknown,
+                   -- Matched to a device, at an address that device is not
+                   -- recorded at: the box has MOVED and nobody wrote it down.
+                   -- Only knowable because the serial matched; on address alone
+                   -- this row would have counted as unknown.
+                   count(*) FILTER (
+                       WHERE dc.matched_device_id IS NOT NULL
+                         AND d.mgmt_ip IS NOT NULL
+                         AND host(d.mgmt_ip) <> host(dc.address))          AS moved,
+                   count(dc.serial)                                        AS with_serial
+              FROM discovery_candidate dc
+              LEFT JOIN device d ON d.id = dc.matched_device_id
+             GROUP BY dc.run_id
+          ) c ON c.run_id = r.id
+         ORDER BY r.started_at DESC LIMIT :limit
     """), {"limit": limit})).mappings().all()
     return [dict(r) for r in rows]
 

@@ -126,7 +126,7 @@ export function SweepPanel() {
               <thead>
                 <tr>
                   <th>Started</th><th>Subnets</th><th>Status</th>
-                  <th>Answered</th><th>Promoted</th>
+                  <th>Result</th>
                 </tr>
               </thead>
               <tbody>
@@ -141,16 +141,41 @@ export function SweepPanel() {
 }
 
 function RunRow({ run }: { run: DiscoveryRun }) {
+  const inFlight = run.status === 'pending' || run.status === 'running';
   return (
     <tr>
       <td className="muted">{relativeTime(run.started_at)}</td>
       <td><code>{(run.scope?.subnets ?? []).join(', ') || '—'}</code></td>
       <td>
+        {/* `status` is the API's own vocabulary (pending / running / done /
+            failed) and the chip carries it as text, so a value with no colour
+            still reads correctly. */}
         <span className={`asset-life is-${run.status}`}>{run.status}</span>
         {run.error && <div className="muted">{run.error}</div>}
       </td>
-      <td>{run.found ?? '—'}</td>
-      <td className="muted">{run.promoted ?? '—'}</td>
+      <td>{inFlight ? <span className="muted">…</span> : <Result run={run} />}</td>
     </tr>
+  );
+}
+
+/** What the run concluded, as a sentence.
+ *
+ *  "105 answered" is not a result - it says nothing about whether that is good
+ *  news. "105 answered · 105 expected · 1 moved" is the audit, and it is the
+ *  exceptions that get emphasis because they are the only rows anybody acts on.
+ */
+function Result({ run }: { run: DiscoveryRun }) {
+  const found = run.found ?? 0;
+  if (!found) return <span className="muted">nothing answered</span>;
+  return (
+    <>
+      {found} answered
+      {run.known != null && <span className="muted"> · {run.known} expected</span>}
+      {Boolean(run.unknown) && <> · <strong>{run.unknown} new</strong></>}
+      {Boolean(run.moved) && <> · <strong>{run.moved} moved</strong></>}
+      {run.with_serial != null && (
+        <div className="muted">{run.with_serial} reported a serial</div>
+      )}
+    </>
   );
 }

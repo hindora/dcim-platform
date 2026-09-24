@@ -264,6 +264,13 @@ export interface DiscoveryRun {
   found?: number | null;
   /** How many of those have since been promoted into inventory. */
   promoted?: number | null;
+  /** What the run concluded. `found` alone is not a result: "105 answered" says
+   *  nothing about whether that is good news. */
+  known?: number | null;
+  unknown?: number | null;
+  /** Matched to a device, at an address that device is not recorded at. */
+  moved?: number | null;
+  with_serial?: number | null;
   started_at?: string | null;
   finished_at?: string | null;
   error?: string | null;
@@ -279,9 +286,18 @@ export interface DiscoveryCandidate {
   suggested_device_type?: string | null;
   suggested_vendor?: string | null;
   suggested_model?: string | null;
+  /** The chassis serial, when the device answered entPhysicalSerialNum. The only
+   *  key that survives a device being re-addressed. */
+  serial?: string | null;
   /** Non-null means this responder is already known. */
   matched_device_id?: string | null;
   matched_device_name?: string | null;
+  /** Where inventory thinks that device is. Differs from `address` when the box
+   *  has MOVED and nobody recorded it. */
+  matched_device_address?: string | null;
+  /** True when the match came from the serial rather than the address, which is
+   *  the stronger claim. */
+  matched_on_serial?: boolean | null;
   status: string;
   first_seen: string;
   last_seen: string;

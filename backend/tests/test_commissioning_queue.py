@@ -314,3 +314,64 @@ def test_discovery_no_longer_hard_wires_the_simulator_convention():
            / "config" / "config.go").read_text(encoding="utf-8")
     assert "CommunityIsAddress" in cfg
     assert "Communities []string" in cfg
+
+
+# ------------------------------------------- the screen shows what was fixed
+
+QUEUE_UI = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "features"
+            / "assets" / "discovery" / "CandidateQueue.tsx").read_text(encoding="utf-8")
+
+
+def test_a_moved_device_gets_its_own_section():
+    """Serial matching is only worth having if the screen says what it found.
+
+    A device recognised by serial at an unexpected address is the one actionable
+    row a sweep produces, and it used to sit silently inside "already known" with
+    a hundred devices that were exactly where the record said.
+    """
+    assert "Moved —" in QUEUE_UI
+    assert "matched_device_address !== c.address" in QUEUE_UI
+    # And the row says which key matched, because "by serial" is the stronger
+    # claim and an operator deciding whether to trust it needs to know.
+    assert "'by serial' : 'by address'" in QUEUE_UI
+
+
+def test_the_expected_case_is_collapsed():
+    """The value of an audit is the exception. Giving a hundred expected devices
+    the same visual weight as the one surprise is what turns it into a data dump -
+    but the denominator stays visible, because 105 of 105 is the reassurance."""
+    assert "Where we expected them" in QUEUE_UI
+    assert "aria-expanded" in QUEUE_UI
+
+
+def test_serial_coverage_is_measured_not_guessed():
+    """The old banner fired on `summary.identity.with_serial === 0` - whether
+    ASSETS carry serials. That stopped being the gap the moment the importer
+    started setting them, so the banner vanished and quietly implied the matching
+    worked. What matters is how many RESPONDERS reported one.
+    """
+    assert "identity.with_serial" not in QUEUE_UI, "the stale banner is back"
+    assert "items.filter((c) => c.serial).length" in QUEUE_UI
+    assert "matched by address" in QUEUE_UI
+
+
+def test_the_device_type_is_chosen_from_the_real_vocabulary():
+    """A free-text device type creates devices with garbage types that every
+    category roll-up then has to cope with. The vocabulary already exists."""
+    assert "assetFilterOptions" in QUEUE_UI
+    assert "options?.device_types" in QUEUE_UI
+    # And promotion cannot proceed without one.
+    assert "!name.trim() || !type" in QUEUE_UI
+
+
+def test_a_run_reports_what_it_concluded():
+    """"105 answered" says nothing about whether that is good news."""
+    repo_src = (APP / "repositories" / "discovery.py").read_text(encoding="utf-8")
+    body = repo_src[repo_src.index("async def list_runs("):]
+
+    for count in ("known", "unknown", "moved", "with_serial"):
+        assert f"AS {count}" in body, f"a run does not report {count}"
+
+    sweep = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "features"
+             / "assets" / "discovery" / "SweepPanel.tsx").read_text(encoding="utf-8")
+    assert "answered" in sweep and "expected" in sweep

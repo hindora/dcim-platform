@@ -309,6 +309,28 @@ a.asset-tile:hover { border-color: var(--border-strong); }
 .asset-life.is-decommissioned,
 .asset-life.is-retired { color: var(--text-faint); text-decoration: line-through; }
 
+/* A discovery run's own status vocabulary: pending / running / done / failed.
+   Separate from the lifecycle values above - they share the chip, not a meaning. */
+.asset-life.is-running,
+.asset-life.is-pending { border-color: var(--accent); color: var(--accent); }
+.asset-life.is-done { border-color: var(--ok); color: var(--ok); }
+.asset-life.is-failed { border-color: var(--critical); color: var(--critical); }
+
+/* A disclosure toggle that sits inside a heading: the heading's own type, with
+   the button chrome removed. Not a link - it goes nowhere, and rendering it as
+   one would promise navigation. */
+.asset-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.asset-link:hover { color: var(--accent); }
+.asset-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
 /* ------------------------------------------------------------ filter rail */
 
 .asset-work {
