@@ -67,21 +67,46 @@ _VENDOR_HINTS: list[tuple[str, str]] = [
 ]
 
 
-def classify(identity: dict[str, Any]) -> tuple[str | None, str | None]:
-    """Guess a device type and vendor from what the probe could read."""
+def classify(identity: dict[str, Any],
+             protocol: str = "snmp") -> tuple[str | None, str | None]:
+    """Guess a device type and vendor from what the probe could read.
+
+    The protocol is itself evidence. Anything answering a Redfish service root is a
+    management controller, and a management controller is overwhelmingly on a
+    server - so that is the fallback when the text gives nothing away, which it
+    often does: a bare service root carries a version and a name and no model at
+    all.
+
+    A suggestion, not a decision. Redfish does appear on some storage arrays and a
+    little network gear, and the operator confirms the type on promotion - which is
+    exactly why a guess here is safe and a guess written straight into inventory
+    would not be.
+    """
     blob = " ".join(str(v) for v in identity.values() if v).lower()
-    if not blob:
-        return None, None
-    dtype = next((t for pattern, t in _TYPE_HINTS if re.search(pattern, blob)), None)
-    vendor = next((v for pattern, v in _VENDOR_HINTS if re.search(pattern, blob)), None)
+    dtype = next((t for pattern, t in _TYPE_HINTS if re.search(pattern, blob)), None) \
+        if blob else None
+    vendor = next((v for pattern, v in _VENDOR_HINTS if re.search(pattern, blob)), None) \
+        if blob else None
+    if dtype is None and protocol == "redfish":
+        dtype = "server"
     return dtype, vendor
+
+
+#: What a run may be called. One sweep now covers every protocol the collector
+#: has been configured for, so the protocol-specific name is a legacy alias.
+_SWEEP_METHODS = frozenset({"sweep", "snmp_sweep"})
 
 
 async def create_run(session: AsyncSession, *, method: str,
                      subnets: list[str]) -> dict[str, Any]:
-    if method != "snmp_sweep":
+    # A run sweeps whatever the collector has configured - SNMP always, Redfish
+    # too where it is enabled - so `sweep` is the honest name. `snmp_sweep` is kept
+    # because runs recorded under it are in the history and a queued one may still
+    # be in flight; refusing it would break a name that is only misleading.
+    if method not in _SWEEP_METHODS:
         raise DiscoveryError(
-            f"method {method!r} is not implemented; only 'snmp_sweep' is")
+            f"method {method!r} is not implemented; "
+            f"try one of {', '.join(sorted(_SWEEP_METHODS))}")
     if not subnets:
         raise DiscoveryError("a run needs at least one subnet to sweep")
     for net in subnets:
@@ -135,7 +160,7 @@ async def record_results(session: AsyncSession, run_id: str,
                 moved += 1
         else:
             match = known.get(addr)
-        dtype, vendor = classify(identity)
+        dtype, vendor = classify(identity, r.get("protocol") or "snmp")
         await repo.upsert_candidate(
             session, run_id=run_id, address=addr,
             protocol=r.get("protocol") or "snmp", identity=identity,

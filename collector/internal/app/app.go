@@ -257,6 +257,36 @@ func New(cfg *config.Config, version string) (*App, error) {
 	return a, nil
 }
 
+// redfishSweeper builds the Redfish half of a sweep, or nil if it is not wanted.
+//
+// Nil rather than a disabled sweeper: a run then does exactly what it did before
+// Redfish existed, and there is no chance of an unconfigured deployment quietly
+// probing 443 across its management network.
+func (a *App) redfishSweeper() *discovery.RedfishSweeper {
+	cfg := a.cfg.Discovery.Redfish
+	if !cfg.Enabled {
+		return nil
+	}
+	creds := make([]discovery.RedfishCredential, 0, len(cfg.Credentials))
+	for _, c := range cfg.Credentials {
+		creds = append(creds, discovery.RedfishCredential{
+			Username: c.Username, Password: c.Password})
+	}
+	// Said out loud, because the two halves fail differently: with no credentials
+	// a sweep still FINDS every BMC (the service root is unauthenticated) and
+	// reports none of their serials - which looks like a working sweep that cannot
+	// match anything.
+	a.log.Info("discovery will sweep redfish",
+		"ports", cfg.Ports, "credentials", len(creds),
+		"allow_plaintext", cfg.AllowPlaintext)
+	return &discovery.RedfishSweeper{
+		Ports:          cfg.Ports,
+		AllowPlaintext: cfg.AllowPlaintext,
+		Credentials:    creds,
+		Log:            a.log,
+	}
+}
+
 // discoveryCommunities picks how a sweep will ask, from configuration.
 //
 // This used to be the literal discovery.PerAddressCommunity - the simulator's
@@ -338,6 +368,7 @@ func (a *App) Run(ctx context.Context) error {
 			Token:    a.cfg.Token,
 			Interval: a.cfg.DCIM.AssignmentInterval,
 			Sweeper:  discovery.New(a.log, a.discoveryCommunities(), 0),
+			Redfish:  a.redfishSweeper(),
 			HTTP:     &http.Client{Timeout: a.cfg.DCIM.RequestTimeout},
 			Log:      a.log,
 		}).Run(ctx)

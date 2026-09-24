@@ -21,8 +21,11 @@ type Runner struct {
 	Token    func() string
 	Interval time.Duration
 	Sweeper  *Sweeper
-	HTTP     *http.Client
-	Log      *slog.Logger
+	// Redfish is optional. Nil means a run sweeps SNMP only, which is what a
+	// deployment that has not configured Redfish discovery should get.
+	Redfish *RedfishSweeper
+	HTTP    *http.Client
+	Log     *slog.Logger
 }
 
 type claimResponse struct {
@@ -78,8 +81,24 @@ func (r *Runner) once(ctx context.Context) error {
 
 	started := time.Now()
 	found := r.Sweeper.Sweep(ctx, addrs)
+	snmpCount := len(found)
+
+	// Both planes in one run, sequentially. One address can legitimately answer
+	// both - a server's BMC runs an SNMP agent AND Redfish - and the two arrive as
+	// separate responders, which is what the API's (address, protocol) candidate
+	// key is for. Sequential because a sweep is a background audit: running them
+	// together would double the traffic on the management network at once for no
+	// answer that arrives sooner than the operator needs it.
+	var redfishCount int
+	if r.Redfish != nil {
+		rf := r.Redfish.Sweep(ctx, addrs)
+		redfishCount = len(rf)
+		found = append(found, rf...)
+	}
+
 	r.Log.Info("discovery sweep finished", "run_id", run.ID,
 		"probed", len(addrs), "answered", len(found),
+		"snmp", snmpCount, "redfish", redfishCount,
 		"seconds", int(time.Since(started).Seconds()))
 
 	return r.report(ctx, run.ID, resultsBody{Responders: found})

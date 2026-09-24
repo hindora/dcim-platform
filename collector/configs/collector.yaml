@@ -63,6 +63,31 @@ discovery:
   # a deployment's choice and a real site leaves it false.
   community_is_address: true
 
+  # Redfish sweeping. What it finds that SNMP does not: a server racked and not yet
+  # built has its BMC up and no operating system, so Redfish is the only thing it
+  # answers - and plenty of real BMCs restrict SNMP entirely.
+  #
+  # Detection needs NO credentials: the service root is unauthenticated by
+  # specification. The credentials below are only for the chassis identity under
+  # /redfish/v1/Systems, which is 401 without them - and that is where the serial
+  # is, which is what lets a re-addressed machine be recognised.
+  redfish:
+    enabled: true
+
+    # 443 on a real floor. This simulator serves 8443.
+    ports: [8443]
+
+    # A BMC serving Redfish in the clear is a finding rather than something to
+    # accommodate, so a real site leaves this false. True here because the
+    # simulator's Redfish plane is plain HTTP.
+    allow_plaintext: true
+
+    # Tried in order. Local simulator credentials; a real site would take these
+    # from its secret store rather than a file in the repo.
+    credentials:
+      - username: admin
+        password: password
+
 protocols:
   snmp:
     enabled: true

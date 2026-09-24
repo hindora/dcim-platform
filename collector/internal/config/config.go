@@ -194,6 +194,42 @@ type DiscoveryCfg struct {
 	// simulator. It is a legitimate thing to configure and a wrong thing to
 	// default to, so a deployment that needs it now says so out loud.
 	CommunityIsAddress bool `yaml:"community_is_address"`
+
+	// Redfish sweeping. Off unless configured: probing 443 across a management
+	// network is a deliberate act, not something a collector should start doing
+	// because it was upgraded.
+	Redfish RedfishDiscoveryCfg `yaml:"redfish"`
+}
+
+// RedfishDiscoveryCfg is how a sweep looks for management controllers.
+//
+// Worth its own protocol because of what it finds that SNMP does not: a server
+// racked and not yet built has its BMC up and no operating system, so Redfish is
+// the only thing it answers. A Redfish-only BMC - plenty of real ones restrict
+// SNMP - was invisible to discovery entirely.
+type RedfishDiscoveryCfg struct {
+	Enabled bool `yaml:"enabled"`
+
+	// Ports to try in order. 443 in the real world.
+	Ports []uint16 `yaml:"ports"`
+
+	// AllowPlaintext also tries http:// where https:// does not answer. False for
+	// a real site - a BMC serving Redfish in the clear is a finding rather than
+	// something to accommodate.
+	AllowPlaintext bool `yaml:"allow_plaintext"`
+
+	// Credentials for the chassis identity. DETECTION NEEDS NONE: the service
+	// root is unauthenticated by specification, which is what makes sweeping for
+	// controllers possible. These are only for Manufacturer / Model /
+	// SerialNumber under /redfish/v1/Systems, which is 401 without auth - and the
+	// serial is what lets a re-addressed machine be recognised rather than
+	// promoted a second time.
+	Credentials []RedfishDiscoveryCredential `yaml:"credentials"`
+}
+
+type RedfishDiscoveryCredential struct {
+	Username string `yaml:"username"`
+	Password string `yaml:"password"`
 }
 
 type ProtocolCfg struct {
@@ -264,7 +300,12 @@ func Default() *Config {
 	// No communities and no address trick: a fresh config sweeps with "public"
 	// (the fallback in discovery.Communities) and finds whatever answers that.
 	// Anything else is a deliberate entry in collector.yaml.
-	c.Discovery = DiscoveryCfg{}
+	// Nothing sweeps by default, and Redfish sweeping in particular is off: a
+	// collector should not start probing 443 across a management network because
+	// somebody upgraded it.
+	c.Discovery = DiscoveryCfg{
+		Redfish: RedfishDiscoveryCfg{Ports: []uint16{443}},
+	}
 	c.Protocols.SNMP = ProtocolCfg{
 		Enabled: true, MaxConcurrent: 256, PerHost: 4,
 		Timeout: 3 * time.Second, Retries: 2, MaxRepetitions: 25,
