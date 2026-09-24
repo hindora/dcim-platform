@@ -10,6 +10,7 @@ import { usePaged } from '../../../components/Pagination';
 import { Seg } from '../../../components/estate';
 import { humanise, relativeTime } from '../../../lib/format';
 import { LifecycleChip } from '../components/LifecycleChip';
+import { SyncBar } from './SyncBar';
 
 /** Commissioning: devices whose hardware has moved ahead of their record.
  *
@@ -69,6 +70,11 @@ export function ReadyQueue() {
         their record. Each row proposes a transition for you to confirm — nothing
         here changes a state on its own.
       </p>
+
+      {/* Above the queue on purpose: a device racked a minute ago is not here
+          until the estate has been read again, and an empty queue with no way to
+          refresh it reads as "nothing to do" when it means "nobody looked". */}
+      <SyncBar />
 
       {/* The soak window is a knob because burn-in length is a local policy:
           24-48h is usual, and an operator chasing one machine wants to see it

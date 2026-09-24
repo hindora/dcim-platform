@@ -85,16 +85,28 @@ def test_the_repository_only_reads():
         assert verb not in sql, f"the queue repository issues {verb.strip()}"
 
 
-def test_the_api_is_read_only():
-    """No POST, so there is no way to confirm a row except through the ordinary
-    transition endpoint - which is what keeps the audit trail honest."""
-    tree = ast.parse(API)
-    verbs = {n.func.attr for n in ast.walk(tree)
-             if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
-             and isinstance(getattr(n.func, "value", None), ast.Name)
-             and n.func.value.id == "router"}
+def test_the_api_moves_no_device():
+    """The queue must not grow a way to confirm a row.
 
-    assert verbs == {"get"}, f"the queue router exposes {verbs}"
+    It has exactly one write, and it is the sync - which reads the device plane
+    and does not transition anything. Confirming a proposal stays with the
+    ordinary transition endpoint, which is what keeps the audit trail honest and
+    the matrix the only judge of a legal move.
+    """
+    tree = ast.parse(API)
+    routes = [(d.func.attr, d.args[0].value)
+              for n in ast.walk(tree)
+              if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)
+              for d in n.decorator_list
+              if isinstance(d, ast.Call) and isinstance(d.func, ast.Attribute)
+              and isinstance(getattr(d.func, "value", None), ast.Name)
+              and d.func.value.id == "router" and d.args]
+    writes = sorted(path for verb, path in routes if verb != "get")
+
+    assert writes == ["/sync"], f"the queue router writes at {writes}"
+    # And nothing in it reaches for the transition machinery.
+    assert "record_transition" not in API
+    assert "lifecycle" not in {v for v, _ in routes}
 
 
 def test_the_ui_confirms_through_the_shared_transition_endpoint():
@@ -161,3 +173,87 @@ def test_disabled_endpoints_are_not_evidence():
 
     assert "e.enabled" in sql
     assert "e.admin_state = 'enabled'" in sql
+
+
+# ------------------------------------------------------------------- the sync
+
+SYNC_SVC = (APP / "services" / "sim_import.py").read_text(encoding="utf-8")
+SYNC_REPO = (APP / "repositories" / "sim_import.py").read_text(encoding="utf-8")
+SYNC_MIG = (Path(__file__).resolve().parents[1] / "alembic" / "versions"
+            / "0076_a_sync_nobody_can_see_ran_or_it_did_not.py"
+            ).read_text(encoding="utf-8")
+
+
+def test_two_syncs_cannot_overlap_and_the_database_says_so():
+    """A SELECT-then-INSERT races, and this is the one thing that must not.
+
+    Two imports writing the whole estate at once interleave their decommission
+    sweeps, and each reads the other's half-written devices as absent - so the
+    second retires hardware the first had not finished importing.
+    """
+    assert "CREATE UNIQUE INDEX ix_sim_import_run_one_at_a_time" in SYNC_MIG
+    assert "WHERE status = 'running'" in SYNC_MIG
+    # Enforced by the index, caught as an integrity error, not pre-checked.
+    assert "IntegrityError" in SYNC_REPO
+    assert "AlreadyRunningError" in SYNC_REPO
+
+
+def test_a_crashed_sync_does_not_block_every_later_one():
+    """The importer runs in the API process, so a restart mid-import leaves a row
+    `running` with nothing behind it - and the unique index would then refuse
+    syncing for ever. The worst outcome of this feature must not be permanent."""
+    assert "release_stale" in SYNC_REPO
+    assert "release_stale" in SYNC_SVC
+    assert "STALE_AFTER_S" in SYNC_SVC
+
+
+def test_the_run_is_always_closed():
+    """A failure has to reach the row. If it escapes, the run stays `running`."""
+    body = SYNC_SVC[SYNC_SVC.index("async def _run("):]
+
+    assert "finally:" in body
+    assert "except Exception" in body, "a broad catch, on purpose"
+    assert "repo.finish(" in body
+
+
+def test_the_background_task_is_referenced():
+    """asyncio holds only a weak reference to a task, so a fire-and-forget import
+    with nothing keeping it alive can be collected half way through - leaving a
+    partly-written estate and no error anywhere."""
+    assert "_TASKS.add(task)" in SYNC_SVC
+    assert "add_done_callback(_TASKS.discard)" in SYNC_SVC
+
+
+def test_the_task_does_not_borrow_the_request_session():
+    """It outlives the request, whose session is closed when the response is
+    sent - so borrowing it fails somewhere in the middle of the estate."""
+    body = SYNC_SVC[SYNC_SVC.index("async def _run("):]
+
+    assert "unit_of_work()" in body
+
+
+def test_missing_configuration_names_the_setting():
+    """"Connection refused" for a URL the operator never saw is the least useful
+    error this can produce, and `host.docker.internal` resolving nowhere outside a
+    container is exactly the default that survives in a .env for months."""
+    assert "DCIM_SIMULATOR_BASE_URL" in SYNC_SVC
+    assert "DCIM_SIMULATOR_PASSWORD" in SYNC_SVC
+    assert "NotConfiguredError" in API
+    assert "HTTP_503_SERVICE_UNAVAILABLE" in API
+
+
+def test_the_sync_is_audited():
+    """It adds devices, decommissions the ones that have gone and rewrites
+    endpoints across the estate. That is a privileged action."""
+    assert 'action="inventory.sync"' in API
+
+
+def test_the_button_polls_only_while_a_sync_runs():
+    """A fixed interval would either feel unresponsive against a 90-second import
+    or poll the API all day for the 23 hours nothing is syncing."""
+    src = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "features"
+           / "assets" / "commissioning" / "SyncBar.tsx").read_text(encoding="utf-8")
+
+    assert "refetchInterval: (q) => (q.state.data?.running ? 3_000 : false)" in src
+    # And a finished run refreshes the queue it just changed.
+    assert "commissioning-queue" in src

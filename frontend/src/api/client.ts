@@ -246,6 +246,29 @@ export interface CommissioningRow {
   proposed_state?: string | null;
 }
 
+/** One read of the device plane: when, by whom, and what it changed. */
+export interface SyncRun {
+  id: string;
+  started_at: string;
+  finished_at?: string | null;
+  status: 'running' | 'completed' | 'failed';
+  actor: string;
+  source?: string | null;
+  /** The importer's own report. Shape belongs to the importer, not to this UI. */
+  report?: Record<string, unknown> | null;
+  error?: string | null;
+  seconds?: number | null;
+}
+
+export interface SyncStatus {
+  /** False when the simulator address or credentials are unset - the button is
+   *  then disabled and says which setting is missing, rather than failing. */
+  configured: boolean;
+  not_configured_reason?: string | null;
+  running?: SyncRun | null;
+  recent: SyncRun[];
+}
+
 export interface CommissioningQueue {
   soak_hours: number;
   counts: { racked: number; ready: number; discrepancy: number; total: number };
@@ -2898,6 +2921,9 @@ export const api = {
   assetCharts: () => request<AssetCharts>('/assets/charts'),
   assetTrends: (days = 90) =>
     request<AssetTrends>(`/assets/trends?days=${days}`),
+
+  syncStatus: () => request<SyncStatus>('/commissioning/sync'),
+  startSync: () => request<SyncRun>('/commissioning/sync', { method: 'POST' }),
 
   commissioningQueue: (params: Record<string, string | undefined> = {}) => {
     const q = new URLSearchParams();
