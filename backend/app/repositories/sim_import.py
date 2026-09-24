@@ -52,12 +52,19 @@ async def finish(session: AsyncSession, run_id: str, *,
     """Close a run. Always called, including on failure - a row left `running`
     for ever would block every future sync, which is a worse outcome than a
     recorded failure."""
+    # Every parameter cast explicitly. `CASE WHEN :error IS NULL` gives PostgreSQL
+    # nothing to infer a type from, and it refuses the whole statement with
+    # "could not determine data type of parameter" - which surfaced here as an
+    # import that finished perfectly and then could not record that it had,
+    # leaving the row `running` and every later sync refused until the stale
+    # sweep caught it.
     await session.execute(text("""
         UPDATE sim_import_run
            SET finished_at = now(),
-               status = CASE WHEN :error IS NULL THEN 'completed' ELSE 'failed' END,
+               status = CASE WHEN CAST(:error AS text) IS NULL
+                             THEN 'completed' ELSE 'failed' END,
                report = CAST(:report AS jsonb),
-               error = :error
+               error = CAST(:error AS text)
          WHERE id = CAST(:id AS uuid)
     """), {"id": run_id, "report": report, "error": error})
 

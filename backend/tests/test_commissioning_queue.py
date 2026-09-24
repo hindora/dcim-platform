@@ -257,3 +257,20 @@ def test_the_button_polls_only_while_a_sync_runs():
     assert "refetchInterval: (q) => (q.state.data?.running ? 3_000 : false)" in src
     # And a finished run refreshes the queue it just changed.
     assert "commissioning-queue" in src
+
+
+def test_every_parameter_in_the_close_is_cast():
+    """`CASE WHEN :error IS NULL` gives PostgreSQL nothing to infer a type from
+    and it refuses the statement outright.
+
+    Found live: an import that read 685 devices perfectly could not then record
+    that it had finished, so the row stayed `running` and every later sync was
+    refused until the stale sweep released it. The failure was in the ONE
+    statement whose job is to survive a failure.
+    """
+    body = SYNC_REPO[SYNC_REPO.index("async def finish("):
+                     SYNC_REPO.index("async def get(")]
+
+    assert "CAST(:error AS text) IS NULL" in body
+    assert "error = CAST(:error AS text)" in body
+    assert "CAST(:report AS jsonb)" in body
