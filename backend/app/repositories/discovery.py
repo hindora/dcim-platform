@@ -85,9 +85,36 @@ async def match_addresses(session: AsyncSession,
             for r in rows}
 
 
+async def match_serials(session: AsyncSession,
+                        serials: list[str]) -> dict[str, dict[str, Any]]:
+    """Which of these serials inventory already knows, and at what address.
+
+    The serial is the STRONGER key and the only one that survives a device being
+    re-addressed. Matching on the address alone reported a moved machine as brand
+    new, and promoting it created a second record for one physical box - the exact
+    failure an audit exists to catch, produced by the audit.
+
+    `known_address` comes back so the caller can say WHY it matched: "this is
+    SW07, last known at 10.51.11.9" is an actionable sentence, and "this is SW07"
+    on a responder at a different address is a confusing one.
+    """
+    serials = [s for s in serials if s]
+    if not serials:
+        return {}
+    rows = (await session.execute(text("""
+        SELECT d.serial_number AS serial, d.id::text AS device_id, d.name,
+               host(d.mgmt_ip) AS known_address
+          FROM device d
+         WHERE d.serial_number = ANY(:serials)
+           AND d.lifecycle <> 'decommissioned'
+    """), {"serials": serials})).mappings().all()
+    return {r["serial"]: dict(r) for r in rows}
+
+
 async def upsert_candidate(session: AsyncSession, *, run_id: str, address: str,
                            protocol: str, identity: dict[str, Any],
                            matched_device_id: str | None,
+                           serial: str | None = None,
                            suggested_device_type: str | None = None,
                            suggested_vendor: str | None = None) -> str | None:
     """Record one responder.
@@ -97,19 +124,21 @@ async def upsert_candidate(session: AsyncSession, *, run_id: str, address: str,
     """
     row = (await session.execute(text("""
         INSERT INTO discovery_candidate
-               (run_id, address, protocol, identity, matched_device_id,
+               (run_id, address, protocol, identity, matched_device_id, serial,
                 suggested_device_type, suggested_vendor, status)
         VALUES (CAST(:run_id AS uuid), CAST(:address AS inet),
                 CAST(:protocol AS protocol_t), CAST(:identity AS jsonb),
-                CAST(:matched AS uuid), :dtype, :vendor, 'new')
+                CAST(:matched AS uuid), :serial, :dtype, :vendor, 'new')
         ON CONFLICT (address, protocol) WHERE status = 'new'
         DO UPDATE SET last_seen = now(),
                       run_id = EXCLUDED.run_id,
                       identity = EXCLUDED.identity,
+                      serial = EXCLUDED.serial,
                       matched_device_id = EXCLUDED.matched_device_id
         RETURNING id::text
     """), {"run_id": run_id, "address": address, "protocol": protocol,
            "identity": json.dumps(identity), "matched": matched_device_id,
+           "serial": serial,
            "dtype": suggested_device_type, "vendor": suggested_vendor})
     ).mappings().first()
     return row["id"] if row else None
@@ -132,10 +161,16 @@ async def list_candidates(session: AsyncSession, *, run_id: str | None = None,
 
     rows = (await session.execute(text(f"""
         SELECT c.id::text, c.run_id::text AS run_id, host(c.address) AS address,
-               c.protocol::text AS protocol, c.identity,
+               c.protocol::text AS protocol, c.identity, c.serial,
                c.suggested_device_type, c.suggested_vendor, c.suggested_model,
                c.matched_device_id::text AS matched_device_id,
                d.name AS matched_device_name,
+               -- Why it matched. A responder recognised by its SERIAL at an
+               -- address inventory did not expect has MOVED, and saying so is the
+               -- difference between a useful audit line and a confusing one.
+               host(d.mgmt_ip) AS matched_device_address,
+               (c.serial IS NOT NULL AND d.serial_number = c.serial)
+                   AS matched_on_serial,
                c.status, c.first_seen, c.last_seen
           FROM discovery_candidate c
           LEFT JOIN device d ON d.id = c.matched_device_id

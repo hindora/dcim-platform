@@ -244,3 +244,73 @@ def test_the_subnets_are_suggested_from_inventory():
     assert "async def mgmt_subnets" in repo_src
     # The count is what makes a result readable.
     assert "count(*) AS known" in repo_src
+
+
+# ------------------------------------------- a re-addressed device is not new
+
+DISCOVERY_REPO = (APP / "repositories" / "discovery.py").read_text(encoding="utf-8")
+
+
+def test_matching_prefers_the_serial_over_the_address():
+    """The serial is the only key that survives a device being re-addressed.
+
+    Matching on the address alone reported a moved machine as brand new, and
+    promoting it created a SECOND record for one physical box - the exact failure
+    an audit exists to catch, produced by the audit.
+    """
+    body = DISCOVERY_SVC[DISCOVERY_SVC.index("async def record_results("):]
+
+    assert "match_serials" in body
+    # Serial consulted FIRST, address only as the fallback.
+    by_serial = body.index("by_serial.get(serial)")
+    by_addr = body.index("known.get(addr)")
+    assert by_serial < by_addr, "the address is being tried before the serial"
+
+
+def test_a_serial_is_normalised_before_it_is_matched():
+    """Gear reports its own serial inconsistently. A match that fails on a
+    trailing space is worse than no match, because it looks like a new device."""
+    from app.services.discovery import _serial_of
+
+    assert _serial_of({"identity": {"serial": " abc123 "}}) == "ABC123"
+    assert _serial_of({"identity": {"serial": ""}}) is None
+    assert _serial_of({"identity": {}}) is None
+    assert _serial_of({}) is None
+    # Not a string: a device answering with a number must not crash a sweep.
+    assert _serial_of({"identity": {"serial": 7}}) is None
+
+
+def test_a_moved_device_is_counted_as_moved():
+    """A device matched by serial at an address inventory did not expect has moved
+    and nobody recorded it. That deserves its own number, not silence."""
+    body = DISCOVERY_SVC[DISCOVERY_SVC.index("async def record_results("):]
+
+    assert "readdressed" in body
+    assert "known_address" in DISCOVERY_REPO
+
+
+def test_the_candidate_says_why_it_matched():
+    """"This is SW07" on a responder at a different address is a confusing line.
+    "This is SW07, last known at 10.51.11.9" is an actionable one."""
+    assert "matched_on_serial" in DISCOVERY_REPO
+    assert "matched_device_address" in DISCOVERY_REPO
+
+
+def test_discovery_no_longer_hard_wires_the_simulator_convention():
+    """`PerAddressCommunity` is snmpsim's routing trick - one process serving every
+    agent from one socket - and it was compiled into the collector's production
+    path, so discovery could only ever have worked against that simulator.
+
+    It is a legitimate thing to configure and a wrong thing to default to.
+    """
+    app_go = (Path(__file__).resolve().parents[2] / "collector" / "internal"
+              / "app" / "app.go").read_text(encoding="utf-8")
+
+    assert "discovery.PerAddressCommunity," not in app_go, (
+        "the simulator's community convention is compiled in again")
+    assert "a.discoveryCommunities()" in app_go
+
+    cfg = (Path(__file__).resolve().parents[2] / "collector" / "internal"
+           / "config" / "config.go").read_text(encoding="utf-8")
+    assert "CommunityIsAddress" in cfg
+    assert "Communities []string" in cfg

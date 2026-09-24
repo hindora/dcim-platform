@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -30,6 +31,20 @@ const (
 	oidSysDescr    = "1.3.6.1.2.1.1.1.0"
 	oidSysObjectID = "1.3.6.1.2.1.1.2.0"
 	oidSysName     = "1.3.6.1.2.1.1.5.0"
+
+	// entPhysicalSerialNum for the first physical entity: the chassis serial.
+	//
+	// Worth one more OID in the probe because it is the only key that survives a
+	// device being RE-ADDRESSED. Matching a responder to inventory by address
+	// alone reported a moved machine as brand new, and promoting it created a
+	// second record for one physical box.
+	//
+	// ENTITY-MIB indexes entPhysicalEntry by an arbitrary entity number, and .1 is
+	// the chassis on the overwhelming majority of gear. A GET of the wrong index
+	// returns noSuchInstance, which is handled like any other absent OID - a
+	// device that does not answer it simply has no serial on its candidate, which
+	// is why the column is nullable.
+	oidEntSerial = "1.3.6.1.2.1.47.1.1.1.1.11.1"
 
 	// Hard ceiling on addresses in one run. A /16 is refused rather than
 	// truncated: silently sweeping the first 4096 of 65,536 and reporting
@@ -60,21 +75,40 @@ type Responder struct {
 	Identity map[string]string `json:"identity"`
 }
 
-// CommunityFor returns the community to try for an address.
+// CommunityFor returns the communities to TRY for an address, in order.
 //
-// On this device plane the SNMP community IS the device's own address: one
-// snmpsim process serves every agent from a single socket and routes by
-// community, so a wrong community is not an auth failure but silence. A real
-// site would carry a list of candidate communities instead; the shape is the
-// same, this is just the list that works here.
-type CommunityFor func(addr string) string
+// A list, not one string. Real discovery has no way to know which community a
+// device it has never spoken to will accept, so it tries the site's candidates
+// until one answers - and on SNMPv2c a wrong community is silence rather than an
+// auth failure, so trying is the only way to find out.
+//
+// This was a single string returning the address itself, which is the SIMULATOR's
+// convention: one snmpsim process serves every agent from one socket and routes by
+// community. That is a fine thing to be able to configure and a wrong thing to
+// hard-wire, which is what it was - against real gear the sweep would have found
+// nothing at all.
+type CommunityFor func(addr string) []string
 
-// PerAddressCommunity is the strategy this plane needs.
-func PerAddressCommunity(addr string) string { return addr }
+// PerAddressCommunity answers with the address itself.
+//
+// Correct for a snmpsim-backed plane and for nothing else. Selected explicitly by
+// configuration (`discovery.community_is_address`), never by default, so a
+// deployment that needs it says so and every other deployment does not silently
+// get it.
+func PerAddressCommunity(addr string) []string { return []string{addr} }
 
-// FixedCommunity is what a real site uses.
-func FixedCommunity(community string) CommunityFor {
-	return func(string) string { return community }
+// Communities tries a fixed list, in order. What a real site uses.
+//
+// Empty falls back to "public": a sweep with no configured community would
+// otherwise probe every address with an empty one and report a silent network,
+// which reads as "nothing is there" rather than "nobody told me how to ask".
+func Communities(list ...string) CommunityFor {
+	if len(list) == 0 {
+		list = []string{"public"}
+	}
+	out := make([]string, len(list))
+	copy(out, list)
+	return func(string) []string { return out }
 }
 
 // Hosts expands CIDRs into probeable addresses, minus network and broadcast.
@@ -180,10 +214,29 @@ func (s *Sweeper) Sweep(ctx context.Context, addrs []string) []Responder {
 	return out
 }
 
+// probe tries each candidate community until one answers.
+//
+// Sequential, and deliberately: the candidates are a short list, a sweep is a
+// background audit rather than an emergency, and firing every community at every
+// address at once would multiply the traffic by the length of the list for no
+// gain. A device that answers the first one costs exactly what it did before.
 func (s *Sweeper) probe(ctx context.Context, addr string) (Responder, bool) {
+	for _, community := range s.Community(addr) {
+		if r, ok := s.probeWith(ctx, addr, community); ok {
+			return r, true
+		}
+		if ctx.Err() != nil {
+			break
+		}
+	}
+	return Responder{}, false
+}
+
+func (s *Sweeper) probeWith(ctx context.Context, addr, community string,
+) (Responder, bool) {
 	conn := &gosnmp.GoSNMP{
 		Target: addr, Port: s.Port, Version: gosnmp.Version2c,
-		Community: s.Community(addr), Timeout: s.Timeout, Retries: s.Retries,
+		Community: community, Timeout: s.Timeout, Retries: s.Retries,
 		Context: ctx,
 	}
 	if err := conn.Connect(); err != nil {
@@ -198,7 +251,8 @@ func (s *Sweeper) probe(ctx context.Context, addr string) (Responder, bool) {
 	}
 	defer func() { _ = conn.Conn.Close() }()
 
-	res, err := conn.Get([]string{oidSysDescr, oidSysObjectID, oidSysName})
+	res, err := conn.Get([]string{oidSysDescr, oidSysObjectID, oidSysName,
+		oidEntSerial})
 	if err != nil || res == nil || len(res.Variables) == 0 {
 		return Responder{}, false
 	}
@@ -206,6 +260,7 @@ func (s *Sweeper) probe(ctx context.Context, addr string) (Responder, bool) {
 	identity := map[string]string{}
 	names := map[string]string{
 		oidSysDescr: "sysDescr", oidSysObjectID: "sysObjectID", oidSysName: "sysName",
+		oidEntSerial: "serial",
 	}
 	answered := false
 	for _, v := range res.Variables {
@@ -232,6 +287,14 @@ func (s *Sweeper) probe(ctx context.Context, addr string) (Responder, bool) {
 	if !answered {
 		return Responder{}, false
 	}
+	// An agent that answers the OID with an empty string has told us nothing. Left
+	// in, it would read downstream as "this device has no serial" rather than "it
+	// did not say", and an empty serial matches no device while looking like a key.
+	if strings.TrimSpace(identity["serial"]) == "" {
+		delete(identity, "serial")
+	}
+	// A sweep answering sysDescr but nothing else is still a responder; only the
+	// serial is optional here.
 	return Responder{Address: addr, Protocol: "snmp", Identity: identity}, true
 }
 

@@ -257,6 +257,24 @@ func New(cfg *config.Config, version string) (*App, error) {
 	return a, nil
 }
 
+// discoveryCommunities picks how a sweep will ask, from configuration.
+//
+// This used to be the literal discovery.PerAddressCommunity - the simulator's
+// convention, compiled in - so the sweep could not have found a real device. The
+// strategy is now a deployment's decision, and the log line says which one is in
+// force because a sweep that finds nothing is otherwise indistinguishable from a
+// network with nothing on it.
+func (a *App) discoveryCommunities() discovery.CommunityFor {
+	if a.cfg.Discovery.CommunityIsAddress {
+		a.log.Info("discovery will use each address as its own community",
+			"reason", "community_is_address is set; this suits an snmpsim-backed plane")
+		return discovery.PerAddressCommunity
+	}
+	list := a.cfg.Discovery.Communities
+	a.log.Info("discovery communities", "count", len(list))
+	return discovery.Communities(list...)
+}
+
 func (a *App) Run(ctx context.Context) error {
 	obs.Serve(ctx, a.cfg.Observability.MetricsListen,
 		a.cfg.Observability.HealthListen, a.ready, a.mets, a.log)
@@ -319,7 +337,7 @@ func (a *App) Run(ctx context.Context) error {
 			BaseURL:  a.cfg.DCIM.BaseURL,
 			Token:    a.cfg.Token,
 			Interval: a.cfg.DCIM.AssignmentInterval,
-			Sweeper:  discovery.New(a.log, discovery.PerAddressCommunity, 0),
+			Sweeper:  discovery.New(a.log, a.discoveryCommunities(), 0),
 			HTTP:     &http.Client{Timeout: a.cfg.DCIM.RequestTimeout},
 			Log:      a.log,
 		}).Run(ctx)

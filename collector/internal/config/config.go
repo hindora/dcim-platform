@@ -52,6 +52,11 @@ type Config struct {
 		QueueMultiplier int `yaml:"queue_multiplier"`
 	} `yaml:"workers"`
 
+	// How a sweep asks. Separate from the pollers' credentials on purpose: a poll
+	// knows which device it is talking to and has its credential, while discovery
+	// is talking to addresses it has never seen and has to try candidates.
+	Discovery DiscoveryCfg `yaml:"discovery"`
+
 	Protocols struct {
 		SNMP         ProtocolCfg     `yaml:"snmp"`
 		SNMPTrap     TrapCfg         `yaml:"snmp_trap"`
@@ -170,6 +175,27 @@ type GNMICfg struct {
 	GraceWindow time.Duration `yaml:"stream_grace_window"`
 }
 
+// DiscoveryCfg is how a sweep authenticates to devices it has never met.
+type DiscoveryCfg struct {
+	// SNMPv2c communities to try, in order. A list because a site cannot know
+	// which one a given device will accept, and on v2c a wrong community is
+	// silence rather than an auth failure - so trying is the only way to find out.
+	//
+	// Empty falls back to "public" rather than probing with nothing: a sweep with
+	// no community configured would report a silent network, which reads as
+	// "nothing is there" instead of "nobody told me how to ask".
+	Communities []string `yaml:"communities"`
+
+	// CommunityIsAddress uses each address as its own community.
+	//
+	// This is the SIMULATOR's convention - one snmpsim process serves every agent
+	// from one socket and routes by community - and it was hard-wired into the
+	// collector, which meant discovery could only ever have worked against that
+	// simulator. It is a legitimate thing to configure and a wrong thing to
+	// default to, so a deployment that needs it now says so out loud.
+	CommunityIsAddress bool `yaml:"community_is_address"`
+}
+
 type ProtocolCfg struct {
 	Enabled        bool          `yaml:"enabled"`
 	MaxConcurrent  int           `yaml:"max_concurrent"`
@@ -235,6 +261,10 @@ func Default() *Config {
 	c.Publisher.RingCapacity = 50000
 	c.Workers.PoolSize = 128
 	c.Workers.QueueMultiplier = 8
+	// No communities and no address trick: a fresh config sweeps with "public"
+	// (the fallback in discovery.Communities) and finds whatever answers that.
+	// Anything else is a deliberate entry in collector.yaml.
+	c.Discovery = DiscoveryCfg{}
 	c.Protocols.SNMP = ProtocolCfg{
 		Enabled: true, MaxConcurrent: 256, PerHost: 4,
 		Timeout: 3 * time.Second, Retries: 2, MaxRepetitions: 25,

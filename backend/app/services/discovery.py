@@ -94,33 +94,65 @@ async def create_run(session: AsyncSession, *, method: str,
     return run
 
 
+def _serial_of(responder: dict[str, Any]) -> str | None:
+    """The chassis serial a sweep read, if it read one.
+
+    Lives in `identity` because that is already a free-form blob the collector
+    sends, so adding it needed no change to the results contract. Normalised to
+    upper case with the padding stripped: gear reports its own serial
+    inconsistently, and a match that fails on a trailing space is worse than no
+    match at all because it looks like a new device.
+    """
+    val = (responder.get("identity") or {}).get("serial")
+    if not isinstance(val, str):
+        return None
+    return val.strip().upper() or None
+
+
 async def record_results(session: AsyncSession, run_id: str,
                          responders: list[dict[str, Any]]) -> dict[str, int]:
     """Stage what a sweep found and mark which of it inventory already knows."""
     addresses = [r["address"] for r in responders if r.get("address")]
     known = await repo.match_addresses(session, addresses)
+    # The serial travels inside `identity`, which is already a free-form blob on
+    # the wire, so reading it needs no change to the collector contract.
+    by_serial = await repo.match_serials(
+        session, [_serial_of(r) for r in responders])
 
-    unmanaged = 0
+    unmanaged, moved = 0, 0
     for r in responders:
         addr = r.get("address")
         if not addr:
             continue
         identity = r.get("identity") or {}
-        match = known.get(addr)
+        serial = _serial_of(r)
+        # SERIAL FIRST. It is the only key that survives a device being
+        # re-addressed, and address matching alone reported a moved machine as
+        # brand new - so promoting it created a second record for one box.
+        match = by_serial.get(serial) if serial else None
+        if match:
+            if match.get("known_address") and match["known_address"] != addr:
+                moved += 1
+        else:
+            match = known.get(addr)
         dtype, vendor = classify(identity)
         await repo.upsert_candidate(
             session, run_id=run_id, address=addr,
             protocol=r.get("protocol") or "snmp", identity=identity,
             matched_device_id=match["device_id"] if match else None,
+            serial=serial,
             suggested_device_type=dtype, suggested_vendor=vendor)
         if not match:
             unmanaged += 1
 
     await repo.finish_run(session, run_id, found=len(responders))
     log.info("discovery run recorded", run_id=run_id, responders=len(responders),
-             known=len(responders) - unmanaged, unmanaged=unmanaged)
+             known=len(responders) - unmanaged, unmanaged=unmanaged,
+             # Worth its own number: a device matched by serial at an address
+             # inventory did not expect has MOVED, and nobody recorded it.
+             readdressed=moved)
     return {"found": len(responders), "known": len(responders) - unmanaged,
-            "unmanaged": unmanaged}
+            "unmanaged": unmanaged, "readdressed": moved}
 
 
 async def promote(session: AsyncSession, candidate_id: str,

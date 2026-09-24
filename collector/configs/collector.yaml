@@ -44,6 +44,25 @@ workers:
   pool_size: 128
   queue_multiplier: 8
 
+# How a discovery sweep asks a device it has never spoken to.
+#
+# Separate from the pollers' credentials: a poll knows which device it is talking
+# to and has its credential, while a sweep is probing addresses nobody has claimed
+# and has to try candidates. On SNMPv2c a wrong community is silence rather than an
+# auth failure, so trying in turn is the only way to find out.
+discovery:
+  # Tried in order. Empty falls back to "public" rather than probing with nothing,
+  # because a sweep with no community would report a silent network - which reads
+  # as "nothing is there" instead of "nobody told me how to ask".
+  communities: []
+
+  # THIS PLANE ONLY. One snmpsim process serves every simulated agent from a
+  # single socket and routes by community, so here the community IS the device's
+  # own address. That convention used to be compiled into the collector, which
+  # meant discovery could only ever have worked against this simulator; it is now
+  # a deployment's choice and a real site leaves it false.
+  community_is_address: true
+
 protocols:
   snmp:
     enabled: true
