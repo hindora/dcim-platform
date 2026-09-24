@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import audit
+from app.core.logging import get_logger
 from app.core.security import Principal, current_principal, require_role
 from app.db.session import get_session
 from app.repositories import discovery as repo
@@ -16,6 +17,7 @@ from app.repositories import meter_channels as meter_repo
 from app.services import discovery as service
 from app.services import meter_commissioning
 
+log = get_logger("api.discovery")
 router = APIRouter(prefix="/discovery", tags=["discovery"])
 
 
@@ -27,6 +29,35 @@ class RunRequest(BaseModel):
 
 class PromoteRequest(BaseModel):
     name: str
+    device_type: str | None = None
+    # Fulfil an existing reservation instead of creating a record.
+    #
+    # The operator chooses it because there is no key to match on: a placeholder
+    # has no address and no serial, which is the whole reason it is a placeholder.
+    # Without this, promotion left TWO records for one machine - the placeholder
+    # still holding its rack unit, and a discovered device with no placement.
+    attach_to_device_id: str | None = None
+    # Accept the sweep's guesses. Resolved against the catalog and never created
+    # from, so an unrecognised name resolves to nothing rather than adding "DELL"
+    # beside "Dell Inc.".
+    vendor: str | None = None
+    model: str | None = None
+
+
+class BulkIgnoreRequest(BaseModel):
+    candidate_ids: list[str] = Field(min_length=1, max_length=500)
+
+
+class BulkPromoteRequest(BaseModel):
+    """Promote several responders, each under the name it reports.
+
+    No name field, deliberately. A bulk promote cannot ask for 40 names, and
+    inventing them from a template - prefix plus last octet - would put addresses
+    into the estate's naming scheme for ever. So this only takes candidates that
+    ALREADY say what they are called, and the caller is told which ones it skipped.
+    """
+
+    candidate_ids: list[str] = Field(min_length=1, max_length=500)
     device_type: str | None = None
 
 
@@ -73,6 +104,20 @@ async def suggest_subnets(
     "is there anything here we do not know about" rather than guessing.
     """
     return {"subnets": await repo.mgmt_subnets(session)}
+
+
+@router.get("/attachable", summary="Reservations a responder could be fulfilling")
+async def attachable(
+    device_type: str | None = None,
+    session: AsyncSession = Depends(get_session),
+    _: Principal = Depends(current_principal),
+) -> dict[str, Any]:
+    """`planned` and `in_stock` records - hardware somebody is waiting for.
+
+    These hold a rack unit and a power budget that arriving hardware should inherit
+    rather than duplicate, and they carry the placement a sweep cannot know.
+    """
+    return {"items": await repo.attachable_devices(session, device_type=device_type)}
 
 
 @router.get("/runs", summary="List discovery runs")
@@ -164,6 +209,78 @@ async def unignore(candidate_id: str, request: Request,
         return result
     except service.DiscoveryError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from None
+
+
+@router.post("/candidates/bulk-ignore", summary="Dismiss many responders")
+async def bulk_ignore(body: BulkIgnoreRequest, request: Request,
+                      session: AsyncSession = Depends(get_session),
+                      principal: Principal = Depends(require_role("operator")),
+                      ) -> dict[str, Any]:
+    """One audit row PER candidate, not per batch.
+
+    Dismissing forty responders is forty decisions about forty addresses, and "40
+    candidates ignored" is not something anybody can act on six months later. Same
+    rule the operator bulk lifecycle move follows.
+    """
+    actor = audit.actor_of(principal)
+    ip, agent = audit.client_of(request)
+    done, failed = [], []
+    for cid in body.candidate_ids:
+        try:
+            await service.ignore(session, cid)
+            await audit.record(session, actor=actor, action="discovery.ignore",
+                               target_type="candidate", target_id=cid,
+                               ip=ip, user_agent=agent)
+            done.append(cid)
+        except service.DiscoveryError as exc:
+            failed.append({"id": cid, "error": str(exc)})
+    await session.commit()
+    log.info("bulk ignore", actor=actor, ignored=len(done), failed=len(failed))
+    return {"ignored": len(done), "failed": failed}
+
+
+@router.post("/candidates/bulk-promote",
+             summary="Promote many responders, each under the name it reports")
+async def bulk_promote(body: BulkPromoteRequest, request: Request,
+                       session: AsyncSession = Depends(get_session),
+                       principal: Principal = Depends(require_role("operator")),
+                       ) -> dict[str, Any]:
+    """Skips anything that does not name itself, and says which.
+
+    A responder with no sysName or HostName cannot be promoted in bulk, because the
+    alternative is inventing a name from its address - which would put IP addresses
+    into the estate's naming scheme permanently. Those are reported back rather than
+    silently dropped, so the operator knows to name them one at a time.
+    """
+    actor = audit.actor_of(principal)
+    ip, agent = audit.client_of(request)
+    promoted, skipped, failed = [], [], []
+    for cid in body.candidate_ids:
+        cand = await repo.get_candidate(session, cid)
+        if cand is None:
+            failed.append({"id": cid, "error": "no such candidate"})
+            continue
+        identity = cand.get("identity") or {}
+        name = str(identity.get("hostName") or identity.get("sysName") or "").strip()
+        if not name:
+            skipped.append({"id": cid, "address": cand.get("address"),
+                            "reason": "it does not report a name"})
+            continue
+        try:
+            result = await service.promote(
+                session, cid,
+                {"name": name, "device_type": body.device_type}, actor=actor)
+            await audit.record(session, actor=actor, action="discovery.promote",
+                               target_type="candidate", target_id=cid,
+                               ip=ip, user_agent=agent,
+                               after={"name": name, "bulk": True})
+            promoted.append(result)
+        except service.DiscoveryError as exc:
+            failed.append({"id": cid, "error": str(exc)})
+    await session.commit()
+    log.info("bulk promote", actor=actor, promoted=len(promoted),
+             skipped=len(skipped), failed=len(failed))
+    return {"promoted": promoted, "skipped": skipped, "failed": failed}
 
 
 # ── meter channel schedules ──────────────────────────────────────────────────

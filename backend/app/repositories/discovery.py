@@ -252,3 +252,86 @@ async def mgmt_subnets(session: AsyncSession) -> list[dict[str, Any]]:
          LIMIT 32
     """))).mappings().all()
     return [dict(r) for r in rows]
+
+
+async def resolve_catalog(session: AsyncSession, *, vendor: str | None,
+                          model: str | None) -> tuple[str | None, str | None]:
+    """Match a swept vendor and model to rows that already exist.
+
+    MATCH ONLY - nothing is created. The importer creates vendors and models
+    because its input is an authoritative export; discovery's input is a regex over
+    a sysDescr and a string a BMC volunteered. Creating from that would fill the
+    catalog with "Dell Inc.", "DELL" and "Dell" as three vendors, and every
+    composition chart downstream would then have to cope with it.
+
+    So an unrecognised vendor resolves to nothing and the operator sets it on the
+    asset afterwards - which is a smaller job than merging duplicate catalog rows.
+    """
+    vendor_id = None
+    if vendor:
+        # Exact first, then a UNIQUE substring. Exact alone resolved almost
+        # nothing, which the first live run showed plainly: the catalog says
+        # "Dell Technologies", "Cisco Systems" and "APC by Schneider Electric"
+        # while a sysDescr regex yields "Dell", "Cisco" and "Schneider Electric".
+        #
+        # Ambiguity is refused rather than guessed. If a short name matches two
+        # vendors there is no way to know which, and attaching the wrong one is
+        # worse than attaching none - a wrong vendor is a fact somebody will read
+        # and believe, where a missing one is a gap they can fill.
+        rows = (await session.execute(text("""
+            SELECT id::text, name FROM vendor
+             WHERE lower(name) = lower(:name)
+                OR position(lower(:name) in lower(name)) > 0
+             ORDER BY (lower(name) = lower(:name)) DESC, length(name)
+             LIMIT 3
+        """), {"name": vendor.strip()})).mappings().all()
+        if len(rows) == 1 or (rows and rows[0]["name"].lower() == vendor.strip().lower()):
+            vendor_id = rows[0]["id"]
+    model_id = None
+    if model and vendor_id:
+        # Scoped to the vendor: "R7525" from two manufacturers is two models, and
+        # a name-only match would attach the wrong one.
+        rows = (await session.execute(text("""
+            SELECT id::text, name FROM model
+             WHERE vendor_id = CAST(:vid AS uuid)
+               AND (lower(name) = lower(:name)
+                    OR position(lower(:name) in lower(name)) > 0)
+             ORDER BY (lower(name) = lower(:name)) DESC, length(name)
+             LIMIT 3
+        """), {"vid": vendor_id, "name": model.strip()})).mappings().all()
+        if len(rows) == 1 or (rows and rows[0]["name"].lower() == model.strip().lower()):
+            model_id = rows[0]["id"]
+    return vendor_id, model_id
+
+
+async def attachable_devices(session: AsyncSession, *,
+                             device_type: str | None = None,
+                             limit: int = 100) -> list[dict[str, Any]]:
+    """Records a responder could BE: hardware that was requested and is expected.
+
+    `planned` and `in_stock` only. Those are the states that mean "we are waiting
+    for this box", and they are the ones holding a rack unit and a power budget
+    that the arriving hardware should inherit rather than duplicate.
+
+    Anything already `installed` or `in_service` is either this device - in which
+    case the candidate matched it and promotion is refused - or a different one.
+    """
+    where = ["d.lifecycle::text IN ('planned', 'in_stock')"]
+    params: dict[str, Any] = {"limit": limit}
+    if device_type:
+        where.append("d.device_type = :dtype")
+        params["dtype"] = device_type
+    rows = (await session.execute(text(f"""
+        SELECT d.id::text, d.name, d.device_type, d.lifecycle::text AS lifecycle,
+               rk.name AS rack_name, d.u_start, dc.code AS datacenter_code,
+               rm.name AS room_name
+          FROM device d
+          LEFT JOIN rack rk     ON rk.id = d.rack_id
+          LEFT JOIN rack_row rr ON rr.id = rk.row_id
+          LEFT JOIN room rm     ON rm.id = COALESCE(rr.room_id, d.room_id)
+          LEFT JOIN datacenter dc ON dc.id = rm.datacenter_id
+         WHERE {" AND ".join(where)}
+         ORDER BY d.name
+         LIMIT :limit
+    """), params)).mappings().all()
+    return [dict(r) for r in rows]

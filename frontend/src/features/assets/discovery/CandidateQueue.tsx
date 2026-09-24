@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import {
   api,
   type AssetFilterOptions,
+  type AttachableDevice,
   type DiscoveryCandidate,
 } from '../../../api/client';
 import { usePaged } from '../../../components/Pagination';
@@ -105,7 +106,7 @@ export function CandidateQueue() {
             never recorded, re-addressed with no serial to match on, or not
             supposed to be there at all.
           </p>
-          <CandidateTable rows={unmatched} />
+          <CandidateTable rows={unmatched} bulk />
         </section>
       )}
 
@@ -169,20 +170,57 @@ function Expected({ rows, total }: { rows: DiscoveryCandidate[]; total: number }
   );
 }
 
-function CandidateTable({ rows }: { rows: DiscoveryCandidate[] }) {
+function CandidateTable({ rows, bulk = false }: {
+  rows: DiscoveryCandidate[]; bulk?: boolean;
+}) {
   const paged = usePaged(rows, { noun: 'responders' });
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+
+  // Only what is on the page, and only what is still actionable. A "select all"
+  // that quietly included rows the operator cannot see is how a bulk action
+  // surprises somebody.
+  const selectable = paged.rows.filter((c) => c.status === 'new');
+  const allPicked = selectable.length > 0
+    && selectable.every((c) => picked.has(c.id));
+
+  const toggle = (id: string) => setPicked((p) => {
+    const next = new Set(p);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+
   return (
     <>
+      {bulk && (
+        <BulkBar ids={[...picked]} rows={rows}
+                 onDone={() => setPicked(new Set())} />
+      )}
       <div className="asset-scroll">
         <table>
           <thead>
             <tr>
+              {bulk && (
+                <th>
+                  <input type="checkbox" checked={allPicked}
+                         aria-label="Select every responder on this page"
+                         onChange={() => setPicked((p) => {
+                           const next = new Set(p);
+                           if (allPicked) selectable.forEach((c) => next.delete(c.id));
+                           else selectable.forEach((c) => next.add(c.id));
+                           return next;
+                         })} />
+                </th>
+              )}
               <th>Address</th><th>Identity</th><th>Serial</th>
               <th>Matched</th><th>Suggested</th><th>Last seen</th><th>Action</th>
             </tr>
           </thead>
           <tbody>
-            {paged.rows.map((c) => <Row key={c.id} c={c} />)}
+            {paged.rows.map((c) => (
+              <Row key={c.id} c={c}
+                   picked={bulk ? picked.has(c.id) : undefined}
+                   onPick={bulk ? () => toggle(c.id) : undefined} />
+            ))}
           </tbody>
         </table>
       </div>
@@ -191,13 +229,107 @@ function CandidateTable({ rows }: { rows: DiscoveryCandidate[] }) {
   );
 }
 
-function Row({ c }: { c: DiscoveryCandidate }) {
+/** Act on several responders at once.
+ *
+ *  Promote takes NO name field. A bulk promote cannot ask for forty names, and
+ *  deriving them from addresses would put IP addresses into the estate's naming
+ *  scheme permanently - so this only promotes responders that already say what they
+ *  are called, and the count says how many of the selection that is. The rest are
+ *  named one at a time, which is the honest amount of work.
+ */
+function BulkBar({ ids, rows, onDone }: {
+  ids: string[]; rows: DiscoveryCandidate[]; onDone: () => void;
+}) {
+  const qc = useQueryClient();
+  const [error, setError] = useState<string | null>(null);
+  const [report, setReport] = useState<string | null>(null);
+
+  const chosen = rows.filter((c) => ids.includes(c.id));
+  const nameable = chosen.filter(
+    (c) => String(c.identity?.hostName ?? c.identity?.sysName ?? '').trim());
+
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: ['discovery-candidates'] });
+    qc.invalidateQueries({ queryKey: ['discovery-runs'] });
+    qc.invalidateQueries({ queryKey: ['asset-summary'] });
+    qc.invalidateQueries({ queryKey: ['commissioning-queue'] });
+    onDone();
+  };
+
+  const promote = useMutation({
+    mutationFn: () => api.bulkPromoteCandidates(nameable.map((c) => c.id)),
+    onSuccess: (r) => {
+      setError(null);
+      // Skipped rows are reported rather than silently dropped: an operator who
+      // selected forty and promoted thirty-seven needs to know which three, and
+      // why.
+      setReport(`${r.promoted.length} promoted`
+        + (r.skipped.length ? `, ${r.skipped.length} skipped (no name reported)` : '')
+        + (r.failed.length ? `, ${r.failed.length} failed` : ''));
+      refresh();
+    },
+    onError: (e) => setError(String(e)),
+  });
+
+  const dismiss = useMutation({
+    mutationFn: () => api.bulkIgnoreCandidates(ids),
+    onSuccess: (r) => {
+      setError(null);
+      setReport(`${r.ignored} dismissed`
+        + (r.failed.length ? `, ${r.failed.length} failed` : ''));
+      refresh();
+    },
+    onError: (e) => setError(String(e)),
+  });
+
+  if (ids.length === 0) {
+    return report ? <p className="muted">{report}</p> : null;
+  }
+
+  return (
+    <div className="asset-toolbar">
+      <span className="muted">{ids.length} selected</span>
+      <button type="button"
+              disabled={nameable.length === 0 || promote.isPending}
+              onClick={() => { setError(null); promote.mutate(); }}>
+        {promote.isPending ? 'Promoting…'
+          : `Promote ${nameable.length} by reported name`}
+      </button>
+      <button type="button" disabled={dismiss.isPending}
+              onClick={() => { setError(null); dismiss.mutate(); }}>
+        {dismiss.isPending ? 'Dismissing…' : `Ignore ${ids.length}`}
+      </button>
+      {nameable.length < ids.length && (
+        <span className="muted">
+          {ids.length - nameable.length} of these report no name and must be
+          promoted individually.
+        </span>
+      )}
+      {error && <div className="banner">{error}</div>}
+      {report && <span className="muted">{report}</span>}
+    </div>
+  );
+}
+
+function Row({ c, picked, onPick }: {
+  c: DiscoveryCandidate; picked?: boolean; onPick?: () => void;
+}) {
   const descr = String(c.identity?.sysDescr ?? c.identity?.sysName ?? '');
   const movedFrom = c.matched_device_address && c.matched_device_address !== c.address
     ? c.matched_device_address : null;
 
   return (
     <tr>
+      {onPick && (
+        <td>
+          {/* Only an actionable row is selectable: a promoted one has nothing left
+              to do to it, and including it would make a count that lies. */}
+          {c.status === 'new' && (
+            <input type="checkbox" checked={Boolean(picked)} onChange={onPick}
+                   aria-label={`Select ${c.address ?? 'responder'}`} />
+          )}
+        </td>
+      )}
       <td className="asset-tag">
         {c.address ?? '—'}
         <div className="muted">{c.protocol.toUpperCase()}</div>
@@ -324,9 +456,21 @@ function CandidateActions({ c }: { c: DiscoveryCandidate }) {
 function PromoteDialog({ c, onClose, onDone }: {
   c: DiscoveryCandidate; onClose: () => void; onDone: () => void;
 }) {
-  const [name, setName] = useState(String(c.identity?.sysName ?? '').trim());
+  const reported = String(c.identity?.hostName ?? c.identity?.sysName ?? '').trim();
+  const [name, setName] = useState(reported);
   const [type, setType] = useState(c.suggested_device_type ?? '');
+  const [attachTo, setAttachTo] = useState('');
   const [error, setError] = useState<string | null>(null);
+
+  // Records somebody is waiting for. Offered because promotion used to INSERT
+  // unconditionally, which left two rows for one machine: the placeholder still
+  // holding its rack unit, and a discovered device with no placement at all.
+  const { data: attachable } = useQuery<{ items: AttachableDevice[] }>({
+    queryKey: ['attachable', type],
+    queryFn: () => api.attachableDevices(type || undefined),
+  });
+  const targets = attachable?.items ?? [];
+  const target = targets.find((t) => t.id === attachTo);
 
   // The real vocabulary, not a free-text box. A typo here creates a device with a
   // garbage type that every category roll-up then has to cope with.
@@ -338,6 +482,11 @@ function PromoteDialog({ c, onClose, onDone }: {
   const save = useMutation({
     mutationFn: () => api.promoteCandidate(c.id, {
       name: name.trim(), device_type: type || undefined,
+      attach_to_device_id: attachTo || undefined,
+      // The sweep's guesses, sent only so the server can resolve them against the
+      // catalog. It creates nothing from them.
+      vendor: c.suggested_vendor ?? undefined,
+      model: c.suggested_model ?? undefined,
     }),
     onSuccess: () => { onDone(); onClose(); },
     onError: (e) => setError(String(e)),
@@ -346,18 +495,42 @@ function PromoteDialog({ c, onClose, onDone }: {
   return (
     <Dialog title={`Promote ${c.address ?? 'responder'}`} onClose={onClose}>
       <div className="asset-form">
-        {/* Pre-filled from sysName because that is usually what the device calls
-            itself, and editable because a device naming itself is not the same as
-            the estate's naming scheme. */}
-        <label>
-          <span>Name</span>
-          <input value={name} autoFocus
-                 onChange={(e) => setName(e.target.value)}
-                 placeholder="as the estate names it" />
-        </label>
+        {/* First, because the answer changes what everything below means: an
+            attached responder inherits a name and a rack, and a new record needs
+            both invented. */}
+        {targets.length > 0 && (
+          <label>
+            <span>Fulfils</span>
+            <select value={attachTo}
+                    onChange={(e) => setAttachTo(e.target.value)}>
+              <option value="">— a new record —</option>
+              {targets.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name} ({t.lifecycle})
+                  {t.rack_name ? ` · ${t.rack_name}` : ''}
+                  {t.u_start ? ` U${t.u_start}` : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+
+        {/* Pre-filled from the name the device reports, and editable because a
+            device naming itself is not the same as the estate's naming scheme.
+            Hidden when attaching: the record already has a name, and offering to
+            change it here would bury a rename inside a commissioning step. */}
+        {!attachTo && (
+          <label>
+            <span>Name</span>
+            <input value={name} autoFocus
+                   onChange={(e) => setName(e.target.value)}
+                   placeholder="as the estate names it" />
+          </label>
+        )}
         <label>
           <span>Device type</span>
-          <select value={type} onChange={(e) => setType(e.target.value)}>
+          <select value={type} onChange={(e) => { setType(e.target.value);
+                                                  setAttachTo(''); }}>
             <option value="">— choose —</option>
             {(options?.device_types ?? []).map((t) => (
               <option key={t.code} value={t.code}>
@@ -385,16 +558,28 @@ function PromoteDialog({ c, onClose, onDone }: {
         )}
 
         <p className="muted asset-form-wide">
-          It will be recorded as <strong>installed</strong> — racked, and not
-          accepted into service. Placement is not asked for: a sweep cannot know
-          which rack it is in. Accept it from the Commissioning page once you are
-          satisfied with it.
+          {target ? (
+            <>
+              <strong>{target.name}</strong> keeps its placement
+              {target.rack_name ? ` (${target.rack_name}${
+                target.u_start ? ` U${target.u_start}` : ''})` : ''} and takes this
+              responder's address and serial. One record, not two.
+            </>
+          ) : (
+            <>
+              A new record, <strong>installed</strong> — racked, and not accepted
+              into service. Placement is not asked for: a sweep cannot know which
+              rack it is in.
+            </>
+          )}
+          {' '}Accept it from the Commissioning page once you are satisfied.
         </p>
         {error && <div className="banner">{error}</div>}
       </div>
       <DialogActions>
         <button type="button" onClick={onClose}>Cancel</button>
-        <button type="button" disabled={!name.trim() || !type || save.isPending}
+        <button type="button"
+                disabled={(!attachTo && (!name.trim() || !type)) || save.isPending}
                 onClick={() => { setError(null); save.mutate(); }}>
           {save.isPending ? 'Promoting…' : 'Promote'}
         </button>

@@ -463,3 +463,136 @@ def test_the_dismissed_query_is_not_declared_after_an_early_return():
     dismissed = QUEUE_UI.index("queryKey: ['discovery-candidates', 'ignored']")
 
     assert dismissed < err, "the dismissed query moved below the error return"
+
+
+# ------------------------------------- a reservation and its hardware are one row
+
+def test_promotion_can_fulfil_a_reservation():
+    """The join the onboarding path was missing.
+
+    A capacity request creates a `planned` placeholder holding rack units and
+    power; the box arrives, an engineer racks it, a sweep finds it - and promotion
+    used to INSERT, leaving two records for one machine: the placeholder still
+    holding the slot, and a discovered device with no placement at all.
+    """
+    assert "attach_to_device_id" in API_DISC
+    assert "async def _attach(" in DISCOVERY_SVC
+    body = DISCOVERY_SVC[DISCOVERY_SVC.index("async def _attach("):
+                         DISCOVERY_SVC.index("async def ignore(")]
+    # It UPDATES the record rather than inserting beside it.
+    assert "UPDATE device" in body
+    assert "INSERT INTO device " not in body
+
+
+def test_attaching_keeps_the_placement_and_takes_the_address():
+    """Neither source is overruled: the reservation knows the rack, which a sweep
+    cannot, and the wire knows the address and serial, which the reservation could
+    not."""
+    body = DISCOVERY_SVC[DISCOVERY_SVC.index("async def _attach("):
+                         DISCOVERY_SVC.index("async def ignore(")]
+
+    assert "mgmt_ip = CAST(:ip AS inet)" in body
+    assert "lifecycle = 'installed'" in body
+    # Placement is untouched - not set, not cleared.
+    for column in ("rack_id", "u_start", "room_id"):
+        assert column not in body, f"attaching is overwriting {column}"
+
+
+def test_only_expected_hardware_can_be_fulfilled():
+    """`planned` and `in_stock` are the states that mean "we are waiting for this".
+    Anything already installed is either this device - in which case the candidate
+    matched it and promotion is refused - or a different one."""
+    body = DISCOVERY_SVC[DISCOVERY_SVC.index("async def _attach("):
+                         DISCOVERY_SVC.index("async def ignore(")]
+
+    assert '("planned", "in_stock")' in body
+    # And a record that already answers somewhere is not a reservation.
+    assert 'target["mgmt_ip"]' in body
+
+
+def test_a_disagreeing_serial_refuses_the_attach():
+    """Two serials that differ mean this is not that box. Refusing beats silently
+    overwriting the serial an operator typed off a delivery note."""
+    body = DISCOVERY_SVC[DISCOVERY_SVC.index("async def _attach("):
+                         DISCOVERY_SVC.index("async def ignore(")]
+
+    assert "are not the same machine" in body
+
+
+def test_the_catalog_is_matched_and_never_created_from():
+    """The importer creates vendors because its input is an authoritative export.
+    Discovery's input is a regex over a sysDescr, and creating from that fills the
+    catalog with "Dell Inc.", "DELL" and "Dell" as three vendors."""
+    body = DISCOVERY_REPO[DISCOVERY_REPO.index("async def resolve_catalog("):]
+    body = body[:body.index("async def attachable_devices(")]
+
+    assert "FROM vendor" in body
+    assert "INSERT INTO vendor" not in body
+    assert "INSERT INTO model" not in body
+    # Model lookup is scoped to the vendor: "R7525" from two manufacturers is two
+    # models, and a name-only match would attach the wrong one.
+    assert "vendor_id = CAST(:vid AS uuid)" in body
+
+
+def test_the_catalog_lookup_is_not_exact_only():
+    """Exact matching resolved almost nothing, which the first live run showed:
+    the catalog says "Dell Technologies", "Cisco Systems" and "APC by Schneider
+    Electric" while a sysDescr regex yields "Dell", "Cisco" and "Schneider
+    Electric"."""
+    body = DISCOVERY_REPO[DISCOVERY_REPO.index("async def resolve_catalog("):]
+    body = body[:body.index("async def attachable_devices(")]
+
+    assert "position(lower(:name) in lower(name)) > 0" in body
+
+
+def test_an_ambiguous_catalog_match_resolves_to_nothing():
+    """If a short name matches two vendors there is no way to know which, and a
+    wrong vendor is a fact somebody will read and believe - where a missing one is
+    a gap they can fill."""
+    body = DISCOVERY_REPO[DISCOVERY_REPO.index("async def resolve_catalog("):]
+    body = body[:body.index("async def attachable_devices(")]
+
+    # Exact wins outright; otherwise a single hit is required.
+    assert "len(rows) == 1" in body
+    assert "LIMIT 3" in body, "it must be able to SEE that a match is ambiguous"
+
+
+def test_bulk_promote_never_invents_a_name():
+    """Deriving names from addresses would put IP addresses into the estate's
+    naming scheme permanently. A responder that does not name itself is reported
+    back, not given one."""
+    assert "async def bulk_promote(" in API_DISC
+    body = API_DISC[API_DISC.index("async def bulk_promote("):]
+
+    assert 'identity.get("hostName") or identity.get("sysName")' in body
+    assert "skipped.append" in body
+    assert "it does not report a name" in body
+
+
+def test_bulk_actions_audit_each_candidate():
+    """Dismissing forty responders is forty decisions about forty addresses, and
+    "40 candidates ignored" is not something anybody can act on six months later -
+    the same rule the operator bulk lifecycle move follows."""
+    for fn in ("bulk_ignore", "bulk_promote"):
+        body = API_DISC[API_DISC.index(f"async def {fn}("):]
+        body = body[:body.index("return {")]
+        assert "audit.record(" in body, f"{fn} does not audit per candidate"
+        assert "for cid in body.candidate_ids" in body
+
+
+def test_the_bulk_selection_only_offers_actionable_rows():
+    """A count that included rows with nothing left to do to them would lie, and a
+    select-all covering rows the operator cannot see is how a bulk action
+    surprises somebody."""
+    assert "c.status === 'new'" in QUEUE_UI
+    assert "paged.rows.filter" in QUEUE_UI
+    # Offered on the unmatched group only - the others are devices that exist,
+    # where the action is to look at one rather than act on forty.
+    assert "<CandidateTable rows={unmatched} bulk />" in QUEUE_UI
+
+
+def test_attaching_hides_the_name_field():
+    """The record already has a name. Offering to change it here would bury a
+    rename inside a commissioning step."""
+    assert "{!attachTo && (" in QUEUE_UI
+    assert "One record, not two." in QUEUE_UI

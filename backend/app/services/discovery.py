@@ -205,6 +205,22 @@ async def promote(session: AsyncSession, candidate_id: str,
     if not name or not device_type:
         raise DiscoveryError("promotion needs at least a name and a device_type")
 
+    # The vendor and model the sweep read, resolved against the catalog rather than
+    # created from it. See repo.resolve_catalog for why nothing is created here.
+    identity = cand["identity"] or {}
+    vendor_id, model_id = await repo.resolve_catalog(
+        session,
+        vendor=payload.get("vendor") or cand.get("suggested_vendor"),
+        model=payload.get("model") or identity.get("model")
+        or cand.get("suggested_model"))
+    serial = (identity.get("serial") or "").strip().upper() or None
+
+    attach_to = payload.get("attach_to_device_id")
+    if attach_to:
+        return await _attach(session, cand, candidate_id, attach_to,
+                             vendor_id=vendor_id, model_id=model_id,
+                             serial=serial, actor=actor)
+
     # `installed`, not `in_service`. A sweep found a box answering on the
     # management network, which is evidence somebody RACKED it and nothing more.
     # Accepting it into service is a cut-over with a change record and a workload
@@ -215,12 +231,15 @@ async def promote(session: AsyncSession, candidate_id: str,
     # at it. Now it appears there as "ready to accept" and somebody presses the
     # button, which is the whole point of that screen.
     row = (await session.execute(text("""
-        INSERT INTO device (name, device_type, mgmt_ip, lifecycle, attributes)
+        INSERT INTO device (name, device_type, mgmt_ip, lifecycle, attributes,
+                            vendor_id, model_id, serial_number)
         VALUES (:name, :dtype, CAST(:ip AS inet), 'installed',
-                CAST(:attrs AS jsonb))
+                CAST(:attrs AS jsonb),
+                CAST(:vendor AS uuid), CAST(:model AS uuid), :serial)
         RETURNING id::text, name
     """), {
         "name": name, "dtype": device_type, "ip": cand["address"],
+        "vendor": vendor_id, "model": model_id, "serial": serial,
         # Keep the evidence. Six months from now the question "why is this
         # device recorded as a switch" has an answer.
         "attrs": json.dumps({
@@ -246,6 +265,83 @@ async def promote(session: AsyncSession, candidate_id: str,
     log.info("candidate promoted", candidate_id=candidate_id,
              device_id=row["id"], name=row["name"])
     return {"device_id": row["id"], "name": row["name"]}
+
+
+async def _attach(session: AsyncSession, cand: dict[str, Any], candidate_id: str,
+                  device_id: str, *, vendor_id: str | None, model_id: str | None,
+                  serial: str | None, actor: str | None) -> dict[str, Any]:
+    """Fulfil a reservation with the hardware that has turned up.
+
+    This is the join the onboarding path was missing. A capacity request creates a
+    `planned` placeholder holding rack units and power; the box arrives, an engineer
+    racks it, a sweep finds it - and promotion used to INSERT, leaving two records
+    for one machine: the placeholder still holding the slot, and a discovered device
+    with no placement at all.
+
+    Attaching keeps the placement, because that is the half discovery cannot know -
+    a sweep has no idea which rack a responder is in - and takes the address,
+    serial and identity from the wire, which is the half the reservation could not
+    know. Neither source is overruled: each fills in what only it has.
+
+    The operator chooses the target. There is no key to match on: a placeholder has
+    no address and no serial, which is the whole reason it is a placeholder.
+    """
+    target = (await session.execute(text("""
+        SELECT id::text, name, lifecycle::text AS lifecycle, device_type,
+               host(mgmt_ip) AS mgmt_ip, serial_number
+          FROM device WHERE id = CAST(:id AS uuid)
+    """), {"id": device_id})).mappings().first()
+    if target is None:
+        raise DiscoveryError(f"no device {device_id}")
+    if target["lifecycle"] not in ("planned", "in_stock"):
+        raise DiscoveryError(
+            f"{target['name']} is {target['lifecycle']}, so it is not hardware "
+            f"anybody is waiting for; only a planned or in_stock record can be "
+            f"fulfilled by a responder")
+    if target["mgmt_ip"]:
+        raise DiscoveryError(
+            f"{target['name']} already answers at {target['mgmt_ip']}; attaching "
+            f"this responder would move a record that is already placed")
+    # A serial on both that disagrees means this is not that box. Refusing beats
+    # silently overwriting the serial an operator typed off a delivery note.
+    if (serial and target["serial_number"]
+            and target["serial_number"].strip().upper() != serial):
+        raise DiscoveryError(
+            f"{target['name']} is recorded with serial {target['serial_number']} "
+            f"and this responder reports {serial}; they are not the same machine")
+
+    await session.execute(text("""
+        UPDATE device
+           SET mgmt_ip = CAST(:ip AS inet),
+               lifecycle = 'installed',
+               serial_number = COALESCE(:serial, serial_number),
+               vendor_id = COALESCE(CAST(:vendor AS uuid), vendor_id),
+               model_id = COALESCE(CAST(:model AS uuid), model_id),
+               attributes = attributes || CAST(:attrs AS jsonb),
+               updated_at = now()
+         WHERE id = CAST(:id AS uuid)
+    """), {"id": device_id, "ip": cand["address"], "serial": serial,
+           "vendor": vendor_id, "model": model_id,
+           "attrs": json.dumps({
+               "discovered": True,
+               "discovery_candidate_id": candidate_id,
+               "discovery_identity": cand["identity"],
+           })})
+
+    await session.execute(text("""
+        INSERT INTO device_lifecycle_event (device_id, from_state, to_state,
+                                            reason, actor)
+        VALUES (CAST(:id AS uuid), CAST(:from AS lifecycle_t), 'installed',
+                :reason, :actor)
+    """), {"id": device_id, "from": target["lifecycle"],
+           "actor": actor or "discovery",
+           "reason": f"fulfilled by a discovered responder at {cand['address']}"})
+
+    await repo.set_candidate_status(session, candidate_id, "promoted")
+    log.info("candidate attached to a reservation", candidate_id=candidate_id,
+             device_id=device_id, name=target["name"],
+             was=target["lifecycle"])
+    return {"device_id": device_id, "name": target["name"], "attached": True}
 
 
 async def ignore(session: AsyncSession, candidate_id: str) -> dict[str, Any]:

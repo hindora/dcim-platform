@@ -246,6 +246,19 @@ export interface CommissioningRow {
   proposed_state?: string | null;
 }
 
+/** A record a responder could be fulfilling: requested hardware that is expected.
+ *  Carries the placement a sweep cannot know. */
+export interface AttachableDevice {
+  id: string;
+  name: string;
+  device_type: string;
+  lifecycle: string;
+  rack_name?: string | null;
+  u_start?: number | null;
+  datacenter_code?: string | null;
+  room_name?: string | null;
+}
+
 export interface CommissioningQueue {
   soak_hours: number;
   counts: { racked: number; ready: number; discrepancy: number; total: number };
@@ -2958,7 +2971,34 @@ export const api = {
       method: 'POST', body: JSON.stringify({ method: 'snmp_sweep', ...body }),
     }),
 
-  promoteCandidate: (id: string, body: { name: string; device_type?: string }) =>
+  /** Reservations a responder could fulfil, so promotion can attach to one
+   *  instead of leaving two records for one machine. */
+  attachableDevices: (deviceType?: string) => {
+    const q = deviceType ? `?device_type=${encodeURIComponent(deviceType)}` : '';
+    return request<{ items: AttachableDevice[] }>(`/discovery/attachable${q}`);
+  },
+
+  bulkIgnoreCandidates: (ids: string[]) =>
+    request<{ ignored: number; failed: { id: string; error: string }[] }>(
+      '/discovery/candidates/bulk-ignore',
+      { method: 'POST', body: JSON.stringify({ candidate_ids: ids }) }),
+
+  /** Each under the name it reports. Anything that does not name itself comes
+   *  back in `skipped` rather than being given one derived from its address. */
+  bulkPromoteCandidates: (ids: string[], deviceType?: string) =>
+    request<{
+      promoted: { device_id: string; name: string }[];
+      skipped: { id: string; address?: string; reason: string }[];
+      failed: { id: string; error: string }[];
+    }>('/discovery/candidates/bulk-promote', {
+      method: 'POST',
+      body: JSON.stringify({ candidate_ids: ids, device_type: deviceType }),
+    }),
+
+  promoteCandidate: (id: string, body: {
+    name: string; device_type?: string;
+    attach_to_device_id?: string; vendor?: string; model?: string;
+  }) =>
     request<{ device_id: string; name: string }>(
       `/discovery/candidates/${id}/promote`,
       { method: 'POST', body: JSON.stringify(body) }),
