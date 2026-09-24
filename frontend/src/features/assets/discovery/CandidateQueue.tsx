@@ -30,9 +30,23 @@ export function CandidateQueue() {
     refetchInterval: 60_000,
   });
 
+  // Fetched separately because the default list is open candidates: a dismissed
+  // responder is deliberately out of the way, and mixing it back into the main
+  // groups would undo the dismissal.
+  //
+  // Declared BEFORE the error return. A hook after an early return is called
+  // conditionally, so the first failed fetch would change the hook count between
+  // renders and React would throw - hiding the real error behind a crash.
+  const { data: dismissed } = useQuery<{ items: DiscoveryCandidate[] }>({
+    queryKey: ['discovery-candidates', 'ignored'],
+    queryFn: () => api.discoveryCandidates({ status: 'ignored', limit: '200' }),
+    refetchInterval: 60_000,
+  });
+
   if (error) return <div className="banner">Failed to load: {String(error)}</div>;
 
   const items = data?.items ?? [];
+  const ignored = dismissed?.items ?? [];
   const unmatched = items.filter((c) => !c.matched_device_id);
   // Matched, but not where inventory says it is. Only knowable because the serial
   // matched - on address alone this row would have read as something new, and
@@ -95,6 +109,15 @@ export function CandidateQueue() {
         </section>
       )}
 
+      {ignored.length > 0 && (
+        <section style={{ marginTop: 16 }}>
+          {/* "What have we decided not to look at" is a question worth being able
+              to answer: a responder somebody waved away is exactly where an
+              unmanaged box hides. Ignore used to be one-way and invisible. */}
+          <Dismissed rows={ignored} />
+        </section>
+      )}
+
       {expected.length > 0 && (
         <section style={{ marginTop: 16 }}>
           {/* Collapsed by default. The expected case getting the same visual
@@ -102,6 +125,29 @@ export function CandidateQueue() {
               but the denominator matters, so the count stays visible. */}
           <Expected rows={expected} total={items.length} />
         </section>
+      )}
+    </>
+  );
+}
+
+function Dismissed({ rows }: { rows: DiscoveryCandidate[] }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <h3>
+        <button type="button" className="asset-link" aria-expanded={open}
+                onClick={() => setOpen((o) => !o)}>
+          {open ? '▾' : '▸'} Dismissed — {rows.length}
+        </button>
+      </h3>
+      {open && (
+        <>
+          <p className="muted">
+            Responders somebody decided were not worth recording. Restoring one
+            puts it back in the queue above.
+          </p>
+          <CandidateTable rows={rows} />
+        </>
       )}
     </>
   );
@@ -156,12 +202,7 @@ function Row({ c }: { c: DiscoveryCandidate }) {
         {c.address ?? '—'}
         <div className="muted">{c.protocol.toUpperCase()}</div>
       </td>
-      {/* sysDescr is where the model and the firmware live, and it is the whole
-          evidence for the suggested type - so the full string is available on
-          hover rather than cut off at 90 characters with no way to see it. */}
-      <td className="muted" style={{ maxWidth: 320 }} title={descr || undefined}>
-        {descr ? `${descr.slice(0, 90)}${descr.length > 90 ? '…' : ''}` : '—'}
-      </td>
+      <td className="muted" style={{ maxWidth: 320 }}><Identity descr={descr} /></td>
       <td className="asset-tag">
         {c.serial ?? <span className="asset-none">not reported</span>}
       </td>
@@ -191,6 +232,28 @@ function Row({ c }: { c: DiscoveryCandidate }) {
   );
 }
 
+/** sysDescr, expandable.
+ *
+ *  It is where the model and the firmware live, and it is the whole evidence for
+ *  the suggested type - so cutting it at 90 characters with no way to see the rest
+ *  hides the reason the row says "switch". This was a `title` tooltip, which is
+ *  unreachable by keyboard and invisible on a touch screen; a button is neither.
+ */
+function Identity({ descr }: { descr: string }) {
+  const [open, setOpen] = useState(false);
+  if (!descr) return <>—</>;
+  if (descr.length <= 90) return <>{descr}</>;
+  return (
+    <>
+      {open ? descr : `${descr.slice(0, 90)}…`}{' '}
+      <button type="button" className="asset-link" aria-expanded={open}
+              onClick={() => setOpen((o) => !o)}>
+        {open ? 'less' : 'more'}
+      </button>
+    </>
+  );
+}
+
 /** Promote or dismiss one responder.
  *
  *  Nothing is offered for a candidate that already matches a device: promoting it
@@ -204,6 +267,8 @@ function CandidateActions({ c }: { c: DiscoveryCandidate }) {
   const [error, setError] = useState<string | null>(null);
 
   const refresh = () => {
+    // Keyed prefix, so both the open list and the dismissed one refetch - a
+    // restored responder has to leave one and appear in the other.
     qc.invalidateQueries({ queryKey: ['discovery-candidates'] });
     qc.invalidateQueries({ queryKey: ['discovery-runs'] });
     qc.invalidateQueries({ queryKey: ['asset-summary'] });
@@ -217,8 +282,25 @@ function CandidateActions({ c }: { c: DiscoveryCandidate }) {
     onError: (e) => setError(String(e)),
   });
 
+  const restore = useMutation({
+    mutationFn: () => api.unignoreCandidate(c.id),
+    onSuccess: refresh,
+    onError: (e) => setError(String(e)),
+  });
+
   if (c.matched_device_id) {
     return <Link to={`/assets/inventory/${c.matched_device_id}`}>Open</Link>;
+  }
+  if (c.status === 'ignored') {
+    return (
+      <>
+        <button type="button" disabled={restore.isPending}
+                onClick={() => { setError(null); restore.mutate(); }}>
+          {restore.isPending ? 'Restoring…' : 'Un-ignore'}
+        </button>
+        {error && <div className="banner">{error}</div>}
+      </>
+    );
   }
   if (c.status !== 'new') {
     return <span className="muted">{humanise(c.status)}</span>;

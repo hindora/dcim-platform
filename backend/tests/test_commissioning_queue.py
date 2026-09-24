@@ -249,6 +249,7 @@ def test_the_subnets_are_suggested_from_inventory():
 # ------------------------------------------- a re-addressed device is not new
 
 DISCOVERY_REPO = (APP / "repositories" / "discovery.py").read_text(encoding="utf-8")
+API_DISC = (APP / "api" / "v1" / "discovery.py").read_text(encoding="utf-8")
 
 
 def test_matching_prefers_the_serial_over_the_address():
@@ -375,3 +376,90 @@ def test_a_run_reports_what_it_concluded():
     sweep = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "features"
              / "assets" / "discovery" / "SweepPanel.tsx").read_text(encoding="utf-8")
     assert "answered" in sweep and "expected" in sweep
+
+
+# --------------------------------------------- the sweep form and the dismissed
+
+SWEEP_UX = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "features"
+            / "assets" / "discovery" / "SweepPanel.tsx").read_text(encoding="utf-8")
+
+
+def test_a_malformed_cidr_is_caught_before_the_api_sees_it():
+    """A typo used to travel to the API to fail, which is a slow way to learn you
+    mistyped an octet. It is checkable as it is typed."""
+    assert "function parseCidr" in SWEEP_UX
+    assert "an octet is above 255" in SWEEP_UX
+    assert "prefix is above /32" in SWEEP_UX
+    # And the button will not fire with one outstanding.
+    assert "bad.length > 0" in SWEEP_UX
+
+
+def test_the_form_says_what_a_sweep_will_cost():
+    """A sweep is minutes, not seconds, and an operator who does not know that
+    reads a running one as a hung page."""
+    assert "SECONDS_PER_ADDRESS" in SWEEP_UX
+    assert "describeDuration" in SWEEP_UX
+    # Calibrated against a measured run rather than guessed - a /24 of this estate
+    # took 252s, and the model's ceiling is 381s because 105 of 254 answered fast.
+    assert "252s" in SWEEP_UX
+
+
+def test_the_address_ceiling_is_explained_not_just_enforced():
+    """MaxAddresses is a refusal rather than a truncation, which is right and a bad
+    surprise. The form says the number first."""
+    assert "MAX_ADDRESSES = 4096" in SWEEP_UX
+    assert "refused rather than truncated" in SWEEP_UX
+    # Mirrored from the sweeper, so the two must not drift.
+    go = (Path(__file__).resolve().parents[2] / "collector" / "internal"
+          / "discovery" / "discovery.go").read_text(encoding="utf-8")
+    assert "MaxAddresses = 4096" in go
+
+
+def test_a_network_and_broadcast_are_not_counted_as_probeable():
+    """The sweeper skips them, so an estimate that counted them would be wrong by
+    two on every subnet - and a /31 or /32 has neither to skip."""
+    assert "bits >= 31 ? total : total - 2" in SWEEP_UX
+
+
+def test_a_dismissed_responder_can_be_restored():
+    """Ignore was one-way and invisible: a responder dismissed by mistake left the
+    audit for good, and "what have we decided not to look at" is itself a question
+    worth answering - a device somebody waved away is where an unmanaged box
+    hides."""
+    assert "unignore" in DISCOVERY_SVC
+    assert "discovery.unignore" in API_DISC
+    assert "Un-ignore" in QUEUE_UI
+    assert "status: 'ignored'" in QUEUE_UI
+
+
+def test_only_a_dismissed_candidate_can_be_restored():
+    """A promoted one is a device now, and dragging it back to `new` would offer to
+    promote it a second time."""
+    body = DISCOVERY_SVC[DISCOVERY_SVC.index("async def unignore("):]
+
+    assert 'cand["status"] != "ignored"' in body
+    assert "only a dismissed one" in body
+
+
+def test_restoring_is_audited_like_dismissing():
+    """Dismissing a responder is how a device stops being asked about; restoring
+    one is somebody deciding that call was wrong. Both belong on the trail."""
+    assert 'action="discovery.unignore"' in API_DISC
+
+
+def test_the_identity_expands_without_a_tooltip():
+    """A `title` attribute is unreachable by keyboard and invisible on a touch
+    screen. sysDescr is the whole evidence for the suggested type."""
+    assert "function Identity" in QUEUE_UI
+    assert "title={descr" not in QUEUE_UI
+    assert "aria-expanded" in QUEUE_UI
+
+
+def test_the_dismissed_query_is_not_declared_after_an_early_return():
+    """A hook after `if (error) return` is called conditionally, so the first
+    failed fetch changes the hook count between renders and React throws - hiding
+    the real error behind a crash."""
+    err = QUEUE_UI.index("if (error) return")
+    dismissed = QUEUE_UI.index("queryKey: ['discovery-candidates', 'ignored']")
+
+    assert dismissed < err, "the dismissed query moved below the error return"

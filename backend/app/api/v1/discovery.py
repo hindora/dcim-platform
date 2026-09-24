@@ -142,6 +142,30 @@ async def ignore(candidate_id: str, request: Request,
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from None
 
 
+@router.post("/candidates/{candidate_id}/unignore",
+             summary="Put a dismissed candidate back in the queue")
+async def unignore(candidate_id: str, request: Request,
+                   session: AsyncSession = Depends(get_session),
+                   principal: Principal = Depends(require_role("operator")),
+                   ) -> dict[str, Any]:
+    """Audited for the same reason ignoring is.
+
+    Dismissing a responder is how a device that answers on the management network
+    stops being asked about; restoring one is somebody deciding that call was
+    wrong. Both are security-relevant and both belong on the trail.
+    """
+    try:
+        result = await service.unignore(session, candidate_id)
+        ip, agent = audit.client_of(request)
+        await audit.record(session, actor=audit.actor_of(principal),
+                           action="discovery.unignore", target_type="candidate",
+                           target_id=candidate_id, ip=ip, user_agent=agent)
+        await session.commit()
+        return result
+    except service.DiscoveryError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from None
+
+
 # ── meter channel schedules ──────────────────────────────────────────────────
 #
 # A branch-circuit monitor stores which breaker each CT is clamped to, written

@@ -6,6 +6,53 @@ import {
 } from '../../../api/client';
 import { relativeTime } from '../../../lib/format';
 
+/** The sweeper's own limits, mirrored so the form can answer before the API does.
+ *
+ *  MaxAddresses is a refusal rather than a truncation: sweeping the first 4096 of
+ *  65,536 and reporting "found 12" would be a lie about what was audited. That is
+ *  the right behaviour and a bad surprise, so the form says the number first.
+ */
+const MAX_ADDRESSES = 4096;
+
+/** Seconds per address at the ceiling: a SILENT address costs the full timeout
+ *  once per attempt (6s x 2 attempts) and eight run at once, so 1.5s each.
+ *
+ *  Calibrated against real sweeps rather than guessed. A /24 of this estate - 254
+ *  addresses, 105 of them answering - took 252s and 247s on two runs. The model
+ *  puts the ceiling at 381s, and the gap is the 105 that answered immediately:
+ *  silence is what a sweep spends its time on.
+ */
+const SECONDS_PER_ADDRESS = (6 * 2) / 8;
+
+type Parsed = { cidr: string; addresses: number; error?: string };
+
+/** Check a CIDR and count what it would probe, without a round trip.
+ *
+ *  A typo used to travel to the API to fail, which is a slow way to learn you
+ *  mistyped an octet.
+ */
+function parseCidr(raw: string): Parsed {
+  const cidr = raw.trim();
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\/(\d{1,2})$/.exec(cidr);
+  if (!m) return { cidr, addresses: 0, error: 'not a CIDR, e.g. 10.51.11.0/24' };
+  const octets = m.slice(1, 5).map(Number);
+  if (octets.some((o) => o > 255)) {
+    return { cidr, addresses: 0, error: 'an octet is above 255' };
+  }
+  const bits = Number(m[5]);
+  if (bits > 32) return { cidr, addresses: 0, error: 'prefix is above /32' };
+  // Minus network and broadcast, which is what the sweeper skips. A /31 and a
+  // /32 have neither to skip, so they are counted whole.
+  const total = 2 ** (32 - bits);
+  const addresses = bits >= 31 ? total : total - 2;
+  return { cidr, addresses };
+}
+
+function describeDuration(seconds: number): string {
+  if (seconds < 90) return `${Math.round(seconds)}s`;
+  return `${Math.round(seconds / 60)} min`;
+}
+
 /** Run a sweep, and see what the last ones did.
  *
  *  This is how the DCIM learns that hardware exists: it asks the management
@@ -38,10 +85,16 @@ export function SweepPanel() {
         || r.status === 'running') ? 5_000 : false,
   });
 
-  const chosen = [
-    ...picked,
-    ...extra.split(/[\s,]+/).map((x) => x.trim()).filter(Boolean),
-  ];
+  const typed = extra.split(/[\s,]+/).map((x) => x.trim()).filter(Boolean);
+  // The suggested subnets come from inventory and are /24s by construction, so
+  // only what was typed can be malformed.
+  const parsed = typed.map(parseCidr);
+  const bad = parsed.filter((p) => p.error);
+  const chosen = [...picked, ...parsed.filter((p) => !p.error).map((p) => p.cidr)];
+
+  const addresses = [...picked].reduce((n) => n + 254, 0)
+    + parsed.filter((p) => !p.error).reduce((n, p) => n + p.addresses, 0);
+  const tooMany = addresses > MAX_ADDRESSES;
 
   const start = useMutation({
     mutationFn: () => api.startDiscoveryRun({ subnets: chosen }),
@@ -99,20 +152,54 @@ export function SweepPanel() {
       <label className="asset-form-wide">
         <span>Other subnets</span>
         <input value={extra} onChange={(e) => setExtra(e.target.value)}
-               placeholder="10.51.30.0/24, 10.52.30.0/24" />
+               placeholder="10.51.30.0/24, 10.52.30.0/24"
+               aria-invalid={bad.length > 0} />
       </label>
+
+      {/* Checked as it is typed. A malformed CIDR used to travel to the API to
+          fail, which is a slow way to learn you mistyped an octet. */}
+      {bad.map((p) => (
+        <p key={p.cidr} className="muted">
+          <code>{p.cidr}</code> — {p.error}
+        </p>
+      ))}
+
+      {/* What it will cost, before the button is pressed. A sweep is minutes, not
+          seconds, and an operator who does not know that reads a running sweep as
+          a hung page. */}
+      {addresses > 0 && (
+        <p className="muted">
+          {addresses} address{addresses === 1 ? '' : 'es'} · up to{' '}
+          {describeDuration(addresses * SECONDS_PER_ADDRESS)}, and faster wherever
+          devices answer — silence is what a sweep spends its time on.
+        </p>
+      )}
+
+      {tooMany && (
+        <div className="banner">
+          {addresses} addresses is more than the {MAX_ADDRESSES} a single sweep
+          will do. It is refused rather than truncated, because sweeping part of a
+          range and reporting what it found would misrepresent what was audited.
+          Narrow the prefix and run it in pieces.
+        </div>
+      )}
 
       <div className="asset-toolbar">
         <button type="button"
-                disabled={chosen.length === 0 || start.isPending
-                          || Boolean(inFlight)}
+                disabled={chosen.length === 0 || bad.length > 0 || tooMany
+                          || start.isPending || Boolean(inFlight)}
                 onClick={() => start.mutate()}>
           {inFlight ? 'Sweep in progress…'
             : start.isPending ? 'Queueing…'
               : `Run sweep${chosen.length ? ` (${chosen.length})` : ''}`}
         </button>
-        {chosen.length === 0 && (
+        {chosen.length === 0 && bad.length === 0 && (
           <span className="muted">Choose at least one subnet.</span>
+        )}
+        {inFlight && (
+          <span className="muted">
+            Started {relativeTime(inFlight.started_at)}.
+          </span>
         )}
       </div>
 

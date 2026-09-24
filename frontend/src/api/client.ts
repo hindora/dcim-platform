@@ -2966,6 +2966,11 @@ export const api = {
   ignoreCandidate: (id: string) =>
     request<unknown>(`/discovery/candidates/${id}/ignore`, { method: 'POST' }),
 
+  /** Put a dismissed responder back in the queue. Ignore used to be one-way,
+   *  so a mistake removed something from the audit permanently. */
+  unignoreCandidate: (id: string) =>
+    request<unknown>(`/discovery/candidates/${id}/unignore`, { method: 'POST' }),
+
   discoveryCandidates: (params: Record<string, string | undefined> = {}) => {
     const q = new URLSearchParams();
     for (const [k, v] of Object.entries(params)) if (v) q.set(k, v);

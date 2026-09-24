@@ -228,3 +228,27 @@ async def ignore(session: AsyncSession, candidate_id: str) -> dict[str, Any]:
     if row is None:
         raise DiscoveryError(f"no candidate {candidate_id}")
     return row
+
+
+async def unignore(session: AsyncSession, candidate_id: str) -> dict[str, Any]:
+    """Put a dismissed responder back in the queue.
+
+    Ignore was one-way and invisible: a responder dismissed by mistake left the
+    audit for good, and "what have we decided not to look at" is itself a question
+    worth being able to answer - a device somebody waved away is exactly where an
+    unmanaged box hides.
+
+    Only from `ignored`. A promoted candidate is a device now, and dragging it
+    back to `new` would offer to promote it a second time.
+    """
+    cand = await repo.get_candidate(session, candidate_id)
+    if cand is None:
+        raise DiscoveryError(f"no candidate {candidate_id}")
+    if cand["status"] != "ignored":
+        raise DiscoveryError(
+            f"candidate is {cand['status']}, not ignored; only a dismissed one "
+            f"can be restored")
+    row = await repo.set_candidate_status(session, candidate_id, "new")
+    log.info("candidate restored", candidate_id=candidate_id,
+             address=cand.get("address"))
+    return row
