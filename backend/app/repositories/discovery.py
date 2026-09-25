@@ -150,7 +150,9 @@ async def upsert_candidate(session: AsyncSession, *, run_id: str, address: str,
     """Record one responder.
 
     Conflicts on the open-candidate index, so rediscovering the same unmanaged
-    address updates last_seen instead of growing a new row every sweep.
+    address updates last_seen instead of growing a new row every sweep - and that
+    index spans 'new' and 'gone', so a responder that comes back is resurrected in
+    place rather than inserted beside the row it already has.
 
     Everything a probe READ is refreshed, including the suggestions derived from it.
     A sweep is the freshest thing anybody has about an address, so a row must never
@@ -163,8 +165,12 @@ async def upsert_candidate(session: AsyncSession, *, run_id: str, address: str,
         VALUES (CAST(:run_id AS uuid), CAST(:address AS inet),
                 CAST(:protocol AS protocol_t), CAST(:identity AS jsonb),
                 CAST(:matched AS uuid), :serial, :dtype, :vendor, 'new')
-        ON CONFLICT (address, protocol) WHERE status = 'new'
+        ON CONFLICT (address, protocol) WHERE status IN ('new', 'gone')
         DO UPDATE SET last_seen = now(),
+                      -- Answering again undoes having gone quiet. Without this the
+                      -- row would stay 'gone' while its last_seen advanced, which
+                      -- reads as a device that is silent and being seen at once.
+                      status = 'new',
                       run_id = EXCLUDED.run_id,
                       identity = EXCLUDED.identity,
                       serial = EXCLUDED.serial,
@@ -184,6 +190,49 @@ async def upsert_candidate(session: AsyncSession, *, run_id: str, address: str,
            "dtype": suggested_device_type, "vendor": suggested_vendor})
     ).mappings().first()
     return row["id"] if row else None
+
+
+async def mark_gone(session: AsyncSession, run_id: str) -> int:
+    """Mark the candidates this run covered but did not see.
+
+    The difference that makes this safe is between "not asked" and "asked and
+    silent". A run records the subnets it swept, so a candidate whose address falls
+    inside that scope and which this run did not touch has genuinely stopped
+    answering; one outside the scope was never asked and must be left alone, or a
+    sweep of the electrical plane would mark the whole IT plane gone.
+
+    Identified by last_seen rather than by run_id: the upsert stamps last_seen =
+    now() on every responder it records, so anything still older than this run's
+    start was not among them. Comparing run_id would miss a candidate that this run
+    saw and a later statement touched.
+
+    Marked, not deleted. That a machine used to answer at an address is how somebody
+    later works out what used to be there, and it is the only trace of a device that
+    was removed without being decommissioned.
+    """
+    run = (await session.execute(text("""
+        SELECT scope, started_at FROM discovery_run WHERE id = CAST(:id AS uuid)
+    """), {"id": run_id})).mappings().first()
+    if run is None:
+        return 0
+    subnets = list((run["scope"] or {}).get("subnets") or [])
+    if not subnets:
+        # A run with no recorded scope cannot say what it covered, and guessing
+        # would mark devices gone on no evidence.
+        return 0
+
+    rows = (await session.execute(text("""
+        UPDATE discovery_candidate
+           SET status = 'gone'
+         WHERE status = 'new'
+           AND last_seen < :started
+           AND address IS NOT NULL
+           AND EXISTS (
+                 SELECT 1 FROM unnest(CAST(:subnets AS text[])) AS s(cidr)
+                  WHERE address <<= CAST(s.cidr AS inet))
+        RETURNING host(address) AS address, protocol::text AS protocol
+    """), {"started": run["started_at"], "subnets": subnets})).mappings().all()
+    return len(rows)
 
 
 async def list_candidates(session: AsyncSession, *, run_id: str | None = None,

@@ -209,14 +209,20 @@ async def record_results(session: AsyncSession, run_id: str,
         if not match:
             unmanaged += 1
 
+    # AFTER the upserts, so anything this run saw has had its last_seen advanced and
+    # only the genuinely silent addresses are left behind. A sweep is the only thing
+    # that can tell "asked and got nothing" from "never asked", and it can only say
+    # so about the subnets it actually covered.
+    gone = await repo.mark_gone(session, run_id)
+
     await repo.finish_run(session, run_id, found=len(responders))
     log.info("discovery run recorded", run_id=run_id, responders=len(responders),
-             known=len(responders) - unmanaged, unmanaged=unmanaged,
+             known=len(responders) - unmanaged, unmanaged=unmanaged, gone=gone,
              # Worth its own number: a device matched by serial at an address
              # inventory did not expect has MOVED, and nobody recorded it.
              readdressed=moved)
     return {"found": len(responders), "known": len(responders) - unmanaged,
-            "unmanaged": unmanaged, "readdressed": moved}
+            "unmanaged": unmanaged, "readdressed": moved, "gone": gone}
 
 
 async def promote(session: AsyncSession, candidate_id: str,

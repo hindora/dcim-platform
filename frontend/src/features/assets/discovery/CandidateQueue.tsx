@@ -9,7 +9,8 @@ import {
 } from '../../../api/client';
 import { usePaged } from '../../../components/Pagination';
 import {
-  collapse, isKnown, matchOf, memberIds, movedFrom, type Responder,
+  collapse, isGone, isKnown, matchOf, memberIds, movedFrom,
+  type Responder,
 } from './responders';
 import { humanise, relativeTime } from '../../../lib/format';
 import { Dialog, DialogActions } from '../components/Dialog';
@@ -53,8 +54,14 @@ export function CandidateQueue() {
   // Redfish on the same address was two rows, and only the Redfish one carried a
   // serial - so the page showed a blank Serial column beside a populated one for
   // the same box and read as a defect.
-  const items = collapse(data?.items ?? []);
+  const all = collapse(data?.items ?? []);
   const ignored = collapse(dismissed?.items ?? []);
+  // Responders that answered nothing on the last sweep of their address. Out of the
+  // three buckets below, because "something is answering that no record accounts
+  // for" is a claim about the present tense, and a machine that has gone quiet makes
+  // that sentence false - which is the one thing an audit page must not do.
+  const gone = all.filter(isGone);
+  const items = all.filter((r) => !isGone(r));
   const unmatched = items.filter((r) => !isKnown(r));
   // Matched, but not where inventory says it is. Only knowable because the serial
   // matched - on address alone this row would have read as something new, and
@@ -129,6 +136,12 @@ export function CandidateQueue() {
         </section>
       )}
 
+      {gone.length > 0 && (
+        <section style={{ marginTop: 16 }}>
+          <Gone rows={gone} />
+        </section>
+      )}
+
       {expected.length > 0 && (
         <section style={{ marginTop: 16 }}>
           {/* Collapsed by default. The expected case getting the same visual
@@ -156,6 +169,38 @@ function Dismissed({ rows }: { rows: Responder[] }) {
           <p className="muted">
             Responders somebody decided were not worth recording. Restoring one
             puts it back in the queue above.
+          </p>
+          <CandidateTable rows={rows} />
+        </>
+      )}
+    </>
+  );
+}
+
+/** Answered once, and not on the last sweep that covered the address.
+ *
+ *  Collapsed, because it is history rather than work. Kept rather than deleted: that
+ *  a machine used to answer at an address is how somebody later works out what used
+ *  to be there, and for a device removed without being decommissioned it is the only
+ *  trace there is.
+ */
+function Gone({ rows }: { rows: Responder[] }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <h3>
+        <button type="button" className="asset-link" aria-expanded={open}
+                onClick={() => setOpen((o) => !o)}>
+          {open ? '▾' : '▸'} Stopped answering — {rows.length}
+        </button>
+      </h3>
+      {open && (
+        <>
+          <p className="muted">
+            These answered a previous sweep and did not answer the most recent one
+            that covered their address. A sweep of a different subnet does not put a
+            responder here: the run records what it swept, so this is the difference
+            between asked-and-silent and never-asked.
           </p>
           <CandidateTable rows={rows} />
         </>

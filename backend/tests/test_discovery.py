@@ -202,6 +202,54 @@ def test_a_reswept_responder_does_not_keep_its_first_guess():
         assert column in clause, f"a re-sweep does not refresh {column}"
 
 
+def test_going_quiet_is_judged_only_where_the_sweep_actually_looked():
+    """The difference between "asked and silent" and "never asked".
+
+    A run records the subnets it swept, and mark_gone may only judge addresses inside
+    them. Without that guard a sweep of the electrical plane would mark the whole IT
+    plane gone - a page that invented 500 dead devices from one /27 would be worse
+    than the stale row it was written to remove.
+    """
+    start = REPO.index("async def mark_gone")
+    body = REPO[start:REPO.index("async def list_candidates", start)]
+
+    # Scope-limited, by containment rather than by string prefix.
+    assert "<<=" in body, "addresses must be tested for containment in the subnets"
+    assert "scope" in body, "the swept subnets come from the run's recorded scope"
+    # A run with no recorded scope cannot say what it covered.
+    assert "if not subnets:" in body
+    # Silence is measured against when this run STARTED, because the upsert stamps
+    # last_seen = now() on everything the run saw.
+    assert "last_seen <" in body
+    # Only open candidates: an ignored or promoted one is not a finding to retract.
+    assert "status = 'new'" in body
+    # Marked, not deleted. The SQL keyword, not the word: the docstring says
+    # "Marked, not deleted", and matching that made this fail on its own explanation.
+    assert "DELETE FROM" not in body.upper(), (
+        "a responder that used to answer is history worth keeping")
+
+
+def test_a_responder_that_comes_back_is_resurrected_not_duplicated():
+    """The index is what makes marking safe.
+
+    It was UNIQUE on (address, protocol) WHERE status = 'new'. Once a row went to
+    'gone' the upsert's ON CONFLICT no longer saw it, so a device that answered again
+    would INSERT a second row for the same address - turning an aged-out responder
+    into a duplicate the moment it came back. Both states share the index now, and the
+    upsert flips 'gone' back to 'new'.
+    """
+    start = REPO.index("ON CONFLICT (address, protocol)")
+    clause = REPO[start:REPO.index("RETURNING", start)]
+    assert "status IN ('new', 'gone')" in clause, "the conflict target must span both"
+    assert "status = 'new'" in clause, "answering again must undo having gone quiet"
+
+    mig = next((Path(__file__).resolve().parents[1] / "alembic" / "versions")
+               .glob("0079_*.py"))
+    sql = mig.read_text(encoding="utf-8")
+    assert "status IN ('new', 'gone')" in sql
+    assert "uq_discovery_candidate_open" in sql
+
+
 # --- run validation ----------------------------------------------------------
 
 @pytest.mark.asyncio

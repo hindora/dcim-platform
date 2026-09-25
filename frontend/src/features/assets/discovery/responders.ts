@@ -162,6 +162,16 @@ export function collapse(items: DiscoveryCandidate[]): Responder[] {
  */
 export const memberIds = (r: Responder): string[] => r.members.map((c) => c.id);
 
+/** Every probe on this machine has stopped answering.
+ *
+ *  EVERY, not any: a server whose Redfish went quiet while its BMC still answers SNMP
+ *  is not gone, it is half broken, and that belongs in front of an operator rather
+ *  than filed away. A row only leaves the queue when nothing on the machine replied
+ *  to a sweep that covered its address.
+ */
+export const isGone = (r: Responder): boolean =>
+  r.members.length > 0 && r.members.every((c) => c.status === 'gone');
+
 /** True when any probe matched inventory. */
 export const isKnown = (r: Responder): boolean =>
   r.members.some((c) => c.matched_device_id);
