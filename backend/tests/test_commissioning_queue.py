@@ -319,8 +319,16 @@ def test_discovery_no_longer_hard_wires_the_simulator_convention():
 
 # ------------------------------------------- the screen shows what was fixed
 
-QUEUE_UI = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "features"
-            / "assets" / "discovery" / "CandidateQueue.tsx").read_text(encoding="utf-8")
+_DISCOVERY = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "features"
+              / "assets" / "discovery")
+QUEUE_UI = (_DISCOVERY / "CandidateQueue.tsx").read_text(encoding="utf-8")
+
+#: The whole discovery feature, for claims about behaviour that is allowed to live
+#: in whichever module fits. Asserting against one FILE pinned where the code was
+#: rather than what it does, and broke when the row-grouping rules moved into
+#: responders.ts - a refactor that changed no behaviour these tests care about.
+DISCOVERY_UI = "".join(
+    f.read_text(encoding="utf-8") for f in sorted(_DISCOVERY.glob("*.ts*")))
 
 
 def test_a_moved_device_gets_its_own_section():
@@ -331,10 +339,47 @@ def test_a_moved_device_gets_its_own_section():
     a hundred devices that were exactly where the record said.
     """
     assert "Moved —" in QUEUE_UI
-    assert "matched_device_address !== c.address" in QUEUE_UI
+    # A set membership rather than one !== comparison, because a row is now one
+    # MACHINE and a machine answers on more than one address - a server's BMC and
+    # its production NIC. "Not where we expect it" has to mean none of them.
+    assert "addresses.includes(m.matched_device_address)" in DISCOVERY_UI
     # And the row says which key matched, because "by serial" is the stronger
     # claim and an operator deciding whether to trust it needs to know.
-    assert "'by serial' : 'by address'" in QUEUE_UI
+    assert "'by serial' : 'by address'" in DISCOVERY_UI
+
+
+def test_one_machine_is_one_row_however_many_protocols_answered():
+    """A candidate records one PROBE, and a server answers two.
+
+    Its BMC serves SNMP and Redfish on the same address, and only Redfish carries a
+    serial - a BMC's SNMP agent implements no ENTITY-MIB and has no serial OID to
+    read. Two rows side by side showed a blank Serial column next to a populated one
+    for the same box, which reads as a defect when it is the protocol being honest.
+    """
+    assert "export function collapse" in DISCOVERY_UI
+    # Grouped on the strongest identity the rows agree on. Address LAST: it joins
+    # protocols on one interface and cannot join a BMC to its host.
+    for key in ('`dev:${c.matched_device_id}`', '`sn:${serial}`',
+                '`addr:${c.address}`'):
+        assert key in DISCOVERY_UI, key
+    # And the protocols are shown, because two badges on one row are the answer to
+    # why a machine whose SNMP agent reports no serial still has one.
+    assert "r.protocols.join" in DISCOVERY_UI
+
+
+def test_an_action_follows_the_machine_not_the_row_it_was_built_from():
+    """The half of collapsing that is not cosmetic.
+
+    Promotion writes the candidate's serial onto the device, so promoting the SNMP
+    half of a server would create a record with no serial - the one key that
+    survives it being re-addressed. And dismissing one protocol would leave the
+    other still in the queue asking about a box somebody has already waved away,
+    with the next sweep bringing the dismissed half straight back.
+    """
+    assert "r.primary.id" in DISCOVERY_UI
+    assert "c.serial ? 4 : 0" in DISCOVERY_UI, "the primary must prefer a serial"
+    assert "export const memberIds" in DISCOVERY_UI
+    assert "chosen.flatMap(memberIds)" in DISCOVERY_UI, "bulk ignore takes every probe"
 
 
 def test_the_expected_case_is_collapsed():
@@ -352,7 +397,10 @@ def test_serial_coverage_is_measured_not_guessed():
     worked. What matters is how many RESPONDERS reported one.
     """
     assert "identity.with_serial" not in QUEUE_UI, "the stale banner is back"
-    assert "items.filter((c) => c.serial).length" in QUEUE_UI
+    # Counted over MACHINES since the page collapsed its per-protocol rows: a server
+    # whose Redfish probe read a serial is identified, and counting its silent SNMP
+    # probe against it understated the coverage it actually has.
+    assert "items.filter((r) => r.serial).length" in QUEUE_UI
     assert "matched by address" in QUEUE_UI
 
 
