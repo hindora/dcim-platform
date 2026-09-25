@@ -40,6 +40,128 @@ def test_vendor_is_guessed_too(descr, vendor):
     assert d.classify(ident(descr))[1] == vendor
 
 
+@pytest.mark.parametrize("descr,expected", [
+    # Every string here is what the gear itself says, in the words the vendor uses.
+    ("ASCO 7000 Series automatic transfer switch, 4000A, 5350 controller, "
+     "ASCO Connectivity Module, Modbus TCP", "ats"),
+    ("ASCO 7000 Series paralleling switchgear, generator paralleling controls, "
+     "ASCO Connectivity Module, Modbus TCP", "switchgear"),
+    ("Eaton Power Xpert Gateway PXG 900, fw 2.1.5, INCOM-to-Ethernet, "
+     "Magnum DS low-voltage switchgear, 4000A, Digitrip 1150 trip units",
+     "switchgear"),
+    ("Eaton Power Xpert Gateway PXG 900, fw 2.1.5, Modbus-to-Ethernet, "
+     "Freedom 2100 motor control center, 1600A, C441 motor protection relays",
+     "mcc"),
+    ("Eaton Power Xpert Gateway PXG 900, fw 2.1.5, Modbus-to-Ethernet, "
+     "Pow-R-Line 3a panelboard, 150A, Power Xpert Meter 2000 branch metering",
+     "mpp"),
+    ("CoolIT CHx80 coolant distribution unit, 80 kW liquid-to-liquid, "
+     "onboard controller fw 2.4.1, Modbus TCP to the BMS", "cdu"),
+    ("LOYTEC LINX-151 L-INX automation server, BACnet/IP to BACnet MS/TP router, "
+     "fw 7.4.2", "bacnet_router"),
+    ("Moxa MGate MB3480, 4-port Modbus RTU/ASCII to Modbus TCP gateway, fw 4.2",
+     "modbus_gateway"),
+])
+def test_facility_gear_is_classified_from_what_it_calls_itself(descr, expected):
+    """22 devices used to answer with sysDescr "Generic Device" and no guess at all."""
+    assert d.classify(ident(descr))[0] == expected
+
+
+def test_the_facility_patterns_come_before_the_network_ones():
+    """The whole reason this ordering is load-bearing, stated as a test.
+
+    An ASCO 7000 calls itself a "transfer SWITCH" and a LOYTEC L-INX calls itself a
+    BACnet ROUTER. Matched against the network patterns first, a 4000 A transfer
+    switch is filed as an access switch and a BACnet router as a network router -
+    which is worse than the "Generic Device" both used to send, because a wrong
+    suggestion gets accepted and an absent one gets looked at.
+    """
+    types = [t for _pattern, t in d._TYPE_HINTS]
+    for facility, network in [("ats", "switch"), ("switchgear", "switch"),
+                              ("bacnet_router", "router"),
+                              ("modbus_gateway", "router")]:
+        assert types.index(facility) < types.index(network), (
+            f"{facility} must be tried before {network}")
+
+
+@pytest.mark.parametrize("descr,vendor", [
+    ("ASCO 7000 Series automatic transfer switch", "ASCO Power Technologies"),
+    ("Moxa MGate MB3480, Modbus TCP gateway", "Moxa"),
+    ("LOYTEC LINX-151 L-INX automation server", "Loytec"),
+    ("CoolIT CHx80 coolant distribution unit", "CoolIT Systems"),
+])
+def test_facility_vendors_are_recognised(descr, vendor):
+    assert d.classify(ident(descr))[1] == vendor
+
+
+def test_a_gateway_is_classified_as_the_gateway_not_as_what_is_behind_it():
+    """A sweep that finds an MGate has found an MGate.
+
+    The 12 plant instruments behind these gateways have no addresses of their own,
+    so classifying the responder as a sensor - or letting an operator read it that
+    way - would turn one reachable gateway into twelve healthy instruments that
+    nobody has actually heard from.
+    """
+    mgate = ("Moxa MGate MB3480, 4-port Modbus RTU/ASCII to Modbus TCP gateway, "
+             "fw 4.2")
+    assert d.classify(ident(mgate))[0] == "modbus_gateway"
+    loytec = ("LOYTEC LINX-151 L-INX automation server, BACnet/IP to BACnet MS/TP "
+              "router, fw 7.4.2")
+    assert d.classify(ident(loytec))[0] == "bacnet_router"
+
+
+@pytest.mark.parametrize("descr,expected", [
+    # Real IOS/IOS-XE/IOS-XR strings, where the image names the platform.
+    ("Cisco IOS Software [Amsterdam], ISR Software "
+     "(X86_64_LINUX_IOSD-UNIVERSALK9-M), Version 17.9.4a, RELEASE SOFTWARE (fc3)",
+     "router"),
+    ("Cisco IOS Software [Amsterdam], ASR1000 Software "
+     "(X86_64_LINUX_IOSD-UNIVERSALK9-M), Version 17.9.4a, RELEASE SOFTWARE (fc3)",
+     "router"),
+    ("Cisco IOS XR Software (Cisco ASR9K Series), Version 7.9.1[Default]", "router"),
+    ("Cisco IOS XE Software, Catalyst L3 Switch Software (CAT9K_IOSXE), "
+     "Version 17.12.1, RELEASE SOFTWARE (fc3)", "switch"),
+    ("Cisco IOS Software, C2960X Software (C2960X-UNIVERSALK9-M), "
+     "Version 15.2(7)E6, RELEASE SOFTWARE (fc2)", "switch"),
+    ("Cisco IOS Software, C1000 Software (C1000-UNIVERSALK9-M), "
+     "Version 15.2(7)E6, RELEASE SOFTWARE (fc2)", "switch"),
+    ("Cisco NX-OS(tm) n9000, Software (n9000-dk9), Version 10.4(1)", "switch"),
+])
+def test_a_cisco_router_is_not_a_switch(descr, expected):
+    """The switch pattern used to contain a bare "ios".
+
+    That said "anything running IOS is a switch", which filed every Cisco IOS router
+    in the estate as one. IOS is a VENDOR signal - the vendor list has it - and the
+    type signal is the image name beside it.
+    """
+    assert d.classify(ident(descr))[0] == expected
+
+
+def test_running_ios_is_not_by_itself_evidence_of_anything(descr="Cisco IOS Software"):
+    """A bare OS name identifies the vendor and no more.
+
+    Kept as its own test because it is the assumption that caused the bug, and
+    because re-adding "ios" to the type hints would make every router a switch again
+    while leaving all the parametrised cases above passing.
+    """
+    dtype, vendor = d.classify(ident(descr))
+    assert vendor == "Cisco"
+    assert dtype is None, f"a bare OS string suggested {dtype}"
+
+
+def test_a_platform_number_is_not_matched_unanchored():
+    """"n9000" was in the switch pattern and matched inside "ION9000".
+
+    A Schneider PowerLogic ION9000 revenue meter classified as a Cisco Nexus. The
+    token was redundant - every Nexus string carries "nx-os" - so the substring
+    hazard bought nothing. Any unanchored platform NUMBER added here needs this
+    check run against the rest of the estate first.
+    """
+    meter = ("Schneider Electric PowerLogic ION9000, revenue-grade power quality "
+             "meter, fw 4.2.1, utility service-entrance metering, Modbus TCP")
+    assert d.classify(ident(meter))[0] != "switch"
+
+
 def test_an_unrecognised_device_gets_no_guess_rather_than_a_wrong_one():
     """A candidate with no suggestion is honest; a wrong one costs an operator
     the time it takes to notice."""

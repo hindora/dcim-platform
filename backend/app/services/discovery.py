@@ -40,10 +40,43 @@ _TYPE_HINTS: list[tuple[str, str]] = [
     (r"\bups\b|uninterruptible", "ups"),
     (r"\bcrah\b|\bcrac\b|air handl", "crah"),
     (r"\bchiller\b", "chiller"),
-    (r"\brouter\b", "router"),
+    (r"\bcdu\b|coolant distribution", "cdu"),
+    # Facility gear, BEFORE the network patterns, because the words collide.
+    # An ASCO 7000 calls itself a "transfer switch" and the switch pattern below
+    # would have filed a 4000 A transfer switch as an access switch; a LOYTEC
+    # L-INX calls itself a BACnet router and the router pattern would have filed
+    # it as a network router. Both are real product language rather than strings
+    # this estate invented, so matching on them is reading evidence.
+    (r"transfer switch|\bats\b", "ats"),
+    (r"paralleling switchgear|\bswitchgear\b", "switchgear"),
+    (r"motor control cent|\bmcc\b", "mcc"),
+    (r"panelboard|\bmpp\b", "mpp"),
+    # A gateway is worth classifying precisely because of what it does NOT tell
+    # you: its agent proves the gateway is up and says nothing about the field
+    # devices behind it, which are on Modbus or BACnet and invisible to a sweep.
+    (r"bacnet[ /-]*(ip)?[ /-]*router|bacnet.{0,12}ms/tp", "bacnet_router"),
+    (r"modbus.{0,12}gateway", "modbus_gateway"),
+    # Cisco names the IMAGE in sysDescr and the image names the platform: "ISR
+    # Software", "ASR1000 Software", "Catalyst L3 Switch Software (CAT9K_IOSXE)".
+    # That is how a real NMS tells a router from a switch, and it has to be tried
+    # before the switch pattern because both strings start "Cisco IOS Software".
+    (r"\brouter\b|isr software|asr1000|asr9k|ios xr", "router"),
     (r"\bfirewall\b", "firewall"),
     (r"load balanc", "load_balancer"),
-    (r"\bswitch\b|\bios\b|nx-os|junos|arista", "switch"),
+    # No bare "ios" here. It meant "anything running IOS is a switch", which
+    # filed every Cisco IOS router in this estate as one - and the heuristic was
+    # not really wrong, it was guessing, because two routers and a switch were
+    # serving a byte-identical "Cisco IOS XE Software, Version 17.9.4a" and there
+    # was nothing else to go on. IOS is a VENDOR signal; the vendor list has it.
+    #
+    # The platform images are listed because the 2960 and 1000 families name
+    # themselves and nothing else - no "Catalyst", no "Switch" - so a real NMS
+    # reads those two off sysObjectID or off the image name, as here.
+    (r"\bswitch\b|catalyst|cat9k|cat3k|c2960|c1000 software"
+    # No unanchored platform NUMBER here. "n9000" was in this list and matched
+    # inside "PowerLogic ION9000", filing a revenue-grade power meter as a Nexus
+    # switch. Every Nexus string carries "nx-os" anyway, so it bought nothing.
+     r"|nx-os|junos|arista", "switch"),
     # No trailing \b after idrac or ilo: the real strings are "iDRAC9" and
     # "iLO 6", and a digit is a word character, so \bidrac\b never matched the
     # thing it was written for. Product families are listed as well, because a
@@ -64,6 +97,12 @@ _VENDOR_HINTS: list[tuple[str, str]] = [
     # Found by the first live sweep: a Supermicro BMC classified as a server
     # but with no vendor, because the list did not have it.
     (r"supermicro", "Supermicro"),
+    # Facility vendors, found the way the others were: by sweeping and seeing
+    # what came back with no vendor at all.
+    (r"\basco\b", "ASCO Power Technologies"),
+    (r"\bmoxa\b", "Moxa"),
+    (r"loytec", "Loytec"),
+    (r"coolit", "CoolIT Systems"),
 ]
 
 
