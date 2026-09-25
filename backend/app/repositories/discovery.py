@@ -151,6 +151,10 @@ async def upsert_candidate(session: AsyncSession, *, run_id: str, address: str,
 
     Conflicts on the open-candidate index, so rediscovering the same unmanaged
     address updates last_seen instead of growing a new row every sweep.
+
+    Everything a probe READ is refreshed, including the suggestions derived from it.
+    A sweep is the freshest thing anybody has about an address, so a row must never
+    keep a guess that its own identity no longer supports.
     """
     row = (await session.execute(text("""
         INSERT INTO discovery_candidate
@@ -164,7 +168,15 @@ async def upsert_candidate(session: AsyncSession, *, run_id: str, address: str,
                       run_id = EXCLUDED.run_id,
                       identity = EXCLUDED.identity,
                       serial = EXCLUDED.serial,
-                      matched_device_id = EXCLUDED.matched_device_id
+                      matched_device_id = EXCLUDED.matched_device_id,
+                      -- Derived FROM the identity this statement is replacing, so
+                      -- keeping the old one guarantees the row contradicts itself.
+                      -- It did: responders whose sysDescr had been corrected still
+                      -- read as the type their first sweep guessed, while every
+                      -- address being seen for the first time classified correctly
+                      -- in the same run.
+                      suggested_device_type = EXCLUDED.suggested_device_type,
+                      suggested_vendor = EXCLUDED.suggested_vendor
         RETURNING id::text
     """), {"run_id": run_id, "address": address, "protocol": protocol,
            "identity": json.dumps(identity), "matched": matched_device_id,

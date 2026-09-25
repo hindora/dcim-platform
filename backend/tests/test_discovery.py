@@ -6,6 +6,8 @@ decides what an answer means.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from app.services import discovery as d
@@ -171,6 +173,33 @@ def test_an_unrecognised_device_gets_no_guess_rather_than_a_wrong_one():
 def test_an_empty_identity_classifies_to_nothing():
     assert d.classify({}) == (None, None)
     assert d.classify({"sysDescr": ""}) == (None, None)
+
+
+# --- the upsert ---------------------------------------------------------------
+
+REPO = (Path(__file__).resolve().parents[1] / "app" / "repositories"
+        / "discovery.py").read_text(encoding="utf-8")
+
+
+def test_a_reswept_responder_does_not_keep_its_first_guess():
+    """The suggestion is derived from the identity, so it has to move with it.
+
+    The upsert replaced `identity` and `serial` on conflict and left the suggestions
+    alone, so a row ended up carrying a guess its own identity column contradicted. A
+    device that is re-imaged, re-badged, re-purposed - or simply identified correctly
+    after a fix - kept the wrong suggestion for ever.
+
+    Found live: Liebert CRAHs and Eaton panelboards whose sysDescr had been corrected
+    still read "ups" on the page, while every address being swept for the FIRST time
+    classified correctly in the same run.
+    """
+    # The ON CONFLICT clause of the candidate upsert.
+    start = REPO.index("ON CONFLICT (address, protocol)")
+    clause = REPO[start:REPO.index("RETURNING", start)]
+
+    for column in ("identity", "serial", "matched_device_id",
+                   "suggested_device_type", "suggested_vendor", "last_seen"):
+        assert column in clause, f"a re-sweep does not refresh {column}"
 
 
 # --- run validation ----------------------------------------------------------
