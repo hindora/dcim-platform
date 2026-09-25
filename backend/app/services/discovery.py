@@ -87,7 +87,17 @@ _TYPE_HINTS: list[tuple[str, str]] = [
     # No unanchored platform NUMBER here. "n9000" was in this list and matched
     # inside "PowerLogic ION9000", filing a revenue-grade power meter as a Nexus
     # switch. Every Nexus string carries "nx-os" anyway, so it bought nothing.
-     r"|nx-os|junos|arista", "switch"),
+     r"|nx-os|junos|arista"
+     # Dell names the network OS, not the equipment class: Enterprise SONiC
+     # reports its HwSku (the platform identifier) and the N-series reports
+     # "Dell EMC Networking ... DNOS". Neither says "switch", which is why both
+     # families arrived with no suggested type at all.
+     #
+     # By NAME and not by OID on purpose. Dell's networking arc is 674.10895 and
+     # 82 PowerEdge SERVERS carry 674.10895.3000, inherited from the vendor
+     # fallback - so an OID backstop would file every Dell server as a switch,
+     # because these patterns are tried before the server ones.
+     r"|\bsonic\b|hwsku|dell emc networking|\bdnos\b", "switch"),
     # No trailing \b after idrac or ilo: the real strings are "iDRAC9" and
     # "iLO 6", and a digit is a word character, so \bidrac\b never matched the
     # thing it was written for. Product families are listed as well, because a

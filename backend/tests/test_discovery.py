@@ -169,6 +169,44 @@ def test_a_firewall_and_a_load_balancer_are_not_servers(identity, expected):
     assert d.classify(identity)[0] == expected
 
 
+SONIC = ("Enterprise SONiC Distribution by Dell Technologies - 4.2.0 - "
+         "HwSku: DellEMC-S5248f-P-25G-DPB - Distribution: Debian - "
+         "Kernel: 5.10.0-18-2-amd64")
+DNOS = "Dell EMC Networking N3248TE-ON, DNOS 6.5.1.9, 48-port GbE + 4-port SFP+"
+
+
+@pytest.mark.parametrize("descr", [SONIC, DNOS])
+def test_a_dell_switch_is_classified_from_its_network_os(descr):
+    """Dell names the NOS, not the equipment class.
+
+    Enterprise SONiC reports its HwSku - the platform identifier - and the N-series
+    reports "Dell EMC Networking ... DNOS". Neither contains "switch", which is why
+    both families arrived with no suggested type at all.
+    """
+    dtype, vendor = d.classify(ident(descr))
+    assert dtype == "switch"
+    assert vendor == "Dell"
+
+
+def test_a_dell_server_is_not_filed_as_a_switch():
+    """The regression the Dell fix had to avoid, pinned.
+
+    Dell's networking arc is 674.10895 and 82 PowerEdge SERVERS in the simulated
+    estate carry 674.10895.3000, inherited from the vendor fallback. The switch
+    patterns are tried BEFORE the server ones, so matching that arc here - the obvious
+    way to catch a Dell switch whose text says nothing useful - would have filed every
+    Dell server as a switch. The hints match the NOS name instead.
+    """
+    server = {"sysDescr": "Dell PowerEdge R760 running Red Hat Enterprise Linux 9.2",
+              "sysObjectID": "1.3.6.1.4.1.674.10895.3000"}
+    assert d.classify(server)[0] == "server"
+
+    # And the BMC in front of it, which is what a sweep usually reaches first.
+    idrac = {"sysDescr": "iDRAC9 7.10.30.00 - Dell Technologies Dell PowerEdge R760",
+             "sysObjectID": "1.3.6.1.4.1.674.10895.3000"}
+    assert d.classify(idrac)[0] == "server"
+
+
 def test_an_f5_cannot_be_identified_from_sysdescr_alone():
     """The realistic part, and the reason the OID is in the pattern.
 
