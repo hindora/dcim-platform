@@ -151,6 +151,62 @@ def test_running_ios_is_not_by_itself_evidence_of_anything(descr="Cisco IOS Soft
     assert dtype is None, f"a bare OS string suggested {dtype}"
 
 
+PAN_DESCR = "Palo Alto Networks PA-5220 series firewall, PAN-OS 11.0.2"
+F5_DESCR = ("Linux f5-i5800-dc1.mgmt 3.10.0-1160.45.1.el7.ve.x86_64 #1 SMP "
+            "Thu Oct 19 2023 x86_64")
+
+
+@pytest.mark.parametrize("identity,expected", [
+    ({"sysDescr": PAN_DESCR}, "firewall"),
+    ({"sysObjectID": "1.3.6.1.4.1.25461"}, "firewall"),
+    ({"sysDescr": PAN_DESCR, "sysObjectID": "1.3.6.1.4.1.25461"}, "firewall"),
+    ({"sysDescr": F5_DESCR, "sysObjectID": "1.3.6.1.4.1.3375"}, "load_balancer"),
+    ({"sysObjectID": ".1.3.6.1.4.1.3375"}, "load_balancer"),
+    ({"sysDescr": "F5 Networks BIG-IP, TMOS Version 17.1.0"}, "load_balancer"),
+])
+def test_a_firewall_and_a_load_balancer_are_not_servers(identity, expected):
+    """Both were arriving with no type and no vendor at all."""
+    assert d.classify(identity)[0] == expected
+
+
+def test_an_f5_cannot_be_identified_from_sysdescr_alone():
+    """The realistic part, and the reason the OID is in the pattern.
+
+    TMOS runs on a Linux host and BIG-IP answers sysDescr with that host's uname - no
+    "BIG-IP", no "load balancer", nothing about what the box is for. Read on sysDescr
+    alone it is a Linux server, and that is not a bug in the classifier: it is why F5
+    monitoring keys on sysObjectID and the F5-BIGIP-SYSTEM-MIB instead.
+
+    Pinned as a POSITIVE assertion rather than left implicit, so that nobody "fixes"
+    it by writing a friendlier sysDescr into the simulator and quietly teaching the
+    collector that sysDescr is always enough.
+    """
+    assert d.classify({"sysDescr": F5_DESCR}) == ("server", None)
+    # And with the one leaf that carries the answer, it is right.
+    assert d.classify({"sysDescr": F5_DESCR,
+                       "sysObjectID": "1.3.6.1.4.1.3375"}) == ("load_balancer", "F5")
+
+
+def test_the_load_balancer_pattern_beats_the_server_one():
+    """Order, not cleverness, is what makes the F5 case work.
+
+    The uname matches `linux`, so if the server patterns were tried first the OID
+    would never get a look in.
+    """
+    types = [t for _pattern, t in d._TYPE_HINTS]
+    assert types.index("load_balancer") < types.index("server")
+
+
+@pytest.mark.parametrize("oid", ["1.3.6.1.4.1.33751.1", "1.3.6.1.4.1.254612.1"])
+def test_an_enterprise_number_does_not_match_a_longer_one(oid):
+    """3375 must not match inside 33751, nor 25461 inside 254612.
+
+    Same hazard as the "n9000" token that matched inside "ION9000" and filed a power
+    meter as a Nexus. An OID pattern is a number, so it needs the same guard.
+    """
+    assert d.classify({"sysObjectID": oid}) == (None, None)
+
+
 def test_a_platform_number_is_not_matched_unanchored():
     """"n9000" was in the switch pattern and matched inside "ION9000".
 

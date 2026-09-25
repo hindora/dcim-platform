@@ -61,8 +61,19 @@ _TYPE_HINTS: list[tuple[str, str]] = [
     # That is how a real NMS tells a router from a switch, and it has to be tried
     # before the switch pattern because both strings start "Cisco IOS Software".
     (r"\brouter\b|isr software|asr1000|asr9k|ios xr", "router"),
-    (r"\bfirewall\b", "firewall"),
-    (r"load balanc", "load_balancer"),
+    # PAN-OS runs on nothing but firewalls, and a real PA-5220 says "firewall"
+    # in sysDescr anyway. The OID is here as the backstop for a PAN-OS version
+    # whose sysDescr wording differs.
+    (r"\bfirewall\b|pan-os|1\.3\.6\.1\.4\.1\.25461(?![0-9])", "firewall"),
+    # F5 is the case that needs the OID rather than the text. TMOS runs on a
+    # Linux host and BIG-IP answers sysDescr with that host's uname - no
+    # "BIG-IP", no "load balancer", nothing about what the box does - so a
+    # collector reading only sysDescr files it as a Linux SERVER. sysObjectID is
+    # the leaf that carries the answer, and it is already in the blob.
+    #
+    # This must stay ahead of the server patterns for that reason: the uname
+    # matches `linux` and would otherwise win.
+    (r"load balanc|big-ip|\btmos\b|1\.3\.6\.1\.4\.1\.3375(?![0-9])", "load_balancer"),
     # No bare "ios" here. It meant "anything running IOS is a switch", which
     # filed every Cisco IOS router in this estate as one - and the heuristic was
     # not really wrong, it was guessing, because two routers and a switch were
@@ -97,6 +108,10 @@ _VENDOR_HINTS: list[tuple[str, str]] = [
     # Found by the first live sweep: a Supermicro BMC classified as a server
     # but with no vendor, because the list did not have it.
     (r"supermicro", "Supermicro"),
+    # Both were arriving with no vendor at all. Matched on the OID as well as
+    # the name, because an F5 sysDescr contains neither.
+    (r"palo alto|pan-os|1\.3\.6\.1\.4\.1\.25461(?![0-9])", "Palo Alto Networks"),
+    (r"f5 networks|big-ip|\btmos\b|1\.3\.6\.1\.4\.1\.3375(?![0-9])", "F5"),
     # Facility vendors, found the way the others were: by sweeping and seeing
     # what came back with no vendor at all.
     (r"\basco\b", "ASCO Power Technologies"),
