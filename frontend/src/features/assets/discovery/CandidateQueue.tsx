@@ -8,6 +8,9 @@ import {
   type DiscoveryCandidate,
 } from '../../../api/client';
 import { usePaged } from '../../../components/Pagination';
+import {
+  collapse, isKnown, matchOf, memberIds, movedFrom, type Responder,
+} from './responders';
 import { humanise, relativeTime } from '../../../lib/format';
 import { Dialog, DialogActions } from '../components/Dialog';
 import { SweepPanel } from './SweepPanel';
@@ -46,20 +49,27 @@ export function CandidateQueue() {
 
   if (error) return <div className="banner">Failed to load: {String(error)}</div>;
 
-  const items = data?.items ?? [];
-  const ignored = dismissed?.items ?? [];
-  const unmatched = items.filter((c) => !c.matched_device_id);
+  // One row per MACHINE, not per probe. A server answering SNMP on its BMC and
+  // Redfish on the same address was two rows, and only the Redfish one carried a
+  // serial - so the page showed a blank Serial column beside a populated one for
+  // the same box and read as a defect.
+  const items = collapse(data?.items ?? []);
+  const ignored = collapse(dismissed?.items ?? []);
+  const unmatched = items.filter((r) => !isKnown(r));
   // Matched, but not where inventory says it is. Only knowable because the serial
   // matched - on address alone this row would have read as something new, and
   // promoting it would have created a second record for one physical box.
-  const moved = items.filter((c) => c.matched_device_id
-    && c.matched_device_address && c.matched_device_address !== c.address);
-  const expected = items.filter((c) => c.matched_device_id && !moved.includes(c));
+  const moved = items.filter((r) => isKnown(r) && movedFrom(r));
+  const expected = items.filter((r) => isKnown(r) && !movedFrom(r));
 
   // How much of this result can be trusted. A responder with no serial is matched
   // by address alone, so a device that has been re-addressed still reads as new.
   // Saying which proportion that is beats a banner that guesses.
-  const withSerial = items.filter((c) => c.serial).length;
+  //
+  // Counted over machines now that a machine is one row, which is also the honest
+  // denominator: a server whose Redfish probe read a serial IS identified, and
+  // counting its silent SNMP probe against it understated the coverage.
+  const withSerial = items.filter((r) => r.serial).length;
 
   return (
     <>
@@ -131,7 +141,7 @@ export function CandidateQueue() {
   );
 }
 
-function Dismissed({ rows }: { rows: DiscoveryCandidate[] }) {
+function Dismissed({ rows }: { rows: Responder[] }) {
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -154,7 +164,7 @@ function Dismissed({ rows }: { rows: DiscoveryCandidate[] }) {
   );
 }
 
-function Expected({ rows, total }: { rows: DiscoveryCandidate[]; total: number }) {
+function Expected({ rows, total }: { rows: Responder[]; total: number }) {
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -171,28 +181,30 @@ function Expected({ rows, total }: { rows: DiscoveryCandidate[]; total: number }
 }
 
 function CandidateTable({ rows, bulk = false }: {
-  rows: DiscoveryCandidate[]; bulk?: boolean;
+  rows: Responder[]; bulk?: boolean;
 }) {
   const paged = usePaged(rows, { noun: 'responders' });
+  // Keyed by responder, not by candidate: a selection has to mean "this machine",
+  // or ignoring a row would dismiss one of its protocols and leave the other.
   const [picked, setPicked] = useState<Set<string>>(new Set());
 
   // Only what is on the page, and only what is still actionable. A "select all"
   // that quietly included rows the operator cannot see is how a bulk action
   // surprises somebody.
-  const selectable = paged.rows.filter((c) => c.status === 'new');
+  const selectable = paged.rows.filter((r) => r.primary.status === 'new');
   const allPicked = selectable.length > 0
-    && selectable.every((c) => picked.has(c.id));
+    && selectable.every((r) => picked.has(r.key));
 
-  const toggle = (id: string) => setPicked((p) => {
+  const toggle = (key: string) => setPicked((p) => {
     const next = new Set(p);
-    if (next.has(id)) next.delete(id); else next.add(id);
+    if (next.has(key)) next.delete(key); else next.add(key);
     return next;
   });
 
   return (
     <>
       {bulk && (
-        <BulkBar ids={[...picked]} rows={rows}
+        <BulkBar keys={[...picked]} rows={rows}
                  onDone={() => setPicked(new Set())} />
       )}
       <div className="asset-scroll">
@@ -205,8 +217,8 @@ function CandidateTable({ rows, bulk = false }: {
                          aria-label="Select every responder on this page"
                          onChange={() => setPicked((p) => {
                            const next = new Set(p);
-                           if (allPicked) selectable.forEach((c) => next.delete(c.id));
-                           else selectable.forEach((c) => next.add(c.id));
+                           if (allPicked) selectable.forEach((r) => next.delete(r.key));
+                           else selectable.forEach((r) => next.add(r.key));
                            return next;
                          })} />
                 </th>
@@ -216,10 +228,10 @@ function CandidateTable({ rows, bulk = false }: {
             </tr>
           </thead>
           <tbody>
-            {paged.rows.map((c) => (
-              <Row key={c.id} c={c}
-                   picked={bulk ? picked.has(c.id) : undefined}
-                   onPick={bulk ? () => toggle(c.id) : undefined} />
+            {paged.rows.map((r) => (
+              <Row key={r.key} r={r}
+                   picked={bulk ? picked.has(r.key) : undefined}
+                   onPick={bulk ? () => toggle(r.key) : undefined} />
             ))}
           </tbody>
         </table>
@@ -237,16 +249,22 @@ function CandidateTable({ rows, bulk = false }: {
  *  are called, and the count says how many of the selection that is. The rest are
  *  named one at a time, which is the honest amount of work.
  */
-function BulkBar({ ids, rows, onDone }: {
-  ids: string[]; rows: DiscoveryCandidate[]; onDone: () => void;
+function BulkBar({ keys, rows, onDone }: {
+  keys: string[]; rows: Responder[]; onDone: () => void;
 }) {
   const qc = useQueryClient();
   const [error, setError] = useState<string | null>(null);
   const [report, setReport] = useState<string | null>(null);
 
-  const chosen = rows.filter((c) => ids.includes(c.id));
-  const nameable = chosen.filter(
-    (c) => String(c.identity?.hostName ?? c.identity?.sysName ?? '').trim());
+  const chosen = rows.filter((r) => keys.includes(r.key));
+  // A name off ANY of the machine's probes: a BMC reports `hostName` over Redfish
+  // where its SNMP agent reports nothing, and refusing to promote for want of a
+  // name the machine did give us would be the same mistake the blank Serial column
+  // was.
+  const named = (r: Responder) => r.members
+    .map((c) => String(c.identity?.hostName ?? c.identity?.sysName ?? '').trim())
+    .find(Boolean);
+  const nameable = chosen.filter(named);
 
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ['discovery-candidates'] });
@@ -257,7 +275,9 @@ function BulkBar({ ids, rows, onDone }: {
   };
 
   const promote = useMutation({
-    mutationFn: () => api.bulkPromoteCandidates(nameable.map((c) => c.id)),
+    // The primary of each machine - the probe that read a serial, so the device
+    // lands with the one key that survives it being re-addressed.
+    mutationFn: () => api.bulkPromoteCandidates(nameable.map((r) => r.primary.id)),
     onSuccess: (r) => {
       setError(null);
       // Skipped rows are reported rather than silently dropped: an operator who
@@ -271,24 +291,28 @@ function BulkBar({ ids, rows, onDone }: {
     onError: (e) => setError(String(e)),
   });
 
+  // EVERY probe on every selected machine. Dismissing the SNMP half and leaving
+  // the Redfish half would keep the row in the queue asking about a box somebody
+  // has already waved away.
   const dismiss = useMutation({
-    mutationFn: () => api.bulkIgnoreCandidates(ids),
+    mutationFn: () => api.bulkIgnoreCandidates(chosen.flatMap(memberIds)),
     onSuccess: (r) => {
       setError(null);
-      setReport(`${r.ignored} dismissed`
+      setReport(`${chosen.length} dismissed`
+        + (r.ignored !== chosen.length ? ` (${r.ignored} probes)` : '')
         + (r.failed.length ? `, ${r.failed.length} failed` : ''));
       refresh();
     },
     onError: (e) => setError(String(e)),
   });
 
-  if (ids.length === 0) {
+  if (keys.length === 0) {
     return report ? <p className="muted">{report}</p> : null;
   }
 
   return (
     <div className="asset-toolbar">
-      <span className="muted">{ids.length} selected</span>
+      <span className="muted">{keys.length} selected</span>
       <button type="button"
               disabled={nameable.length === 0 || promote.isPending}
               onClick={() => { setError(null); promote.mutate(); }}>
@@ -297,11 +321,11 @@ function BulkBar({ ids, rows, onDone }: {
       </button>
       <button type="button" disabled={dismiss.isPending}
               onClick={() => { setError(null); dismiss.mutate(); }}>
-        {dismiss.isPending ? 'Dismissing…' : `Ignore ${ids.length}`}
+        {dismiss.isPending ? 'Dismissing…' : `Ignore ${keys.length}`}
       </button>
-      {nameable.length < ids.length && (
+      {nameable.length < keys.length && (
         <span className="muted">
-          {ids.length - nameable.length} of these report no name and must be
+          {keys.length - nameable.length} of these report no name and must be
           promoted individually.
         </span>
       )}
@@ -311,12 +335,28 @@ function BulkBar({ ids, rows, onDone }: {
   );
 }
 
-function Row({ c, picked, onPick }: {
-  c: DiscoveryCandidate; picked?: boolean; onPick?: () => void;
+function Row({ r, picked, onPick }: {
+  r: Responder; picked?: boolean; onPick?: () => void;
 }) {
-  const descr = String(c.identity?.sysDescr ?? c.identity?.sysName ?? '');
-  const movedFrom = c.matched_device_address && c.matched_device_address !== c.address
-    ? c.matched_device_address : null;
+  const c = r.primary;
+  // The fullest description any probe returned. A Redfish service root carries a
+  // version and a name and no model at all, so taking the primary's would often
+  // throw away the sysDescr that is the whole evidence for the suggested type.
+  const descr = r.members
+    .map((m) => String(m.identity?.sysDescr ?? m.identity?.sysName ?? ''))
+    .reduce((a, b) => (b.length > a.length ? b : a), '');
+  const match = matchOf(r);
+  const from = movedFrom(r);
+  // Newest reading across the machine's probes: a row saying "2 min ago" because
+  // one protocol answered is more use than one saying "an hour ago" because the
+  // other did not.
+  const lastSeen = r.members
+    .map((m) => m.last_seen)
+    .reduce((a, b) => (String(b ?? '') > String(a ?? '') ? b : a), r.primary.last_seen);
+  // Suggestions from whichever probe had one. Redfish suggests `server` where a
+  // bare sysDescr suggests nothing, and the vendor often comes from the other one.
+  const pick = <K extends keyof DiscoveryCandidate>(k: K) =>
+    r.members.map((m) => m[k]).find(Boolean);
 
   return (
     <tr>
@@ -331,22 +371,32 @@ function Row({ c, picked, onPick }: {
         </td>
       )}
       <td className="asset-tag">
-        {c.address ?? '—'}
-        <div className="muted">{c.protocol.toUpperCase()}</div>
+        {r.addresses.length > 0
+          ? r.addresses.map((a) => <div key={a}>{a}</div>)
+          : '—'}
+        {/* Which protocols reached it. Two badges on one row is the answer to why
+            the Serial column can be populated for a machine whose SNMP agent
+            publishes no serial OID. */}
+        <div className="muted">{r.protocols.join(' · ')}</div>
       </td>
       <td className="muted" style={{ maxWidth: 320 }}><Identity descr={descr} /></td>
       <td className="asset-tag">
-        {c.serial ?? <span className="asset-none">not reported</span>}
+        {r.serial ?? <span className="asset-none">not reported</span>}
+        {/* Attributed, because "which protocol told us" is the useful half: it says
+            a blank here is a property of the protocol, not a missing serial. */}
+        {r.serial && r.protocols.length > 1 && (
+          <div className="muted">via {r.serialFrom}</div>
+        )}
       </td>
       <td>
-        {c.matched_device_id ? (
+        {match?.matched_device_id ? (
           <>
-            <Link to={`/assets/inventory/${c.matched_device_id}`}>
-              {c.matched_device_name ?? 'known'}
+            <Link to={`/assets/inventory/${match.matched_device_id}`}>
+              {match.matched_device_name ?? 'known'}
             </Link>
             <div className="muted">
-              {c.matched_on_serial ? 'by serial' : 'by address'}
-              {movedFrom && <> · recorded at {movedFrom}</>}
+              {match.matched_on_serial ? 'by serial' : 'by address'}
+              {from && <> · recorded at {from}</>}
             </div>
           </>
         ) : (
@@ -354,12 +404,13 @@ function Row({ c, picked, onPick }: {
         )}
       </td>
       <td className="muted">
-        {[c.suggested_vendor,
-          c.suggested_device_type ? humanise(c.suggested_device_type) : null,
-          c.suggested_model].filter(Boolean).join(' · ') || '—'}
+        {[pick('suggested_vendor'),
+          pick('suggested_device_type')
+            ? humanise(String(pick('suggested_device_type'))) : null,
+          pick('suggested_model')].filter(Boolean).join(' · ') || '—'}
       </td>
-      <td className="muted">{relativeTime(c.last_seen)}</td>
-      <td><CandidateActions c={c} /></td>
+      <td className="muted">{relativeTime(lastSeen)}</td>
+      <td><CandidateActions r={r} /></td>
     </tr>
   );
 }
@@ -393,7 +444,8 @@ function Identity({ descr }: { descr: string }) {
  *  action there is to open the device it matched — and for a MOVED one, to correct
  *  its address on the record.
  */
-function CandidateActions({ c }: { c: DiscoveryCandidate }) {
+function CandidateActions({ r }: { r: Responder }) {
+  const c = r.primary;
   const qc = useQueryClient();
   const [naming, setNaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -408,20 +460,27 @@ function CandidateActions({ c }: { c: DiscoveryCandidate }) {
     qc.invalidateQueries({ queryKey: ['commissioning-queue'] });
   };
 
+  // Every probe on the machine, not just the one this row happens to be built
+  // around. Dismissing SNMP and leaving Redfish keeps the row in the queue.
+  const ids = memberIds(r);
   const dismiss = useMutation({
-    mutationFn: () => api.ignoreCandidate(c.id),
+    mutationFn: () => (ids.length > 1
+      ? api.bulkIgnoreCandidates(ids) : api.ignoreCandidate(c.id)),
     onSuccess: refresh,
     onError: (e) => setError(String(e)),
   });
 
   const restore = useMutation({
-    mutationFn: () => api.unignoreCandidate(c.id),
+    mutationFn: () => (ids.length > 1
+      ? Promise.all(ids.map((id) => api.unignoreCandidate(id)))
+      : api.unignoreCandidate(c.id)),
     onSuccess: refresh,
     onError: (e) => setError(String(e)),
   });
 
-  if (c.matched_device_id) {
-    return <Link to={`/assets/inventory/${c.matched_device_id}`}>Open</Link>;
+  const match = matchOf(r);
+  if (match?.matched_device_id) {
+    return <Link to={`/assets/inventory/${match.matched_device_id}`}>Open</Link>;
   }
   if (c.status === 'ignored') {
     return (
