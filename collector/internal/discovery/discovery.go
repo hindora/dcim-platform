@@ -46,6 +46,24 @@ const (
 	// is why the column is nullable.
 	oidEntSerial = "1.3.6.1.2.1.47.1.1.1.1.11.1"
 
+	// Vendor serial OIDs, read only when the standard one answered nothing.
+	//
+	// ENTITY-MIB is a network-gear convention. Facility gear does not implement it
+	// and the standard MIB for each class has no serial object to fall back on:
+	// UPS-MIB (RFC 1628) stops at manufacturer, model and two software versions,
+	// and neither Modbus nor BACnet defines a serial register at all. So a serial
+	// for a PDU or a UPS lives in the vendor's own tree or nowhere, which is why a
+	// real discovery tool reads sysObjectID first and then asks the vendor.
+	//
+	// Without this, 80 rack PDUs and every UPS on the plane came back with no
+	// serial, and a serial is the only key that survives a device being
+	// re-addressed - so a re-addressed PDU read as a brand new one.
+	oidAPCrPDU2Serial = "1.3.6.1.4.1.318.1.1.26.2.1.7.1"  // rPDU2IdentSerialNumber
+	oidAPCrPDUSerial  = "1.3.6.1.4.1.318.1.1.12.1.6.0"    // rPDUIdentSerialNumber
+	oidAPCUPSSerial   = "1.3.6.1.4.1.318.1.1.1.1.2.3.0"   // upsBasicIdentSerialNumber
+	oidRaritanSerial  = "1.3.6.1.4.1.13742.6.3.2.1.1.4.1" // pduSerialNumber
+	oidLiebertSerial  = "1.3.6.1.4.1.476.1.42.2.1.4.0"    // lgpAgentIdentSerialNumber
+
 	// Hard ceiling on addresses in one run. A /16 is refused rather than
 	// truncated: silently sweeping the first 4096 of 65,536 and reporting
 	// "found 12" would be a lie about what was audited.
@@ -293,6 +311,15 @@ func (s *Sweeper) probeWith(ctx context.Context, addr, community string,
 	if strings.TrimSpace(identity["serial"]) == "" {
 		delete(identity, "serial")
 	}
+	// Nothing at the standard OID: ask the vendor. Most of a facility plane lands
+	// here - PDUs, UPSs and air handlers implement no ENTITY-MIB - and a candidate
+	// with no serial can only be matched by address, which a re-addressing breaks.
+	if _, ok := identity["serial"]; !ok {
+		if sn := vendorSerial(conn, identity["sysObjectID"],
+			identity["sysDescr"]); sn != "" {
+			identity["serial"] = sn
+		}
+	}
 	// A sweep answering sysDescr but nothing else is still a responder; only the
 	// serial is optional here.
 	return Responder{Address: addr, Protocol: "snmp", Identity: identity}, true
@@ -303,6 +330,128 @@ func trimLeadingDot(s string) string {
 		return s[1:]
 	}
 	return s
+}
+
+// Enterprise sysObjectID prefix to the serial OIDs that vendor publishes.
+//
+// A slice, not a map, because the match is by prefix and order matters within a
+// vendor: APC's modern rPDU2 identity table is tried before the legacy rPDU one,
+// and an AP88xx strip answers both.
+//
+// Short on purpose. Eaton, Server Technology and Schneider PowerLogic all expose
+// a serial somewhere in their trees, but no MIB was available to pin the OID, and
+// a wrong OID here is worse than a missing one: it reads a firmware version or a
+// part number off the neighbouring leaf and files it as a serial, which then
+// matches nothing for ever. Add a vendor when its OID can be confirmed.
+var vendorSerialOIDs = []struct {
+	prefix string
+	oids   []string
+}{
+	// Rack PDUs, floor PDUs and UPSs all sit under the APC enterprise, and one
+	// device answers only its own. Asking for all three costs one GET.
+	//
+	// UNVERIFIED column index on rPDU2IdentSerialNumber: .7 is where the serial
+	// sits in the conventional rPDU2Ident table shape (Index, Name, HardwareRev,
+	// FirmwareRev, DateOfManufacture, ModelNumber, SerialNumber) but no MIB was
+	// available to confirm it. It is tried FIRST and a wrong leaf would win, so
+	// the value is sanity-checked before it is used.
+	{"1.3.6.1.4.1.318", []string{oidAPCrPDU2Serial, oidAPCrPDUSerial, oidAPCUPSSerial}},
+	{"1.3.6.1.4.1.13742", []string{oidRaritanSerial}},
+	{"1.3.6.1.4.1.476", []string{oidLiebertSerial}},
+}
+
+func serialOIDsFor(sysObjectID string) []string {
+	id := trimLeadingDot(strings.TrimSpace(sysObjectID))
+	if id == "" {
+		return nil
+	}
+	for _, v := range vendorSerialOIDs {
+		if id == v.prefix || strings.HasPrefix(id, v.prefix+".") {
+			return v.oids
+		}
+	}
+	return nil
+}
+
+// plausibleSerial rejects what an identity leaf read by mistake looks like.
+//
+// The vendor OIDs above are tried in order and the first non-empty string wins,
+// so an off-by-one column would hand back a firmware version or a model number
+// and it would be filed as a serial. Those are the two neighbours in every
+// identity table this reads, and both are recognisable: a version is digits and
+// dots, a model number is what sysDescr already says.
+//
+// This does NOT try to validate a real serial - serial formats are arbitrary and
+// rejecting an odd one would lose a real device. It only refuses the specific
+// mistakes this lookup can make.
+func plausibleSerial(sn, sysDescr string) bool {
+	if sn == "" || len(sn) > 64 {
+		return false
+	}
+	// A version string: dotted digits, with an optional leading v. The dot is what
+	// makes it one - plenty of real serials are all digits and nothing else, so
+	// "digits only" would have thrown those away.
+	if v := strings.TrimPrefix(strings.ToLower(sn), "v"); strings.Contains(v, ".") &&
+		strings.IndexFunc(v, func(r rune) bool {
+			return r != '.' && (r < '0' || r > '9')
+		}) < 0 {
+		return false
+	}
+	// A model number, which sysDescr already carries. Only for strings long enough
+	// for the match to mean something: a 2-character substring hit says nothing.
+	if len(sn) >= 4 && sysDescr != "" &&
+		strings.Contains(strings.ToLower(sysDescr), strings.ToLower(sn)) {
+		return false
+	}
+	return true
+}
+
+// vendorSerial asks the vendor's tree for a serial the standard OID did not give.
+//
+// One extra GET, and only for a device that already answered - so it costs a
+// round trip on a host known to be up, not a timeout. Batched, because three
+// varbinds in one PDU is one round trip; retried one at a time if the batch
+// errors, because a v1-era agent rejects the WHOLE PDU when any OID in it is
+// unknown, and losing all three to one absent leaf is how this would silently
+// find nothing.
+func vendorSerial(conn *gosnmp.GoSNMP, sysObjectID, sysDescr string) string {
+	oids := serialOIDsFor(sysObjectID)
+	if len(oids) == 0 {
+		return ""
+	}
+	if sn := firstSerial(conn, oids, sysDescr); sn != "" {
+		return sn
+	}
+	if len(oids) == 1 {
+		return ""
+	}
+	for _, oid := range oids {
+		if sn := firstSerial(conn, []string{oid}, sysDescr); sn != "" {
+			return sn
+		}
+	}
+	return ""
+}
+
+func firstSerial(conn *gosnmp.GoSNMP, oids []string, sysDescr string) string {
+	res, err := conn.Get(oids)
+	if err != nil || res == nil {
+		return ""
+	}
+	for _, v := range res.Variables {
+		if v.Type != gosnmp.OctetString {
+			continue
+		}
+		b, ok := v.Value.([]byte)
+		if !ok {
+			continue
+		}
+		sn := strings.TrimSpace(string(b))
+		if plausibleSerial(sn, sysDescr) {
+			return sn
+		}
+	}
+	return ""
 }
 
 // Scope is the run scope the API hands over.

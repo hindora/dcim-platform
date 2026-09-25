@@ -1,6 +1,9 @@
 package discovery
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // Hosts decides what a sweep actually probes, so an off-by-one here is the
 // difference between auditing a network and auditing a different network.
@@ -133,5 +136,62 @@ func TestTheSerialOIDIsTheChassisEntity(t *testing.T) {
 	const want = "1.3.6.1.2.1.47.1.1.1.1.11.1"
 	if oidEntSerial != want {
 		t.Errorf("serial OID = %s, want entPhysicalSerialNum.1 (%s)", oidEntSerial, want)
+	}
+}
+
+func TestVendorSerialIsChosenByEnterprisePrefix(t *testing.T) {
+	// A real discovery tool reads sysObjectID and then asks that vendor, because
+	// no standard MIB carries a serial for facility gear: UPS-MIB has no serial
+	// object and Modbus/BACnet define no serial register. Prefix matching is what
+	// makes one table cover every model a vendor ships.
+	cases := []struct {
+		name        string
+		sysObjectID string
+		wantFirst   string
+	}{
+		{"APC rack PDU", "1.3.6.1.4.1.318.1.3.5.4", oidAPCrPDU2Serial},
+		{"APC, leading dot", ".1.3.6.1.4.1.318.1.3.5.1", oidAPCrPDU2Serial},
+		{"Raritan PX2", "1.3.6.1.4.1.13742.6.3.2.14", oidRaritanSerial},
+		{"Vertiv Liebert", "1.3.6.1.4.1.476.1.42.2.10.2.1.1", oidLiebertSerial},
+	}
+	for _, c := range cases {
+		got := serialOIDsFor(c.sysObjectID)
+		if len(got) == 0 || got[0] != c.wantFirst {
+			t.Errorf("%s: first serial OID = %v, want %s", c.name, got, c.wantFirst)
+		}
+	}
+	// A vendor with no confirmed OID asks for nothing rather than guessing. An
+	// unknown enterprise must NOT fall through to another vendor's tree.
+	for _, id := range []string{"1.3.6.1.4.1.9.1.1861", "1.3.6.1.4.1.534.2.14", ""} {
+		if got := serialOIDsFor(id); len(got) != 0 {
+			t.Errorf("sysObjectID %q resolved to %v, want no vendor probe", id, got)
+		}
+	}
+	// 3181 is not under 318. Prefix matching on the raw string would have said it
+	// was, and every Cisco-adjacent enterprise would get asked for an APC serial.
+	if got := serialOIDsFor("1.3.6.1.4.1.3181.1"); len(got) != 0 {
+		t.Errorf("enterprise 3181 matched APC's 318: %v", got)
+	}
+}
+
+func TestPlausibleSerialRefusesTheNeighbouringLeaf(t *testing.T) {
+	// The vendor OIDs are tried in order and the first non-empty string wins, so an
+	// off-by-one column hands back whatever sits beside the serial in the identity
+	// table. That is a firmware version or a model number, and filed as a serial it
+	// would match nothing for ever while looking like a key.
+	const descr = "APC Rack PDU AP8886, firmware v6.8.2"
+	for _, sn := range []string{"6.8.2", "v6.8.2", "1.6.0", "AP8886", "",
+		strings.Repeat("x", 65)} {
+		if plausibleSerial(sn, descr) {
+			t.Errorf("accepted %q as a serial", sn)
+		}
+	}
+	// And it must not reject real ones. An all-digit serial is ordinary - rejecting
+	// "digits only" as a version would have thrown those away.
+	for _, sn := range []string{"YUGLKTRR", "5A1703T99999", "1234567890",
+		"SN-ABC-123", "7e3f2a1"} {
+		if !plausibleSerial(sn, descr) {
+			t.Errorf("rejected %q, which is a serial", sn)
+		}
 	}
 }
