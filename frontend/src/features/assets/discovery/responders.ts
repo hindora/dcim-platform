@@ -5,8 +5,8 @@ import type { DiscoveryCandidate } from '../../../api/client';
  *  A candidate is a record of one PROBE, so a server that answers SNMP on its BMC
  *  and Redfish on the same address produced two rows - and only the Redfish one
  *  carried a serial, because a BMC's SNMP agent implements no ENTITY-MIB and has no
- *  serial OID to read. Side by side, the blank SNMP row read as a defect when it
- *  was the protocol telling the truth about what it can see.
+ *  serial OID to read. Side by side, the blank SNMP row read as a defect when it was
+ *  the protocol telling the truth about what it can see.
  *
  *  So the page groups by machine and each protocol contributes what only it knows.
  */
@@ -29,25 +29,30 @@ export interface Responder {
   serialFrom: string | null;
 }
 
-/** The strongest identity the rows agree on.
+/** Everything that identifies this probe's machine.
  *
- *  Order matters. `matched_device_id` is authority and joins rows at DIFFERENT
- *  addresses - a server's BMC and its production NIC are one machine and inventory
- *  knows it. Serial is next: it is the only key that survives a re-addressing.
- *  Address is last and weakest; it joins protocols on one interface and nothing
- *  more.
+ *  A LIST, not one best key. The first version of this returned a single key, ranked
+ *  matched-device over serial over address, and that split the exact case the
+ *  grouping exists for: a BMC answering SNMP with no serial and Redfish with one
+ *  produced `addr:10.51.11.210` and `sn:YUGLKTRR` - one machine, one address, two
+ *  rows. It only showed on UNMATCHED responders, because matched ones share a device
+ *  id and joined on that, which is why 156 expected rows looked fine and the one
+ *  unknown machine did not.
  *
- *  Deliberately NOT joined: two unmatched rows with no serial at different
- *  addresses. They may well be one machine - a BMC and its host - but nothing in
- *  the data says so, and merging them on a guess would hide a genuinely unknown
- *  responder inside a row about a different one. An audit may not do that.
+ *  Two probes belong together if they agree on ANY of these, and agreement is
+ *  transitive: a serial seen at a second address pulls that address in too, which is
+ *  how a BMC and its production NIC become one row.
  */
-function keyOf(c: DiscoveryCandidate): string {
-  if (c.matched_device_id) return `dev:${c.matched_device_id}`;
+function idsOf(c: DiscoveryCandidate): string[] {
+  const ids: string[] = [];
+  if (c.matched_device_id) ids.push(`dev:${c.matched_device_id}`);
   const serial = (c.serial ?? '').trim().toUpperCase();
-  if (serial) return `sn:${serial}`;
-  if (c.address) return `addr:${c.address}`;
-  return `id:${c.id}`;
+  if (serial) ids.push(`sn:${serial}`);
+  if (c.address) ids.push(`addr:${c.address}`);
+  // Nothing at all to go on: keep it separate rather than merging every anonymous
+  // responder into one row.
+  if (ids.length === 0) ids.push(`id:${c.id}`);
+  return ids;
 }
 
 /** Which member an action operates on.
@@ -80,17 +85,56 @@ function pickPrimary(members: DiscoveryCandidate[]): DiscoveryCandidate {
 const seen = <T,>(xs: (T | null | undefined)[]): T[] =>
   [...new Set(xs.filter((x): x is T => Boolean(x)))];
 
+/** The group's name: the strongest identifier anything in it carries.
+ *
+ *  Not the first member's - that would change when the API returns the same probes in
+ *  a different order, and the key is what React reconciles on and what a selection
+ *  holds across a refetch.
+ */
+function keyFor(ids: Set<string>): string {
+  const sorted = [...ids].sort();
+  return sorted.find((i) => i.startsWith('dev:'))
+    ?? sorted.find((i) => i.startsWith('sn:'))
+    ?? sorted.find((i) => i.startsWith('addr:'))
+    ?? sorted[0];
+}
+
 export function collapse(items: DiscoveryCandidate[]): Responder[] {
-  // Insertion-ordered, so the page keeps the order the API sorted by rather than
-  // whatever order the grouping happened to discover keys in.
-  const groups = new Map<string, DiscoveryCandidate[]>();
+  // Union by shared identifier. Small n - a page holds hundreds of rows, not
+  // millions - so a plain merge loop is clearer here than a real union-find, and
+  // clarity is worth more in the thing that decides what an operator is looking at.
+  const owner = new Map<string, number>();      // identifier -> group index
+  const groups: { ids: Set<string>; members: DiscoveryCandidate[] }[] = [];
+
   for (const c of items) {
-    const k = keyOf(c);
-    const g = groups.get(k);
-    if (g) g.push(c); else groups.set(k, [c]);
+    const ids = idsOf(c);
+    const hit = [...new Set(ids.map((i) => owner.get(i))
+      .filter((g): g is number => g !== undefined))];
+
+    if (hit.length === 0) {
+      const g = groups.length;
+      groups.push({ ids: new Set(ids), members: [c] });
+      ids.forEach((i) => owner.set(i, g));
+      continue;
+    }
+
+    // Merge into the lowest-indexed group so insertion order is preserved: the page
+    // shows responders in the order the API sorted them.
+    const [keep, ...rest] = hit.sort((a, b) => a - b);
+    const target = groups[keep];
+    target.members.push(c);
+    ids.forEach((i) => { target.ids.add(i); owner.set(i, keep); });
+    // This probe tied previously separate groups together - a serial seen at a
+    // second address, say. Fold them in and leave the emptied ones behind.
+    for (const other of rest) {
+      groups[other].members.forEach((m) => target.members.push(m));
+      groups[other].ids.forEach((i) => { target.ids.add(i); owner.set(i, keep); });
+      groups[other].members = [];
+      groups[other].ids = new Set();
+    }
   }
 
-  return [...groups].map(([key, members]) => {
+  return groups.filter((g) => g.members.length > 0).map(({ ids, members }) => {
     const primary = pickPrimary(members);
     // Newest first, so "which protocol reported the serial" answers about the
     // freshest reading rather than a stale one from an older run.
@@ -98,7 +142,7 @@ export function collapse(items: DiscoveryCandidate[]): Responder[] {
       .filter((c) => (c.serial ?? '').trim())
       .sort((a, b) => String(b.last_seen ?? '').localeCompare(String(a.last_seen ?? '')));
     return {
-      key,
+      key: keyFor(ids),
       primary,
       members,
       protocols: seen(members.map((c) => c.protocol?.toUpperCase())),
