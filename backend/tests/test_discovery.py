@@ -197,14 +197,23 @@ def test_a_dell_server_is_not_filed_as_a_switch():
     way to catch a Dell switch whose text says nothing useful - would have filed every
     Dell server as a switch. The hints match the NOS name instead.
     """
-    server = {"sysDescr": "Dell PowerEdge R760 running Red Hat Enterprise Linux 9.2",
-              "sysObjectID": "1.3.6.1.4.1.674.10895.3000"}
+    # What a Dell host reports NOW: net-snmp, because that is what runs on it. The
+    # networking arc is a backstop for Dell switches and no longer reaches a server.
+    server = {"sysDescr": "Dell PowerEdge R760 running Ubuntu Server 22.04 LTS",
+              "sysObjectID": "1.3.6.1.4.1.8072.3.2.10"}
     assert d.classify(server)[0] == "server"
 
-    # And the BMC in front of it, which is what a sweep usually reaches first.
-    idrac = {"sysDescr": "iDRAC9 7.10.30.00 - Dell Technologies Dell PowerEdge R760",
-             "sysObjectID": "1.3.6.1.4.1.674.10895.3000"}
+    # And the BMC in front of it, which is what a management-plane sweep reaches
+    # first: an iDRAC on Dell's RAC arc, not on the networking one.
+    idrac = {"sysDescr": "iDRAC9 7.10.30.00 - Dell Technologies Dell PowerEdge R760 BMC",
+             "sysObjectID": "1.3.6.1.4.1.674.10892.5"}
     assert d.classify(idrac)[0] == "server"
+
+    # The arc that used to be on those servers now means switch, which is only safe
+    # because nothing on a server answers with it any more.
+    assert d.classify({"sysObjectID": "1.3.6.1.4.1.674.10895.3000"})[0] == "switch"
+    # And it must not swallow a longer enterprise number.
+    assert d.classify({"sysObjectID": "1.3.6.1.4.1.674.108950.1"})[0] is None
 
 
 def test_an_f5_cannot_be_identified_from_sysdescr_alone():

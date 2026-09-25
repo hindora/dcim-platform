@@ -97,7 +97,17 @@ _TYPE_HINTS: list[tuple[str, str]] = [
      # 82 PowerEdge SERVERS carry 674.10895.3000, inherited from the vendor
      # fallback - so an OID backstop would file every Dell server as a switch,
      # because these patterns are tried before the server ones.
-     r"|\bsonic\b|hwsku|dell emc networking|\bdnos\b", "switch"),
+     r"|\bsonic\b|hwsku|dell emc networking|\bdnos\b"
+     # Dell's networking arc, as the backstop for a Dell switch whose text says
+     # nothing useful - a NOS this list has not met, or a bare agent.
+     #
+     # This was deliberately left out while 82 PowerEdge SERVERS carried
+     # 674.10895.3000, inherited from the vendor fallback: these patterns run
+     # before the server ones, so it would have filed every Dell server as a
+     # switch. They now answer as net-snmp and the Microsoft SNMP service, which
+     # is what runs on them, so the arc means what it claims. The guard against
+     # 674.108950 is the same one every OID pattern here carries.
+     r"|1\.3\.6\.1\.4\.1\.674\.10895(?![0-9])", "switch"),
     # No trailing \b after idrac or ilo: the real strings are "iDRAC9" and
     # "iLO 6", and a digit is a word character, so \bidrac\b never matched the
     # thing it was written for. Product families are listed as well, because a
