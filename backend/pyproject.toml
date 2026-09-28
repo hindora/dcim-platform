@@ -24,6 +24,12 @@ dependencies = [
     "prometheus-client>=0.20",
     "PyYAML>=6.0",
     "cryptography>=42.0",
+    # The IANA zone database as a package. zoneinfo reads the host's first and
+    # falls back to this, so a schedule's timezone resolves the same on every
+    # host - Ubuntu 24.04 moved the legacy names browsers still report
+    # ("Asia/Calcutta") into a separate tzdata-legacy package, and without this a
+    # schedule made from such a browser was refused.
+    "tzdata>=2024.1",
 ]
 
 [project.optional-dependencies]

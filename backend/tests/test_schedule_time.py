@@ -142,3 +142,13 @@ def test_a_time_travels_to_the_database_as_text():
     assert src.count("CAST(CAST(:run_at AS text) AS time)") == 2
     # The same for Run now and re-timing, which send the next run as ISO text.
     assert "CAST(CAST(:next_run_at AS text) AS timestamptz)" in src
+
+
+def test_a_legacy_zone_name_a_browser_reports_is_accepted():
+    """Found live: Chrome reports Asia/Calcutta, Ubuntu 24.04 ships it only in
+    tzdata-legacy, and the schedule was refused. The tzdata package is declared so
+    zoneinfo can always fall back to the full database."""
+    pyproject = (APP.parent / "pyproject.toml").read_text(encoding="utf-8")
+    assert '"tzdata>=' in pyproject
+    t = st.timing("02:00", None, "Asia/Calcutta", None, INTERVALS)
+    assert t["timezone"] == "Asia/Calcutta"
