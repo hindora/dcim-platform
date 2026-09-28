@@ -394,10 +394,17 @@ export interface DiscoveryRange {
   known?: number;
   /** Names of other ranges sharing addresses with this one. */
   overlaps?: string[];
+  /** The last sweep that covered ALL of it (a partial one does not count). */
+  last_full_at?: string | null;
+  /** Its most frequent enabled schedule's longest gap; null when unscheduled. */
+  schedule_hours?: number | null;
+  schedule_names?: string[];
+  /** ok | overdue | never | unscheduled | off */
+  audit?: 'ok' | 'overdue' | 'never' | 'unscheduled' | 'off';
 }
 
 export interface RangeOptions {
-  datacenters: { id: string; name: string }[];
+  datacenters: { id: string; name: string; timezone?: string | null }[];
   collectors: { id: string; hostname?: string | null; age_s?: number | null;
                 healthy: boolean }[];
   purposes: string[];
@@ -418,6 +425,12 @@ export interface DiscoverySchedule {
   range_ids: string[];
   range_names: string[];
   subnets: string[];
+  /** "02:00" for a timed schedule; null for an interval one. */
+  run_at?: string | null;
+  /** ISO weekdays it runs on, 1 = Monday. */
+  days?: number[] | null;
+  /** IANA zone its run_at is read in. */
+  timezone?: string | null;
   interval_hours: number;
   enabled: boolean;
   next_run_at: string;
@@ -3201,7 +3214,8 @@ export const api = {
     request<{ items: DiscoverySchedule[]; intervals: number[] }>('/discovery/schedules'),
 
   createDiscoverySchedule: (body: {
-    name?: string; range_ids: string[]; interval_hours: number;
+    name?: string; range_ids: string[]; interval_hours?: number;
+    run_at?: string; days?: number[]; timezone?: string;
   }) =>
     request<DiscoverySchedule>('/discovery/schedules', {
       method: 'POST', body: JSON.stringify(body),
@@ -3209,6 +3223,8 @@ export const api = {
 
   updateDiscoverySchedule: (id: string, body: {
     name?: string; range_ids?: string[]; interval_hours?: number;
+    /** null turns a timed schedule back into an interval one. */
+    run_at?: string | null; days?: number[] | null; timezone?: string | null;
     enabled?: boolean; run_now?: boolean;
   }) =>
     request<DiscoverySchedule>(`/discovery/schedules/${id}`, {

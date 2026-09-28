@@ -8,7 +8,7 @@ import {
 } from '../../../api/client';
 import { relativeTime, untilTime } from '../../../lib/format';
 import { RangeDialog } from './RangeDialog';
-import { intervalLabel, ScheduleDialog } from './ScheduleDialog';
+import { inZone, ScheduleDialog, timingLabel } from './ScheduleDialog';
 import {
   collectorTrouble, lastSwept, MAX_ADDRESSES, parseCidr, probeCount, PURPOSE_LABEL,
   PURPOSE_TAG, SECONDS_PER_ADDRESS,
@@ -152,6 +152,7 @@ export function SweepPanel({ activeRun, onPickRun }: {
   });
 
   const sweepable = ranges.filter((r) => r.enabled);
+  const stale = ranges.filter((r) => r.audit === 'overdue' || r.audit === 'never').length;
   const allPicked = sweepable.length > 0 && sweepable.every((r) => picked.has(r.id));
   const inFlight = history.filter((r) => r.status === 'pending' || r.status === 'running');
   const shownRuns = allRuns ? history : history.slice(0, 6);
@@ -170,6 +171,13 @@ export function SweepPanel({ activeRun, onPickRun }: {
 
         {/* "No ranges" is a statement about the configuration; made while the list
             is still loading it was false for as long as the fetch took. */}
+        {/* How many audits have stopped happening, before the list that says
+            which. */}
+        {stale > 0 && (
+          <p className="disc-bad disc-stale">
+            {stale} range{stale === 1 ? '' : 's'} overdue.
+          </p>
+        )}
         {rangesQ.isLoading ? (
           <div className="asset-skeleton" style={{ height: 180 }} />
         ) : ranges.length ? (
@@ -376,6 +384,7 @@ function RangeRow({ r, picked, last, onToggle, onEdit, onDeleted }: {
         {r.name !== r.cidr && <code>{r.cidr}</code>}
         <div className="tags">
           {!r.enabled && <span className="proto">OFF</span>}
+          <AuditTag r={r} />
           {r.purpose && (
             <span className="proto" title={PURPOSE_LABEL[r.purpose]}>
               {PURPOSE_TAG[r.purpose] ?? r.purpose}
@@ -411,6 +420,28 @@ function RangeRow({ r, picked, last, onToggle, onEdit, onDeleted }: {
       </td>
     </tr>
   );
+}
+
+/** Whether this range's audit is still happening.
+ *
+ *  Overdue: not fully swept within twice its schedule's gap - a paused schedule,
+ *  a failing one or a collector that is gone all end here. Never: scheduled, never
+ *  fully swept. Unscheduled: only swept by hand. A partial sweep does not count.
+ */
+function AuditTag({ r }: { r: DiscoveryRange }) {
+  const last = r.last_full_at ? `last full sweep ${relativeTime(r.last_full_at)}` : 'never fully swept';
+  const by = r.schedule_names?.length ? `; ${r.schedule_names.join(', ')}` : '';
+  if (r.audit === 'overdue' || r.audit === 'never') {
+    return (
+      <span className="disc-bad" title={`${last}${by}`}>
+        {r.audit === 'never' ? 'never swept' : 'overdue'}
+      </span>
+    );
+  }
+  if (r.audit === 'unscheduled') {
+    return <span className="muted" title={last}>unscheduled</span>;
+  }
+  return null;
 }
 
 /** A sweep in flight, or one that is waiting - and on what - with a way out.
@@ -580,9 +611,9 @@ function Delta({ run }: { run: DiscoveryRun }) {
  */
 function Schedules({ chosen, adhoc }: { chosen: DiscoveryRange[]; adhoc: number }) {
   const qc = useQueryClient();
-  const [hours, setHours] = useState(24);
-  const [name, setName] = useState('');
-  const [error, setError] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const options = useQuery({ queryKey: ['discovery-range-options'],
+                             queryFn: api.discoveryRangeOptions, staleTime: 60_000 });
 
   const { data, isLoading } = useQuery({
     queryKey: ['discovery-schedules'],
@@ -606,18 +637,16 @@ function Schedules({ chosen, adhoc }: { chosen: DiscoveryRange[]; adhoc: number 
     qc.invalidateQueries({ queryKey: ['discovery-runs'] });
   };
 
-  const create = useMutation({
-    mutationFn: () => api.createDiscoverySchedule({
-      range_ids: chosen.map((r) => r.id), interval_hours: hours,
-      name: name.trim() || undefined,
-    }),
-    onSuccess: () => { setError(null); setName(''); refresh(); },
-    onError: (e) => setError(String(e)),
-  });
-
   return (
     <section className="asset-panel disc-schedules">
-      <h3>Schedules</h3>
+      <div className="disc-rail-head">
+        <h3>Schedules</h3>
+        {/* A dialog, not a row in the rail: time, days and a timezone do not fit
+            beside a name in 324px. The ranges selected above come pre-ticked. */}
+        <button type="button" className="link-button" onClick={() => setCreating(true)}>
+          New schedule
+        </button>
+      </div>
       {isLoading ? (
         <div className="asset-skeleton" style={{ height: 60 }} />
       ) : list.length > 0 ? (
@@ -632,33 +661,15 @@ function Schedules({ chosen, adhoc }: { chosen: DiscoveryRange[]; adhoc: number 
         <p className="muted disc-sched-none">No schedules.</p>
       )}
 
-      <div className="disc-sched-new">
-        <select value={hours} aria-label="How often"
-                onChange={(e) => setHours(Number(e.target.value))}>
-          {intervals.map((h) => <option key={h} value={h}>{intervalLabel(h)}</option>)}
-        </select>
-        <input value={name} onChange={(e) => setName(e.target.value)}
-               placeholder="Name (optional)" aria-label="Schedule name" />
-        <button type="button"
-                disabled={chosen.length === 0 || create.isPending}
-                title={chosen.length === 0 ? 'Choose saved ranges above first' : undefined}
-                onClick={() => { setError(null); create.mutate(); }}>
-          {create.isPending ? 'Saving…'
-            : chosen.length
-              ? `Schedule ${chosen.length} range${chosen.length === 1 ? '' : 's'}`
-              : 'Schedule'}
-        </button>
-      </div>
-      {chosen.length === 0 && (
-        <p className="muted disc-sched-hint">Select ranges above to schedule them.</p>
-      )}
       {adhoc > 0 && (
         <p className="muted disc-sched-hint">One-off subnets can't be scheduled.</p>
       )}
-      {error && <div className="banner">{error}</div>}
-      {editing && (
-        <ScheduleDialog schedule={editing} ranges={rangesQ.data?.items ?? []}
-                        intervals={intervals} onClose={() => setEditing(null)} />
+      {(editing || creating) && (
+        <ScheduleDialog schedule={editing ?? undefined}
+                        initialRangeIds={chosen.map((r) => r.id)}
+                        ranges={rangesQ.data?.items ?? []} intervals={intervals}
+                        options={options.data}
+                        onClose={() => { setEditing(null); setCreating(false); }} />
       )}
     </section>
   );
@@ -689,6 +700,10 @@ function ScheduleItem({ s, onChanged, onEdit, lastRun }: {
   });
 
   const due = Date.parse(s.next_run_at) <= Date.now();
+  // Due for over an hour and still not fired: something is holding it - its
+  // collector is busy or gone. A minute or two late is just the scheduler tick.
+  const lateS = (Date.now() - Date.parse(s.next_run_at)) / 1000;
+  const overdue = s.enabled && lateS > 3600;
   const status = lastRun?.status ?? s.last_status;
   const finished = lastRun?.finished_at ?? s.last_finished_at;
   const found = lastRun ? lastRun.found : s.last_found;
@@ -706,7 +721,7 @@ function ScheduleItem({ s, onChanged, onEdit, lastRun }: {
     <li className={`disc-sched${s.enabled ? '' : ' is-paused'}`}>
       <div className="top">
         <span className="title">{s.name || s.range_names.join(', ')}</span>
-        <span className="muted">{intervalLabel(s.interval_hours)}</span>
+        <span className="muted">{timingLabel(s)}</span>
       </div>
       {/* What it sweeps, resolved live from its ranges. */}
       <code className="scope" title={s.subnets.join(', ')}>
@@ -714,8 +729,12 @@ function ScheduleItem({ s, onChanged, onEdit, lastRun }: {
       </code>
       <div className="muted">
         {!s.enabled ? 'paused'
-          : due ? 'due now'
-            : `next ${untilTime(s.next_run_at)}`}
+          : overdue ? <span className="disc-bad">overdue by {Math.round(lateS / 3600)} h</span>
+            : due ? 'due now'
+              // A timed run as its own zone's clock reads it - "Tue 02:00" -
+              // because that is how the window was chosen.
+              : s.run_at ? `next ${inZone(s.next_run_at, s.timezone)} (${untilTime(s.next_run_at)})`
+                : `next ${untilTime(s.next_run_at)}`}
         {' · '}last {last}
       </div>
       {lastError && <div className="disc-bad">{lastError}</div>}

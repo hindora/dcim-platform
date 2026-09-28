@@ -361,6 +361,7 @@
 }
 .disc-sched-new button { grid-column: 1 / -1; height: 30px; }
 .disc-sched-hint { margin: 6px 0 0; font-size: 0.74rem; }
+.disc-stale { margin: 0 0 6px; font-size: 0.76rem; }
 .disc-sched > .disc-bad { margin: 2px 0 0; font-size: 0.74rem; }
 .disc-sched-ranges { display: flex; flex-direction: column; gap: 6px; max-height: 220px; overflow: auto; }
 .disc-sched-ranges code { font-size: 0.74rem; color: var(--text-muted); }
