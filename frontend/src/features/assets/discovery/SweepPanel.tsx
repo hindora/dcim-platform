@@ -1,4 +1,4 @@
-import { useMemo, useState, type MouseEvent } from 'react';
+import { useEffect, useMemo, useState, type MouseEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   api,
@@ -85,6 +85,13 @@ export function SweepPanel({ activeRun, onPickRun }: {
   const { data: runs } = useDiscoveryRuns();
   const history = useMemo(() => runs?.items ?? [], [runs]);
   const ranges = rangesQ.data?.items ?? [];
+  // A finished sweep changes what "Swept" and the audit tags say. Refetched the
+  // moment one finishes, not on the next minute's poll - a range just swept by
+  // Run now otherwise went on reading "never swept".
+  const lastFinished = history.find((r) => r.finished_at)?.finished_at;
+  useEffect(() => {
+    if (lastFinished) qc.invalidateQueries({ queryKey: ['discovery-ranges'] });
+  }, [lastFinished, qc]);
   const suggestions = suggestQ.data?.subnets ?? [];
   const collectors = options.data?.collectors ?? [];
 
