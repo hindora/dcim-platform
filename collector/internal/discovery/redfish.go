@@ -157,9 +157,18 @@ func (s *RedfishSweeper) probe(ctx context.Context, addr string) (Responder, boo
 			// Answered. Anything more needs credentials, and a BMC that refuses
 			// them is still a BMC worth reporting - so a failure here narrows the
 			// identity rather than discarding the responder.
-			s.chassis(ctx, base, identity)
+			cred := s.chassis(ctx, base, identity)
+			access := map[string]string{"port": fmt.Sprint(port), "scheme": scheme,
+				"credential": "none"}
+			// Which configured credential read the chassis, by index. "none" is a
+			// finding in itself: the BMC is there and nothing this collector holds
+			// opens it, so promoting it needs a credential from somebody.
+			if cred >= 0 {
+				access["credential"] = "configured"
+				access["credential_index"] = fmt.Sprint(cred)
+			}
 			return Responder{Address: addr, Protocol: "redfish",
-				Identity: identity}, true
+				Identity: identity, Access: access}, true
 		}
 	}
 	return Responder{}, false
@@ -203,12 +212,14 @@ func (s *RedfishSweeper) serviceRoot(ctx context.Context,
 // The member id is NOT assumed. /redfish/v1/Systems/1 is an HPE-ism; Dell uses
 // System.Embedded.1 and this plane uses the device's own id, so a hard-coded path
 // would have found the serial on some vendors and 404ed on the rest.
+//
+// Returns the index of the credential that read it, or -1 when none did.
 func (s *RedfishSweeper) chassis(ctx context.Context, base string,
-	identity map[string]string) {
+	identity map[string]string) int {
 	if len(s.Credentials) == 0 {
-		return
+		return -1
 	}
-	for _, cred := range s.Credentials {
+	for i, cred := range s.Credentials {
 		var coll struct {
 			Members []struct {
 				ID string `json:"@odata.id"`
@@ -219,7 +230,9 @@ func (s *RedfishSweeper) chassis(ctx context.Context, base string,
 			continue
 		}
 		if len(coll.Members) == 0 {
-			return
+			// Authenticated - the credential works - and there is no system to
+			// read. Still the credential to poll with.
+			return i
 		}
 		var sys struct {
 			Manufacturer string `json:"Manufacturer"`
@@ -241,8 +254,9 @@ func (s *RedfishSweeper) chassis(ctx context.Context, base string,
 		put(identity, "uuid", sys.UUID)
 		put(identity, "hostName", sys.HostName)
 		put(identity, "powerState", sys.PowerState)
-		return
+		return i
 	}
+	return -1
 }
 
 func (s *RedfishSweeper) getJSON(ctx context.Context, url, user, pass string,

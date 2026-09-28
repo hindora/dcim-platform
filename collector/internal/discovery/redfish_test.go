@@ -210,3 +210,51 @@ func TestTheRootPathIsTheSpecifiedOne(t *testing.T) {
 		t.Errorf("root path = %q", src)
 	}
 }
+
+func TestAccessSaysWhichCredentialOpenedTheChassis(t *testing.T) {
+	srv := fakeBMC(t, "root", "calvin")
+	host, port := hostPort(t, srv.URL)
+	s := &RedfishSweeper{
+		Ports: []uint16{port}, AllowPlaintext: true,
+		Credentials: []RedfishCredential{
+			{Username: "root", Password: "wrong"},
+			{Username: "root", Password: "calvin"},
+		},
+	}
+	got := s.Sweep(context.Background(), []string{host})
+	if len(got) != 1 {
+		t.Fatalf("responders = %d, want 1", len(got))
+	}
+	a := got[0].Access
+	// The second entry: the list is tried in order and the index is the answer.
+	if a["credential"] != "configured" || a["credential_index"] != "1" {
+		t.Errorf("access = %v", a)
+	}
+	if a["scheme"] != "http" || a["port"] != strconv.Itoa(int(port)) {
+		t.Errorf("scheme/port = %v", a)
+	}
+	for k, v := range a {
+		if strings.Contains(v, "calvin") || strings.Contains(v, "root") {
+			t.Fatalf("a credential travelled in access[%q]", k)
+		}
+	}
+}
+
+func TestABMCNothingOpensSaysSo(t *testing.T) {
+	// Found, and no configured credential reads it. That is the case promotion has
+	// to ask a person about, so it must be distinguishable from "opened by #0".
+	srv := fakeBMC(t, "root", "calvin")
+	host, port := hostPort(t, srv.URL)
+	s := &RedfishSweeper{Ports: []uint16{port}, AllowPlaintext: true,
+		Credentials: []RedfishCredential{{Username: "admin", Password: "nope"}}}
+	got := s.Sweep(context.Background(), []string{host})
+	if len(got) != 1 {
+		t.Fatalf("responders = %d, want 1", len(got))
+	}
+	if got[0].Access["credential"] != "none" {
+		t.Errorf("access = %v, want credential none", got[0].Access)
+	}
+	if _, ok := got[0].Access["credential_index"]; ok {
+		t.Error("an index was reported although nothing opened the chassis")
+	}
+}

@@ -195,3 +195,28 @@ func TestPlausibleSerialRefusesTheNeighbouringLeaf(t *testing.T) {
 		}
 	}
 }
+
+func TestAccessNamesTheCommunityWithoutCarryingIt(t *testing.T) {
+	// The simulator's convention, recognised as such: the API can recreate a
+	// community that IS the address without the value ever leaving here.
+	a := snmpAccess("10.51.11.10", "10.51.11.10", 0, 161)
+	if a["community"] != "address" || a["port"] != "161" || a["version"] != "2c" {
+		t.Errorf("address mode = %v", a)
+	}
+	if _, ok := a["community_index"]; ok {
+		t.Error("an index was reported for the address convention")
+	}
+	// A configured list: which entry, never the string.
+	b := snmpAccess("10.0.0.5", "s3cret-ro", 2, 1161)
+	if b["community"] != "configured" || b["community_index"] != "2" || b["port"] != "1161" {
+		t.Errorf("configured mode = %v", b)
+	}
+	for k, v := range b {
+		if strings.Contains(v, "s3cret") {
+			t.Fatalf("the community travelled in access[%q]", k)
+		}
+	}
+	if snmpAccess("10.0.0.5", "x", 0, 0)["port"] != "161" {
+		t.Error("an unset port must report the SNMP default")
+	}
+}

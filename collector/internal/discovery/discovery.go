@@ -91,6 +91,31 @@ type Responder struct {
 	Address  string            `json:"address"`
 	Protocol string            `json:"protocol"`
 	Identity map[string]string `json:"identity"`
+	// Access is how the sweep reached it: the port, the scheme, and WHICH of the
+	// configured credentials answered - by reference, never the secret. The sweep
+	// already knows what works, and promoting a responder used to throw that away
+	// and ask an operator to guess it again. The value of a community or password
+	// stays on this collector; what travels is "the address itself" or "entry N".
+	Access map[string]string `json:"access,omitempty"`
+}
+
+// snmpAccess describes how an SNMP probe got its answer.
+//
+// "address" is the snmpsim convention (the community IS the device's address),
+// said as such so the API can recreate it without the value crossing the wire.
+// "configured" means entry `community_index` of discovery.communities.
+func snmpAccess(addr, community string, index int, port uint16) map[string]string {
+	if port == 0 {
+		port = 161
+	}
+	a := map[string]string{"version": "2c", "port": fmt.Sprint(port)}
+	if community == addr {
+		a["community"] = "address"
+	} else {
+		a["community"] = "configured"
+		a["community_index"] = fmt.Sprint(index)
+	}
+	return a
 }
 
 // CommunityFor returns the communities to TRY for an address, in order.
@@ -239,8 +264,9 @@ func (s *Sweeper) Sweep(ctx context.Context, addrs []string) []Responder {
 // address at once would multiply the traffic by the length of the list for no
 // gain. A device that answers the first one costs exactly what it did before.
 func (s *Sweeper) probe(ctx context.Context, addr string) (Responder, bool) {
-	for _, community := range s.Community(addr) {
+	for i, community := range s.Community(addr) {
 		if r, ok := s.probeWith(ctx, addr, community); ok {
+			r.Access = snmpAccess(addr, community, i, s.Port)
 			return r, true
 		}
 		if ctx.Err() != nil {
