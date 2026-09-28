@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
@@ -27,9 +27,33 @@ class RunRequest(BaseModel):
                                examples=[["10.51.0.0/24"]])
 
 
+class EndpointCredentialChoice(BaseModel):
+    """How the new endpoint authenticates.
+
+    `address` - the community is the device's own address (the simulator's
+    convention, offered only when the sweep proved it). `existing` - a credential
+    already in the store. `new` - typed here, encrypted on arrival, never echoed.
+    """
+    mode: Literal["existing", "new", "address"]
+    id: str | None = None
+    community: str | None = None
+    username: str | None = None
+    password: str | None = None
+
+
+class EndpointRequest(BaseModel):
+    #: The probe to poll - its protocol, address and port are what the sweep saw.
+    candidate_id: str
+    credential: EndpointCredentialChoice
+    port: int | None = None
+    poll_profile_id: str | None = None
+
+
 class PromoteRequest(BaseModel):
     name: str
     device_type: str | None = None
+    #: The endpoints to create with the record. Absent: none, as before.
+    endpoints: list[EndpointRequest] | None = Field(default=None, max_length=8)
     # Fulfil an existing reservation instead of creating a record.
     #
     # The operator chooses it because there is no key to match on: a placeholder
@@ -59,6 +83,9 @@ class BulkPromoteRequest(BaseModel):
 
     candidate_ids: list[str] = Field(min_length=1, max_length=500)
     device_type: str | None = None
+    #: Create the endpoints the sweep's evidence proves - an SNMP community that
+    #: is the device's own address - and report the rest as needing a credential.
+    auto_endpoints: bool = True
 
 
 @router.post("/runs", status_code=status.HTTP_202_ACCEPTED,
@@ -165,6 +192,22 @@ async def promote(candidate_id: str, req: PromoteRequest, request: Request,
         return result
     except service.DiscoveryError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from None
+
+
+@router.get("/candidates/{candidate_id}/monitoring",
+            summary="The endpoints promoting this responder would create")
+async def monitoring_plan(candidate_id: str,
+                          device_type: str | None = Query(None),
+                          session: AsyncSession = Depends(get_session),
+                          _: Principal = Depends(current_principal)
+                          ) -> dict[str, Any]:
+    """Server-decided, so the dialog cannot disagree with the importer about which
+    agent a probe is or which profile polls it. Carries a credential suggestion
+    only where the sweep's own evidence supports one."""
+    try:
+        return await service.monitoring_plan(session, candidate_id, device_type)
+    except service.DiscoveryError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from None
 
 
 @router.post("/candidates/{candidate_id}/ignore",
@@ -386,13 +429,18 @@ async def bulk_promote(body: BulkPromoteRequest, request: Request,
                             "reason": "it does not report a name"})
             continue
         try:
+            # Only what the sweep proved: a bulk promote cannot ask forty
+            # operators for forty passwords, so an endpoint whose credential the
+            # evidence cannot rebuild is reported back rather than guessed.
             result = await service.promote(
                 session, cid,
-                {"name": name, "device_type": body.device_type}, actor=actor)
+                {"name": name, "device_type": body.device_type,
+                 "auto_endpoints": body.auto_endpoints}, actor=actor)
             await audit.record(session, actor=actor, action="discovery.promote",
                                target_type="candidate", target_id=cid,
                                ip=ip, user_agent=agent,
-                               after={"name": name, "bulk": True})
+                               after={"name": name, "bulk": True,
+                                      "endpoints": len(result["endpoints"])})
             promoted.append(result)
         except service.DiscoveryError as exc:
             failed.append({"id": cid, "error": str(exc)})

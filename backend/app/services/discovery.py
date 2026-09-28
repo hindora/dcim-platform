@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
 from app.repositories import discovery as repo
+from app.services import discovery_endpoints
 
 log = get_logger("discovery")
 
@@ -279,6 +280,11 @@ async def record_results(session: AsyncSession, run_id: str,
         if not addr:
             continue
         identity = r.get("identity") or {}
+        # Kept with the evidence, so promotion can carry the credential that
+        # worked onto the record instead of asking for it again. A reference
+        # ("address", "configured #2"), never a secret - see Responder.Access.
+        if r.get("access"):
+            identity = {**identity, "access": dict(r["access"])}
         serial = _serial_of(r)
         # SERIAL FIRST. It is the only key that survives a device being
         # re-addressed, and address matching alone reported a moved machine as
@@ -372,9 +378,11 @@ async def promote(session: AsyncSession, candidate_id: str,
 
     attach_to = payload.get("attach_to_device_id")
     if attach_to:
-        return await _attach(session, cand, candidate_id, attach_to,
-                             vendor_id=vendor_id, model_id=model_id,
-                             serial=serial, actor=actor)
+        result = await _attach(session, cand, candidate_id, attach_to,
+                               vendor_id=vendor_id, model_id=model_id,
+                               serial=serial, actor=actor)
+        return await _monitor(session, cand, result, payload,
+                              device_type=result.pop("device_type"))
 
     # `installed`, not `in_service`. A sweep found a box answering on the
     # management network, which is evidence somebody RACKED it and nothing more.
@@ -419,7 +427,55 @@ async def promote(session: AsyncSession, candidate_id: str,
     await repo.set_candidate_status(session, candidate_id, "promoted")
     log.info("candidate promoted", candidate_id=candidate_id,
              device_id=row["id"], name=row["name"])
-    return {"device_id": row["id"], "name": row["name"]}
+    return await _monitor(session, cand, {"device_id": row["id"], "name": row["name"]},
+                          payload, device_type=device_type)
+
+
+async def _monitor(session: AsyncSession, cand: dict[str, Any],
+                   result: dict[str, Any], payload: dict[str, Any], *,
+                   device_type: str) -> dict[str, Any]:
+    """Wire up how the new record will be polled, and settle its other probes.
+
+    The endpoints are the operator's choice from the dialog (`endpoints`), or -
+    for a bulk promote, which cannot ask - whatever the sweep's evidence alone
+    supports (`auto_endpoints`). A device promoted with no endpoint is still a
+    valid record; it just waits on the Commissioning page with nothing to soak.
+    """
+    vendor = cand.get("suggested_vendor") or (cand.get("identity") or {}).get("vendor")
+    requests = payload.get("endpoints")
+    skipped: list[dict[str, Any]] = []
+    if requests is None and payload.get("auto_endpoints"):
+        requests = []
+        for item in await discovery_endpoints.plan(
+                session, cand, device_type=device_type, vendor=vendor):
+            if item["suggested_credential"]:
+                requests.append({"candidate_id": item["candidate_id"],
+                                 "credential": item["suggested_credential"]})
+            else:
+                skipped.append({"protocol": item["protocol"],
+                                "address": item["address"],
+                                "reason": item["credential_note"]})
+    try:
+        made = await discovery_endpoints.create(
+            session, device_id=result["device_id"], device_type=device_type,
+            vendor=vendor, cand=cand, requests=requests or [])
+    except discovery_endpoints.EndpointPlanError as exc:
+        raise DiscoveryError(str(exc)) from None
+    await discovery_endpoints.settle_probes(session, cand, result["device_id"])
+    return {**result, "endpoints": made, "endpoints_skipped": skipped}
+
+
+async def monitoring_plan(session: AsyncSession, candidate_id: str,
+                          device_type: str | None) -> dict[str, Any]:
+    """What promoting this candidate would wire up, for the dialog to show."""
+    cand = await repo.get_candidate(session, candidate_id)
+    if cand is None:
+        raise DiscoveryError(f"no candidate {candidate_id}")
+    dtype = device_type or cand.get("suggested_device_type") or ""
+    vendor = cand.get("suggested_vendor") or (cand.get("identity") or {}).get("vendor")
+    return {"device_type": dtype,
+            "endpoints": await discovery_endpoints.plan(
+                session, cand, device_type=dtype, vendor=vendor)}
 
 
 async def _attach(session: AsyncSession, cand: dict[str, Any], candidate_id: str,
@@ -496,7 +552,8 @@ async def _attach(session: AsyncSession, cand: dict[str, Any], candidate_id: str
     log.info("candidate attached to a reservation", candidate_id=candidate_id,
              device_id=device_id, name=target["name"],
              was=target["lifecycle"])
-    return {"device_id": device_id, "name": target["name"], "attached": True}
+    return {"device_id": device_id, "name": target["name"], "attached": True,
+            "device_type": target["device_type"]}
 
 
 async def ignore(session: AsyncSession, candidate_id: str) -> dict[str, Any]:

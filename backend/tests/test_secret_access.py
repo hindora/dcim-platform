@@ -25,6 +25,9 @@ ALLOWED_SECRET_READERS = {
     "repositories/collector.py",   # SELECTs the column
     "services/collector.py",       # decrypts it into an assignment
     "importer/simulator.py",       # writes it at import time
+    # Writes it at promotion, the importer's twin for a device that arrived by
+    # sweep rather than by import. INSERT only - the test below holds it to that.
+    "services/discovery_endpoints.py",
     "models/endpoints.py",         # declares it
     "core/security.py",            # encrypt/decrypt themselves
     # The second chain, added with outbound ticketing: an integration holds a
@@ -91,6 +94,18 @@ def test_only_the_assignment_chain_reads_the_encrypted_column():
         and mentions_in_code(p, "secret_enc")
     )
     assert offenders == [], f"these read the encrypted secret: {offenders}"
+
+
+def test_promotion_writes_a_secret_and_never_reads_one():
+    """The promote dialog is the one place an operator types a password into
+    discovery. The module that stores it must not be able to hand one back."""
+    src = (APP / "services" / "discovery_endpoints.py").read_text(encoding="utf-8")
+    assert "INSERT INTO credential" in src
+    assert "decrypt_secret" not in src
+    # secret_enc appears only as an INSERT target, never in a SELECT or RETURNING.
+    for line in src.splitlines():
+        if "secret_enc" in line:
+            assert "INSERT INTO credential" in line, line
 
 
 def test_no_request_handler_decrypts_a_secret():

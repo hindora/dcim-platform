@@ -201,6 +201,9 @@ class DiscoveryResult(BaseModel):
     address: str
     protocol: str = "snmp"
     identity: dict[str, Any] = Field(default_factory=dict)
+    #: How the sweep reached it - port, scheme, which configured credential
+    #: answered - by reference. A collector that predates it sends nothing.
+    access: dict[str, str] = Field(default_factory=dict)
 
 
 class DiscoveryResults(BaseModel):
