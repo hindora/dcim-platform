@@ -197,6 +197,20 @@ def test_a_sweep_never_covers_an_address_it_did_not_probe():
     assert '_probed("address", "s.cidr")' in _body(REPO, "mark_gone")
 
 
+def test_a_run_keeps_its_origin_when_its_schedule_is_deleted():
+    """Found live: deleting a schedule nulled schedule_id on its runs (it must -
+    a run outlives what queued it), and that was the only trace a schedule had
+    asked, so its history turned into hand-run sweeps."""
+    create = _body(REPO, "create_run")
+    assert '"schedule" if schedule_id else "manual"' in create
+    assert "schedule_label" in create
+    assert "COALESCE(sch.name, r.schedule_label)" in _body(REPO, "list_runs")
+    assert "schedule_label=" in _body(SVC, "fire_due_schedule")
+    mig = next((APP.parent / "alembic" / "versions").glob("0081_*.py")).read_text(
+        encoding="utf-8")
+    assert "trigger IN ('manual', 'schedule')" in mig
+
+
 # ------------------------------------------------------------------ nav badge
 
 def test_the_badge_counts_what_the_page_opens_on():

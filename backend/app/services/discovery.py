@@ -598,7 +598,9 @@ async def fire_due_schedule(session: AsyncSession) -> dict[str, Any] | None:
         return None
     run = await repo.create_run(session, method="sweep",
                                 scope={"subnets": list(sched["subnets"])},
-                                schedule_id=sched["id"])
+                                schedule_id=sched["id"],
+                                schedule_label=sched["name"]
+                                or ", ".join(sched["subnets"]))
     await repo.advance_schedule(session, sched["id"], run["id"])
     log.info("scheduled sweep queued", schedule=sched["name"], run_id=run["id"],
              subnets=sched["subnets"], every_h=sched["interval_hours"])

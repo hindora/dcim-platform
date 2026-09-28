@@ -11,13 +11,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 async def create_run(session: AsyncSession, *, method: str,
                      scope: dict[str, Any],
-                     schedule_id: str | None = None) -> dict[str, Any]:
+                     schedule_id: str | None = None,
+                     schedule_label: str | None = None) -> dict[str, Any]:
+    # `trigger` and the label are the run's OWN record of who asked: schedule_id is
+    # nulled when the schedule is deleted, and was the only trace (0081).
     row = (await session.execute(text("""
-        INSERT INTO discovery_run (method, scope, status, schedule_id)
-        VALUES (:method, CAST(:scope AS jsonb), 'pending', CAST(:schedule AS uuid))
-        RETURNING id::text, method, scope, status, started_at
+        INSERT INTO discovery_run (method, scope, status, schedule_id, trigger,
+                                   schedule_label)
+        VALUES (:method, CAST(:scope AS jsonb), 'pending', CAST(:schedule AS uuid),
+                :trigger, :label)
+        RETURNING id::text, method, scope, status, started_at, trigger
     """), {"method": method, "scope": json.dumps(scope),
-           "schedule": schedule_id})).mappings().first()
+           "schedule": schedule_id,
+           "trigger": "schedule" if schedule_id else "manual",
+           "label": schedule_label})).mappings().first()
     return dict(row)
 
 
@@ -53,7 +60,9 @@ async def list_runs(session: AsyncSession, limit: int = 25) -> list[dict[str, An
                COALESCE(r.moved, c.moved, 0)             AS moved,
                COALESCE(r.with_serial, c.with_serial, 0) AS with_serial,
                r.appeared, r.gone, r.changed,
-               r.schedule_id::text AS schedule_id, sch.name AS schedule_name
+               r.schedule_id::text AS schedule_id, r.trigger,
+               -- The schedule's name now, else what it was called when it fired.
+               COALESCE(sch.name, r.schedule_label) AS schedule_name
           FROM discovery_run r
           LEFT JOIN discovery_schedule sch ON sch.id = r.schedule_id
           LEFT JOIN (
