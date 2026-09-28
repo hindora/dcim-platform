@@ -228,6 +228,20 @@ async def upsert_candidate(session: AsyncSession, *, run_id: str, address: str,
     return dict(row) if row else None
 
 
+#: The addresses a sweep of `cidr` actually PROBES. The sweeper skips a CIDR's network
+#: and broadcast address below /31 (collector Hosts()), so containment alone - which
+#: includes both - calls a device on .31 "asked" by a /27 sweep that never sent it a
+#: packet. That read as missing, and as gone.
+def _probed(addr: str, cidr: str) -> str:
+    return (f"({addr} <<= CAST({cidr} AS inet)"
+            f" AND (masklen(CAST({cidr} AS inet)) >= 31"
+            # host() on both sides: network() and broadcast() keep the /27 mask
+            # and a stored address is /32, so comparing the inets would compare
+            # the masks too and never exclude anything.
+            f" OR (host({addr}) <> host(network(CAST({cidr} AS inet)))"
+            f" AND host({addr}) <> host(broadcast(CAST({cidr} AS inet))))))")
+
+
 async def mark_gone(session: AsyncSession, run_id: str) -> int:
     """Mark the candidates this run covered but did not see.
 
@@ -258,7 +272,7 @@ async def mark_gone(session: AsyncSession, run_id: str) -> int:
         # would mark devices gone on no evidence.
         return 0
 
-    rows = (await session.execute(text("""
+    rows = (await session.execute(text(f"""
         UPDATE discovery_candidate
            SET status = 'gone'
          WHERE status = 'new'
@@ -266,7 +280,7 @@ async def mark_gone(session: AsyncSession, run_id: str) -> int:
            AND address IS NOT NULL
            AND EXISTS (
                  SELECT 1 FROM unnest(CAST(:subnets AS text[])) AS s(cidr)
-                  WHERE address <<= CAST(s.cidr AS inet))
+                  WHERE {_probed("address", "s.cidr")})
         RETURNING host(address) AS address, protocol::text AS protocol
     """), {"started": run["started_at"], "subnets": subnets})).mappings().all()
     return len(rows)
@@ -519,7 +533,7 @@ async def missing_devices(session: AsyncSession) -> list[dict[str, Any]]:
     diagnosis: silent to the sweep but ONLINE to the poller means the sweep's
     credentials or an ACL, not a dead box.
     """
-    rows = (await session.execute(text("""
+    rows = (await session.execute(text(f"""
         WITH addr AS (
             -- Every address a device answers a SWEEPABLE protocol on.
             SELECT e.device_id, e.address, e.protocol::text AS protocol
@@ -535,7 +549,7 @@ async def missing_devices(session: AsyncSession) -> list[dict[str, Any]]:
               FROM addr a
               JOIN discovery_run r ON r.status = 'done'
               JOIN LATERAL jsonb_array_elements_text(r.scope -> 'subnets') AS s(cidr)
-                   ON a.address <<= CAST(s.cidr AS inet)
+                   ON {_probed("a.address", "s.cidr")}
              ORDER BY a.device_id, r.finished_at DESC
         ), polled AS (
             SELECT e.device_id,

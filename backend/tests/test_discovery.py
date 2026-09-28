@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from app.repositories import discovery as repo
 from app.services import discovery as d
 
 
@@ -317,7 +318,8 @@ def test_going_quiet_is_judged_only_where_the_sweep_actually_looked():
     body = REPO[start:REPO.index("async def list_candidates", start)]
 
     # Scope-limited, by containment rather than by string prefix.
-    assert "<<=" in body, "addresses must be tested for containment in the subnets"
+    assert "_probed(" in body, "addresses must be tested against what the sweep probed"
+    assert "<<=" in repo._probed("a", "c"), "containment, not a string prefix"
     assert "scope" in body, "the swept subnets come from the run's recorded scope"
     # A run with no recorded scope cannot say what it covered.
     assert "if not subnets:" in body

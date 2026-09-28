@@ -107,7 +107,7 @@ def test_silence_is_judged_from_when_the_sweep_began_asking():
 
 def test_missing_is_judged_only_where_a_sweep_looked():
     body = _body(REPO, "missing_devices")
-    assert "<<= CAST(s.cidr AS inet)" in body, "containment in the swept scope"
+    assert '_probed("a.address", "s.cidr")' in body, "only what the sweep probed"
     assert "status = 'done'" in body
     # The LATEST covering run, per device.
     assert "DISTINCT ON (a.device_id)" in body and "finished_at DESC" in body
@@ -183,3 +183,15 @@ def test_the_scheduler_does_not_touch_the_database_on_startup():
     wrote on its first tick would find their database."""
     from app.services import discovery_scheduler as sch
     assert sch.FIRST_TICK_S >= 10
+
+
+def test_a_sweep_never_covers_an_address_it_did_not_probe():
+    """Found live: two devices on .31 read as missing after a /27 sweep. .31 is that
+    /27's broadcast address, which the sweeper skips - it never sent them a packet.
+    Coverage now excludes network and broadcast below /31, exactly as Hosts() does,
+    for missing devices AND for marking responders gone."""
+    frag = repo._probed("a", "c")
+    assert "host(network(CAST(c AS inet)))" in frag
+    assert "host(broadcast(CAST(c AS inet)))" in frag, "mask-free comparison"
+    assert "masklen(CAST(c AS inet)) >= 31" in frag, "/31 and /32 have neither to skip"
+    assert '_probed("address", "s.cidr")' in _body(REPO, "mark_gone")
