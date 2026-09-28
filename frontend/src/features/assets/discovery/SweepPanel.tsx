@@ -160,13 +160,7 @@ export function SweepPanel({ activeRun, onPickRun }: {
   return (
     <aside className="disc-rail" aria-label="Sweep the management network">
       <section className="asset-panel disc-sweep">
-        <div className="disc-rail-head">
-          <h3>Sweep</h3>
-          <button type="button" className="link-button"
-                  onClick={() => setEditing({})}>
-            Add range
-          </button>
-        </div>
+        <h3>Sweep</h3>
         <p className="muted disc-rail-sub">
           Bounded and deliberately slow: an unbounded sweep looks like a port scan
           to anything watching.
@@ -204,7 +198,16 @@ export function SweepPanel({ activeRun, onPickRun }: {
               </tbody>
             </table>
           </div>
-        ) : (
+        ) : null}
+        {/* Under the list it grows, once there is one; the empty state below has
+            its own button. */}
+        {!rangesQ.isLoading && ranges.length > 0 && (
+          <button type="button" className="link-button disc-add-range"
+                  onClick={() => setEditing({})}>
+            Add range
+          </button>
+        )}
+        {!rangesQ.isLoading && ranges.length === 0 && (
           <div className="disc-empty-ranges">
             <p>
               No ranges saved yet. Add the address space you want audited - a hall's

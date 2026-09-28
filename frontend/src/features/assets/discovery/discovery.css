@@ -388,8 +388,7 @@
 
 /* ------------------------------------------------------------------- ranges */
 
-.disc-rail-head { display: flex; align-items: baseline; justify-content: space-between; }
-.disc-rail-head .link-button { font-size: 0.78rem; color: var(--accent); }
+.disc-add-range { margin-top: 6px; font-size: 0.78rem; color: var(--accent); }
 
 /* A range is a name, its CIDR and a line of facts - site, plane, collector -
    stacked, because four columns of those do not fit a 324px rail. */
