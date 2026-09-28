@@ -132,3 +132,13 @@ def test_a_retimed_schedule_moves_its_next_run():
     # Mondays at 02:00, re-timed on a Monday afternoon: next Monday.
     assert st.next_after({"run_at": "02:00", "days": [1], "timezone": "UTC"},
                          utc(2026, 9, 28, 12, 0)) == utc(2026, 10, 5, 2, 0)
+
+
+def test_a_time_travels_to_the_database_as_text():
+    """Found live: asyncpg types `CAST(:run_at AS time)` as a time parameter and
+    refuses the string "02:00" - a 500 on every timed schedule. Cast via text."""
+    src = (APP / "repositories" / "discovery.py").read_text(encoding="utf-8")
+    assert "CAST(:run_at AS time)" not in src
+    assert src.count("CAST(CAST(:run_at AS text) AS time)") == 2
+    # The same for Run now and re-timing, which send the next run as ISO text.
+    assert "CAST(CAST(:next_run_at AS text) AS timestamptz)" in src

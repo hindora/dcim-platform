@@ -762,7 +762,7 @@ async def create_schedule(session: AsyncSession, *, name: str, range_ids: list[s
                                         created_by, run_at, days, timezone)
         VALUES (:name, CAST(:ranges AS uuid[]), :interval,
                 COALESCE(CAST(:first AS timestamptz), now()), :actor,
-                CAST(:run_at AS time), CAST(:days AS smallint[]), :tz)
+                CAST(CAST(:run_at AS text) AS time), CAST(:days AS smallint[]), :tz)
         RETURNING id::text, name, interval_hours, enabled, next_run_at,
                   to_char(run_at, 'HH24:MI') AS run_at, days, timezone
     """), {"name": name, "ranges": range_ids, "interval": interval_hours,
@@ -787,10 +787,10 @@ async def update_schedule(session: AsyncSession, schedule_id: str,
                "enabled": "enabled = :enabled",
                "interval_hours": "interval_hours = :interval_hours",
                "range_ids": "range_ids = CAST(:range_ids AS uuid[])",
-               "run_at": "run_at = CAST(:run_at AS time)",
+               "run_at": "run_at = CAST(CAST(:run_at AS text) AS time)",
                "days": "days = CAST(:days AS smallint[])",
                "timezone": "timezone = :timezone",
-               "next_run_at": "next_run_at = CAST(:next_run_at AS timestamptz)"}
+               "next_run_at": "next_run_at = CAST(CAST(:next_run_at AS text) AS timestamptz)"}
     sets = [allowed[k] for k in fields if k in allowed]
     if not sets:
         return None
