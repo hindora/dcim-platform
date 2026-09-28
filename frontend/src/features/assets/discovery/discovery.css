@@ -212,7 +212,14 @@
   max-height: 360px; overflow: auto;
   border: 1px solid var(--border); border-radius: var(--radius);
 }
-.disc-subnets table { font-size: 0.78rem; }
+/* Fixed layout: the range cell carries Edit and Delete beside the name, and on
+   auto layout its content widened the table past the 324px rail. Fixed columns,
+   and the name truncates instead. */
+.disc-subnets table { font-size: 0.78rem; table-layout: fixed; width: 100%; }
+.disc-subnets th:nth-child(3), .disc-subnets td:nth-child(3) { width: 58px; }
+.disc-subnets th:nth-child(4), .disc-subnets td:nth-child(4) { width: 64px; }
+.disc-range { overflow: hidden; }
+.disc-range code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .disc-subnets th {
   position: sticky; top: 0; z-index: 1;
   background: var(--bg-raised); padding: 6px 6px;
@@ -388,7 +395,8 @@
 
 /* ------------------------------------------------------------------- ranges */
 
-.disc-add-range { margin-top: 6px; font-size: 0.78rem; color: var(--accent); }
+.disc-rail-head { display: flex; align-items: baseline; justify-content: space-between; }
+.disc-rail-head .link-button { font-size: 0.78rem; color: var(--accent); }
 
 /* A range is a name, its CIDR and a line of facts - site, plane, collector -
    stacked, because four columns of those do not fit a 324px rail. */
@@ -397,7 +405,10 @@
   font-weight: 600; min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.disc-range .top .link-button { flex: 0 0 auto; font-size: 0.72rem; color: var(--accent); }
+.disc-range .top .acts { flex: 0 0 auto; display: inline-flex; gap: 8px; }
+.disc-range .top .link-button { font-size: 0.72rem; color: var(--accent); }
+.disc-range .top .link-button.danger { color: var(--critical); }
+.disc-range > .disc-bad { margin: 3px 0 0; font-size: 0.72rem; }
 .disc-range code { display: block; font-size: 0.72rem; color: var(--text-muted); }
 .disc-range .tags {
   display: flex; flex-wrap: wrap; gap: 2px 6px; margin-top: 2px;
@@ -411,7 +422,7 @@
   padding: 12px; border: 1px dashed var(--border-strong); border-radius: var(--radius);
   font-size: 0.8rem; color: var(--text-muted);
 }
-.disc-empty-ranges p { margin: 0 0 8px; }
+.disc-empty-ranges p { margin: 0; }
 
 .disc-suggest { margin: 10px 0 0; font-size: 0.78rem; }
 .disc-suggest summary { cursor: pointer; color: var(--text-muted); }

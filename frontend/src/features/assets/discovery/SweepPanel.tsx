@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type MouseEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   api,
@@ -160,7 +160,13 @@ export function SweepPanel({ activeRun, onPickRun }: {
   return (
     <aside className="disc-rail" aria-label="Sweep the management network">
       <section className="asset-panel disc-sweep">
-        <h3>Sweep</h3>
+        <div className="disc-rail-head">
+          <h3>Sweep</h3>
+          <button type="button" className="link-button"
+                  onClick={() => setEditing({})}>
+            Add range
+          </button>
+        </div>
         <p className="muted disc-rail-sub">
           Bounded and deliberately slow: an unbounded sweep looks like a port scan
           to anything watching.
@@ -185,7 +191,7 @@ export function SweepPanel({ activeRun, onPickRun }: {
                   </th>
                   <th>Range</th>
                   <th className="num">Known</th>
-                  <th>Last swept</th>
+                  <th title="When a sweep last covered this range">Swept</th>
                 </tr>
               </thead>
               <tbody>
@@ -193,27 +199,22 @@ export function SweepPanel({ activeRun, onPickRun }: {
                   <RangeRow key={r.id} r={r} picked={picked.has(r.id)}
                             last={lastSwept(r.cidr, history)}
                             onToggle={() => toggle(r.id)}
-                            onEdit={() => setEditing({ range: r })} />
+                            onEdit={() => setEditing({ range: r })}
+                            onDeleted={() => {
+                              setPicked((s) => { const n = new Set(s); n.delete(r.id); return n; });
+                              refresh();
+                            }} />
                 ))}
               </tbody>
             </table>
           </div>
-        ) : null}
-        {/* Under the list it grows, once there is one; the empty state below has
-            its own button. */}
-        {!rangesQ.isLoading && ranges.length > 0 && (
-          <button type="button" className="link-button disc-add-range"
-                  onClick={() => setEditing({})}>
-            Add range
-          </button>
-        )}
-        {!rangesQ.isLoading && ranges.length === 0 && (
+        ) : (
           <div className="disc-empty-ranges">
             <p>
-              No ranges saved yet. Add the address space you want audited - a hall's
-              BMC network, the BMS VLAN - with the collector that can reach it.
+              No ranges saved yet. Use Add range to save the address space you want
+              audited - a hall's BMC network, the BMS VLAN - with the collector that
+              can reach it.
             </p>
-            <button type="button" onClick={() => setEditing({})}>Add a range</button>
           </div>
         )}
 
@@ -330,12 +331,24 @@ export function SweepPanel({ activeRun, onPickRun }: {
   );
 }
 
-function RangeRow({ r, picked, last, onToggle, onEdit }: {
+function RangeRow({ r, picked, last, onToggle, onEdit, onDeleted }: {
   r: DiscoveryRange; picked: boolean;
   last: ReturnType<typeof lastSwept>;
-  onToggle: () => void; onEdit: () => void;
+  onToggle: () => void; onEdit: () => void; onDeleted: () => void;
 }) {
   const trouble = collectorTrouble(r);
+  // Two clicks, not a browser confirm(): a modal blocks the page. The second
+  // click is the delete; anything else backs out.
+  const [confirming, setConfirming] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const remove = useMutation({
+    mutationFn: () => api.deleteDiscoveryRange(r.id),
+    onSuccess: onDeleted,
+    // Refused while a schedule sweeps it - deleting it would quietly shrink what
+    // that schedule audits - and the refusal names the schedule.
+    onError: (e) => { setConfirming(false); setError(String(e)); },
+  });
+  const stop = (fn: () => void) => (e: MouseEvent) => { e.stopPropagation(); fn(); };
   return (
     <tr className={`${picked ? 'is-picked' : ''}${r.enabled ? '' : ' is-off'}`}
         onClick={r.enabled ? onToggle : undefined}>
@@ -347,11 +360,34 @@ function RangeRow({ r, picked, last, onToggle, onEdit }: {
       <td className="disc-range">
         <div className="top">
           <span className="name">{r.name}</span>
-          <button type="button" className="link-button"
-                  onClick={(e) => { e.stopPropagation(); onEdit(); }}
-                  aria-label={`Edit ${r.name}`}>
-            Edit
-          </button>
+          <span className="acts">
+            {confirming ? (
+              <>
+                <button type="button" className="link-button danger"
+                        disabled={remove.isPending}
+                        onClick={stop(() => { setError(null); remove.mutate(); })}
+                        aria-label={`Confirm deleting ${r.name}`}>
+                  {remove.isPending ? 'Deleting…' : 'Confirm'}
+                </button>
+                <button type="button" className="link-button"
+                        onClick={stop(() => setConfirming(false))}>
+                  Keep
+                </button>
+              </>
+            ) : (
+              <>
+                <button type="button" className="link-button"
+                        onClick={stop(onEdit)} aria-label={`Edit ${r.name}`}>
+                  Edit
+                </button>
+                <button type="button" className="link-button"
+                        onClick={stop(() => { setError(null); setConfirming(true); })}
+                        aria-label={`Delete ${r.name}`}>
+                  Delete
+                </button>
+              </>
+            )}
+          </span>
         </div>
         {r.name !== r.cidr && <code>{r.cidr}</code>}
         <div className="tags">
@@ -373,6 +409,7 @@ function RangeRow({ r, picked, last, onToggle, onEdit }: {
             </span>
           )}
         </div>
+        {error && <div className="disc-bad">{error}</div>}
       </td>
       <td className="num">{r.known ?? 0}</td>
       <td className={last ? '' : 'disc-never'}>
