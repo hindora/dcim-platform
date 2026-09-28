@@ -8,6 +8,7 @@ import {
 } from '../../../api/client';
 import { relativeTime, untilTime } from '../../../lib/format';
 import { RangeDialog } from './RangeDialog';
+import { intervalLabel, ScheduleDialog } from './ScheduleDialog';
 import {
   collectorTrouble, lastSwept, MAX_ADDRESSES, parseCidr, probeCount, PURPOSE_LABEL,
   PURPOSE_TAG, SECONDS_PER_ADDRESS,
@@ -565,12 +566,6 @@ function Delta({ run }: { run: DiscoveryRun }) {
   );
 }
 
-const INTERVAL_LABEL: Record<number, string> = {
-  6: 'every 6 hours', 12: 'every 12 hours', 24: 'daily', 48: 'every 2 days',
-  168: 'weekly',
-};
-const intervalLabel = (h: number) => INTERVAL_LABEL[h] ?? `every ${h} hours`;
-
 /** Ranges swept on an interval.
  *
  *  An audit run once is a snapshot; the findings only stay true if somebody keeps
@@ -596,6 +591,10 @@ function Schedules({ chosen, adhoc }: { chosen: DiscoveryRange[]; adhoc: number 
   });
   const intervals = data?.intervals ?? [6, 12, 24, 48, 168];
   const list = data?.items ?? [];
+  // The saved ranges, for the edit dialog - the same cached query the Sweep
+  // table reads.
+  const rangesQ = useQuery({ queryKey: ['discovery-ranges'], queryFn: api.discoveryRanges });
+  const [editing, setEditing] = useState<DiscoverySchedule | null>(null);
   // The run history polls fast while a sweep is in flight; the schedule list does
   // not. Reading a schedule's last run from the history means "last: running"
   // turns into the result when the run does, not a minute later.
@@ -625,6 +624,7 @@ function Schedules({ chosen, adhoc }: { chosen: DiscoveryRange[]; adhoc: number 
         <ul className="disc-sched-list">
           {list.map((s) => (
             <ScheduleItem key={s.id} s={s} onChanged={refresh}
+                          onEdit={() => setEditing(s)}
                           lastRun={history.find((r) => r.id === s.last_run_id)} />
           ))}
         </ul>
@@ -656,12 +656,16 @@ function Schedules({ chosen, adhoc }: { chosen: DiscoveryRange[]; adhoc: number 
         <p className="muted disc-sched-hint">One-off subnets can't be scheduled.</p>
       )}
       {error && <div className="banner">{error}</div>}
+      {editing && (
+        <ScheduleDialog schedule={editing} ranges={rangesQ.data?.items ?? []}
+                        intervals={intervals} onClose={() => setEditing(null)} />
+      )}
     </section>
   );
 }
 
-function ScheduleItem({ s, onChanged, lastRun }: {
-  s: DiscoverySchedule; onChanged: () => void;
+function ScheduleItem({ s, onChanged, onEdit, lastRun }: {
+  s: DiscoverySchedule; onChanged: () => void; onEdit: () => void;
   /** The same run as s.last_run_id, from the fresher history query. */
   lastRun?: DiscoveryRun;
 }) {
@@ -695,6 +699,8 @@ function ScheduleItem({ s, onChanged, lastRun }: {
       + (unknown ? ` · ${unknown} new` : '')
       + (gone ? ` · ${gone} went quiet` : '')
     : status ?? 'not yet';
+  // Why the last one did not finish - timed out, or its collector was gone.
+  const lastError = status === 'failed' ? lastRun?.error : null;
 
   return (
     <li className={`disc-sched${s.enabled ? '' : ' is-paused'}`}>
@@ -712,7 +718,11 @@ function ScheduleItem({ s, onChanged, lastRun }: {
             : `next ${untilTime(s.next_run_at)}`}
         {' · '}last {last}
       </div>
+      {lastError && <div className="disc-bad">{lastError}</div>}
       <div className="acts">
+        <button type="button" className="link-button" onClick={onEdit}>
+          Edit
+        </button>
         <button type="button" className="link-button"
                 disabled={runNow.isPending || !s.enabled || due}
                 title={!s.enabled ? 'Resume it first' : undefined}

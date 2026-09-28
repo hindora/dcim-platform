@@ -36,7 +36,12 @@ async def run_forever(stop: asyncio.Event) -> None:
     while not stop.is_set():
         try:
             async with unit_of_work() as session:
+                # First, so a run that will never finish stops holding its
+                # collector's schedules back on this same tick.
+                expired = await service.expire_stuck_runs(session)
                 fired = await service.fire_due_schedule(session)
+            if expired:
+                log.info("stuck sweeps expired", count=expired)
             if fired:
                 log.info("schedule fired", run_id=fired["run"]["id"])
         except Exception as exc:  # the loop must outlive one bad tick

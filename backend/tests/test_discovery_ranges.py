@@ -237,3 +237,75 @@ def test_cancelled_is_not_in_flight_so_schedules_can_fire_again():
     sweep is in flight."""
     assert "status IN ('pending', 'running')" in _body(REPO, "run_in_flight")
     assert "cancelled" not in _body(REPO, "run_in_flight")
+
+
+# ------------------------------------------------ scheduling per collector
+
+def test_a_busy_collector_holds_back_only_its_own_schedules():
+    """A long sweep on DC1's collector held back DC2's schedule too."""
+    body = _body(REPO, "run_in_flight")
+    assert "collector_id = ANY(CAST(:ids AS text[]))" in body
+    assert "CAST(:shared AS boolean) AND collector_id IS NULL" in body
+    fire = _body(SVC, "fire_due_schedule")
+    assert 'lanes = sorted({r["collector_id"] for r in live}' in fire
+    # A schedule that must wait does not stop the next one firing.
+    assert "continue" in fire[fire.index("run_in_flight(session, lanes)"):]
+
+
+# ---------------------------------------------------------- stuck sweeps
+
+from app.services import discovery as svc  # noqa: E402
+
+
+def _run(**kw):
+    base = {"id": "r1", "status": "pending", "scope": {"subnets": ["10.0.0.0/24"]},
+            "collector_id": "dc2-col", "queued_s": 3600, "running_s": None,
+            "collector_registered": True, "collector_age_s": 5,
+            "freshest_collector_s": 5}
+    return {**base, **kw}
+
+
+def test_a_queue_behind_a_busy_collector_keeps_waiting():
+    """A collector sweeps its runs one after another; a run behind two /20s waits
+    hours and is not stuck."""
+    assert svc.stuck_reason(_run(queued_s=6 * 3600)) is None
+
+
+def test_a_run_for_a_collector_that_is_gone_gives_up_and_says_why():
+    assert "never checked in" in svc.stuck_reason(
+        _run(collector_registered=False, collector_age_s=None))
+    assert "last checked in 2 h ago" in svc.stuck_reason(_run(collector_age_s=7200))
+    # Not before it has waited long enough to be sure.
+    assert svc.stuck_reason(_run(queued_s=60, collector_registered=False)) is None
+
+
+def test_an_unassigned_run_gives_up_only_if_no_collector_is_about():
+    assert svc.stuck_reason(_run(collector_id=None)) is None
+    assert "no collector" in svc.stuck_reason(
+        _run(collector_id=None, freshest_collector_s=7200))
+
+
+def test_a_running_sweep_is_allowed_for_its_size():
+    """A /24 gets the floor; a /20 - 4094 silent addresses on two protocols - gets
+    hours, because it can legitimately take that long."""
+    assert svc.running_allowance_s({"subnets": ["10.0.0.0/24"]}) == svc.RUNNING_FLOOR_S
+    assert svc.running_allowance_s({"subnets": ["10.0.0.0/20"]}) > 6 * 3600
+    ok = _run(status="running", running_s=1200)
+    assert svc.stuck_reason(ok) is None
+    late = _run(status="running", running_s=2 * 3600)
+    assert "never reported" in svc.stuck_reason(late)
+
+
+def test_exclusions_shrink_the_allowance():
+    wide = svc.running_allowance_s({"subnets": ["10.0.0.0/20"]})
+    carved = svc.running_allowance_s({"subnets": ["10.0.0.0/20"],
+                                      "exclude": ["10.0.8.0/21"]})
+    assert carved < wide
+
+
+def test_a_stuck_sweep_fails_rather_than_cancels():
+    """Nobody decided it; something broke. It should read as a fault."""
+    assert "status = 'failed'" in _body(REPO, "fail_run")
+    assert "FOR UPDATE OF r SKIP LOCKED" in _body(REPO, "unfinished_runs")
+    sched = (APP / "services" / "discovery_scheduler.py").read_text(encoding="utf-8")
+    assert sched.index("expire_stuck_runs") < sched.index("fire_due_schedule")

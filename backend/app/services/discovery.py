@@ -12,6 +12,7 @@ guesses and make it less trustworthy than before it ran.
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import re
 from typing import Any
@@ -669,33 +670,115 @@ async def update_schedule(session: AsyncSession, schedule_id: str,
 
 
 async def fire_due_schedule(session: AsyncSession) -> dict[str, Any] | None:
-    """Queue ONE due schedule's sweep, if nothing else is sweeping.
+    """Queue ONE due schedule's sweep, if its collectors are free.
 
-    One at a time, like a hand-run sweep: every agent on the plane answers through
-    the same listeners, so two sweeps do not finish faster, they time each other
-    out. A due schedule that finds a sweep in flight is left due and fires on the
-    next tick - it runs late rather than stacking a second sweep on the first.
+    Free per collector, not estate-wide: a collector sweeps one run at a time and
+    its network's agents answer through the same listeners, so two sweeps there
+    do not finish faster, they time each other out. A different collector's sweep
+    is no reason to wait. A due schedule whose collector is busy stays due and
+    fires on a later tick - late, rather than stacked on the sweep in flight -
+    and the next due schedule gets its turn meanwhile.
     """
-    if await repo.run_in_flight(session):
+    for sched in await repo.claim_due_schedules(session):
+        # Its ranges as they are NOW. A disabled one is skipped rather than
+        # failing the schedule: somebody paused that range, not the whole audit.
+        ranges = await ranges_repo.get_ranges(session, list(sched["range_ids"]))
+        live = [r for r in ranges if r["enabled"]]
+        if not live:
+            # Advanced anyway, or it would be "due" on every tick for ever.
+            await repo.advance_schedule(session, sched["id"], None)
+            log.warning("scheduled sweep skipped: no enabled ranges",
+                        schedule=sched["name"])
+            continue
+        lanes = sorted({r["collector_id"] for r in live}, key=lambda c: c or "")
+        if await repo.run_in_flight(session, lanes):
+            continue
+        runs = await discovery_ranges.queue(
+            session, range_ids=[r["id"] for r in live], schedule_id=sched["id"],
+            schedule_label=sched["name"])
+        await repo.advance_schedule(session, sched["id"], runs[0]["id"])
+        log.info("scheduled sweep queued", schedule=sched["name"],
+                 runs=[r["id"] for r in runs], ranges=len(live),
+                 every_h=sched["interval_hours"])
+        return {"schedule": sched, "run": runs[0], "runs": runs}
+    return None
+
+
+#: A queued sweep gives up when nothing that may take it has checked in for this
+#: long. NOT when it has merely waited this long: a collector sweeps its runs one
+#: after another, so a queued run behind two /20s legitimately waits hours.
+COLLECTOR_GONE_S = 30 * 60
+
+#: A running sweep's allowance: this floor, or twice its worst case - every
+#: address silent, on both protocols (SNMP then Redfish), at the collector's
+#: 1.5 s per silent address - whichever is longer. A /24 gets the floor; a /20
+#: gets about seven hours.
+RUNNING_FLOOR_S = 30 * 60
+SECONDS_PER_SILENT_PROBE = (6 * 2) / 8
+PROTOCOLS_SWEPT = 2
+
+
+def running_allowance_s(scope: dict[str, Any] | None) -> float:
+    probes = 0
+    exclude = list((scope or {}).get("exclude") or [])
+    for cidr in (scope or {}).get("subnets") or []:
+        try:
+            net = ipaddress.ip_network(cidr, strict=False)
+        except ValueError:
+            continue
+        mine = [e for e in exclude
+                if ipaddress.ip_network(e, strict=False).subnet_of(net)]
+        probes += discovery_ranges.probe_count(net, mine)
+    worst = probes * SECONDS_PER_SILENT_PROBE * PROTOCOLS_SWEPT
+    return max(RUNNING_FLOOR_S, 2 * worst)
+
+
+def _ago(seconds: float) -> str:
+    if seconds < 3600:
+        return f"{round(seconds / 60)} min"
+    if seconds < 172800:
+        return f"{round(seconds / 3600)} h"
+    return f"{round(seconds / 86400)} days"
+
+
+def stuck_reason(run: dict[str, Any]) -> str | None:
+    """Why this unfinished run should be given up on, or None to keep waiting."""
+    if run["status"] == "running":
+        took = float(run["running_s"] or 0)
+        limit = running_allowance_s(run["scope"])
+        if took > limit:
+            return (f"timed out: the collector took it {_ago(took)} ago and never "
+                    f"reported (allowed {_ago(limit)})")
         return None
-    sched = await repo.claim_due_schedule(session)
-    if sched is None:
+    if float(run["queued_s"] or 0) < COLLECTOR_GONE_S:
         return None
-    # Its ranges as they are NOW. A disabled one is skipped rather than failing
-    # the schedule: somebody paused that range, not the whole audit.
-    ranges = await ranges_repo.get_ranges(session, list(sched["range_ids"]))
-    live = [r["id"] for r in ranges if r["enabled"]]
-    if not live:
-        # Advanced anyway, or it would be "due" on every tick for ever.
-        await repo.advance_schedule(session, sched["id"], None)
-        log.warning("scheduled sweep skipped: no enabled ranges",
-                    schedule=sched["name"])
+    if run["collector_id"]:
+        if not run["collector_registered"]:
+            return f"gave up: {run['collector_id']} has never checked in"
+        age = float(run["collector_age_s"] or 0)
+        if age > COLLECTOR_GONE_S:
+            return f"gave up: {run['collector_id']} last checked in {_ago(age)} ago"
         return None
-    runs = await discovery_ranges.queue(
-        session, range_ids=live, schedule_id=sched["id"],
-        schedule_label=sched["name"])
-    await repo.advance_schedule(session, sched["id"], runs[0]["id"])
-    log.info("scheduled sweep queued", schedule=sched["name"],
-             runs=[r["id"] for r in runs], ranges=len(live),
-             every_h=sched["interval_hours"])
-    return {"schedule": sched, "run": runs[0], "runs": runs}
+    freshest = run["freshest_collector_s"]
+    if freshest is None or float(freshest) > COLLECTOR_GONE_S:
+        return "gave up: no collector has checked in"
+    return None
+
+
+async def expire_stuck_runs(session: AsyncSession) -> int:
+    """Fail sweeps that will never finish, and say why.
+
+    A run queued for a collector that is gone waited for ever, and a run whose
+    collector died mid-sweep stayed "running" for ever - and both held back every
+    schedule for that collector. Failed rather than cancelled: nobody decided
+    this, something broke, and it should read as a fault.
+    """
+    n = 0
+    for run in await repo.unfinished_runs(session):
+        reason = stuck_reason(run)
+        if reason and await repo.fail_run(session, run["id"], reason):
+            n += 1
+            log.warning("discovery run timed out", run_id=run["id"],
+                        status=run["status"], collector=run["collector_id"],
+                        reason=reason)
+    return n

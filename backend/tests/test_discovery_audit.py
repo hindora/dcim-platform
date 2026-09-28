@@ -162,11 +162,13 @@ def test_a_due_schedule_waits_for_a_sweep_in_flight():
     """One sweep at a time. A due schedule that finds one running stays due and
     fires late, rather than stacking a second sweep on the first."""
     body = _body(SVC, "fire_due_schedule")
-    assert body.index("run_in_flight") < body.index("claim_due_schedule")
+    # Claimed, then checked against ITS collectors, then queued.
+    assert body.index("claim_due_schedules") < body.index("run_in_flight(session, lanes)")
+    assert body.index("run_in_flight(session, lanes)") < body.index("discovery_ranges.queue")
 
 
 def test_two_api_processes_cannot_fire_one_schedule_twice():
-    assert "FOR UPDATE SKIP LOCKED" in _body(REPO, "claim_due_schedule")
+    assert "FOR UPDATE SKIP LOCKED" in _body(REPO, "claim_due_schedules")
 
 
 def test_a_missed_tick_runs_late_once_rather_than_catching_up():

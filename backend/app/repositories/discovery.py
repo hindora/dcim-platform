@@ -32,14 +32,61 @@ async def create_run(session: AsyncSession, *, method: str,
     return dict(row)
 
 
-async def run_in_flight(session: AsyncSession) -> bool:
-    """Whether a sweep is queued or running. One at a time, deliberately: every
-    agent on the plane is served through the same listeners, so two sweeps do not
-    finish faster, they time each other out."""
+async def run_in_flight(session: AsyncSession,
+                        lanes: list[str | None] | None = None) -> bool:
+    """Whether a sweep is queued or running - on these collectors, or anywhere.
+
+    Per collector, because that is where one-at-a-time matters: a collector sweeps
+    its runs one after another, and the agents on ITS network answer through the
+    same listeners. A long sweep on DC1's collector used to hold back every
+    schedule, DC2's included, for no reason at all.
+
+    `None` in `lanes` is the shared lane - runs assigned to no collector, which
+    whichever collector asks first takes.
+    """
+    if lanes is None:
+        return bool((await session.execute(text("""
+            SELECT EXISTS (SELECT 1 FROM discovery_run
+                            WHERE status IN ('pending', 'running'))
+        """))).scalar_one())
+    ids = [lane for lane in lanes if lane]
     return bool((await session.execute(text("""
         SELECT EXISTS (SELECT 1 FROM discovery_run
-                        WHERE status IN ('pending', 'running'))
-    """))).scalar_one())
+                        WHERE status IN ('pending', 'running')
+                          AND (collector_id = ANY(CAST(:ids AS text[]))
+                               OR (CAST(:shared AS boolean) AND collector_id IS NULL)))
+    """), {"ids": ids, "shared": None in lanes})).scalar_one())
+
+
+async def unfinished_runs(session: AsyncSession) -> list[dict[str, Any]]:
+    """Every queued or running sweep, with how recently its collector was heard,
+    locked so two API processes do not both time the same one out."""
+    rows = (await session.execute(text("""
+        SELECT r.id::text, r.status, r.scope, r.collector_id,
+               extract(epoch FROM (clock_timestamp() - r.started_at)) AS queued_s,
+               extract(epoch FROM (clock_timestamp() - r.claimed_at)) AS running_s,
+               ci.id IS NOT NULL AS collector_registered,
+               extract(epoch FROM (clock_timestamp() - ci.last_heartbeat))
+                   AS collector_age_s,
+               (SELECT min(extract(epoch FROM (clock_timestamp() - last_heartbeat)))
+                  FROM collector_instance) AS freshest_collector_s
+          FROM discovery_run r
+          LEFT JOIN collector_instance ci ON ci.id = r.collector_id
+         WHERE r.status IN ('pending', 'running')
+         ORDER BY r.started_at
+         FOR UPDATE OF r SKIP LOCKED
+    """))).mappings().all()
+    return [dict(r) for r in rows]
+
+
+async def fail_run(session: AsyncSession, run_id: str, error: str) -> bool:
+    """Close an unfinished run as failed. A late report is then refused by the
+    results endpoint, which only takes one for a run still running."""
+    return bool((await session.execute(text("""
+        UPDATE discovery_run SET status = 'failed', finished_at = now(), error = :e
+         WHERE id = CAST(:id AS uuid) AND status IN ('pending', 'running')
+        RETURNING id
+    """), {"id": run_id, "e": error})).first())
 
 
 async def list_runs(session: AsyncSession, limit: int = 25) -> list[dict[str, Any]]:
@@ -742,22 +789,26 @@ async def delete_schedule(session: AsyncSession, schedule_id: str) -> bool:
     """), {"id": schedule_id})).first())
 
 
-async def claim_due_schedule(session: AsyncSession) -> dict[str, Any] | None:
-    """One schedule that is due, locked so two API processes cannot both fire it.
+async def claim_due_schedules(session: AsyncSession,
+                              limit: int = 25) -> list[dict[str, Any]]:
+    """The due schedules, oldest first, locked so two API processes cannot both
+    fire one.
 
-    SKIP LOCKED for the same reason the collectors use it to claim runs: the
-    second process moves on rather than queueing a duplicate sweep.
+    Several, not one: the oldest may be waiting on a busy collector, and a
+    schedule for a different collector should not wait behind it. SKIP LOCKED for
+    the same reason collectors use it to claim runs - the second process moves on
+    rather than queueing a duplicate sweep.
     """
-    row = (await session.execute(text("""
+    rows = (await session.execute(text("""
         SELECT id::text, name, interval_hours,
                array(SELECT x::text FROM unnest(range_ids) x) AS range_ids
           FROM discovery_schedule
          WHERE enabled AND next_run_at <= now()
          ORDER BY next_run_at
          FOR UPDATE SKIP LOCKED
-         LIMIT 1
-    """))).mappings().first()
-    return dict(row) if row else None
+         LIMIT :limit
+    """), {"limit": limit})).mappings().all()
+    return [dict(r) for r in rows]
 
 
 async def advance_schedule(session: AsyncSession, schedule_id: str,
