@@ -32,27 +32,27 @@ type Facet = 'all' | 'action' | Finding;
 
 const FACETS: { key: Facet; label: string; dot?: 'warning' | 'minor';
                hideWhenEmpty?: boolean; tip: string }[] = [
-  { key: 'all', label: 'All', tip: 'Every responder, whatever the audit concluded' },
+  { key: 'all', label: 'All', tip: 'Every responder' },
   { key: 'action', label: 'Needs action', dot: 'warning',
-    tip: 'Not in inventory, or recognised at an address inventory does not expect' },
+    tip: 'Unrecorded, moved, replaced or missing' },
   { key: 'new', label: 'Not in inventory', dot: 'warning',
-    tip: 'Answering, and no record accounts for it' },
+    tip: 'Answering, with no record' },
   { key: 'moved', label: 'Moved', dot: 'warning', hideWhenEmpty: true,
-    tip: 'Recognised by serial at an address inventory does not expect' },
+    tip: 'Known serial at a new address' },
   { key: 'replaced', label: 'Replaced', dot: 'warning', hideWhenEmpty: true,
-    tip: 'Answering where expected, but a serial, platform or model differs from the last sweep' },
+    tip: 'Hardware differs from the last sweep' },
   { key: 'missing', label: 'Missing', dot: 'warning',
-    tip: 'On record, and silent to the last sweep that covered its address' },
+    tip: 'On record, silent to the last sweep' },
   { key: 'changed', label: 'Changed', hideWhenEmpty: true,
-    tip: 'Firmware, OS image or name differs from the last sweep - drift, not a fault' },
+    tip: 'Firmware or name changed' },
   { key: 'gone', label: 'Stopped answering', dot: 'minor',
-    tip: 'Answered once, and not on the last sweep that covered its address' },
+    tip: 'Answered before, not on the last sweep' },
   { key: 'expected', label: 'Expected',
-    tip: 'Answering where inventory says it is' },
+    tip: 'Where inventory expects it' },
   { key: 'dismissed', label: 'Dismissed', hideWhenEmpty: true,
-    tip: 'Somebody decided these were not worth recording' },
+    tip: 'Ignored by an operator' },
   { key: 'promoted', label: 'Promoted', hideWhenEmpty: true,
-    tip: 'Turned into inventory records by an operator' },
+    tip: 'Added to inventory' },
 ];
 
 const FINDING_LABEL: Record<Finding, string> = {
@@ -257,28 +257,24 @@ export function CandidateQueue() {
 
           {missingError && (
             <div className="banner">
-              Could not check inventory against the sweeps, so devices that stopped
-              answering are not listed: {String(missingError)}
+              Missing devices unavailable: {String(missingError)}
             </div>
           )}
 
           {run && (
             <div className="disc-runfilter">
-              Responders last seen by the sweep of{' '}
-              <code>{(run.scope?.subnets ?? []).join(', ')}</code>,{' '}
+              Sweep of <code>{(run.scope?.subnets ?? []).join(', ')}</code>,{' '}
               {relativeTime(run.started_at)}.{' '}
               <button type="button" className="link-button"
                       onClick={() => setParam('run', null)}>
-                Show every sweep
+                Show all
               </button>
             </div>
           )}
 
           {truncated && (
             <div className="banner">
-              Showing the first {FETCH_LIMIT.toLocaleString()} probes. Responders not in
-              inventory are listed first, so no exception is hidden - but the totals on
-              this page undercount the estate.
+              Showing the first {FETCH_LIMIT.toLocaleString()} probes; totals undercount.
             </div>
           )}
 
@@ -286,9 +282,7 @@ export function CandidateQueue() {
             <div className="asset-skeleton" style={{ height: 240 }} />
           ) : classified.length === 0 ? (
             <div className="asset-empty">
-              Nothing has answered yet. Choose subnets in the sweep panel and run it:
-              every address is asked whether something is there, and what replies is
-              staged here for you to promote into inventory or dismiss.
+              Nothing has answered yet. Run a sweep.
             </div>
           ) : visible.length === 0 ? (
             <Empty facet={facet} counts={counts} searching={Boolean(needle)}
@@ -299,11 +293,10 @@ export function CandidateQueue() {
 
           {!loading && items.length > 0 && (
             <p className="muted disc-note">
-              {withSerial} of {items.length} responders reported a serial.
+              {withSerial} of {items.length} reported a serial
               {withSerial < items.length && (
-                <> The other {items.length - withSerial} are matched by address
-                alone, so one that has been re-addressed will read as new.</>
-              )}
+                <>; {items.length - withSerial} matched by address only</>
+              )}.
             </p>
           )}
         </section>
@@ -374,29 +367,22 @@ function Empty({ facet, counts, searching, onShow }: {
   onShow: (f: Facet) => void;
 }) {
   if (searching) {
-    return <div className="asset-empty">No responder in this view matches the search.</div>;
+    return <div className="asset-empty">No match.</div>;
   }
   if (facet === 'action') {
     return (
       <div className="disc-allclear">
         <span className="tick" aria-hidden>✓</span>
         <div>
-          <strong>Nothing needs action.</strong>{' '}
-          All {counts.expected.toLocaleString()} responder
-          {counts.expected === 1 ? ' is' : 's are'} where inventory expects them
-          {counts.missing > 0
-            ? <>, and the {counts.missing} silent device{counts.missing === 1 ? ' is' : 's are'} in
-                maintenance</>
-            : <>, and every device on record answered the last sweep of its address</>}
-          {counts.gone > 0 && <>; {counts.gone} unrecorded responder
-            {counts.gone === 1 ? '' : 's'} stopped answering</>}.
+          <strong>Nothing needs action.</strong>
+          {counts.missing > 0 && <> {counts.missing} silent, in maintenance.</>}
           <div className="actions">
             <button type="button" className="link-button" onClick={() => onShow('expected')}>
-              Show the {counts.expected.toLocaleString()} expected
+              Show {counts.expected.toLocaleString()} expected
             </button>
             {counts.gone > 0 && (
               <button type="button" className="link-button" onClick={() => onShow('gone')}>
-                Show what stopped answering
+                Show {counts.gone} stopped answering
               </button>
             )}
           </div>
@@ -407,21 +393,18 @@ function Empty({ facet, counts, searching, onShow }: {
   if (facet === 'missing') {
     return (
       <div className="asset-empty">
-        Every device on record answered the last sweep that covered its address.
-        Only swept ranges are judged, and only devices polled over SNMP or Redfish:
-        a chiller behind a BACnet router cannot answer a sweep however healthy it is.
+        Every device on record answered its last sweep.
       </div>
     );
   }
   if (facet === 'changed' || facet === 'replaced') {
     return (
       <div className="asset-empty">
-        Nothing answered differently from the sweep before, or every difference
-        has been acknowledged.
+        No changes since the last sweep.
       </div>
     );
   }
-  return <div className="asset-empty">Nothing in this view.</div>;
+  return <div className="asset-empty">Nothing here.</div>;
 }
 
 /** A row somebody can select: a machine to promote or dismiss, or one whose
