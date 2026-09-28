@@ -2,94 +2,20 @@ import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   api,
+  type DiscoveryRange,
   type DiscoveryRun,
   type DiscoverySchedule,
 } from '../../../api/client';
 import { relativeTime, untilTime } from '../../../lib/format';
+import { RangeDialog } from './RangeDialog';
+import {
+  collectorTrouble, lastSwept, MAX_ADDRESSES, parseCidr, probeCount, PURPOSE_LABEL,
+  PURPOSE_TAG, SECONDS_PER_ADDRESS,
+} from './ranges';
 
-/** The sweeper's own limits, mirrored so the form can answer before the API does.
- *
- *  MaxAddresses is a refusal rather than a truncation: sweeping the first 4096 of
- *  65,536 and reporting "found 12" would be a lie about what was audited. That is
- *  the right behaviour and a bad surprise, so the form says the number first.
- */
-const MAX_ADDRESSES = 4096;
-
-/** Seconds per address at the ceiling: a SILENT address costs the full timeout
- *  once per attempt (6s x 2 attempts) and eight run at once, so 1.5s each.
- *
- *  Calibrated against real sweeps rather than guessed. A /24 of this estate - 254
- *  addresses, 105 of them answering - took 252s and 247s on two runs. The model
- *  puts the ceiling at 381s, and the gap is the 105 that answered immediately:
- *  silence is what a sweep spends its time on.
- */
-const SECONDS_PER_ADDRESS = (6 * 2) / 8;
-
-/** How many runs to read. Enough to say when each suggested range was last
- *  audited, which is the question the subnet list exists to answer. */
+/** How many runs to read. Enough to say when each range was last audited, which
+ *  is the question the range list exists to answer. */
 const RUN_HISTORY = 30;
-
-type Parsed = { cidr: string; addresses: number; error?: string };
-
-/** Check a CIDR and count what it would probe, without a round trip.
- *
- *  A typo used to travel to the API to fail, which is a slow way to learn you
- *  mistyped an octet.
- */
-function parseCidr(raw: string): Parsed {
-  const cidr = raw.trim();
-  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\/(\d{1,2})$/.exec(cidr);
-  if (!m) return { cidr, addresses: 0, error: 'not a CIDR, e.g. 10.51.11.0/24' };
-  const octets = m.slice(1, 5).map(Number);
-  if (octets.some((o) => o > 255)) {
-    return { cidr, addresses: 0, error: 'an octet is above 255' };
-  }
-  const bits = Number(m[5]);
-  if (bits > 32) return { cidr, addresses: 0, error: 'prefix is above /32' };
-  // Minus network and broadcast, which is what the sweeper skips. A /31 and a
-  // /32 have neither to skip, so they are counted whole.
-  const total = 2 ** (32 - bits);
-  const addresses = bits >= 31 ? total : total - 2;
-  return { cidr, addresses };
-}
-
-/** [first, last] address of a CIDR as integers, or null if it is not one. */
-function span(cidr: string): [number, number] | null {
-  const m = /^(\d+)\.(\d+)\.(\d+)\.(\d+)\/(\d+)$/.exec(cidr.trim());
-  if (!m) return null;
-  const base = m.slice(1, 5).reduce((n, o) => n * 256 + Number(o), 0);
-  const size = 2 ** (32 - Number(m[5]));
-  const lo = base - (base % size);
-  return [lo, lo + size - 1];
-}
-
-/** When a range was last looked at, and whether the look covered all of it.
- *
- *  A sweep of a /27 inside a /24 audited 30 addresses of 254. Calling the /24
- *  "swept 3 min ago" on the strength of that would be the same misstatement the
- *  address ceiling refuses to make, so a partial pass says so.
- */
-function lastSwept(cidr: string, runs: DiscoveryRun[]) {
-  const mine = span(cidr);
-  if (!mine) return null;
-  let best: { run: DiscoveryRun; whole: boolean } | null = null;
-  for (const run of runs) {
-    if (run.status !== 'done') continue;
-    for (const s of run.scope?.subnets ?? []) {
-      const theirs = span(s);
-      if (!theirs || theirs[0] > mine[1] || mine[0] > theirs[1]) continue;
-      const whole = theirs[0] <= mine[0] && theirs[1] >= mine[1];
-      const when = run.finished_at ?? run.started_at;
-      const bestWhen = best ? best.run.finished_at ?? best.run.started_at : null;
-      // Newest wins; at the same instant a whole pass beats a partial one.
-      if (!best || String(when) > String(bestWhen)
-          || (String(when) === String(bestWhen) && whole && !best.whole)) {
-        best = { run, whole };
-      }
-    }
-  }
-  return best;
-}
 
 /** The run history, shared by the rail and the page header.
  *
@@ -116,6 +42,8 @@ function describeDuration(seconds: number): string {
   return `${Math.round(seconds / 60)} min`;
 }
 
+type Editing = { range?: DiscoveryRange; cidr?: string } | null;
+
 /** Run a sweep, and see what the last ones did.
  *
  *  This is how the DCIM learns that hardware exists: it asks the management
@@ -123,12 +51,14 @@ function describeDuration(seconds: number): string {
  *  that sits on that network. It talks to no other product's API - a DCIM must not
  *  know what is generating its telemetry.
  *
- *  Queued, not executed here. The API records the run and a collector claims it,
- *  because the sweep happens on the management network and the API is not on it.
+ *  What it sweeps is SAVED RANGES: address space somebody said is worth auditing,
+ *  with the collector that can reach it. The list used to be the /24s inventory's
+ *  addresses fell in, which offered nothing at a new site, never the unrecorded
+ *  subnet an audit is for, and only ever /24s. Those are now suggestions.
  *
- *  A rail beside the findings rather than a form above them. The findings are what
- *  an audit is FOR; the old page put sixteen checkboxes between the operator and the
- *  first exception.
+ *  Queued, not executed here. The API records one run per collector and each
+ *  collector claims its own, because the sweep happens on the management network
+ *  and the API is not on it.
  */
 export function SweepPanel({ activeRun, onPickRun }: {
   activeRun: string | null;
@@ -138,147 +68,206 @@ export function SweepPanel({ activeRun, onPickRun }: {
   const qc = useQueryClient();
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [extra, setExtra] = useState('');
+  const [extraCollector, setExtraCollector] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [report, setReport] = useState<string | null>(null);
   const [allRuns, setAllRuns] = useState(false);
+  const [editing, setEditing] = useState<Editing>(null);
 
-  const { data: subnets, isLoading: subnetsLoading } = useQuery({
-    queryKey: ['discovery-subnets'],
-    queryFn: api.discoverySubnets,
-  });
+  const rangesQ = useQuery({ queryKey: ['discovery-ranges'], queryFn: api.discoveryRanges,
+                             refetchInterval: 60_000 });
+  const options = useQuery({ queryKey: ['discovery-range-options'],
+                             queryFn: api.discoveryRangeOptions, staleTime: 60_000 });
+  const suggestQ = useQuery({ queryKey: ['discovery-subnets'],
+                              queryFn: api.discoverySubnets });
 
   const { data: runs } = useDiscoveryRuns();
   const history = useMemo(() => runs?.items ?? [], [runs]);
+  const ranges = rangesQ.data?.items ?? [];
+  const suggestions = suggestQ.data?.subnets ?? [];
+  const collectors = options.data?.collectors ?? [];
 
+  const selected = ranges.filter((r) => picked.has(r.id) && r.enabled);
   const typed = extra.split(/[\s,]+/).map((x) => x.trim()).filter(Boolean);
-  // The suggested subnets come from inventory and are /24s by construction, so
-  // only what was typed can be malformed.
+  // Checked as it is typed. A malformed CIDR used to travel to the API to fail,
+  // which is a slow way to learn you mistyped an octet.
   const parsed = typed.map(parseCidr);
   const bad = parsed.filter((p) => p.error);
-  const chosen = [...picked, ...parsed.filter((p) => !p.error).map((p) => p.cidr)];
+  const adhoc = parsed.filter((p) => !p.error);
 
-  const addresses = [...picked].reduce((n) => n + 254, 0)
-    + parsed.filter((p) => !p.error).reduce((n, p) => n + p.addresses, 0);
-  const tooMany = addresses > MAX_ADDRESSES;
+  // The estimate, per collector: different collectors sweep at the same time,
+  // one collector sweeps its runs one after another.
+  const perCollector = new Map<string, number>();
+  for (const r of selected) {
+    const k = r.collector_id ?? '';
+    perCollector.set(k, (perCollector.get(k) ?? 0) + probeCount(r));
+  }
+  for (const p of adhoc) {
+    perCollector.set(extraCollector, (perCollector.get(extraCollector) ?? 0) + p.addresses);
+  }
+  const probes = [...perCollector.values()].reduce((a, b) => a + b, 0);
+  const longest = Math.max(0, ...perCollector.values());
+  const runCount = [...perCollector.values()]
+    .reduce((n, v) => n + Math.max(1, Math.ceil(v / MAX_ADDRESSES)), 0);
+  const chosenCount = selected.length + adhoc.length;
+
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: ['discovery-runs'] });
+    qc.invalidateQueries({ queryKey: ['discovery-candidates'] });
+    qc.invalidateQueries({ queryKey: ['discovery-ranges'] });
+    qc.invalidateQueries({ queryKey: ['discovery-subnets'] });
+  };
 
   const start = useMutation({
-    mutationFn: () => api.startDiscoveryRun({ subnets: chosen }),
-    onSuccess: () => {
+    mutationFn: () => api.startDiscoveryRun({
+      range_ids: selected.map((r) => r.id),
+      subnets: adhoc.map((p) => p.cidr),
+      collector_id: extraCollector || undefined,
+    }),
+    onSuccess: (r) => {
       setError(null);
+      setReport(r.runs.length > 1
+        ? `Queued as ${r.runs.length} sweeps, one per collector and at most ${
+          MAX_ADDRESSES.toLocaleString()} addresses each.` : null);
       setPicked(new Set());
       setExtra('');
-      qc.invalidateQueries({ queryKey: ['discovery-runs'] });
-      qc.invalidateQueries({ queryKey: ['discovery-candidates'] });
+      refresh();
     },
-    // The API refuses a /16 rather than truncating it - sweeping the first 4096
-    // of 65,536 and reporting "found 12" would be a lie about what was audited.
-    // Its message says so; ours would not.
     onError: (e) => setError(String(e)),
   });
 
-  const toggle = (cidr: string) => setPicked((s) => {
+  // One click from a suggestion to a saved range, named after its CIDR until
+  // somebody names it better.
+  const addSuggestions = useMutation({
+    mutationFn: async (cidrs: string[]) => {
+      for (const cidr of cidrs) await api.createDiscoveryRange({ cidr });
+    },
+    onSuccess: refresh,
+    onError: (e) => { setError(String(e)); refresh(); },
+  });
+
+  const toggle = (id: string) => setPicked((s) => {
     const next = new Set(s);
-    if (next.has(cidr)) next.delete(cidr); else next.add(cidr);
+    if (next.has(id)) next.delete(id); else next.add(id);
     return next;
   });
 
-  const list = subnets?.subnets ?? [];
-  const allPicked = list.length > 0 && list.every((s) => picked.has(s.cidr));
-  const inFlight = history.find(
-    (r) => r.status === 'pending' || r.status === 'running');
+  const sweepable = ranges.filter((r) => r.enabled);
+  const allPicked = sweepable.length > 0 && sweepable.every((r) => picked.has(r.id));
+  const inFlight = history.filter((r) => r.status === 'pending' || r.status === 'running');
   const shownRuns = allRuns ? history : history.slice(0, 6);
 
   return (
     <aside className="disc-rail" aria-label="Sweep the management network">
       <section className="asset-panel disc-sweep">
-        <h3>Sweep</h3>
+        <div className="disc-rail-head">
+          <h3>Sweep</h3>
+          <button type="button" className="link-button"
+                  onClick={() => setEditing({})}>
+            Add range
+          </button>
+        </div>
         <p className="muted disc-rail-sub">
           Bounded and deliberately slow: an unbounded sweep looks like a port scan
           to anything watching.
         </p>
 
-        {inFlight && (
-          <div className="disc-inflight" role="status">
-            <span className="disc-pulse" aria-hidden />
-            Sweeping <code>{(inFlight.scope?.subnets ?? []).join(', ')}</code>
-            <span className="muted"> · started {relativeTime(inFlight.started_at)}</span>
-          </div>
-        )}
+        {inFlight.map((r) => <InFlight key={r.id} run={r} />)}
 
-        {/* Derived from inventory rather than typed from memory, and each one says
-            when it was last audited - which is what decides whether to sweep it. */}
-        {/* "No management addresses in inventory" is a statement about the estate;
-            made while the list is still loading it was false for as long as the
-            fetch took. */}
-        {subnetsLoading ? (
+        {/* "No ranges" is a statement about the configuration; made while the list
+            is still loading it was false for as long as the fetch took. */}
+        {rangesQ.isLoading ? (
           <div className="asset-skeleton" style={{ height: 180 }} />
-        ) : list.length ? (
+        ) : ranges.length ? (
           <div className="disc-subnets">
             <table>
               <thead>
                 <tr>
                   <th>
                     <input type="checkbox" checked={allPicked}
-                           aria-label="Select every suggested subnet"
+                           aria-label="Select every enabled range"
                            onChange={() => setPicked(allPicked
-                             ? new Set() : new Set(list.map((s) => s.cidr)))} />
+                             ? new Set() : new Set(sweepable.map((r) => r.id)))} />
                   </th>
-                  <th>Subnet</th>
+                  <th>Range</th>
                   <th className="num">Known</th>
                   <th>Last swept</th>
                 </tr>
               </thead>
               <tbody>
-                {list.map((s) => {
-                  const last = lastSwept(s.cidr, history);
-                  return (
-                    <tr key={s.cidr} className={picked.has(s.cidr) ? 'is-picked' : ''}
-                        onClick={() => toggle(s.cidr)}>
-                      <td>
-                        <input type="checkbox" checked={picked.has(s.cidr)}
-                               onChange={() => toggle(s.cidr)}
-                               onClick={(e) => e.stopPropagation()}
-                               aria-label={`Sweep ${s.cidr}`} />
-                      </td>
-                      <td><code>{s.cidr}</code></td>
-                      <td className="num">{s.known}</td>
-                      <td className={last ? '' : 'disc-never'}>
-                        {last ? (
-                          <>
-                            {relativeTime(last.run.finished_at ?? last.run.started_at)}
-                            {!last.whole && (
-                              <span className="disc-part"
-                                    title={`Only ${(last.run.scope?.subnets ?? []).join(', ')} was swept`}>
-                                part
-                              </span>
-                            )}
-                          </>
-                        ) : 'never'}
-                      </td>
-                    </tr>
-                  );
-                })}
+                {ranges.map((r) => (
+                  <RangeRow key={r.id} r={r} picked={picked.has(r.id)}
+                            last={lastSwept(r.cidr, history)}
+                            onToggle={() => toggle(r.id)}
+                            onEdit={() => setEditing({ range: r })} />
+                ))}
               </tbody>
             </table>
           </div>
         ) : (
-          <p className="muted">
-            No management addresses in inventory yet, so there is nothing to suggest.
-            Enter a subnet below.
-          </p>
+          <div className="disc-empty-ranges">
+            <p>
+              No ranges saved yet. Add the address space you want audited - a hall's
+              BMC network, the BMS VLAN - with the collector that can reach it.
+            </p>
+            <button type="button" onClick={() => setEditing({})}>Add a range</button>
+          </div>
+        )}
+
+        {/* Suggestions, not the list: inventory can only show space something is
+            already recorded in, never the unrecorded subnet an audit is for. */}
+        {suggestions.length > 0 && (
+          <details className="disc-suggest" open={ranges.length === 0}>
+            <summary>
+              Suggested from inventory <span className="muted">· {suggestions.length}</span>
+            </summary>
+            <p className="muted disc-form-note">
+              /24s your recorded devices sit in that no saved range covers. Real
+              management networks are often wider or narrower - edit one after
+              adding it if so.
+            </p>
+            <ul>
+              {suggestions.map((s) => (
+                <li key={s.cidr}>
+                  <code>{s.cidr}</code>
+                  <span className="muted">{s.known} known</span>
+                  <button type="button" className="link-button"
+                          disabled={addSuggestions.isPending}
+                          onClick={() => addSuggestions.mutate([s.cidr])}>
+                    Add
+                  </button>
+                </li>
+              ))}
+            </ul>
+            {suggestions.length > 1 && (
+              <button type="button" className="link-button"
+                      disabled={addSuggestions.isPending}
+                      onClick={() => addSuggestions.mutate(suggestions.map((s) => s.cidr))}>
+                {addSuggestions.isPending ? 'Adding…' : `Add all ${suggestions.length}`}
+              </button>
+            )}
+          </details>
         )}
 
         <label className="disc-extra">
-          <span>Other subnets</span>
+          <span>Sweep once, without saving</span>
           <input value={extra} onChange={(e) => setExtra(e.target.value)}
-                 placeholder="10.51.30.0/24, 10.52.30.0/24"
+                 placeholder="10.51.30.0/24, 10.52.30.64/26"
                  aria-invalid={bad.length > 0} />
         </label>
-
-        {/* Checked as it is typed. A malformed CIDR used to travel to the API to
-            fail, which is a slow way to learn you mistyped an octet. */}
+        {/* Only offered where there is a choice to make. */}
+        {adhoc.length > 0 && collectors.length > 1 && (
+          <label className="disc-extra">
+            <span>Swept by</span>
+            <select value={extraCollector} onChange={(e) => setExtraCollector(e.target.value)}>
+              <option value="">Any collector</option>
+              {collectors.map((c) => <option key={c.id} value={c.id}>{c.id}</option>)}
+            </select>
+          </label>
+        )}
         {bad.map((p) => (
           <p key={p.cidr} className="disc-bad">
-            <code>{p.cidr}</code> — {p.error}
+            <code>{p.cidr}</code> - {p.error}
           </p>
         ))}
 
@@ -286,35 +275,26 @@ export function SweepPanel({ activeRun, onPickRun }: {
             seconds, and an operator who does not know that reads a running sweep as
             a hung page. */}
         <p className="muted disc-estimate">
-          {addresses > 0
-            ? <>{addresses.toLocaleString()} address{addresses === 1 ? '' : 'es'} · up
-                to {describeDuration(addresses * SECONDS_PER_ADDRESS)}, faster wherever
+          {probes > 0
+            ? <>{probes.toLocaleString()} address{probes === 1 ? '' : 'es'}
+                {runCount > 1 && <> in {runCount} sweeps</>} · up to{' '}
+                {describeDuration(longest * SECONDS_PER_ADDRESS)}, faster wherever
                 devices answer.</>
-            : 'Choose at least one subnet.'}
+            : 'Choose at least one range.'}
         </p>
 
-        {tooMany && (
-          <div className="banner">
-            {addresses.toLocaleString()} addresses is more than the {MAX_ADDRESSES} a
-            single sweep will do. It is refused rather than truncated, because
-            sweeping part of a range and reporting what it found would misrepresent
-            what was audited. Run it in pieces.
-          </div>
-        )}
-
         <button type="button" className="primary disc-run"
-                disabled={chosen.length === 0 || bad.length > 0 || tooMany
-                          || start.isPending || Boolean(inFlight)}
-                onClick={() => start.mutate()}>
-          {inFlight ? 'Sweep in progress…'
-            : start.isPending ? 'Queueing…'
-              : `Run sweep${chosen.length ? ` · ${chosen.length} subnet${chosen.length === 1 ? '' : 's'}` : ''}`}
+                disabled={chosenCount === 0 || bad.length > 0 || start.isPending}
+                onClick={() => { setError(null); start.mutate(); }}>
+          {start.isPending ? 'Queueing…'
+            : `Run sweep${chosenCount ? ` · ${chosenCount} range${chosenCount === 1 ? '' : 's'}` : ''}`}
         </button>
 
+        {report && <p className="muted disc-estimate">{report}</p>}
         {error && <div className="banner">{error}</div>}
       </section>
 
-      <Schedules chosen={chosen} blocked={bad.length > 0 || tooMany} />
+      <Schedules chosen={selected} adhoc={adhoc.length} />
 
       {history.length > 0 && (
         <section className="asset-panel disc-runs">
@@ -336,7 +316,91 @@ export function SweepPanel({ activeRun, onPickRun }: {
           )}
         </section>
       )}
+
+      {editing && (
+        <RangeDialog range={editing.range} initialCidr={editing.cidr}
+                     options={options.data} onClose={() => setEditing(null)} />
+      )}
     </aside>
+  );
+}
+
+function RangeRow({ r, picked, last, onToggle, onEdit }: {
+  r: DiscoveryRange; picked: boolean;
+  last: ReturnType<typeof lastSwept>;
+  onToggle: () => void; onEdit: () => void;
+}) {
+  const trouble = collectorTrouble(r);
+  return (
+    <tr className={`${picked ? 'is-picked' : ''}${r.enabled ? '' : ' is-off'}`}
+        onClick={r.enabled ? onToggle : undefined}>
+      <td>
+        <input type="checkbox" checked={picked} disabled={!r.enabled}
+               onChange={onToggle} onClick={(e) => e.stopPropagation()}
+               aria-label={`Sweep ${r.name}`} />
+      </td>
+      <td className="disc-range">
+        <div className="top">
+          <span className="name">{r.name}</span>
+          <button type="button" className="link-button"
+                  onClick={(e) => { e.stopPropagation(); onEdit(); }}
+                  aria-label={`Edit ${r.name}`}>
+            Edit
+          </button>
+        </div>
+        {r.name !== r.cidr && <code>{r.cidr}</code>}
+        <div className="tags">
+          {!r.enabled && <span className="proto">OFF</span>}
+          {r.purpose && (
+            <span className="proto" title={PURPOSE_LABEL[r.purpose]}>
+              {PURPOSE_TAG[r.purpose] ?? r.purpose}
+            </span>
+          )}
+          {r.datacenter_name && <span className="muted">{r.datacenter_name}</span>}
+          {r.collector_id && (
+            <span className={trouble ? 'disc-bad' : 'muted'} title={trouble ?? undefined}>
+              via {r.collector_id}
+            </span>
+          )}
+          {r.exclusions.length > 0 && (
+            <span className="muted" title={r.exclusions.join(', ')}>
+              {r.exclusions.length} excl.
+            </span>
+          )}
+        </div>
+      </td>
+      <td className="num">{r.known ?? 0}</td>
+      <td className={last ? '' : 'disc-never'}>
+        {last ? (
+          <>
+            {relativeTime(last.run.finished_at ?? last.run.started_at)}
+            {!last.whole && (
+              <span className="disc-part"
+                    title={`Only ${(last.run.scope?.subnets ?? []).join(', ')} was swept`}>
+                part
+              </span>
+            )}
+          </>
+        ) : 'never'}
+      </td>
+    </tr>
+  );
+}
+
+/** A sweep in flight, or one that is waiting - and on what. */
+function InFlight({ run }: { run: DiscoveryRun }) {
+  const trouble = run.status === 'pending' ? collectorTrouble(run) : null;
+  const scope = (run.scope?.subnets ?? []).join(', ');
+  return (
+    <div className={`disc-inflight${trouble ? ' is-stuck' : ''}`} role="status">
+      {!trouble && <span className="disc-pulse" aria-hidden />}
+      {run.status === 'running' ? 'Sweeping' : 'Queued'} <code>{scope}</code>
+      {run.collector_id && <span className="muted"> on {run.collector_id}</span>}
+      <span className="muted"> · {relativeTime(run.started_at)}</span>
+      {/* Stuck, not queued: only that collector can reach the range, so nothing
+          else will pick this up. */}
+      {trouble && <div className="disc-bad">Waiting: {trouble}.</div>}
+    </div>
   );
 }
 
@@ -358,6 +422,7 @@ function RunItem({ run, active, onPick }: {
           {secs != null && secs >= 0 && (
             <span className="muted"> · {describeDuration(secs)}</span>
           )}
+          {run.collector_id && <span className="muted"> · {run.collector_id}</span>}
           {/* Who asked. A run nobody remembers starting is a schedule's, and
               saying so saves somebody hunting the audit log for it. */}
           {(run.trigger === 'schedule' || run.schedule_id) && (
@@ -436,15 +501,16 @@ const intervalLabel = (h: number) => INTERVAL_LABEL[h] ?? `every ${h} hours`;
 /** Ranges swept on an interval.
  *
  *  An audit run once is a snapshot; the findings only stay true if somebody keeps
- *  asking. A schedule is made from the subnets chosen in the sweep form above, so
- *  there is one way to say which ranges and it is the one already in front of the
- *  operator.
+ *  asking. A schedule is made from the saved ranges chosen above and points at
+ *  them, so editing a range - a wider prefix, a new exclusion, another collector -
+ *  changes what its schedules sweep. One-off subnets cannot be scheduled: there is
+ *  no record to say which collector reaches them.
  *
  *  The API decides when: a missed tick runs once, late, rather than firing once
  *  for every interval an outage swallowed, and a due schedule waits for a sweep
  *  already running rather than stacking a second one on the management network.
  */
-function Schedules({ chosen, blocked }: { chosen: string[]; blocked: boolean }) {
+function Schedules({ chosen, adhoc }: { chosen: DiscoveryRange[]; adhoc: number }) {
   const qc = useQueryClient();
   const [hours, setHours] = useState(24);
   const [name, setName] = useState('');
@@ -470,7 +536,8 @@ function Schedules({ chosen, blocked }: { chosen: string[]; blocked: boolean }) 
 
   const create = useMutation({
     mutationFn: () => api.createDiscoverySchedule({
-      subnets: chosen, interval_hours: hours, name: name.trim() || undefined,
+      range_ids: chosen.map((r) => r.id), interval_hours: hours,
+      name: name.trim() || undefined,
     }),
     onSuccess: () => { setError(null); setName(''); refresh(); },
     onError: (e) => setError(String(e)),
@@ -508,18 +575,24 @@ function Schedules({ chosen, blocked }: { chosen: string[]; blocked: boolean }) 
         <input value={name} onChange={(e) => setName(e.target.value)}
                placeholder="Name (optional)" aria-label="Schedule name" />
         <button type="button"
-                disabled={chosen.length === 0 || blocked || create.isPending}
-                title={chosen.length === 0 ? 'Choose subnets in the sweep form first' : undefined}
+                disabled={chosen.length === 0 || create.isPending}
+                title={chosen.length === 0 ? 'Choose saved ranges above first' : undefined}
                 onClick={() => { setError(null); create.mutate(); }}>
           {create.isPending ? 'Saving…'
             : chosen.length
-              ? `Schedule ${chosen.length} subnet${chosen.length === 1 ? '' : 's'}`
+              ? `Schedule ${chosen.length} range${chosen.length === 1 ? '' : 's'}`
               : 'Schedule'}
         </button>
       </div>
       {chosen.length === 0 && (
         <p className="muted disc-sched-hint">
-          Choose subnets in the sweep form above to schedule them.
+          Choose saved ranges above to schedule them.
+        </p>
+      )}
+      {adhoc > 0 && (
+        <p className="muted disc-sched-hint">
+          One-off subnets are not scheduled. Add them as ranges to sweep them on a
+          schedule.
         </p>
       )}
       {error && <div className="banner">{error}</div>}
@@ -566,10 +639,13 @@ function ScheduleItem({ s, onChanged, lastRun }: {
   return (
     <li className={`disc-sched${s.enabled ? '' : ' is-paused'}`}>
       <div className="top">
-        <span className="title">{s.name || s.subnets.join(', ')}</span>
+        <span className="title">{s.name || s.range_names.join(', ')}</span>
         <span className="muted">{intervalLabel(s.interval_hours)}</span>
       </div>
-      {s.name && <code className="scope">{s.subnets.join(', ')}</code>}
+      {/* What it sweeps, resolved live from its ranges. */}
+      <code className="scope" title={s.subnets.join(', ')}>
+        {s.range_names.length ? s.range_names.join(', ') : 'no ranges - it cannot run'}
+      </code>
       <div className="muted">
         {!s.enabled ? 'paused'
           : due ? 'due now - starts within a minute'

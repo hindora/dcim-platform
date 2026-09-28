@@ -273,7 +273,7 @@ export interface DiscoveryRun {
   id: string;
   method: string;
   /** What was asked for: `{ subnets: [...] }`. */
-  scope?: { subnets?: string[] } | null;
+  scope?: { subnets?: string[]; exclude?: string[] } | null;
   /** pending → running → completed | failed. */
   status: string;
   /** Responders the sweep found, once it has finished. */
@@ -298,6 +298,13 @@ export interface DiscoveryRun {
   /** Set when a schedule queued the run rather than a person; nulled if that
    *  schedule is later deleted. */
   schedule_id?: string | null;
+  /** The collector that must do it; null means any collector may. */
+  collector_id?: string | null;
+  /** Whether that collector has ever checked in, and how long ago it last did. */
+  collector_registered?: boolean | null;
+  collector_age_s?: number | null;
+  /** The saved ranges this run sweeps; empty for one-off subnets. */
+  range_ids?: string[];
   schedule_name?: string | null;
   started_at?: string | null;
   finished_at?: string | null;
@@ -366,9 +373,50 @@ export interface MissingDevice {
   room_name?: string | null;
 }
 
+/** Address space somebody said is worth auditing, and who can reach it. */
+export interface DiscoveryRange {
+  id: string;
+  cidr: string;
+  name: string;
+  datacenter_id?: string | null;
+  datacenter_name?: string | null;
+  /** it_oob | bms | production | other */
+  purpose?: string | null;
+  /** The collector that sweeps it; null means any. */
+  collector_id?: string | null;
+  collector_registered?: boolean | null;
+  collector_age_s?: number | null;
+  /** Addresses a sweep must not probe, as CIDRs. */
+  exclusions: string[];
+  enabled: boolean;
+  notes?: string | null;
+  /** Recorded devices answering somewhere inside it. */
+  known?: number;
+  /** Names of other ranges sharing addresses with this one. */
+  overlaps?: string[];
+}
+
+export interface RangeOptions {
+  datacenters: { id: string; name: string }[];
+  collectors: { id: string; hostname?: string | null; age_s?: number | null;
+                healthy: boolean }[];
+  purposes: string[];
+  widest_prefix: number;
+  max_addresses: number;
+}
+
+export type RangeInput = {
+  cidr?: string; name?: string | null; datacenter_id?: string | null;
+  purpose?: string | null; collector_id?: string | null; exclusions?: string[];
+  enabled?: boolean; notes?: string | null;
+};
+
 export interface DiscoverySchedule {
   id: string;
   name?: string | null;
+  /** The saved ranges it sweeps, with their names and CIDRs resolved live. */
+  range_ids: string[];
+  range_names: string[];
   subnets: string[];
   interval_hours: number;
   enabled: boolean;
@@ -3062,10 +3110,31 @@ export const api = {
     return request<{ items: DiscoveryRun[] }>(`/discovery/runs${qs ? `?${qs}` : ''}`);
   },
 
-  startDiscoveryRun: (body: { method?: string; subnets: string[] }) =>
-    request<DiscoveryRun>('/discovery/runs', {
-      method: 'POST', body: JSON.stringify({ method: 'snmp_sweep', ...body }),
+  /** Queue sweeps of saved ranges and/or one-off subnets. One run per collector
+   *  that has to do the work, each no wider than a collector will sweep. */
+  startDiscoveryRun: (body: {
+    range_ids?: string[]; subnets?: string[]; collector_id?: string;
+  }) =>
+    request<DiscoveryRun & { runs: DiscoveryRun[] }>('/discovery/runs', {
+      method: 'POST', body: JSON.stringify({ method: 'sweep', ...body }),
     }),
+
+  discoveryRanges: () => request<{ items: DiscoveryRange[] }>('/discovery/ranges'),
+
+  discoveryRangeOptions: () => request<RangeOptions>('/discovery/range-options'),
+
+  createDiscoveryRange: (body: RangeInput) =>
+    request<DiscoveryRange>('/discovery/ranges', {
+      method: 'POST', body: JSON.stringify(body),
+    }),
+
+  updateDiscoveryRange: (id: string, body: RangeInput) =>
+    request<DiscoveryRange>(`/discovery/ranges/${id}`, {
+      method: 'PATCH', body: JSON.stringify(body),
+    }),
+
+  deleteDiscoveryRange: (id: string) =>
+    request<unknown>(`/discovery/ranges/${id}`, { method: 'DELETE' }),
 
   /** Reservations a responder could fulfil, so promotion can attach to one
    *  instead of leaving two records for one machine. */
@@ -3126,14 +3195,14 @@ export const api = {
     request<{ items: DiscoverySchedule[]; intervals: number[] }>('/discovery/schedules'),
 
   createDiscoverySchedule: (body: {
-    name?: string; subnets: string[]; interval_hours: number;
+    name?: string; range_ids: string[]; interval_hours: number;
   }) =>
     request<DiscoverySchedule>('/discovery/schedules', {
       method: 'POST', body: JSON.stringify(body),
     }),
 
   updateDiscoverySchedule: (id: string, body: {
-    name?: string; subnets?: string[]; interval_hours?: number;
+    name?: string; range_ids?: string[]; interval_hours?: number;
     enabled?: boolean; run_now?: boolean;
   }) =>
     request<DiscoverySchedule>(`/discovery/schedules/${id}`, {

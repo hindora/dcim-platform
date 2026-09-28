@@ -182,8 +182,12 @@ def test_disabled_endpoints_are_not_evidence():
 # ----------------------------------------------------- how hardware is found
 
 DISCOVERY_SVC = (APP / "services" / "discovery.py").read_text(encoding="utf-8")
-SWEEP_UI = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "features"
-            / "assets" / "discovery" / "SweepPanel.tsx").read_text(encoding="utf-8")
+_SWEEP_DIR = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "features"
+              / "assets" / "discovery")
+# The sweep rail is the panel plus its range helpers (ranges.ts): the parsing and
+# the estimate moved there when ranges became records.
+SWEEP_UI = "\n".join((_SWEEP_DIR / f).read_text(encoding="utf-8")
+                     for f in ("SweepPanel.tsx", "ranges.ts", "RangeDialog.tsx"))
 
 
 def test_a_promoted_candidate_is_installed_not_in_service():
@@ -235,15 +239,15 @@ def test_the_sweep_is_queued_for_the_collector_not_run_by_the_api():
         assert bad not in SWEEP_UI.lower()
 
 
-def test_the_subnets_are_suggested_from_inventory():
-    """An operator should not have to know the site's addressing by heart to run
-    an audit, and a free-text box invites both typos and a /16 - which the sweeper
-    refuses outright rather than truncating, so the run just fails."""
+def test_inventory_only_suggests_ranges_it_does_not_already_have():
+    """Suggestions, not the list: inventory can only show space something is
+    already recorded in. Once a saved range covers a /24 it stops being offered."""
     assert "discoverySubnets" in SWEEP_UI
-    repo_src = (APP / "repositories" / "discovery.py").read_text(encoding="utf-8")
-    assert "async def mgmt_subnets" in repo_src
+    src = (APP / "repositories" / "discovery_ranges.py").read_text(encoding="utf-8")
+    body = src[src.index("async def suggestions"):src.index("async def collectors")]
+    assert "NOT EXISTS (SELECT 1 FROM discovery_range r WHERE addr.a <<= r.cidr)" in body
     # The count is what makes a result readable.
-    assert "count(*) AS known" in repo_src
+    assert "count(*) AS known" in body
 
 
 # ------------------------------------------- a re-addressed device is not new
@@ -438,8 +442,7 @@ def test_a_run_reports_what_it_concluded():
 
 # --------------------------------------------- the sweep form and the dismissed
 
-SWEEP_UX = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "features"
-            / "assets" / "discovery" / "SweepPanel.tsx").read_text(encoding="utf-8")
+SWEEP_UX = SWEEP_UI
 
 
 def test_a_malformed_cidr_is_caught_before_the_api_sees_it():
@@ -466,7 +469,7 @@ def test_the_address_ceiling_is_explained_not_just_enforced():
     """MaxAddresses is a refusal rather than a truncation, which is right and a bad
     surprise. The form says the number first."""
     assert "MAX_ADDRESSES = 4096" in SWEEP_UX
-    assert "refused rather than truncated" in SWEEP_UX
+    assert "is refused, not truncated" in SWEEP_UX
     # Mirrored from the sweeper, so the two must not drift.
     go = (Path(__file__).resolve().parents[2] / "collector" / "internal"
           / "discovery" / "discovery.go").read_text(encoding="utf-8")
@@ -476,7 +479,7 @@ def test_the_address_ceiling_is_explained_not_just_enforced():
 def test_a_network_and_broadcast_are_not_counted_as_probeable():
     """The sweeper skips them, so an estimate that counted them would be wrong by
     two on every subnet - and a /31 or /32 has neither to skip."""
-    assert "bits >= 31 ? total : total - 2" in SWEEP_UX
+    assert "bits >= 31 ? size : size - 2" in SWEEP_UX
 
 
 def test_a_dismissed_responder_can_be_restored():
@@ -732,7 +735,7 @@ def test_nothing_is_claimed_before_the_data_arrives():
     # Both fetches: "Missing 0" before the missing check has answered is the same
     # unearned all-clear.
     assert "const loading = isLoading || missingLoading;" in QUEUE_UI
-    assert "subnetsLoading ?" in SWEEP_UI
+    assert "rangesQ.isLoading ?" in SWEEP_UI
 
 
 def test_attaching_hides_the_name_field():

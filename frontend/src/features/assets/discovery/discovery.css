@@ -385,3 +385,49 @@
 .disc-mon-cred select, .disc-mon-cred input { min-width: 0; width: 100%; }
 .disc-mon-cred .muted { grid-column: 1 / -1; font-size: 0.74rem; }
 .disc-mon-note { margin: 4px 0 0; font-size: 0.74rem; color: var(--text-faint); }
+
+/* ------------------------------------------------------------------- ranges */
+
+.disc-rail-head { display: flex; align-items: baseline; justify-content: space-between; }
+.disc-rail-head .link-button { font-size: 0.78rem; color: var(--accent); }
+
+/* A range is a name, its CIDR and a line of facts - site, plane, collector -
+   stacked, because four columns of those do not fit a 324px rail. */
+.disc-range .top { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; }
+.disc-range .name {
+  font-weight: 600; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.disc-range .top .link-button { flex: 0 0 auto; font-size: 0.72rem; color: var(--accent); }
+.disc-range code { display: block; font-size: 0.72rem; color: var(--text-muted); }
+.disc-range .tags {
+  display: flex; flex-wrap: wrap; gap: 2px 6px; margin-top: 2px;
+  font-size: 0.7rem;
+}
+.disc-range .tags .disc-bad { margin: 0; font-size: 0.7rem; }
+.disc-subnets tbody tr.is-off { cursor: default; }
+.disc-subnets tbody tr.is-off > td { color: var(--text-faint); }
+
+.disc-empty-ranges {
+  padding: 12px; border: 1px dashed var(--border-strong); border-radius: var(--radius);
+  font-size: 0.8rem; color: var(--text-muted);
+}
+.disc-empty-ranges p { margin: 0 0 8px; }
+
+.disc-suggest { margin: 10px 0 0; font-size: 0.78rem; }
+.disc-suggest summary { cursor: pointer; color: var(--text-muted); }
+.disc-suggest ul { list-style: none; margin: 6px 0; padding: 0; max-height: 180px; overflow: auto; }
+.disc-suggest li {
+  display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: baseline;
+  padding: 3px 0;
+}
+.disc-suggest li + li { border-top: 1px solid var(--border); }
+.disc-suggest .link-button { font-size: 0.74rem; color: var(--accent); }
+.disc-form-note { margin: 0; font-size: 0.74rem; }
+
+/* Waiting on a collector that is not checking in is stuck, not queued. */
+.disc-inflight.is-stuck { border-left-color: var(--warn); }
+.disc-inflight .disc-bad { flex-basis: 100%; margin: 2px 0 0; }
+
+/* A destructive second click reads as one. */
+.asset-dialog-actions button.danger { color: var(--critical); border-color: var(--critical); }
