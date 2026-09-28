@@ -609,8 +609,13 @@ function Evidence({ r, cols }: { r: Responder; cols: number }) {
         <div className="grid">
           {r.members.map((c) => {
             const ident = c.identity ?? {};
+            // Each protocol in its own vocabulary. The collector files a Redfish
+            // service root's Name under `sysName`, and printing it as "sysName: Root
+            // Service" told an operator the BMC had answered SNMP with that.
+            const redfish = c.protocol === 'redfish';
             const fields: [string, unknown][] = [
-              ['sysName', ident.sysName], ['hostName', ident.hostName],
+              [redfish ? 'Service root' : 'sysName', ident.sysName],
+              [redfish ? 'HostName' : 'hostName', ident.hostName],
               ['sysObjectID', ident.sysObjectID], ['Model', ident.model],
               ['Vendor', ident.vendor], ['Serial', c.serial],
             ];
