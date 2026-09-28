@@ -215,9 +215,11 @@ export function SweepPanel({ activeRun, onPickRun }: {
         )}
 
         {/* Suggestions, not the list: inventory can only show space something is
-            already recorded in, never the unrecorded subnet an audit is for. */}
+            already recorded in, never the unrecorded subnet an audit is for.
+            Collapsed by default - the count in the summary says they are there,
+            and open they pushed the Run button off the rail. */}
         {suggestions.length > 0 && (
-          <details className="disc-suggest" open={ranges.length === 0}>
+          <details className="disc-suggest">
             <summary>
               Suggested from inventory <span className="muted">· {suggestions.length}</span>
             </summary>
