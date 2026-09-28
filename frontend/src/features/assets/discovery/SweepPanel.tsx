@@ -126,9 +126,7 @@ export function SweepPanel({ activeRun, onPickRun }: {
     }),
     onSuccess: (r) => {
       setError(null);
-      setReport(r.runs.length > 1
-        ? `Queued as ${r.runs.length} sweeps, one per collector and at most ${
-          MAX_ADDRESSES.toLocaleString()} addresses each.` : null);
+      setReport(r.runs.length > 1 ? `Queued as ${r.runs.length} sweeps.` : null);
       setPicked(new Set());
       setExtra('');
       refresh();
@@ -167,11 +165,6 @@ export function SweepPanel({ activeRun, onPickRun }: {
             Add range
           </button>
         </div>
-        <p className="muted disc-rail-sub">
-          Bounded and deliberately slow: an unbounded sweep looks like a port scan
-          to anything watching.
-        </p>
-
         {inFlight.map((r) => <InFlight key={r.id} run={r} onChanged={refresh} />)}
 
         {/* "No ranges" is a statement about the configuration; made while the list
@@ -210,11 +203,7 @@ export function SweepPanel({ activeRun, onPickRun }: {
           </div>
         ) : (
           <div className="disc-empty-ranges">
-            <p>
-              No ranges saved yet. Use Add range to save the address space you want
-              audited - a hall's BMC network, the BMS VLAN - with the collector that
-              can reach it.
-            </p>
+            <p>No ranges yet. Use Add range.</p>
           </div>
         )}
 
@@ -227,11 +216,6 @@ export function SweepPanel({ activeRun, onPickRun }: {
             <summary>
               Suggested from inventory <span className="muted">· {suggestions.length}</span>
             </summary>
-            <p className="muted disc-form-note">
-              /24s your recorded devices sit in that no saved range covers. Real
-              management networks are often wider or narrower - edit one after
-              adding it if so.
-            </p>
             <ul>
               {suggestions.map((s) => (
                 <li key={s.cidr}>
@@ -284,9 +268,8 @@ export function SweepPanel({ activeRun, onPickRun }: {
           {probes > 0
             ? <>{probes.toLocaleString()} address{probes === 1 ? '' : 'es'}
                 {runCount > 1 && <> in {runCount} sweeps</>} · up to{' '}
-                {describeDuration(longest * SECONDS_PER_ADDRESS)}, faster wherever
-                devices answer.</>
-            : 'Choose at least one range.'}
+                {describeDuration(longest * SECONDS_PER_ADDRESS)}</>
+            : 'Choose a range.'}
         </p>
 
         <button type="button" className="primary disc-run"
@@ -468,9 +451,7 @@ function InFlight({ run, onChanged }: { run: DiscoveryRun; onChanged: () => void
           {/* Said before, not after: a running sweep cannot be stopped on the
               collector, so what is being cancelled is its result. */}
           <span>
-            {running
-              ? 'The collector will finish this sweep; what it finds is discarded.'
-              : 'It has not started, so nothing is probed.'}
+            {running ? 'Its results will be discarded.' : 'It has not started.'}
           </span>
           <button type="button" className="link-button danger"
                   disabled={cancel.isPending} onClick={() => cancel.mutate()}>
@@ -638,11 +619,6 @@ function Schedules({ chosen, adhoc }: { chosen: DiscoveryRange[]; adhoc: number 
   return (
     <section className="asset-panel disc-schedules">
       <h3>Schedules</h3>
-      <p className="muted disc-rail-sub">
-        Sweeps that run themselves. One that comes due during another sweep waits
-        for it; one missed while the platform was down runs once, late.
-      </p>
-
       {isLoading ? (
         <div className="asset-skeleton" style={{ height: 60 }} />
       ) : list.length > 0 ? (
@@ -653,10 +629,7 @@ function Schedules({ chosen, adhoc }: { chosen: DiscoveryRange[]; adhoc: number 
           ))}
         </ul>
       ) : (
-        <p className="muted disc-sched-none">
-          Nothing is swept on a schedule, so every finding here is only as fresh as
-          the last time somebody ran one.
-        </p>
+        <p className="muted disc-sched-none">No schedules.</p>
       )}
 
       <div className="disc-sched-new">
@@ -677,15 +650,10 @@ function Schedules({ chosen, adhoc }: { chosen: DiscoveryRange[]; adhoc: number 
         </button>
       </div>
       {chosen.length === 0 && (
-        <p className="muted disc-sched-hint">
-          Choose saved ranges above to schedule them.
-        </p>
+        <p className="muted disc-sched-hint">Select ranges above to schedule them.</p>
       )}
       {adhoc > 0 && (
-        <p className="muted disc-sched-hint">
-          One-off subnets are not scheduled. Add them as ranges to sweep them on a
-          schedule.
-        </p>
+        <p className="muted disc-sched-hint">One-off subnets can't be scheduled.</p>
       )}
       {error && <div className="banner">{error}</div>}
     </section>
@@ -740,7 +708,7 @@ function ScheduleItem({ s, onChanged, lastRun }: {
       </code>
       <div className="muted">
         {!s.enabled ? 'paused'
-          : due ? 'due now - starts within a minute'
+          : due ? 'due now'
             : `next ${untilTime(s.next_run_at)}`}
         {' · '}last {last}
       </div>
