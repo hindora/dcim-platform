@@ -450,6 +450,7 @@
 .asset-life.is-cancelled, .asset-life.is-skipped { border-style: dashed; color: var(--text-faint); }
 /* An active freeze reads as one: the rule goes to the warning colour. */
 .disc-freeze.is-active { box-shadow: inset 2px 0 0 var(--warn); }
+.disc-sweep .banner .link-button.danger { margin-top: 4px; color: var(--critical); }
 .disc-run-item .disc-run-note { grid-column: 1 / -1; font-size: 0.74rem; }
 
 /* Waiting on a collector that is not checking in is stuck, not queued. */

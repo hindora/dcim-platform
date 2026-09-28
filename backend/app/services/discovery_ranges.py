@@ -257,8 +257,7 @@ async def queue(session: AsyncSession, *, method: str = "sweep",
         frozen = [(it, b) for it, b in frozen if b]
         if frozen:
             names = ", ".join(it.get("name") or it["cidr"] for it, _ in frozen)
-            raise DiscoveryError(f"change freeze: {names} - {_until(frozen[0][1])}. "
-                                 f"Sweep anyway to override")
+            raise DiscoveryError(f"change freeze {_until(frozen[0][1])} covers {names}")
 
     groups: dict[str | None, list[dict[str, Any]]] = {}
     for it in items:
