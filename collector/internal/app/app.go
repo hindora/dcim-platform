@@ -364,13 +364,14 @@ func (a *App) Run(ctx context.Context) error {
 	// run, so this goroutine is idle until there is work.
 	if a.cfg.Protocols.SNMP.Enabled {
 		go (&discovery.Runner{
-			BaseURL:  a.cfg.DCIM.BaseURL,
-			Token:    a.cfg.Token,
-			Interval: a.cfg.DCIM.AssignmentInterval,
-			Sweeper:  discovery.New(a.log, a.discoveryCommunities(), 0),
-			Redfish:  a.redfishSweeper(),
-			HTTP:     &http.Client{Timeout: a.cfg.DCIM.RequestTimeout},
-			Log:      a.log,
+			BaseURL:     a.cfg.DCIM.BaseURL,
+			CollectorID: a.cfg.Collector.ID,
+			Token:       a.cfg.Token,
+			Interval:    a.cfg.DCIM.AssignmentInterval,
+			Sweeper:     discovery.New(a.log, a.discoveryCommunities(), 0),
+			Redfish:     a.redfishSweeper(),
+			HTTP:        &http.Client{Timeout: a.cfg.DCIM.RequestTimeout},
+			Log:         a.log,
 		}).Run(ctx)
 	}
 

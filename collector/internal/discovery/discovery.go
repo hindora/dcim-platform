@@ -483,6 +483,47 @@ func firstSerial(conn *gosnmp.GoSNMP, oids []string, sysDescr string) string {
 // Scope is the run scope the API hands over.
 type Scope struct {
 	Subnets []string `json:"subnets"`
+	// Addresses the sweep must NOT probe: gateways, and old controllers that
+	// misbehave when scanned. The API hands a run carrying these only to a
+	// collector that claims with features=exclude, which this one does.
+	Exclude []string `json:"exclude"`
+}
+
+// Excluding removes every address inside any of `cidrs` from `addrs`.
+//
+// An exclusion that does not parse is an error, not a no-op: the list exists
+// because probing those addresses does harm, and sweeping them because a CIDR
+// was malformed is the one outcome it must never have. A bare address is a /32.
+func Excluding(addrs, cidrs []string) ([]string, error) {
+	if len(cidrs) == 0 {
+		return addrs, nil
+	}
+	nets := make([]*net.IPNet, 0, len(cidrs))
+	for _, c := range cidrs {
+		if !strings.Contains(c, "/") {
+			c += "/32"
+		}
+		_, n, err := net.ParseCIDR(c)
+		if err != nil {
+			return nil, fmt.Errorf("bad exclusion %q: %w", c, err)
+		}
+		nets = append(nets, n)
+	}
+	out := addrs[:0:0]
+	for _, a := range addrs {
+		ip := net.ParseIP(a)
+		skip := false
+		for _, n := range nets {
+			if ip != nil && n.Contains(ip) {
+				skip = true
+				break
+			}
+		}
+		if !skip {
+			out = append(out, a)
+		}
+	}
+	return out, nil
 }
 
 // ParseScope reads the scope JSON a run carries.

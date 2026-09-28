@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -17,10 +18,14 @@ import (
 // collector that is down simply does not claim anything rather than having
 // sweeps queue up against it.
 type Runner struct {
-	BaseURL  string
-	Token    func() string
-	Interval time.Duration
-	Sweeper  *Sweeper
+	BaseURL string
+	// CollectorID is declared on every claim, so a run assigned to this
+	// collector's range reaches this collector and no other. A scoped token
+	// already carries it; a fleet-wide token cannot, and this is how it says.
+	CollectorID string
+	Token       func() string
+	Interval    time.Duration
+	Sweeper     *Sweeper
 	// Redfish is optional. Nil means a run sweeps SNMP only, which is what a
 	// deployment that has not configured Redfish discovery should get.
 	Redfish *RedfishSweeper
@@ -78,6 +83,14 @@ func (r *Runner) once(ctx context.Context) error {
 		// run is the one who needs to know their scope was too wide.
 		return r.report(ctx, run.ID, resultsBody{Error: err.Error()})
 	}
+	before := len(addrs)
+	if addrs, err = Excluding(addrs, scope.Exclude); err != nil {
+		return r.report(ctx, run.ID, resultsBody{Error: err.Error()})
+	}
+	if skipped := before - len(addrs); skipped > 0 {
+		r.Log.Info("discovery exclusions applied", "run_id", run.ID,
+			"skipped", skipped)
+	}
 
 	started := time.Now()
 	found := r.Sweeper.Sweep(ctx, addrs)
@@ -105,8 +118,15 @@ func (r *Runner) once(ctx context.Context) error {
 }
 
 func (r *Runner) claim(ctx context.Context) (*claimResponse, error) {
+	q := url.Values{}
+	if r.CollectorID != "" {
+		q.Set("collector_id", r.CollectorID)
+	}
+	// Said, not assumed: a run with exclusions is only handed to a collector
+	// that can honour them.
+	q.Set("features", "exclude")
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		r.BaseURL+"/api/v1/collector/discovery/claim", nil)
+		r.BaseURL+"/api/v1/collector/discovery/claim?"+q.Encode(), nil)
 	if err != nil {
 		return nil, err
 	}

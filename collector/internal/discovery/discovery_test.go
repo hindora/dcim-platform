@@ -220,3 +220,37 @@ func TestAccessNamesTheCommunityWithoutCarryingIt(t *testing.T) {
 		t.Error("an unset port must report the SNMP default")
 	}
 }
+
+func TestExcludedAddressesAreNeverProbed(t *testing.T) {
+	addrs, err := Hosts([]string{"10.52.11.0/29"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A gateway as a bare address, and a /31 carved out of the range.
+	got, err := Excluding(addrs, []string{"10.52.11.1", "10.52.11.4/31"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"10.52.11.2", "10.52.11.3", "10.52.11.6"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("got %v, want %v", got, want)
+	}
+	if strings.Join(addrs, ",") != "10.52.11.1,10.52.11.2,10.52.11.3,10.52.11.4,10.52.11.5,10.52.11.6" {
+		t.Errorf("the input slice was modified: %v", addrs)
+	}
+}
+
+func TestAnUnreadableExclusionStopsTheSweep(t *testing.T) {
+	// Sweeping the addresses somebody listed as harmful to probe, because their
+	// CIDR had a typo, is the one outcome the list must never have.
+	if _, err := Excluding([]string{"10.0.0.1"}, []string{"10.0.0.0/33"}); err == nil {
+		t.Fatal("a malformed exclusion was ignored")
+	}
+}
+
+func TestScopeReadsExclusions(t *testing.T) {
+	s, err := ParseScope([]byte(`{"subnets":["10.0.0.0/24"],"exclude":["10.0.0.1/32"]}`))
+	if err != nil || len(s.Exclude) != 1 || s.Exclude[0] != "10.0.0.1/32" {
+		t.Fatalf("scope = %+v, err = %v", s, err)
+	}
+}
