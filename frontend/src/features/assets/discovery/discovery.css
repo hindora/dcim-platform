@@ -435,6 +435,17 @@
 .disc-suggest .link-button { font-size: 0.74rem; color: var(--accent); }
 .disc-form-note { margin: 0; font-size: 0.74rem; }
 
+/* Cancel sits at the end of the in-flight line; the question drops under it. */
+.disc-inflight .disc-cancel { margin-left: auto; font-size: 0.74rem; color: var(--accent); }
+.disc-cancel-ask {
+  flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline;
+  margin-top: 4px; font-size: 0.74rem; color: var(--text-muted);
+}
+.disc-cancel-ask .link-button { font-size: 0.74rem; color: var(--accent); }
+.disc-cancel-ask .link-button.danger { color: var(--critical); }
+.asset-life.is-cancelled { border-style: dashed; color: var(--text-faint); }
+.disc-run-item .disc-run-note { grid-column: 1 / -1; font-size: 0.74rem; }
+
 /* Waiting on a collector that is not checking in is stuck, not queued. */
 .disc-inflight.is-stuck { border-left-color: var(--warn); }
 .disc-inflight .disc-bad { flex-basis: 100%; margin: 2px 0 0; }

@@ -3119,6 +3119,12 @@ export const api = {
       method: 'POST', body: JSON.stringify({ method: 'sweep', ...body }),
     }),
 
+  /** Stop a queued or running sweep. A running one still finishes on its
+   *  collector; what it reports is discarded. */
+  cancelDiscoveryRun: (id: string) =>
+    request<{ id: string; status: string; was: string }>(
+      `/discovery/runs/${id}/cancel`, { method: 'POST' }),
+
   discoveryRanges: () => request<{ items: DiscoveryRange[] }>('/discovery/ranges'),
 
   discoveryRangeOptions: () => request<RangeOptions>('/discovery/range-options'),

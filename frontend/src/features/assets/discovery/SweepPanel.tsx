@@ -172,7 +172,7 @@ export function SweepPanel({ activeRun, onPickRun }: {
           to anything watching.
         </p>
 
-        {inFlight.map((r) => <InFlight key={r.id} run={r} />)}
+        {inFlight.map((r) => <InFlight key={r.id} run={r} onChanged={refresh} />)}
 
         {/* "No ranges" is a statement about the configuration; made while the list
             is still loading it was false for as long as the fetch took. */}
@@ -429,19 +429,60 @@ function RangeRow({ r, picked, last, onToggle, onEdit, onDeleted }: {
   );
 }
 
-/** A sweep in flight, or one that is waiting - and on what. */
-function InFlight({ run }: { run: DiscoveryRun }) {
+/** A sweep in flight, or one that is waiting - and on what - with a way out.
+ *
+ *  Cancel matters most for the stuck one: a run queued for a collector that never
+ *  checks in waits for ever, and while it does it holds back every schedule,
+ *  because a due schedule waits while any sweep is in flight.
+ */
+function InFlight({ run, onChanged }: { run: DiscoveryRun; onChanged: () => void }) {
   const trouble = run.status === 'pending' ? collectorTrouble(run) : null;
   const scope = (run.scope?.subnets ?? []).join(', ');
+  const running = run.status === 'running';
+  // Two clicks, not a browser confirm(): a modal blocks the page.
+  const [confirming, setConfirming] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const cancel = useMutation({
+    mutationFn: () => api.cancelDiscoveryRun(run.id),
+    onSuccess: () => { setConfirming(false); onChanged(); },
+    // Most likely it finished in the meantime; the refetch shows how.
+    onError: (e) => { setConfirming(false); setError(String(e)); onChanged(); },
+  });
   return (
     <div className={`disc-inflight${trouble ? ' is-stuck' : ''}`} role="status">
       {!trouble && <span className="disc-pulse" aria-hidden />}
-      {run.status === 'running' ? 'Sweeping' : 'Queued'} <code>{scope}</code>
+      {running ? 'Sweeping' : 'Queued'} <code>{scope}</code>
       {run.collector_id && <span className="muted"> on {run.collector_id}</span>}
       <span className="muted"> · {relativeTime(run.started_at)}</span>
+      {!confirming && (
+        <button type="button" className="link-button disc-cancel"
+                onClick={() => { setError(null); setConfirming(true); }}>
+          Cancel
+        </button>
+      )}
       {/* Stuck, not queued: only that collector can reach the range, so nothing
           else will pick this up. */}
       {trouble && <div className="disc-bad">Waiting: {trouble}.</div>}
+      {confirming && (
+        <div className="disc-cancel-ask">
+          {/* Said before, not after: a running sweep cannot be stopped on the
+              collector, so what is being cancelled is its result. */}
+          <span>
+            {running
+              ? 'The collector will finish this sweep; what it finds is discarded.'
+              : 'It has not started, so nothing is probed.'}
+          </span>
+          <button type="button" className="link-button danger"
+                  disabled={cancel.isPending} onClick={() => cancel.mutate()}>
+            {cancel.isPending ? 'Cancelling…' : 'Cancel sweep'}
+          </button>
+          <button type="button" className="link-button"
+                  onClick={() => setConfirming(false)}>
+            Keep
+          </button>
+        </div>
+      )}
+      {error && <div className="disc-bad">{error}</div>}
     </div>
   );
 }
@@ -484,7 +525,12 @@ function RunItem({ run, active, onPick }: {
         <span className="result">
           {inFlight ? '…' : <Result run={run} />}
         </span>
-        {run.error && <span className="disc-bad">{run.error}</span>}
+        {/* A cancel is a decision, not a fault: muted, where a failure is red. */}
+        {run.error && (
+          <span className={run.status === 'cancelled' ? 'muted disc-run-note' : 'disc-bad'}>
+            {run.error}
+          </span>
+        )}
       </button>
     </li>
   );

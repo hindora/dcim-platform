@@ -134,6 +134,41 @@ async def claim_pending(session: AsyncSession, collector_id: str | None = None,
     return dict(row) if row else None
 
 
+async def lock_run_status(session: AsyncSession, run_id: str) -> str | None:
+    """The run's status, with its row locked until the transaction ends.
+
+    Taken before results are recorded, so a cancel and the collector's report
+    cannot interleave: whichever commits first decides, and the other sees it.
+    """
+    return (await session.execute(text("""
+        SELECT status FROM discovery_run WHERE id = CAST(:id AS uuid) FOR UPDATE
+    """), {"id": run_id})).scalar()
+
+
+async def cancel_run(session: AsyncSession, run_id: str, reason: str,
+                     running_reason: str) -> dict[str, Any] | None:
+    """Cancel a run that has not finished. Returns what it WAS, or None.
+
+    Only pending and running runs: a finished run is history, and cancelling it
+    would rewrite what a sweep that happened concluded.
+    """
+    row = (await session.execute(text("""
+        WITH prev AS (
+            SELECT id, status FROM discovery_run
+             WHERE id = CAST(:id AS uuid) FOR UPDATE
+        )
+        UPDATE discovery_run r
+           SET status = 'cancelled', finished_at = now(),
+               error = CASE WHEN prev.status = 'running' THEN :running_reason
+                            ELSE :reason END
+          FROM prev
+         WHERE r.id = prev.id AND prev.status IN ('pending', 'running')
+        RETURNING r.id::text AS id, prev.status AS was, r.collector_id
+    """), {"id": run_id, "reason": reason,
+           "running_reason": running_reason})).mappings().first()
+    return dict(row) if row else None
+
+
 async def finish_run(session: AsyncSession, run_id: str, *, found: int,
                      status: str = "done", error: str | None = None,
                      counts: dict[str, int] | None = None) -> None:

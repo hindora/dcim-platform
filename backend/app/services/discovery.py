@@ -453,6 +453,31 @@ async def _monitor(session: AsyncSession, cand: dict[str, Any],
     return {**result, "endpoints": made, "endpoints_skipped": skipped}
 
 
+async def cancel_run(session: AsyncSession, run_id: str,
+                     actor: str | None) -> dict[str, Any]:
+    """Stop a sweep that is queued or running.
+
+    Queued: it never starts. Running: the collector cannot be interrupted - it
+    does not listen while it sweeps - so it finishes, and what it reports is
+    discarded. Either way the run stops counting as in flight, which is what a
+    run stuck on a collector that never checks in was doing to every schedule:
+    a due schedule waits while any sweep is in flight.
+    """
+    who = actor or "an operator"
+    was = await repo.cancel_run(
+        session, run_id, reason=f"cancelled by {who} before a collector took it",
+        running_reason=f"cancelled by {who} while running; its results are discarded")
+    if was is None:
+        status = await repo.lock_run_status(session, run_id)
+        if status is None:
+            raise DiscoveryError("no such sweep")
+        raise DiscoveryError(f"that sweep already finished ({status}); only a "
+                             f"queued or running one can be cancelled")
+    log.info("discovery run cancelled", run_id=run_id, was=was["was"],
+             collector=was["collector_id"], actor=who)
+    return was
+
+
 async def monitoring_plan(session: AsyncSession, candidate_id: str,
                           device_type: str | None) -> dict[str, Any]:
     """What promoting this candidate would wire up, for the dialog to show."""

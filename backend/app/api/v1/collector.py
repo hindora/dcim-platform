@@ -235,6 +235,19 @@ async def discovery_results(run_id: str, body: DiscoveryResults,
                             session: AsyncSession = Depends(get_session),
                             _: str = Depends(require_collector),
                             ) -> dict[str, Any]:
+    # Only a run that is still running takes results. Locked, so a cancel and
+    # this report cannot interleave. A cancelled run's sweep still finishes -
+    # the collector cannot be interrupted - and what it found is discarded
+    # rather than recorded against a run somebody stopped. A duplicate report
+    # for a run already done is refused the same way.
+    current = await disc_repo.lock_run_status(session, run_id)
+    if current is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "no such discovery run")
+    if current != "running":
+        await session.commit()
+        log.info("discovery results discarded", run_id=run_id, status=current,
+                 responders=len(body.responders))
+        return {"status": current, "discarded": len(body.responders)}
     if body.error:
         await disc_repo.finish_run(session, run_id, found=0, status="failed",
                                    error=body.error)

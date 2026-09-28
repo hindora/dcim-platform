@@ -195,3 +195,45 @@ def test_a_range_a_schedule_uses_cannot_be_deleted():
 def test_suggestions_skip_space_a_range_already_covers():
     assert "NOT EXISTS (SELECT 1 FROM discovery_range r WHERE addr.a <<= r.cidr)" \
         in _body(RANGES_REPO, "suggestions")
+
+
+# ------------------------------------------------------------------ cancel
+
+SVC = (APP / "services" / "discovery.py").read_text(encoding="utf-8")
+DISC_API = (APP / "api" / "v1" / "discovery.py").read_text(encoding="utf-8")
+
+
+def test_only_an_unfinished_sweep_can_be_cancelled():
+    """A finished run is history; cancelling it would rewrite what a sweep that
+    happened concluded."""
+    body = _body(REPO, "cancel_run")
+    assert "prev.status IN ('pending', 'running')" in body
+    assert "FOR UPDATE" in body
+
+
+def test_a_cancelled_sweeps_results_are_discarded_not_recorded():
+    """A collector cannot be interrupted mid-sweep, so it finishes and reports.
+    Recording that against a run somebody stopped would be the opposite of what
+    they asked for."""
+    handler = COLLECTOR_API[COLLECTOR_API.index("async def discovery_results("):]
+    assert handler.index("lock_run_status") < handler.index("record_results")
+    assert 'if current != "running":' in handler
+    assert '"discarded"' in handler
+
+
+def test_the_report_and_a_cancel_cannot_interleave():
+    assert "FOR UPDATE" in _body(REPO, "lock_run_status")
+
+
+def test_a_cancel_is_audited_and_a_finished_sweep_is_a_conflict():
+    handler = DISC_API[DISC_API.index("async def cancel_run("):]
+    assert '"discovery.run.cancel"' in handler
+    assert "HTTP_409_CONFLICT" in handler
+
+
+def test_cancelled_is_not_in_flight_so_schedules_can_fire_again():
+    """The stuck run this exists for: a sweep waiting on a collector that never
+    checks in held every schedule back, because a due schedule waits while any
+    sweep is in flight."""
+    assert "status IN ('pending', 'running')" in _body(REPO, "run_in_flight")
+    assert "cancelled" not in _body(REPO, "run_in_flight")

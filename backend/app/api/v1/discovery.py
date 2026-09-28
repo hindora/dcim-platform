@@ -150,6 +150,29 @@ async def create_run(req: RunRequest,
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from None
 
 
+@router.post("/runs/{run_id}/cancel", summary="Cancel a queued or running sweep")
+async def cancel_run(run_id: str, request: Request,
+                     session: AsyncSession = Depends(get_session),
+                     principal: Principal = Depends(require_role("operator")),
+                     ) -> dict[str, Any]:
+    """Audited: a sweep that was asked for and then stopped is part of what was,
+    and was not, audited."""
+    actor = audit.actor_of(principal)
+    try:
+        was = await service.cancel_run(session, run_id, actor)
+    except service.DiscoveryError as exc:
+        code = (status.HTTP_404_NOT_FOUND if "no such" in str(exc)
+                else status.HTTP_409_CONFLICT)
+        raise HTTPException(code, str(exc)) from None
+    ip, agent = audit.client_of(request)
+    await audit.record(session, actor=actor, action="discovery.run.cancel",
+                       target_type="discovery_run", target_id=run_id,
+                       ip=ip, user_agent=agent, before={"status": was["was"]},
+                       after={"status": "cancelled"})
+    await session.commit()
+    return {"id": run_id, "status": "cancelled", "was": was["was"]}
+
+
 @router.get("/subnets", summary="Management subnets worth sweeping")
 async def suggest_subnets(
     session: AsyncSession = Depends(get_session),
