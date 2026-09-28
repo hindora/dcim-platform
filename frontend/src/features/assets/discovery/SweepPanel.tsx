@@ -522,9 +522,13 @@ function RunItem({ run, active, onPick }: {
         {run.status !== 'done' && (
           <span className={`asset-life is-${run.status}`}>{run.status}</span>
         )}
-        <span className="result">
-          {inFlight ? '…' : <Result run={run} />}
-        </span>
+        {/* A cancelled run concluded nothing - "nothing answered" would read as
+            a result it never produced. Its note says what happened instead. */}
+        {run.status !== 'cancelled' && (
+          <span className="result">
+            {inFlight ? '…' : <Result run={run} />}
+          </span>
+        )}
         {/* A cancel is a decision, not a fault: muted, where a failure is red. */}
         {run.error && (
           <span className={run.status === 'cancelled' ? 'muted disc-run-note' : 'disc-bad'}>
