@@ -144,15 +144,20 @@ export function AssetOverview() {
                 {' — '}holding space nobody has claimed
               </li>
             )}
-            {discovery.new_candidates > 0 && (
+            {/* Findings that need somebody, not every responder a sweep staged.
+                "276 candidates awaiting a decision" was false - they were devices
+                answering exactly where inventory expected them - and it kept
+                "Nothing needs attention" from ever appearing. */}
+            {(discovery.needs_action ?? 0) > 0 && (
               <li>
                 <Link to="/assets/discovery">
-                  {discovery.new_candidates} discovery candidates
+                  {discovery.needs_action} discovery finding
+                  {discovery.needs_action === 1 ? '' : 's'}
                 </Link>
-                {' '}awaiting a decision
+                {' '}need a decision
               </li>
             )}
-            {identity.unidentified === 0 && discovery.new_candidates === 0
+            {identity.unidentified === 0 && !discovery.needs_action
               && !data.contracts?.expired && !data.contracts?.expiring
               && !data.stock?.below_reorder && !data.reservations?.overdue && (
               <li className="muted">Nothing needs attention.</li>

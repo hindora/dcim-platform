@@ -192,7 +192,46 @@ export function matchOf(r: Responder): DiscoveryCandidate | null {
  */
 export function movedFrom(r: Responder): string | null {
   const m = matchOf(r);
-  if (!m?.matched_device_address) return null;
+  // Serial or nothing. A match by ADDRESS can come from a polled endpoint rather
+  // than the management address - a host answering on its production NIC - so the
+  // two addresses differ without anything having moved. Only a serial proves the
+  // box is the one inventory recorded somewhere else.
+  if (!m?.matched_device_address || !m.matched_on_serial) return null;
   return r.addresses.includes(m.matched_device_address)
     ? null : m.matched_device_address;
+}
+
+/** What the audit concluded about one machine. Exactly one per responder.
+ *
+ *  One list, classified, instead of four sections fed by two fetches. The old page
+ *  fetched every status into its main buckets AND fetched `ignored` again for the
+ *  Dismissed section, so a dismissed responder was listed twice.
+ */
+export type Finding = 'new' | 'moved' | 'gone' | 'expected' | 'dismissed' | 'promoted';
+
+export function findingOf(r: Responder): Finding {
+  // Anything still answering is judged on what it answered with; a machine with
+  // one quiet probe and one live one is live (see isGone).
+  if (r.members.some((c) => c.status === 'new')) {
+    if (!isKnown(r)) return 'new';
+    return movedFrom(r) ? 'moved' : 'expected';
+  }
+  if (isGone(r)) return 'gone';
+  if (r.members.some((c) => c.status === 'ignored')) return 'dismissed';
+  if (r.members.some((c) => c.status === 'promoted')) return 'promoted';
+  return 'expected';
+}
+
+/** The findings somebody has to act on. */
+export const needsAction = (f: Finding): boolean => f === 'new' || f === 'moved';
+
+/** Sort key for an IPv4 address, so .20 sorts before .100.
+ *
+ *  A string sort puts 10.51.11.100 between .10 and .11, which on a page of
+ *  addresses makes a subnet unreadable.
+ */
+export function ipKey(address: string | null | undefined): number {
+  const m = /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(address ?? '');
+  if (!m) return Number.MAX_SAFE_INTEGER;
+  return m.slice(1, 5).reduce((n, o) => n * 256 + Number(o), 0);
 }

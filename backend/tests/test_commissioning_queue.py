@@ -338,7 +338,10 @@ def test_a_moved_device_gets_its_own_section():
     row a sweep produces, and it used to sit silently inside "already known" with
     a hundred devices that were exactly where the record said.
     """
-    assert "Moved —" in QUEUE_UI
+    # A facet cell of its own, and a finding label on the row - no longer a section
+    # heading, since the page became one table classified by finding.
+    assert "key: 'moved', label: 'Moved'" in QUEUE_UI
+    assert "moved: 'Moved'" in QUEUE_UI
     # A set membership rather than one !== comparison, because a row is now one
     # MACHINE and a machine answers on more than one address - a server's BMC and
     # its production NIC. "Not where we expect it" has to mean none of them.
@@ -382,12 +385,19 @@ def test_an_action_follows_the_machine_not_the_row_it_was_built_from():
     assert "chosen.flatMap(memberIds)" in DISCOVERY_UI, "bulk ignore takes every probe"
 
 
-def test_the_expected_case_is_collapsed():
+def test_the_expected_case_is_out_of_the_way():
     """The value of an audit is the exception. Giving a hundred expected devices
     the same visual weight as the one surprise is what turns it into a data dump -
-    but the denominator stays visible, because 105 of 105 is the reassurance."""
-    assert "Where we expected them" in QUEUE_UI
-    assert "aria-expanded" in QUEUE_UI
+    but the denominator stays visible, because 105 of 105 is the reassurance.
+
+    It was a collapsed section; it is now a facet the page does not open on. The
+    default view is what needs action, and when that is nothing the page says so
+    with the count it is vouching for and a way to see those rows.
+    """
+    assert "?? 'action'" in QUEUE_UI, "the page must open on what needs action"
+    assert "Nothing needs action." in QUEUE_UI
+    assert "counts.expected.toLocaleString()" in QUEUE_UI, "the denominator is shown"
+    assert "onShow('expected')" in QUEUE_UI
 
 
 def test_serial_coverage_is_measured_not_guessed():
@@ -477,7 +487,11 @@ def test_a_dismissed_responder_can_be_restored():
     assert "unignore" in DISCOVERY_SVC
     assert "discovery.unignore" in API_DISC
     assert "Un-ignore" in QUEUE_UI
-    assert "status: 'ignored'" in QUEUE_UI
+    # A facet of its own. It used to be a SECOND fetch for status=ignored, while the
+    # main listing already carried every status - so a dismissed responder appeared
+    # in its bucket AND in the Dismissed list. One listing, classified, now.
+    assert "key: 'dismissed'" in QUEUE_UI
+    assert "'dismissed'" in DISCOVERY_UI and "c.status === 'ignored'" in DISCOVERY_UI
 
 
 def test_only_a_dismissed_candidate_can_be_restored():
@@ -508,9 +522,13 @@ def test_the_dismissed_query_is_not_declared_after_an_early_return():
     failed fetch changes the hook count between renders and React throws - hiding
     the real error behind a crash."""
     err = QUEUE_UI.index("if (error) return")
-    dismissed = QUEUE_UI.index("queryKey: ['discovery-candidates', 'ignored']")
-
-    assert dismissed < err, "the dismissed query moved below the error return"
+    # There is one candidates query now, plus the shared runs hook; the rule is the
+    # same for both - and for every useMemo the page computes.
+    assert QUEUE_UI.index("queryKey: ['discovery-candidates']") < err
+    assert QUEUE_UI.index("useDiscoveryRuns()") < err
+    assert QUEUE_UI.rindex("useMemo(", 0, err) < err
+    assert "useMemo(" not in QUEUE_UI[err:QUEUE_UI.index("return (", err)], (
+        "a hook between the error return and the render")
 
 
 # ------------------------------------- a reservation and its hardware are one row
@@ -636,7 +654,70 @@ def test_the_bulk_selection_only_offers_actionable_rows():
     assert "paged.rows.filter" in QUEUE_UI
     # Offered on the unmatched group only - the others are devices that exist,
     # where the action is to look at one rather than act on forty.
-    assert "<CandidateTable rows={unmatched} bulk />" in QUEUE_UI
+    # Only unrecorded machines with a probe still open - the others are devices that
+    # exist, where the action is to look at one rather than act on forty.
+    assert "row.f === 'new' && row.r.members.some((c) => c.status === 'new')" in QUEUE_UI
+
+
+def test_the_page_opens_on_findings_not_on_the_form():
+    """The findings are what an audit is FOR.
+
+    The old page put sixteen subnet checkboxes between the operator and the first
+    exception. The sweep is a rail beside the findings now, and the header carries
+    the numbers read on every visit - in the KPI band, on the title row.
+    """
+    assert "<PageHead" in QUEUE_UI and "kpis={kpis}" in QUEUE_UI
+    for caption in ("Needs action", "Responders", "With serial", "Last sweep"):
+        assert f"caption: '{caption}'" in QUEUE_UI, caption
+    # Findings before the rail, in source order and therefore in the narrow layout.
+    assert QUEUE_UI.index("<ResponderTable") < QUEUE_UI.index("<SweepPanel")
+
+
+def test_a_subnet_says_when_it_was_last_audited_and_how_much_of_it():
+    """Whether to sweep a range depends on when it was last looked at.
+
+    And a sweep of a /27 inside a /24 audited 30 addresses of 254: calling the /24
+    swept on the strength of that is the misstatement the address ceiling refuses to
+    make, so a partial pass is labelled as one.
+    """
+    assert "function lastSwept" in SWEEP_UI
+    assert "whole" in SWEEP_UI and "disc-part" in SWEEP_UI
+    assert "'never'" in SWEEP_UI
+
+
+def test_one_sweep_can_narrow_the_findings_to_what_it_saw():
+    """ "What did last night's run turn up" is the question somebody arrives with, and
+    the answer should be a link that can be sent."""
+    assert "onPickRun" in SWEEP_UI
+    assert "setParam('run'" in QUEUE_UI and "params.get('run')" in QUEUE_UI
+    assert "c.run_id === activeRun" in QUEUE_UI
+
+
+def test_the_page_says_when_it_is_showing_less_than_everything():
+    """The listing was capped at 500 and nothing said so: a fully swept estate would
+    have undercounted every total on the page in silence."""
+    assert "FETCH_LIMIT = 1000" in QUEUE_UI
+    assert ">= FETCH_LIMIT" in QUEUE_UI and "undercount" in QUEUE_UI
+
+
+def test_the_badge_counts_what_needs_doing():
+    """The nav badge read "Discovery 276" on a page where nothing needed action -
+    every open PROBE, expected ones included. A badge that is always lit trains
+    people to ignore it."""
+    repo = (APP / "repositories" / "assets.py").read_text(encoding="utf-8")
+    assert '"needs_action"' in repo
+    shell = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "features"
+             / "assets" / "AssetWorkspace.tsx").read_text(encoding="utf-8")
+    assert "discovery.needs_action" in shell
+    assert "discovery.new_candidates" not in shell
+
+
+def test_promotion_does_not_claim_to_drop_the_vendor():
+    """The dialog said vendor and model "are not recorded by promotion". They are -
+    resolved against the catalog - so the sentence was telling operators to redo
+    work the system had already done."""
+    assert "are not recorded by promotion" not in QUEUE_UI
+    assert "matched against the catalog" in QUEUE_UI
 
 
 def test_attaching_hides_the_name_field():

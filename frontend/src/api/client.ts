@@ -167,7 +167,10 @@ export interface AssetSummary {
     u_free: number;
   };
   by_category: { category: string; n: number }[];
-  discovery: { new_candidates: number; unmatched: number };
+  /** `needs_action` is what the Discovery page opens on: machines nobody has
+   *  recorded, plus devices recognised by serial where inventory does not expect
+   *  them. `new_candidates` counts every open PROBE, expected ones included. */
+  discovery: { new_candidates: number; unmatched: number; needs_action?: number };
   /** Devices whose hardware has moved ahead of their record, by signal. */
   commissioning?: { racked: number; ready: number; discrepancy: number;
     total: number };

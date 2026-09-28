@@ -62,7 +62,9 @@ export function AssetWorkspace() {
       title: 'Intake',
       items: [
         { to: '/assets/discovery', label: 'Discovery',
-          count: data?.discovery.new_candidates },
+          // What needs doing, not every open probe: it read 276 on a page where
+          // nothing needed action, which trains people to ignore the badge.
+          count: data?.discovery.needs_action },
         // Next to Discovery because both are intake, and deliberately separate
         // because they answer different questions: Discovery finds devices in no
         // record at all, this one finds records the hardware has moved ahead of.

@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import {
   api,
   type AssetFilterOptions,
@@ -8,275 +8,360 @@ import {
   type DiscoveryCandidate,
 } from '../../../api/client';
 import { usePaged } from '../../../components/Pagination';
-import {
-  collapse, isGone, isKnown, matchOf, memberIds, movedFrom,
-  type Responder,
-} from './responders';
+import { PageHead, type Kpi } from '../../../components/estate';
 import { humanise, relativeTime } from '../../../lib/format';
 import { Dialog, DialogActions } from '../components/Dialog';
-import { SweepPanel } from './SweepPanel';
+import {
+  collapse, findingOf, ipKey, matchOf, memberIds, movedFrom, needsAction,
+  type Finding, type Responder,
+} from './responders';
+import { SweepPanel, useDiscoveryRuns } from './SweepPanel';
+import './discovery.css';
 
-/** Discovery: what answered on the management network, and what to do about it.
+/** The API's own ceiling for one listing. Asked for in full so the page's totals are
+ *  the estate's, and SAID when it is hit rather than quietly undercounting. */
+const FETCH_LIMIT = 1000;
+
+/** The facet strip's cells, in reading order. `action` is the default view. */
+type Facet = 'all' | 'action' | Finding;
+
+const FACETS: { key: Facet; label: string; dot?: 'warning' | 'minor';
+               hideWhenEmpty?: boolean; tip: string }[] = [
+  { key: 'all', label: 'All', tip: 'Every responder, whatever the audit concluded' },
+  { key: 'action', label: 'Needs action', dot: 'warning',
+    tip: 'Not in inventory, or recognised at an address inventory does not expect' },
+  { key: 'new', label: 'Not in inventory', dot: 'warning',
+    tip: 'Answering, and no record accounts for it' },
+  { key: 'moved', label: 'Moved', dot: 'warning',
+    tip: 'Recognised by serial at an address inventory does not expect' },
+  { key: 'gone', label: 'Stopped answering', dot: 'minor',
+    tip: 'Answered once, and not on the last sweep that covered its address' },
+  { key: 'expected', label: 'Expected',
+    tip: 'Answering where inventory says it is' },
+  { key: 'dismissed', label: 'Dismissed', hideWhenEmpty: true,
+    tip: 'Somebody decided these were not worth recording' },
+  { key: 'promoted', label: 'Promoted', hideWhenEmpty: true,
+    tip: 'Turned into inventory records by an operator' },
+];
+
+const FINDING_LABEL: Record<Finding, string> = {
+  new: 'Not in inventory',
+  moved: 'Moved',
+  gone: 'Stopped answering',
+  expected: 'Expected',
+  dismissed: 'Dismissed',
+  promoted: 'Promoted',
+};
+
+/** Exceptions first, then history, then the reassurance. */
+const PRIORITY: Record<Finding, number> = {
+  new: 0, moved: 1, gone: 2, dismissed: 3, promoted: 4, expected: 5,
+};
+
+type Classified = { r: Responder; f: Finding };
+
+/** Discovery: what answered on the management network, reconciled with inventory.
  *
- *  The value of an audit is the EXCEPTION, so the page is ordered by how much a
- *  row wants attention rather than by what the sweep happened to return. A
- *  hundred expected devices collapse to one line; the one that moved does not.
+ *  The value of an audit is the EXCEPTION, so the page opens on what needs action
+ *  and says plainly when nothing does - with the denominator, because "all 177 where
+ *  we expected them" is the reassurance. The expected rows are one click away, not
+ *  in the way.
  *
- *  Promote asks for the name, because discovery cannot know it - a sysDescr regex
- *  is not authority to name an inventory record. It deliberately does NOT ask for
+ *  One table, one finding per machine. It used to be four sections fed by two
+ *  fetches - the main one carried every status, so a dismissed responder appeared in
+ *  its bucket AND in the Dismissed list.
+ *
+ *  Promote asks for the name, because discovery cannot know it - a sysDescr regex is
+ *  not authority to name an inventory record. It deliberately does NOT ask for
  *  placement: a sweep cannot know which rack a box is in, and guessing would put a
  *  wrong U in the elevation. The device lands as `installed` - racked, and not
  *  accepted by anybody - and then appears on the Commissioning page.
  */
 export function CandidateQueue() {
+  const [params, setParams] = useSearchParams();
+  const facet = (params.get('finding') as Facet | null) ?? 'action';
+  const activeRun = params.get('run');
+  const [search, setSearch] = useState('');
+
+  // In the URL, like the estate pages' drill state: a link to "what last night's
+  // sweep found" is worth being able to send somebody.
+  const setParam = (key: string, value: string | null) => {
+    const next = new URLSearchParams(params);
+    if (value) next.set(key, value); else next.delete(key);
+    setParams(next, { replace: true });
+  };
+
+  // Every status in one listing, classified client-side. Declared BEFORE the error
+  // return: a hook after an early return is called conditionally, so the first
+  // failed fetch would change the hook count between renders and React would throw
+  // - hiding the real error behind a crash.
   const { data, isLoading, error } = useQuery<{ items: DiscoveryCandidate[] }>({
     queryKey: ['discovery-candidates'],
-    queryFn: () => api.discoveryCandidates({ limit: '500' }),
+    queryFn: () => api.discoveryCandidates({ limit: String(FETCH_LIMIT) }),
     refetchInterval: 60_000,
   });
+  const { data: runs } = useDiscoveryRuns();
 
-  // Fetched separately because the default list is open candidates: a dismissed
-  // responder is deliberately out of the way, and mixing it back into the main
-  // groups would undo the dismissal.
-  //
-  // Declared BEFORE the error return. A hook after an early return is called
-  // conditionally, so the first failed fetch would change the hook count between
-  // renders and React would throw - hiding the real error behind a crash.
-  const { data: dismissed } = useQuery<{ items: DiscoveryCandidate[] }>({
-    queryKey: ['discovery-candidates', 'ignored'],
-    queryFn: () => api.discoveryCandidates({ status: 'ignored', limit: '200' }),
-    refetchInterval: 60_000,
-  });
+  const classified = useMemo<Classified[]>(
+    () => collapse(data?.items ?? []).map((r) => ({ r, f: findingOf(r) })),
+    [data]);
+
+  const counts = useMemo(() => {
+    const n: Record<Facet, number> = {
+      all: classified.length, action: 0, new: 0, moved: 0, gone: 0,
+      expected: 0, dismissed: 0, promoted: 0,
+    };
+    for (const { f } of classified) {
+      n[f] += 1;
+      if (needsAction(f)) n.action += 1;
+    }
+    return n;
+  }, [classified]);
+
+  const run = (runs?.items ?? []).find((x) => x.id === activeRun) ?? null;
+  const needle = search.trim().toLowerCase();
+
+  const visible = useMemo(() => classified
+    .filter(({ f }) => facet === 'all'
+      || (facet === 'action' ? needsAction(f) : f === facet))
+    .filter(({ r }) => !activeRun || r.members.some((c) => c.run_id === activeRun))
+    .filter(({ r }) => !needle || haystack(r).includes(needle))
+    .sort((a, b) => PRIORITY[a.f] - PRIORITY[b.f]
+      || ipKey(a.r.addresses[0]) - ipKey(b.r.addresses[0])),
+  [classified, facet, activeRun, needle]);
 
   if (error) return <div className="banner">Failed to load: {String(error)}</div>;
 
-  // One row per MACHINE, not per probe. A server answering SNMP on its BMC and
-  // Redfish on the same address was two rows, and only the Redfish one carried a
-  // serial - so the page showed a blank Serial column beside a populated one for
-  // the same box and read as a defect.
-  const all = collapse(data?.items ?? []);
-  const ignored = collapse(dismissed?.items ?? []);
-  // Responders that answered nothing on the last sweep of their address. Out of the
-  // three buckets below, because "something is answering that no record accounts
-  // for" is a claim about the present tense, and a machine that has gone quiet makes
-  // that sentence false - which is the one thing an audit page must not do.
-  const gone = all.filter(isGone);
-  const items = all.filter((r) => !isGone(r));
-  const unmatched = items.filter((r) => !isKnown(r));
-  // Matched, but not where inventory says it is. Only knowable because the serial
-  // matched - on address alone this row would have read as something new, and
-  // promoting it would have created a second record for one physical box.
-  const moved = items.filter((r) => isKnown(r) && movedFrom(r));
-  const expected = items.filter((r) => isKnown(r) && !movedFrom(r));
-
+  // The machines that answered - what the serial coverage and the header count are
+  // about. Gone, dismissed and promoted rows are history, not this sweep's result.
+  const items = classified
+    .filter(({ f }) => f === 'new' || f === 'moved' || f === 'expected')
+    .map(({ r }) => r);
   // How much of this result can be trusted. A responder with no serial is matched
   // by address alone, so a device that has been re-addressed still reads as new.
-  // Saying which proportion that is beats a banner that guesses.
-  //
-  // Counted over machines now that a machine is one row, which is also the honest
-  // denominator: a server whose Redfish probe read a serial IS identified, and
-  // counting its silent SNMP probe against it understated the coverage.
+  // Counted over machines: a server whose Redfish probe read a serial IS identified,
+  // and counting its silent SNMP probe against it understated the coverage.
   const withSerial = items.filter((r) => r.serial).length;
+  const serialPct = items.length ? (withSerial * 100) / items.length : null;
+
+  const lastDone = (runs?.items ?? []).find((x) => x.status === 'done');
+  const truncated = (data?.items?.length ?? 0) >= FETCH_LIMIT;
+
+  const kpis: Kpi[] = [
+    { caption: 'Needs action', value: counts.action, digits: 0,
+      tone: counts.action > 0 ? 'warn' : 'ok' },
+    { caption: 'Responders', value: items.length, digits: 0 },
+    { caption: 'With serial', value: serialPct, digits: 0, unit: '%',
+      why: 'nothing has answered yet' },
+    { caption: 'Stopped answering', value: counts.gone, digits: 0 },
+    { caption: 'Last sweep',
+      value: lastDone ? relativeTime(lastDone.finished_at ?? lastDone.started_at) : null,
+      why: 'no sweep has finished yet' },
+  ];
 
   return (
-    <>
-      <h2>Discovery</h2>
+    <div className="disc-page">
+      <PageHead title="Discovery"
+                sub="What answers on the management network, reconciled with inventory."
+                kpis={kpis} />
 
-      <SweepPanel />
+      <div className="disc-layout">
+        <section className="disc-main">
+          <div className="disc-toolbar">
+            <FindingFacets value={facet} counts={counts}
+                           onChange={(f) => setParam('finding', f === 'action' ? null : f)} />
+            <input type="search" className="disc-search" value={search}
+                   onChange={(e) => setSearch(e.target.value)}
+                   placeholder="Address, name, serial, vendor"
+                   aria-label="Search responders" />
+          </div>
 
-      {isLoading && <p className="muted">Loading…</p>}
-
-      {!isLoading && items.length === 0 && (
-        <div className="asset-empty">
-          Nothing has answered yet. Run a sweep above: it asks every address in a
-          subnet whether something is there, and stages what replies here for you
-          to promote into inventory or dismiss.
-        </div>
-      )}
-
-      {items.length > 0 && (
-        <p className="muted">
-          {withSerial} of {items.length} responders reported a serial.
-          {withSerial < items.length && (
-            <> The other {items.length - withSerial} are matched by address
-            alone, so one that has been re-addressed will read as new.</>
+          {run && (
+            <div className="disc-runfilter">
+              Responders last seen by the sweep of{' '}
+              <code>{(run.scope?.subnets ?? []).join(', ')}</code>,{' '}
+              {relativeTime(run.started_at)}.{' '}
+              <button type="button" className="link-button"
+                      onClick={() => setParam('run', null)}>
+                Show every sweep
+              </button>
+            </div>
           )}
-        </p>
-      )}
 
-      {moved.length > 0 && (
-        <section style={{ marginTop: 16 }}>
-          <h3>Moved — {moved.length}</h3>
-          <p className="muted">
-            Recognised by serial at an address inventory does not expect. The
-            hardware is where it says; the record is stale.
-          </p>
-          <CandidateTable rows={moved} />
-        </section>
-      )}
+          {truncated && (
+            <div className="banner">
+              Showing the first {FETCH_LIMIT.toLocaleString()} probes. Responders not in
+              inventory are listed first, so no exception is hidden - but the totals on
+              this page undercount the estate.
+            </div>
+          )}
 
-      {unmatched.length > 0 && (
-        <section style={{ marginTop: 16 }}>
-          <h3>Not in inventory — {unmatched.length}</h3>
-          <p className="muted">
-            Something is answering that no record accounts for: installed and
-            never recorded, re-addressed with no serial to match on, or not
-            supposed to be there at all.
-          </p>
-          <CandidateTable rows={unmatched} bulk />
-        </section>
-      )}
+          {isLoading ? (
+            <div className="asset-skeleton" style={{ height: 240 }} />
+          ) : classified.length === 0 ? (
+            <div className="asset-empty">
+              Nothing has answered yet. Choose subnets in the sweep panel and run it:
+              every address is asked whether something is there, and what replies is
+              staged here for you to promote into inventory or dismiss.
+            </div>
+          ) : visible.length === 0 ? (
+            <Empty facet={facet} counts={counts} searching={Boolean(needle)}
+                   onShow={(f) => setParam('finding', f)} />
+          ) : (
+            <ResponderTable rows={visible} />
+          )}
 
-      {ignored.length > 0 && (
-        <section style={{ marginTop: 16 }}>
-          {/* "What have we decided not to look at" is a question worth being able
-              to answer: a responder somebody waved away is exactly where an
-              unmanaged box hides. Ignore used to be one-way and invisible. */}
-          <Dismissed rows={ignored} />
+          {items.length > 0 && (
+            <p className="muted disc-note">
+              {withSerial} of {items.length} responders reported a serial.
+              {withSerial < items.length && (
+                <> The other {items.length - withSerial} are matched by address
+                alone, so one that has been re-addressed will read as new.</>
+              )}
+            </p>
+          )}
         </section>
-      )}
 
-      {gone.length > 0 && (
-        <section style={{ marginTop: 16 }}>
-          <Gone rows={gone} />
-        </section>
-      )}
-
-      {expected.length > 0 && (
-        <section style={{ marginTop: 16 }}>
-          {/* Collapsed by default. The expected case getting the same visual
-              weight as the surprise is what turns an audit into a data dump -
-              but the denominator matters, so the count stays visible. */}
-          <Expected rows={expected} total={items.length} />
-        </section>
-      )}
-    </>
+        <SweepPanel activeRun={activeRun}
+                    onPickRun={(id) => setParam('run', id)} />
+      </div>
+    </div>
   );
 }
 
-function Dismissed({ rows }: { rows: Responder[] }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <>
-      <h3>
-        <button type="button" className="asset-link" aria-expanded={open}
-                onClick={() => setOpen((o) => !o)}>
-          {open ? '▾' : '▸'} Dismissed — {rows.length}
-        </button>
-      </h3>
-      {open && (
-        <>
-          <p className="muted">
-            Responders somebody decided were not worth recording. Restoring one
-            puts it back in the queue above.
-          </p>
-          <CandidateTable rows={rows} />
-        </>
-      )}
-    </>
-  );
+/** Everything a search box should find a machine by, across all its probes. */
+function haystack(r: Responder): string {
+  const m = matchOf(r);
+  return [
+    ...r.addresses, r.serial, m?.matched_device_name,
+    ...r.members.flatMap((c) => [
+      c.suggested_vendor, c.suggested_device_type,
+      String(c.identity?.sysName ?? ''), String(c.identity?.hostName ?? ''),
+    ]),
+  ].filter(Boolean).join(' ').toLowerCase();
 }
 
-/** Answered once, and not on the last sweep that covered the address.
+/** The finding filter: one strip, one pressed cell, the count inside each.
  *
- *  Collapsed, because it is history rather than work. Kept rather than deleted: that
- *  a machine used to answer at an address is how somebody later works out what used
- *  to be there, and for a device removed without being decommissioned it is the only
- *  trace there is.
+ *  The segmented control every filter in the product wears, not pill chips. Counts
+ *  are always the whole population, so a pressed cell can be compared with its
+ *  neighbours. A hue dot rides inside the cell where the finding IS a state that
+ *  wants attention; the control's own colour only ever means "pressed".
  */
-function Gone({ rows }: { rows: Responder[] }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <>
-      <h3>
-        <button type="button" className="asset-link" aria-expanded={open}
-                onClick={() => setOpen((o) => !o)}>
-          {open ? '▾' : '▸'} Stopped answering — {rows.length}
-        </button>
-      </h3>
-      {open && (
-        <>
-          <p className="muted">
-            These answered a previous sweep and did not answer the most recent one
-            that covered their address. A sweep of a different subnet does not put a
-            responder here: the run records what it swept, so this is the difference
-            between asked-and-silent and never-asked.
-          </p>
-          <CandidateTable rows={rows} />
-        </>
-      )}
-    </>
-  );
-}
-
-function Expected({ rows, total }: { rows: Responder[]; total: number }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <>
-      <h3>
-        <button type="button" className="asset-link"
-                aria-expanded={open}
-                onClick={() => setOpen((o) => !o)}>
-          {open ? '▾' : '▸'} Where we expected them — {rows.length} of {total}
-        </button>
-      </h3>
-      {open && <CandidateTable rows={rows} />}
-    </>
-  );
-}
-
-function CandidateTable({ rows, bulk = false }: {
-  rows: Responder[]; bulk?: boolean;
+function FindingFacets({ value, counts, onChange }: {
+  value: Facet; counts: Record<Facet, number>; onChange: (f: Facet) => void;
 }) {
+  return (
+    <div className="seg facet-seg disc-facets" role="group" aria-label="Finding filter">
+      {FACETS.filter((o) => !o.hideWhenEmpty || counts[o.key] > 0).map((o) => (
+        <button key={o.key} type="button"
+                className={o.key === value ? 'active' : ''}
+                aria-pressed={o.key === value}
+                title={o.tip}
+                onClick={() => onChange(o.key)}>
+          {o.dot && <i className={`sw ${counts[o.key] > 0 ? o.dot : 'minor'}`} aria-hidden />}
+          {o.label}<b>{counts[o.key].toLocaleString()}</b>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** An empty view says WHY it is empty. "Needs action: 0" is the good news, and it
+ *  comes with the denominator and a way to see the rows it is vouching for. */
+function Empty({ facet, counts, searching, onShow }: {
+  facet: Facet; counts: Record<Facet, number>; searching: boolean;
+  onShow: (f: Facet) => void;
+}) {
+  if (searching) {
+    return <div className="asset-empty">No responder in this view matches the search.</div>;
+  }
+  if (facet === 'action') {
+    return (
+      <div className="disc-allclear">
+        <span className="tick" aria-hidden>✓</span>
+        <div>
+          <strong>Nothing needs action.</strong>{' '}
+          All {counts.expected.toLocaleString()} responder
+          {counts.expected === 1 ? ' is' : 's are'} where inventory expects them
+          {counts.gone > 0 && <>, and {counts.gone} stopped answering</>}.
+          <div className="actions">
+            <button type="button" className="link-button" onClick={() => onShow('expected')}>
+              Show the {counts.expected.toLocaleString()} expected
+            </button>
+            {counts.gone > 0 && (
+              <button type="button" className="link-button" onClick={() => onShow('gone')}>
+                Show what stopped answering
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+  return <div className="asset-empty">Nothing in this view.</div>;
+}
+
+function ResponderTable({ rows }: { rows: Classified[] }) {
   const paged = usePaged(rows, { noun: 'responders' });
   // Keyed by responder, not by candidate: a selection has to mean "this machine",
   // or ignoring a row would dismiss one of its protocols and leave the other.
   const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [open, setOpen] = useState<Set<string>>(new Set());
 
-  // Only what is on the page, and only what is still actionable. A "select all"
-  // that quietly included rows the operator cannot see is how a bulk action
-  // surprises somebody.
-  const selectable = paged.rows.filter((r) => r.primary.status === 'new');
-  const allPicked = selectable.length > 0
-    && selectable.every((r) => picked.has(r.key));
+  // Only what is on the page, and only what is still actionable: a machine nobody
+  // has recorded, with a probe still open. A "select all" that quietly included
+  // rows the operator cannot see is how a bulk action surprises somebody - and a
+  // known device has nothing to promote.
+  const selectable = paged.rows.filter(
+    (row) => row.f === 'new' && row.r.members.some((c) => c.status === 'new'));
+  const bulk = selectable.length > 0;
+  const allPicked = bulk && selectable.every(({ r }) => picked.has(r.key));
 
-  const toggle = (key: string) => setPicked((p) => {
-    const next = new Set(p);
+  const toggle = (set: Set<string>, key: string) => {
+    const next = new Set(set);
     if (next.has(key)) next.delete(key); else next.add(key);
     return next;
-  });
+  };
+  const cols = bulk ? 9 : 8;
 
   return (
     <>
       {bulk && (
-        <BulkBar keys={[...picked]} rows={rows}
+        <BulkBar keys={[...picked]} rows={rows.map(({ r }) => r)}
                  onDone={() => setPicked(new Set())} />
       )}
       <div className="asset-scroll">
-        <table>
+        <table className="disc-table">
           <thead>
             <tr>
               {bulk && (
-                <th>
+                <th className="pick">
                   <input type="checkbox" checked={allPicked}
-                         aria-label="Select every responder on this page"
+                         aria-label="Select every unrecorded responder on this page"
                          onChange={() => setPicked((p) => {
                            const next = new Set(p);
-                           if (allPicked) selectable.forEach((r) => next.delete(r.key));
-                           else selectable.forEach((r) => next.add(r.key));
+                           if (allPicked) selectable.forEach(({ r }) => next.delete(r.key));
+                           else selectable.forEach(({ r }) => next.add(r.key));
                            return next;
                          })} />
                 </th>
               )}
-              <th>Address</th><th>Identity</th><th>Serial</th>
-              <th>Matched</th><th>Suggested</th><th>Last seen</th><th>Action</th>
+              <th>Address</th><th>Finding</th><th>Identity</th><th>Serial</th>
+              <th>Inventory</th><th>Suggested</th><th>Last seen</th>
+              <th className="act">Action</th>
             </tr>
           </thead>
           <tbody>
-            {paged.rows.map((r) => (
-              <Row key={r.key} r={r}
-                   picked={bulk ? picked.has(r.key) : undefined}
-                   onPick={bulk ? () => toggle(r.key) : undefined} />
+            {paged.rows.map(({ r, f }) => (
+              <Fragment key={r.key}>
+                <Row r={r} f={f} expanded={open.has(r.key)}
+                     onExpand={() => setOpen((o) => toggle(o, r.key))}
+                     picked={bulk ? picked.has(r.key) : undefined}
+                     selectable={selectable.some((s) => s.r.key === r.key)}
+                     onPick={bulk ? () => setPicked((p) => toggle(p, r.key)) : undefined} />
+                {open.has(r.key) && <Evidence r={r} cols={cols} />}
+              </Fragment>
             ))}
           </tbody>
         </table>
@@ -352,11 +437,11 @@ function BulkBar({ keys, rows, onDone }: {
   });
 
   if (keys.length === 0) {
-    return report ? <p className="muted">{report}</p> : null;
+    return report ? <p className="muted disc-report">{report}</p> : null;
   }
 
   return (
-    <div className="asset-toolbar">
+    <div className="asset-toolbar disc-bulk">
       <span className="muted">{keys.length} selected</span>
       <button type="button"
               disabled={nameable.length === 0 || promote.isPending}
@@ -380,16 +465,10 @@ function BulkBar({ keys, rows, onDone }: {
   );
 }
 
-function Row({ r, picked, onPick }: {
-  r: Responder; picked?: boolean; onPick?: () => void;
+function Row({ r, f, expanded, onExpand, picked, selectable, onPick }: {
+  r: Responder; f: Finding; expanded: boolean; onExpand: () => void;
+  picked?: boolean; selectable: boolean; onPick?: () => void;
 }) {
-  const c = r.primary;
-  // The fullest description any probe returned. A Redfish service root carries a
-  // version and a name and no model at all, so taking the primary's would often
-  // throw away the sysDescr that is the whole evidence for the suggested type.
-  const descr = r.members
-    .map((m) => String(m.identity?.sysDescr ?? m.identity?.sysName ?? ''))
-    .reduce((a, b) => (b.length > a.length ? b : a), '');
   const match = matchOf(r);
   const from = movedFrom(r);
   // Newest reading across the machine's probes: a row saying "2 min ago" because
@@ -404,28 +483,43 @@ function Row({ r, picked, onPick }: {
     r.members.map((m) => m[k]).find(Boolean);
 
   return (
-    <tr>
+    <tr className={`f-${f}${expanded ? ' is-open' : ''}`}>
       {onPick && (
-        <td>
+        <td className="pick">
           {/* Only an actionable row is selectable: a promoted one has nothing left
               to do to it, and including it would make a count that lies. */}
-          {c.status === 'new' && (
+          {selectable && (
             <input type="checkbox" checked={Boolean(picked)} onChange={onPick}
-                   aria-label={`Select ${c.address ?? 'responder'}`} />
+                   aria-label={`Select ${r.addresses[0] ?? 'responder'}`} />
           )}
         </td>
       )}
-      <td className="asset-tag">
-        {r.addresses.length > 0
-          ? r.addresses.map((a) => <div key={a}>{a}</div>)
-          : '—'}
-        {/* Which protocols reached it. Two badges on one row is the answer to why
-            the Serial column can be populated for a machine whose SNMP agent
-            publishes no serial OID. */}
-        <div className="muted">{r.protocols.join(' · ')}</div>
+      <td className="addr">
+        <button type="button" className="disc-expand" aria-expanded={expanded}
+                aria-label={`${expanded ? 'Hide' : 'Show'} the evidence for ${
+                  r.addresses[0] ?? 'this responder'}`}
+                onClick={onExpand}>
+          <span className="chev" aria-hidden>{expanded ? '▾' : '▸'}</span>
+          <span className="ip">
+            {r.addresses.length > 0
+              ? r.addresses.map((a) => <span key={a}>{a}</span>)
+              : '—'}
+          </span>
+        </button>
+        {/* Which protocols reached it. Two tags on one row is the answer to why the
+            Serial column can be populated for a machine whose SNMP agent publishes
+            no serial OID. */}
+        <div className="protos" aria-label={`Answered on ${r.protocols.join(' · ')}`}>
+          {r.protocols.map((p) => <span key={p} className="proto">{p}</span>)}
+        </div>
       </td>
-      <td className="muted" style={{ maxWidth: 320 }}><Identity descr={descr} /></td>
-      <td className="asset-tag">
+      <td className="finding">
+        <span className="label">{FINDING_LABEL[f]}</span>
+        {from && <div className="muted">recorded at {from}</div>}
+        {f === 'gone' && <div className="muted">last answered {relativeTime(lastSeen)}</div>}
+      </td>
+      <td className="ident"><Identity r={r} /></td>
+      <td className="serial">
         {r.serial ?? <span className="asset-none">not reported</span>}
         {/* Attributed, because "which protocol told us" is the useful half: it says
             a blank here is a property of the protocol, not a missing serial. */}
@@ -441,11 +535,10 @@ function Row({ r, picked, onPick }: {
             </Link>
             <div className="muted">
               {match.matched_on_serial ? 'by serial' : 'by address'}
-              {from && <> · recorded at {from}</>}
             </div>
           </>
         ) : (
-          <span className="asset-none">new</span>
+          <span className="asset-none">no record</span>
         )}
       </td>
       <td className="muted">
@@ -454,31 +547,81 @@ function Row({ r, picked, onPick }: {
             ? humanise(String(pick('suggested_device_type'))) : null,
           pick('suggested_model')].filter(Boolean).join(' · ') || '—'}
       </td>
-      <td className="muted">{relativeTime(lastSeen)}</td>
-      <td><CandidateActions r={r} /></td>
+      <td className="muted nowrap">{relativeTime(lastSeen)}</td>
+      <td className="act"><CandidateActions r={r} /></td>
     </tr>
   );
 }
 
-/** sysDescr, expandable.
+/** What the machine calls itself, and the first line of what it says it is.
  *
- *  It is where the model and the firmware live, and it is the whole evidence for
- *  the suggested type - so cutting it at 90 characters with no way to see the rest
- *  hides the reason the row says "switch". This was a `title` tooltip, which is
- *  unreachable by keyboard and invisible on a touch screen; a button is neither.
+ *  sysDescr is the whole evidence for the suggested type, so it is never cut off for
+ *  good: the row's expander shows every probe's full text. That replaced a `title`
+ *  tooltip, which is unreachable by keyboard and invisible on a touch screen.
  */
-function Identity({ descr }: { descr: string }) {
-  const [open, setOpen] = useState(false);
-  if (!descr) return <>—</>;
-  if (descr.length <= 90) return <>{descr}</>;
+function Identity({ r }: { r: Responder }) {
+  const name = r.members
+    .map((c) => String(c.identity?.hostName ?? c.identity?.sysName ?? '').trim())
+    .find(Boolean);
+  // The fullest description any probe returned. A Redfish service root carries a
+  // version and a name and no model at all, so taking the primary's would often
+  // throw away the sysDescr that is the evidence for the suggested type.
+  const descr = r.members
+    .map((m) => String(m.identity?.sysDescr ?? m.identity?.model ?? ''))
+    .reduce((a, b) => (b.length > a.length ? b : a), '');
+  if (!name && !descr) return <span className="asset-none">nothing reported</span>;
   return (
     <>
-      {open ? descr : `${descr.slice(0, 90)}…`}{' '}
-      <button type="button" className="asset-link" aria-expanded={open}
-              onClick={() => setOpen((o) => !o)}>
-        {open ? 'less' : 'more'}
-      </button>
+      {name && <div className="name">{name}</div>}
+      {descr && <div className="descr">{descr}</div>}
     </>
+  );
+}
+
+/** Every probe that reached the machine, in full.
+ *
+ *  The row is a summary built from several probes; this is the evidence it was built
+ *  from - which protocol said what, when, and in which sweep - because an operator
+ *  deciding whether to promote a box should be able to see exactly what it said.
+ */
+function Evidence({ r, cols }: { r: Responder; cols: number }) {
+  return (
+    <tr className="disc-evidence">
+      <td colSpan={cols}>
+        <div className="grid">
+          {r.members.map((c) => {
+            const ident = c.identity ?? {};
+            const fields: [string, unknown][] = [
+              ['sysName', ident.sysName], ['hostName', ident.hostName],
+              ['sysObjectID', ident.sysObjectID], ['Model', ident.model],
+              ['Vendor', ident.vendor], ['Serial', c.serial],
+            ];
+            return (
+              <div key={c.id} className="probe">
+                <div className="head">
+                  <span className="proto">{c.protocol.toUpperCase()}</span>
+                  <code>{c.address ?? '—'}</code>
+                  <span className={`asset-life is-${c.status}`}>{humanise(c.status)}</span>
+                  <span className="muted">
+                    first {relativeTime(c.first_seen)} · last {relativeTime(c.last_seen)}
+                  </span>
+                </div>
+                {ident.sysDescr != null && (
+                  <p className="full">{String(ident.sysDescr)}</p>
+                )}
+                <dl>
+                  {fields.filter(([, v]) => v != null && String(v).trim()).map(([k, v]) => (
+                    <Fragment key={k}>
+                      <dt>{k}</dt><dd><code>{String(v)}</code></dd>
+                    </Fragment>
+                  ))}
+                </dl>
+              </div>
+            );
+          })}
+        </div>
+      </td>
+    </tr>
   );
 }
 
@@ -496,8 +639,7 @@ function CandidateActions({ r }: { r: Responder }) {
   const [error, setError] = useState<string | null>(null);
 
   const refresh = () => {
-    // Keyed prefix, so both the open list and the dismissed one refetch - a
-    // restored responder has to leave one and appear in the other.
+    // Keyed prefix, so every listing of candidates refetches together.
     qc.invalidateQueries({ queryKey: ['discovery-candidates'] });
     qc.invalidateQueries({ queryKey: ['discovery-runs'] });
     qc.invalidateQueries({ queryKey: ['asset-summary'] });
@@ -527,6 +669,8 @@ function CandidateActions({ r }: { r: Responder }) {
   if (match?.matched_device_id) {
     return <Link to={`/assets/inventory/${match.matched_device_id}`}>Open</Link>;
   }
+  // A dismissed machine: every probe on it carries status: 'ignored', and the only
+  // honest action is to reverse the decision.
   if (c.status === 'ignored') {
     return (
       <>
@@ -543,8 +687,10 @@ function CandidateActions({ r }: { r: Responder }) {
   }
 
   return (
-    <>
-      <button type="button" onClick={() => setNaming(true)}>Promote</button>
+    <div className="disc-actions">
+      <button type="button" className="primary" onClick={() => setNaming(true)}>
+        Promote
+      </button>
       <button type="button" disabled={dismiss.isPending}
               onClick={() => { setError(null); dismiss.mutate(); }}>
         Ignore
@@ -553,7 +699,7 @@ function CandidateActions({ r }: { r: Responder }) {
       {naming && (
         <PromoteDialog c={c} onClose={() => setNaming(false)} onDone={refresh} />
       )}
-    </>
+    </div>
   );
 }
 
@@ -645,9 +791,11 @@ function PromoteDialog({ c, onClose, onDone }: {
           </select>
         </label>
 
-        {/* Shown, not silently applied. The sweep's guess is evidence for the
-            operator to accept, and promote records only the name and the type -
-            vendor and model need a vendor lookup this endpoint does not do. */}
+        {/* Shown, not silently applied. The vendor and model are matched against
+            the catalog on promotion and never created from - so an unrecognised
+            one is left for the operator rather than becoming "DELL" beside
+            "Dell Inc.". This sentence used to say they were not recorded at all,
+            which stopped being true when the catalog lookup landed. */}
         {(c.suggested_vendor || c.suggested_model || c.serial) && (
           <p className="muted asset-form-wide">
             The sweep read:{' '}
@@ -655,8 +803,8 @@ function PromoteDialog({ c, onClose, onDone }: {
               c.serial ? `serial ${c.serial}` : null]
               .filter(Boolean).join(' · ')}.
             {(c.suggested_vendor || c.suggested_model) && (
-              <> Vendor and model are not recorded by promotion — set them on the
-              asset afterwards.</>
+              <> Vendor and model are matched against the catalog; one it does not
+              recognise is left for you to set on the asset.</>
             )}
           </p>
         )}
@@ -682,7 +830,7 @@ function PromoteDialog({ c, onClose, onDone }: {
       </div>
       <DialogActions>
         <button type="button" onClick={onClose}>Cancel</button>
-        <button type="button"
+        <button type="button" className="primary"
                 disabled={(!attachTo && (!name.trim() || !type)) || save.isPending}
                 onClick={() => { setError(null); save.mutate(); }}>
           {save.isPending ? 'Promoting…' : 'Promote'}

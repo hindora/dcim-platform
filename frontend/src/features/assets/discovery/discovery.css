@@ -1,0 +1,249 @@
+/* Discovery.
+ *
+ * The page is an audit: findings first, the sweep that produced them beside them.
+ * Everything here is tokens (index.css :root) - no raw colour - and a finding marks
+ * its row with a 2px leading rule rather than a tinted block, which is how every
+ * drill-down table in this product marks a row that wants attention.
+ */
+
+.disc-page { min-width: 0; }
+
+/* Findings take the room, the sweep rail keeps a fixed width. Below the breakpoint
+   the rail drops under the findings rather than above them: the result is what the
+   page is for, the form is how you get another one. */
+.disc-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 356px;
+  gap: 16px;
+  align-items: start;
+}
+@media (max-width: 1320px) {
+  .disc-layout { grid-template-columns: minmax(0, 1fr); }
+}
+
+.disc-main { min-width: 0; }
+
+/* ------------------------------------------------------------------ toolbar */
+
+.disc-toolbar {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 10px;
+  margin: 0 0 12px;
+}
+.disc-facets { height: 30px; }
+.disc-facets button { height: 30px; }
+.disc-search {
+  margin-left: auto;
+  width: 260px; max-width: 100%;
+  height: 30px; padding: 0 10px;
+  background: var(--bg-inset); color: var(--text);
+  border: 1px solid var(--border); border-radius: 4px;
+  font: inherit; font-size: 0.8rem;
+}
+.disc-search:focus { outline: none; border-color: var(--accent); }
+
+.disc-runfilter {
+  display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap;
+  margin: 0 0 10px; padding: 8px 12px;
+  border: 1px solid var(--border); border-left: 2px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--bg-raised); color: var(--text-muted); font-size: 0.82rem;
+}
+
+/* --------------------------------------------------------------- all clear */
+
+/* "Nothing needs action" is the good news, stated as such - with the denominator
+   and a way to the rows it is vouching for - rather than as an empty table. */
+.disc-allclear {
+  display: flex; gap: 14px; align-items: flex-start;
+  padding: 18px 20px;
+  border: 1px solid var(--border); border-left: 2px solid var(--ok);
+  border-radius: var(--radius);
+  background: var(--bg-raised); color: var(--text-muted);
+}
+.disc-allclear strong { color: var(--text); }
+.disc-allclear .tick {
+  flex: 0 0 auto;
+  width: 26px; height: 26px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--ok); color: var(--ok); font-size: 0.85rem;
+}
+.disc-allclear .actions { display: flex; gap: 16px; margin-top: 8px; }
+
+/* -------------------------------------------------------------------- table */
+
+.disc-table { font-size: 0.82rem; }
+.disc-table th { white-space: nowrap; }
+.disc-table td { vertical-align: top; }
+.disc-table th.pick, .disc-table td.pick { width: 28px; padding-right: 0; }
+.disc-table th.act, .disc-table td.act { text-align: right; white-space: nowrap; }
+
+/* The leading rule. On the first cell, so it survives a hidden checkbox column. */
+.disc-table tbody tr > td:first-child { box-shadow: inset 2px 0 0 transparent; }
+.disc-table tbody tr.f-new > td:first-child,
+.disc-table tbody tr.f-moved > td:first-child { box-shadow: inset 2px 0 0 var(--warn); }
+.disc-table tbody tr.f-gone > td:first-child { box-shadow: inset 2px 0 0 var(--text-faint); }
+.disc-table tbody tr.f-dismissed > td:first-child { box-shadow: inset 2px 0 0 var(--border-strong); }
+
+/* Only a row that wants attention gets strong ink in the finding cell. */
+.disc-table .finding .label { color: var(--text-muted); white-space: nowrap; }
+.disc-table tr.f-new .finding .label,
+.disc-table tr.f-moved .finding .label { color: var(--warn); font-weight: 600; }
+.disc-table tr.f-gone .finding .label,
+.disc-table tr.f-dismissed .finding .label { color: var(--text-faint); }
+
+/* History reads as history: a machine that stopped answering, or that somebody
+   dismissed, is kept but set back. */
+.disc-table tr.f-gone > td:not(.act),
+.disc-table tr.f-dismissed > td:not(.act) { color: var(--text-muted); }
+
+.disc-table tr.is-open > td { border-bottom-color: transparent; }
+
+/* Address: the expander is the address, so the whole thing is one target. */
+.disc-expand {
+  display: inline-flex; align-items: flex-start; gap: 6px;
+  padding: 0; margin: 0; background: none; border: 0;
+  color: var(--text); font: inherit; cursor: pointer; text-align: left;
+}
+.disc-expand .chev { color: var(--text-faint); width: 10px; line-height: 1.45; }
+.disc-expand:hover .chev, .disc-expand[aria-expanded="true"] .chev { color: var(--accent); }
+.disc-expand .ip {
+  display: flex; flex-direction: column;
+  font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.disc-expand:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+
+.disc-table .protos, .disc-evidence .head { display: flex; gap: 4px; flex-wrap: wrap; }
+.disc-table .protos { margin: 4px 0 0 16px; }
+.proto {
+  display: inline-block; padding: 0 5px; border-radius: 3px;
+  border: 1px solid var(--border-strong);
+  font-size: 0.64rem; letter-spacing: .06em; line-height: 1.5;
+  color: var(--text-muted);
+}
+
+/* Identity: the name, then ONE line of the description. The full text is in the
+   evidence row, never behind a tooltip. */
+.disc-table .ident { max-width: 360px; min-width: 200px; }
+.disc-table .ident .name { color: var(--text); font-weight: 600; }
+.disc-table .ident .descr {
+  color: var(--text-muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.disc-table .serial { font-family: var(--mono); white-space: nowrap; }
+.disc-table .nowrap { white-space: nowrap; }
+
+.disc-actions { display: inline-flex; gap: 6px; }
+
+/* ----------------------------------------------------------------- evidence */
+
+.disc-evidence > td {
+  padding: 4px 10px 14px 26px;
+  background: var(--bg-inset);
+}
+.disc-evidence .grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 10px;
+}
+.disc-evidence .probe {
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--bg-raised); padding: 10px 12px;
+}
+.disc-evidence .head { align-items: center; gap: 8px; font-size: 0.78rem; }
+.disc-evidence .full {
+  margin: 8px 0; color: var(--text); font-size: 0.8rem; line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.disc-evidence dl {
+  display: grid; grid-template-columns: max-content 1fr; gap: 3px 12px;
+  margin: 6px 0 0; font-size: 0.76rem;
+}
+.disc-evidence dt { color: var(--text-faint); }
+.disc-evidence dd { margin: 0; overflow-wrap: anywhere; }
+
+/* A candidate's own status vocabulary, beside the run and lifecycle ones. */
+.asset-life.is-gone { border-style: dashed; color: var(--text-faint); }
+.asset-life.is-ignored { color: var(--text-faint); }
+.asset-life.is-promoted { border-color: var(--ok); color: var(--ok); }
+
+.disc-bulk { margin: 0 0 10px; }
+.disc-report { margin: 0 0 10px; }
+.disc-note { margin: 12px 0 0; font-size: 0.8rem; }
+
+/* --------------------------------------------------------------------- rail */
+
+.disc-rail { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.disc-rail .asset-panel h3 { margin-bottom: 6px; }
+.disc-rail-sub { margin: 0 0 12px; font-size: 0.78rem; }
+
+.disc-inflight {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin: 0 0 12px; padding: 8px 10px;
+  border: 1px solid var(--border); border-left: 2px solid var(--accent);
+  border-radius: var(--radius); font-size: 0.8rem;
+}
+.disc-pulse {
+  width: 8px; height: 8px; border-radius: 50%; background: var(--accent);
+  animation: disc-pulse 1.6s ease-in-out infinite;
+}
+@keyframes disc-pulse { 50% { opacity: .25; } }
+@media (prefers-reduced-motion: reduce) { .disc-pulse { animation: none; } }
+
+/* The subnet list is a table because each range carries three facts, and a
+   checkbox list could only carry one. Scrolls inside the rail past ~11 rows so
+   the Run button stays in reach. */
+.disc-subnets {
+  max-height: 360px; overflow: auto;
+  border: 1px solid var(--border); border-radius: var(--radius);
+}
+.disc-subnets table { font-size: 0.78rem; }
+.disc-subnets th {
+  position: sticky; top: 0; z-index: 1;
+  background: var(--bg-raised); padding: 6px 8px;
+}
+.disc-subnets td { padding: 5px 8px; }
+.disc-subnets tbody tr { cursor: pointer; }
+.disc-subnets tbody tr:hover > td { background: var(--bg-inset); }
+.disc-subnets tbody tr.is-picked > td:first-child { box-shadow: inset 2px 0 0 var(--accent); }
+.disc-subnets code { font-size: 0.78rem; }
+.disc-subnets th:first-child, .disc-subnets td:first-child { width: 22px; padding-right: 0; }
+.disc-never { color: var(--text-faint); }
+.disc-part {
+  margin-left: 6px; padding: 0 4px; border-radius: 3px;
+  border: 1px dashed var(--border-strong);
+  font-size: 0.64rem; color: var(--text-faint); letter-spacing: .04em;
+}
+
+.disc-extra { display: flex; flex-direction: column; gap: 4px; margin: 12px 0 0; }
+.disc-extra span { font-size: 0.72rem; color: var(--text-faint);
+                   text-transform: uppercase; letter-spacing: .06em; }
+.disc-extra input {
+  height: 30px; padding: 0 10px;
+  background: var(--bg-inset); color: var(--text);
+  border: 1px solid var(--border); border-radius: 4px; font: inherit; font-size: 0.8rem;
+}
+.disc-extra input[aria-invalid="true"] { border-color: var(--warn); }
+.disc-bad { margin: 6px 0 0; font-size: 0.76rem; color: var(--warn); }
+.disc-estimate { margin: 10px 0; font-size: 0.78rem; }
+.disc-run { width: 100%; height: 34px; }
+
+.disc-runs ol { list-style: none; margin: 0; padding: 0; }
+.disc-run-item + .disc-run-item { border-top: 1px solid var(--border); }
+.disc-run-item > button {
+  display: grid; grid-template-columns: 1fr auto; gap: 2px 8px;
+  width: 100%; padding: 8px 6px 8px 8px; margin: 0;
+  background: none; border: 0; border-radius: 0; text-align: left;
+  color: var(--text); font: inherit; font-size: 0.78rem; cursor: pointer;
+}
+.disc-run-item > button:hover:not(:disabled) { background: var(--bg-inset); }
+.disc-run-item > button:disabled { cursor: default; }
+.disc-run-item.is-active > button { box-shadow: inset 2px 0 0 var(--accent); background: var(--bg-inset); }
+.disc-run-item.is-failed .when { color: var(--critical); }
+.disc-run-item .when { grid-column: 1; }
+.disc-run-item .asset-life { grid-column: 2; grid-row: 1; justify-self: end; }
+.disc-run-item .scope {
+  grid-column: 1 / -1; font-size: 0.74rem; color: var(--text-muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.disc-run-item .result { grid-column: 1 / -1; color: var(--text-muted); }
+.disc-run-item .result strong { color: var(--warn); }
+.disc-runs .link-button { margin-top: 8px; font-size: 0.78rem; color: var(--accent); }

@@ -86,11 +86,36 @@ async def summary(session: AsyncSession) -> dict[str, Any]:
         ORDER BY n DESC
     """))).mappings().all()
 
+    # `new_candidates` counts PROBES in the open state, expected ones included, and
+    # it was the nav badge: "Discovery 276" on a page where nothing needed doing.
+    # `needs_action` is what the page opens on - machines nobody has recorded, plus
+    # devices recognised by serial somewhere inventory does not expect them.
+    #
+    # Machines, approximately: distinct ADDRESS, which joins a BMC answering SNMP
+    # and Redfish at one address into one - the case that matters. The page's
+    # grouping also joins a machine seen at two addresses by a shared serial, which
+    # an aggregate cannot do cheaply; for an unrecorded machine that is rare.
+    #
+    # Moved mirrors the page: serial-matched, answering at an address that is not
+    # the device's management address, and not ALSO answering at that address.
     discovery = (await session.execute(text("""
-        SELECT count(*) FILTER (WHERE status = 'new')            AS new_candidates,
-               count(*) FILTER (WHERE status = 'new'
-                                  AND matched_device_id IS NULL) AS unmatched
-        FROM discovery_candidate
+        SELECT count(*) FILTER (WHERE c.status = 'new')            AS new_candidates,
+               count(*) FILTER (WHERE c.status = 'new'
+                                  AND c.matched_device_id IS NULL) AS unmatched,
+               count(DISTINCT c.address) FILTER (
+                   WHERE c.status = 'new' AND c.matched_device_id IS NULL)
+                                                                  AS unrecorded,
+               count(DISTINCT c.matched_device_id) FILTER (
+                   WHERE c.status = 'new'
+                     AND c.serial IS NOT NULL AND d.serial_number = c.serial
+                     AND d.mgmt_ip IS NOT NULL AND c.address <> d.mgmt_ip
+                     AND NOT EXISTS (
+                           SELECT 1 FROM discovery_candidate c2
+                            WHERE c2.matched_device_id = c.matched_device_id
+                              AND c2.status = 'new'
+                              AND c2.address = d.mgmt_ip))       AS moved
+          FROM discovery_candidate c
+          LEFT JOIN device d ON d.id = c.matched_device_id
     """))).mappings().one()
 
     # How many devices are waiting on a commissioning decision, for the nav
@@ -145,7 +170,8 @@ async def summary(session: AsyncSession) -> dict[str, Any]:
         },
         "estate": dict(estate),
         "by_category": [dict(r) for r in category_rows],
-        "discovery": dict(discovery),
+        "discovery": {**dict(discovery),
+                      "needs_action": discovery["unrecorded"] + discovery["moved"]},
         "commissioning": commissioning,
         # Present now that migration 0047 gives them something to count. Before
         # it they were ABSENT rather than zero - a tile reading "0 expiring"
