@@ -11,6 +11,7 @@ LOCKED, so the second process moves on instead of queueing a duplicate.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 
 from app.core.logging import get_logger
 from app.db.session import unit_of_work
@@ -40,7 +41,5 @@ async def run_forever(stop: asyncio.Event) -> None:
                 log.info("schedule fired", run_id=fired["run"]["id"])
         except Exception as exc:  # the loop must outlive one bad tick
             log.warning("scheduler tick failed", error=str(exc))
-        try:
+        with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(stop.wait(), timeout=TICK_S)
-        except TimeoutError:
-            pass

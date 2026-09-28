@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -58,10 +58,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     stop.set()
     if scheduler is not None:
         scheduler.cancel()
-        try:
+        with suppress(asyncio.CancelledError, Exception):
             await scheduler
-        except (asyncio.CancelledError, Exception):
-            pass
     await hub.stop()
     set_hub(None)
     await topology_service.close_cache()

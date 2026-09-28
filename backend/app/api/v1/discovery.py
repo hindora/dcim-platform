@@ -298,8 +298,8 @@ async def update_schedule(schedule_id: str, body: ScheduleUpdate, request: Reque
                           ) -> dict[str, Any]:
     fields = body.model_dump(exclude_none=True, exclude={"run_now"})
     if body.run_now:
-        from datetime import datetime, timezone
-        fields["next_run_at"] = datetime.now(timezone.utc).isoformat()
+        from datetime import UTC, datetime
+        fields["next_run_at"] = datetime.now(UTC).isoformat()
     try:
         row = await service.update_schedule(session, schedule_id, fields)
     except service.DiscoveryError as exc:
@@ -309,7 +309,7 @@ async def update_schedule(schedule_id: str, body: ScheduleUpdate, request: Reque
                        action="discovery.schedule.update",
                        target_type="discovery_schedule", target_id=schedule_id,
                        ip=ip, user_agent=agent,
-                       after={k: v for k, v in fields.items()})
+                       after=dict(fields))
     await session.commit()
     return row
 
