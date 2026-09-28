@@ -84,6 +84,13 @@ DEFAULTS: dict[str, Any] = {
         # ones that arrive pre-formed - traps and equipment alarm points - which
         # have no dwell of their own.
         "dwell_s": 300,
+        # Conditions ticketed whatever their class, severity or domain - the
+        # symptom, shelving and dwell rules still apply. For findings a service
+        # desk routes by KIND rather than by urgency: an unrecorded box on the
+        # management network is a CMDB discrepancy worth a ticket at MINOR, and
+        # widening the severity floor to reach it would ticket every other
+        # MINOR alert too. Empty by default.
+        "alarm_types": [],
     },
 
     # ------------------------------------------------------------ mapping
@@ -282,6 +289,9 @@ def _policy(raw: dict[str, Any]) -> dict[str, Any]:
             clean[key] = value
         elif key == "dwell_s":
             clean[key] = _int(key, value, lo=0, hi=86_400)
+        elif key == "alarm_types":
+            from app.core.alert_taxonomy import BY_ALARM_TYPE
+            clean[key] = _subset(key, value, tuple(sorted(BY_ALARM_TYPE)))
         else:
             clean[key] = _bool(key, value)
     if clean.get("response_classes") == [] or clean.get("categories") == []:

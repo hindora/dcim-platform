@@ -382,3 +382,27 @@ def test_alarms_reach_the_ticketing_outbox():
     assert "outbox.enqueue_actions(session, actions)" in ALARMS
     col = (APP / "api" / "v1" / "collector.py").read_text(encoding="utf-8")
     assert "reconcile_and_enqueue" in col and "begin_nested" in col
+
+
+def test_a_listed_type_is_ticketed_whatever_its_severity():
+    """The live Jira policy tickets CRITICAL alarms only; a MINOR discovery alert
+    was 'not ticketed'. Naming the type reaches it without widening the floor for
+    every other alert."""
+    from app.integrations import config as cfg
+    from app.integrations import policy as pol
+    base = cfg.resolved({"policy": {"min_severity": "CRITICAL"}})["policy"]
+    alarm = {"alarm_type": "discovery_unrecorded", "response_class": "alert",
+             "severity": "MINOR", "category": "visibility", "first_seen": None}
+    assert pol.explain(alarm, {**base, "dwell_s": 0}).startswith("response class")
+    listed = {**base, "dwell_s": 0, "alarm_types": ["discovery_unrecorded"]}
+    assert pol.explain(alarm, listed) == pol.MATCH
+    # Still no ticket for a symptom, listed or not.
+    assert pol.explain({**alarm, "is_symptom": True}, listed) != pol.MATCH
+
+
+def test_only_real_alarm_types_can_be_listed():
+    from app.integrations import config as cfg
+    with pytest.raises(cfg.IntegrationConfigError):
+        cfg._policy({"alarm_types": ["not_a_condition"]})
+    assert cfg._policy({"alarm_types": ["discovery_missing"]}) == {
+        "alarm_types": ["discovery_missing"]}

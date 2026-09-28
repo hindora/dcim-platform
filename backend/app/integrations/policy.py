@@ -51,24 +51,29 @@ def explain(alarm: dict[str, Any], policy: dict[str, Any], *,
     through", and answering that by reading the policy back to them and
     letting them guess is how support tickets are made.
     """
-    response_class = alarm.get("response_class")
-    allowed = policy.get("response_classes") or []
-    if response_class not in allowed:
-        return (f"response class {response_class!r} is not in "
-                f"{', '.join(allowed) or 'nothing'}")
+    # A condition the policy names by type skips the class, severity and domain
+    # clauses - that is what naming it means - but not the ones below: a
+    # symptom, planned work and a flap are no more a ticket for being listed.
+    listed = alarm.get("alarm_type") in (policy.get("alarm_types") or [])
+    if not listed:
+        response_class = alarm.get("response_class")
+        allowed = policy.get("response_classes") or []
+        if response_class not in allowed:
+            return (f"response class {response_class!r} is not in "
+                    f"{', '.join(allowed) or 'nothing'}")
 
-    severity = str(alarm.get("severity") or "")
-    floor = str(policy.get("min_severity") or "")
-    # Worst-first ranking, so "at least MAJOR" is rank <= rank(MAJOR). An
-    # unknown severity ranks last and is therefore excluded, which is the safe
-    # direction: a severity this platform does not recognise is not something
-    # to page a service desk about.
-    if SEVERITY_RANK.get(severity, 99) > SEVERITY_RANK.get(floor, -1):
-        return f"severity {severity} is below {floor}"
+        severity = str(alarm.get("severity") or "")
+        floor = str(policy.get("min_severity") or "")
+        # Worst-first ranking, so "at least MAJOR" is rank <= rank(MAJOR). An
+        # unknown severity ranks last and is therefore excluded, which is the
+        # safe direction: a severity this platform does not recognise is not
+        # something to page a service desk about.
+        if SEVERITY_RANK.get(severity, 99) > SEVERITY_RANK.get(floor, -1):
+            return f"severity {severity} is below {floor}"
 
-    categories = policy.get("categories") or []
-    if alarm.get("category") not in categories:
-        return f"category {alarm.get('category')!r} is not ticketed"
+        categories = policy.get("categories") or []
+        if alarm.get("category") not in categories:
+            return f"category {alarm.get('category')!r} is not ticketed"
 
     if policy.get("exclude_symptoms", True) and alarm.get("is_symptom"):
         return "it is a symptom of another alarm, which carries the ticket"
