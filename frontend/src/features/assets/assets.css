@@ -878,6 +878,10 @@ a.asset-tile:hover { border-color: var(--border-strong); }
 .asset-form input,
 .asset-form select,
 .asset-form textarea { width: 100%; }
+/* Not boxes: a checkbox or radio at width 100% took the whole row, drew itself
+   centred in it, and pushed its label out of the dialog. */
+.asset-form input[type="checkbox"],
+.asset-form input[type="radio"] { width: auto; }
 
 .asset-form label.asset-check { display: flex; align-items: flex-start; }
 .asset-form label.asset-check > span {

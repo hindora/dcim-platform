@@ -129,9 +129,7 @@ export function RangeDialog({ range, initialCidr, options, onClose }: {
           </select>
         </label>
         <p className="muted asset-form-wide disc-form-note">
-          Choose the collector on this network when there is more than one. A sweep
-          from a collector that cannot reach the range hears nothing, and every
-          device in it would read as missing.
+          The collector on this network. Any other hears nothing.
         </p>
 
         <label className="asset-form-wide">
@@ -143,9 +141,7 @@ export function RangeDialog({ range, initialCidr, options, onClose }: {
         </label>
         {ex.errors.map((m) => <p key={m} className="disc-bad asset-form-wide">{m}</p>)}
         <p className="muted asset-form-wide disc-form-note">
-          Gateways and HSRP/VRRP addresses, and controllers known to misbehave when
-          scanned. One address or CIDR per line. Only collectors that honour
-          exclusions are given this range.
+          One address or CIDR per line, e.g. gateways.
         </p>
 
         <label className="asset-form-wide">
@@ -155,7 +151,7 @@ export function RangeDialog({ range, initialCidr, options, onClose }: {
         <label className="asset-check asset-form-wide">
           <input type="checkbox" checked={enabled}
                  onChange={(e) => setEnabled(e.target.checked)} />
-          <span>Enabled - offered for sweeps, and swept by its schedules</span>
+          <span>Enabled</span>
         </label>
 
         {parsed && !parsed.error && (
