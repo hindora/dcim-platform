@@ -208,9 +208,11 @@
 .disc-subnets table { font-size: 0.78rem; }
 .disc-subnets th {
   position: sticky; top: 0; z-index: 1;
-  background: var(--bg-raised); padding: 6px 8px;
+  background: var(--bg-raised); padding: 6px 6px;
 }
-.disc-subnets td { padding: 5px 8px; }
+/* 6px, not the table default 10px: four columns in a 324px rail overflowed by 4px
+   at 8px and scrolled sideways. */
+.disc-subnets td { padding: 5px 6px; }
 .disc-subnets tbody tr { cursor: pointer; }
 .disc-subnets tbody tr:hover > td { background: var(--bg-inset); }
 .disc-subnets tbody tr.is-picked > td:first-child { box-shadow: inset 2px 0 0 var(--accent); }
