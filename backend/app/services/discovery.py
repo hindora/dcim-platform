@@ -208,17 +208,72 @@ def _serial_of(responder: dict[str, Any]) -> str | None:
     return val.strip().upper() or None
 
 
+#: A change here means the BOX changed: a different chassis serial, platform,
+#: board UUID or model at the same address is hardware that was swapped, and
+#: nobody recorded it. That needs somebody.
+HARDWARE_FIELDS = frozenset({"serial", "sysObjectID", "uuid", "model", "vendor"})
+
+#: A change here is ordinary drift - firmware, OS image, a hostname. Worth being
+#: able to see and date; not worth paging anybody over. A fleet-wide BMC firmware
+#: roll would otherwise put three hundred rows in "needs action" overnight.
+SOFT_FIELDS = ("sysDescr", "redfishVersion", "hostName", "sysName")
+
+WATCHED_FIELDS = ("serial", "sysObjectID", "uuid", "model", "vendor", *SOFT_FIELDS)
+
+
+def _norm(field: str, value: Any) -> str | None:
+    if value is None:
+        return None
+    text_ = str(value).strip()
+    if not text_:
+        return None
+    if field == "serial":
+        return text_.upper()
+    if field == "sysObjectID":
+        return text_.lstrip(".")
+    return text_
+
+
+def identity_changes(old_identity: dict[str, Any] | None, old_serial: str | None,
+                     new_identity: dict[str, Any] | None, new_serial: str | None
+                     ) -> list[tuple[str, str, str]]:
+    """What a responder says differently from last time, field by field.
+
+    Only where BOTH readings said something. A probe that timed out on one OID this
+    run is a partial read, not a change: recording "serial: X -> nothing" would
+    flap every time a slow agent dropped a varbind, and bury the real swaps.
+    """
+    out: list[tuple[str, str, str]] = []
+    for field in WATCHED_FIELDS:
+        old = _norm(field, old_serial if field == "serial"
+                    else (old_identity or {}).get(field))
+        new = _norm(field, new_serial if field == "serial"
+                    else (new_identity or {}).get(field))
+        if old and new and old != new:
+            out.append((field, old, new))
+    return out
+
+
 async def record_results(session: AsyncSession, run_id: str,
                          responders: list[dict[str, Any]]) -> dict[str, int]:
-    """Stage what a sweep found and mark which of it inventory already knows."""
+    """Stage what a sweep found and mark which of it inventory already knows.
+
+    And what is DIFFERENT since the last look: what appeared, what went quiet, and
+    what now describes itself differently - which is the question somebody reading
+    last night's sweep arrives with.
+    """
     addresses = [r["address"] for r in responders if r.get("address")]
     known = await repo.match_addresses(session, addresses)
+    # Read BEFORE the upserts overwrite it: the previous identity is the thing a
+    # change is measured against.
+    prior = await repo.prior_identities(session, addresses)
     # The serial travels inside `identity`, which is already a free-form blob on
     # the wire, so reading it needs no change to the collector contract.
     by_serial = await repo.match_serials(
         session, [_serial_of(r) for r in responders])
 
-    unmanaged, moved = 0, 0
+    unmanaged, moved, appeared, changed, with_serial = 0, 0, 0, 0, 0
+    changes: list[dict[str, Any]] = []
     for r in responders:
         addr = r.get("address")
         if not addr:
@@ -234,30 +289,50 @@ async def record_results(session: AsyncSession, run_id: str,
                 moved += 1
         else:
             match = known.get(addr)
-        dtype, vendor = classify(identity, r.get("protocol") or "snmp")
-        await repo.upsert_candidate(
+        protocol = r.get("protocol") or "snmp"
+        dtype, vendor = classify(identity, protocol)
+        before = prior.get((addr, protocol))
+        row = await repo.upsert_candidate(
             session, run_id=run_id, address=addr,
-            protocol=r.get("protocol") or "snmp", identity=identity,
+            protocol=protocol, identity=identity,
             matched_device_id=match["device_id"] if match else None,
             serial=serial,
             suggested_device_type=dtype, suggested_vendor=vendor)
         if not match:
             unmanaged += 1
+        if serial:
+            with_serial += 1
+        # New to the audit, or answering again after going quiet - either way,
+        # different from the last look.
+        if row and (row["inserted"] or (before and before["status"] == "gone")):
+            appeared += 1
+        if row and before and not row["inserted"]:
+            diff = identity_changes(before.get("identity"), before.get("serial"),
+                                    identity, serial)
+            if diff:
+                changed += 1
+                changes.extend({"candidate_id": row["id"], "field": f,
+                                "old": o, "new": n} for f, o, n in diff)
 
     # AFTER the upserts, so anything this run saw has had its last_seen advanced and
     # only the genuinely silent addresses are left behind. A sweep is the only thing
     # that can tell "asked and got nothing" from "never asked", and it can only say
     # so about the subnets it actually covered.
     gone = await repo.mark_gone(session, run_id)
+    await repo.record_changes(session, run_id, changes)
 
-    await repo.finish_run(session, run_id, found=len(responders))
+    counts = {"known": len(responders) - unmanaged, "unknown": unmanaged,
+              "moved": moved, "with_serial": with_serial,
+              "appeared": appeared, "gone": gone, "changed": changed}
+    await repo.finish_run(session, run_id, found=len(responders), counts=counts)
     log.info("discovery run recorded", run_id=run_id, responders=len(responders),
              known=len(responders) - unmanaged, unmanaged=unmanaged, gone=gone,
              # Worth its own number: a device matched by serial at an address
              # inventory did not expect has MOVED, and nobody recorded it.
-             readdressed=moved)
+             readdressed=moved, appeared=appeared, changed=changed)
     return {"found": len(responders), "known": len(responders) - unmanaged,
-            "unmanaged": unmanaged, "readdressed": moved, "gone": gone}
+            "unmanaged": unmanaged, "readdressed": moved, "gone": gone,
+            "appeared": appeared, "changed": changed}
 
 
 async def promote(session: AsyncSession, candidate_id: str,
@@ -453,3 +528,78 @@ async def unignore(session: AsyncSession, candidate_id: str) -> dict[str, Any]:
     log.info("candidate restored", candidate_id=candidate_id,
              address=cand.get("address"))
     return row
+
+
+
+async def missing(session: AsyncSession) -> list[dict[str, Any]]:
+    """Devices on record that the last sweep of their range did not hear from."""
+    return await repo.missing_devices(session)
+
+
+async def acknowledge(session: AsyncSession, candidate_ids: list[str],
+                      actor: str | None) -> int:
+    """Somebody has looked at what changed and agrees it was expected."""
+    return await repo.acknowledge_changes(session, candidate_ids, actor)
+
+
+#: The intervals a range is actually swept on. A free integer invites "every 1
+#: hour" on a /16, which queues sweeps faster than one can finish.
+SCHEDULE_INTERVALS = (6, 12, 24, 48, 168)
+
+
+def _validate_subnets(subnets: list[str]) -> list[str]:
+    out = [s.strip() for s in subnets if s and s.strip()]
+    if not out:
+        raise DiscoveryError("a schedule needs at least one subnet")
+    for net in out:
+        if not re.fullmatch(r"\d+\.\d+\.\d+\.\d+/\d+", net):
+            raise DiscoveryError(f"{net!r} is not a CIDR subnet")
+    return out
+
+
+async def create_schedule(session: AsyncSession, *, name: str | None,
+                          subnets: list[str], interval_hours: int,
+                          first_run_at: Any | None = None,
+                          actor: str | None = None) -> dict[str, Any]:
+    nets = _validate_subnets(subnets)
+    if interval_hours not in SCHEDULE_INTERVALS:
+        raise DiscoveryError(
+            f"interval must be one of {', '.join(map(str, SCHEDULE_INTERVALS))} hours")
+    label = (name or "").strip() or ", ".join(nets)
+    return await repo.create_schedule(session, name=label, subnets=nets,
+                                      interval_hours=interval_hours,
+                                      first_run_at=first_run_at, actor=actor)
+
+
+async def update_schedule(session: AsyncSession, schedule_id: str,
+                          fields: dict[str, Any]) -> dict[str, Any]:
+    if "subnets" in fields:
+        fields["subnets"] = _validate_subnets(fields["subnets"])
+    if "interval_hours" in fields and fields["interval_hours"] not in SCHEDULE_INTERVALS:
+        raise DiscoveryError("interval is not one of the offered ones")
+    row = await repo.update_schedule(session, schedule_id, fields)
+    if row is None:
+        raise DiscoveryError(f"no schedule {schedule_id}")
+    return row
+
+
+async def fire_due_schedule(session: AsyncSession) -> dict[str, Any] | None:
+    """Queue ONE due schedule's sweep, if nothing else is sweeping.
+
+    One at a time, like a hand-run sweep: every agent on the plane answers through
+    the same listeners, so two sweeps do not finish faster, they time each other
+    out. A due schedule that finds a sweep in flight is left due and fires on the
+    next tick - it runs late rather than stacking a second sweep on the first.
+    """
+    if await repo.run_in_flight(session):
+        return None
+    sched = await repo.claim_due_schedule(session)
+    if sched is None:
+        return None
+    run = await repo.create_run(session, method="sweep",
+                                scope={"subnets": list(sched["subnets"])},
+                                schedule_id=sched["id"])
+    await repo.advance_schedule(session, sched["id"], run["id"])
+    log.info("scheduled sweep queued", schedule=sched["name"], run_id=run["id"],
+             subnets=sched["subnets"], every_h=sched["interval_hours"])
+    return {"schedule": sched, "run": run}

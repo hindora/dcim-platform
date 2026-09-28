@@ -44,8 +44,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await hub.start()
     set_hub(hub)
 
+    # Scheduled discovery sweeps. Queued here, claimed and run by a collector.
+    import asyncio
+
+    from app.services import discovery_scheduler
+
+    stop = asyncio.Event()
+    scheduler = (asyncio.create_task(discovery_scheduler.run_forever(stop))
+                 if settings.discovery_scheduler_enabled else None)
+
     yield
 
+    stop.set()
+    if scheduler is not None:
+        scheduler.cancel()
+        try:
+            await scheduler
+        except (asyncio.CancelledError, Exception):
+            pass
     await hub.stop()
     set_hub(None)
     await topology_service.close_cache()

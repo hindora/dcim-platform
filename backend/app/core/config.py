@@ -48,6 +48,10 @@ class Settings(BaseSettings):
     db_max_overflow: int = 20
     db_echo: bool = False
 
+    # Queue scheduled discovery sweeps from this process. Off for a process that
+    # should never write on its own - a read replica API, a one-off script.
+    discovery_scheduler_enabled: bool = True
+
     redis_url: str = "redis://127.0.0.1:6379/0"
 
     # --- security -----------------------------------------------------------

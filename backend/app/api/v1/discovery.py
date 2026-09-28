@@ -211,6 +211,125 @@ async def unignore(candidate_id: str, request: Request,
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from None
 
 
+class AcknowledgeRequest(BaseModel):
+    candidate_ids: list[str] = Field(min_length=1, max_length=500)
+
+
+class ScheduleRequest(BaseModel):
+    name: str | None = None
+    subnets: list[str] = Field(min_length=1, max_length=64)
+    interval_hours: int = 24
+
+
+class ScheduleUpdate(BaseModel):
+    name: str | None = None
+    subnets: list[str] | None = None
+    interval_hours: int | None = None
+    enabled: bool | None = None
+    #: "Run it now" is a schedule whose next run is due immediately - the scheduler
+    #: picks it up on its next tick and it then carries on at its interval.
+    run_now: bool = False
+
+
+@router.get("/missing", summary="Inventory the last sweep of its range did not hear")
+async def missing(session: AsyncSession = Depends(get_session),
+                  _: Principal = Depends(current_principal)) -> dict[str, Any]:
+    """The mirror of "not in inventory": devices on record whose address a sweep
+    covered and which did not answer it, with their polling state beside them -
+    silent to the sweep but ONLINE to the poller is a credentials or ACL problem,
+    not a dead box."""
+    items = await service.missing(session)
+    return {"items": items, "total": len(items)}
+
+
+@router.post("/candidates/acknowledge",
+             summary="Accept that what changed about these responders was expected")
+async def acknowledge(body: AcknowledgeRequest, request: Request,
+                      session: AsyncSession = Depends(get_session),
+                      principal: Principal = Depends(require_role("operator")),
+                      ) -> dict[str, Any]:
+    """Audited per candidate. "The serial changed and somebody said that was fine"
+    is exactly the line an investigation into a swapped box looks for."""
+    actor = audit.actor_of(principal)
+    ip, agent = audit.client_of(request)
+    n = await service.acknowledge(session, body.candidate_ids, actor)
+    for cid in body.candidate_ids:
+        await audit.record(session, actor=actor, action="discovery.acknowledge",
+                           target_type="candidate", target_id=cid,
+                           ip=ip, user_agent=agent)
+    await session.commit()
+    return {"acknowledged": n}
+
+
+@router.get("/schedules", summary="Ranges swept on a schedule")
+async def list_schedules(session: AsyncSession = Depends(get_session),
+                         _: Principal = Depends(current_principal)) -> dict[str, Any]:
+    return {"items": await repo.list_schedules(session),
+            "intervals": list(service.SCHEDULE_INTERVALS)}
+
+
+@router.post("/schedules", status_code=status.HTTP_201_CREATED,
+             summary="Sweep these ranges on an interval")
+async def create_schedule(body: ScheduleRequest, request: Request,
+                          session: AsyncSession = Depends(get_session),
+                          principal: Principal = Depends(require_role("operator")),
+                          ) -> dict[str, Any]:
+    actor = audit.actor_of(principal)
+    try:
+        row = await service.create_schedule(
+            session, name=body.name, subnets=body.subnets,
+            interval_hours=body.interval_hours, actor=actor)
+    except service.DiscoveryError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from None
+    ip, agent = audit.client_of(request)
+    await audit.record(session, actor=actor, action="discovery.schedule.create",
+                       target_type="discovery_schedule", target_id=row["id"],
+                       ip=ip, user_agent=agent,
+                       after={"subnets": row["subnets"],
+                              "interval_hours": row["interval_hours"]})
+    await session.commit()
+    return row
+
+
+@router.patch("/schedules/{schedule_id}", summary="Change or pause a schedule")
+async def update_schedule(schedule_id: str, body: ScheduleUpdate, request: Request,
+                          session: AsyncSession = Depends(get_session),
+                          principal: Principal = Depends(require_role("operator")),
+                          ) -> dict[str, Any]:
+    fields = body.model_dump(exclude_none=True, exclude={"run_now"})
+    if body.run_now:
+        from datetime import datetime, timezone
+        fields["next_run_at"] = datetime.now(timezone.utc).isoformat()
+    try:
+        row = await service.update_schedule(session, schedule_id, fields)
+    except service.DiscoveryError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from None
+    ip, agent = audit.client_of(request)
+    await audit.record(session, actor=audit.actor_of(principal),
+                       action="discovery.schedule.update",
+                       target_type="discovery_schedule", target_id=schedule_id,
+                       ip=ip, user_agent=agent,
+                       after={k: v for k, v in fields.items()})
+    await session.commit()
+    return row
+
+
+@router.delete("/schedules/{schedule_id}", status_code=status.HTTP_204_NO_CONTENT,
+               summary="Stop sweeping a range on a schedule")
+async def delete_schedule(schedule_id: str, request: Request,
+                          session: AsyncSession = Depends(get_session),
+                          principal: Principal = Depends(require_role("operator")),
+                          ) -> None:
+    if not await repo.delete_schedule(session, schedule_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "no such schedule")
+    ip, agent = audit.client_of(request)
+    await audit.record(session, actor=audit.actor_of(principal),
+                       action="discovery.schedule.delete",
+                       target_type="discovery_schedule", target_id=schedule_id,
+                       ip=ip, user_agent=agent)
+    await session.commit()
+
+
 @router.post("/candidates/bulk-ignore", summary="Dismiss many responders")
 async def bulk_ignore(body: BulkIgnoreRequest, request: Request,
                       session: AsyncSession = Depends(get_session),
