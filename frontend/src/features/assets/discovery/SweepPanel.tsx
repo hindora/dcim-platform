@@ -3,8 +3,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   api,
   type DiscoveryRun,
+  type DiscoverySchedule,
 } from '../../../api/client';
-import { relativeTime } from '../../../lib/format';
+import { relativeTime, untilTime } from '../../../lib/format';
 
 /** The sweeper's own limits, mirrored so the form can answer before the API does.
  *
@@ -100,12 +101,13 @@ export function useDiscoveryRuns() {
   return useQuery({
     queryKey: ['discovery-runs'],
     queryFn: () => api.discoveryRuns({ limit: String(RUN_HISTORY) }),
-    // Only while something is in flight. A sweep is a background audit, not an
-    // emergency, so polling it every few seconds all day would cost more than it
-    // tells anybody.
+    // Fast only while something is in flight - a sweep is a background audit, not
+    // an emergency. But never OFF: a schedule queues runs nobody on this page
+    // started, and with polling off between sweeps the scheduled one did not
+    // appear until a reload. A minute is when the scheduler ticks anyway.
     refetchInterval: (q) =>
       q.state.data?.items?.some((r) => r.status === 'pending'
-        || r.status === 'running') ? 5_000 : false,
+        || r.status === 'running') ? 5_000 : 60_000,
   });
 }
 
@@ -312,6 +314,8 @@ export function SweepPanel({ activeRun, onPickRun }: {
         {error && <div className="banner">{error}</div>}
       </section>
 
+      <Schedules chosen={chosen} blocked={bad.length > 0 || tooMany} />
+
       {history.length > 0 && (
         <section className="asset-panel disc-runs">
           <h3>Recent sweeps</h3>
@@ -354,6 +358,14 @@ function RunItem({ run, active, onPick }: {
           {secs != null && secs >= 0 && (
             <span className="muted"> · {describeDuration(secs)}</span>
           )}
+          {/* Who asked. A run nobody remembers starting is a schedule's, and
+              saying so saves somebody hunting the audit log for it. */}
+          {(run.trigger === 'schedule' || run.schedule_id) && (
+            <span className="disc-sched-tag"
+                  title={run.schedule_name ? `Schedule: ${run.schedule_name}` : 'Queued by a schedule'}>
+              scheduled
+            </span>
+          )}
         </span>
         <code className="scope">{(run.scope?.subnets ?? []).join(', ') || '—'}</code>
         {/* `status` is the API's own vocabulary (pending / running / done /
@@ -379,13 +391,222 @@ function RunItem({ run, active, onPick }: {
  */
 function Result({ run }: { run: DiscoveryRun }) {
   const found = run.found ?? 0;
-  if (!found) return <span className="muted">nothing answered</span>;
   return (
     <>
-      {found} answered
-      {run.known != null && <span className="muted"> · {run.known} expected</span>}
-      {Boolean(run.unknown) && <> · <strong>{run.unknown} new</strong></>}
-      {Boolean(run.moved) && <> · <strong>{run.moved} moved</strong></>}
+      {found ? (
+        <>
+          {found} answered
+          {run.known != null && <span className="muted"> · {run.known} expected</span>}
+          {Boolean(run.unknown) && <> · <strong>{run.unknown} new</strong></>}
+          {Boolean(run.moved) && <> · <strong>{run.moved} moved</strong></>}
+        </>
+      ) : <span className="muted">nothing answered</span>}
+      <Delta run={run} />
     </>
+  );
+}
+
+/** What this sweep saw differently from the one before it over the same
+ *  addresses. The question a re-sweep is run to answer is "what changed", and the
+ *  totals alone cannot say: 105 answered twice can be the same 105 or two
+ *  different ones.
+ *
+ *  Absent, not zero, on runs recorded before the delta was: "no change" is a claim
+ *  those runs never measured. */
+function Delta({ run }: { run: DiscoveryRun }) {
+  if (run.appeared == null && run.gone == null && run.changed == null) return null;
+  const parts = [
+    run.appeared ? `${run.appeared} appeared` : null,
+    run.gone ? `${run.gone} went quiet` : null,
+    run.changed ? `${run.changed} changed` : null,
+  ].filter(Boolean);
+  return (
+    <span className="disc-delta">
+      {parts.length ? parts.join(' · ') : 'no change from the sweep before'}
+    </span>
+  );
+}
+
+const INTERVAL_LABEL: Record<number, string> = {
+  6: 'every 6 hours', 12: 'every 12 hours', 24: 'daily', 48: 'every 2 days',
+  168: 'weekly',
+};
+const intervalLabel = (h: number) => INTERVAL_LABEL[h] ?? `every ${h} hours`;
+
+/** Ranges swept on an interval.
+ *
+ *  An audit run once is a snapshot; the findings only stay true if somebody keeps
+ *  asking. A schedule is made from the subnets chosen in the sweep form above, so
+ *  there is one way to say which ranges and it is the one already in front of the
+ *  operator.
+ *
+ *  The API decides when: a missed tick runs once, late, rather than firing once
+ *  for every interval an outage swallowed, and a due schedule waits for a sweep
+ *  already running rather than stacking a second one on the management network.
+ */
+function Schedules({ chosen, blocked }: { chosen: string[]; blocked: boolean }) {
+  const qc = useQueryClient();
+  const [hours, setHours] = useState(24);
+  const [name, setName] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['discovery-schedules'],
+    queryFn: api.discoverySchedules,
+    refetchInterval: 60_000,
+  });
+  const intervals = data?.intervals ?? [6, 12, 24, 48, 168];
+  const list = data?.items ?? [];
+  // The run history polls fast while a sweep is in flight; the schedule list does
+  // not. Reading a schedule's last run from the history means "last: running"
+  // turns into the result when the run does, not a minute later.
+  const { data: runs } = useDiscoveryRuns();
+  const history = runs?.items ?? [];
+
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: ['discovery-schedules'] });
+    qc.invalidateQueries({ queryKey: ['discovery-runs'] });
+  };
+
+  const create = useMutation({
+    mutationFn: () => api.createDiscoverySchedule({
+      subnets: chosen, interval_hours: hours, name: name.trim() || undefined,
+    }),
+    onSuccess: () => { setError(null); setName(''); refresh(); },
+    onError: (e) => setError(String(e)),
+  });
+
+  return (
+    <section className="asset-panel disc-schedules">
+      <h3>Schedules</h3>
+      <p className="muted disc-rail-sub">
+        Sweeps that run themselves. One that comes due during another sweep waits
+        for it; one missed while the platform was down runs once, late.
+      </p>
+
+      {isLoading ? (
+        <div className="asset-skeleton" style={{ height: 60 }} />
+      ) : list.length > 0 ? (
+        <ul className="disc-sched-list">
+          {list.map((s) => (
+            <ScheduleItem key={s.id} s={s} onChanged={refresh}
+                          lastRun={history.find((r) => r.id === s.last_run_id)} />
+          ))}
+        </ul>
+      ) : (
+        <p className="muted disc-sched-none">
+          Nothing is swept on a schedule, so every finding here is only as fresh as
+          the last time somebody ran one.
+        </p>
+      )}
+
+      <div className="disc-sched-new">
+        <select value={hours} aria-label="How often"
+                onChange={(e) => setHours(Number(e.target.value))}>
+          {intervals.map((h) => <option key={h} value={h}>{intervalLabel(h)}</option>)}
+        </select>
+        <input value={name} onChange={(e) => setName(e.target.value)}
+               placeholder="Name (optional)" aria-label="Schedule name" />
+        <button type="button"
+                disabled={chosen.length === 0 || blocked || create.isPending}
+                title={chosen.length === 0 ? 'Choose subnets in the sweep form first' : undefined}
+                onClick={() => { setError(null); create.mutate(); }}>
+          {create.isPending ? 'Saving…'
+            : chosen.length
+              ? `Schedule ${chosen.length} subnet${chosen.length === 1 ? '' : 's'}`
+              : 'Schedule'}
+        </button>
+      </div>
+      {chosen.length === 0 && (
+        <p className="muted disc-sched-hint">
+          Choose subnets in the sweep form above to schedule them.
+        </p>
+      )}
+      {error && <div className="banner">{error}</div>}
+    </section>
+  );
+}
+
+function ScheduleItem({ s, onChanged, lastRun }: {
+  s: DiscoverySchedule; onChanged: () => void;
+  /** The same run as s.last_run_id, from the fresher history query. */
+  lastRun?: DiscoveryRun;
+}) {
+  const [error, setError] = useState<string | null>(null);
+  // Two clicks, not a browser confirm(): a modal dialog blocks the page, and
+  // deleting a schedule is cheap to undo by making it again.
+  const [confirming, setConfirming] = useState(false);
+  const fail = (e: unknown) => setError(String(e));
+
+  const toggle = useMutation({
+    mutationFn: () => api.updateDiscoverySchedule(s.id, { enabled: !s.enabled }),
+    onSuccess: onChanged, onError: fail,
+  });
+  const runNow = useMutation({
+    mutationFn: () => api.updateDiscoverySchedule(s.id, { run_now: true }),
+    onSuccess: onChanged, onError: fail,
+  });
+  const remove = useMutation({
+    mutationFn: () => api.deleteDiscoverySchedule(s.id),
+    onSuccess: onChanged, onError: fail,
+  });
+
+  const due = Date.parse(s.next_run_at) <= Date.now();
+  const status = lastRun?.status ?? s.last_status;
+  const finished = lastRun?.finished_at ?? s.last_finished_at;
+  const found = lastRun ? lastRun.found : s.last_found;
+  const unknown = lastRun ? lastRun.unknown : s.last_unknown;
+  const gone = lastRun ? lastRun.gone : s.last_gone;
+  const last = status === 'done' && finished
+    ? `${relativeTime(finished)}${found != null ? ` · ${found} answered` : ''}`
+      + (unknown ? ` · ${unknown} new` : '')
+      + (gone ? ` · ${gone} went quiet` : '')
+    : status ?? 'not yet';
+
+  return (
+    <li className={`disc-sched${s.enabled ? '' : ' is-paused'}`}>
+      <div className="top">
+        <span className="title">{s.name || s.subnets.join(', ')}</span>
+        <span className="muted">{intervalLabel(s.interval_hours)}</span>
+      </div>
+      {s.name && <code className="scope">{s.subnets.join(', ')}</code>}
+      <div className="muted">
+        {!s.enabled ? 'paused'
+          : due ? 'due now - starts within a minute'
+            : `next ${untilTime(s.next_run_at)}`}
+        {' · '}last {last}
+      </div>
+      <div className="acts">
+        <button type="button" className="link-button"
+                disabled={runNow.isPending || !s.enabled || due}
+                title={!s.enabled ? 'Resume it first' : undefined}
+                onClick={() => { setError(null); runNow.mutate(); }}>
+          Run now
+        </button>
+        <button type="button" className="link-button" disabled={toggle.isPending}
+                onClick={() => { setError(null); toggle.mutate(); }}>
+          {s.enabled ? 'Pause' : 'Resume'}
+        </button>
+        {confirming ? (
+          <>
+            <button type="button" className="link-button danger"
+                    disabled={remove.isPending}
+                    onClick={() => { setError(null); remove.mutate(); }}>
+              {remove.isPending ? 'Deleting…' : 'Confirm delete'}
+            </button>
+            <button type="button" className="link-button"
+                    onClick={() => setConfirming(false)}>
+              Keep
+            </button>
+          </>
+        ) : (
+          <button type="button" className="link-button"
+                  onClick={() => setConfirming(true)}>
+            Delete
+          </button>
+        )}
+      </div>
+      {error && <div className="banner">{error}</div>}
+    </li>
   );
 }

@@ -1,4 +1,4 @@
-import type { DiscoveryCandidate } from '../../../api/client';
+import type { DiscoveryCandidate, IdentityChange } from '../../../api/client';
 
 /** One physical machine, however many protocols it answered on.
  *
@@ -201,20 +201,65 @@ export function movedFrom(r: Responder): string | null {
     ? null : m.matched_device_address;
 }
 
+/** The fields whose change means the BOX changed - a different chassis at the same
+ *  address. Mirrors the API's HARDWARE_FIELDS; anything else (firmware strings, OS
+ *  images, hostnames) is ordinary drift. */
+export const HARDWARE_FIELDS = new Set(['serial', 'sysObjectID', 'uuid', 'model', 'vendor']);
+
+/** What changed on this machine since the previous sweep, not yet acknowledged.
+ *
+ *  Across every probe, newest reading per (protocol, field): the SNMP and Redfish
+ *  halves of one BMC can both report a firmware change and that is one fact per
+ *  protocol, not a duplicate to hide.
+ */
+export interface MachineChange extends IdentityChange { protocol: string }
+
+export function changesOf(r: Responder): MachineChange[] {
+  const latest = new Map<string, MachineChange>();
+  for (const c of r.members) {
+    for (const ch of c.changes ?? []) {
+      const k = `${c.protocol}:${ch.field}`;
+      const prev = latest.get(k);
+      if (!prev || String(ch.detected_at) > String(prev.detected_at)) {
+        latest.set(k, { ...ch, protocol: c.protocol });
+      }
+    }
+  }
+  // Hardware first: it is the half somebody has to act on.
+  return [...latest.values()].sort((a, b) =>
+    Number(HARDWARE_FIELDS.has(b.field)) - Number(HARDWARE_FIELDS.has(a.field))
+    || a.field.localeCompare(b.field));
+}
+
+/** The probes carrying an unacknowledged change - what Acknowledge targets. */
+export const changedIds = (r: Responder): string[] =>
+  r.members.filter((c) => (c.changes ?? []).length > 0).map((c) => c.id);
+
 /** What the audit concluded about one machine. Exactly one per responder.
  *
  *  One list, classified, instead of four sections fed by two fetches. The old page
  *  fetched every status into its main buckets AND fetched `ignored` again for the
  *  Dismissed section, so a dismissed responder was listed twice.
+ *
+ *  `missing` is never returned here: it is a device nobody heard, so there is no
+ *  responder to classify. It is a Finding so the page can filter and sort it with
+ *  the rest.
  */
-export type Finding = 'new' | 'moved' | 'gone' | 'expected' | 'dismissed' | 'promoted';
+export type Finding =
+  | 'new' | 'moved' | 'replaced' | 'missing' | 'changed'
+  | 'gone' | 'expected' | 'dismissed' | 'promoted';
 
 export function findingOf(r: Responder): Finding {
   // Anything still answering is judged on what it answered with; a machine with
   // one quiet probe and one live one is live (see isGone).
   if (r.members.some((c) => c.status === 'new')) {
+    // Unrecorded outranks everything: a changed serial on a box nobody has a record
+    // of is still, first, a box nobody has a record of.
     if (!isKnown(r)) return 'new';
-    return movedFrom(r) ? 'moved' : 'expected';
+    if (movedFrom(r)) return 'moved';
+    const changes = changesOf(r);
+    if (changes.some((ch) => HARDWARE_FIELDS.has(ch.field))) return 'replaced';
+    return changes.length > 0 ? 'changed' : 'expected';
   }
   if (isGone(r)) return 'gone';
   if (r.members.some((c) => c.status === 'ignored')) return 'dismissed';
@@ -222,8 +267,11 @@ export function findingOf(r: Responder): Finding {
   return 'expected';
 }
 
-/** The findings somebody has to act on. */
-export const needsAction = (f: Finding): boolean => f === 'new' || f === 'moved';
+/** The findings somebody has to act on. Changed is not one: a firmware roll is
+ *  drift to date, not a page to answer. Missing is, except in maintenance - which
+ *  the page decides, because it is a property of the device, not the finding. */
+export const needsAction = (f: Finding): boolean =>
+  f === 'new' || f === 'moved' || f === 'replaced' || f === 'missing';
 
 /** Sort key for an IPv4 address, so .20 sorts before .100.
  *

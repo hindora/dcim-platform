@@ -5,10 +5,21 @@
  *  export is the table, including its current sort, filter and scope.
  */
 
+/** A text cell a spreadsheet would run as a formula.
+ *
+ *  Strings only. A device name, sysDescr or hostname is whatever the device - or
+ *  whoever configured it - chose to report, and a responder calling itself
+ *  `=HYPERLINK(...)` executes when the export is opened in Excel. A leading
+ *  apostrophe makes it text. Numbers are left alone: -3.2 in a thermal export is a
+ *  value, and quoting it would turn every negative delta into text.
+ */
+const FORMULA = /^[=+\-@\t\r]/;
+
 /** RFC 4180 quoting: double the quotes, wrap anything that could break a row. */
 function cell(value: unknown): string {
   if (value === null || value === undefined) return '';
-  const s = String(value);
+  let s = String(value);
+  if (typeof value === 'string' && FORMULA.test(s)) s = `'${s}`;
   return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 

@@ -37,9 +37,12 @@
 /* Gives way before the facet strip does: it grows into whatever the strip leaves
    on the row and only wraps when that is under 180px. A fixed width wrapped it onto
    a line of its own at 1920px. */
+.disc-tools {
+  display: flex; gap: 8px; margin-left: auto;
+  flex: 1 1 220px; min-width: 220px; max-width: 380px;
+}
 .disc-search {
-  margin-left: auto;
-  flex: 1 1 180px; min-width: 180px; max-width: 300px;
+  flex: 1 1 auto; min-width: 0;
   height: 30px; padding: 0 10px;
   background: var(--bg-inset); color: var(--text);
   border: 1px solid var(--border); border-radius: 4px;
@@ -259,3 +262,91 @@
 .disc-run-item .result { grid-column: 1 / -1; color: var(--text-muted); }
 .disc-run-item .result strong { color: var(--warn); }
 .disc-runs .link-button { margin-top: 8px; font-size: 0.78rem; color: var(--accent); }
+
+/* ------------------------------------------------- missing, replaced, changed */
+
+/* Replaced and missing want somebody, so they take the warning rule. Changed is
+   drift - a firmware roll - and is marked, not raised. A missing device in
+   maintenance is expected to be quiet: listed, and set back like history. */
+.disc-table tbody tr.f-replaced > td:first-child,
+.disc-table tbody tr.f-missing > td:first-child { box-shadow: inset 2px 0 0 var(--warn); }
+.disc-table tbody tr.f-missing.is-maint > td:first-child,
+.disc-table tbody tr.f-changed > td:first-child { box-shadow: inset 2px 0 0 var(--border-strong); }
+.disc-table tr.f-replaced .finding .label,
+.disc-table tr.f-missing .finding .label { color: var(--warn); font-weight: 600; }
+.disc-table tr.f-missing.is-maint .finding .label { color: var(--text-muted); font-weight: 400; }
+.disc-table tr.f-missing.is-maint > td:not(.act) { color: var(--text-muted); }
+
+/* A missing row has no evidence to expand, so its address sits where the
+   expander's text would: past the chevron's 16px. */
+.disc-ip {
+  display: inline-block; padding-left: 16px;
+  font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+
+.disc-chg { margin-top: 3px; font-size: 0.74rem; color: var(--text-muted); }
+.disc-chg .link-button { margin-top: 2px; font-size: 0.74rem; color: var(--accent); }
+/* The finding cell carries a diagnosis line now; capped so it wraps inside the
+   column instead of widening the table past the findings column. */
+.disc-table td.finding { max-width: 180px; }
+.disc-subnet {
+  padding-left: 16px; margin-top: 4px;
+  font-size: 0.72rem; color: var(--text-faint); white-space: nowrap;
+}
+.disc-chg .hw { color: var(--warn); }
+.disc-chg code { font-size: 0.72rem; }
+
+.disc-changes { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); }
+.disc-changes h4 {
+  margin: 0 0 4px; font-size: 0.7rem; font-weight: 600; color: var(--text-faint);
+  text-transform: uppercase; letter-spacing: .06em;
+}
+.disc-changes dt.hw { color: var(--warn); }
+.disc-changes code.was { color: var(--text-muted); text-decoration: line-through; }
+
+.disc-export { flex: 0 0 auto; height: 30px; white-space: nowrap; }
+
+/* ---------------------------------------------------------------- run delta */
+
+/* Its own line: it sits inside the result span, so a grid placement never
+   reached it and it ran on from "27 expected" mid-sentence. */
+.disc-run-item .disc-delta {
+  display: block; font-size: 0.74rem; color: var(--text-faint);
+}
+.disc-sched-tag {
+  margin-left: 6px; padding: 0 4px; border-radius: 3px;
+  border: 1px solid var(--border-strong);
+  font-size: 0.64rem; color: var(--text-muted); letter-spacing: .04em;
+}
+
+/* ---------------------------------------------------------------- schedules */
+
+.disc-sched-list { list-style: none; margin: 0 0 12px; padding: 0; }
+.disc-sched { padding: 8px 0 8px 8px; font-size: 0.78rem; box-shadow: inset 2px 0 0 var(--accent); }
+.disc-sched + .disc-sched { margin-top: 6px; }
+/* Paused reads as paused without a colour: the rule drops and the ink fades. */
+.disc-sched.is-paused { box-shadow: inset 2px 0 0 var(--border-strong); color: var(--text-muted); }
+.disc-sched .top { display: flex; justify-content: space-between; gap: 8px; }
+.disc-sched .title {
+  font-weight: 600; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.disc-sched .top .muted { flex: 0 0 auto; }
+.disc-sched .scope {
+  display: block; font-size: 0.74rem; color: var(--text-muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.disc-sched .acts { display: flex; gap: 12px; margin-top: 4px; }
+.disc-sched .acts .link-button { font-size: 0.76rem; color: var(--accent); }
+.disc-sched .acts .link-button:disabled { color: var(--text-faint); cursor: default; }
+.disc-sched .acts .link-button.danger { color: var(--critical); }
+.disc-sched-none { margin: 0 0 12px; font-size: 0.78rem; }
+
+.disc-sched-new { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px; }
+.disc-sched-new select, .disc-sched-new input {
+  height: 30px; padding: 0 8px; min-width: 0;
+  background: var(--bg-inset); color: var(--text);
+  border: 1px solid var(--border); border-radius: 4px; font: inherit; font-size: 0.78rem;
+}
+.disc-sched-new button { grid-column: 1 / -1; height: 30px; }
+.disc-sched-hint { margin: 6px 0 0; font-size: 0.74rem; }

@@ -287,9 +287,69 @@ export interface DiscoveryRun {
   /** Matched to a device, at an address that device is not recorded at. */
   moved?: number | null;
   with_serial?: number | null;
+  /** The delta against the previous sweep of the same addresses: answering for
+   *  the first time (or again after going quiet), quiet this time, and saying
+   *  something different about itself. Null on runs from before 0080. */
+  appeared?: number | null;
+  gone?: number | null;
+  changed?: number | null;
+  /** Who asked. Survives the schedule being deleted, where schedule_id does not. */
+  trigger?: 'manual' | 'schedule' | null;
+  /** Set when a schedule queued the run rather than a person; nulled if that
+   *  schedule is later deleted. */
+  schedule_id?: string | null;
+  schedule_name?: string | null;
   started_at?: string | null;
   finished_at?: string | null;
   error?: string | null;
+}
+
+/** One thing a responder said differently from the previous sweep, not yet
+ *  acknowledged. `serial`/`sysObjectID`/`model`/`vendor`/`uuid` are hardware; the
+ *  rest are firmware strings and names. */
+export interface IdentityChange {
+  id: string;
+  field: string;
+  old?: string | null;
+  new?: string | null;
+  detected_at: string;
+}
+
+/** A device on record that a sweep of its address did not hear from. */
+export interface MissingDevice {
+  device_id: string;
+  name: string;
+  device_type: string;
+  lifecycle: string;
+  /** The serial on the RECORD - the sweep heard nothing to compare it with. */
+  serial?: string | null;
+  address: string;
+  run_id: string;
+  swept_at: string;
+  subnet: string;
+  /** Any of its polled endpoints ONLINE. True here means the sweep, not the box,
+   *  is what failed. Null when it has no polled endpoint. */
+  any_online?: boolean | null;
+  polling_state?: string | null;
+  rack_name?: string | null;
+  room_name?: string | null;
+}
+
+export interface DiscoverySchedule {
+  id: string;
+  name?: string | null;
+  subnets: string[];
+  interval_hours: number;
+  enabled: boolean;
+  next_run_at: string;
+  last_run_id?: string | null;
+  created_by?: string | null;
+  last_status?: string | null;
+  last_finished_at?: string | null;
+  last_found?: number | null;
+  last_unknown?: number | null;
+  last_moved?: number | null;
+  last_gone?: number | null;
 }
 
 export interface DiscoveryCandidate {
@@ -317,6 +377,8 @@ export interface DiscoveryCandidate {
   status: string;
   first_seen: string;
   last_seen: string;
+  /** Unacknowledged differences from the previous sweep, oldest first. */
+  changes?: IdentityChange[];
 }
 
 export interface LifecycleEvent {
@@ -3005,6 +3067,37 @@ export const api = {
     request<{ device_id: string; name: string }>(
       `/discovery/candidates/${id}/promote`,
       { method: 'POST', body: JSON.stringify(body) }),
+
+  /** Inventory a sweep of its address did not hear from. */
+  discoveryMissing: () =>
+    request<{ items: MissingDevice[]; total: number }>('/discovery/missing'),
+
+  /** Accept that what changed about these responders was expected. Audited. */
+  acknowledgeChanges: (ids: string[]) =>
+    request<{ acknowledged: number }>('/discovery/candidates/acknowledge', {
+      method: 'POST', body: JSON.stringify({ candidate_ids: ids }),
+    }),
+
+  discoverySchedules: () =>
+    request<{ items: DiscoverySchedule[]; intervals: number[] }>('/discovery/schedules'),
+
+  createDiscoverySchedule: (body: {
+    name?: string; subnets: string[]; interval_hours: number;
+  }) =>
+    request<DiscoverySchedule>('/discovery/schedules', {
+      method: 'POST', body: JSON.stringify(body),
+    }),
+
+  updateDiscoverySchedule: (id: string, body: {
+    name?: string; subnets?: string[]; interval_hours?: number;
+    enabled?: boolean; run_now?: boolean;
+  }) =>
+    request<DiscoverySchedule>(`/discovery/schedules/${id}`, {
+      method: 'PATCH', body: JSON.stringify(body),
+    }),
+
+  deleteDiscoverySchedule: (id: string) =>
+    request<unknown>(`/discovery/schedules/${id}`, { method: 'DELETE' }),
 
   ignoreCandidate: (id: string) =>
     request<unknown>(`/discovery/candidates/${id}/ignore`, { method: 'POST' }),

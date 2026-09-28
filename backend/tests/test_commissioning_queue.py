@@ -656,7 +656,10 @@ def test_the_bulk_selection_only_offers_actionable_rows():
     # where the action is to look at one rather than act on forty.
     # Only unrecorded machines with a probe still open - the others are devices that
     # exist, where the action is to look at one rather than act on forty.
-    assert "row.f === 'new' && row.r.members.some((c) => c.status === 'new')" in QUEUE_UI
+    assert "(x.f === 'new' && x.r.members.some((c) => c.status === 'new'))" in QUEUE_UI
+    assert "paged.rows.filter(selectableRow)" in QUEUE_UI
+    # A missing device is fixed on the wire or on its record, not from here.
+    assert "if (x.kind !== 'responder') return false;" in QUEUE_UI
 
 
 def test_the_page_opens_on_findings_not_on_the_form():
@@ -670,7 +673,7 @@ def test_the_page_opens_on_findings_not_on_the_form():
     for caption in ("Needs action", "Responders", "With serial", "Last sweep"):
         assert f"caption: '{caption}'" in QUEUE_UI, caption
     # Findings before the rail, in source order and therefore in the narrow layout.
-    assert QUEUE_UI.index("<ResponderTable") < QUEUE_UI.index("<SweepPanel")
+    assert QUEUE_UI.index("<FindingTable") < QUEUE_UI.index("<SweepPanel")
 
 
 def test_a_subnet_says_when_it_was_last_audited_and_how_much_of_it():
@@ -725,7 +728,10 @@ def test_nothing_is_claimed_before_the_data_arrives():
     "No management addresses in inventory yet" - the all-clear and an estate-wide
     statement, both on no evidence, for as long as the fetch took."""
     assert "value: pending ? null : counts.action" in QUEUE_UI
-    assert "counts={isLoading ? null : counts}" in QUEUE_UI
+    assert "counts={loading ? null : counts}" in QUEUE_UI
+    # Both fetches: "Missing 0" before the missing check has answered is the same
+    # unearned all-clear.
+    assert "const loading = isLoading || missingLoading;" in QUEUE_UI
     assert "subnetsLoading ?" in SWEEP_UI
 
 
