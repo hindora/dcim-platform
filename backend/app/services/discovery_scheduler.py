@@ -16,6 +16,7 @@ import contextlib
 from app.core.logging import get_logger
 from app.db.session import unit_of_work
 from app.services import discovery as service
+from app.services import discovery_alarms
 
 log = get_logger("discovery.scheduler")
 
@@ -46,5 +47,14 @@ async def run_forever(stop: asyncio.Event) -> None:
                 log.info("schedule fired", run_id=fired["run"]["id"])
         except Exception as exc:  # the loop must outlive one bad tick
             log.warning("scheduler tick failed", error=str(exc))
+        # Its own transaction: a failure raising alarms must not roll back a
+        # schedule that just fired. Every tick, so a finding resolved on the
+        # page (promoted, dismissed, acknowledged) clears its alarm within a
+        # minute.
+        try:
+            async with unit_of_work() as session:
+                await discovery_alarms.reconcile_and_enqueue(session)
+        except Exception as exc:
+            log.warning("discovery alarm reconcile failed", error=str(exc))
         with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(stop.wait(), timeout=TICK_S)

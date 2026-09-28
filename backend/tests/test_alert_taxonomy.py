@@ -285,6 +285,9 @@ NON_TRAP_ALARM_TYPES = frozenset({
     "collector_degraded", "collector_stale", "assignment_stale",
     "ingest_lag_high", "ingest_stalled", "ingest_worker_stale",
     "db_pool_exhausted",
+    # raised by discovery when what answers disagrees with inventory
+    # (services/discovery_alarms.py)
+    "discovery_unrecorded", "discovery_missing", "discovery_replaced",
     # threshold rules over polled telemetry
     "cpu_high", "cpu_saturated", "server_cpu_saturated", "cpu_temp_high",
     "memory_high", "disk_high", "if_errors_high", "if_discards_high",

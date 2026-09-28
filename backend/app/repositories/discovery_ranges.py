@@ -180,3 +180,56 @@ async def datacenters(session: AsyncSession) -> list[dict[str, Any]]:
     rows = (await session.execute(text(
         "SELECT id::text, name, timezone FROM datacenter ORDER BY name"))).mappings().all()
     return [dict(r) for r in rows]
+
+
+# ---------------------------------------------------------------- blackouts
+
+async def list_blackouts(session: AsyncSession) -> list[dict[str, Any]]:
+    """Current and future change freezes, soonest first. Past ones drop off: a
+    freeze that is over no longer changes what a sweep may do."""
+    rows = (await session.execute(text("""
+        SELECT b.id::text, b.name, b.starts_at, b.ends_at,
+               b.datacenter_id::text AS datacenter_id, dc.name AS datacenter_name,
+               b.reason, b.created_by, b.created_at,
+               (b.starts_at <= now() AND now() < b.ends_at) AS active
+          FROM discovery_blackout b
+          LEFT JOIN datacenter dc ON dc.id = b.datacenter_id
+         WHERE b.ends_at > now()
+         ORDER BY b.starts_at
+    """))).mappings().all()
+    return [dict(r) for r in rows]
+
+
+async def active_blackouts(session: AsyncSession) -> list[dict[str, Any]]:
+    return [b for b in await list_blackouts(session) if b["active"]]
+
+
+async def create_blackout(session: AsyncSession, values: dict[str, Any],
+                          actor: str | None) -> dict[str, Any]:
+    bid = (await session.execute(text("""
+        INSERT INTO discovery_blackout (name, starts_at, ends_at, datacenter_id,
+                                        reason, created_by)
+        VALUES (:name, CAST(CAST(:starts_at AS text) AS timestamptz),
+                CAST(CAST(:ends_at AS text) AS timestamptz),
+                CAST(:datacenter_id AS uuid), :reason, :actor)
+        RETURNING id::text
+    """), {**values, "actor": actor})).scalar_one()
+    return next(b for b in await list_blackouts(session) if b["id"] == bid)
+
+
+async def end_blackout(session: AsyncSession, blackout_id: str) -> bool:
+    """End a freeze now. A future one simply starts and ends now, i.e. never."""
+    return bool((await session.execute(text("""
+        UPDATE discovery_blackout
+           SET ends_at = GREATEST(now(), starts_at + interval '1 second'),
+               starts_at = LEAST(starts_at, now())
+         WHERE id = CAST(:id AS uuid) AND ends_at > now()
+        RETURNING id
+    """), {"id": blackout_id})).first())
+
+
+async def delete_blackout(session: AsyncSession, blackout_id: str) -> bool:
+    return bool((await session.execute(text("""
+        DELETE FROM discovery_blackout WHERE id = CAST(:id AS uuid) RETURNING id
+    """), {"id": blackout_id})).first())
+

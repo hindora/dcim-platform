@@ -181,6 +181,28 @@ async def claim_pending(session: AsyncSession, collector_id: str | None = None,
     return dict(row) if row else None
 
 
+async def record_skipped_run(session: AsyncSession, *, scope: dict[str, Any],
+                             schedule_id: str | None, schedule_label: str | None,
+                             collector_id: str | None, range_ids: list[str],
+                             reason: str) -> str:
+    """A scheduled sweep that did not happen, and why, as a run in the history.
+
+    Recorded rather than silently skipped: "the 02:00 sweep did nothing because
+    of the Q4 freeze" is exactly what somebody reading the history the next
+    morning needs to see.
+    """
+    return (await session.execute(text("""
+        INSERT INTO discovery_run (method, scope, status, schedule_id, trigger,
+                                   schedule_label, collector_id, range_ids,
+                                   finished_at, error)
+        VALUES ('sweep', CAST(:scope AS jsonb), 'skipped', CAST(:schedule AS uuid),
+                'schedule', :label, :collector, CAST(:ranges AS uuid[]), now(), :reason)
+        RETURNING id::text
+    """), {"scope": json.dumps(scope), "schedule": schedule_id, "label": schedule_label,
+           "collector": collector_id, "ranges": range_ids,
+           "reason": reason})).scalar_one()
+
+
 async def lock_run_status(session: AsyncSession, run_id: str) -> str | None:
     """The run's status, with its row locked until the transaction ends.
 

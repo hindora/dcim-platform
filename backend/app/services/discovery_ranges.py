@@ -192,12 +192,27 @@ def _pack(items: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
     return runs
 
 
+def frozen_by(blackouts: list[dict[str, Any]], datacenter_id: str | None
+              ) -> dict[str, Any] | None:
+    """The active freeze that covers a range at this site, if any. An
+    estate-wide one covers everything, including a one-off subnet with no site."""
+    for b in blackouts:
+        if b["datacenter_id"] is None or (datacenter_id and b["datacenter_id"] == datacenter_id):
+            return b
+    return None
+
+
+def _until(b: dict[str, Any]) -> str:
+    return f"{b['name']} until {b['ends_at']:%Y-%m-%d %H:%M} UTC"
+
+
 async def queue(session: AsyncSession, *, method: str = "sweep",
                 range_ids: list[str] | None = None,
                 subnets: list[str] | None = None,
                 collector_id: str | None = None,
                 schedule_id: str | None = None,
-                schedule_label: str | None = None) -> list[dict[str, Any]]:
+                schedule_label: str | None = None,
+                override_blackout: bool = False) -> list[dict[str, Any]]:
     """Queue sweeps of saved ranges and/or one-off subnets. Returns the runs.
 
     One run per collector that has to do the work, because the collector is what
@@ -233,6 +248,17 @@ async def queue(session: AsyncSession, *, method: str = "sweep",
     items = [{**r, "probes": probe_count(ipaddress.ip_network(r["cidr"]),
                                          list(r["exclusions"] or []))}
              for r in chosen] + adhoc
+
+    # A change freeze refuses a hand-run sweep unless the operator says, in so
+    # many words, to go ahead - which the API audits.
+    if not override_blackout:
+        active = await repo.active_blackouts(session)
+        frozen = [(it, frozen_by(active, it.get("datacenter_id"))) for it in items]
+        frozen = [(it, b) for it, b in frozen if b]
+        if frozen:
+            names = ", ".join(it.get("name") or it["cidr"] for it, _ in frozen)
+            raise DiscoveryError(f"change freeze: {names} - {_until(frozen[0][1])}. "
+                                 f"Sweep anyway to override")
 
     groups: dict[str | None, list[dict[str, Any]]] = {}
     for it in items:
@@ -288,6 +314,41 @@ async def list_ranges(session: AsyncSession) -> list[dict[str, Any]]:
     for r in rows:
         r["audit"] = audit_state(r, now_s)
     return rows
+
+
+def _parse_when(raw: Any, label: str):
+    from datetime import datetime
+    try:
+        dt = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        raise DiscoveryError(f"{label} is not a date and time") from None
+    if dt.tzinfo is None:
+        raise DiscoveryError(f"{label} needs a timezone")
+    return dt
+
+
+async def create_blackout(session: AsyncSession, payload: dict[str, Any],
+                          actor: str | None) -> dict[str, Any]:
+    from datetime import UTC, datetime
+    name = str(payload.get("name") or "").strip()
+    if not name:
+        raise DiscoveryError("a change freeze needs a name")
+    starts = _parse_when(payload.get("starts_at"), "start")
+    ends = _parse_when(payload.get("ends_at"), "end")
+    if ends <= starts:
+        raise DiscoveryError("the freeze must end after it starts")
+    if ends <= datetime.now(UTC):
+        raise DiscoveryError("that window is already over")
+    site = payload.get("datacenter_id") or None
+    if site and site not in {d["id"] for d in await repo.datacenters(session)}:
+        raise DiscoveryError("no such site")
+    row = await repo.create_blackout(session, {
+        "name": name, "starts_at": starts.isoformat(), "ends_at": ends.isoformat(),
+        "datacenter_id": site, "reason": (payload.get("reason") or "").strip() or None,
+    }, actor)
+    log.info("discovery blackout created", name=name, site=site,
+             starts=starts.isoformat(), ends=ends.isoformat())
+    return row
 
 
 async def options(session: AsyncSession) -> dict[str, Any]:

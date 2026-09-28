@@ -255,6 +255,15 @@ async def discovery_results(run_id: str, body: DiscoveryResults,
         return {"status": "failed"}
     result = await disc_service.record_results(
         session, run_id, [r.model_dump() for r in body.responders])
+    # Straight away rather than on the next scheduler tick, so a 02:00 finding
+    # is an alarm (and, by policy, a ticket) when the sweep lands. In a
+    # savepoint: a failure here must not lose the results.
+    try:
+        async with session.begin_nested():
+            from app.services import discovery_alarms
+            await discovery_alarms.reconcile_and_enqueue(session)
+    except Exception as exc:
+        log.warning("discovery alarm reconcile failed", run_id=run_id, error=str(exc))
     await session.commit()
     return result
 

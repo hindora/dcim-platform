@@ -165,6 +165,8 @@ DETECTION_BY_SOURCE: dict[str, str] = {
     "modbus": STATE,
     "analytics": DERIVED,
     "forecast": FORECAST,
+    # A sweep compared what answered with what is recorded.
+    "discovery": DERIVED,
 }
 
 #: Conditions that are a MEASUREMENT CROSSING A LIMIT, whoever noticed them.
@@ -298,6 +300,11 @@ def response_sql_case(severity_col: str = "a.severity::text",
 BY_ALARM_TYPE: dict[str, str] = {
     # --- visibility: we lost sight of it, which is not the same as it failing
     "endpoint_unreachable": VISIBILITY,
+    # Discovery: what inventory says is there disagrees with what answers. A
+    # question of whether we can see the estate as it is.
+    "discovery_unrecorded": VISIBILITY,
+    "discovery_missing": VISIBILITY,
+    "discovery_replaced": VISIBILITY,
     "telemetry_stale": VISIBILITY,
     "datapoint_missing": VISIBILITY,
     "collector_stale": VISIBILITY,

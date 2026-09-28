@@ -97,8 +97,14 @@ def _queue(monkeypatch, ranges, **kw):
         made.append(run)
         return {"id": f"run-{len(made)}", **run}
 
+    freezes = list(kw.pop("_blackouts", []))
+
+    async def active_blackouts(_s):
+        return freezes
+
     monkeypatch.setattr(dr.repo, "get_ranges", get_ranges)
     monkeypatch.setattr(dr.run_repo, "create_run", create_run)
+    monkeypatch.setattr(dr.repo, "active_blackouts", active_blackouts)
     runs = asyncio.run(dr.queue(None, **kw))
     return runs, made
 
@@ -309,3 +315,70 @@ def test_a_stuck_sweep_fails_rather_than_cancels():
     assert "FOR UPDATE OF r SKIP LOCKED" in _body(REPO, "unfinished_runs")
     sched = (APP / "services" / "discovery_scheduler.py").read_text(encoding="utf-8")
     assert sched.index("expire_stuck_runs") < sched.index("fire_due_schedule")
+
+
+# ------------------------------------------------------------- change freezes
+
+def _freeze(site=None):
+    from datetime import UTC, datetime
+    return {"id": "b1", "name": "Q4 freeze", "datacenter_id": site,
+            "ends_at": datetime(2027, 1, 5, tzinfo=UTC), "active": True}
+
+
+def test_a_freeze_refuses_a_hand_run_sweep_unless_overridden(monkeypatch):
+    r = {**_range(1, "10.51.11.0/24"), "datacenter_id": "dc1"}
+    with pytest.raises(dr.DiscoveryError, match="change freeze"):
+        _queue(monkeypatch, [r], range_ids=[r["id"]], _blackouts=[_freeze("dc1")])
+    _, made = _queue(monkeypatch, [r], range_ids=[r["id"]],
+                     _blackouts=[_freeze("dc1")], override_blackout=True)
+    assert len(made) == 1
+
+
+def test_a_site_freeze_leaves_other_sites_alone(monkeypatch):
+    r = {**_range(1, "10.52.11.0/24"), "datacenter_id": "dc2"}
+    _, made = _queue(monkeypatch, [r], range_ids=[r["id"]], _blackouts=[_freeze("dc1")])
+    assert len(made) == 1
+
+
+def test_an_estate_freeze_covers_a_one_off_subnet_too():
+    assert dr.frozen_by([_freeze(None)], None)
+    assert dr.frozen_by([_freeze("dc1")], None) is None, "a site freeze needs a site"
+
+
+def test_a_frozen_schedule_records_why_it_did_not_sweep():
+    fire = _body(SVC, "fire_due_schedule")
+    assert "record_skipped_run" in fire
+    assert "override_blackout=True" in fire, "what is left after the freeze still sweeps"
+    assert "'skipped'" in _body(REPO, "record_skipped_run")
+
+
+# ---------------------------------------------------------------- alarms
+
+ALARMS = (APP / "services" / "discovery_alarms.py").read_text(encoding="utf-8")
+
+
+def test_findings_are_alarms_with_a_lifecycle():
+    """Raised while the finding is open, cleared when it is resolved - nothing
+    needs clearing by hand."""
+    body = _body(ALARMS, "reconcile")
+    assert "not in keys" in body and "'CLEARED'" in body
+    assert "WHERE source = :source" in body, "only its own alarms are cleared"
+
+
+def test_maintenance_and_firmware_drift_stay_quiet():
+    body = _body(ALARMS, "desired")
+    assert 'm["lifecycle"] == "maintenance"' in body
+    assert "HARDWARE_FIELDS" in body
+
+
+def test_the_platform_monitor_no_longer_clears_what_it_did_not_raise():
+    """It cleared every open alarm with no device that was not in its findings -
+    which included every discovery alarm about an unrecorded box."""
+    alarms = (APP / "repositories" / "alarms.py").read_text(encoding="utf-8")
+    assert alarms.count("AND source = 'platform'") == 2
+
+
+def test_alarms_reach_the_ticketing_outbox():
+    assert "outbox.enqueue_actions(session, actions)" in ALARMS
+    col = (APP / "api" / "v1" / "collector.py").read_text(encoding="utf-8")
+    assert "reconcile_and_enqueue" in col and "begin_nested" in col

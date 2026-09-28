@@ -714,12 +714,35 @@ async def fire_due_schedule(session: AsyncSession) -> dict[str, Any] | None:
             log.warning("scheduled sweep skipped: no enabled ranges",
                         schedule=sched["name"])
             continue
+        # A change freeze skips the ranges it covers - recorded as a skipped
+        # run so the history says why - and the rest of the schedule sweeps.
+        blackouts = await ranges_repo.active_blackouts(session)
+        frozen = [(r, discovery_ranges.frozen_by(blackouts, r.get("datacenter_id")))
+                  for r in live]
+        blocked = [(r, b) for r, b in frozen if b]
+        live = [r for r, b in frozen if not b]
+        skipped_id = None
+        if blocked:
+            b = blocked[0][1]
+            skipped_id = await repo.record_skipped_run(
+                session, scope={"subnets": [r["cidr"] for r, _ in blocked]},
+                schedule_id=sched["id"], schedule_label=sched["name"],
+                collector_id=blocked[0][0].get("collector_id"),
+                range_ids=[r["id"] for r, _ in blocked],
+                reason=f"skipped: change freeze {b['name']} until "
+                       f"{b['ends_at']:%Y-%m-%d %H:%M} UTC")
+            log.info("scheduled sweep skipped for a change freeze",
+                     schedule=sched["name"], ranges=len(blocked), freeze=b["name"])
+        if not live:
+            await repo.advance_schedule(session, sched["id"], skipped_id,
+                                        schedule_time.next_after(sched, datetime.now(UTC)))
+            continue
         lanes = sorted({r["collector_id"] for r in live}, key=lambda c: c or "")
         if await repo.run_in_flight(session, lanes):
             continue
         runs = await discovery_ranges.queue(
             session, range_ids=[r["id"] for r in live], schedule_id=sched["id"],
-            schedule_label=sched["name"])
+            schedule_label=sched["name"], override_blackout=True)
         await repo.advance_schedule(session, sched["id"], runs[0]["id"],
                                     schedule_time.next_after(sched, datetime.now(UTC)))
         log.info("scheduled sweep queued", schedule=sched["name"],

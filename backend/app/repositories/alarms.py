@@ -753,6 +753,10 @@ async def open_platform_alarms(session: AsyncSession) -> list[dict[str, Any]]:
                acknowledged_at
           FROM alarm
          WHERE device_id IS NULL AND state <> 'CLEARED'
+           -- Its own alarms only. The monitor clears whatever is open and not in
+           -- its findings; without this it cleared every discovery alarm about
+           -- an unrecorded box, which has no device either, on its next cycle.
+           AND source = 'platform'
          ORDER BY last_seen DESC
     """))).mappings().all()
     return [dict(r) for r in rows]
@@ -776,6 +780,7 @@ async def clear_platform_alarms(session: AsyncSession, *,
     rows = (await session.execute(text("""
         UPDATE alarm SET state = 'CLEARED', cleared_at = :at, cleared_by = :by
          WHERE device_id IS NULL
+           AND source = 'platform'
            AND state <> 'CLEARED'
            AND (alarm_type, instance) IN (
                  SELECT t.a, t.b

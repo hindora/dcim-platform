@@ -31,6 +31,18 @@ class RunRequest(BaseModel):
     subnets: list[str] = Field(default_factory=list, max_length=64,
                                examples=[["10.51.0.0/24"]])
     collector_id: str | None = None
+    #: Sweep inside a change freeze anyway. Audited.
+    override_blackout: bool = False
+
+
+class BlackoutRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    #: ISO 8601 with a zone, e.g. 2026-12-15T00:00:00+05:30.
+    starts_at: str
+    ends_at: str
+    #: NULL: every site.
+    datacenter_id: str | None = None
+    reason: str | None = Field(default=None, max_length=2000)
 
 
 class RangeRequest(BaseModel):
@@ -131,7 +143,8 @@ async def create_run(req: RunRequest,
     try:
         runs = await discovery_ranges.queue(
             session, method=req.method, range_ids=req.range_ids,
-            subnets=req.subnets, collector_id=req.collector_id)
+            subnets=req.subnets, collector_id=req.collector_id,
+            override_blackout=req.override_blackout)
         ip, agent = audit.client_of(request)
         # A discovery sweep is active traffic on the management network, sent
         # to addresses nobody has claimed yet. Who asked for it, over which
@@ -141,7 +154,8 @@ async def create_run(req: RunRequest,
                                action="discovery.run", target_type="discovery_run",
                                target_id=str(run.get("id")), ip=ip, user_agent=agent,
                                after={"method": req.method, "scope": run.get("scope"),
-                                      "collector_id": run.get("collector_id")})
+                                      "collector_id": run.get("collector_id"),
+                                      "override_blackout": req.override_blackout})
         await session.commit()
         # The first run's fields at the top level, for callers that queued one
         # subnet and read one run back; `runs` is the whole answer.
@@ -194,6 +208,61 @@ async def suggest_subnets(
 async def list_ranges(session: AsyncSession = Depends(get_session),
                       _: Principal = Depends(current_principal)) -> dict[str, Any]:
     return {"items": await discovery_ranges.list_ranges(session)}
+
+
+@router.get("/blackouts", summary="Change freezes that stop discovery sweeps")
+async def list_blackouts(session: AsyncSession = Depends(get_session),
+                         _: Principal = Depends(current_principal)) -> dict[str, Any]:
+    return {"items": await ranges_repo.list_blackouts(session)}
+
+
+@router.post("/blackouts", status_code=status.HTTP_201_CREATED,
+             summary="Freeze discovery sweeps for a window")
+async def create_blackout(body: BlackoutRequest, request: Request,
+                          session: AsyncSession = Depends(get_session),
+                          principal: Principal = Depends(require_role("operator")),
+                          ) -> dict[str, Any]:
+    actor = audit.actor_of(principal)
+    try:
+        row = await discovery_ranges.create_blackout(session, body.model_dump(), actor)
+    except service.DiscoveryError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from None
+    ip, agent = audit.client_of(request)
+    await audit.record(session, actor=actor, action="discovery.blackout.create",
+                       target_type="discovery_blackout", target_id=row["id"],
+                       ip=ip, user_agent=agent, after=body.model_dump())
+    await session.commit()
+    return row
+
+
+@router.post("/blackouts/{blackout_id}/end", summary="End a change freeze now")
+async def end_blackout(blackout_id: str, request: Request,
+                       session: AsyncSession = Depends(get_session),
+                       principal: Principal = Depends(require_role("operator")),
+                       ) -> dict[str, Any]:
+    if not await ranges_repo.end_blackout(session, blackout_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "no such freeze, or it is over")
+    ip, agent = audit.client_of(request)
+    await audit.record(session, actor=audit.actor_of(principal),
+                       action="discovery.blackout.end", target_type="discovery_blackout",
+                       target_id=blackout_id, ip=ip, user_agent=agent)
+    await session.commit()
+    return {"id": blackout_id, "ended": True}
+
+
+@router.delete("/blackouts/{blackout_id}", status_code=status.HTTP_204_NO_CONTENT,
+               summary="Delete a change freeze")
+async def delete_blackout(blackout_id: str, request: Request,
+                          session: AsyncSession = Depends(get_session),
+                          principal: Principal = Depends(require_role("operator")),
+                          ) -> None:
+    if not await ranges_repo.delete_blackout(session, blackout_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "no such freeze")
+    ip, agent = audit.client_of(request)
+    await audit.record(session, actor=audit.actor_of(principal),
+                       action="discovery.blackout.delete", target_type="discovery_blackout",
+                       target_id=blackout_id, ip=ip, user_agent=agent)
+    await session.commit()
 
 
 @router.get("/range-options", summary="What a range can be assigned to")
