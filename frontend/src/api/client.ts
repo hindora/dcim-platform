@@ -403,6 +403,19 @@ export interface DiscoveryRange {
   audit?: 'ok' | 'overdue' | 'never' | 'unscheduled' | 'off';
 }
 
+/** A change freeze: no discovery sweeps in this window, estate-wide or one site. */
+export interface DiscoveryBlackout {
+  id: string;
+  name: string;
+  starts_at: string;
+  ends_at: string;
+  /** Null: every site. */
+  datacenter_id?: string | null;
+  datacenter_name?: string | null;
+  reason?: string | null;
+  active: boolean;
+}
+
 export interface RangeOptions {
   datacenters: { id: string; name: string; timezone?: string | null }[];
   collectors: { id: string; hostname?: string | null; age_s?: number | null;
@@ -2704,6 +2717,8 @@ export interface IntegrationPolicy {
   categories: string[];
   exclude_symptoms: boolean;
   exclude_shelved: boolean;
+  /** Conditions ticketed whatever their class, severity or domain. */
+  alarm_types?: string[];
   dwell_s: number;
 }
 
@@ -3127,6 +3142,8 @@ export const api = {
    *  that has to do the work, each no wider than a collector will sweep. */
   startDiscoveryRun: (body: {
     range_ids?: string[]; subnets?: string[]; collector_id?: string;
+    /** Sweep inside a change freeze anyway. Audited. */
+    override_blackout?: boolean;
   }) =>
     request<DiscoveryRun & { runs: DiscoveryRun[] }>('/discovery/runs', {
       method: 'POST', body: JSON.stringify({ method: 'sweep', ...body }),
@@ -3139,6 +3156,23 @@ export const api = {
       `/discovery/runs/${id}/cancel`, { method: 'POST' }),
 
   discoveryRanges: () => request<{ items: DiscoveryRange[] }>('/discovery/ranges'),
+
+  discoveryBlackouts: () =>
+    request<{ items: DiscoveryBlackout[] }>('/discovery/blackouts'),
+
+  createDiscoveryBlackout: (body: {
+    name: string; starts_at: string; ends_at: string;
+    datacenter_id?: string | null; reason?: string | null;
+  }) =>
+    request<DiscoveryBlackout>('/discovery/blackouts', {
+      method: 'POST', body: JSON.stringify(body),
+    }),
+
+  endDiscoveryBlackout: (id: string) =>
+    request<unknown>(`/discovery/blackouts/${id}/end`, { method: 'POST' }),
+
+  deleteDiscoveryBlackout: (id: string) =>
+    request<unknown>(`/discovery/blackouts/${id}`, { method: 'DELETE' }),
 
   discoveryRangeOptions: () => request<RangeOptions>('/discovery/range-options'),
 

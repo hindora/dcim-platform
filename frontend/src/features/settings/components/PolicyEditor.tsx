@@ -14,6 +14,15 @@ const CATEGORIES = ['power', 'cooling', 'environmental', 'it_equipment',
 const CLASSES = ['alarm', 'alert'] as const;
 const RANGES = [7, 14, 30, 90] as const;
 
+/** Conditions a service desk routes by KIND rather than urgency. Offered by name
+ *  because each is a MINOR alert the severity floor would otherwise have to be
+ *  lowered - for everything - to reach. */
+const ALWAYS = [
+  { type: 'discovery_unrecorded', label: 'Device not in inventory' },
+  { type: 'discovery_missing', label: 'Device missing from its sweep' },
+  { type: 'discovery_replaced', label: 'Hardware replaced at an address' },
+] as const;
+
 /** The clauses that decide which conditions earn a ticket, and a rehearsal.
  *
  *  The rehearsal is the point. A policy is a promise about somebody else's
@@ -139,6 +148,23 @@ export function PolicyEditor({ integrationId, effective, onChange }: {
             their own; this is theirs.
           </small>
       </label>
+
+      <div className="group" role="group" aria-labelledby="pol-always">
+        <span id="pol-always">Always ticket</span>
+        {ALWAYS.map((a) => {
+          const on = (policy.alarm_types ?? []).includes(a.type);
+          return (
+            <label key={a.type} className="switch">
+              <input type="checkbox" checked={on}
+                     onChange={() => set('alarm_types', on
+                       ? (policy.alarm_types ?? []).filter((t) => t !== a.type)
+                       : [...(policy.alarm_types ?? []), a.type])} />
+              <span>{a.label}</span>
+            </label>
+          );
+        })}
+        <small className="hint">Whatever their severity. Discovery findings.</small>
+      </div>
 
       <label className="switch">
         <input type="checkbox" checked={policy.exclude_symptoms}

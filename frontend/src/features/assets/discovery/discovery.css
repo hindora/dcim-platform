@@ -447,7 +447,9 @@
 }
 .disc-cancel-ask .link-button { font-size: 0.74rem; color: var(--accent); }
 .disc-cancel-ask .link-button.danger { color: var(--critical); }
-.asset-life.is-cancelled { border-style: dashed; color: var(--text-faint); }
+.asset-life.is-cancelled, .asset-life.is-skipped { border-style: dashed; color: var(--text-faint); }
+/* An active freeze reads as one: the rule goes to the warning colour. */
+.disc-freeze.is-active { box-shadow: inset 2px 0 0 var(--warn); }
 .disc-run-item .disc-run-note { grid-column: 1 / -1; font-size: 0.74rem; }
 
 /* Waiting on a collector that is not checking in is stuck, not queued. */

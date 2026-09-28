@@ -7,6 +7,7 @@ import {
   type DiscoverySchedule,
 } from '../../../api/client';
 import { relativeTime, untilTime } from '../../../lib/format';
+import { Freezes, useBlackouts, when } from './Freezes';
 import { RangeDialog } from './RangeDialog';
 import { inZone, ScheduleDialog, timingLabel } from './ScheduleDialog';
 import {
@@ -126,11 +127,16 @@ export function SweepPanel({ activeRun, onPickRun }: {
     qc.invalidateQueries({ queryKey: ['discovery-subnets'] });
   };
 
+  const blackouts = useBlackouts();
+  const frozen = (blackouts.data?.items ?? []).filter((b) => b.active);
   const start = useMutation({
-    mutationFn: () => api.startDiscoveryRun({
+    // `override` only ever comes from the "Sweep anyway" button, after the API
+    // has said which freeze the sweep would break.
+    mutationFn: (override: boolean = false) => api.startDiscoveryRun({
       range_ids: selected.map((r) => r.id),
       subnets: adhoc.map((p) => p.cidr),
       collector_id: extraCollector || undefined,
+      override_blackout: override || undefined,
     }),
     onSuccess: (r) => {
       setError(null);
@@ -174,6 +180,11 @@ export function SweepPanel({ activeRun, onPickRun }: {
             Add range
           </button>
         </div>
+        {frozen.map((b) => (
+          <p key={b.id} className="disc-bad disc-stale">
+            Change freeze{b.datacenter_name ? ` (${b.datacenter_name})` : ''} until {when(b.ends_at)}.
+          </p>
+        ))}
         {inFlight.map((r) => <InFlight key={r.id} run={r} onChanged={refresh} />)}
 
         {/* "No ranges" is a statement about the configuration; made while the list
@@ -290,16 +301,33 @@ export function SweepPanel({ activeRun, onPickRun }: {
 
         <button type="button" className="primary disc-run"
                 disabled={chosenCount === 0 || bad.length > 0 || start.isPending}
-                onClick={() => { setError(null); start.mutate(); }}>
+                onClick={() => { setError(null); start.mutate(false); }}>
           {start.isPending ? 'Queueing…'
             : `Run sweep${chosenCount ? ` · ${chosenCount} range${chosenCount === 1 ? '' : 's'}` : ''}`}
         </button>
 
         {report && <p className="muted disc-estimate">{report}</p>}
-        {error && <div className="banner">{error}</div>}
+        {error && (
+          <div className="banner">
+            {error}
+            {/* Refused for a freeze: the override is one deliberate click, and
+                the API audits it. */}
+            {error.includes('change freeze') && (
+              <div>
+                <button type="button" className="link-button danger"
+                        disabled={start.isPending}
+                        onClick={() => { setError(null); start.mutate(true); }}>
+                  Sweep anyway
+                </button>
+              </div>
+            )}
+          </div>
+        )}
       </section>
 
       <Schedules chosen={selected} adhoc={adhoc.length} />
+
+      <Freezes />
 
       {history.length > 0 && (
         <section className="asset-panel disc-runs">
@@ -544,14 +572,15 @@ function RunItem({ run, active, onPick }: {
         )}
         {/* A cancelled run concluded nothing - "nothing answered" would read as
             a result it never produced. Its note says what happened instead. */}
-        {run.status !== 'cancelled' && (
+        {run.status !== 'cancelled' && run.status !== 'skipped' && (
           <span className="result">
             {inFlight ? '…' : <Result run={run} />}
           </span>
         )}
         {/* A cancel is a decision, not a fault: muted, where a failure is red. */}
         {run.error && (
-          <span className={run.status === 'cancelled' ? 'muted disc-run-note' : 'disc-bad'}>
+          <span className={run.status === 'cancelled' || run.status === 'skipped'
+            ? 'muted disc-run-note' : 'disc-bad'}>
             {run.error}
           </span>
         )}
@@ -722,7 +751,7 @@ function ScheduleItem({ s, onChanged, onEdit, lastRun }: {
       + (gone ? ` · ${gone} went quiet` : '')
     : status ?? 'not yet';
   // Why the last one did not finish - timed out, or its collector was gone.
-  const lastError = status === 'failed' ? lastRun?.error : null;
+  const lastError = status === 'failed' || status === 'skipped' ? lastRun?.error : null;
 
   return (
     <li className={`disc-sched${s.enabled ? '' : ' is-paused'}`}>
@@ -744,7 +773,9 @@ function ScheduleItem({ s, onChanged, onEdit, lastRun }: {
                 : `next ${untilTime(s.next_run_at)}`}
         {' · '}last {last}
       </div>
-      {lastError && <div className="disc-bad">{lastError}</div>}
+      {lastError && (
+        <div className={status === 'skipped' ? 'muted' : 'disc-bad'}>{lastError}</div>
+      )}
       <div className="acts">
         <button type="button" className="link-button" onClick={onEdit}>
           Edit
