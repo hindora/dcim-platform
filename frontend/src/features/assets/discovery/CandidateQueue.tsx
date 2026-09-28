@@ -323,7 +323,7 @@ function ResponderTable({ rows }: { rows: Classified[] }) {
     if (next.has(key)) next.delete(key); else next.add(key);
     return next;
   };
-  const cols = bulk ? 9 : 8;
+  const cols = bulk ? 8 : 7;
 
   return (
     <>
@@ -348,7 +348,7 @@ function ResponderTable({ rows }: { rows: Classified[] }) {
                 </th>
               )}
               <th>Address</th><th>Finding</th><th>Identity</th><th>Serial</th>
-              <th>Inventory</th><th>Suggested</th><th>Last seen</th>
+              <th>Inventory</th><th>Last seen</th>
               <th className="act">Action</th>
             </tr>
           </thead>
@@ -481,6 +481,9 @@ function Row({ r, f, expanded, onExpand, picked, selectable, onPick }: {
   // bare sysDescr suggests nothing, and the vendor often comes from the other one.
   const pick = <K extends keyof DiscoveryCandidate>(k: K) =>
     r.members.map((m) => m[k]).find(Boolean);
+  const suggestion = [pick('suggested_vendor'),
+    pick('suggested_device_type') ? humanise(String(pick('suggested_device_type'))) : null,
+    pick('suggested_model')].filter(Boolean).join(' · ');
 
   return (
     <tr className={`f-${f}${expanded ? ' is-open' : ''}`}>
@@ -518,7 +521,14 @@ function Row({ r, f, expanded, onExpand, picked, selectable, onPick }: {
         {from && <div className="muted">recorded at {from}</div>}
         {f === 'gone' && <div className="muted">last answered {relativeTime(lastSeen)}</div>}
       </td>
-      <td className="ident"><Identity r={r} /></td>
+      <td className="ident">
+        <Identity r={r} />
+        {/* The sweep's guess, under the evidence it was guessed from. A column of
+            its own pushed the table past the width of a 1536px screen with the
+            sweep rail open, and a guess read beside its evidence is easier to
+            judge anyway. */}
+        {suggestion && <div className="guess">suggests {suggestion}</div>}
+      </td>
       <td className="serial">
         {r.serial ?? <span className="asset-none">not reported</span>}
         {/* Attributed, because "which protocol told us" is the useful half: it says
@@ -540,12 +550,6 @@ function Row({ r, f, expanded, onExpand, picked, selectable, onPick }: {
         ) : (
           <span className="asset-none">no record</span>
         )}
-      </td>
-      <td className="muted">
-        {[pick('suggested_vendor'),
-          pick('suggested_device_type')
-            ? humanise(String(pick('suggested_device_type'))) : null,
-          pick('suggested_model')].filter(Boolean).join(' · ') || '—'}
       </td>
       <td className="muted nowrap">{relativeTime(lastSeen)}</td>
       <td className="act"><CandidateActions r={r} /></td>

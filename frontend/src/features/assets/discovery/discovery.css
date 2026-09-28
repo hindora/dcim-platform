@@ -126,7 +126,11 @@
 
 /* Identity: the name, then ONE line of the description. The full text is in the
    evidence row, never behind a tooltip. */
-.disc-table .ident { max-width: 360px; min-width: 200px; }
+/* The column that gives way. Ellipsis in a table cell needs a max-width on the
+   cell; 300px keeps the table inside the findings column at 1536 CSS px (a 1920
+   screen at 125%) with the sweep rail open. */
+.disc-table .ident { max-width: 300px; min-width: 180px; }
+.disc-table .ident .guess { margin-top: 2px; font-size: 0.74rem; color: var(--text-faint); }
 .disc-table .ident .name { color: var(--text); font-weight: 600; }
 .disc-table .ident .descr {
   color: var(--text-muted);
