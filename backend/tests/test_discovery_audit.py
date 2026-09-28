@@ -174,8 +174,13 @@ def test_two_api_processes_cannot_fire_one_schedule_twice():
 def test_a_missed_tick_runs_late_once_rather_than_catching_up():
     """Advancing from the OLD due time would, after an outage, fire once for every
     interval missed."""
-    assert "now() + make_interval(hours => interval_hours)" in _body(
-        REPO, "advance_schedule")
+    from datetime import UTC, datetime, timedelta
+
+    from app.services import schedule_time as st
+    now = datetime(2026, 9, 28, 12, 0, tzinfo=UTC)
+    assert st.next_after({"interval_hours": 24}, now) == now + timedelta(hours=24)
+    fire = _body(SVC, "fire_due_schedule")
+    assert "schedule_time.next_after(sched, datetime.now(UTC))" in fire
 
 
 def test_the_migration_guards_the_schedule():

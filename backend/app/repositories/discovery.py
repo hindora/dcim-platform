@@ -730,6 +730,7 @@ async def attention_counts(session: AsyncSession) -> dict[str, int]:
 async def list_schedules(session: AsyncSession) -> list[dict[str, Any]]:
     rows = (await session.execute(text("""
         SELECT s.id::text, s.name, s.interval_hours, s.enabled,
+               to_char(s.run_at, 'HH24:MI') AS run_at, s.days, s.timezone,
                array(SELECT x::text FROM unnest(s.range_ids) x) AS range_ids,
                -- What it sweeps, by name and CIDR, in one read. Resolved live, so
                -- editing a range changes what its schedules say they cover.
@@ -753,16 +754,31 @@ async def list_schedules(session: AsyncSession) -> list[dict[str, Any]]:
 
 async def create_schedule(session: AsyncSession, *, name: str, range_ids: list[str],
                           interval_hours: int, first_run_at: Any | None,
-                          actor: str | None) -> dict[str, Any]:
+                          actor: str | None, run_at: str | None = None,
+                          days: list[int] | None = None,
+                          timezone: str | None = None) -> dict[str, Any]:
     row = (await session.execute(text("""
         INSERT INTO discovery_schedule (name, range_ids, interval_hours, next_run_at,
-                                        created_by)
+                                        created_by, run_at, days, timezone)
         VALUES (:name, CAST(:ranges AS uuid[]), :interval,
-                COALESCE(CAST(:first AS timestamptz), now()), :actor)
-        RETURNING id::text, name, interval_hours, enabled, next_run_at
+                COALESCE(CAST(:first AS timestamptz), now()), :actor,
+                CAST(:run_at AS time), CAST(:days AS smallint[]), :tz)
+        RETURNING id::text, name, interval_hours, enabled, next_run_at,
+                  to_char(run_at, 'HH24:MI') AS run_at, days, timezone
     """), {"name": name, "ranges": range_ids, "interval": interval_hours,
-           "first": first_run_at, "actor": actor})).mappings().first()
+           "first": first_run_at, "actor": actor, "run_at": run_at, "days": days,
+           "tz": timezone})).mappings().first()
     return dict(row)
+
+
+async def get_schedule(session: AsyncSession, schedule_id: str) -> dict[str, Any] | None:
+    row = (await session.execute(text("""
+        SELECT id::text, name, interval_hours, enabled, next_run_at,
+               to_char(run_at, 'HH24:MI') AS run_at, days, timezone,
+               array(SELECT x::text FROM unnest(range_ids) x) AS range_ids
+          FROM discovery_schedule WHERE id = CAST(:id AS uuid)
+    """), {"id": schedule_id})).mappings().first()
+    return dict(row) if row else None
 
 
 async def update_schedule(session: AsyncSession, schedule_id: str,
@@ -771,6 +787,9 @@ async def update_schedule(session: AsyncSession, schedule_id: str,
                "enabled": "enabled = :enabled",
                "interval_hours": "interval_hours = :interval_hours",
                "range_ids": "range_ids = CAST(:range_ids AS uuid[])",
+               "run_at": "run_at = CAST(:run_at AS time)",
+               "days": "days = CAST(:days AS smallint[])",
+               "timezone": "timezone = :timezone",
                "next_run_at": "next_run_at = CAST(:next_run_at AS timestamptz)"}
     sets = [allowed[k] for k in fields if k in allowed]
     if not sets:
@@ -778,7 +797,8 @@ async def update_schedule(session: AsyncSession, schedule_id: str,
     row = (await session.execute(text(f"""
         UPDATE discovery_schedule SET {", ".join(sets)}, updated_at = now()
          WHERE id = CAST(:id AS uuid)
-        RETURNING id::text, name, interval_hours, enabled, next_run_at
+        RETURNING id::text, name, interval_hours, enabled, next_run_at,
+                  to_char(run_at, 'HH24:MI') AS run_at, days, timezone
     """), {"id": schedule_id, **fields})).mappings().first()
     return dict(row) if row else None
 
@@ -801,6 +821,7 @@ async def claim_due_schedules(session: AsyncSession,
     """
     rows = (await session.execute(text("""
         SELECT id::text, name, interval_hours,
+               to_char(run_at, 'HH24:MI') AS run_at, days, timezone,
                array(SELECT x::text FROM unnest(range_ids) x) AS range_ids
           FROM discovery_schedule
          WHERE enabled AND next_run_at <= now()
@@ -812,17 +833,13 @@ async def claim_due_schedules(session: AsyncSession,
 
 
 async def advance_schedule(session: AsyncSession, schedule_id: str,
-                           run_id: str | None) -> None:
-    """Next due one interval after NOW, not after the old due time.
-
-    Advancing from the old due time would, after an outage, fire the schedule once
-    for every interval missed - a backlog of sweeps nobody asked for. A missed tick
-    runs late, once.
-    """
+                           run_id: str | None, next_run_at: Any) -> None:
+    """Move a schedule on to its next run. The caller computes when
+    (schedule_time.next_after) - from NOW, so a missed slot runs late once."""
     await session.execute(text("""
         UPDATE discovery_schedule
-           SET next_run_at = now() + make_interval(hours => interval_hours),
+           SET next_run_at = CAST(:next AS timestamptz),
                last_run_id = COALESCE(CAST(:run AS uuid), last_run_id),
                updated_at = now()
          WHERE id = CAST(:id AS uuid)
-    """), {"id": schedule_id, "run": run_id})
+    """), {"id": schedule_id, "run": run_id, "next": next_run_at})

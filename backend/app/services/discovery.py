@@ -15,6 +15,7 @@ from __future__ import annotations
 import ipaddress
 import json
 import re
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import text
@@ -23,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.logging import get_logger
 from app.repositories import discovery as repo
 from app.repositories import discovery_ranges as ranges_repo
-from app.services import discovery_endpoints, discovery_ranges
+from app.services import discovery_endpoints, discovery_ranges, schedule_time
 from app.services.discovery_ranges import DiscoveryError
 
 log = get_logger("discovery")
@@ -641,28 +642,50 @@ async def _existing_ranges(session: AsyncSession, ids: list[str]) -> list[dict[s
     return found
 
 
+def _timing(run_at: Any, days: Any, tz: Any, interval_hours: Any) -> dict[str, Any]:
+    try:
+        return schedule_time.timing(run_at, days, tz, interval_hours, SCHEDULE_INTERVALS)
+    except schedule_time.ScheduleTimeError as exc:
+        raise DiscoveryError(str(exc)) from None
+
+
 async def create_schedule(session: AsyncSession, *, name: str | None,
-                          range_ids: list[str], interval_hours: int,
+                          range_ids: list[str], interval_hours: int | None = 24,
                           first_run_at: Any | None = None,
-                          actor: str | None = None) -> dict[str, Any]:
+                          actor: str | None = None, run_at: Any = None,
+                          days: Any = None, timezone: Any = None) -> dict[str, Any]:
+    """An interval schedule runs first NOW; a timed one at its first slot."""
     ids = _validate_range_ids(range_ids)
-    if interval_hours not in SCHEDULE_INTERVALS:
-        raise DiscoveryError(
-            f"interval must be one of {', '.join(map(str, SCHEDULE_INTERVALS))} hours")
+    t = _timing(run_at, days, timezone, interval_hours)
     ranges = await _existing_ranges(session, ids)
     label = (name or "").strip() or ", ".join(r["name"] for r in ranges)
+    if first_run_at is None and t["run_at"]:
+        first_run_at = schedule_time.next_after(t, datetime.now(UTC))
     return await repo.create_schedule(session, name=label, range_ids=ids,
-                                      interval_hours=interval_hours,
-                                      first_run_at=first_run_at, actor=actor)
+                                      interval_hours=t["interval_hours"],
+                                      first_run_at=first_run_at, actor=actor,
+                                      run_at=t["run_at"], days=t["days"],
+                                      timezone=t["timezone"])
 
 
 async def update_schedule(session: AsyncSession, schedule_id: str,
                           fields: dict[str, Any]) -> dict[str, Any]:
+    current = await repo.get_schedule(session, schedule_id)
+    if current is None:
+        raise DiscoveryError(f"no schedule {schedule_id}")
     if "range_ids" in fields:
         fields["range_ids"] = _validate_range_ids(fields["range_ids"])
         await _existing_ranges(session, fields["range_ids"])
-    if "interval_hours" in fields and fields["interval_hours"] not in SCHEDULE_INTERVALS:
-        raise DiscoveryError("interval is not one of the offered ones")
+    # Re-timed: validated as a whole, and the next run moves to the new timing -
+    # otherwise a schedule changed from "daily" to "weekdays at 02:00" would fire
+    # once more at its old time first.
+    if {"run_at", "days", "timezone", "interval_hours"} & fields.keys():
+        merged = {**current, **fields}
+        t = _timing(merged.get("run_at"), merged.get("days"),
+                    merged.get("timezone"), merged.get("interval_hours"))
+        fields.update(t)
+        fields.setdefault("next_run_at",
+                          schedule_time.next_after(t, datetime.now(UTC)).isoformat())
     row = await repo.update_schedule(session, schedule_id, fields)
     if row is None:
         raise DiscoveryError(f"no schedule {schedule_id}")
@@ -686,7 +709,8 @@ async def fire_due_schedule(session: AsyncSession) -> dict[str, Any] | None:
         live = [r for r in ranges if r["enabled"]]
         if not live:
             # Advanced anyway, or it would be "due" on every tick for ever.
-            await repo.advance_schedule(session, sched["id"], None)
+            await repo.advance_schedule(session, sched["id"], None,
+                                        schedule_time.next_after(sched, datetime.now(UTC)))
             log.warning("scheduled sweep skipped: no enabled ranges",
                         schedule=sched["name"])
             continue
@@ -696,7 +720,8 @@ async def fire_due_schedule(session: AsyncSession) -> dict[str, Any] | None:
         runs = await discovery_ranges.queue(
             session, range_ids=[r["id"] for r in live], schedule_id=sched["id"],
             schedule_label=sched["name"])
-        await repo.advance_schedule(session, sched["id"], runs[0]["id"])
+        await repo.advance_schedule(session, sched["id"], runs[0]["id"],
+                                    schedule_time.next_after(sched, datetime.now(UTC)))
         log.info("scheduled sweep queued", schedule=sched["name"],
                  runs=[r["id"] for r in runs], ranges=len(live),
                  every_h=sched["interval_hours"])

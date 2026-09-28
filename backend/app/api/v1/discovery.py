@@ -193,7 +193,7 @@ async def suggest_subnets(
 @router.get("/ranges", summary="Address ranges saved for discovery")
 async def list_ranges(session: AsyncSession = Depends(get_session),
                       _: Principal = Depends(current_principal)) -> dict[str, Any]:
-    return {"items": await ranges_repo.list_ranges(session)}
+    return {"items": await discovery_ranges.list_ranges(session)}
 
 
 @router.get("/range-options", summary="What a range can be assigned to")
@@ -388,12 +388,22 @@ class AcknowledgeRequest(BaseModel):
 class ScheduleRequest(BaseModel):
     name: str | None = None
     range_ids: list[str] = Field(min_length=1, max_length=128)
-    interval_hours: int = 24
+    #: Every N hours from when it last ran - or, with `run_at`, ignored.
+    interval_hours: int | None = 24
+    #: "02:00": run at this local time on `days` (1 = Monday ... 7 = Sunday,
+    #: default every day) in `timezone` (IANA, e.g. "Asia/Kolkata").
+    run_at: str | None = None
+    days: list[int] | None = Field(default=None, max_length=7)
+    timezone: str | None = Field(default=None, max_length=64)
 
 
 class ScheduleUpdate(BaseModel):
     name: str | None = None
     range_ids: list[str] | None = Field(default=None, min_length=1, max_length=128)
+    #: Send `run_at: null` to turn a timed schedule back into an interval one.
+    run_at: str | None = None
+    days: list[int] | None = Field(default=None, max_length=7)
+    timezone: str | None = Field(default=None, max_length=64)
     interval_hours: int | None = None
     enabled: bool | None = None
     #: "Run it now" is a schedule whose next run is due immediately - the scheduler
@@ -448,7 +458,8 @@ async def create_schedule(body: ScheduleRequest, request: Request,
     try:
         row = await service.create_schedule(
             session, name=body.name, range_ids=body.range_ids,
-            interval_hours=body.interval_hours, actor=actor)
+            interval_hours=body.interval_hours, actor=actor, run_at=body.run_at,
+            days=body.days, timezone=body.timezone)
     except service.DiscoveryError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from None
     ip, agent = audit.client_of(request)
@@ -456,7 +467,9 @@ async def create_schedule(body: ScheduleRequest, request: Request,
                        target_type="discovery_schedule", target_id=row["id"],
                        ip=ip, user_agent=agent,
                        after={"range_ids": body.range_ids,
-                              "interval_hours": row["interval_hours"]})
+                              "interval_hours": row["interval_hours"],
+                              "run_at": row.get("run_at"), "days": row.get("days"),
+                              "timezone": row.get("timezone")})
     await session.commit()
     return row
 
@@ -466,7 +479,12 @@ async def update_schedule(schedule_id: str, body: ScheduleUpdate, request: Reque
                           session: AsyncSession = Depends(get_session),
                           principal: Principal = Depends(require_role("operator")),
                           ) -> dict[str, Any]:
-    fields = body.model_dump(exclude_none=True, exclude={"run_now"})
+    # exclude_unset, not exclude_none: `run_at: null` is how a timed schedule is
+    # turned back into an interval one, and dropping nulls would ignore it.
+    fields = body.model_dump(exclude_unset=True, exclude={"run_now"})
+    for key in ("name", "range_ids", "interval_hours", "enabled"):
+        if key in fields and fields[key] is None:
+            del fields[key]
     if body.run_now:
         from datetime import UTC, datetime
         fields["next_run_at"] = datetime.now(UTC).isoformat()

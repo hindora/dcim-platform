@@ -45,7 +45,22 @@ async def list_ranges(session: AsyncSession) -> list[dict[str, Any]]:
                    AS collector_age_s,
                COALESCE((SELECT array_agg(o.name ORDER BY o.cidr)
                            FROM discovery_range o
-                          WHERE o.id <> r.id AND o.cidr && r.cidr), '{{}}') AS overlaps
+                          WHERE o.id <> r.id AND o.cidr && r.cidr), '{{}}') AS overlaps,
+               -- The last sweep that covered ALL of it. A sweep of a /27 inside
+               -- this /24 audited an eighth of it, and must not count as fresh.
+               -- inet, not cidr: a run from before 0082 may carry host bits.
+               (SELECT max(run.finished_at) FROM discovery_run run
+                  CROSS JOIN LATERAL jsonb_array_elements_text(
+                      COALESCE(run.scope -> 'subnets', '[]'::jsonb)) AS s(c)
+                 WHERE run.status = 'done' AND r.cidr <<= CAST(s.c AS inet)
+               ) AS last_full_at,
+               -- How often it is MEANT to be swept: its most frequent enabled
+               -- schedule. NULL is nothing sweeps it on its own.
+               (SELECT min(sch.interval_hours) FROM discovery_schedule sch
+                 WHERE sch.enabled AND r.id = ANY(sch.range_ids)) AS schedule_hours,
+               COALESCE((SELECT array_agg(sch.name ORDER BY sch.name)
+                           FROM discovery_schedule sch
+                          WHERE r.id = ANY(sch.range_ids)), '{{}}') AS schedule_names
           FROM discovery_range r
           LEFT JOIN datacenter dc ON dc.id = r.datacenter_id
           LEFT JOIN collector_instance ci ON ci.id = r.collector_id
@@ -163,5 +178,5 @@ async def collectors(session: AsyncSession) -> list[dict[str, Any]]:
 
 async def datacenters(session: AsyncSession) -> list[dict[str, Any]]:
     rows = (await session.execute(text(
-        "SELECT id::text, name FROM datacenter ORDER BY name"))).mappings().all()
+        "SELECT id::text, name, timezone FROM datacenter ORDER BY name"))).mappings().all()
     return [dict(r) for r in rows]

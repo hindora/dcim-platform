@@ -255,6 +255,41 @@ async def queue(session: AsyncSession, *, method: str = "sweep",
     return runs
 
 
+#: How late a scheduled range may be before it reads as overdue: twice its
+#: schedule's longest gap. Once is a slow collector or a run that waited its
+#: turn; twice is an audit that has stopped happening.
+OVERDUE_FACTOR = 2
+
+
+def audit_state(r: dict[str, Any], now_s: float) -> str:
+    """How fresh this range's audit is.
+
+    ok - fully swept within twice its schedule's gap; overdue - not; never - on
+    a schedule and never fully swept; unscheduled - nothing sweeps it on its own;
+    off - disabled. A schedule that is paused, failing or skipping the range all
+    end up here, which is the point: they are different causes of one outcome.
+    """
+    if not r.get("enabled"):
+        return "off"
+    hours = r.get("schedule_hours")
+    if hours is None:
+        return "unscheduled"
+    last = r.get("last_full_at")
+    if last is None:
+        return "never"
+    age = now_s - last.timestamp()
+    return "overdue" if age > OVERDUE_FACTOR * float(hours) * 3600 else "ok"
+
+
+async def list_ranges(session: AsyncSession) -> list[dict[str, Any]]:
+    import time as _time
+    now_s = _time.time()
+    rows = await repo.list_ranges(session)
+    for r in rows:
+        r["audit"] = audit_state(r, now_s)
+    return rows
+
+
 async def options(session: AsyncSession) -> dict[str, Any]:
     """What the range form offers: sites, collectors, purposes, and the limits."""
     return {"datacenters": await repo.datacenters(session),
