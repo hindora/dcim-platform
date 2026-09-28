@@ -100,7 +100,7 @@ export function CandidateQueue() {
     queryFn: () => api.discoveryCandidates({ limit: String(FETCH_LIMIT) }),
     refetchInterval: 60_000,
   });
-  const { data: runs } = useDiscoveryRuns();
+  const { data: runs, isLoading: runsLoading } = useDiscoveryRuns();
 
   const classified = useMemo<Classified[]>(
     () => collapse(data?.items ?? []).map((r) => ({ r, f: findingOf(r) })),
@@ -147,16 +147,22 @@ export function CandidateQueue() {
   const lastDone = (runs?.items ?? []).find((x) => x.status === 'done');
   const truncated = (data?.items?.length ?? 0) >= FETCH_LIMIT;
 
+  // Absent while loading, never zero. "Needs action 0" in green before the listing
+  // has arrived is the all-clear, given on no evidence - on a slow API it was on
+  // screen for as long as the fetch took.
+  const pending = isLoading ? 'loading' : null;
   const kpis: Kpi[] = [
-    { caption: 'Needs action', value: counts.action, digits: 0,
-      tone: counts.action > 0 ? 'warn' : 'ok' },
-    { caption: 'Responders', value: items.length, digits: 0 },
-    { caption: 'With serial', value: serialPct, digits: 0, unit: '%',
-      why: 'nothing has answered yet' },
-    { caption: 'Stopped answering', value: counts.gone, digits: 0 },
+    { caption: 'Needs action', value: pending ? null : counts.action, digits: 0,
+      tone: counts.action > 0 ? 'warn' : 'ok', why: pending },
+    { caption: 'Responders', value: pending ? null : items.length, digits: 0,
+      why: pending },
+    { caption: 'With serial', value: pending ? null : serialPct, digits: 0, unit: '%',
+      why: pending ?? 'nothing has answered yet' },
+    { caption: 'Stopped answering', value: pending ? null : counts.gone, digits: 0,
+      why: pending },
     { caption: 'Last sweep',
       value: lastDone ? relativeTime(lastDone.finished_at ?? lastDone.started_at) : null,
-      why: 'no sweep has finished yet' },
+      why: runsLoading ? 'loading' : 'no sweep has finished yet' },
   ];
 
   return (
@@ -168,7 +174,7 @@ export function CandidateQueue() {
       <div className="disc-layout">
         <section className="disc-main">
           <div className="disc-toolbar">
-            <FindingFacets value={facet} counts={counts}
+            <FindingFacets value={facet} counts={isLoading ? null : counts}
                            onChange={(f) => setParam('finding', f === 'action' ? null : f)} />
             <input type="search" className="disc-search" value={search}
                    onChange={(e) => setSearch(e.target.value)}
@@ -249,18 +255,23 @@ function haystack(r: Responder): string {
  *  wants attention; the control's own colour only ever means "pressed".
  */
 function FindingFacets({ value, counts, onChange }: {
-  value: Facet; counts: Record<Facet, number>; onChange: (f: Facet) => void;
+  value: Facet;
+  /** null while the listing is loading: a count of 0 is a claim, not a placeholder. */
+  counts: Record<Facet, number> | null;
+  onChange: (f: Facet) => void;
 }) {
   return (
     <div className="seg facet-seg disc-facets" role="group" aria-label="Finding filter">
-      {FACETS.filter((o) => !o.hideWhenEmpty || counts[o.key] > 0).map((o) => (
+      {FACETS.filter((o) => !o.hideWhenEmpty || (counts?.[o.key] ?? 0) > 0).map((o) => (
         <button key={o.key} type="button"
                 className={o.key === value ? 'active' : ''}
                 aria-pressed={o.key === value}
                 title={o.tip}
                 onClick={() => onChange(o.key)}>
-          {o.dot && <i className={`sw ${counts[o.key] > 0 ? o.dot : 'minor'}`} aria-hidden />}
-          {o.label}<b>{counts[o.key].toLocaleString()}</b>
+          {o.dot && (
+            <i className={`sw ${(counts?.[o.key] ?? 0) > 0 ? o.dot : 'minor'}`} aria-hidden />
+          )}
+          {o.label}<b>{counts ? counts[o.key].toLocaleString() : '·'}</b>
         </button>
       ))}
     </div>

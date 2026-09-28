@@ -139,7 +139,7 @@ export function SweepPanel({ activeRun, onPickRun }: {
   const [error, setError] = useState<string | null>(null);
   const [allRuns, setAllRuns] = useState(false);
 
-  const { data: subnets } = useQuery({
+  const { data: subnets, isLoading: subnetsLoading } = useQuery({
     queryKey: ['discovery-subnets'],
     queryFn: api.discoverySubnets,
   });
@@ -204,7 +204,12 @@ export function SweepPanel({ activeRun, onPickRun }: {
 
         {/* Derived from inventory rather than typed from memory, and each one says
             when it was last audited - which is what decides whether to sweep it. */}
-        {list.length ? (
+        {/* "No management addresses in inventory" is a statement about the estate;
+            made while the list is still loading it was false for as long as the
+            fetch took. */}
+        {subnetsLoading ? (
+          <div className="asset-skeleton" style={{ height: 180 }} />
+        ) : list.length ? (
           <div className="disc-subnets">
             <table>
               <thead>

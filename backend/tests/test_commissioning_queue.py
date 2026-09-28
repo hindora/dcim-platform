@@ -720,6 +720,15 @@ def test_promotion_does_not_claim_to_drop_the_vendor():
     assert "matched against the catalog" in QUEUE_UI
 
 
+def test_nothing_is_claimed_before_the_data_arrives():
+    """While loading, the page showed "Needs action 0" in green and the rail said
+    "No management addresses in inventory yet" - the all-clear and an estate-wide
+    statement, both on no evidence, for as long as the fetch took."""
+    assert "value: pending ? null : counts.action" in QUEUE_UI
+    assert "counts={isLoading ? null : counts}" in QUEUE_UI
+    assert "subnetsLoading ?" in SWEEP_UI
+
+
 def test_attaching_hides_the_name_field():
     """The record already has a name. Offering to change it here would bury a
     rename inside a commissioning step."""
