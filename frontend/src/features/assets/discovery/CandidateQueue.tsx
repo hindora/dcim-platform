@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
@@ -17,6 +17,9 @@ import {
   changedIds, changesOf, collapse, findingOf, HARDWARE_FIELDS, ipKey, matchOf,
   memberIds, movedFrom, needsAction, type Finding, type MachineChange, type Responder,
 } from './responders';
+import {
+  initialRows, PromoteMonitoring, rowProblem, toRequest, type MonitoringRow,
+} from './PromoteMonitoring';
 import { SweepPanel, useDiscoveryRuns } from './SweepPanel';
 import './discovery.css';
 
@@ -558,7 +561,13 @@ function BulkBar({ keys, rows, onDone }: {
       // Skipped rows are reported rather than silently dropped: an operator who
       // selected forty and promoted thirty-seven needs to know which three, and
       // why.
+      // And what monitoring came with them: a bulk promote creates only the
+      // endpoints the sweep proved, so the rest are counted rather than hidden.
+      const made = r.promoted.reduce((n, p) => n + (p.endpoints?.length ?? 0), 0);
+      const owed = r.promoted.reduce((n, p) => n + (p.endpoints_skipped?.length ?? 0), 0);
       setReport(`${r.promoted.length} promoted`
+        + (r.promoted.length ? ` with ${made} endpoint${made === 1 ? '' : 's'}` : '')
+        + (owed ? ` (${owed} need a credential - set them on each asset)` : '')
         + (r.skipped.length ? `, ${r.skipped.length} skipped (no name reported)` : '')
         + (r.failed.length ? `, ${r.failed.length} failed` : ''));
       refresh();
@@ -769,6 +778,7 @@ function Evidence({ r, cols }: { r: Responder; cols: number }) {
               [redfish ? 'HostName' : 'hostName', ident.hostName],
               ['sysObjectID', ident.sysObjectID], ['Model', ident.model],
               ['Vendor', ident.vendor], ['Serial', c.serial],
+              ['Reached', reachedBy(c)],
             ];
             return (
               <div key={c.id} className="probe">
@@ -910,6 +920,20 @@ function PromoteDialog({ c, onClose, onDone }: {
   const [attachTo, setAttachTo] = useState('');
   const [error, setError] = useState<string | null>(null);
 
+  // How it will be polled. Re-planned when the type changes: a PDU's profile is
+  // its vendor's MIB and a server's SNMP agent may be its BMC, so the answer
+  // depends on what the operator says the box is.
+  const plan = useQuery({
+    queryKey: ['monitoring-plan', c.id, type],
+    queryFn: () => api.monitoringPlan(c.id, type || undefined),
+    enabled: Boolean(type),
+  });
+  const [monitoring, setMonitoring] = useState<MonitoringRow[]>([]);
+  useEffect(() => {
+    if (plan.data) setMonitoring(initialRows(plan.data.endpoints));
+  }, [plan.data]);
+  const monitoringBlocked = monitoring.some((r) => rowProblem(r) !== null);
+
   // Records somebody is waiting for. Offered because promotion used to INSERT
   // unconditionally, which left two rows for one machine: the placeholder still
   // holding its rack unit, and a discovered device with no placement at all.
@@ -935,6 +959,7 @@ function PromoteDialog({ c, onClose, onDone }: {
       // catalog. It creates nothing from them.
       vendor: c.suggested_vendor ?? undefined,
       model: c.suggested_model ?? undefined,
+      endpoints: monitoring.filter((r) => r.include).map(toRequest),
     }),
     onSuccess: () => { onDone(); onClose(); },
     onError: (e) => setError(String(e)),
@@ -1007,6 +1032,18 @@ function PromoteDialog({ c, onClose, onDone }: {
           </p>
         )}
 
+        <fieldset className="asset-form-wide disc-mon-set">
+          <legend>Monitoring</legend>
+          {type ? (
+            <PromoteMonitoring loading={plan.isLoading} rows={monitoring}
+                               onChange={setMonitoring} />
+          ) : (
+            <p className="muted">Choose the device type first: it decides which
+              agent each probe is and the profile that polls it.</p>
+          )}
+          {plan.error && <div className="banner">{String(plan.error)}</div>}
+        </fieldset>
+
         <p className="muted asset-form-wide">
           {target ? (
             <>
@@ -1029,7 +1066,8 @@ function PromoteDialog({ c, onClose, onDone }: {
       <DialogActions>
         <button type="button" onClick={onClose}>Cancel</button>
         <button type="button" className="primary"
-                disabled={(!attachTo && (!name.trim() || !type)) || save.isPending}
+                disabled={(!attachTo && (!name.trim() || !type)) || save.isPending
+                          || monitoringBlocked || plan.isLoading}
                 onClick={() => { setError(null); save.mutate(); }}>
           {save.isPending ? 'Promoting…' : 'Promote'}
         </button>
@@ -1202,3 +1240,21 @@ function exportFindings(rows: Classified[], facet: Facet) {
   });
   downloadCsv(stampedName(`discovery-${facet}`), headers, out);
 }
+
+/** How the sweep got in, in words. A reference to the credential, never the
+ *  credential: the collector keeps the values and reports which one worked. */
+function reachedBy(c: DiscoveryCandidate): string | null {
+  const a = (c.identity?.access ?? null) as Record<string, string> | null;
+  if (!a) return null;
+  if (c.protocol === 'snmp') {
+    const how = a.community === 'address' ? 'community = this address'
+      : a.community === 'configured' ? `configured community #${a.community_index}`
+        : null;
+    return [`v${a.version ?? '2c'}`, a.port ? `:${a.port}` : null, how]
+      .filter(Boolean).join(' · ');
+  }
+  const login = a.credential === 'configured' ? `configured login #${a.credential_index}`
+    : a.credential === 'none' ? 'no configured login opens it' : null;
+  return [a.scheme, a.port ? `:${a.port}` : null, login].filter(Boolean).join(' · ');
+}
+

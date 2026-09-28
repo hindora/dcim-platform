@@ -146,6 +146,10 @@
 .disc-table .nowrap { white-space: nowrap; }
 
 .disc-actions { display: inline-flex; gap: 6px; }
+/* The promote dialog renders inside the action cell (Dialog has no portal), so it
+   inherited the cell's nowrap and right alignment: every sentence in it ran on one
+   line past the dialog's edge. */
+.disc-table td.act .asset-backdrop { white-space: normal; text-align: left; }
 
 /* ----------------------------------------------------------------- evidence */
 
@@ -350,3 +354,34 @@
 }
 .disc-sched-new button { grid-column: 1 / -1; height: 30px; }
 .disc-sched-hint { margin: 6px 0 0; font-size: 0.74rem; }
+
+/* ------------------------------------------------------ promote: monitoring */
+
+/* min-width 0: a fieldset defaults to min-content, and the longest credential
+   name in a select is its min-content - which stretched the dialog's whole form
+   grid past the dialog's edge. */
+.disc-mon-set {
+  min-width: 0;
+  margin: 0; padding: 10px 12px 12px;
+  border: 1px solid var(--border); border-radius: var(--radius);
+}
+.disc-mon-set legend {
+  padding: 0 6px; font-size: 0.72rem; letter-spacing: .05em;
+  text-transform: uppercase; color: var(--text-faint);
+}
+.disc-mon { display: flex; flex-direction: column; gap: 10px; }
+.disc-mon-row { padding-left: 8px; box-shadow: inset 2px 0 0 var(--accent); }
+/* Left out reads as left out: the rule drops and the ink fades. */
+.disc-mon-row.is-off { box-shadow: inset 2px 0 0 var(--border-strong); color: var(--text-muted); }
+.disc-mon-head {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  font-size: 0.8rem; cursor: pointer;
+}
+.disc-mon-head input { width: auto; }
+.disc-mon-cred {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 6px; margin-top: 6px;
+}
+.disc-mon-cred select, .disc-mon-cred input { min-width: 0; width: 100%; }
+.disc-mon-cred .muted { grid-column: 1 / -1; font-size: 0.74rem; }
+.disc-mon-note { margin: 4px 0 0; font-size: 0.74rem; color: var(--text-faint); }

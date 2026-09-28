@@ -315,6 +315,37 @@ export interface IdentityChange {
   detected_at: string;
 }
 
+/** An endpoint promotion would create, with the API's defaults. */
+export interface PlannedEndpoint {
+  candidate_id: string;
+  protocol: 'snmp' | 'redfish';
+  address: string;
+  port: number;
+  role: string;
+  poll_profile: string;
+  /** The scheme the sweep reached a BMC on; null for SNMP. */
+  scheme?: string | null;
+  /** Only where the sweep's own evidence can rebuild the credential. */
+  suggested_credential?: { mode: 'address' } | null;
+  credential_note: string;
+}
+
+/** The operator's answer for one planned endpoint. */
+export interface EndpointChoice {
+  candidate_id: string;
+  credential:
+    | { mode: 'address' }
+    | { mode: 'existing'; id: string }
+    | { mode: 'new'; community?: string; username?: string; password?: string };
+  port?: number;
+  poll_profile_id?: string;
+}
+
+export interface CreatedEndpoint {
+  endpoint_id: string; protocol: string; address: string; role: string;
+  poll_profile?: string | null;
+}
+
 /** A device on record that a sweep of its address did not hear from. */
 export interface MissingDevice {
   device_id: string;
@@ -3052,7 +3083,12 @@ export const api = {
    *  back in `skipped` rather than being given one derived from its address. */
   bulkPromoteCandidates: (ids: string[], deviceType?: string) =>
     request<{
-      promoted: { device_id: string; name: string }[];
+      promoted: {
+        device_id: string; name: string;
+        endpoints: CreatedEndpoint[];
+        /** Probes whose credential the sweep could not prove. */
+        endpoints_skipped: { protocol: string; address: string; reason: string }[];
+      }[];
       skipped: { id: string; address?: string; reason: string }[];
       failed: { id: string; error: string }[];
     }>('/discovery/candidates/bulk-promote', {
@@ -3060,11 +3096,19 @@ export const api = {
       body: JSON.stringify({ candidate_ids: ids, device_type: deviceType }),
     }),
 
+  /** What promoting this candidate would wire up. Server-decided, so the dialog
+   *  and the importer agree on roles and profiles. */
+  monitoringPlan: (id: string, deviceType?: string) =>
+    request<{ device_type: string; endpoints: PlannedEndpoint[] }>(
+      `/discovery/candidates/${id}/monitoring${
+        deviceType ? `?device_type=${encodeURIComponent(deviceType)}` : ''}`),
+
   promoteCandidate: (id: string, body: {
     name: string; device_type?: string;
     attach_to_device_id?: string; vendor?: string; model?: string;
+    endpoints?: EndpointChoice[];
   }) =>
-    request<{ device_id: string; name: string }>(
+    request<{ device_id: string; name: string; endpoints: CreatedEndpoint[] }>(
       `/discovery/candidates/${id}/promote`,
       { method: 'POST', body: JSON.stringify(body) }),
 
