@@ -31,9 +31,12 @@
 }
 .disc-facets { height: 30px; }
 .disc-facets button { height: 30px; }
+/* Gives way before the facet strip does: it grows into whatever the strip leaves
+   on the row and only wraps when that is under 180px. A fixed width wrapped it onto
+   a line of its own at 1920px. */
 .disc-search {
   margin-left: auto;
-  width: 260px; max-width: 100%;
+  flex: 1 1 180px; min-width: 180px; max-width: 300px;
   height: 30px; padding: 0 10px;
   background: var(--bg-inset); color: var(--text);
   border: 1px solid var(--border); border-radius: 4px;
