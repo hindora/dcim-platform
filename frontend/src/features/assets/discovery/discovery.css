@@ -13,11 +13,14 @@
    page is for, the form is how you get another one. */
 .disc-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 356px;
+  grid-template-columns: minmax(0, 1fr) 324px;
   gap: 16px;
   align-items: start;
 }
-@media (max-width: 1320px) {
+/* Where the findings column stops holding the table (~875px) with the rail beside
+   it. Measured, not guessed: at 1320 the column was 760px and the table scrolled
+   sideways, which is worse than the rail moving down. */
+@media (max-width: 1480px) {
   .disc-layout { grid-template-columns: minmax(0, 1fr); }
 }
 
@@ -127,9 +130,9 @@
 /* Identity: the name, then ONE line of the description. The full text is in the
    evidence row, never behind a tooltip. */
 /* The column that gives way. Ellipsis in a table cell needs a max-width on the
-   cell; 300px keeps the table inside the findings column at 1536 CSS px (a 1920
-   screen at 125%) with the sweep rail open. */
-.disc-table .ident { max-width: 300px; min-width: 180px; }
+   cell; 270px keeps the table inside the findings column at 1536 CSS px (a 1920
+   screen at 125%) with the sweep rail open, with room to spare. */
+.disc-table .ident { max-width: 270px; min-width: 170px; }
 .disc-table .ident .guess { margin-top: 2px; font-size: 0.74rem; color: var(--text-faint); }
 .disc-table .ident .name { color: var(--text); font-weight: 600; }
 .disc-table .ident .descr {
