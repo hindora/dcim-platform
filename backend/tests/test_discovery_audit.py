@@ -195,3 +195,27 @@ def test_a_sweep_never_covers_an_address_it_did_not_probe():
     assert "host(broadcast(CAST(c AS inet)))" in frag, "mask-free comparison"
     assert "masklen(CAST(c AS inet)) >= 31" in frag, "/31 and /32 have neither to skip"
     assert '_probed("address", "s.cidr")' in _body(REPO, "mark_gone")
+
+
+# ------------------------------------------------------------------ nav badge
+
+def test_the_badge_counts_what_the_page_opens_on():
+    """The badge said "0" while the page opened on devices that stopped answering:
+    it counted unrecorded and moved, and missing and replaced arrived after it."""
+    src = (APP / "repositories" / "assets.py").read_text(encoding="utf-8")
+    assert 'attention["missing"] + attention["replaced"]' in src
+
+
+def test_maintenance_is_listed_missing_but_not_badged():
+    """A device in maintenance is expected to go quiet. The page lists it, and
+    nobody is asked to act on it."""
+    body = _body(REPO, "attention_counts")
+    assert 'm["lifecycle"] != "maintenance"' in body
+    assert "maintenance" in repo.EXPECTED_ON_WIRE, "still listed on the page"
+
+
+def test_replaced_is_hardware_and_unacknowledged():
+    body = _body(REPO, "attention_counts")
+    assert "ch.acknowledged_at IS NULL" in body
+    assert "sorted(HARDWARE_FIELDS)" in body
+    assert svc.HARDWARE_FIELDS is repo.HARDWARE_FIELDS, "one definition"

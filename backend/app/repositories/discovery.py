@@ -464,6 +464,11 @@ async def attachable_devices(session: AsyncSession, *,
 
 # ------------------------------------------------------------ identity changes
 
+#: A change here means the BOX changed: a different chassis serial, platform,
+#: board UUID or model at the same address is hardware that was swapped, and
+#: nobody recorded it. That needs somebody.
+HARDWARE_FIELDS = frozenset({"serial", "sysObjectID", "uuid", "model", "vendor"})
+
 async def prior_identities(session: AsyncSession, addresses: list[str]
                            ) -> dict[tuple[str, str], dict[str, Any]]:
     """What each open responder said LAST time, read before this run overwrites it.
@@ -561,7 +566,7 @@ async def missing_devices(session: AsyncSession) -> list[dict[str, Any]]:
              GROUP BY e.device_id
         )
         SELECT d.id::text AS device_id, d.name, d.device_type,
-               d.lifecycle::text AS lifecycle, cv.address,
+               d.lifecycle::text AS lifecycle, d.serial_number AS serial, cv.address,
                cv.run_id::text AS run_id, cv.finished_at AS swept_at, cv.subnet,
                p.any_online, p.a_state AS polling_state,
                rk.name AS rack_name, rm.name AS room_name
@@ -585,6 +590,28 @@ async def missing_devices(session: AsyncSession) -> list[dict[str, Any]]:
     """), {"protocols": list(SWEPT_PROTOCOLS),
            "lifecycles": list(EXPECTED_ON_WIRE)})).mappings().all()
     return [dict(r) for r in rows]
+
+
+async def attention_counts(session: AsyncSession) -> dict[str, int]:
+    """The two findings the nav badge needs beyond unrecorded and moved.
+
+    Missing counts what the page counts: a device in maintenance is expected to go
+    quiet, so it is listed and not badged. Replaced is a hardware field that
+    changed on a responder still answering, by address - machines, like the rest
+    of the badge.
+    """
+    missing = [m for m in await missing_devices(session)
+               if m["lifecycle"] != "maintenance"]
+    replaced = (await session.execute(text("""
+        SELECT count(DISTINCT c.address)
+          FROM discovery_candidate c
+         WHERE c.status = 'new'
+           AND EXISTS (SELECT 1 FROM discovery_identity_change ch
+                        WHERE ch.candidate_id = c.id
+                          AND ch.acknowledged_at IS NULL
+                          AND ch.field = ANY(:hardware))
+    """), {"hardware": sorted(HARDWARE_FIELDS)})).scalar_one()
+    return {"missing": len(missing), "replaced": int(replaced or 0)}
 
 
 # ---------------------------------------------------------------- schedules

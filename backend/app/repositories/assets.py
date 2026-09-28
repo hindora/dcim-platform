@@ -21,6 +21,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.repositories import commissioning as commissioning_repo
+from app.repositories import discovery as discovery_repo
 from app.repositories.contracts import EXPIRING_DAYS
 
 # Lifecycle states that mean "this is part of the estate right now". Used as
@@ -118,6 +119,8 @@ async def summary(session: AsyncSession) -> dict[str, Any]:
           LEFT JOIN device d ON d.id = c.matched_device_id
     """))).mappings().one()
 
+    attention = await discovery_repo.attention_counts(session)
+
     # How many devices are waiting on a commissioning decision, for the nav
     # badge. Counted here rather than fetched from /commissioning/queue so the
     # number costs one aggregate instead of 500 rows on every asset page.
@@ -170,8 +173,11 @@ async def summary(session: AsyncSession) -> dict[str, Any]:
         },
         "estate": dict(estate),
         "by_category": [dict(r) for r in category_rows],
-        "discovery": {**dict(discovery),
-                      "needs_action": discovery["unrecorded"] + discovery["moved"]},
+        # Missing and replaced too, or the badge said "0" while the page opened on
+        # a dozen devices that stopped answering.
+        "discovery": {**dict(discovery), **attention,
+                      "needs_action": discovery["unrecorded"] + discovery["moved"]
+                      + attention["missing"] + attention["replaced"]},
         "commissioning": commissioning,
         # Present now that migration 0047 gives them something to count. Before
         # it they were ABSENT rather than zero - a tile reading "0 expiring"

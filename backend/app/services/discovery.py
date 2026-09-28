@@ -208,10 +208,10 @@ def _serial_of(responder: dict[str, Any]) -> str | None:
     return val.strip().upper() or None
 
 
-#: A change here means the BOX changed: a different chassis serial, platform,
-#: board UUID or model at the same address is hardware that was swapped, and
-#: nobody recorded it. That needs somebody.
-HARDWARE_FIELDS = frozenset({"serial", "sysObjectID", "uuid", "model", "vendor"})
+#: A change here means the BOX changed. Defined beside the SQL that counts it for
+#: the nav badge, so the page and the badge cannot disagree about what "replaced"
+#: means.
+HARDWARE_FIELDS = repo.HARDWARE_FIELDS
 
 #: A change here is ordinary drift - firmware, OS image, a hostname. Worth being
 #: able to see and date; not worth paging anybody over. A fleet-wide BMC firmware
