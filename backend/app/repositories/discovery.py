@@ -12,19 +12,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 async def create_run(session: AsyncSession, *, method: str,
                      scope: dict[str, Any],
                      schedule_id: str | None = None,
-                     schedule_label: str | None = None) -> dict[str, Any]:
+                     schedule_label: str | None = None,
+                     collector_id: str | None = None,
+                     range_ids: list[str] | None = None) -> dict[str, Any]:
     # `trigger` and the label are the run's OWN record of who asked: schedule_id is
     # nulled when the schedule is deleted, and was the only trace (0081).
+    # `collector_id` is who must do it (0082): NULL means any collector may.
     row = (await session.execute(text("""
         INSERT INTO discovery_run (method, scope, status, schedule_id, trigger,
-                                   schedule_label)
+                                   schedule_label, collector_id, range_ids)
         VALUES (:method, CAST(:scope AS jsonb), 'pending', CAST(:schedule AS uuid),
-                :trigger, :label)
-        RETURNING id::text, method, scope, status, started_at, trigger
+                :trigger, :label, :collector, CAST(:ranges AS uuid[]))
+        RETURNING id::text, method, scope, status, started_at, trigger, collector_id
     """), {"method": method, "scope": json.dumps(scope),
            "schedule": schedule_id,
            "trigger": "schedule" if schedule_id else "manual",
-           "label": schedule_label})).mappings().first()
+           "label": schedule_label, "collector": collector_id,
+           "ranges": list(range_ids or [])})).mappings().first()
     return dict(row)
 
 
@@ -62,9 +66,18 @@ async def list_runs(session: AsyncSession, limit: int = 25) -> list[dict[str, An
                r.appeared, r.gone, r.changed,
                r.schedule_id::text AS schedule_id, r.trigger,
                -- The schedule's name now, else what it was called when it fired.
-               COALESCE(sch.name, r.schedule_label) AS schedule_name
+               COALESCE(sch.name, r.schedule_label) AS schedule_name,
+               -- Who must do it, and whether they are about. A run waiting on a
+               -- collector nobody has heard from in an hour is not "queued", it
+               -- is stuck, and the page has to be able to say so.
+               r.collector_id,
+               ci.id IS NOT NULL AS collector_registered,
+               extract(epoch FROM (clock_timestamp() - ci.last_heartbeat))
+                   AS collector_age_s,
+               array(SELECT x::text FROM unnest(r.range_ids) x) AS range_ids
           FROM discovery_run r
           LEFT JOIN discovery_schedule sch ON sch.id = r.schedule_id
+          LEFT JOIN collector_instance ci ON ci.id = r.collector_id
           LEFT JOIN (
             SELECT dc.run_id,
                    count(*) FILTER (WHERE dc.matched_device_id IS NOT NULL) AS known,
@@ -87,22 +100,37 @@ async def list_runs(session: AsyncSession, limit: int = 25) -> list[dict[str, An
     return [dict(r) for r in rows]
 
 
-async def claim_pending(session: AsyncSession) -> dict[str, Any] | None:
-    """Hand the oldest pending run to a collector, exactly once.
+async def claim_pending(session: AsyncSession, collector_id: str | None = None,
+                        supports_exclude: bool = False) -> dict[str, Any] | None:
+    """Hand the oldest pending run THIS collector may do to it, exactly once.
 
-    SKIP LOCKED so two collectors cannot claim the same run: the second skips
-    it rather than blocking, which is what you want when the work is a network
-    sweep that must not be done twice.
+    A run assigned to a collector goes to that collector only: the range is on a
+    network only it reaches, and a sweep from anywhere else hears nothing and
+    reports a site's worth of devices missing. A run assigned to nobody goes to
+    whoever asks first.
+
+    A run with exclusions goes only to a collector that says it honours them. One
+    that predates exclusions would probe exactly the addresses somebody listed
+    because probing them is harmful.
+
+    SKIP LOCKED so two collectors cannot claim the same run: the second skips it
+    rather than blocking, which is what you want when the work is a network sweep
+    that must not be done twice.
     """
     row = (await session.execute(text("""
         UPDATE discovery_run SET status = 'running', claimed_at = now()
          WHERE id = (SELECT id FROM discovery_run
                       WHERE status = 'pending'
+                        AND (collector_id IS NULL
+                             OR collector_id = CAST(:collector AS text))
+                        AND (CAST(:excl AS boolean)
+                             OR jsonb_array_length(
+                                  COALESCE(scope -> 'exclude', '[]'::jsonb)) = 0)
                       ORDER BY started_at
                       FOR UPDATE SKIP LOCKED
                       LIMIT 1)
-        RETURNING id::text, method, scope
-    """))).mappings().first()
+        RETURNING id::text, method, scope, collector_id
+    """), {"collector": collector_id, "excl": supports_exclude})).mappings().first()
     return dict(row) if row else None
 
 
@@ -276,6 +304,8 @@ async def mark_gone(session: AsyncSession, run_id: str) -> int:
     if run is None:
         return 0
     subnets = list((run["scope"] or {}).get("subnets") or [])
+    # Excluded addresses were never asked, so they cannot have gone quiet.
+    exclude = list((run["scope"] or {}).get("exclude") or [])
     if not subnets:
         # A run with no recorded scope cannot say what it covered, and guessing
         # would mark devices gone on no evidence.
@@ -290,8 +320,12 @@ async def mark_gone(session: AsyncSession, run_id: str) -> int:
            AND EXISTS (
                  SELECT 1 FROM unnest(CAST(:subnets AS text[])) AS s(cidr)
                   WHERE {_probed("address", "s.cidr")})
+           AND NOT EXISTS (
+                 SELECT 1 FROM unnest(CAST(:exclude AS text[])) AS x(cidr)
+                  WHERE address <<= CAST(x.cidr AS inet))
         RETURNING host(address) AS address, protocol::text AS protocol
-    """), {"started": run["started_at"], "subnets": subnets})).mappings().all()
+    """), {"started": run["started_at"], "subnets": subnets,
+           "exclude": exclude})).mappings().all()
     return len(rows)
 
 
@@ -365,26 +399,6 @@ async def get_candidate(session: AsyncSession,
           FROM discovery_candidate WHERE id = CAST(:id AS uuid)
     """), {"id": candidate_id})).mappings().first()
     return dict(row) if row else None
-
-
-async def mgmt_subnets(session: AsyncSession) -> list[dict[str, Any]]:
-    """Distinct /24s of the estate's management addresses, with what is in them.
-
-    The count is the point: "10.51.11.0/24 — 96 known" tells an operator that a
-    sweep finding 97 responders has found one thing worth looking at. A bare list
-    of subnets does not.
-    """
-    rows = (await session.execute(text("""
-        SELECT host(network(set_masklen(mgmt_ip, 24)))::text || '/24' AS cidr,
-               count(*) AS known
-          FROM device
-         WHERE mgmt_ip IS NOT NULL
-           AND lifecycle <> 'decommissioned'
-         GROUP BY 1
-         ORDER BY count(*) DESC, 1
-         LIMIT 32
-    """))).mappings().all()
-    return [dict(r) for r in rows]
 
 
 async def resolve_catalog(session: AsyncSession, *, vendor: str | None,
@@ -564,6 +578,12 @@ async def missing_devices(session: AsyncSession) -> list[dict[str, Any]]:
               JOIN discovery_run r ON r.status = 'done'
               JOIN LATERAL jsonb_array_elements_text(r.scope -> 'subnets') AS s(cidr)
                    ON {_probed("a.address", "s.cidr")}
+             -- An excluded address was never asked, so silence there is not a
+             -- finding - the device is simply outside what that run audited.
+             WHERE NOT EXISTS (
+                     SELECT 1 FROM jsonb_array_elements_text(
+                              COALESCE(r.scope -> 'exclude', '[]'::jsonb)) AS x(cidr)
+                      WHERE a.address <<= CAST(x.cidr AS inet))
              ORDER BY a.device_id, r.finished_at DESC
         ), polled AS (
             SELECT e.device_id,
@@ -627,7 +647,16 @@ async def attention_counts(session: AsyncSession) -> dict[str, int]:
 
 async def list_schedules(session: AsyncSession) -> list[dict[str, Any]]:
     rows = (await session.execute(text("""
-        SELECT s.id::text, s.name, s.subnets, s.interval_hours, s.enabled,
+        SELECT s.id::text, s.name, s.interval_hours, s.enabled,
+               array(SELECT x::text FROM unnest(s.range_ids) x) AS range_ids,
+               -- What it sweeps, by name and CIDR, in one read. Resolved live, so
+               -- editing a range changes what its schedules say they cover.
+               COALESCE((SELECT array_agg(g.name ORDER BY g.cidr)
+                           FROM discovery_range g WHERE g.id = ANY(s.range_ids)),
+                        '{}') AS range_names,
+               COALESCE((SELECT array_agg(g.cidr::text ORDER BY g.cidr)
+                           FROM discovery_range g WHERE g.id = ANY(s.range_ids)),
+                        '{}') AS subnets,
                s.next_run_at, s.last_run_id::text AS last_run_id,
                s.created_by, s.created_at,
                r.status AS last_status, r.finished_at AS last_finished_at,
@@ -640,16 +669,16 @@ async def list_schedules(session: AsyncSession) -> list[dict[str, Any]]:
     return [dict(r) for r in rows]
 
 
-async def create_schedule(session: AsyncSession, *, name: str, subnets: list[str],
+async def create_schedule(session: AsyncSession, *, name: str, range_ids: list[str],
                           interval_hours: int, first_run_at: Any | None,
                           actor: str | None) -> dict[str, Any]:
     row = (await session.execute(text("""
-        INSERT INTO discovery_schedule (name, subnets, interval_hours, next_run_at,
+        INSERT INTO discovery_schedule (name, range_ids, interval_hours, next_run_at,
                                         created_by)
-        VALUES (:name, CAST(:subnets AS text[]), :interval,
+        VALUES (:name, CAST(:ranges AS uuid[]), :interval,
                 COALESCE(CAST(:first AS timestamptz), now()), :actor)
-        RETURNING id::text, name, subnets, interval_hours, enabled, next_run_at
-    """), {"name": name, "subnets": subnets, "interval": interval_hours,
+        RETURNING id::text, name, interval_hours, enabled, next_run_at
+    """), {"name": name, "ranges": range_ids, "interval": interval_hours,
            "first": first_run_at, "actor": actor})).mappings().first()
     return dict(row)
 
@@ -659,7 +688,7 @@ async def update_schedule(session: AsyncSession, schedule_id: str,
     allowed = {"name": "name = :name",
                "enabled": "enabled = :enabled",
                "interval_hours": "interval_hours = :interval_hours",
-               "subnets": "subnets = CAST(:subnets AS text[])",
+               "range_ids": "range_ids = CAST(:range_ids AS uuid[])",
                "next_run_at": "next_run_at = CAST(:next_run_at AS timestamptz)"}
     sets = [allowed[k] for k in fields if k in allowed]
     if not sets:
@@ -667,7 +696,7 @@ async def update_schedule(session: AsyncSession, schedule_id: str,
     row = (await session.execute(text(f"""
         UPDATE discovery_schedule SET {", ".join(sets)}, updated_at = now()
          WHERE id = CAST(:id AS uuid)
-        RETURNING id::text, name, subnets, interval_hours, enabled, next_run_at
+        RETURNING id::text, name, interval_hours, enabled, next_run_at
     """), {"id": schedule_id, **fields})).mappings().first()
     return dict(row) if row else None
 
@@ -685,7 +714,8 @@ async def claim_due_schedule(session: AsyncSession) -> dict[str, Any] | None:
     second process moves on rather than queueing a duplicate sweep.
     """
     row = (await session.execute(text("""
-        SELECT id::text, name, subnets, interval_hours
+        SELECT id::text, name, interval_hours,
+               array(SELECT x::text FROM unnest(range_ids) x) AS range_ids
           FROM discovery_schedule
          WHERE enabled AND next_run_at <= now()
          ORDER BY next_run_at
@@ -696,7 +726,7 @@ async def claim_due_schedule(session: AsyncSession) -> dict[str, Any] | None:
 
 
 async def advance_schedule(session: AsyncSession, schedule_id: str,
-                           run_id: str) -> None:
+                           run_id: str | None) -> None:
     """Next due one interval after NOW, not after the old due time.
 
     Advancing from the old due time would, after an outage, fire the schedule once
@@ -706,6 +736,7 @@ async def advance_schedule(session: AsyncSession, schedule_id: str,
     await session.execute(text("""
         UPDATE discovery_schedule
            SET next_run_at = now() + make_interval(hours => interval_hours),
-               last_run_id = CAST(:run AS uuid), updated_at = now()
+               last_run_id = COALESCE(CAST(:run AS uuid), last_run_id),
+               updated_at = now()
          WHERE id = CAST(:id AS uuid)
     """), {"id": schedule_id, "run": run_id})

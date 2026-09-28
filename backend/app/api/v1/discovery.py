@@ -13,18 +13,46 @@ from app.core.logging import get_logger
 from app.core.security import Principal, current_principal, require_role
 from app.db.session import get_session
 from app.repositories import discovery as repo
+from app.repositories import discovery_ranges as ranges_repo
 from app.repositories import meter_channels as meter_repo
 from app.services import discovery as service
-from app.services import meter_commissioning
+from app.services import discovery_ranges, meter_commissioning
 
 log = get_logger("api.discovery")
 router = APIRouter(prefix="/discovery", tags=["discovery"])
 
 
 class RunRequest(BaseModel):
-    method: str = "snmp_sweep"
-    subnets: list[str] = Field(default_factory=list,
+    method: str = "sweep"
+    #: Saved ranges. Each is swept by the collector assigned to it.
+    range_ids: list[str] = Field(default_factory=list, max_length=128)
+    #: One-off subnets, not saved. Nothing records which collector reaches them,
+    #: so they go to `collector_id`, or to any collector.
+    subnets: list[str] = Field(default_factory=list, max_length=64,
                                examples=[["10.51.0.0/24"]])
+    collector_id: str | None = None
+
+
+class RangeRequest(BaseModel):
+    cidr: str
+    name: str | None = None
+    datacenter_id: str | None = None
+    purpose: str | None = None
+    collector_id: str | None = None
+    exclusions: list[str] = Field(default_factory=list, max_length=256)
+    enabled: bool = True
+    notes: str | None = Field(default=None, max_length=2000)
+
+
+class RangeUpdate(BaseModel):
+    cidr: str | None = None
+    name: str | None = None
+    datacenter_id: str | None = None
+    purpose: str | None = None
+    collector_id: str | None = None
+    exclusions: list[str] | None = Field(default=None, max_length=256)
+    enabled: bool | None = None
+    notes: str | None = Field(default=None, max_length=2000)
 
 
 class EndpointCredentialChoice(BaseModel):
@@ -101,18 +129,23 @@ async def create_run(req: RunRequest,
     which is where the collector is and the API is not.
     """
     try:
-        run = await service.create_run(session, method=req.method,
-                                       subnets=req.subnets)
+        runs = await discovery_ranges.queue(
+            session, method=req.method, range_ids=req.range_ids,
+            subnets=req.subnets, collector_id=req.collector_id)
         ip, agent = audit.client_of(request)
         # A discovery sweep is active traffic on the management network, sent
-        # to addresses nobody has claimed yet. Who asked for it, and over which
-        # subnets, is worth keeping.
-        await audit.record(session, actor=audit.actor_of(principal),
-                           action="discovery.run", target_type="discovery_run",
-                           target_id=str(run.get("id")), ip=ip, user_agent=agent,
-                           after={"method": req.method, "subnets": req.subnets})
+        # to addresses nobody has claimed yet. Who asked for it, over which
+        # subnets and from which collector, is worth keeping - per run.
+        for run in runs:
+            await audit.record(session, actor=audit.actor_of(principal),
+                               action="discovery.run", target_type="discovery_run",
+                               target_id=str(run.get("id")), ip=ip, user_agent=agent,
+                               after={"method": req.method, "scope": run.get("scope"),
+                                      "collector_id": run.get("collector_id")})
         await session.commit()
-        return run
+        # The first run's fields at the top level, for callers that queued one
+        # subnet and read one run back; `runs` is the whole answer.
+        return {**runs[0], "runs": runs}
     except service.DiscoveryError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from None
 
@@ -122,15 +155,86 @@ async def suggest_subnets(
     session: AsyncSession = Depends(get_session),
     _: Principal = Depends(current_principal),
 ) -> dict[str, Any]:
-    """The /24s the estate's management addresses already sit in.
+    """/24s inventory's addresses sit in that no saved range covers yet.
 
-    An operator should not have to know the site's addressing by heart to run an
-    audit, and a free-text box invites both typos and a /16 - which the sweeper
-    refuses outright rather than truncating, so the run just fails. These are
-    derived from what inventory already holds, so a sweep of one of them is asking
-    "is there anything here we do not know about" rather than guessing.
+    Suggestions, not the list. They can only show space something is already
+    recorded in - never the unrecorded subnet an audit is for - and a real
+    management network is rarely a tidy /24. The list is the saved ranges.
     """
-    return {"subnets": await repo.mgmt_subnets(session)}
+    return {"subnets": await ranges_repo.suggestions(session)}
+
+
+# ── ranges ─────────────────────────────────────────────────────────────────
+
+
+@router.get("/ranges", summary="Address ranges saved for discovery")
+async def list_ranges(session: AsyncSession = Depends(get_session),
+                      _: Principal = Depends(current_principal)) -> dict[str, Any]:
+    return {"items": await ranges_repo.list_ranges(session)}
+
+
+@router.get("/range-options", summary="What a range can be assigned to")
+async def range_options(session: AsyncSession = Depends(get_session),
+                        _: Principal = Depends(current_principal)) -> dict[str, Any]:
+    return await discovery_ranges.options(session)
+
+
+@router.post("/ranges", status_code=status.HTTP_201_CREATED,
+             summary="Save an address range for discovery")
+async def create_range(body: RangeRequest, request: Request,
+                       session: AsyncSession = Depends(get_session),
+                       principal: Principal = Depends(require_role("operator")),
+                       ) -> dict[str, Any]:
+    actor = audit.actor_of(principal)
+    try:
+        row = await discovery_ranges.create_range(session, body.model_dump(), actor)
+    except service.DiscoveryError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from None
+    ip, agent = audit.client_of(request)
+    await audit.record(session, actor=actor, action="discovery.range.create",
+                       target_type="discovery_range", target_id=row["id"],
+                       ip=ip, user_agent=agent, after=body.model_dump())
+    await session.commit()
+    return row
+
+
+@router.patch("/ranges/{range_id}", summary="Change a discovery range")
+async def update_range(range_id: str, body: RangeUpdate, request: Request,
+                       session: AsyncSession = Depends(get_session),
+                       principal: Principal = Depends(require_role("operator")),
+                       ) -> dict[str, Any]:
+    # Only what the caller sent: an absent field is "leave alone", and a
+    # datacenter or collector sent as null is "clear it".
+    fields = body.model_dump(exclude_unset=True)
+    try:
+        row = await discovery_ranges.update_range(session, range_id, fields)
+    except service.DiscoveryError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from None
+    ip, agent = audit.client_of(request)
+    await audit.record(session, actor=audit.actor_of(principal),
+                       action="discovery.range.update",
+                       target_type="discovery_range", target_id=range_id,
+                       ip=ip, user_agent=agent, after=fields)
+    await session.commit()
+    return row
+
+
+@router.delete("/ranges/{range_id}", status_code=status.HTTP_204_NO_CONTENT,
+               summary="Stop auditing a range")
+async def delete_range(range_id: str, request: Request,
+                       session: AsyncSession = Depends(get_session),
+                       principal: Principal = Depends(require_role("operator")),
+                       ) -> None:
+    try:
+        await discovery_ranges.delete_range(session, range_id)
+    except service.DiscoveryError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from None
+    ip, agent = audit.client_of(request)
+    await audit.record(session, actor=audit.actor_of(principal),
+                       action="discovery.range.delete",
+                       target_type="discovery_range", target_id=range_id,
+                       ip=ip, user_agent=agent)
+    await session.commit()
 
 
 @router.get("/attachable", summary="Reservations a responder could be fulfilling")
@@ -260,13 +364,13 @@ class AcknowledgeRequest(BaseModel):
 
 class ScheduleRequest(BaseModel):
     name: str | None = None
-    subnets: list[str] = Field(min_length=1, max_length=64)
+    range_ids: list[str] = Field(min_length=1, max_length=128)
     interval_hours: int = 24
 
 
 class ScheduleUpdate(BaseModel):
     name: str | None = None
-    subnets: list[str] | None = None
+    range_ids: list[str] | None = Field(default=None, min_length=1, max_length=128)
     interval_hours: int | None = None
     enabled: bool | None = None
     #: "Run it now" is a schedule whose next run is due immediately - the scheduler
@@ -320,7 +424,7 @@ async def create_schedule(body: ScheduleRequest, request: Request,
     actor = audit.actor_of(principal)
     try:
         row = await service.create_schedule(
-            session, name=body.name, subnets=body.subnets,
+            session, name=body.name, range_ids=body.range_ids,
             interval_hours=body.interval_hours, actor=actor)
     except service.DiscoveryError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from None
@@ -328,7 +432,7 @@ async def create_schedule(body: ScheduleRequest, request: Request,
     await audit.record(session, actor=actor, action="discovery.schedule.create",
                        target_type="discovery_schedule", target_id=row["id"],
                        ip=ip, user_agent=agent,
-                       after={"subnets": row["subnets"],
+                       after={"range_ids": body.range_ids,
                               "interval_hours": row["interval_hours"]})
     await session.commit()
     return row

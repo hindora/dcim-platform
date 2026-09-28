@@ -181,16 +181,34 @@ async def heartbeat(
 
 @router.get("/discovery/claim",
             summary="Claim a pending discovery run (collector only)")
-async def claim_discovery(session: AsyncSession = Depends(get_session),
-                          _: str = Depends(require_collector),
-                          ) -> dict[str, Any]:
-    """Hand one queued sweep to the caller, or nothing.
+async def claim_discovery(
+    collector_id: str | None = Query(None, max_length=128),
+    features: str = Query("", max_length=256),
+    session: AsyncSession = Depends(get_session),
+    identity: str = Depends(require_collector),
+) -> dict[str, Any]:
+    """Hand one queued sweep the CALLER may do to it, or nothing.
 
     The sweep runs on the collector because that is what sits on the management
-    network. The API only decides what should be swept and what the answer
-    means.
+    network, so a run assigned to one collector must only ever reach that one.
+
+    Who is asking: a scoped token says so, and a declared id that disagrees with
+    it is refused. A legacy fleet-wide token cannot say, so the declared id is
+    taken - the same id the collector heartbeats as, and a fleet token is
+    trusted with every endpoint's credentials already. A collector that
+    declares nothing claims only runs assigned to nobody.
+
+    `features=exclude` is the collector saying it honours exclusions; without
+    it, runs that carry any are never handed over.
     """
-    run = await disc_repo.claim_pending(session)
+    scoped = identity != UNSCOPED_COLLECTOR
+    if scoped and collector_id and collector_id != identity:
+        raise HTTPException(status.HTTP_403_FORBIDDEN,
+                            "declared collector id does not match the token")
+    who = identity if scoped else (collector_id or None)
+    supports = {f.strip() for f in features.split(",") if f.strip()}
+    run = await disc_repo.claim_pending(session, collector_id=who,
+                                        supports_exclude="exclude" in supports)
     # Committed immediately: the claim is the point. Without it the row's
     # status never leaves 'pending' and every collector claims it forever.
     await session.commit()

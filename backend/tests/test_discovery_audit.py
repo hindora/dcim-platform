@@ -145,14 +145,17 @@ def test_missing_carries_the_polling_state():
 def test_a_schedule_is_a_real_interval_not_any_integer():
     assert svc.SCHEDULE_INTERVALS == (6, 12, 24, 48, 168)
     with pytest.raises(svc.DiscoveryError):
-        asyncio.run(svc.create_schedule(None, name=None, subnets=["10.0.0.0/24"],
-                                        interval_hours=1))
+        asyncio.run(svc.create_schedule(
+            None, name=None, range_ids=["0b1c2d3e-0000-4000-8000-000000000001"],
+            interval_hours=1))
 
 
-@pytest.mark.parametrize("bad", [[], [""], ["10.0.0.0"], ["banana/24"]])
-def test_a_schedule_needs_real_subnets(bad):
+@pytest.mark.parametrize("bad", [[], [""], ["10.0.0.0/24"], ["banana"]])
+def test_a_schedule_sweeps_saved_ranges_not_cidr_text(bad):
+    """Editing a range must change what its schedules audit. A copy of the CIDR
+    text would go on sweeping the old one."""
     with pytest.raises(svc.DiscoveryError):
-        svc._validate_subnets(bad)
+        svc._validate_range_ids(bad)
 
 
 def test_a_due_schedule_waits_for_a_sweep_in_flight():

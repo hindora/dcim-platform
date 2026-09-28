@@ -21,13 +21,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
 from app.repositories import discovery as repo
-from app.services import discovery_endpoints
+from app.repositories import discovery_ranges as ranges_repo
+from app.services import discovery_endpoints, discovery_ranges
+from app.services.discovery_ranges import DiscoveryError
 
 log = get_logger("discovery")
-
-
-class DiscoveryError(ValueError):
-    """Bad request, with a message meant for the caller."""
 
 
 # sysDescr fragments -> device type. Ordered, first match wins, and matched
@@ -169,29 +167,19 @@ def classify(identity: dict[str, Any],
 
 #: What a run may be called. One sweep now covers every protocol the collector
 #: has been configured for, so the protocol-specific name is a legacy alias.
-_SWEEP_METHODS = frozenset({"sweep", "snmp_sweep"})
-
-
 async def create_run(session: AsyncSession, *, method: str,
                      subnets: list[str]) -> dict[str, Any]:
-    # A run sweeps whatever the collector has configured - SNMP always, Redfish
-    # too where it is enabled - so `sweep` is the honest name. `snmp_sweep` is kept
-    # because runs recorded under it are in the history and a queued one may still
-    # be in flight; refusing it would break a name that is only misleading.
-    if method not in _SWEEP_METHODS:
-        raise DiscoveryError(
-            f"method {method!r} is not implemented; "
-            f"try one of {', '.join(sorted(_SWEEP_METHODS))}")
+    """One-off subnets, to any collector. Saved ranges go through
+    discovery_ranges.queue, which also routes each to the collector that can
+    reach it.
+
+    A run sweeps whatever the collector has configured - SNMP always, Redfish
+    too where it is enabled - so `sweep` is the honest name. `snmp_sweep` is
+    kept because runs recorded under it are in the history."""
     if not subnets:
         raise DiscoveryError("a run needs at least one subnet to sweep")
-    for net in subnets:
-        # Validated here so a typo fails at request time rather than silently
-        # sweeping nothing an hour later on a collector.
-        if not re.fullmatch(r"\d+\.\d+\.\d+\.\d+/\d+", net):
-            raise DiscoveryError(f"{net!r} is not an IPv4 CIDR")
-    run = await repo.create_run(session, method=method, scope={"subnets": subnets})
-    log.info("discovery run queued", run_id=run["id"], subnets=subnets)
-    return run
+    runs = await discovery_ranges.queue(session, method=method, subnets=subnets)
+    return runs[0]
 
 
 def _serial_of(responder: dict[str, Any]) -> str | None:
@@ -604,34 +592,49 @@ async def acknowledge(session: AsyncSession, candidate_ids: list[str],
 SCHEDULE_INTERVALS = (6, 12, 24, 48, 168)
 
 
-def _validate_subnets(subnets: list[str]) -> list[str]:
-    out = [s.strip() for s in subnets if s and s.strip()]
+_UUID = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+                   r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+
+
+def _validate_range_ids(range_ids: list[str]) -> list[str]:
+    """A schedule sweeps saved ranges, not CIDR text: editing a range then
+    changes what its schedules audit, instead of leaving them on a stale copy."""
+    out = list(dict.fromkeys(str(r).strip() for r in range_ids or [] if r))
     if not out:
-        raise DiscoveryError("a schedule needs at least one subnet")
-    for net in out:
-        if not re.fullmatch(r"\d+\.\d+\.\d+\.\d+/\d+", net):
-            raise DiscoveryError(f"{net!r} is not a CIDR subnet")
+        raise DiscoveryError("a schedule needs at least one range")
+    for r in out:
+        if not _UUID.fullmatch(r):
+            raise DiscoveryError(f"{r!r} is not a range id")
     return out
 
 
+async def _existing_ranges(session: AsyncSession, ids: list[str]) -> list[dict[str, Any]]:
+    found = await ranges_repo.get_ranges(session, ids)
+    if len(found) != len(ids):
+        raise DiscoveryError("a chosen range no longer exists; reload and try again")
+    return found
+
+
 async def create_schedule(session: AsyncSession, *, name: str | None,
-                          subnets: list[str], interval_hours: int,
+                          range_ids: list[str], interval_hours: int,
                           first_run_at: Any | None = None,
                           actor: str | None = None) -> dict[str, Any]:
-    nets = _validate_subnets(subnets)
+    ids = _validate_range_ids(range_ids)
     if interval_hours not in SCHEDULE_INTERVALS:
         raise DiscoveryError(
             f"interval must be one of {', '.join(map(str, SCHEDULE_INTERVALS))} hours")
-    label = (name or "").strip() or ", ".join(nets)
-    return await repo.create_schedule(session, name=label, subnets=nets,
+    ranges = await _existing_ranges(session, ids)
+    label = (name or "").strip() or ", ".join(r["name"] for r in ranges)
+    return await repo.create_schedule(session, name=label, range_ids=ids,
                                       interval_hours=interval_hours,
                                       first_run_at=first_run_at, actor=actor)
 
 
 async def update_schedule(session: AsyncSession, schedule_id: str,
                           fields: dict[str, Any]) -> dict[str, Any]:
-    if "subnets" in fields:
-        fields["subnets"] = _validate_subnets(fields["subnets"])
+    if "range_ids" in fields:
+        fields["range_ids"] = _validate_range_ids(fields["range_ids"])
+        await _existing_ranges(session, fields["range_ids"])
     if "interval_hours" in fields and fields["interval_hours"] not in SCHEDULE_INTERVALS:
         raise DiscoveryError("interval is not one of the offered ones")
     row = await repo.update_schedule(session, schedule_id, fields)
@@ -653,12 +656,21 @@ async def fire_due_schedule(session: AsyncSession) -> dict[str, Any] | None:
     sched = await repo.claim_due_schedule(session)
     if sched is None:
         return None
-    run = await repo.create_run(session, method="sweep",
-                                scope={"subnets": list(sched["subnets"])},
-                                schedule_id=sched["id"],
-                                schedule_label=sched["name"]
-                                or ", ".join(sched["subnets"]))
-    await repo.advance_schedule(session, sched["id"], run["id"])
-    log.info("scheduled sweep queued", schedule=sched["name"], run_id=run["id"],
-             subnets=sched["subnets"], every_h=sched["interval_hours"])
-    return {"schedule": sched, "run": run}
+    # Its ranges as they are NOW. A disabled one is skipped rather than failing
+    # the schedule: somebody paused that range, not the whole audit.
+    ranges = await ranges_repo.get_ranges(session, list(sched["range_ids"]))
+    live = [r["id"] for r in ranges if r["enabled"]]
+    if not live:
+        # Advanced anyway, or it would be "due" on every tick for ever.
+        await repo.advance_schedule(session, sched["id"], None)
+        log.warning("scheduled sweep skipped: no enabled ranges",
+                    schedule=sched["name"])
+        return None
+    runs = await discovery_ranges.queue(
+        session, range_ids=live, schedule_id=sched["id"],
+        schedule_label=sched["name"])
+    await repo.advance_schedule(session, sched["id"], runs[0]["id"])
+    log.info("scheduled sweep queued", schedule=sched["name"],
+             runs=[r["id"] for r in runs], ranges=len(live),
+             every_h=sched["interval_hours"])
+    return {"schedule": sched, "run": runs[0], "runs": runs}
