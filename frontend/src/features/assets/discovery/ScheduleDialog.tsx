@@ -32,6 +32,20 @@ export function timingLabel(s: Pick<DiscoverySchedule,
   return `${when} at ${s.run_at} ${s.timezone ?? ''}`.trim();
 }
 
+/** A tag's worth: "daily", "weekdays", "12h", "weekly". */
+export function shortTiming(s: Pick<DiscoverySchedule,
+  'run_at' | 'days' | 'interval_hours'>): string {
+  if (s.run_at) {
+    const days = [...(s.days ?? EVERY_DAY)].sort();
+    if (days.length === 7) return 'daily';
+    if (days.join() === WEEKDAYS.join()) return 'weekdays';
+    if (days.length === 1) return 'weekly';
+    return `${days.length}d/wk`;
+  }
+  const h = s.interval_hours;
+  return h === 168 ? 'weekly' : h % 24 === 0 ? `${h / 24}d` : `${h}h`;
+}
+
 /** A time in a zone, as its local clock reads it: "Tue 02:00". */
 export function inZone(iso: string, tz?: string | null): string {
   try {

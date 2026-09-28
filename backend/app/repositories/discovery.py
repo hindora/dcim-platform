@@ -89,7 +89,8 @@ async def fail_run(session: AsyncSession, run_id: str, error: str) -> bool:
     """), {"id": run_id, "e": error})).first())
 
 
-async def list_runs(session: AsyncSession, limit: int = 25) -> list[dict[str, Any]]:
+async def list_runs(session: AsyncSession, limit: int = 25,
+                    schedule_id: str | None = None) -> list[dict[str, Any]]:
     """Recent sweeps, each with what it actually concluded.
 
     `found` alone is not a result. "105 answered" says nothing about whether that
@@ -142,8 +143,11 @@ async def list_runs(session: AsyncSession, limit: int = 25) -> list[dict[str, An
               LEFT JOIN device d ON d.id = dc.matched_device_id
              GROUP BY dc.run_id
           ) c ON c.run_id = r.id
+         -- One schedule's own history, when asked: the runs it queued, however
+         -- far back the estate-wide list has scrolled past them.
+         WHERE (CAST(:schedule AS uuid) IS NULL OR r.schedule_id = CAST(:schedule AS uuid))
          ORDER BY r.started_at DESC LIMIT :limit
-    """), {"limit": limit})).mappings().all()
+    """), {"limit": limit, "schedule": schedule_id})).mappings().all()
     return [dict(r) for r in rows]
 
 
@@ -766,7 +770,9 @@ async def list_schedules(session: AsyncSession) -> list[dict[str, Any]]:
                s.created_by, s.created_at,
                r.status AS last_status, r.finished_at AS last_finished_at,
                r.found AS last_found, r.unknown AS last_unknown,
-               r.moved AS last_moved, r.gone AS last_gone
+               r.moved AS last_moved, r.gone AS last_gone,
+               r.appeared AS last_appeared, r.changed AS last_changed,
+               r.error AS last_error
           FROM discovery_schedule s
           LEFT JOIN discovery_run r ON r.id = s.last_run_id
          ORDER BY s.next_run_at

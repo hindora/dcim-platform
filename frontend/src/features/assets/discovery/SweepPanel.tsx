@@ -9,7 +9,7 @@ import {
 import { relativeTime, untilTime } from '../../../lib/format';
 import { Freezes, useBlackouts, when } from './Freezes';
 import { RangeDialog } from './RangeDialog';
-import { inZone, ScheduleDialog, timingLabel } from './ScheduleDialog';
+import { inZone, ScheduleDialog, shortTiming, timingLabel } from './ScheduleDialog';
 import {
   collectorTrouble, lastSwept, MAX_ADDRESSES, parseCidr, probeCount, PURPOSE_LABEL,
   PURPOSE_TAG, SECONDS_PER_ADDRESS,
@@ -165,6 +165,15 @@ export function SweepPanel({ activeRun, onPickRun }: {
   });
 
   const sweepable = ranges.filter((r) => r.enabled);
+  // Which schedule covers each range, for its tag. The same cached query the
+  // Schedules panel reads.
+  const schedulesQ = useQuery({ queryKey: ['discovery-schedules'],
+                                queryFn: api.discoverySchedules, refetchInterval: 60_000 });
+  const coverBy = new Map<string, DiscoverySchedule[]>();
+  for (const sc of schedulesQ.data?.items ?? []) {
+    if (!sc.enabled) continue;
+    for (const id of sc.range_ids) coverBy.set(id, [...(coverBy.get(id) ?? []), sc]);
+  }
   const stale = ranges.filter((r) => r.audit === 'overdue' || r.audit === 'never').length;
   const allPicked = sweepable.length > 0 && sweepable.every((r) => picked.has(r.id));
   const inFlight = history.filter((r) => r.status === 'pending' || r.status === 'running');
@@ -217,6 +226,7 @@ export function SweepPanel({ activeRun, onPickRun }: {
               <tbody>
                 {ranges.map((r) => (
                   <RangeRow key={r.id} r={r} picked={picked.has(r.id)}
+                            covering={coverBy.get(r.id) ?? []}
                             last={lastSwept(r.cidr, history)}
                             onToggle={() => toggle(r.id)}
                             onEdit={() => setEditing({ range: r })}
@@ -325,7 +335,8 @@ export function SweepPanel({ activeRun, onPickRun }: {
         )}
       </section>
 
-      <Schedules chosen={selected} adhoc={adhoc.length} />
+      <Schedules chosen={selected} adhoc={adhoc.length}
+                 onPickRun={(id) => onPickRun(id)} />
 
       <Freezes />
 
@@ -358,8 +369,10 @@ export function SweepPanel({ activeRun, onPickRun }: {
   );
 }
 
-function RangeRow({ r, picked, last, onToggle, onEdit, onDeleted }: {
+function RangeRow({ r, picked, covering, last, onToggle, onEdit, onDeleted }: {
   r: DiscoveryRange; picked: boolean;
+  /** The enabled schedules that sweep it. */
+  covering: DiscoverySchedule[];
   last: ReturnType<typeof lastSwept>;
   onToggle: () => void; onEdit: () => void; onDeleted: () => void;
 }) {
@@ -419,6 +432,13 @@ function RangeRow({ r, picked, last, onToggle, onEdit, onDeleted }: {
         {r.name !== r.cidr && <code>{r.cidr}</code>}
         <div className="tags">
           {!r.enabled && <span className="proto">OFF</span>}
+          {/* The most frequent schedule that sweeps it, and how many more. */}
+          {covering.length > 0 && (
+            <span className="proto" title={covering.map((c) => `${c.name}: ${timingLabel(c)}`).join('\n')}>
+              {shortTiming([...covering].sort((a, b) => a.interval_hours - b.interval_hours)[0])}
+              {covering.length > 1 ? ` +${covering.length - 1}` : ''}
+            </span>
+          )}
           <AuditTag r={r} />
           {r.purpose && (
             <span className="proto" title={PURPOSE_LABEL[r.purpose]}>
@@ -474,7 +494,7 @@ function AuditTag({ r }: { r: DiscoveryRange }) {
     );
   }
   if (r.audit === 'unscheduled') {
-    return <span className="muted" title={last}>unscheduled</span>;
+    return <span className="disc-bad" title={`${last}; no schedule sweeps it`}>unscheduled</span>;
   }
   return null;
 }
@@ -645,7 +665,9 @@ function Delta({ run }: { run: DiscoveryRun }) {
  *  for every interval an outage swallowed, and a due schedule waits for a sweep
  *  already running rather than stacking a second one on the management network.
  */
-function Schedules({ chosen, adhoc }: { chosen: DiscoveryRange[]; adhoc: number }) {
+function Schedules({ chosen, adhoc, onPickRun }: {
+  chosen: DiscoveryRange[]; adhoc: number; onPickRun: (runId: string) => void;
+}) {
   const qc = useQueryClient();
   const [creating, setCreating] = useState(false);
   const options = useQuery({ queryKey: ['discovery-range-options'],
@@ -689,7 +711,7 @@ function Schedules({ chosen, adhoc }: { chosen: DiscoveryRange[]; adhoc: number 
         <ul className="disc-sched-list">
           {list.map((s) => (
             <ScheduleItem key={s.id} s={s} onChanged={refresh}
-                          onEdit={() => setEditing(s)}
+                          onEdit={() => setEditing(s)} onPickRun={onPickRun}
                           lastRun={history.find((r) => r.id === s.last_run_id)} />
           ))}
         </ul>
@@ -711,8 +733,47 @@ function Schedules({ chosen, adhoc }: { chosen: DiscoveryRange[]; adhoc: number 
   );
 }
 
-function ScheduleItem({ s, onChanged, onEdit, lastRun }: {
+/** What a run found, in one short line: "26 answered · 1 new · 2 appeared". */
+function runSummary(r: {
+  found?: number | null; unknown?: number | null; appeared?: number | null;
+  gone?: number | null; changed?: number | null;
+}): string {
+  return [
+    r.found != null ? `${r.found} answered` : null,
+    r.unknown ? `${r.unknown} new` : null,
+    r.appeared ? `${r.appeared} appeared` : null,
+    r.gone ? `${r.gone} went quiet` : null,
+    r.changed ? `${r.changed} changed` : null,
+  ].filter(Boolean).join(' · ');
+}
+
+/** The one thing to know about a schedule right now, or null when all is well.
+ *
+ *  One marker, in priority order: paused says it will not run; waiting says its
+ *  collector is not there to run it; overdue says it has not fired when due;
+ *  failed and skipped say its last run did not happen.
+ */
+function scheduleStatus(s: DiscoverySchedule, lastRun?: DiscoveryRun): {
+  label: string; tone: 'warn' | 'muted'; title?: string;
+} | null {
+  if (!s.enabled) return { label: 'paused', tone: 'muted' };
+  const status = lastRun?.status ?? s.last_status;
+  const trouble = status === 'pending' && lastRun ? collectorTrouble(lastRun) : null;
+  if (trouble) return { label: 'waiting', tone: 'warn', title: trouble };
+  const lateS = (Date.now() - Date.parse(s.next_run_at)) / 1000;
+  if (lateS > 3600) {
+    return { label: `overdue ${Math.round(lateS / 3600)} h`, tone: 'warn',
+             title: 'Due and not fired - its collector is busy or gone' };
+  }
+  if (status === 'failed') return { label: 'failed', tone: 'warn' };
+  if (status === 'skipped') return { label: 'skipped', tone: 'muted' };
+  return null;
+}
+
+function ScheduleItem({ s, onChanged, onEdit, onPickRun, lastRun }: {
   s: DiscoverySchedule; onChanged: () => void; onEdit: () => void;
+  /** Open one run's findings in the table. */
+  onPickRun: (runId: string) => void;
   /** The same run as s.last_run_id, from the fresher history query. */
   lastRun?: DiscoveryRun;
 }) {
@@ -720,6 +781,7 @@ function ScheduleItem({ s, onChanged, onEdit, lastRun }: {
   // Two clicks, not a browser confirm(): a modal dialog blocks the page, and
   // deleting a schedule is cheap to undo by making it again.
   const [confirming, setConfirming] = useState(false);
+  const [history, setHistory] = useState(false);
   const fail = (e: unknown) => setError(String(e));
 
   const toggle = useMutation({
@@ -736,42 +798,53 @@ function ScheduleItem({ s, onChanged, onEdit, lastRun }: {
   });
 
   const due = Date.parse(s.next_run_at) <= Date.now();
-  // Due for over an hour and still not fired: something is holding it - its
-  // collector is busy or gone. A minute or two late is just the scheduler tick.
-  const lateS = (Date.now() - Date.parse(s.next_run_at)) / 1000;
-  const overdue = s.enabled && lateS > 3600;
+  const marker = scheduleStatus(s, lastRun);
   const status = lastRun?.status ?? s.last_status;
   const finished = lastRun?.finished_at ?? s.last_finished_at;
-  const found = lastRun ? lastRun.found : s.last_found;
-  const unknown = lastRun ? lastRun.unknown : s.last_unknown;
-  const gone = lastRun ? lastRun.gone : s.last_gone;
-  const last = status === 'done' && finished
-    ? `${relativeTime(finished)}${found != null ? ` · ${found} answered` : ''}`
-      + (unknown ? ` · ${unknown} new` : '')
-      + (gone ? ` · ${gone} went quiet` : '')
-    : status ?? 'not yet';
-  // Why the last one did not finish - timed out, or its collector was gone.
-  const lastError = status === 'failed' || status === 'skipped' ? lastRun?.error : null;
+  const summary = runSummary(lastRun ?? {
+    found: s.last_found, unknown: s.last_unknown, appeared: s.last_appeared,
+    gone: s.last_gone, changed: s.last_changed,
+  });
+  // Why the last one did not finish - timed out, its collector was gone, a freeze.
+  const lastError = status === 'failed' || status === 'skipped'
+    ? (lastRun?.error ?? s.last_error) : null;
 
   return (
     <li className={`disc-sched${s.enabled ? '' : ' is-paused'}`}>
       <div className="top">
         <span className="title">{s.name || s.range_names.join(', ')}</span>
-        <span className="muted">{timingLabel(s)}</span>
+        {marker && (
+          <span className={`disc-mark is-${marker.tone}`} title={marker.title}>
+            {marker.label}
+          </span>
+        )}
       </div>
-      {/* What it sweeps, resolved live from its ranges. */}
-      <code className="scope" title={s.subnets.join(', ')}>
-        {s.range_names.length ? s.range_names.join(', ') : 'no ranges - it cannot run'}
-      </code>
+      {/* What it sweeps, resolved live from its ranges - one chip per range. */}
+      <div className="disc-chips" title={s.subnets.join(', ')}>
+        {s.range_names.length
+          ? s.range_names.map((n) => <span key={n} className="disc-chip">{n}</span>)
+          : <span className="disc-bad">no ranges - it cannot run</span>}
+      </div>
       <div className="muted">
-        {!s.enabled ? 'paused'
-          : overdue ? <span className="disc-bad">overdue by {Math.round(lateS / 3600)} h</span>
-            : due ? 'due now'
-              // A timed run as its own zone's clock reads it - "Tue 02:00" -
-              // because that is how the window was chosen.
-              : s.run_at ? `next ${inZone(s.next_run_at, s.timezone)} (${untilTime(s.next_run_at)})`
-                : `next ${untilTime(s.next_run_at)}`}
-        {' · '}last {last}
+        {timingLabel(s)}
+        {s.enabled && !due && (
+          // The clock time as well as the countdown: "Tue 02:00" is how a window
+          // is chosen, "in 7h" is how a person reads it. A timed schedule in its
+          // own zone; an interval one in this browser's.
+          <> · next {inZone(s.next_run_at, s.timezone)} ({untilTime(s.next_run_at)})</>
+        )}
+        {s.enabled && due && !marker && <> · due now</>}
+      </div>
+      <div className="disc-last">
+        {status === 'done' && finished && s.last_run_id ? (
+          <button type="button" className="link-button"
+                  title="Show what this run found"
+                  onClick={() => onPickRun(s.last_run_id!)}>
+            last {relativeTime(finished)}{summary ? ` · ${summary}` : ''}
+          </button>
+        ) : (
+          <span className="muted">last {status ?? 'not yet'}</span>
+        )}
       </div>
       {lastError && (
         <div className={status === 'skipped' ? 'muted' : 'disc-bad'}>{lastError}</div>
@@ -789,6 +862,10 @@ function ScheduleItem({ s, onChanged, onEdit, lastRun }: {
         <button type="button" className="link-button" disabled={toggle.isPending}
                 onClick={() => { setError(null); toggle.mutate(); }}>
           {s.enabled ? 'Pause' : 'Resume'}
+        </button>
+        <button type="button" className="link-button" aria-expanded={history}
+                onClick={() => setHistory((h) => !h)}>
+          {history ? 'Hide history' : 'History'}
         </button>
         {confirming ? (
           <>
@@ -809,7 +886,53 @@ function ScheduleItem({ s, onChanged, onEdit, lastRun }: {
           </button>
         )}
       </div>
+      {history && <ScheduleHistory scheduleId={s.id} onPickRun={onPickRun} />}
       {error && <div className="banner">{error}</div>}
     </li>
+  );
+}
+
+/** One schedule's last ten runs: when, how long, what it found, and what changed.
+ *
+ *  Duration drawn as a bar against the slowest of the ten, because "getting
+ *  slower" is a shape and a column of numbers hides it. A flapping range shows as
+ *  appeared/went quiet alternating down the list.
+ */
+function ScheduleHistory({ scheduleId, onPickRun }: {
+  scheduleId: string; onPickRun: (runId: string) => void;
+}) {
+  const { data, isLoading } = useQuery({
+    queryKey: ['discovery-schedule-runs', scheduleId],
+    queryFn: () => api.discoveryRuns({ limit: '10', schedule_id: scheduleId }),
+  });
+  const runs = data?.items ?? [];
+  const secs = (r: DiscoveryRun) => (r.finished_at && r.started_at
+    ? Math.max(0, (Date.parse(r.finished_at) - Date.parse(r.started_at)) / 1000) : 0);
+  const slowest = Math.max(1, ...runs.map(secs));
+
+  if (isLoading) return <div className="asset-skeleton" style={{ height: 60 }} />;
+  if (runs.length === 0) return <p className="muted disc-hist-none">No runs yet.</p>;
+  return (
+    <ol className="disc-hist">
+      {runs.map((r) => {
+        const s = secs(r);
+        const done = r.status === 'done';
+        return (
+          <li key={r.id}>
+            <button type="button" onClick={() => onPickRun(r.id)} disabled={!done}
+                    title={done ? 'Show what this run found' : r.error ?? r.status}>
+              <span className="when">{relativeTime(r.started_at)}</span>
+              <span className="bar" aria-hidden>
+                <i style={{ width: `${Math.round((s / slowest) * 100)}%` }} />
+              </span>
+              <span className="dur">{s ? describeDuration(s) : '—'}</span>
+              <span className="what">
+                {done ? runSummary(r) || 'nothing answered' : r.status}
+              </span>
+            </button>
+          </li>
+        );
+      })}
+    </ol>
   );
 }

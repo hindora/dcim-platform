@@ -361,6 +361,39 @@
 }
 .disc-sched-new button { grid-column: 1 / -1; height: 30px; }
 .disc-sched-hint { margin: 6px 0 0; font-size: 0.74rem; }
+
+/* One marker per schedule: what to know right now. Outlined, so a warning is
+   the text colour and never a filled block. */
+.disc-mark {
+  flex: 0 0 auto; padding: 0 5px; border-radius: 3px; font-size: 0.66rem;
+  letter-spacing: .04em; text-transform: uppercase; border: 1px solid currentColor;
+}
+.disc-mark.is-warn { color: var(--warn); }
+.disc-mark.is-muted { color: var(--text-faint); }
+
+.disc-chips { display: flex; flex-wrap: wrap; gap: 3px; margin: 3px 0; }
+.disc-chip {
+  padding: 0 5px; border-radius: 3px; border: 1px solid var(--border-strong);
+  font-size: 0.7rem; color: var(--text-muted);
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.disc-last .link-button { font-size: 0.76rem; color: var(--accent); text-align: left; }
+
+.disc-hist { list-style: none; margin: 6px 0 0; padding: 0; }
+.disc-hist li + li { border-top: 1px solid var(--border); }
+.disc-hist button {
+  display: grid; grid-template-columns: 52px 1fr 40px; gap: 2px 6px; align-items: center;
+  width: 100%; padding: 4px 0; background: none; border: 0; color: var(--text);
+  font: inherit; font-size: 0.72rem; text-align: left; cursor: pointer;
+}
+.disc-hist button:disabled { cursor: default; color: var(--text-muted); }
+.disc-hist button:hover:not(:disabled) { background: var(--bg-inset); }
+.disc-hist .when { color: var(--text-muted); }
+.disc-hist .bar { height: 6px; background: var(--bg-inset); border-radius: 3px; overflow: hidden; }
+.disc-hist .bar i { display: block; height: 100%; background: var(--series-1); }
+.disc-hist .dur { text-align: right; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.disc-hist .what { grid-column: 1 / -1; color: var(--text-muted); }
+.disc-hist-none { margin: 6px 0 0; font-size: 0.74rem; }
 .disc-stale { margin: 0 0 6px; font-size: 0.76rem; }
 .disc-sched > .disc-bad { margin: 2px 0 0; font-size: 0.74rem; }
 .disc-sched-ranges { display: flex; flex-direction: column; gap: 6px; max-height: 220px; overflow: auto; }

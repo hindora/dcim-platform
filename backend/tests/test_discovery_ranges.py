@@ -406,3 +406,13 @@ def test_only_real_alarm_types_can_be_listed():
         cfg._policy({"alarm_types": ["not_a_condition"]})
     assert cfg._policy({"alarm_types": ["discovery_missing"]}) == {
         "alarm_types": ["discovery_missing"]}
+
+
+def test_a_schedule_has_its_own_history():
+    """The estate-wide run list keeps the last N; a busy estate scrolls a nightly
+    schedule's runs off it within a day. Its history is asked for by id."""
+    body = _body(REPO, "list_runs")
+    assert "r.schedule_id = CAST(:schedule AS uuid)" in body
+    assert "schedule_id=schedule_id" in DISC_API
+    sched = _body(REPO, "list_schedules")
+    assert "r.appeared AS last_appeared" in sched and "r.error AS last_error" in sched

@@ -455,6 +455,10 @@ export interface DiscoverySchedule {
   last_unknown?: number | null;
   last_moved?: number | null;
   last_gone?: number | null;
+  last_appeared?: number | null;
+  last_changed?: number | null;
+  /** Why the last run did not finish: a timeout, a gone collector, a freeze. */
+  last_error?: string | null;
 }
 
 export interface DiscoveryCandidate {

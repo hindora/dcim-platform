@@ -345,9 +345,16 @@ async def attachable(
 
 @router.get("/runs", summary="List discovery runs")
 async def list_runs(limit: int = Query(25, ge=1, le=100),
+                    schedule_id: str | None = Query(None, max_length=64),
                     session: AsyncSession = Depends(get_session),
                     _: Principal = Depends(current_principal)) -> dict[str, Any]:
-    return {"items": await repo.list_runs(session, limit)}
+    """`schedule_id` narrows to one schedule's own runs - its history, which
+    the estate-wide list of the last N scrolls past on a busy estate."""
+    if schedule_id:
+        import re
+        if not re.fullmatch(r"[0-9a-fA-F-]{36}", schedule_id):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "not a schedule id")
+    return {"items": await repo.list_runs(session, limit, schedule_id=schedule_id)}
 
 
 @router.get("/candidates", summary="What answered, and whether we knew about it")
