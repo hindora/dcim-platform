@@ -523,11 +523,14 @@ function Row({ r, f, expanded, onExpand, picked, selectable, onPick }: {
       </td>
       <td className="ident">
         <Identity r={r} />
-        {/* The sweep's guess, under the evidence it was guessed from. A column of
-            its own pushed the table past the width of a 1536px screen with the
-            sweep rail open, and a guess read beside its evidence is easier to
-            judge anyway. */}
-        {suggestion && <div className="guess">suggests {suggestion}</div>}
+        {/* The sweep's guess, under the evidence it was guessed from - and only
+            where there is no record. A column of its own pushed the table past a
+            1536px screen with the sweep rail open; on a device inventory already
+            knows, the record is the authority and the guess is a third line of
+            noise on every one of 177 rows. */}
+        {suggestion && !match?.matched_device_id && (
+          <div className="guess">suggests {suggestion}</div>
+        )}
       </td>
       <td className="serial">
         {r.serial ?? <span className="asset-none">not reported</span>}
