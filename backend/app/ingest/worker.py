@@ -54,6 +54,7 @@ from app.integrations import outbox as integration_outbox
 from app.integrations.dispatcher import Dispatcher
 from app.repositories import alarms as repo_alarms
 from app.repositories import snapshots as snapshot_repo
+from app.services import assigner
 from app.services import maintenance as maintenance_service
 
 log = get_logger("ingest")
@@ -95,6 +96,15 @@ STALENESS_SWEEP_S = 60.0
 # How often the platform evaluates its own health. Frequent enough that a dead
 # collector is noticed inside a minute, rare enough that it is not a load.
 PLATFORM_CHECK_S = 30.0
+
+# How often the assigner (app/services/assigner.py, docs/26 Phase 5) writes
+# endpoint_assignment. Same cadence as OwnershipGuard's own refresh: a
+# mandatory move (a drain, a dead collector) needs to land inside about a
+# minute, and a THRESHOLD-triggered rebalance is self-limiting regardless of
+# how often this runs - a real deviation gets corrected the first time it is
+# seen and does not recur until something changes again, so there is no
+# separate cooldown timer here beyond this interval.
+ASSIGNER_INTERVAL_S = 30.0
 
 _QUALITY_NAMES = {int(q): q.name.lower() for q in Quality}
 _SEVERITY_NAMES = {int(s): s.name for s in Severity}
@@ -144,6 +154,7 @@ class IngestWorker:
         self._last_snapshot_check = float("-inf")
         self._last_platform_check = float("-inf")
         self._last_consumer_reap = float("-inf")
+        self._last_assigner_run = float("-inf")
         # Pipeline latency measured on the last telemetry batch. None until a
         # batch has actually been seen - an idle worker has no lag to report,
         # and reporting zero would be a claim it cannot support.
@@ -203,6 +214,7 @@ class IngestWorker:
         if self.cache.is_stale():
             async with unit_of_work() as session:
                 await self.cache.refresh(session)
+        await self._maybe_run_assigner()
         if self.ownership.due():
             try:
                 async with unit_of_work() as session:
@@ -383,6 +395,23 @@ class IngestWorker:
         except Exception as exc:
             log.error("collector visibility sweep failed", error=str(exc),
                       exc_info=True)
+
+    async def _maybe_run_assigner(self) -> None:
+        """Write endpoint_assignment - docs/26 Phase 5. Advisory-locked
+        inside assigner.run itself, so with the documented two-worker
+        deployment only one of them actually does anything on a given
+        tick; the other finds the lock held and returns immediately."""
+        now = time.monotonic()
+        if now - self._last_assigner_run < ASSIGNER_INTERVAL_S:
+            return
+        self._last_assigner_run = now
+        try:
+            async with unit_of_work() as session:
+                await assigner.run(session)
+        except Exception as exc:
+            # The previous persisted plan stays in force; a failed tick
+            # here must not touch what build_assignment is already serving.
+            log.error("assigner tick failed", error=str(exc))
 
     async def _maybe_sweep_staleness(self) -> None:
         """Look for endpoints that answer but deliver nothing.

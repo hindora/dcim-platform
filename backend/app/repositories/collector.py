@@ -7,6 +7,7 @@ changes at runtime and a file goes stale within minutes.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from sqlalchemy import text
@@ -62,7 +63,7 @@ async def live_collectors(session: AsyncSession,
     it cannot route to.
     """
     rows = (await session.execute(text("""
-        SELECT ci.id, ci.status, ci.state, dc.code AS site,
+        SELECT ci.id, ci.status, ci.state, dc.code AS site, ci.pool_id::text AS pool_id,
                ci.started_at IS NOT NULL AS has_run,
                extract(epoch FROM (clock_timestamp() - ci.last_heartbeat)) AS age_s
           FROM collector_instance ci
@@ -78,6 +79,10 @@ async def live_collectors(session: AsyncSession,
             # Absent means "serves any site", which is the correct default for
             # a single-site deployment.
             "sites": [r["site"]] if r["site"] else [],
+            # docs/26 Phase 5: set, this REPLACES sites as the whole placement
+            # decision (see services/sharding.Collector.serves) - a collector
+            # an admin has placed in a pool serves that pool and nothing else.
+            "pool_id": r["pool_id"],
             "healthy": age is not None and age < stale_after_s,
             # Takes a share of the hash only once it has actually run. A
             # collector created ahead of its install would otherwise pull its
@@ -204,6 +209,15 @@ async def assignment_endpoints(session: AsyncSession, collector_id: str,
                c.kind AS credential_kind, c.secret_enc, c.key_id AS credential_key_id,
                e.collector_id,
                dc.code AS site,
+               COALESCE(e.pool_id, (
+                   SELECT cp.id
+                     FROM discovery_range dr
+                     JOIN collector_pool cp
+                       ON cp.datacenter_id = dc.id AND cp.plane = dr.purpose
+                    WHERE e.address IS NOT NULL AND e.address <<= dr.cidr
+                    ORDER BY masklen(dr.cidr) DESC
+                    LIMIT 1
+               ))::text AS pool_id,
                p.interval_s, p.timeout_ms, p.retries, p.metric_groups, p.push_enabled
         FROM device_endpoint e
         JOIN device d        ON d.id = e.device_id
@@ -230,7 +244,16 @@ async def ownable_endpoints(session: AsyncSession) -> list[dict[str, Any]]:
     business decrypting a credential to get it.
     """
     rows = (await session.execute(text("""
-        SELECT e.id::text, e.collector_id, dc.code AS site
+        SELECT e.id::text, e.collector_id, dc.code AS site,
+               COALESCE(e.pool_id, (
+                   SELECT cp.id
+                     FROM discovery_range dr
+                     JOIN collector_pool cp
+                       ON cp.datacenter_id = dc.id AND cp.plane = dr.purpose
+                    WHERE e.address IS NOT NULL AND e.address <<= dr.cidr
+                    ORDER BY masklen(dr.cidr) DESC
+                    LIMIT 1
+               ))::text AS pool_id
         FROM device_endpoint e
         JOIN device d        ON d.id = e.device_id
         JOIN poll_profile p  ON p.id = e.poll_profile_id
@@ -242,6 +265,38 @@ async def ownable_endpoints(session: AsyncSession) -> list[dict[str, Any]]:
           AND d.lifecycle <> 'decommissioned'
     """))).mappings().all()
     return [dict(r) for r in rows]
+
+
+async def current_assignment(session: AsyncSession) -> dict[str, str | None]:
+    """What endpoint_assignment holds right now - docs/26 Phase 5's
+    persisted plan, read by the assigner as its damping baseline and by
+    build_assignment to serve a collector without recomputing anything."""
+    rows = (await session.execute(text(
+        "SELECT endpoint_id::text, collector_id FROM endpoint_assignment"
+    ))).all()
+    return {str(r[0]): r[1] for r in rows}
+
+
+async def write_assignment(session: AsyncSession,
+                           changes: dict[str, tuple[str | None, str]]) -> None:
+    """Upserts endpoint_assignment for every endpoint whose owner actually
+    changed - bumping epoch and since, recording reason. Only called with
+    real changes; a no-op tick writes nothing at all."""
+    if not changes:
+        return
+    await session.execute(text("""
+        INSERT INTO endpoint_assignment (endpoint_id, collector_id, epoch, since, reason)
+        SELECT (v->>'endpoint_id')::uuid, v->>'collector_id', 1, now(), v->>'reason'
+          FROM jsonb_array_elements(CAST(:rows AS jsonb)) AS v
+        ON CONFLICT (endpoint_id) DO UPDATE SET
+            collector_id = EXCLUDED.collector_id,
+            epoch = endpoint_assignment.epoch + 1,
+            since = now(),
+            reason = EXCLUDED.reason
+    """), {"rows": json.dumps([
+        {"endpoint_id": eid, "collector_id": owner, "reason": reason}
+        for eid, (owner, reason) in changes.items()
+    ])})
 
 
 async def resolvable_endpoints(session: AsyncSession) -> list[dict[str, Any]]:

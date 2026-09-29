@@ -27,8 +27,15 @@ def endpoints(n: int, site: str | None = "DC1",
     return out
 
 
-def col(name: str, sites: tuple[str, ...] = ()) -> sh.Collector:
-    return sh.Collector(collector_id=name, sites=frozenset(sites))
+def col(name: str, sites: tuple[str, ...] = (), pool_id: str | None = None,
+        healthy: bool = True, accepting: bool = True) -> sh.Collector:
+    return sh.Collector(collector_id=name, sites=frozenset(sites), pool_id=pool_id,
+                        healthy=healthy, accepting=accepting)
+
+
+def pool_endpoints(n: int, pool_id: str) -> list[dict]:
+    return [{"id": str(uuid.UUID(int=i + 1)), "pool_id": pool_id, "site": None}
+            for i in range(n)]
 
 
 # --- the exit criterion -------------------------------------------------------
@@ -98,8 +105,8 @@ def test_assignment_does_not_depend_on_process_or_ordering():
     a = sh.plan(eps, [col("col-1"), col("col-2")])
     b = sh.plan(eps, [col("col-2"), col("col-1")])
     assert a == b
-    assert sh.owner("fixed-id", "DC1", [col("x"), col("y")]) == \
-        sh.owner("fixed-id", "DC1", [col("y"), col("x")])
+    assert sh.owner("fixed-id", None, "DC1", [col("x"), col("y")]) == \
+        sh.owner("fixed-id", None, "DC1", [col("y"), col("x")])
 
 
 # --- reachability -------------------------------------------------------------
@@ -129,10 +136,10 @@ def test_an_endpoint_no_collector_can_reach_is_reported_unassigned():
 
 def test_a_collector_with_no_declared_sites_serves_everything():
     """The single-site default, and why existing deployments are unaffected."""
-    assert col("any").serves("DC1")
-    assert col("any").serves(None)
-    assert not col("east", ("DC1",)).serves("DC2")
-    assert not col("east", ("DC1",)).serves(None)
+    assert col("any").serves(None, "DC1")
+    assert col("any").serves(None, None)
+    assert not col("east", ("DC1",)).serves(None, "DC2")
+    assert not col("east", ("DC1",)).serves(None, None)
 
 
 # --- pins ---------------------------------------------------------------------
@@ -164,3 +171,127 @@ def test_pins_do_not_break_the_no_overlap_guarantee():
     b = {e["id"] for e in sh.owned_by(eps, cols, "col-2")}
     assert a & b == set()
     assert a | b == {e["id"] for e in eps}
+
+
+# --- pools (docs/26 Phase 5) ----------------------------------------------
+
+def test_a_pool_placed_collector_ignores_sites_entirely():
+    """pool_id is the whole placement decision once set - sites is not
+    consulted, even if it happens to be populated too."""
+    c = col("p", sites=("DC1",), pool_id="pool-a")
+    assert c.serves("pool-a", None)
+    assert c.serves("pool-a", "DC9")  # site is irrelevant once pool_id is set
+    assert not c.serves("pool-b", "DC1")
+    assert not c.serves(None, "DC1")
+
+
+def test_adding_a_second_collector_to_a_pool_never_takes_another_pools_endpoint():
+    a_eps = pool_endpoints(100, "pool-a")
+    b_eps = pool_endpoints(100, "pool-b")
+    cols = [col("a1", pool_id="pool-a"), col("a2", pool_id="pool-a"),
+            col("b1", pool_id="pool-b")]
+    a_owned = {e["id"] for e in sh.owned_by(a_eps, cols, "a1")} | \
+        {e["id"] for e in sh.owned_by(a_eps, cols, "a2")}
+    assert a_owned == {e["id"] for e in a_eps}
+    assert sh.owned_by(b_eps, cols, "a1") == []
+    assert sh.owned_by(b_eps, cols, "a2") == []
+
+
+# --- rebalance damping (docs/26 Phase 5) ----------------------------------
+
+def test_rebalance_does_nothing_below_the_deviation_threshold():
+    """A large pool already spread across many members: one more joining
+    changes the mean only slightly, and the existing members' current
+    counts (~mean already) are nowhere near 10 over or 2x it. Must not
+    reshuffle a pool this size over one new, still nearly-empty member."""
+    eps = pool_endpoints(200, "pool-a")
+    existing = [col(f"a{i}", pool_id="pool-a") for i in range(20)]
+    joined = [*existing, col("a20", pool_id="pool-a")]
+    current = sh.plan(eps, existing)  # ~10 each across 20 members
+    target = sh.plan(eps, joined)     # ~9.5 each across 21 members
+    result = sh.rebalance(current, target, eps, joined)
+    assert result == current
+
+
+def test_rebalance_triggers_exactly_at_the_boundary_not_only_past_it():
+    """20 endpoints, solo -> pair: current is 20/0, which is EXACTLY
+    deviation=10 and EXACTLY ratio=2x - the floors are both '>=', so this
+    is meant to trigger, not the one case away from it."""
+    eps = pool_endpoints(20, "pool-a")
+    cols = [col("a1", pool_id="pool-a"), col("a2", pool_id="pool-a")]
+    current = sh.plan(eps, [col("a1", pool_id="pool-a")])
+    target = sh.plan(eps, cols)
+    result = sh.rebalance(current, target, eps, cols)
+    assert result == target
+
+
+def test_rebalance_moves_everything_when_deviation_crosses_both_thresholds():
+    eps = pool_endpoints(200, "pool-a")
+    solo = [col("a1", pool_id="pool-a")]
+    pair = [col("a1", pool_id="pool-a"), col("a2", pool_id="pool-a")]
+    current = sh.plan(eps, solo)
+    target = sh.plan(eps, pair)
+    result = sh.rebalance(current, target, eps, pair)
+    assert result == target
+    assert sh.distribution(result)["a2"] > 0
+
+
+def test_rebalance_moves_immediately_when_the_current_owner_is_draining():
+    """docs/26 Phase 5's acceptance bar: a drain completes with zero
+    polling gaps beyond one interval - the very next assigner run, not
+    whatever the deviation threshold would otherwise require."""
+    eps = pool_endpoints(20, "pool-a")
+    healthy_pair = [col("a1", pool_id="pool-a"), col("a2", pool_id="pool-a")]
+    current = sh.plan(eps, healthy_pair)
+    draining = [col("a1", pool_id="pool-a", accepting=False),
+               col("a2", pool_id="pool-a")]
+    target = sh.plan(eps, draining)
+    result = sh.rebalance(current, target, eps, draining)
+    assert result == target
+    assert "a1" not in sh.distribution(result)
+
+
+def test_rebalance_moves_immediately_when_the_current_owner_is_unhealthy():
+    eps = pool_endpoints(20, "pool-a")
+    healthy_pair = [col("a1", pool_id="pool-a"), col("a2", pool_id="pool-a")]
+    current = sh.plan(eps, healthy_pair)
+    one_down = [col("a1", pool_id="pool-a", healthy=False),
+               col("a2", pool_id="pool-a")]
+    target = sh.plan(eps, one_down)
+    result = sh.rebalance(current, target, eps, one_down)
+    assert result == target
+
+
+def test_rebalance_leaves_other_pools_untouched_by_one_pools_drain():
+    a_eps = pool_endpoints(20, "pool-a")
+    b_eps = pool_endpoints(20, "pool-b")
+    eps = a_eps + b_eps
+    healthy = [col("a1", pool_id="pool-a"), col("a2", pool_id="pool-a"),
+              col("b1", pool_id="pool-b")]
+    current = sh.plan(eps, healthy)
+    a_drains = [col("a1", pool_id="pool-a", accepting=False),
+               col("a2", pool_id="pool-a"), col("b1", pool_id="pool-b")]
+    target = sh.plan(eps, a_drains)
+    result = sh.rebalance(current, target, eps, a_drains)
+    for e in b_eps:
+        assert result[e["id"]] == current[e["id"]] == "b1"
+
+
+def test_rebalance_assigns_a_brand_new_endpoint_straight_to_target():
+    """No current entry at all - there is nothing to damp against, so the
+    fresh target answer is simply adopted."""
+    eps = pool_endpoints(5, "pool-a")
+    cols = [col("a1", pool_id="pool-a")]
+    current: dict[str, str | None] = {}
+    target = sh.plan(eps, cols)
+    result = sh.rebalance(current, target, eps, cols)
+    assert result == target
+
+
+def test_rebalance_result_covers_every_endpoint_given():
+    eps = pool_endpoints(50, "pool-a")
+    cols = [col("a1", pool_id="pool-a"), col("a2", pool_id="pool-a")]
+    current = sh.plan(eps, cols)
+    target = sh.plan(eps, cols)
+    result = sh.rebalance(current, target, eps, cols)
+    assert set(result) == {e["id"] for e in eps}
