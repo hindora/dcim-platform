@@ -116,7 +116,7 @@ func trapHarness(t *testing.T, sim *Sim, endpoints []*models.Endpoint) *trapSink
 		t.Fatalf("load trap mappings: %v", err)
 	}
 	resolver := assign.NewResolver()
-	resolver.Replace(endpoints)
+	resolver.Replace(endpoints, nil, "")
 
 	sink := newTrapSink()
 	port := freeUDPPort(t)

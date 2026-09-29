@@ -156,4 +156,7 @@ message CollectorHeartbeat {
   bool config_restart_pending = 16;
   string config_error = 17;
   string config_effective = 18;
+  uint64 publish_dropped = 19;
+  uint32 queue_capacity = 20;
+  uint32 assignment_age_s = 21;
 }

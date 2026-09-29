@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/hari/dcim-platform/collector/internal/assign"
@@ -60,7 +61,13 @@ type EventReceiver struct {
 	mu     sync.Mutex
 	seen   map[string]*rateWindow
 	server *http.Server
+
+	// Every event delivery accepted, for the heartbeat's events_received.
+	received atomic.Uint64
 }
+
+// Received is how many event deliveries have been accepted since start.
+func (r *EventReceiver) Received() uint64 { return r.received.Load() }
 
 type rateWindow struct {
 	windowStart time.Time
@@ -215,6 +222,7 @@ func (r *EventReceiver) publish(ctx context.Context, in inboundEvent) {
 	if len(in.doc.Events) == 0 {
 		return
 	}
+	r.received.Add(uint64(len(in.doc.Events)))
 	out := make([]models.Event, 0, len(in.doc.Events))
 
 	// Context carries the endpoint id we set at subscribe time; the source

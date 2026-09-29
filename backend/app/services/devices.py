@@ -261,7 +261,7 @@ async def one_endpoint(session: AsyncSession, device_id: str,
 #: thing that moved, and this is the trail somebody reads after a device went
 #: quiet at 3am.
 _AUDITED = ("address", "port", "addressing", "credential_id",
-            "poll_profile_id", "enabled", "admin_state")
+            "poll_profile_id", "enabled", "admin_state", "collector_id")
 
 
 async def update_endpoint(session: AsyncSession, *, device_id: str,
@@ -300,6 +300,21 @@ async def update_endpoint(session: AsyncSession, *, device_id: str,
             if await repo.get_poll_profile(session, value) is None:
                 raise endpoint_config.EndpointConfigError(
                     "no such poll profile")
+            clean[key] = value
+        elif key == "collector_id" and value is not None:
+            # A pin to a collector that does not exist is kept by the sharding
+            # plan on purpose (it may not have started yet), which makes a typo
+            # here an endpoint nobody polls. So the pin must name a collector
+            # this platform knows, and not a retired one.
+            from app.repositories import collector as collector_repo
+
+            known = await collector_repo.collector_state(session, value)
+            if known is None:
+                raise endpoint_config.EndpointConfigError(
+                    f"no collector called {value} has registered")
+            if known["state"] == "decommissioned":
+                raise endpoint_config.EndpointConfigError(
+                    f"collector {value} is decommissioned")
             clean[key] = value
         else:
             clean[key] = value

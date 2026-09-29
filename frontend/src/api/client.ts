@@ -878,10 +878,28 @@ export interface CollectorRow {
   alive: boolean;
   updated_at?: string | null;
   updated_by?: string | null;
+  /** Placement and intent, both an admin's decision. */
+  state: 'pending' | 'active' | 'draining' | 'decommissioned';
+  state_changed_at?: string | null;
+  state_changed_by?: string | null;
+  datacenter_id?: string | null;
+  site?: string | null;
+  token_generation: number;
+  /** True once it has heartbeated at least once. A collector created ahead
+   *  of its install has never run and takes no share of the hash yet. */
+  has_run: boolean;
+  /** Endpoints pinned to it directly, regardless of the hash. */
+  pinned: number;
+  /** What the CURRENT sharding plan gives it, which can differ from
+   *  endpoints_owned while it is stale, pending or mid-move. */
+  planned: number;
 }
 
 export interface CollectorsPage {
   collectors: CollectorRow[];
+  sites: { id: string; code: string; name: string }[];
+  /** Endpoints no collector can own: a site with nobody placed in it. */
+  unassigned: number;
   schema: { sections: ConfigSection[] };
 }
 
@@ -941,6 +959,9 @@ export interface EndpointPatch {
   poll_profile_id?: string | null;
   enabled?: boolean;
   admin_state?: string;
+  /** Pin this endpoint to one collector, or null to release it back to the
+   *  sharding plan. */
+  collector_id?: string | null;
 }
 
 export interface EndpointSummary {
@@ -963,6 +984,10 @@ export interface EndpointSummary {
    *  or a BACnet router. Its address belongs to the gateway, not to it. */
   via_endpoint_id?: string | null;
   via_name?: string | null;
+  /** The collector this endpoint is pinned to, if an operator pinned it. */
+  pinned_collector?: string | null;
+  /** The collector that last reported its state. */
+  reported_by?: string | null;
   poll_interval_s?: number | null;
   status: string;
   /** Every poll attempt. Fresh here with a stale last_success = polling and failing. */
@@ -3321,6 +3346,32 @@ export const api = {
     request<{ collector_id: string; version: number; restart_pending: string[] }>(
       `/collectors/${id}/config`,
       { method: 'PUT', body: JSON.stringify({ config }) }),
+
+  /** Create a collector ahead of its install: placed and approved before it
+   *  ever asks for work, so its first assignment is the right one. The token
+   *  is returned exactly once — the platform keeps no copy. */
+  createCollector: (id: string, datacenterId: string | null) =>
+    request<{ id: string; token: string; generation: number }>('/collectors', {
+      method: 'POST', body: JSON.stringify({ id, datacenter_id: datacenterId }),
+    }),
+
+  /** Place a collector in a site, approve a pending one (state: 'active'),
+   *  or drain it (state: 'draining'). */
+  patchCollector: (id: string, body: { datacenter_id?: string | null;
+                                       state?: 'active' | 'draining' }) =>
+    request<{ id: string; changed: Record<string, unknown> }>(
+      `/collectors/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+
+  /** Issue a new token, revoking every token this collector holds now. */
+  issueCollectorToken: (id: string) =>
+    request<{ id: string; generation: number; token: string }>(
+      `/collectors/${id}/token`, { method: 'POST' }),
+
+  /** Retire a collector: its token stops working and anything pinned to it
+   *  is released back to the hash. Not reversible from here. */
+  decommissionCollector: (id: string) =>
+    request<{ id: string; unpinned: number }>(
+      `/collectors/${id}/decommission`, { method: 'POST' }),
 
   pollProfiles: () => request<PollProfilesPage>('/poll-profiles'),
 

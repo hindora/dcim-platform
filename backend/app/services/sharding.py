@@ -22,10 +22,18 @@ they were.
 wrong. A collector can only poll what it can route to, and management networks
 are per-site and frequently overlapping RFC1918 - 10.51.x.x in one datacenter
 is a different network from 10.51.x.x in another. Real poller fleets assign by
-site first and balance within it. A collector declares the sites it serves; one
-that declares none is treated as serving all, which is the correct default for
-a single-site deployment and the reason the existing single collector keeps
-working unchanged.
+site first and balance within it. An admin places each collector in the site
+whose network it sits on (``collector_instance.datacenter_id``); one placed
+nowhere is treated as serving all, which is the correct default for a
+single-site deployment and the reason the existing single collector keeps
+working unchanged. Placement is recorded centrally rather than declared by the
+process, as Zabbix proxy-group membership is: a typo in a heartbeat must not be
+able to re-shard the estate.
+
+A draining collector is still a collector - it keeps anything pinned to it, and
+it is not the same as a dead one - but it takes no share of the hash, so its
+unpinned endpoints move to the other collectors in its site. That is how a host
+is emptied ahead of maintenance without deleting its row.
 
 Failover is deliberately NOT automatic. A collector that stops heartbeating
 keeps its shard, and its endpoints go UNKNOWN - which is what the test strategy
@@ -49,12 +57,13 @@ class Collector:
 
     ``sites`` is the set of datacenter codes it can reach. Empty means "any" -
     the single-collector default, and the reason adding this module changes
-    nothing for an existing deployment.
+    nothing for an existing deployment. ``accepting`` is False while it drains.
     """
 
     collector_id: str
     sites: frozenset[str] = field(default_factory=frozenset)
     healthy: bool = True
+    accepting: bool = True
 
     def serves(self, site: str | None) -> bool:
         if not self.sites:
@@ -81,7 +90,7 @@ def owner(endpoint_id: str, site: str | None,
     endpoint in a site no collector serves is unpolled, and the honest response
     is to say so rather than hand it to a collector that cannot route to it.
     """
-    eligible = [c for c in collectors if c.serves(site)]
+    eligible = [c for c in collectors if c.accepting and c.serves(site)]
     if not eligible:
         return None
     return max(eligible, key=lambda c: (_weight(endpoint_id, c.collector_id),

@@ -218,6 +218,9 @@ class CollectorHeartbeat(_Msg):
     config_restart_pending: bool = False
     config_error: str = ""
     config_effective: str = ""
+    publish_dropped: int = 0
+    queue_capacity: int = 0
+    assignment_age_s: int = 0
 
 
 class Stream:

@@ -91,7 +91,7 @@ func TestItIsPublishedWithItsDeviceOnceTheInventoryArrives(t *testing.T) {
 
 	resolver.Replace([]*models.Endpoint{
 		endpoint("ep-1", "dev-1", "10.50.21.26"),
-	})
+	}, nil, "")
 	r.flushHeld(context.Background(), false)
 
 	events := sink.all()
@@ -118,7 +118,7 @@ func TestTheOriginalArrivalTimeSurvivesTheHold(t *testing.T) {
 	arrived := time.Now().Add(-45 * time.Second)
 	r.hold(trap("10.50.21.26", "1.3.6.1.4.1.99999.1.1", arrived))
 
-	resolver.Replace([]*models.Endpoint{endpoint("ep-1", "dev-1", "10.50.21.26")})
+	resolver.Replace([]*models.Endpoint{endpoint("ep-1", "dev-1", "10.50.21.26")}, nil, "")
 	r.flushHeld(context.Background(), false)
 
 	got := sink.all()[0].ObservedAt
@@ -137,7 +137,7 @@ func TestOrderIsPreservedAcrossTheHold(t *testing.T) {
 	r.hold(trap("10.50.21.26", "1.3.6.1.4.1.99999.1.1", base))                    // cpuHigh
 	r.hold(trap("10.50.21.26", "1.3.6.1.4.1.99999.1.3", base.Add(2*time.Second))) // cpuNormal
 
-	resolver.Replace([]*models.Endpoint{endpoint("ep-1", "dev-1", "10.50.21.26")})
+	resolver.Replace([]*models.Endpoint{endpoint("ep-1", "dev-1", "10.50.21.26")}, nil, "")
 	r.flushHeld(context.Background(), false)
 
 	events := sink.all()
@@ -159,7 +159,7 @@ func TestOrderIsPreservedAcrossTheHold(t *testing.T) {
 // anyway.
 func TestAnUnknownSourceIsNotHeldOnceTheInventoryIsLoaded(t *testing.T) {
 	r, _, resolver := newHoldReceiver(t)
-	resolver.Replace([]*models.Endpoint{endpoint("ep-1", "dev-1", "10.50.21.26")})
+	resolver.Replace([]*models.Endpoint{endpoint("ep-1", "dev-1", "10.50.21.26")}, nil, "")
 
 	if r.hold(trap("192.0.2.99", "1.3.6.1.4.1.99999.1.1", time.Now())) {
 		t.Fatal("held a trap from an unknown source against a loaded inventory")

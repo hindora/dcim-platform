@@ -96,6 +96,10 @@ class EndpointSummary(BaseModel):
     # or a BACnet router. Its address is the gateway's and is not editable here.
     via_endpoint_id: str | None = None
     via_name: str | None = None
+    #: The collector this endpoint is pinned to, if an operator pinned it.
+    pinned_collector: str | None = None
+    #: The collector that last reported its state.
+    reported_by: str | None = None
     poll_interval_s: int | None = None
     status: str = "UNKNOWN"
     # last_seen is every poll ATTEMPT, last_success only the ones that worked.
@@ -648,11 +652,40 @@ class AssignmentEndpoint(BaseModel):
     poll: AssignmentPoll
 
 
+class ResolveEntry(BaseModel):
+    """An endpoint this collector does not poll but may hear from.
+
+    A trap goes wherever the device was told to send it, which is device
+    configuration that nobody rewrites on every rebalance - so it routinely
+    lands on a collector that does not own the sender. Resolving it against
+    the collector's own shard left it unattributed, and an unattributed trap
+    raises no alarm. Credential-free by construction: the only secret-derived
+    field is a digest of the v1/v2c community, and that string crosses the
+    wire in clear text in every trap the device sends anyway.
+    """
+
+    id: str
+    device_id: str
+    device_name: str
+    device_type: str
+    protocol: str
+    role: str
+    address: str | None = None
+    site: str | None = None
+    #: sha256 hex of the SNMP community, for traps whose source address is not
+    #: the agent's own (NAT, a shared sending socket).
+    community_sha256: str | None = None
+
+
 class Assignment(BaseModel):
     version: int
     generated_at: datetime
     collector_id: str
+    #: The site an admin placed this collector in; None means "any".
+    site: str | None = None
     endpoints: list[AssignmentEndpoint]
+    #: Everything else a trap may arrive from, owned by somebody else.
+    resolve: list[ResolveEntry] = Field(default_factory=list)
 
 
 # -------------------------------------------------------------------- auth

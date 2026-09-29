@@ -27,8 +27,8 @@ import msgpack
 from redis.asyncio import Redis
 from sqlalchemy import text
 
+from app.alarms import collector_visibility, platform_monitor
 from app.alarms import platform as rules
-from app.alarms import platform_monitor
 from app.alarms.service import AlarmService, event_row
 from app.contracts.messages_gen import (
     CollectorHeartbeat,
@@ -49,6 +49,7 @@ from app.db.session import dispose_engine, unit_of_work
 from app.ingest import changelog, rates, writer
 from app.ingest.enrich import InventoryCache
 from app.ingest.fanout import Fanout
+from app.ingest.ownership import OwnershipGuard
 from app.integrations import outbox as integration_outbox
 from app.integrations.dispatcher import Dispatcher
 from app.repositories import alarms as repo_alarms
@@ -152,6 +153,7 @@ class IngestWorker:
         self._samples = 0
         self.redis: Redis = Redis.from_url(self.settings.redis_url)
         self.cache = InventoryCache()
+        self.ownership = OwnershipGuard()
         self.fanout = Fanout(self.redis)
         self.alarms = AlarmService(self.redis)
         # Outbound ticketing. Cheap when nothing is configured: its first
@@ -201,6 +203,14 @@ class IngestWorker:
         if self.cache.is_stale():
             async with unit_of_work() as session:
                 await self.cache.refresh(session)
+        if self.ownership.due():
+            try:
+                async with unit_of_work() as session:
+                    await self.ownership.refresh(session)
+            except Exception as exc:
+                # The previous plan stays in force; refusing nothing because
+                # the plan could not be read is the safe way round.
+                log.error("ownership refresh failed", error=str(exc))
 
         await self._maybe_sweep_staleness()
         await self._maybe_advance_maintenance()
@@ -362,6 +372,18 @@ class IngestWorker:
             # Self-monitoring must never be the thing that stops ingestion.
             log.error("platform monitor failed", error=str(exc), exc_info=True)
 
+        # A stale collector's shard goes UNKNOWN. Its own transaction, so a
+        # failure here cannot roll back the platform alarms just written.
+        try:
+            async with unit_of_work() as session:
+                changed = await collector_visibility.sweep(
+                    session, stale_after_s=rules.COLLECTOR_STALE_S)
+            for d in changed:
+                await self.fanout.device_status(d["device_id"], d["status"], None)
+        except Exception as exc:
+            log.error("collector visibility sweep failed", error=str(exc),
+                      exc_info=True)
+
     async def _maybe_sweep_staleness(self) -> None:
         """Look for endpoints that answer but deliver nothing.
 
@@ -516,7 +538,14 @@ class IngestWorker:
         samples = []
         for raw in payloads:
             batch = TelemetryBatch.from_dict(raw)
-            samples.extend(batch.samples)
+            # Before the counter baselines are exchanged below: a foreign
+            # sample must not become the next rate's previous reading either.
+            kept = [s for s in batch.samples
+                    if self.ownership.allows(batch.collector_id, s.endpoint_id)]
+            if len(kept) < len(batch.samples):
+                self.ownership.refuse(batch.collector_id, Stream.TELEMETRY,
+                                      len(batch.samples) - len(kept))
+            samples.extend(kept)
         if not samples:
             return
 
@@ -875,6 +904,11 @@ class IngestWorker:
         rows = []
         for raw in payloads:
             st = EndpointState.from_dict(raw)
+            # A non-owner's verdict would flip the owner's: one collector that
+            # cannot reach a device reporting it OFFLINE over another that can.
+            if not self.ownership.allows(st.collector_id, st.endpoint_id):
+                self.ownership.refuse(st.collector_id, Stream.ENDPOINTSTATE, 1)
+                continue
             status = _COMM_STATUS.get(st.status, "UNKNOWN")
             rows.append((st, status, {
                     "endpoint_id": st.endpoint_id,
@@ -899,8 +933,15 @@ class IngestWorker:
 
         async with unit_of_work() as session:
             # Pass 1: endpoint_state, keyed and ordered by endpoint id.
-            for _st, _status, s in sorted(rows, key=lambda r: r[2]["endpoint_id"]):
-                await writer.upsert_endpoint_state(session, s)
+            #
+            # A refresh that changes what is stored is a transition after all
+            # - see writer.upsert_endpoint_state - and is promoted to one here,
+            # so the device rollup and the alarm pass below both run for it.
+            for st, status, s in sorted(rows, key=lambda r: r[2]["endpoint_id"]):
+                before = await writer.upsert_endpoint_state(session, s)
+                if st.is_refresh and before is not None and before != status:
+                    st.is_refresh = False
+                    s["is_refresh"] = False
 
             # Pass 2: device_state, ordered by DEVICE id - the key of the row
             # actually locked. Endpoint order would not order these: a device
@@ -951,9 +992,15 @@ class IngestWorker:
                 await session.execute(text("""
                     INSERT INTO collector_instance
                         (id, version, hostname, started_at, last_heartbeat,
-                         endpoints_owned, endpoints_online, status, stats)
+                         endpoints_owned, endpoints_online, status, stats, state)
                     VALUES (:id, :version, :hostname, :started_at, now(),
-                            :owned, :online, 'HEALTHY', CAST(:stats AS jsonb))
+                            :owned, :online, 'HEALTHY', CAST(:stats AS jsonb),
+                            -- The same rule as registration on first fetch:
+                            -- a heartbeat can arrive first, and must not be a
+                            -- way round the approval.
+                            CASE WHEN EXISTS (SELECT 1 FROM collector_instance
+                                               WHERE state <> 'decommissioned')
+                                 THEN 'pending' ELSE 'active' END)
                     ON CONFLICT (id) DO UPDATE SET
                         version = EXCLUDED.version,
                         hostname = EXCLUDED.hostname,
@@ -962,7 +1009,28 @@ class IngestWorker:
                         endpoints_owned = EXCLUDED.endpoints_owned,
                         endpoints_online = EXCLUDED.endpoints_online,
                         status = EXCLUDED.status,
-                        stats = EXCLUDED.stats
+                        -- When the drop counter last ROSE, which is what the
+                        -- platform judges: the counter is cumulative per
+                        -- process, so judging the count itself would hold
+                        -- `collector_degraded` open from one bad minute until
+                        -- the next restart. A new process starts from zero, so
+                        -- across a restart any drops at all are new ones.
+                        stats = EXCLUDED.stats || jsonb_build_object(
+                            'publish_dropped_at',
+                            CASE
+                              WHEN EXCLUDED.started_at
+                                   IS DISTINCT FROM collector_instance.started_at
+                                THEN CASE WHEN (EXCLUDED.stats->>'publish_dropped')::bigint > 0
+                                          THEN to_jsonb(now())
+                                          ELSE 'null'::jsonb END
+                              WHEN (EXCLUDED.stats->>'publish_dropped')::bigint
+                                   > COALESCE(
+                                       (collector_instance.stats->>'publish_dropped')::bigint,
+                                       0)
+                                THEN to_jsonb(now())
+                              ELSE COALESCE(collector_instance.stats->'publish_dropped_at',
+                                            'null'::jsonb)
+                            END)
                 """), {
                     "id": hb.collector_id, "version": hb.version or None,
                     "hostname": hb.hostname or None,
@@ -971,7 +1039,13 @@ class IngestWorker:
                     "stats": json.dumps({
                         "polls_total": hb.polls_total, "polls_failed": hb.polls_failed,
                         "traps_received": hb.traps_received,
+                        "events_received": hb.events_received,
                         "queue_depth": hb.queue_depth,
+                        # The three the platform's collector checks read. Not
+                        # stored, those checks could never fire.
+                        "queue_capacity": hb.queue_capacity or None,
+                        "publish_dropped": hb.publish_dropped,
+                        "assignment_age_s": hb.assignment_age_s,
                         "active_streams": hb.active_streams,
                         "assignment_version": hb.assignment_version,
                         # What configuration this process is actually running,

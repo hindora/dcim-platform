@@ -9,7 +9,9 @@ section B1 for why returning them at all is unavoidable.
 from __future__ import annotations
 
 import hashlib
+import json
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,6 +23,7 @@ from app.schemas import (
     AssignmentCredential,
     AssignmentEndpoint,
     AssignmentPoll,
+    ResolveEntry,
 )
 from app.services import sharding
 
@@ -43,18 +46,9 @@ async def build_assignment(session: AsyncSession, collector_id: str,
     if await repo.register_collector(session, collector_id):
         log.info("collector registered on first assignment fetch",
                  collector_id=collector_id)
-    collectors = [
-        sharding.Collector(collector_id=c["collector_id"],
-                           sites=frozenset(c["sites"]),
-                           healthy=c["healthy"])
-        for c in await repo.live_collectors(session)
-    ]
-    if not any(c.collector_id == collector_id for c in collectors):  # pragma: no cover
-        # A collector asking for work before its first heartbeat has no row
-        # yet. It still owns whatever the hash gives it, so it is added rather
-        # than handed nothing - otherwise a fresh collector polls nothing until
-        # its next heartbeat and the fleet is under-covered for that window.
-        collectors.append(sharding.Collector(collector_id=collector_id))
+    # A pending collector is not in the fleet, so it owns only what is
+    # pinned to it - nothing, until an admin approves it.
+    collectors = await fleet(session)
     before = len(rows)
     rows = sharding.owned_by(rows, collectors, collector_id)
     log.info("assignment sharded", collector_id=collector_id,
@@ -98,8 +92,81 @@ async def build_assignment(session: AsyncSession, collector_id: str,
     log.info("assignment served", collector_id=collector_id,
              endpoints=len(endpoints), version=version)
 
+    owned = {e.id for e in endpoints}
+    resolve = await resolve_list(session, exclude=owned)
+    site = next((c.sites for c in collectors if c.collector_id == collector_id),
+                frozenset())
+
     return Assignment(version=version, generated_at=datetime.now(UTC),
-                      collector_id=collector_id, endpoints=endpoints)
+                      collector_id=collector_id,
+                      site=next(iter(site), None), endpoints=endpoints,
+                      resolve=resolve)
+
+
+async def fleet(session: AsyncSession) -> list[sharding.Collector]:
+    """The collectors that share the fleet, as the sharding plan sees them.
+
+    One definition, because four callers need it - the assignment, the shard
+    summary, the visibility sweep and the ingest ownership check - and the
+    first bug a second collector ever found here was two of them disagreeing
+    about who could own what.
+    """
+    return [
+        sharding.Collector(collector_id=c["collector_id"],
+                           sites=frozenset(c["sites"]),
+                           healthy=c["healthy"], accepting=c["accepting"])
+        for c in await repo.live_collectors(session)
+    ]
+
+
+async def ownership(session: AsyncSession) -> dict[str, str | None]:
+    """Who owns every endpoint right now, pins included."""
+    collectors = await fleet(session)
+    if not collectors:
+        return {}
+    return sharding.plan(await repo.ownable_endpoints(session), collectors)
+
+
+def community_digest(credential: dict[str, Any] | None) -> str | None:
+    """sha256 of a v1/v2c community, the form a resolver may hold it in."""
+    community = (credential or {}).get("community")
+    if not isinstance(community, str) or not community:
+        return None
+    return hashlib.sha256(community.encode()).hexdigest()
+
+
+async def resolve_list(session: AsyncSession,
+                       exclude: set[str]) -> list[ResolveEntry]:
+    """Every endpoint a trap could come from, minus the ones already owned.
+
+    Estate-wide rather than site-wide, deliberately. A device sends its traps
+    wherever it was configured to, and in the lab every datacenter sends to one
+    receiver; on a real estate the same happens mid-migration, when a site's
+    devices still point at the old collector. The resolver prefers its own
+    shard and then its own site, and refuses an address that two other sites
+    both use rather than guessing - overlapping RFC1918 between sites is
+    common, and a wrong device is worse than no device.
+    """
+    out: list[ResolveEntry] = []
+    failures = 0
+    for r in await repo.resolvable_endpoints(session):
+        if r["id"] in exclude:
+            continue
+        digest = None
+        if r.get("secret_enc") is not None and r["protocol"] == "snmp":
+            try:
+                digest = community_digest(decrypt_secret(bytes(r["secret_enc"])))
+            except Exception:
+                failures += 1
+        out.append(ResolveEntry(
+            id=r["id"], device_id=r["device_id"], device_name=r["device_name"],
+            device_type=r["device_type"], protocol=r["protocol"], role=r["role"],
+            address=r.get("address"), site=r.get("site"),
+            community_sha256=digest))
+    if failures:
+        log.error("credential decryption failed building the resolve list",
+                  count=failures)
+    return out
 
 
 def etag_for(assignment: Assignment) -> str:
@@ -117,13 +184,28 @@ def etag_for(assignment: Assignment) -> str:
     interval until something unrelated is edited or the process restarts.
     Digesting the poll fields makes the ETag track the body, which is what an
     ETag is for.
+
+    The credential is in here for the same reason. A password rotation writes
+    the ``credential`` row and no endpoint row, so it used to answer 304 and a
+    collector kept presenting the old password - failing every poll, and
+    locking the account out on BMCs that count failures - until something
+    unrelated moved an endpoint's timestamp.
     """
     digest = hashlib.sha256()
     digest.update(str(assignment.version).encode())
+    digest.update(f"|site|{assignment.site}".encode())
     for e in assignment.endpoints:
         digest.update(e.id.encode())
         digest.update(f"|{e.address}|{e.port}|{e.poll.interval_s}"
                       f"|{e.poll.timeout_ms}|{e.poll.retries}"
                       f"|{e.poll.push_enabled}|{','.join(e.poll.metric_groups)}"
+                      .encode())
+        if e.credential is not None:
+            digest.update(b"|cred|")
+            digest.update(e.credential.kind.encode())
+            digest.update(json.dumps(e.credential.data, sort_keys=True,
+                                     default=str).encode())
+    for r in assignment.resolve:
+        digest.update(f"|r|{r.id}|{r.address}|{r.site}|{r.community_sha256}"
                       .encode())
     return f'W/"{digest.hexdigest()[:32]}"'

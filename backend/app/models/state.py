@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import BigInteger, Enum, ForeignKey, Index, Integer, Numeric, Text
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -91,6 +91,13 @@ class CollectorInstance(Base):
     endpoints_online: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     status: Mapped[str] = mapped_column(Text, nullable=False, default="UNKNOWN")
     stats: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    # Placement and intent, both set by an admin - see migration 0085.
+    datacenter_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("datacenter.id", ondelete="SET NULL"))
+    state: Mapped[str] = mapped_column(Text, nullable=False, default="active")
+    state_changed_at: Mapped[datetime | None] = mapped_column()
+    state_changed_by: Mapped[str | None] = mapped_column(Text)
+    token_generation: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
 
 class Metric(Base):

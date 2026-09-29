@@ -154,6 +154,14 @@ collector_heartbeat_age = Gauge(
     "dcim_collector_heartbeat_age_seconds", "Age of the newest collector heartbeat",
     ["collector_id"], registry=REGISTRY)
 
+# Messages refused because the collector that sent them does not own the
+# endpoint. Non-zero means two collectors are polling one device, or somebody
+# who is not a collector is writing to the stream.
+ingest_foreign = Counter(
+    "dcim_ingest_foreign_total",
+    "Samples and state reports dropped because the sender does not own the endpoint",
+    ["collector_id", "stream"], registry=REGISTRY)
+
 
 @contextmanager
 def observe(histogram: Histogram, **labels: str) -> Iterator[None]:

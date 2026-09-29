@@ -17,7 +17,13 @@ from typing import Any
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.alarms import correlation, link_correlation, reconcile, staleness
+from app.alarms import (
+    collector_visibility,
+    correlation,
+    link_correlation,
+    reconcile,
+    staleness,
+)
 from app.alarms.engine import (
     AlarmKey,
     Candidate,
@@ -763,7 +769,15 @@ class AlarmService:
         for row in await reconcile.state_settled(session):
             await close(row, "state", reconcile.state_reason(row))
 
-        for row in await reconcile.aged_out(session):
+        # Ageing out assumes a condition that was still true would have been
+        # re-asserted. Nothing can be re-asserted through a collector that has
+        # stopped reporting, so a device it owned keeps its alarms until
+        # somebody can see it again.
+        aged = await reconcile.aged_out(session)
+        blind = await collector_visibility.blind_devices(session) if aged else set()
+        for row in aged:
+            if str(row["device_id"]) in blind:
+                continue
             await close(row, "aged", reconcile.aged_reason(row))
 
         # And the ones no path above can reach: the key itself is gone. Last,
@@ -838,9 +852,16 @@ class AlarmService:
 
         # Clear the ones that started talking again. Scoped to alarms this
         # sweep raised, so it cannot clear anything else.
+        #
+        # Not the ones nobody is polling. An endpoint whose collector died
+        # drops out of `silent` because it is no longer ONLINE, which is not
+        # the same as it having started to talk - clearing it would record a
+        # recovery the platform never saw.
         open_stale = await repo.open_alarms_of_type(session, staleness.ALARM_TYPE)
+        blind = (await collector_visibility.blind_endpoints(session)
+                 if open_stale else set())
         for row in open_stale:
-            if row["instance"] in silent_ids:
+            if row["instance"] in silent_ids or row["instance"] in blind:
                 continue
             cleared = await repo.clear_alarms(
                 session, device_id=row["device_id"],

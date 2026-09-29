@@ -337,6 +337,10 @@ class EndpointPatch(BaseModel):
     poll_profile_id: str | None = None
     enabled: bool | None = None
     admin_state: str | None = Field(None, pattern="^(enabled|disabled|maintenance)$")
+    #: Pin this endpoint to one collector - a device only that collector can
+    #: reach, or one moved off a host ahead of maintenance. Null unpins it and
+    #: the sharding plan decides again.
+    collector_id: str | None = Field(None, max_length=64)
 
 
 @router.get("/{device_id}/endpoints", response_model=list[EndpointSummary],

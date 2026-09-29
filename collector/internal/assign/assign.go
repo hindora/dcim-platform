@@ -8,10 +8,12 @@ package assign
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/hari/dcim-platform/collector/internal/config"
@@ -20,10 +22,14 @@ import (
 )
 
 type Assignment struct {
-	Version     int64              `json:"version"`
-	GeneratedAt time.Time          `json:"generated_at"`
-	CollectorID string             `json:"collector_id"`
-	Endpoints   []*models.Endpoint `json:"endpoints"`
+	Version     int64     `json:"version"`
+	GeneratedAt time.Time `json:"generated_at"`
+	CollectorID string    `json:"collector_id"`
+	// The site an admin placed this collector in; empty means "any".
+	Site      string             `json:"site"`
+	Endpoints []*models.Endpoint `json:"endpoints"`
+	// Everything else a trap may arrive from - see ResolveEntry.
+	Resolve []ResolveEntry `json:"resolve"`
 }
 
 // Diff is what changed between two assignments.
@@ -45,10 +51,20 @@ type Client struct {
 
 	etag    string
 	current map[string]*models.Endpoint
-	lastOK  time.Time
+	resolve []ResolveEntry
+	site    string
+	// Read by the heartbeat loop while the refresh loop writes them, so they
+	// are atomics: the age and version in every heartbeat come from here.
+	version atomic.Int64
+	lastOK  atomic.Int64 // unix nanoseconds; zero before the first fetch
+	started time.Time
 
 	// OnChange is invoked with the diff whenever the assignment changes.
 	OnChange func(Diff)
+	// OnRefreshed is invoked after every fetch that returned a body, whether
+	// or not the owned set moved: the resolve list changes when OTHER
+	// collectors' endpoints do, which is no diff of this one's.
+	OnRefreshed func()
 }
 
 func New(cfg *config.Config, log *slog.Logger, mets *obs.Metrics) *Client {
@@ -58,6 +74,7 @@ func New(cfg *config.Config, log *slog.Logger, mets *obs.Metrics) *Client {
 		log:     log,
 		mets:    mets,
 		current: make(map[string]*models.Endpoint),
+		started: time.Now(),
 	}
 }
 
@@ -77,10 +94,10 @@ func (c *Client) Run(ctx context.Context) {
 				// worse failure than a stale list.
 				c.log.Error("assignment refresh failed; keeping last known set",
 					"error", err, "endpoints", len(c.current),
-					"age_seconds", int(time.Since(c.lastOK).Seconds()))
+					"age_seconds", int(c.AgeSeconds()))
 			}
-			if !c.lastOK.IsZero() {
-				c.mets.AssignmentAge.Set(time.Since(c.lastOK).Seconds())
+			if c.lastOK.Load() != 0 {
+				c.mets.AssignmentAge.Set(c.AgeSeconds())
 			}
 		}
 	}
@@ -108,7 +125,7 @@ func (c *Client) Refresh(ctx context.Context) error {
 
 	switch resp.StatusCode {
 	case http.StatusNotModified:
-		c.lastOK = time.Now()
+		c.lastOK.Store(time.Now().UnixNano())
 		return nil
 	case http.StatusOK:
 	case http.StatusUnauthorized, http.StatusForbidden:
@@ -132,8 +149,11 @@ func (c *Client) Refresh(ctx context.Context) error {
 	diff := c.diff(next)
 
 	c.current = next
+	c.resolve = assignment.Resolve
+	c.site = assignment.Site
+	c.version.Store(assignment.Version)
 	c.etag = resp.Header.Get("ETag")
-	c.lastOK = time.Now()
+	c.lastOK.Store(time.Now().UnixNano())
 	c.mets.AssignmentVersion.Set(float64(assignment.Version))
 	c.mets.AssignmentAge.Set(0)
 
@@ -144,6 +164,9 @@ func (c *Client) Refresh(ctx context.Context) error {
 		if c.OnChange != nil {
 			c.OnChange(diff)
 		}
+	}
+	if c.OnRefreshed != nil {
+		c.OnRefreshed()
 	}
 	return nil
 }
@@ -189,7 +212,24 @@ func changed(a, b *models.Endpoint) bool {
 			return true
 		}
 	}
-	return a.Credential.Community() != b.Credential.Community()
+	// The whole credential, not only the SNMP community. A rotated Redfish or
+	// gNMI password compared equal here, so even once the platform served it
+	// the job kept presenting the old one - failing every poll, and on a BMC
+	// that counts failures, locking the account.
+	return credentialDigest(a.Credential) != credentialDigest(b.Credential)
+}
+
+func credentialDigest(c *models.Credential) string {
+	if c == nil {
+		return ""
+	}
+	// encoding/json sorts map keys, so equal credentials digest equally.
+	raw, err := json.Marshal(c)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(raw)
+	return string(sum[:])
 }
 
 func (c *Client) Endpoints() []*models.Endpoint {
@@ -202,11 +242,32 @@ func (c *Client) Endpoints() []*models.Endpoint {
 
 func (c *Client) Count() int { return len(c.current) }
 
+// Resolve is the rest of the estate, for the trap resolver.
+func (c *Client) Resolve() []ResolveEntry { return c.resolve }
+
+// Site is where this collector is placed; empty means "any".
+func (c *Client) Site() string { return c.site }
+
+// Version is the assignment version last applied.
+func (c *Client) Version() int64 { return c.version.Load() }
+
+// AgeSeconds is how long since an assignment was last fetched successfully.
+// Before the first one it is the age of the process: zero would read as
+// "fresh" to the platform, which is the one thing it certainly is not.
+func (c *Client) AgeSeconds() float64 {
+	last := c.lastOK.Load()
+	if last == 0 {
+		return time.Since(c.started).Seconds()
+	}
+	return time.Since(time.Unix(0, last)).Seconds()
+}
+
 // Stale reports whether the assignment is too old to trust. The caller uses it
 // to mark the collector self-degraded so endpoint health stops condemning.
 func (c *Client) Stale() bool {
-	if c.lastOK.IsZero() {
+	last := c.lastOK.Load()
+	if last == 0 {
 		return true
 	}
-	return time.Since(c.lastOK) > 5*c.cfg.DCIM.AssignmentInterval
+	return time.Since(time.Unix(0, last)) > 5*c.cfg.DCIM.AssignmentInterval
 }

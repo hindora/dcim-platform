@@ -263,6 +263,9 @@ func Load(path string) (*Config, error) {
 	return cfg, cfg.validate()
 }
 
+// Validate re-checks the config after a caller has changed it - the --id flag.
+func (c *Config) Validate() error { return c.validate() }
+
 func Default() *Config {
 	c := &Config{}
 	c.Collector.ID = "col-1"
@@ -359,6 +362,15 @@ func Default() *Config {
 }
 
 func (c *Config) resolve() error {
+	// The identity can come from the environment, so one image and one file
+	// serve every collector in a fleet and only the unit or container differs.
+	// A typo here used to be worse than a typo anywhere else in the file: an id
+	// the platform has never seen registered itself and took a share of every
+	// site. It now arrives pending and takes nothing, but the id is still the
+	// one setting a collector cannot get wrong quietly.
+	if v := strings.TrimSpace(os.Getenv("DCIM_COLLECTOR_ID")); v != "" {
+		c.Collector.ID = v
+	}
 	if env := strings.TrimSpace(c.DCIM.TokenEnv); env != "" {
 		c.DCIM.token = os.Getenv(env)
 	}
@@ -373,6 +385,12 @@ func (c *Config) resolve() error {
 func (c *Config) validate() error {
 	if c.Collector.ID == "" {
 		return fmt.Errorf("collector.id is required")
+	}
+	// The token is "<id>.<generation>.<mac>", so a dot in the id would make
+	// every token this collector is issued unparseable.
+	if strings.ContainsAny(c.Collector.ID, ". /") {
+		return fmt.Errorf("collector.id %q may not contain '.', '/' or spaces",
+			c.Collector.ID)
 	}
 	if c.DCIM.token == "" {
 		return fmt.Errorf("no collector token: set %s", c.DCIM.TokenEnv)

@@ -189,7 +189,7 @@ func TestEventIsAttributedByContext(t *testing.T) {
 	resolver.Replace([]*models.Endpoint{{
 		ID: "ep-bmc-1", DeviceID: "dev-1", Protocol: "redfish",
 		Address: "10.51.11.99", // deliberately NOT the delivering address
-	}})
+	}}, nil, "")
 	sink := &captureSink{}
 	r := newReceiver(t, sink, resolver)
 

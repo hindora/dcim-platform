@@ -201,6 +201,10 @@ async def record_poll_results(session: AsyncSession, rows: list[dict]) -> int:
 
 
 _UPSERT_ENDPOINT_STATE = text("""
+    WITH prev AS (
+        SELECT status::text AS status FROM endpoint_state
+         WHERE endpoint_id = CAST(:endpoint_id AS uuid)
+    )
     INSERT INTO endpoint_state (endpoint_id, status, last_success, last_failure,
                                 consecutive_failures, last_error, last_error_class,
                                 last_latency_ms, collector_id, last_seen,
@@ -229,6 +233,7 @@ _UPSERT_ENDPOINT_STATE = text("""
         timeout_count        = GREATEST(endpoint_state.timeout_count, EXCLUDED.timeout_count),
         auth_fail_count      = GREATEST(endpoint_state.auth_fail_count, EXCLUDED.auth_fail_count),
         updated_at           = now()
+    RETURNING (SELECT status FROM prev) AS prev_status
 """)
 
 # A refresh carries no status change, so device status cannot have moved. It
@@ -242,7 +247,7 @@ _TOUCH_DEVICE_SEEN = text("""
 """)
 
 
-async def upsert_endpoint_state(session: AsyncSession, s: dict) -> None:
+async def upsert_endpoint_state(session: AsyncSession, s: dict) -> str | None:
     """The endpoint_state half, on its own.
 
     Split from the device_state half so a batch can take EVERY endpoint_state
@@ -251,8 +256,15 @@ async def upsert_endpoint_state(session: AsyncSession, s: dict) -> None:
     fixed by sorting: the telemetry path takes all of one table then all of
     the other, so it need only hold a device_state row and want an
     endpoint_state row that this path already holds, and the two deadlock.
+
+    Returns the status the row held before, or None for a new row. A refresh
+    is the collector saying "no change" from ITS point of view, and the stored
+    row can disagree: the platform marks a stale collector's shard UNKNOWN,
+    and when that collector comes back its first word may be a refresh. The
+    caller treats a refresh that changes the stored status as the transition
+    it is, or the device would stay UNKNOWN until something else moved.
     """
-    await session.execute(_UPSERT_ENDPOINT_STATE, s)
+    return (await session.execute(_UPSERT_ENDPOINT_STATE, s)).scalar()
 
 
 async def apply_device_status(session: AsyncSession, s: dict) -> None:

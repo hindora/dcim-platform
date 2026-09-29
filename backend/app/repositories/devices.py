@@ -403,6 +403,10 @@ async def list_endpoints(session: AsyncSession, device_id: str) -> list[dict[str
                -- The gateway's own identity, so the UI can say WHICH gateway
                -- an endpoint sits behind rather than only that one exists.
                vd.name AS via_name,
+               -- Two different facts: who it is pinned to (a decision), and
+               -- who last reported on it (what actually happened).
+               e.collector_id AS pinned_collector,
+               es.collector_id AS reported_by,
                p.interval_s AS poll_interval_s,
                COALESCE(es.status::text, 'UNKNOWN') AS status,
                es.last_seen, es.last_success, es.last_error, es.last_error_class,
@@ -439,7 +443,8 @@ async def get_endpoint(session: AsyncSession, endpoint_id: str
                e.credential_id::text AS credential_id,
                e.poll_profile_id::text AS poll_profile_id,
                e.via_endpoint_id::text AS via_endpoint_id,
-               vd.name AS via_name, d.name AS device_name
+               vd.name AS via_name, d.name AS device_name,
+               e.collector_id
           FROM device_endpoint e
           JOIN device d ON d.id = e.device_id
           LEFT JOIN device_endpoint ve ON ve.id = e.via_endpoint_id
@@ -462,6 +467,7 @@ _EDITABLE = {
     "poll_profile_id": "poll_profile_id = CAST(:poll_profile_id AS uuid)",
     "enabled":         "enabled = :enabled",
     "admin_state":     "admin_state = CAST(:admin_state AS admin_state_t)",
+    "collector_id":    "collector_id = :collector_id",
 }
 
 

@@ -169,7 +169,8 @@ async def claim_pending(session: AsyncSession, collector_id: str | None = None,
     that must not be done twice.
     """
     row = (await session.execute(text("""
-        UPDATE discovery_run SET status = 'running', claimed_at = now()
+        UPDATE discovery_run SET status = 'running', claimed_at = now(),
+                                 claimed_by = CAST(:collector AS text)
          WHERE id = (SELECT id FROM discovery_run
                       WHERE status = 'pending'
                         AND (collector_id IS NULL
@@ -215,6 +216,14 @@ async def lock_run_status(session: AsyncSession, run_id: str) -> str | None:
     """
     return (await session.execute(text("""
         SELECT status FROM discovery_run WHERE id = CAST(:id AS uuid) FOR UPDATE
+    """), {"id": run_id})).scalar()
+
+
+async def run_claimant(session: AsyncSession, run_id: str) -> str | None:
+    """The collector a run belongs to: whoever claimed it, else whom it names."""
+    return (await session.execute(text("""
+        SELECT COALESCE(claimed_by, collector_id) FROM discovery_run
+         WHERE id = CAST(:id AS uuid)
     """), {"id": run_id})).scalar()
 
 

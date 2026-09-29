@@ -131,7 +131,7 @@ func TestRedfishSubscriptionAndTestEvent(t *testing.T) {
 		t.Fatalf("load redfish event mappings: %v", err)
 	}
 	resolver := assign.NewResolver()
-	resolver.Replace([]*models.Endpoint{ep})
+	resolver.Replace([]*models.Endpoint{ep}, nil, "")
 
 	port := freeTCPPort(t)
 	// The path is the standard one; the port is this test's, so reconciliation

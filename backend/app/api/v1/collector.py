@@ -162,12 +162,28 @@ async def instances(
 async def heartbeat(
     payload: dict,
     session: AsyncSession = Depends(get_session),
-    _: str = Depends(require_collector),
+    identity: str = Depends(require_collector),
 ) -> Response:
+    """Liveness for the collector the token names, and only that one.
+
+    It used to trust the payload's ``collector_id``, so any collector token
+    could keep any other collector looking alive - which is exactly the lie
+    ``collector_stale`` exists to catch.
+    """
     import json
 
+    claimed = payload.get("collector_id")
+    if identity != UNSCOPED_COLLECTOR:
+        if claimed and claimed != identity:
+            raise HTTPException(status.HTTP_403_FORBIDDEN,
+                                "this token is not scoped to that collector")
+        claimed = identity
+    if not claimed:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            "a heartbeat must name its collector")
+
     await repo.upsert_heartbeat(session, {
-        "id": payload.get("collector_id", "unknown"),
+        "id": claimed,
         "version": payload.get("version"),
         "hostname": payload.get("hostname"),
         "started_at": payload.get("started_at"),
@@ -233,8 +249,18 @@ class DiscoveryResults(BaseModel):
              summary="Report what a sweep found (collector only)")
 async def discovery_results(run_id: str, body: DiscoveryResults,
                             session: AsyncSession = Depends(get_session),
-                            _: str = Depends(require_collector),
+                            identity: str = Depends(require_collector),
                             ) -> dict[str, Any]:
+    # Only the collector that ran the sweep may report it. Results become
+    # candidates and missing-device alarms, so one collector writing into
+    # another's run is a way to raise alarms about a site it cannot see.
+    if identity != UNSCOPED_COLLECTOR:
+        owner = await disc_repo.run_claimant(session, run_id)
+        if owner and owner != identity:
+            log.warning("discovery results scope violation", run_id=run_id,
+                        token_identity=identity, claimed_by=owner)
+            raise HTTPException(status.HTTP_403_FORBIDDEN,
+                                "this sweep was claimed by another collector")
     # Only a run that is still running takes results. Locked, so a cancel and
     # this report cannot interleave. A cancelled run's sweep still finishes -
     # the collector cannot be interrupted - and what it found is discarded
@@ -342,22 +368,21 @@ async def collector_health(
 
 
 async def _shard_summary(session: AsyncSession) -> dict[str, Any]:
-    """Endpoints per collector, plus anything nothing can reach."""
-    from app.repositories import collector as crepo
+    """Endpoints per collector, plus anything nothing can reach.
+
+    From the whole fleet's plan. It used to plan over the FIRST collector's
+    candidates, which leave out every endpoint pinned to any other collector -
+    so a pin made a collector's shard look smaller than it is on exactly the
+    page used to check that pins took.
+    """
     from app.services import sharding
 
-    live = await crepo.live_collectors(session)
-    collectors = [
-        sharding.Collector(collector_id=c["collector_id"],
-                           sites=frozenset(c["sites"]), healthy=c["healthy"])
-        for c in live
-    ]
+    collectors = await service.fleet(session)
     if not collectors:
         return {"collectors": 0, "owned": {}, "unassigned": None,
                 "note": "no collector has ever registered, so nothing is assigned"}
 
-    rows = await crepo.assignment_endpoints(session, collectors[0].collector_id)
-    plan = sharding.plan(rows, collectors)
+    plan = await service.ownership(session)
     counts = sharding.distribution(plan)
     healthy = {c.collector_id for c in collectors if c.healthy}
     stranded = sum(n for cid, n in counts.items()

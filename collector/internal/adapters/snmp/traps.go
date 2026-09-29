@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	g "github.com/gosnmp/gosnmp"
@@ -82,7 +83,16 @@ type TrapReceiver struct {
 	held    []*heldTrap
 	holdFor time.Duration
 	holdMax int
+
+	// Every datagram that reached the socket, for the heartbeat. The
+	// heartbeat has carried `traps_received` since the first contract and
+	// nothing ever filled it in, so the platform could not tell a quiet
+	// estate from a listener nothing reaches.
+	received atomic.Uint64
 }
+
+// Received is how many traps have reached the socket since start.
+func (t *TrapReceiver) Received() uint64 { return t.received.Load() }
 
 // heldTrap is a decoded trap waiting for the inventory that explains it.
 //
@@ -93,6 +103,10 @@ type heldTrap struct {
 	community string
 	trapOID   string
 	varbinds  map[string]string
+	// sysUpTime.0 as the device sent it. Not a clock, but it is the same in
+	// every copy of one notification and different in the next one, which
+	// is what a dedup key needs - see dedupKey.
+	uptime string
 	// The moment the datagram ARRIVED, carried through every retry. Stamping
 	// a replay with its replay time would place the alarm's first_seen minutes
 	// after the condition, and - worse - could make a raise look newer than
@@ -189,6 +203,7 @@ func (t *TrapReceiver) Listen(ctx context.Context) error {
 func (t *TrapReceiver) handle(ctx context.Context, p *g.SnmpPacket,
 	addr *net.UDPAddr, at time.Time) {
 
+	t.received.Add(1)
 	source := ""
 	if addr != nil {
 		source = addr.IP.String()
@@ -198,7 +213,7 @@ func (t *TrapReceiver) handle(ctx context.Context, p *g.SnmpPacket,
 		return
 	}
 
-	trapOID, varbinds := splitTrap(p)
+	trapOID, varbinds, uptime := splitTrap(p)
 	if trapOID == "" {
 		t.mets.TrapsTotal.WithLabelValues("no_trap_oid").Inc()
 		t.log.Warn("trap without an snmpTrapOID varbind", "source", source)
@@ -206,7 +221,7 @@ func (t *TrapReceiver) handle(ctx context.Context, p *g.SnmpPacket,
 	}
 
 	trap := &heldTrap{source: source, community: p.Community,
-		trapOID: trapOID, varbinds: varbinds, at: at}
+		trapOID: trapOID, varbinds: varbinds, uptime: uptime, at: at}
 
 	// A trap the collector cannot attribute YET is not the same as one it
 	// cannot attribute at all. Before the first assignment lands there is no
@@ -300,7 +315,7 @@ func (t *TrapReceiver) emit(ctx context.Context, trap *heldTrap) {
 		t.mets.TrapsTotal.WithLabelValues("ok").Inc()
 	}
 
-	ev.DedupKey = dedupKey(&ev)
+	ev.DedupKey = dedupKey(&ev, trap.uptime)
 
 	if err := t.sink.Events(ctx, []models.Event{ev}); err != nil {
 		t.log.Warn("trap publish failed", "error", err, "oid", trapOID)
@@ -331,9 +346,9 @@ func (t *TrapReceiver) allow(source string) bool {
 
 // splitTrap pulls the notification OID out of the varbinds and returns the
 // remaining payload.
-func splitTrap(p *g.SnmpPacket) (string, map[string]string) {
+func splitTrap(p *g.SnmpPacket) (string, map[string]string, string) {
 	out := make(map[string]string, len(p.Variables))
-	trapOID := ""
+	trapOID, uptime := "", ""
 	for _, v := range p.Variables {
 		name := strings.TrimPrefix(v.Name, ".")
 		switch name {
@@ -342,12 +357,14 @@ func splitTrap(p *g.SnmpPacket) (string, map[string]string) {
 		case trapSysUpTime:
 			// sysUpTime is framing, not payload. Note that it is the device's
 			// uptime, NOT a wall clock: a trap carries no timestamp, which is
-			// why observed_at is stamped on arrival.
+			// why observed_at is stamped on arrival. It is kept for the dedup
+			// key only.
+			uptime = toString(v.Value)
 		default:
 			out[name] = toString(v.Value)
 		}
 	}
-	return trapOID, out
+	return trapOID, out, uptime
 }
 
 func severityFromName(name string) models.Severity {
@@ -446,9 +463,25 @@ func describe(def mapping.TrapDef, oid string) string {
 // dedupKey lets the ingest worker discard a redelivered trap without needing a
 // database constraint. Second granularity: the same condition reported twice in
 // one second is a duplicate, twice in two seconds is two occurrences.
-func dedupKey(ev *models.Event) string {
+// dedupKey identifies one notification, so the platform keeps one copy.
+//
+// Copies are normal once there is more than one collector: a device sending
+// to two trap receivers - the usual way to make trap delivery survive a
+// collector outage - lands the same trap on both, each stamps its own arrival
+// time, and a key built on that time split them across a second boundary one
+// time in a few. The device's sysUpTime is identical in both copies and moves
+// on for the next notification, so it replaces the arrival second whenever
+// the trap carries one; v1 traps and senders that omit it keep the old key.
+// The source address is left out for the same reason: behind NAT, or from a
+// shared sending socket, two copies need not agree on it.
+func dedupKey(ev *models.Event, uptime string) string {
 	h := sha1.New()
-	fmt.Fprintf(h, "%s|%s|%s|%s|%d", ev.EndpointID, ev.SourceIP, ev.EventType,
-		ev.Instance, ev.ObservedAt/1_000_000)
+	if uptime != "" && ev.DeviceID != "" {
+		fmt.Fprintf(h, "%s|%s|%s|%s|u%s", ev.DeviceID, ev.RawIdentifier,
+			ev.EventType, ev.Instance, uptime)
+	} else {
+		fmt.Fprintf(h, "%s|%s|%s|%s|%d", ev.EndpointID, ev.SourceIP, ev.EventType,
+			ev.Instance, ev.ObservedAt/1_000_000)
+	}
 	return hex.EncodeToString(h.Sum(nil))[:32]
 }

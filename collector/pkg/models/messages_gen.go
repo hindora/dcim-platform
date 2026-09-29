@@ -246,6 +246,9 @@ type CollectorHeartbeat struct {
 	ConfigRestartPending bool   `msgpack:"config_restart_pending,omitempty" json:"config_restart_pending,omitempty"`
 	ConfigError          string `msgpack:"config_error,omitempty" json:"config_error,omitempty"`
 	ConfigEffective      string `msgpack:"config_effective,omitempty" json:"config_effective,omitempty"`
+	PublishDropped       uint64 `msgpack:"publish_dropped,omitempty" json:"publish_dropped,omitempty"`
+	QueueCapacity        uint32 `msgpack:"queue_capacity,omitempty" json:"queue_capacity,omitempty"`
+	AssignmentAgeS       uint32 `msgpack:"assignment_age_s,omitempty" json:"assignment_age_s,omitempty"`
 }
 
 // Stream names and caps, from contracts/schema/messages_v1.yaml.

@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
-import { humanise } from '../../lib/format';
+import { humanise, oneLine } from '../../lib/format';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ApiError,
   api,
   type AddressingField,
+  type CollectorsPage,
   type EndpointOptions,
   type EndpointPatch,
   type EndpointSummary,
 } from '../../api/client';
+import { Tip } from '../../components/HoverTip';
 
 /** Editing how a device is reached.
  *
@@ -55,7 +57,18 @@ export function EndpointEditor({
     credential_id: endpoint.credential_id ?? '',
     poll_profile_id: endpoint.poll_profile_id ?? '',
     admin_state: endpoint.admin_state,
+    collector_id: endpoint.pinned_collector ?? '',
   }));
+
+  // Only used to populate the pin picker. The field itself is hidden on a
+  // single-collector deployment, where pinning has nothing to choose between.
+  const collectors = useQuery<CollectorsPage>({
+    queryKey: ['collectors'],
+    queryFn: () => api.collectors(),
+    staleTime: 30_000,
+  });
+  const pinnable = (collectors.data?.collectors ?? [])
+    .filter((c) => c.state !== 'decommissioned');
 
   const behindGateway = Boolean(endpoint.via_endpoint_id);
   const isTrap = endpoint.protocol === 'snmp_trap';
@@ -243,6 +256,33 @@ export function EndpointEditor({
                     : 'Polled on its profile; failures raise alarms.'}
               </em>
             </label>
+
+            {pinnable.length > 1 && (
+              <label>
+                <span>Collector</span>
+                <select value={form.collector_id}
+                        onChange={(e) => set('collector_id', e.target.value)}>
+                  <option value="">Automatic — the sharding plan decides</option>
+                  {pinnable.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.id}{c.site ? ` · ${c.site}` : ''}
+                    </option>
+                  ))}
+                </select>
+                <em className="hint">
+                  <Tip tip={oneLine(`Overrides the hash for this one endpoint —
+                          a device only one collector can reach, or one moved
+                          off a host ahead of maintenance. ${
+                            endpoint.reported_by
+                              ? `Last reported by ${endpoint.reported_by}.`
+                              : ''
+                          }`)}>
+                    Pin it to one collector, or leave automatic.
+                    <span className="why"> ?</span>
+                  </Tip>
+                </em>
+              </label>
+            )}
           </div>
         </div>
 
@@ -272,6 +312,7 @@ type AddressingValues = Record<string, string | number | boolean>;
 type Form = {
   address: string; port: string; addressing: AddressingValues;
   credential_id: string; poll_profile_id: string; admin_state: string;
+  collector_id: string;
 };
 
 /** Client-side check against the same ranges the server rejects with, so a
@@ -343,6 +384,10 @@ function diff(current: EndpointSummary, form: Form,
     // dropped from the assignment rather than merely labelled.
     patch.enabled = form.admin_state !== 'disabled';
   }
+
+  const pin = form.collector_id || null;
+  if (pin !== (current.pinned_collector ?? null)) patch.collector_id = pin;
+
   return patch;
 }
 

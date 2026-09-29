@@ -56,6 +56,11 @@ ASSIGNMENT_STALE_S = 300.0
 # Queue depth past this share of capacity is a collector that is losing.
 PUBLISH_QUEUE_WARN_FRACTION = 0.8
 
+# How long after the drop counter last rose the collector stays degraded. Long
+# enough to be seen on a console that is not being watched continuously, short
+# enough that a recovered collector stops saying it is losing data.
+PUBLISH_DROP_WINDOW_S = 900.0
+
 # Sustained pool saturation. A momentary spike is normal under load; thirty
 # seconds of it means requests are queueing on connections.
 DB_POOL_SATURATED_S = 30.0
@@ -288,6 +293,17 @@ def evaluate(signals: Signals) -> list[Finding]:
                      f"polling the fleet")))
 
     for c in signals.collectors:
+        if c.heartbeat_age_s is None and not c.endpoints_owned:
+            # Created ahead of its install and never run. It owns nothing yet
+            # - the hash waits for a first heartbeat - so nothing is going
+            # unpolled on its account; the finding is the missing machine.
+            out.append(Finding(
+                alarm_type="collector_stale", instance=c.collector_id,
+                severity=WARNING, threshold=COLLECTOR_STALE_S,
+                message=(
+                    f"Collector {c.collector_id} has been created but has "
+                    f"never checked in. It takes no work until it does")))
+            continue
         if c.heartbeat_age_s is None or c.heartbeat_age_s >= COLLECTOR_STALE_S:
             age = ("never" if c.heartbeat_age_s is None
                    else f"{c.heartbeat_age_s:.0f}s ago")
@@ -298,7 +314,7 @@ def evaluate(signals: Signals) -> list[Finding]:
                 message=(
                     f"Collector {c.collector_id} last checked in {age}. The "
                     f"{c.endpoints_owned} endpoints it owns are not being "
-                    f"polled by anything")))
+                    f"polled by anything, and show UNKNOWN until it returns")))
             # A collector that is not talking to us cannot also be judged
             # degraded or stale-assignment; those would be three alarms for one
             # fault, and the operator has to read all three to find the one
@@ -324,9 +340,10 @@ def evaluate(signals: Signals) -> list[Finding]:
                 alarm_type="collector_degraded", instance=c.collector_id,
                 severity=MAJOR, value=float(c.publish_dropped),
                 message=(
-                    f"Collector {c.collector_id} has dropped "
-                    f"{c.publish_dropped} publish batches. Those samples do "
-                    f"not exist anywhere - this is data loss, not delay")))
+                    f"Collector {c.collector_id} has shed "
+                    f"{c.publish_dropped} samples from its publish buffer. "
+                    f"Those samples do not exist anywhere - this is data "
+                    f"loss, not delay")))
         elif (c.publish_queue_depth is not None and c.publish_queue_capacity):
             fraction = c.publish_queue_depth / c.publish_queue_capacity
             if fraction >= PUBLISH_QUEUE_WARN_FRACTION:

@@ -23,6 +23,8 @@ var version = "0.1.0"
 
 func main() {
 	configPath := flag.String("config", "configs/collector.yaml", "path to the config file")
+	collectorID := flag.String("id", "",
+		"collector id, overriding the file and DCIM_COLLECTOR_ID")
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
 
@@ -32,6 +34,10 @@ func main() {
 	}
 
 	cfg, err := config.Load(*configPath)
+	if err == nil && *collectorID != "" {
+		cfg.Collector.ID = *collectorID
+		err = cfg.Validate()
+	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "config error: %v\n", err)
 		os.Exit(2)

@@ -253,6 +253,7 @@ func New(cfg *config.Config, version string) (*App, error) {
 
 	a.assign = assign.New(cfg, log, mets)
 	a.assign.OnChange = a.applyDiff
+	a.assign.OnRefreshed = a.refreshResolver
 	a.cfg.Collector.Version = version
 	return a, nil
 }
@@ -355,7 +356,6 @@ func (a *App) Run(ctx context.Context) error {
 		a.tracker.SetSelfDegraded(true)
 	} else {
 		a.ready.SetAssignment(true)
-		a.resolver.Replace(a.assign.Endpoints())
 		a.log.Info("initial assignment", "endpoints", a.assign.Count())
 	}
 	go a.assign.Run(ctx)
@@ -526,10 +526,17 @@ func (a *App) streamed(ep *models.Endpoint) bool {
 	return a.gnmiSubs != nil && gnmi.StreamOnly(ep)
 }
 
+// refreshResolver rebuilds the trap resolver from the owned endpoints and the
+// rest of the estate. Run after every fetch that returned a body, not only on
+// a diff: the resolve list moves when other collectors' endpoints do.
+func (a *App) refreshResolver() {
+	a.resolver.Replace(a.assign.Endpoints(), a.assign.Resolve(), a.assign.Site())
+}
+
 func (a *App) applyDiff(diff assign.Diff) {
 	// The resolver turns a trap's source address into a device, so it has to
 	// track the full assignment rather than the diff.
-	a.resolver.Replace(a.assign.Endpoints())
+	a.refreshResolver()
 	if a.gnmiSubs != nil && a.streamCtx != nil {
 		// The subscriber diffs the full assignment itself: a stream is a
 		// long-lived session keyed on the endpoint, not something to start and
@@ -633,6 +640,22 @@ func (a *App) heartbeatLoop(ctx context.Context) {
 				PollsTotal:      a.pollsOK + a.pollsBad,
 				PollsFailed:     a.pollsBad,
 				QueueDepth:      uint32(a.pub.QueueDepth()),
+				// These five were in the contract from the start and never
+				// filled in, so the platform checks that read them could not
+				// fire. Queue capacity turns depth into a fraction; drops and
+				// assignment age are what collector_degraded and
+				// assignment_stale are judged on.
+				QueueCapacity:     uint32(a.pub.Capacity()),
+				PublishDropped:    a.pub.Dropped(),
+				AssignmentAgeS:    uint32(a.assign.AgeSeconds()),
+				AssignmentVersion: uint32(a.assign.Version()),
+				ActiveStreams:     uint32(a.streamCount()),
+			}
+			if a.traps != nil {
+				hb.TrapsReceived = a.traps.Received()
+			}
+			if a.rfEvents != nil {
+				hb.EventsReceived = a.rfEvents.Received()
 			}
 			// Which configuration this process is running, as opposed to what
 			// the database was last told to store. Without these three the

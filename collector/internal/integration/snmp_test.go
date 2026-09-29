@@ -225,7 +225,7 @@ func TestResolverMapsAddressesToDevices(t *testing.T) {
 	ep := sim.SNMPEndpoint(t, dev, "os_agent")
 
 	r := assign.NewResolver()
-	r.Replace([]*models.Endpoint{ep})
+	r.Replace([]*models.Endpoint{ep}, nil, "")
 
 	got, ok := r.Resolve(ep.Address, "")
 	if !ok || got.DeviceID != dev.ID {

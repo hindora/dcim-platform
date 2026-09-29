@@ -35,6 +35,8 @@ type Publisher struct {
 	// information per byte.
 	ring    []models.Telemetry
 	ringCap int
+	// Samples shed since start, for the heartbeat.
+	dropped uint64
 
 	flushCh chan struct{}
 	wg      sync.WaitGroup
@@ -182,6 +184,7 @@ func (p *Publisher) bufferOrShed(chunk []models.Telemetry) {
 	p.ring = append(p.ring, chunk...)
 	if overflow := len(p.ring) - p.ringCap; overflow > 0 {
 		p.ring = p.ring[overflow:]
+		p.dropped += uint64(overflow)
 		p.mets.PublishDropped.WithLabelValues(
 			p.cfg.Redis.Streams.Telemetry.Name, "ring_full").Add(float64(overflow))
 		p.log.Error("shedding telemetry: publish buffer full",
@@ -218,6 +221,16 @@ func (p *Publisher) xadd(ctx context.Context, stream config.StreamCfg, msg any) 
 
 // Ping is used by the readiness check.
 func (p *Publisher) Ping(ctx context.Context) error { return p.rdb.Ping(ctx).Err() }
+
+// Capacity is how many samples the buffer holds before it sheds.
+func (p *Publisher) Capacity() int { return p.ringCap }
+
+// Dropped is how many samples have been shed since the process started.
+func (p *Publisher) Dropped() uint64 {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.dropped
+}
 
 func (p *Publisher) QueueDepth() int {
 	p.mu.Lock()

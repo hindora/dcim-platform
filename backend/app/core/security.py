@@ -168,55 +168,130 @@ def require_role(minimum: str):
 
 # Per-collector tokens are "<collector_id>.<hmac>", where the hmac is over the
 # collector id with the master token as the key. Derived rather than stored, so
-# minting one needs no migration and no provisioning table, and verifying one
-# needs no database round trip on the hot path.
+# minting one needs no provisioning table, and verifying the MAC needs no
+# database round trip.
 #
 # The property that matters: the master secret cannot be recovered from a
 # derived token, so a compromised collector's token grants that collector's
 # shard and nothing else. That is the difference between one machine's
 # credentials and the whole fleet's.
+#
+# A derived token could not be revoked, though - only the master could be
+# rotated, which kills every collector at once. So a token now carries a
+# GENERATION, "<collector_id>.<generation>.<hmac>" with the hmac over
+# "<collector_id>:<generation>", and the collector's row holds the generation
+# currently honoured. Bumping it revokes that one collector's token and no
+# other. Generation 0 keeps the original two-part form, so every token minted
+# before this change is still generation 0 and still valid.
 _TOKEN_SEP = "."
 
 
-def mint_collector_token(collector_id: str, settings: Settings | None = None) -> str:
+def _token_mac(master: str, collector_id: str, generation: int) -> str:
+    message = collector_id if generation == 0 else f"{collector_id}:{generation}"
+    return hmac.new(master.encode(), message.encode(), hashlib.sha256).hexdigest()
+
+
+def mint_collector_token(collector_id: str, settings: Settings | None = None,
+                         generation: int = 0) -> str:
     """Issue a token that carries, and is bound to, one collector's identity."""
     s = settings or get_settings()
-    mac = hmac.new(s.collector_token.get_secret_value().encode(),
-                   collector_id.encode(), hashlib.sha256).hexdigest()
-    return f"{collector_id}{_TOKEN_SEP}{mac}"
+    mac = _token_mac(s.collector_token.get_secret_value(), collector_id, generation)
+    if generation == 0:
+        return f"{collector_id}{_TOKEN_SEP}{mac}"
+    return f"{collector_id}{_TOKEN_SEP}{generation}{_TOKEN_SEP}{mac}"
+
+
+def parse_collector_token(token: str, settings: Settings | None = None
+                          ) -> tuple[str, int] | None:
+    """The collector id and generation a token proves, or None.
+
+    The bare master token resolves to the unscoped sentinel at generation 0 -
+    see ``verify_collector_token``.
+    """
+    s = settings or get_settings()
+    master = s.collector_token.get_secret_value()
+
+    if _TOKEN_SEP in token:
+        collector_id, _, rest = token.partition(_TOKEN_SEP)
+        generation = 0
+        mac = rest
+        if _TOKEN_SEP in rest:
+            gen_text, _, mac = rest.partition(_TOKEN_SEP)
+            if not gen_text.isdigit() or gen_text.startswith("0"):
+                return None
+            generation = int(gen_text)
+        expected = _token_mac(master, collector_id, generation)
+        # compare_digest: a plain == on the mac leaks its prefix through
+        # timing, and the whole point of a derived token is that it cannot be
+        # guessed.
+        if collector_id and hmac.compare_digest(mac, expected):
+            return collector_id, generation
+        return None
+
+    if hmac.compare_digest(token, master):
+        return UNSCOPED_COLLECTOR, 0
+    return None
 
 
 def verify_collector_token(token: str, settings: Settings | None = None) -> str | None:
     """Return the collector id a token proves, or None.
 
     Falls back to accepting the bare master token, which every collector
-    deployed before this change is using. That fallback is a real weakness -
-    it is a fleet-wide credential - so it does not pretend to be an identity:
-    it resolves to the sentinel below, which the assignments endpoint refuses
-    to treat as scoped and which the audit log records as unscoped.
+    deployed before per-collector tokens is using. That fallback is a real
+    weakness - it is a fleet-wide credential - so it does not pretend to be an
+    identity: it resolves to the sentinel below, which the assignments endpoint
+    refuses to treat as scoped and which the audit log records as unscoped.
+
+    This proves the MAC only. Whether the generation is still honoured is a
+    database question, answered by ``require_collector``.
     """
-    s = settings or get_settings()
-    master = s.collector_token.get_secret_value()
-
-    if _TOKEN_SEP in token:
-        collector_id, _, mac = token.partition(_TOKEN_SEP)
-        expected = hmac.new(master.encode(), collector_id.encode(),
-                            hashlib.sha256).hexdigest()
-        # compare_digest on both halves: a plain == on the mac leaks its prefix
-        # through timing, and the whole point of a derived token is that it
-        # cannot be guessed.
-        if collector_id and hmac.compare_digest(mac, expected):
-            return collector_id
-        return None
-
-    if hmac.compare_digest(token, master):
-        return UNSCOPED_COLLECTOR
-    return None
+    parsed = parse_collector_token(token, settings)
+    return parsed[0] if parsed else None
 
 
 # What a legacy fleet-wide token resolves to. Never a real collector id, so it
 # can never satisfy a scope check by accident.
 UNSCOPED_COLLECTOR = "*unscoped*"
+
+# The honoured generation and state per collector, cached briefly. Every
+# collector request would otherwise pay a query for a fact that changes when
+# an admin revokes a token - a few times a year. Fifteen seconds is how long a
+# revoked token can outlive its revocation, which is well inside the time it
+# takes an operator to notice it still works.
+_REVOCATION_TTL_S = 15.0
+_revocation_cache: dict[str, tuple[float, int, str | None]] = {}
+
+
+def forget_collector(collector_id: str) -> None:
+    """Drop the cached generation, so a revocation in THIS process is instant."""
+    _revocation_cache.pop(collector_id, None)
+
+
+async def _honoured(collector_id: str) -> tuple[int, str | None]:
+    """The generation the platform honours for a collector, and its state.
+
+    A collector with no row yet has generation 0 and no state: it is allowed,
+    because asking for work is how a new collector registers at all.
+    """
+    import time
+
+    now = time.monotonic()
+    hit = _revocation_cache.get(collector_id)
+    if hit and now - hit[0] < _REVOCATION_TTL_S:
+        return hit[1], hit[2]
+
+    from sqlalchemy import text
+
+    from app.db.session import unit_of_work
+
+    async with unit_of_work() as session:
+        row = (await session.execute(text("""
+            SELECT token_generation, state FROM collector_instance WHERE id = :id
+        """), {"id": collector_id})).mappings().first()
+    generation, state = ((int(row["token_generation"]), row["state"])
+                         if row else (0, None))
+    _revocation_cache[collector_id] = (now, generation, state)
+    return generation, state
 
 
 async def require_collector(
@@ -233,10 +308,26 @@ async def require_collector(
     log could record that credentials had been handed out but not to whom -
     and "someone with the collector token pulled every credential in the fleet"
     is not an investigation, it is the start of one.
+
+    A scoped token must also still be honoured: its generation current, and its
+    collector not decommissioned. Either failure is a 401 that says which, so a
+    collector locked out on purpose is told so rather than retrying a bad token
+    forever.
     """
     if creds is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "missing collector token")
-    identity = verify_collector_token(creds.credentials, settings)
-    if identity is None:
+    parsed = parse_collector_token(creds.credentials, settings)
+    if parsed is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid collector token")
+    identity, generation = parsed
+    if identity == UNSCOPED_COLLECTOR:
+        return identity
+    honoured, state = await _honoured(identity)
+    if state == "decommissioned":
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED,
+                            f"collector {identity} is decommissioned")
+    if generation != honoured:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED,
+                            f"this token for {identity} has been revoked; "
+                            f"issue a new one")
     return identity

@@ -73,9 +73,17 @@ async def list_collectors(session: AsyncSession) -> list[dict[str, Any]]:
                -- collector that has not reported one, which the UI must show
                -- as unknown rather than as zeros.
                coalesce(ci.stats->'config_effective', '{}'::jsonb) AS effective,
-               (ci.last_heartbeat > now() - interval '90 seconds') AS alive
+               (ci.last_heartbeat > now() - interval '90 seconds'
+                AND ci.started_at IS NOT NULL) AS alive,
+               -- Placement and intent, both an admin's decision.
+               ci.state, ci.state_changed_at, ci.state_changed_by,
+               ci.datacenter_id::text AS datacenter_id, dc.code AS site,
+               ci.token_generation, (ci.started_at IS NOT NULL) AS has_run,
+               (SELECT count(*) FROM device_endpoint e
+                 WHERE e.collector_id = ci.id)      AS pinned
           FROM collector_instance ci
           LEFT JOIN collector_config cc ON cc.collector_id = ci.id
-         ORDER BY ci.id
+          LEFT JOIN datacenter dc ON dc.id = ci.datacenter_id
+         ORDER BY ci.state = 'decommissioned', ci.id
     """))).mappings().all()
     return [dict(r) for r in rows]

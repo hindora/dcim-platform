@@ -95,11 +95,22 @@ async def _collectors(session: AsyncSession) -> list[rules.Collector]:
     # future and the age comes back negative. It showed up live as a collector
     # "-5743 ms ago", which is nonsense on screen and, worse, sails under every
     # staleness threshold no matter how large the real skew is.
+    #
+    # Decommissioned collectors are left out: a retired machine is supposed to
+    # be silent, and alarming on it is how a decommission gets undone by hand.
     rows = (await session.execute(text("""
         SELECT id, status, endpoints_owned, endpoints_online, stats,
-               extract(epoch FROM (clock_timestamp() - last_heartbeat))
-                   AS heartbeat_age_s
+               -- NULL for a collector that has never heartbeated at all -
+               -- created ahead of its install - which the rule reports as
+               -- "never" rather than as however long ago the row was made.
+               CASE WHEN started_at IS NULL THEN NULL
+                    ELSE extract(epoch FROM (clock_timestamp() - last_heartbeat))
+               END AS heartbeat_age_s,
+               extract(epoch FROM (clock_timestamp()
+                   - (stats->>'publish_dropped_at')::timestamptz))
+                   AS dropped_age_s
           FROM collector_instance
+         WHERE state NOT IN ('decommissioned', 'pending')
     """))).mappings().all()
     out = []
     for r in rows:
@@ -120,9 +131,33 @@ async def _collectors(session: AsyncSession) -> list[rules.Collector]:
             endpoints_online=int(r["endpoints_online"] or 0),
             publish_queue_depth=stats.get("queue_depth"),
             publish_queue_capacity=stats.get("queue_capacity"),
-            publish_dropped=int(stats.get("publish_dropped") or 0),
+            # Drops count only while recent. The counter is cumulative for the
+            # life of the process; judged raw, one bad minute would hold the
+            # alarm open until the next restart.
+            publish_dropped=(int(stats.get("publish_dropped") or 0)
+                             if r["dropped_age_s"] is not None
+                             and float(r["dropped_age_s"]) < rules.PUBLISH_DROP_WINDOW_S
+                             else 0),
+            # Zero is what a collector that predates the field sends, and it
+            # reads as "fresh" - the safe way round for an alarm.
+            assignment_age_s=(float(stats["assignment_age_s"])
+                              if stats.get("assignment_age_s") else None),
         ))
     return out
+
+
+async def _collectors_expected(session: AsyncSession) -> int:
+    """How many collectors should be checking in: every one not retired.
+
+    It was hardcoded to 1, so "no collector has ever checked in" was the only
+    fleet-size question the platform could ask. At least one, because a
+    platform with no collector registered is still a platform polling nothing.
+    """
+    n = (await session.execute(text("""
+        SELECT count(*) FROM collector_instance
+         WHERE state NOT IN ('decommissioned', 'pending')
+    """))).scalar() or 0
+    return max(1, int(n))
 
 
 async def _stream_pending(redis: Redis, streams: list[str],
@@ -152,7 +187,7 @@ async def gather(session: AsyncSession, redis: Redis, *,
                  poll_interval_s: float = 120.0,
                  ingest_lag_s: float | None = None,
                  ingest_lag_sustained_s: float = 0.0,
-                 collectors_expected: int = 1) -> rules.Signals:
+                 collectors_expected: int | None = None) -> rules.Signals:
     """Read every signal the evaluator needs, and export them as metrics.
 
     ``ingest_lag_s`` is passed in when the caller is the worker, which measured
@@ -162,6 +197,8 @@ async def gather(session: AsyncSession, redis: Redis, *,
     age, present = await _telemetry_freshness(session)
     integrations = await _integrations(session)
     collectors = await _collectors(session)
+    if collectors_expected is None:
+        collectors_expected = await _collectors_expected(session)
     pending = await _stream_pending(redis, streams, group)
     hb = await read_heartbeat(redis)
 

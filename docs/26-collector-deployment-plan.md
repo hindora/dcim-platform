@@ -1,0 +1,361 @@
+# 26 — Collector deployment for real datacenters
+
+How a customer creates, enrolls and configures collectors when the platform
+moves off the simulator onto a real estate: what commercial DCIM and monitoring
+products do, where this codebase stands, and a phased plan.
+Written 2026-09-29 against the working tree at `20b5ad3`.
+
+In real datacenters a collector is customer-hosted software, usually a Linux VM or container, sometimes an appliance. It sits inside the management zone it polls (IT out-of-band, BMS/OT, or production management), has a static IP so devices can send it traps, and is enrolled with a short-lived token created in the central UI. After enrollment it opens an **outbound-only TLS connection on 443** and receives its jobs, config and upgrades over that same channel. That describes the EcoStruxure IT Gateway, Hyperview, Device42, LogicMonitor and ServiceNow MID. Devices are bound **exclusively, one device to one collector**, through site- or subnet-scoped discovery, and the central server decides every ownership change. Our platform already has the core of the right control plane: pull-based assignment with ETags, remote config, site-aware rendezvous hashing, and discovery ranges routed per collector. Its data plane and multi-collector correctness are not ready. Site binding is never populated, traps land on the wrong shard, a dead collector's devices freeze at their last status, and the collector writes straight into the core Redis with the fleet-wide password behind a 40-second RAM buffer. Nothing can be installed anywhere except the developer's WSL box. The recommended path has three steps. Fix multi-collector correctness first (Phase 0). Then put an authenticated ingest gateway, per-collector mTLS identity and a disk spool between the edge and Redis. Then add zone-scoped collector pools with centrally decided ownership, and add HA, upgrades and OT-specific plumbing on top. A remote site becomes realistic after roughly Phases 0–5, about 23–27 engineer-weeks. The full programme, including colo API mode and the simulator changes needed to test it, is about 43–52 weeks.
+
+## Real products converge on outbound, enrolled, zone-bound collectors
+
+### Form factor and sizing: software on the customer's VM, sized in points not boxes
+
+**Common practice.** The collector is software on customer infrastructure. Hyperview's current Data Collector is Linux-only and runs as containers under docker-compose, with a minimum of 4 cores, 8 GB RAM and 64 GB free in /opt ([Hyperview](https://docs.hyperviewhq.com/product/auto-discovery/topics/setting-up-data-collectors.html)). Device42 ships its Remote Collector as a virtual appliance sized at 2 vCPU, 4 GB RAM and 50 GB per ~1,000 workloads ([Device42](https://docs.device42.com/getstarted/deploy-device42/remote-collector-rc-installation/)). The EcoStruxure IT Gateway runs on Windows Server or Rocky Linux ([Schneider, search extract](https://community.se.com/t5/System-requirements/System-requirements-for-EcoStruxure-IT-Gateway/ta-p/447011)). Dedicated hardware survives mostly as legacy: Vertiv's Avocent UMG, Schneider's DCE appliances and Sunbird's 2U Power IQ box ([Vertiv Trellis pre-install guide](https://www.vertiv.com/4a593f/globalassets/documents/manuals/trellis-historical-documents/trellis__real_time_infrastructure_-_pre_installation__v5.0.x__338736_0.pdf); [Power IQ datasheet](https://www.sunbirddcim.com/sites/default/files/DS007_Sunbird_DataSheet_PowerIQ6_1.pdf)). A second pattern is still common in on-prem suites: a central poller with no remote collectors at all. Power IQ, DCE and Nlyte NEO poll every device from one server, and they scale by adding servers.
+
+**Sizing units differ by vendor, and protocol cost matters more than device count.** Schneider's published Gateway tiers are the most useful number in the research. A medium Gateway (8 GB, 8 cores) handles **2,000 devices on SNMPv1/Modbus but only 500 on SNMPv3**, about 4x fewer ([Schneider, search extract via a 403'd page](https://community.se.com/t5/System-requirements/System-requirements-for-EcoStruxure-IT-Gateway/ta-p/447011)). Power IQ's default SNMPv3 timeout is likewise 4x its v1/v2c timeout: 20 s against 5 s ([Sunbird](https://www.sunbirddcim.com/help/PowerIQ/v700/CPI/en/Content/Power_IQ_Only/Advanced_Data_Polling_Settings.htm)). Trellis sizes its engine in **data points per minute**, from 10k to 50k points/min on 2–4 cores ([Vertiv](https://www.vertiv.com/4a593f/globalassets/documents/manuals/trellis-historical-documents/trellis__real_time_infrastructure_-_pre_installation__v5.0.x__338736_0.pdf)). SolarWinds warns at **85% of a poller's maximum polling rate** and automatically lengthens intervals ([SolarWinds KB](https://support.solarwinds.com/SuccessCenter/s/article/Orion-Web-Console-error-Polling-rate-limit-exceeded-Add-an-additional-poller-to-continue-at-your-current-polling-intervals)). DCIM poll cadences are also slower than the simulator suggests. Power IQ's sizing assumes 10-minute data polling ([Sunbird](https://www.sunbirddcim.com/help/PowerIQ/v620/en/Content/Power_IQ_Only/Installing_the_Power_IQ_Application.htm)), and Nlyte cites 5–15 minutes ([Nlyte](https://www.nlyte.com/press-releases/nlyte-solution-delivers-complete-view-of-data-center-health-with-new-real-time-system-utilization-monitoring/)). The takeaway for us is to size and alarm on polled points per second, weighted by protocol, not on endpoint count.
+
+### Enrollment: a short-lived secret minted centrally, consumed locally, exchanged for a per-collector credential
+
+**Common practice in cloud and hub products.** An admin creates a registration secret in the central UI and enters it on the collector host. Hyperview issues a registration token, reportedly valid for 72 hours (search extract), and registration can only be triggered from the collector machine ([Hyperview](https://docs.hyperviewhq.com/product/auto-discovery/topics/setting-up-data-collectors.html); [forum](https://system.hyperviewhq.com/forum/support-1/why-is-my-data-collector-failing-to-register-24)). Device42 uses an OTP entered in the RC console. After registration, "all subsequent communication occurs over a secure WebSocket channel" ([Device42](https://docs.device42.com/getstarted/deploy-device42/remote-collector-rc-installation/)).
+
+Mature monitoring platforms show the stronger pattern: keep the enrollment token and the collector credential as separate objects. Elastic Fleet binds an enrollment token to a policy. Revoking that token stops new enrollments without breaking agents already enrolled, while unenrolling one agent invalidates only that agent's keys ([Elastic](https://www.elastic.co/docs/reference/fleet/fleet-enrollment-tokens)). Icinga 2 signs a CSR against a master-generated ticket, with an on-demand, admin-signed alternative when there is no ticket ([Icinga](https://icinga.com/docs/icinga-2/latest/doc/06-distributed-monitoring/)). SPIRE join tokens "expire immediately after use" and yield automatically rotated SVIDs ([SPIRE](https://spiffe.io/docs/latest/spire-about/spire-concepts/)).
+
+Approval queues appear where the secret is shared and long-lived. PRTG makes the admin approve a new probe before any sensors can be created ([PRTG](https://www.paessler.com/manuals/prtg/remote_probes_and_multiple_probes)), and ServiceNow requires a "Validate" step on each MID ([ServiceNow](https://www.servicenow.com/community/itom-articles/validate-mid-server/ta-p/2326664)). Where the token is scoped and single-use, the token itself is the approval.
+
+**Vendor-specific.** Trellis uses mutual TLS in both directions, with the front server connecting to the engine on 4440 and the engine connecting to the front on 6443 ([Vertiv](https://www.vertiv.com/4a593f/globalassets/documents/manuals/trellis-historical-documents/trellis__real_time_infrastructure_-_pre_installation__v5.0.x__338736_0.pdf)). That design assumes a flat routed enterprise network and does not survive NAT, and it is not the modern template. Per-collector client certificates after enrollment are not publicly documented for any DCIM vendor. ServiceNow's optional MID mTLS is the closest documented example ([ServiceNow](https://www.servicenow.com/community/itom-articles/how-to-enable-mutual-tls-mtls-authentication-between-a-mid/ta-p/3520310)).
+
+### Placement: one collector per management zone, dialling out
+
+Every source puts BMCs, network management and BMS gear on segregated management networks. Dell states the iDRAC "is intended to be on a separate management network" ([Dell iDRAC10 SCG](https://www.dell.com/support/manuals/en-us/poweredge-r7725/idrac10_1.xx_scg/best-practices?guid=guid-4a34c56d-8487-4908-8fba-2e3e1943a5d6&lang=en-us)). NIST SP 800-82r3 requires firewall rules that "only permit connections between adjacent levels, tiers, or zones", and routes enterprise-to-operations traffic through a DMZ ([NIST SP 800-82r3](https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-82r3.pdf)).
+
+Three placements exist in practice. The standards-aligned one is **one collector per zone**: one in IT-OOB and one in the BMS operations-management zone, each dialling out. The most common enterprise shortcut routes one collector through the management firewall. The small-site compromise is a dual-homed host. NIST r3 flags dual-homed maintenance devices as a concern. The oft-quoted line that dual-homed hosts "do not provide suitable isolation" could not be verified in the r3 text and probably comes from rev. 2.
+
+Vendors present multi-collector deployment as the answer to *reachability*: separate VLANs, VRFs, NAT and remote sites. They do not present it as load balancing, and none publishes a "collector per N racks" rule. Collectors need a **static IP** because devices are configured to send traps to it ([Hyperview](https://docs.hyperviewhq.com/product/auto-discovery/topics/setting-up-data-collectors.html)). BACnet discovery forces Hyperview's container onto `network_mode: host`, because Who-Is broadcasts do not cross Docker NAT ([Hyperview](https://docs.hyperviewhq.com/product/auto-discovery/topics/advanced-discovery-topics.html)).
+
+The collector-to-core direction is outbound 443 in every modern product: Schneider ([search extract](https://helpcenter.ecostruxureit.com/hc/en-us/articles/360014961498-EcoStruxure-IT-Gateway-security-considerations)), LogicMonitor ("no inbound network ports", [whitepaper](https://www.logicmonitor.com/wp-content/uploads/2024/07/2024_LM_Security_whitepaper.pdf)) and ServiceNow MID ([ServiceNow](https://www.servicenow.com/community/itom-forum/midserver-and-servicenow-instance-communication/td-p/3352580)). NIST adds a caveat that matters in OT zones: make outbound rules "as stringent as inbound rules." Outbound-only is necessary but not sufficient. The conduit must be narrow and pinned to specific destinations.
+
+### Assignment: exclusive ownership, scoped by location, arbitrated centrally
+
+Trellis states the rule plainly: "Only one engine/appliance is allowed to be connected to and monitor a target device at the same time" ([Vertiv](https://www.vertiv.com/4a593f/globalassets/documents/manuals/trellis-historical-documents/trellis__real_time_infrastructure_-_pre_installation__v5.0.x__338736_0.pdf)). Device42 picks the collector per discovery job from a dropdown ([Device42](https://docs.device42.com/auto-discovery/remote-collector-rc/)). Commercial DCIM products do not auto-balance.
+
+Where monitoring platforms do balance, they constrain it to a pool whose members share reachability. Zabbix 7.0 assigns hosts to a *proxy group* ([Zabbix](https://www.zabbix.com/documentation/7.0/en/manual/distributed_monitoring/proxies/ha)). OpenNMS assigns nodes to a Minion *location* ([OpenNMS](https://vault.opennms.com/docs/opennms/releases/28.0.0/documentation/horizon/28.0.0/deployment/minion/introduction.html)). ServiceNow selects MIDs by IP-range capability ([ServiceNow](https://www.servicenow.com/docs/r/servicenow-platform/mid-server/t_ConfigureMIDIPRange.html)). Split-brain is avoided the same way everywhere: **the server is the only arbiter**, and collectors never negotiate ownership among themselves. Rebalancing is deliberately damped. Zabbix moves hosts only when a proxy differs from the group average by at least 10 hosts *and* a factor of 2, with a grace period of 10x the failover delay. LogicMonitor rebalances every 30 minutes ([LM](https://www.logicmonitor.com/support/auto-balanced-collector-groups-legacy)).
+
+**Traps are the known hole.** Zabbix explicitly does not support SNMP traps in proxy groups, because the trap destination is configured on the device ([Zabbix](https://www.zabbix.com/documentation/7.0/en/manual/distributed_monitoring/proxies/ha)). That is exactly the bug our hash sharding has today.
+
+### HA, buffering and self-monitoring: weak in DCIM, well developed in monitoring
+
+**DCIM reality.** No commercial DCIM product documents automatic device failover to a standby collector. Resilience comes from VM HA, snapshot restore, or a pre-registered second collector that devices are manually re-bound to. Schneider's only documented continuity mechanism is its upgrade path: the new version installs in parallel, collection is interrupted during the restart, and a failed install rolls back ([search extract](https://helpcenter.ecostruxureit.com/hc/en-us/articles/360016452233-Gateway-auto-update-in-IT-Expert)). A claim that the Gateway buffers "8 days, about 128 MB per day" could not be sourced and is treated as unverified.
+
+**Monitoring-platform practice is the template.** Failure is detected in 60 s to 3 minutes: the Zabbix failover period defaults to 1 minute ([Zabbix](https://www.zabbix.com/documentation/7.0/en/manual/distributed_monitoring/proxies/ha)), a Datadog HA standby takes over "within 90 seconds" ([Datadog](https://docs.datadoghq.com/integrations/guide/high_availability/)), and LogicMonitor declares a collector down after 3 minutes and waits **8 minutes before failback** ([LM](https://www.logicmonitor.com/support/collector-failover-and-failback)). LogicMonitor also warns that devices fail over only if the target has headroom, so N+1 capacity has to be reserved ([LM Community](https://community.logicmonitor.com/discussions/product-discussions/auto-balanced-collector-group-vs-failover/17085)).
+
+Buffers are **disk-backed with a time or size cap**:
+
+| Platform | Buffer |
+|---|---|
+| Zabbix | `ProxyOfflineBuffer`, default 1 h, with a 7.0 "hybrid" memory-then-DB mode that flushes to disk on stop or overflow ([Zabbix](https://www.zabbix.com/documentation/7.0/en/manual/concepts/proxy)) |
+| OpenNMS Minion | 1 GB off-heap disk queue ([OpenNMS](https://docs.opennms.com/horizon/33/deployment/minion/off-heap-storage.html)) |
+| Prometheus remote_write | ~2 h of WAL before loss ([Prometheus](https://prometheus.io/docs/practices/remote_write/)) |
+
+Self-monitoring has one rule that matters most for a DCIM, and it comes from LogicMonitor. While a collector is down, alerts already open stay open but **no new alerts are generated for its resources** ([LM](https://www.logicmonitor.com/support/collector-failover-and-failback)). A collector outage therefore does not show up as a thousand device outages.
+
+### Upgrades: centre-driven, staged, with a declared skew window
+
+Cloud and hub collectors upgrade from the centre. ServiceNow MIDs "auto-upgrade themselves" immediately after an instance upgrade ([KB0722838](https://support.servicenow.com/kb?id=kb_article_view&sysparm_article=KB0722838)). Device42 RCs are version-locked to the Main Appliance ([Device42](https://docs.device42.com/administration/main-appliance-remote-collector-faq/)). LogicMonitor forces a required release once a year with at least 30 days' notice ([LM](https://www.logicmonitor.com/support/collectors/collector-overview/collector-versions)).
+
+The best skew policy is Zabbix's. A proxy from the previous LTS is "outdated": it keeps collecting data but receives no configuration updates. Anything older, or newer than the server, is "unsupported" and its data is ignored ([Zabbix](https://www.zabbix.com/documentation/7.0/en/manual/appendix/compatibility)). Schneider ships its device library separately from the Gateway binary ([Schneider](https://helpcenter.ecostruxureit.com/hc/en-us/articles/360012956557-How-to-update-the-Gateway-device-library)). That split matters to us, because our collector reads mapping YAML off disk at boot. Package signing is thin in public docs. LogicMonitor describes checksums stored separately from build artefacts and verified at deploy ([whitepaper](https://www.logicmonitor.com/wp-content/uploads/2024/07/2024_LM_Security_whitepaper.pdf)). A 2025 CISA advisory found hard-coded credentials in Sunbird dcTrack/Power IQ ([ICSA-25-338-05](https://www.cisa.gov/news-events/ics-advisories/icsa-25-338-05)), which shows the collector itself is attack surface.
+
+### Credentials: central envelope encryption or collector-side vault, held in memory
+
+Three custody patterns exist:
+
+| Pattern | Who uses it | How it works |
+|---|---|---|
+| Central store pushed to the collector (most common in SaaS) | LogicMonitor | Encrypts with per-customer keys under KMS envelope encryption and states "Monitored device credentials are not stored to disk in LogicMonitor Collectors" ([whitepaper](https://www.logicmonitor.com/wp-content/uploads/2024/07/2024_LM_Security_whitepaper.pdf)) |
+| Vault resolved by the collector (regulated enterprises) | ServiceNow MID | Resolves a Credential ID from CyberArk or HashiCorp at run time, so the secret never enters the platform ([ServiceNow](https://github.com/ServiceNow/mid-hashicorp-external-credential-resolver)) |
+| Entered only on the collector | Plausibly the EcoStruxure Gateway | Inferred from its local admin UI; unverified |
+
+The device side ranges from strong to none. SNMPv3 has SHA-2 auth per RFC 7860 ([RFC 7860](https://www.rfc-editor.org/rfc/rfc7860.html)). Redfish offers a ReadOnly role that cannot reset systems ([DMTF DSP0266](https://www.dmtf.org/sites/default/files/standards/documents/DSP0266_1.21.0.html)). BACnet/SC ([ASHRAE](https://www.ashrae.org/File%20Library/Technical%20Resources/Standards%20and%20Guidelines/Standards%20Addenda/135_2016_bj_20191118.pdf)) and Modbus/TCP Security on TCP 802 ([Modbus.org](https://www.modbus.org/file/secure/modbussecurityprotocol.pdf)) both exist. Most installed facility cards still speak unauthenticated v2c, BACnet/IP and Modbus/TCP on 502, so segmentation is the real control there. Collectors should hold **read-only** credentials; LogicMonitor says "typically, read-only rights are sufficient."
+
+### Facility and OT paths: gateways, BBMDs and colo APIs
+
+In production, the BMS and EPMS own plant control. DCIM polls IT-side power directly over SNMP: rack PDUs, UPS cards and RPPs. It reads chillers, CRAHs and switchgear through the BMS/EPMS or through gateways. The sources for this split are integrator blogs, not surveys ([Aravolta](https://www.aravolta.com/blog/bms-vs-epms-vs-scada-vs-dcim)), so the split is an informed inference.
+
+Serial gear sits behind protocol gateways. A Moxa MGate exposes up to 31 RTU slaves per port behind one IP, uses the Modbus Unit ID to select the slave, and accepts at most 16 TCP masters ([Moxa, snippet-level](https://www.moxa.com/getmedia/69de17dc-3980-4ea9-a178-607ce93d5a16/moxa-mgate-mb3000-series-manual-v13.4.pdf)). The gateway itself synthesises exception **0x0A (path unavailable)** and **0x0B (target failed to respond)** ([Chipkin](https://docs.chipkin.com/articles/modbus-exception-codes-and-error-handling-reference/)). A dead slave therefore shows up as a live gateway returning 0x0B, not as a TCP timeout.
+
+BACnet/IP Who-Is is a broadcast that routers drop. An off-subnet collector must register as a **Foreign Device** with the site BBMD, re-registering before its TTL expires. Kepware's default TTL is 60 s, within a range of 10–3600 s ([Kepware](https://support.ptc.com/help/kepware/drivers/en/kepware/drivers/BACNET/channel_protocol_settings.html)). The alternative is to skip discovery and read a static unicast device table. The BBMD belongs to the controls contractor, so an FDR entry is a facilities change request.
+
+BMS supervisors are capacity-managed. Niagara keeps poll-scheduler busy time under 75%, and COV is off by default ([Innon](https://know.innon.com/niagara-driver-polling-and-tuning-policy)). A DCIM poller gets a rate budget, not free rein.
+
+In colocation the tenant never touches plant. Equinix Smart View exposes BMS and power data through a REST API and a near-real-time "API Plus", with 12 months' retention ([Equinix, snippets](https://docs.equinix.com/smart-view/)). OCP's October 2025 draft proposes that BMS and tenant talk only through a broker; the PDF returned 403 and is unverified ([OCP](https://www.opencompute.org/documents/third-party-integration-telemetry-apis-final-pdf)).
+
+## Where our platform stands today: sharding built, multi-collector correctness broken
+
+The dcim-platform collector (`collector/`, Go) already follows the modern pull shape:
+
+- It fetches its work list from `GET /api/v1/collector/assignments` every 30 s with `If-None-Match`, diffs it, and keeps the last known set on error (`collector/internal/assign/assign.go:64-193`).
+- It layers remote overrides with an ETag and version onto a file config that deliberately cannot be changed remotely (`internal/config/remote.go:13-196`).
+- The server uses rendezvous hashing with site eligibility and pins (`backend/app/services/sharding.py`).
+- Discovery ranges are routed per collector through `SKIP LOCKED` claims (`repositories/discovery.py:154-184`).
+- Every credential handout is audited.
+
+That foundation is sound and resembles a Zabbix active proxy. The problems sit in identity, transport, and the assumption, baked into several paths, that there is exactly one collector.
+
+| Area | What is broken or paper-only | Evidence |
+|---|---|---|
+| Site-aware sharding | The algorithm filters by `Collector.sites`, which is read from `stats.sites`. The Go heartbeat has no `sites` field and ingest never writes it, so **every collector is eligible for every site**. With two DCs, about half of DC2's endpoints hash to DC1's collector, which cannot route to them (worse with overlapping RFC1918) | `sharding.py:46-62`; `repositories/collector.py:39-71`; `messages_gen.go:230-249`; `ingest/worker.py:947-990` |
+| Trap and Redfish-event attribution | The resolver is built only from the collector's own assignment. With N collectors in a site, about (N-1)/N of traps reach a non-owner, are held 2 min, then published with no device, so **no alarm is raised**. Redfish event resolution has the same shard limit, and the listener is off by default | `internal/assign/resolver.go:1-97`; `app.go:529-532`; `adapters/snmp/traps.go:30-47,200-260`; `adapters/redfish/events.go` |
+| Alarms that can never fire | `platform_monitor._collectors` reads `stats.queue_capacity` and `stats.publish_dropped`, and the rules read `assignment_age_s`. **Ingest writes none of the three.** So `collector_degraded` (drops/queue) and `assignment_stale` are dead, and the only live degraded check is online > owned. `traps_received`, `events_received`, `active_streams` and `assignment_version` are never populated. `collectors_expected` is hardcoded to 1. `collector_instance.status` is always `'HEALTHY'` | `platform_monitor.py:120-123,155`; `alarms/platform.py:46-56,282-352`; `ingest/worker.py:947` |
+| Dead collector ≠ UNKNOWN | The backend does not mark a stale collector's shard UNKNOWN, contrary to `docs/02-target-architecture.md:203` and the chaos expectation in doc 14. Staleness sweeps only fire for endpoints still ONLINE with a recent success, so **a dead collector's devices freeze at their last status**. There is no device-alarm suppression or "visibility lost" annotation | `alarms/staleness.py:1-18` |
+| Credential rotation | The assignment ETag excludes secrets and the collector diff compares only the SNMP community. **A Redfish password rotation returns 304 and never reaches the collector** until something else touches the row's `updated_at` | `services/collector.py:121-128`; `assign.go:192` |
+| SNMPv3 | `snmp_v3` exists as a credential kind. The poller hardcodes `g.Version2c`, the trap listener uses `g.Default` (v1/v2c) and does not validate the community | `adapters/snmp/snmp.go:120-150`; `traps.go:109-199` |
+| gNMI auth | `ConnPool.SetCredential` is **never called**, so gNMI runs unauthenticated, with `InsecureSkipVerify: true` always. Redfish `verify_tls` defaults to false from the importer | `adapters/gnmi/conn.go:68-75,104-120` |
+| Collector → Redis | The collector writes straight to Redis Streams with the single shared `requirepass`, no per-collector ACL and no TLS. It can read and write every key, including counter baselines and other collectors' data. **Ingest does not check that a batch's `collector_id` owns what it reports**, so any Redis writer can spoof any device | `deploy/docker-compose.yml:40-43`; `ingest/worker.py` |
+| Buffering | Only an in-memory ring of 50,000 samples, **about 40 s of full-fleet telemetry**. Events are unbounded in RAM. Nothing goes to disk, so a restart during an outage loses everything. The stream `maxlen` of 8,000 (~55 min) is a fleet-wide budget under `maxmemory 1gb noeviction`, so N sites shrink it N-fold | `publish.go:23-41,133-190`; `config.go:276-294` |
+| Identity and tokens | The token is the master or an HMAC-derived `<id>.<hmac>`. There is **no expiry and no per-collector revocation**, and rotating the master kills the fleet. Tokens are minted only from a Python shell. `POST /collector/heartbeat` trusts the payload `collector_id`, and discovery results are not scope-checked. `collector.id` has no env or flag override, and a typo creates a new collector that takes a shard | `core/security.py:169-242`; `api/v1/collector.py:160-179,232-268`; `docs/17-operations-runbook.md:283-287` |
+| Transport security | API over `http://`, Redis over `redis://`. Assignment JSON carries **decrypted credentials in cleartext**. `DCIM_CREDENTIAL_KEY` is a single key with no key id. Discovery Redfish credentials sit in plaintext in `collector.yaml` | `collector.yaml:11-18,51-96`; `core/config.py:61-117`; `services/collector.py:66-76` |
+| Mappings | Read from `../contracts/mappings` on local disk at boot. A remote collector has no way to get version-matched mappings | `collector.yaml` `mappings.dir`; `app.go:95-99` |
+| Versioning | `version = "0.1.0"` is hardcoded. `schema_version` is never checked. There is no min-version gate or remote upgrade, and the upgrade runbook is `git pull` | `cmd/collector/main.go:22`; `docs/17-operations-runbook.md:271-281` |
+| Packaging | There is no collector Dockerfile, compose service, systemd unit or installer. `scripts/dev.sh` starts exactly one collector from WSL, and the committed `collector-linux` binaries are ad-hoc cross-compiles | `backend/Dockerfile`; `scripts/dev.sh:194-207` |
+| Operations | Failover is manual by design (`DELETE FROM collector_instance`). There is no API or UI to pin, drain, rebalance or decommission, and no enrollment, site binding or shard map in the UI | `sharding.py:30-36`; `docs/17-operations-runbook.md:301-308`; `frontend/src/features/settings/Collectors.tsx` |
+
+Most of these bugs are latent today because a single unscoped collector owns everything. The trap and site bugs are **correctness bugs that appear the moment a second collector heartbeats**, even in the lab.
+
+## Eight architectural decisions to lock in before writing code
+
+| Decision | Recommendation | Mirrors | Rejected alternative and why |
+|---|---|---|---|
+| Edge-to-core transport | Remote collectors stop writing to Redis. They POST msgpack batches (reusing `contracts/schema/messages_v1.yaml`) over **HTTPS 443 with mTLS** to a thin **ingest gateway**. The gateway authenticates the cert, **stamps the authenticated collector id** into the stream entry and XADDs. Control flows over the same 443 as long-poll GETs | EcoStruxure Gateway, Hyperview, LogicMonitor (all outbound 443); ServiceNow ECC and Elastic long-poll for control | Direct Redis with per-collector ACL + TLS: acceptable as a Phase 0 stopgap for core-hosted collectors, but it exposes the datastore across a WAN and gives no backpressure. NATS JetStream leaf nodes (floated in docs 01/02): a second stateful system at every site; revisit past ~50 sites. gRPC streams: workable, but HTTPS POST survives TLS-inspecting proxies more reliably (inference) |
+| Ownership | **One device, one collector, decided centrally and persisted** as an assignment row with an epoch. It is not recomputed ad hoc from a hash at read time | Trellis exclusivity; Zabbix/LM central arbitration | Collector-side consensus: no product does it, and it invites split-brain |
+| Assignment scope | **Collector pools keyed by (site, management plane)**, e.g. `DC2/IT-OOB`, `DC2/BMS`. An endpoint's pool derives from its site and plane or discovery range. HRW runs only *inside* a pool, and pools default to one active member | Zabbix proxy groups, OpenNMS locations, ServiceNow IP-range capability | Global hashing: sends DC2's chillers to DC1's VM. Self-declared `sites` in the heartbeat: a typo re-shards the estate; the binding must be server-side |
+| Buffering | **Hybrid memory-then-disk spool** on the collector, capped by time (**default 72 h**) *and* size (**default 40 GB**, on a 100 GB disk). Replay oldest-first, throttled, samples flagged `late`. Ack is the gateway's 2xx after XADD | Zabbix 7.0 hybrid buffer; OpenNMS off-heap; Prometheus WAL | RAM-only (today): loses data on restart. The 72 h default is longer than the 1–2 h industry defaults on purpose. Power and cooling data during a site isolation event is the forensic record. This is a recommendation, not observed practice |
+| Collector-down behaviour | **One `collector_stale` alarm naming N unmonitored devices.** The pool's endpoints go **UNKNOWN / visibility lost**, open alarms stay open and annotated, and **new device alarms are suppressed** | LogicMonitor collector-down semantics | Per-device OFFLINE: an alarm storm that sends operators to 1,500 servers instead of one VM |
+| Failover | Default: single collector per pool plus infrastructure HA (VM HA), which is what DCIM customers really run. Optional N+1 pools with **server-held leases**: down after 3 min, failback only after 10 min stable, rebalance damped with Zabbix's thresholds | LM 3 min / 8 min; Zabbix hysteresis; Datadog HA pairs | Aggressive 30 s failover: flaps on WAN blips, and every move gaps counter rates |
+| Version skew | Contract-major must match. Collector minor N and N-1 fully supported. N-2 is **"outdated"**: data accepted, assignment frozen, alarm raised. Older is rejected at the gateway with an explicit reason and alarm. Upgrades are staged per pool and **never both members of a pool at once** | Zabbix "outdated = data only"; Datadog/ServiceNow staged upgrades | Hard version lock (Device42, SolarWinds): a core upgrade would then silently stop power data at every site that has an OT change freeze |
+| Credentials | Per-collector **envelope encryption** of the credentials in each assignment (sealed to a collector key registered at enrollment), decrypted only in memory. Optional **vault references** resolved at the edge. Collectors get read-only device accounts | LogicMonitor (KMS envelope, never on disk); ServiceNow external credential resolvers | Cleartext JSON over TLS alone: every proxy log and heap dump on the path sees plaintext |
+
+One decision needs explicit trade-off language. **Should the collector cache its assignment, including sealed credentials, on disk** so it can restart and keep polling during a WAN outage? LogicMonitor says it never writes credentials to disk. A remote DC that loses its WAN link and reboots the collector VM would then collect nothing until the link returns. Default to an encrypted-at-rest cache sealed to the collector's key, with a per-site policy switch that disables it for customers whose security teams forbid it.
+
+## A phased plan from fix-what's-broken to colo API mode
+
+Sizes are rough single-engineer estimates for someone who knows the codebase, and could be ±50%.
+
+### Phase 0: make two collectors correct before adding a third (M, 3–4 weeks)
+
+**Goal:** two collectors in one lab, one per simulated site and plane, produce exactly the alarms one collector would. No stranded traps, no frozen devices, no dead health signals.
+
+| Area | Concrete changes |
+|---|---|
+| Backend | Add `collector_instance.site_id` and `plane` (migration), **set by an admin**, and feed them into `sharding.Collector.sites` in place of `stats.sites`. Persist `publish_dropped`, `queue_capacity` and `assignment_age_s` in the heartbeat handler (`ingest/worker.py:947`). Write `status` from real staleness instead of the hardcoded `'HEALTHY'`. Derive `collectors_expected` from registered, non-decommissioned collectors. Add a sweep that marks endpoints owned by a stale collector `UNKNOWN` (reason `collector_stale`), and suppress staleness-driven device alarms for them. Include a credential version/hash in the assignment ETag (`services/collector.py:105-129`). Scope-check `POST /collector/heartbeat` and `POST /collector/discovery/{run_id}/results` against the token. Add an ingest-side ownership check that counts and drops samples whose endpoint's current owner ≠ batch `collector_id`, with a 2-interval grace after a move. Add a per-collector token generation counter so one derived token can be revoked without rotating the master |
+| Collector | Compare the full credential (hash) in `changed()` (`assign.go:192`). Populate `traps_received`, `events_received`, `active_streams` and `assignment_version`. Add `--id` / `DCIM_COLLECTOR_ID` overrides. Build the trap/event resolver from a **pool-wide resolution list**: the assignment gains a credential-free `resolve[]` of every endpoint in the collector's pool, so a trap attributes correctly whichever pool member receives it. Unowned-but-resolved traps are forwarded with the device id, and the backend dedups by (device, trap OID, timestamp window) |
+| Frontend | Settings → Collectors: site and plane columns and an edit dialog. Endpoint editor gains a pin/unpin field. Add drain and decommission actions that replace `DELETE FROM collector_instance` |
+| Deploy | Stopgap: per-collector Redis ACL users limited to `XADD` on the four streams (`+xadd ~telemetry.v1 ~events.v1 ~endpointstate.v1 ~collectorhb.v1`), replacing the shared password for collectors |
+
+**Decisions.** Server-side site binding, not self-declared: authoritative placement lives centrally, as in Zabbix proxy-group membership. The pool-wide trap resolver is chosen over "configure devices to trap to their hash owner", because trap destinations are device config that facilities teams will not rewrite on every rebalance. Zabbix sidesteps the problem by excluding traps from proxy groups.
+
+**Acceptance.** With two collectors on two simulated DCs, `GET /collector/health` shows zero endpoints owned across sites. A trap sent to either collector raises the correct device alarm within one ingest cycle. `kill -9` of one collector produces one CRITICAL `collector_stale` alarm, and its endpoints show UNKNOWN within 90 s with zero new device alarms. A Redfish password change reaches the collector within one assignment interval. Stopping ingest while polling makes `collector_degraded` fire on queue fill.
+
+### Phase 1: ship an installable, versioned collector (S–M, 2–3 weeks)
+
+**Goal:** a site admin can install the collector without the repo, WSL or Go.
+
+| Area | Concrete changes |
+|---|---|
+| Collector | Stamp version and git SHA via `-ldflags`. **Embed the mapping bundle** (`contracts/mappings`) with `go:embed`, keep `mappings.dir` as an override, and report `mapping_bundle_sha` in the heartbeat. Env overrides for every file-only key (id, server URL, spool path). Configurable trap port 162 via `CAP_NET_BIND_SERVICE` |
+| Deploy | Distroless container image (`network_mode: host` documented as required for BACnet broadcast and traps). `.deb`/`.rpm` with a systemd unit (`AmbientCapabilities=CAP_NET_BIND_SERVICE`, dedicated non-root user, `StateDirectory` for the spool). A compose `collector` service profile. Cosign/minisign signatures plus an SBOM per release. A published firewall matrix: outbound 443 to core; to devices UDP 161, TCP 443 (Redfish), TCP 502, UDP 47808, TCP 9339/57400/6030 (gNMI); inbound UDP 162 and TCP 9143 (Redfish events) |
+| Backend | The server compares the reported `mapping_bundle_sha` with its registry and raises a WARNING on mismatch |
+
+**Decisions.** Linux-first container plus native package, mirroring Hyperview (Linux containers) and Device42 (appliance). Windows is deferred: Schneider supports it, but our Go binary gains nothing there, and BACnet on Windows is harder. Publish minimum specs of **4 vCPU / 8 GB / 100 GB** (Hyperview's floor plus spool space), and size by points per second rather than devices. Bundling mappings with the binary follows the release-coupled model; a separately updatable device library (Schneider) comes in Phase 7.
+
+**Acceptance.** `dnf install` or `docker run` on a clean Rocky 9 VM plus one config file yields a collector that polls the simulator. Signature verification fails on a tampered package. A mapping mismatch alarms.
+
+### Phase 2: enroll collectors with one-time tokens and mTLS identity (M–L, 4 weeks)
+
+**Goal:** replace HMAC-derived bearer tokens with a per-collector certificate obtained through a one-time token bound to a pre-created collector record.
+
+| Area | Concrete changes |
+|---|---|
+| Backend | A `collector` registry table (name, pool, site, plane, state `pending → connected → draining → decommissioned`, cert serial, fingerprint, encryption public key, enrolled_by/at). An `enrollment_token` table (hash only, single-use, **24 h default expiry**, bound to one collector record). An internal CA (online intermediate, offline root). `POST /collector/v1/enroll` exchanges token + CSR + X25519 public key for a client cert (SAN = collector id, **30-day lifetime, renew at 2/3**). A per-request check of cert serial against registry state gives revocation without CRL/OCSP. Audit events for enroll, renew and revoke |
+| Collector | `dcim-collector enroll --server https://… --token …` generates keys locally (0600 in the state dir), submits the CSR, stores the cert, and auto-renews. Every control and data call uses mTLS. The bearer token is removed |
+| Frontend | "Add collector" wizard (name → pool → shows the one-time install command and token, with expiry countdown). Collector detail: state, cert expiry, revoke, re-issue token |
+| Deploy | A TLS front door (Envoy/nginx) verifies client certs against the internal CA and forwards the verified identity header to FastAPI. Plain HTTP is dropped for collector routes |
+
+**Decisions.** The token-to-certificate exchange with separate token and credential objects follows Elastic Fleet revocation semantics and Icinga's ticket-signed CSR. The pre-created record *is* the approval, so there is no separate PRTG-style queue. An optional multi-use "pool token" with a pending-approval queue can serve bulk automation later. The 30-day certificate lifetime is judgment: no DCIM vendor publishes one, and SPIRE's much shorter default was only secondarily sourced. Revocation is a server-side check on each connection, the note-recommended approach, because CRL distribution to air-gapped sites is fragile.
+
+**Acceptance.** A reused or expired token is rejected. A revoked collector's next request fails within one poll interval, and it drops to self-degraded without condemning endpoints. The heartbeat's `collector_id` comes from the cert, and a payload mismatch is logged and ignored. Rotating the CA intermediate re-issues certs without downtime.
+
+### Phase 3: ingest gateway, disk spool and backpressure (L, 5–6 weeks)
+
+**Goal:** remote collectors reach the core only on 443. Data survives WAN loss and collector restarts. The core can say "slow down" without losing data.
+
+| Area | Concrete changes |
+|---|---|
+| Backend | A `collector-gateway` service (FastAPI first, Go if profiling demands). `POST /collector/v1/batches/{stream}` accepts zstd-compressed msgpack with a `(collector_id, spool_seq)` header, checks the contract major, stamps the authenticated collector id and `received_at`, XADDs, and returns 2xx only after XADD. It returns **429 with Retry-After** when stream length or Redis memory crosses a high-water mark. The ingest worker trusts only the stamped id, dedups by `(collector_id, spool_seq)`, and accepts out-of-order samples by source timestamp. Alarms evaluated from replayed data carry `late=true`, and notifications for late alarms that have already cleared are suppressed. `GET /collector/v1/poll?rev=` long-polls (≤60 s hold) and returns assignment/config deltas plus commands (`poll-now`, `rediscover`, `restart`, `upgrade`). This replaces the 30 s poll and the never-built Redis pub/sub nudge from doc 07 §6. Per-collector stream quotas replace the fleet-wide `maxlen` |
+| Collector | A spool: an append-only segmented log (e.g. 64 MB segments) in `StateDirectory`, **memory-first, spilling to disk** on backlog, shutdown or age. Caps are 72 h / 40 GB; telemetry sheds oldest first, and events and endpoint-state get a reserved 10% partition that is shed last. Replay is oldest-first at ≤3x live rate. Heartbeat fields `spool_bytes`, `spool_oldest_age_s` and `replay_rate`. The direct-Redis publisher stays behind a flag for core-hosted collectors only |
+| Frontend | Platform Health: per-collector spool depth, oldest age and replay ETA. A "site isolated since…" banner on site pages |
+| Deploy | The gateway sits behind the Phase 2 front door. Redis is no longer reachable from outside the core network |
+
+**Sizing rationale.** The current fleet publishes about 2.4 telemetry entries/s at ~49 KB each (`config.go:276-294`). That is ~118 KB/s, or **~10 GB/day uncompressed for the whole simulated estate**. A per-site collector sees its share, and msgpack numerics should compress several-fold under zstd (to be measured, not assumed). 72 h therefore fits comfortably in 40 GB for any single site the simulator models, and the cap is a backstop. Replay throughput is the real constraint: ingest runs two workers sized for live rate, so replay must be throttled and ingest must be scaled during catch-up.
+
+**Acceptance.** A 6-hour `tc netem` partition between a collector and the core produces zero telemetry loss. Series backfill, and the UI marks them late. `kill -9` of the collector during the partition loses at most the in-memory tail (≤ the configured flush interval). Forcing Redis past high-water yields 429s and spool growth, not `OOM` errors. A spoofed batch claiming another collector's endpoints is dropped and counted.
+
+### Phase 4: credentials that rotate, stay sealed and speak v3 (L, 5–6 weeks)
+
+**Goal:** every protocol authenticates properly, secrets are never plaintext outside the collector's memory, and rotation propagates.
+
+| Area | Concrete changes |
+|---|---|
+| Backend | Seal each assignment credential to the collector's X25519 key (e.g. NaCl sealed box). Key ids on `secret_enc` and a `DCIM_CREDENTIAL_KEY` rotation command (re-wrap in place). **Discovery credential sets** stored centrally and delivered sealed with a claimed discovery run, replacing plaintext YAML. `credential_ref` kinds (`vault:hashicorp:<path>`, `vault:cyberark:<id>`) that are passed through unresolved. Default `verify_tls=true` for new Redfish/gNMI endpoints, with a per-site CA bundle |
+| Collector | **SNMPv3 USM** for polling and traps: authPriv with SHA-2 per RFC 7860 and AES-128 per RFC 3826; AES-192/256 as vendor extensions, flagged as non-IETF. Per-device engine-ID handling for v3 traps and INFORM support. **Wire gNMI `SetCredential`** and honour `verify_tls`. Local vault resolvers (HashiCorp AppRole with response-wrapped secret-zero, CyberArk CCP) behind an interface. Credentials held in memory, plus the encrypted assignment cache (policy-switchable, see the trade-off above) |
+| Frontend | Credential form for v3 users (auth/priv protocol pickers). Credential sets assignable to pools. Last-rotated and last-delivered-to-collector per credential |
+| Deploy | Document read-only device accounts: Redfish ReadOnly role, SNMP read-only view, no write community |
+
+**Decisions.** The central envelope-encrypted default mirrors LogicMonitor, and optional edge vault references mirror ServiceNow MID. SNMPv3 is weighted as ~4x the polling cost of v2c in capacity planning, per the Schneider sizing (search-extract sourced) and Power IQ's 4x timeout. Control and write credentials stay out of the collector until a separate, change-controlled control feature exists. In production, DCIM reads while the BMS/EPMS writes.
+
+**Acceptance.** A v3 authPriv device polls and traps with SHA-256/AES-128. A wrong v3 key produces an explicit auth-failure endpoint state, not a timeout. gNMI rejects a bad password. Rotating a Redfish password in the UI reaches the collector within one long-poll cycle, and polls succeed with the new secret. A packet capture of assignment traffic shows no plaintext secret.
+
+### Phase 5: pools, zones and stable ownership (M–L, 4 weeks)
+
+**Goal:** assignment follows network reality (site × plane), ownership is persisted and damped, and operators can move work deliberately.
+
+| Area | Concrete changes |
+|---|---|
+| Backend | `collector_pool` (site, plane `it_oob|bms|production|provider`, CIDRs, trap VIP, BBMD settings, rate budgets, min_members). Endpoints inherit a pool from discovery range `purpose` and `datacenter_id` (`0082` already has both), overridable per endpoint. An **`endpoint_assignment` table** (endpoint, collector, epoch, since, reason) written by a single assigner loop (advisory-locked). HRW runs only within the pool's healthy members, with pins honoured. Rebalance only when a member deviates from the pool mean by ≥10 endpoints **and** 2x, at most every 30 min (Zabbix/LM damping). Endpoints whose pool has no healthy member show `(unassigned)` + UNKNOWN, never cross-pool. A per-collector capacity model in weighted points/s (v3 x4, per-outlet walks weighted, BACnet/Modbus latency-bound), with a **utilisation alarm at 85%** (SolarWinds) |
+| Collector | Reports capacity telemetry (points/s achieved vs scheduled, per-protocol concurrency saturation). Stops polling an endpoint within one cycle of losing it. Transfers counter baselines lazily: the first sample after a move is a baseline, and the rate gap is marked `reset` |
+| Frontend | Sites → Collection tab: pools, members, owned/online, utilisation, unassigned count. A shard map (endpoint → collector with history). Actions: pin, drain collector (moves endpoints within the pool, then marks draining), rebalance now (with preview) |
+| Deploy | A per-pool firewall matrix generated from pool CIDRs and enabled protocols |
+
+**Decisions.** Pools over global hashing, and a single-member pool as the default, mirroring OpenNMS locations and Zabbix proxy groups. Persisting ownership instead of recomputing HRW per request makes trap attribution, audit ("who polled this UPS at 03:12?") and ingest ownership checks stable. It also matches Trellis's "only one engine per device."
+
+**Acceptance.** Adding a second collector to `DC1/IT-OOB` moves ≈50% of that pool and nothing else. Adding a collector to `DC2/BMS` never takes a DC1 endpoint. A drain completes with zero polling gaps beyond one interval. Pushing utilisation above 85% alarms.
+
+### Phase 6: HA and failover with leases, not heroics (M, 3–4 weeks)
+
+**Goal:** optional N+1 per pool with predictable failover, no flapping, and honest capacity headroom.
+
+| Area | Concrete changes |
+|---|---|
+| Backend | Leases on `endpoint_assignment` tied to member heartbeat: **stale at 60 s** (alarm), **failover at 180 s** (reassign within the pool), **failback after 10 min healthy**, and never during a `0084` change-freeze blackout. The assigner refuses failover that would exceed a survivor's capacity and reports the stranded count (the LM ABCG lesson). A pool `min_members` alarm |
+| Collector | Honours lease epochs and drops work whose epoch it no longer holds. Both pool members listen for traps: with a **keepalived VIP per pool** (preferred), or with devices configured for both collectors as trap destinations and dedup at ingest |
+| Frontend | Pool HA status, a failover timeline, and a "planned failover" button for maintenance |
+| Deploy | A keepalived/VRRP recipe for the trap VIP (L2 adjacency required). Guidance that VM HA is the baseline, with N+1 for large or critical sites |
+
+**Decisions.** Server-held leases mirror Zabbix/LM/Datadog central arbitration, and the 3 min / 10 min timings follow LogicMonitor's 3-minute detection and 8-minute failback, rounded up for WAN sites. A VIP for traps is preferred over dual destinations: many facility cards support only one or two trap receivers, and dual destinations double trap load. This is inference; verify per device family.
+
+**Acceptance.** Stopping the active collector moves its endpoints to the standby within 4 minutes. Device alarms stay suppressed throughout. Traps keep flowing through the VIP. Restarting the primary does not move anything back for 10 minutes. A three-member pool at 90% utilisation that loses a member reports its stranded endpoints explicitly.
+
+### Phase 7: upgrades, capability negotiation and skew policy (M, 3 weeks)
+
+**Goal:** upgrade the core without breaking sites, and upgrade sites without taking pools dark.
+
+| Area | Concrete changes |
+|---|---|
+| Backend | Enforce `schema_version` at the gateway (contract major). A collector capabilities list sent at connect (`snmpv3`, `spool`, `exclude`, …), generalising today's ad-hoc `features=exclude`. The skew policy from the decision table (N, N-1 supported; N-2 outdated with data accepted and assignment frozen; older rejected with alarm). A release channel per pool (manual / staged / auto), with maintenance windows. An `upgrade` command delivered on long-poll with the artefact URL, digest and signature. Rollout orchestration that upgrades one member per pool at a time and waits for a healthy heartbeat before the next. Separately versioned **mapping/device library bundles** deliverable without a binary upgrade |
+| Collector | Self-update: download to the side, verify signature and digest, swap, restart via systemd, and roll back if no healthy heartbeat within N minutes. For containers, emit a desired-image signal for an external updater instead of self-mutating |
+| Frontend | Fleet version view (version, mapping bundle, channel, eligible upgrade), rollout progress, and a per-pool freeze toggle |
+| Deploy | A release pipeline that publishes signed artefacts, the mapping bundle and a compatibility manifest |
+
+**Decisions.** Zabbix's "outdated keeps collecting" rule is deliberately preferred over Device42/SolarWinds hard version locks. OT sites routinely freeze changes, and a core upgrade must not blind them. Staged, one-member-per-pool rollouts mirror Datadog's HA-pair upgrade rationale. Auto-update stays opt-in per pool, because auto-update is often disabled by policy in OT zones (security note inference).
+
+**Acceptance.** Upgrading the core with N-1 and N-2 collectors connected keeps data flowing from both, and the N-2 collector shows "outdated". A deliberately broken release rolls back automatically on one member while its pool partner keeps polling.
+
+### Phase 8: the operator journey as a product surface (M, 3–4 weeks, partly spread across earlier phases)
+
+**Goal:** an admin can bring up a site's collection end-to-end in the UI, without SQL, a Python shell or a runbook.
+
+| Area | Concrete changes |
+|---|---|
+| Frontend | A site onboarding wizard (pools → firewall matrix download → add collector → install command → **preflight results** → credentials → discovery ranges → trap destination instructions → verification). Collector detail page (identity, cert, version, spool, utilisation, owned endpoints, recent errors). Device pages show "monitored by DC2-BMS-01 (pool DC2/BMS)" and visibility state |
+| Collector | A `preflight` command, also run automatically after enroll. It checks NTP offset (Device42 requires NTP), disk space for the spool, trap port bound, reachability probes to sample addresses of each pool CIDR per enabled protocol, TLS reachability to core, and optionally BBMD registration. Results are posted to the server |
+| Backend | Preflight result storage. Replace the runbook-only procedures in `docs/17-operations-runbook.md` §6.2–6.3 with API actions |
+
+**Acceptance.** A new engineer brings up a second simulated site's two pools from the wizard in under an hour with no shell access to the core.
+
+### Phase 9: facility and OT specifics (L, 5–6 weeks)
+
+**Goal:** collection behaves like a well-mannered guest on facilities-owned networks.
+
+| Area | Concrete changes |
+|---|---|
+| Backend | Split **network endpoint** (gateway IP:port) from **logical device** (Modbus Unit ID; BACnet network number + MAC or device instance), with a `via_gateway` dependency so a gateway TCP failure marks its slaves UNKNOWN under one alarm. Per-target **rate budgets** (max concurrent requests, min interval) attached to BMS supervisors and serial gateways. Pool-level BACnet settings: mode `static` (unicast device table, default) or `fdr` (BBMD IP, TTL default 60 s, auto re-register). Optional COV subscriptions for state and alarm points |
+| Collector | Per-gateway request serialisation (one in flight per serial port). Treat **0x0B as slave-down and 0x0A as gateway path fault**, never as gateway-down. Count the collector's TCP sessions against the gateway's master limit (16 on MGate). A BACnet Foreign Device Registration client with TTL renewal. Block reads of contiguous registers |
+| Frontend | Gateway view listing logical devices behind each IP. BACnet pool settings. A rate budget editor showing measured load against budget |
+| Deploy | Guidance that the BMS collector sits in the operations-management/DMZ zone and dials out, with FDR entries and firewall pinholes raised as facilities change requests |
+
+**Decisions.** Static unicast BACnet by default, with FDR only for discovery: it needs no broadcast and no facilities change beyond a pinhole. This is the Kepware pattern, where FDR settings "are irrelevant" without discovery. Read plant through the BMS/EPMS supervisor where the site has one, rather than every controller, to minimise conduits into OT. Integrator guidance treats DCIM as a read-only consumer.
+
+**Uncertainty.** The collector notes did not cover whether the current Modbus adapter already carries per-logical-device Unit IDs behind a shared IP. Verify that before sizing this phase.
+
+**Acceptance.** Killing one simulated RTU slave produces one device alarm (0x0B), not a gateway alarm. Killing the gateway produces one gateway alarm plus N UNKNOWN slaves. A BMS collector off-subnet discovers devices only after FDR is configured. Exceeding a rate budget throttles polling instead of queuing unboundedly.
+
+### Phase 10: colo API-only mode (M, 2–3 weeks per provider)
+
+**Goal:** a tenant in a colo facility gets facility telemetry with no southbound protocols at all.
+
+A new pool plane `provider`, served by a **core-hosted** collector with no site VM, runs a provider adapter against the Equinix Smart View REST / API Plus family ([Equinix](https://developer.equinix.com/dev-docs/smartview/overview)). It maps provider cage/cabinet/circuit identifiers to our racks and PDUs and tags samples with `provenance=provider`. The adapter respects provider rate limits and backfills within the provider's 12-month retention. The tenant's own rack PDUs and servers still need a site collector in the tenant's cage network. **Decision:** model the provider as just another pool with API credentials, so ownership, staleness and collector-down semantics apply unchanged. Track the OCP broker draft, but do not build to it until its text is verifiable. **Acceptance:** a mock Smart-View-like API in the simulator drives cabinet power and environmentals into the same UI views as SNMP-sourced data, with provenance shown.
+
+### Phase S: simulator changes that make multi-collector testing honest (M–L, 4–5 weeks, run alongside Phases 0–6)
+
+Today every simulated device IP is bound on one host, so **any collector can reach any device**. That hides exactly the misassignment bugs Phase 0 fixes. The simulator must enforce network reality. Changes go through the simulator's REST API (`api/routers`) and web UI.
+
+| Change | Why |
+|---|---|
+| Run each collector in its own Linux **network namespace**, routed only to its plane (10.51.x IT-OOB, 10.52.x BMS, 10.50.x production), plus a path to the core | A DC1 collector must physically fail against DC2 devices. This extends the existing `DCIM_DARK` iptables approach |
+| `dev.sh` profiles for N collectors (per site × plane), each enrolled with its own identity | Replaces the single hardcoded collector |
+| **Per-device or per-plane trap destinations** (list or VIP) in place of the single `POST /api/snmp/trap-receiver` | Exercises trap attribution and the Phase 6 VIP |
+| SNMPv3 USM users per device in snmpsim datasets, including engine IDs and a v3 response-latency cost | Phase 4 testing and realistic capacity weighting |
+| Redfish and gNMI endpoints with site-CA-signed certs and real username/password checks | Makes `verify_tls=true` and gNMI auth testable |
+| BACnet devices placed on a subnet unreachable by broadcast, plus a simulated BBMD with FDR | Tests static vs FDR modes |
+| Modbus gateways returning **0x0B / 0x0A** and enforcing a master-connection limit | The simulator already models plant instruments behind Moxa-style gateways, so this extends it |
+| WAN impairment (`tc netem` loss, latency, partition) between collector namespaces and core | Tests the spool, replay and late alarms |
+| Collector lifecycle chaos: `kill -9`, N-1/N-2 binaries, a broken release | Phases 6–7 acceptance, and doc 14's "collector down → UNKNOWN" |
+| A mock provider API for colo mode | Phase 10 |
+
+## Operator journey: bringing up DC3's collectors in the future system
+
+The table below is what an administrator does once Phases 0–8 exist. It assumes DC3 is an enterprise-owned site with an IT-OOB network and a facilities-owned BMS network.
+
+| Step | Who / where | What happens |
+|---|---|---|
+| 1. Plan pools | DCIM admin, Sites → DC3 → Collection | Creates pools `DC3/IT-OOB` (e.g. 10.51.3.0/24) and `DC3/BMS` (10.52.3.0/24), enables protocols per pool, sets the BMS rate budget and the BACnet mode (static) |
+| 2. Raise change requests | Network team and facilities | Downloads the per-pool firewall matrix: outbound 443 to the DCIM front door; device ports; inbound UDP 162 and TCP 9143. Facilities approves a read-only pinhole to the BMS supervisor and Modbus gateways, and a BBMD FDR entry if discovery is wanted |
+| 3. Provision hosts | Site virtualisation team | Two Linux VMs (4 vCPU / 8 GB / 100 GB), **static IPs** on each management VLAN, NTP configured. Optional second VM per pool for N+1 |
+| 4. Create collector records | DCIM admin, "Add collector" | Names `DC3-OOB-01` in `DC3/IT-OOB`. The UI shows a one-time install command containing a 24 h enrollment token and the signed package digest |
+| 5. Install and enroll | Site engineer on the VM | Verifies the package signature, installs the rpm or container, runs `dcim-collector enroll --server https://dcim.example.com --token …`. Keys are generated locally, the cert is issued, and the UI flips to *Connected* |
+| 6. Preflight | Automatic | The UI shows green/red for NTP offset, spool disk, trap port, TLS to core, and reachability of sample addresses per protocol. A red Modbus probe usually means the facilities pinhole is not in yet |
+| 7. Credentials | DCIM admin | Attaches credential sets to each pool: SNMPv3 read-only user, Redfish ReadOnly account, or vault references. Secrets are sealed to each collector's key |
+| 8. Discovery | DCIM admin | Defines ranges bound to the pool (`purpose=it_oob` / `bms`), runs them from the pool's collector, reviews the candidate queue, and promotes. Endpoints inherit the pool and ownership is assigned centrally. Plant behind gateways is added as logical devices with Unit IDs from the register list |
+| 9. Trap and event wiring | Network and facilities | Configures devices to send traps to the pool's trap VIP or collector IP (v3 users where supported). Redfish event subscriptions are reconciled automatically by the collector |
+| 10. Verify | DCIM admin | The pool dashboard shows owned = online, utilisation below 85%, spool empty, a test trap attributed to the correct device, and site views populated |
+| 11. Day 2 | Platform | Certs auto-renew. Upgrades roll out one member per pool in the maintenance window. A collector outage raises **one** alarm with the unmonitored-device count. Decommission is drain → revoke → retire, entirely from the UI |
+
+## Risks and open questions
+
+**Security teams may reject outbound 443 from the BMS zone.** NIST 800-82r3's "outbound as stringent as inbound" gives them grounds to. Some sites will demand a DMZ relay or a data diode. The gateway protocol should therefore be relayable through an HTTPS forward proxy from day one, and a server-initiated or passive mode (Zabbix passive proxy) should stay a documented future option.
+
+**Replay load is the likeliest production incident.** A 72-hour site isolation replays days of data into ingest workers that were sized for live rate. If the Timescale raw hypertable compresses chunks early, backfill will land in compressed chunks. Check the platform's current compression policy against the 72 h spool default before shipping Phase 3.
+
+**The on-disk credential cache is a real policy conflict.** On one side is site autonomy during WAN loss; on the other, LogicMonitor's "never on disk" posture. Ship it switchable and document the trade-off, rather than pretending there is a right answer.
+
+**Counter baselines reset on every ownership move.** HA therefore trades availability for small rate gaps. Shared baselines in the backend would close the gaps at the cost of cross-site state, which is a deferred decision.
+
+**Several industry facts rest on weak sources:**
+
+- The Schneider sizing tiers, auto-update behaviour and Gateway buffer came from search extracts of 403'd pages, and the 8-day buffer figure is unsourced.
+- The OCP broker document and Equinix API details are snippet-level.
+- Hyperview's 72-hour token is a search extract.
+- No DCIM vendor documents collector cert lifetimes, revocation, or active/standby failover.
+
+Where this plan cites a DCIM vendor for such a behaviour, the underlying pattern is borrowed from monitoring platforms (Zabbix, LogicMonitor, Elastic, ServiceNow), whose documentation was primary.
+
+**Open questions for the product owner:**
+
+- Is Windows collector support ever required? Schneider offers it; Hyperview dropped it.
+- Should the platform ever issue control writes (outlet switching, setpoints)? That would need a separate credential class and change-control path.
+- Is multi-tenant (MSP) collection in scope? It would add a tenant dimension to pools and CA hierarchy.
+
+## Conclusion
+
+The most useful finding is that "deploying a collector" is mostly a network-reachability and ownership problem, and only secondarily a packaging problem. Every mature product ends up with the same invariants. The collector lives inside the zone it polls, dials out, holds a credential that can be revoked individually, and polls devices it owns exclusively, as decided by a server that damps its own decisions. Our platform's HRW sharding looks like the scalable part, but it is the part most at odds with this. Hash placement without pools is exactly what makes traps misattribute and cross-site assignment possible. The fix is to demote hashing to a tie-breaker inside a site-and-plane pool whose default size is one.
+
+The second implication is that the simulator must stop being generous. A single host that can reach every device IP will pass every multi-collector test while the production design is wrong. Network namespaces per collector, per-device trap destinations, and gateways that return real exception codes are what turn the Phase 0–6 acceptance criteria from assertions into evidence. They are cheap relative to the cost of discovering these failures at a customer's second site.
