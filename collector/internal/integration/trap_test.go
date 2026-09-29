@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -111,7 +112,7 @@ func trapHarness(t *testing.T, sim *Sim, endpoints []*models.Endpoint) *trapSink
 			"ip": before.TrapReceiverIP, "port": before.TrapReceiverPort}, nil)
 	})
 
-	table, err := mapping.LoadTraps("../../../contracts/mappings")
+	table, err := mapping.LoadTraps(os.DirFS("../../../contracts/mappings"))
 	if err != nil {
 		t.Fatalf("load trap mappings: %v", err)
 	}

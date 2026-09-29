@@ -69,9 +69,18 @@ def honoured(monkeypatch):
     return table
 
 
+class _NoMTLSRequest:
+    """A request that made no mTLS attempt - no proxy headers at all - so
+    require_collector falls straight through to the bearer token, the same
+    as every request in a dev checkout with no TLS proxy in front of it."""
+
+    def __init__(self) -> None:
+        self.headers: dict[str, str] = {}
+
+
 async def _auth(token: str) -> str:
     creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
-    return await security.require_collector(creds, get_settings())
+    return await security.require_collector(_NoMTLSRequest(), creds, get_settings())
 
 
 async def test_a_revoked_token_is_refused_and_says_so(honoured):
@@ -139,10 +148,11 @@ def test_a_site_nobody_serves_is_unowned_not_handed_out():
 # --- platform checks ----------------------------------------------------------
 
 
-def _signals(*collectors: p.Collector) -> p.Signals:
+def _signals(*collectors: p.Collector, expected_mapping_sha=None) -> p.Signals:
     return p.Signals(ingest_lag_s=0.4, telemetry_age_s=30.0,
                      telemetry_present=True, worker_heartbeat_age_s=5.0,
-                     collectors=list(collectors), collectors_expected=len(collectors))
+                     collectors=list(collectors), collectors_expected=len(collectors),
+                     expected_mapping_sha=expected_mapping_sha)
 
 
 def test_recent_drops_are_data_loss():
@@ -180,6 +190,46 @@ def test_a_dead_collector_says_its_endpoints_went_unknown():
         "col-dc1", heartbeat_age_s=400.0, endpoints_owned=700)))
     [f] = findings
     assert f.severity == p.CRITICAL and "UNKNOWN" in f.message
+
+
+# --- mapping bundle -------------------------------------------------------
+
+
+def test_a_mapping_mismatch_is_a_warning_naming_both_shas():
+    findings = p.evaluate(_signals(
+        p.Collector("col-1", heartbeat_age_s=5.0, endpoints_owned=10,
+                    mapping_bundle_sha="aaaa" * 16),
+        expected_mapping_sha="bbbb" * 16))
+    [f] = findings
+    assert f.alarm_type == "mapping_mismatch" and f.severity == p.WARNING
+    assert "aaaaaaaaaaaa" in f.message and "bbbbbbbbbbbb" in f.message
+
+
+def test_a_matching_mapping_sha_raises_nothing():
+    sha = "cccc" * 16
+    findings = p.evaluate(_signals(
+        p.Collector("col-1", heartbeat_age_s=5.0, endpoints_owned=10,
+                    mapping_bundle_sha=sha),
+        expected_mapping_sha=sha))
+    assert findings == []
+
+
+def test_an_older_collector_reporting_no_sha_is_silence_not_a_mismatch():
+    findings = p.evaluate(_signals(
+        p.Collector("col-1", heartbeat_age_s=5.0, endpoints_owned=10),
+        expected_mapping_sha="bbbb" * 16))
+    assert findings == []
+
+
+def test_an_unreadable_platform_bundle_is_never_the_reason_to_alarm():
+    """If the platform cannot compute its own digest, the comparison itself
+    is untrustworthy - raising here would blame the collector for a fault
+    entirely on this side."""
+    findings = p.evaluate(_signals(
+        p.Collector("col-1", heartbeat_age_s=5.0, endpoints_owned=10,
+                    mapping_bundle_sha="aaaa" * 16),
+        expected_mapping_sha=None))
+    assert findings == []
 
 
 # --- ingest ownership ---------------------------------------------------------

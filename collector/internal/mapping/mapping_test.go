@@ -31,7 +31,7 @@ profiles:
         metric: cpu_utilisation_typo
         value_type: gauge
 `)
-	_, err := Load(dir)
+	_, err := Load(os.DirFS(dir))
 	if err == nil {
 		t.Fatal("Load accepted a mapping with an unknown metric")
 	}
@@ -51,7 +51,7 @@ profiles:
             metric: if_in_octets
             value_type: gauge
 `)
-	_, err := Load(dir)
+	_, err := Load(os.DirFS(dir))
 	if err == nil {
 		t.Fatal("Load accepted a value_type contradicting the registry")
 	}
@@ -84,7 +84,7 @@ profiles:
             transform: {scale: 100}
         aggregate: max
 `)
-	reg, err := Load(dir)
+	reg, err := Load(os.DirFS(dir))
 	if err != nil {
 		t.Fatalf("Load failed on a valid profile: %v", err)
 	}
@@ -114,14 +114,14 @@ profiles:
 func TestLoadFailsWhenNoMappingsExist(t *testing.T) {
 	// Starting with zero mappings would poll every device and emit nothing,
 	// which reads as "all devices silent".
-	if _, err := Load(t.TempDir()); err == nil {
+	if _, err := Load(os.DirFS(t.TempDir())); err == nil {
 		t.Fatal("Load succeeded with no mapping files")
 	}
 }
 
 func TestShippedMappingsAreValid(t *testing.T) {
 	// Guards the real contracts/mappings tree, not just a fixture.
-	reg, err := Load(filepath.Join("..", "..", "..", "contracts", "mappings"))
+	reg, err := Load(os.DirFS(filepath.Join("..", "..", "..", "contracts", "mappings")))
 	if err != nil {
 		t.Fatalf("shipped mappings failed to load: %v", err)
 	}
@@ -140,7 +140,7 @@ func TestShippedMappingsAreValid(t *testing.T) {
 // with a cpu_temp_high raised from the unlabelled SNMP sample while the gNMI
 // samples ran below the clear point, with nothing able to join them up.
 func TestScalarCarriesItsInstance(t *testing.T) {
-	reg, err := Load("../../../contracts/mappings")
+	reg, err := Load(os.DirFS("../../../contracts/mappings"))
 	if err != nil {
 		t.Fatalf("load mappings: %v", err)
 	}

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -50,7 +51,7 @@ func (c *captureSink) all() []models.Event {
 
 func loadEventMap(t *testing.T) *mapping.RedfishEventMap {
 	t.Helper()
-	m, err := mapping.LoadRedfishEvents("../../../../contracts/mappings")
+	m, err := mapping.LoadRedfishEvents(os.DirFS("../../../../contracts/mappings"))
 	if err != nil {
 		t.Fatalf("load event mappings: %v", err)
 	}

@@ -27,6 +27,7 @@ from app.alarms import platform as rules
 from app.core import metrics
 from app.core.logging import get_logger
 from app.repositories import integrations as repo_integrations
+from app.services import mapping_bundle
 
 log = get_logger("platform")
 
@@ -142,6 +143,7 @@ async def _collectors(session: AsyncSession) -> list[rules.Collector]:
             # reads as "fresh" - the safe way round for an alarm.
             assignment_age_s=(float(stats["assignment_age_s"])
                               if stats.get("assignment_age_s") else None),
+            mapping_bundle_sha=str(stats.get("mapping_bundle_sha") or ""),
         ))
     return out
 
@@ -233,6 +235,7 @@ async def gather(session: AsyncSession, redis: Redis, *,
         collectors_expected=collectors_expected,
         stream_pending=pending,
         integrations=integrations,
+        expected_mapping_sha=mapping_bundle.expected_sha(),
     )
 
 

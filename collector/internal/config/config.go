@@ -9,6 +9,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -19,6 +20,11 @@ type Config struct {
 	Collector struct {
 		ID      string `yaml:"id"`
 		Version string `yaml:"version"`
+		// Where an enrolled certificate and key live - see internal/mtls.
+		// deploy/collector.service's StateDirectory= sets this via
+		// DCIM_STATE_DIR to /var/lib/dcim-collector; a dev checkout defaults
+		// to a directory beside the binary.
+		StateDir string `yaml:"state_dir"`
 	} `yaml:"collector"`
 
 	DCIM struct {
@@ -40,6 +46,24 @@ type Config struct {
 			Heartbeat     StreamCfg `yaml:"heartbeat"`
 		} `yaml:"streams"`
 	} `yaml:"redis"`
+
+	// Transport picks how this process gets telemetry to the platform.
+	// "redis" (default) is the direct XADD path from before docs/26 Phase 3 -
+	// correct for a collector on a network Redis can be trusted on. "gateway"
+	// is the WAN-safe alternative: everything goes to a disk spool first and
+	// is drained over HTTPS to POST /collector/batches/{stream}, the path a
+	// collector reaching the platform over the internet must use instead,
+	// since exposing Redis's own port and password to the internet is not a
+	// real option.
+	Transport struct {
+		Mode    string `yaml:"mode"`
+		Gateway struct {
+			// Defaults to <collector.state_dir>/spool when empty - see
+			// resolve(). Broken out only for a deployment that wants the
+			// spool on a different disk than certs/cursor state.
+			SpoolDir string `yaml:"spool_dir"`
+		} `yaml:"gateway"`
+	} `yaml:"transport"`
 
 	Publisher struct {
 		MaxBatch     int           `yaml:"max_batch"`
@@ -269,6 +293,7 @@ func (c *Config) Validate() error { return c.validate() }
 func Default() *Config {
 	c := &Config{}
 	c.Collector.ID = "col-1"
+	c.Collector.StateDir = "./state"
 	c.DCIM.BaseURL = "http://127.0.0.1:8000"
 	c.DCIM.TokenEnv = "DCIM_COLLECTOR_TOKEN"
 	c.DCIM.AssignmentPath = "/api/v1/collector/assignments"
@@ -276,6 +301,7 @@ func Default() *Config {
 	c.DCIM.RequestTimeout = 15 * time.Second
 	c.Redis.URLEnv = "DCIM_REDIS_URL"
 	c.Redis.URL = "redis://127.0.0.1:6379/0"
+	c.Transport.Mode = "redis"
 	// These caps are entry counts, but the thing that actually runs out is
 	// memory, so they are derived from measured entry SIZE against a measured
 	// memory budget - see contracts/schema/messages_v1.yaml, which is the
@@ -371,6 +397,25 @@ func (c *Config) resolve() error {
 	if v := strings.TrimSpace(os.Getenv("DCIM_COLLECTOR_ID")); v != "" {
 		c.Collector.ID = v
 	}
+	// Packaging needs the platform address and the mapping override settable
+	// without editing the file: a container image is one artifact shared by
+	// every site, and a systemd unit's Environment= line is the natural place
+	// for what differs between them.
+	if v := strings.TrimSpace(os.Getenv("DCIM_BASE_URL")); v != "" {
+		c.DCIM.BaseURL = v
+	}
+	if v := strings.TrimSpace(os.Getenv("DCIM_MAPPINGS_DIR")); v != "" {
+		c.Mappings.Dir = v
+	}
+	if v := strings.TrimSpace(os.Getenv("DCIM_STATE_DIR")); v != "" {
+		c.Collector.StateDir = v
+	}
+	if v := strings.TrimSpace(os.Getenv("DCIM_TRANSPORT_MODE")); v != "" {
+		c.Transport.Mode = v
+	}
+	if strings.TrimSpace(c.Transport.Gateway.SpoolDir) == "" {
+		c.Transport.Gateway.SpoolDir = filepath.Join(c.Collector.StateDir, "spool")
+	}
 	if env := strings.TrimSpace(c.DCIM.TokenEnv); env != "" {
 		c.DCIM.token = os.Getenv(env)
 	}
@@ -400,6 +445,10 @@ func (c *Config) validate() error {
 	}
 	if c.Publisher.MaxBatch < 1 {
 		return fmt.Errorf("publisher.max_batch must be >= 1")
+	}
+	if c.Transport.Mode != "redis" && c.Transport.Mode != "gateway" {
+		return fmt.Errorf("transport.mode must be %q or %q, got %q",
+			"redis", "gateway", c.Transport.Mode)
 	}
 	return nil
 }

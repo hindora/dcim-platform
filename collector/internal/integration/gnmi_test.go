@@ -2,6 +2,7 @@ package integration
 
 import (
 	"context"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -14,7 +15,7 @@ import (
 
 func gnmiParts(t *testing.T) (*gnmi.Adapter, *gnmi.ConnPool, *mapping.GNMIMap) {
 	t.Helper()
-	maps, err := mapping.LoadGNMI("../../../contracts/mappings")
+	maps, err := mapping.LoadGNMI(os.DirFS("../../../contracts/mappings"))
 	if err != nil {
 		t.Fatalf("load gnmi mappings: %v", err)
 	}

@@ -1,4 +1,5 @@
-.PHONY: help setup generate check-generated mapcheck backend-test backend-lint \
+.PHONY: help setup generate check-generated mapcheck sync-mappings \
+        check-mappings-synced backend-test backend-lint \
         collector-build collector-test frontend-build lint test up down logs \
         dev dev-api dev-ingest dev-collector dev-ui seed
 
@@ -30,6 +31,12 @@ check-generated:
 
 mapcheck:
 	$(PY) contracts/mapcheck.py
+
+sync-mappings:
+	$(PY) scripts/sync_mapping_bundle.py
+
+check-mappings-synced:
+	$(PY) scripts/sync_mapping_bundle.py --check
 
 # ------------------------------------------------------------- datastores
 
@@ -70,8 +77,10 @@ backend-test:
 backend-lint:
 	cd backend && ../$(PY) -m ruff check app tests
 
+COLLECTOR_VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+
 collector-build:
-	cd collector && go mod tidy && go build ./...
+	cd collector && go mod tidy && go build -ldflags "-X main.version=$(COLLECTOR_VERSION)" ./...
 
 collector-test:
 	cd collector && gofmt -l . && go vet ./... && go test ./...
@@ -83,4 +92,4 @@ lint: backend-lint
 	cd collector && gofmt -l . && go vet ./...
 	npm --prefix frontend run typecheck
 
-test: check-generated mapcheck backend-test collector-test frontend-build
+test: check-generated mapcheck check-mappings-synced backend-test collector-test frontend-build

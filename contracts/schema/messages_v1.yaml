@@ -192,6 +192,35 @@ messages:
       # before the first fetch is indistinguishable from fresh, so a collector
       # that has never fetched sends the age of its process instead.
       - {name: assignment_age_s,   tag: 21, type: uint32}
+      # sha256 of the mapping bundle this process is actually running -
+      # embedded in the binary at build time, or read live from mappings.dir
+      # when an operator overrode it. The platform computes the same digest
+      # over its own copy of contracts/mappings (see
+      # contracts/mapping_bundle.py) and raises a WARNING on a mismatch: a
+      # collector polling with a different mapping release than the platform
+      # expects drops or misreads metrics in a way a version string alone
+      # would not catch on a hot-patched build. Empty for a collector built
+      # before this field existed, which is silence, not a mismatch.
+      - {name: mapping_bundle_sha, tag: 22, type: string}
+      # The disk spool (docs/26 Phase 3): what a collector falls back to when
+      # the gateway is unreachable, so a WAN partition costs replay time
+      # rather than data. Zero on a collector still writing straight to
+      # Redis (publish_mode: redis, the default and the only mode before
+      # this field existed) - there is no spool to report on.
+      #
+      # Bytes currently held across both spool partitions (bulk telemetry
+      # and the reserved 10% for events/endpoint-state).
+      - {name: spool_bytes, tag: 23, type: uint64}
+      # Age of the oldest record still spooled - what "site isolated since…"
+      # is computed from on the platform side, and the number an operator
+      # actually wants: not how much is queued, but how far behind it is.
+      - {name: spool_oldest_age_s, tag: 24, type: uint32}
+      # Records replayed per second over the last interval, throttled to at
+      # most 3x live rate so a catch-up burst cannot starve live traffic on
+      # the same connection. Zero while nothing is being replayed - a spool
+      # with content but no replay in progress is a distinct, visible state
+      # from one making no progress because ingest cannot keep up.
+      - {name: replay_rate, tag: 25, type: uint32}
 
 streams:
   # maxlen is an entry count, but memory is what runs out, so these are sized

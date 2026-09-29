@@ -6,10 +6,14 @@ response contains decrypted device credentials.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
+from cryptography import x509
+from cryptography.x509.oid import NameOID
 from fastapi import (
     APIRouter,
+    Body,
     Depends,
     Header,
     HTTPException,
@@ -29,7 +33,9 @@ from app.core.security import (
     UNSCOPED_COLLECTOR,
     Principal,
     current_principal,
+    forget_collector_cert,
     require_collector,
+    require_collector_cert,
 )
 from app.db.session import get_session
 from app.repositories import collector as repo
@@ -37,11 +43,166 @@ from app.repositories import collector_config as config_repo
 from app.repositories import dashboard as dashboard_repo
 from app.repositories import discovery as disc_repo
 from app.schemas import Assignment
+from app.services import ca, collector_gateway, collector_pki
 from app.services import collector as service
 from app.services import discovery as disc_service
 
 router = APIRouter(prefix="/collector", tags=["collector"])
 log = get_logger("api.collector")
+
+
+class EnrollRequest(BaseModel):
+    token: str
+    #: PEM-encoded PKCS#10 CSR, generated and signed by the collector's own,
+    #: never-transmitted private key.
+    csr_pem: str
+    #: Base64 X25519 public key, collected now because enrollment is when the
+    #: collector generates its keypair. Inert until Phase 4 seals credentials
+    #: to it - stored, not yet read by anything.
+    encryption_pubkey: str | None = None
+
+
+class CertResponse(BaseModel):
+    cert_pem: str
+    #: Every certificate a client needs above its own, root last - append to
+    #: cert_pem to get a complete verification chain in one PEM bundle.
+    chain: list[str]
+    not_after: datetime
+    serial: str
+
+
+@router.get("/trust-chain", summary="The CA chain this platform issues under")
+async def trust_chain(
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Public and unauthenticated - it is a list of certificates, the same
+    information a browser gets from any TLS handshake against this platform.
+    A fresh collector needs it before it can prove anything else, and the
+    proxy in front of collector routes needs it to build its own client-CA
+    trust bundle, so this is the one artifact both sides fetch rather than
+    having copied onto them by hand at every site."""
+    return {"chain": await collector_pki.trust_chain(session)}
+
+
+@router.post("/enroll", response_model=CertResponse,
+             summary="Exchange a one-time token and a CSR for a certificate")
+async def enroll(
+    body: EnrollRequest,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+) -> CertResponse:
+    """No collector or user auth: the one-time token IS the credential, and
+    the whole point of enrollment is proving an identity that has no other
+    credential yet."""
+    ip, agent = audit.client_of(request)
+    try:
+        issued = await collector_pki.enroll(
+            session, token=body.token, csr_pem=body.csr_pem,
+            encryption_pubkey=body.encryption_pubkey)
+    except (collector_pki.EnrollmentError, ca.CAError) as exc:
+        await audit.record(session, actor="collector:unenrolled",
+                           action="collector.enroll", ip=ip, user_agent=agent,
+                           outcome="denied", after={"reason": str(exc)})
+        await session.commit()
+        log.warning("enrollment refused", error=str(exc), client=ip)
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from None
+
+    # Read back the collector id the CSR proved rather than trusting the
+    # request body for it: sign_collector_csr already asserted the CSR's own
+    # CN, so this is what the token was actually bound to.
+    leaf = x509.load_pem_x509_certificate(issued.cert_pem.encode())
+    collector_id = leaf.subject.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value
+
+    await audit.record(session, actor=f"collector:{collector_id}",
+                       action="collector.enroll", target_type="collector",
+                       target_id=collector_id, ip=ip, user_agent=agent,
+                       after={"serial": issued.serial,
+                              "not_after": issued.not_after.isoformat()})
+    await session.commit()
+    forget_collector_cert(collector_id)
+    log.info("collector enrolled", collector_id=collector_id, serial=issued.serial,
+             not_after=issued.not_after.isoformat(), client=ip)
+    return CertResponse(cert_pem=issued.cert_pem,
+                        chain=await collector_pki.trust_chain(session),
+                        not_after=issued.not_after, serial=issued.serial)
+
+
+@router.post("/renew", response_model=CertResponse,
+             summary="Renew the current certificate before it expires")
+async def renew(
+    request: Request,
+    csr_pem: str = Body(..., embed=True),
+    session: AsyncSession = Depends(get_session),
+    identity: str = Depends(require_collector_cert),
+) -> CertResponse:
+    """Requires the CURRENT certificate, not a bearer token - see
+    ``require_collector_cert``. Authorization is holding that certificate;
+    nothing here re-checks the CSR's key against the old one, because a
+    collector renewing with a freshly generated key pair is a normal and
+    even desirable rotation, not a red flag."""
+    ip, agent = audit.client_of(request)
+    try:
+        issued = await collector_pki.renew(session, collector_id=identity,
+                                           csr_pem=csr_pem)
+    except (collector_pki.EnrollmentError, ca.CAError) as exc:
+        await session.rollback()
+        log.warning("renewal refused", collector_id=identity, error=str(exc))
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from None
+
+    await audit.record(session, actor=f"collector:{identity}",
+                       action="collector.renew", target_type="collector",
+                       target_id=identity, ip=ip, user_agent=agent,
+                       after={"serial": issued.serial,
+                              "not_after": issued.not_after.isoformat()})
+    await session.commit()
+    forget_collector_cert(identity)
+    log.info("collector certificate renewed", collector_id=identity,
+             serial=issued.serial, not_after=issued.not_after.isoformat())
+    return CertResponse(cert_pem=issued.cert_pem,
+                        chain=await collector_pki.trust_chain(session),
+                        not_after=issued.not_after, serial=issued.serial)
+
+
+@router.post("/batches/{path_segment}",
+             summary="Durable batch ingest - the WAN-safe path (docs/26 Phase 3)")
+async def ingest_batch(
+    path_segment: str,
+    request: Request,
+    x_dcim_spool_seq: int = Header(..., alias="X-DCIM-Spool-Seq"),
+    settings: Settings = Depends(get_settings),
+    identity: str = Depends(require_collector),
+) -> dict[str, Any]:
+    """Accept a zstd-compressed msgpack batch and XADD it under the
+    identity this request actually authenticated as - never whatever the
+    payload itself claims to be. See app/services/collector_gateway.py for
+    what "durable" means here: 2xx is returned only once the XADD is
+    confirmed, X-DCIM-Spool-Seq makes a retried POST idempotent rather than
+    a duplicate, and the platform can answer 429 instead of falling over
+    when Redis is under pressure.
+
+    `identity` can be the UNSCOPED legacy token in a dev checkout with no
+    mTLS proxy in front of it; a real remote-site collector authenticates by
+    certificate the same as every other collector route since Phase 2.
+    """
+    if identity == UNSCOPED_COLLECTOR:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED,
+                            "the gateway needs a collector-scoped identity, "
+                            "not the fleet-wide token")
+    body = await request.body()
+    redis = Redis.from_url(settings.redis_url)
+    try:
+        try:
+            result = await collector_gateway.ingest_batch(
+                redis, collector_id=identity, path_segment=path_segment,
+                spool_seq=x_dcim_spool_seq, compressed_body=body)
+        except collector_gateway.GatewayError as exc:
+            headers = ({"Retry-After": str(exc.retry_after)}
+                      if exc.retry_after else None)
+            raise HTTPException(exc.status_code, str(exc), headers=headers) from None
+    finally:
+        await redis.aclose()
+    return {"stream": result.stream, "accepted": result.accepted,
+            "duplicate": result.duplicate, "entries": result.entries}
 
 
 @router.get("/config", summary="Configuration this collector should run")
@@ -182,6 +343,21 @@ async def heartbeat(
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
                             "a heartbeat must name its collector")
 
+    # A gateway-transport collector (docs/26 Phase 3) has no Redis heartbeat
+    # stream to carry these on - it POSTs the same flat CollectorHeartbeat
+    # shape here instead (contracts/schema/messages_v1.yaml's json tags match
+    # these keys 1:1), so this fallback stores the identical stats shape
+    # _handle_heartbeat builds from the Redis-delivered copy in
+    # app/ingest/worker.py, keeping the two transports' visibility even.
+    stats = dict(payload.get("stats") or {})
+    for key in ("polls_total", "polls_failed", "traps_received", "events_received",
+                "queue_depth", "queue_capacity", "assignment_age_s", "active_streams",
+                "assignment_version", "mapping_bundle_sha", "config_version",
+                "config_restart_pending", "config_error", "config_effective",
+                "spool_bytes", "spool_oldest_age_s", "replay_rate"):
+        if key in payload:
+            stats[key] = payload[key]
+
     await repo.upsert_heartbeat(session, {
         "id": claimed,
         "version": payload.get("version"),
@@ -189,7 +365,7 @@ async def heartbeat(
         "started_at": payload.get("started_at"),
         "endpoints_owned": int(payload.get("endpoints_owned") or 0),
         "endpoints_online": int(payload.get("endpoints_online") or 0),
-        "stats": json.dumps(payload.get("stats") or {}),
+        "stats": json.dumps(stats),
     })
     await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

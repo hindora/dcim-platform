@@ -196,7 +196,9 @@ if want collector; then
   if [[ ! -x "$BIN" ]]; then
     if command -v go >/dev/null 2>&1; then
       say "building collector"
-      (cd collector && go build -o bin/collector ./cmd/collector)
+      ver="$(git describe --tags --always --dirty 2>/dev/null || echo dev)"
+      (cd collector && go build -ldflags "-X main.version=$ver" \
+        -o bin/collector ./cmd/collector)
     else
       die "no collector binary at $BIN and no Go toolchain.
      Install Go, or cross-compile elsewhere with:

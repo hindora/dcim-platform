@@ -1,0 +1,76 @@
+# Redfish resource -> canonical metric.
+#
+# Mappings are DATA, exactly as for SNMP: a new BMC family that names its
+# sensors differently is a YAML change, not a collector release.
+#
+# WHAT THIS ADAPTER READS
+# Three GETs per cycle, not a crawl. The service root, Systems and Chassis
+# collections are walked ONCE at discovery and the resolved URLs cached; after
+# that only /Chassis/{id}/Thermal, /Chassis/{id}/Power and /Systems/{id} are
+# fetched. Crawling every cycle is the difference between three requests and
+# thirty, and at 310 BMCs that is the dominant cost in the whole collector.
+#
+# Sensors are matched by NAME rather than by array position. BMC firmware
+# reorders those arrays between releases, so index-based mapping silently
+# relabels a CPU probe as an inlet probe after an update.
+
+version: 1
+
+thermal:
+  # /redfish/v1/Chassis/{id}/Thermal
+  temperatures:
+    reading_field: ReadingCelsius
+    # Ordered: the first pattern that matches a sensor's Name wins.
+    entries:
+      - match: "CPU*"
+        metric: cpu_temperature
+        instance_from: Name
+      - match: "*Inlet*"
+        metric: inlet_temperature
+      - match: "*Intake*"
+        metric: inlet_temperature
+      - match: "*Ambient*"
+        metric: inlet_temperature
+      - match: "*Exhaust*"
+        metric: exhaust_temperature
+      - match: "*Outlet*"
+        metric: exhaust_temperature
+  fans:
+    reading_field: Reading
+    # Redfish reports fans in RPM or in percent depending on the unit; the
+    # adapter picks the metric from ReadingUnits so a percentage is never
+    # recorded as an rpm figure.
+    metric_rpm: fan_speed
+    metric_pct: fan_speed_pct
+    instance_from: Name
+
+power:
+  # /redfish/v1/Chassis/{id}/Power
+  power_control:
+    - field: PowerConsumedWatts
+      metric: power_draw
+  power_supplies:
+    instance_from: MemberId
+    fields:
+      - field: LineInputVoltage
+        metric: psu_input_voltage
+      - field: PowerOutputWatts
+        metric: psu_output_power
+      - field: LastPowerOutputWatts
+        metric: psu_output_power
+    state:
+      # A supply is only "good" when the BMC says both Enabled and OK. Treating
+      # Enabled alone as healthy hides a failing redundant supply, which is
+      # precisely the condition worth knowing about before the other one goes.
+      metric: psu_state
+      status_state_field: Status.State
+      status_health_field: Status.Health
+      healthy_state: Enabled
+      healthy_health: OK
+
+# A sensor the BMC reports as absent or disabled must be recorded as a MISS, not
+# as zero: a zeroed absent probe reads as "CPU at 0 C" and produces a false
+# alarm rather than an obvious gap.
+skip_when:
+  status_state_not_in: [Enabled, StandbyOffline, UnavailableOffline]
+  null_reading: true

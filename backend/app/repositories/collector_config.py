@@ -80,7 +80,14 @@ async def list_collectors(session: AsyncSession) -> list[dict[str, Any]]:
                ci.datacenter_id::text AS datacenter_id, dc.code AS site,
                ci.token_generation, (ci.started_at IS NOT NULL) AS has_run,
                (SELECT count(*) FROM device_endpoint e
-                 WHERE e.collector_id = ci.id)      AS pinned
+                 WHERE e.collector_id = ci.id)      AS pinned,
+               -- mTLS identity (migration 0086). NULL cert_serial means
+               -- "never enrolled" - still on the bearer token alone.
+               ci.cert_serial, ci.cert_fingerprint_sha256, ci.cert_not_after,
+               ci.cert_revoked_at, ci.enrolled_at, ci.enrolled_by,
+               EXISTS (SELECT 1 FROM enrollment_token et
+                        WHERE et.collector_id = ci.id AND et.used_at IS NULL
+                          AND et.expires_at > now())  AS has_pending_token
           FROM collector_instance ci
           LEFT JOIN collector_config cc ON cc.collector_id = ci.id
           LEFT JOIN datacenter dc ON dc.id = ci.datacenter_id

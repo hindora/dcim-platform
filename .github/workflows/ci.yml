@@ -24,6 +24,11 @@ jobs:
         run: python contracts/codegen.py --check
       - name: Mappings reference only registered metrics
         run: python contracts/mapcheck.py
+      # The collector embeds its own copy of contracts/mappings (go:embed
+      # cannot reach outside the module) - this gate fails if anyone edited a
+      # mapping without also running scripts/sync_mapping_bundle.py.
+      - name: Embedded collector mapping bundle is up to date
+        run: python scripts/sync_mapping_bundle.py --check
 
   backend:
     name: Backend

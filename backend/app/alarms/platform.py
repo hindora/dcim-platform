@@ -80,6 +80,7 @@ PLATFORM_ALARM_TYPES = (
     "collector_stale",
     "collector_degraded",
     "assignment_stale",
+    "mapping_mismatch",
     "db_pool_exhausted",
     "integration_credential_expiring",
     "integration_degraded",
@@ -133,6 +134,10 @@ class Collector:
     publish_queue_depth: int | None = None
     publish_queue_capacity: int | None = None
     publish_dropped: int = 0
+    #: sha256 of the mapping bundle this process is actually running. Empty
+    #: for a collector built before the field existed, which is silence, not
+    #: a mismatch - see mapping_mismatch below.
+    mapping_bundle_sha: str = ""
 
 
 @dataclass
@@ -174,6 +179,12 @@ class Signals:
     db_pool_saturated_for_s: float = 0.0
     stream_pending: dict[str, int] = field(default_factory=dict)
     integrations: list[Integration] = field(default_factory=list)
+    #: sha256 of the platform's own contracts/mappings, computed fresh each
+    #: gather() - see app/services/mapping_bundle.py. None means it could not
+    #: be computed (the directory is missing), in which case the check is
+    #: skipped rather than raised on: an alarm judged against its own broken
+    #: input is worse than no alarm.
+    expected_mapping_sha: str | None = None
 
 
 def _lag_severity(lag: float) -> str | None:
@@ -365,6 +376,24 @@ def evaluate(signals: Signals) -> list[Finding]:
                     f"Collector {c.collector_id} is working from an assignment "
                     f"{c.assignment_age_s / 60:.0f} minutes old. Devices added "
                     f"or retired since then are not reflected in what it polls")))
+
+        # Absence is silence, not a mismatch: a collector built before this
+        # field existed sends nothing, and an unknown expected digest (the
+        # platform's own contracts/mappings could not be read) means the
+        # comparison itself is untrustworthy. Either way the honest answer is
+        # to say nothing rather than raise on a question that cannot be
+        # answered.
+        if (c.mapping_bundle_sha and signals.expected_mapping_sha
+                and c.mapping_bundle_sha != signals.expected_mapping_sha):
+            out.append(Finding(
+                alarm_type="mapping_mismatch", instance=c.collector_id,
+                severity=WARNING,
+                message=(
+                    f"Collector {c.collector_id} is running mapping data "
+                    f"{c.mapping_bundle_sha[:12]}, not the platform's "
+                    f"{signals.expected_mapping_sha[:12]}. It may be polling "
+                    f"metrics this release does not expect, or missing ones "
+                    f"this release added")))
 
     # --- database -------------------------------------------------------------
     if signals.db_pool_saturated_for_s >= DB_POOL_SATURATED_S:

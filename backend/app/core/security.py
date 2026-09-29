@@ -17,7 +17,7 @@ from typing import Any
 
 import jwt
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.core.config import Settings, get_settings
@@ -294,7 +294,128 @@ async def _honoured(collector_id: str) -> tuple[int, str | None]:
     return generation, state
 
 
+# --------------------------------------------------------- mTLS (Phase 2)
+#
+# FastAPI never terminates TLS itself in production - a proxy in front of it
+# does (deploy/collector-nginx.conf), verifies the client certificate against
+# the CA chain built by app/services/ca.py, and forwards what it found as
+# headers. Those headers are trusted ONLY when the proxy-shared token is also
+# present and correct: without that check, anyone who can reach the backend
+# directly (its port is published for local dev - deploy/docker-compose.yml)
+# could simply claim to be verified.
+_MTLS_VERIFY_HEADER = "x-dcim-client-verify"
+#: The certificate's full subject DN (nginx's $ssl_client_s_dn - it has no
+#: CN-only variable), e.g. "CN=col-dc2-oob". Parsed by _cn_from_dn below.
+_MTLS_DN_HEADER = "x-dcim-client-cn"
+_MTLS_SERIAL_HEADER = "x-dcim-client-serial"
+_PROXY_TRUST_HEADER = "x-dcim-proxy-token"
+
+
+def _cn_from_dn(dn: str) -> str:
+    """The CommonName out of an RFC 2253-ish subject DN.
+
+    Not a full RFC 2253 parser - it does not unescape a comma inside a
+    quoted or backslash-escaped value - but this CA (app/services/ca.py)
+    only ever puts a single CommonName attribute in a leaf's subject, so
+    the DN this actually has to parse is always exactly "CN=<value>" with
+    nothing else in it. A DN this cannot make sense of yields no CN, which
+    _try_mtls treats as "no collector id" and refuses, never as some other
+    identity.
+    """
+    for part in dn.split(","):
+        part = part.strip()
+        if part.upper().startswith("CN="):
+            return part[3:]
+    return ""
+
+_CERT_CACHE_TTL_S = 15.0
+_cert_cache: dict[str, tuple[float, dict[str, Any] | None]] = {}
+
+
+def forget_collector_cert(collector_id: str) -> None:
+    """Drop the cached certificate state, so a revocation is instant here."""
+    _cert_cache.pop(collector_id, None)
+
+
+async def _current_cert(collector_id: str) -> dict[str, Any] | None:
+    import time
+
+    now = time.monotonic()
+    hit = _cert_cache.get(collector_id)
+    if hit and now - hit[0] < _CERT_CACHE_TTL_S:
+        return hit[1]
+
+    from sqlalchemy import text
+
+    from app.db.session import unit_of_work
+
+    async with unit_of_work() as session:
+        row = (await session.execute(text("""
+            SELECT cert_serial, cert_not_after, cert_revoked_at, state
+              FROM collector_instance WHERE id = :id
+        """), {"id": collector_id})).mappings().first()
+    value = dict(row) if row else None
+    _cert_cache[collector_id] = (now, value)
+    return value
+
+
+async def _try_mtls(request: Request, settings: Settings) -> str | None:
+    """The verified collector id, if the proxy attests one; None if this
+    request made no mTLS attempt at all (fall through to the bearer path).
+
+    A *failed* attempt - a cert the proxy could not verify, or one that
+    verified but does not match what this collector currently holds - is
+    never silently downgraded to the weaker path: it raises here. Letting a
+    rejected strong credential fall back to a bearer token would make mTLS
+    optional for an attacker in exactly the case it exists to stop.
+    """
+    trust_token = settings.proxy_trust_token
+    if trust_token is None:
+        return None  # no proxy configured (plain dev) - mTLS path is off
+    presented = request.headers.get(_PROXY_TRUST_HEADER, "")
+    if not hmac.compare_digest(presented, trust_token.get_secret_value()):
+        return None  # request did not come through the trusted proxy at all
+
+    verify = request.headers.get(_MTLS_VERIFY_HEADER, "")
+    if verify == "NONE":
+        return None  # proxy is up, but this client presented no certificate
+    if verify != "SUCCESS":
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED,
+                            "client certificate did not verify")
+
+    collector_id = _cn_from_dn(request.headers.get(_MTLS_DN_HEADER, ""))
+    serial = request.headers.get(_MTLS_SERIAL_HEADER, "").lower().lstrip("0") or "0"
+    if not collector_id:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED,
+                            "verified certificate carried no collector id")
+
+    row = await _current_cert(collector_id)
+    if row is None or row["cert_serial"] is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED,
+                            f"collector {collector_id} has no certificate on file")
+    if row["state"] == "decommissioned":
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED,
+                            f"collector {collector_id} is decommissioned")
+    if row["cert_revoked_at"] is not None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED,
+                            f"collector {collector_id}'s certificate was revoked")
+    stored_serial = str(row["cert_serial"]).lower().lstrip("0") or "0"
+    if serial != stored_serial:
+        # Not necessarily an attack: the far more common cause is a renewal
+        # that issued a new serial, and this client is still presenting the
+        # certificate from before it picked up the new one.
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED,
+                            f"collector {collector_id}'s certificate is not "
+                            f"the current one - it may need to fetch its "
+                            f"renewed certificate")
+    if row["cert_not_after"] is not None and row["cert_not_after"] <= datetime.now(UTC):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED,
+                            f"collector {collector_id}'s certificate has expired")
+    return collector_id
+
+
 async def require_collector(
+    request: Request,
     creds: HTTPAuthorizationCredentials | None = Depends(bearer),
     settings: Settings = Depends(get_settings),
 ) -> str:
@@ -309,11 +430,19 @@ async def require_collector(
     and "someone with the collector token pulled every credential in the fleet"
     is not an investigation, it is the start of one.
 
-    A scoped token must also still be honoured: its generation current, and its
-    collector not decommissioned. Either failure is a 401 that says which, so a
-    collector locked out on purpose is told so rather than retrying a bad token
-    forever.
+    Two credential types, checked in order. mTLS first: if the request came
+    through the TLS proxy at all, its verdict is final - see ``_try_mtls``.
+    Only a request that made no mTLS attempt falls through to the bearer
+    token from migration 0085, kept alive deliberately (see migration 0086's
+    docstring) rather than cut off in one release. A scoped bearer token must
+    also still be honoured: its generation current, and its collector not
+    decommissioned. Either failure is a 401 that says which, so a collector
+    locked out on purpose is told so rather than retrying a bad token forever.
     """
+    mtls_identity = await _try_mtls(request, settings)
+    if mtls_identity is not None:
+        return mtls_identity
+
     if creds is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "missing collector token")
     parsed = parse_collector_token(creds.credentials, settings)
@@ -330,4 +459,23 @@ async def require_collector(
         raise HTTPException(status.HTTP_401_UNAUTHORIZED,
                             f"this token for {identity} has been revoked; "
                             f"issue a new one")
+    return identity
+
+
+async def require_collector_cert(
+    request: Request,
+    settings: Settings = Depends(get_settings),
+) -> str:
+    """Like ``require_collector``, but refuses the bearer fallback entirely.
+
+    For an action that only means something as proof of holding the CURRENT
+    certificate - renewing it - where a shared bearer token proves nothing
+    of the kind. A collector that has never enrolled has no certificate to
+    renew and must use ``/collector/enroll`` with a token instead.
+    """
+    identity = await _try_mtls(request, settings)
+    if identity is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED,
+                            "a certificate is required for this request; "
+                            "a bearer token cannot renew what it did not enroll")
     return identity

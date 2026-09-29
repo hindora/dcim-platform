@@ -17,6 +17,7 @@ import (
 
 	"github.com/hari/dcim-platform/collector/internal/config"
 	"github.com/hari/dcim-platform/collector/internal/obs"
+	"github.com/hari/dcim-platform/collector/internal/spool"
 	"github.com/hari/dcim-platform/collector/pkg/models"
 )
 
@@ -237,5 +238,13 @@ func (p *Publisher) QueueDepth() int {
 	defer p.mu.Unlock()
 	return len(p.pending) + len(p.ring)
 }
+
+// SpoolStats and ReplayRateRPS exist so Publisher satisfies the same
+// interface app.App uses for GatewayPublisher. The direct-Redis transport
+// has no disk spool to report on - a Redis outage is absorbed by the ring
+// buffer QueueDepth/Capacity/Dropped already describe - so both are zero
+// rather than meaningful.
+func (p *Publisher) SpoolStats() spool.Stats { return spool.Stats{} }
+func (p *Publisher) ReplayRateRPS() uint32   { return 0 }
 
 var _ models.Sink = (*Publisher)(nil)

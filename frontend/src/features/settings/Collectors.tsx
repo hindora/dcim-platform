@@ -7,8 +7,9 @@ import {
   type CollectorsPage,
   type ConfigField,
   type ConfigSection,
+  type EnrollmentToken,
 } from '../../api/client';
-import { oneLine, relativeTime } from '../../lib/format';
+import { oneLine, relativeTime, untilTime } from '../../lib/format';
 import { Tip } from '../../components/HoverTip';
 
 /** What each collector is running, and what it has been told to run.
@@ -32,7 +33,7 @@ export function Collectors() {
   const [open, setOpen] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [justCreated, setJustCreated] = useState<
-    { id: string; token: string } | null>(null);
+    { id: string; enrollment: EnrollmentToken; fallbackToken: string } | null>(null);
 
   if (page.isLoading) return <p className="muted">Loading…</p>;
   if (page.error) return <div className="banner">Could not load collectors.</div>;
@@ -134,19 +135,23 @@ export function Collectors() {
           existing={new Set(rows.map((c) => c.id))}
           sites={sites}
           onClose={() => setCreating(false)}
-          onCreated={(id, token) => { setCreating(false); setJustCreated({ id, token }); }}
+          onCreated={(id, enrollment, fallbackToken) => {
+            setCreating(false);
+            setJustCreated({ id, enrollment, fallbackToken });
+          }}
         />
       )}
 
       {justCreated && (
-        <TokenDialog id={justCreated.id} token={justCreated.token}
-                     title="Collector created"
-                     lede={<>
-                       <span className="mono">{justCreated.id}</span> is placed
-                       and approved. It takes no work until it first checks in
-                       with this token.
-                     </>}
-                     onClose={() => setJustCreated(null)} />
+        <EnrollmentDialog id={justCreated.id} enrollment={justCreated.enrollment}
+                          fallbackToken={justCreated.fallbackToken}
+                          title="Collector created"
+                          lede={<>
+                            <span className="mono">{justCreated.id}</span> is placed
+                            and approved. It takes no work until it enrolls with
+                            this token.
+                          </>}
+                          onClose={() => setJustCreated(null)} />
       )}
     </div>
   );
@@ -230,13 +235,52 @@ function ConfigState({ row }: { row: CollectorRow }) {
   return <span className="muted">v{row.version} · in force</span>;
 }
 
+/** The mTLS identity: enrolled or not, revoked or not, and how much of its
+ *  certificate's life is left. Read from what the platform itself recorded
+ *  at enrollment/renewal, never from anything a collector could claim about
+ *  itself. */
+function CertStatus({ row }: { row: CollectorRow }) {
+  if (row.cert_revoked_at) {
+    return (
+      <p className="warn" style={{ margin: 0 }}>
+        Certificate revoked {relativeTime(row.cert_revoked_at)}. Issue a new
+        enrollment token to let it re-enroll.
+      </p>
+    );
+  }
+  if (!row.cert_serial) {
+    return (
+      <p className="muted" style={{ margin: 0 }}>
+        {row.has_pending_token
+          ? 'Not yet enrolled — an unused token is outstanding.'
+          : 'Not yet enrolled.'} Still authenticating on its bearer token, if any.
+      </p>
+    );
+  }
+  const expiring = row.cert_not_after
+    && new Date(row.cert_not_after).getTime() - Date.now() < 10 * 24 * 3600 * 1000;
+  return (
+    <p className={expiring ? 'warn' : 'muted'} style={{ margin: 0 }}>
+      Enrolled {relativeTime(row.enrolled_at)}
+      {row.enrolled_by ? ` by ${row.enrolled_by}` : ''}. Certificate{' '}
+      {row.cert_not_after ? (
+        <Tip tip={row.cert_fingerprint_sha256
+          ? `fingerprint ${row.cert_fingerprint_sha256.slice(0, 16)}…` : undefined}>
+          expires {untilTime(row.cert_not_after)}
+        </Tip>
+      ) : 'has no recorded expiry'}
+      {expiring && ' — due for renewal soon'}.
+    </p>
+  );
+}
+
 /** Create a collector before it exists: name it, place it, and hand the
  *  operator the one-time token to put on its host. */
 function CreateDialog({ existing, sites, onClose, onCreated }: {
   existing: Set<string>;
   sites: { id: string; code: string; name: string }[];
   onClose: () => void;
-  onCreated: (id: string, token: string) => void;
+  onCreated: (id: string, enrollment: EnrollmentToken, fallbackToken: string) => void;
 }) {
   const [id, setId] = useState('');
   const [site, setSite] = useState('');
@@ -248,7 +292,7 @@ function CreateDialog({ existing, sites, onClose, onCreated }: {
 
   const create = useMutation({
     mutationFn: () => api.createCollector(id, site || null),
-    onSuccess: (r) => onCreated(r.id, r.token),
+    onSuccess: (r) => onCreated(r.id, r.enrollment, r.fallback_bearer_token),
   });
 
   return (
@@ -371,6 +415,102 @@ function TokenDialog({ id, token, title, lede, onClose }: {
   );
 }
 
+/** An enrollment token, shown exactly once, led with the command an operator
+ *  actually runs — copy-paste is the whole point, so it comes first and the
+ *  raw token stays available underneath for anyone scripting their own
+ *  install instead. `fallbackToken` is a plain bearer token, secondary on
+ *  purpose: it only matters for a site that cannot yet run the mTLS proxy
+ *  in front of this platform. */
+function EnrollmentDialog({ id, enrollment, fallbackToken, title, lede, onClose }: {
+  id: string;
+  enrollment: EnrollmentToken;
+  fallbackToken?: string;
+  title: string;
+  lede: React.ReactNode;
+  onClose: () => void;
+}) {
+  const [copiedCommand, setCopiedCommand] = useState(false);
+  const [copiedToken, setCopiedToken] = useState(false);
+  const [showFallback, setShowFallback] = useState(false);
+
+  const copy = (text: string, mark: (v: boolean) => void) => {
+    navigator.clipboard?.writeText(text).then(() => {
+      mark(true);
+      setTimeout(() => mark(false), 2000);
+    });
+  };
+
+  return (
+    <div className="sheet-scrim" role="dialog" aria-modal="true"
+         aria-label={title}
+         onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <section className="sheet narrow">
+        <header className="sheet-head">
+          <div>
+            <h2>{title}</h2>
+            <p>{lede}</p>
+          </div>
+          <button className="close" onClick={onClose} aria-label="Close">✕</button>
+        </header>
+        <div className="sheet-body">
+          <div className="banner soft">
+            This token is shown once and expires{' '}
+            {untilTime(enrollment.expires_at)}. Run the command below on
+            the collector's own host — it generates a key pair locally,
+            exchanges the token for a certificate, and never sends its
+            private key anywhere.
+          </div>
+          <div className="form-grid">
+            <label>
+              <span>Install command</span>
+              <input value={enrollment.install_command} readOnly className="mono" />
+            </label>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <button onClick={() => copy(enrollment.install_command, setCopiedCommand)}>
+              {copiedCommand ? 'Copied' : 'Copy command'}
+            </button>
+          </div>
+
+          {fallbackToken && (
+            <fieldset className="proto">
+              <legend>Fallback bearer token</legend>
+              {!showFallback ? (
+                <button onClick={() => setShowFallback(true)}>
+                  Show — only needed if this site cannot run the mTLS proxy yet
+                </button>
+              ) : (
+                <>
+                  <p className="muted" style={{ margin: '0 0 8px' }}>
+                    A fleet-wide-derived token, scoped to <span className="mono">{id}</span>.
+                    Prefer the enrollment command above; this exists only as a
+                    fallback for a site without the TLS proxy in place.
+                  </p>
+                  <div className="form-grid">
+                    <label>
+                      <span>Token</span>
+                      <input value={fallbackToken} readOnly className="mono" />
+                    </label>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
+                    <button onClick={() => copy(fallbackToken, setCopiedToken)}>
+                      {copiedToken ? 'Copied' : 'Copy token'}
+                    </button>
+                  </div>
+                </>
+              )}
+            </fieldset>
+          )}
+        </div>
+        <div className="sheet-foot">
+          <span className="spacer" />
+          <button className="primary" onClick={onClose}>Done</button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function ManageSheet({ row, sections, sites, onClose }: {
   row: CollectorRow;
   sections: ConfigSection[];
@@ -383,6 +523,8 @@ function ManageSheet({ row, sections, sites, onClose }: {
   const [site, setSite] = useState(row.datacenter_id ?? '');
   const [confirmDecommission, setConfirmDecommission] = useState(false);
   const [reissued, setReissued] = useState<{ id: string; token: string } | null>(null);
+  const [reissuedEnrollment, setReissuedEnrollment] = useState<EnrollmentToken | null>(null);
+  const [confirmRevoke, setConfirmRevoke] = useState(false);
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ['collectors'] });
 
@@ -404,6 +546,16 @@ function ManageSheet({ row, sections, sites, onClose }: {
   const reissue = useMutation({
     mutationFn: () => api.issueCollectorToken(row.id),
     onSuccess: (r) => { invalidate(); setReissued({ id: row.id, token: r.token }); },
+  });
+
+  const reissueEnrollment = useMutation({
+    mutationFn: () => api.issueEnrollmentToken(row.id),
+    onSuccess: (r) => { invalidate(); setReissuedEnrollment(r); },
+  });
+
+  const revokeCert = useMutation({
+    mutationFn: () => api.revokeCollectorCert(row.id),
+    onSuccess: () => { invalidate(); setConfirmRevoke(false); },
   });
 
   const decommission = useMutation({
@@ -506,15 +658,47 @@ function ManageSheet({ row, sections, sites, onClose }: {
             </fieldset>
 
             <fieldset className="proto">
-              <legend>Token</legend>
+              <legend>Enrollment</legend>
+              <CertStatus row={row} />
+              <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+                <button disabled={locked || reissueEnrollment.isPending}
+                        onClick={() => reissueEnrollment.mutate()}>
+                  {reissueEnrollment.isPending ? 'Issuing…'
+                    : row.cert_serial ? 'Issue new enrollment token' : 'Issue enrollment token'}
+                </button>
+                {row.cert_serial && !row.cert_revoked_at && (
+                  !confirmRevoke ? (
+                    <button disabled={locked} onClick={() => setConfirmRevoke(true)}>
+                      Revoke certificate…
+                    </button>
+                  ) : (
+                    <>
+                      <span className="warn">Really revoke its certificate?</span>
+                      <button onClick={() => setConfirmRevoke(false)}>Cancel</button>
+                      <button className="primary" disabled={revokeCert.isPending}
+                              onClick={() => revokeCert.mutate()}>
+                        {revokeCert.isPending ? 'Revoking…' : 'Confirm'}
+                      </button>
+                    </>
+                  )
+                )}
+              </div>
+            </fieldset>
+
+            <fieldset className="proto">
+              <legend>Fallback bearer token</legend>
               <p className="muted" style={{ margin: '0 0 8px' }}>
-                Generation {row.token_generation}. Issuing a new one revokes
-                every token this collector currently holds within about
-                fifteen seconds.
+                <Tip tip={oneLine(`Only relevant for a site that cannot yet run
+                        the mTLS proxy in front of this platform - prefer the
+                        enrollment token above.`)}>
+                  Generation {row.token_generation}.
+                </Tip>{' '}
+                Issuing a new one revokes every token this collector currently
+                holds within about fifteen seconds.
               </p>
               <button disabled={locked || reissue.isPending}
                       onClick={() => reissue.mutate()}>
-                {reissue.isPending ? 'Issuing…' : 'Issue new token'}
+                {reissue.isPending ? 'Issuing…' : 'Issue new fallback token'}
               </button>
             </fieldset>
 
@@ -620,10 +804,18 @@ function ManageSheet({ row, sections, sites, onClose }: {
       </div>
       {reissued && (
         <TokenDialog id={reissued.id} token={reissued.token}
-                     title="New token issued"
+                     title="New fallback token issued"
                      lede={<>Every token <span className="mono">{reissued.id}</span>{' '}
                        held before this is now refused.</>}
                      onClose={() => setReissued(null)} />
+      )}
+      {reissuedEnrollment && (
+        <EnrollmentDialog id={row.id} enrollment={reissuedEnrollment}
+                          title="New enrollment token issued"
+                          lede={<>Run this on <span className="mono">{row.id}</span>'s
+                            own host to (re-)enroll it. This does not touch a
+                            certificate it is already using.</>}
+                          onClose={() => setReissuedEnrollment(null)} />
       )}
     </>
   );

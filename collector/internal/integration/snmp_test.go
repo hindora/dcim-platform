@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -13,7 +14,7 @@ import (
 
 func snmpAdapter(t *testing.T) *snmp.Adapter {
 	t.Helper()
-	maps, err := mapping.Load("../../../contracts/mappings")
+	maps, err := mapping.Load(os.DirFS("../../../contracts/mappings"))
 	if err != nil {
 		t.Fatalf("load snmp mappings: %v", err)
 	}

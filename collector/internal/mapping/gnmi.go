@@ -2,8 +2,8 @@ package mapping
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
+	"io/fs"
+	stdpath "path"
 	"strings"
 	"time"
 
@@ -73,9 +73,9 @@ type GNMIMap struct {
 }
 
 // LoadGNMI reads contracts/mappings/gnmi/paths.yaml.
-func LoadGNMI(dir string) (*GNMIMap, error) {
-	path := filepath.Join(dir, "gnmi", "paths.yaml")
-	raw, err := os.ReadFile(path)
+func LoadGNMI(fsys fs.FS) (*GNMIMap, error) {
+	path := stdpath.Join("gnmi", "paths.yaml")
+	raw, err := fs.ReadFile(fsys, path)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}

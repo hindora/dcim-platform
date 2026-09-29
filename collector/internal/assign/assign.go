@@ -9,6 +9,7 @@ package assign
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -67,10 +68,15 @@ type Client struct {
 	OnRefreshed func()
 }
 
-func New(cfg *config.Config, log *slog.Logger, mets *obs.Metrics) *Client {
+// tlsConfig is nil for a collector with no enrolled certificate - see
+// config.NewRemoteClient's docstring for why that is the ordinary case, not
+// an error.
+func New(cfg *config.Config, log *slog.Logger, mets *obs.Metrics,
+	tlsConfig *tls.Config) *Client {
 	return &Client{
-		cfg:     cfg,
-		http:    &http.Client{Timeout: cfg.DCIM.RequestTimeout},
+		cfg: cfg,
+		http: &http.Client{Timeout: cfg.DCIM.RequestTimeout,
+			Transport: &http.Transport{TLSClientConfig: tlsConfig}},
 		log:     log,
 		mets:    mets,
 		current: make(map[string]*models.Endpoint),

@@ -27,7 +27,7 @@ func tableFrom(t *testing.T, body string) *TrapTable {
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	tbl, err := LoadTraps(dir)
+	tbl, err := LoadTraps(os.DirFS(dir))
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -112,7 +112,7 @@ func TestTheShippedMappingResolvesTheLiebertCollision(t *testing.T) {
 	// The real file, not a fixture: the generator has to keep emitting both
 	// meanings with the device types that separate them.
 	root := filepath.Join("..", "..", "..", "contracts", "mappings")
-	tbl, err := LoadTraps(root)
+	tbl, err := LoadTraps(os.DirFS(root))
 	if err != nil {
 		t.Skipf("shipped mapping not readable from here: %v", err)
 	}

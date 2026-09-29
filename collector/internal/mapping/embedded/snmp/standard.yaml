@@ -1,0 +1,455 @@
+# Standard-MIB SNMP mappings: SNMPv2-MIB, IF-MIB, HOST-RESOURCES-MIB, UCD-SNMP-MIB.
+#
+# Mappings are DATA. Adding an OID must not require a collector release, and
+# `python contracts/mapcheck.py` validates every `metric:` here against
+# contracts/metrics/registry.yaml so a typo fails CI rather than silently
+# dropping a metric.
+#
+# WHAT THIS DEVICE PLANE ACTUALLY SERVES
+# Probed directly with snmpget/snmpwalk before writing this file, because
+# mapping an OID the agents do not carry produces a metric that is always
+# missing and nobody notices for a week:
+#
+#   present   sysUpTime, ifAdminStatus, ifOperStatus, ifSpeed, ifHighSpeed,
+#             hrProcessorLoad, UCD memTotalReal / memAvailReal
+#   ABSENT    ifInOctets/.16, ifHCInOctets/.10 (no octet counters at all),
+#             ifInErrors/Discards, the whole hrStorage table
+#
+# The interface counters are absent from SNMP by design in this plane - they
+# live in the gNMI datasets (openconfig counters), which is the phase 3
+# adapter. The registry keeps if_in_octets and friends because real gear and
+# gNMI do serve them; they are simply not mapped to SNMP here.
+#
+# Structure
+#   profiles[]           a named group, selected per endpoint by poll profile
+#     scalars[]          single GET of a fully-qualified instance OID
+#     derived_scalars[]  a metric computed from two scalar OIDs
+#     tables[]           GETBULK walk of column OIDs; the OID suffix is the index
+#       columns[]        column OID -> metric
+#       derived[]        metric computed from two columns of the same row
+#       row_filter       keep only rows whose filter column matches
+#       aggregate        collapse all rows into one device-scoped sample
+#       instance_from    column whose value becomes `instance` (default: OID index)
+#
+# Transforms: scale, offset, map, enum_true.
+
+version: 1
+
+profiles:
+
+  # ------------------------------------------------------------------ system
+  - name: system
+    scalars:
+      - oid: 1.3.6.1.2.1.1.3.0          # sysUpTime, TimeTicks (centiseconds)
+        metric: sys_uptime
+        value_type: counter
+        counter_bits: 32
+        transform: {scale: 0.01}
+        # Read in the same cycle as the counters: a decrease means the agent
+        # restarted and every counter reset. See docs/08 section 1.4.
+
+  # -------------------------------------------------------------- interfaces
+  - name: interfaces
+    tables:
+      - name: if_table
+        # ifTable is indexed by ifIndex, so the instance is a NUMBER here and a
+        # name in ifXTable. Both are the same port: the ingest worker resolves
+        # an ifIndex against inventory, which is exactly why it indexes ports
+        # by their number as well as their name.
+        kind: interface
+        index_oid: 1.3.6.1.2.1.2.2.1.1          # ifIndex; the OID suffix IS the instance
+        columns:
+          - oid: 1.3.6.1.2.1.2.2.1.7            # ifAdminStatus
+            metric: if_admin_state
+            value_type: bool
+            transform: {enum_true: [1]}
+          - oid: 1.3.6.1.2.1.2.2.1.8            # ifOperStatus
+            metric: if_oper_state
+            value_type: bool
+            transform: {enum_true: [1]}
+          # Errors and discards live ONLY in ifTable - RFC 2863 gave ifXTable
+          # high-capacity octet and packet counters but left the error columns
+          # behind, so these cannot move to the name-indexed table.
+          #
+          # NOT POLLED. Four columns across 5,700 interfaces were 17.6% of all
+          # telemetry - 90,000 samples per ten minutes - against a pipeline
+          # that could sustain 400 samples/s while the plane produced 740/s.
+          # The stream hit its cap and began shedding, which loses every
+          # metric, not just these. Error and discard counters are the cheapest
+          # thing to stop asking for: they read zero almost always, and a port
+          # that is genuinely erroring shows up in oper state, in the traps the
+          # device sends, and in the gNMI stream that switches and routers push.
+          # Re-enable them the day the database has the headroom - the OIDs are
+          # right here and the metrics stay registered.
+          #
+          # - oid: 1.3.6.1.2.1.2.2.1.13         # ifInDiscards -> if_in_discards
+          # - oid: 1.3.6.1.2.1.2.2.1.14         # ifInErrors   -> if_in_errors
+          # - oid: 1.3.6.1.2.1.2.2.1.19         # ifOutDiscards -> if_out_discards
+          # - oid: 1.3.6.1.2.1.2.2.1.20         # ifOutErrors  -> if_out_errors
+
+      # ifXTable is a SEPARATE MIB table and needs its own entry: columns from
+      # two tables share only 1.3.6.1.2.1, so combining them would walk the
+      # whole of mib-2 instead of one table.
+      - name: if_x_table
+        # The instance is a port identity, so it is normalised before it
+        # becomes a series - see internal/normalize.
+        kind: interface
+        index_oid: 1.3.6.1.2.1.31.1.1.1.1         # ifName
+        # Key these rows by the ifName VALUE, not by the row's OID suffix.
+        # index_oid only says which column to enumerate rows from; without
+        # instance_from the instance is the suffix, which is ifIndex - so
+        # ifXTable counters came back as "43" while gNMI reported
+        # "GigabitEthernet0/43" for the same port, and one port became two
+        # series. ifTable cannot do this (it has no ifName column), so its
+        # rows stay ifIndex-keyed and the ingest worker resolves them against
+        # inventory.
+        instance_from: 1.3.6.1.2.1.31.1.1.1.1
+        columns:
+          # The traffic counters, and the reason anyone polls an interface at
+          # all. HIGH-CAPACITY (64-bit) versions, not ifInOctets/.10: a 32-bit
+          # octet counter wraps in about 34 seconds on a 10 Gbps port at line
+          # rate, which is faster than any poll interval and makes the derived
+          # rate meaningless.
+          - oid: 1.3.6.1.2.1.31.1.1.1.6           # ifHCInOctets
+            metric: if_in_octets
+            value_type: counter
+            counter_bits: 64
+          - oid: 1.3.6.1.2.1.31.1.1.1.10          # ifHCOutOctets
+            metric: if_out_octets
+            value_type: counter
+            counter_bits: 64
+          - oid: 1.3.6.1.2.1.31.1.1.1.15          # ifHighSpeed, Mbps
+            metric: if_speed
+            value_type: gauge
+            transform: {scale: 1000000}
+            # ifHighSpeed, not ifSpeed (.5): ifSpeed is a 32-bit bits/s gauge
+            # that saturates at 4294967295 for any link of 4.29 Gbps or more,
+            # so a 10G port reports the same number as a 40G one. Observed
+            # directly on this fleet before switching.
+
+  # ---------------------------------------------------------- host resources
+  - name: host_resources
+    tables:
+      # hrProcessorLoad is one row per core. The device-scoped metric is their
+      # mean, which is what an operator means by "CPU". Per-core detail is not
+      # worth the cardinality at DCIM altitude.
+      - name: hr_processor
+        columns:
+          - oid: 1.3.6.1.2.1.25.3.3.1.2         # hrProcessorLoad, percent
+            metric: cpu_utilization
+            value_type: gauge
+        aggregate: avg
+
+    # UCD-SNMP for memory, hrStorage for the filesystem. UCD reports kilobytes,
+    # hence the 1024 scale; hrStorage counts allocation units, scaled per row.
+    scalars:
+      - oid: 1.3.6.1.4.1.2021.4.5.0             # memTotalReal, kB
+        metric: memory_total
+        value_type: gauge
+        transform: {scale: 1024}
+      - oid: 1.3.6.1.4.1.2021.4.6.0             # memAvailReal, kB
+        metric: memory_available
+        value_type: gauge
+        transform: {scale: 1024}
+
+      # Disk, from HOST-RESOURCES-MIB hrStorage row 2 - the "/" filesystem.
+      #
+      # hrStorage counts in ALLOCATION UNITS, not bytes, and the unit is per
+      # row: this plane serves 1024-byte units for the memory row and 4096 for
+      # the filesystem, which is why the scale here is 4096 and belongs to row 2
+      # alone. A poller facing real hardware must read hrStorageAllocationUnits
+      # (25.2.3.1.4) per row rather than assume either number - the same caveat
+      # the Raritan sensor decimals carry, and for the same reason.
+      #
+      # Row 2 by index because that is where this plane puts the filesystem. A
+      # real host may enumerate several and index them in any order; picking the
+      # right one there needs a row filter on hrStorageType = hrStorageFixedDisk
+      # (25.2.1.4), which the table syntax above supports and the scalar syntax
+      # here does not.
+      - oid: 1.3.6.1.2.1.25.2.3.1.5.2         # hrStorageSize, 4 kB units
+        metric: disk_total
+        value_type: gauge
+        transform: {scale: 4096}
+      - oid: 1.3.6.1.2.1.25.2.3.1.6.2         # hrStorageUsed, 4 kB units
+        metric: disk_used
+        value_type: gauge
+        transform: {scale: 4096}
+
+    derived_scalars:
+      # used = total - available, so the numerator is the available fraction
+      # subtracted from one.
+      - metric: memory_used
+        value_type: gauge
+        numerator: 1.3.6.1.4.1.2021.4.6.0
+        denominator: 1.3.6.1.4.1.2021.4.5.0
+        one_minus: true
+        multiply_by: 1.3.6.1.4.1.2021.4.5.0     # (1 - avail/total) * total
+        transform: {scale: 1024}
+      - metric: memory_utilization
+        value_type: gauge
+        numerator: 1.3.6.1.4.1.2021.4.6.0
+        denominator: 1.3.6.1.4.1.2021.4.5.0
+        one_minus: true
+        transform: {scale: 100}
+      # used/total directly - hrStorage reports what IS used, where UCD reports
+      # what is free, so this one needs no one_minus.
+      - metric: disk_utilization
+        value_type: gauge
+        numerator: 1.3.6.1.2.1.25.2.3.1.6.2
+        denominator: 1.3.6.1.2.1.25.2.3.1.5.2
+        transform: {scale: 100}
+
+  # ------------------------------------------------------------- environment
+  # ENTITY-SENSOR-MIB. entPhySensorValue is scaled by entPhySensorPrecision.
+  - name: entity_sensors
+    tables:
+      - name: ent_sensor_temp
+        row_filter: {oid: 1.3.6.1.2.1.99.1.1.1.1, equals_int: 8}    # celsius
+        columns:
+          - oid: 1.3.6.1.2.1.99.1.1.1.4         # entPhySensorValue
+            metric: ambient_temperature
+            value_type: gauge
+            precision_from: 1.3.6.1.2.1.99.1.1.1.3
+      - name: ent_sensor_humidity
+        row_filter: {oid: 1.3.6.1.2.1.99.1.1.1.1, equals_int: 9}    # percentRH
+        columns:
+          - oid: 1.3.6.1.2.1.99.1.1.1.4
+            metric: relative_humidity
+            value_type: gauge
+            precision_from: 1.3.6.1.2.1.99.1.1.1.3
+
+  # ------------------------------------------------------------- rack PDUs
+  #
+  # THE GAP THIS CLOSES: 80 rack PDUs, SNMP-only, delivering nothing but an
+  # uptime tick. Every other class in the estate had a live source - CRAH over
+  # BACnet, BMCs over Redfish, switchgear over Modbus - and the PDUs, which are
+  # the meter directly above the IT load, had none.
+  #
+  # Mapped against the VENDORS' OWN MIBs rather than the simulator's
+  # placeholder tree at 1.3.6.1.4.1.99999.5. Real Rack PDUs publish on
+  # PowerNet-MIB and PDU2-MIB, this plane imitates them faithfully, and a
+  # mapping written against the imitation would have to be thrown away the
+  # first time it met an actual PDU.
+  #
+  # Every OID below was walked on this plane before it was written down, and
+  # every scale was checked against the reading it produced.
+
+  # APC Rack PDU 2G - PowerNet-MIB rPDU2 status tables. 56 units here.
+  #
+  # Scalars, not tables: a single-inlet rack PDU has exactly one row in each of
+  # these tables, and the index is a constant 1. Multi-inlet and three-phase
+  # gear needs the table form with the phase as the instance - the engine can
+  # do it, this plane has nothing to point it at.
+  # ------------------------------------------------ network chassis sensors
+  #
+  # ENTITY-SENSOR-MIB, which is the vendor-neutral place a switch, router or
+  # console switch reports how hot it is. Arista, Juniper, Nokia and modern
+  # IOS-XE all populate it; the Cisco boxes here also carry CISCO-ENVMON, read
+  # by `network_cisco`, and either is enough.
+  #
+  # Read as SCALARS at fixed indices rather than as a table walk, because the
+  # table cannot say which row is which: entPhySensorValue carries a chassis
+  # inlet and a die temperature under the same sensor type, and a walk that
+  # mapped both to one metric would file a 90 C ASIC as room air.
+  #
+  # This group exists because an OOB switch had neither channel. Its
+  # temperature was invisible to the platform for as long as it has existed:
+  # no trap (the simulator's rule excluded the type) and no poll (its profile
+  # carried system and interfaces only). A hot console switch was silent.
+  - name: network_sensors
+    scalars:
+      # The instances match what gNMI calls the same two sensors. Without
+      # that they are different series for one reading, and an alarm raised
+      # from the SNMP side cannot be cleared from the gNMI side.
+      - oid: 1.3.6.1.2.1.99.1.1.1.4.1        # chassis / inlet sensor
+        metric: component_temperature
+        instance: CHASSIS
+        value_type: gauge
+        # Stored x10 so one decimal survives an integer encoding.
+        transform: {scale: 0.1}
+      - oid: 1.3.6.1.2.1.99.1.1.1.4.2        # CPU / ASIC die
+        metric: cpu_temperature
+        instance: CPU
+        value_type: gauge
+        transform: {scale: 0.1}
+
+  - name: pdu_apc
+    scalars:
+      - oid: 1.3.6.1.4.1.318.1.1.26.4.3.1.5.1     # rPDU2DeviceStatusPower, 0.01 kW
+        metric: power_draw
+        value_type: gauge
+        transform: {scale: 10}                    # 0.01 kW -> W
+      - oid: 1.3.6.1.4.1.318.1.1.26.4.3.1.16.1    # rPDU2DeviceStatusApparentPower, 0.01 kVA
+        metric: apparent_power
+        value_type: gauge
+        transform: {scale: 10}                    # 0.01 kVA -> VA
+      - oid: 1.3.6.1.4.1.318.1.1.26.4.3.1.17.1    # rPDU2DeviceStatusPowerFactor, hundredths
+        metric: power_factor
+        value_type: gauge
+        transform: {scale: 0.01}
+      - oid: 1.3.6.1.4.1.318.1.1.26.4.3.1.9.1     # rPDU2DeviceStatusEnergy, 0.1 kWh
+        metric: energy_consumed
+        value_type: counter
+        counter_bits: 32
+        transform: {scale: 0.1}
+        # A counter, and it must stay one. Cumulative energy read as a gauge
+        # charts as a ramp that never falls and no threshold on it means
+        # anything; as a counter the pipeline derives the rate, which is the
+        # number an operator actually wants from a meter.
+      - oid: 1.3.6.1.4.1.318.1.1.26.6.3.1.5.1     # rPDU2PhaseStatusCurrent, 0.1 A
+        metric: current
+        value_type: gauge
+        transform: {scale: 0.1}
+      - oid: 1.3.6.1.4.1.318.1.1.26.6.3.1.6.1     # rPDU2PhaseStatusVoltage, V
+        metric: voltage_ln
+        value_type: gauge
+    # The strip publishes no environment of its own. An AP8000 has no
+    # onboard sensor - it has two RJ-45 sensor ports - so a temperature read
+    # here belongs to the PROBE fitted to a port, not to the strip, and it is
+    # collected against that probe by the profile below.
+
+  # A probe on a rack PDU's sensor port.
+  #
+  # It has no address: the strip polls it over the lead and publishes it at a
+  # sensor index, so the endpoint carries the STRIP's address and the index,
+  # and {sensor_index} is filled from the endpoint's addressing. The same
+  # arrangement as an RTU slave behind a Modbus gateway or an MS/TP controller
+  # behind a BACnet router - the carrier is how you reach it, the sub-address
+  # is which one it is.
+  #
+  # Read against the probe rather than the strip so the reading, the comm
+  # status and any alarm belong to the thing that took it. Read at the strip
+  # they were a rack-wide average of whatever was fitted, and a probe that
+  # stopped answering was invisible.
+  - name: pdu_probe_apc
+    scalars:
+      - oid: 1.3.6.1.4.1.318.1.1.26.10.2.2.1.8.{sensor_index}   # ...StatusTempC, 0.1 C
+        metric: ambient_temperature
+        value_type: gauge
+        transform: {scale: 0.1}
+      # An AP9335T carries a thermistor only. Its humidity leaf does not
+      # exist, the agent says so, and no sample is recorded - which is the
+      # difference between a dry rack and an unmeasured one.
+      - oid: 1.3.6.1.4.1.318.1.1.26.10.2.2.1.10.{sensor_index}  # ...RelativeHumidity, %
+        metric: relative_humidity
+        value_type: gauge
+
+  # Raritan PX2 - PDU2-MIB measurement tables. 24 units here.
+  #
+  # PDU2-MIB indexes as [pduId][inletId][sensorType] and scales every reading
+  # by that sensor's own decimalDigits attribute, so the sensor TYPE is in the
+  # OID index rather than in a column. `row_filter` matches on a column value
+  # and cannot see an index, so each sensor type is addressed as its own
+  # scalar with the scale its decimals imply - checked against this plane:
+  # current and voltage carry 3 decimals, power and energy 0, power factor 2,
+  # frequency 1.
+  #
+  # A poller facing REAL Raritan gear must read inletSensorDecimalDigits
+  # (1.3.6.1.4.1.13742.6.3.3.4.1.7) rather than assume these, because the
+  # digits vary by model - 23.5 C and 235 C are the same integer otherwise.
+  # That needs index-aware tables, which is the honest next step here.
+  - name: pdu_raritan
+    scalars:
+      - oid: 1.3.6.1.4.1.13742.6.5.2.3.1.4.1.1.1  # inlet sensor 1: current, mA
+        metric: current
+        value_type: gauge
+        transform: {scale: 0.001}
+      - oid: 1.3.6.1.4.1.13742.6.5.2.3.1.4.1.1.4  # 4: voltage, mV
+        metric: voltage_ln
+        value_type: gauge
+        transform: {scale: 0.001}
+      - oid: 1.3.6.1.4.1.13742.6.5.2.3.1.4.1.1.5  # 5: activePower, W
+        metric: power_draw
+        value_type: gauge
+      - oid: 1.3.6.1.4.1.13742.6.5.2.3.1.4.1.1.6  # 6: apparentPower, VA
+        metric: apparent_power
+        value_type: gauge
+      - oid: 1.3.6.1.4.1.13742.6.5.2.3.1.4.1.1.7  # 7: powerFactor, hundredths
+        metric: power_factor
+        value_type: gauge
+        transform: {scale: 0.01}
+      - oid: 1.3.6.1.4.1.13742.6.5.2.3.1.4.1.1.8  # 8: activeEnergy, Wh
+        metric: energy_consumed
+        value_type: counter
+        counter_bits: 32
+        transform: {scale: 0.001}                 # Wh -> kWh
+      - oid: 1.3.6.1.4.1.13742.6.5.2.3.1.4.1.1.23 # 23: frequency, 0.1 Hz
+        metric: line_frequency
+        value_type: gauge
+        transform: {scale: 0.1}
+      # The external-sensor table is NOT read here. A probe is a device, and
+      # a strip with none has no environment to report - read at the strip it
+      # was a rack-wide figure whatever was fitted, and a probe that stopped
+      # answering was invisible. See pdu_probe_raritan below.
+
+  # ------------------------------------------------- a probe on a PX2 sensor port
+  #
+  # A DPX2 is an RJ-12 lead with a thermistor on the end: no processor, no IP.
+  # The strip polls it and publishes it in measurementsExternalSensorTable at a
+  # slot, so the endpoint carries the STRIP's address and the slot says which
+  # probe answered.
+  #
+  # Raritan puts one VALUE column in that table and gives each channel its own
+  # slot, which is the difference from the APC part above: a T1H1 at slot 1
+  # reads temperature at 1 and humidity at 2. Hence two indices rather than two
+  # columns at one index. A temperature-only probe simply has no row at the
+  # second slot, and an absent row is an absent reading.
+  - name: pdu_probe_raritan
+    scalars:
+      - oid: 1.3.6.1.4.1.13742.6.5.5.3.1.4.1.{sensor_index}
+        metric: ambient_temperature
+        value_type: gauge
+        transform: {scale: 0.1}
+      - oid: 1.3.6.1.4.1.13742.6.5.5.3.1.4.1.{humidity_index}
+        metric: relative_humidity
+        value_type: gauge
+        transform: {scale: 0.1}
+
+  # --------------------------------------------------------- network CPU/memory
+  #
+  # Control-plane load on switches, routers, firewalls and load balancers. It
+  # was missing entirely: HOST-RESOURCES is a HOST MIB, the network agents do
+  # not carry it, and `hrProcessorLoad` on a spine returns noSuchInstance -
+  # measured. So the number that decides whether a box still answers a keepalive
+  # reached this platform only as a trap: nothing to graph, nothing to threshold,
+  # and on the 12 firewalls and 4 load balancers - which speak no gNMI, because
+  # PAN-OS and F5 TMOS genuinely do not - nothing at all.
+  #
+  # Cisco keeps its own family. IOS and NX-OS publish CISCO-PROCESS-MIB and
+  # CISCO-MEMORY-POOL-MIB and no host MIBs, which is why this is a separate
+  # group selected by vendor rather than an addition to `host_resources`: asking
+  # a Cisco box for hrProcessorLoad and a Dell one for cpmCPUTotal5minRev
+  # produces a noSuchObject on every poll of every device, forever.
+  - name: network_cisco
+    scalars:
+      - oid: 1.3.6.1.4.1.9.9.109.1.1.1.1.8.1     # cpmCPUTotal5minRev, percent
+        metric: cpu_utilization
+        value_type: gauge
+        # The 5-minute average, not the 5-second (.6): the short one swings with
+        # every convergence event and would alarm on a device that is working
+        # normally. Cisco's own guidance, and what an NMS graphs.
+      - oid: 1.3.6.1.4.1.9.9.48.1.1.1.5.1        # ciscoMemoryPoolUsed
+        metric: memory_used
+        value_type: gauge
+        transform: {scale: 1048576}
+        # MEBIBYTES on this plane, not the bytes the MIB definition states -
+        # verified on the wire before this scale was written: a 2 GiB pool
+        # reports 2047 across used+free, not 2147483648.
+        #
+        # It is not a simulator shortcut either. ciscoMemoryPoolUsed is a 32-bit
+        # Gauge, so a real bytes value overflows on any platform with more than
+        # 4 GB of pool - which is every switch in this fleet. Real Cisco has the
+        # same problem, and the answer there is CISCO-ENHANCED-MEMPOOL-MIB with
+        # its 64-bit cempMemPoolHCUsed. A deployment facing modern IOS-XE should
+        # prefer that table and drop this scale.
+    derived_scalars:
+      # Used / (used + free). The pool has no "total" object - a poller that
+      # wants a percentage has to add the two, which is exactly the arithmetic
+      # people get wrong when they divide by the platform's nameplate RAM
+      # instead and report a router at 3% forever.
+      - metric: memory_utilization
+        value_type: gauge
+        numerator: 1.3.6.1.4.1.9.9.48.1.1.1.5.1
+        denominator: 1.3.6.1.4.1.9.9.48.1.1.1.6.1
+        sum_denominator: true
+        transform: {scale: 100}

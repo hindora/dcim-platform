@@ -3,6 +3,7 @@ package app
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -22,11 +23,30 @@ import (
 	"github.com/hari/dcim-platform/collector/internal/discovery"
 	"github.com/hari/dcim-platform/collector/internal/health"
 	"github.com/hari/dcim-platform/collector/internal/mapping"
+	"github.com/hari/dcim-platform/collector/internal/mtls"
 	"github.com/hari/dcim-platform/collector/internal/obs"
 	"github.com/hari/dcim-platform/collector/internal/publish"
 	"github.com/hari/dcim-platform/collector/internal/sched"
+	"github.com/hari/dcim-platform/collector/internal/spool"
 	"github.com/hari/dcim-platform/collector/pkg/models"
 )
+
+// sink is what App needs from a publisher, satisfied by both publish.
+// Publisher (direct-Redis) and publish.GatewayPublisher (spool-backed
+// HTTPS, docs/26 Phase 3) - see either's SpoolStats/ReplayRateRPS/Capacity/
+// Dropped/QueueDepth docstrings for which of these five report something
+// real for that transport and which are deliberately 0.
+type sink interface {
+	models.Sink
+	Heartbeat(ctx context.Context, hb models.CollectorHeartbeat) error
+	Run(ctx context.Context)
+	Ping(ctx context.Context) error
+	Capacity() int
+	Dropped() uint64
+	QueueDepth() int
+	SpoolStats() spool.Stats
+	ReplayRateRPS() uint32
+}
 
 type App struct {
 	cfg     *config.Config
@@ -34,7 +54,8 @@ type App struct {
 	mets    *obs.Metrics
 	ready   *obs.Readiness
 	rdb     *redis.Client
-	pub     *publish.Publisher
+	pub     sink
+	sp      *spool.Spool // nil unless cfg.Transport.Mode == "gateway"
 	tracker *health.Tracker
 	sched   *sched.Scheduler
 	assign  *assign.Client
@@ -79,34 +100,87 @@ type App struct {
 	startedAt time.Time
 	pollsOK   uint64
 	pollsBad  uint64
+
+	// Where mapping data came from and its fingerprint - reported in every
+	// heartbeat so the platform can catch a collector running data it does
+	// not recognise, which a version string alone would not.
+	mappingSource    string
+	mappingBundleSHA string
+
+	// nil for a collector that has never enrolled - every http.Client built
+	// with it then presents no client certificate. Live: a certificate
+	// renewed after construction is picked up on the next connection with
+	// nothing here to update, because it came from an mtls.Store.
+	tlsConfig *tls.Config
 }
 
-func New(cfg *config.Config, version string) (*App, error) {
+// tlsStore is nil for a collector run without ever having enrolled - every
+// http.Client built here then presents no client certificate, the ordinary
+// case for a collector still on its bearer token alone.
+func New(cfg *config.Config, version string, tlsStore *mtls.Store) (*App, error) {
+	var tlsConfig *tls.Config
+	if tlsStore != nil {
+		tlsConfig = tlsStore.TLSConfig()
+	}
+
 	log := obs.NewLogger(cfg.Observability.LogLevel, cfg.Observability.LogFormat,
 		cfg.Collector.ID)
 	mets := obs.NewMetrics()
 
-	opts, err := redis.ParseURL(cfg.Redis.URL)
-	if err != nil {
-		return nil, fmt.Errorf("parse redis url: %w", err)
+	// Redis is only ever dialled for the direct transport. A gateway-
+	// transport collector reaches the platform over the internet and Redis's
+	// own port and password are not something that connection can expose -
+	// see config.Config.Transport's docstring.
+	var rdb *redis.Client
+	if cfg.Transport.Mode == "redis" {
+		opts, err := redis.ParseURL(cfg.Redis.URL)
+		if err != nil {
+			return nil, fmt.Errorf("parse redis url: %w", err)
+		}
+		rdb = redis.NewClient(opts)
 	}
-	rdb := redis.NewClient(opts)
 
-	maps, err := mapping.Load(cfg.Mappings.Dir)
+	mapFS, mapSource := mapping.Resolve(cfg.Mappings.Dir)
+	bundleSHA, err := mapping.BundleSHA(mapFS)
+	if err != nil {
+		return nil, fmt.Errorf("fingerprint mappings (%s): %w", mapSource, err)
+	}
+
+	maps, err := mapping.Load(mapFS)
 	if err != nil {
 		return nil, fmt.Errorf("load mappings: %w", err)
 	}
-	log.Info("mappings loaded", "profiles", maps.Names(), "dir", cfg.Mappings.Dir)
+	log.Info("mappings loaded", "profiles", maps.Names(), "source", mapSource,
+		"bundle_sha", bundleSHA[:12])
 
-	pub := publish.New(rdb, cfg, log, mets)
+	var pub sink
+	var sp *spool.Spool
+	if cfg.Transport.Mode == "gateway" {
+		sp, err = spool.Open(spool.Config{Dir: cfg.Transport.Gateway.SpoolDir})
+		if err != nil {
+			return nil, fmt.Errorf("open spool: %w", err)
+		}
+		pub, err = publish.NewGateway(cfg, log, mets, tlsConfig, sp)
+		if err != nil {
+			sp.Close()
+			return nil, fmt.Errorf("build gateway publisher: %w", err)
+		}
+		log.Info("transport: gateway (spool-backed HTTPS)",
+			"spool_dir", cfg.Transport.Gateway.SpoolDir)
+	} else {
+		pub = publish.New(rdb, cfg, log, mets)
+	}
 	tracker := health.NewTracker(cfg.Health.OfflineThreshold, cfg.Collector.ID,
 		pub, log, mets, cfg.Health.RefreshInterval)
 
 	a := &App{
 		cfg: cfg, log: log, mets: mets, ready: &obs.Readiness{},
-		rdb: rdb, pub: pub, tracker: tracker,
-		adapters:  map[string]models.Adapter{},
-		startedAt: time.Now().UTC(),
+		rdb: rdb, pub: pub, sp: sp, tracker: tracker,
+		adapters:         map[string]models.Adapter{},
+		startedAt:        time.Now().UTC(),
+		mappingSource:    mapSource,
+		mappingBundleSHA: bundleSHA,
+		tlsConfig:        tlsConfig,
 	}
 
 	if cfg.Protocols.SNMP.Enabled {
@@ -116,7 +190,7 @@ func New(cfg *config.Config, version string) (*App, error) {
 	}
 
 	if cfg.Protocols.Redfish.Enabled {
-		rfMaps, err := mapping.LoadRedfish(cfg.Mappings.Dir)
+		rfMaps, err := mapping.LoadRedfish(mapFS)
 		if err != nil {
 			return nil, fmt.Errorf("load redfish mappings: %w", err)
 		}
@@ -126,7 +200,7 @@ func New(cfg *config.Config, version string) (*App, error) {
 	}
 
 	if cfg.Protocols.BACnet.Enabled {
-		bnMaps, err := mapping.LoadBACnet(cfg.Mappings.Dir)
+		bnMaps, err := mapping.LoadBACnet(mapFS)
 		if err != nil {
 			return nil, fmt.Errorf("load bacnet mappings: %w", err)
 		}
@@ -141,7 +215,7 @@ func New(cfg *config.Config, version string) (*App, error) {
 	}
 
 	if cfg.Protocols.Modbus.Enabled {
-		mbMaps, err := mapping.LoadModbus(cfg.Mappings.Dir)
+		mbMaps, err := mapping.LoadModbus(mapFS)
 		if err != nil {
 			return nil, fmt.Errorf("load modbus templates: %w", err)
 		}
@@ -153,7 +227,7 @@ func New(cfg *config.Config, version string) (*App, error) {
 	}
 
 	if cfg.Protocols.GNMI.Enabled {
-		gnMaps, err := mapping.LoadGNMI(cfg.Mappings.Dir)
+		gnMaps, err := mapping.LoadGNMI(mapFS)
 		if err != nil {
 			return nil, fmt.Errorf("load gnmi mappings: %w", err)
 		}
@@ -181,7 +255,7 @@ func New(cfg *config.Config, version string) (*App, error) {
 			return nil, fmt.Errorf("redfish_event.advertise is required: the " +
 				"collector cannot guess which of its addresses the BMCs can reach")
 		}
-		evMaps, err := mapping.LoadRedfishEvents(cfg.Mappings.Dir)
+		evMaps, err := mapping.LoadRedfishEvents(mapFS)
 		if err != nil {
 			return nil, fmt.Errorf("load redfish event mappings: %w", err)
 		}
@@ -196,7 +270,7 @@ func New(cfg *config.Config, version string) (*App, error) {
 	}
 
 	if cfg.Protocols.SNMPTrap.Enabled {
-		trapTable, err := mapping.LoadTraps(cfg.Mappings.Dir)
+		trapTable, err := mapping.LoadTraps(mapFS)
 		if err != nil {
 			return nil, fmt.Errorf("load trap mappings: %w", err)
 		}
@@ -251,7 +325,7 @@ func New(cfg *config.Config, version string) (*App, error) {
 		}, a.ping, log, mets)
 	}
 
-	a.assign = assign.New(cfg, log, mets)
+	a.assign = assign.New(cfg, log, mets, tlsConfig)
 	a.assign.OnChange = a.applyDiff
 	a.assign.OnRefreshed = a.refreshResolver
 	a.cfg.Collector.Version = version
@@ -310,13 +384,20 @@ func (a *App) Run(ctx context.Context) error {
 	obs.Serve(ctx, a.cfg.Observability.MetricsListen,
 		a.cfg.Observability.HealthListen, a.ready, a.mets, a.log)
 
-	if err := a.rdb.Ping(ctx).Err(); err != nil {
-		// Not fatal: the publisher buffers and the collector still polls. A
-		// collector that refuses to start because Redis is briefly down is
-		// worse than one that starts degraded and says so.
-		a.log.Error("redis unreachable at startup; starting degraded", "error", err)
-		a.tracker.SetSelfDegraded(true)
+	if a.rdb != nil {
+		if err := a.rdb.Ping(ctx).Err(); err != nil {
+			// Not fatal: the publisher buffers and the collector still polls. A
+			// collector that refuses to start because Redis is briefly down is
+			// worse than one that starts degraded and says so.
+			a.log.Error("redis unreachable at startup; starting degraded", "error", err)
+			a.tracker.SetSelfDegraded(true)
+		} else {
+			a.ready.SetRedis(true)
+		}
 	} else {
+		// Gateway transport: readiness for this leg is judged by the
+		// publisher's own Ping (a platform reachability probe), polled the
+		// same way the heartbeat loop already reports it below.
 		a.ready.SetRedis(true)
 	}
 
@@ -370,8 +451,9 @@ func (a *App) Run(ctx context.Context) error {
 			Interval:    a.cfg.DCIM.AssignmentInterval,
 			Sweeper:     discovery.New(a.log, a.discoveryCommunities(), 0),
 			Redfish:     a.redfishSweeper(),
-			HTTP:        &http.Client{Timeout: a.cfg.DCIM.RequestTimeout},
-			Log:         a.log,
+			HTTP: &http.Client{Timeout: a.cfg.DCIM.RequestTimeout,
+				Transport: &http.Transport{TLSClientConfig: a.tlsConfig}},
+			Log: a.log,
 		}).Run(ctx)
 	}
 
@@ -428,7 +510,16 @@ func (a *App) Run(ctx context.Context) error {
 			a.log.Warn("adapter close failed", "adapter", name, "error", err)
 		}
 	}
-	_ = a.rdb.Close()
+	if a.rdb != nil {
+		_ = a.rdb.Close()
+	}
+	if a.sp != nil {
+		// Flushes whatever is still only in memory - the other half of "kill
+		// -9 loses at most the flush interval": a clean stop loses nothing.
+		if err := a.sp.Close(); err != nil {
+			a.log.Warn("spool close failed", "error", err)
+		}
+	}
 	a.log.Info("stopped")
 	return nil
 }
@@ -650,7 +741,16 @@ func (a *App) heartbeatLoop(ctx context.Context) {
 				AssignmentAgeS:    uint32(a.assign.AgeSeconds()),
 				AssignmentVersion: uint32(a.assign.Version()),
 				ActiveStreams:     uint32(a.streamCount()),
+				MappingBundleSha:  a.mappingBundleSHA,
 			}
+			// Zero for the direct-Redis transport (Publisher.SpoolStats/
+			// ReplayRateRPS are stubs) and real for the gateway transport -
+			// see either's docstring. Filled in generically here so neither
+			// transport has to know it is the one being reported.
+			spoolStats := a.pub.SpoolStats()
+			hb.SpoolBytes = uint64(spoolStats.Bytes)
+			hb.SpoolOldestAgeS = uint32(spoolStats.OldestAge.Seconds())
+			hb.ReplayRate = a.pub.ReplayRateRPS()
 			if a.traps != nil {
 				hb.TrapsReceived = a.traps.Received()
 			}

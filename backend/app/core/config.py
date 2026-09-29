@@ -61,6 +61,16 @@ class Settings(BaseSettings):
     collector_token: SecretStr
     credential_key: SecretStr = Field(
         description="base64-encoded 32-byte key for device-credential encryption at rest")
+    #: Shared only with the TLS-terminating proxy in front of collector
+    #: routes (deploy/collector-nginx.conf), never with a browser or a
+    #: collector. Its presence and correctness on a request is what lets the
+    #: backend trust that request's `X-DCIM-Client-*` headers came from the
+    #: proxy's own verified TLS handshake and not from whoever is on the
+    #: other end of the connection - see app/core/security.py's `_try_mtls`.
+    #: Unset (the default) disables the mTLS path entirely: every request
+    #: falls through to the bearer token, which is what a plain dev checkout
+    #: with no proxy in front of it needs to keep working unchanged.
+    proxy_trust_token: SecretStr | None = None
 
     # --- ingest -------------------------------------------------------------
     ingest_group: str = "dcim-ingest"

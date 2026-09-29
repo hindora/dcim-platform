@@ -103,6 +103,27 @@ services:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
 
+  collector:
+    build:
+      context: ..
+      dockerfile: collector/Dockerfile
+      args:
+        VERSION: dev
+    # Required, not a tuning choice: the trap listener must bind udp/162 and
+    # BACnet must source from a routable address on the device plane, neither
+    # of which bridge networking on Linux can do. On Docker Desktop (Mac/
+    # Windows), host networking does not exist at all - run
+    # `go run ./cmd/collector` directly on the host instead, and start this
+    # stack with `--scale collector=0`.
+    network_mode: host
+    environment:
+      DCIM_BASE_URL: http://127.0.0.1:8000
+      DCIM_COLLECTOR_TOKEN: ${DCIM_COLLECTOR_TOKEN:?set DCIM_COLLECTOR_TOKEN in deploy/.env}
+      DCIM_REDIS_URL: redis://:${REDIS_PASSWORD}@127.0.0.1:6379/0
+    depends_on:
+      api: {condition: service_started}
+      redis: {condition: service_healthy}
+
   ui:
     image: node:20-alpine
     working_dir: /app

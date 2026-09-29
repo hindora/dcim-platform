@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -41,7 +42,7 @@ func (s *trapSink) all() []models.Event {
 
 func newHoldReceiver(t *testing.T) (*TrapReceiver, *trapSink, *assign.Resolver) {
 	t.Helper()
-	table, err := mapping.LoadTraps("../../../../contracts/mappings")
+	table, err := mapping.LoadTraps(os.DirFS("../../../../contracts/mappings"))
 	if err != nil {
 		t.Fatalf("load trap mappings: %v", err)
 	}

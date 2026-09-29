@@ -2,8 +2,8 @@ package mapping
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
+	"io/fs"
+	stdpath "path"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -54,9 +54,9 @@ type BACnetMap struct {
 }
 
 // LoadBACnet reads contracts/mappings/bacnet/objects.yaml.
-func LoadBACnet(dir string) (*BACnetMap, error) {
-	path := filepath.Join(dir, "bacnet", "objects.yaml")
-	raw, err := os.ReadFile(path)
+func LoadBACnet(fsys fs.FS) (*BACnetMap, error) {
+	path := stdpath.Join("bacnet", "objects.yaml")
+	raw, err := fs.ReadFile(fsys, path)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}

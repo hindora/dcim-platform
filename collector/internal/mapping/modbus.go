@@ -2,8 +2,8 @@ package mapping
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
+	"io/fs"
+	stdpath "path"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -73,9 +73,9 @@ type ModbusMap struct {
 }
 
 // LoadModbus reads contracts/mappings/modbus/templates.yaml.
-func LoadModbus(dir string) (*ModbusMap, error) {
-	path := filepath.Join(dir, "modbus", "templates.yaml")
-	raw, err := os.ReadFile(path)
+func LoadModbus(fsys fs.FS) (*ModbusMap, error) {
+	path := stdpath.Join("modbus", "templates.yaml")
+	raw, err := fs.ReadFile(fsys, path)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}

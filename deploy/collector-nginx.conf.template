@@ -1,0 +1,90 @@
+# TLS front door for collector routes (docs/26 Phase 2).
+#
+# A TEMPLATE, not a config file nginx can load directly: nginx does not
+# expand ${VAR} on its own, and a raw config with that string in it would
+# silently send the literal text "${DCIM_PROXY_TRUST_TOKEN}" as the shared
+# secret forever, defeating the whole point of it being secret. Use the
+# official nginx image's own template mechanism - mount this file at
+# /etc/nginx/templates/collector.conf.template and set DCIM_PROXY_TRUST_TOKEN
+# in the container's environment; the image's entrypoint runs envsubst on
+# every file under templates/ into /etc/nginx/conf.d/ before nginx starts.
+# Any other deployment tooling that does its own envsubst pass works the
+# same way; what must NOT happen is loading this file as-is.
+#
+# Every OTHER route (the browser UI, the user-facing API) can sit behind
+# whatever TLS termination this deployment already uses - this file is only
+# for /api/v1/collector/*, which is the surface collectors call and the only
+# one that ever needs to ask "did the client present OUR certificate".
+#
+# ssl_verify_client is `optional`, not `on`: a collector that has not
+# enrolled yet presents no certificate at all and must still reach
+# /api/v1/collector/enroll and /api/v1/collector/trust-chain (both handle
+# their own auth - a one-time token, or nothing). `optional` lets the TLS
+# handshake complete either way and hands the verdict to the backend as a
+# header; only the backend decides whether a route requires the header to
+# say SUCCESS - see app/core/security.py's `_try_mtls`.
+#
+# The trust bundle (ssl_client_certificate) is the ROOT certificate only,
+# fetched once from GET /api/v1/collector/trust-chain and saved to disk -
+# never the intermediate. That is what lets the intermediate rotate (a new
+# one signed by the same root) without editing this file or reloading nginx:
+# any certificate the root actually signed, through any intermediate,
+# verifies here unchanged.
+
+upstream dcim_backend {
+    server api:8000;
+}
+
+server {
+    listen 443 ssl;
+    server_name dcim-collectors.internal;
+
+    # This deployment's OWN server certificate - ordinary HTTPS hygiene,
+    # unrelated to the collector CA. Replace with whatever this site issues
+    # its server certificates from (an internal CA, ACME, etc).
+    ssl_certificate     /etc/nginx/tls/server.crt;
+    ssl_certificate_key /etc/nginx/tls/server.key;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    # The collector CA's root, and ONLY the root - see the note above.
+    ssl_client_certificate /etc/nginx/tls/collector-ca-root.pem;
+    ssl_verify_client optional;
+    ssl_verify_depth 2;  # root -> intermediate -> leaf
+
+    location /api/v1/collector/ {
+        # Never trust a client-supplied copy of these headers: strip
+        # whatever arrived on the wire before setting nginx's own verdict.
+        proxy_set_header X-DCIM-Client-Verify "";
+        proxy_set_header X-DCIM-Client-CN "";
+        proxy_set_header X-DCIM-Client-Serial "";
+        proxy_set_header X-DCIM-Proxy-Token "";
+
+        proxy_set_header X-DCIM-Client-Verify  $ssl_client_verify;
+        # The full subject DN (e.g. "CN=col-dc2-oob") - nginx has no
+        # CN-only variable. The backend's _try_mtls parses the CN out; this
+        # CA only ever puts a CommonName in a leaf's subject, so the DN is
+        # always exactly one RDN.
+        proxy_set_header X-DCIM-Client-CN      $ssl_client_s_dn;
+        proxy_set_header X-DCIM-Client-Serial  $ssl_client_serial;
+        # Shared only between this file and the backend's
+        # DCIM_PROXY_TRUST_TOKEN - proves a request reached the backend
+        # THROUGH this proxy's verified TLS handshake, not directly against
+        # a port that happens to be reachable. Set from an environment
+        # variable at deploy time, never committed.
+        proxy_set_header X-DCIM-Proxy-Token "${DCIM_PROXY_TRUST_TOKEN}";
+
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        proxy_pass http://dcim_backend;
+    }
+}
+
+# Everything else on this listener (the browser UI, /api/v1/* outside
+# /collector/) has no reason to request a client certificate at all and
+# belongs on a separate server block or a separate TLS terminator entirely -
+# folding it in here would make every browser tab negotiate the collector
+# CA's verification step for no purpose.

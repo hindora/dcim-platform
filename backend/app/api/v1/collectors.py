@@ -15,11 +15,13 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import audit
+from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
 from app.core.security import (
     Principal,
     current_principal,
     forget_collector,
+    forget_collector_cert,
     mint_collector_token,
     require_role,
 )
@@ -27,6 +29,7 @@ from app.db.session import get_session
 from app.repositories import collector as fleet_repo
 from app.repositories import collector_config as repo
 from app.services import collector_config as cfg
+from app.services import collector_pki
 
 router = APIRouter(prefix="/collectors", tags=["collectors"])
 log = get_logger("api.collectors")
@@ -121,14 +124,22 @@ async def create_collector(
     request: Request,
     session: AsyncSession = Depends(get_session),
     principal: Principal = Depends(require_role("admin")),
+    settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
-    """Create, place and issue a token in one step - the order that is safe.
+    """Create, place, and issue enrollment material in one step - the order
+    that is safe.
 
     A collector that simply starts up and asks for work arrives pending once
     another exists. Creating it here first means it is placed in its site and
-    approved before it runs, so its first assignment is the right one. The
-    token is returned exactly once; the platform keeps no copy it could show
-    again, only the generation that makes it valid.
+    approved before it runs, so its first assignment is the right one.
+
+    Two credentials come back, both exactly once - the platform keeps no copy
+    of either. The enrollment token is what the install command actually
+    uses: `dcim-collector enroll` exchanges it for a certificate and never
+    touches the bearer token at all. The bearer token is minted anyway, at
+    generation 1, purely as a fallback for a site that cannot yet run the
+    mTLS proxy in front of this platform - see migration 0086's docstring for
+    why that path stays open rather than being cut off in this release.
     """
     if not _ID.match(body.id):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -138,17 +149,31 @@ async def create_collector(
                                              principal.username):
         raise HTTPException(status.HTTP_409_CONFLICT,
                             f"a collector called {body.id} already exists")
+    token, expires_at = await collector_pki.issue_enrollment_token(
+        session, body.id, principal.username)
     ip, agent = audit.client_of(request)
     await audit.record(session, actor=audit.actor_of(principal),
                        action="collector.create", target_type="collector",
                        target_id=body.id, ip=ip, user_agent=agent,
-                       after={"datacenter_id": body.datacenter_id})
+                       after={"datacenter_id": body.datacenter_id,
+                              "enrollment_token_expires_at": expires_at.isoformat()})
     await session.commit()
     forget_collector(body.id)
     log.info("collector created", collector_id=body.id,
              actor=principal.username, datacenter_id=body.datacenter_id)
-    return {"id": body.id, "token": mint_collector_token(body.id, generation=1),
-            "generation": 1}
+    server = settings.public_base_url or "https://<this platform's address>"
+    return {
+        "id": body.id,
+        "enrollment": {
+            "token": token,
+            "expires_at": expires_at,
+            "install_command": (
+                f"dcim-collector enroll --server {server} "
+                f"--id {body.id} --token {token}"),
+        },
+        "fallback_bearer_token": mint_collector_token(body.id, generation=1),
+        "generation": 1,
+    }
 
 
 @router.patch("/{collector_id}", summary="Place a collector, approve it, or drain it")
@@ -224,6 +249,74 @@ async def issue_token(
              actor=principal.username, generation=generation)
     return {"id": collector_id, "generation": generation,
             "token": mint_collector_token(collector_id, generation=generation)}
+
+
+@router.post("/{collector_id}/enrollment-token",
+             summary="Issue a fresh one-time enrollment token")
+async def issue_enrollment_token(
+    collector_id: str,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    principal: Principal = Depends(require_role("admin")),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    """For a collector whose token expired unused, or that needs to re-enroll
+    after its certificate was revoked. Does not touch any certificate the
+    collector already holds and is currently using - only `/revoke-cert`
+    does that - so reissuing a token for an already-enrolled collector is
+    harmless until someone actually uses the new token."""
+    row = await _must_exist(session, collector_id)
+    if row["state"] == "decommissioned":
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            "a decommissioned collector cannot be enrolled")
+    token, expires_at = await collector_pki.issue_enrollment_token(
+        session, collector_id, principal.username)
+    ip, agent = audit.client_of(request)
+    await audit.record(session, actor=audit.actor_of(principal),
+                       action="collector.enrollment_token_issued",
+                       target_type="collector", target_id=collector_id,
+                       ip=ip, user_agent=agent,
+                       after={"expires_at": expires_at.isoformat()})
+    await session.commit()
+    log.info("enrollment token issued", collector_id=collector_id,
+             actor=principal.username)
+    server = settings.public_base_url or "https://<this platform's address>"
+    return {"id": collector_id, "token": token, "expires_at": expires_at,
+            "install_command": (
+                f"dcim-collector enroll --server {server} "
+                f"--id {collector_id} --token {token}")}
+
+
+@router.post("/{collector_id}/revoke-cert",
+             summary="Stop trusting this collector's current certificate")
+async def revoke_cert(
+    collector_id: str,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    principal: Principal = Depends(require_role("admin")),
+) -> dict[str, Any]:
+    """For a suspected key compromise: unlike `/decommission`, the collector
+    row and its history stay - it is expected to re-enroll with a fresh
+    token (`/enrollment-token`) and resume where it left off, not be
+    replaced. Its bearer token, if it still has one, is untouched; if this
+    platform's proxy is the only path in for it, revoking the certificate
+    alone is enough to lock it out."""
+    await _must_exist(session, collector_id)
+    before_status = await collector_pki.cert_status(session, collector_id)
+    if not await collector_pki.revoke_cert(session, collector_id):
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            f"collector {collector_id} has no certificate to revoke, "
+                            f"or it is already revoked")
+    ip, agent = audit.client_of(request)
+    await audit.record(session, actor=audit.actor_of(principal),
+                       action="collector.cert_revoked", target_type="collector",
+                       target_id=collector_id, ip=ip, user_agent=agent,
+                       before={"cert_serial": (before_status or {}).get("cert_serial")})
+    await session.commit()
+    forget_collector_cert(collector_id)
+    log.warning("collector certificate revoked", collector_id=collector_id,
+                actor=principal.username)
+    return {"id": collector_id, "revoked": True}
 
 
 @router.post("/{collector_id}/decommission",

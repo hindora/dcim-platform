@@ -221,6 +221,10 @@ class CollectorHeartbeat(_Msg):
     publish_dropped: int = 0
     queue_capacity: int = 0
     assignment_age_s: int = 0
+    mapping_bundle_sha: str = ""
+    spool_bytes: int = 0
+    spool_oldest_age_s: int = 0
+    replay_rate: int = 0
 
 
 class Stream:

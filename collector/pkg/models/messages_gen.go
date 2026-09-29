@@ -249,6 +249,10 @@ type CollectorHeartbeat struct {
 	PublishDropped       uint64 `msgpack:"publish_dropped,omitempty" json:"publish_dropped,omitempty"`
 	QueueCapacity        uint32 `msgpack:"queue_capacity,omitempty" json:"queue_capacity,omitempty"`
 	AssignmentAgeS       uint32 `msgpack:"assignment_age_s,omitempty" json:"assignment_age_s,omitempty"`
+	MappingBundleSha     string `msgpack:"mapping_bundle_sha,omitempty" json:"mapping_bundle_sha,omitempty"`
+	SpoolBytes           uint64 `msgpack:"spool_bytes,omitempty" json:"spool_bytes,omitempty"`
+	SpoolOldestAgeS      uint32 `msgpack:"spool_oldest_age_s,omitempty" json:"spool_oldest_age_s,omitempty"`
+	ReplayRate           uint32 `msgpack:"replay_rate,omitempty" json:"replay_rate,omitempty"`
 }
 
 // Stream names and caps, from contracts/schema/messages_v1.yaml.

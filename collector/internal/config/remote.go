@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -93,11 +94,17 @@ type RemoteClient struct {
 	OnChange func(version uint32, o Overrides)
 }
 
-func NewRemoteClient(cfg *Config, log *slog.Logger) *RemoteClient {
+// tlsConfig is nil for a collector with no enrolled certificate - every
+// request then presents none, which is the bearer-token path unchanged.
+// Non-nil, it comes from an mtls.Store and is live: a certificate renewed
+// after this client is built is picked up on the client's very next
+// connection, with nothing here to update.
+func NewRemoteClient(cfg *Config, log *slog.Logger, tlsConfig *tls.Config) *RemoteClient {
 	return &RemoteClient{
-		cfg:  cfg,
-		http: &http.Client{Timeout: cfg.DCIM.RequestTimeout},
-		log:  log,
+		cfg: cfg,
+		http: &http.Client{Timeout: cfg.DCIM.RequestTimeout,
+			Transport: &http.Transport{TLSClientConfig: tlsConfig}},
+		log: log,
 	}
 }
 

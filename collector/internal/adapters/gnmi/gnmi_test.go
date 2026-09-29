@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"math"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -311,7 +312,7 @@ func testLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard,
 
 func loadMaps(t *testing.T) *mapping.GNMIMap {
 	t.Helper()
-	m, err := mapping.LoadGNMI("../../../../contracts/mappings")
+	m, err := mapping.LoadGNMI(os.DirFS("../../../../contracts/mappings"))
 	if err != nil {
 		t.Fatalf("load gnmi mappings: %v", err)
 	}

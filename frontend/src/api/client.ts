@@ -893,6 +893,26 @@ export interface CollectorRow {
   /** What the CURRENT sharding plan gives it, which can differ from
    *  endpoints_owned while it is stale, pending or mid-move. */
   planned: number;
+  /** mTLS identity (docs/26 Phase 2). Null cert_serial means "never
+   *  enrolled" — still on the bearer token alone. */
+  cert_serial?: string | null;
+  cert_fingerprint_sha256?: string | null;
+  cert_not_after?: string | null;
+  cert_revoked_at?: string | null;
+  enrolled_at?: string | null;
+  enrolled_by?: string | null;
+  /** An unused, unexpired enrollment token exists for this collector. */
+  has_pending_token: boolean;
+}
+
+/** A one-time enrollment token, shown exactly once. The collector it was
+ *  issued for is already known from context, so the response's own `id`
+ *  field (present on both endpoints that return this shape, though nested
+ *  differently) is left out here rather than duplicated. */
+export interface EnrollmentToken {
+  token: string;
+  expires_at: string;
+  install_command: string;
 }
 
 export interface CollectorsPage {
@@ -3348,10 +3368,18 @@ export const api = {
       { method: 'PUT', body: JSON.stringify({ config }) }),
 
   /** Create a collector ahead of its install: placed and approved before it
-   *  ever asks for work, so its first assignment is the right one. The token
-   *  is returned exactly once — the platform keeps no copy. */
+   *  ever asks for work, so its first assignment is the right one. Both
+   *  credentials are returned exactly once — the platform keeps no copy of
+   *  either. `enrollment` is what `dcim-collector enroll` actually uses;
+   *  `fallback_bearer_token` exists only for a site that cannot yet run the
+   *  mTLS proxy in front of this platform. */
   createCollector: (id: string, datacenterId: string | null) =>
-    request<{ id: string; token: string; generation: number }>('/collectors', {
+    request<{
+      id: string;
+      enrollment: EnrollmentToken;
+      fallback_bearer_token: string;
+      generation: number;
+    }>('/collectors', {
       method: 'POST', body: JSON.stringify({ id, datacenter_id: datacenterId }),
     }),
 
@@ -3366,6 +3394,20 @@ export const api = {
   issueCollectorToken: (id: string) =>
     request<{ id: string; generation: number; token: string }>(
       `/collectors/${id}/token`, { method: 'POST' }),
+
+  /** A fresh one-time enrollment token — for a collector whose first token
+   *  expired unused, or that needs to re-enroll after `revokeCollectorCert`.
+   *  Does not touch a certificate the collector is already using. */
+  issueEnrollmentToken: (id: string) =>
+    request<EnrollmentToken>(
+      `/collectors/${id}/enrollment-token`, { method: 'POST' }),
+
+  /** Stop trusting this collector's current certificate — for a suspected
+   *  key compromise. Unlike decommissioning, the row and its history stay;
+   *  it is expected to re-enroll with a fresh token. */
+  revokeCollectorCert: (id: string) =>
+    request<{ id: string; revoked: boolean }>(
+      `/collectors/${id}/revoke-cert`, { method: 'POST' }),
 
   /** Retire a collector: its token stops working and anything pinned to it
    *  is released back to the hash. Not reversible from here. */

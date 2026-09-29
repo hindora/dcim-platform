@@ -1,0 +1,49 @@
+# systemd unit for a bare-metal or VM collector install (the .deb/.rpm
+# package installs this to /usr/lib/systemd/system/dcim-collector.service).
+#
+# Install by hand:
+#   sudo useradd --system --no-create-home --shell /usr/sbin/nologin dcim-collector
+#   sudo install -d -o dcim-collector -g dcim-collector /etc/dcim /var/lib/dcim-collector
+#   sudo install -m 0644 collector.service /etc/systemd/system/dcim-collector.service
+#   sudo install -m 0640 -o dcim-collector -g dcim-collector configs/collector.yaml /etc/dcim/collector.yaml
+#   sudoedit /etc/dcim/collector.env        # DCIM_COLLECTOR_TOKEN=... (Settings > Collectors > Add collector)
+#   sudo systemctl daemon-reload && sudo systemctl enable --now dcim-collector
+
+[Unit]
+Description=DCIM collector
+Documentation=https://github.com/hindora/dcim-platform/blob/main/docs/26-collector-deployment-plan.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=dcim-collector
+Group=dcim-collector
+ExecStart=/usr/local/bin/collector --config /etc/dcim/collector.yaml
+Restart=on-failure
+RestartSec=5
+
+# The one exception to running as a plain unprivileged user: the SNMP trap
+# listener binds UDP 162 by default, a port below 1024 that only root or a
+# process holding this capability may bind. Ambient (not just Bounding),
+# because the binary is not setuid and needs the capability to survive into
+# its own process image at exec time.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+
+# Reserved for the local spool (Phase 3: memory-then-disk buffering when the
+# platform is unreachable). Harmless and forward-compatible to create now -
+# systemd owns creating and permissioning it before the process starts.
+StateDirectory=dcim-collector
+StateDirectoryMode=0750
+
+# Everything this process can touch outside its own state directory: nothing.
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+EnvironmentFile=-/etc/dcim/collector.env
+
+[Install]
+WantedBy=multi-user.target

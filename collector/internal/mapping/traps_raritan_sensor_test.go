@@ -1,6 +1,7 @@
 package mapping
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -42,7 +43,7 @@ const (
 
 func shippedTable(t *testing.T) *TrapTable {
 	t.Helper()
-	tbl, err := LoadTraps(filepath.Join("..", "..", "..", "contracts", "mappings"))
+	tbl, err := LoadTraps(os.DirFS(filepath.Join("..", "..", "..", "contracts", "mappings")))
 	if err != nil {
 		t.Skipf("shipped mapping not readable from here: %v", err)
 	}

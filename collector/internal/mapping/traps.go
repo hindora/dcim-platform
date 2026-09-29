@@ -2,8 +2,8 @@ package mapping
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
+	"io/fs"
+	stdpath "path"
 	"strconv"
 	"strings"
 
@@ -151,14 +151,14 @@ type TrapTable struct {
 }
 
 // LoadTraps reads every trap mapping under <dir>/snmp/traps*.yaml.
-func LoadTraps(dir string) (*TrapTable, error) {
+func LoadTraps(fsys fs.FS) (*TrapTable, error) {
 	t := &TrapTable{byOID: make(map[string][]TrapDef)}
-	paths, err := filepath.Glob(filepath.Join(dir, "snmp", "traps*.yaml"))
+	paths, err := fs.Glob(fsys, stdpath.Join("snmp", "traps*.yaml"))
 	if err != nil {
 		return nil, err
 	}
 	for _, path := range paths {
-		raw, err := os.ReadFile(path)
+		raw, err := fs.ReadFile(fsys, path)
 		if err != nil {
 			return nil, fmt.Errorf("read %s: %w", path, err)
 		}

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"math"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -307,7 +308,7 @@ func testLogger() *slog.Logger {
 
 func loadMap(t *testing.T) *mapping.BACnetMap {
 	t.Helper()
-	m, err := mapping.LoadBACnet("../../../../contracts/mappings")
+	m, err := mapping.LoadBACnet(os.DirFS("../../../../contracts/mappings"))
 	if err != nil {
 		t.Fatalf("load bacnet mappings: %v", err)
 	}

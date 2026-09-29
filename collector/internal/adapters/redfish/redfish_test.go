@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"os"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -91,7 +92,7 @@ func (f *fakeBMC) handler() http.Handler {
 
 func newAdapter(t *testing.T) *Adapter {
 	t.Helper()
-	maps, err := mapping.LoadRedfish("../../../../contracts/mappings")
+	maps, err := mapping.LoadRedfish(os.DirFS("../../../../contracts/mappings"))
 	if err != nil {
 		t.Fatalf("load mappings: %v", err)
 	}

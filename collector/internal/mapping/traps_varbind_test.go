@@ -1,6 +1,7 @@
 package mapping
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -138,7 +139,7 @@ func TestBothVarbindsMustHold(t *testing.T) {
 func TestTheShippedMappingSeparatesTheLiebertConditions(t *testing.T) {
 	// The generated file, not a fixture. 476.1.42.3.3.0.1 carries seven
 	// conditions on this plane and every one of them has to land separately.
-	tbl, err := LoadTraps(filepath.Join("..", "..", "..", "contracts", "mappings"))
+	tbl, err := LoadTraps(os.DirFS(filepath.Join("..", "..", "..", "contracts", "mappings")))
 	if err != nil {
 		t.Skipf("shipped mapping not readable from here: %v", err)
 	}

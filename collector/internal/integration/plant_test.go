@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"os"
 	"testing"
 	"time"
 
@@ -12,7 +13,7 @@ import (
 
 func bacnetAdapter(t *testing.T) *bacnet.Adapter {
 	t.Helper()
-	maps, err := mapping.LoadBACnet("../../../contracts/mappings")
+	maps, err := mapping.LoadBACnet(os.DirFS("../../../contracts/mappings"))
 	if err != nil {
 		t.Fatalf("load bacnet mappings: %v", err)
 	}
@@ -117,7 +118,7 @@ func TestBACnetMSTPDevicesAreDistinctThroughOneRouter(t *testing.T) {
 
 func modbusAdapter(t *testing.T) *modbus.Adapter {
 	t.Helper()
-	maps, err := mapping.LoadModbus("../../../contracts/mappings")
+	maps, err := mapping.LoadModbus(os.DirFS("../../../contracts/mappings"))
 	if err != nil {
 		t.Fatalf("load modbus templates: %v", err)
 	}

@@ -2,8 +2,8 @@ package mapping
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
+	"io/fs"
+	stdpath "path"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -70,9 +70,9 @@ type RedfishMap struct {
 }
 
 // LoadRedfish reads contracts/mappings/redfish/resources.yaml.
-func LoadRedfish(dir string) (*RedfishMap, error) {
-	path := filepath.Join(dir, "redfish", "resources.yaml")
-	raw, err := os.ReadFile(path)
+func LoadRedfish(fsys fs.FS) (*RedfishMap, error) {
+	path := stdpath.Join("redfish", "resources.yaml")
+	raw, err := fs.ReadFile(fsys, path)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}

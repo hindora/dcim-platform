@@ -8,8 +8,8 @@ package mapping
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
+	"io/fs"
+	stdpath "path"
 
 	"gopkg.in/yaml.v3"
 
@@ -122,10 +122,10 @@ type Registry struct {
 	profiles map[string]*Profile
 }
 
-func Load(dir string) (*Registry, error) {
+func Load(fsys fs.FS) (*Registry, error) {
 	r := &Registry{profiles: make(map[string]*Profile)}
-	pattern := filepath.Join(dir, "snmp", "*.yaml")
-	paths, err := filepath.Glob(pattern)
+	pattern := stdpath.Join("snmp", "*.yaml")
+	paths, err := fs.Glob(fsys, pattern)
 	if err != nil {
 		return nil, err
 	}
@@ -133,21 +133,21 @@ func Load(dir string) (*Registry, error) {
 		return nil, fmt.Errorf("no SNMP mapping files found under %s", pattern)
 	}
 
-	for _, path := range paths {
-		raw, err := os.ReadFile(path)
+	for _, filePath := range paths {
+		raw, err := fs.ReadFile(fsys, filePath)
 		if err != nil {
-			return nil, fmt.Errorf("read %s: %w", path, err)
+			return nil, fmt.Errorf("read %s: %w", filePath, err)
 		}
 		var f file
 		if err := yaml.Unmarshal(raw, &f); err != nil {
-			return nil, fmt.Errorf("parse %s: %w", path, err)
+			return nil, fmt.Errorf("parse %s: %w", filePath, err)
 		}
 		for i := range f.Profiles {
-			p := f.Profiles[i]
-			if err := validate(&p); err != nil {
-				return nil, fmt.Errorf("%s: profile %q: %w", path, p.Name, err)
+			prof := f.Profiles[i]
+			if err := validate(&prof); err != nil {
+				return nil, fmt.Errorf("%s: profile %q: %w", filePath, prof.Name, err)
 			}
-			r.profiles[p.Name] = &p
+			r.profiles[prof.Name] = &prof
 		}
 	}
 	return r, nil

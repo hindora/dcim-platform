@@ -1,0 +1,158 @@
+# Collector release artifacts: a signed, versioned container image with an
+# SBOM, and .deb/.rpm packages - docs/26 Phase 1 ("ship an installable,
+# versioned collector"). Runs on a version tag only, never on a normal push,
+# so it never competes with or blocks ci.yml.
+#
+# Signing is KEYLESS (Sigstore/cosign via GitHub's OIDC token): no signing
+# key is stored as a repository secret, so there is nothing here for anyone
+# to provision before this can run. `id-token: write` is what lets the
+# runner mint that short-lived OIDC identity.
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+
+jobs:
+  image:
+    name: Collector image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Derive version
+        id: ver
+        run: |
+          echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          echo "sha=${GITHUB_SHA:0:12}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: collector/Dockerfile
+          push: true
+          build-args: |
+            VERSION=${{ steps.ver.outputs.version }}
+            GIT_SHA=${{ steps.ver.outputs.sha }}
+          tags: |
+            ghcr.io/${{ github.repository }}/collector:${{ steps.ver.outputs.version }}
+            ghcr.io/${{ github.repository }}/collector:latest
+
+      # SBOM: what is actually in the image, in a standard format an
+      # operator's own vulnerability scanner can ingest. anchore/sbom-action
+      # needs no secret and works against the digest just pushed.
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ghcr.io/${{ github.repository }}/collector@${{ steps.build.outputs.digest }}
+          format: spdx-json
+          output-file: collector-sbom.spdx.json
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      # Keyless: cosign uses the OIDC token this job already has (id-token:
+      # write above) to get a short-lived certificate from Sigstore's Fulcio,
+      # and records the signature in the public Rekor transparency log rather
+      # than in a secret this repository has to protect. Verify with:
+      #   cosign verify ghcr.io/<repo>/collector:<version> \
+      #     --certificate-identity-regexp '.*' \
+      #     --certificate-oidc-issuer https://token.actions.githubusercontent.com
+      - name: Sign the image (keyless)
+        run: |
+          cosign sign --yes \
+            "ghcr.io/${{ github.repository }}/collector@${{ steps.build.outputs.digest }}"
+
+      - name: Attach the SBOM to the image
+        run: |
+          cosign attach sbom --sbom collector-sbom.spdx.json \
+            "ghcr.io/${{ github.repository }}/collector@${{ steps.build.outputs.digest }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: collector-sbom
+          path: collector-sbom.spdx.json
+
+  packages:
+    name: .deb / .rpm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache-dependency-path: collector/go.sum
+
+      - name: Derive version
+        id: ver
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build the binary
+        working-directory: collector
+        run: |
+          CGO_ENABLED=0 go build \
+            -ldflags "-s -w -X main.version=${{ steps.ver.outputs.version }}" \
+            -o bin/collector ./cmd/collector
+
+      - uses: goreleaser/nfpm-action@v1
+        with:
+          config: collector/packaging/nfpm.yaml
+          packager: deb
+          target: dist/
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+
+      - uses: goreleaser/nfpm-action@v1
+        with:
+          config: collector/packaging/nfpm.yaml
+          packager: rpm
+          target: dist/
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign the packages (keyless)
+        run: |
+          for f in dist/*.deb dist/*.rpm; do
+            cosign sign-blob --yes --output-signature "$f.sig" \
+              --output-certificate "$f.pem" "$f"
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: collector-packages
+          path: dist/*
+
+  publish:
+    name: Publish GitHub release
+    runs-on: ubuntu-latest
+    needs: [image, packages]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/collector-sbom/collector-sbom.spdx.json
+            artifacts/collector-packages/*
+          generate_release_notes: true

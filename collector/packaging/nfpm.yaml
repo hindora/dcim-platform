@@ -1,0 +1,61 @@
+# nfpm (https://nfpm.goreleaser.com) config for the collector's .deb and .rpm
+# packages. Built from the REPO ROOT (paths below are relative to it) by
+# .github/workflows/release.yml on a version tag:
+#
+#   VERSION=1.2.3 nfpm package --config collector/packaging/nfpm.yaml \
+#     --packager deb --target dist/
+#
+# nfpm needs no Go toolchain and no root, so this can also be run by hand to
+# test a package locally before a release - build the binary first with
+# `make collector-build`.
+name: dcim-collector
+arch: amd64
+platform: linux
+version: ${VERSION}
+section: net
+priority: optional
+maintainer: "DCIM platform <noreply@example.com>"
+description: |
+  DCIM platform collector: polls SNMP, Redfish, BACnet, Modbus and gNMI
+  device planes and publishes canonical telemetry to the platform.
+homepage: https://github.com/hindora/dcim-platform
+license: proprietary
+
+contents:
+  - src: collector/bin/collector
+    dst: /usr/local/bin/collector
+    file_info:
+      mode: 0755
+
+  - src: collector/configs/collector.yaml
+    dst: /etc/dcim/collector.yaml
+    type: config|noreplace
+    file_info:
+      mode: 0640
+      owner: dcim-collector
+      group: dcim-collector
+
+  - src: deploy/collector.env.example
+    dst: /etc/dcim/collector.env.example
+    file_info:
+      mode: 0644
+
+  - src: deploy/collector.service
+    dst: /usr/lib/systemd/system/dcim-collector.service
+    file_info:
+      mode: 0644
+
+  - src: deploy/collector-firewall.md
+    dst: /usr/share/doc/dcim-collector/collector-firewall.md
+    file_info:
+      mode: 0644
+
+scripts:
+  preinstall: collector/packaging/scripts/preinstall.sh
+  postinstall: collector/packaging/scripts/postinstall.sh
+
+rpm:
+  compression: zstd
+
+deb:
+  compression: zstd

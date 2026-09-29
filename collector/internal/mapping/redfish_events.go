@@ -2,8 +2,8 @@ package mapping
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
+	"io/fs"
+	stdpath "path"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -35,9 +35,9 @@ type RedfishEventMap struct {
 	Unknown     RedfishEventClass            `yaml:"unknown"`
 }
 
-func LoadRedfishEvents(dir string) (*RedfishEventMap, error) {
-	path := filepath.Join(dir, "redfish", "events.yaml")
-	raw, err := os.ReadFile(path)
+func LoadRedfishEvents(fsys fs.FS) (*RedfishEventMap, error) {
+	path := stdpath.Join("redfish", "events.yaml")
+	raw, err := fs.ReadFile(fsys, path)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}

@@ -1048,6 +1048,7 @@ class IngestWorker:
                         "assignment_age_s": hb.assignment_age_s,
                         "active_streams": hb.active_streams,
                         "assignment_version": hb.assignment_version,
+                        "mapping_bundle_sha": hb.mapping_bundle_sha or None,
                         # What configuration this process is actually running,
                         # which is not what the config table was last told to
                         # store. Kept apart so the settings page can show both

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -17,7 +18,7 @@ import (
 
 func redfishAdapter(t *testing.T) *redfish.Adapter {
 	t.Helper()
-	maps, err := mapping.LoadRedfish("../../../contracts/mappings")
+	maps, err := mapping.LoadRedfish(os.DirFS("../../../contracts/mappings"))
 	if err != nil {
 		t.Fatalf("load redfish mappings: %v", err)
 	}
@@ -126,7 +127,7 @@ func TestRedfishSubscriptionAndTestEvent(t *testing.T) {
 	dev := sim.DeviceOfType(t, "server")
 	ep := sim.RedfishEndpoint(t, dev)
 
-	evMaps, err := mapping.LoadRedfishEvents("../../../contracts/mappings")
+	evMaps, err := mapping.LoadRedfishEvents(os.DirFS("../../../contracts/mappings"))
 	if err != nil {
 		t.Fatalf("load redfish event mappings: %v", err)
 	}
@@ -260,7 +261,7 @@ func TestRedfishReconciliationRemovesStaleSubscriptions(t *testing.T) {
 	dev := sim.DeviceOfType(t, "server")
 	ep := sim.RedfishEndpoint(t, dev)
 
-	evMaps, err := mapping.LoadRedfishEvents("../../../contracts/mappings")
+	evMaps, err := mapping.LoadRedfishEvents(os.DirFS("../../../contracts/mappings"))
 	if err != nil {
 		t.Fatalf("load redfish event mappings: %v", err)
 	}

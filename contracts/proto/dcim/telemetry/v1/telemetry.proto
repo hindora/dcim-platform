@@ -159,4 +159,8 @@ message CollectorHeartbeat {
   uint64 publish_dropped = 19;
   uint32 queue_capacity = 20;
   uint32 assignment_age_s = 21;
+  string mapping_bundle_sha = 22;
+  uint64 spool_bytes = 23;
+  uint32 spool_oldest_age_s = 24;
+  uint32 replay_rate = 25;
 }

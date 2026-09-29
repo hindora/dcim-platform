@@ -9,7 +9,16 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Enum, ForeignKey, Index, Integer, Numeric, Text
+from sqlalchemy import (
+    BigInteger,
+    Enum,
+    ForeignKey,
+    Index,
+    Integer,
+    Numeric,
+    Text,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -98,6 +107,46 @@ class CollectorInstance(Base):
     state_changed_at: Mapped[datetime | None] = mapped_column()
     state_changed_by: Mapped[str | None] = mapped_column(Text)
     token_generation: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # mTLS identity - see migration 0086.
+    cert_serial: Mapped[str | None] = mapped_column(Text)
+    cert_fingerprint_sha256: Mapped[str | None] = mapped_column(Text)
+    cert_not_after: Mapped[datetime | None] = mapped_column()
+    cert_revoked_at: Mapped[datetime | None] = mapped_column()
+    encryption_pubkey: Mapped[str | None] = mapped_column(Text)
+    enrolled_by: Mapped[str | None] = mapped_column(Text)
+    enrolled_at: Mapped[datetime | None] = mapped_column()
+
+
+class CertificateAuthority(Base):
+    __tablename__ = "certificate_authority"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True,
+        server_default=text("gen_random_uuid()"))
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    serial: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    cert_pem: Mapped[str] = mapped_column(Text, nullable=False)
+    #: NULL for 'root' - this process never holds that key.
+    key_enc: Mapped[bytes | None] = mapped_column()
+    not_after: Mapped[datetime] = mapped_column(nullable=False)
+    is_active: Mapped[bool] = mapped_column(nullable=False, default=False)
+    created_at: Mapped[datetime | None] = mapped_column()
+
+
+class EnrollmentToken(Base):
+    __tablename__ = "enrollment_token"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True,
+        server_default=text("gen_random_uuid()"))
+    collector_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("collector_instance.id", ondelete="CASCADE"),
+        nullable=False)
+    token_hash: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    expires_at: Mapped[datetime] = mapped_column(nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column()
+    created_by: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime | None] = mapped_column()
 
 
 class Metric(Base):

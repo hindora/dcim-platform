@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"math"
 	"net"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -210,7 +211,7 @@ func testLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard,
 
 func loadMaps(t *testing.T) *mapping.ModbusMap {
 	t.Helper()
-	m, err := mapping.LoadModbus("../../../../contracts/mappings")
+	m, err := mapping.LoadModbus(os.DirFS("../../../../contracts/mappings"))
 	if err != nil {
 		t.Fatalf("load modbus templates: %v", err)
 	}
