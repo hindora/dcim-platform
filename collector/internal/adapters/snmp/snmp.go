@@ -117,16 +117,12 @@ func UseAnySourceSocket(client *g.GoSNMP, address string, port int) error {
 }
 
 // dial opens a session to the endpoint's agent. The caller closes client.Conn.
+//
+// A "snmp_v3" credential (docs/26 Phase 4) gets a USM session instead of a
+// community string - everything else about the session (timeout, retries,
+// the any-source-reply socket swap below) is identical between the two.
 func (a *Adapter) dial(ctx context.Context, ep *models.Endpoint,
 	retries int) (*g.GoSNMP, error) {
-	community := ep.Credential.Community()
-	if community == "" {
-		// Fail loudly: with a wildcard-listener agent plane, an empty community
-		// is not "use the default", it is a guaranteed silent drop.
-		return nil, fmt.Errorf("%w: no community for endpoint %s",
-			models.ErrAuth, ep.ID)
-	}
-
 	port := ep.Port
 	if port == 0 {
 		port = 161
@@ -135,14 +131,47 @@ func (a *Adapter) dial(ctx context.Context, ep *models.Endpoint,
 	client := &g.GoSNMP{
 		Target:             ep.Address,
 		Port:               uint16(port),
-		Community:          community,
-		Version:            g.Version2c,
 		Timeout:            ep.Poll.Timeout(),
 		Retries:            retries,
 		MaxRepetitions:     uint32(a.maxRepetitions),
 		ExponentialTimeout: false,
 		Context:            ctx,
 	}
+
+	if ep.Credential != nil && ep.Credential.Kind == "snmp_v3" {
+		usm, err := parseUSM(ep.Credential)
+		if err != nil {
+			return nil, err
+		}
+		client.Version = g.Version3
+		client.SecurityModel = g.UserSecurityModel
+		client.MsgFlags = usm.msgFlags()
+		// AuthoritativeEngineID is deliberately left empty: gosnmp performs
+		// USM's own discovery handshake against it on Connect and learns
+		// the agent's real engine ID, boots and time from there. Nothing
+		// here needs to know or cache a device's engine ID for polling -
+		// that only becomes this collector's problem on the TRAP side,
+		// where a message arrives unsolicited with no discovery round trip
+		// possible first (see traps.go).
+		client.SecurityParameters = &g.UsmSecurityParameters{
+			UserName:                 usm.securityName,
+			AuthenticationProtocol:   usm.authProtocol,
+			AuthenticationPassphrase: usm.authKey,
+			PrivacyProtocol:          usm.privProtocol,
+			PrivacyPassphrase:        usm.privKey,
+		}
+	} else {
+		community := ep.Credential.Community()
+		if community == "" {
+			// Fail loudly: with a wildcard-listener agent plane, an empty
+			// community is not "use the default", it is a guaranteed silent drop.
+			return nil, fmt.Errorf("%w: no community for endpoint %s",
+				models.ErrAuth, ep.ID)
+		}
+		client.Community = community
+		client.Version = g.Version2c
+	}
+
 	if err := client.Connect(); err != nil {
 		return nil, fmt.Errorf("%w: %v", models.ErrUnreachable, err)
 	}
@@ -166,6 +195,9 @@ func (a *Adapter) Ping(ctx context.Context, ep *models.Endpoint) error {
 	defer client.Conn.Close()
 	result, err := client.Get([]string{sysUpTimeOID})
 	if err != nil {
+		if isUSMAuthError(err) {
+			return fmt.Errorf("%w: %v", models.ErrAuth, err)
+		}
 		return fmt.Errorf("%w: %v", models.ErrTimeout, err)
 	}
 	if len(result.Variables) == 0 {
@@ -186,8 +218,15 @@ func (a *Adapter) Poll(ctx context.Context, ep *models.Endpoint) (*models.PollOu
 	now := models.NowMicros()
 
 	// sysUpTime first, and in this same cycle, so counter resets are detected
-	// before any counter is emitted.
-	counterReset := a.checkUptime(ep, client, outcome, now)
+	// before any counter is emitted. A hard error here - a v3 auth failure
+	// above all - means every OID this session would ask for next fails the
+	// identical way, so this returns immediately rather than let
+	// collectScalars/collectTables each rediscover the same fault one Miss
+	// at a time.
+	counterReset, hardErr := a.checkUptime(ep, client, outcome, now)
+	if hardErr != nil {
+		return nil, hardErr
+	}
 
 	profiles := ep.Poll.MetricGroups
 	if len(profiles) == 0 {
@@ -239,26 +278,37 @@ func emptyPollError(misses []models.Miss, ep *models.Endpoint) error {
 	return fmt.Errorf("%w: no response from %s", models.ErrTimeout, ep.Address)
 }
 
-// checkUptime returns true when the agent appears to have restarted.
+// checkUptime returns true when the agent appears to have restarted, and a
+// non-nil error only for a fault the whole session shares - currently just
+// a v3 USM auth failure - that Poll should stop on rather than keep polling
+// into.
 func (a *Adapter) checkUptime(ep *models.Endpoint, client *g.GoSNMP,
-	outcome *models.PollOutcome, now int64) bool {
+	outcome *models.PollOutcome, now int64) (bool, error) {
 
 	result, err := client.Get([]string{sysUpTimeOID})
-	if err != nil || len(result.Variables) == 0 {
+	if err != nil {
+		if isUSMAuthError(err) {
+			return false, fmt.Errorf("%w: %v", models.ErrAuth, err)
+		}
 		outcome.Misses = append(outcome.Misses,
 			models.Miss{Metric: "sys_uptime", Reason: models.MissTimeout})
-		return false
+		return false, nil
+	}
+	if len(result.Variables) == 0 {
+		outcome.Misses = append(outcome.Misses,
+			models.Miss{Metric: "sys_uptime", Reason: models.MissTimeout})
+		return false, nil
 	}
 	pdu := result.Variables[0]
 	if pdu.Type == g.NoSuchObject || pdu.Type == g.NoSuchInstance {
 		outcome.Misses = append(outcome.Misses,
 			models.Miss{Metric: "sys_uptime", Reason: models.MissNoSuchObject})
-		return false
+		return false, nil
 	}
 
 	ticks, ok := toFloat(pdu.Value)
 	if !ok {
-		return false
+		return false, nil
 	}
 	seconds := ticks / 100.0 // TimeTicks are centiseconds
 
@@ -282,7 +332,7 @@ func (a *Adapter) checkUptime(ep *models.Endpoint, client *g.GoSNMP,
 		Metadata:       map[string]string{"oid": sysUpTimeOID},
 	})
 
-	return seen && seconds < previous
+	return seen && seconds < previous, nil
 }
 
 // resolveOID fills {placeholders} in a profile OID from the endpoint's

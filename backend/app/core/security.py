@@ -29,20 +29,31 @@ bearer = HTTPBearer(auto_error=False)
 
 # ---------------------------------------------------------------- secrets
 
-def encrypt_secret(payload: dict[str, Any], settings: Settings | None = None) -> bytes:
-    """Encrypt a credential payload. Returns nonce || ciphertext || tag."""
+def encrypt_secret(payload: dict[str, Any], settings: Settings | None = None,
+                   key_id: str | None = None) -> bytes:
+    """Encrypt a credential payload. Returns nonce || ciphertext || tag.
+
+    key_id (docs/26 Phase 4) selects which key seals it - None (the default
+    for every caller that predates rotation) always means DCIM_CREDENTIAL_KEY,
+    exactly as before this parameter existed. Only a caller that also has
+    somewhere to remember which key_id it used - today, only the `credential`
+    table's own key_id column - has any reason to pass one.
+    """
     s = settings or get_settings()
     nonce = os.urandom(_NONCE_BYTES)
-    aes = AESGCM(s.credential_key_bytes)
+    aes = AESGCM(s.credential_key_for(key_id))
     blob = aes.encrypt(nonce, json.dumps(payload, separators=(",", ":")).encode(), None)
     return nonce + blob
 
 
-def decrypt_secret(blob: bytes, settings: Settings | None = None) -> dict[str, Any]:
+def decrypt_secret(blob: bytes, settings: Settings | None = None,
+                   key_id: str | None = None) -> dict[str, Any]:
+    """The exact inverse of encrypt_secret - key_id must be whatever the
+    matching row's own key_id column says, not assumed."""
     s = settings or get_settings()
     if len(blob) <= _NONCE_BYTES:
         raise ValueError("credential blob too short")
-    aes = AESGCM(s.credential_key_bytes)
+    aes = AESGCM(s.credential_key_for(key_id))
     plain = aes.decrypt(bytes(blob[:_NONCE_BYTES]), bytes(blob[_NONCE_BYTES:]), None)
     return json.loads(plain)
 

@@ -220,6 +220,7 @@ func (s *Subscriber) subscribe(ctx context.Context, ep *models.Endpoint) error {
 	if err != nil {
 		return err
 	}
+	s.adapter.applyCredential(ep, tgt)
 	client, err := s.conns.Client(ctx, ep.ID, tgt)
 	if err != nil {
 		return err

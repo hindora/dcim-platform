@@ -61,6 +61,22 @@ class Settings(BaseSettings):
     collector_token: SecretStr
     credential_key: SecretStr = Field(
         description="base64-encoded 32-byte key for device-credential encryption at rest")
+    #: Additional keys, by id, usable ONLY to decrypt a device credential
+    #: whose key_id names one of them - docs/26 Phase 4. Populate this with
+    #: the OLD key (under some id) before running scripts/
+    #: rotate_credential_key.py, so a row not yet re-wrapped still decrypts
+    #: during the rotation window; DCIM_CREDENTIAL_KEY itself is always the
+    #: key a NULL key_id (the pre-rotation default) resolves to and is never
+    #: put in this ring. JSON object of id -> base64 32-byte key, e.g.
+    #: {"2026-01": "base64..."}. Empty by default: a deployment that has
+    #: never rotated needs nothing here.
+    credential_key_ring: dict[str, SecretStr] = Field(default_factory=dict)
+    #: Which key_id scripts/rotate_credential_key.py's target and any NEW
+    #: device credential (app/services/discovery_endpoints.py's promotion
+    #: path) should be sealed under. None means DCIM_CREDENTIAL_KEY itself -
+    #: the original single-key behaviour, and every deployment's default
+    #: until an operator explicitly rotates.
+    active_credential_key_id: str | None = None
     #: Shared only with the TLS-terminating proxy in front of collector
     #: routes (deploy/collector-nginx.conf), never with a browser or a
     #: collector. Its presence and correctness on a request is what lets the
@@ -122,9 +138,39 @@ class Settings(BaseSettings):
             raise ValueError(f"credential_key must decode to 32 bytes, got {len(raw)}")
         return v
 
+    @field_validator("credential_key_ring")
+    @classmethod
+    def _ring_keys_must_be_32_bytes(cls, v: dict[str, SecretStr]) -> dict[str, SecretStr]:
+        for key_id, key in v.items():
+            try:
+                raw = base64.b64decode(key.get_secret_value(), validate=True)
+            except Exception as exc:
+                raise ValueError(f"credential_key_ring[{key_id!r}] must be base64") from exc
+            if len(raw) != 32:
+                raise ValueError(
+                    f"credential_key_ring[{key_id!r}] must decode to 32 bytes, got {len(raw)}")
+        return v
+
     @property
     def credential_key_bytes(self) -> bytes:
         return base64.b64decode(self.credential_key.get_secret_value())
+
+    def credential_key_for(self, key_id: str | None) -> bytes:
+        """Resolves a credential.key_id to the key bytes that sealed it -
+        docs/26 Phase 4. None (the pre-rotation default, and every row
+        before this phase existed) always means DCIM_CREDENTIAL_KEY itself,
+        never a ring entry, so a deployment that has never rotated is
+        completely unaffected by credential_key_ring existing as a concept.
+        """
+        if key_id is None:
+            return self.credential_key_bytes
+        try:
+            secret = self.credential_key_ring[key_id]
+        except KeyError:
+            raise ValueError(
+                f"no key {key_id!r} in credential_key_ring - a credential sealed "
+                "under it cannot be decrypted until it is added back") from None
+        return base64.b64decode(secret.get_secret_value())
 
     @property
     def sync_database_url(self) -> str:

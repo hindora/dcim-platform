@@ -47,6 +47,29 @@ type Config struct {
 		} `yaml:"streams"`
 	} `yaml:"redis"`
 
+	// Vault configures external secrets managers a "credential_ref"
+	// endpoint's ref can name (docs/26 Phase 4) - see internal/vault.
+	// Disabled by default: an endpoint whose credential is a ref and no
+	// matching resolver is configured fails that one endpoint's polls as
+	// ErrConfig, not the whole collector.
+	Vault struct {
+		HashiCorp struct {
+			Enabled bool   `yaml:"enabled"`
+			Addr    string `yaml:"addr"`
+			RoleID  string `yaml:"role_id"`
+			// SecretIDEnv names the environment variable holding the
+			// AppRole secret_id (or its wrapping token) - never written to
+			// the config file itself, the same convention DCIM.TokenEnv
+			// already uses for the collector's own token.
+			SecretIDEnv     string        `yaml:"secret_id_env"`
+			SecretIDWrapped bool          `yaml:"secret_id_wrapped"`
+			Namespace       string        `yaml:"namespace"`
+			MountPath       string        `yaml:"mount_path"`
+			Timeout         time.Duration `yaml:"timeout"`
+			secretID        string
+		} `yaml:"hashicorp"`
+	} `yaml:"vault"`
+
 	// Transport picks how this process gets telemetry to the platform.
 	// "redis" (default) is the direct XADD path from before docs/26 Phase 3 -
 	// correct for a collector on a network Redis can be trusted on. "gateway"
@@ -272,6 +295,10 @@ type ProtocolCfg struct {
 // stored in the config file.
 func (c *Config) Token() string { return c.DCIM.token }
 
+// VaultHashiCorpSecretID is the AppRole secret_id (or its wrapping token),
+// read from the environment. Never stored in the config file.
+func (c *Config) VaultHashiCorpSecretID() string { return c.Vault.HashiCorp.secretID }
+
 func Load(path string) (*Config, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -418,6 +445,9 @@ func (c *Config) resolve() error {
 	}
 	if env := strings.TrimSpace(c.DCIM.TokenEnv); env != "" {
 		c.DCIM.token = os.Getenv(env)
+	}
+	if env := strings.TrimSpace(c.Vault.HashiCorp.SecretIDEnv); env != "" {
+		c.Vault.HashiCorp.secretID = os.Getenv(env)
 	}
 	if env := strings.TrimSpace(c.Redis.URLEnv); env != "" {
 		if v := os.Getenv(env); v != "" {

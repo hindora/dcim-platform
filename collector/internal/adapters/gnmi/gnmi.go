@@ -62,10 +62,16 @@ type target struct {
 	addr   string
 	target string
 	tls    bool
+	// verifyTLS defaults true (docs/26 Phase 4) - the same convention the
+	// Redfish adapter already uses for its own addressing.verify_tls. A lab
+	// device with a self-signed certificate is common enough that the
+	// decision has to be overridable per endpoint, but a new endpoint must
+	// not be silently insecure by default.
+	verifyTLS bool
 }
 
 func targetOf(ep *models.Endpoint) (target, error) {
-	t := target{tls: true}
+	t := target{tls: true, verifyTLS: true}
 	if ep.Address == "" {
 		return t, fmt.Errorf("%w: endpoint has no address", models.ErrConfig)
 	}
@@ -84,6 +90,9 @@ func targetOf(ep *models.Endpoint) (target, error) {
 	if v, ok := ep.Addressing["tls"].(bool); ok {
 		t.tls = v
 	}
+	if v, ok := ep.Addressing["verify_tls"].(bool); ok {
+		t.verifyTLS = v
+	}
 	// The target names the DEVICE the server should answer for, which is not
 	// always the address dialled: a single collector-facing gNMI service can
 	// front many devices. Falling back to the address is right for gear that
@@ -92,6 +101,26 @@ func targetOf(ep *models.Endpoint) (target, error) {
 		t.target = ep.Address
 	}
 	return t, nil
+}
+
+// applyCredential registers this endpoint's username/password with the
+// connection pool before dialling, so client.Get and the Subscribe path in
+// stream.go both carry it via WithAuth - there is no auth message in gNMI
+// itself, every implementation sends the credential as gRPC metadata (see
+// ConnPool.SetCredential). Previously nothing ever called SetCredential at
+// all, so a gNMI endpoint's stored credential - however carefully rotated -
+// never actually reached the device; every poll authenticated as nobody and
+// relied on the device permitting anonymous reads.
+func (a *Adapter) applyCredential(ep *models.Endpoint, tgt target) {
+	if ep.Credential == nil {
+		return
+	}
+	user, _ := ep.Credential.Data["username"].(string)
+	pass, _ := ep.Credential.Data["password"].(string)
+	if user == "" && pass == "" {
+		return
+	}
+	a.conns.SetCredential(tgt.addr, user, pass)
 }
 
 // Poll fetches every mapped subtree with Get.
@@ -106,6 +135,7 @@ func (a *Adapter) Poll(ctx context.Context, ep *models.Endpoint) (*models.PollOu
 	if err != nil {
 		return nil, err
 	}
+	a.applyCredential(ep, tgt)
 
 	client, err := a.conns.Client(ctx, ep.ID, tgt)
 	if err != nil {
@@ -122,7 +152,7 @@ func (a *Adapter) Poll(ctx context.Context, ep *models.Endpoint) (*models.PollOu
 			Path:     []*gpb.Path{pathOf(sub.Path)},
 			Encoding: gpb.Encoding_JSON_IETF,
 		}
-		resp, err := client.Get(ctx, req)
+		resp, err := client.Get(a.conns.WithAuth(ctx, tgt.addr), req)
 		if err != nil {
 			// One subtree failing must not cost the others: a device may not
 			// implement openconfig-platform and still serve interfaces

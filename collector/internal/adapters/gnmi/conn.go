@@ -67,10 +67,14 @@ func (p *ConnPool) Client(ctx context.Context, endpointID string,
 
 	var creds credentials.TransportCredentials
 	if tgt.tls {
-		// A lab device with a self-signed certificate is the norm, and the
-		// verification decision belongs per endpoint rather than to the
-		// process - the same reasoning as the Redfish adapter.
-		creds = credentials.NewTLS(&tls.Config{InsecureSkipVerify: true}) //nolint:gosec
+		// A lab device with a self-signed certificate is common enough that
+		// the verification decision belongs per endpoint rather than to the
+		// process - the same reasoning as the Redfish adapter - but
+		// verifyTLS defaults true (see targetOf), so a new endpoint is
+		// secure until someone explicitly opts it out via
+		// addressing.verify_tls: false. This used to skip verification
+		// unconditionally for every TLS target.
+		creds = credentials.NewTLS(&tls.Config{InsecureSkipVerify: !tgt.verifyTLS}) //nolint:gosec // per-endpoint, see targetOf's verifyTLS
 	} else {
 		creds = insecure.NewCredentials()
 	}

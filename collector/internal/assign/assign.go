@@ -21,6 +21,7 @@ import (
 	"github.com/hari/dcim-platform/collector/internal/config"
 	"github.com/hari/dcim-platform/collector/internal/obs"
 	"github.com/hari/dcim-platform/collector/internal/sealedbox"
+	"github.com/hari/dcim-platform/collector/internal/vault"
 	"github.com/hari/dcim-platform/collector/pkg/models"
 )
 
@@ -58,6 +59,12 @@ type Client struct {
 	// which is the honest outcome of a collector that cannot unseal
 	// anything rather than a panic.
 	seal *sealedbox.KeyPair
+	// vault is nil unless a resolver was configured (internal/vault). An
+	// endpoint whose credential is a "credential_ref" then keeps that
+	// reference unresolved - every adapter treats it as an empty
+	// credential, the same visible failure a real vault outage would
+	// produce, not a crash.
+	vault *vault.Registry
 
 	etag    string
 	current map[string]*models.Endpoint
@@ -93,6 +100,12 @@ func New(cfg *config.Config, log *slog.Logger, mets *obs.Metrics,
 		started: time.Now(),
 	}
 }
+
+// SetVaultRegistry attaches a vault resolver registry after construction -
+// a setter rather than another New() parameter because it is the rare case
+// (most deployments have no credential_ref endpoints at all) and every
+// existing caller of New should not have to know it exists.
+func (c *Client) SetVaultRegistry(r *vault.Registry) { c.vault = r }
 
 // Run refreshes on an interval. It returns when ctx is cancelled.
 func (c *Client) Run(ctx context.Context) {
@@ -158,6 +171,7 @@ func (c *Client) Refresh(ctx context.Context) error {
 		return fmt.Errorf("decode assignment: %w", err)
 	}
 	c.unsealCredentials(assignment.Endpoints)
+	c.resolveCredentialRefs(ctx, assignment.Endpoints)
 
 	next := make(map[string]*models.Endpoint, len(assignment.Endpoints))
 	for _, ep := range assignment.Endpoints {
@@ -227,6 +241,42 @@ func (c *Client) unsealCredentials(endpoints []*models.Endpoint) {
 		}
 		cred.Data = data
 		cred.Sealed = ""
+	}
+}
+
+// resolveCredentialRefs replaces a "credential_ref" credential's Data
+// (after unsealCredentials has already turned any sealed reference into a
+// plain one) with the actual secret an external vault names, in place -
+// docs/26 Phase 4. Runs after unsealing so a ref delivered sealed is
+// resolved the same as one delivered plaintext.
+//
+// A ref this collector cannot currently resolve - no registry configured,
+// the wrong backend registered, the vault itself unreachable - is left
+// alone rather than cleared: Data still holds the reference string
+// (Data["ref"]), and every protocol adapter that reads Credential.
+// Community()/Data["username"] etc. finds nothing usable there and fails
+// the poll as a config/auth error, which is the honest outcome of a
+// credential this process genuinely cannot use right now.
+func (c *Client) resolveCredentialRefs(ctx context.Context, endpoints []*models.Endpoint) {
+	if c.vault == nil {
+		return
+	}
+	for _, ep := range endpoints {
+		cred := ep.Credential
+		if cred == nil || cred.Kind != "credential_ref" {
+			continue
+		}
+		ref, _ := cred.Data["ref"].(string)
+		if ref == "" {
+			continue
+		}
+		resolved, err := c.vault.Resolve(ctx, ref)
+		if err != nil {
+			c.log.Error("could not resolve credential_ref; endpoint will fail to "+
+				"authenticate until it can be", "endpoint_id", ep.ID, "ref", ref, "error", err)
+			continue
+		}
+		cred.Data = resolved
 	}
 }
 

@@ -17,6 +17,7 @@ import (
 	gpb "github.com/openconfig/gnmi/proto/gnmi"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
 	"github.com/hari/dcim-platform/collector/internal/health"
@@ -45,6 +46,10 @@ type fakeTarget struct {
 	subCalls    int
 	streamEvery time.Duration
 	silent      bool
+	// lastGetMD is the incoming gRPC metadata of the most recent Get call -
+	// what SetCredential/WithAuth (docs/26 Phase 4) actually put on the
+	// wire, not just what the adapter intended to send.
+	lastGetMD metadata.MD
 }
 
 func newFakeTarget(t *testing.T) *fakeTarget {
@@ -63,6 +68,12 @@ func newFakeTarget(t *testing.T) *fakeTarget {
 	go func() { _ = f.srv.Serve(ln) }()
 	t.Cleanup(f.srv.Stop)
 	return f
+}
+
+func (f *fakeTarget) lastMetadata() metadata.MD {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.lastGetMD
 }
 
 func (f *fakeTarget) addrPort() (string, int) {
@@ -184,9 +195,11 @@ func (f *fakeTarget) subtree(p *gpb.Path) (any, bool) {
 	return cur, true
 }
 
-func (f *fakeTarget) Get(_ context.Context, req *gpb.GetRequest) (*gpb.GetResponse, error) {
+func (f *fakeTarget) Get(ctx context.Context, req *gpb.GetRequest) (*gpb.GetResponse, error) {
+	md, _ := metadata.FromIncomingContext(ctx)
 	f.mu.Lock()
 	f.getCalls++
+	f.lastGetMD = md
 	silent := f.silent
 	fails := make(map[string]codes.Code, len(f.failPaths))
 	for k, v := range f.failPaths {

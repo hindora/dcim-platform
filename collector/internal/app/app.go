@@ -29,6 +29,7 @@ import (
 	"github.com/hari/dcim-platform/collector/internal/sched"
 	"github.com/hari/dcim-platform/collector/internal/sealedbox"
 	"github.com/hari/dcim-platform/collector/internal/spool"
+	"github.com/hari/dcim-platform/collector/internal/vault"
 	"github.com/hari/dcim-platform/collector/pkg/models"
 )
 
@@ -339,6 +340,19 @@ func New(cfg *config.Config, version string, tlsStore *mtls.Store) (*App, error)
 	}
 
 	a.assign = assign.New(cfg, log, mets, tlsConfig, sealKP)
+	if cfg.Vault.HashiCorp.Enabled {
+		reg := vault.NewRegistry()
+		reg.Register("hashicorp", vault.NewHashiCorpResolver(vault.HashiCorpConfig{
+			Addr: cfg.Vault.HashiCorp.Addr, RoleID: cfg.Vault.HashiCorp.RoleID,
+			SecretID:        cfg.VaultHashiCorpSecretID(),
+			SecretIDWrapped: cfg.Vault.HashiCorp.SecretIDWrapped,
+			Namespace:       cfg.Vault.HashiCorp.Namespace,
+			MountPath:       cfg.Vault.HashiCorp.MountPath,
+			Timeout:         cfg.Vault.HashiCorp.Timeout,
+		}))
+		a.assign.SetVaultRegistry(reg)
+		log.Info("vault: hashicorp resolver enabled", "addr", cfg.Vault.HashiCorp.Addr)
+	}
 	a.assign.OnChange = a.applyDiff
 	a.assign.OnRefreshed = a.refreshResolver
 	a.cfg.Collector.Version = version

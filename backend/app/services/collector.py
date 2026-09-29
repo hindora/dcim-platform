@@ -68,10 +68,13 @@ async def build_assignment(session: AsyncSession, collector_id: str,
         credential = None
         if r.get("secret_enc") is not None:
             try:
-                plain = decrypt_secret(bytes(r["secret_enc"]))
+                plain = decrypt_secret(bytes(r["secret_enc"]), key_id=r.get("credential_key_id"))
             except Exception:
                 # A credential encrypted under a previous key must not take the
-                # whole assignment down - the other endpoints still work.
+                # whole assignment down - the other endpoints still work. (Now
+                # a real, named case: a row whose key_id names a ring entry
+                # that has since been removed - see docs/26 Phase 4's
+                # rotation script.)
                 decrypt_failures += 1
             else:
                 kind = r.get("credential_kind") or "none"
@@ -183,7 +186,8 @@ async def resolve_list(session: AsyncSession,
         digest = None
         if r.get("secret_enc") is not None and r["protocol"] == "snmp":
             try:
-                digest = community_digest(decrypt_secret(bytes(r["secret_enc"])))
+                digest = community_digest(decrypt_secret(
+                    bytes(r["secret_enc"]), key_id=r.get("credential_key_id")))
             except Exception:
                 failures += 1
         out.append(ResolveEntry(

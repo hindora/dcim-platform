@@ -44,6 +44,9 @@ class Credential(Base):
     secret_enc: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     secret_hint: Mapped[str | None] = mapped_column(Text)
     rotated_at: Mapped[str | None] = mapped_column(Text)
+    #: Which DCIM_CREDENTIAL_KEY_RING entry sealed secret_enc; NULL means the
+    #: original DCIM_CREDENTIAL_KEY - docs/26 Phase 4, see migration 0087.
+    key_id: Mapped[str | None] = mapped_column(Text)
 
 
 class PollProfile(Base):

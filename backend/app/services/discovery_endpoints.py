@@ -26,6 +26,7 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.core.security import credential_hint, encrypt_secret
 from app.importer.endpoints import (
     DEFAULT_SNMP_PROFILE,
@@ -216,13 +217,19 @@ async def _credential(session: AsyncSession, protocol: str, address: str,
     else:
         raise EndpointPlanError(f"unknown credential choice {mode!r}")
 
+    # docs/26 Phase 4: a newly-promoted credential is sealed under whatever
+    # key rotation currently calls active, not always the original
+    # DCIM_CREDENTIAL_KEY - key_id is stored alongside the encrypted blob so
+    # a later read knows which one to reach for.
+    active_key_id = get_settings().active_credential_key_id
     return (await session.execute(text("""
-        INSERT INTO credential (name, protocol, kind, secret_enc, secret_hint)
-        VALUES (:name, CAST(:proto AS protocol_t), :kind, :blob, :hint)
+        INSERT INTO credential (name, protocol, kind, secret_enc, secret_hint, key_id)
+        VALUES (:name, CAST(:proto AS protocol_t), :kind, :blob, :hint, :key_id)
         RETURNING id::text
     """), {"name": name, "proto": protocol, "kind": kind,
-           "blob": encrypt_secret(payload),
-           "hint": credential_hint(kind, payload)})).scalar_one()
+           "blob": encrypt_secret(payload, key_id=active_key_id),
+           "hint": credential_hint(kind, payload),
+           "key_id": active_key_id})).scalar_one()
 
 
 def _requested_port(req: dict[str, Any], probe: dict[str, Any]) -> int:

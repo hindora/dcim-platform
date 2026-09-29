@@ -201,7 +201,7 @@ async def assignment_endpoints(session: AsyncSession, collector_id: str,
                e.protocol::text AS protocol, e.role::text AS role,
                host(e.address) AS address, e.port, e.addressing,
                e.via_endpoint_id::text,
-               c.kind AS credential_kind, c.secret_enc,
+               c.kind AS credential_kind, c.secret_enc, c.key_id AS credential_key_id,
                e.collector_id,
                dc.code AS site,
                p.interval_s, p.timeout_ms, p.retries, p.metric_groups, p.push_enabled
@@ -255,7 +255,7 @@ async def resolvable_endpoints(session: AsyncSession) -> list[dict[str, Any]]:
         SELECT e.id::text, e.device_id::text, d.name AS device_name, d.device_type,
                e.protocol::text AS protocol, e.role::text AS role,
                host(e.address) AS address, dc.code AS site,
-               c.kind AS credential_kind, c.secret_enc
+               c.kind AS credential_kind, c.secret_enc, c.key_id AS credential_key_id
         FROM device_endpoint e
         JOIN device d        ON d.id = e.device_id
         LEFT JOIN rack rk    ON rk.id = d.rack_id
