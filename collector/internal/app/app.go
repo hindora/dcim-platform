@@ -27,6 +27,7 @@ import (
 	"github.com/hari/dcim-platform/collector/internal/obs"
 	"github.com/hari/dcim-platform/collector/internal/publish"
 	"github.com/hari/dcim-platform/collector/internal/sched"
+	"github.com/hari/dcim-platform/collector/internal/sealedbox"
 	"github.com/hari/dcim-platform/collector/internal/spool"
 	"github.com/hari/dcim-platform/collector/pkg/models"
 )
@@ -126,6 +127,18 @@ func New(cfg *config.Config, version string, tlsStore *mtls.Store) (*App, error)
 	log := obs.NewLogger(cfg.Observability.LogLevel, cfg.Observability.LogFormat,
 		cfg.Collector.ID)
 	mets := obs.NewMetrics()
+
+	// The credential-sealing keypair (docs/26 Phase 4) is independent of
+	// mTLS enrollment: generated and persisted here unconditionally, same
+	// as any other piece of this collector's local state. It does nothing
+	// until the platform has this collector's public half on file - a
+	// bearer-token-only collector, or one that enrolled before ever
+	// registering a key, simply keeps getting plaintext credentials, the
+	// same as before this phase existed.
+	sealKP, err := sealedbox.LoadOrGenerate(cfg.Collector.StateDir)
+	if err != nil {
+		return nil, fmt.Errorf("prepare credential-sealing key: %w", err)
+	}
 
 	// Redis is only ever dialled for the direct transport. A gateway-
 	// transport collector reaches the platform over the internet and Redis's
@@ -325,7 +338,7 @@ func New(cfg *config.Config, version string, tlsStore *mtls.Store) (*App, error)
 		}, a.ping, log, mets)
 	}
 
-	a.assign = assign.New(cfg, log, mets, tlsConfig)
+	a.assign = assign.New(cfg, log, mets, tlsConfig, sealKP)
 	a.assign.OnChange = a.applyDiff
 	a.assign.OnRefreshed = a.refreshResolver
 	a.cfg.Collector.Version = version

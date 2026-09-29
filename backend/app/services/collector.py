@@ -25,7 +25,7 @@ from app.schemas import (
     AssignmentPoll,
     ResolveEntry,
 )
-from app.services import sharding
+from app.services import sealed_credential, sharding
 
 log = get_logger("collector")
 
@@ -54,20 +54,45 @@ async def build_assignment(session: AsyncSession, collector_id: str,
     log.info("assignment sharded", collector_id=collector_id,
              candidates=before, owned=len(rows), collectors=len(collectors))
 
+    # docs/26 Phase 4: a collector that has enrolled and registered an
+    # encryption_pubkey gets every credential sealed to that key instead of
+    # plaintext - see sealed_credential.py. Looked up once per call, not per
+    # endpoint: it cannot change mid-request, and a collector with no key
+    # yet (pre-Phase-4, or enrolled but never sent one) is unaffected.
+    pubkey = await repo.encryption_pubkey(session, collector_id)
+
     endpoints: list[AssignmentEndpoint] = []
     decrypt_failures = 0
+    seal_failures = 0
     for r in rows:
         credential = None
         if r.get("secret_enc") is not None:
             try:
-                credential = AssignmentCredential(
-                    kind=r.get("credential_kind") or "none",
-                    data=decrypt_secret(bytes(r["secret_enc"])),
-                )
+                plain = decrypt_secret(bytes(r["secret_enc"]))
             except Exception:
                 # A credential encrypted under a previous key must not take the
                 # whole assignment down - the other endpoints still work.
                 decrypt_failures += 1
+            else:
+                kind = r.get("credential_kind") or "none"
+                cred_digest = hashlib.sha256(
+                    json.dumps(plain, sort_keys=True, default=str).encode()).hexdigest()
+                if pubkey:
+                    try:
+                        credential = AssignmentCredential(
+                            kind=kind, digest=cred_digest,
+                            sealed_b64=sealed_credential.seal_for_collector(
+                                plain, pubkey))
+                    except sealed_credential.SealError:
+                        # A malformed stored pubkey must not silently fall
+                        # back to plaintext - that would defeat the point of
+                        # sealing the moment the stored key is ever corrupt.
+                        # It drops this one endpoint's credential instead,
+                        # same as a decrypt failure above.
+                        seal_failures += 1
+                else:
+                    credential = AssignmentCredential(kind=kind, data=plain,
+                                                       digest=cred_digest)
 
         endpoints.append(AssignmentEndpoint(
             id=r["id"], device_id=r["device_id"], device_name=r["device_name"],
@@ -88,9 +113,12 @@ async def build_assignment(session: AsyncSession, collector_id: str,
     if decrypt_failures:
         log.error("credential decryption failed", count=decrypt_failures,
                   collector_id=collector_id)
+    if seal_failures:
+        log.error("credential sealing failed: stored encryption_pubkey is invalid",
+                  count=seal_failures, collector_id=collector_id)
 
     log.info("assignment served", collector_id=collector_id,
-             endpoints=len(endpoints), version=version)
+             endpoints=len(endpoints), sealed=bool(pubkey), version=version)
 
     owned = {e.id for e in endpoints}
     resolve = await resolve_list(session, exclude=owned)
@@ -190,6 +218,14 @@ def etag_for(assignment: Assignment) -> str:
     collector kept presenting the old password - failing every poll, and
     locking the account out on BMCs that count failures - until something
     unrelated moved an endpoint's timestamp.
+
+    Digests ``credential.digest`` (sha256 of the plaintext, set by
+    build_assignment), never ``credential.data`` or ``credential.sealed_b64``
+    directly. docs/26 Phase 4 made those two mutually exclusive and neither is
+    fit for this: ``data`` is empty once a credential is sealed, and
+    ``sealed_b64`` is re-randomised - a fresh ephemeral key and nonce - on
+    every single call, so it never matches even when nothing about the
+    credential actually changed.
     """
     digest = hashlib.sha256()
     digest.update(str(assignment.version).encode())
@@ -203,8 +239,7 @@ def etag_for(assignment: Assignment) -> str:
         if e.credential is not None:
             digest.update(b"|cred|")
             digest.update(e.credential.kind.encode())
-            digest.update(json.dumps(e.credential.data, sort_keys=True,
-                                     default=str).encode())
+            digest.update(e.credential.digest.encode())
     for r in assignment.resolve:
         digest.update(f"|r|{r.id}|{r.address}|{r.site}|{r.community_sha256}"
                       .encode())

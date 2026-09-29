@@ -278,12 +278,16 @@ func TestEnrollSendsTheTokenAndCSRAndPersistsTheResult(t *testing.T) {
 
 	dir := t.TempDir()
 	err := Enroll(context.Background(), server.URL, "col-test-enroll",
-		"one-time-token", dir, 5*time.Second)
+		"one-time-token", dir, "fake-sealedbox-pubkey-b64", 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if gotBody["token"] != "one-time-token" {
 		t.Errorf("token sent = %q", gotBody["token"])
+	}
+	if gotBody["encryption_pubkey"] != "fake-sealedbox-pubkey-b64" {
+		t.Errorf("encryption_pubkey sent = %q, want the sealing key's public half",
+			gotBody["encryption_pubkey"])
 	}
 	if gotBody["csr_pem"] == "" {
 		t.Error("no CSR sent")
@@ -295,6 +299,33 @@ func TestEnrollSendsTheTokenAndCSRAndPersistsTheResult(t *testing.T) {
 	}
 	if cert == nil || notAfter.IsZero() {
 		t.Fatal("enrollment did not leave a usable certificate on disk")
+	}
+}
+
+func TestEnrollWithNoSealedboxKeyOmitsTheFieldEntirely(t *testing.T) {
+	var gotBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		notAfter := time.Now().Add(30 * 24 * time.Hour)
+		resp := certResponse{
+			CertPEM:  signCSRPEM(t, gotBody["csr_pem"].(string), notAfter),
+			Chain:    []string{selfSignedCertPEM(t, "DCIM Root", time.Now().Add(3650*24*time.Hour))},
+			NotAfter: notAfter,
+			Serial:   "0104",
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	dir := t.TempDir()
+	if err := Enroll(context.Background(), server.URL, "col-no-seal", "tok", dir,
+		"", 5*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if _, present := gotBody["encryption_pubkey"]; present {
+		t.Errorf("encryption_pubkey should be absent from the request body "+
+			"when Enroll is called with \"\", got %v", gotBody["encryption_pubkey"])
 	}
 }
 

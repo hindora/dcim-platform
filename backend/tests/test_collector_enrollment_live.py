@@ -22,7 +22,8 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.services import ca, collector_pki
+from app.repositories import collector as collector_repo
+from app.services import ca, collector_pki, sealed_credential
 
 DB_URL = os.getenv("DCIM_TEST_DATABASE_URL")
 
@@ -82,6 +83,40 @@ async def test_a_full_enroll_issues_a_certificate_that_chains_to_the_root(sessio
     assert status["cert_serial"] == issued.serial
     assert status["enrolled_by"] == "test-admin"
     assert status["enrolled_at"] is not None
+
+
+async def test_a_real_enrolled_pubkey_round_trips_and_can_seal_a_credential(session):
+    """docs/26 Phase 4 against real Postgres, not a mock: enroll with a real
+    X25519 public key, read it back through app/repositories/collector.py's
+    encryption_pubkey (what build_assignment actually calls), and confirm a
+    credential sealed against that stored value unseals to the original
+    payload. This is the one link the Go-side and Python-side unit/interop
+    tests cannot cover by themselves - that a key genuinely round-tripping
+    through the enrollment table is usable, not just a value sitting in a
+    Python variable."""
+    await _make_collector(session, "col-test-seal-roundtrip")
+    token, _ = await collector_pki.issue_enrollment_token(
+        session, "col-test-seal-roundtrip", actor="test-admin")
+
+    priv_b64, pub_b64 = sealed_credential.generate_collector_keypair()
+    key = ec.generate_private_key(ca.CURVE)
+    csr = ca.build_csr("col-test-seal-roundtrip", key)
+    await collector_pki.enroll(session, token=token, csr_pem=csr,
+                              encryption_pubkey=pub_b64)
+
+    stored = await collector_repo.encryption_pubkey(session, "col-test-seal-roundtrip")
+    assert stored == pub_b64
+
+    sealed = sealed_credential.seal_for_collector(
+        {"username": "admin", "password": "hunter2"}, stored)
+    assert sealed_credential.unseal_for_test(sealed, priv_b64) == {
+        "username": "admin", "password": "hunter2"}
+
+
+async def test_a_never_enrolled_collector_has_no_encryption_pubkey(session):
+    await _make_collector(session, "col-test-no-seal-key")
+    stored = await collector_repo.encryption_pubkey(session, "col-test-no-seal-key")
+    assert stored is None
 
 
 async def test_a_token_cannot_be_used_twice(session):

@@ -624,7 +624,23 @@ class AssignmentCredential(BaseModel):
     kind: str
     # Decrypted, and returned ONLY on the collector-scoped endpoint over TLS.
     # See docs/13 section B1 for why this is unavoidable and how it is mitigated.
-    data: dict[str, Any]
+    #
+    # docs/26 Phase 4: once a collector has enrolled and registered an
+    # encryption_pubkey, this is left empty and `sealed_b64` carries the
+    # same payload instead, sealed to that collector's own key - see
+    # app/services/sealed_credential.py. `data` stays populated for a
+    # collector with no registered key yet (pre-Phase-4, or not yet
+    # enrolled), the same no-flag-day pattern Phase 2 used for the bearer
+    # token.
+    data: dict[str, Any] = Field(default_factory=dict)
+    sealed_b64: str | None = None
+    # sha256 of the plaintext payload, always populated regardless of which
+    # of the two fields above actually carries it. etag_for digests THIS,
+    # not `data` - `data` is empty once sealed, and `sealed_b64` changes on
+    # every single call (a fresh ephemeral key and nonce each time a
+    # credential is sealed), so digesting either directly would either stop
+    # noticing a real password rotation or never stop looking like one.
+    digest: str = ""
 
 
 class AssignmentPoll(BaseModel):

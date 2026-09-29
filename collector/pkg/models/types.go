@@ -33,6 +33,12 @@ type Endpoint struct {
 type Credential struct {
 	Kind string         `json:"kind"`
 	Data map[string]any `json:"data"`
+	// Sealed (docs/26 Phase 4) is this credential's payload, X25519-sealed
+	// to this collector's own encryption key, base64-encoded. assign.Client
+	// unseals it into Data right after decoding the assignment response -
+	// nothing past that point ever sees Sealed populated at the same time
+	// Data is empty. See internal/sealedbox.
+	Sealed string `json:"sealed_b64,omitempty"`
 }
 
 // Community returns the SNMP community. In this device plane the community IS

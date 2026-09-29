@@ -161,8 +161,15 @@ func postJSON(ctx context.Context, httpClient *http.Client, url string,
 // everything to stateDir. Run once per collector, by a human or a
 // provisioning script - not by the long-running collector process, which
 // only ever loads what this wrote.
-func Enroll(ctx context.Context, baseURL, collectorID, token, stateDir string,
-	timeout time.Duration) error {
+//
+// encryptionPubKeyB64 is docs/26 Phase 4's separate sealing identity
+// (internal/sealedbox), registered alongside the certificate so the
+// platform can start sealing this collector's device credentials from its
+// very first assignment fetch. Pass "" to enroll without one - the caller's
+// choice, not this package's; mtls has no reason to know what sealedbox is
+// for, only that the server accepts an optional field by this name.
+func Enroll(ctx context.Context, baseURL, collectorID, token, stateDir,
+	encryptionPubKeyB64 string, timeout time.Duration) error {
 	key, err := generateKey()
 	if err != nil {
 		return fmt.Errorf("generate key: %w", err)
@@ -171,9 +178,13 @@ func Enroll(ctx context.Context, baseURL, collectorID, token, stateDir string,
 	if err != nil {
 		return err
 	}
+	body := map[string]string{"token": token, "csr_pem": string(csr)}
+	if encryptionPubKeyB64 != "" {
+		body["encryption_pubkey"] = encryptionPubKeyB64
+	}
 	httpClient := &http.Client{Timeout: timeout}
 	resp, err := postJSON(ctx, httpClient, baseURL+"/api/v1/collector/enroll",
-		map[string]string{"token": token, "csr_pem": string(csr)}, "")
+		body, "")
 	if err != nil {
 		return fmt.Errorf("enroll: %w", err)
 	}

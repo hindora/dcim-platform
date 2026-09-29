@@ -10,6 +10,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/hari/dcim-platform/collector/internal/config"
 	"github.com/hari/dcim-platform/collector/internal/obs"
+	"github.com/hari/dcim-platform/collector/internal/sealedbox"
 	"github.com/hari/dcim-platform/collector/pkg/models"
 )
 
@@ -49,6 +51,13 @@ type Client struct {
 	http *http.Client
 	log  *slog.Logger
 	mets *obs.Metrics
+	// seal is nil for a collector with no sealedbox keypair yet, which
+	// cannot happen once app.New always calls sealedbox.LoadOrGenerate -
+	// nil is only ever a test double's choice. A nil seal leaves a Sealed
+	// credential exactly as the platform sent it: unusable by any adapter,
+	// which is the honest outcome of a collector that cannot unseal
+	// anything rather than a panic.
+	seal *sealedbox.KeyPair
 
 	etag    string
 	current map[string]*models.Endpoint
@@ -72,13 +81,14 @@ type Client struct {
 // config.NewRemoteClient's docstring for why that is the ordinary case, not
 // an error.
 func New(cfg *config.Config, log *slog.Logger, mets *obs.Metrics,
-	tlsConfig *tls.Config) *Client {
+	tlsConfig *tls.Config, seal *sealedbox.KeyPair) *Client {
 	return &Client{
 		cfg: cfg,
 		http: &http.Client{Timeout: cfg.DCIM.RequestTimeout,
 			Transport: &http.Transport{TLSClientConfig: tlsConfig}},
 		log:     log,
 		mets:    mets,
+		seal:    seal,
 		current: make(map[string]*models.Endpoint),
 		started: time.Now(),
 	}
@@ -147,6 +157,7 @@ func (c *Client) Refresh(ctx context.Context) error {
 	if err := json.NewDecoder(resp.Body).Decode(&assignment); err != nil {
 		return fmt.Errorf("decode assignment: %w", err)
 	}
+	c.unsealCredentials(assignment.Endpoints)
 
 	next := make(map[string]*models.Endpoint, len(assignment.Endpoints))
 	for _, ep := range assignment.Endpoints {
@@ -175,6 +186,48 @@ func (c *Client) Refresh(ctx context.Context) error {
 		c.OnRefreshed()
 	}
 	return nil
+}
+
+// unsealCredentials replaces every endpoint's Sealed credential with its
+// plaintext Data, in place, before anything else in the collector ever sees
+// the assignment - docs/26 Phase 4. A credential that fails to unseal
+// (wrong/stale key, corrupt blob) is dropped rather than left half-sealed:
+// Data stays nil, which every adapter already treats as "no credential",
+// the same outcome build_assignment's own decrypt-failure path produces
+// server-side. One endpoint's bad credential must not take the rest of the
+// assignment down.
+func (c *Client) unsealCredentials(endpoints []*models.Endpoint) {
+	for _, ep := range endpoints {
+		cred := ep.Credential
+		if cred == nil || cred.Sealed == "" {
+			continue
+		}
+		if c.seal == nil {
+			c.log.Warn("assignment carries a sealed credential but this "+
+				"collector has no sealing key; dropping it", "endpoint_id", ep.ID)
+			cred.Data = nil
+			cred.Sealed = ""
+			continue
+		}
+		blob, err := base64.StdEncoding.DecodeString(cred.Sealed)
+		if err != nil {
+			c.log.Error("sealed credential is not valid base64; dropping it",
+				"endpoint_id", ep.ID, "error", err)
+			cred.Data = nil
+			cred.Sealed = ""
+			continue
+		}
+		data, err := c.seal.Unseal(blob)
+		if err != nil {
+			c.log.Error("could not unseal credential; dropping it",
+				"endpoint_id", ep.ID, "error", err)
+			cred.Data = nil
+			cred.Sealed = ""
+			continue
+		}
+		cred.Data = data
+		cred.Sealed = ""
+	}
 }
 
 func (c *Client) diff(next map[string]*models.Endpoint) Diff {

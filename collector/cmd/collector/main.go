@@ -8,6 +8,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -19,6 +20,7 @@ import (
 	"github.com/hari/dcim-platform/collector/internal/app"
 	"github.com/hari/dcim-platform/collector/internal/config"
 	"github.com/hari/dcim-platform/collector/internal/mtls"
+	"github.com/hari/dcim-platform/collector/internal/sealedbox"
 )
 
 // Overridden at build time via -ldflags "-X main.version=...". "dev" is what
@@ -126,7 +128,20 @@ func runEnroll(args []string) int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := mtls.Enroll(ctx, *server, *id, *token, *stateDir, *timeout); err != nil {
+
+	// The credential-sealing keypair (docs/26 Phase 4) is separate from the
+	// mTLS identity Enroll below negotiates, and long-lived across
+	// certificate renewals - LoadOrGenerate so re-running enroll against an
+	// already-provisioned state dir does not silently orphan whatever the
+	// platform has on file for this collector.
+	sealKP, err := sealedbox.LoadOrGenerate(*stateDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "could not prepare credential-sealing key: %v\n", err)
+		return 1
+	}
+	sealPub := base64.StdEncoding.EncodeToString(sealKP.PublicKeyBytes())
+
+	if err := mtls.Enroll(ctx, *server, *id, *token, *stateDir, sealPub, *timeout); err != nil {
 		fmt.Fprintf(os.Stderr, "enrollment failed: %v\n", err)
 		return 1
 	}

@@ -101,6 +101,16 @@ async def collector_state(session: AsyncSession,
     return dict(row) if row else None
 
 
+async def encryption_pubkey(session: AsyncSession, collector_id: str) -> str | None:
+    """This collector's registered X25519 public key (base64), or None if it
+    has never enrolled with one - docs/26 Phase 4. build_assignment uses
+    this to decide whether a credential is sealed or returned plaintext."""
+    row = (await session.execute(text("""
+        SELECT encryption_pubkey FROM collector_instance WHERE id = :id
+    """), {"id": collector_id})).first()
+    return row[0] if row and row[0] else None
+
+
 async def create_collector(session: AsyncSession, collector_id: str,
                            datacenter_id: str | None, actor: str) -> bool:
     """Create a collector before it first runs, already placed and approved.

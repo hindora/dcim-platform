@@ -8,6 +8,8 @@ readings accepted as if they were the owner's.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import time
 
 import pytest
@@ -282,13 +284,20 @@ def test_a_refusal_from_a_stranger_asks_for_an_early_refresh():
 
 
 def _assignment(password: str) -> Assignment:
+    # digest is what etag_for actually reads (docs/26 Phase 4) - build it the
+    # same way app/services/collector.py's build_assignment does, so this
+    # fixture exercises the real invariant rather than one only true because
+    # both calls happened to leave the field at its default.
+    payload = {"username": "root", "password": password}
+    digest = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
     return Assignment(
         version=1, generated_at="2026-09-29T00:00:00Z", collector_id="col-1",
         endpoints=[AssignmentEndpoint(
             id="ep-1", device_id="d-1", device_name="SRV01", device_type="server",
             protocol="redfish", role="bmc", address="10.51.11.25",
             credential=AssignmentCredential(
-                kind="redfish_basic", data={"username": "root", "password": password}),
+                kind="redfish_basic", data=payload, digest=digest),
             poll=AssignmentPoll(interval_s=60, timeout_ms=8000, retries=1))])
 
 
