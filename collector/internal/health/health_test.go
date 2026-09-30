@@ -362,6 +362,91 @@ func TestWithoutAFasterCheckThePollIntervalStillGoverns(t *testing.T) {
 	}
 }
 
+// docs/26 Phase 9: a field device reached through a dead gateway must go
+// UNKNOWN, not OFFLINE - the same "I cannot see it" reasoning selfDegraded
+// already uses, applied per endpoint instead of collector-wide.
+func TestChildOfAnOfflineGatewayGoesUnknownNotOffline(t *testing.T) {
+	tr, _ := newTracker(t, 1)
+	gw := endpoint()
+	gw.ID = "gw-1"
+	child := endpoint()
+	child.ID = "child-1"
+	child.ViaEndpointID = "gw-1"
+
+	tr.Failure(gw, errors.New("connection refused")) // threshold 1: gateway OFFLINE
+	tr.mu.RLock()
+	gwStatus := tr.state[gw.ID].Status
+	tr.mu.RUnlock()
+	if gwStatus != models.CommStatusOffline {
+		t.Fatalf("gateway status = %v, want OFFLINE (setup precondition)", gwStatus)
+	}
+
+	tr.Failure(child, errors.New("connection refused"))
+
+	tr.mu.RLock()
+	st := *tr.state[child.ID]
+	tr.mu.RUnlock()
+	if st.Status != models.CommStatusUnknown {
+		t.Fatalf("child status = %v, want UNKNOWN while its gateway is OFFLINE", st.Status)
+	}
+	if st.LastErrorClass != "via_gateway_unreachable" {
+		t.Errorf("error class = %q, want via_gateway_unreachable", st.LastErrorClass)
+	}
+}
+
+// Before the gateway is known OFFLINE, a child's own failures must still
+// behave exactly as any other endpoint's - this is an added case, not a
+// replacement for the ordinary debounce.
+func TestChildStillDebouncesNormallyWhileGatewayIsHealthy(t *testing.T) {
+	tr, _ := newTracker(t, 3)
+	gw := endpoint()
+	gw.ID = "gw-1"
+	tr.Success(gw, 5) // gateway ONLINE
+
+	child := endpoint()
+	child.ID = "child-1"
+	child.ViaEndpointID = "gw-1"
+
+	tr.Failure(child, errors.New("timeout"))
+	tr.mu.RLock()
+	got := tr.state[child.ID].Status
+	tr.mu.RUnlock()
+	if got != models.CommStatusDegraded {
+		t.Fatalf("status = %v, want DEGRADED: one failure behind a healthy gateway", got)
+	}
+}
+
+// A gateway that recovers must let its children resume their own debounce
+// immediately - Success() already re-derives from a live poll, so nothing
+// about the cascade should linger once the path is proven good again.
+func TestChildResumesOwnDebounceOnceGatewayRecovers(t *testing.T) {
+	tr, _ := newTracker(t, 1)
+	gw := endpoint()
+	gw.ID = "gw-1"
+	child := endpoint()
+	child.ID = "child-1"
+	child.ViaEndpointID = "gw-1"
+
+	tr.Failure(gw, errors.New("connection refused")) // gateway OFFLINE
+	tr.Failure(child, errors.New("connection refused"))
+	tr.mu.RLock()
+	beforeRecovery := tr.state[child.ID].Status
+	tr.mu.RUnlock()
+	if beforeRecovery != models.CommStatusUnknown {
+		t.Fatalf("child status = %v, want UNKNOWN before the gateway recovers", beforeRecovery)
+	}
+
+	tr.Success(gw, 5) // gateway back ONLINE
+	tr.Failure(child, errors.New("timeout"))
+
+	tr.mu.RLock()
+	got := tr.state[child.ID].Status
+	tr.mu.RUnlock()
+	if got != models.CommStatusOffline {
+		t.Fatalf("status = %v, want OFFLINE: threshold 1, gateway healthy again", got)
+	}
+}
+
 // A check interval slower than the poll is ignored - the poll already checks
 // more often, and loosening the rule to the slower one would delay OFFLINE.
 func TestASlowerCheckIntervalDoesNotLoosenTheRule(t *testing.T) {

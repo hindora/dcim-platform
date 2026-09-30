@@ -47,6 +47,17 @@ type Config struct {
 		} `yaml:"streams"`
 	} `yaml:"redis"`
 
+	// Preflight configures `dcim-collector preflight` (docs/26 Phase 8) -
+	// run standalone, or automatically once after a successful `enroll`.
+	Preflight struct {
+		// host:port of an NTP/SNTP server to check this host's clock
+		// against. Public pool.ntp.org is the default; a real deployment
+		// on a private network without outbound internet access should
+		// point this at its own internal NTP source.
+		NTPServer string        `yaml:"ntp_server"`
+		Timeout   time.Duration `yaml:"timeout"`
+	} `yaml:"preflight"`
+
 	// Vault configures external secrets managers a "credential_ref"
 	// endpoint's ref can name (docs/26 Phase 4) - see internal/vault.
 	// Disabled by default: an endpoint whose credential is a ref and no
@@ -197,7 +208,25 @@ type BACnetCfg struct {
 	Retries       int           `yaml:"retries"`
 	// Objects per ReadPropertyMultiple. Sized well under a 1476-byte APDU: an
 	// oversized request comes back as an abort, not a short answer.
-	BatchSize int `yaml:"batch_size"`
+	BatchSize int    `yaml:"batch_size"`
+	FDR       FDRCfg `yaml:"fdr"`
+}
+
+// FDRCfg configures BACnet Foreign Device Registration (Annex J.5.2).
+//
+// Off by default: static unicast addressing (device_instance already known,
+// or found with a directed Who-Is) needs no broadcast domain and no
+// facilities change beyond one firewall pinhole - docs/26 Phase 9's own
+// decision. FDR exists for the one case that still needs one: discovering
+// devices on a subnet this collector is not on.
+type FDRCfg struct {
+	Enabled bool `yaml:"enabled"`
+	// BBMD is the host:port of the BACnet Broadcast Management Device this
+	// collector registers with, e.g. the facilities network's router.
+	BBMD string `yaml:"bbmd"`
+	// TTL bounds how long the registration lasts before the BBMD forgets it;
+	// this collector renews at half of it. 300s matches common BBMD defaults.
+	TTL time.Duration `yaml:"ttl"`
 }
 
 // GNMICfg configures the gNMI client.
@@ -329,6 +358,8 @@ func Default() *Config {
 	c.Redis.URLEnv = "DCIM_REDIS_URL"
 	c.Redis.URL = "redis://127.0.0.1:6379/0"
 	c.Transport.Mode = "redis"
+	c.Preflight.NTPServer = "pool.ntp.org:123"
+	c.Preflight.Timeout = 5 * time.Second
 	// These caps are entry counts, but the thing that actually runs out is
 	// memory, so they are derived from measured entry SIZE against a measured
 	// memory budget - see contracts/schema/messages_v1.yaml, which is the
@@ -384,6 +415,7 @@ func Default() *Config {
 	c.Protocols.BACnet = BACnetCfg{
 		Enabled: false, LocalPort: 0, MaxConcurrent: 24, PerHost: 1,
 		Timeout: 3 * time.Second, Retries: 2, BatchSize: 16,
+		FDR: FDRCfg{Enabled: false, TTL: 300 * time.Second},
 	}
 	c.Protocols.Modbus = ProtocolCfg{
 		Enabled: false, MaxConcurrent: 24, PerHost: 1,
@@ -479,6 +511,9 @@ func (c *Config) validate() error {
 	if c.Transport.Mode != "redis" && c.Transport.Mode != "gateway" {
 		return fmt.Errorf("transport.mode must be %q or %q, got %q",
 			"redis", "gateway", c.Transport.Mode)
+	}
+	if c.Protocols.BACnet.FDR.Enabled && c.Protocols.BACnet.FDR.BBMD == "" {
+		return fmt.Errorf("protocols.bacnet.fdr.bbmd is required when fdr is enabled")
 	}
 	return nil
 }

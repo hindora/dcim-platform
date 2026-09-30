@@ -435,6 +435,12 @@ func (a *App) Run(ctx context.Context) error {
 	}
 	a.ready.SetAdapters(true)
 
+	if a.bacnet != nil && a.cfg.Protocols.BACnet.FDR.Enabled {
+		fdr := a.cfg.Protocols.BACnet.FDR
+		go bacnet.RenewForeignDeviceRegistration(ctx, fdr.BBMD, fdr.TTL,
+			a.cfg.Protocols.BACnet.Timeout, a.log)
+	}
+
 	go a.pub.Run(ctx)
 
 	if a.traps != nil {

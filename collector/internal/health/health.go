@@ -186,10 +186,23 @@ func (t *Tracker) Failure(ep *models.Endpoint, err error) bool {
 	st.LastErrorClass = class
 	selfDegraded := t.selfDegraded
 
+	// A field device reached through a gateway that is itself OFFLINE has
+	// told us nothing - the path is gone, not the instrument. Counting its
+	// own timeouts toward its own threshold would eventually call it OFFLINE
+	// too, turning one dead serial gateway into N independent device alarms
+	// instead of the one that actually explains all of them (docs/26 Phase
+	// 9). This is the same shape as selfDegraded above: "I cannot see it" is
+	// not "it is not there".
+	viaDown := ep.ViaEndpointID != "" && t.state[ep.ViaEndpointID] != nil &&
+		t.state[ep.ViaEndpointID].Status == models.CommStatusOffline
+
 	switch {
 	case selfDegraded:
 		// Do not condemn while we are the sick one.
 		st.Status = models.CommStatusUnknown
+	case viaDown:
+		st.Status = models.CommStatusUnknown
+		st.LastErrorClass = "via_gateway_unreachable"
 	case st.ConsecutiveFailures >= t.offlineThreshold &&
 		time.Since(st.LastSuccess) > 2*st.Interval:
 		// Both conditions: a long interval with two quick failures is not
