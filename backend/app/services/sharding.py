@@ -83,6 +83,16 @@ class Collector:
     def serves(self, pool_id: str | None, site: str | None) -> bool:
         if self.pool_id is not None:
             return pool_id is not None and pool_id == self.pool_id
+        # An endpoint that resolves into a pool belongs to that pool's
+        # members and nobody else - "unassigned, never cross-pool" (docs/26
+        # Phase 5). An unplaced collector was taking them: in a pool with
+        # no healthy member, a serves-everything collector on the IT-OOB
+        # network quietly became the owner of BMS devices it has no route
+        # to, and the pool page's "owned by nobody" was never true. With
+        # zero pools configured no endpoint has a pool_id, so the
+        # pre-Phase-5 single-collector estate is untouched.
+        if pool_id is not None:
+            return False
         if not self.sites:
             return True
         return site is not None and site in self.sites

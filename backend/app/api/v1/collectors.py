@@ -7,9 +7,10 @@ collector token. This is the operator's view of the same thing.
 from __future__ import annotations
 
 import re
+import uuid
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,8 +30,8 @@ from app.db.session import get_session
 from app.repositories import collector as fleet_repo
 from app.repositories import collector_config as repo
 from app.repositories import preflight as preflight_repo
+from app.services import assigner, collector_pki, shard_map
 from app.services import collector_config as cfg
-from app.services import collector_pki
 
 router = APIRouter(prefix="/collectors", tags=["collectors"])
 log = get_logger("api.collectors")
@@ -132,6 +133,45 @@ async def _check_pool(session: AsyncSession, pool_id: str | None) -> None:
     """), {"id": pool_id})).scalar()
     if not known:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "no such pool")
+
+
+@router.get("/shard-map", summary="Which collector polls every endpoint, and since when")
+async def get_shard_map(
+    collector_id: str | None = None,
+    pool_id: str | None = None,
+    protocol: str | None = None,
+    q: str | None = Query(None, max_length=128),
+    disagree_only: bool = False,
+    unassigned_only: bool = False,
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    session: AsyncSession = Depends(get_session),
+    _: Principal = Depends(current_principal),
+) -> dict[str, Any]:
+    """docs/26 Phase 5's shard map. `owner` is who the serving path hands
+    the endpoint to right now; `recorded_owner`, `epoch`, `since` and
+    `reason` are what the assigner last wrote. See services/shard_map for
+    why both are shown. Declared before `/{collector_id}` so the path is
+    not read as a collector called "shard-map"."""
+    return await shard_map.shard_map(
+        session, limit=limit, offset=offset, collector_id=collector_id,
+        pool_id=pool_id, protocol=protocol, q=q, disagree_only=disagree_only,
+        unassigned_only=unassigned_only)
+
+
+@router.get("/shard-map/{endpoint_id}/history",
+            summary="Every recorded move of one endpoint, newest first")
+async def get_assignment_history(
+    endpoint_id: str,
+    session: AsyncSession = Depends(get_session),
+    _: Principal = Depends(current_principal),
+) -> dict[str, Any]:
+    try:
+        uuid.UUID(endpoint_id)
+    except ValueError:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "no such endpoint") from None
+    rows = await fleet_repo.assignment_history(session, endpoint_id)
+    return {"endpoint_id": endpoint_id, "moves": rows}
 
 
 @router.post("", status_code=status.HTTP_201_CREATED,
@@ -461,3 +501,103 @@ async def preflight_history(
     return {"collector_id": collector_id,
            "latest": rows[0] if rows else None,
            "history": rows}
+
+
+class DrainBody(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    #: Unpin everything pinned to it, so the drain can actually empty it.
+    #: Pins beat the hash; without this they stay.
+    release_pins: bool = False
+    #: Drain even though some endpoints would be polled by nothing.
+    force: bool = False
+
+
+@router.get("/{collector_id}/drain-preview",
+            summary="What draining this collector would move, and where")
+async def drain_preview(
+    collector_id: str,
+    session: AsyncSession = Depends(get_session),
+    _: Principal = Depends(current_principal),
+) -> dict[str, Any]:
+    row = await _must_exist(session, collector_id)
+    out = await shard_map.drain_preview(session, collector_id)
+    out["state"] = row["state"]
+    return out
+
+
+@router.post("/{collector_id}/drain", summary="Move a collector's work elsewhere, now")
+async def drain(
+    collector_id: str,
+    body: DrainBody,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    principal: Principal = Depends(require_role("admin")),
+) -> dict[str, Any]:
+    """Preview, guard, release pins if asked, mark draining, and run the
+    assigner in the same transaction so the record moves now rather than on
+    the ingest worker's next tick. The serving path needs no push: a
+    draining collector stops being given its unpinned endpoints on its next
+    assignment fetch (about 30 s), and the new owners pick them up on
+    theirs - a gap of at most one fetch interval, never overlap.
+
+    409 when something would have nowhere to go, unless forced: draining the
+    last accepting member of a pool silently stops polling that pool, and
+    that should be a decision someone reads a number for first."""
+    row = await _must_exist(session, collector_id)
+    if row["state"] in ("decommissioned", "pending"):
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            f"a {row['state']} collector has nothing to drain")
+    preview = await shard_map.drain_preview(session, collector_id)
+    if not preview["can_drain"] and not body.force:
+        raise HTTPException(status.HTTP_409_CONFLICT, " ".join(preview["blockers"]))
+    unpinned = (await fleet_repo.unpin_all(session, collector_id)
+                if body.release_pins else 0)
+    if row["state"] != "draining":
+        await fleet_repo.set_state(session, collector_id, "draining", principal.username)
+    result = await assigner.run(session)
+    ip, agent = audit.client_of(request)
+    await audit.record(session, actor=audit.actor_of(principal),
+                       action="collector.drain", target_type="collector",
+                       target_id=collector_id, ip=ip, user_agent=agent,
+                       before={"state": row["state"]},
+                       after={"state": "draining", "moving": preview["moving"],
+                              "stranded": preview["stranded"], "pinned": preview["pinned"],
+                              "unpinned": unpinned, "forced": body.force})
+    await session.commit()
+    forget_collector(collector_id)
+    log.warning("collector drained", collector_id=collector_id,
+                actor=principal.username, moving=preview["moving"],
+                stranded=preview["stranded"], unpinned=unpinned, forced=body.force)
+    return {"id": collector_id, "preview": preview, "unpinned": unpinned,
+            "recorded_moves": result.moved if result.ran else None,
+            "remaining": await shard_map.remaining(session, collector_id)}
+
+
+@router.post("/{collector_id}/undrain", summary="Return a drained collector to service")
+async def undrain(
+    collector_id: str,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    principal: Principal = Depends(require_role("admin")),
+) -> dict[str, Any]:
+    """Back into the hash. It does not get its old endpoints back at once:
+    the serving path's plan gives it its hash share on the next fetch, but
+    the recorded assignment follows the assigner's damping (a member off the
+    pool mean by 10 endpoints AND 2x), so the record may lag."""
+    row = await _must_exist(session, collector_id)
+    if row["state"] != "draining":
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            f"it is {row['state']}, not draining")
+    await fleet_repo.set_state(session, collector_id, "active", principal.username)
+    result = await assigner.run(session)
+    ip, agent = audit.client_of(request)
+    await audit.record(session, actor=audit.actor_of(principal),
+                       action="collector.undrain", target_type="collector",
+                       target_id=collector_id, ip=ip, user_agent=agent,
+                       before={"state": "draining"}, after={"state": "active"})
+    await session.commit()
+    forget_collector(collector_id)
+    log.info("collector undrained", collector_id=collector_id, actor=principal.username)
+    return {"id": collector_id, "recorded_moves": result.moved if result.ran else None,
+            "owned": await shard_map.remaining(session, collector_id)}

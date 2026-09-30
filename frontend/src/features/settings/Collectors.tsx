@@ -395,6 +395,119 @@ function CreateDialog({ existing, sites, pools, onClose, onCreated }: {
   );
 }
 
+/** Drain with a preview (docs/26 Phase 5): what moves, where, what stays
+ *  pinned, and what would be stranded - read before anything moves, the way
+ *  `kubectl drain` refuses before it evicts. */
+function DrainPanel({ row, locked, onDone }: {
+  row: CollectorRow;
+  locked: boolean;
+  onDone: () => void;
+}) {
+  const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [releasePins, setReleasePins] = useState(false);
+  const [force, setForce] = useState(false);
+  const preview = useQuery({
+    queryKey: ['drain-preview', row.id],
+    queryFn: () => api.drainPreview(row.id),
+    enabled: open || row.state === 'draining',
+    refetchInterval: row.state === 'draining' ? 10_000 : false,
+  });
+  const done = () => {
+    onDone();
+    void qc.invalidateQueries({ queryKey: ['drain-preview', row.id] });
+    void qc.invalidateQueries({ queryKey: ['shard-map'] });
+    setOpen(false);
+  };
+  const drain = useMutation({
+    mutationFn: () => api.drainCollector(row.id, { release_pins: releasePins, force }),
+    onSuccess: done,
+  });
+  const undrain = useMutation({
+    mutationFn: () => api.undrainCollector(row.id),
+    onSuccess: done,
+  });
+  const p = preview.data;
+  const err = drain.error ?? undrain.error;
+
+  if (row.state === 'draining') {
+    return (
+      <div style={{ marginTop: 10 }}>
+        <p className="muted" style={{ margin: '0 0 8px' }}>
+          Draining.{' '}
+          {p == null ? 'Checking what it still owns…'
+            : p.owned === 0 ? 'It owns nothing now — safe to stop or upgrade.'
+              : <>It still owns {p.owned}
+                {p.pinned ? `, ${p.pinned} of them pinned to it` : ''}.
+                {p.owned - p.pinned > 0 && ' The rest leave on its next assignment fetch.'}</>}
+        </p>
+        {err && <div className="banner">{(err as Error).message}</div>}
+        <button disabled={locked || undrain.isPending} onClick={() => undrain.mutate()}>
+          {undrain.isPending ? 'Returning…' : 'Return to service'}
+        </button>
+      </div>
+    );
+  }
+
+  if (!open) {
+    return (
+      <div style={{ marginTop: 10 }}>
+        <button disabled={locked} onClick={() => setOpen(true)}>
+          Drain — preview what moves
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ marginTop: 10, display: 'grid', gap: 8 }}>
+      {preview.isLoading && <p className="muted">Working out where everything goes…</p>}
+      {p && (
+        <>
+          <p style={{ margin: 0 }}>
+            It owns <strong>{p.owned}</strong>.{' '}
+            {p.moving > 0 && <>{p.moving} move to{' '}
+              {Object.entries(p.destinations).map(([c, n], i) => (
+                <span key={c}>{i > 0 && ', '}<span className="mono">{c}</span> ({n})</span>
+              ))}.{' '}</>}
+            {p.pinned > 0 && <span className="warn">{p.pinned} are pinned to it and stay. </span>}
+            {p.stranded > 0 && (
+              <span className="critical">{p.stranded} would be polled by nothing. </span>
+            )}
+          </p>
+          {p.blockers.map((b) => <div key={b} className="banner">{b}</div>)}
+          {p.pinned > 0 && (
+            <label className="check" style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <input type="checkbox" checked={releasePins}
+                     onChange={(e) => setReleasePins(e.target.checked)} />
+              Release its {p.pinned} pin{p.pinned === 1 ? '' : 's'} too, so it empties completely
+            </label>
+          )}
+          {!p.can_drain && (
+            <label className="check" style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <input type="checkbox" checked={force} onChange={(e) => setForce(e.target.checked)} />
+              Drain anyway — I accept those endpoints go unpolled
+            </label>
+          )}
+          <p className="muted" style={{ margin: 0 }}>
+            Endpoints move on the next assignment fetch, about 30 s: a gap of at most one
+            fetch, never two collectors polling the same device.
+          </p>
+        </>
+      )}
+      {err && <div className="banner">{(err as Error).message}</div>}
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button onClick={() => setOpen(false)}>Cancel</button>
+        <button className="primary"
+                disabled={locked || !p || drain.isPending || (!p.can_drain && !force)}
+                onClick={() => drain.mutate()}>
+          {drain.isPending ? 'Draining…' : 'Drain now'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /** A token shown exactly once. The platform keeps no copy of it — only the
  *  generation that makes it valid — so this is the only place it is ever
  *  visible again. */
@@ -703,19 +816,10 @@ function ManageSheet({ row, sections, sites, pools, onClose }: {
                     Approve — start giving it work
                   </button>
                 )}
-                {row.state === 'active' && (
-                  <button disabled={locked || placement.isPending}
-                          onClick={() => placement.mutate({ state: 'draining' })}>
-                    Drain — move its endpoints elsewhere
-                  </button>
-                )}
-                {row.state === 'draining' && (
-                  <button disabled={locked || placement.isPending}
-                          onClick={() => placement.mutate({ state: 'active' })}>
-                    Resume — take work again
-                  </button>
-                )}
               </div>
+              {(row.state === 'active' || row.state === 'draining') && (
+                <DrainPanel row={row} locked={locked} onDone={invalidate} />
+              )}
             </fieldset>
 
             <fieldset className="proto">

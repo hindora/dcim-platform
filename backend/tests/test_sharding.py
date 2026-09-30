@@ -410,3 +410,17 @@ def test_ha_policy_end_to_end_failover_then_no_failback_for_ten_minutes():
     after_recovery = sh.rebalance(after_failover, target2, eps, policy_applied)
     assert sh.distribution(after_recovery) == {"standby": 50}, \
         "the primary must not reclaim anything inside the failback window"
+
+
+def test_an_unplaced_collector_never_takes_a_pooled_endpoint():
+    """docs/26 Phase 5: unassigned, never cross-pool. A pool with no
+    healthy member leaves its endpoints owned by nobody - not by whichever
+    serves-everything or same-site collector happens to exist."""
+    eps = pool_endpoints(10, "pool-a")
+    anywhere = col("anywhere")
+    same_site = col("site-only", sites=("DC1",))
+    assert not anywhere.serves("pool-a", "DC1")
+    assert not same_site.serves("pool-a", "DC1")
+    assert set(sh.plan(eps, [anywhere, same_site]).values()) == {None}
+    # ...and an unpooled endpoint is still theirs, exactly as before pools.
+    assert anywhere.serves(None, "DC1") and same_site.serves(None, "DC1")

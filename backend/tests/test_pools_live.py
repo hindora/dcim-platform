@@ -442,3 +442,107 @@ async def test_pool_points_and_member_busy_reach_the_pool_view(session):
     """), {"id": cid})
     got = await svc.detail(session, pool["id"])
     assert got["points_per_s"] is None and got["busiest_member_pct"] is None
+
+
+# --- shard map and drain (docs/26 Phase 5 frontend row, migration 0093) --------
+
+async def _history(session, endpoint_id):
+    return (await session.execute(text("""
+        SELECT from_collector, to_collector, epoch, reason
+          FROM endpoint_assignment_history
+         WHERE endpoint_id = CAST(:e AS uuid) ORDER BY at, id
+    """), {"e": endpoint_id})).mappings().all()
+
+
+async def test_every_move_leaves_a_history_row_with_where_it_came_from(session):
+    _, room_id = await _datacenter_and_room(session, f"P{_tag()[:6]}")
+    profile = await _poll_profile(session)
+    eid = await _device_endpoint(session, room_id, profile, "10.52.21.10", "bacnet")
+
+    await fleet_repo.write_assignment(session, {eid: ("col-a", "initial")})
+    await fleet_repo.write_assignment(session, {eid: ("col-b", "drain")})
+    await fleet_repo.write_assignment(session, {eid: (None, "pool_empty")})
+
+    rows = [dict(r) for r in await _history(session, eid)]
+    assert rows == [
+        {"from_collector": None, "to_collector": "col-a", "epoch": 1, "reason": "initial"},
+        {"from_collector": "col-a", "to_collector": "col-b", "epoch": 2, "reason": "drain"},
+        {"from_collector": "col-b", "to_collector": None, "epoch": 3, "reason": "pool_empty"},
+    ]
+    newest_first = await fleet_repo.assignment_history(session, eid)
+    assert [r["epoch"] for r in newest_first] == [3, 2, 1]
+
+
+async def test_history_older_than_the_keep_window_is_pruned(session):
+    _, room_id = await _datacenter_and_room(session, f"P{_tag()[:6]}")
+    profile = await _poll_profile(session)
+    eid = await _device_endpoint(session, room_id, profile, "10.52.22.10", "bacnet")
+    await fleet_repo.write_assignment(session, {eid: ("col-a", "initial")})
+    await fleet_repo.write_assignment(session, {eid: ("col-b", "rebalance")})
+    await session.execute(text("""
+        UPDATE endpoint_assignment_history
+           SET at = now() - make_interval(days => :d)
+         WHERE endpoint_id = CAST(:e AS uuid) AND epoch = 1
+    """), {"e": eid, "d": fleet_repo.HISTORY_KEEP_DAYS + 1})
+    assert await fleet_repo.prune_assignment_history(session) >= 1
+    assert [r["epoch"] for r in await _history(session, eid)] == [2]
+
+
+async def test_a_drain_moves_the_pools_work_to_the_other_member_and_records_why(session):
+    """End to end on the real schema: preview, mark draining, run the real
+    assigner - the moved endpoints now belong to the other member, and every
+    move is in the history as a drain."""
+    from app.services import assigner, shard_map
+
+    dc_id, room_id = await _datacenter_and_room(session, f"P{_tag()[:6]}")
+    pool = await svc.create(session, _payload(dc_id, cidrs=[], min_members=1,
+                                              bbmd_settings={}))
+    await _discovery_range(session, dc_id, "10.52.23.0/24", purpose="bms")
+    profile = await _poll_profile(session)
+    eids = [await _device_endpoint(session, room_id, profile, f"10.52.23.{i}", "bacnet")
+            for i in range(10, 30)]
+    a, b = f"col-{_tag()}", f"col-{_tag()}"
+    await _collector(session, a, pool["id"])
+    await _collector(session, b, pool["id"])
+    await assigner.run(session)
+
+    preview = await shard_map.drain_preview(session, a)
+    assert preview["owned"] > 0, "HRW over 20 endpoints and 2 members gives each some"
+    assert preview["destinations"] == {b: preview["moving"]}
+    assert preview["can_drain"] is True
+
+    await fleet_repo.set_state(session, a, "draining", "test")
+    await assigner.run(session)
+
+    recorded = {r["endpoint_id"]: r for r in (await session.execute(text("""
+        SELECT endpoint_id::text, collector_id, reason FROM endpoint_assignment
+         WHERE endpoint_id = ANY(CAST(:ids AS uuid[]))
+    """), {"ids": eids})).mappings().all()}
+    assert {r["collector_id"] for r in recorded.values()} == {b}
+    moved = [e for e in eids if recorded[e]["reason"] == "drain"]
+    assert len(moved) == preview["moving"]
+    last = (await _history(session, moved[0]))[-1]
+    assert (last["from_collector"], last["to_collector"], last["reason"]) == (a, b, "drain")
+    assert await shard_map.remaining(session, a) == 0
+
+    page = await shard_map.shard_map(session, pool_id=pool["id"], limit=500)
+    assert page["total"] == 20
+    assert all(r["owner"] == b and not r["record_disagrees"] for r in page["items"])
+
+
+async def test_the_preview_refuses_to_strand_a_single_member_pool(session):
+    from app.services import shard_map
+
+    dc_id, room_id = await _datacenter_and_room(session, f"P{_tag()[:6]}")
+    pool = await svc.create(session, _payload(dc_id, cidrs=[], min_members=1,
+                                              bbmd_settings={}))
+    await _discovery_range(session, dc_id, "10.52.24.0/24", purpose="bms")
+    profile = await _poll_profile(session)
+    for i in range(10, 13):
+        await _device_endpoint(session, room_id, profile, f"10.52.24.{i}", "bacnet")
+    only = f"col-{_tag()}"
+    await _collector(session, only, pool["id"])
+
+    preview = await shard_map.drain_preview(session, only)
+    assert preview["owned"] == 3 and preview["stranded"] == 3
+    assert preview["can_drain"] is False

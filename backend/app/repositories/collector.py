@@ -346,23 +346,100 @@ async def current_assignment(session: AsyncSession) -> dict[str, str | None]:
 async def write_assignment(session: AsyncSession,
                            changes: dict[str, tuple[str | None, str]]) -> None:
     """Upserts endpoint_assignment for every endpoint whose owner actually
-    changed - bumping epoch and since, recording reason. Only called with
-    real changes; a no-op tick writes nothing at all."""
+    changed - bumping epoch and since, recording reason - and writes one
+    endpoint_assignment_history row per move (migration 0093) in the SAME
+    statement, so a move and its record cannot disagree. Only called with
+    real changes; a no-op tick writes nothing at all.
+
+    `old` reads the pre-update owner: every sub-statement of one WITH sees
+    the same snapshot, so it is the row as it was before `up` changed it."""
     if not changes:
         return
     await session.execute(text("""
-        INSERT INTO endpoint_assignment (endpoint_id, collector_id, epoch, since, reason)
-        SELECT (v->>'endpoint_id')::uuid, v->>'collector_id', 1, now(), v->>'reason'
-          FROM jsonb_array_elements(CAST(:rows AS jsonb)) AS v
-        ON CONFLICT (endpoint_id) DO UPDATE SET
-            collector_id = EXCLUDED.collector_id,
-            epoch = endpoint_assignment.epoch + 1,
-            since = now(),
-            reason = EXCLUDED.reason
+        WITH v AS (
+            SELECT (x->>'endpoint_id')::uuid AS endpoint_id,
+                   x->>'collector_id' AS collector_id, x->>'reason' AS reason
+              FROM jsonb_array_elements(CAST(:rows AS jsonb)) AS x
+        ), old AS (
+            SELECT ea.endpoint_id, ea.collector_id
+              FROM endpoint_assignment ea JOIN v USING (endpoint_id)
+        ), up AS (
+            INSERT INTO endpoint_assignment (endpoint_id, collector_id, epoch, since, reason)
+            SELECT endpoint_id, collector_id, 1, now(), reason FROM v
+            ON CONFLICT (endpoint_id) DO UPDATE SET
+                collector_id = EXCLUDED.collector_id,
+                epoch = endpoint_assignment.epoch + 1,
+                since = now(),
+                reason = EXCLUDED.reason
+            RETURNING endpoint_id, collector_id, epoch, reason
+        )
+        INSERT INTO endpoint_assignment_history
+               (endpoint_id, from_collector, to_collector, epoch, reason)
+        SELECT up.endpoint_id, old.collector_id, up.collector_id, up.epoch, up.reason
+          FROM up LEFT JOIN old USING (endpoint_id)
     """), {"rows": json.dumps([
         {"endpoint_id": eid, "collector_id": owner, "reason": reason}
         for eid, (owner, reason) in changes.items()
     ])})
+
+
+#: How long a move is kept. The plan's audit question - "who polled this UPS
+#: at 03:12?" - is asked about incidents, which are reviewed within weeks and
+#: occasionally within a quarter; half a year covers that with room. A
+#: judgment, not a sourced figure: no DCIM vendor publishes one.
+HISTORY_KEEP_DAYS = 180
+
+
+async def prune_assignment_history(session: AsyncSession) -> int:
+    result = await session.execute(text("""
+        DELETE FROM endpoint_assignment_history
+         WHERE at < now() - make_interval(days => :days)
+    """), {"days": HISTORY_KEEP_DAYS})
+    return result.rowcount or 0
+
+
+async def shard_rows(session: AsyncSession) -> list[dict[str, Any]]:
+    """Display columns for every ownable endpoint, with its recorded
+    assignment (docs/26 Phase 5's shard map). Same predicate as
+    ownable_endpoints; the owner itself is not decided here - the service
+    computes it from the plan, the same way build_assignment does."""
+    rows = (await session.execute(text("""
+        SELECT e.id::text AS id, e.device_id::text AS device_id,
+               d.name AS device_name, d.device_type,
+               e.protocol::text AS protocol, host(e.address) AS address,
+               e.collector_id AS pinned_to,
+               ea.collector_id AS recorded_owner, ea.epoch, ea.since, ea.reason
+          FROM device_endpoint e
+          JOIN device d        ON d.id = e.device_id
+          JOIN poll_profile p  ON p.id = e.poll_profile_id
+          LEFT JOIN endpoint_assignment ea ON ea.endpoint_id = e.id
+         WHERE e.enabled AND e.admin_state = 'enabled'
+           AND d.lifecycle <> 'decommissioned'
+    """))).mappings().all()
+    return [dict(r) for r in rows]
+
+
+async def assignment_history(session: AsyncSession, endpoint_id: str,
+                             limit: int = 50) -> list[dict[str, Any]]:
+    rows = (await session.execute(text("""
+        SELECT from_collector, to_collector, epoch, reason, at
+          FROM endpoint_assignment_history
+         WHERE endpoint_id = CAST(:id AS uuid)
+         ORDER BY at DESC, id DESC
+         LIMIT :limit
+    """), {"id": endpoint_id, "limit": limit})).mappings().all()
+    return [dict(r) for r in rows]
+
+
+async def recent_moves(session: AsyncSession, hours: int = 24) -> dict[str, int]:
+    """Moves in the last `hours`, by reason - seeded rows included only if
+    they fall inside the window, which after the first day they will not."""
+    rows = (await session.execute(text("""
+        SELECT reason, count(*) AS n FROM endpoint_assignment_history
+         WHERE at > now() - make_interval(hours => :h)
+         GROUP BY reason
+    """), {"h": hours})).mappings().all()
+    return {r["reason"]: int(r["n"]) for r in rows}
 
 
 async def resolvable_endpoints(session: AsyncSession) -> list[dict[str, Any]]:

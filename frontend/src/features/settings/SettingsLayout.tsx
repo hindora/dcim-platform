@@ -23,6 +23,11 @@ export const SETTINGS_NAV = [
     blurb: 'Which network each collector is on, and which devices that makes it responsible for',
   },
   {
+    to: 'shards',
+    label: 'Shard map',
+    blurb: 'Which collector polls every device, and every move it made',
+  },
+  {
     to: 'onboarding',
     label: 'Site onboarding',
     blurb: 'Bring one network at a site under collection, start to finish',

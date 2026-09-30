@@ -12,6 +12,7 @@ import { Collectors } from './features/settings/Collectors';
 import { CollectorDetail } from './features/settings/CollectorDetail';
 import { Integrations } from './features/settings/Integrations';
 import { Onboarding } from './features/settings/Onboarding';
+import { ShardMap } from './features/settings/ShardMap';
 import { PollProfiles } from './features/settings/PollProfiles';
 import { Pools } from './features/settings/Pools';
 import { SettingsLayout } from './features/settings/SettingsLayout';
@@ -298,6 +299,7 @@ export default function App() {
             <Route path="collectors/:id" element={<CollectorDetail />} />
             <Route path="pools" element={<Pools />} />
             <Route path="onboarding" element={<Onboarding />} />
+            <Route path="shards" element={<ShardMap />} />
             <Route path="integrations" element={<Integrations />} />
             <Route path="appearance" element={<Appearance />} />
           </Route>

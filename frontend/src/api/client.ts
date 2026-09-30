@@ -1169,6 +1169,76 @@ export interface PoolReadiness {
   ranges: PoolRange[];
 }
 
+/** docs/26 Phase 5's shard map. `owner` is who the serving path hands the
+ *  endpoint to right now; the `recorded_*` fields, epoch, since and reason
+ *  are what the assigner last wrote. They can disagree - see
+ *  backend services/shard_map.py - and the page shows it rather than hide it. */
+export interface ShardRow {
+  id: string;
+  device_id: string;
+  device_name: string;
+  device_type: string;
+  protocol: string;
+  address?: string | null;
+  site?: string | null;
+  pool_id?: string | null;
+  pool_name?: string | null;
+  owner?: string | null;
+  pinned: boolean;
+  recorded_owner?: string | null;
+  epoch?: number | null;
+  since?: string | null;
+  reason?: string | null;
+  record_disagrees: boolean;
+}
+
+export interface ShardCollector {
+  collector_id: string;
+  pool_id?: string | null;
+  accepting: boolean;
+  healthy: boolean;
+  owned: number;
+  pinned: number;
+  /** A pin to a collector that is not in the fleet: kept, polled by nobody. */
+  not_in_fleet?: boolean;
+}
+
+export interface ShardMapPage {
+  summary: {
+    by_collector: ShardCollector[];
+    total: number;
+    unassigned: number;
+    record_disagrees: number;
+    unrecorded: number;
+    moves_24h: Record<string, number>;
+    pools: { id: string; name: string }[];
+    protocols: string[];
+  };
+  total: number;
+  items: ShardRow[];
+}
+
+export interface AssignmentMove {
+  from_collector?: string | null;
+  to_collector?: string | null;
+  epoch: number;
+  reason: string;
+  at: string;
+}
+
+export interface DrainPreview {
+  collector_id: string;
+  state?: string;
+  owned: number;
+  moving: number;
+  destinations: Record<string, number>;
+  stranded: number;
+  stranded_pools: Record<string, number>;
+  pinned: number;
+  blockers: string[];
+  can_drain: boolean;
+}
+
 export interface CollectorsPage {
   collectors: CollectorRow[];
   sites: { id: string; code: string; name: string }[];
@@ -3679,6 +3749,35 @@ export const api = {
   decommissionCollector: (id: string) =>
     request<{ id: string; unpinned: number }>(
       `/collectors/${id}/decommission`, { method: 'POST' }),
+
+  /** The shard map: who polls every endpoint, filtered and paged server-side. */
+  shardMap: (params: Record<string, string | number | boolean | undefined>) => {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== undefined && v !== '' && v !== false) qs.set(k, String(v));
+    }
+    return request<ShardMapPage>(`/collectors/shard-map?${qs}`);
+  },
+
+  assignmentHistory: (endpointId: string) =>
+    request<{ endpoint_id: string; moves: AssignmentMove[] }>(
+      `/collectors/shard-map/${encodeURIComponent(endpointId)}/history`),
+
+  /** Exactly what a drain would move and where - the same plan the serving
+   *  path uses, computed with this collector taken out. */
+  drainPreview: (id: string) =>
+    request<DrainPreview>(`/collectors/${encodeURIComponent(id)}/drain-preview`),
+
+  /** 409 when something would have nowhere to go, unless forced. */
+  drainCollector: (id: string, body: { release_pins?: boolean; force?: boolean }) =>
+    request<{ id: string; preview: DrainPreview; unpinned: number;
+              recorded_moves: number | null; remaining: number }>(
+      `/collectors/${encodeURIComponent(id)}/drain`,
+      { method: 'POST', body: JSON.stringify(body) }),
+
+  undrainCollector: (id: string) =>
+    request<{ id: string; recorded_moves: number | null; owned: number }>(
+      `/collectors/${encodeURIComponent(id)}/undrain`, { method: 'POST' }),
 
   /** One collector: identity, version skew, heartbeat figures, owned
    *  endpoints with their state, recent errors, latest preflight. */

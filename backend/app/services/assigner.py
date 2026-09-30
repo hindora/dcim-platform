@@ -103,6 +103,9 @@ async def run(session: AsyncSession) -> AssignerResult:
                                           endpoints_by_id.get(eid) or {}, raw_by_id))
 
     await repo.write_assignment(session, changes)
+    # Bounded history (migration 0093). Indexed on `at`, so a tick with
+    # nothing old enough to prune costs one index probe.
+    await repo.prune_assignment_history(session)
     unassigned = sum(1 for owner in result.values() if owner is None)
     log.info("assigner ran", moved=len(changes), unassigned=unassigned,
              endpoints=len(endpoints), collectors=len(collectors),
