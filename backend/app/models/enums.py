@@ -19,6 +19,7 @@ class Protocol(StrEnum):
     MODBUS = "modbus"
     SFLOW = "sflow"
     MANUAL = "manual"
+    PROVIDER = "provider"
 
 
 class EndpointRole(StrEnum):

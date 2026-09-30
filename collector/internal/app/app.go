@@ -16,6 +16,7 @@ import (
 	"github.com/hari/dcim-platform/collector/internal/adapters/bacnet"
 	"github.com/hari/dcim-platform/collector/internal/adapters/gnmi"
 	"github.com/hari/dcim-platform/collector/internal/adapters/modbus"
+	"github.com/hari/dcim-platform/collector/internal/adapters/provider"
 	"github.com/hari/dcim-platform/collector/internal/adapters/redfish"
 	"github.com/hari/dcim-platform/collector/internal/adapters/snmp"
 	"github.com/hari/dcim-platform/collector/internal/assign"
@@ -72,6 +73,7 @@ type App struct {
 	rfEvents *redfish.EventReceiver
 	bacnet   *bacnet.Adapter
 	modbus   *modbus.Adapter
+	provider *provider.Adapter
 	gnmi     *gnmi.Adapter
 	gnmiSubs *gnmi.Subscriber
 	// The context streams live under. Held on the App because assignment
@@ -240,6 +242,12 @@ func New(cfg *config.Config, version string, tlsStore *mtls.Store) (*App, error)
 		log.Info("modbus adapter enabled", "templates", len(mbMaps.Templates))
 	}
 
+	if cfg.Protocols.Provider.Enabled {
+		a.provider = provider.New(log, mets, cfg.Protocols.Provider.Timeout)
+		a.adapters["provider"] = a.provider
+		log.Info("provider adapter enabled")
+	}
+
 	if cfg.Protocols.GNMI.Enabled {
 		gnMaps, err := mapping.LoadGNMI(mapFS)
 		if err != nil {
@@ -303,11 +311,12 @@ func New(cfg *config.Config, version string, tlsStore *mtls.Store) (*App, error)
 		Workers:   cfg.Workers.PoolSize,
 		QueueSize: cfg.Workers.PoolSize * cfg.Workers.QueueMultiplier,
 		ProtoLimits: map[string]int{
-			"snmp":    cfg.Protocols.SNMP.MaxConcurrent,
-			"redfish": cfg.Protocols.Redfish.MaxConcurrent,
-			"bacnet":  cfg.Protocols.BACnet.MaxConcurrent,
-			"modbus":  cfg.Protocols.Modbus.MaxConcurrent,
-			"gnmi":    cfg.Protocols.GNMI.MaxConcurrent,
+			"snmp":     cfg.Protocols.SNMP.MaxConcurrent,
+			"redfish":  cfg.Protocols.Redfish.MaxConcurrent,
+			"bacnet":   cfg.Protocols.BACnet.MaxConcurrent,
+			"modbus":   cfg.Protocols.Modbus.MaxConcurrent,
+			"gnmi":     cfg.Protocols.GNMI.MaxConcurrent,
+			"provider": cfg.Protocols.Provider.MaxConcurrent,
 		},
 		PerHostLimits: map[string]int{
 			"snmp":    cfg.Protocols.SNMP.PerHost,
@@ -320,6 +329,9 @@ func New(cfg *config.Config, version string, tlsStore *mtls.Store) (*App, error)
 			// queue inside the gateway where the collector cannot see them.
 			"modbus": cfg.Protocols.Modbus.PerHost,
 			"gnmi":   cfg.Protocols.GNMI.PerHost,
+			// The provider's own API gateway, not a device - its rate limit
+			// is what per_host is bounding here, not a serial trunk.
+			"provider": cfg.Protocols.Provider.PerHost,
 		},
 	}, a.poll, log, mets)
 

@@ -17,6 +17,7 @@ enum Protocol {
   PROTOCOL_REDFISH = 5;
   PROTOCOL_MODBUS = 6;
   PROTOCOL_SFLOW = 7;
+  PROTOCOL_PROVIDER = 8;
 }
 
 enum ValueType {

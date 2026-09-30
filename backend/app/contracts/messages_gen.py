@@ -37,6 +37,7 @@ class Protocol(IntEnum):
     REDFISH = 5
     MODBUS = 6
     SFLOW = 7
+    PROVIDER = 8
 
 
 class ValueType(IntEnum):

@@ -123,6 +123,10 @@ type Config struct {
 		BACnet       BACnetCfg       `yaml:"bacnet"`
 		Modbus       ProtocolCfg     `yaml:"modbus"`
 		GNMI         GNMICfg         `yaml:"gnmi"`
+		// Provider polls a colo provider's own REST API (docs/26 Phase 10) -
+		// no device network to reach at all, so max_concurrent/per_host bound
+		// a rate this collector controls against the provider's own limits.
+		Provider ProtocolCfg `yaml:"provider"`
 	} `yaml:"protocols"`
 
 	Health struct {
@@ -424,6 +428,10 @@ func Default() *Config {
 	c.Protocols.GNMI = GNMICfg{
 		Enabled: false, MaxConcurrent: 16, PerHost: 2,
 		Timeout: 10 * time.Second, Stream: true, StreamGraceFactor: 3,
+	}
+	c.Protocols.Provider = ProtocolCfg{
+		Enabled: false, MaxConcurrent: 4, PerHost: 1,
+		Timeout: 15 * time.Second, Retries: 1,
 	}
 	c.Health.OfflineThreshold = 3
 	// 60 s bounds how stale endpoint_state can get without making the write

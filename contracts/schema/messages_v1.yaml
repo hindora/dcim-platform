@@ -21,7 +21,7 @@ package: dcim.telemetry.v1
 
 enums:
   Protocol:
-    values: [UNSPECIFIED, SNMP, SNMP_TRAP, GNMI, BACNET, REDFISH, MODBUS, SFLOW]
+    values: [UNSPECIFIED, SNMP, SNMP_TRAP, GNMI, BACNET, REDFISH, MODBUS, SFLOW, PROVIDER]
   ValueType:
     values: [UNSPECIFIED, GAUGE, COUNTER, DELTA, BOOL, TEXT]
   Quality:

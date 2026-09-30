@@ -16,6 +16,7 @@ const (
 	ProtocolRedfish     Protocol = 5
 	ProtocolModbus      Protocol = 6
 	ProtocolSflow       Protocol = 7
+	ProtocolProvider    Protocol = 8
 )
 
 var protocolNames = map[Protocol]string{
@@ -27,6 +28,7 @@ var protocolNames = map[Protocol]string{
 	5: "REDFISH",
 	6: "MODBUS",
 	7: "SFLOW",
+	8: "PROVIDER",
 }
 
 func (e Protocol) String() string {
