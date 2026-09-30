@@ -376,3 +376,69 @@ async def test_readiness_counts_credentials_state_and_member_preflight(session):
     assert checks["online"] is False
     assert got["ready"] is False
     assert [r["cidr"] for r in got["ranges"]] == ["10.51.13.0/24"]
+
+
+async def test_the_monitor_reads_capacity_and_per_pool_points_from_heartbeats(session):
+    """docs/26 Phase 5: busy % per collector, and a pool's measured points/s
+    summed over every live collector reporting it - member or not."""
+    import json
+
+    from app.alarms import platform_monitor as mon
+
+    dc_id, _ = await _datacenter_and_room(session, f"P{_tag()[:6]}")
+    pool = await svc.create(session, _payload(dc_id, cidrs=[]))  # budget 400
+    member, outsider = f"col-{_tag()}", f"col-{_tag()}"
+    await _collector(session, member, pool["id"])
+    await _collector(session, outsider, None)
+    for cid, pts, pct in ((member, 300.0, 91.5), (outsider, 50.0, 10.0)):
+        await session.execute(text("""
+            UPDATE collector_instance SET stats = CAST(:s AS jsonb) WHERE id = :id
+        """), {"id": cid, "s": json.dumps({"capacity": {
+            "window_s": 300, "busy_pct": pct, "shed": 0, "late": 2,
+            "pools": {pool["id"]: {"points_per_s": pts}}}})})
+
+    pools = {p.pool_id: p for p in await mon._pools(session)}
+    got = pools[pool["id"]]
+    assert got.rate_budget_points_per_s == 400.0
+    assert got.points_per_s == 350.0, "a pinned endpoint's points count wherever they came from"
+
+    cols = {c.collector_id: c for c in await mon._collectors(session)}
+    assert cols[member].capacity_busy_pct == 91.5
+    assert cols[member].capacity_window_s == 300.0
+    assert cols[member].capacity_late == 2
+
+
+async def test_a_pool_nobody_reports_points_for_is_unmeasured_not_zero(session):
+    from app.alarms import platform_monitor as mon
+
+    dc_id, _ = await _datacenter_and_room(session, f"P{_tag()[:6]}")
+    pool = await svc.create(session, _payload(dc_id, cidrs=[]))
+    pools = {p.pool_id: p for p in await mon._pools(session)}
+    assert pools[pool["id"]].points_per_s is None
+
+
+async def test_pool_points_and_member_busy_reach_the_pool_view(session):
+    import json
+
+    dc_id, _ = await _datacenter_and_room(session, f"P{_tag()[:6]}")
+    pool = await svc.create(session, _payload(dc_id, cidrs=[]))  # budget 400
+    cid = f"col-{_tag()}"
+    await _collector(session, cid, pool["id"])
+    await session.execute(text("""
+        UPDATE collector_instance SET stats = CAST(:s AS jsonb) WHERE id = :id
+    """), {"id": cid, "s": json.dumps({"capacity": {
+        "window_s": 300, "busy_pct": 77.0,
+        "pools": {pool["id"]: {"points_per_s": 100.0}}}})})
+
+    got = await svc.detail(session, pool["id"])
+    assert got["points_per_s"] == 100.0
+    assert got["budget_used_pct"] == 25.0
+    assert got["busiest_member_pct"] == 77.0
+
+    # A silent collector's last figure is history, not load.
+    await session.execute(text("""
+        UPDATE collector_instance SET last_heartbeat = now() - interval '10 minutes'
+         WHERE id = :id
+    """), {"id": cid})
+    got = await svc.detail(session, pool["id"])
+    assert got["points_per_s"] is None and got["busiest_member_pct"] is None

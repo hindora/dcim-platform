@@ -89,7 +89,28 @@ PLATFORM_ALARM_TYPES = (
     "integration_webhook_expiring",
     "pool_below_min_members",
     "collector_outdated",
+    "collector_capacity_high",
+    "pool_rate_budget_exceeded",
 )
+
+#: docs/26 Phase 5. SolarWinds warns at 85% of a poller's maximum polling
+#: rate and starts stretching intervals at 100%; Zabbix's stock template
+#: alerts on poller busy above 75%, Niagara keeps its poll scheduler under
+#: 75%. 85 is the plan's line, drawn on MEASURED worker saturation - the
+#: collector's own worker-time over a trailing five minutes - rather than on
+#: a weighted estimate of what the load ought to cost.
+CAPACITY_WARN_PCT = 85.0
+#: Past this a collector has no headroom for a slow device or a retry storm.
+CAPACITY_MAJOR_PCT = 95.0
+#: A report over less than this is a process that just started: one slow
+#: walk in its first ten seconds is not a capacity finding.
+CAPACITY_MIN_WINDOW_S = 60.0
+
+#: A pool's rate budget is the load the target network agreed to take - the
+#: BMS supervisor's or serial gateway's ceiling, not the collector's. Warn
+#: at the same fraction; at 100% it is being exceeded, and nothing throttles
+#: to it yet (per-target enforcement is Phase 9).
+BUDGET_WARN_FRACTION = 0.85
 
 #: An Atlassian Cloud API token expires within a year of being minted, and the
 #: whole pre-December-2024 generation was force-expired in spring 2026. A
@@ -147,6 +168,13 @@ class Collector:
     #: - neither current nor ancient, just outside what skew can say anything
     #: about.
     version: str = ""
+    #: docs/26 Phase 5: the collector's own capacity report, trailing
+    #: window. None for a collector too old to send one, or one with a
+    #: single reading so far - silence, never a zero load.
+    capacity_busy_pct: float | None = None
+    capacity_window_s: float = 0.0
+    capacity_shed: int = 0
+    capacity_late: int = 0
 
 
 @dataclass
@@ -165,6 +193,13 @@ class Pool:
     name: str
     min_members: int
     healthy_accepting_members: int
+    #: docs/26 Phase 5. The pool's configured ceiling, and what live
+    #: collectors measured publishing from its endpoints - summed over every
+    #: collector reporting points for it, member or not, since a pinned
+    #: endpoint can be polled from outside its pool. None when unset, or
+    #: when no collector reports per-pool points yet.
+    rate_budget_points_per_s: float | None = None
+    points_per_s: float | None = None
 
 
 @dataclass
@@ -454,6 +489,37 @@ def evaluate(signals: Signals) -> list[Finding]:
                     f"keeps collecting - this platform does not hard-block "
                     f"an old collector's data - but it needs upgrading soon")))
 
+        # docs/26 Phase 5: capacity. Shed polls are the unambiguous case -
+        # the queue was full and the poll was never made - so they raise
+        # MAJOR on their own, whatever the busy figure says.
+        if (c.capacity_busy_pct is not None
+                and c.capacity_window_s >= CAPACITY_MIN_WINDOW_S):
+            mins = c.capacity_window_s / 60
+            late = (f" {c.capacity_late} polls started more than 5 s late."
+                    if c.capacity_late else "")
+            if c.capacity_shed > 0:
+                out.append(Finding(
+                    alarm_type="collector_capacity_high", instance=c.collector_id,
+                    severity=MAJOR, value=float(c.capacity_shed),
+                    message=(
+                        f"Collector {c.collector_id} shed {c.capacity_shed} "
+                        f"polls in the last {mins:.0f} minutes because its "
+                        f"queue was full - those polls were never made. Its "
+                        f"poll workers are {c.capacity_busy_pct:.0f}% busy."
+                        f"{late} Add a collector to its pool or raise its "
+                        f"worker count")))
+            elif c.capacity_busy_pct >= CAPACITY_WARN_PCT:
+                out.append(Finding(
+                    alarm_type="collector_capacity_high", instance=c.collector_id,
+                    severity=(MAJOR if c.capacity_busy_pct >= CAPACITY_MAJOR_PCT
+                              else WARNING),
+                    value=c.capacity_busy_pct, threshold=CAPACITY_WARN_PCT,
+                    message=(
+                        f"Collector {c.collector_id}'s poll workers have been "
+                        f"{c.capacity_busy_pct:.0f}% busy over the last "
+                        f"{mins:.0f} minutes.{late} It has little headroom "
+                        f"left for a slow device or a retry storm")))
+
     # --- collector pools (docs/26 Phase 6) -------------------------------------
     #
     # min_members is only ever meaningful once an operator has set it above
@@ -477,6 +543,29 @@ def evaluate(signals: Signals) -> list[Finding]:
                     + ("No collector can currently poll this pool at all."
                        if pool.healthy_accepting_members == 0 else
                        "It is running with less redundancy than configured."))))
+
+    # --- pool rate budgets (docs/26 Phase 5) ------------------------------------
+    for pool in signals.pools:
+        budget = pool.rate_budget_points_per_s
+        if not budget or pool.points_per_s is None:
+            continue
+        fraction = pool.points_per_s / budget
+        if fraction >= BUDGET_WARN_FRACTION:
+            over = fraction >= 1.0
+            out.append(Finding(
+                alarm_type="pool_rate_budget_exceeded", instance=pool.pool_id,
+                severity=MAJOR if over else WARNING,
+                value=round(pool.points_per_s, 1), threshold=float(budget),
+                message=(
+                    f"Pool {pool.name} is polling {pool.points_per_s:.0f} "
+                    f"points/s against a rate budget of {budget:.0f} "
+                    f"({fraction * 100:.0f}%). "
+                    + ("The target network is getting more than it agreed "
+                       "to take, and nothing throttles to the budget yet - "
+                       "lengthen the poll intervals or split the load."
+                       if over else
+                       "Adding devices or shortening intervals will take "
+                       "it over."))))
 
     # --- database -------------------------------------------------------------
     if signals.db_pool_saturated_for_s >= DB_POOL_SATURATED_S:

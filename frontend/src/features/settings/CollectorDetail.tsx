@@ -83,6 +83,7 @@ export function CollectorDetail() {
         <Heartbeat d={d} />
       </div>
 
+      <Capacity d={d} />
       <Preflight d={d} />
       <RecentErrors d={d} />
       <Owned endpoints={d.endpoints} byProtocol={d.by_protocol} />
@@ -91,6 +92,7 @@ export function CollectorDetail() {
 }
 
 function kpis(d: Detail): Kpi[] {
+  const cap = d.capacity;
   const online = d.by_status.ONLINE ?? 0;
   const owned = d.endpoints.length;
   const failedPct = d.stats.polls_total
@@ -105,10 +107,10 @@ function kpis(d: Detail): Kpi[] {
       tone: d.error_count ? 'warn' : 'ok' },
     { caption: 'Polls failed', value: failedPct, unit: '%', digits: 2,
       why: failedPct == null ? 'Its heartbeat reports no poll counters' : null },
-    { caption: 'Work queue', value: d.queue_fill_pct ?? null, unit: '%', digits: 0,
-      why: d.queue_fill_pct == null
-        ? 'Its heartbeat reports no queue capacity to measure against'
-        : 'Fill of its internal queue - not utilisation; the capacity model is not built' },
+    { caption: 'Workers busy', value: cap?.busy_pct ?? null, unit: '%', digits: 0,
+      tone: cap == null ? undefined : cap.shed > 0 || cap.busy_pct >= 95 ? 'critical'
+        : cap.busy_pct >= 85 ? 'warn' : 'ok',
+      why: cap == null ? 'It has not sent a capacity report yet' : null },
   ];
 }
 
@@ -220,6 +222,92 @@ function Heartbeat({ d }: { d: Detail }) {
           </Row>
         </tbody>
       </table>
+    </fieldset>
+  );
+}
+
+/** docs/26 Phase 5. Measured, not estimated: the busy figure is worker time
+ *  held over worker time available, and each protocol's cost per poll is
+ *  what its polls actually took - the weight a sizing table would guess. */
+function Capacity({ d }: { d: Detail }) {
+  const c = d.capacity;
+  const protos = c ? Object.entries(c.protocols) : [];
+  const tone = !c ? '' : c.shed > 0 || c.busy_pct >= 95 ? 'critical'
+    : c.busy_pct >= 85 ? 'warn' : 'ok';
+  return (
+    <fieldset className="proto">
+      <legend>
+        <Tip tip={oneLine(`Its poll workers over the last few minutes. 85% busy warns,
+                95% or any shed poll is major. Streams and trap listeners hold no
+                poll worker, so they are not in these figures.`)}>Capacity</Tip>
+      </legend>
+      {!c ? (
+        <p className="muted" style={{ margin: 0 }}>
+          Not reported yet. A collector sends this from its second heartbeat on;
+          one built before capacity reporting never will.
+        </p>
+      ) : (
+        <>
+          <p style={{ marginTop: 0 }}>
+            <span className={tone}>{c.busy_pct.toFixed(0)}% of {c.workers} workers busy</span>
+            <span className="muted">
+              {' '}over {seconds(c.window_s)} · {num(c.polls_per_s, 2)} of{' '}
+              {num(c.scheduled_polls_per_s, 2)} scheduled polls/s · {num(c.points_per_s, 1)} points/s
+              · queue wait {num(c.queue_wait_avg_ms, 1)} ms
+            </span>
+          </p>
+          {(c.shed > 0 || c.late > 0 || c.overrun > 0) && (
+            <p className="muted">
+              {c.shed > 0 && <span className="critical">{c.shed} shed (never made) · </span>}
+              {c.late > 0 && <span className="warn">{c.late} started over 5 s late · </span>}
+              <Tip tip={oneLine(`Due again while the previous poll of the same endpoint
+                      was still running: usually one slow device, not the pool.`)}>
+                {c.overrun} overran
+              </Tip>
+            </p>
+          )}
+          <div className="table-frame">
+            <table>
+              <thead>
+                <tr>
+                  <th>Protocol</th><th className="num">Endpoints</th>
+                  <th className="num">Polls/s</th><th className="num">Points/s</th>
+                  <th className="num">
+                    <Tip tip="This protocol's share of all worker time">Busy</Tip>
+                  </th>
+                  <th className="num">
+                    <Tip tip="Worker-seconds one poll takes, measured. Timeouts and retries count.">
+                      Cost/poll
+                    </Tip>
+                  </th>
+                  <th className="num">
+                    <Tip tip={oneLine(`Share of its worker time spent waiting for a
+                            protocol or per-host slot. High means the protocol
+                            limit is the ceiling, not the worker pool.`)}>Slot wait</Tip>
+                  </th>
+                  <th className="num">Limit</th>
+                </tr>
+              </thead>
+              <tbody>
+                {protos.map(([name, p]) => (
+                  <tr key={name}>
+                    <td>{name}</td>
+                    <td className="num">{p.jobs}</td>
+                    <td className="num">{num(p.polls_per_s, 2)}</td>
+                    <td className="num">{num(p.points_per_s, 1)}</td>
+                    <td className="num">{p.busy_pct.toFixed(1)}%</td>
+                    <td className="num">{p.cost_s_per_poll.toFixed(2)} s</td>
+                    <td className={p.sem_wait_pct >= 50 ? 'num warn' : 'num'}>
+                      {p.sem_wait_pct.toFixed(0)}%
+                    </td>
+                    <td className="num muted">{p.limit || 'pool'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
     </fieldset>
   );
 }

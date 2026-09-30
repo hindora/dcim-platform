@@ -221,6 +221,15 @@ messages:
       # with content but no replay in progress is a distinct, visible state
       # from one making no progress because ingest cannot keep up.
       - {name: replay_rate, tag: 25, type: uint32}
+      # Poll-worker capacity over the trailing five minutes, as JSON
+      # (docs/26 Phase 5): busy % of the worker pool, scheduled vs achieved
+      # polls/s, points/s, shed/overrun/late counts, and per protocol the
+      # measured worker-seconds one poll costs. JSON rather than fields for
+      # the same reason as config_effective: the per-protocol and per-pool
+      # breakdown is a map, and the platform stores it as an object. Empty
+      # for a collector built before this field, or before it has two
+      # readings to subtract - silence, never a zero load.
+      - {name: capacity, tag: 26, type: string}
 
 streams:
   # maxlen is an entry count, but memory is what runs out, so these are sized

@@ -415,3 +415,87 @@ def test_skew_alarms_are_keyed_per_collector():
         p.Collector(collector_id="col-1", heartbeat_age_s=10.0, version="2.3.0"),
         p.Collector(collector_id="col-2", heartbeat_age_s=10.0, version="2.5.0")]))
     assert {f.instance for f in found} == {"col-1"}
+
+
+# --- capacity (docs/26 Phase 5) ------------------------------------------------
+
+def busy(pct, *, window_s=300.0, shed=0, late=0, cid="col-1"):
+    return p.Collector(collector_id=cid, heartbeat_age_s=10.0, endpoints_owned=664,
+                       capacity_busy_pct=pct, capacity_window_s=window_s,
+                       capacity_shed=shed, capacity_late=late)
+
+
+def test_a_collector_under_the_line_raises_nothing():
+    assert p.evaluate(sig(collectors=[busy(84.9)])) == []
+
+
+def test_eighty_five_percent_busy_warns():
+    found = p.evaluate(sig(collectors=[busy(85.0)]))
+    assert types(found) == {"collector_capacity_high"}
+    assert found[0].severity == p.WARNING
+    assert found[0].threshold == p.CAPACITY_WARN_PCT
+
+
+def test_ninety_five_percent_busy_is_major():
+    found = p.evaluate(sig(collectors=[busy(96.0, late=12)]))
+    assert found[0].severity == p.MAJOR
+    assert "12 polls started more than 5 s late" in found[0].message
+
+
+def test_shed_polls_are_major_however_idle_the_workers_look():
+    """A shed poll was never made. That is capacity lost outright, and the
+    busy average over five minutes can hide the burst that caused it."""
+    found = p.evaluate(sig(collectors=[busy(40.0, shed=3)]))
+    assert types(found) == {"collector_capacity_high"}
+    assert found[0].severity == p.MAJOR
+    assert "never made" in found[0].message
+
+
+def test_a_collector_that_never_reported_capacity_is_not_judged():
+    """An older collector, or one with a single reading, sends nothing -
+    which is silence, not a zero load and not a full one."""
+    found = p.evaluate(sig(collectors=[p.Collector(
+        collector_id="col-1", heartbeat_age_s=10.0, endpoints_owned=664)]))
+    assert found == []
+
+
+def test_a_window_shorter_than_a_minute_is_not_judged():
+    assert p.evaluate(sig(collectors=[busy(100.0, window_s=20.0)])) == []
+
+
+def test_a_stale_collector_raises_stale_not_capacity():
+    c = busy(99.0)
+    c.heartbeat_age_s = 900.0
+    assert types(p.evaluate(sig(collectors=[c]))) == {"collector_stale"}
+
+
+def test_a_pool_within_its_budget_raises_nothing():
+    found = p.evaluate(sig(pools=[pool(rate_budget_points_per_s=400.0,
+                                       points_per_s=339.0)]))
+    assert found == []
+
+
+def test_a_pool_at_eighty_five_percent_of_budget_warns():
+    found = p.evaluate(sig(pools=[pool(rate_budget_points_per_s=400.0,
+                                       points_per_s=340.0)]))
+    assert types(found) == {"pool_rate_budget_exceeded"}
+    assert found[0].severity == p.WARNING
+
+
+def test_a_pool_over_budget_is_major_and_says_nothing_throttles():
+    found = p.evaluate(sig(pools=[pool(rate_budget_points_per_s=400.0,
+                                       points_per_s=520.0)]))
+    assert found[0].severity == p.MAJOR
+    assert "nothing throttles" in found[0].message
+
+
+def test_no_budget_or_no_measurement_means_no_budget_alarm():
+    assert p.evaluate(sig(pools=[pool(points_per_s=9999.0)])) == []
+    assert p.evaluate(sig(pools=[pool(rate_budget_points_per_s=10.0)])) == []
+
+
+def test_capacity_alarm_types_are_classified():
+    from app.core import alert_taxonomy as tax
+    for t in ("collector_capacity_high", "pool_rate_budget_exceeded"):
+        assert t in p.PLATFORM_ALARM_TYPES
+        assert tax.BY_ALARM_TYPE[t] == tax.VISIBILITY

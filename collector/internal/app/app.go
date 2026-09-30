@@ -4,11 +4,13 @@ package app
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -20,6 +22,7 @@ import (
 	"github.com/hari/dcim-platform/collector/internal/adapters/redfish"
 	"github.com/hari/dcim-platform/collector/internal/adapters/snmp"
 	"github.com/hari/dcim-platform/collector/internal/assign"
+	"github.com/hari/dcim-platform/collector/internal/capacity"
 	"github.com/hari/dcim-platform/collector/internal/config"
 	"github.com/hari/dcim-platform/collector/internal/discovery"
 	"github.com/hari/dcim-platform/collector/internal/health"
@@ -102,8 +105,15 @@ type App struct {
 	adapters      map[string]models.Adapter
 
 	startedAt time.Time
-	pollsOK   uint64
-	pollsBad  uint64
+	// Atomic: every poll worker bumps these concurrently, and the heartbeat
+	// reads them from its own goroutine.
+	pollsOK  atomic.Uint64
+	pollsBad atomic.Uint64
+
+	// Poll-worker capacity (docs/26 Phase 5): samples per protocol and pool,
+	// and the trailing window the heartbeat reports over.
+	points   *capacity.Points
+	capTrack capacity.Tracker
 
 	// Where mapping data came from and its fingerprint - reported in every
 	// heartbeat so the platform can catch a collector running data it does
@@ -315,6 +325,7 @@ func New(cfg *config.Config, version string, tlsStore *mtls.Store) (*App, error)
 		return nil, fmt.Errorf("no protocol adapters enabled")
 	}
 
+	a.points = capacity.NewPoints()
 	a.sched = sched.New(sched.Options{
 		Workers:   cfg.Workers.PoolSize,
 		QueueSize: cfg.Workers.PoolSize * cfg.Workers.QueueMultiplier,
@@ -592,7 +603,7 @@ func (a *App) poll(ctx context.Context, ep *models.Endpoint) {
 		Observe(elapsed.Seconds())
 
 	if err != nil {
-		a.pollsBad++
+		a.pollsBad.Add(1)
 		a.mets.PollsTotal.WithLabelValues(ep.Protocol, ep.DeviceType, "failure").Inc()
 		a.tracker.Failure(ep, err)
 		a.log.Debug("poll failed", "endpoint_id", ep.ID, "device", ep.DeviceName,
@@ -604,7 +615,8 @@ func (a *App) poll(ctx context.Context, ep *models.Endpoint) {
 	if outcome.Partial {
 		result = "partial"
 	}
-	a.pollsOK++
+	a.pollsOK.Add(1)
+	a.points.Add(ep.Protocol, ep.PoolID, len(outcome.Samples))
 	a.mets.PollsTotal.WithLabelValues(ep.Protocol, ep.DeviceType, result).Inc()
 	for _, miss := range outcome.Misses {
 		a.mets.MissesTotal.WithLabelValues(ep.Protocol, miss.Reason).Inc()
@@ -784,8 +796,8 @@ func (a *App) heartbeatLoop(ctx context.Context) {
 				// means a real coverage gap, and above it is impossible.
 				EndpointsOwned:  uint32(a.sched.Count() + a.streamCount()),
 				EndpointsOnline: uint32(a.tracker.OnlineCount()),
-				PollsTotal:      a.pollsOK + a.pollsBad,
-				PollsFailed:     a.pollsBad,
+				PollsTotal:      a.pollsOK.Load() + a.pollsBad.Load(),
+				PollsFailed:     a.pollsBad.Load(),
 				QueueDepth:      uint32(a.pub.QueueDepth()),
 				// These five were in the contract from the start and never
 				// filled in, so the platform checks that read them could not
@@ -803,6 +815,11 @@ func (a *App) heartbeatLoop(ctx context.Context) {
 			// ReplayRateRPS are stubs) and real for the gateway transport -
 			// see either's docstring. Filled in generically here so neither
 			// transport has to know it is the one being reported.
+			if rep := a.capTrack.Observe(capacity.Read(a.sched, a.points)); rep != nil {
+				if raw, err := json.Marshal(rep); err == nil {
+					hb.Capacity = string(raw)
+				}
+			}
 			spoolStats := a.pub.SpoolStats()
 			hb.SpoolBytes = uint64(spoolStats.Bytes)
 			hb.SpoolOldestAgeS = uint32(spoolStats.OldestAge.Seconds())

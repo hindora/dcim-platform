@@ -222,10 +222,12 @@ def summarise_detail(collector_id: str, endpoints: list[dict[str, Any]],
         "recent_errors": errors[:recent],
         "error_count": len(errors),
         "stats": {k: s.get(k) for k in DETAIL_STATS},
-        # Work-queue fill, NOT utilisation: the capacity model that would
-        # say how close this collector is to its ceiling is not built
-        # (docs/26 Phase 5). Named for what it measures.
+        # Publish-queue fill - how far behind sending it is. Not poll
+        # capacity, which is `capacity` below.
         "queue_fill_pct": queue,
+        # docs/26 Phase 5: the collector's own poll-worker capacity report
+        # over its trailing window, as sent. None until it has sent one.
+        "capacity": s.get("capacity") if isinstance(s.get("capacity"), dict) else None,
     }
 
 

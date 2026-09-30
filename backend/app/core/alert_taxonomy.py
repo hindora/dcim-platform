@@ -309,6 +309,11 @@ BY_ALARM_TYPE: dict[str, str] = {
     "datapoint_missing": VISIBILITY,
     "collector_stale": VISIBILITY,
     "collector_degraded": VISIBILITY,
+    # docs/26 Phase 5: not yet lost sight, but about to - a collector with
+    # no poll-worker headroom, or a pool pushing its target network past
+    # the load it agreed to take.
+    "collector_capacity_high": VISIBILITY,
+    "pool_rate_budget_exceeded": VISIBILITY,
     "assignment_stale": VISIBILITY,
     "ingest_lag_high": VISIBILITY,
     "ingest_stalled": VISIBILITY,

@@ -85,3 +85,10 @@ def test_missing_stats_stay_none_not_zero():
 def test_queue_fill_is_depth_over_capacity():
     out = summarise_detail("col-1", [], {"queue_depth": 250, "queue_capacity": 1000})
     assert out["queue_fill_pct"] == 25.0
+
+
+def test_the_capacity_report_passes_through_and_is_none_until_sent():
+    cap = {"busy_pct": 61.0, "window_s": 300, "protocols": {}}
+    assert summarise_detail("col-1", [], {"capacity": cap})["capacity"] == cap
+    assert summarise_detail("col-1", [], {})["capacity"] is None
+    assert summarise_detail("col-1", [], {"capacity": None})["capacity"] is None

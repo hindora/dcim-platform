@@ -87,6 +87,17 @@ export function Pools() {
                 Unassigned
               </Tip>
             </th>
+            <th className="num">
+              <Tip tip={oneLine(`Points/s measured from this pool's endpoints, and the
+                      share of its rate budget that is. 85% of budget warns.`)}>
+                Load
+              </Tip>
+            </th>
+            <th className="num">
+              <Tip tip="Poll-worker busy % of its busiest live member. 85% warns.">
+                Busiest
+              </Tip>
+            </th>
             <th>Trap VIP</th><th>BBMD</th><th />
           </tr>
         </thead>
@@ -118,6 +129,27 @@ export function Pools() {
                 {p.unassigned > 0
                   ? <span className="warn">{p.unassigned}</span>
                   : <span className="muted">0</span>}
+              </td>
+              <td className="num">
+                {p.points_per_s == null ? <span className="muted">—</span> : (
+                  <>
+                    {p.points_per_s.toFixed(0)}/s
+                    {p.budget_used_pct != null && (
+                      <span className={p.budget_used_pct >= 100 ? 'critical'
+                        : p.budget_used_pct >= 85 ? 'warn' : 'muted'}>
+                        {' '}({p.budget_used_pct.toFixed(0)}%)
+                      </span>
+                    )}
+                  </>
+                )}
+              </td>
+              <td className="num">
+                {p.busiest_member_pct == null ? <span className="muted">—</span> : (
+                  <span className={p.busiest_member_pct >= 95 ? 'critical'
+                    : p.busiest_member_pct >= 85 ? 'warn' : undefined}>
+                    {p.busiest_member_pct.toFixed(0)}%
+                  </span>
+                )}
               </td>
               <td className="mono muted">{p.trap_vip ?? '—'}</td>
               <td className="mono muted">
@@ -468,8 +500,9 @@ function ManageSheet({ row, onClose }: { row: PoolRow; onClose: () => void }) {
                 <input value={form.rate_budget} onChange={(e) => set('rate_budget', e.target.value)}
                        inputMode="numeric" className="mono" placeholder="unset" />
                 <em className="hint">
-                  Carried to the collectors. Nothing measures against it yet — the capacity
-                  model is not built.
+                  The load the target network agreed to take — a BMS supervisor's or
+                  gateway's ceiling, not the collector's. Measured against the points/s
+                  this pool's endpoints publish; alarms at 85%. Nothing throttles to it yet.
                 </em>
               </label>
               <label>

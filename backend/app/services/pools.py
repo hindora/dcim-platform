@@ -163,7 +163,8 @@ def clean(payload: dict[str, Any], *, partial: bool) -> dict[str, Any]:
 def aggregate(pools: list[dict[str, Any]], members: list[dict[str, Any]],
               endpoint_counts: list[dict[str, Any]],
               ownable: list[dict[str, Any]],
-              plan: dict[str, str | None]) -> dict[str, Any]:
+              plan: dict[str, str | None],
+              points: dict[str, float] | None = None) -> dict[str, Any]:
     """Pure: join pools with their members, endpoint totals and the plan.
 
     Separated from the queries so the arithmetic - which is where a page
@@ -205,6 +206,15 @@ def aggregate(pools: list[dict[str, Any]], members: list[dict[str, Any]],
         p["members"].sort(key=lambda m: m["collector_id"])
         p["below_min_members"] = (p["min_members"] > 1
                                   and p["accepting_members"] < p["min_members"])
+        # docs/26 Phase 5: measured load. None is "nobody reports it", never
+        # zero - a pool of old collectors is unmeasured, not idle.
+        pts = (points or {}).get(p["id"])
+        budget = p.get("rate_budget_points_per_s")
+        p["points_per_s"] = round(pts, 1) if pts is not None else None
+        p["budget_used_pct"] = (round(100.0 * pts / budget, 1)
+                                if pts is not None and budget else None)
+        busy = [m["busy_pct"] for m in p["members"] if m.get("busy_pct") is not None]
+        p["busiest_member_pct"] = max(busy) if busy else None
     return {
         "pools": sorted(by_pool.values(), key=lambda p: (p["site"], p["plane"])),
         # Endpoints that resolve to no pool at all: a site with ranges but
@@ -222,7 +232,7 @@ async def overview(session: AsyncSession) -> dict[str, Any]:
     counts = await repo.endpoint_counts(session)
     ownable = await fleet_repo.ownable_endpoints(session)
     plan = await fleet.ownership(session)
-    out = aggregate(pools, members, counts, ownable, plan)
+    out = aggregate(pools, members, counts, ownable, plan, await repo.pool_points(session))
     out["planes"] = list(PLANES)
     return out
 
@@ -236,7 +246,8 @@ async def detail(session: AsyncSession, pool_id: str) -> dict[str, Any]:
     ownable = [e for e in await fleet_repo.ownable_endpoints(session)
                if e.get("pool_id") == pool_id]
     plan = await fleet.ownership(session)
-    agg = aggregate([pool], members, counts, ownable, plan)["pools"][0]
+    agg = aggregate([pool], members, counts, ownable, plan,
+                    await repo.pool_points(session))["pools"][0]
     agg["ranges"] = await repo.ranges_for(session, pool_id)
     return agg
 

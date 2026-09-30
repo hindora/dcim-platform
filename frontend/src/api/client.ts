@@ -957,6 +957,42 @@ export interface CollectorEndpoint {
   reported_by?: string | null;
 }
 
+/** One protocol in a collector's capacity report (docs/26 Phase 5). */
+export interface CapacityProtocol {
+  jobs: number;
+  /** Its concurrency limit; 0 when only the worker pool bounds it. */
+  limit: number;
+  scheduled_per_s: number;
+  polls_per_s: number;
+  points_per_s: number;
+  /** This protocol's share of the whole pool's worker time. */
+  busy_pct: number;
+  /** Measured worker-seconds one poll costs - the protocol's real weight. */
+  cost_s_per_poll: number;
+  /** Share of its worker time spent waiting for a protocol or per-host slot. */
+  sem_wait_pct: number;
+  shed: number;
+  overrun: number;
+  late: number;
+}
+
+/** A collector's poll-worker capacity over its trailing window, as it sent
+ *  it. Only the poll scheduler: streams and listeners hold no poll worker. */
+export interface CollectorCapacity {
+  window_s: number;
+  workers: number;
+  busy_pct: number;
+  scheduled_polls_per_s: number;
+  polls_per_s: number;
+  points_per_s: number;
+  shed: number;
+  overrun: number;
+  late: number;
+  queue_wait_avg_ms: number;
+  protocols: Record<string, CapacityProtocol>;
+  pools?: Record<string, { points_per_s: number }>;
+}
+
 /** docs/26 Phase 8's collector detail page. Stats a collector never sent
  *  are null, never zero: a redis-transport collector has no spool. */
 export interface CollectorDetail extends Omit<CollectorRow, 'config' | 'effective'> {
@@ -978,8 +1014,10 @@ export interface CollectorDetail extends Omit<CollectorRow, 'config' | 'effectiv
     spool_oldest_age_s?: number | null; replay_rate?: number | null;
     mapping_bundle_sha?: string | null;
   };
-  /** Work-queue fill - NOT utilisation; the capacity model is not built. */
+  /** Publish-queue fill - how far behind sending it is, not poll capacity. */
   queue_fill_pct?: number | null;
+  /** Poll-worker capacity (docs/26 Phase 5); null until it has sent one. */
+  capacity?: CollectorCapacity | null;
   preflight?: PreflightRun | null;
 }
 
@@ -1007,6 +1045,8 @@ export interface PoolMember {
    *  creation time, so `healthy` alone cannot say it never ran. */
   has_run: boolean;
   heartbeat_age_s?: number | null;
+  /** Poll-worker busy % over its trailing window; null when silent or unreported. */
+  busy_pct?: number | null;
   endpoints_owned: number;
   endpoints_online: number;
 }
@@ -1037,6 +1077,11 @@ export interface PoolRow {
   /** Resolving here, owned by nobody: no member is healthy enough. */
   unassigned: number;
   below_min_members: boolean;
+  /** docs/26 Phase 5: points/s measured from this pool's endpoints by live
+   *  collectors. Null is unmeasured, never idle. */
+  points_per_s?: number | null;
+  budget_used_pct?: number | null;
+  busiest_member_pct?: number | null;
 }
 
 export interface PoolRange {

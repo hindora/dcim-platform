@@ -164,4 +164,5 @@ message CollectorHeartbeat {
   uint64 spool_bytes = 23;
   uint32 spool_oldest_age_s = 24;
   uint32 replay_rate = 25;
+  string capacity = 26;
 }

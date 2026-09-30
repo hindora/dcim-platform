@@ -44,7 +44,7 @@ from app.repositories import dashboard as dashboard_repo
 from app.repositories import discovery as disc_repo
 from app.repositories import preflight as preflight_repo
 from app.schemas import Assignment, PreflightCheck, PreflightResult
-from app.services import ca, collector_gateway, collector_pki
+from app.services import ca, collector_capacity, collector_gateway, collector_pki
 from app.services import collector as service
 from app.services import discovery as disc_service
 
@@ -358,6 +358,10 @@ async def heartbeat(
                 "spool_bytes", "spool_oldest_age_s", "replay_rate"):
         if key in payload:
             stats[key] = payload[key]
+    # A JSON string on the wire (contracts: capacity, tag 26); stored as an
+    # object, decoded by the same function the Redis path uses.
+    if "capacity" in payload:
+        stats["capacity"] = collector_capacity.decode(payload["capacity"], claimed)
 
     await repo.upsert_heartbeat(session, {
         "id": claimed,

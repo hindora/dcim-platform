@@ -285,6 +285,8 @@ NON_TRAP_ALARM_TYPES = frozenset({
     "collector_degraded", "collector_stale", "assignment_stale",
     "ingest_lag_high", "ingest_stalled", "ingest_worker_stale",
     "db_pool_exhausted",
+    # docs/26 Phase 5 capacity (alarms/platform.py)
+    "collector_capacity_high", "pool_rate_budget_exceeded",
     # raised by discovery when what answers disagrees with inventory
     # (services/discovery_alarms.py)
     "discovery_unrecorded", "discovery_missing", "discovery_replaced",

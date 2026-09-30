@@ -146,8 +146,23 @@ async def _collectors(session: AsyncSession) -> list[rules.Collector]:
                               if stats.get("assignment_age_s") else None),
             mapping_bundle_sha=str(stats.get("mapping_bundle_sha") or ""),
             version=str(r["version"] or ""),
+            **_capacity_fields(stats.get("capacity")),
         ))
     return out
+
+
+def _capacity_fields(cap: Any) -> dict[str, Any]:
+    """The heartbeat's capacity report, as rules.Collector fields. Anything
+    missing or malformed reads as "not reported", never as zero load."""
+    if not isinstance(cap, dict) or cap.get("busy_pct") is None:
+        return {}
+    try:
+        return {"capacity_busy_pct": float(cap["busy_pct"]),
+                "capacity_window_s": float(cap.get("window_s") or 0),
+                "capacity_shed": int(cap.get("shed") or 0),
+                "capacity_late": int(cap.get("late") or 0)}
+    except (TypeError, ValueError):
+        return {}
 
 
 async def _pools(session: AsyncSession) -> list[rules.Pool]:
@@ -158,20 +173,38 @@ async def _pools(session: AsyncSession) -> list[rules.Pool]:
     live_collectors's own stale_after_s default uses.
     """
     rows = (await session.execute(text("""
-        SELECT p.id, p.name, p.min_members,
+        SELECT p.id, p.name, p.min_members, p.rate_budget_points_per_s,
                count(ci.id) FILTER (
                    WHERE ci.state = 'active'
                      AND ci.last_heartbeat IS NOT NULL
                      AND clock_timestamp() - ci.last_heartbeat
                          < make_interval(secs => :stale_s)
-               ) AS healthy_accepting
+               ) AS healthy_accepting,
+               -- docs/26 Phase 5: points/s measured FROM this pool's
+               -- endpoints, by any live collector reporting them - a pinned
+               -- endpoint can be polled from outside its pool. NULL when
+               -- no live collector reports per-pool points at all.
+               (SELECT sum((c.stats->'capacity'->'pools'->(p.id::text)
+                            ->>'points_per_s')::float)
+                  FROM collector_instance c
+                 WHERE c.state NOT IN ('decommissioned', 'pending')
+                   AND c.last_heartbeat IS NOT NULL
+                   AND clock_timestamp() - c.last_heartbeat
+                       < make_interval(secs => :stale_s)
+                   AND c.stats->'capacity'->'pools' ? (p.id::text)
+               ) AS points_per_s
           FROM collector_pool p
           LEFT JOIN collector_instance ci ON ci.pool_id = p.id
-         GROUP BY p.id, p.name, p.min_members
+         GROUP BY p.id, p.name, p.min_members, p.rate_budget_points_per_s
     """), {"stale_s": rules.COLLECTOR_STALE_S})).mappings().all()
     return [rules.Pool(pool_id=str(r["id"]), name=r["name"],
                        min_members=int(r["min_members"]),
-                       healthy_accepting_members=int(r["healthy_accepting"]))
+                       healthy_accepting_members=int(r["healthy_accepting"]),
+                       rate_budget_points_per_s=(
+                           float(r["rate_budget_points_per_s"])
+                           if r["rate_budget_points_per_s"] else None),
+                       points_per_s=(float(r["points_per_s"])
+                                     if r["points_per_s"] is not None else None))
            for r in rows]
 
 

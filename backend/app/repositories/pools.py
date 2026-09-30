@@ -153,7 +153,8 @@ async def members(session: AsyncSession,
                ci.hostname, ci.version,
                ci.started_at IS NOT NULL AS has_run,
                extract(epoch FROM (clock_timestamp() - ci.last_heartbeat)) AS age_s,
-               ci.endpoints_owned, ci.endpoints_online
+               ci.endpoints_owned, ci.endpoints_online,
+               (ci.stats->'capacity'->>'busy_pct')::float AS busy_pct
           FROM collector_instance ci
          WHERE ci.pool_id IS NOT NULL AND ci.state <> 'decommissioned'
          ORDER BY ci.id
@@ -173,8 +174,31 @@ async def members(session: AsyncSession,
             "heartbeat_age_s": age,
             "endpoints_owned": r["endpoints_owned"],
             "endpoints_online": r["endpoints_online"],
+            # docs/26 Phase 5: poll-worker busy % over the trailing window,
+            # from the last heartbeat. Only while that heartbeat is fresh -
+            # a silent collector's last figure is history, not load.
+            "busy_pct": (float(r["busy_pct"]) if r["busy_pct"] is not None
+                         and age is not None and age < stale_after_s else None),
         })
     return out
+
+
+async def pool_points(session: AsyncSession,
+                      stale_after_s: float = 60.0) -> dict[str, float]:
+    """Points/s measured from each pool's endpoints (docs/26 Phase 5),
+    summed over every live collector reporting them - member or not, since a
+    pinned endpoint can be polled from outside its pool. A pool no live
+    collector reports on is absent, not zero."""
+    rows = (await session.execute(text("""
+        SELECT kv.key AS pool_id, sum((kv.value->>'points_per_s')::float) AS pts
+          FROM collector_instance ci,
+               jsonb_each(ci.stats->'capacity'->'pools') AS kv
+         WHERE ci.state NOT IN ('decommissioned', 'pending')
+           AND jsonb_typeof(ci.stats->'capacity'->'pools') = 'object'
+           AND clock_timestamp() - ci.last_heartbeat < make_interval(secs => :stale)
+         GROUP BY kv.key
+    """), {"stale": stale_after_s})).mappings().all()
+    return {r["pool_id"]: float(r["pts"]) for r in rows if r["pts"] is not None}
 
 
 async def collector_count(session: AsyncSession, pool_id: str) -> int:

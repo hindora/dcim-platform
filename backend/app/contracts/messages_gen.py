@@ -226,6 +226,7 @@ class CollectorHeartbeat(_Msg):
     spool_bytes: int = 0
     spool_oldest_age_s: int = 0
     replay_rate: int = 0
+    capacity: str = ""
 
 
 class Stream:

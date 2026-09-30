@@ -239,3 +239,28 @@ def test_etag_changes_when_a_pools_bbmd_or_vip_changes_and_nothing_else_does():
     tags = {etag_for(_assignment(p)) for p in (base, bbmd, vip, {})}
     assert len(tags) == 4, "a pool setting change must not answer 304"
     assert etag_for(_assignment(base)) == etag_for(_assignment(dict(base)))
+
+
+def test_aggregate_carries_measured_load_against_the_budget():
+    """docs/26 Phase 5: points/s measured from the pool's endpoints, the
+    share of its rate budget that is, and its busiest live member."""
+    p1 = {**_pool("p1"), "rate_budget_points_per_s": 400}
+    p2 = _pool("p2", plane="it_oob")
+    m1 = {**_member("c1", "p1"), "busy_pct": 40.0}
+    m2 = {**_member("c2", "p1"), "busy_pct": 72.5}
+    m3 = {**_member("c3", "p2"), "busy_pct": None}
+    out = {p["id"]: p for p in svc.aggregate(
+        [p1, p2], [m1, m2, m3], [], [], {}, {"p1": 340.04})["pools"]}
+    assert out["p1"]["points_per_s"] == 340.0
+    assert out["p1"]["budget_used_pct"] == 85.0
+    assert out["p1"]["busiest_member_pct"] == 72.5
+    # Unmeasured is None, never zero: nobody reports points for p2, and its
+    # only member has not sent a capacity report.
+    assert out["p2"]["points_per_s"] is None
+    assert out["p2"]["budget_used_pct"] is None
+    assert out["p2"]["busiest_member_pct"] is None
+
+
+def test_a_measured_pool_with_no_budget_has_load_but_no_share():
+    out = svc.aggregate([_pool("p1")], [], [], [], {}, {"p1": 12.0})["pools"][0]
+    assert out["points_per_s"] == 12.0 and out["budget_used_pct"] is None

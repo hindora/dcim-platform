@@ -255,6 +255,7 @@ type CollectorHeartbeat struct {
 	SpoolBytes           uint64 `msgpack:"spool_bytes,omitempty" json:"spool_bytes,omitempty"`
 	SpoolOldestAgeS      uint32 `msgpack:"spool_oldest_age_s,omitempty" json:"spool_oldest_age_s,omitempty"`
 	ReplayRate           uint32 `msgpack:"replay_rate,omitempty" json:"replay_rate,omitempty"`
+	Capacity             string `msgpack:"capacity,omitempty" json:"capacity,omitempty"`
 }
 
 // Stream names and caps, from contracts/schema/messages_v1.yaml.

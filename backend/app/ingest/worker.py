@@ -54,7 +54,7 @@ from app.integrations import outbox as integration_outbox
 from app.integrations.dispatcher import Dispatcher
 from app.repositories import alarms as repo_alarms
 from app.repositories import snapshots as snapshot_repo
-from app.services import assigner
+from app.services import assigner, collector_capacity
 from app.services import maintenance as maintenance_service
 
 log = get_logger("ingest")
@@ -117,6 +117,12 @@ _HOT_COLUMNS = {
     "cpu_utilization": "cpu_util_pct",
     "relative_humidity": "humidity_pct",
 }
+
+
+def _capacity(hb) -> dict | None:
+    """The collector's capacity report (docs/26 Phase 5) - see
+    services/collector_capacity.decode, shared with the HTTP fallback."""
+    return collector_capacity.decode(getattr(hb, "capacity", ""), hb.collector_id)
 
 
 def _config_effective(hb) -> dict:
@@ -1114,6 +1120,9 @@ class IngestWorker:
                         # the defaults live in collector.yaml on its host, and
                         # this table holds only what somebody overrode.
                         "config_effective": _config_effective(hb),
+                        # docs/26 Phase 5: poll-worker capacity over the
+                        # trailing window, decoded like config_effective.
+                        "capacity": _capacity(hb),
                     }),
                 })
 
