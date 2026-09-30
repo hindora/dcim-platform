@@ -24,6 +24,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.services import version_skew
+
 # Pipeline latency: publish -> committed row. Sub-second when healthy, so these
 # thresholds have room. This is NOT data freshness - see core/metrics.py.
 INGEST_LAG_WARNING_S = 60.0
@@ -86,6 +88,7 @@ PLATFORM_ALARM_TYPES = (
     "integration_degraded",
     "integration_webhook_expiring",
     "pool_below_min_members",
+    "collector_outdated",
 )
 
 #: An Atlassian Cloud API token expires within a year of being minted, and the
@@ -139,6 +142,11 @@ class Collector:
     #: for a collector built before the field existed, which is silence, not
     #: a mismatch - see mapping_mismatch below.
     mapping_bundle_sha: str = ""
+    #: docs/26 Phase 7. Empty, or "dev" (main.go's default for a build that
+    #: never went through a real release), is UNKNOWN to version_skew.classify
+    #: - neither current nor ancient, just outside what skew can say anything
+    #: about.
+    version: str = ""
 
 
 @dataclass
@@ -195,6 +203,11 @@ class Signals:
     poll_interval_s: float = 120.0
     collectors: list[Collector] = field(default_factory=list)
     pools: list[Pool] = field(default_factory=list)
+    #: This running platform's own release (app.__version__) - docs/26
+    #: Phase 7's "N". Empty disables skew checking entirely (version_skew.
+    #: classify returns UNKNOWN for an unparseable platform_version too),
+    #: which is the honest state for a dev checkout with no real version.
+    platform_version: str = ""
     collectors_expected: int = 0
     db_pool_saturated_for_s: float = 0.0
     stream_pending: dict[str, int] = field(default_factory=dict)
@@ -414,6 +427,32 @@ def evaluate(signals: Signals) -> list[Finding]:
                     f"{signals.expected_mapping_sha[:12]}. It may be polling "
                     f"metrics this release does not expect, or missing ones "
                     f"this release added")))
+
+        # docs/26 Phase 7. Zabbix's "outdated keeps collecting" rule, not a
+        # hard version lock - nothing here refuses this collector's data;
+        # see version_skew's own docstring for why. UNKNOWN (unparseable on
+        # either side - most commonly a "dev" build) raises nothing: it is
+        # not this evaluator's place to guess at a policy neither version
+        # string can support.
+        skew = version_skew.classify(signals.platform_version, c.version)
+        if skew == version_skew.OUTDATED:
+            out.append(Finding(
+                alarm_type="collector_outdated", instance=c.collector_id,
+                severity=WARNING,
+                message=(
+                    f"Collector {c.collector_id} is running {c.version}, two "
+                    f"releases behind {signals.platform_version}. It keeps "
+                    f"collecting, but is not being given new endpoints until "
+                    f"it upgrades")))
+        elif skew == version_skew.REJECTED:
+            out.append(Finding(
+                alarm_type="collector_outdated", instance=c.collector_id,
+                severity=MAJOR,
+                message=(
+                    f"Collector {c.collector_id} is running {c.version}, too "
+                    f"far behind {signals.platform_version} to trust. It "
+                    f"keeps collecting - this platform does not hard-block "
+                    f"an old collector's data - but it needs upgrading soon")))
 
     # --- collector pools (docs/26 Phase 6) -------------------------------------
     #

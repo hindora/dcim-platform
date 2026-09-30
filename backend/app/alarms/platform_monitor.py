@@ -23,6 +23,7 @@ from redis.asyncio import Redis
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import __version__ as platform_version
 from app.alarms import platform as rules
 from app.core import metrics
 from app.core.logging import get_logger
@@ -100,7 +101,7 @@ async def _collectors(session: AsyncSession) -> list[rules.Collector]:
     # Decommissioned collectors are left out: a retired machine is supposed to
     # be silent, and alarming on it is how a decommission gets undone by hand.
     rows = (await session.execute(text("""
-        SELECT id, status, endpoints_owned, endpoints_online, stats,
+        SELECT id, status, version, endpoints_owned, endpoints_online, stats,
                -- NULL for a collector that has never heartbeated at all -
                -- created ahead of its install - which the rule reports as
                -- "never" rather than as however long ago the row was made.
@@ -144,6 +145,7 @@ async def _collectors(session: AsyncSession) -> list[rules.Collector]:
             assignment_age_s=(float(stats["assignment_age_s"])
                               if stats.get("assignment_age_s") else None),
             mapping_bundle_sha=str(stats.get("mapping_bundle_sha") or ""),
+            version=str(r["version"] or ""),
         ))
     return out
 
@@ -263,6 +265,7 @@ async def gather(session: AsyncSession, redis: Redis, *,
         stream_pending=pending,
         integrations=integrations,
         expected_mapping_sha=mapping_bundle.expected_sha(),
+        platform_version=platform_version,
     )
 
 

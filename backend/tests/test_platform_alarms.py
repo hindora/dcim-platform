@@ -357,3 +357,61 @@ def test_pool_alarms_are_keyed_per_pool():
         pool(pool_id="pool-1", healthy_accepting_members=1),
         pool(pool_id="pool-2", name="DC2/BMS", healthy_accepting_members=0)]))
     assert {f.instance for f in found} == {"pool-1", "pool-2"}
+
+
+# --- version skew (docs/26 Phase 7) -----------------------------------------
+
+def test_a_current_collector_raises_no_skew_alarm():
+    found = p.evaluate(sig(platform_version="2.5.0",
+                           collectors=[p.Collector(collector_id="col-1",
+                                                   heartbeat_age_s=10.0, version="2.5.0")]))
+    assert "collector_outdated" not in types(found)
+
+
+def test_a_one_generation_behind_collector_raises_nothing_either():
+    """N-1 is SUPPORTED, not OUTDATED - only N-2 and older alarm."""
+    found = p.evaluate(sig(platform_version="2.5.0",
+                           collectors=[p.Collector(collector_id="col-1",
+                                                   heartbeat_age_s=10.0, version="2.4.0")]))
+    assert "collector_outdated" not in types(found)
+
+
+def test_a_two_generation_behind_collector_warns():
+    found = p.evaluate(sig(platform_version="2.5.0",
+                           collectors=[p.Collector(collector_id="col-1",
+                                                   heartbeat_age_s=10.0, version="2.3.0")]))
+    assert types(found) == {"collector_outdated"}
+    assert found[0].severity == p.WARNING
+    assert "not being given new endpoints" in found[0].message
+
+
+def test_a_three_generation_behind_collector_is_major_not_hard_blocked():
+    found = p.evaluate(sig(platform_version="2.5.0",
+                           collectors=[p.Collector(collector_id="col-1",
+                                                   heartbeat_age_s=10.0, version="2.2.0")]))
+    assert found[0].severity == p.MAJOR
+    assert "does not hard-block" in found[0].message
+
+
+def test_a_dev_build_never_raises_a_skew_alarm():
+    found = p.evaluate(sig(platform_version="2.5.0",
+                           collectors=[p.Collector(collector_id="col-1",
+                                                   heartbeat_age_s=10.0, version="dev")]))
+    assert "collector_outdated" not in types(found)
+
+
+def test_with_no_platform_version_set_skew_never_alarms():
+    """A dev checkout with no real platform_version must not spuriously
+    warn about every collector's version, since there is no "N" to measure
+    distance from."""
+    found = p.evaluate(sig(platform_version="",
+                           collectors=[p.Collector(collector_id="col-1",
+                                                   heartbeat_age_s=10.0, version="0.1.0")]))
+    assert "collector_outdated" not in types(found)
+
+
+def test_skew_alarms_are_keyed_per_collector():
+    found = p.evaluate(sig(platform_version="2.5.0", collectors=[
+        p.Collector(collector_id="col-1", heartbeat_age_s=10.0, version="2.3.0"),
+        p.Collector(collector_id="col-2", heartbeat_age_s=10.0, version="2.5.0")]))
+    assert {f.instance for f in found} == {"col-1"}
