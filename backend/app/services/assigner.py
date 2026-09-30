@@ -135,4 +135,8 @@ def _reason(old_owner: str | None, new_owner: str | None,
         return "drain"
     if old.heartbeat_age_s is not None and old.heartbeat_age_s > sharding.FAILOVER_AFTER_S:
         return "failover"
+    if not old.serves(endpoint.get("pool_id"), endpoint.get("site")):
+        # Still accepting, but no longer allowed to hold it: where the
+        # endpoint or the collector lives changed (migration 0094).
+        return "placement"
     return "rebalance"

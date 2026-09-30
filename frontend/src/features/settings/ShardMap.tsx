@@ -231,6 +231,7 @@ const REASON_TIP: Record<string, string> = {
   drain: 'Its previous owner was drained.',
   failover: 'Its previous owner went silent past the failover threshold (HA pools).',
   failback: 'Its original owner came back healthy and took it back.',
+  placement: 'Its owner no longer serves where it lives: a discovery range or pool change moved it.',
 };
 
 function HistorySheet({ row, endpointId, onClose }: {

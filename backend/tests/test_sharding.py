@@ -483,3 +483,25 @@ def test_a_pin_beats_the_record_at_once():
     eps = [{"id": "e1", "pool_id": "pool-a", "site": None, "collector_id": "a2"}]
     cols = [col("a1", pool_id="pool-a"), col("a2", pool_id="pool-a")]
     assert sh.effective(eps, cols, {"e1": "a1"}) == {"e1": "a2"}
+
+
+def test_an_owner_that_no_longer_serves_the_endpoint_loses_it_at_once():
+    """Found bringing up the six-collector fleet: a discovery range put 1426
+    endpoints into pools, their unplaced owner could no longer serve one of
+    them, and the record never moved - the damping loop only looks at a
+    group's MEMBERS, and the old holder is not one."""
+    eps = pool_endpoints(30, "pool-a")
+    old_owner = col("anywhere")                    # unplaced, still accepting
+    member = col("a1", pool_id="pool-a")
+    current = {e["id"]: "anywhere" for e in eps}
+    target = sh.plan(eps, [old_owner, member])
+    assert set(target.values()) == {"a1"}
+    got = sh.rebalance(current, target, eps, [old_owner, member])
+    assert set(got.values()) == {"a1"}
+
+
+def test_a_pin_survives_its_owner_losing_the_placement():
+    eps = [{"id": "e1", "pool_id": "pool-a", "site": None, "collector_id": "anywhere"}]
+    cols = [col("anywhere"), col("a1", pool_id="pool-a")]
+    got = sh.rebalance({"e1": "anywhere"}, sh.plan(eps, cols), eps, cols)
+    assert got == {"e1": "anywhere"}

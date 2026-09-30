@@ -230,9 +230,12 @@ REBALANCE_MIN_RATIO = 2.0
 
 
 def _mandatory_moves(current: dict[str, str | None],
-                     collectors_by_id: dict[str, Collector]) -> set[str]:
+                     collectors_by_id: dict[str, Collector],
+                     endpoints_by_id: dict[str, dict[str, Any]] | None = None) -> set[str]:
     """Endpoint ids whose CURRENT owner can no longer hold them at all - the
-    owner is gone from the fleet or `accepting` is False. These bypass
+    owner is gone from the fleet, `accepting` is False, or it no longer
+    serves the endpoint's pool or site (an endpoint pinned to it excepted:
+    a pin beats placement, exactly as in `plan`). These bypass
     damping entirely: an operator draining a collector is a decision, not
     routine jitter, and docs/26 Phase 5's own acceptance bar ("a drain
     completes with zero polling gaps beyond one interval") means the very
@@ -255,6 +258,16 @@ def _mandatory_moves(current: dict[str, str | None],
             continue
         c = collectors_by_id.get(owner_id)
         if c is None or not c.accepting:
+            out.add(endpoint_id)
+            continue
+        # A placement change - a discovery range that moved the endpoint into
+        # a pool, or a collector moved to another pool or site - leaves the
+        # owner accepting but unable to serve it. Before this check the
+        # record kept the old owner forever: the damping below never fires
+        # for a group whose current holder is not even one of its members.
+        e = (endpoints_by_id or {}).get(endpoint_id)
+        if e is not None and e.get("collector_id") != owner_id \
+                and not c.serves(e.get("pool_id"), e.get("site")):
             out.add(endpoint_id)
     return out
 
@@ -288,7 +301,8 @@ def rebalance(current: dict[str, str | None], target: dict[str, str | None],
     "current" to damp against yet.
     """
     collectors_by_id = {c.collector_id: c for c in collectors}
-    mandatory = _mandatory_moves(current, collectors_by_id)
+    mandatory = _mandatory_moves(current, collectors_by_id,
+                                 {str(e["id"]): e for e in endpoints})
 
     groups: dict[tuple[str | None, str | None], list[str]] = {}
     for e in endpoints:
