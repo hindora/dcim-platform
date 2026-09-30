@@ -444,7 +444,7 @@ async def get_endpoint(session: AsyncSession, endpoint_id: str
                e.poll_profile_id::text AS poll_profile_id,
                e.via_endpoint_id::text AS via_endpoint_id,
                vd.name AS via_name, d.name AS device_name,
-               e.collector_id
+               e.collector_id, e.pool_id::text AS pool_id
           FROM device_endpoint e
           JOIN device d ON d.id = e.device_id
           LEFT JOIN device_endpoint ve ON ve.id = e.via_endpoint_id
@@ -468,6 +468,7 @@ _EDITABLE = {
     "enabled":         "enabled = :enabled",
     "admin_state":     "admin_state = CAST(:admin_state AS admin_state_t)",
     "collector_id":    "collector_id = :collector_id",
+    "pool_id":         "pool_id = CAST(:pool_id AS uuid)",
 }
 
 

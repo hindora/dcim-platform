@@ -18,11 +18,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.logging import get_logger
 from app.core.security import decrypt_secret
 from app.repositories import collector as repo
+from app.repositories import pools as pool_repo
 from app.schemas import (
     Assignment,
+    AssignmentBBMD,
     AssignmentCredential,
     AssignmentEndpoint,
     AssignmentPoll,
+    AssignmentPool,
     ResolveEntry,
 )
 from app.services import sealed_credential, sharding
@@ -104,6 +107,7 @@ async def build_assignment(session: AsyncSession, collector_id: str,
             address=r.get("address"), port=r.get("port"),
             addressing=r.get("addressing") or {},
             via_endpoint_id=r.get("via_endpoint_id"),
+            pool_id=r.get("pool_id"),
             credential=credential,
             poll=AssignmentPoll(
                 interval_s=r["interval_s"], timeout_ms=r["timeout_ms"],
@@ -125,13 +129,30 @@ async def build_assignment(session: AsyncSession, collector_id: str,
 
     owned = {e.id for e in endpoints}
     resolve = await resolve_list(session, exclude=owned)
-    site = next((c.sites for c in collectors if c.collector_id == collector_id),
-                frozenset())
+    me = next((c for c in collectors if c.collector_id == collector_id), None)
+    site = me.sites if me else frozenset()
+
+    # docs/26 Phase 5's pool-level settings, finally on the wire: every pool
+    # an owned endpoint resolved into, plus the collector's own placement
+    # pool (so a pool with a BBMD but no endpoints yet still registers).
+    pool_ids = {e.pool_id for e in endpoints if e.pool_id}
+    if me and me.pool_id:
+        pool_ids.add(me.pool_id)
+    pools: dict[str, AssignmentPool] = {}
+    for p in await pool_repo.pools_by_ids(session, sorted(pool_ids)):
+        bbmd = p.get("bbmd_settings") or {}
+        pools[p["id"]] = AssignmentPool(
+            id=p["id"], name=p["name"], site=p.get("site"), plane=p["plane"],
+            trap_vip=p.get("trap_vip"),
+            bbmd=AssignmentBBMD(enabled=bool(bbmd.get("enabled")),
+                                bbmd=bbmd.get("bbmd"),
+                                ttl_s=int(bbmd.get("ttl_s") or 300)),
+            rate_budget_points_per_s=p.get("rate_budget_points_per_s"))
 
     return Assignment(version=version, generated_at=datetime.now(UTC),
                       collector_id=collector_id,
                       site=next(iter(site), None), endpoints=endpoints,
-                      resolve=resolve)
+                      resolve=resolve, pools=pools)
 
 
 async def fleet(session: AsyncSession) -> list[sharding.Collector]:
@@ -249,4 +270,12 @@ def etag_for(assignment: Assignment) -> str:
     for r in assignment.resolve:
         digest.update(f"|r|{r.id}|{r.address}|{r.site}|{r.community_sha256}"
                       .encode())
+    # Pool settings for the same reason as the poll profile above: a BBMD
+    # or trap VIP edit writes collector_pool and no endpoint row, so a
+    # version-only ETag would answer 304 and the collector would keep
+    # registering with the old BBMD until something unrelated moved.
+    for pool_id in sorted(assignment.pools):
+        p = assignment.pools[pool_id]
+        digest.update(f"|p|{pool_id}|{p.trap_vip}|{p.bbmd.enabled}|{p.bbmd.bbmd}"
+                      f"|{p.bbmd.ttl_s}|{p.rate_budget_points_per_s}".encode())
     return f'W/"{digest.hexdigest()[:32]}"'

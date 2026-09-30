@@ -25,9 +25,13 @@ type Endpoint struct {
 	Addressing map[string]any `json:"addressing"`
 	// Endpoint this one is reached THROUGH: a Modbus gateway, a BACnet router.
 	// Its failure is the parent's, not six independent ones.
-	ViaEndpointID string      `json:"via_endpoint_id"`
-	Credential    *Credential `json:"credential"`
-	Poll          PollProfile `json:"poll"`
+	ViaEndpointID string `json:"via_endpoint_id"`
+	// The collector_pool this endpoint resolved into (docs/26 Phase 5) - the
+	// key into the assignment's Pools map, where that network's own
+	// settings (BBMD, trap VIP) live rather than being repeated per endpoint.
+	PoolID     string      `json:"pool_id"`
+	Credential *Credential `json:"credential"`
+	Poll       PollProfile `json:"poll"`
 }
 
 type Credential struct {

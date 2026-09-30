@@ -261,7 +261,7 @@ async def one_endpoint(session: AsyncSession, device_id: str,
 #: thing that moved, and this is the trail somebody reads after a device went
 #: quiet at 3am.
 _AUDITED = ("address", "port", "addressing", "credential_id",
-            "poll_profile_id", "enabled", "admin_state", "collector_id")
+            "poll_profile_id", "enabled", "admin_state", "collector_id", "pool_id")
 
 
 async def update_endpoint(session: AsyncSession, *, device_id: str,
@@ -315,6 +315,16 @@ async def update_endpoint(session: AsyncSession, *, device_id: str,
             if known["state"] == "decommissioned":
                 raise endpoint_config.EndpointConfigError(
                     f"collector {value} is decommissioned")
+            clean[key] = value
+        elif key == "pool_id" and value is not None:
+            # docs/26 Phase 5: an explicit override of the range-resolved
+            # pool. Null clears it and resolution decides again; a value
+            # must name a real pool, or the endpoint would resolve to a
+            # pool nothing is placed in and be polled by nobody.
+            from app.repositories import pools as pool_repo
+
+            if await pool_repo.get_pool(session, value) is None:
+                raise endpoint_config.EndpointConfigError("no such pool")
             clean[key] = value
         else:
             clean[key] = value

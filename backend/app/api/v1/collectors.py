@@ -90,6 +90,9 @@ class CreateBody(BaseModel):
     #: Letters, digits, '-' and '_'. No dot: the token format uses it.
     id: str = Field(..., min_length=1, max_length=64)
     datacenter_id: str | None = None
+    #: docs/26 Phase 5: set, the pool is the WHOLE placement (site and
+    #: plane) and datacenter_id follows the pool's own site.
+    pool_id: str | None = None
 
 
 class PatchBody(BaseModel):
@@ -98,6 +101,9 @@ class PatchBody(BaseModel):
     model_config = {"extra": "forbid"}
 
     datacenter_id: str | None = None
+    #: Null takes the collector out of its pool - back to site-only
+    #: placement, which is what it had before pools existed.
+    pool_id: str | None = None
     state: Literal["active", "draining"] | None = None
 
 
@@ -116,6 +122,16 @@ async def _check_site(session: AsyncSession, datacenter_id: str | None) -> None:
     """), {"id": datacenter_id})).scalar()
     if not known:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "no such site")
+
+
+async def _check_pool(session: AsyncSession, pool_id: str | None) -> None:
+    if pool_id is None:
+        return
+    known = (await session.execute(text("""
+        SELECT 1 FROM collector_pool WHERE id::text = :id
+    """), {"id": pool_id})).scalar()
+    if not known:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "no such pool")
 
 
 @router.post("", status_code=status.HTTP_201_CREATED,
@@ -146,10 +162,14 @@ async def create_collector(
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
                             "a collector id is letters, digits, '-' and '_'")
     await _check_site(session, body.datacenter_id)
+    await _check_pool(session, body.pool_id)
     if not await fleet_repo.create_collector(session, body.id, body.datacenter_id,
-                                             principal.username):
+                                             principal.username, pool_id=body.pool_id):
         raise HTTPException(status.HTTP_409_CONFLICT,
                             f"a collector called {body.id} already exists")
+    if body.pool_id:
+        # The pool's own site wins over any datacenter_id sent alongside it.
+        await fleet_repo.set_pool(session, body.id, body.pool_id)
     token, expires_at = await collector_pki.issue_enrollment_token(
         session, body.id, principal.username)
     ip, agent = audit.client_of(request)
@@ -157,11 +177,13 @@ async def create_collector(
                        action="collector.create", target_type="collector",
                        target_id=body.id, ip=ip, user_agent=agent,
                        after={"datacenter_id": body.datacenter_id,
+                              "pool_id": body.pool_id,
                               "enrollment_token_expires_at": expires_at.isoformat()})
     await session.commit()
     forget_collector(body.id)
     log.info("collector created", collector_id=body.id,
-             actor=principal.username, datacenter_id=body.datacenter_id)
+             actor=principal.username, datacenter_id=body.datacenter_id,
+             pool_id=body.pool_id)
     server = settings.public_base_url or "https://<this platform's address>"
     return {
         "id": body.id,
@@ -203,6 +225,10 @@ async def patch_collector(
         await fleet_repo.set_placement(session, collector_id,
                                        changes["datacenter_id"])
         after["datacenter_id"] = changes["datacenter_id"]
+    if "pool_id" in changes and changes["pool_id"] != before.get("pool_id"):
+        await _check_pool(session, changes["pool_id"])
+        await fleet_repo.set_pool(session, collector_id, changes["pool_id"])
+        after["pool_id"] = changes["pool_id"]
     if changes.get("state") and changes["state"] != before["state"]:
         await fleet_repo.set_state(session, collector_id, changes["state"],
                                    principal.username)

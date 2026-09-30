@@ -34,6 +34,32 @@ type Assignment struct {
 	Endpoints []*models.Endpoint `json:"endpoints"`
 	// Everything else a trap may arrive from - see ResolveEntry.
 	Resolve []ResolveEntry `json:"resolve"`
+	// Every pool an endpoint above resolved into, plus this collector's own
+	// placement pool, keyed by id - docs/26 Phase 5. Settings that describe
+	// the NETWORK the endpoints share, applied once per pool: one BBMD per
+	// broadcast domain, one trap VIP per plane.
+	Pools map[string]Pool `json:"pools"`
+}
+
+// BBMD is a pool's BACnet Foreign Device Registration settings - the
+// platform's collector_pool.bbmd_settings exactly. Disabled means static
+// unicast, the default.
+type BBMD struct {
+	Enabled    bool   `json:"enabled"`
+	Addr       string `json:"bbmd"`
+	TTLSeconds int    `json:"ttl_s"`
+}
+
+// Pool is what this collector needs to know about a pool it serves.
+type Pool struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Site    string `json:"site"`
+	Plane   string `json:"plane"`
+	TrapVIP string `json:"trap_vip"`
+	BBMD    BBMD   `json:"bbmd"`
+	// nil when an operator has not sized the pool - no budget, no alarm.
+	RateBudgetPointsPerS *int `json:"rate_budget_points_per_s"`
 }
 
 // Diff is what changed between two assignments.
@@ -69,6 +95,7 @@ type Client struct {
 	etag    string
 	current map[string]*models.Endpoint
 	resolve []ResolveEntry
+	pools   map[string]Pool
 	site    string
 	// Read by the heartbeat loop while the refresh loop writes them, so they
 	// are atomics: the age and version in every heartbeat come from here.
@@ -181,6 +208,7 @@ func (c *Client) Refresh(ctx context.Context) error {
 
 	c.current = next
 	c.resolve = assignment.Resolve
+	c.pools = assignment.Pools
 	c.site = assignment.Site
 	c.version.Store(assignment.Version)
 	c.etag = resp.Header.Get("ETag")
@@ -356,6 +384,16 @@ func (c *Client) Resolve() []ResolveEntry { return c.resolve }
 
 // Site is where this collector is placed; empty means "any".
 func (c *Client) Site() string { return c.site }
+
+// Pools is every pool the current assignment carries settings for, keyed by
+// id - a copy, so a caller iterating it is not racing the next Refresh.
+func (c *Client) Pools() map[string]Pool {
+	out := make(map[string]Pool, len(c.pools))
+	for id, p := range c.pools {
+		out[id] = p
+	}
+	return out
+}
 
 // Version is the assignment version last applied.
 func (c *Client) Version() int64 { return c.version.Load() }

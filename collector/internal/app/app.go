@@ -116,6 +116,14 @@ type App struct {
 	// renewed after construction is picked up on the next connection with
 	// nothing here to update, because it came from an mtls.Store.
 	tlsConfig *tls.Config
+
+	// One BBMD registration loop per distinct BBMD address this collector
+	// should be foreign-registered with - the config's own, plus one per
+	// pool in the assignment that has one (docs/26 Phase 5/9). Reconciled
+	// on every assignment refresh; see fdr.go.
+	fdrMu    sync.Mutex
+	fdrLoops map[string]fdrLoop
+	fdrCtx   context.Context
 }
 
 // tlsStore is nil for a collector run without ever having enrolled - every
@@ -447,11 +455,11 @@ func (a *App) Run(ctx context.Context) error {
 	}
 	a.ready.SetAdapters(true)
 
-	if a.bacnet != nil && a.cfg.Protocols.BACnet.FDR.Enabled {
-		fdr := a.cfg.Protocols.BACnet.FDR
-		go bacnet.RenewForeignDeviceRegistration(ctx, fdr.BBMD, fdr.TTL,
-			a.cfg.Protocols.BACnet.Timeout, a.log)
-	}
+	// BBMD registrations: the config's own, if any, now - and one per pool
+	// with a BBMD once the first assignment lands (reconcileFDR runs again
+	// on every refresh, see refreshResolver).
+	a.fdrCtx = ctx
+	a.reconcileFDR()
 
 	go a.pub.Run(ctx)
 
@@ -667,6 +675,9 @@ func (a *App) streamed(ep *models.Endpoint) bool {
 // a diff: the resolve list moves when other collectors' endpoints do.
 func (a *App) refreshResolver() {
 	a.resolver.Replace(a.assign.Endpoints(), a.assign.Resolve(), a.assign.Site())
+	// Pool settings ride the same refresh: a BBMD added to a pool in the UI
+	// is registered with on the next fetch, with nothing restarted.
+	a.reconcileFDR()
 }
 
 func (a *App) applyDiff(diff assign.Diff) {

@@ -111,7 +111,8 @@ async def collector_state(session: AsyncSession,
                           collector_id: str) -> dict[str, Any] | None:
     """The admin-held facts about one collector: its intent and its token."""
     row = (await session.execute(text("""
-        SELECT id, state, token_generation, datacenter_id::text AS datacenter_id
+        SELECT id, state, token_generation, datacenter_id::text AS datacenter_id,
+               pool_id::text AS pool_id
           FROM collector_instance WHERE id = :id
     """), {"id": collector_id})).mappings().first()
     return dict(row) if row else None
@@ -128,7 +129,8 @@ async def encryption_pubkey(session: AsyncSession, collector_id: str) -> str | N
 
 
 async def create_collector(session: AsyncSession, collector_id: str,
-                           datacenter_id: str | None, actor: str) -> bool:
+                           datacenter_id: str | None, actor: str,
+                           pool_id: str | None = None) -> bool:
     """Create a collector before it first runs, already placed and approved.
 
     The way a second collector should arrive: known, sited and with its own
@@ -138,12 +140,12 @@ async def create_collector(session: AsyncSession, collector_id: str,
     result = await session.execute(text("""
         INSERT INTO collector_instance (id, last_heartbeat, endpoints_owned,
                                         endpoints_online, status, stats, state,
-                                        datacenter_id, token_generation,
+                                        datacenter_id, pool_id, token_generation,
                                         state_changed_at, state_changed_by)
         VALUES (:id, now(), 0, 0, 'UNKNOWN', '{}'::jsonb, 'active',
-                CAST(:dc AS uuid), 1, now(), :actor)
+                CAST(:dc AS uuid), CAST(:pool AS uuid), 1, now(), :actor)
         ON CONFLICT (id) DO NOTHING
-    """), {"id": collector_id, "dc": datacenter_id, "actor": actor})
+    """), {"id": collector_id, "dc": datacenter_id, "pool": pool_id, "actor": actor})
     return bool(result.rowcount)
 
 
@@ -153,6 +155,22 @@ async def set_placement(session: AsyncSession, collector_id: str,
         UPDATE collector_instance SET datacenter_id = CAST(:dc AS uuid)
          WHERE id = :id
     """), {"id": collector_id, "dc": datacenter_id})
+
+
+async def set_pool(session: AsyncSession, collector_id: str,
+                   pool_id: str | None) -> None:
+    """docs/26 Phase 5: a pool is the WHOLE placement once set (see
+    services/sharding.Collector.serves) - it replaces datacenter_id as the
+    decision, so the site is kept in step with the pool's own site rather
+    than left saying something the pool contradicts."""
+    await session.execute(text("""
+        UPDATE collector_instance
+           SET pool_id = CAST(:pool AS uuid),
+               datacenter_id = COALESCE(
+                   (SELECT datacenter_id FROM collector_pool
+                     WHERE id = CAST(:pool AS uuid)), datacenter_id)
+         WHERE id = :id
+    """), {"id": collector_id, "pool": pool_id})
 
 
 async def set_state(session: AsyncSession, collector_id: str, state: str,

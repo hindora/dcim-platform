@@ -78,6 +78,8 @@ async def list_collectors(session: AsyncSession) -> list[dict[str, Any]]:
                -- Placement and intent, both an admin's decision.
                ci.state, ci.state_changed_at, ci.state_changed_by,
                ci.datacenter_id::text AS datacenter_id, dc.code AS site,
+               -- docs/26 Phase 5: set, the pool IS the placement.
+               ci.pool_id::text AS pool_id, cp.name AS pool_name, cp.plane AS pool_plane,
                ci.token_generation, (ci.started_at IS NOT NULL) AS has_run,
                (SELECT count(*) FROM device_endpoint e
                  WHERE e.collector_id = ci.id)      AS pinned,
@@ -91,6 +93,7 @@ async def list_collectors(session: AsyncSession) -> list[dict[str, Any]]:
           FROM collector_instance ci
           LEFT JOIN collector_config cc ON cc.collector_id = ci.id
           LEFT JOIN datacenter dc ON dc.id = ci.datacenter_id
+          LEFT JOIN collector_pool cp ON cp.id = ci.pool_id
          ORDER BY ci.state = 'decommissioned', ci.id
     """))).mappings().all()
     return [dict(r) for r in rows]

@@ -341,6 +341,10 @@ class EndpointPatch(BaseModel):
     #: reach, or one moved off a host ahead of maintenance. Null unpins it and
     #: the sharding plan decides again.
     collector_id: str | None = Field(None, max_length=64)
+    #: Override the pool this endpoint resolves into (docs/26 Phase 5) - for
+    #: a device whose address sits in one range but is reached via another
+    #: plane. Null clears the override and the containing range decides.
+    pool_id: str | None = None
 
 
 @router.get("/{device_id}/endpoints", response_model=list[EndpointSummary],

@@ -98,6 +98,10 @@ class EndpointSummary(BaseModel):
     via_name: str | None = None
     #: The collector this endpoint is pinned to, if an operator pinned it.
     pinned_collector: str | None = None
+    #: An explicit pool override (docs/26 Phase 5). Null - every endpoint by
+    #: default - means the pool is resolved from the discovery range that
+    #: contains the endpoint's address, which is the common case.
+    pool_id: str | None = None
     #: The collector that last reported its state.
     reported_by: str | None = None
     poll_interval_s: int | None = None
@@ -664,6 +668,9 @@ class AssignmentEndpoint(BaseModel):
     port: int | None = None
     addressing: dict[str, Any] = Field(default_factory=dict)
     via_endpoint_id: str | None = None
+    #: The collector_pool this endpoint resolved into (docs/26 Phase 5) -
+    #: the key into Assignment.pools, where that pool's own settings live.
+    pool_id: str | None = None
     credential: AssignmentCredential | None = None
     poll: AssignmentPoll
 
@@ -693,6 +700,34 @@ class ResolveEntry(BaseModel):
     community_sha256: str | None = None
 
 
+class AssignmentBBMD(BaseModel):
+    """A pool's BACnet Foreign Device Registration settings - the JSONB
+    `collector_pool.bbmd_settings` exactly, so the collector's fdr.go and
+    the operator's form read the one shape. Disabled is static unicast."""
+
+    enabled: bool = False
+    bbmd: str | None = None
+    ttl_s: int = 300
+
+
+class AssignmentPool(BaseModel):
+    """What a collector needs to know about a pool it serves endpoints in.
+
+    Settings live on the pool, not on each endpoint, because they describe
+    the NETWORK the endpoints share - one BBMD per broadcast domain, one
+    trap VIP per plane - and a collector applies them once per pool rather
+    than once per endpoint.
+    """
+
+    id: str
+    name: str
+    site: str | None = None
+    plane: str
+    trap_vip: str | None = None
+    bbmd: AssignmentBBMD = Field(default_factory=AssignmentBBMD)
+    rate_budget_points_per_s: int | None = None
+
+
 class Assignment(BaseModel):
     version: int
     generated_at: datetime
@@ -702,6 +737,9 @@ class Assignment(BaseModel):
     endpoints: list[AssignmentEndpoint]
     #: Everything else a trap may arrive from, owned by somebody else.
     resolve: list[ResolveEntry] = Field(default_factory=list)
+    #: Every pool an endpoint above resolved into, plus the collector's own
+    #: placement pool, keyed by id - docs/26 Phase 5's dead columns, live.
+    pools: dict[str, AssignmentPool] = Field(default_factory=dict)
 
 
 # ---------------------------------------------------------------- preflight
