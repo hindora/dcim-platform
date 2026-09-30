@@ -205,7 +205,23 @@ if want collector; then
        GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o collector/bin/collector ./cmd/collector"
     fi
   fi
-  start collector env -C "$ROOT/collector" "$BIN" --config configs/collector.yaml
+  # A collector fleet (docs/26 Phase 5): one process per site x management
+  # network, from collector/configs/fleet/<id>.yaml, each with its own scoped
+  # token from var/fleet/tokens.env (DCIM_COLLECTOR_TOKEN_<ID>, gitignored -
+  # the tokens are minted by POST /collectors and shown once). Without both,
+  # the single collector runs exactly as before.
+  FLEET_TOKENS="$ROOT/var/fleet/tokens.env"
+  if compgen -G "$ROOT/collector/configs/fleet/*.yaml" >/dev/null && [[ -f "$FLEET_TOKENS" ]]; then
+    for cfg in "$ROOT"/collector/configs/fleet/*.yaml; do
+      id="$(basename "$cfg" .yaml)"
+      var="DCIM_COLLECTOR_TOKEN_$(tr 'a-z-' 'A-Z_' <<<"$id")"
+      tok="$(grep -m1 "^$var=" "$FLEET_TOKENS" | cut -d= -f2-)"
+      [[ -n "$tok" ]] || die "no $var in $FLEET_TOKENS for $cfg"
+      start "$id" env -C "$ROOT/collector" DCIM_COLLECTOR_TOKEN="$tok"         "$BIN" --config "configs/fleet/$id.yaml"
+    done
+  else
+    start collector env -C "$ROOT/collector" "$BIN" --config configs/collector.yaml
+  fi
 fi
 
 if want ui; then
