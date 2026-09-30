@@ -72,6 +72,13 @@ class Collector:
     pool_id: str | None = None
     healthy: bool = True
     accepting: bool = True
+    # docs/26 Phase 6 - None for a collector that has never heartbeated with
+    # these columns populated. Only apply_ha_policy reads either; owner()/
+    # plan()/rebalance() never look at raw health duration, only at
+    # `accepting`, which is what keeps the whole live-recompute path from
+    # Phase 0 onward oblivious to whichever policy set accepting this way.
+    heartbeat_age_s: float | None = None
+    healthy_duration_s: float | None = None
 
     def serves(self, pool_id: str | None, site: str | None) -> bool:
         if self.pool_id is not None:
@@ -170,19 +177,29 @@ REBALANCE_MIN_RATIO = 2.0
 def _mandatory_moves(current: dict[str, str | None],
                      collectors_by_id: dict[str, Collector]) -> set[str]:
     """Endpoint ids whose CURRENT owner can no longer hold them at all - the
-    owner is gone from the fleet, unhealthy, or draining. These bypass
-    damping entirely: an operator draining a collector, or a collector
-    dying, is a decision or a fact, never routine jitter, and docs/26 Phase
-    5's own acceptance bar ("a drain completes with zero polling gaps
-    beyond one interval") means the very next assigner run, not whatever a
-    30-minute damping window would otherwise hold it to.
+    owner is gone from the fleet or `accepting` is False. These bypass
+    damping entirely: an operator draining a collector is a decision, not
+    routine jitter, and docs/26 Phase 5's own acceptance bar ("a drain
+    completes with zero polling gaps beyond one interval") means the very
+    next assigner run, not whatever the deviation threshold would otherwise
+    hold it to.
+
+    Deliberately NOT `not c.healthy` on its own: a merely stale heartbeat
+    for a collector nobody has decided to fail over must not move anything
+    by itself, exactly as Phase 0's own docstring on this module states -
+    "failover is deliberately not automatic". docs/26 Phase 6's
+    `apply_ha_policy` is what turns sustained unhealth into `accepting =
+    False`, and only for a pool an operator actually gave real HA to
+    (`min_members >= 2`); this function then treats that exactly like a
+    drain, which is correct - by the time `accepting` is False here, the
+    policy decision has already been made upstream.
     """
     out: set[str] = set()
     for endpoint_id, owner_id in current.items():
         if owner_id is None:
             continue
         c = collectors_by_id.get(owner_id)
-        if c is None or not c.healthy or not c.accepting:
+        if c is None or not c.accepting:
             out.add(endpoint_id)
     return out
 
@@ -261,4 +278,96 @@ def rebalance(current: dict[str, str | None], target: dict[str, str | None],
                 out[eid] = target.get(eid)
             else:
                 out[eid] = current.get(eid)
+    return out
+
+
+# ------------------------------------------------------------------- HA
+
+# docs/26 Phase 6's own numbers. STALE_AFTER_S is not enforced here - it is
+# what live_collectors's own stale_after_s cutoff already means by
+# Collector.healthy, computed before this module ever sees a Collector -
+# named here only so the relationship between the three is written down in
+# one place: 60s is an ALARM ("this collector needs attention"), 180s is
+# FAILOVER ("this pool needs to act"), 600s is how long a recovered member
+# waits before FAILBACK trusts it again.
+STALE_AFTER_S = 60.0
+FAILOVER_AFTER_S = 180.0
+FAILBACK_AFTER_S = 600.0
+
+
+def apply_ha_policy(collectors: list[Collector],
+                    pool_min_members: dict[str, int],
+                    frozen_pools: frozenset[str] = frozenset()) -> list[Collector]:
+    """Overrides ``accepting`` for HA pools only - every non-HA pool
+    (``min_members`` under 2, the default for a `collector_pool` row) is
+    untouched, which is Phase 0's original, deliberate choice: failover is
+    not automatic unless an operator has actually asked for N+1 by giving a
+    pool a real ``min_members``.
+
+    ``frozen_pools`` is docs/26 Phase 6's "never during a change-freeze
+    blackout" (migration 0084): a pool listed here is exempted from the
+    automatic failover/failback logic below entirely, keeping every
+    member's `accepting` exactly as given - an unplanned failure during a
+    declared change freeze still shows up as `healthy: false` (the alarm at
+    STALE_AFTER_S is untouched by this), it just does not trigger the
+    platform moving anything on its own while change control asked for
+    nothing to move. An explicit drain (`accepting` already False, an
+    operator's own decision) is NOT covered by this exemption - see the
+    `not c.accepting: continue` line below, which is checked first.
+
+    Within an HA pool, a collector whose heartbeat has been stale past
+    FAILOVER_AFTER_S is treated as not accepting - `rebalance`'s existing
+    mandatory-move handling (unchanged from docs/26 Phase 5) then moves its
+    endpoints to whichever pool member is still accepting, on the very next
+    tick, satisfying "a drain completes with zero polling gaps beyond one
+    interval" for an unplanned failure the same way it already does for a
+    planned drain.
+
+    A collector that has JUST come back (heartbeat fresh again, but
+    ``healthy_duration_s`` under FAILBACK_AFTER_S) is ALSO held out of
+    ``accepting`` - but only while the pool already has some other member
+    genuinely healthy and accepting. That second condition is what tells a
+    recovering primary apart from a pool's very first member ever: an empty
+    HA pool cannot be made to wait ten minutes before it does anything at
+    all, because there is no standby it would be protecting anyone from -
+    the quarantine exists to stop a flapping primary from snatching work
+    back the instant a heartbeat happens to land, not to slow down a pool
+    that has nothing else serving it yet.
+
+    Known, deliberate simplification: this also means a genuinely NEW
+    third member joining an already-healthy HA pool sits out for its first
+    ten minutes too, indistinguishable here from a recovering one - the
+    plan's acceptance bar only asks about restart/failback, and treating
+    the two cases identically is far simpler than trying to tell them
+    apart from heartbeat history alone.
+    """
+    by_pool: dict[str, list[Collector]] = {}
+    for c in collectors:
+        if c.pool_id is not None:
+            by_pool.setdefault(c.pool_id, []).append(c)
+
+    out: list[Collector] = []
+    for c in collectors:
+        if (c.pool_id is None or pool_min_members.get(c.pool_id, 1) < 2
+                or not c.accepting or c.pool_id in frozen_pools):
+            out.append(c)
+            continue
+
+        accepting = c.accepting
+        if c.heartbeat_age_s is not None and c.heartbeat_age_s > FAILOVER_AFTER_S:
+            accepting = False
+        elif (c.healthy_duration_s is not None
+              and c.healthy_duration_s < FAILBACK_AFTER_S):
+            others_healthy = any(
+                o.collector_id != c.collector_id and o.accepting
+                and (o.heartbeat_age_s is None or o.heartbeat_age_s <= FAILOVER_AFTER_S)
+                for o in by_pool[c.pool_id])
+            if others_healthy:
+                accepting = False
+
+        out.append(c if accepting == c.accepting else
+                   Collector(collector_id=c.collector_id, sites=c.sites,
+                             pool_id=c.pool_id, healthy=c.healthy, accepting=accepting,
+                             heartbeat_age_s=c.heartbeat_age_s,
+                             healthy_duration_s=c.healthy_duration_s))
     return out

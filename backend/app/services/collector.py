@@ -145,7 +145,9 @@ async def fleet(session: AsyncSession) -> list[sharding.Collector]:
     return [
         sharding.Collector(collector_id=c["collector_id"],
                            sites=frozenset(c["sites"]), pool_id=c.get("pool_id"),
-                           healthy=c["healthy"], accepting=c["accepting"])
+                           healthy=c["healthy"], accepting=c["accepting"],
+                           heartbeat_age_s=c.get("heartbeat_age_s"),
+                           healthy_duration_s=c.get("healthy_duration_s"))
         for c in await repo.live_collectors(session)
     ]
 

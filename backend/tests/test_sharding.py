@@ -251,15 +251,21 @@ def test_rebalance_moves_immediately_when_the_current_owner_is_draining():
     assert "a1" not in sh.distribution(result)
 
 
-def test_rebalance_moves_immediately_when_the_current_owner_is_unhealthy():
+def test_rebalance_does_not_move_anything_for_merely_unhealthy_on_its_own():
+    """docs/26 Phase 0's own stated design, still true after Phase 6:
+    "failover is deliberately NOT automatic" for a pool nobody gave real HA
+    to. A stale heartbeat alone (healthy=False, accepting still True - no
+    HA policy has run to turn that into accepting=False) must change
+    nothing; see docs/26 Phase 6's apply_ha_policy for where automatic
+    failover actually lives, opt-in per pool."""
     eps = pool_endpoints(20, "pool-a")
     healthy_pair = [col("a1", pool_id="pool-a"), col("a2", pool_id="pool-a")]
     current = sh.plan(eps, healthy_pair)
-    one_down = [col("a1", pool_id="pool-a", healthy=False),
-               col("a2", pool_id="pool-a")]
-    target = sh.plan(eps, one_down)
-    result = sh.rebalance(current, target, eps, one_down)
-    assert result == target
+    one_unhealthy = [col("a1", pool_id="pool-a", healthy=False),
+                     col("a2", pool_id="pool-a")]
+    target = sh.plan(eps, one_unhealthy)
+    result = sh.rebalance(current, target, eps, one_unhealthy)
+    assert result == current
 
 
 def test_rebalance_leaves_other_pools_untouched_by_one_pools_drain():
@@ -295,3 +301,112 @@ def test_rebalance_result_covers_every_endpoint_given():
     target = sh.plan(eps, cols)
     result = sh.rebalance(current, target, eps, cols)
     assert set(result) == {e["id"] for e in eps}
+
+
+# --- HA policy (docs/26 Phase 6) -------------------------------------------
+
+def ha_col(name: str, pool_id: str, heartbeat_age_s: float | None = 5.0,
+          healthy_duration_s: float | None = 3600.0, accepting: bool = True) -> sh.Collector:
+    return sh.Collector(collector_id=name, pool_id=pool_id, accepting=accepting,
+                        heartbeat_age_s=heartbeat_age_s,
+                        healthy_duration_s=healthy_duration_s)
+
+
+def test_a_non_ha_pool_is_completely_unaffected():
+    """min_members < 2 (the default) is Phase 0's original behaviour,
+    verbatim - a stale heartbeat here must not flip accepting."""
+    cols = [ha_col("a1", "pool-a", heartbeat_age_s=99999)]
+    out = sh.apply_ha_policy(cols, {"pool-a": 1})
+    assert out[0].accepting is True
+
+
+def test_a_pool_with_no_min_members_entry_defaults_to_non_ha():
+    cols = [ha_col("a1", "pool-a", heartbeat_age_s=99999)]
+    out = sh.apply_ha_policy(cols, {})
+    assert out[0].accepting is True
+
+
+def test_a_draining_collector_stays_refused_regardless_of_health():
+    cols = [ha_col("a1", "pool-a", accepting=False, heartbeat_age_s=1.0,
+                   healthy_duration_s=99999)]
+    out = sh.apply_ha_policy(cols, {"pool-a": 2})
+    assert out[0].accepting is False
+
+
+def test_a_stale_member_past_failover_loses_accepting_in_an_ha_pool():
+    cols = [ha_col("a1", "pool-a", heartbeat_age_s=sh.FAILOVER_AFTER_S + 1)]
+    out = sh.apply_ha_policy(cols, {"pool-a": 2})
+    assert out[0].accepting is False
+
+
+def test_a_member_just_stale_but_under_failover_still_accepts():
+    """Between STALE_AFTER_S and FAILOVER_AFTER_S is the alarm window, not
+    the failover window - Collector.healthy would already be False here,
+    but accepting must not flip yet."""
+    cols = [ha_col("a1", "pool-a", heartbeat_age_s=sh.FAILOVER_AFTER_S - 1)]
+    out = sh.apply_ha_policy(cols, {"pool-a": 2})
+    assert out[0].accepting is True
+
+
+def test_an_empty_pools_first_member_is_never_quarantined():
+    """No other healthy member exists to protect - a brand new HA pool must
+    be able to do something immediately, not wait ten minutes for nothing."""
+    cols = [ha_col("a1", "pool-a", healthy_duration_s=1.0)]
+    out = sh.apply_ha_policy(cols, {"pool-a": 2})
+    assert out[0].accepting is True
+
+
+def test_a_recovering_member_is_quarantined_while_a_healthy_peer_exists():
+    cols = [ha_col("a1", "pool-a", healthy_duration_s=1.0),   # just recovered
+           ha_col("a2", "pool-a", healthy_duration_s=99999)]  # been fine all along
+    out = {c.collector_id: c for c in sh.apply_ha_policy(cols, {"pool-a": 2})}
+    assert out["a1"].accepting is False
+    assert out["a2"].accepting is True
+
+
+def test_a_recovering_member_regains_accepting_after_the_failback_window():
+    cols = [ha_col("a1", "pool-a", healthy_duration_s=sh.FAILBACK_AFTER_S + 1),
+           ha_col("a2", "pool-a", healthy_duration_s=99999)]
+    out = {c.collector_id: c for c in sh.apply_ha_policy(cols, {"pool-a": 2})}
+    assert out["a1"].accepting is True
+
+
+def test_a_frozen_pool_never_fails_over_automatically():
+    """docs/26 Phase 6: never during a change-freeze blackout."""
+    cols = [ha_col("a1", "pool-a", heartbeat_age_s=sh.FAILOVER_AFTER_S + 1)]
+    out = sh.apply_ha_policy(cols, {"pool-a": 2}, frozen_pools=frozenset({"pool-a"}))
+    assert out[0].accepting is True
+
+
+def test_a_frozen_pool_does_not_block_an_explicit_drain():
+    """The freeze exemption only ever protects automatic failover - an
+    operator's own drain decision still goes through."""
+    cols = [ha_col("a1", "pool-a", accepting=False)]
+    out = sh.apply_ha_policy(cols, {"pool-a": 2}, frozen_pools=frozenset({"pool-a"}))
+    assert out[0].accepting is False
+
+
+def test_ha_policy_end_to_end_failover_then_no_failback_for_ten_minutes():
+    """The acceptance bar, in one test: stop the primary, its endpoints
+    move to the standby past FAILOVER_AFTER_S; the primary comes back but
+    nothing moves back until FAILBACK_AFTER_S has passed."""
+    eps = pool_endpoints(50, "pool-a")
+    both_up = [ha_col("primary", "pool-a"), ha_col("standby", "pool-a")]
+    current = sh.plan(eps, sh.apply_ha_policy(both_up, {"pool-a": 2}))
+    assert sh.distribution(current)["primary"] > 0
+
+    primary_down = [ha_col("primary", "pool-a", heartbeat_age_s=sh.FAILOVER_AFTER_S + 1),
+                    ha_col("standby", "pool-a")]
+    policy_applied = sh.apply_ha_policy(primary_down, {"pool-a": 2})
+    target = sh.plan(eps, policy_applied)
+    after_failover = sh.rebalance(current, target, eps, policy_applied)
+    assert sh.distribution(after_failover) == {"standby": 50}
+
+    primary_back_but_recent = [
+        ha_col("primary", "pool-a", heartbeat_age_s=1.0, healthy_duration_s=5.0),
+        ha_col("standby", "pool-a")]
+    policy_applied = sh.apply_ha_policy(primary_back_but_recent, {"pool-a": 2})
+    target2 = sh.plan(eps, policy_applied)
+    after_recovery = sh.rebalance(after_failover, target2, eps, policy_applied)
+    assert sh.distribution(after_recovery) == {"standby": 50}, \
+        "the primary must not reclaim anything inside the failback window"

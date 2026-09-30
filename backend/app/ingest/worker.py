@@ -1021,23 +1021,47 @@ class IngestWorker:
                 await session.execute(text("""
                     INSERT INTO collector_instance
                         (id, version, hostname, started_at, last_heartbeat,
-                         endpoints_owned, endpoints_online, status, stats, state)
-                    VALUES (:id, :version, :hostname, :started_at, now(),
+                         endpoints_owned, endpoints_online, status, stats, state,
+                         healthy_since)
+                    VALUES (:id, :version, :hostname, :started_at, clock_timestamp(),
                             :owned, :online, 'HEALTHY', CAST(:stats AS jsonb),
                             -- The same rule as registration on first fetch:
                             -- a heartbeat can arrive first, and must not be a
                             -- way round the approval.
                             CASE WHEN EXISTS (SELECT 1 FROM collector_instance
                                                WHERE state <> 'decommissioned')
-                                 THEN 'pending' ELSE 'active' END)
+                                 THEN 'pending' ELSE 'active' END,
+                            -- A brand new row's first heartbeat is the start
+                            -- of its first healthy streak.
+                            clock_timestamp())
                     ON CONFLICT (id) DO UPDATE SET
                         version = EXCLUDED.version,
                         hostname = EXCLUDED.hostname,
                         started_at = EXCLUDED.started_at,
-                        last_heartbeat = now(),
+                        last_heartbeat = clock_timestamp(),
                         endpoints_owned = EXCLUDED.endpoints_owned,
                         endpoints_online = EXCLUDED.endpoints_online,
                         status = EXCLUDED.status,
+                        -- docs/26 Phase 6: a gap past the stale cutoff (or no
+                        -- previous heartbeat at all - migrating in an old
+                        -- row) means this heartbeat starts a NEW streak;
+                        -- otherwise the streak that was already running
+                        -- continues untouched. 60s matches live_collectors's
+                        -- own stale_after_s default - the two must agree,
+                        -- since this is what failback damping measures its
+                        -- 10-minute window from. clock_timestamp(), not
+                        -- now(): now() is fixed for the whole transaction,
+                        -- and _handle_heartbeat processes a whole BATCH of
+                        -- heartbeats - possibly several for the same
+                        -- collector - in one transaction, which would make
+                        -- every one of them see an identical, frozen "now".
+                        healthy_since = CASE
+                            WHEN collector_instance.last_heartbeat IS NULL
+                                 OR clock_timestamp() - collector_instance.last_heartbeat
+                                    > interval '60 seconds'
+                              THEN clock_timestamp()
+                            ELSE collector_instance.healthy_since
+                        END,
                         -- When the drop counter last ROSE, which is what the
                         -- platform judges: the counter is cumulative per
                         -- process, so judging the count itself would hold

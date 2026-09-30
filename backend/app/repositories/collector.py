@@ -65,7 +65,9 @@ async def live_collectors(session: AsyncSession,
     rows = (await session.execute(text("""
         SELECT ci.id, ci.status, ci.state, dc.code AS site, ci.pool_id::text AS pool_id,
                ci.started_at IS NOT NULL AS has_run,
-               extract(epoch FROM (clock_timestamp() - ci.last_heartbeat)) AS age_s
+               extract(epoch FROM (clock_timestamp() - ci.last_heartbeat)) AS age_s,
+               extract(epoch FROM (clock_timestamp() - ci.healthy_since))
+                   AS healthy_duration_s
           FROM collector_instance ci
           LEFT JOIN datacenter dc ON dc.id = ci.datacenter_id
          WHERE ci.state NOT IN ('decommissioned', 'pending')
@@ -74,6 +76,8 @@ async def live_collectors(session: AsyncSession,
     out = []
     for r in rows:
         age = float(r["age_s"]) if r["age_s"] is not None else None
+        healthy_duration = (float(r["healthy_duration_s"])
+                           if r["healthy_duration_s"] is not None else None)
         out.append({
             "collector_id": r["id"],
             # Absent means "serves any site", which is the correct default for
@@ -92,6 +96,13 @@ async def live_collectors(session: AsyncSession,
             # the next one, thirty seconds later, is not.
             "accepting": r["state"] == "active" and bool(r["has_run"]),
             "heartbeat_age_s": age,
+            # docs/26 Phase 6: how long this collector has been continuously
+            # healthy, not just whether it is healthy right now - what
+            # failback damping measures its 10-minute window from. None for
+            # a collector that has never sent a heartbeat with the column
+            # populated (a row from before migration 0089, or one that has
+            # never heartbeated at all).
+            "healthy_duration_s": healthy_duration,
         })
     return out
 
@@ -263,6 +274,19 @@ async def ownable_endpoints(session: AsyncSession) -> list[dict[str, Any]]:
         LEFT JOIN datacenter dc ON dc.id = rm.datacenter_id
         WHERE e.enabled AND e.admin_state = 'enabled'
           AND d.lifecycle <> 'decommissioned'
+    """))).mappings().all()
+    return [dict(r) for r in rows]
+
+
+async def pools(session: AsyncSession) -> list[dict[str, Any]]:
+    """Every collector_pool row - docs/26 Phase 6 reads min_members (for
+    apply_ha_policy) and datacenter_id (to match against an active
+    blackout) from here; Phase 5 itself never needed this, only the
+    per-endpoint pool_id resolution in assignment_endpoints/
+    ownable_endpoints."""
+    rows = (await session.execute(text("""
+        SELECT id::text, datacenter_id::text, plane, min_members
+          FROM collector_pool
     """))).mappings().all()
     return [dict(r) for r in rows]
 

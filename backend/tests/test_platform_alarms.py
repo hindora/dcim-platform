@@ -316,3 +316,44 @@ def test_a_credential_and_a_webhook_can_both_be_expiring():
         integration(days_left=3.0, webhook_days_left=1.0)]))
     assert types(found) == {"integration_credential_expiring",
                             "integration_webhook_expiring"}
+
+
+# --- collector pools (docs/26 Phase 6) -------------------------------------
+
+def pool(**kw) -> p.Pool:
+    base = {"pool_id": "pool-1", "name": "DC1/IT-OOB", "min_members": 2,
+           "healthy_accepting_members": 2}
+    base.update(kw)
+    return p.Pool(**base)
+
+
+def test_a_pool_at_full_strength_raises_nothing():
+    assert p.evaluate(sig(pools=[pool()])) == []
+
+
+def test_a_single_member_pool_never_alarms_on_min_members():
+    """min_members = 1 (the default for every pool an operator has not
+    explicitly asked for N+1 on) must never alarm just for being at 1-of-1
+    - that is every ordinary single-collector pool in the estate."""
+    found = p.evaluate(sig(pools=[pool(min_members=1, healthy_accepting_members=1)]))
+    assert types(found) == set()
+
+
+def test_a_pool_missing_one_of_two_members_warns():
+    found = p.evaluate(sig(pools=[pool(healthy_accepting_members=1)]))
+    assert types(found) == {"pool_below_min_members"}
+    assert found[0].severity == p.WARNING
+    assert found[0].instance == "pool-1"
+
+
+def test_a_pool_with_no_healthy_members_at_all_is_major():
+    found = p.evaluate(sig(pools=[pool(healthy_accepting_members=0)]))
+    assert found[0].severity == p.MAJOR
+    assert "No collector can currently poll this pool at all" in found[0].message
+
+
+def test_pool_alarms_are_keyed_per_pool():
+    found = p.evaluate(sig(pools=[
+        pool(pool_id="pool-1", healthy_accepting_members=1),
+        pool(pool_id="pool-2", name="DC2/BMS", healthy_accepting_members=0)]))
+    assert {f.instance for f in found} == {"pool-1", "pool-2"}

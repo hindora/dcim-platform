@@ -85,6 +85,7 @@ PLATFORM_ALARM_TYPES = (
     "integration_credential_expiring",
     "integration_degraded",
     "integration_webhook_expiring",
+    "pool_below_min_members",
 )
 
 #: An Atlassian Cloud API token expires within a year of being minted, and the
@@ -141,6 +142,24 @@ class Collector:
 
 
 @dataclass
+class Pool:
+    """One collector_pool, as the monitor sees it - docs/26 Phase 6.
+
+    healthy_accepting_members counts collectors placed in this pool
+    (pool_id matches) whose heartbeat is under COLLECTOR_STALE_S and whose
+    state is 'active' - the same two facts services.sharding.Collector
+    calls healthy/accepting, gathered here independently rather than
+    reused, since this module is intentionally a pure function of
+    whatever numbers its caller hands it.
+    """
+
+    pool_id: str
+    name: str
+    min_members: int
+    healthy_accepting_members: int
+
+
+@dataclass
 class Integration:
     """One configured outbound integration, as the monitor sees it."""
 
@@ -175,6 +194,7 @@ class Signals:
     worker_heartbeat_age_s: float | None = None
     poll_interval_s: float = 120.0
     collectors: list[Collector] = field(default_factory=list)
+    pools: list[Pool] = field(default_factory=list)
     collectors_expected: int = 0
     db_pool_saturated_for_s: float = 0.0
     stream_pending: dict[str, int] = field(default_factory=dict)
@@ -394,6 +414,30 @@ def evaluate(signals: Signals) -> list[Finding]:
                     f"{signals.expected_mapping_sha[:12]}. It may be polling "
                     f"metrics this release does not expect, or missing ones "
                     f"this release added")))
+
+    # --- collector pools (docs/26 Phase 6) -------------------------------------
+    #
+    # min_members is only ever meaningful once an operator has set it above
+    # the default of 1 - a pool nobody asked for N+1 on reporting "below
+    # minimum" at 1-of-1 would be every single-collector pool in the
+    # estate, permanently, which is not a finding, it is the entire
+    # deployment shape most sites actually run.
+    for pool in signals.pools:
+        if pool.min_members <= 1:
+            continue
+        if pool.healthy_accepting_members < pool.min_members:
+            out.append(Finding(
+                alarm_type="pool_below_min_members", instance=pool.pool_id,
+                severity=MAJOR if pool.healthy_accepting_members == 0 else WARNING,
+                value=float(pool.healthy_accepting_members),
+                threshold=float(pool.min_members),
+                message=(
+                    f"Pool {pool.name} has {pool.healthy_accepting_members} "
+                    f"of its required {pool.min_members} collectors healthy "
+                    f"and accepting work. "
+                    + ("No collector can currently poll this pool at all."
+                       if pool.healthy_accepting_members == 0 else
+                       "It is running with less redundancy than configured."))))
 
     # --- database -------------------------------------------------------------
     if signals.db_pool_saturated_for_s >= DB_POOL_SATURATED_S:

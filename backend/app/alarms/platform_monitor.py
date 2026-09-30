@@ -148,6 +148,31 @@ async def _collectors(session: AsyncSession) -> list[rules.Collector]:
     return out
 
 
+async def _pools(session: AsyncSession) -> list[rules.Pool]:
+    """One row per collector_pool, with how many of its OWN members
+    (pool_id matches) are currently healthy and accepting work - docs/26
+    Phase 6. state = 'active' is the same "accepting" fact services.
+    sharding.Collector reads; COLLECTOR_STALE_S is the same 60s cutoff
+    live_collectors's own stale_after_s default uses.
+    """
+    rows = (await session.execute(text("""
+        SELECT p.id, p.name, p.min_members,
+               count(ci.id) FILTER (
+                   WHERE ci.state = 'active'
+                     AND ci.last_heartbeat IS NOT NULL
+                     AND clock_timestamp() - ci.last_heartbeat
+                         < make_interval(secs => :stale_s)
+               ) AS healthy_accepting
+          FROM collector_pool p
+          LEFT JOIN collector_instance ci ON ci.pool_id = p.id
+         GROUP BY p.id, p.name, p.min_members
+    """), {"stale_s": rules.COLLECTOR_STALE_S})).mappings().all()
+    return [rules.Pool(pool_id=str(r["id"]), name=r["name"],
+                       min_members=int(r["min_members"]),
+                       healthy_accepting_members=int(r["healthy_accepting"]))
+           for r in rows]
+
+
 async def _collectors_expected(session: AsyncSession) -> int:
     """How many collectors should be checking in: every one not retired.
 
@@ -199,6 +224,7 @@ async def gather(session: AsyncSession, redis: Redis, *,
     age, present = await _telemetry_freshness(session)
     integrations = await _integrations(session)
     collectors = await _collectors(session)
+    pools = await _pools(session)
     if collectors_expected is None:
         collectors_expected = await _collectors_expected(session)
     pending = await _stream_pending(redis, streams, group)
@@ -232,6 +258,7 @@ async def gather(session: AsyncSession, redis: Redis, *,
         worker_heartbeat_age_s=hb.get("age_s") if hb else None,
         poll_interval_s=poll_interval_s,
         collectors=collectors,
+        pools=pools,
         collectors_expected=collectors_expected,
         stream_pending=pending,
         integrations=integrations,
