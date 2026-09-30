@@ -28,6 +28,7 @@ from app.core.security import (
 from app.db.session import get_session
 from app.repositories import collector as fleet_repo
 from app.repositories import collector_config as repo
+from app.repositories import preflight as preflight_repo
 from app.services import collector_config as cfg
 from app.services import collector_pki
 
@@ -397,3 +398,21 @@ async def set_config(
             # Named fields rather than a count: "3 settings need a restart" is
             # not something an operator can act on without knowing which.
             "restart_pending": pending}
+
+
+@router.get("/{collector_id}/preflight",
+            summary="Preflight history for one collector (docs/26 Phase 8)")
+async def preflight_history(
+    collector_id: str,
+    session: AsyncSession = Depends(get_session),
+    _: Principal = Depends(current_principal),
+) -> dict[str, Any]:
+    """Read-only for any authenticated user, like the rest of this file's
+    GET routes - only placement and config changes need admin. Newest
+    first; `latest` is `history[0]` when there is one at all, broken out
+    separately so a caller that only cares about "did it pass" does not
+    have to reach into an array."""
+    rows = await preflight_repo.history(session, collector_id)
+    return {"collector_id": collector_id,
+           "latest": rows[0] if rows else None,
+           "history": rows}

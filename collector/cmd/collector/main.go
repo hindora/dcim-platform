@@ -12,6 +12,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -20,6 +21,7 @@ import (
 	"github.com/hari/dcim-platform/collector/internal/app"
 	"github.com/hari/dcim-platform/collector/internal/config"
 	"github.com/hari/dcim-platform/collector/internal/mtls"
+	"github.com/hari/dcim-platform/collector/internal/preflight"
 	"github.com/hari/dcim-platform/collector/internal/sealedbox"
 )
 
@@ -36,6 +38,9 @@ func main() {
 	// touches os.Args at all.
 	if len(os.Args) > 1 && os.Args[1] == "enroll" {
 		os.Exit(runEnroll(os.Args[2:]))
+	}
+	if len(os.Args) > 1 && os.Args[1] == "preflight" {
+		os.Exit(runPreflight(os.Args[2:]))
 	}
 
 	configPath := flag.String("config", "configs/collector.yaml", "path to the config file")
@@ -120,6 +125,11 @@ func runEnroll(args []string) int {
 	stateDir := fs.String("state-dir", "./state",
 		"where to write the certificate and key (0600, non-world-readable)")
 	timeout := fs.Duration("timeout", 15*time.Second, "request timeout")
+	configPath := fs.String("config", "configs/collector.yaml",
+		"config file to run preflight against afterward - missing or invalid is not "+
+			"fatal to enrollment itself, only to the automatic preflight run")
+	skipPreflight := fs.Bool("skip-preflight", false,
+		"do not run preflight automatically after a successful enroll")
 	_ = fs.Parse(args)
 
 	if *server == "" || *id == "" || *token == "" {
@@ -148,5 +158,87 @@ func runEnroll(args []string) int {
 	fmt.Printf("enrolled %s - certificate and key written to %s\n", *id, *stateDir)
 	fmt.Println("start the collector normally; it loads the certificate from " +
 		"the same state directory automatically.")
+
+	if *skipPreflight {
+		return 0
+	}
+	// docs/26 Phase 8: preflight runs automatically here, using the
+	// certificate Enroll just wrote - an install that never gets this far
+	// on its own is exactly what the onboarding wizard's preflight step
+	// exists to catch immediately, not thirty seconds later on the first
+	// real assignment fetch. A config file that cannot be read or does not
+	// validate is NOT fatal to enroll's own exit code - only to which
+	// checks preflight can meaningfully run - so config.Default() with the
+	// id and state dir just used is the fallback, which still exercises
+	// NTP and core reachability even with nothing else configured yet.
+	cfg := config.Default()
+	cfg.Collector.ID = *id
+	cfg.Collector.StateDir = *stateDir
+	cfg.DCIM.BaseURL = *server
+	if loaded, loadErr := config.Load(*configPath); loadErr == nil {
+		cfg = loaded
+		cfg.Collector.ID = *id
+	} else {
+		fmt.Fprintf(os.Stderr, "preflight: could not read %s (%v); running with "+
+			"defaults - some checks will show as skipped\n", *configPath, loadErr)
+	}
+	runPreflightWith(ctx, cfg, *stateDir, true)
+	return 0
+}
+
+func runPreflight(args []string) int {
+	fs := flag.NewFlagSet("preflight", flag.ExitOnError)
+	configPath := fs.String("config", "configs/collector.yaml", "path to the config file")
+	collectorID := fs.String("id", "",
+		"collector id, overriding the file and DCIM_COLLECTOR_ID")
+	post := fs.Bool("post", true, "post results to the platform")
+	_ = fs.Parse(args)
+
+	cfg, err := config.Load(*configPath)
+	if err == nil && *collectorID != "" {
+		cfg.Collector.ID = *collectorID
+		err = cfg.Validate()
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "config error: %v\n", err)
+		return 2
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return runPreflightWith(ctx, cfg, cfg.Collector.StateDir, *post)
+}
+
+// runPreflightWith is shared by the standalone `preflight` command and
+// enroll's automatic run - the only difference between the two call sites
+// is where the config came from and whether skip-preflight was passed.
+func runPreflightWith(ctx context.Context, cfg *config.Config, stateDir string, post bool) int {
+	store := mtls.NewStore()
+	if cert, notAfter, err := mtls.Load(stateDir); err == nil && cert != nil {
+		store.Set(*cert, notAfter)
+	}
+	client := &http.Client{Timeout: cfg.Preflight.Timeout,
+		Transport: &http.Transport{TLSClientConfig: store.TLSConfig()}}
+
+	checks := preflight.Run(ctx, cfg, client)
+	failed := false
+	for _, c := range checks {
+		fmt.Printf("[%s] %-12s %s\n", c.Status, c.Check, c.Detail)
+		if c.Status == preflight.StatusFail {
+			failed = true
+		}
+	}
+
+	if post {
+		if err := preflight.Post(ctx, client, cfg.DCIM.BaseURL, cfg.Token(), checks); err != nil {
+			fmt.Fprintf(os.Stderr, "preflight: could not post results to the platform: %v\n", err)
+		} else {
+			fmt.Println("preflight: results posted to the platform")
+		}
+	}
+
+	if failed {
+		return 1
+	}
 	return 0
 }

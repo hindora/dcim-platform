@@ -8,7 +8,7 @@ the public API and makes lazy-loading a latency bug.
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -702,6 +702,29 @@ class Assignment(BaseModel):
     endpoints: list[AssignmentEndpoint]
     #: Everything else a trap may arrive from, owned by somebody else.
     resolve: list[ResolveEntry] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------- preflight
+
+class PreflightCheck(BaseModel):
+    """One `dcim-collector preflight` finding - docs/26 Phase 8. Open-ended
+    on purpose: `check` names the check (e.g. "ntp_offset", "spool_disk",
+    "trap_port", "core_tls"), so a new check type needs no schema change,
+    only a new value here."""
+
+    check: str
+    status: Literal["ok", "warn", "fail", "skipped"]
+    detail: str = ""
+    #: The measured number the status was judged against, if the check has
+    #: one - an NTP offset in ms, free bytes, and so on. None for a check
+    #: that is pass/fail with nothing to plot (e.g. "trap_port").
+    value: float | None = None
+
+
+class PreflightResult(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    checks: list[PreflightCheck]
 
 
 # -------------------------------------------------------------------- auth

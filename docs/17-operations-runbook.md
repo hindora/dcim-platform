@@ -280,32 +280,78 @@ write paths, and an API on new code against an old worker is the skew that
 produces `ingest_worker_stale` warnings.
 
 ### 6.2 Adding a collector
-1. Mint a scoped token — never reuse the fleet-wide one:
-   ```python
-   from app.core.security import mint_collector_token
-   mint_collector_token("col-2")
+
+**Updated for docs/26 Phases 0-7. The `mint_collector_token`/raw-SQL
+procedure this section used to describe predates the admin API below and
+should not be used anymore** - it bypasses the placement-before-first-run
+ordering `POST /collectors` gives you, and mints a fleet-shaped token
+directly rather than the per-collector, per-generation one the revocation
+scheme (§6.3, and migration 0085) actually expects.
+
+`$JWT` is a bearer token for an admin-role user, from `POST /api/v1/login`.
+
+1. Create the collector, placed in its site before it ever runs - the order
+   that avoids a first assignment fetch seeing the wrong shard:
+   ```bash
+   curl -s -X POST http://127.0.0.1:8000/api/v1/collectors \
+        -H "Authorization: Bearer $JWT" -H "Content-Type: application/json" \
+        -d '{"id": "col-2", "datacenter_id": "<uuid, or omit for \"any site\">"}'
    ```
-2. Start it with that token and its own `collector_id`.
+   The response carries an `enrollment.install_command` ready to paste on
+   the new host - `dcim-collector enroll --server ... --id col-2 --token
+   ...` - plus a `fallback_bearer_token`, kept only for a site that cannot
+   yet run the mTLS proxy in front of this platform (migration 0086). Both
+   credentials are returned exactly once; the platform keeps no copy of
+   either.
+2. Run the install command on the new host, then start the collector
+   normally - it loads the certificate `enroll` wrote from its own state
+   directory.
 3. Confirm the split:
    ```bash
    curl -s -H "Authorization: Bearer $JWT" \
         http://127.0.0.1:8000/api/v1/collector/health | jq .shards
    ```
-   `owned` must sum to the fleet, `unassigned` must be 0.
+   `owned` must sum to the fleet, `unassigned` must be 0. If the site (or,
+   docs/26 Phase 5, the pool) this collector was placed in has no other
+   healthy member, its endpoints show up here rather than silently sitting
+   with the collector that used to hold them.
 
 **The hazard.** Registering a collector that then does not run **strands its
 shard**: those endpoints are owned by nobody and are "not mine" from every
 other collector's point of view. `collector_stale` tells you a collector is
 gone; `shards.owned_by_unhealthy` tells you how much of the fleet went with it.
+A collector created but never started stays `pending` and holds nothing -
+see `PATCH /collectors/{id}` to approve it once it has, or to place it in a
+different site.
 
 ### 6.3 Removing a collector
-Delete its row, or its shard stays stranded:
-```sql
-DELETE FROM collector_instance WHERE id = 'col-2';
+
+**Updated for docs/26 Phase 0. Deleting the `collector_instance` row
+directly loses its history and its audit trail - use the decommission
+endpoint instead, which the row survives (marked retired) and which also
+revokes its token in the same step:**
+```bash
+curl -s -X POST http://127.0.0.1:8000/api/v1/collectors/col-2/decommission \
+     -H "Authorization: Bearer $JWT"
 ```
+Not reversible from here on purpose - a machine coming back from retirement
+is a new install and should go through §6.2 again, not be un-decommissioned.
+
 Its endpoints redistribute on the next assignment fetch. Roughly 1/N of the
 fleet changes hands, and **each moved endpoint loses its counter baseline** —
-expect a gap, not a spike, in interface rates for one poll cycle.
+expect a gap, not a spike, in interface rates for one poll cycle. (docs/26
+Phase 5 found this is actually not true server-side - `app/ingest/rates.py`
+keys a counter baseline by endpoint, not by collector, so a move alone does
+not reset anything; the real gap here is however long the endpoint sits
+unowned between the old collector losing it and the new one's first poll,
+typically well under one assignment interval.)
+
+If this collector had a certificate rather than the bearer-token fallback,
+decommissioning revokes its token generation but does not itself invalidate
+an mTLS certificate already in its trust chain - see `POST
+/collectors/{id}/revoke-cert` for a suspected key compromise, which is a
+narrower, separate action from decommissioning (the row and its history
+stay, and it is expected to re-enroll and resume, not be replaced).
 
 ### 6.4 Backup
 ```bash

@@ -42,7 +42,8 @@ from app.repositories import collector as repo
 from app.repositories import collector_config as config_repo
 from app.repositories import dashboard as dashboard_repo
 from app.repositories import discovery as disc_repo
-from app.schemas import Assignment
+from app.repositories import preflight as preflight_repo
+from app.schemas import Assignment, PreflightCheck, PreflightResult
 from app.services import ca, collector_gateway, collector_pki
 from app.services import collector as service
 from app.services import discovery as disc_service
@@ -368,6 +369,48 @@ async def heartbeat(
         "stats": json.dumps(stats),
     })
     await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+def preflight_passed(checks: list[PreflightCheck]) -> bool:
+    """A run passes only if every check that actually ran reported ok. A
+    "skipped" check (no pool assigned yet to sample, say) does not count
+    against it - it is neither a pass nor a fail - but "warn" does, since a
+    passing wizard step should mean genuinely nothing left to fix, not
+    "nothing FAILED"."""
+    return all(c.status in ("ok", "skipped") for c in checks)
+
+
+@router.post("/preflight", status_code=status.HTTP_204_NO_CONTENT,
+             summary="Record a preflight run (docs/26 Phase 8)")
+async def preflight(
+    body: PreflightResult,
+    session: AsyncSession = Depends(get_session),
+    identity: str = Depends(require_collector),
+) -> Response:
+    """`dcim-collector preflight`'s findings, stored for the onboarding
+    wizard to poll - see app/repositories/preflight.py. Never blocks
+    anything itself: a failed check is a finding for an operator to read,
+    not a reason this platform refuses the collector that reported it -
+    the same posture docs/26 Phase 7's version skew alarm takes, and for
+    the same reason: this endpoint's job is to be honest, not to gate.
+
+    An UNSCOPED_COLLECTOR (the legacy fleet-wide token, never issued after
+    a real enroll) is refused - a preflight result with no real collector
+    identity behind it is not useful to store, and every path that calls
+    this (dcim-collector's own `preflight` command, run automatically
+    after `enroll`) always has a scoped identity by the time it runs.
+    """
+    if identity == UNSCOPED_COLLECTOR:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED,
+                            "preflight needs a collector-scoped identity, "
+                            "not the fleet-wide token")
+    passed = preflight_passed(body.checks)
+    await preflight_repo.record(session, identity, passed,
+                               [c.model_dump() for c in body.checks])
+    await session.commit()
+    log.info("preflight recorded", collector_id=identity, passed=passed,
+             checks=len(body.checks))
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
