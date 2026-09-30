@@ -3,6 +3,7 @@ package mtls
 import (
 	"context"
 	"crypto/ecdsa"
+	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -43,7 +44,7 @@ func selfSignedCertPEMWithKey(t *testing.T, cn string, notAfter time.Time,
 		NotAfter:     notAfter,
 		DNSNames:     []string{cn},
 	}
-	der, err := x509.CreateCertificate(nil, tmpl, tmpl, &key.PublicKey, key)
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +80,7 @@ func signCSRPEM(t *testing.T, csrPEM string, notAfter time.Time) string {
 	}
 	issuer := &x509.Certificate{SerialNumber: big.NewInt(1),
 		Subject: pkix.Name{CommonName: "test issuer"}}
-	der, err := x509.CreateCertificate(nil, tmpl, issuer, csr.PublicKey, issuerKey)
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, issuer, csr.PublicKey, issuerKey)
 	if err != nil {
 		t.Fatal(err)
 	}
