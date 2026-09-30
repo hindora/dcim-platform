@@ -546,3 +546,30 @@ async def test_the_preview_refuses_to_strand_a_single_member_pool(session):
     preview = await shard_map.drain_preview(session, only)
     assert preview["owned"] == 3 and preview["stranded"] == 3
     assert preview["can_drain"] is False
+
+
+async def test_the_serving_path_honours_the_assigners_damping(session):
+    """A second member joins an 8-endpoint pool: HRW would hand it about
+    half at once, but the imbalance is under the damping floor, so the
+    assigner keeps the record on the first member - and build_assignment
+    now serves the record, so the newcomer is given nothing yet."""
+    from app.services import assigner
+    from app.services import collector as fleet_svc
+
+    dc_id, room_id = await _datacenter_and_room(session, f"P{_tag()[:6]}")
+    pool = await svc.create(session, _payload(dc_id, cidrs=[], min_members=1,
+                                              bbmd_settings={}))
+    await _discovery_range(session, dc_id, "10.52.25.0/24", purpose="bms")
+    profile = await _poll_profile(session)
+    eids = {await _device_endpoint(session, room_id, profile, f"10.52.25.{i}", "bacnet")
+            for i in range(10, 18)}
+    a1, a2 = f"col-{_tag()}", f"col-{_tag()}"
+    await _collector(session, a1, pool["id"])
+    await assigner.run(session)
+    await _collector(session, a2, pool["id"])
+    await assigner.run(session)
+
+    served_a1 = {e.id for e in (await fleet_svc.build_assignment(session, a1)).endpoints}
+    served_a2 = {e.id for e in (await fleet_svc.build_assignment(session, a2)).endpoints}
+    assert eids <= served_a1
+    assert not (eids & served_a2), "the live plan alone would have given a2 some"

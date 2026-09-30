@@ -1,19 +1,18 @@
 """The shard map and collector drains (docs/26 Phase 5's frontend row).
 
-Two owners exist for every endpoint, and this module shows both rather than
-pretending they are one:
+Two owners are shown for every endpoint:
 
-- **served**: what `build_assignment` actually hands each collector - the
-  live `sharding.plan` over the current fleet, pins first. This is who is
-  polling it.
-- **recorded**: what the assigner last wrote to `endpoint_assignment` - the
-  damped, persisted plan, with epoch, since and reason, and the history
-  every move leaves (migration 0093).
+- **served**: who `build_assignment` hands it to - `sharding.effective`:
+  a pin, else the assigner's record while it is valid, else the live plan.
+  This is who is polling it.
+- **recorded**: what the assigner last wrote to `endpoint_assignment`, with
+  epoch, since and reason, and the history every move leaves (migration
+  0093).
 
-They agree except where the assigner's damping held an ordinary rebalance
-back, or where no assigner is running at all. A disagreement is shown, not
-reconciled here: which of the two a collector should be served is a
-decision about the serving path, not about a page.
+Since the serving path reads the record, they agree except in the window
+between a change and the assigner's next tick (an owner drained, retired
+or moved out of the pool), or where a pin is newer than the record. A
+persistent disagreement means the assigner is not running.
 
 Drain follows Kubernetes' `drain`, the most widely understood version of the
 operation: preview what moves and where, refuse when something would have
@@ -32,7 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.repositories import collector as repo
 from app.repositories import pools as pools_repo
 from app.services import sharding
-from app.services.collector import fleet
+from app.services.collector import fleet, ownership
 
 # ---------------------------------------------------------------- shard map
 
@@ -117,9 +116,9 @@ def filter_rows(rows: list[dict[str, Any]], *, collector_id: str | None = None,
 
 async def shard_map(session: AsyncSession, *, limit: int = 50, offset: int = 0,
                     **filters: Any) -> dict[str, Any]:
+    served = await ownership(session)
     collectors = await fleet(session)
     ownable = await repo.ownable_endpoints(session)
-    served = sharding.plan(ownable, collectors) if collectors else {}
     pool_names = {p["id"]: p["name"] for p in await pools_repo.list_pools(session)}
     rows = build_rows(await repo.shard_rows(session), ownable, served, pool_names)
     summary = summarise(rows, collectors)
@@ -135,13 +134,17 @@ async def shard_map(session: AsyncSession, *, limit: int = 50, offset: int = 0,
 # -------------------------------------------------------------------- drain
 
 def preview_drain(collector_id: str, ownable: list[dict[str, Any]],
-                  collectors: list[sharding.Collector]) -> dict[str, Any]:
+                  collectors: list[sharding.Collector],
+                  recorded: dict[str, str | None] | None = None) -> dict[str, Any]:
     """Pure: what draining this collector would do, before doing it.
 
-    Computed with the same `sharding.plan` the serving path uses, once with
-    the fleet as it is and once with this collector no longer accepting -
-    so the preview is exactly the move, not an estimate of it."""
-    now = sharding.plan(ownable, collectors) if collectors else {}
+    "Owned now" is `sharding.effective` - what the serving path hands it.
+    Where each of those goes is the fresh plan with this collector no
+    longer accepting: a drain is a mandatory move, and the assigner moves
+    every mandatory endpoint straight to its target, undamped - so the
+    preview is exactly the move, not an estimate of it."""
+    now = (sharding.effective(ownable, collectors, recorded or {})
+           if collectors else {})
     drained = [replace(c, accepting=False) if c.collector_id == collector_id else c
                for c in collectors]
     after = sharding.plan(ownable, drained) if drained else {}
@@ -185,15 +188,11 @@ def preview_drain(collector_id: str, ownable: list[dict[str, Any]],
 
 async def drain_preview(session: AsyncSession, collector_id: str) -> dict[str, Any]:
     return preview_drain(collector_id, await repo.ownable_endpoints(session),
-                         await fleet(session))
+                         await fleet(session), await repo.current_assignment(session))
 
 
 async def remaining(session: AsyncSession, collector_id: str) -> int:
     """What a draining collector is still served - its pins, and anything
     the plan still gives it."""
-    collectors = await fleet(session)
-    if not collectors:
-        return 0
-    return sum(1 for owner in sharding.plan(await repo.ownable_endpoints(session),
-                                            collectors).values()
+    return sum(1 for owner in (await ownership(session)).values()
                if owner == collector_id)

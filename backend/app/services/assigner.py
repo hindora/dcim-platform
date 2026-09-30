@@ -10,8 +10,12 @@ endpoint" that a trap handler, an audit log, or a second process could
 agree with.
 
 This is the one place that plan is actually decided and written.
-Everything else - `build_assignment`, `OwnershipGuard`, the shard summary -
-reads `endpoint_assignment` instead of recomputing anything.
+Everything else - `build_assignment`, `OwnershipGuard`, the visibility
+sweep, the pools and shard pages - reads it through `collector.ownership`
+(`sharding.effective`): a pin, else this record while it is still valid,
+else the live plan for what the record does not cover yet. (Until
+2026-09-30 `build_assignment` recomputed the live plan instead, despite this
+paragraph, so neither the damping nor HA failover ever reached a collector.)
 
 Advisory-locked (`pg_try_advisory_xact_lock`, released automatically at
 commit/rollback) so that a deployment running more than one ingest worker -

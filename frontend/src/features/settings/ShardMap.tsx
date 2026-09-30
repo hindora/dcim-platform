@@ -16,9 +16,11 @@ import { KpiBand, type Kpi } from '../../components/estate';
  *
  *  Two owners per row, on purpose. "Polled by" is what the serving path
  *  hands each collector right now; "recorded" is what the assigner last
- *  wrote, with the epoch, time and reason of the move. They agree except
- *  where the assigner's damping held a rebalance back, or where no assigner
- *  runs - and when they disagree the page says so instead of picking one.
+ *  wrote, with the epoch, time and reason of the move. The serving path
+ *  reads the record, so they agree except for the seconds between a change
+ *  (a drain, a pin, a retired owner) and the assigner's next tick - and
+ *  persistently only where no assigner runs. When they disagree the page
+ *  says so instead of picking one.
  *
  *  Filters live in the URL, so "every BMS endpoint on col-2" is a link an
  *  engineer can send. Drains are started from the Collectors page, where
@@ -79,9 +81,9 @@ export function ShardMap() {
         <h2>Shard map</h2>
         <p className="subtitle">
           <Tip tip={oneLine(`"Polled by" is who is given the endpoint right now.
-                  "Recorded" is the assigner's last written move. They differ
-                  only while damping holds a rebalance back, or where no
-                  assigner is running.`)}>
+                  "Recorded" is the assigner's last written move, which is what
+                  collectors are served. They differ only until the assigner's
+                  next tick after a change, or where no assigner is running.`)}>
             Which collector polls every device, and every move it made.
           </Tip>
         </p>

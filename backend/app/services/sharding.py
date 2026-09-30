@@ -151,6 +151,51 @@ def plan(endpoints: list[dict[str, Any]],
     return out
 
 
+def effective(endpoints: list[dict[str, Any]], collectors: list[Collector],
+              recorded: dict[str, str | None]) -> dict[str, str | None]:
+    """Who actually owns every endpoint: the assigner's record where it is
+    still valid, the live plan where it is not (docs/26 Phase 5/6).
+
+    The record is what the assigner decided with damping (an ordinary
+    rebalance waits for a real imbalance) and HA policy (failover and
+    failback in pools that opted in). Serving the live plan instead - as
+    build_assignment did until this - meant neither of those ever reached a
+    collector: every HRW opinion change moved endpoints at once, and a
+    failover changed the record while the silent collector kept being
+    handed the work.
+
+    Precedence, per endpoint:
+      1. a pin - the operator's word, immediately, not a tick later;
+      2. the recorded owner, if it is in the fleet, accepting, and still
+         serves the endpoint's pool or site;
+      3. the live plan - for an endpoint the assigner has not recorded yet
+         (new, or no assigner has run at all), a record naming nobody
+         (pool_empty, which the plan may now be able to fill), and a record
+         gone stale between ticks (its owner drained, retired, or moved to
+         another pool).
+
+    Health is deliberately NOT a validity test for the record: outside an
+    HA pool a silent collector keeps its shard (sharding's founding rule),
+    and inside one the assigner has already moved the record away.
+    """
+    by_id = {c.collector_id: c for c in collectors}
+    live = plan(endpoints, collectors) if collectors else {}
+    out: dict[str, str | None] = {}
+    for e in endpoints:
+        eid = str(e["id"])
+        pinned = e.get("collector_id")
+        if pinned:
+            out[eid] = pinned
+            continue
+        owner_id = recorded.get(eid)
+        c = by_id.get(owner_id) if owner_id else None
+        if c is not None and c.accepting and c.serves(e.get("pool_id"), e.get("site")):
+            out[eid] = owner_id
+        else:
+            out[eid] = live.get(eid)
+    return out
+
+
 def owned_by(endpoints: list[dict[str, Any]], collectors: list[Collector],
              collector_id: str) -> list[dict[str, Any]]:
     """The subset of endpoints this collector should poll."""

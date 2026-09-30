@@ -424,3 +424,62 @@ def test_an_unplaced_collector_never_takes_a_pooled_endpoint():
     assert set(sh.plan(eps, [anywhere, same_site]).values()) == {None}
     # ...and an unpooled endpoint is still theirs, exactly as before pools.
     assert anywhere.serves(None, "DC1") and same_site.serves(None, "DC1")
+
+
+# --- effective ownership: the record where valid, the plan where not ----------
+
+def test_effective_with_no_record_is_the_live_plan():
+    eps = pool_endpoints(30, "pool-a")
+    cols = [col("a1", pool_id="pool-a"), col("a2", pool_id="pool-a")]
+    assert sh.effective(eps, cols, {}) == sh.plan(eps, cols)
+
+
+def test_a_valid_record_beats_the_plan_so_damping_reaches_the_collectors():
+    """The assigner held an ordinary rebalance back; the serving path must
+    honour that, or damping only ever changed a table."""
+    eps = pool_endpoints(8, "pool-a")
+    cols = [col("a1", pool_id="pool-a"), col("a2", pool_id="pool-a")]
+    recorded = {e["id"]: "a1" for e in eps}
+    assert set(sh.plan(eps, cols).values()) == {"a1", "a2"}, "HRW would split them"
+    assert set(sh.effective(eps, cols, recorded).values()) == {"a1"}
+
+
+def test_a_failover_in_the_record_reaches_the_collectors():
+    """HA pools: the assigner moved these off a silent a1. The live plan
+    (no HA policy) would still hand them to a1, which is accepting but dead."""
+    eps = pool_endpoints(10, "pool-a")
+    cols = [col("a1", pool_id="pool-a", healthy=False), col("a2", pool_id="pool-a")]
+    recorded = {e["id"]: "a2" for e in eps}
+    assert set(sh.effective(eps, cols, recorded).values()) == {"a2"}
+
+
+def test_a_silent_owner_outside_ha_keeps_its_record():
+    """Health is not a validity test: failover is opt-in per pool."""
+    eps = pool_endpoints(5, "pool-a")
+    cols = [col("a1", pool_id="pool-a", healthy=False), col("a2", pool_id="pool-a")]
+    recorded = {e["id"]: "a1" for e in eps}
+    assert set(sh.effective(eps, cols, recorded).values()) == {"a1"}
+
+
+def test_a_stale_record_falls_back_to_the_plan():
+    eps = pool_endpoints(10, "pool-a")
+    live = [col("a2", pool_id="pool-a"), col("a3", pool_id="pool-a")]
+    draining = [col("a1", pool_id="pool-a", accepting=False), *live]
+    moved = [col("a1", pool_id="pool-b"), *live]
+    recorded = {e["id"]: "a1" for e in eps}
+    for fleet in (draining, moved, live):  # drained, moved pools, retired
+        got = sh.effective(eps, fleet, recorded)
+        assert "a1" not in got.values()
+        assert got == sh.plan(eps, fleet)
+
+
+def test_a_record_of_nobody_lets_the_plan_fill_it():
+    eps = pool_endpoints(3, "pool-a")
+    cols = [col("a1", pool_id="pool-a")]
+    assert set(sh.effective(eps, cols, {e["id"]: None for e in eps}).values()) == {"a1"}
+
+
+def test_a_pin_beats_the_record_at_once():
+    eps = [{"id": "e1", "pool_id": "pool-a", "site": None, "collector_id": "a2"}]
+    cols = [col("a1", pool_id="pool-a"), col("a2", pool_id="pool-a")]
+    assert sh.effective(eps, cols, {"e1": "a1"}) == {"e1": "a2"}

@@ -52,9 +52,19 @@ async def build_assignment(session: AsyncSession, collector_id: str,
                  collector_id=collector_id)
     # A pending collector is not in the fleet, so it owns only what is
     # pinned to it - nothing, until an admin approves it.
-    collectors = await fleet(session)
     before = len(rows)
-    rows = sharding.owned_by(rows, collectors, collector_id)
+    # The recorded owner where it is valid, the live plan where it is not -
+    # the same answer the ingest ownership check and every page read, from
+    # ownership() below. Serving the live plan alone skipped the assigner's
+    # damping and HA failover entirely.
+    collectors = await fleet(session)
+    if collectors:
+        owners = await ownership(session)
+        rows = [r for r in rows if owners.get(str(r["id"])) == collector_id]
+    else:
+        # No fleet yet (the first collector, still pending): only what is
+        # pinned to it, exactly as before.
+        rows = sharding.owned_by(rows, collectors, collector_id)
     log.info("assignment sharded", collector_id=collector_id,
              candidates=before, owned=len(rows), collectors=len(collectors))
 
@@ -175,11 +185,18 @@ async def fleet(session: AsyncSession) -> list[sharding.Collector]:
 
 
 async def ownership(session: AsyncSession) -> dict[str, str | None]:
-    """Who owns every endpoint right now, pins included."""
+    """Who owns every endpoint right now: pins, then the assigner's record
+    where it is still valid, then the live plan (sharding.effective).
+
+    The one answer every reader shares - the serving path, the ingest
+    ownership check, the visibility sweep, the pools and shard pages. Two
+    of them disagreeing is how a collector's own telemetry gets dropped as
+    coming from a non-owner."""
     collectors = await fleet(session)
     if not collectors:
         return {}
-    return sharding.plan(await repo.ownable_endpoints(session), collectors)
+    return sharding.effective(await repo.ownable_endpoints(session), collectors,
+                              await repo.current_assignment(session))
 
 
 #: Heartbeat stats a collector detail page shows, in the order it shows

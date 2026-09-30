@@ -581,10 +581,12 @@ async def undrain(
     session: AsyncSession = Depends(get_session),
     principal: Principal = Depends(require_role("admin")),
 ) -> dict[str, Any]:
-    """Back into the hash. It does not get its old endpoints back at once:
-    the serving path's plan gives it its hash share on the next fetch, but
-    the recorded assignment follows the assigner's damping (a member off the
-    pool mean by 10 endpoints AND 2x), so the record may lag."""
+    """Back into the hash - but not necessarily back to work at once. The
+    serving path reads the assigner's record, and giving a returning member
+    its share is an ordinary rebalance, which the assigner damps (a member
+    off the pool mean by 10 endpoints AND 2x). In a small pool it may stay
+    empty until the imbalance is real; that is the damping working, not the
+    undrain failing."""
     row = await _must_exist(session, collector_id)
     if row["state"] != "draining":
         raise HTTPException(status.HTTP_409_CONFLICT,
