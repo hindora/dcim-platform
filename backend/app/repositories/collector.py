@@ -173,6 +173,30 @@ async def set_pool(session: AsyncSession, collector_id: str,
     """), {"id": collector_id, "pool": pool_id})
 
 
+async def endpoint_health(session: AsyncSession,
+                          endpoint_ids: list[str]) -> list[dict[str, Any]]:
+    """What a collector detail page shows per owned endpoint (docs/26
+    Phase 8): the device, how it is reached, and its last reported state.
+    Credential-free - this page is readable by any signed-in user."""
+    if not endpoint_ids:
+        return []
+    rows = (await session.execute(text("""
+        SELECT e.id::text, e.device_id::text, d.name AS device_name, d.device_type,
+               e.protocol::text AS protocol, host(e.address) AS address, e.port,
+               COALESCE(es.status::text, 'UNKNOWN') AS status,
+               es.last_seen, es.last_success, es.last_failure,
+               es.last_error, es.last_error_class,
+               COALESCE(es.consecutive_failures, 0) AS consecutive_failures,
+               es.last_latency_ms, es.collector_id AS reported_by
+          FROM device_endpoint e
+          JOIN device d ON d.id = e.device_id
+          LEFT JOIN endpoint_state es ON es.endpoint_id = e.id
+         WHERE e.id = ANY(CAST(:ids AS uuid[]))
+         ORDER BY d.name, e.protocol
+    """), {"ids": endpoint_ids})).mappings().all()
+    return [dict(r) for r in rows]
+
+
 async def set_state(session: AsyncSession, collector_id: str, state: str,
                     actor: str) -> None:
     await session.execute(text("""

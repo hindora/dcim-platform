@@ -1205,3 +1205,50 @@ tr.is-selected > td { background: var(--bg-inset); }
   .alarm-split.with-detail .alarm-master { display: none; }
   .alarm-detail { position: static; }
 }
+
+/* Site onboarding (docs/26 Phase 8). The rail is the whole journey at a
+   glance: each step's mark is derived from the server, never from having
+   clicked past it, so a step that went red again after a firewall change
+   says so wherever the reader happens to be. */
+.wizard { display: grid; grid-template-columns: 220px 1fr; gap: 28px; align-items: start; }
+.wizard-rail { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px;
+               counter-reset: step; position: sticky; top: 12px; }
+.wizard-rail button {
+  width: 100%; display: grid; grid-template-columns: 22px 1fr; gap: 8px;
+  align-items: center; text-align: left; padding: 8px 10px;
+  background: none; border: 1px solid transparent; border-radius: var(--radius);
+  color: var(--text-muted); font-size: 13px; cursor: pointer;
+}
+.wizard-rail button:hover:not(:disabled) { background: var(--bg-raised); }
+.wizard-rail button:disabled { cursor: default; color: var(--text-faint); }
+.wizard-rail button.current {
+  background: var(--bg-raised); border-color: var(--border-strong);
+  color: var(--text); box-shadow: inset 2px 0 0 var(--accent);
+}
+.wizard-rail .mark {
+  width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center;
+  font-size: 11px; font-weight: 600; border: 1px solid var(--border-strong);
+  color: var(--text-muted);
+}
+.wizard-rail .mark.ok { border-color: var(--ok); color: var(--ok); }
+.wizard-rail .mark.bad { border-color: var(--critical); color: var(--critical); }
+.wizard-step { display: grid; gap: 16px; min-width: 0; }
+.wizard-step h3 { margin: 0; font-size: 16px; }
+.wizard-nav { display: flex; gap: 8px; border-top: 1px solid var(--border);
+              padding-top: 14px; }
+.wizard-nav .spacer { flex: 1; }
+.choice-list { display: grid; gap: 6px; }
+.choice-list label {
+  display: grid; grid-template-columns: 18px 1fr auto; gap: 10px; align-items: center;
+  padding: 9px 12px; border: 1px solid var(--border); border-radius: var(--radius);
+  cursor: pointer;
+}
+.choice-list label.chosen { border-color: var(--accent); background: var(--bg-raised); }
+.choice-list input { margin: 0; }
+.checks li.pending .name::before { content: '… '; color: var(--text-faint); }
+
+@media (max-width: 860px) {
+  .wizard { grid-template-columns: 1fr; gap: 16px; }
+  .wizard-rail { position: static; grid-auto-flow: column; grid-auto-columns: minmax(120px, 1fr);
+                 overflow-x: auto; }
+}

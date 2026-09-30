@@ -193,3 +193,20 @@ async def firewall_matrix(
     if format == "text":
         return Response(content=matrix["text"], media_type="text/plain")
     return matrix
+
+
+@router.get("/{pool_id}/readiness",
+            summary="Is this pool collecting yet, and which bring-up step is not done")
+async def readiness(
+    pool_id: str,
+    session: AsyncSession = Depends(get_session),
+    _: Principal = Depends(current_principal),
+) -> dict[str, Any]:
+    """The onboarding wizard's credentials and verification steps (docs/26
+    Phase 8): per-protocol credential coverage and comm state for the
+    endpoints resolving here, each member's latest preflight, and a list of
+    checks that are True, False, or None when there is nothing to judge."""
+    try:
+        return await service.readiness(session, pool_id)
+    except service.PoolError as exc:
+        raise _http(exc) from None

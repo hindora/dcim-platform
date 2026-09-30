@@ -223,6 +223,9 @@ async def test_the_assignment_carries_the_pools_settings_to_a_placed_collector(s
     ep = await _device_endpoint(session, room_id, profile, "10.52.9.10", "bacnet")
     cid = f"col-{_tag()}"
     await _collector(session, cid, pool["id"])
+    # Pinned - see test_preflight_targets_for_an_active_pool_member_are_what_it_owns.
+    await session.execute(text("UPDATE device_endpoint SET collector_id = :c "
+                               "WHERE id = CAST(:e AS uuid)"), {"c": cid, "e": ep})
 
     assignment = await fleet.build_assignment(session, cid)
     mine = [e for e in assignment.endpoints if e.id == ep]
@@ -244,6 +247,55 @@ async def test_a_pool_placed_collector_with_no_endpoints_still_gets_its_pool(ses
     assert set(assignment.pools) == {pool["id"]}
 
 
+async def test_preflight_targets_fall_back_to_the_pool_for_a_collector_owning_nothing(session):
+    """The just-enrolled case: a pending collector owns nothing yet, but its
+    pool says what it will own - that is what preflight must probe."""
+    dc_id, room_id = await _datacenter_and_room(session, f"P{_tag()[:6]}")
+    pool = await svc.create(session, _payload(dc_id, cidrs=[]))
+    await _discovery_range(session, dc_id, "10.52.11.0/24", purpose="bms")
+    profile = await _poll_profile(session)
+    await _device_endpoint(session, room_id, profile, "10.52.11.10", "bacnet")
+    await _device_endpoint(session, room_id, profile, "10.52.11.20", "modbus")
+    cid = f"col-{_tag()}"
+    await _collector(session, cid, pool["id"])
+    await session.execute(text("UPDATE collector_instance SET state = 'pending' "
+                               "WHERE id = :id"), {"id": cid})
+
+    got = await fleet.preflight_targets(session, cid)
+    assert got["source"] == "pool"
+    by_proto = {p["protocol"]: p["targets"] for p in got["protocols"]}
+    assert by_proto["bacnet"] == [{"address": "10.52.11.10", "port": 47808}]
+    assert by_proto["modbus"] == [{"address": "10.52.11.20", "port": 502}]
+
+
+async def test_preflight_targets_for_an_active_pool_member_are_what_it_owns(session):
+    dc_id, room_id = await _datacenter_and_room(session, f"P{_tag()[:6]}")
+    pool = await svc.create(session, _payload(dc_id, cidrs=[]))
+    await _discovery_range(session, dc_id, "10.52.12.0/24", purpose="bms")
+    profile = await _poll_profile(session)
+    ep = await _device_endpoint(session, room_id, profile, "10.52.12.10", "bacnet")
+    cid = f"col-{_tag()}"
+    await _collector(session, cid, pool["id"])
+    # Pinned: the real dev fleet's unplaced collector serves everything and
+    # competes by rendezvous hash for a pool endpoint, so without a pin the
+    # owner depends on a random UUID - the trap docs/26 Phase 5 documented.
+    await session.execute(text("UPDATE device_endpoint SET collector_id = :c "
+                               "WHERE id = CAST(:e AS uuid)"), {"c": cid, "e": ep})
+
+    got = await fleet.preflight_targets(session, cid)
+    assert got["source"] == "owned"
+    assert [p["protocol"] for p in got["protocols"]] == ["bacnet"]
+
+
+async def test_preflight_targets_are_none_with_nothing_owned_and_no_pool(session):
+    cid = f"col-{_tag()}"
+    await _collector(session, cid, None)
+    await session.execute(text("UPDATE collector_instance SET state = 'pending' "
+                               "WHERE id = :id"), {"id": cid})
+    got = await fleet.preflight_targets(session, cid)
+    assert got == {"collector_id": cid, "source": "none", "protocols": []}
+
+
 async def test_set_pool_keeps_the_collectors_site_in_step(session):
     dc_id, _ = await _datacenter_and_room(session, f"P{_tag()[:6]}")
     pool = await svc.create(session, _payload(dc_id))
@@ -256,3 +308,71 @@ async def test_set_pool_keeps_the_collectors_site_in_step(session):
     row = await fleet_repo.collector_state(session, cid)
     assert row["pool_id"] is None and row["datacenter_id"] == dc_id, \
         "leaving a pool keeps the site it implied"
+
+
+async def test_collector_detail_shows_owned_endpoints_and_skew(session):
+    dc_id, room_id = await _datacenter_and_room(session, f"P{_tag()[:6]}")
+    pool = await svc.create(session, _payload(dc_id, cidrs=[]))
+    await _discovery_range(session, dc_id, "10.52.13.0/24", purpose="bms")
+    profile = await _poll_profile(session)
+    ep = await _device_endpoint(session, room_id, profile, "10.52.13.10", "bacnet")
+    cid = f"col-{_tag()}"
+    await _collector(session, cid, pool["id"])
+    # Pinned: the real dev fleet's unplaced collector serves everything and
+    # competes by rendezvous hash for a pool endpoint, so without a pin the
+    # owner depends on a random UUID - the trap docs/26 Phase 5 documented.
+    await session.execute(text("UPDATE device_endpoint SET collector_id = :c "
+                               "WHERE id = CAST(:e AS uuid)"), {"c": cid, "e": ep})
+
+    detail = await fleet.collector_detail(session, cid)
+    assert detail["id"] == cid and detail["pool_id"] == pool["id"]
+    assert [e["id"] for e in detail["endpoints"]] == [ep]
+    assert detail["by_protocol"] == {"bacnet": 1}
+    assert detail["version_skew"] == "unknown", "a collector that never reported a build"
+    assert "config" not in detail and "effective" not in detail
+    assert await fleet.collector_detail(session, f"nope-{_tag()}") is None
+
+
+async def test_readiness_counts_credentials_state_and_member_preflight(session):
+    """The wizard's credentials and verification steps read these numbers;
+    each must come from the row it names, not from a guess."""
+    from app.repositories import preflight as preflight_repo
+
+    dc_id, room_id = await _datacenter_and_room(session, f"P{_tag()[:6]}")
+    pool = await svc.create(session, _payload(dc_id, cidrs=[], plane="it_oob",
+                                              min_members=1, bbmd_settings={}))
+    await _discovery_range(session, dc_id, "10.51.13.0/24", purpose="it_oob")
+    profile = await _poll_profile(session)
+    with_cred = await _device_endpoint(session, room_id, profile, "10.51.13.10", "snmp")
+    await _device_endpoint(session, room_id, profile, "10.51.13.11", "snmp")
+    await _device_endpoint(session, room_id, profile, "10.51.13.12", "modbus")
+    cred = await session.scalar(text("""
+        INSERT INTO credential (name, protocol, kind, secret_enc)
+        VALUES (:n, 'snmp', 'snmp_v2c', 'x') RETURNING id::text
+    """), {"n": f"cred-{_tag()}"})
+    await session.execute(text("UPDATE device_endpoint SET credential_id = CAST(:c AS uuid) "
+                               "WHERE id = CAST(:e AS uuid)"), {"c": cred, "e": with_cred})
+    await session.execute(text("""
+        INSERT INTO endpoint_state (endpoint_id, status, updated_at)
+        VALUES (CAST(:e AS uuid), 'ONLINE', now())
+    """), {"e": with_cred})
+    cid = f"col-{_tag()}"
+    await _collector(session, cid, pool["id"])
+    await preflight_repo.record(session, cid, False, [{"check": "ntp_offset", "status": "fail"}])
+
+    got = await svc.readiness(session, pool["id"])
+    by = {p["protocol"]: p for p in got["protocols"]}
+    assert by["snmp"]["endpoints"] == 2
+    assert by["snmp"]["with_credential"] == 1
+    assert by["snmp"]["missing_credential"] == 1
+    assert by["snmp"]["online"] == 1 and by["snmp"]["never_polled"] == 1
+    assert by["modbus"]["needs_credential"] is False
+    assert by["modbus"]["missing_credential"] == 0, "Modbus/TCP has no auth to be missing"
+    assert got["members"][0]["collector_id"] == cid
+    assert got["members"][0]["preflight_passed"] is False
+    checks = {c["key"]: c["ok"] for c in got["checks"]}
+    assert checks["preflight"] is False
+    assert checks["credentials"] is False
+    assert checks["online"] is False
+    assert got["ready"] is False
+    assert [r["cidr"] for r in got["ranges"]] == ["10.51.13.0/24"]

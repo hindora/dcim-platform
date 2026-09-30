@@ -920,6 +920,69 @@ export interface EnrollmentToken {
   install_command: string;
 }
 
+/** One `dcim-collector preflight` finding (docs/26 Phase 8). */
+export interface PreflightCheck {
+  check: string;
+  status: 'ok' | 'warn' | 'fail' | 'skipped';
+  detail?: string;
+  value?: number | null;
+}
+
+export interface PreflightRun {
+  id: string;
+  collector_id: string;
+  ran_at: string;
+  passed: boolean;
+  checks: PreflightCheck[];
+}
+
+/** One endpoint the current plan gives a collector, with its last state. */
+export interface CollectorEndpoint {
+  id: string;
+  device_id: string;
+  device_name: string;
+  device_type: string;
+  protocol: string;
+  address?: string | null;
+  port?: number | null;
+  status: string;
+  last_seen?: string | null;
+  last_success?: string | null;
+  last_failure?: string | null;
+  last_error?: string | null;
+  last_error_class?: string | null;
+  consecutive_failures: number;
+  last_latency_ms?: number | null;
+  /** Who last reported it - differs from this collector mid-move. */
+  reported_by?: string | null;
+}
+
+/** docs/26 Phase 8's collector detail page. Stats a collector never sent
+ *  are null, never zero: a redis-transport collector has no spool. */
+export interface CollectorDetail extends Omit<CollectorRow, 'config' | 'effective'> {
+  platform_version: string;
+  version_skew: 'current' | 'supported' | 'outdated' | 'rejected' | 'unknown';
+  endpoints: CollectorEndpoint[];
+  by_status: Record<string, number>;
+  by_protocol: Record<string, number>;
+  /** Owned by plan, last reported by another collector. */
+  reported_elsewhere: number;
+  recent_errors: CollectorEndpoint[];
+  error_count: number;
+  stats: {
+    polls_total?: number | null; polls_failed?: number | null;
+    traps_received?: number | null; events_received?: number | null;
+    queue_depth?: number | null; queue_capacity?: number | null;
+    assignment_age_s?: number | null; assignment_version?: number | null;
+    active_streams?: number | null; spool_bytes?: number | null;
+    spool_oldest_age_s?: number | null; replay_rate?: number | null;
+    mapping_bundle_sha?: string | null;
+  };
+  /** Work-queue fill - NOT utilisation; the capacity model is not built. */
+  queue_fill_pct?: number | null;
+  preflight?: PreflightRun | null;
+}
+
 /** Collector pools (docs/26 Phase 5): site x plane placement. */
 export type PoolPlane = 'it_oob' | 'bms' | 'production' | 'other';
 
@@ -940,6 +1003,9 @@ export interface PoolMember {
   version?: string | null;
   healthy: boolean;
   accepting: boolean;
+  /** False for a record created ahead of its install: its heartbeat is the
+   *  creation time, so `healthy` alone cannot say it never ran. */
+  has_run: boolean;
   heartbeat_age_s?: number | null;
   endpoints_owned: number;
   endpoints_online: number;
@@ -1024,6 +1090,38 @@ export interface FirewallMatrix {
   rows: FirewallRule[];
   /** The same rows as a plain-text change request. */
   text: string;
+}
+
+/** docs/26 Phase 8's onboarding wizard: is a pool collecting yet. */
+export interface PoolReadinessProtocol {
+  protocol: string;
+  endpoints: number;
+  with_credential: number;
+  /** False for BACnet/IP and Modbus/TCP: neither carries authentication. */
+  needs_credential: boolean;
+  missing_credential: number;
+  online: number;
+  degraded: number;
+  offline: number;
+  never_polled: number;
+}
+
+export interface PoolReadinessCheck {
+  key: 'members' | 'preflight' | 'endpoints' | 'credentials' | 'assigned' | 'online';
+  /** null: nothing to judge yet - an empty pool is not "all online". */
+  ok: boolean | null;
+  detail: string;
+}
+
+export interface PoolReadiness {
+  pool_id: string;
+  protocols: PoolReadinessProtocol[];
+  members: { collector_id: string; state: string; has_run: boolean; healthy: boolean;
+             accepting: boolean;
+             preflight_passed: boolean | null; preflight_at?: string | null }[];
+  checks: PoolReadinessCheck[];
+  ready: boolean;
+  ranges: PoolRange[];
 }
 
 export interface CollectorsPage {
@@ -3537,6 +3635,16 @@ export const api = {
     request<{ id: string; unpinned: number }>(
       `/collectors/${id}/decommission`, { method: 'POST' }),
 
+  /** One collector: identity, version skew, heartbeat figures, owned
+   *  endpoints with their state, recent errors, latest preflight. */
+  collectorDetail: (id: string) =>
+    request<CollectorDetail>(`/collectors/${encodeURIComponent(id)}`),
+
+  /** Preflight history for one collector, newest first. */
+  collectorPreflight: (id: string) =>
+    request<{ collector_id: string; latest: PreflightRun | null; history: PreflightRun[] }>(
+      `/collectors/${encodeURIComponent(id)}/preflight`),
+
   /** Collector pools (docs/26 Phase 5): every pool with its members,
    *  endpoint totals and what is unassigned, plus the sites and planes the
    *  create form offers. */
@@ -3561,6 +3669,11 @@ export const api = {
    *  protocols on its endpoints; `text` is the paste-ready change request. */
   poolFirewallMatrix: (id: string) =>
     request<FirewallMatrix>(`/pools/${id}/firewall-matrix`),
+
+  /** Credential coverage, comm state and member preflight for the
+   *  endpoints resolving into one pool - the wizard's last two steps. */
+  poolReadiness: (id: string) =>
+    request<PoolReadiness>(`/pools/${id}/readiness`),
 
   pollProfiles: () => request<PollProfilesPage>('/poll-profiles'),
 

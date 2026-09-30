@@ -13,6 +13,7 @@ import json
 from datetime import UTC, datetime
 from typing import Any
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
@@ -179,6 +180,142 @@ async def ownership(session: AsyncSession) -> dict[str, str | None]:
     if not collectors:
         return {}
     return sharding.plan(await repo.ownable_endpoints(session), collectors)
+
+
+#: Heartbeat stats a collector detail page shows, in the order it shows
+#: them. A key the collector never sent stays None rather than 0: a
+#: redis-transport collector has no spool at all, and "0 bytes spooled"
+#: would claim a measurement nobody took.
+DETAIL_STATS = ("polls_total", "polls_failed", "traps_received", "events_received",
+                "queue_depth", "queue_capacity", "assignment_age_s", "assignment_version",
+                "active_streams", "spool_bytes", "spool_oldest_age_s", "replay_rate",
+                "mapping_bundle_sha")
+
+
+def summarise_detail(collector_id: str, endpoints: list[dict[str, Any]],
+                     stats: dict[str, Any] | None, recent: int = 20) -> dict[str, Any]:
+    """Pure: the counts and lists a collector detail page is built from.
+
+    `reported_elsewhere` is the one number here that is not a count of the
+    collector's own state: endpoints the PLAN gives this collector whose
+    last report came from a different one. Non-zero during a move, a
+    drain or a failover - and stuck non-zero means the move never happened.
+    """
+    by_status: dict[str, int] = {}
+    by_protocol: dict[str, int] = {}
+    elsewhere = 0
+    for e in endpoints:
+        by_status[e["status"]] = by_status.get(e["status"], 0) + 1
+        by_protocol[e["protocol"]] = by_protocol.get(e["protocol"], 0) + 1
+        if e.get("reported_by") and e["reported_by"] != collector_id:
+            elsewhere += 1
+    errors = sorted((e for e in endpoints if e.get("last_error")),
+                    key=lambda e: str(e.get("last_failure") or ""), reverse=True)
+    s = stats or {}
+    queue = None
+    if s.get("queue_depth") is not None and s.get("queue_capacity"):
+        queue = round(100.0 * float(s["queue_depth"]) / float(s["queue_capacity"]), 1)
+    return {
+        "by_status": dict(sorted(by_status.items())),
+        "by_protocol": dict(sorted(by_protocol.items())),
+        "reported_elsewhere": elsewhere,
+        "recent_errors": errors[:recent],
+        "error_count": len(errors),
+        "stats": {k: s.get(k) for k in DETAIL_STATS},
+        # Work-queue fill, NOT utilisation: the capacity model that would
+        # say how close this collector is to its ceiling is not built
+        # (docs/26 Phase 5). Named for what it measures.
+        "queue_fill_pct": queue,
+    }
+
+
+async def collector_detail(session: AsyncSession, collector_id: str) -> dict[str, Any] | None:
+    from app import __version__ as platform_version
+    from app.repositories import collector_config as config_repo
+    from app.repositories import preflight as preflight_repo
+    from app.services import version_skew
+
+    row = next((r for r in await config_repo.list_collectors(session)
+                if r["id"] == collector_id), None)
+    if row is None:
+        return None
+    owned = [eid for eid, owner in (await ownership(session)).items()
+             if owner == collector_id]
+    endpoints = await repo.endpoint_health(session, owned)
+    stats = (await session.execute(text(
+        "SELECT stats FROM collector_instance WHERE id = :id"), {"id": collector_id})).scalar()
+    out = {**row, **summarise_detail(collector_id, endpoints, stats)}
+    # config/effective are the settings page's business, not this one's.
+    out.pop("config", None)
+    out.pop("effective", None)
+    out["platform_version"] = platform_version
+    out["version_skew"] = version_skew.classify(platform_version, row.get("build"))
+    out["endpoints"] = endpoints
+    out["preflight"] = await preflight_repo.latest(session, collector_id)
+    return out
+
+
+#: Protocols a preflight reachability probe means nothing for: both are
+#: INBOUND to the collector, so "can the collector reach the device" is
+#: the wrong question - the trap_port check already asks the right one.
+_INBOUND_ONLY = frozenset({"snmp_trap", "sflow"})
+
+
+def sample_targets(rows: list[dict[str, Any]],
+                   per_protocol: int = 3) -> list[dict[str, Any]]:
+    """Pure: up to `per_protocol` distinct (address, port) per protocol.
+
+    Real device addresses rather than hosts picked from a CIDR: a random
+    address in 10.52.1.0/24 answering nothing proves nothing, while a known
+    chiller's controller not answering is exactly the facilities pinhole
+    that is not in yet. Distinct, because every field device behind one
+    Modbus gateway shares the gateway's address - probing it eighteen times
+    is one probe with extra steps. Sorted, so the same fleet always yields
+    the same sample and a rerun compares like with like.
+    """
+    from app.services.endpoint_config import DEFAULT_PORT
+
+    by_proto: dict[str, set[tuple[str, int]]] = {}
+    for r in rows:
+        proto = r["protocol"]
+        if proto in _INBOUND_ONLY or not r.get("address"):
+            continue
+        port = r.get("port") or DEFAULT_PORT.get(proto)
+        if not port:
+            continue
+        by_proto.setdefault(proto, set()).add((r["address"], int(port)))
+    out = []
+    for proto in sorted(by_proto):
+        picked = sorted(by_proto[proto])[:per_protocol]
+        out.append({"protocol": proto,
+                    "targets": [{"address": a, "port": p} for a, p in picked],
+                    "total": len(by_proto[proto])})
+    return out
+
+
+async def preflight_targets(session: AsyncSession, collector_id: str) -> dict[str, Any]:
+    """What `dcim-collector preflight` should try to reach (docs/26 Phase 8).
+
+    The endpoints this collector owns right now; or, for a collector that
+    owns nothing yet - pending, or just enrolled, the exact moment preflight
+    runs - every endpoint in the pool it is placed in, which is what it WILL
+    own. With neither there is nothing honest to probe, and saying so beats
+    inventing a target.
+    """
+    owned = [eid for eid, owner in (await ownership(session)).items()
+             if owner == collector_id]
+    rows = await pool_repo.probe_rows(session, endpoint_ids=owned) if owned else []
+    source = "owned"
+    if not rows:
+        state = await repo.collector_state(session, collector_id)
+        pool_id = (state or {}).get("pool_id")
+        if pool_id:
+            rows = await pool_repo.probe_rows(session, pool_id=pool_id)
+            source = "pool"
+    if not rows:
+        source = "none"
+    return {"collector_id": collector_id, "source": source,
+            "protocols": sample_targets(rows)}
 
 
 def community_digest(credential: dict[str, Any] | None) -> str | None:

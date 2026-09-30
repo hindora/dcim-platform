@@ -426,6 +426,25 @@ async def set_config(
             "restart_pending": pending}
 
 
+@router.get("/{collector_id}", summary="One collector: identity, health, what it owns")
+async def collector_detail(
+    collector_id: str,
+    session: AsyncSession = Depends(get_session),
+    _: Principal = Depends(current_principal),
+) -> dict[str, Any]:
+    """docs/26 Phase 8's collector detail page: identity and certificate,
+    version against the platform's own, the heartbeat's spool and queue
+    figures, every endpoint the current plan gives it with its last state,
+    the most recent errors, and the latest preflight. Read-only for any
+    signed-in user - nothing here is a credential."""
+    from app.services import collector as fleet
+
+    detail = await fleet.collector_detail(session, collector_id)
+    if detail is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "no such collector")
+    return detail
+
+
 @router.get("/{collector_id}/preflight",
             summary="Preflight history for one collector (docs/26 Phase 8)")
 async def preflight_history(

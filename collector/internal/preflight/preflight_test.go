@@ -204,7 +204,7 @@ func TestCheckNTPWarnsRatherThanFailsWhenTheServerIsUnreachable(t *testing.T) {
 	}
 }
 
-func TestRunReturnsAllFourChecksInAFixedOrder(t *testing.T) {
+func TestRunReturnsTheFourHostChecksFirstThenReachability(t *testing.T) {
 	cfg := testConfig()
 	cfg.Preflight.NTPServer = fakeSNTPServer(t, 0)
 	cfg.Transport.Mode = "redis"           // spool_disk skipped
@@ -217,8 +217,13 @@ func TestRunReturnsAllFourChecksInAFixedOrder(t *testing.T) {
 	cfg.DCIM.BaseURL = srv.URL
 
 	checks := Run(context.Background(), cfg, srv.Client())
-	if len(checks) != 4 {
-		t.Fatalf("got %d checks, want 4", len(checks))
+	// Four host checks, then reachability - a single skipped check here,
+	// since this fake core answers the targets path with an empty body.
+	if len(checks) != 5 {
+		t.Fatalf("got %d checks, want 5", len(checks))
+	}
+	if checks[4].Check != "reachability" || checks[4].Status != StatusSkipped {
+		t.Errorf("checks[4] = %+v, want a skipped reachability check", checks[4])
 	}
 	names := []string{checks[0].Check, checks[1].Check, checks[2].Check, checks[3].Check}
 	want := []string{"ntp_offset", "spool_disk", "trap_port", "core_tls"}

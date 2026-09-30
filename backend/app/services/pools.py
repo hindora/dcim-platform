@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.repositories import collector as fleet_repo
 from app.repositories import pools as repo
+from app.repositories import preflight as preflight_repo
 from app.services import collector as fleet
 from app.services.discovery_ranges import PURPOSES as PLANES
 from app.services.endpoint_config import DEFAULT_PORT
@@ -238,6 +239,84 @@ async def detail(session: AsyncSession, pool_id: str) -> dict[str, Any]:
     agg = aggregate([pool], members, counts, ownable, plan)["pools"][0]
     agg["ranges"] = await repo.ranges_for(session, pool_id)
     return agg
+
+
+# ------------------------------------------------------------- readiness
+
+#: Protocols that cannot be polled without a secret. BACnet/IP and
+#: Modbus/TCP carry no authentication at all (BACnet/SC aside, which nothing
+#: here speaks), so an endpoint of theirs with no credential is correct, not
+#: a gap - counting it as one would make every BMS pool look unfinished.
+CREDENTIALED = frozenset({"snmp", "redfish", "gnmi", "provider"})
+
+
+def summarise_readiness(pool: dict[str, Any], protocols: list[dict[str, Any]],
+                        preflights: dict[str, dict[str, Any] | None]) -> dict[str, Any]:
+    """Pure: is this pool actually collecting, and if not, which step of
+    bringing it up is unfinished (docs/26 Phase 8's wizard, steps 6-10).
+
+    Each check is ok True / False, or None when there is nothing to judge
+    yet - a pool with no endpoints is not "all online", and saying so
+    would turn the wizard's last step green on an empty site."""
+    protos = []
+    for r in protocols:
+        needs = r["protocol"] in CREDENTIALED
+        gap = r["endpoints"] - r["with_credential"] if needs else 0
+        protos.append({**r, "needs_credential": needs, "missing_credential": gap})
+    total = sum(r["endpoints"] for r in protos)
+    online = sum(r["online"] for r in protos)
+    missing = sum(r["missing_credential"] for r in protos)
+
+    members = []
+    for m in pool.get("members", []):
+        pf = preflights.get(m["collector_id"])
+        members.append({"collector_id": m["collector_id"], "state": m["state"],
+                        "has_run": bool(m.get("has_run", True)),
+                        "healthy": bool(m["healthy"]) and bool(m.get("has_run", True)),
+                        "accepting": bool(m["accepting"]),
+                        "preflight_passed": None if pf is None else bool(pf["passed"]),
+                        "preflight_at": None if pf is None else pf["ran_at"]})
+
+    need = max(1, int(pool.get("min_members") or 1))
+    accepting = int(pool.get("accepting_members") or 0)
+    ran = [m for m in members if m["preflight_passed"] is not None]
+    checks = [
+        {"key": "members", "ok": accepting >= need,
+         "detail": f"{accepting} of {need} required member(s) healthy and accepting work"},
+        {"key": "preflight",
+         "ok": None if not members else (len(ran) == len(members)
+                                         and all(m["preflight_passed"] for m in ran)),
+         "detail": ("no collector placed" if not members else
+                    f"{sum(1 for m in ran if m['preflight_passed'])} of {len(members)} "
+                    "member(s) passed their latest preflight")},
+        {"key": "endpoints", "ok": None if total == 0 else True,
+         "detail": (f"{total} endpoint(s) resolve here" if total else
+                    "no endpoint resolves here - add a discovery range with this "
+                    "site and plane, then discover and promote")},
+        {"key": "credentials", "ok": None if total == 0 else missing == 0,
+         "detail": ("nothing to check yet" if total == 0 else
+                    f"{missing} endpoint(s) of a credentialed protocol have no credential"
+                    if missing else "every endpoint that needs a credential has one")},
+        {"key": "assigned", "ok": None if total == 0 else int(pool.get("unassigned") or 0) == 0,
+         "detail": ("nothing to check yet" if total == 0 else
+                    f"{int(pool.get('unassigned') or 0)} endpoint(s) owned by nobody")},
+        {"key": "online", "ok": None if total == 0 else online == total,
+         "detail": ("nothing to check yet" if total == 0 else
+                    f"{online} of {total} endpoint(s) online at the last poll")},
+    ]
+    return {"pool_id": pool["id"], "protocols": protos, "members": members,
+            "checks": checks,
+            "ready": all(c["ok"] is True for c in checks)}
+
+
+async def readiness(session: AsyncSession, pool_id: str) -> dict[str, Any]:
+    agg = await detail(session, pool_id)
+    protos = await repo.readiness_counts(session, pool_id)
+    preflights = {m["collector_id"]: await preflight_repo.latest(session, m["collector_id"])
+                  for m in agg["members"]}
+    out = summarise_readiness(agg, protos, preflights)
+    out["ranges"] = agg["ranges"]
+    return out
 
 
 # ----------------------------------------------------------------- writing

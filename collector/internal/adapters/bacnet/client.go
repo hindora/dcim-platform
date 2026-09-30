@@ -153,7 +153,7 @@ func (c *Client) dispatch(data []byte, from *net.UDPAddr) {
 		c.log.Debug("bacnet apdu ignored", "src", from.IP.String(), "error", err)
 		return
 	}
-	src := Address{IP: from.IP.String(), Net: info.SrcNet, MAC: info.SrcMAC}
+	src := Address{IP: from.IP.String(), Port: from.Port, Net: info.SrcNet, MAC: info.SrcMAC}
 
 	if a.Kind == kindUnconfirmed {
 		if a.Service == svcIAm {
@@ -210,11 +210,17 @@ func sameDevice(want, got Address) bool {
 
 // addressKey identifies a responder. For a routed device the IP belongs to the
 // router, so the network and MAC are what separate it from its neighbours.
+//
+// The UDP port is part of it. A B/IP address is IP AND port (Annex J), and
+// more than one BACnet device on one IP - a supervisor exposing virtual
+// devices, several soft controllers on one host - is legal and real. Keyed on
+// the IP alone, one device's I-Am satisfied every concurrent Who-Is to that
+// IP, and a discovery would record one device's instance against another.
 func addressKey(a Address) string {
 	if a.Routed() {
-		return fmt.Sprintf("%s|%d|%x", a.IP, a.Net, a.MAC)
+		return fmt.Sprintf("%s:%d|%d|%x", a.IP, a.UDPPort(), a.Net, a.MAC)
 	}
-	return a.IP
+	return fmt.Sprintf("%s:%d", a.IP, a.UDPPort())
 }
 
 func (c *Client) deliverIAm(src Address, a apdu) {

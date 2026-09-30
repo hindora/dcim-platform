@@ -865,3 +865,62 @@ func TestCounterMetricsCarryUintValue(t *testing.T) {
 		t.Errorf("gauge carried a uint value: %d", temp.UintValue)
 	}
 }
+
+// Two BACnet devices on ONE IP, different UDP ports - legal B/IP (Annex J:
+// the address is IP and port) and real (a supervisor exposing virtual
+// devices, soft controllers sharing a host). Identified concurrently, each
+// must come back with its OWN instance: keyed on the IP alone, the first
+// I-Am to arrive answered both Who-Is calls, and a discovery recorded one
+// device's instance against the other.
+func TestIdentifyTellsApartTwoDevicesOnOneIP(t *testing.T) {
+	a := newFakeDevice(t, nil)
+	b := newFakeDevice(t, nil)
+	b.instance = 40008 // set before any packet reaches it
+
+	c := NewClient(0, time.Second, 0, testLogger())
+	if err := c.Open(); err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+
+	type res struct {
+		obj ObjectID
+		err error
+	}
+	ra, rb := make(chan res, 1), make(chan res, 1)
+	go func() { o, err := c.Identify(context.Background(), a.addr()); ra <- res{o, err} }()
+	go func() { o, err := c.Identify(context.Background(), b.addr()); rb <- res{o, err} }()
+	gotA, gotB := <-ra, <-rb
+	if gotA.err != nil || gotB.err != nil {
+		t.Fatalf("identify: a=%v b=%v", gotA.err, gotB.err)
+	}
+	if gotA.obj.Instance != 40007 || gotB.obj.Instance != 40008 {
+		t.Fatalf("got a=%d b=%d, want 40007 and 40008 - one device's I-Am answered the other",
+			gotA.obj.Instance, gotB.obj.Instance)
+	}
+}
+
+// And a silent device on that IP must time out, not borrow its neighbour's
+// answer - the preflight reachability probe depends on exactly this.
+func TestIdentifyDoesNotBorrowANeighboursIAm(t *testing.T) {
+	loud := newFakeDevice(t, nil)
+	quiet := newFakeDevice(t, nil)
+	quiet.mu.Lock()
+	quiet.silent = true
+	quiet.mu.Unlock()
+
+	c := NewClient(0, 400*time.Millisecond, 0, testLogger())
+	if err := c.Open(); err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+
+	done := make(chan error, 1)
+	go func() { _, err := c.Identify(context.Background(), quiet.addr()); done <- err }()
+	if _, err := c.Identify(context.Background(), loud.addr()); err != nil {
+		t.Fatalf("loud device: %v", err)
+	}
+	if err := <-done; err == nil {
+		t.Fatal("the silent device was reported as answering")
+	}
+}

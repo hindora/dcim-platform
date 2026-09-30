@@ -167,6 +167,9 @@ async def members(session: AsyncSession,
             "hostname": r["hostname"], "version": r["version"],
             "healthy": age is not None and age < stale_after_s,
             "accepting": r["state"] == "active" and bool(r["has_run"]),
+            # A record created ahead of its install carries a creation-time
+            # heartbeat, so `healthy` alone cannot tell "fine" from "never ran".
+            "has_run": bool(r["has_run"]),
             "heartbeat_age_s": age,
             "endpoints_owned": r["endpoints_owned"],
             "endpoints_online": r["endpoints_online"],
@@ -204,6 +207,36 @@ async def endpoint_counts(session: AsyncSession) -> list[dict[str, Any]]:
     return [dict(r) for r in rows]
 
 
+async def probe_rows(session: AsyncSession, *, endpoint_ids: list[str] | None = None,
+                     pool_id: str | None = None) -> list[dict[str, Any]]:
+    """Address, port and protocol for reachability probing (docs/26 Phase 8)
+    - either the named endpoints, or every endpoint resolving into a pool.
+    Credential-free by construction: preflight runs before a collector has
+    been trusted with anything, and needs only where to knock."""
+    if endpoint_ids is not None:
+        if not endpoint_ids:
+            return []
+        where, params = "e.id = ANY(CAST(:ids AS uuid[]))", {"ids": endpoint_ids}
+    elif pool_id is not None:
+        where, params = f"({_RESOLVED_POOL}) = CAST(:pool AS uuid)", {"pool": pool_id}
+    else:
+        return []
+    rows = (await session.execute(text(f"""
+        SELECT e.id::text, e.protocol::text AS protocol,
+               host(e.address) AS address, e.port
+          FROM device_endpoint e
+          JOIN device d        ON d.id = e.device_id
+          LEFT JOIN rack rk    ON rk.id = d.rack_id
+          LEFT JOIN rack_row rr ON rr.id = rk.row_id
+          LEFT JOIN room rm    ON rm.id = COALESCE(rr.room_id, d.room_id)
+          LEFT JOIN datacenter dc ON dc.id = rm.datacenter_id
+         WHERE e.enabled AND e.admin_state = 'enabled'
+           AND d.lifecycle <> 'decommissioned' AND e.address IS NOT NULL
+           AND {where}
+    """), params)).mappings().all()
+    return [dict(r) for r in rows]
+
+
 async def ranges_for(session: AsyncSession, pool_id: str) -> list[dict[str, Any]]:
     """The discovery ranges whose endpoints resolve into this pool: same
     datacenter, purpose == plane. What the firewall matrix's destination
@@ -218,3 +251,34 @@ async def ranges_for(session: AsyncSession, pool_id: str) -> list[dict[str, Any]
          ORDER BY dr.cidr
     """), {"id": pool_id})).mappings().all()
     return [{**dict(r), "exclusions": list(r["exclusions"] or [])} for r in rows]
+
+
+async def readiness_counts(session: AsyncSession, pool_id: str) -> list[dict[str, Any]]:
+    """Per protocol, for the endpoints resolving into one pool: how many,
+    how many carry a credential, and how many the last poll left in each
+    comm state (docs/26 Phase 8's onboarding wizard, credentials and
+    verification steps). Resolved with the same fragment as everything
+    else here, so the wizard counts exactly what the assigner shards."""
+    rows = (await session.execute(text(f"""
+        SELECT e.protocol::text AS protocol,
+               count(*) AS endpoints,
+               count(e.credential_id) AS with_credential,
+               count(*) FILTER (WHERE es.status::text = 'ONLINE')   AS online,
+               count(*) FILTER (WHERE es.status::text = 'DEGRADED') AS degraded,
+               count(*) FILTER (WHERE es.status::text = 'OFFLINE')  AS offline,
+               count(*) FILTER (WHERE es.status IS NULL
+                                   OR es.status::text = 'UNKNOWN') AS never_polled
+          FROM device_endpoint e
+          JOIN device d        ON d.id = e.device_id
+          LEFT JOIN rack rk    ON rk.id = d.rack_id
+          LEFT JOIN rack_row rr ON rr.id = rk.row_id
+          LEFT JOIN room rm    ON rm.id = COALESCE(rr.room_id, d.room_id)
+          LEFT JOIN datacenter dc ON dc.id = rm.datacenter_id
+          LEFT JOIN endpoint_state es ON es.endpoint_id = e.id
+         WHERE e.enabled AND e.admin_state = 'enabled'
+           AND d.lifecycle <> 'decommissioned'
+           AND ({_RESOLVED_POOL}) = CAST(:pool AS uuid)
+         GROUP BY 1
+         ORDER BY 1
+    """), {"pool": pool_id})).mappings().all()
+    return [{k: (int(v) if k != "protocol" else v) for k, v in r.items()} for r in rows]

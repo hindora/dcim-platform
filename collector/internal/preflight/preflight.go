@@ -60,15 +60,21 @@ func val(f float64) *float64 { return &f }
 // an error becomes a "fail" Check, not a return that drops every check
 // after it.
 func Run(ctx context.Context, cfg *config.Config, httpClient *http.Client) []Check {
-	ctx, cancel := context.WithTimeout(ctx, cfg.Preflight.Timeout)
+	hostCtx, cancel := context.WithTimeout(ctx, cfg.Preflight.Timeout)
 	defer cancel()
 
-	return []Check{
-		checkNTP(ctx, cfg),
+	checks := []Check{
+		checkNTP(hostCtx, cfg),
 		checkSpoolDisk(cfg),
 		checkTrapPort(cfg),
-		checkCoreReachable(ctx, cfg, httpClient),
+		checkCoreReachable(hostCtx, cfg, httpClient),
 	}
+	// Its own budget, after the host checks rather than sharing theirs: a
+	// fetch plus a round of probes would otherwise inherit whatever an NTP
+	// timeout left over, and a slow clock check would read as a firewall.
+	reachCtx, cancelReach := context.WithTimeout(ctx, 2*cfg.Preflight.Timeout)
+	defer cancelReach()
+	return append(checks, checkReachability(reachCtx, cfg, httpClient)...)
 }
 
 func checkNTP(ctx context.Context, cfg *config.Config) Check {

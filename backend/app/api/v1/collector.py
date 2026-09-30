@@ -381,6 +381,26 @@ def preflight_passed(checks: list[PreflightCheck]) -> bool:
     return all(c.status in ("ok", "skipped") for c in checks)
 
 
+@router.get("/preflight-targets",
+            summary="Sample device addresses for preflight reachability probes")
+async def preflight_targets(
+    collector_id: str = Query(..., min_length=1, max_length=64),
+    session: AsyncSession = Depends(get_session),
+    identity: str = Depends(require_collector),
+) -> dict[str, Any]:
+    """docs/26 Phase 8: where `dcim-collector preflight` should knock.
+
+    Scoped exactly like /assignments - a token for col-1 may not map
+    col-2's network - but credential-free, so unlike /assignments there is
+    no secret handed out and nothing to audit per call. Addresses, ports
+    and protocols only.
+    """
+    if identity != UNSCOPED_COLLECTOR and identity != collector_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN,
+                            "this token is not scoped to that collector")
+    return await service.preflight_targets(session, collector_id)
+
+
 @router.post("/preflight", status_code=status.HTTP_204_NO_CONTENT,
              summary="Record a preflight run (docs/26 Phase 8)")
 async def preflight(

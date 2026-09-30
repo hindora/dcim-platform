@@ -9,7 +9,9 @@ import { Analytics } from './features/analytics/Analytics';
 import { PlatformHealth } from './features/platform/PlatformHealth';
 import { Appearance } from './features/settings/Appearance';
 import { Collectors } from './features/settings/Collectors';
+import { CollectorDetail } from './features/settings/CollectorDetail';
 import { Integrations } from './features/settings/Integrations';
+import { Onboarding } from './features/settings/Onboarding';
 import { PollProfiles } from './features/settings/PollProfiles';
 import { Pools } from './features/settings/Pools';
 import { SettingsLayout } from './features/settings/SettingsLayout';
@@ -293,7 +295,9 @@ export default function App() {
             <Route index element={<Navigate to="poll-profiles" replace />} />
             <Route path="poll-profiles" element={<PollProfiles />} />
             <Route path="collectors" element={<Collectors />} />
+            <Route path="collectors/:id" element={<CollectorDetail />} />
             <Route path="pools" element={<Pools />} />
+            <Route path="onboarding" element={<Onboarding />} />
             <Route path="integrations" element={<Integrations />} />
             <Route path="appearance" element={<Appearance />} />
           </Route>

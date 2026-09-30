@@ -23,6 +23,11 @@ export const SETTINGS_NAV = [
     blurb: 'Which network each collector is on, and which devices that makes it responsible for',
   },
   {
+    to: 'onboarding',
+    label: 'Site onboarding',
+    blurb: 'Bring one network at a site under collection, start to finish',
+  },
+  {
     to: 'integrations',
     label: 'Ticketing',
     blurb: 'Which conditions reach a service desk, and what happened to them',

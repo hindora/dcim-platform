@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ApiError,
@@ -96,7 +97,7 @@ export function Collectors() {
         <tbody>
           {rows.map((c) => (
             <tr key={c.id}>
-              <td className="mono">{c.id}</td>
+              <td className="mono"><Link to={`/settings/collectors/${encodeURIComponent(c.id)}`}>{c.id}</Link></td>
               <td className="muted">{c.site ?? (
                 <Tip tip="No site placed. Eligible for every site — the correct
                           default for a single-collector deployment.">any</Tip>
@@ -178,7 +179,7 @@ export function Collectors() {
 
 /** Placement + heartbeat, in one badge. `pending` and `draining` are an
  *  admin's decision and outrank whatever the heartbeat is doing. */
-function StateBadge({ row }: { row: CollectorRow }) {
+export function StateBadge({ row }: { row: Pick<CollectorRow, 'state' | 'has_run'> }) {
   if (row.state === 'decommissioned') {
     return <Tip className="muted" tip="Retired. Its token no longer works.">
       decommissioned
