@@ -9,6 +9,7 @@ import {
   type EndpointOptions,
   type EndpointPatch,
   type EndpointSummary,
+  type PoolsPage,
 } from '../../api/client';
 import { Tip } from '../../components/HoverTip';
 
@@ -58,6 +59,7 @@ export function EndpointEditor({
     poll_profile_id: endpoint.poll_profile_id ?? '',
     admin_state: endpoint.admin_state,
     collector_id: endpoint.pinned_collector ?? '',
+    pool_id: endpoint.pool_id ?? '',
   }));
 
   // Only used to populate the pin picker. The field itself is hidden on a
@@ -67,6 +69,14 @@ export function EndpointEditor({
     queryFn: () => api.collectors(),
     staleTime: 30_000,
   });
+  // Same again for the pool override picker: hidden until a pool exists,
+  // since with none there is nothing an override could name.
+  const poolsPage = useQuery<PoolsPage>({
+    queryKey: ['pools'],
+    queryFn: () => api.pools(),
+    staleTime: 30_000,
+  });
+  const pools = poolsPage.data?.pools ?? [];
   const pinnable = (collectors.data?.collectors ?? [])
     .filter((c) => c.state !== 'decommissioned');
 
@@ -257,6 +267,24 @@ export function EndpointEditor({
               </em>
             </label>
 
+            {pools.length > 0 && !isTrap && (
+              <label>
+                <span>Pool</span>
+                <select value={form.pool_id}
+                        onChange={(e) => set('pool_id', e.target.value)}>
+                  <option value="">Automatic — the range containing its address decides</option>
+                  {pools.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name} · {p.site}</option>
+                  ))}
+                </select>
+                <em className="hint">
+                  Override for a device whose address sits in one range but is
+                  reached through another plane. Only a collector placed in
+                  the chosen pool will ever own it.
+                </em>
+              </label>
+            )}
+
             {pinnable.length > 1 && (
               <label>
                 <span>Collector</span>
@@ -312,7 +340,7 @@ type AddressingValues = Record<string, string | number | boolean>;
 type Form = {
   address: string; port: string; addressing: AddressingValues;
   credential_id: string; poll_profile_id: string; admin_state: string;
-  collector_id: string;
+  collector_id: string; pool_id: string;
 };
 
 /** Client-side check against the same ranges the server rejects with, so a
@@ -387,6 +415,8 @@ function diff(current: EndpointSummary, form: Form,
 
   const pin = form.collector_id || null;
   if (pin !== (current.pinned_collector ?? null)) patch.collector_id = pin;
+  const pool = form.pool_id || null;
+  if (pool !== (current.pool_id ?? null)) patch.pool_id = pool;
 
   return patch;
 }

@@ -102,6 +102,7 @@ class EndpointSummary(BaseModel):
     #: default - means the pool is resolved from the discovery range that
     #: contains the endpoint's address, which is the common case.
     pool_id: str | None = None
+    pool_name: str | None = None
     #: The collector that last reported its state.
     reported_by: str | None = None
     poll_interval_s: int | None = None

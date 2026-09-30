@@ -21,7 +21,24 @@ POOL = {"id": "p1", "name": "DC1/BMS", "site": "DC1", "plane": "bms",
         "rate_budget_points_per_s": None, "min_members": 1}
 
 
+class _Rows:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def mappings(self):
+        return self
+
+    def all(self):
+        return self._rows
+
+
 class _Session:
+    """The list handler runs one direct query (the sites for the create
+    form) beside the stubbed service; everything else it does is commit."""
+
+    async def execute(self, *_a, **_k):
+        return _Rows([{"id": "dc-1", "code": "DC1", "name": "Datacenter One"}])
+
     async def commit(self):
         return None
 
@@ -108,6 +125,8 @@ def test_list_is_open_to_any_authenticated_user(client):
     assert r.status_code == 200
     assert r.json()["pools"][0]["id"] == "p1"
     assert r.json()["planes"] == ["bms"]
+    # The create form's site list rides the same response.
+    assert r.json()["sites"] == [{"id": "dc-1", "code": "DC1", "name": "Datacenter One"}]
 
 
 def test_create_needs_admin(client):

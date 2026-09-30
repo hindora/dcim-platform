@@ -8,6 +8,8 @@ import {
   type ConfigField,
   type ConfigSection,
   type EnrollmentToken,
+  type PoolRow,
+  type PoolsPage,
 } from '../../api/client';
 import { oneLine, relativeTime, untilTime } from '../../lib/format';
 import { Tip } from '../../components/HoverTip';
@@ -29,6 +31,14 @@ export function Collectors() {
     queryFn: () => api.collectors(),
     refetchInterval: 15_000,
   });
+  // Only to populate the pool pickers. A deployment with no pools sees no
+  // picker at all - site-only placement, exactly as before pools existed.
+  const poolsPage = useQuery<PoolsPage>({
+    queryKey: ['pools'],
+    queryFn: () => api.pools(),
+    staleTime: 30_000,
+  });
+  const pools = poolsPage.data?.pools ?? [];
 
   const [open, setOpen] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -77,7 +87,7 @@ export function Collectors() {
       <table>
         <thead>
           <tr>
-            <th>Collector</th><th>Site</th><th>State</th>
+            <th>Collector</th><th>Site</th><th>Pool</th><th>State</th>
             <th>Host</th><th>Build</th>
             <th className="num">Endpoints</th><th>Config</th>
             <th>Last heartbeat</th><th />
@@ -91,6 +101,13 @@ export function Collectors() {
                 <Tip tip="No site placed. Eligible for every site — the correct
                           default for a single-collector deployment.">any</Tip>
               )}</td>
+              <td className="muted">
+                {c.pool_name ? (
+                  <Tip tip={`Serves this pool and nothing else, not even the rest of ${c.site ?? 'its site'}.`}>
+                    {c.pool_name}
+                  </Tip>
+                ) : '—'}
+              </td>
               <td><StateBadge row={c} /></td>
               <td className="muted">{c.hostname ?? '—'}</td>
               <td className="muted mono">{c.build ?? '—'}</td>
@@ -126,6 +143,7 @@ export function Collectors() {
           row={rows.find((c) => c.id === open)!}
           sections={sections}
           sites={sites}
+          pools={pools}
           onClose={() => setOpen(null)}
         />
       )}
@@ -134,6 +152,7 @@ export function Collectors() {
         <CreateDialog
           existing={new Set(rows.map((c) => c.id))}
           sites={sites}
+          pools={pools}
           onClose={() => setCreating(false)}
           onCreated={(id, enrollment, fallbackToken) => {
             setCreating(false);
@@ -276,14 +295,16 @@ function CertStatus({ row }: { row: CollectorRow }) {
 
 /** Create a collector before it exists: name it, place it, and hand the
  *  operator the one-time token to put on its host. */
-function CreateDialog({ existing, sites, onClose, onCreated }: {
+function CreateDialog({ existing, sites, pools, onClose, onCreated }: {
   existing: Set<string>;
   sites: { id: string; code: string; name: string }[];
+  pools: PoolRow[];
   onClose: () => void;
   onCreated: (id: string, enrollment: EnrollmentToken, fallbackToken: string) => void;
 }) {
   const [id, setId] = useState('');
   const [site, setSite] = useState('');
+  const [pool, setPool] = useState('');
 
   const idError = id === '' ? null
     : !/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(id)
@@ -291,7 +312,7 @@ function CreateDialog({ existing, sites, onClose, onCreated }: {
       : existing.has(id) ? 'A collector with this id already exists.' : null;
 
   const create = useMutation({
-    mutationFn: () => api.createCollector(id, site || null),
+    mutationFn: () => api.createCollector(id, site || null, pool || null),
     onSuccess: (r) => onCreated(r.id, r.enrollment, r.fallback_bearer_token),
   });
 
@@ -342,6 +363,21 @@ function CreateDialog({ existing, sites, onClose, onCreated }: {
                 this site will ever hash to it.
               </em>
             </label>
+            {pools.length > 0 && (
+              <label>
+                <span>Pool</span>
+                <select value={pool} onChange={(e) => setPool(e.target.value)}>
+                  <option value="">None — site placement only</option>
+                  {pools.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name} · {p.site}</option>
+                  ))}
+                </select>
+                <em className="hint">
+                  A pool is the whole placement: this collector then serves that
+                  site's one plane and nothing else. The site above follows it.
+                </em>
+              </label>
+            )}
           </div>
         </div>
         <div className="sheet-foot">
@@ -511,16 +547,18 @@ function EnrollmentDialog({ id, enrollment, fallbackToken, title, lede, onClose 
   );
 }
 
-function ManageSheet({ row, sections, sites, onClose }: {
+function ManageSheet({ row, sections, sites, pools, onClose }: {
   row: CollectorRow;
   sections: ConfigSection[];
   sites: { id: string; code: string; name: string }[];
+  pools: PoolRow[];
   onClose: () => void;
 }) {
   const qc = useQueryClient();
   const [values, setValues] = useState<Values>(() => structured(row.config));
   const [confirmed, setConfirmed] = useState(false);
   const [site, setSite] = useState(row.datacenter_id ?? '');
+  const [pool, setPool] = useState(row.pool_id ?? '');
   const [confirmDecommission, setConfirmDecommission] = useState(false);
   const [reissued, setReissued] = useState<{ id: string; token: string } | null>(null);
   const [reissuedEnrollment, setReissuedEnrollment] = useState<EnrollmentToken | null>(null);
@@ -628,11 +666,33 @@ function ManageSheet({ row, sections, sites, onClose }: {
                     it moves endpoints on the next assignment fetch.
                   </em>
                 </label>
+                {pools.length > 0 && (
+                  <label>
+                    <span>Pool</span>
+                    <select value={pool} disabled={locked}
+                            onChange={(e) => setPool(e.target.value)}>
+                      <option value="">None — site placement only</option>
+                      {pools.map((p) => (
+                        <option key={p.id} value={p.id}>{p.name} · {p.site}</option>
+                      ))}
+                    </select>
+                    <em className="hint">
+                      Set, the pool is the whole placement: one site, one plane,
+                      nothing else. The site follows it. Clear it to return to
+                      site-only placement.
+                    </em>
+                  </label>
+                )}
               </div>
               <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                {site !== (row.datacenter_id ?? '') && (
+                {(site !== (row.datacenter_id ?? '') || pool !== (row.pool_id ?? '')) && (
                   <button disabled={locked || placement.isPending}
-                          onClick={() => placement.mutate({ datacenter_id: site || null })}>
+                          onClick={() => placement.mutate({
+                            ...(site !== (row.datacenter_id ?? '')
+                              ? { datacenter_id: site || null } : {}),
+                            ...(pool !== (row.pool_id ?? '')
+                              ? { pool_id: pool || null } : {}),
+                          })}>
                     {placement.isPending ? 'Saving…' : 'Save placement'}
                   </button>
                 )}

@@ -884,6 +884,11 @@ export interface CollectorRow {
   state_changed_by?: string | null;
   datacenter_id?: string | null;
   site?: string | null;
+  /** docs/26 Phase 5: set, the pool IS the placement (site and plane);
+   *  datacenter_id follows the pool's own site. */
+  pool_id?: string | null;
+  pool_name?: string | null;
+  pool_plane?: PoolPlane | null;
   token_generation: number;
   /** True once it has heartbeated at least once. A collector created ahead
    *  of its install has never run and takes no share of the hash yet. */
@@ -913,6 +918,112 @@ export interface EnrollmentToken {
   token: string;
   expires_at: string;
   install_command: string;
+}
+
+/** Collector pools (docs/26 Phase 5): site x plane placement. */
+export type PoolPlane = 'it_oob' | 'bms' | 'production' | 'other';
+
+/** The pool's BACnet Foreign Device Registration settings - the JSONB
+ *  column as-is. `{}` (or enabled false) is static unicast, the default. */
+export interface PoolBBMD {
+  enabled?: boolean;
+  bbmd?: string | null;
+  ttl_s?: number;
+}
+
+export interface PoolMember {
+  collector_id: string;
+  pool_id: string;
+  state: string;
+  status: string;
+  hostname?: string | null;
+  version?: string | null;
+  healthy: boolean;
+  accepting: boolean;
+  heartbeat_age_s?: number | null;
+  endpoints_owned: number;
+  endpoints_online: number;
+}
+
+export interface PoolRow {
+  id: string;
+  name: string;
+  datacenter_id: string;
+  site: string;
+  site_name: string;
+  plane: PoolPlane;
+  /** Networks members must reach beyond the discovery ranges. */
+  cidrs: string[];
+  trap_vip?: string | null;
+  bbmd_settings: PoolBBMD;
+  rate_budget_points_per_s?: number | null;
+  min_members: number;
+  created_at?: string | null;
+  updated_at?: string | null;
+  members: PoolMember[];
+  healthy_members: number;
+  /** Healthy AND accepting - what the assigner can actually hand work to. */
+  accepting_members: number;
+  /** Endpoints that resolve into this pool, and how many per protocol. */
+  endpoints: number;
+  protocols: Record<string, number>;
+  owned: number;
+  /** Resolving here, owned by nobody: no member is healthy enough. */
+  unassigned: number;
+  below_min_members: boolean;
+}
+
+export interface PoolRange {
+  id: string;
+  cidr: string;
+  name: string;
+  enabled: boolean;
+  exclusions: string[];
+}
+
+export interface PoolDetail extends PoolRow {
+  /** The discovery ranges whose endpoints resolve here. */
+  ranges: PoolRange[];
+}
+
+export interface PoolsPage {
+  pools: PoolRow[];
+  /** Endpoints that resolve to no pool at all - served by unplaced
+   *  collectors, as before pools existed. */
+  unpooled: { endpoints: number; protocols: Record<string, number>; unassigned: number };
+  planes: PoolPlane[];
+  sites: { id: string; code: string; name: string }[];
+}
+
+export interface PoolBody {
+  name?: string;
+  datacenter_id?: string;
+  plane?: PoolPlane;
+  cidrs?: string[];
+  trap_vip?: string | null;
+  bbmd_settings?: PoolBBMD;
+  rate_budget_points_per_s?: number | null;
+  min_members?: number;
+}
+
+export interface FirewallRule {
+  direction: 'inbound' | 'outbound';
+  from: string;
+  to: string;
+  transport: 'tcp' | 'udp';
+  port: number;
+  protocol: string;
+  why: string;
+}
+
+export interface FirewallMatrix {
+  pool_id: string;
+  pool: string;
+  site?: string | null;
+  plane: string;
+  rows: FirewallRule[];
+  /** The same rows as a plain-text change request. */
+  text: string;
 }
 
 export interface CollectorsPage {
@@ -982,6 +1093,9 @@ export interface EndpointPatch {
   /** Pin this endpoint to one collector, or null to release it back to the
    *  sharding plan. */
   collector_id?: string | null;
+  /** Override the pool this endpoint resolves into, or null to let the
+   *  discovery range containing its address decide (docs/26 Phase 5). */
+  pool_id?: string | null;
 }
 
 export interface EndpointSummary {
@@ -1008,6 +1122,10 @@ export interface EndpointSummary {
   pinned_collector?: string | null;
   /** The collector that last reported its state. */
   reported_by?: string | null;
+  /** An explicit pool override only; a range-resolved pool is not shown
+   *  here (docs/26 Phase 5). */
+  pool_id?: string | null;
+  pool_name?: string | null;
   poll_interval_s?: number | null;
   status: string;
   /** Every poll attempt. Fresh here with a stale last_success = polling and failing. */
@@ -3373,19 +3491,23 @@ export const api = {
    *  either. `enrollment` is what `dcim-collector enroll` actually uses;
    *  `fallback_bearer_token` exists only for a site that cannot yet run the
    *  mTLS proxy in front of this platform. */
-  createCollector: (id: string, datacenterId: string | null) =>
+  createCollector: (id: string, datacenterId: string | null,
+                    poolId: string | null = null) =>
     request<{
       id: string;
       enrollment: EnrollmentToken;
       fallback_bearer_token: string;
       generation: number;
     }>('/collectors', {
-      method: 'POST', body: JSON.stringify({ id, datacenter_id: datacenterId }),
+      method: 'POST',
+      body: JSON.stringify({ id, datacenter_id: datacenterId, pool_id: poolId }),
     }),
 
-  /** Place a collector in a site, approve a pending one (state: 'active'),
-   *  or drain it (state: 'draining'). */
+  /** Place a collector in a site or a pool, approve a pending one
+   *  (state: 'active'), or drain it (state: 'draining'). A pool is the whole
+   *  placement once set; a null pool_id returns it to site-only placement. */
   patchCollector: (id: string, body: { datacenter_id?: string | null;
+                                       pool_id?: string | null;
                                        state?: 'active' | 'draining' }) =>
     request<{ id: string; changed: Record<string, unknown> }>(
       `/collectors/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
@@ -3414,6 +3536,31 @@ export const api = {
   decommissionCollector: (id: string) =>
     request<{ id: string; unpinned: number }>(
       `/collectors/${id}/decommission`, { method: 'POST' }),
+
+  /** Collector pools (docs/26 Phase 5): every pool with its members,
+   *  endpoint totals and what is unassigned, plus the sites and planes the
+   *  create form offers. */
+  pools: () => request<PoolsPage>('/pools'),
+
+  pool: (id: string) => request<PoolDetail>(`/pools/${id}`),
+
+  /** Admin only. One pool per site and plane: a 409 means one exists. */
+  createPool: (body: PoolBody) =>
+    request<PoolRow>('/pools', { method: 'POST', body: JSON.stringify(body) }),
+
+  /** Only the fields that changed; site and plane cannot be patched. */
+  patchPool: (id: string, body: PoolBody) =>
+    request<{ id: string; changed: Record<string, unknown> }>(
+      `/pools/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+
+  /** Refused (422) while any collector is placed in the pool. */
+  deletePool: (id: string) =>
+    request<void>(`/pools/${id}`, { method: 'DELETE' }),
+
+  /** The firewall rules this pool needs, derived from its ranges and the
+   *  protocols on its endpoints; `text` is the paste-ready change request. */
+  poolFirewallMatrix: (id: string) =>
+    request<FirewallMatrix>(`/pools/${id}/firewall-matrix`),
 
   pollProfiles: () => request<PollProfilesPage>('/poll-profiles'),
 

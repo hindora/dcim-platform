@@ -13,6 +13,7 @@ from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import audit
@@ -67,7 +68,14 @@ async def list_pools(
     session: AsyncSession = Depends(get_session),
     _: Principal = Depends(current_principal),
 ) -> dict[str, Any]:
-    return await service.overview(session)
+    out = await service.overview(session)
+    # The create form needs the sites to offer, the same list /collectors
+    # serves - fetched here so the page is one request, not two.
+    sites = (await session.execute(text("""
+        SELECT id::text, code, name FROM datacenter ORDER BY code
+    """))).mappings().all()
+    out["sites"] = [dict(s) for s in sites]
+    return out
 
 
 @router.post("", status_code=status.HTTP_201_CREATED, summary="Create a pool")

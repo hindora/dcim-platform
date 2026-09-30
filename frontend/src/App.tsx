@@ -11,6 +11,7 @@ import { Appearance } from './features/settings/Appearance';
 import { Collectors } from './features/settings/Collectors';
 import { Integrations } from './features/settings/Integrations';
 import { PollProfiles } from './features/settings/PollProfiles';
+import { Pools } from './features/settings/Pools';
 import { SettingsLayout } from './features/settings/SettingsLayout';
 import { TrustBanner } from './components/TrustBanner';
 import { UserMenu } from './components/UserMenu';
@@ -292,6 +293,7 @@ export default function App() {
             <Route index element={<Navigate to="poll-profiles" replace />} />
             <Route path="poll-profiles" element={<PollProfiles />} />
             <Route path="collectors" element={<Collectors />} />
+            <Route path="pools" element={<Pools />} />
             <Route path="integrations" element={<Integrations />} />
             <Route path="appearance" element={<Appearance />} />
           </Route>

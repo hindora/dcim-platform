@@ -330,6 +330,17 @@ export function DeviceDetail() {
                 <td className="mono muted">{selector(e)}</td>
                 <td>
                   <StatusChip status={e.status} />
+                  {/* Who is actually watching it, and on whose behalf: the
+                      collector that last reported, and the pool an operator
+                      pinned it into if any (docs/26 Phase 8's "monitored by
+                      DC2-BMS-01 (pool DC2/BMS)"). Range-resolved pools are
+                      not shown - only the assigner knows those. */}
+                  {e.reported_by && (
+                    <div className="muted">
+                      monitored by <span className="mono">{e.reported_by}</span>
+                      {e.pool_name ? ` (pool ${e.pool_name})` : ''}
+                    </div>
+                  )}
                   {/* Two different "off" states, and they answer different
                       questions. admin_state is what an operator asked for;
                       `enabled` is whether the collector is given this endpoint

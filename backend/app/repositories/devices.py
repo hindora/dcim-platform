@@ -407,6 +407,10 @@ async def list_endpoints(session: AsyncSession, device_id: str) -> list[dict[str
                -- who last reported on it (what actually happened).
                e.collector_id AS pinned_collector,
                es.collector_id AS reported_by,
+               -- An explicit override only (docs/26 Phase 5); the common
+               -- range-resolved pool is not shown here, since the join that
+               -- resolves it is the assigner's and belongs on the pools page.
+               e.pool_id::text AS pool_id, cp.name AS pool_name,
                p.interval_s AS poll_interval_s,
                COALESCE(es.status::text, 'UNKNOWN') AS status,
                es.last_seen, es.last_success, es.last_error, es.last_error_class,
@@ -426,6 +430,7 @@ async def list_endpoints(session: AsyncSession, device_id: str) -> list[dict[str
         LEFT JOIN endpoint_state es ON es.endpoint_id = e.id
         LEFT JOIN device_endpoint ve ON ve.id = e.via_endpoint_id
         LEFT JOIN device vd          ON vd.id = ve.device_id
+        LEFT JOIN collector_pool cp  ON cp.id = e.pool_id
         WHERE e.device_id = CAST(:id AS uuid)
         ORDER BY e.protocol, e.role
     """), {"id": device_id})).mappings().all()
