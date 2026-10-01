@@ -633,3 +633,102 @@ async def test_rebalance_now_moves_what_damping_held_and_only_in_its_pool(sessio
     pool_eids = {eid for eid, owner in others_after.items() if owner in (a1, a2)}
     assert {k: v for k, v in others_before.items() if k not in pool_eids} == \
            {k: v for k, v in others_after.items() if k not in pool_eids}
+
+
+# --- docs/26 Phase 7: commands and rollouts -------------------------------------
+
+async def _release(session, version):
+    from app.repositories import commands as cmd_repo
+    await cmd_repo.add_release(session, {
+        "version": version, "sha256": "ab" * 32, "signature": "c2ln", "key_id": "k1",
+        "size_bytes": 1, "path": f"{version}/collector", "notes": None, "actor": "test"})
+
+
+async def test_a_command_is_delivered_once_and_finished_once(session):
+    from app.repositories import commands as cmd_repo
+
+    cid = f"col-{_tag()}"
+    await _collector(session, cid, None)
+    await _release(session, f"9.9.{_tag()[:4]}")
+    command = await cmd_repo.create(session, cid, "upgrade", {"version": "x"}, "test")
+    first = await cmd_repo.claim_pending(session, cid)
+    assert [c["id"] for c in first] == [command]
+    assert await cmd_repo.claim_pending(session, cid) == [], "delivered, not re-delivered"
+    assert await cmd_repo.finish(session, command, cid, "succeeded", {"detail": "ok"})
+    assert not await cmd_repo.finish(session, command, cid, "failed", {}), "only once"
+    assert not await cmd_repo.finish(session, command, "someone-else", "failed", {})
+
+
+async def test_the_moves_token_changes_when_an_owner_changes(session):
+    from app.repositories import commands as cmd_repo
+
+    _, room_id = await _datacenter_and_room(session, f"P{_tag()[:6]}")
+    profile = await _poll_profile(session)
+    eid = await _device_endpoint(session, room_id, profile, "10.52.28.10", "bacnet")
+    before = await cmd_repo.moves_token(session)
+    await session.execute(text("SELECT pg_sleep(0.01)"))
+    await fleet_repo.write_assignment(session, {eid: ("col-x", "initial")})
+    assert await cmd_repo.moves_token(session) != before
+
+
+async def test_a_rollout_upgrades_one_member_at_a_time_and_finishes(session):
+    """tick() end to end on the real schema: first member commanded; nothing
+    more until it reports, runs the target and has settled; then the second;
+    then done."""
+    from app.repositories import commands as cmd_repo
+    from app.services import rollout
+
+    dc_id, _ = await _datacenter_and_room(session, f"P{_tag()[:6]}")
+    pool = await svc.create(session, _payload(dc_id, cidrs=[], min_members=1, bbmd_settings={}))
+    a, b = sorted([f"col-{_tag()}", f"col-{_tag()}"])
+    for cid in (a, b):
+        await _collector(session, cid, pool["id"])
+        await session.execute(text("""
+            UPDATE collector_instance
+               SET version = '1.0', healthy_since = now() - interval '2 hours'
+             WHERE id = :id"""), {"id": cid})
+    version = f"2.0.{_tag()[:4]}"
+    await _release(session, version)
+    rid = await cmd_repo.create_rollout(session, version, [pool["id"]], "test")
+
+    assert await rollout.tick(session) == 1
+    cmds = await cmd_repo.rollout_commands(session, rid)
+    assert [c["collector_id"] for c in cmds] == [a]
+    assert await rollout.tick(session) == 0, "a is still upgrading"
+
+    await cmd_repo.finish(session, cmds[0]["id"], a, "succeeded", {"detail": "ok"})
+    await session.execute(text("""
+        UPDATE collector_instance SET version = :v, healthy_since = now() WHERE id = :id
+    """), {"v": version, "id": a})
+    assert await rollout.tick(session) == 0, "a has not settled yet"
+    await session.execute(text("""
+        UPDATE collector_instance SET healthy_since = now() - interval '5 minutes' WHERE id = :id
+    """), {"id": a})
+    assert await rollout.tick(session) == 1
+    second = [c for c in await cmd_repo.rollout_commands(session, rid) if c["collector_id"] == b]
+    await cmd_repo.finish(session, second[0]["id"], b, "succeeded", {"detail": "ok"})
+    await session.execute(text("""
+        UPDATE collector_instance SET version = :v, healthy_since = now() - interval '5 minutes'
+         WHERE id = :id"""), {"v": version, "id": b})
+    await rollout.tick(session)
+    state = next(r for r in await cmd_repo.rollouts(session) if r["id"] == rid)["state"]
+    assert state == "succeeded"
+
+
+async def test_a_failed_member_fails_the_rollout(session):
+    from app.repositories import commands as cmd_repo
+    from app.services import rollout
+
+    dc_id, _ = await _datacenter_and_room(session, f"P{_tag()[:6]}")
+    pool = await svc.create(session, _payload(dc_id, cidrs=[], min_members=1, bbmd_settings={}))
+    cid = f"col-{_tag()}"
+    await _collector(session, cid, pool["id"])
+    version = f"3.0.{_tag()[:4]}"
+    await _release(session, version)
+    rid = await cmd_repo.create_rollout(session, version, [pool["id"]], "test")
+    await rollout.tick(session)
+    c = (await cmd_repo.rollout_commands(session, rid))[0]
+    await cmd_repo.finish(session, c["id"], cid, "failed", {"detail": "rolled back"})
+    await rollout.tick(session)
+    r = next(r for r in await cmd_repo.rollouts(session) if r["id"] == rid)
+    assert r["state"] == "failed" and "rolled back" in r["detail"]

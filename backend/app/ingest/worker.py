@@ -55,7 +55,7 @@ from app.integrations.dispatcher import Dispatcher
 from app.repositories import alarms as repo_alarms
 from app.repositories import collector as collector_repo
 from app.repositories import snapshots as snapshot_repo
-from app.services import assigner, collector_capacity
+from app.services import assigner, collector_capacity, rollout
 from app.services import maintenance as maintenance_service
 
 log = get_logger("ingest")
@@ -419,6 +419,14 @@ class IngestWorker:
             # The previous persisted plan stays in force; a failed tick
             # here must not touch what build_assignment is already serving.
             log.error("assigner tick failed", error=str(exc))
+        # docs/26 Phase 7: advance any running rollout one step, on the same
+        # cadence - its own advisory lock, its own transaction, so a failure
+        # here never costs the assignment above.
+        try:
+            async with unit_of_work() as session:
+                await rollout.tick(session)
+        except Exception as exc:
+            log.error("rollout tick failed", error=str(exc))
 
     async def _maybe_sweep_staleness(self) -> None:
         """Look for endpoints that answer but deliver nothing.

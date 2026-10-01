@@ -7,7 +7,7 @@ response contains decrypted device credentials.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from cryptography import x509
 from cryptography.x509.oid import NameOID
@@ -642,3 +642,102 @@ async def _shard_summary(session: AsyncSession) -> dict[str, Any]:
         # collector that is not currently answering.
         "owned_by_unhealthy": stranded,
     }
+
+
+# ----------------------------------------------------------- docs/26 Phase 7
+
+class CommandResult(BaseModel):
+    state: Literal["succeeded", "failed"]
+    detail: str = ""
+    version: str | None = None
+
+
+@router.get("/commands", summary="Long-poll for work the platform has for this collector")
+async def commands(
+    collector_id: str = Query(..., min_length=1, max_length=64),
+    wait: int = Query(25, ge=0, le=30),
+    moves: str = Query("", max_length=64),
+    identity: str = Depends(require_collector),
+) -> dict[str, Any]:
+    """Held open up to `wait` seconds; answers the moment there is a command,
+    or the moment the fleet's assignment changed since the `moves` token the
+    collector last saw - so a failover reaches the survivor in about a second
+    instead of on its next 30 s fetch.
+
+    Holds NO database connection while it waits: each check is its own short
+    session. Eight collectors long-polling would otherwise pin eight pool
+    connections for good."""
+    import asyncio
+
+    from app.db.session import get_sessionmaker
+    from app.repositories import commands as cmd_repo
+
+    if identity != UNSCOPED_COLLECTOR and identity != collector_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN,
+                            "this token is not scoped to that collector")
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + wait
+    while True:
+        async with get_sessionmaker()() as s:
+            claimed = await cmd_repo.claim_pending(s, collector_id)
+            token = await cmd_repo.moves_token(s)
+            await s.commit()
+        if claimed or (moves and token != moves) or loop.time() >= deadline:
+            return {"commands": [{"id": c["id"], "kind": c["kind"], "payload": c["payload"]}
+                                 for c in claimed],
+                    "moves": token}
+        await asyncio.sleep(1.0)
+
+
+@router.post("/commands/{command_id}/result", status_code=status.HTTP_204_NO_CONTENT,
+             summary="Report how a command ended")
+async def command_result(
+    command_id: str,
+    body: CommandResult,
+    collector_id: str = Query(..., min_length=1, max_length=64),
+    session: AsyncSession = Depends(get_session),
+    identity: str = Depends(require_collector),
+) -> Response:
+    from app.repositories import commands as cmd_repo
+
+    if identity != UNSCOPED_COLLECTOR and identity != collector_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN,
+                            "this token is not scoped to that collector")
+    ok = await cmd_repo.finish(session, command_id, collector_id, body.state,
+                               {"detail": body.detail, "version": body.version})
+    if not ok:
+        raise HTTPException(status.HTTP_409_CONFLICT, "no open command with that id")
+    await audit.record(session, actor=f"collector:{collector_id}",
+                       action=f"collector.command_{body.state}", target_type="collector",
+                       target_id=collector_id, after={"command_id": command_id,
+                                                      "detail": body.detail[:500],
+                                                      "version": body.version})
+    await session.commit()
+    log.info("collector command finished", collector_id=collector_id,
+             command_id=command_id, state=body.state, detail=body.detail[:200])
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/releases/{version}/artifact", summary="Download a signed collector release")
+async def release_artifact(
+    version: str,
+    session: AsyncSession = Depends(get_session),
+    _identity: str = Depends(require_collector),
+    settings: Settings = Depends(get_settings),
+):
+    """Collector-scoped. The collector verifies the sha256 and the Ed25519
+    signature against its OWN trusted keys before running a byte of it."""
+    import os
+
+    from fastapi.responses import FileResponse
+
+    from app.repositories import commands as cmd_repo
+
+    rel = await cmd_repo.get_release(session, version)
+    if rel is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "no such release")
+    path = os.path.join(settings.release_dir, rel["path"])
+    if not os.path.isfile(path):
+        raise HTTPException(status.HTTP_410_GONE, "release artefact is missing on the platform")
+    return FileResponse(path, media_type="application/octet-stream",
+                        headers={"X-Release-Sha256": rel["sha256"]})

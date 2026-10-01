@@ -127,6 +127,16 @@ class Settings(BaseSettings):
     #: integration that needs a callback refuses until it is set.
     public_base_url: str = ""
 
+    #: docs/26 Phase 7: where signed collector release artefacts are stored
+    #: and served from. Relative paths resolve from the API's working
+    #: directory (the repo root under scripts/dev.sh).
+    release_dir: str = "var/releases"
+    #: Ed25519 public keys (base64, 32 bytes) the platform checks a release
+    #: against before accepting it, by key id. The COLLECTOR's own trust list
+    #: is what actually protects it; this only stops a mis-signed build from
+    #: ever being offered. Empty: accept and leave verification to collectors.
+    release_trusted_keys: dict[str, str] = Field(default_factory=dict)
+
     @field_validator("credential_key")
     @classmethod
     def _key_must_be_32_bytes(cls, v: SecretStr) -> SecretStr:
