@@ -15,11 +15,14 @@ from __future__ import annotations
 
 import os
 import uuid
+from datetime import UTC
 
 import pytest
 import pytest_asyncio
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+from app.repositories import collector as fleet_repo
 
 DB_URL = os.getenv("DCIM_TEST_DATABASE_URL")
 
@@ -55,14 +58,9 @@ async def _heartbeat(session, collector_id: str) -> None:
                 0, 0, 'HEALTHY', '{}'::jsonb, 'active', clock_timestamp())
         ON CONFLICT (id) DO UPDATE SET
             last_heartbeat = clock_timestamp(),
-            healthy_since = CASE
-                WHEN collector_instance.last_heartbeat IS NULL
-                     OR clock_timestamp() - collector_instance.last_heartbeat
-                        > interval '60 seconds'
-                  THEN clock_timestamp()
-                ELSE collector_instance.healthy_since
-            END
-    """), {"id": collector_id})
+            healthy_since = __HEALTHY_SINCE__
+    """.replace("__HEALTHY_SINCE__", fleet_repo.HEALTHY_SINCE_ON_HEARTBEAT)),
+        {"id": collector_id})
 
 
 async def _healthy_since(session, collector_id: str):
@@ -116,3 +114,37 @@ async def test_a_gap_under_the_stale_cutoff_does_not_reset(session):
     await _heartbeat(session, cid)
     second = await _healthy_since(session, cid)
     assert second == first
+
+
+async def test_a_record_created_ahead_of_its_install_starts_a_streak(session):
+    """Found in the live HA test: POST /collectors writes a creation-time
+    last_heartbeat, so the first real heartbeat landed inside the 60 s
+    window and the streak stayed NULL for good."""
+    cid = f"col-{uuid.uuid4().hex[:8]}"
+    await fleet_repo.create_collector(session, cid, None, "test")
+    assert await _healthy_since(session, cid) is None
+    await _heartbeat(session, cid)
+    assert await _healthy_since(session, cid) is not None
+
+
+async def test_the_http_fallback_heartbeat_keeps_started_at_and_the_streak(session):
+    """A gateway-transport collector heartbeats over HTTP. That path never
+    set started_at on an existing record - so a collector created ahead of
+    its install never counted as having run, and was never given work - and
+    never kept a streak at all."""
+    import json
+    from datetime import datetime
+
+    cid = f"col-{uuid.uuid4().hex[:8]}"
+    await fleet_repo.create_collector(session, cid, None, "test")
+    hb = {"id": cid, "version": "t", "hostname": "h",
+          "started_at": datetime.now(UTC), "endpoints_owned": 0,
+          "endpoints_online": 0, "stats": json.dumps({})}
+    await fleet_repo.upsert_heartbeat(session, hb)
+    row = (await session.execute(text(
+        "SELECT started_at, healthy_since FROM collector_instance WHERE id = :id"),
+        {"id": cid})).mappings().one()
+    assert row["started_at"] is not None and row["healthy_since"] is not None
+    first = row["healthy_since"]
+    await fleet_repo.upsert_heartbeat(session, hb)
+    assert await _healthy_since(session, cid) == first, "a prompt heartbeat continues it"

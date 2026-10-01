@@ -500,22 +500,54 @@ async def assignment_version(session: AsyncSession, collector_id: str) -> int:
     return int(row["newest"]) * 100_000 + int(row["n"])
 
 
+#: When a heartbeat starts a NEW healthy streak (docs/26 Phase 6's failback
+#: damping measures its ten minutes from healthy_since). One fragment for both
+#: heartbeat paths - the Redis stream (ingest worker) and the HTTP fallback -
+#: and the live test, so the three cannot drift: the test used to carry its
+#: own copy of the worker's SQL. A streak starts on the first heartbeat ever
+#: (no last_heartbeat, or a record created ahead of its install that has never
+#: run), after a gap past the 60 s stale cutoff, or when none is recorded. The
+#: last two were missing: a pre-created record carries a creation-time
+#: last_heartbeat, so its first real heartbeat fell inside the window and the
+#: streak stayed NULL for good - both second BMS members ran half an hour in
+#: the live HA test with none. clock_timestamp(), not now(): one transaction
+#: can hold several heartbeats for the same collector.
+HEALTHY_SINCE_ON_HEARTBEAT = """CASE
+                WHEN collector_instance.last_heartbeat IS NULL
+                     OR collector_instance.healthy_since IS NULL
+                     OR collector_instance.started_at IS NULL
+                     OR clock_timestamp() - collector_instance.last_heartbeat
+                        > interval '60 seconds'
+                  THEN clock_timestamp()
+                ELSE collector_instance.healthy_since
+            END"""
+
+
 async def upsert_heartbeat(session: AsyncSession, hb: dict[str, Any]) -> None:
+    """The HTTP-fallback heartbeat (a gateway-transport collector). Keeps the
+    same three facts the Redis path keeps, which it did not: started_at (so a
+    collector created ahead of its install ever counts as having run - without
+    it `accepting` stayed False and it was never given work), and the
+    healthy_since streak docs/26 Phase 6's failover and failback read."""
     await session.execute(text("""
         INSERT INTO collector_instance (id, version, hostname, started_at,
                                         last_heartbeat, endpoints_owned,
-                                        endpoints_online, status, stats, state)
-        VALUES (:id, :version, :hostname, :started_at, now(),
+                                        endpoints_online, status, stats, state,
+                                        healthy_since)
+        VALUES (:id, :version, :hostname, :started_at, clock_timestamp(),
                 :endpoints_owned, :endpoints_online, 'HEALTHY', CAST(:stats AS jsonb),
                 CASE WHEN EXISTS (SELECT 1 FROM collector_instance
                                    WHERE state <> 'decommissioned')
-                     THEN 'pending' ELSE 'active' END)
+                     THEN 'pending' ELSE 'active' END,
+                clock_timestamp())
         ON CONFLICT (id) DO UPDATE SET
             version = EXCLUDED.version,
             hostname = EXCLUDED.hostname,
-            last_heartbeat = now(),
+            started_at = COALESCE(EXCLUDED.started_at, collector_instance.started_at),
+            healthy_since = __HEALTHY_SINCE__,
+            last_heartbeat = clock_timestamp(),
             endpoints_owned = EXCLUDED.endpoints_owned,
             endpoints_online = EXCLUDED.endpoints_online,
             status = 'HEALTHY',
             stats = EXCLUDED.stats
-    """), hb)
+    """.replace("__HEALTHY_SINCE__", HEALTHY_SINCE_ON_HEARTBEAT)), hb)

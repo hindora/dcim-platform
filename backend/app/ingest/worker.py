@@ -53,6 +53,7 @@ from app.ingest.ownership import OwnershipGuard
 from app.integrations import outbox as integration_outbox
 from app.integrations.dispatcher import Dispatcher
 from app.repositories import alarms as repo_alarms
+from app.repositories import collector as collector_repo
 from app.repositories import snapshots as snapshot_repo
 from app.services import assigner, collector_capacity
 from app.services import maintenance as maintenance_service
@@ -1061,13 +1062,8 @@ class IngestWorker:
                         -- heartbeats - possibly several for the same
                         -- collector - in one transaction, which would make
                         -- every one of them see an identical, frozen "now".
-                        healthy_since = CASE
-                            WHEN collector_instance.last_heartbeat IS NULL
-                                 OR clock_timestamp() - collector_instance.last_heartbeat
-                                    > interval '60 seconds'
-                              THEN clock_timestamp()
-                            ELSE collector_instance.healthy_since
-                        END,
+                        -- See repositories/collector.HEALTHY_SINCE_ON_HEARTBEAT.
+                        healthy_since = __HEALTHY_SINCE__,
                         -- When the drop counter last ROSE, which is what the
                         -- platform judges: the counter is cumulative per
                         -- process, so judging the count itself would hold
@@ -1090,7 +1086,7 @@ class IngestWorker:
                               ELSE COALESCE(collector_instance.stats->'publish_dropped_at',
                                             'null'::jsonb)
                             END)
-                """), {
+                """.replace("__HEALTHY_SINCE__", collector_repo.HEALTHY_SINCE_ON_HEARTBEAT)), {
                     "id": hb.collector_id, "version": hb.version or None,
                     "hostname": hb.hostname or None,
                     "started_at": ts_to_dt(hb.started_at),

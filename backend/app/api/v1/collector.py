@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.contracts.messages_gen import ts_to_dt
 from app.core import audit
 from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
@@ -367,7 +368,10 @@ async def heartbeat(
         "id": claimed,
         "version": payload.get("version"),
         "hostname": payload.get("hostname"),
-        "started_at": payload.get("started_at"),
+        # Contract microseconds on the wire (CollectorHeartbeat.started_at);
+        # the column is a timestamp, and a raw int would fail the INSERT.
+        "started_at": (ts_to_dt(int(payload["started_at"]))
+                       if payload.get("started_at") else None),
         "endpoints_owned": int(payload.get("endpoints_owned") or 0),
         "endpoints_online": int(payload.get("endpoints_online") or 0),
         "stats": json.dumps(stats),
