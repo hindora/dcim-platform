@@ -48,7 +48,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_constraint("device_endpoint_target_limit_object", "device_endpoint")
+    # Each CHECK goes with its column. Dropping it by name first failed: the
+    # metadata naming convention stores it as ck_<table>_<name>.
     op.drop_column("device_endpoint", "target_limit")
-    op.drop_constraint("collector_pool_target_limits_object", "collector_pool")
     op.drop_column("collector_pool", "target_limits")
