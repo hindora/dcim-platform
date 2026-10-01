@@ -70,6 +70,7 @@ async def run(session: AsyncSession) -> AssignerResult:
     raw_collectors = await fleet(session)
     endpoints = await repo.ownable_endpoints(session)
     current = await repo.current_assignment(session)
+    reasons = await repo.current_reasons(session)
 
     if not raw_collectors:
         # Nothing can own anything right now. Writing every endpoint to
@@ -104,7 +105,8 @@ async def run(session: AsyncSession) -> AssignerResult:
         if old_owner == new_owner:
             continue
         changes[eid] = (new_owner, _reason(old_owner, new_owner,
-                                          endpoints_by_id.get(eid) or {}, raw_by_id))
+                                          endpoints_by_id.get(eid) or {}, raw_by_id,
+                                          reasons.get(eid)))
 
     await repo.write_assignment(session, changes)
     # Bounded history (migration 0093). Indexed on `at`, so a tick with
@@ -118,7 +120,8 @@ async def run(session: AsyncSession) -> AssignerResult:
 
 
 def _reason(old_owner: str | None, new_owner: str | None,
-           endpoint: dict, raw_by_id: dict[str, sharding.Collector]) -> str:
+           endpoint: dict, raw_by_id: dict[str, sharding.Collector],
+           current_reason: str | None = None) -> str:
     """raw_by_id is the fleet BEFORE apply_ha_policy - the only way to tell
     an operator's own drain (accepting was already False) apart from an
     automatic failover (accepting was True; HA policy is what flipped it,
@@ -139,4 +142,10 @@ def _reason(old_owner: str | None, new_owner: str | None,
         # Still accepting, but no longer allowed to hold it: where the
         # endpoint or the collector lives changed (migration 0094).
         return "placement"
+    if current_reason == "failover":
+        # The endpoint is leaving the member that took it over when its
+        # owner failed, for a healthy one: the pool going back to normal.
+        # Migration 0090 added this reason and nothing ever wrote it -
+        # every return after a failover was recorded as a "rebalance".
+        return "failback"
     return "rebalance"

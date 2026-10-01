@@ -343,6 +343,15 @@ async def current_assignment(session: AsyncSession) -> dict[str, str | None]:
     return {str(r[0]): r[1] for r in rows}
 
 
+async def current_reasons(session: AsyncSession) -> dict[str, str]:
+    """Why each endpoint holds its current owner - the assigner needs it to
+    tell a failback (moving off a failover holder) from a rebalance."""
+    rows = (await session.execute(text(
+        "SELECT endpoint_id::text, reason FROM endpoint_assignment"
+    ))).all()
+    return {str(r[0]): r[1] for r in rows}
+
+
 async def write_assignment(session: AsyncSession,
                            changes: dict[str, tuple[str | None, str]]) -> None:
     """Upserts endpoint_assignment for every endpoint whose owner actually

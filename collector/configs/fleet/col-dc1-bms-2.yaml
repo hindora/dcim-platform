@@ -1,0 +1,272 @@
+# col-dc1-bms-2: the DC1 BMS (10.52.0.0/20), second member collector (docs/26 Phase 5 pools).
+#
+# GENERATED from collector.yaml by the fleet bring-up - one collector per site
+# per management network, so each sits in exactly one network and none bridges
+# the out-of-band plane into production. In a real deployment each is its own
+# VM with its own address and every one listens for traps on udp/162; here all
+# six share one WSL host, so what differs between the files is only what would
+# collide on one host (trap, metrics and health ports, state dir) and which
+# protocols that network actually carries.
+#
+# The token is NOT here: DCIM_COLLECTOR_TOKEN is set per process from
+# var/fleet/tokens.env by scripts/dev.sh.
+# Collector process configuration.
+#
+# Note what is ABSENT: any device. The DCIM database is the source of truth for
+# what exists and this process pulls its work list from
+# /api/v1/collector/assignments. A file-based device list goes stale within
+# minutes of a fleet change.
+
+collector:
+  id: col-dc1-bms-2
+  state_dir: ./state/col-dc1-bms-2
+
+dcim:
+  base_url: http://127.0.0.1:8000
+  # The token is read from this environment variable. Never put a literal
+  # secret in this file.
+  token_env: DCIM_COLLECTOR_TOKEN
+  assignment_path: /api/v1/collector/assignments
+  assignment_interval: 30s
+  request_timeout: 15s
+
+redis:
+  url_env: DCIM_REDIS_URL
+  # 127.0.0.1, not localhost: on Windows localhost prefers ::1 and a
+  # Docker-published port answers there unreliably.
+  url: redis://127.0.0.1:6379/0
+  # These mirror contracts/schema/messages_v1.yaml, which explains the sizing.
+  # Short version: maxlen counts entries but memory is what runs out, a
+  # telemetry entry is a ~49 KB batch, and the old 2,000,000 was a stream of
+  # tens of GB on a 3.7 GB host - Redis was OOM-killed twice before the trim
+  # ever fired. Do not raise telemetry without raising Redis's maxmemory first.
+  streams:
+    telemetry:     {name: telemetry.v1,     maxlen: 8000}
+    events:        {name: events.v1,        maxlen: 200000}
+    endpointstate: {name: endpointstate.v1, maxlen: 100000}
+    heartbeat:     {name: collectorhb.v1,   maxlen: 10000}
+
+publisher:
+  max_batch: 500
+  max_delay: 200ms
+  # Bounded fallback when Redis is unreachable. Telemetry is shed from the
+  # oldest end; events are never shed.
+  ring_capacity: 50000
+
+workers:
+  pool_size: 128
+  queue_multiplier: 8
+
+# How a discovery sweep asks a device it has never spoken to.
+#
+# Separate from the pollers' credentials: a poll knows which device it is talking
+# to and has its credential, while a sweep is probing addresses nobody has claimed
+# and has to try candidates. On SNMPv2c a wrong community is silence rather than an
+# auth failure, so trying in turn is the only way to find out.
+discovery:
+  # Tried in order. Empty falls back to "public" rather than probing with nothing,
+  # because a sweep with no community would report a silent network - which reads
+  # as "nothing is there" instead of "nobody told me how to ask".
+  communities: []
+
+  # THIS PLANE ONLY. One snmpsim process serves every simulated agent from a
+  # single socket and routes by community, so here the community IS the device's
+  # own address. That convention used to be compiled into the collector, which
+  # meant discovery could only ever have worked against this simulator; it is now
+  # a deployment's choice and a real site leaves it false.
+  community_is_address: true
+
+  # Redfish sweeping. What it finds that SNMP does not: a server racked and not yet
+  # built has its BMC up and no operating system, so Redfish is the only thing it
+  # answers - and plenty of real BMCs restrict SNMP entirely.
+  #
+  # Detection needs NO credentials: the service root is unauthenticated by
+  # specification. The credentials below are only for the chassis identity under
+  # /redfish/v1/Systems, which is 401 without them - and that is where the serial
+  # is, which is what lets a re-addressed machine be recognised.
+  redfish:
+    enabled: false
+
+    # 443 on a real floor. This simulator serves 8443.
+    ports: [8443]
+
+    # A BMC serving Redfish in the clear is a finding rather than something to
+    # accommodate, so a real site leaves this false. True here because the
+    # simulator's Redfish plane is plain HTTP.
+    allow_plaintext: true
+
+    # Tried in order. Local simulator credentials; a real site would take these
+    # from its secret store rather than a file in the repo.
+    credentials:
+      - username: admin
+        password: password
+
+protocols:
+  snmp:
+    enabled: true
+    # Tuned for a single snmpsim process serving the whole fleet from one
+    # wildcard socket. Each server poll is ~20 SNMP operations (one GET plus a
+    # BulkWalk per table column), so 894 endpoints is ~18k operations a cycle;
+    # 256 in flight simply queues behind one responder and everything times
+    # out. Real gear answers per-device and tolerates far more fan-out.
+    max_concurrent: 48
+    # Per HOST, not per endpoint: a server has two SNMP agents and a gateway
+    # fronts several field devices.
+    per_host: 2
+    timeout: 6s
+    retries: 2
+    # An agent bound to a wildcard socket replies from whichever source
+    # address the kernel picks, not necessarily the one polled. gosnmp's
+    # connected UDP socket drops those replies and every poll times out.
+    accept_any_source_reply: true
+    max_repetitions: 25
+
+  redfish:
+    enabled: false
+    # HTTPS per BMC: the handshake, not the payload, is the cost. Connections
+    # are pooled and kept alive, and one request at a time per host because a
+    # BMC serialises them regardless.
+    max_concurrent: 32
+    per_host: 1
+    timeout: 8s
+    retries: 1
+
+  # Pushed Redfish events. Off by default because `advertise` has no safe
+  # default - see below.
+  redfish_event:
+    enabled: false
+    listen: "0.0.0.0:9143"
+    # host:port the BMCs are told to POST to. REQUIRED, and it must be an
+    # address reachable FROM the management network. The collector cannot work
+    # this out itself: on a multi-homed host a wrong guess creates the
+    # subscriptions successfully and then delivers nothing, with no error at
+    # either end.
+    advertise: ""
+    # TLS on the DESTINATION url, not on the listener. Leave it off unless the
+    # BMCs trust the receiver's certificate: firmware that cannot verify it
+    # drops every event silently. The simulator posts with urllib, which
+    # verifies by default, so a self-signed https destination loses everything.
+    tls: false
+    workers: 4
+    rate_limit_per_minute: 120
+    # Subscriptions are reconciled, not created once. A BMC reset drops every
+    # subscription silently, and orphans pointing at a previous collector
+    # address accumulate until the per-BMC cap (often 8-20) is reached, after
+    # which new subscriptions fail and events simply stop.
+    reconcile_every: 10m
+
+  # BACnet/IP for mechanical and electrical plant. One UDP socket serves every
+  # device - Who-Is, I-Am and COV notifications arrive unsolicited, and a
+  # per-device socket would receive none of them.
+  bacnet:
+    # ON. Every CRAH, CDU, chiller, tower, pump and valve carries its readings
+    # and its 36 fault points on BACnet only - their SNMP agent answers the
+    # system group and one interface, nothing else. With this off the collector
+    # was handed 94 BACnet endpoints, polled none of them, and the cooling
+    # counter read zero because nothing was ever measured rather than because
+    # the plant was well. It had never raised an alarm in 33,000 rows of
+    # history, which is the shape of a plane nobody is watching.
+    enabled: true
+    # 0 asks the kernel for an ephemeral port. Replies come back to the source
+    # of the request, so 47808 is only needed to receive broadcasts - and it is
+    # usually already held by whatever else on the host speaks BACnet.
+    local_port: 0
+    max_concurrent: 24
+    # Per HOST, not per device: an MS/TP router fronts a whole trunk of field
+    # devices, and polling them in parallel through it saturates the trunk.
+    per_host: 1
+    timeout: 3s
+    retries: 2
+    # Objects per ReadPropertyMultiple. Well under a 1476-byte APDU, because an
+    # oversized request comes back as an abort rather than a short answer.
+    batch_size: 16
+
+  # Modbus/TCP for electrical gear and field instruments.
+  modbus:
+    # ON. The electrical chain reports here: UPS, switchgear, generators, ATS,
+    # the branch-circuit monitors and the plant instruments behind the two Moxa
+    # gateways. With this off the newest load_pct in the database was a day old
+    # and `power-load-high` had nothing current to evaluate, so the power
+    # counter was reading zero on stale data rather than on a quiet estate.
+    enabled: true
+    max_concurrent: 24
+    # Per HOST, and it must stay 1 for anything behind a serial gateway: the
+    # gateway forwards one RS-485 transaction at a time, so parallel requests
+    # only queue inside it where the collector cannot see the delay. An
+    # eighteen-slave trunk genuinely cannot be polled in under a couple of
+    # seconds, and pretending otherwise just moves the queue.
+    per_host: 1
+    timeout: 3s
+    # Transport failures only. A device that answered with an exception
+    # answered; repeating the request produces the same exception.
+    retries: 1
+
+  # gNMI for network devices. Two collection modes share one connection pool:
+  # Get for endpoints the scheduler polls, and Subscribe for endpoints whose
+  # poll profile says the device pushes instead (interval 0 with push enabled -
+  # the gnmi-stream profile). A streamed endpoint is never also polled: the
+  # duplicate samples would be indistinguishable from real ones.
+  gnmi:
+    # ON. Interface state, counters and adjacency for the fabric - the network
+    # category has raised exactly one alarm in the platform's life, which is
+    # what a domain with no feed looks like.
+    #
+    # WATCH THE FIRST CYCLE. Unlike BACnet and Modbus, nothing was listening on
+    # 57400 when this was turned on. If the device plane is not serving gNMI,
+    # 46 endpoints fail their poll and become unreachable alarms - real ones,
+    # correctly raised, about a plane that genuinely cannot be seen.
+    enabled: false
+    max_concurrent: 16
+    # A gRPC connection is multiplexed, so several concurrent RPCs to one
+    # device share it rather than opening sockets.
+    per_host: 2
+    timeout: 10s
+    stream: true
+    # A stream that is connected and silent looks exactly like one that has
+    # died. Silence past this multiple of the requested sample interval fails
+    # the session, so an endpoint delivering nothing is never reported healthy.
+    stream_grace_factor: 3
+    # Optional fixed staleness window, replacing the interval-derived one.
+    # stream_grace_window: 120s
+
+  snmp_trap:
+    enabled: true
+    # 1162, not the well-known 162, because binding below 1024 needs root or
+    # CAP_NET_BIND_SERVICE and the collector should not run privileged just to
+    # receive traps. In production grant the capability and use 162:
+    #   sudo setcap 'cap_net_bind_service=+ep' ./bin/collector
+    #
+    # Whichever port is used, the device plane must be TOLD about it - the
+    # simulator defaults to 127.0.0.1:162 and points nowhere useful otherwise:
+    #   POST /api/snmp/trap-receiver {"ip": "<collector>", "port": 1162}
+    # Without that step no trap arrives and the alarm path looks broken when it
+    # is merely unaddressed.
+    listen: "0.0.0.0:11627"
+    workers: 8
+    # Per source. A flapping interface must not fill the stream or the disk.
+    rate_limit_per_minute: 100
+
+health:
+  # One failure is DEGRADED. OFFLINE needs this many consecutive failures AND
+  # more than two intervals since the last success.
+  offline_threshold: 3
+  # Liveness probe (one SNMP GET of sysUpTime, one GET of the Redfish service
+  # root) for every endpoint polled less often than this. Detection of a dead
+  # device becomes offline_threshold x this instead of x its poll interval - a
+  # leaf polled every 600 s goes OFFLINE in ~90 s, not ~30 min. 0 disables.
+  availability_interval: 30s
+
+mappings:
+  dir: ../contracts/mappings
+
+observability:
+  log_level: info
+  log_format: json
+  metrics_listen: "0.0.0.0:9123"
+  health_listen: "0.0.0.0:9124"
+  heartbeat_every: 10s
+
+limits:
+  # One socket per Redfish BMC and per gNMI stream; fd exhaustion is the real
+  # scaling wall, not CPU.
+  max_open_files: 65536
