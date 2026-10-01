@@ -9,6 +9,7 @@ import (
 	"context"
 	"hash/fnv"
 	"log/slog"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -30,8 +31,10 @@ type Job struct {
 	// The target slot the limiter granted, released when the poll is done.
 	target string
 	// Deferred by a limit since it last fell due: counted once per cycle,
-	// not once per tick it is retried.
+	// not once per tick it is retried. dueAt is when it first fell due, so
+	// the oldest waiting poll is admitted first.
 	deferred bool
+	dueAt    time.Time
 }
 
 type Runner func(ctx context.Context, ep *models.Endpoint)
@@ -186,7 +189,9 @@ func (s *Scheduler) Wait() { s.wg.Wait() }
 
 // Add registers an endpoint. The first poll is placed at a deterministic phase
 // within one interval so that 664 endpoints on a 30 s schedule fire ~22 per
-// second instead of all at t=0.
+// second instead of all at t=0 - and that phase is anchored to the clock, not
+// to when the process started, so a restart keeps every endpoint in the slot
+// it already had (Zabbix places items the same way).
 func (s *Scheduler) Add(ep *models.Endpoint) {
 	s.AddEvery(ep, ep.Poll.Interval())
 }
@@ -213,7 +218,13 @@ func (s *Scheduler) addAt(ep *models.Endpoint, interval, spread time.Duration) {
 	if spread <= 0 || spread > interval {
 		spread = interval
 	}
-	offset := phaseOffset(ep.ID, spread)
+	now := time.Now()
+	var first time.Time
+	if spread == interval {
+		first = alignedSlot(now, interval, phaseOffset(ep.ID, interval))
+	} else {
+		first = now.Add(phaseOffset(ep.ID, spread))
+	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -225,7 +236,7 @@ func (s *Scheduler) addAt(ep *models.Endpoint, interval, spread time.Duration) {
 	s.jobs[ep.ID] = &Job{
 		Endpoint: ep,
 		Interval: interval,
-		nextRun:  time.Now().Add(offset),
+		nextRun:  first,
 	}
 }
 
@@ -262,7 +273,7 @@ func (s *Scheduler) dispatch(now time.Time) {
 		startAt time.Time
 	}
 	s.mu.Lock()
-	due := make([]ready, 0, 32)
+	candidates := make([]*Job, 0, 32)
 	for _, job := range s.jobs {
 		if job.nextRun.After(now) {
 			continue
@@ -275,10 +286,25 @@ func (s *Scheduler) dispatch(now time.Time) {
 			s.statsFor(job.Endpoint.Protocol).overrun.Add(1)
 			continue
 		}
+		candidates = append(candidates, job)
+	}
+	// Oldest due first. A map's order is random, and a deferred poll used to
+	// rejoin as "due now": under a tight budget the lucky ones were admitted
+	// each tick and an unlucky endpoint waited past its staleness grace -
+	// the live run raised 29 telemetry_stale on a pool whose AVERAGE stretch
+	// was well inside it. FIFO bounds every wait by the average.
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].firstDue().Before(candidates[j].firstDue())
+	})
+	due := make([]ready, 0, len(candidates))
+	for _, job := range candidates {
 		ok, key, startAt, retryAt, why := s.limiter.Admit(job.Endpoint, now, s.budgeted)
 		if !ok {
 			// Held back by the facility's limits: try again when they allow,
 			// and let the rest of its cycle stretch rather than queue.
+			if !job.deferred {
+				job.dueAt = job.nextRun
+			}
 			job.nextRun = retryAt
 			if !job.deferred {
 				job.deferred = true
@@ -292,6 +318,7 @@ func (s *Scheduler) dispatch(now time.Time) {
 			continue
 		}
 		job.deferred = false
+		job.dueAt = time.Time{}
 		job.nextRun = now.Add(job.Interval)
 		job.running = true
 		job.target = key
@@ -308,6 +335,15 @@ func (s *Scheduler) dispatch(now time.Time) {
 		}
 		s.enqueue(r.job, now)
 	}
+}
+
+// firstDue is when a job first fell due: its original slot while a limit
+// holds it back, else its next run.
+func (j *Job) firstDue() time.Time {
+	if j.deferred && !j.dueAt.IsZero() {
+		return j.dueAt
+	}
+	return j.nextRun
 }
 
 func (s *Scheduler) enqueue(job *Job, at time.Time) {
@@ -464,6 +500,23 @@ func (s *Scheduler) markDone(job *Job) {
 	job.target = ""
 	s.mu.Unlock()
 	s.limiter.Done(key)
+}
+
+// alignedSlot is the next time at or after now that sits `offset` into an
+// interval-long period counted from the zero time. Measured from now, as it
+// used to be, every restart moved every slot: a re-exec seconds after a poll
+// could put the next one a whole interval out, and two restarts in a row -
+// a deploy, then an upgrade - left server agents silent past their
+// 3-interval grace (74 telemetry_stale in one live run).
+func alignedSlot(now time.Time, interval, offset time.Duration) time.Time {
+	if interval <= 0 {
+		return now
+	}
+	slot := now.Truncate(interval).Add(offset)
+	if slot.Before(now) {
+		slot = slot.Add(interval)
+	}
+	return slot
 }
 
 // phaseOffset spreads endpoints deterministically across their interval, so a

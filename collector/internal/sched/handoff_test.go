@@ -62,3 +62,21 @@ func TestAWindowWiderThanTheIntervalIsTheInterval(t *testing.T) {
 		t.Fatalf("first poll in %v, beyond its own 10 s interval", d)
 	}
 }
+
+func TestARestartKeepsEveryEndpointInTheSlotItHad(t *testing.T) {
+	interval := 120 * time.Second
+	offset := phaseOffset("ep-1", interval)
+	at := time.Date(2026, 10, 1, 12, 0, 7, 0, time.UTC)
+	before := alignedSlot(at, interval, offset)
+	// Restarted 40 s later, and again 3 min later: the same slot on the
+	// clock each time, only further along.
+	for _, later := range []time.Duration{40 * time.Second, 3 * time.Minute} {
+		got := alignedSlot(at.Add(later), interval, offset)
+		if d := got.Sub(before) % interval; d != 0 {
+			t.Fatalf("after %v the slot moved by %v within the interval", later, d)
+		}
+		if got.Before(at.Add(later)) || got.Sub(at.Add(later)) >= interval {
+			t.Fatalf("after %v the next slot %v is not within one interval", later, got)
+		}
+	}
+}

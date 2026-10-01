@@ -105,3 +105,51 @@ func TestAPoolOverBudgetIsDeferredAndLivenessIsNot(t *testing.T) {
 		t.Fatal("a liveness probe was held by the pool budget - the pool would look dead")
 	}
 }
+
+func TestTheLongestWaitingPollIsAdmittedFirst(t *testing.T) {
+	lim := throttle.New()
+	s := New(Options{Workers: 1, Limiter: lim, Budgeted: true},
+		func(ctx context.Context, ep *models.Endpoint) {}, quietLog(), obs.NewMetrics())
+	ids := []string{"a", "b", "c", "d", "e"}
+	for _, id := range ids {
+		ep := hourly(id, "snmp")
+		ep.PoolID = "p"
+		s.Add(ep)
+	}
+	now := time.Now().Add(2 * time.Hour)
+	// Make "c" the oldest-waiting: deferred an hour ago and still waiting.
+	s.mu.Lock()
+	for id, j := range s.jobs {
+		j.nextRun = now
+		if id == "c" {
+			j.deferred, j.dueAt = true, now.Add(-time.Hour)
+		}
+	}
+	s.mu.Unlock()
+	lim.SetBudgets(map[string]float64{"p": 1}) // 5 banked
+	// Learn a 5-point cost for everyone: 5 - 25 = 20 in debt. The bank
+	// then refills at 1/s, and the first positive tick admits exactly one -
+	// its 5-point reservation takes the balance negative again.
+	for _, id := range ids {
+		lim.Charge(&models.Endpoint{ID: id, PoolID: "p"}, 5, now)
+	}
+	for i := 0; i < 30; i++ {
+		s.dispatch(now)
+		s.mu.Lock()
+		running := ""
+		for id, j := range s.jobs {
+			if j.running {
+				running += id
+			}
+		}
+		s.mu.Unlock()
+		if running != "" {
+			if running[0] != 'c' {
+				t.Fatalf("admitted %q first, want the oldest-waiting c", running)
+			}
+			return
+		}
+		now = now.Add(time.Second)
+	}
+	t.Fatal("nothing was admitted")
+}
