@@ -462,3 +462,36 @@ func TestASlowerCheckIntervalDoesNotLoosenTheRule(t *testing.T) {
 		t.Fatalf("interval = %v, want the 30 s poll", got)
 	}
 }
+
+// A poll in flight when its endpoint is handed to another collector must not
+// resurrect it here: found live as "101 online out of 95 owned" after a
+// failback, which raised collector_degraded and kept publishing state for
+// endpoints this collector no longer owned.
+func TestALatePollForAForgottenEndpointIsIgnored(t *testing.T) {
+	tr, sink := newTracker(t, 3)
+	ep := endpoint()
+	tr.Register(ep)
+	tr.Success(ep, 5)
+	if tr.OnlineCount() != 1 {
+		t.Fatalf("online = %d, want 1", tr.OnlineCount())
+	}
+	before := len(sink.published())
+
+	tr.Forget(ep.ID)
+	tr.Success(ep, 5) // the in-flight poll lands after the hand-off
+	tr.Failure(ep, errors.New("timeout"))
+
+	if n := tr.OnlineCount(); n != 0 {
+		t.Fatalf("online = %d after forget, want 0 - the late poll resurrected it", n)
+	}
+	if got := len(sink.published()); got != before {
+		t.Fatalf("published %d states for a forgotten endpoint", got-before)
+	}
+
+	// Handed back later: registering again lifts the block.
+	tr.Register(ep)
+	tr.Success(ep, 5)
+	if tr.OnlineCount() != 1 {
+		t.Fatalf("online = %d after re-register, want 1", tr.OnlineCount())
+	}
+}

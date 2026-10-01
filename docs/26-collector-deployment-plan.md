@@ -537,6 +537,34 @@ No endpoint left ONLINE at any point; 1426/1426 throughout.
 
 **What this does not model.** The separation is logical, not physical. All six collectors and the whole device plane share one network namespace, so there is no WAN, no per-site latency, and no partition to survive. Phase S's network namespaces and `tc netem` are what would add those. The simulator's SNMP agent also serialises at roughly six requests a second in total, so a handful of SNMP timeouts at any moment come from it and are untouched by how many collectors poll it. Each pool still has a single member, so a dead collector blinds its network at its site. That is Phase 6's redundancy, exercised next.
 
+**Redundancy, exercised live (2026-10-01).** Each BMS pool got a second member (`col-dc1-bms-2`, `col-dc2-bms-2`) and `min_members: 2`. The plant is the network whose blindness costs most, so it got N+1 first. Splitting a pool's endpoints across two members puts two Modbus masters on some gateways. That stays well under the simulator's 16-connection gateway ceiling, and it is what a real MGate expects: several TCP masters queued onto one serial bus. Then `col-dc1-bms` was killed with SIGKILL, a crash rather than a stop:
+
+| Time (UTC) | Observed |
+|---|---|
+| 09:27:54 | `col-dc1-bms` killed. It owned 95 of DC1/BMS's 179 endpoints |
+| +82 s | `collector_stale` CRITICAL and `pool_below_min_members` WARNING. The 95 go **UNKNOWN**, not OFFLINE, and no device alarm is raised |
+| +183 s | **Failover**: all 95 recorded `failover` to `col-dc1-bms-2`, three seconds past FAILOVER_AFTER_S |
+| +223 s / +283 s | 161, then 179 of 179 ONLINE under the survivor |
+| 09:52:18 | `col-dc1-bms` back. Healthy, and held out of `accepting` |
+| 10:02:49 | Its 10-minute quarantine over, the pool rebalances: 95 recorded **`failback`** to it, split back to 95/84, all ONLINE |
+| 10:05:09 | (After deploying the streak fix below.) Both second members have a real streak for the first time, so each is quarantined beside its long-healthy primary. The primaries take whole pools |
+| 10:14:56 | Eleven seconds after that quarantine ends, both pools split back (95/84, 98/77), all 1426 ONLINE |
+
+The plan's acceptance bar is endpoints moved within 4 minutes, device alarms suppressed throughout, and nothing moved back for 10 minutes after a restart. The record moved at 3 min and polling had fully recovered by 4.7 min. The gap between the two is the new owner's first data poll, which lands at its phase offset within the poll interval. Polling newly-assigned endpoints immediately, rather than at their spread slot, would close it. That is a collector change, not yet made.
+
+**Five defects the run found, all fixed with a regression test that fails on the old code:**
+
+- **A hand-off read as silence** (`ba9ff09`). At failover, 24 plant devices raised `telemetry_stale` ("answers but has delivered no telemetry for 7 min") and cleared a minute later. The new owner's 30 s liveness probe marked them ONLINE before its first data poll, while the last sample was the dead collector's. Silence is now measured from the later of the last sample and `endpoint_assignment.since`.
+- **A pool that quarantined itself** (`ba9ff09`). When every member of an HA pool restarts together (a host reboot, an upgrade, a stack restart), each counted the other as a healthy peer and held itself out. The pool's record then had no accepting member for ten minutes. A peer now counts only once it has itself been healthy past the failback window.
+- **A failback was never called one** (`8eef1db`). Migration 0090 added the reason and nothing wrote it. A move off a failover holder to a healthy member is now recorded as `failback`.
+- **No healthy streak for a collector created ahead of its install** (`f04ebe8`). Both second members ran half an hour with `healthy_since` NULL: the record's creation-time `last_heartbeat` swallowed their first real heartbeat into the 60 s window. A NULL streak was read as long-healthy, so it happened to quarantine the right member, but only by accident. The HTTP-fallback heartbeat (gateway transport) was worse. It kept no streak at all, never set `started_at` on an existing record (so a gateway-transport collector created ahead of its install was never given work), and wrote raw contract microseconds into a timestamp column. The streak rule is now one SQL fragment, `repositories/collector.HEALTHY_SINCE_ON_HEARTBEAT`, shared by both heartbeat paths and the test.
+
+- **A collector counting endpoints it had handed away** (collector, `internal/health`). Straight after the failback, `col-dc1-bms` reported "101 endpoints online out of 95 owned" and raised `collector_degraded`. A poll already in flight when an endpoint was removed completed after `Forget`, and `Success` re-created its state. The collector then counted the endpoint as its own and online indefinitely, and kept publishing its state. The tracker now remembers what it forgot for ten minutes and ignores late results for those endpoints, and a re-assignment lifts the block.
+
+One labelling gap was left as it is: moves off a member that is being held in quarantine are recorded as `rebalance`, since no reason names that case. The moves themselves are correct.
+
+**Not yet redundant: traps.** Each network's traps still go to one collector's port, so the DC1/BMS traps sent while `col-dc1-bms` was dead were lost. The plan prefers a keepalived VIP per pool (L2 adjacency), or devices configured with both members as trap destinations with ingest deduplicating. On this single host neither works without a simulator change: its plane destinations carry one receiver each. Ownership-based ingest would already do the deduplication, since a non-owner's copy is dropped as foreign.
+
 ## Operator journey: bringing up DC3's collectors in the future system
 
 The table below is what an administrator does once Phases 0–8 exist. It assumes DC3 is an enterprise-owned site with an IT-OOB network and a facilities-owned BMS network.

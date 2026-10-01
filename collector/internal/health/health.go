@@ -47,6 +47,15 @@ type State struct {
 type Tracker struct {
 	mu    sync.RWMutex
 	state map[string]*State
+	// Endpoints forgotten recently, and when. A poll already in flight when
+	// its endpoint was removed still completes; without this, Success/Failure
+	// re-created the state through get(), and the collector counted an
+	// endpoint it had handed to another collector as its own and online, for
+	// good, and kept publishing its state. Found in the live HA test: after a
+	// failback, "101 endpoints online out of 95 owned" - six polls in flight
+	// at the hand-off. Register lifts the block; entries expire after
+	// forgetFor, far longer than any poll can be in flight.
+	forgotten map[string]time.Time
 
 	offlineThreshold int
 	collectorID      string
@@ -76,6 +85,7 @@ func NewTracker(offlineThreshold int, collectorID string, sink models.Sink,
 	}
 	return &Tracker{
 		state:            make(map[string]*State),
+		forgotten:        make(map[string]time.Time),
 		offlineThreshold: offlineThreshold,
 		collectorID:      collectorID,
 		sink:             sink,
@@ -94,6 +104,7 @@ func (t *Tracker) SetSelfDegraded(degraded bool) {
 func (t *Tracker) Register(ep *models.Endpoint) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	delete(t.forgotten, ep.ID)
 	if _, ok := t.state[ep.ID]; !ok {
 		t.state[ep.ID] = &State{
 			Status:   models.CommStatusUnknown,
@@ -120,10 +131,29 @@ func (t *Tracker) SetCheckInterval(ep *models.Endpoint, d time.Duration) {
 	}
 }
 
+// forgetFor bounds how long a forgotten endpoint's late poll results are
+// ignored: a poll's ceiling is timeout x (retries+1) plus a second, minutes
+// at most, so ten minutes is generous and keeps the map small.
+const forgetFor = 10 * time.Minute
+
 func (t *Tracker) Forget(endpointID string) {
+	now := time.Now()
 	t.mu.Lock()
 	delete(t.state, endpointID)
+	t.forgotten[endpointID] = now
+	for id, at := range t.forgotten {
+		if now.Sub(at) > forgetFor {
+			delete(t.forgotten, id)
+		}
+	}
 	t.mu.Unlock()
+}
+
+// gone reports whether a poll result belongs to an endpoint forgotten while
+// the poll was in flight. Called with t.mu held.
+func (t *Tracker) gone(endpointID string) bool {
+	at, ok := t.forgotten[endpointID]
+	return ok && time.Since(at) <= forgetFor
 }
 
 // Success records a successful poll and returns true when the status changed.
@@ -131,6 +161,10 @@ func (t *Tracker) Success(ep *models.Endpoint, latencyMs int) bool {
 	now := time.Now().UTC()
 
 	t.mu.Lock()
+	if t.gone(ep.ID) {
+		t.mu.Unlock()
+		return false
+	}
 	st := t.get(ep)
 	previous := st.Status
 	st.Status = models.CommStatusOnline
@@ -169,6 +203,10 @@ func (t *Tracker) Failure(ep *models.Endpoint, err error) bool {
 	now := time.Now().UTC()
 
 	t.mu.Lock()
+	if t.gone(ep.ID) {
+		t.mu.Unlock()
+		return false
+	}
 	st := t.get(ep)
 	previous := st.Status
 	st.ConsecutiveFailures++
