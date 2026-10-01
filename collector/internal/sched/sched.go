@@ -166,10 +166,29 @@ func (s *Scheduler) Add(ep *models.Endpoint) {
 	s.AddEvery(ep, ep.Poll.Interval())
 }
 
+// AddSoon registers an endpoint whose first poll lands within `within` rather
+// than anywhere in its interval. For endpoints handed over at runtime - a
+// failover, failback, drain or rebalance: the previous owner has stopped, so
+// a first poll at the endpoint's spread slot left it unpolled for up to a
+// whole interval. The live HA test measured the record moving at 3 min and
+// polling recovering only at 4.7 min, for exactly this reason. Later polls
+// keep the endpoint's interval; only the first is pulled in, still spread
+// deterministically across `within` so a batch does not land in one tick.
+func (s *Scheduler) AddSoon(ep *models.Endpoint, within time.Duration) {
+	s.addAt(ep, ep.Poll.Interval(), within)
+}
+
 // AddEvery registers an endpoint on an interval other than its poll profile's.
 // The availability scheduler uses it: liveness runs on its own cadence.
 func (s *Scheduler) AddEvery(ep *models.Endpoint, interval time.Duration) {
-	offset := phaseOffset(ep.ID, interval)
+	s.addAt(ep, interval, interval)
+}
+
+func (s *Scheduler) addAt(ep *models.Endpoint, interval, spread time.Duration) {
+	if spread <= 0 || spread > interval {
+		spread = interval
+	}
+	offset := phaseOffset(ep.ID, spread)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -692,6 +692,21 @@ func (a *App) refreshResolver() {
 	a.reconcileFDR()
 }
 
+// startupSpreadFor is how long after start an assignment counts as the
+// initial one: the first fetch can fail and land a few retries later.
+const startupSpreadFor = 90 * time.Second
+
+// handoffWindow spreads a handed-over batch's first polls over at least 15 s,
+// and over n/20 s for a large batch (twenty first polls a second), so a whole
+// pool failing over to one member is a short ramp, not a single tick.
+func handoffWindow(n int) time.Duration {
+	w := time.Duration(n) * time.Second / 20
+	if w < 15*time.Second {
+		w = 15 * time.Second
+	}
+	return w
+}
+
 func (a *App) applyDiff(diff assign.Diff) {
 	// The resolver turns a trap's source address into a device, so it has to
 	// track the full assignment rather than the diff.
@@ -704,6 +719,13 @@ func (a *App) applyDiff(diff assign.Diff) {
 		a.gnmiSubs.Manage(a.streamCtx, a.assign.Endpoints())
 	}
 
+	// Endpoints that arrive once this process is past its start-up (a
+	// failover, failback, drain or rebalance handing them over) are polled
+	// within a short window instead of at their spread slot: their previous
+	// owner has already stopped. At start-up the full spread stays, so a
+	// restart does not poll the whole assignment in one burst.
+	soon := handoffWindow(len(diff.Added))
+	handoff := time.Since(a.startedAt) > startupSpreadFor
 	for _, ep := range diff.Added {
 		if _, ok := a.adapters[ep.Protocol]; !ok {
 			// An endpoint for a protocol this build does not implement is not
@@ -717,7 +739,11 @@ func (a *App) applyDiff(diff assign.Diff) {
 			continue
 		}
 		a.tracker.Register(ep)
-		a.sched.Add(ep)
+		if handoff {
+			a.sched.AddSoon(ep, soon)
+		} else {
+			a.sched.Add(ep)
+		}
 		a.watchAvailability(ep)
 	}
 	for _, ep := range diff.Changed {
