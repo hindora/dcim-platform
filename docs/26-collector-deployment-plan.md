@@ -550,7 +550,7 @@ No endpoint left ONLINE at any point; 1426/1426 throughout.
 | 10:05:09 | (After deploying the streak fix below.) Both second members have a real streak for the first time, so each is quarantined beside its long-healthy primary. The primaries take whole pools |
 | 10:14:56 | Eleven seconds after that quarantine ends, both pools split back (95/84, 98/77), all 1426 ONLINE |
 
-The plan's acceptance bar is endpoints moved within 4 minutes, device alarms suppressed throughout, and nothing moved back for 10 minutes after a restart. The record moved at 3 min and polling had fully recovered by 4.7 min. The gap between the two is the new owner's first data poll, which lands at its phase offset within the poll interval. Polling newly-assigned endpoints immediately, rather than at their spread slot, would close it. That is a collector change, not yet made.
+The plan's acceptance bar is endpoints moved within 4 minutes, device alarms suppressed throughout, and nothing moved back for 10 minutes after a restart. In this first run the record moved at 3 min, but polling recovered only at 4.7 min: the new owner's first data poll landed at its phase slot within the poll interval. Fixed in `2dcbb06` (see the second run below).
 
 **Five defects the run found, all fixed with a regression test that fails on the old code:**
 
@@ -563,7 +563,22 @@ The plan's acceptance bar is endpoints moved within 4 minutes, device alarms sup
 
 One labelling gap was left as it is: moves off a member that is being held in quarantine are recorded as `rebalance`, since no reason names that case. The moves themselves are correct.
 
-**Not yet redundant: traps.** Each network's traps still go to one collector's port, so the DC1/BMS traps sent while `col-dc1-bms` was dead were lost. The plan prefers a keepalived VIP per pool (L2 adjacency), or devices configured with both members as trap destinations with ingest deduplicating. On this single host neither works without a simulator change: its plane destinations carry one receiver each. Ownership-based ingest would already do the deduplication, since a non-owner's copy is dropped as foreign.
+**Second run (2026-10-01, 10:33 UTC): traps redundant, and failover under 4 minutes.** Two changes went in first.
+
+- **Traps go to both pool members.** The simulator's plane destinations can now list several receivers (simulator `a1e77ff`), and the BMS planes list both members' ports. That is the plan's dual-destination alternative to a VIP, and what real agents do: `snmpTargetAddrTable` holds many targets, and most facility cards take two. Nothing changed on the platform side, because it had been built for this already. The collector's dedup key uses the device's `sysUpTime`, not the arrival time, so the two copies collapse to one. The ingest ownership guard exempts events, so the peer's copy counts when the owner is dead.
+- **A handed-over endpoint is polled within seconds** (`2dcbb06`). Endpoints that arrive after a collector's start-up get their first poll spread over 15 s, or n/20 s for a large batch, instead of their slot anywhere in the interval. The first assignment after a start keeps the full spread, so a restart is not a single burst of polls.
+
+| Check | Result |
+|---|---|
+| Trap from a device, both members alive | Received by **both** (each counter +1), stored **once** |
+| Owner killed; trap 30 s later, before failover | Received by the peer only, and **stored**. In the first run this trap was lost |
+| Kill to failover recorded | +185-195 s |
+| Kill to all 179 ONLINE | **+235 s (3.9 min)**, 40 s after the record moved. First run: 283 s |
+| `telemetry_stale` from kill to end | **0**. First run: 24 |
+| Restart; quarantine; failback | 95 recorded `failback` at +643 s, and **0** endpoints left ONLINE during the hand-back |
+| `collector_degraded` | 0 (the tracker no longer counts endpoints it handed away) |
+
+Phase 6's acceptance bar is met on live collectors: endpoints moved within 4 minutes, no device alarms, traps kept flowing, and nothing moved back for 10 minutes. The remaining ~40 s between the record moving and the last endpoint ONLINE is the survivor's 30 s assignment fetch plus the 15 s first-poll window. Push-based assignment (Phase 7's long-poll) is what would shorten it further.
 
 ## Operator journey: bringing up DC3's collectors in the future system
 
