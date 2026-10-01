@@ -124,6 +124,11 @@ BUDGET_WARN_FRACTION = 0.85
 #: the 5-minute window, because a quiet spell may bank 5 s of rate as a
 #: burst. "Not enforcing" must not fire on a pool that is.
 BUDGET_OVER_FRACTION = 1.05
+#: How long after a pool's settings change before "over budget" can mean
+#: "not enforcing": the collectors' capacity window (5 min) plus a
+#: heartbeat. Inside it the average still includes the old load - the live
+#: test raised a MAJOR at 229% twenty seconds after a budget was set.
+BUDGET_SETTLE_S = 360.0
 
 #: An Atlassian Cloud API token expires within a year of being minted, and the
 #: whole pre-December-2024 generation was force-expired in spring 2026. A
@@ -219,6 +224,10 @@ class Pool:
     #: when no collector reports per-pool points yet.
     rate_budget_points_per_s: float | None = None
     points_per_s: float | None = None
+    #: Seconds since the pool's settings last changed. The measured rate is
+    #: a 5-minute average, so for a window after a budget is set it still
+    #: carries the load from before it.
+    settings_age_s: float | None = None
 
 
 @dataclass
@@ -601,6 +610,22 @@ def evaluate(signals: Signals) -> list[Finding]:
         fraction = pool.points_per_s / budget
         if fraction >= BUDGET_WARN_FRACTION:
             over = fraction >= BUDGET_OVER_FRACTION
+            settling = (over and pool.settings_age_s is not None
+                        and pool.settings_age_s < BUDGET_SETTLE_S)
+            if settling:
+                out.append(Finding(
+                    alarm_type="pool_rate_budget_exceeded", instance=pool.pool_id,
+                    severity=WARNING,
+                    value=round(pool.points_per_s, 1), threshold=float(budget),
+                    message=(
+                        f"Pool {pool.name} is polling {pool.points_per_s:.0f} "
+                        f"points/s against a rate budget of {budget:.0f} "
+                        f"({fraction * 100:.0f}%), but its settings changed "
+                        f"{pool.settings_age_s:.0f} s ago and the figure is a "
+                        f"5-minute average that still includes the load from "
+                        f"before. It should settle at the budget within "
+                        f"{BUDGET_SETTLE_S - pool.settings_age_s:.0f} s.")))
+                continue
             out.append(Finding(
                 alarm_type="pool_rate_budget_exceeded", instance=pool.pool_id,
                 severity=MAJOR if over else WARNING,

@@ -619,6 +619,8 @@ func (a *App) poll(ctx context.Context, ep *models.Endpoint) {
 		a.pollsBad.Add(1)
 		a.mets.PollsTotal.WithLabelValues(ep.Protocol, ep.DeviceType, "failure").Inc()
 		a.tracker.Failure(ep, err)
+		// It put next to nothing on the network: refund its reservation.
+		a.limiter.Charge(ep, 0, time.Now())
 		a.log.Debug("poll failed", "endpoint_id", ep.ID, "device", ep.DeviceName,
 			"error", err)
 		return
@@ -630,7 +632,7 @@ func (a *App) poll(ctx context.Context, ep *models.Endpoint) {
 	}
 	a.pollsOK.Add(1)
 	a.points.Add(ep.Protocol, ep.PoolID, len(outcome.Samples))
-	a.limiter.Charge(ep.PoolID, len(outcome.Samples), time.Now())
+	a.limiter.Charge(ep, len(outcome.Samples), time.Now())
 	a.mets.PollsTotal.WithLabelValues(ep.Protocol, ep.DeviceType, result).Inc()
 	for _, miss := range outcome.Misses {
 		a.mets.MissesTotal.WithLabelValues(ep.Protocol, miss.Reason).Inc()
@@ -705,6 +707,7 @@ func (a *App) refreshResolver() {
 	// is registered with on the next fetch, with nothing restarted.
 	a.reconcileFDR()
 	a.limiter.SetBudgets(budgetShares(a.assign.Pools()))
+	a.limiter.Sync(a.assign.Endpoints())
 }
 
 // budgetShares is this collector's slice of each pool's budget, as the
@@ -767,7 +770,6 @@ func (a *App) applyDiff(diff assign.Diff) {
 			continue
 		}
 		a.tracker.Register(ep)
-		a.limiter.Track(ep)
 		if handoff {
 			a.sched.AddSoon(ep, soon)
 		} else {
@@ -784,12 +786,10 @@ func (a *App) applyDiff(diff assign.Diff) {
 			}
 			continue
 		}
-		a.limiter.Track(ep)
 		a.sched.Add(ep)
 		a.watchAvailability(ep)
 	}
 	for _, ep := range diff.Removed {
-		a.limiter.Forget(ep.ID)
 		a.sched.Remove(ep.ID)
 		if a.avail != nil {
 			a.avail.Remove(ep.ID)

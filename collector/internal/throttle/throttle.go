@@ -14,10 +14,11 @@
 // Per POOL: the points per second the facility agreed this poller may put
 // on its network - a Niagara-style supervisor budget. Each collector
 // enforces its SHARE, which the platform computes from what it owns, with a
-// token bucket settled on the points a poll actually returned: admission
-// needs a positive balance, and the real cost is charged afterwards. No
-// estimate of what a poll will cost is needed, and a big walk leaves a debt
-// that holds the next polls back, which is exactly the point.
+// token bucket. Admission needs a positive balance and RESERVES what the
+// endpoint's last poll cost; the difference is settled when this one
+// finishes. Charging only afterwards let every poll due in one tick through
+// on the same positive balance - the live run sat 4-5% over its budget - and
+// a big walk still leaves a debt that holds the next polls back.
 //
 // Nothing here blocks. A poll the limits will not admit is deferred to a
 // later tick, which stretches the cycle the way Niagara's poll scheduler
@@ -82,6 +83,10 @@ type Limiter struct {
 	limits  map[string]limit
 	targets map[string]*target
 	pools   map[string]*bucket
+	// Per endpoint: the points its last poll returned (the next poll's
+	// reservation), and what an admitted poll has reserved so far.
+	lastPoints map[string]int
+	reserved   map[string]int
 }
 
 type endpointLimit struct {
@@ -91,7 +96,51 @@ type endpointLimit struct {
 
 func New() *Limiter {
 	return &Limiter{byEndpoint: map[string]endpointLimit{}, limits: map[string]limit{},
-		targets: map[string]*target{}, pools: map[string]*bucket{}}
+		targets: map[string]*target{}, pools: map[string]*bucket{},
+		lastPoints: map[string]int{}, reserved: map[string]int{}}
+}
+
+// Sync replaces every endpoint's limit with the assignment's - the whole
+// set, on every fetched body. An endpoint diff that does not compare the
+// limit cannot then lose a change to it: the live run set a pool limit,
+// the ETag moved, the body arrived, and nothing was re-tracked.
+func (l *Limiter) Sync(eps []*models.Endpoint) {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	keep := make(map[string]bool, len(eps))
+	l.byEndpoint = make(map[string]endpointLimit, len(eps))
+	for _, ep := range eps {
+		keep[ep.ID] = true
+		if e, ok := limitOf(ep); ok {
+			l.byEndpoint[ep.ID] = e
+		}
+	}
+	for id := range l.lastPoints {
+		if !keep[id] {
+			delete(l.lastPoints, id)
+		}
+	}
+	l.limits = map[string]limit{}
+	seen := map[string]bool{}
+	for _, e := range l.byEndpoint {
+		if !seen[e.target] {
+			seen[e.target] = true
+			l.recompute(e.target)
+		}
+	}
+}
+
+func limitOf(ep *models.Endpoint) (endpointLimit, bool) {
+	tl := ep.TargetLimit
+	if ep.Address == "" || tl == nil || (tl.MaxConcurrent <= 0 && tl.MinIntervalMs <= 0) {
+		return endpointLimit{}, false
+	}
+	return endpointLimit{target: ep.Address, limit: limit{
+		maxConcurrent: tl.MaxConcurrent,
+		minGap:        time.Duration(tl.MinIntervalMs) * time.Millisecond}}, true
 }
 
 // Track records an endpoint's target limit (nil: none). Endpoints reaching
@@ -104,13 +153,10 @@ func (l *Limiter) Track(ep *models.Endpoint) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	old, had := l.byEndpoint[ep.ID]
-	tl := ep.TargetLimit
-	if ep.Address == "" || tl == nil || (tl.MaxConcurrent <= 0 && tl.MinIntervalMs <= 0) {
-		delete(l.byEndpoint, ep.ID)
+	if e, ok := limitOf(ep); ok {
+		l.byEndpoint[ep.ID] = e
 	} else {
-		l.byEndpoint[ep.ID] = endpointLimit{target: ep.Address, limit: limit{
-			maxConcurrent: tl.MaxConcurrent,
-			minGap:        time.Duration(tl.MinIntervalMs) * time.Millisecond}}
+		delete(l.byEndpoint, ep.ID)
 	}
 	if had {
 		l.recompute(old.target)
@@ -194,16 +240,28 @@ func (l *Limiter) Admit(ep *models.Endpoint, now time.Time, budgeted bool) (
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	var pool *bucket
 	if budgeted && ep.PoolID != "" {
 		if b := l.pools[ep.PoolID]; b != nil {
 			b.refill(now)
 			if b.tokens <= 0 {
 				return false, "", time.Time{}, now.Add(time.Second), ReasonBudget
 			}
+			pool = b
+		}
+	}
+	// Reserve only once the poll is surely admitted: a target refusal
+	// below must not leave a reservation nobody settles.
+	reserve := func() {
+		if pool != nil {
+			n := l.lastPoints[ep.ID]
+			pool.tokens -= float64(n)
+			l.reserved[ep.ID] += n
 		}
 	}
 	lim, limited := l.limits[ep.Address]
 	if !limited || ep.Address == "" {
+		reserve()
 		return true, "", now, time.Time{}, ReasonNone
 	}
 	t := l.targets[ep.Address]
@@ -223,6 +281,7 @@ func (l *Limiter) Admit(ep *models.Endpoint, now time.Time, budgeted bool) (
 	}
 	t.inflight++
 	t.nextStart = start.Add(lim.minGap)
+	reserve()
 	return true, ep.Address, start, time.Time{}, ReasonNone
 }
 
@@ -238,16 +297,24 @@ func (l *Limiter) Done(key string) {
 	}
 }
 
-// Charge settles a finished poll's real cost against its pool's balance.
-func (l *Limiter) Charge(pool string, points int, now time.Time) {
-	if l == nil || pool == "" || points <= 0 {
+// Charge settles a finished poll against its pool's balance: its real cost
+// less what admission reserved for it, and remembers the cost as the next
+// poll's reservation. A failed poll is charged 0 and refunds its
+// reservation - it put next to nothing on the network.
+func (l *Limiter) Charge(ep *models.Endpoint, points int, now time.Time) {
+	if l == nil || ep == nil {
 		return
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if b := l.pools[pool]; b != nil {
+	held := l.reserved[ep.ID]
+	delete(l.reserved, ep.ID)
+	if points > 0 {
+		l.lastPoints[ep.ID] = points
+	}
+	if b := l.pools[ep.PoolID]; ep.PoolID != "" && b != nil {
 		b.refill(now)
-		b.tokens -= float64(points)
+		b.tokens -= float64(points - held)
 	}
 }
 

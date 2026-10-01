@@ -180,6 +180,7 @@ async def _pools(session: AsyncSession) -> list[rules.Pool]:
     """
     rows = (await session.execute(text("""
         SELECT p.id, p.name, p.min_members, p.rate_budget_points_per_s,
+               extract(epoch FROM clock_timestamp() - p.updated_at) AS settings_age_s,
                count(ci.id) FILTER (
                    WHERE ci.state = 'active'
                      AND ci.last_heartbeat IS NOT NULL
@@ -201,7 +202,7 @@ async def _pools(session: AsyncSession) -> list[rules.Pool]:
                ) AS points_per_s
           FROM collector_pool p
           LEFT JOIN collector_instance ci ON ci.pool_id = p.id
-         GROUP BY p.id, p.name, p.min_members, p.rate_budget_points_per_s
+         GROUP BY p.id, p.name, p.min_members, p.rate_budget_points_per_s, p.updated_at
     """), {"stale_s": rules.COLLECTOR_STALE_S})).mappings().all()
     return [rules.Pool(pool_id=str(r["id"]), name=r["name"],
                        min_members=int(r["min_members"]),
@@ -210,7 +211,9 @@ async def _pools(session: AsyncSession) -> list[rules.Pool]:
                            float(r["rate_budget_points_per_s"])
                            if r["rate_budget_points_per_s"] else None),
                        points_per_s=(float(r["points_per_s"])
-                                     if r["points_per_s"] is not None else None))
+                                     if r["points_per_s"] is not None else None),
+                       settings_age_s=(float(r["settings_age_s"])
+                                       if r["settings_age_s"] is not None else None))
            for r in rows]
 
 

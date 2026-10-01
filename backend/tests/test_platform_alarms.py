@@ -497,6 +497,17 @@ def test_a_pool_held_at_its_budget_is_a_warning_not_a_failure_to_enforce():
     assert found[0].severity == p.WARNING and "decides how fresh" in found[0].message
 
 
+def test_a_budget_just_set_below_the_load_is_settling_not_unenforced():
+    """The live run: a MAJOR at 229% twenty seconds after the budget was set,
+    from an average that still held the load from before it."""
+    found = p.evaluate(sig(pools=[pool(rate_budget_points_per_s=40.0, points_per_s=92.0,
+                                       settings_age_s=20.0)]))
+    assert found[0].severity == p.WARNING and "still includes" in found[0].message
+    later = p.evaluate(sig(pools=[pool(rate_budget_points_per_s=40.0, points_per_s=92.0,
+                                       settings_age_s=p.BUDGET_SETTLE_S + 1)]))
+    assert later[0].severity == p.MAJOR and "not enforcing" in later[0].message
+
+
 def test_no_budget_or_no_measurement_means_no_budget_alarm():
     assert p.evaluate(sig(pools=[pool(points_per_s=9999.0)])) == []
     assert p.evaluate(sig(pools=[pool(rate_budget_points_per_s=10.0)])) == []

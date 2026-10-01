@@ -87,7 +87,7 @@ func TestAPoolOverBudgetIsDeferredAndLivenessIsNot(t *testing.T) {
 	lim := throttle.New()
 	now := time.Now().Add(2 * time.Hour)
 	lim.SetBudgets(map[string]float64{"bms": 10})
-	lim.Charge("bms", 1000, now) // deep in debt
+	lim.Charge(&models.Endpoint{ID: "x", PoolID: "bms"}, 1000, now) // deep in debt
 	run := func(ctx context.Context, ep *models.Endpoint) {}
 	polls := New(Options{Workers: 1, Limiter: lim, Budgeted: true}, run, quietLog(), obs.NewMetrics())
 	probes := New(Options{Workers: 1, Limiter: lim}, run, quietLog(), obs.NewMetrics())

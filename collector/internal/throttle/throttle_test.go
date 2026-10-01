@@ -1,6 +1,7 @@
 package throttle
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -105,7 +106,7 @@ func TestAPoolBudgetIsSettledOnRealPointsAndRefills(t *testing.T) {
 	if ok, _, _, _, _ := l.Admit(e, t0, true); !ok {
 		t.Fatal("a fresh budget refused")
 	}
-	l.Charge("p", 800, t0) // a big walk: 300 in debt
+	l.Charge(e, 800, t0) // a big walk: 300 in debt
 	if ok, _, _, _, why := l.Admit(e, t0, true); ok || why != ReasonBudget {
 		t.Fatal("a pool in debt admitted another poll")
 	}
@@ -123,14 +124,72 @@ func TestAPoolBudgetIsSettledOnRealPointsAndRefills(t *testing.T) {
 func TestABudgetChangeKeepsTheBalanceAndRemovalLiftsIt(t *testing.T) {
 	l := New()
 	l.SetBudgets(map[string]float64{"p": 10})
-	l.Charge("p", 1000, t0)
-	l.SetBudgets(map[string]float64{"p": 20})
 	e := ep("e", "x", "p", nil)
+	l.Charge(e, 1000, t0)
+	l.SetBudgets(map[string]float64{"p": 20})
 	if ok, _, _, _, _ := l.Admit(e, t0, true); ok {
 		t.Fatal("a refresh wiped the debt - a free burst at the supervisor")
 	}
 	l.SetBudgets(map[string]float64{})
 	if ok, _, _, _, _ := l.Admit(e, t0, true); !ok {
 		t.Fatal("a pool with no budget is still throttled")
+	}
+}
+
+func TestAdmissionReservesTheLastCostSoOneTickCannotOvershoot(t *testing.T) {
+	l := New()
+	l.SetBudgets(map[string]float64{"p": 20})
+	eps := make([]*models.Endpoint, 5)
+	for i := range eps {
+		eps[i] = ep(fmt.Sprintf("e%d", i), "x", "p", nil)
+		l.Charge(eps[i], 40, t0) // learn: each poll costs 40; 100 banked - 200 = -100
+	}
+	now := t0.Add(6 * time.Second) // +120: a balance of 20
+	admitted := 0
+	for _, e := range eps {
+		if ok, _, _, _, _ := l.Admit(e, now, true); ok {
+			admitted++
+		}
+	}
+	if admitted != 1 {
+		t.Fatalf("%d of five 40-point polls admitted on a 20-point balance, want 1", admitted)
+	}
+}
+
+func TestSettlingRefundsTheReservationOfAFailedPoll(t *testing.T) {
+	l := New()
+	l.SetBudgets(map[string]float64{"p": 10}) // 50 banked
+	e := ep("e", "x", "p", nil)
+	l.Charge(e, 40, t0)                              // learned 40; balance 10
+	if ok, _, _, _, _ := l.Admit(e, t0, true); !ok { // reserves 40: -30
+		t.Fatal("refused on a positive balance")
+	}
+	l.Charge(e, 0, t0) // it failed: refund 40, balance 10
+	if ok, _, _, _, _ := l.Admit(e, t0, true); !ok {
+		t.Fatal("a failed poll's reservation was never refunded")
+	}
+}
+
+func TestSyncPicksUpALimitChangeNoDiffReported(t *testing.T) {
+	l := New()
+	l.Sync([]*models.Endpoint{ep("a", "gw", "", nil), ep("b", "gw", "", nil)})
+	if l.Targets() != 0 {
+		t.Fatal("no limits yet")
+	}
+	// The pool gained a limit: same endpoints, same everything else.
+	lim := &models.TargetLimit{MaxConcurrent: 1}
+	a2, b2 := ep("a", "gw", "", lim), ep("b", "gw", "", lim)
+	l.Sync([]*models.Endpoint{a2, b2})
+	ok, key, _, _, _ := l.Admit(a2, t0, false)
+	if !ok || key == "" {
+		t.Fatal("first refused")
+	}
+	if ok, _, _, _, _ := l.Admit(b2, t0, false); ok {
+		t.Fatal("the synced limit was not applied")
+	}
+	l.Done(key)
+	l.Sync([]*models.Endpoint{ep("a", "gw", "", nil)})
+	if l.Targets() != 0 {
+		t.Fatal("a limit removed from the pool was kept")
 	}
 }
