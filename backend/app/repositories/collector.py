@@ -523,6 +523,22 @@ HEALTHY_SINCE_ON_HEARTBEAT = """CASE
             END"""
 
 
+#: When a heartbeat proves a SECOND live process under this collector's
+#: identity. One process's started_at only ever moves forward - a restart,
+#: an upgrade's re-exec - so a heartbeat whose started_at is OLDER than the
+#: stored one came from another process that is still running. Found live: a
+#: hand-started test collector outlived a stack restart, two processes ran as
+#: col-dc1-bms for a quarter of an hour, double-polled 95 endpoints, fought
+#: over its trap and health ports, and nothing anywhere said so.
+DUPLICATE_SEEN_ON_HEARTBEAT = """CASE
+                WHEN collector_instance.started_at IS NOT NULL
+                     AND EXCLUDED.started_at IS NOT NULL
+                     AND EXCLUDED.started_at < collector_instance.started_at - interval '1 second'
+                  THEN to_jsonb(clock_timestamp())
+                ELSE COALESCE(collector_instance.stats->'duplicate_seen_at', 'null'::jsonb)
+            END"""
+
+
 async def upsert_heartbeat(session: AsyncSession, hb: dict[str, Any]) -> None:
     """The HTTP-fallback heartbeat (a gateway-transport collector). Keeps the
     same three facts the Redis path keeps, which it did not: started_at (so a
@@ -549,5 +565,7 @@ async def upsert_heartbeat(session: AsyncSession, hb: dict[str, Any]) -> None:
             endpoints_owned = EXCLUDED.endpoints_owned,
             endpoints_online = EXCLUDED.endpoints_online,
             status = 'HEALTHY',
-            stats = EXCLUDED.stats
-    """.replace("__HEALTHY_SINCE__", HEALTHY_SINCE_ON_HEARTBEAT)), hb)
+            stats = EXCLUDED.stats || jsonb_build_object(
+                'duplicate_seen_at', __DUPLICATE_SEEN__)
+    """.replace("__HEALTHY_SINCE__", HEALTHY_SINCE_ON_HEARTBEAT)
+       .replace("__DUPLICATE_SEEN__", DUPLICATE_SEEN_ON_HEARTBEAT)), hb)

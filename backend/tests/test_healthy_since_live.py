@@ -148,3 +148,30 @@ async def test_the_http_fallback_heartbeat_keeps_started_at_and_the_streak(sessi
     first = row["healthy_since"]
     await fleet_repo.upsert_heartbeat(session, hb)
     assert await _healthy_since(session, cid) == first, "a prompt heartbeat continues it"
+
+
+async def test_a_heartbeat_from_an_older_process_marks_a_duplicate(session):
+    """Two live processes under one identity alternate heartbeats; the older
+    one's start time going BACKWARDS is impossible for a single process."""
+    import json
+    from datetime import datetime, timedelta
+
+    from app.alarms import platform_monitor as mon
+
+    cid = f"col-{uuid.uuid4().hex[:8]}"
+    await fleet_repo.create_collector(session, cid, None, "test")
+    now = datetime.now(UTC)
+    hb = {"id": cid, "version": "t", "hostname": "h", "endpoints_owned": 0,
+          "endpoints_online": 0, "stats": json.dumps({})}
+    await fleet_repo.upsert_heartbeat(session, {**hb, "started_at": now - timedelta(minutes=30)})
+    await fleet_repo.upsert_heartbeat(session, {**hb, "started_at": now})  # a restart: fine
+    seen = await session.scalar(text(
+        "SELECT stats->>'duplicate_seen_at' FROM collector_instance WHERE id = :id"), {"id": cid})
+    assert seen is None, "a start time moving forward is a restart, not a duplicate"
+
+    await fleet_repo.upsert_heartbeat(session, {**hb, "started_at": now - timedelta(minutes=30)})
+    seen = await session.scalar(text(
+        "SELECT stats->>'duplicate_seen_at' FROM collector_instance WHERE id = :id"), {"id": cid})
+    assert seen is not None
+    cols = {c.collector_id: c for c in await mon._collectors(session)}
+    assert cols[cid].duplicate_age_s is not None and cols[cid].duplicate_age_s < 60

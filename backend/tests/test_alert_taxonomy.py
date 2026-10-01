@@ -289,6 +289,7 @@ NON_TRAP_ALARM_TYPES = frozenset({
     "collector_capacity_high", "pool_rate_budget_exceeded",
     # docs/26 Phase 6 / Phase 7 (alarms/platform.py)
     "pool_below_min_members", "collector_outdated",
+    "collector_misconfigured", "collector_duplicate",
     # raised by discovery when what answers disagrees with inventory
     # (services/discovery_alarms.py)
     "discovery_unrecorded", "discovery_missing", "discovery_replaced",

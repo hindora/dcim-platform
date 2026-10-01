@@ -1071,6 +1071,7 @@ class IngestWorker:
                         -- the next restart. A new process starts from zero, so
                         -- across a restart any drops at all are new ones.
                         stats = EXCLUDED.stats || jsonb_build_object(
+                            'duplicate_seen_at', __DUPLICATE_SEEN__,
                             'publish_dropped_at',
                             CASE
                               WHEN EXCLUDED.started_at
@@ -1086,7 +1087,8 @@ class IngestWorker:
                               ELSE COALESCE(collector_instance.stats->'publish_dropped_at',
                                             'null'::jsonb)
                             END)
-                """.replace("__HEALTHY_SINCE__", collector_repo.HEALTHY_SINCE_ON_HEARTBEAT)), {
+                """.replace("__HEALTHY_SINCE__", collector_repo.HEALTHY_SINCE_ON_HEARTBEAT)
+                  .replace("__DUPLICATE_SEEN__", collector_repo.DUPLICATE_SEEN_ON_HEARTBEAT)), {
                     "id": hb.collector_id, "version": hb.version or None,
                     "hostname": hb.hostname or None,
                     "started_at": ts_to_dt(hb.started_at),

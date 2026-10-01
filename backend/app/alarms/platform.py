@@ -91,7 +91,14 @@ PLATFORM_ALARM_TYPES = (
     "collector_outdated",
     "collector_capacity_high",
     "pool_rate_budget_exceeded",
+    "collector_misconfigured",
+    "collector_duplicate",
 )
+
+#: A second process seen under one collector identity within this long is
+#: still running: duplicates alternate heartbeats, so a live pair re-marks
+#: it every twenty seconds or so.
+DUPLICATE_WINDOW_S = 300.0
 
 #: docs/26 Phase 5. SolarWinds warns at 85% of a poller's maximum polling
 #: rate and starts stretching intervals at 100%; Zabbix's stock template
@@ -175,6 +182,12 @@ class Collector:
     capacity_window_s: float = 0.0
     capacity_shed: int = 0
     capacity_late: int = 0
+    #: What the collector could not apply of its own configuration - a trap
+    #: or health port already in use, most often. Empty when clean.
+    config_error: str = ""
+    #: Seconds since a heartbeat proved a second live process under this
+    #: identity; None when never.
+    duplicate_age_s: float | None = None
 
 
 @dataclass
@@ -488,6 +501,32 @@ def evaluate(signals: Signals) -> list[Finding]:
                     f"far behind {signals.platform_version} to trust. It "
                     f"keeps collecting - this platform does not hard-block "
                     f"an old collector's data - but it needs upgrading soon")))
+
+        # Two processes under one identity: both poll everything the
+        # collector owns, so every counter-derived rate is wrong and every
+        # endpoint is polled twice. MAJOR - it is data corruption, not risk.
+        if c.duplicate_age_s is not None and c.duplicate_age_s < DUPLICATE_WINDOW_S:
+            out.append(Finding(
+                alarm_type="collector_duplicate", instance=c.collector_id,
+                severity=MAJOR,
+                message=(
+                    f"Two processes are running as collector {c.collector_id}: "
+                    f"its heartbeats come from two different start times. Both "
+                    f"poll everything it owns, so its endpoints are polled twice "
+                    f"and their rates are wrong. Stop the one that should not "
+                    f"be running")))
+
+        # Reported by the collector itself and stored, but raised by nothing
+        # until now - a trap listener that failed to bind ran silently with
+        # no traps.
+        if c.config_error:
+            out.append(Finding(
+                alarm_type="collector_misconfigured", instance=c.collector_id,
+                severity=WARNING,
+                message=(
+                    f"Collector {c.collector_id} could not apply part of its "
+                    f"configuration and is running without it: "
+                    f"{c.config_error[:240]}")))
 
         # docs/26 Phase 5: capacity. Shed polls are the unambiguous case -
         # the queue was full and the poll was never made - so they raise

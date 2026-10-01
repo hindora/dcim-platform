@@ -318,6 +318,10 @@ BY_ALARM_TYPE: dict[str, str] = {
     # was given, and a collector too far behind the platform's release. Both
     # say "our sight of the estate is at risk", not "a device failed".
     "pool_below_min_members": VISIBILITY,
+    # A collector running without part of its configuration (a listener
+    # that failed to bind), and two processes under one identity.
+    "collector_misconfigured": VISIBILITY,
+    "collector_duplicate": VISIBILITY,
     "collector_outdated": VISIBILITY,
     "assignment_stale": VISIBILITY,
     "ingest_lag_high": VISIBILITY,

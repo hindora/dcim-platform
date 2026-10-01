@@ -110,7 +110,10 @@ async def _collectors(session: AsyncSession) -> list[rules.Collector]:
                END AS heartbeat_age_s,
                extract(epoch FROM (clock_timestamp()
                    - (stats->>'publish_dropped_at')::timestamptz))
-                   AS dropped_age_s
+                   AS dropped_age_s,
+               extract(epoch FROM (clock_timestamp()
+                   - (stats->>'duplicate_seen_at')::timestamptz))
+                   AS duplicate_age_s
           FROM collector_instance
          WHERE state NOT IN ('decommissioned', 'pending')
     """))).mappings().all()
@@ -147,6 +150,9 @@ async def _collectors(session: AsyncSession) -> list[rules.Collector]:
             mapping_bundle_sha=str(stats.get("mapping_bundle_sha") or ""),
             version=str(r["version"] or ""),
             **_capacity_fields(stats.get("capacity")),
+            config_error=str(stats.get("config_error") or ""),
+            duplicate_age_s=(float(r["duplicate_age_s"])
+                             if r["duplicate_age_s"] is not None else None),
         ))
     return out
 

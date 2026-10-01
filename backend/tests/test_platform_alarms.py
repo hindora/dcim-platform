@@ -500,3 +500,28 @@ def test_capacity_alarm_types_are_classified():
               "pool_below_min_members", "collector_outdated"):
         assert t in p.PLATFORM_ALARM_TYPES
         assert tax.BY_ALARM_TYPE[t] == tax.VISIBILITY
+
+
+# --- duplicate identity and misconfiguration -----------------------------------
+
+def test_two_processes_under_one_identity_is_major():
+    c = p.Collector(collector_id="col-1", heartbeat_age_s=5.0, endpoints_owned=95,
+                    duplicate_age_s=20.0)
+    found = p.evaluate(sig(collectors=[c]))
+    assert types(found) == {"collector_duplicate"}
+    assert found[0].severity == p.MAJOR and "polled twice" in found[0].message
+
+
+def test_an_old_duplicate_sighting_has_aged_out():
+    c = p.Collector(collector_id="col-1", heartbeat_age_s=5.0, endpoints_owned=95,
+                    duplicate_age_s=p.DUPLICATE_WINDOW_S + 1)
+    assert p.evaluate(sig(collectors=[c])) == []
+
+
+def test_a_reported_config_error_is_raised_not_just_stored():
+    err = "trap listener on 0.0.0.0:11622: bind: address already in use"
+    c = p.Collector(collector_id="col-1", heartbeat_age_s=5.0, endpoints_owned=95,
+                    config_error=err)
+    found = p.evaluate(sig(collectors=[c]))
+    assert types(found) == {"collector_misconfigured"}
+    assert found[0].severity == p.WARNING and "address already in use" in found[0].message
