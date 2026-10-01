@@ -482,11 +482,19 @@ def test_a_pool_at_eighty_five_percent_of_budget_warns():
     assert found[0].severity == p.WARNING
 
 
-def test_a_pool_over_budget_is_major_and_says_nothing_throttles():
+def test_a_pool_over_budget_is_major_and_says_a_collector_is_not_enforcing():
     found = p.evaluate(sig(pools=[pool(rate_budget_points_per_s=400.0,
                                        points_per_s=520.0)]))
     assert found[0].severity == p.MAJOR
-    assert "nothing throttles" in found[0].message
+    assert "not enforcing" in found[0].message
+
+
+def test_a_pool_held_at_its_budget_is_a_warning_not_a_failure_to_enforce():
+    """Enforced, a pool sits at its budget with the token bucket's burst
+    averaging a little over it - that is the budget working."""
+    found = p.evaluate(sig(pools=[pool(rate_budget_points_per_s=400.0,
+                                       points_per_s=406.0)]))
+    assert found[0].severity == p.WARNING and "decides how fresh" in found[0].message
 
 
 def test_no_budget_or_no_measurement_means_no_budget_alarm():

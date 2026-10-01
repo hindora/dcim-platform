@@ -9,6 +9,7 @@ import {
   type PoolPlane,
   type PoolRow,
   type PoolsPage,
+  type TargetLimit,
 } from '../../api/client';
 import { oneLine, relativeTime } from '../../lib/format';
 import { Tip } from '../../components/HoverTip';
@@ -289,6 +290,40 @@ interface Form {
   ttl_s: string;
   rate_budget: string;
   min_members: string;
+  limits: Record<string, { mc: string; gap: string }>;
+}
+
+/** Polled protocols, in the order a BMS pool cares about them. */
+const LIMIT_PROTOCOLS = ['modbus', 'bacnet', 'snmp', 'redfish'] as const;
+
+function limitsOf(p: PoolRow): Form['limits'] {
+  const out: Form['limits'] = {};
+  for (const proto of LIMIT_PROTOCOLS) {
+    const l = p.target_limits?.[proto];
+    out[proto] = { mc: l?.max_concurrent == null ? '' : String(l.max_concurrent),
+                   gap: l?.min_interval_ms == null ? '' : String(l.min_interval_ms) };
+  }
+  return out;
+}
+
+/** The form's limits as the API takes them: protocols with nothing set are
+ *  left out, which is "no limit". */
+function limitsBody(form: Form): Record<string, TargetLimit> {
+  const out: Record<string, TargetLimit> = {};
+  for (const proto of LIMIT_PROTOCOLS) {
+    const { mc, gap } = form.limits[proto];
+    const l: TargetLimit = {};
+    if (mc.trim() !== '') l.max_concurrent = Number(mc);
+    if (gap.trim() !== '' && Number(gap) > 0) l.min_interval_ms = Number(gap);
+    if (Object.keys(l).length) out[proto] = l;
+  }
+  return out;
+}
+
+function sameLimits(a: Record<string, TargetLimit>, b: Record<string, TargetLimit>): boolean {
+  const norm = (x: Record<string, TargetLimit>) => JSON.stringify(
+    Object.keys(x).sort().map((k) => [k, x[k].max_concurrent ?? null, x[k].min_interval_ms ?? null]));
+  return norm(a) === norm(b);
 }
 
 function formOf(p: PoolRow): Form {
@@ -301,6 +336,7 @@ function formOf(p: PoolRow): Form {
     ttl_s: String(p.bbmd_settings?.ttl_s ?? 300),
     rate_budget: p.rate_budget_points_per_s == null ? '' : String(p.rate_budget_points_per_s),
     min_members: String(p.min_members),
+    limits: limitsOf(p),
   };
 }
 
@@ -325,6 +361,8 @@ function toPatch(form: Form, p: PoolRow): PoolBody {
   if (budget !== (p.rate_budget_points_per_s ?? null)) patch.rate_budget_points_per_s = budget;
   const mm = Number(form.min_members) || 1;
   if (mm !== p.min_members) patch.min_members = mm;
+  const limits = limitsBody(form);
+  if (!sameLimits(limits, p.target_limits ?? {})) patch.target_limits = limits;
   return patch;
 }
 
@@ -501,8 +539,9 @@ function ManageSheet({ row, onClose }: { row: PoolRow; onClose: () => void }) {
                        inputMode="numeric" className="mono" placeholder="unset" />
                 <em className="hint">
                   The load the target network agreed to take — a BMS supervisor's or
-                  gateway's ceiling, not the collector's. Measured against the points/s
-                  this pool's endpoints publish; alarms at 85%. Nothing throttles to it yet.
+                  gateway's ceiling, not the collector's. Each member holds to its share
+                  (by the endpoints it owns) by deferring polls, so the cycle stretches
+                  instead of the network being overdriven. Alarms at 85%.
                 </em>
               </label>
               <label>
@@ -514,6 +553,37 @@ function ManageSheet({ row, onClose }: { row: PoolRow; onClose: () => void }) {
                   fewer than this are healthy.
                 </em>
               </label>
+            </div>
+            <div style={{ marginTop: 12 }}>
+              <span>Per-address limits</span>
+              <em className="hint" style={{ display: 'block' }}>
+                How hard one address may be driven — every endpoint reaching it counts, so a
+                serial gateway's limit covers all its slaves. A Moxa MGate on one RS-485 line
+                wants 1 in flight; a small PDU or UPS card usually 1 with a gap. Empty is no
+                limit. An endpoint can override its pool on the device page.
+              </em>
+              <table style={{ marginTop: 6 }}>
+                <thead><tr><th>Protocol</th><th>In flight</th><th>Gap between starts (ms)</th></tr></thead>
+                <tbody>
+                  {LIMIT_PROTOCOLS.map((proto) => (
+                    <tr key={proto}>
+                      <td className="mono">{proto}</td>
+                      <td>
+                        <input value={form.limits[proto].mc} inputMode="numeric" className="mono"
+                               placeholder="any" style={{ width: 80 }}
+                               onChange={(e) => set('limits', { ...form.limits,
+                                 [proto]: { ...form.limits[proto], mc: e.target.value } })} />
+                      </td>
+                      <td>
+                        <input value={form.limits[proto].gap} inputMode="numeric" className="mono"
+                               placeholder="none" style={{ width: 100 }}
+                               onChange={(e) => set('limits', { ...form.limits,
+                                 [proto]: { ...form.limits[proto], gap: e.target.value } })} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
             <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
               <button className="primary" disabled={!dirty || save.isPending}

@@ -974,6 +974,10 @@ export interface CapacityProtocol {
   shed: number;
   overrun: number;
   late: number;
+  /** Deferred by a per-address limit / the pool budget (docs/26 Phase 9).
+   *  Absent from a collector built before enforcement. */
+  throttled_target?: number;
+  throttled_budget?: number;
 }
 
 /** A collector's poll-worker capacity over its trailing window, as it sent
@@ -988,6 +992,8 @@ export interface CollectorCapacity {
   shed: number;
   overrun: number;
   late: number;
+  throttled_target?: number;
+  throttled_budget?: number;
   queue_wait_avg_ms: number;
   protocols: Record<string, CapacityProtocol>;
   pools?: Record<string, { points_per_s: number }>;
@@ -1064,6 +1070,8 @@ export interface PoolRow {
   bbmd_settings: PoolBBMD;
   rate_budget_points_per_s?: number | null;
   min_members: number;
+  /** Per protocol: how hard one address may be driven (docs/26 Phase 9). */
+  target_limits?: Record<string, TargetLimit>;
   created_at?: string | null;
   updated_at?: string | null;
   members: PoolMember[];
@@ -1115,6 +1123,14 @@ export interface PoolBody {
   bbmd_settings?: PoolBBMD;
   rate_budget_points_per_s?: number | null;
   min_members?: number;
+  target_limits?: Record<string, TargetLimit>;
+}
+
+/** A per-address poll limit: polls in flight at once, and the minimum gap
+ *  between their starts. Either may be absent. */
+export interface TargetLimit {
+  max_concurrent?: number;
+  min_interval_ms?: number;
 }
 
 export interface FirewallRule {
@@ -1367,6 +1383,9 @@ export interface EndpointPatch {
   /** Override the pool this endpoint resolves into, or null to let the
    *  discovery range containing its address decide (docs/26 Phase 5). */
   pool_id?: string | null;
+  /** This endpoint's own per-address limit over its pool's default, or null
+   *  to let the pool decide (docs/26 Phase 9). */
+  target_limit?: TargetLimit | null;
 }
 
 export interface EndpointSummary {
@@ -1397,6 +1416,8 @@ export interface EndpointSummary {
    *  here (docs/26 Phase 5). */
   pool_id?: string | null;
   pool_name?: string | null;
+  /** Its own per-address limit; null means its pool's default applies. */
+  target_limit?: TargetLimit | null;
   poll_interval_s?: number | null;
   status: string;
   /** Every poll attempt. Fresh here with a stale last_success = polling and failing. */

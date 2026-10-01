@@ -56,7 +56,8 @@ def test_clean_create_requires_name_site_and_a_known_plane():
     out = svc.clean(_create(), partial=False)
     assert out == {"name": "DC1/BMS", "datacenter_id": "dc-1", "plane": "bms",
                    "cidrs": [], "trap_vip": None, "bbmd_settings": {},
-                   "rate_budget_points_per_s": None, "min_members": 1}
+                   "rate_budget_points_per_s": None, "min_members": 1,
+                   "target_limits": {}}
     with pytest.raises(svc.PoolError):
         svc.clean(_create(name="  "), partial=False)
     with pytest.raises(svc.PoolError):
@@ -264,3 +265,13 @@ def test_aggregate_carries_measured_load_against_the_budget():
 def test_a_measured_pool_with_no_budget_has_load_but_no_share():
     out = svc.aggregate([_pool("p1")], [], [], [], {}, {"p1": 12.0})["pools"][0]
     assert out["points_per_s"] == 12.0 and out["budget_used_pct"] is None
+
+
+def test_clean_validates_target_limits_and_refuses_one_it_cannot_apply():
+    out = svc.clean({"target_limits": {"modbus": {"max_concurrent": 1,
+                                                  "min_interval_ms": 150}}}, partial=True)
+    assert out == {"target_limits": {"modbus": {"max_concurrent": 1, "min_interval_ms": 150}}}
+    with pytest.raises(svc.PoolError, match="max_concurrent"):
+        svc.clean({"target_limits": {"modbus": {"max_concurrent": 0}}}, partial=True)
+    with pytest.raises(svc.PoolError, match="not a polled protocol"):
+        svc.clean({"target_limits": {"gnmi": {"max_concurrent": 1}}}, partial=True)

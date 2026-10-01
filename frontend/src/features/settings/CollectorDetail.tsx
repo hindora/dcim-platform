@@ -256,6 +256,17 @@ function Capacity({ d }: { d: Detail }) {
               · queue wait {num(c.queue_wait_avg_ms, 1)} ms
             </span>
           </p>
+          {((c.throttled_target ?? 0) > 0 || (c.throttled_budget ?? 0) > 0) && (
+            <p className="muted">
+              <Tip tip={oneLine(`Polls the facility's limits held back on purpose: a
+                      per-address limit (in flight, gap between starts) or the pool's
+                      rate budget. Their cycle stretched instead of the device being
+                      overdriven - not a capacity problem of this collector's.`)}>
+                Deferred by limits: {c.throttled_target ?? 0} per-address ·{' '}
+                {c.throttled_budget ?? 0} pool budget
+              </Tip>
+            </p>
+          )}
           {(c.shed > 0 || c.late > 0 || c.overrun > 0) && (
             <p className="muted">
               {c.shed > 0 && <span className="critical">{c.shed} shed (never made) · </span>}
@@ -286,6 +297,12 @@ function Capacity({ d }: { d: Detail }) {
                             limit is the ceiling, not the worker pool.`)}>Slot wait</Tip>
                   </th>
                   <th className="num">Limit</th>
+                  <th className="num">
+                    <Tip tip={oneLine(`Polls deferred by a per-address limit or the
+                            pool budget in this window, each counted once per cycle.`)}>
+                      Deferred
+                    </Tip>
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -301,6 +318,9 @@ function Capacity({ d }: { d: Detail }) {
                       {p.sem_wait_pct.toFixed(0)}%
                     </td>
                     <td className="num muted">{p.limit || 'pool'}</td>
+                    <td className="num">
+                      {(p.throttled_target ?? 0) + (p.throttled_budget ?? 0) || '—'}
+                    </td>
                   </tr>
                 ))}
               </tbody>

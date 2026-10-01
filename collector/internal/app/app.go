@@ -33,6 +33,7 @@ import (
 	"github.com/hari/dcim-platform/collector/internal/sched"
 	"github.com/hari/dcim-platform/collector/internal/sealedbox"
 	"github.com/hari/dcim-platform/collector/internal/spool"
+	"github.com/hari/dcim-platform/collector/internal/throttle"
 	"github.com/hari/dcim-platform/collector/internal/vault"
 	"github.com/hari/dcim-platform/collector/pkg/models"
 )
@@ -114,6 +115,10 @@ type App struct {
 	// and the trailing window the heartbeat reports over.
 	points   *capacity.Points
 	capTrack capacity.Tracker
+	// The facility's limits (internal/throttle), shared by the poll and
+	// liveness schedulers: a probe and a poll at one gateway are two
+	// requests to one device.
+	limiter *throttle.Limiter
 
 	// Where mapping data came from and its fingerprint - reported in every
 	// heartbeat so the platform can catch a collector running data it does
@@ -326,7 +331,10 @@ func New(cfg *config.Config, version string, tlsStore *mtls.Store) (*App, error)
 	}
 
 	a.points = capacity.NewPoints()
+	a.limiter = throttle.New()
 	a.sched = sched.New(sched.Options{
+		Limiter:   a.limiter,
+		Budgeted:  true,
 		Workers:   cfg.Workers.PoolSize,
 		QueueSize: cfg.Workers.PoolSize * cfg.Workers.QueueMultiplier,
 		ProtoLimits: map[string]int{
@@ -361,6 +369,7 @@ func New(cfg *config.Config, version string, tlsStore *mtls.Store) (*App, error)
 		// the exact wait it exists to avoid. Per-host 1: two probes at one
 		// agent at once would only measure each other.
 		a.avail = sched.New(sched.Options{
+			Limiter:   a.limiter,
 			Workers:   16,
 			QueueSize: 16 * 64,
 			ProtoLimits: map[string]int{
@@ -621,6 +630,7 @@ func (a *App) poll(ctx context.Context, ep *models.Endpoint) {
 	}
 	a.pollsOK.Add(1)
 	a.points.Add(ep.Protocol, ep.PoolID, len(outcome.Samples))
+	a.limiter.Charge(ep.PoolID, len(outcome.Samples), time.Now())
 	a.mets.PollsTotal.WithLabelValues(ep.Protocol, ep.DeviceType, result).Inc()
 	for _, miss := range outcome.Misses {
 		a.mets.MissesTotal.WithLabelValues(ep.Protocol, miss.Reason).Inc()
@@ -694,6 +704,20 @@ func (a *App) refreshResolver() {
 	// Pool settings ride the same refresh: a BBMD added to a pool in the UI
 	// is registered with on the next fetch, with nothing restarted.
 	a.reconcileFDR()
+	a.limiter.SetBudgets(budgetShares(a.assign.Pools()))
+}
+
+// budgetShares is this collector's slice of each pool's budget, as the
+// platform computed it from what it owns. A pool the platform sent no share
+// for has no budget here.
+func budgetShares(pools map[string]assign.Pool) map[string]float64 {
+	out := make(map[string]float64, len(pools))
+	for id, p := range pools {
+		if p.RateBudgetShare != nil && *p.RateBudgetShare > 0 {
+			out[id] = *p.RateBudgetShare
+		}
+	}
+	return out
 }
 
 // startupSpreadFor is how long after start an assignment counts as the
@@ -743,6 +767,7 @@ func (a *App) applyDiff(diff assign.Diff) {
 			continue
 		}
 		a.tracker.Register(ep)
+		a.limiter.Track(ep)
 		if handoff {
 			a.sched.AddSoon(ep, soon)
 		} else {
@@ -759,10 +784,12 @@ func (a *App) applyDiff(diff assign.Diff) {
 			}
 			continue
 		}
+		a.limiter.Track(ep)
 		a.sched.Add(ep)
 		a.watchAvailability(ep)
 	}
 	for _, ep := range diff.Removed {
+		a.limiter.Forget(ep.ID)
 		a.sched.Remove(ep.ID)
 		if a.avail != nil {
 			a.avail.Remove(ep.ID)

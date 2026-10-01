@@ -114,10 +114,16 @@ CAPACITY_MAJOR_PCT = 95.0
 CAPACITY_MIN_WINDOW_S = 60.0
 
 #: A pool's rate budget is the load the target network agreed to take - the
-#: BMS supervisor's or serial gateway's ceiling, not the collector's. Warn
-#: at the same fraction; at 100% it is being exceeded, and nothing throttles
-#: to it yet (per-target enforcement is Phase 9).
+#: BMS supervisor's or serial gateway's ceiling, not the collector's. Each
+#: collector enforces its share of it by deferring polls (collector
+#: internal/throttle), so from the warning fraction up the budget, not the
+#: poll profile, is what decides how fresh the pool's data is; past 100%
+#: some collector is not enforcing it at all.
 BUDGET_WARN_FRACTION = 0.85
+#: Not 1.0: a pool held to its budget averages up to about 2% over it in
+#: the 5-minute window, because a quiet spell may bank 5 s of rate as a
+#: burst. "Not enforcing" must not fire on a pool that is.
+BUDGET_OVER_FRACTION = 1.05
 
 #: An Atlassian Cloud API token expires within a year of being minted, and the
 #: whole pre-December-2024 generation was force-expired in spring 2026. A
@@ -594,7 +600,7 @@ def evaluate(signals: Signals) -> list[Finding]:
             continue
         fraction = pool.points_per_s / budget
         if fraction >= BUDGET_WARN_FRACTION:
-            over = fraction >= 1.0
+            over = fraction >= BUDGET_OVER_FRACTION
             out.append(Finding(
                 alarm_type="pool_rate_budget_exceeded", instance=pool.pool_id,
                 severity=MAJOR if over else WARNING,
@@ -604,11 +610,15 @@ def evaluate(signals: Signals) -> list[Finding]:
                     f"points/s against a rate budget of {budget:.0f} "
                     f"({fraction * 100:.0f}%). "
                     + ("The target network is getting more than it agreed "
-                       "to take, and nothing throttles to the budget yet - "
-                       "lengthen the poll intervals or split the load."
+                       "to take. Collectors hold the pool to its budget, so "
+                       "one is not enforcing it - most likely a collector "
+                       "built before enforcement; check the Releases page."
                        if over else
-                       "Adding devices or shortening intervals will take "
-                       "it over."))))
+                       "Collectors hold the pool to its budget by deferring "
+                       "polls, so at this level the budget, not the poll "
+                       "intervals, decides how fresh this pool's data is. "
+                       "Raise the budget if the network can take it, or "
+                       "lengthen the intervals."))))
 
     # --- database -------------------------------------------------------------
     if signals.db_pool_saturated_for_s >= DB_POOL_SATURATED_S:

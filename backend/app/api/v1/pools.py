@@ -40,6 +40,8 @@ class CreateBody(BaseModel):
     bbmd_settings: dict[str, Any] = Field(default_factory=dict)
     rate_budget_points_per_s: int | None = None
     min_members: int = Field(1, ge=1)
+    #: Per protocol: {"max_concurrent"?, "min_interval_ms"?} at each address.
+    target_limits: dict[str, Any] = Field(default_factory=dict)
 
 
 class PatchBody(BaseModel):
@@ -54,6 +56,7 @@ class PatchBody(BaseModel):
     bbmd_settings: dict[str, Any] | None = None
     rate_budget_points_per_s: int | None = None
     min_members: int | None = Field(None, ge=1)
+    target_limits: dict[str, Any] | None = None
 
 
 def _http(exc: service.PoolError) -> HTTPException:
@@ -100,7 +103,7 @@ async def create_pool(
                        after={k: pool[k] for k in ("name", "datacenter_id", "plane",
                                                     "cidrs", "trap_vip", "bbmd_settings",
                                                     "rate_budget_points_per_s",
-                                                    "min_members")})
+                                                    "min_members", "target_limits")})
     await session.commit()
     log.info("pool created", pool_id=pool["id"], name=pool["name"],
              site=pool["site"], plane=pool["plane"], actor=principal.username)

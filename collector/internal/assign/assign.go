@@ -60,6 +60,11 @@ type Pool struct {
 	BBMD    BBMD   `json:"bbmd"`
 	// nil when an operator has not sized the pool - no budget, no alarm.
 	RateBudgetPointsPerS *int `json:"rate_budget_points_per_s"`
+	// This collector's slice of that budget, which it enforces: the budget
+	// times its share of the pool's endpoints, computed by the platform from
+	// ownership. A failover's survivor owns them all, so gets it all. nil
+	// with no budget, or from a platform that predates enforcement.
+	RateBudgetShare *float64 `json:"rate_budget_share_points_per_s"`
 }
 
 // Diff is what changed between two assignments.

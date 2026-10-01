@@ -345,6 +345,9 @@ class EndpointPatch(BaseModel):
     #: a device whose address sits in one range but is reached via another
     #: plane. Null clears the override and the containing range decides.
     pool_id: str | None = None
+    #: This endpoint's own per-address limit - {"max_concurrent"?,
+    #: "min_interval_ms"?} - over its pool's default. Null clears it.
+    target_limit: dict[str, Any] | None = None
 
 
 @router.get("/{device_id}/endpoints", response_model=list[EndpointSummary],

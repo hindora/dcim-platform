@@ -10,6 +10,7 @@ import {
   type EndpointPatch,
   type EndpointSummary,
   type PoolsPage,
+  type TargetLimit,
 } from '../../api/client';
 import { Tip } from '../../components/HoverTip';
 
@@ -60,6 +61,10 @@ export function EndpointEditor({
     admin_state: endpoint.admin_state,
     collector_id: endpoint.pinned_collector ?? '',
     pool_id: endpoint.pool_id ?? '',
+    limit_mc: endpoint.target_limit?.max_concurrent == null
+      ? '' : String(endpoint.target_limit.max_concurrent),
+    limit_gap: endpoint.target_limit?.min_interval_ms == null
+      ? '' : String(endpoint.target_limit.min_interval_ms),
   }));
 
   // Only used to populate the pin picker. The field itself is hidden on a
@@ -285,6 +290,28 @@ export function EndpointEditor({
               </label>
             )}
 
+            {!isTrap && (
+              <label>
+                <span>Address limit</span>
+                <span style={{ display: 'flex', gap: 8 }}>
+                  <input value={form.limit_mc} inputMode="numeric" className="mono"
+                         placeholder="pool default" aria-label="Polls in flight"
+                         onChange={(e) => set('limit_mc', e.target.value)} />
+                  <input value={form.limit_gap} inputMode="numeric" className="mono"
+                         placeholder="pool default" aria-label="Gap between starts (ms)"
+                         onChange={(e) => set('limit_gap', e.target.value)} />
+                </span>
+                <em className={errors.limit ? 'hint bad' : 'hint'}>
+                  {errors.limit ?? <>
+                  Polls in flight at once, and the gap in ms between their starts, at this
+                  address — over the pool's default for {endpoint.protocol}. For the odd
+                  device on the network: a legacy card that wants one request at a time.
+                  Every endpoint at the same address shares it; the strictest wins.
+                  </>}
+                </em>
+              </label>
+            )}
+
             {pinnable.length > 1 && (
               <label>
                 <span>Collector</span>
@@ -341,6 +368,7 @@ type Form = {
   address: string; port: string; addressing: AddressingValues;
   credential_id: string; poll_profile_id: string; admin_state: string;
   collector_id: string; pool_id: string;
+  limit_mc: string; limit_gap: string;
 };
 
 /** Client-side check against the same ranges the server rejects with, so a
@@ -364,6 +392,16 @@ function validate(form: Form, fields: Record<string, AddressingField>) {
     const p = Number(form.port);
     if (!Number.isInteger(p) || p < 1 || p > 65535)
       errors.port = 'Port must be between 1 and 65535';
+  }
+  if (form.limit_mc !== '') {
+    const n = Number(form.limit_mc);
+    if (!Number.isInteger(n) || n < 1 || n > 64)
+      errors.limit = 'Polls in flight must be a whole number from 1 to 64';
+  }
+  if (form.limit_gap !== '') {
+    const n = Number(form.limit_gap);
+    if (!Number.isInteger(n) || n < 0 || n > 60000)
+      errors.limit = 'The gap must be a whole number of ms from 0 to 60000';
   }
   return errors;
 }
@@ -417,6 +455,18 @@ function diff(current: EndpointSummary, form: Form,
   if (pin !== (current.pinned_collector ?? null)) patch.collector_id = pin;
   const pool = form.pool_id || null;
   if (pool !== (current.pool_id ?? null)) patch.pool_id = pool;
+
+  const limit: TargetLimit = {};
+  if (form.limit_mc.trim() !== '') limit.max_concurrent = Number(form.limit_mc);
+  if (form.limit_gap.trim() !== '' && Number(form.limit_gap) > 0) {
+    limit.min_interval_ms = Number(form.limit_gap);
+  }
+  const want = Object.keys(limit).length ? limit : null;
+  const have = current.target_limit ?? null;
+  if ((want?.max_concurrent ?? null) !== (have?.max_concurrent ?? null)
+      || (want?.min_interval_ms ?? null) !== (have?.min_interval_ms ?? null)) {
+    patch.target_limit = want;
+  }
 
   return patch;
 }

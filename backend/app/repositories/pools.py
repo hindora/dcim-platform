@@ -41,6 +41,7 @@ _SELECT = """
            dc.code AS site, dc.name AS site_name, cp.plane,
            cp.cidrs::text[] AS cidrs, host(cp.trap_vip) AS trap_vip,
            cp.bbmd_settings, cp.rate_budget_points_per_s, cp.min_members,
+           cp.target_limits,
            cp.created_at, cp.updated_at
       FROM collector_pool cp
       JOIN datacenter dc ON dc.id = cp.datacenter_id
@@ -51,6 +52,7 @@ def _row(r: Any) -> dict[str, Any]:
     d = dict(r)
     d["cidrs"] = list(d.get("cidrs") or [])
     d["bbmd_settings"] = dict(d.get("bbmd_settings") or {})
+    d["target_limits"] = dict(d.get("target_limits") or {})
     return d
 
 
@@ -84,11 +86,11 @@ async def create_pool(session: AsyncSession, values: dict[str, Any]) -> str:
     return await session.scalar(text("""
         INSERT INTO collector_pool (name, datacenter_id, plane, cidrs, trap_vip,
                                     bbmd_settings, rate_budget_points_per_s,
-                                    min_members)
+                                    min_members, target_limits)
         VALUES (:name, CAST(:datacenter_id AS uuid), :plane,
                 CAST(:cidrs AS text[])::cidr[], CAST(:trap_vip AS inet),
                 CAST(:bbmd_settings AS jsonb), :rate_budget_points_per_s,
-                :min_members)
+                :min_members, CAST(:target_limits AS jsonb))
         RETURNING id::text
     """), {
         "name": values["name"],
@@ -99,6 +101,7 @@ async def create_pool(session: AsyncSession, values: dict[str, Any]) -> str:
         "bbmd_settings": json.dumps(values.get("bbmd_settings") or {}),
         "rate_budget_points_per_s": values.get("rate_budget_points_per_s"),
         "min_members": int(values.get("min_members") or 1),
+        "target_limits": json.dumps(values.get("target_limits") or {}),
     })
 
 
@@ -112,6 +115,7 @@ _EDITABLE = {
     "bbmd_settings":            "bbmd_settings = CAST(:bbmd_settings AS jsonb)",
     "rate_budget_points_per_s": "rate_budget_points_per_s = :rate_budget_points_per_s",
     "min_members":              "min_members = :min_members",
+    "target_limits":            "target_limits = CAST(:target_limits AS jsonb)",
 }
 
 
@@ -125,6 +129,8 @@ async def update_pool(session: AsyncSession, pool_id: str,
         params["cidrs"] = list(params["cidrs"] or [])
     if "bbmd_settings" in params:
         params["bbmd_settings"] = json.dumps(params["bbmd_settings"] or {})
+    if "target_limits" in params:
+        params["target_limits"] = json.dumps(params["target_limits"] or {})
     await session.execute(text(f"""
         UPDATE collector_pool SET {sets}, updated_at = now()
          WHERE id = CAST(:id AS uuid)

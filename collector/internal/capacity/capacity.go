@@ -125,16 +125,21 @@ type Report struct {
 	Workers int     `json:"workers"`
 	// Worker time held over worker time available. The number the 85% line
 	// is drawn on.
-	BusyPct        float64                `json:"busy_pct"`
-	ScheduledPerS  float64                `json:"scheduled_polls_per_s"`
-	PollsPerS      float64                `json:"polls_per_s"`
-	PointsPerS     float64                `json:"points_per_s"`
-	Shed           uint64                 `json:"shed"`
-	Overrun        uint64                 `json:"overrun"`
-	Late           uint64                 `json:"late"`
-	QueueWaitAvgMs float64                `json:"queue_wait_avg_ms"`
-	Protocols      map[string]ProtoReport `json:"protocols"`
-	Pools          map[string]PoolReport  `json:"pools,omitempty"`
+	BusyPct       float64 `json:"busy_pct"`
+	ScheduledPerS float64 `json:"scheduled_polls_per_s"`
+	PollsPerS     float64 `json:"polls_per_s"`
+	PointsPerS    float64 `json:"points_per_s"`
+	Shed          uint64  `json:"shed"`
+	Overrun       uint64  `json:"overrun"`
+	Late          uint64  `json:"late"`
+	// Polls the facility's limits deferred (internal/throttle): held back
+	// on purpose, so the cycle stretches. Not a capacity problem of this
+	// collector's - a sign the target or the budget is the ceiling.
+	ThrottledTarget uint64                 `json:"throttled_target"`
+	ThrottledBudget uint64                 `json:"throttled_budget"`
+	QueueWaitAvgMs  float64                `json:"queue_wait_avg_ms"`
+	Protocols       map[string]ProtoReport `json:"protocols"`
+	Pools           map[string]PoolReport  `json:"pools,omitempty"`
 }
 
 type ProtoReport struct {
@@ -149,10 +154,12 @@ type ProtoReport struct {
 	CostSPerPoll float64 `json:"cost_s_per_poll"`
 	// Share of this protocol's worker time spent waiting for a protocol or
 	// per-host slot. High means raise the limit, not the pool.
-	SemWaitPct float64 `json:"sem_wait_pct"`
-	Shed       uint64  `json:"shed"`
-	Overrun    uint64  `json:"overrun"`
-	Late       uint64  `json:"late"`
+	SemWaitPct      float64 `json:"sem_wait_pct"`
+	Shed            uint64  `json:"shed"`
+	Overrun         uint64  `json:"overrun"`
+	Late            uint64  `json:"late"`
+	ThrottledTarget uint64  `json:"throttled_target"`
+	ThrottledBudget uint64  `json:"throttled_budget"`
 }
 
 type PoolReport struct {
@@ -176,7 +183,9 @@ func Build(old, cur Reading) *Report {
 		pr := ProtoReport{Jobs: c.Jobs, Limit: c.Limit,
 			ScheduledPerS: round(c.Scheduled, 3),
 			Shed:          sub(c.Shed, o.Shed), Overrun: sub(c.Overrun, o.Overrun),
-			Late: sub(c.Late, o.Late)}
+			Late:            sub(c.Late, o.Late),
+			ThrottledTarget: sub(c.ThrottledTarget, o.ThrottledTarget),
+			ThrottledBudget: sub(c.ThrottledBudget, o.ThrottledBudget)}
 		done := sub(c.Completed, o.Completed)
 		busy := sub(c.BusyNs, o.BusyNs)
 		semw := sub(c.SemWaitNs, o.SemWaitNs)
@@ -201,6 +210,8 @@ func Build(old, cur Reading) *Report {
 		r.Shed += pr.Shed
 		r.Overrun += pr.Overrun
 		r.Late += pr.Late
+		r.ThrottledTarget += pr.ThrottledTarget
+		r.ThrottledBudget += pr.ThrottledBudget
 		busyNs += busy
 		queueNs += sub(c.QueueWaitNs, o.QueueWaitNs)
 		started += done

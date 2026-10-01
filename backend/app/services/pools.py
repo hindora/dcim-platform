@@ -26,6 +26,7 @@ from app.repositories import collector as fleet_repo
 from app.repositories import pools as repo
 from app.repositories import preflight as preflight_repo
 from app.services import collector as fleet
+from app.services import target_limits
 from app.services.discovery_ranges import PURPOSES as PLANES
 from app.services.endpoint_config import DEFAULT_PORT
 
@@ -146,6 +147,11 @@ def clean(payload: dict[str, Any], *, partial: bool) -> dict[str, Any]:
             if rb <= 0:
                 raise PoolError("rate_budget_points_per_s must be positive")
         out["rate_budget_points_per_s"] = rb
+    if "target_limits" in payload or not partial:
+        try:
+            out["target_limits"] = target_limits.validate_limits(payload.get("target_limits"))
+        except target_limits.TargetLimitError as exc:
+            raise PoolError(str(exc)) from None
     if "min_members" in payload or not partial:
         mm = payload.get("min_members", 1)
         try:

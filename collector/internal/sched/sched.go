@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/hari/dcim-platform/collector/internal/obs"
+	"github.com/hari/dcim-platform/collector/internal/throttle"
 	"github.com/hari/dcim-platform/collector/pkg/models"
 )
 
@@ -26,6 +27,11 @@ type Job struct {
 	// When dispatch queued it. Written before the channel send and read
 	// after the receive, so the channel orders the two.
 	enqueued time.Time
+	// The target slot the limiter granted, released when the poll is done.
+	target string
+	// Deferred by a limit since it last fell due: counted once per cycle,
+	// not once per tick it is retried.
+	deferred bool
 }
 
 type Runner func(ctx context.Context, ep *models.Endpoint)
@@ -54,6 +60,12 @@ type Scheduler struct {
 	stats   map[string]*protoStats
 	statsMu sync.Mutex
 
+	// Facility limits (internal/throttle): per target address and per pool
+	// budget. nil: none. budgeted is false for the liveness scheduler - a
+	// probe returns no points, and a pool over budget must not look dead.
+	limiter  *throttle.Limiter
+	budgeted bool
+
 	wg sync.WaitGroup
 }
 
@@ -67,6 +79,9 @@ type protoStats struct {
 	busyNs      atomic.Uint64
 	semWaitNs   atomic.Uint64
 	queueWaitNs atomic.Uint64
+	// Polls a facility limit deferred, once per cycle each.
+	throttledTarget atomic.Uint64
+	throttledBudget atomic.Uint64
 }
 
 // LateAfter is how long a queued poll may wait for a worker before it counts
@@ -100,6 +115,11 @@ type ProtoCounters struct {
 	// large share means the protocol limit, not the pool, is the ceiling.
 	SemWaitNs   uint64 `json:"sem_wait_ns"`
 	QueueWaitNs uint64 `json:"queue_wait_ns"`
+	// Deferred by a target's limit (in flight, gap) or by the pool's
+	// budget: the facility's ceiling holding polls back, by design. Not
+	// shed, not late - the cycle stretches instead.
+	ThrottledTarget uint64 `json:"throttled_target"`
+	ThrottledBudget uint64 `json:"throttled_budget"`
 }
 
 // Snapshot is a whole scheduler's capacity reading at one instant.
@@ -114,6 +134,9 @@ type Options struct {
 	QueueSize     int
 	ProtoLimits   map[string]int
 	PerHostLimits map[string]int
+	Limiter       *throttle.Limiter
+	// Whether pool budgets apply (the poll scheduler) or not (liveness).
+	Budgeted bool
 }
 
 func New(opts Options, run Runner, log *slog.Logger, mets *obs.Metrics) *Scheduler {
@@ -133,6 +156,8 @@ func New(opts Options, run Runner, log *slog.Logger, mets *obs.Metrics) *Schedul
 		hostSem:  make(map[string]chan struct{}),
 		hostCap:  make(map[string]int),
 		stats:    make(map[string]*protoStats),
+		limiter:  opts.Limiter,
+		budgeted: opts.Budgeted,
 	}
 	for proto, limit := range opts.ProtoLimits {
 		if limit > 0 {
@@ -232,37 +257,70 @@ func (s *Scheduler) tick(ctx context.Context) {
 }
 
 func (s *Scheduler) dispatch(now time.Time) {
+	type ready struct {
+		job     *Job
+		startAt time.Time
+	}
 	s.mu.Lock()
-	due := make([]*Job, 0, 32)
+	due := make([]ready, 0, 32)
 	for _, job := range s.jobs {
 		if job.nextRun.After(now) {
 			continue
 		}
-		job.nextRun = now.Add(job.Interval)
 		if job.running {
 			// Never queue the same endpoint twice: overlapping polls corrupt
 			// counter deltas and produce impossible throughput spikes.
+			job.nextRun = now.Add(job.Interval)
 			s.mets.PollsSkipped.WithLabelValues(job.Endpoint.Protocol).Inc()
 			s.statsFor(job.Endpoint.Protocol).overrun.Add(1)
 			continue
 		}
+		ok, key, startAt, retryAt, why := s.limiter.Admit(job.Endpoint, now, s.budgeted)
+		if !ok {
+			// Held back by the facility's limits: try again when they allow,
+			// and let the rest of its cycle stretch rather than queue.
+			job.nextRun = retryAt
+			if !job.deferred {
+				job.deferred = true
+				st := s.statsFor(job.Endpoint.Protocol)
+				if why == throttle.ReasonBudget {
+					st.throttledBudget.Add(1)
+				} else {
+					st.throttledTarget.Add(1)
+				}
+			}
+			continue
+		}
+		job.deferred = false
+		job.nextRun = now.Add(job.Interval)
 		job.running = true
-		job.enqueued = now
-		due = append(due, job)
+		job.target = key
+		due = append(due, ready{job, startAt})
 	}
 	s.mu.Unlock()
 
-	for _, job := range due {
-		st := s.statsFor(job.Endpoint.Protocol)
-		select {
-		case s.queue <- job:
-			st.dispatched.Add(1)
-		default:
-			// Queue full: shed rather than block the wheel, and say so.
-			s.mets.PollsShed.WithLabelValues(job.Endpoint.Protocol).Inc()
-			st.shed.Add(1)
-			s.markDone(job)
+	for _, r := range due {
+		if wait := r.startAt.Sub(now); wait > 0 {
+			// A target's gap inside this tick: a timer, not a worker asleep.
+			job := r.job
+			time.AfterFunc(wait, func() { s.enqueue(job, time.Now()) })
+			continue
 		}
+		s.enqueue(r.job, now)
+	}
+}
+
+func (s *Scheduler) enqueue(job *Job, at time.Time) {
+	st := s.statsFor(job.Endpoint.Protocol)
+	job.enqueued = at
+	select {
+	case s.queue <- job:
+		st.dispatched.Add(1)
+	default:
+		// Queue full: shed rather than block the wheel, and say so.
+		s.mets.PollsShed.WithLabelValues(job.Endpoint.Protocol).Inc()
+		st.shed.Add(1)
+		s.markDone(job)
 	}
 }
 
@@ -386,6 +444,8 @@ func (s *Scheduler) Snapshot() Snapshot {
 		pc.BusyNs = st.busyNs.Load()
 		pc.SemWaitNs = st.semWaitNs.Load()
 		pc.QueueWaitNs = st.queueWaitNs.Load()
+		pc.ThrottledTarget = st.throttledTarget.Load()
+		pc.ThrottledBudget = st.throttledBudget.Load()
 		out.Protocols[proto] = pc
 	}
 	for proto, pc := range out.Protocols {
@@ -400,7 +460,10 @@ func (s *Scheduler) Snapshot() Snapshot {
 func (s *Scheduler) markDone(job *Job) {
 	s.mu.Lock()
 	job.running = false
+	key := job.target
+	job.target = ""
 	s.mu.Unlock()
+	s.limiter.Done(key)
 }
 
 // phaseOffset spreads endpoints deterministically across their interval, so a

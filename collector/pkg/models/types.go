@@ -32,6 +32,18 @@ type Endpoint struct {
 	PoolID     string      `json:"pool_id"`
 	Credential *Credential `json:"credential"`
 	Poll       PollProfile `json:"poll"`
+	// How hard this endpoint's address may be driven (internal/throttle),
+	// resolved by the platform: the endpoint's own override, else its
+	// pool's default for the protocol. nil: no limit beyond the protocol's.
+	TargetLimit *TargetLimit `json:"target_limit,omitempty"`
+}
+
+// TargetLimit is a per-address limit. Zero in either field means none.
+type TargetLimit struct {
+	// Polls in flight at once against the address.
+	MaxConcurrent int `json:"max_concurrent,omitempty"`
+	// Minimum gap between one poll starting and the next, in ms.
+	MinIntervalMs int `json:"min_interval_ms,omitempty"`
 }
 
 type Credential struct {

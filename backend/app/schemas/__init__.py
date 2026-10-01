@@ -103,6 +103,9 @@ class EndpointSummary(BaseModel):
     #: contains the endpoint's address, which is the common case.
     pool_id: str | None = None
     pool_name: str | None = None
+    #: This endpoint's own per-address limit (docs/26 Phase 9), over its
+    #: pool's default; null means the pool decides.
+    target_limit: dict[str, int] | None = None
     #: The collector that last reported its state.
     reported_by: str | None = None
     poll_interval_s: int | None = None
@@ -674,6 +677,9 @@ class AssignmentEndpoint(BaseModel):
     pool_id: str | None = None
     credential: AssignmentCredential | None = None
     poll: AssignmentPoll
+    #: How hard this endpoint's address may be driven - its own override,
+    #: else its pool's default for the protocol (services/target_limits).
+    target_limit: dict[str, int] | None = None
 
 
 class ResolveEntry(BaseModel):
@@ -727,6 +733,9 @@ class AssignmentPool(BaseModel):
     trap_vip: str | None = None
     bbmd: AssignmentBBMD = Field(default_factory=AssignmentBBMD)
     rate_budget_points_per_s: int | None = None
+    #: This collector's slice of the budget, which it enforces: the budget
+    #: times its share of the pool's owned endpoints.
+    rate_budget_share_points_per_s: float | None = None
 
 
 class Assignment(BaseModel):

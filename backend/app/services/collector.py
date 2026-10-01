@@ -29,7 +29,7 @@ from app.schemas import (
     AssignmentPool,
     ResolveEntry,
 )
-from app.services import sealed_credential, sharding
+from app.services import sealed_credential, sharding, target_limits
 
 log = get_logger("collector")
 
@@ -149,8 +149,25 @@ async def build_assignment(session: AsyncSession, collector_id: str,
     pool_ids = {e.pool_id for e in endpoints if e.pool_id}
     if me and me.pool_id:
         pool_ids.add(me.pool_id)
+    pool_rows = await pool_repo.pools_by_ids(session, sorted(pool_ids))
+    # Per-address limits: the endpoint's own override, else its pool's
+    # default for the protocol - resolved here so a collector applies one
+    # value and never needs the rule.
+    defaults = {p["id"]: p.get("target_limits") or {} for p in pool_rows}
+    overrides = {str(r["id"]): r.get("target_limit") for r in rows}
+    for e in endpoints:
+        e.target_limit = target_limits.resolve(
+            overrides.get(e.id), defaults.get(e.pool_id or ""), e.protocol)
+    # Each collector enforces its share of a pool budget, from ownership:
+    # the same owners map the serving path used above.
+    budgets = {p["id"]: p.get("rate_budget_points_per_s") for p in pool_rows}
+    shares: dict[str, float] = {}
+    if collectors and any(budgets.values()):
+        pool_of = {str(r["id"]): r.get("pool_id")
+                   for r in await repo.ownable_endpoints(session)}
+        shares = target_limits.budget_shares(budgets, owners, pool_of, collector_id)
     pools: dict[str, AssignmentPool] = {}
-    for p in await pool_repo.pools_by_ids(session, sorted(pool_ids)):
+    for p in pool_rows:
         bbmd = p.get("bbmd_settings") or {}
         pools[p["id"]] = AssignmentPool(
             id=p["id"], name=p["name"], site=p.get("site"), plane=p["plane"],
@@ -158,7 +175,8 @@ async def build_assignment(session: AsyncSession, collector_id: str,
             bbmd=AssignmentBBMD(enabled=bool(bbmd.get("enabled")),
                                 bbmd=bbmd.get("bbmd"),
                                 ttl_s=int(bbmd.get("ttl_s") or 300)),
-            rate_budget_points_per_s=p.get("rate_budget_points_per_s"))
+            rate_budget_points_per_s=p.get("rate_budget_points_per_s"),
+            rate_budget_share_points_per_s=shares.get(p["id"]))
 
     return Assignment(version=version, generated_at=datetime.now(UTC),
                       collector_id=collector_id,
@@ -418,6 +436,7 @@ def etag_for(assignment: Assignment) -> str:
         digest.update(f"|{e.address}|{e.port}|{e.poll.interval_s}"
                       f"|{e.poll.timeout_ms}|{e.poll.retries}"
                       f"|{e.poll.push_enabled}|{','.join(e.poll.metric_groups)}"
+                      f"|{sorted((e.target_limit or {}).items())}"
                       .encode())
         if e.credential is not None:
             digest.update(b"|cred|")
@@ -433,5 +452,6 @@ def etag_for(assignment: Assignment) -> str:
     for pool_id in sorted(assignment.pools):
         p = assignment.pools[pool_id]
         digest.update(f"|p|{pool_id}|{p.trap_vip}|{p.bbmd.enabled}|{p.bbmd.bbmd}"
-                      f"|{p.bbmd.ttl_s}|{p.rate_budget_points_per_s}".encode())
+                      f"|{p.bbmd.ttl_s}|{p.rate_budget_points_per_s}"
+                      f"|{p.rate_budget_share_points_per_s}".encode())
     return f'W/"{digest.hexdigest()[:32]}"'

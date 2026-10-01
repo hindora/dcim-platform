@@ -261,7 +261,8 @@ async def one_endpoint(session: AsyncSession, device_id: str,
 #: thing that moved, and this is the trail somebody reads after a device went
 #: quiet at 3am.
 _AUDITED = ("address", "port", "addressing", "credential_id",
-            "poll_profile_id", "enabled", "admin_state", "collector_id", "pool_id")
+            "poll_profile_id", "enabled", "admin_state", "collector_id", "pool_id",
+            "target_limit")
 
 
 async def update_endpoint(session: AsyncSession, *, device_id: str,
@@ -326,6 +327,15 @@ async def update_endpoint(session: AsyncSession, *, device_id: str,
             if await pool_repo.get_pool(session, value) is None:
                 raise endpoint_config.EndpointConfigError("no such pool")
             clean[key] = value
+        elif key == "target_limit":
+            # docs/26 Phase 9: this endpoint's own per-address limit, over its
+            # pool's default. Null clears it.
+            from app.services import target_limits
+
+            try:
+                clean[key] = target_limits.validate_limit(value)
+            except target_limits.TargetLimitError as exc:
+                raise endpoint_config.EndpointConfigError(str(exc)) from None
         else:
             clean[key] = value
 

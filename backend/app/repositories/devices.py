@@ -410,7 +410,7 @@ async def list_endpoints(session: AsyncSession, device_id: str) -> list[dict[str
                -- An explicit override only (docs/26 Phase 5); the common
                -- range-resolved pool is not shown here, since the join that
                -- resolves it is the assigner's and belongs on the pools page.
-               e.pool_id::text AS pool_id, cp.name AS pool_name,
+               e.pool_id::text AS pool_id, cp.name AS pool_name, e.target_limit,
                p.interval_s AS poll_interval_s,
                COALESCE(es.status::text, 'UNKNOWN') AS status,
                es.last_seen, es.last_success, es.last_error, es.last_error_class,
@@ -449,7 +449,7 @@ async def get_endpoint(session: AsyncSession, endpoint_id: str
                e.poll_profile_id::text AS poll_profile_id,
                e.via_endpoint_id::text AS via_endpoint_id,
                vd.name AS via_name, d.name AS device_name,
-               e.collector_id, e.pool_id::text AS pool_id
+               e.collector_id, e.pool_id::text AS pool_id, e.target_limit
           FROM device_endpoint e
           JOIN device d ON d.id = e.device_id
           LEFT JOIN device_endpoint ve ON ve.id = e.via_endpoint_id
@@ -474,6 +474,7 @@ _EDITABLE = {
     "admin_state":     "admin_state = CAST(:admin_state AS admin_state_t)",
     "collector_id":    "collector_id = :collector_id",
     "pool_id":         "pool_id = CAST(:pool_id AS uuid)",
+    "target_limit":    "target_limit = CAST(:target_limit AS jsonb)",
 }
 
 
@@ -493,6 +494,8 @@ async def update_endpoint(session: AsyncSession, endpoint_id: str,
     params: dict[str, Any] = {"id": endpoint_id, **changes}
     if "addressing" in params:
         params["addressing"] = json.dumps(params["addressing"])
+    if "target_limit" in params and params["target_limit"] is not None:
+        params["target_limit"] = json.dumps(params["target_limit"])
     await session.execute(text(f"""
         UPDATE device_endpoint
            SET {sets}, updated_at = now()
