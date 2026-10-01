@@ -103,6 +103,9 @@ type Client struct {
 	lastOK  atomic.Int64 // unix nanoseconds; zero before the first fetch
 	started time.Time
 
+	// kick wakes Run for an immediate refresh - see Kick.
+	kick chan struct{}
+
 	// OnChange is invoked with the diff whenever the assignment changes.
 	OnChange func(Diff)
 	// OnRefreshed is invoked after every fetch that returned a body, whether
@@ -125,6 +128,18 @@ func New(cfg *config.Config, log *slog.Logger, mets *obs.Metrics,
 		seal:    seal,
 		current: make(map[string]*models.Endpoint),
 		started: time.Now(),
+		kick:    make(chan struct{}, 1),
+	}
+}
+
+// Kick asks Run to refresh now rather than at its next tick - the platform
+// said ownership moved (docs/26 Phase 7's long-poll). Non-blocking, and
+// coalescing: a kick already pending is enough. Run does the fetch, so a
+// kick can never race the ticker's own refresh.
+func (c *Client) Kick() {
+	select {
+	case c.kick <- struct{}{}:
+	default:
 	}
 }
 
@@ -142,6 +157,11 @@ func (c *Client) Run(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
+		case <-c.kick:
+			if err := c.Refresh(ctx); err != nil {
+				c.mets.AssignmentErrors.Inc()
+				c.log.Warn("kicked assignment refresh failed", "error", err)
+			}
 		case <-ticker.C:
 			if err := c.Refresh(ctx); err != nil {
 				c.mets.AssignmentErrors.Inc()

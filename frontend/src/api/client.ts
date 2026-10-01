@@ -1256,6 +1256,47 @@ export interface RebalancePreview {
   note?: string;
 }
 
+/** docs/26 Phase 7: signed collector releases and rollouts. */
+export interface CollectorRelease {
+  version: string;
+  sha256: string;
+  key_id: string;
+  size_bytes: number;
+  notes?: string | null;
+  created_at: string;
+  created_by?: string | null;
+}
+
+export interface CollectorCommand {
+  id: string;
+  collector_id: string;
+  state: 'pending' | 'delivered' | 'succeeded' | 'failed' | 'expired' | 'cancelled';
+  result?: { detail?: string; version?: string | null } | null;
+  created_at: string;
+  finished_at?: string | null;
+}
+
+export interface Rollout {
+  id: string;
+  version: string;
+  pool_ids: string[];
+  state: 'running' | 'succeeded' | 'failed' | 'cancelled';
+  detail?: string | null;
+  created_at: string;
+  created_by?: string | null;
+  finished_at?: string | null;
+  commands: CollectorCommand[];
+}
+
+export interface FleetVersion {
+  id: string;
+  version?: string | null;
+  state: string;
+  pool?: string | null;
+  pool_id?: string | null;
+  heartbeat_age_s?: number | null;
+}
+
 export interface CollectorsPage {
   collectors: CollectorRow[];
   sites: { id: string; code: string; name: string }[];
@@ -3825,6 +3866,20 @@ export const api = {
   /** Refused (422) while any collector is placed in the pool. */
   deletePool: (id: string) =>
     request<void>(`/pools/${id}`, { method: 'DELETE' }),
+
+  collectorReleases: () => request<{ releases: CollectorRelease[] }>('/collectors/releases'),
+
+  rollouts: () => request<{ rollouts: Rollout[]; fleet: FleetVersion[] }>('/collectors/rollouts'),
+
+  /** Admin. One member per pool at a time; the platform waits for each to
+   *  come back healthy on the new version before the next. */
+  startRollout: (version: string, poolIds: string[]) =>
+    request<{ id: string }>('/collectors/rollouts', {
+      method: 'POST', body: JSON.stringify({ version, pool_ids: poolIds }),
+    }),
+
+  cancelRollout: (id: string) =>
+    request<{ id: string; state: string }>(`/collectors/rollouts/${id}/cancel`, { method: 'POST' }),
 
   rebalancePreview: (id: string) =>
     request<RebalancePreview>(`/pools/${id}/rebalance-preview`),

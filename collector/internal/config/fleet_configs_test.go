@@ -31,5 +31,9 @@ func TestFleetConfigsLoadAndDoNotCollide(t *testing.T) {
 		claim("trap", c.Protocols.SNMPTrap.Listen, f)
 		claim("metrics", c.Observability.MetricsListen, f)
 		claim("health", c.Observability.HealthListen, f)
+		if !c.Update.Enabled || len(c.Update.TrustedKeys) == 0 ||
+			c.Update.VerifyWindow <= c.Update.ConfirmAfter {
+			t.Errorf("%s: update block not parsed as intended: %+v", f, c.Update)
+		}
 	}
 }

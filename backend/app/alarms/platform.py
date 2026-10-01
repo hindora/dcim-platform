@@ -518,8 +518,12 @@ def evaluate(signals: Signals) -> list[Finding]:
 
         # Reported by the collector itself and stored, but raised by nothing
         # until now - a trap listener that failed to bind ran silently with
-        # no traps.
-        if c.config_error:
+        # no traps. Not while a duplicate is seen: two processes alternate
+        # heartbeats, so the error comes and goes every tick and the alarm
+        # flapped - and the duplicate is the cause, already raised above.
+        duplicate = (c.duplicate_age_s is not None
+                     and c.duplicate_age_s < DUPLICATE_WINDOW_S)
+        if c.config_error and not duplicate:
             out.append(Finding(
                 alarm_type="collector_misconfigured", instance=c.collector_id,
                 severity=WARNING,

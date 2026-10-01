@@ -23,6 +23,7 @@ import (
 	"github.com/hari/dcim-platform/collector/internal/mtls"
 	"github.com/hari/dcim-platform/collector/internal/preflight"
 	"github.com/hari/dcim-platform/collector/internal/sealedbox"
+	"github.com/hari/dcim-platform/collector/internal/update"
 )
 
 // Overridden at build time via -ldflags "-X main.version=...". "dev" is what
@@ -38,6 +39,9 @@ func main() {
 	// touches os.Args at all.
 	if len(os.Args) > 1 && os.Args[1] == "enroll" {
 		os.Exit(runEnroll(os.Args[2:]))
+	}
+	if len(os.Args) > 1 && os.Args[1] == "upgrade-watch" {
+		os.Exit(runUpgradeWatch(os.Args[2:]))
 	}
 	if len(os.Args) > 1 && os.Args[1] == "preflight" {
 		os.Exit(runPreflight(os.Args[2:]))
@@ -238,6 +242,25 @@ func runPreflightWith(ctx context.Context, cfg *config.Config, stateDir string, 
 	}
 
 	if failed {
+		return 1
+	}
+	return 0
+}
+
+// runUpgradeWatch is the rollback watcher (docs/26 Phase 7): the PREVIOUS
+// build, started detached by the one being replaced. It never runs a poll.
+func runUpgradeWatch(args []string) int {
+	fs := flag.NewFlagSet("upgrade-watch", flag.ExitOnError)
+	stateDir := fs.String("state-dir", "./state", "the collector's state directory")
+	_ = fs.Parse(args)
+	logf := func(format string, a ...any) {
+		fmt.Println(time.Now().UTC().Format(time.RFC3339), "upgrade-watch:",
+			fmt.Sprintf(format, a...))
+	}
+	logf("watching %s", update.MarkerPath(*stateDir))
+	if err := update.Watch(*stateDir, 3*time.Second, update.KillMatching, update.Alive,
+		update.StartDetached, logf); err != nil {
+		logf("watcher error: %v", err)
 		return 1
 	}
 	return 0

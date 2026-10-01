@@ -156,6 +156,21 @@ type Config struct {
 	Limits struct {
 		MaxOpenFiles int `yaml:"max_open_files"`
 	} `yaml:"limits"`
+	// Self-update (docs/26 Phase 7). Opt-in: OT sites routinely forbid a
+	// device updating itself, so a collector refuses upgrade commands unless
+	// this is enabled - and even then runs nothing that is not signed by one
+	// of ITS OWN trusted keys. The platform serves releases; it cannot sign.
+	Update struct {
+		Enabled bool `yaml:"enabled"`
+		// key id -> base64 Ed25519 public key (32 bytes).
+		TrustedKeys map[string]string `yaml:"trusted_keys"`
+		// How long the new build has to report healthy before the watcher
+		// (the previous binary) rolls back to itself.
+		VerifyWindow time.Duration `yaml:"verify_window"`
+		// How long the new build must run with a fresh assignment before it
+		// counts itself good and confirms.
+		ConfirmAfter time.Duration `yaml:"confirm_after"`
+	} `yaml:"update"`
 }
 
 type StreamCfg struct {
@@ -451,6 +466,8 @@ func Default() *Config {
 	c.Observability.HealthListen = "0.0.0.0:9101"
 	c.Observability.HeartbeatEvery = 10 * time.Second
 	c.Limits.MaxOpenFiles = 65536
+	c.Update.VerifyWindow = 5 * time.Minute
+	c.Update.ConfirmAfter = 60 * time.Second
 	return c
 }
 

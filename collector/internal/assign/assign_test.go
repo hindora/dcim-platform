@@ -122,3 +122,12 @@ func ids(eps []*models.Endpoint) []string {
 	}
 	return out
 }
+
+func TestKickIsNonBlockingAndCoalesces(t *testing.T) {
+	c := &Client{kick: make(chan struct{}, 1)}
+	c.Kick()
+	c.Kick() // a second kick while one is pending must not block
+	if len(c.kick) != 1 {
+		t.Fatalf("pending kicks = %d, want exactly 1", len(c.kick))
+	}
+}

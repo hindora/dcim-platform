@@ -525,3 +525,11 @@ def test_a_reported_config_error_is_raised_not_just_stored():
     found = p.evaluate(sig(collectors=[c]))
     assert types(found) == {"collector_misconfigured"}
     assert found[0].severity == p.WARNING and "address already in use" in found[0].message
+
+
+def test_a_duplicate_suppresses_the_misconfiguration_it_causes():
+    """Two processes alternate heartbeats, so config_error comes and goes every
+    tick; raising it flapped the alarm. The duplicate is the root cause."""
+    c = p.Collector(collector_id="col-1", heartbeat_age_s=5.0, endpoints_owned=95,
+                    duplicate_age_s=10.0, config_error="bind: address already in use")
+    assert types(p.evaluate(sig(collectors=[c]))) == {"collector_duplicate"}

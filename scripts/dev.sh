@@ -217,7 +217,11 @@ if want collector; then
       var="DCIM_COLLECTOR_TOKEN_$(tr 'a-z-' 'A-Z_' <<<"$id")"
       tok="$(grep -m1 "^$var=" "$FLEET_TOKENS" | cut -d= -f2-)"
       [[ -n "$tok" ]] || die "no $var in $FLEET_TOKENS for $cfg"
-      start "$id" env -C "$ROOT/collector" DCIM_COLLECTOR_TOKEN="$tok"         "$BIN" --config "configs/fleet/$id.yaml"
+      # Restarted when it exits, as systemd's Restart=always would - a
+      # collector that self-updates (docs/26 Phase 7) relies on its
+      # supervisor to bring it back if the new build dies, so the rollback
+      # watcher can put the previous build in its place.
+      start "$id" env -C "$ROOT/collector" DCIM_COLLECTOR_TOKEN="$tok"         bash -c 'while :; do "$0" "$@"; echo "[supervisor] collector exited ($?), restarting in 2 s"; sleep 2; done'         "$BIN" --config "configs/fleet/$id.yaml"
     done
   else
     start collector env -C "$ROOT/collector" "$BIN" --config configs/collector.yaml

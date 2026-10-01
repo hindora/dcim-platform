@@ -270,3 +270,14 @@ limits:
   # One socket per Redfish BMC and per gNMI stream; fd exhaustion is the real
   # scaling wall, not CPU.
   max_open_files: 65536
+
+# Self-update (docs/26 Phase 7): accept upgrade commands, but run only builds
+# signed by a key listed here - the platform serves releases, it cannot sign.
+# dev-2026 is the development signing key (scripts/publish_release.py gen-key);
+# its private half lives off the platform host.
+update:
+  enabled: true
+  trusted_keys:
+    dev-2026: "xF8K7OYJoxs6rKS5HFNyg7ILG8W1R3efq2xPe4zgXAI="
+  verify_window: 5m
+  confirm_after: 60s

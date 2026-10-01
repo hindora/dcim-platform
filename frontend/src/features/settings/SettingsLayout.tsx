@@ -23,6 +23,11 @@ export const SETTINGS_NAV = [
     blurb: 'Which network each collector is on, and which devices that makes it responsible for',
   },
   {
+    to: 'releases',
+    label: 'Releases',
+    blurb: 'Which build every collector runs, and upgrading them a pool at a time',
+  },
+  {
     to: 'shards',
     label: 'Shard map',
     blurb: 'Which collector polls every device, and every move it made',

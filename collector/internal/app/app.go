@@ -504,6 +504,10 @@ func (a *App) Run(ctx context.Context) error {
 		a.log.Info("initial assignment", "endpoints", a.assign.Count())
 	}
 	go a.assign.Run(ctx)
+	// docs/26 Phase 7: finish (confirm or report) an upgrade this process is
+	// part of, then long-poll for commands.
+	a.resumeUpgrade(ctx)
+	go a.commandLoop(ctx)
 
 	// Discovery is opt-in per run: nothing sweeps unless an operator queues a
 	// run, so this goroutine is idle until there is work.
