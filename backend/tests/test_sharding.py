@@ -505,3 +505,27 @@ def test_a_pin_survives_its_owner_losing_the_placement():
     cols = [col("anywhere"), col("a1", pool_id="pool-a")]
     got = sh.rebalance({"e1": "anywhere"}, sh.plan(eps, cols), eps, cols)
     assert got == {"e1": "anywhere"}
+
+
+def test_members_restarting_together_do_not_quarantine_each_other():
+    """A host reboot, an upgrade or a stack restart brings every member of an
+    HA pool back at once. Each saw the other as a healthy peer and held
+    itself out, so the pool had no accepting member for the whole failback
+    window - quarantine protects a long-healthy peer from a flapping one,
+    and here there is no long-healthy peer to protect."""
+    a = col("a1", pool_id="pool-a")
+    b = col("a2", pool_id="pool-a")
+    a.heartbeat_age_s, a.healthy_duration_s = 5.0, 40.0
+    b.heartbeat_age_s, b.healthy_duration_s = 5.0, 35.0
+    out = {c.collector_id: c.accepting for c in sh.apply_ha_policy([a, b], {"pool-a": 2})}
+    assert out == {"a1": True, "a2": True}
+
+
+def test_a_recovering_member_still_waits_beside_a_long_healthy_peer():
+    back = col("a1", pool_id="pool-a")
+    back.heartbeat_age_s, back.healthy_duration_s = 5.0, 40.0
+    steady = col("a2", pool_id="pool-a")
+    steady.heartbeat_age_s, steady.healthy_duration_s = 5.0, 7200.0
+    out = {c.collector_id: c.accepting
+           for c in sh.apply_ha_policy([back, steady], {"pool-a": 2})}
+    assert out == {"a1": False, "a2": True}

@@ -573,3 +573,27 @@ async def test_the_serving_path_honours_the_assigners_damping(session):
     served_a2 = {e.id for e in (await fleet_svc.build_assignment(session, a2)).endpoints}
     assert eids <= served_a1
     assert not (eids & served_a2), "the live plan alone would have given a2 some"
+
+
+async def test_a_just_moved_endpoint_is_not_called_silent_before_its_new_owner_polls(session):
+    """Found in the live HA failover: the new owner's liveness probe marks the
+    endpoint ONLINE within 30 s, its first data poll lands later in the
+    interval, and the last sample is the dead collector's, minutes old. The
+    endpoint was called "answers but delivers no telemetry" for a minute."""
+    from app.alarms import staleness
+
+    _, room_id = await _datacenter_and_room(session, f"P{_tag()[:6]}")
+    profile = await _poll_profile(session)  # 30 s interval -> 300 s grace floor
+    eid = await _device_endpoint(session, room_id, profile, "10.52.26.10", "snmp")
+    await session.execute(text("""
+        INSERT INTO endpoint_state (endpoint_id, status, last_success,
+                                    last_telemetry_at, updated_at)
+        VALUES (CAST(:e AS uuid), 'ONLINE', now(), now() - interval '8 minutes', now())
+    """), {"e": eid})
+
+    silent = {r["endpoint_id"] for r in await staleness.find_silent(session)}
+    assert eid in silent, "8 min of silence under one owner IS silent"
+
+    await fleet_repo.write_assignment(session, {eid: ("col-new", "failover")})
+    silent = {r["endpoint_id"] for r in await staleness.find_silent(session)}
+    assert eid not in silent, "its new owner has had it for seconds"

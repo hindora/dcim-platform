@@ -427,9 +427,15 @@ def apply_ha_policy(collectors: list[Collector],
             accepting = False
         elif (c.healthy_duration_s is not None
               and c.healthy_duration_s < FAILBACK_AFTER_S):
+            # The peer must itself be past the failback window: quarantine
+            # protects a long-healthy member from a flapping one. Members that
+            # all came back together (a host reboot, an upgrade, a stack
+            # restart) each counted the other as healthy and held themselves
+            # out, leaving the pool with no accepting member for ten minutes.
             others_healthy = any(
                 o.collector_id != c.collector_id and o.accepting
                 and (o.heartbeat_age_s is None or o.heartbeat_age_s <= FAILOVER_AFTER_S)
+                and (o.healthy_duration_s is None or o.healthy_duration_s >= FAILBACK_AFTER_S)
                 for o in by_pool[c.pool_id])
             if others_healthy:
                 accepting = False

@@ -63,6 +63,16 @@ def grace_seconds(interval_s: int | None, push_enabled: bool) -> int:
 # nothing EVER is only interesting once it has existed long enough to have had
 # a fair chance. Without the created_at test, every endpoint would alarm the
 # moment it was imported, which trains people to ignore the alarm.
+#
+# Silence is measured from the later of the last sample and the moment the
+# CURRENT owner was given the endpoint (endpoint_assignment.since). Found in
+# a live HA failover: the new owner's availability probe marks an endpoint
+# ONLINE within 30 s, but its first data poll lands anywhere in one interval
+# (phase-spread to avoid a thundering herd), and the last sample is the one
+# the dead collector took minutes earlier. 24 plant devices raised "answers
+# but has delivered no telemetry" in that window and cleared a minute later.
+# A collector cannot be silent about an endpoint it has only just been given;
+# it gets the same grace as anything else, from when it got it.
 _CANDIDATES = text("""
     SELECT e.id::text                         AS endpoint_id,
            e.device_id::text                  AS device_id,
@@ -73,12 +83,14 @@ _CANDIDATES = text("""
            COALESCE(p.push_enabled, false)    AS push_enabled,
            st.last_telemetry_at,
            st.last_success,
-           EXTRACT(epoch FROM now() - st.last_telemetry_at)::bigint AS silent_s,
+           EXTRACT(epoch FROM now() - GREATEST(st.last_telemetry_at, ea.since))::bigint
+                                              AS silent_s,
            (st.last_telemetry_at IS NULL)     AS never_reported
       FROM device_endpoint e
       JOIN device d            ON d.id = e.device_id
       JOIN endpoint_state st   ON st.endpoint_id = e.id
       LEFT JOIN poll_profile p ON p.id = e.poll_profile_id
+      LEFT JOIN endpoint_assignment ea ON ea.endpoint_id = e.id
      WHERE e.enabled
        AND d.lifecycle <> 'decommissioned'
        -- Reachable: the poll itself is working right now.
