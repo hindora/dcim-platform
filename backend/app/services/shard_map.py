@@ -196,3 +196,47 @@ async def remaining(session: AsyncSession, collector_id: str) -> int:
     the plan still gives it."""
     return sum(1 for owner in (await ownership(session)).values()
                if owner == collector_id)
+
+
+# ---------------------------------------------------------------- rebalance
+
+def summarise_rebalance(pool_id: str, forced: Any, auto: Any) -> dict[str, Any]:
+    """Pure: what "rebalance now" would do to one pool, and how much of it
+    the ordinary damped tick would do on its own anyway.
+
+    `forced` and `auto` are assigner Plans for the same moment, with and
+    without the pool forced. Only this pool's endpoints are counted: a
+    forced pool never moves anything outside itself."""
+    if forced is None:
+        return {"pool_id": pool_id, "endpoints": 0, "moving": 0, "moves": [],
+                "before": {}, "after": {}, "automatic": 0, "frozen": False,
+                "balanced": True, "note": "no collector exists to plan against"}
+    eids = [eid for eid, e in forced.endpoints_by_id.items() if e.get("pool_id") == pool_id]
+    before = Counter(forced.current.get(eid) for eid in eids)
+    after = Counter(forced.result.get(eid) for eid in eids)
+    pairs = Counter((forced.current.get(eid), forced.changes[eid][0])
+                    for eid in eids if eid in forced.changes)
+    automatic = sum(1 for eid in eids if auto is not None and eid in auto.changes)
+    moving = sum(pairs.values())
+    return {
+        "pool_id": pool_id,
+        "endpoints": len(eids),
+        "moving": moving,
+        "moves": [{"from": f, "to": t, "count": n}
+                  for (f, t), n in sorted(pairs.items(), key=lambda kv: -kv[1])],
+        # None is "owned by nobody" - shown, never dropped.
+        "before": {str(k): v for k, v in sorted(before.items(), key=lambda kv: str(kv[0]))},
+        "after": {str(k): v for k, v in sorted(after.items(), key=lambda kv: str(kv[0]))},
+        # Moves the next ordinary tick would make anyway (a mandatory move,
+        # or an imbalance already past the damping floor).
+        "automatic": automatic,
+        "frozen": pool_id in forced.frozen_pools,
+        "balanced": moving == 0,
+    }
+
+
+async def rebalance_preview(session: AsyncSession, pool_id: str) -> dict[str, Any]:
+    from app.services import assigner
+
+    return summarise_rebalance(pool_id, await assigner.compute(session, pool_id),
+                               await assigner.compute(session))

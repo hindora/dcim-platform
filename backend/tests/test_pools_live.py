@@ -597,3 +597,39 @@ async def test_a_just_moved_endpoint_is_not_called_silent_before_its_new_owner_p
     await fleet_repo.write_assignment(session, {eid: ("col-new", "failover")})
     silent = {r["endpoint_id"] for r in await staleness.find_silent(session)}
     assert eid not in silent, "its new owner has had it for seconds"
+
+
+async def test_rebalance_now_moves_what_damping_held_and_only_in_its_pool(session):
+    """docs/26 Phase 5's "rebalance now": a second member joins an 8-endpoint
+    pool, damping keeps everything on the first, the preview shows the move,
+    and the forced pass makes exactly that move - nowhere else."""
+    from app.services import assigner, shard_map
+
+    dc_id, room_id = await _datacenter_and_room(session, f"P{_tag()[:6]}")
+    pool = await svc.create(session, _payload(dc_id, cidrs=[], min_members=1,
+                                              bbmd_settings={}))
+    await _discovery_range(session, dc_id, "10.52.27.0/24", purpose="bms")
+    profile = await _poll_profile(session)
+    for i in range(10, 18):
+        await _device_endpoint(session, room_id, profile, f"10.52.27.{i}", "bacnet")
+    a1, a2 = f"col-{_tag()}", f"col-{_tag()}"
+    await _collector(session, a1, pool["id"])
+    await assigner.run(session)
+    await _collector(session, a2, pool["id"])
+    await assigner.run(session)
+
+    preview = await shard_map.rebalance_preview(session, pool["id"])
+    assert preview["endpoints"] == 8 and preview["before"] == {a1: 8}
+    assert preview["moving"] > 0 and preview["automatic"] == 0
+    assert {m["from"] for m in preview["moves"]} == {a1}
+    assert {m["to"] for m in preview["moves"]} == {a2}
+
+    others_before = await fleet_repo.current_assignment(session)
+    result = await assigner.run(session, force_pool=pool["id"])
+    assert result.ran and result.moved == preview["moving"]
+    after = await shard_map.rebalance_preview(session, pool["id"])
+    assert after["balanced"] and after["before"] == preview["after"]
+    others_after = await fleet_repo.current_assignment(session)
+    pool_eids = {eid for eid, owner in others_after.items() if owner in (a1, a2)}
+    assert {k: v for k, v in others_before.items() if k not in pool_eids} == \
+           {k: v for k, v in others_after.items() if k not in pool_eids}

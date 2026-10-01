@@ -23,6 +23,7 @@ from app.core.security import Principal, current_principal, require_role
 from app.db.session import get_session
 from app.repositories import pools as repo
 from app.services import pools as service
+from app.services import shard_map
 
 router = APIRouter(prefix="/pools", tags=["pools"])
 log = get_logger("api.pools")
@@ -210,3 +211,65 @@ async def readiness(
         return await service.readiness(session, pool_id)
     except service.PoolError as exc:
         raise _http(exc) from None
+
+
+@router.get("/{pool_id}/rebalance-preview",
+            summary="What rebalancing this pool now would move, and where")
+async def rebalance_preview(
+    pool_id: str,
+    session: AsyncSession = Depends(get_session),
+    _: Principal = Depends(current_principal),
+) -> dict[str, Any]:
+    """docs/26 Phase 5's "rebalance now (with preview)". The assigner damps
+    ordinary rebalances - a member must sit 10 endpoints AND 2x off the
+    pool mean - so a member added to a large, balanced-enough pool can sit
+    under-used. This computes the pass the assigner would make with this
+    pool's damping bypassed: pins, HA quarantine and change freezes still
+    apply, and no other pool is touched."""
+    if await repo.get_pool(session, pool_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "no such pool")
+    return await shard_map.rebalance_preview(session, pool_id)
+
+
+@router.post("/{pool_id}/rebalance", summary="Rebalance this pool now, bypassing damping")
+async def rebalance_now(
+    pool_id: str,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    principal: Principal = Depends(require_role("admin")),
+) -> dict[str, Any]:
+    """Runs the real assigner with this pool forced. Refused during a change
+    freeze covering the pool: a freeze exists so nothing moves, and an
+    operator who must move work then has drain and pins, both explicit.
+    Retries briefly if an ingest worker's tick holds the assigner lock."""
+    import asyncio
+
+    from app.services import assigner
+
+    pool = await repo.get_pool(session, pool_id)
+    if pool is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "no such pool")
+    preview = await shard_map.rebalance_preview(session, pool_id)
+    if preview["frozen"]:
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            "a change freeze covers this pool's site - nothing is moved "
+                            "automatically until it ends")
+    result = None
+    for _ in range(10):
+        result = await assigner.run(session, force_pool=pool_id)
+        if result.ran:
+            break
+        await asyncio.sleep(0.5)
+    if result is None or not result.ran:
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            "the assigner is busy on another worker - retry in a moment")
+    ip, agent = audit.client_of(request)
+    await audit.record(session, actor=audit.actor_of(principal), action="pool.rebalance",
+                       target_type="collector_pool", target_id=pool_id, ip=ip,
+                       user_agent=agent, before=preview["before"],
+                       after={"after": preview["after"], "moving": preview["moving"],
+                              "recorded_moves": result.moved})
+    await session.commit()
+    log.info("pool rebalanced", pool_id=pool_id, actor=principal.username,
+             moving=preview["moving"], recorded=result.moved)
+    return {"pool_id": pool_id, "preview": preview, "recorded_moves": result.moved}

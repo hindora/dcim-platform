@@ -526,6 +526,8 @@ function ManageSheet({ row, onClose }: { row: PoolRow; onClose: () => void }) {
             </div>
           </fieldset>
 
+          <RebalancePanel row={row} onDone={invalidate} />
+
           <fieldset className="proto">
             <legend>Firewall matrix</legend>
             <p className="muted">
@@ -588,6 +590,87 @@ function ManageSheet({ row, onClose }: { row: PoolRow; onClose: () => void }) {
         </div>
       </section>
     </div>
+  );
+}
+
+/** docs/26 Phase 5's "rebalance now (with preview)". The assigner damps
+ *  ordinary rebalances so a flapping member cannot reshuffle a pool, which
+ *  also means a member added to a nearly-even pool can sit under-used until
+ *  the imbalance is real. This shows the exact move first - the assigner's
+ *  own pass with this pool's damping bypassed - then makes it. */
+function RebalancePanel({ row, onDone }: { row: PoolRow; onDone: () => void }) {
+  const qc = useQueryClient();
+  const preview = useMutation({ mutationFn: () => api.rebalancePreview(row.id) });
+  const apply = useMutation({
+    mutationFn: () => api.rebalancePool(row.id),
+    onSuccess: () => {
+      onDone();
+      void qc.invalidateQueries({ queryKey: ['shard-map'] });
+      preview.reset();
+    },
+  });
+  const p = preview.data;
+  const name = (id: string | null) => (id == null || id === 'None' ? 'nobody' : id);
+  return (
+    <fieldset className="proto">
+      <legend>Rebalance</legend>
+      <p className="muted" style={{ marginTop: 0 }}>
+        Work moves on its own only when a member is gone, draining or failed, or when the
+        pool is uneven by 10 endpoints and 2x. Preview what an even split would move now.
+      </p>
+      {(preview.error || apply.error) && (
+        <div className="banner">{errorText(preview.error ?? apply.error, 'Rebalancing')}</div>
+      )}
+      {apply.data && (
+        <p className="ok">
+          Rebalanced: {apply.data.recorded_moves} moves recorded. Collectors pick them up on
+          their next assignment fetch.
+        </p>
+      )}
+      {p && (
+        <>
+          {p.frozen && (
+            <div className="banner">
+              A change freeze covers this pool's site. Nothing moves until it ends.
+            </div>
+          )}
+          {p.balanced ? (
+            <p className="muted">Already as even as the plan makes it — nothing would move.</p>
+          ) : (
+            <>
+              <p>
+                {p.moving} of {p.endpoints} endpoints would move
+                {p.automatic > 0 && (
+                  <span className="muted"> ({p.automatic} of them the next tick would move anyway)</span>
+                )}.
+              </p>
+              <table>
+                <thead><tr><th>Collector</th><th className="num">Now</th><th className="num">After</th></tr></thead>
+                <tbody>
+                  {[...new Set([...Object.keys(p.before), ...Object.keys(p.after)])].sort().map((k) => (
+                    <tr key={k}>
+                      <td className="mono">{name(k)}</td>
+                      <td className="num">{p.before[k] ?? 0}</td>
+                      <td className="num">{p.after[k] ?? 0}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          )}
+        </>
+      )}
+      <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+        <button disabled={preview.isPending} onClick={() => preview.mutate()}>
+          {preview.isPending ? 'Working it out…' : p ? 'Preview again' : 'Preview'}
+        </button>
+        {p && !p.balanced && !p.frozen && (
+          <button className="primary" disabled={apply.isPending} onClick={() => apply.mutate()}>
+            {apply.isPending ? 'Rebalancing…' : `Rebalance now (${p.moving} moves)`}
+          </button>
+        )}
+      </div>
+    </fieldset>
   );
 }
 

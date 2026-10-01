@@ -119,3 +119,37 @@ def test_an_unpooled_collector_hands_work_to_its_site():
     got = preview_drain("c1", endpoints, fleet)
     assert set(got["destinations"]) <= {"c2"}
     assert got["stranded"] == 0
+
+
+# ---------------------------------------------------------------- rebalance
+
+def _plan(current, result, pools, changes=None, frozen=()):
+    from types import SimpleNamespace
+    changes = changes if changes is not None else {
+        e: (result[e], "rebalance") for e in result if result[e] != current.get(e)}
+    return SimpleNamespace(current=current, result=result, changes=changes,
+                           endpoints_by_id={e: {"pool_id": p} for e, p in pools.items()},
+                           frozen_pools=frozenset(frozen), collectors=[])
+
+
+def test_rebalance_preview_counts_only_its_own_pool():
+    from app.services.shard_map import summarise_rebalance
+    pools = {"e1": "pa", "e2": "pa", "e3": "pa", "e4": "pa", "x1": "pb"}
+    current = {"e1": "a1", "e2": "a1", "e3": "a1", "e4": "a1", "x1": "b1"}
+    forced = _plan(current, {**current, "e2": "a2", "e4": "a2", "x1": "b1"}, pools)
+    auto = _plan(current, dict(current), pools)
+    got = summarise_rebalance("pa", forced, auto)
+    assert got["endpoints"] == 4 and got["moving"] == 2
+    assert got["moves"] == [{"from": "a1", "to": "a2", "count": 2}]
+    assert got["before"] == {"a1": 4} and got["after"] == {"a1": 2, "a2": 2}
+    assert got["automatic"] == 0, "damping was holding all of it"
+    assert got["balanced"] is False and got["frozen"] is False
+
+
+def test_a_balanced_or_frozen_pool_says_so():
+    from app.services.shard_map import summarise_rebalance
+    pools = {"e1": "pa", "e2": "pa"}
+    current = {"e1": "a1", "e2": "a2"}
+    p = _plan(current, dict(current), pools, frozen=("pa",))
+    got = summarise_rebalance("pa", p, p)
+    assert got["balanced"] is True and got["moving"] == 0 and got["frozen"] is True

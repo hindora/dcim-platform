@@ -1239,6 +1239,23 @@ export interface DrainPreview {
   can_drain: boolean;
 }
 
+/** docs/26 Phase 5's "rebalance now": the assigner's own pass with this
+ *  pool's damping bypassed. Keys of before/after are collector ids; "None"
+ *  is owned by nobody. */
+export interface RebalancePreview {
+  pool_id: string;
+  endpoints: number;
+  moving: number;
+  moves: { from: string | null; to: string | null; count: number }[];
+  before: Record<string, number>;
+  after: Record<string, number>;
+  /** Moves the ordinary damped tick would make on its own anyway. */
+  automatic: number;
+  frozen: boolean;
+  balanced: boolean;
+  note?: string;
+}
+
 export interface CollectorsPage {
   collectors: CollectorRow[];
   sites: { id: string; code: string; name: string }[];
@@ -3808,6 +3825,14 @@ export const api = {
   /** Refused (422) while any collector is placed in the pool. */
   deletePool: (id: string) =>
     request<void>(`/pools/${id}`, { method: 'DELETE' }),
+
+  rebalancePreview: (id: string) =>
+    request<RebalancePreview>(`/pools/${id}/rebalance-preview`),
+
+  /** Admin. 409 during a change freeze covering the pool. */
+  rebalancePool: (id: string) =>
+    request<{ pool_id: string; preview: RebalancePreview; recorded_moves: number }>(
+      `/pools/${id}/rebalance`, { method: 'POST' }),
 
   /** The firewall rules this pool needs, derived from its ranges and the
    *  protocols on its endpoints; `text` is the paste-ready change request. */

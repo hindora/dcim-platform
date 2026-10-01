@@ -60,13 +60,27 @@ class AssignerResult:
     unassigned: int = 0
 
 
-async def run(session: AsyncSession) -> AssignerResult:
-    got_lock = (await session.execute(
-        text("SELECT pg_try_advisory_xact_lock(:key)"),
-        {"key": ADVISORY_LOCK_KEY})).scalar()
-    if not got_lock:
-        return AssignerResult(ran=False)
+@dataclass
+class Plan:
+    """What one assigner pass would write, computed without writing it."""
 
+    current: dict[str, str | None]
+    result: dict[str, str | None]
+    changes: dict[str, tuple[str | None, str]]
+    endpoints_by_id: dict[str, dict]
+    frozen_pools: frozenset[str]
+    collectors: list[sharding.Collector]
+
+
+async def compute(session: AsyncSession, force_pool: str | None = None) -> Plan | None:
+    """One assigner pass, minus the write. None when no collector exists.
+
+    `force_pool` is docs/26 Phase 5's "rebalance now": that pool's endpoints
+    adopt the fresh target outright instead of waiting for damping (a member
+    off the pool mean by 10 endpoints AND 2x). Everything else - pins, HA
+    policy, a change freeze, every other pool - is decided exactly as on an
+    ordinary tick, so a preview built from this IS the move.
+    """
     raw_collectors = await fleet(session)
     endpoints = await repo.ownable_endpoints(session)
     current = await repo.current_assignment(session)
@@ -78,7 +92,7 @@ async def run(session: AsyncSession) -> AssignerResult:
         # state and would need a reason on rows that used to have a real
         # owner - safer to leave endpoint_assignment exactly as it was
         # until a collector actually exists to plan against.
-        return AssignerResult(ran=True)
+        return None
 
     pool_rows = await repo.pools(session)
     pool_min_members = {p["id"]: p["min_members"] for p in pool_rows}
@@ -96,6 +110,10 @@ async def run(session: AsyncSession) -> AssignerResult:
 
     target = sharding.plan(endpoints, collectors)
     result = sharding.rebalance(current, target, endpoints, collectors)
+    if force_pool is not None:
+        for e in endpoints:
+            if e.get("pool_id") == force_pool:
+                result[str(e["id"])] = target.get(str(e["id"]))
 
     raw_by_id = {c.collector_id: c for c in raw_collectors}
     endpoints_by_id = {str(e["id"]): e for e in endpoints}
@@ -107,16 +125,31 @@ async def run(session: AsyncSession) -> AssignerResult:
         changes[eid] = (new_owner, _reason(old_owner, new_owner,
                                           endpoints_by_id.get(eid) or {}, raw_by_id,
                                           reasons.get(eid)))
+    return Plan(current=current, result=result, changes=changes,
+                endpoints_by_id=endpoints_by_id, frozen_pools=frozen_pools,
+                collectors=collectors)
 
-    await repo.write_assignment(session, changes)
+
+async def run(session: AsyncSession, force_pool: str | None = None) -> AssignerResult:
+    got_lock = (await session.execute(
+        text("SELECT pg_try_advisory_xact_lock(:key)"),
+        {"key": ADVISORY_LOCK_KEY})).scalar()
+    if not got_lock:
+        return AssignerResult(ran=False)
+
+    plan = await compute(session, force_pool)
+    if plan is None:
+        return AssignerResult(ran=True)
+
+    await repo.write_assignment(session, plan.changes)
     # Bounded history (migration 0093). Indexed on `at`, so a tick with
     # nothing old enough to prune costs one index probe.
     await repo.prune_assignment_history(session)
-    unassigned = sum(1 for owner in result.values() if owner is None)
-    log.info("assigner ran", moved=len(changes), unassigned=unassigned,
-             endpoints=len(endpoints), collectors=len(collectors),
-             frozen_pools=len(frozen_pools))
-    return AssignerResult(ran=True, moved=len(changes), unassigned=unassigned)
+    unassigned = sum(1 for owner in plan.result.values() if owner is None)
+    log.info("assigner ran", moved=len(plan.changes), unassigned=unassigned,
+             endpoints=len(plan.endpoints_by_id), collectors=len(plan.collectors),
+             frozen_pools=len(plan.frozen_pools), forced_pool=force_pool)
+    return AssignerResult(ran=True, moved=len(plan.changes), unassigned=unassigned)
 
 
 def _reason(old_owner: str | None, new_owner: str | None,
