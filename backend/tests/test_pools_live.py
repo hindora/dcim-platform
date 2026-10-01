@@ -671,10 +671,34 @@ async def test_the_moves_token_changes_when_an_owner_changes(session):
     assert await cmd_repo.moves_token(session) != before
 
 
-async def test_a_rollout_upgrades_one_member_at_a_time_and_finishes(session):
-    """tick() end to end on the real schema: first member commanded; nothing
-    more until it reports, runs the target and has settled; then the second;
-    then done."""
+async def _state(session, cid):
+    return (await session.execute(text(
+        "SELECT state, state_changed_by FROM collector_instance WHERE id = :id"),
+        {"id": cid})).mappings().one()
+
+
+async def _age_state(session, cid):
+    """Past the hand-off window, as if the drain had happened two minutes ago."""
+    await session.execute(text("""
+        UPDATE collector_instance SET state_changed_at = now() - interval '2 minutes'
+         WHERE id = :id"""), {"id": cid})
+
+
+async def _confirm(session, command_id, cid, version, settled):
+    from app.repositories import commands as cmd_repo
+    await cmd_repo.finish(session, command_id, cid, "succeeded", {"detail": "ok"})
+    await session.execute(text("UPDATE collector_instance SET version = :v WHERE id = :id"),
+                          {"v": version, "id": cid})
+    if settled:
+        await session.execute(text("""
+            UPDATE collector_command SET finished_at = now() - interval '5 minutes'
+             WHERE id = CAST(:id AS uuid)"""), {"id": command_id})
+
+
+async def test_a_rollout_drains_upgrades_and_returns_one_member_at_a_time(session):
+    """tick() end to end on the real schema: the first member is drained to
+    its partner and commanded only after the hand-off window; returned once
+    it confirms; the second waits for the first to settle; then done."""
     from app.repositories import commands as cmd_repo
     from app.services import rollout
 
@@ -690,29 +714,70 @@ async def test_a_rollout_upgrades_one_member_at_a_time_and_finishes(session):
     version = f"2.0.{_tag()[:4]}"
     await _release(session, version)
     rid = await cmd_repo.create_rollout(session, version, [pool["id"]], "test")
+    tag = f"rollout:{rid}"
 
+    assert await rollout.tick(session) == 0, "drained first, not commanded"
+    assert dict(await _state(session, a)) == {"state": "draining", "state_changed_by": tag}
+    assert (await _state(session, b))["state"] == "active"
+    assert await rollout.tick(session) == 0, "inside the hand-off window"
+    await _age_state(session, a)
     assert await rollout.tick(session) == 1
     cmds = await cmd_repo.rollout_commands(session, rid)
     assert [c["collector_id"] for c in cmds] == [a]
     assert await rollout.tick(session) == 0, "a is still upgrading"
 
-    await cmd_repo.finish(session, cmds[0]["id"], a, "succeeded", {"detail": "ok"})
-    await session.execute(text("""
-        UPDATE collector_instance SET version = :v, healthy_since = now() WHERE id = :id
-    """), {"v": version, "id": a})
-    assert await rollout.tick(session) == 0, "a has not settled yet"
-    await session.execute(text("""
-        UPDATE collector_instance SET healthy_since = now() - interval '5 minutes' WHERE id = :id
-    """), {"id": a})
+    await _confirm(session, cmds[0]["id"], a, version, settled=False)
+    await rollout.tick(session)
+    assert (await _state(session, a))["state"] == "active", "returned once confirmed"
+    await rollout.tick(session)
+    assert (await _state(session, b))["state"] == "active", "a has not settled yet"
+
+    await _confirm(session, cmds[0]["id"], a, version, settled=True)
+    await rollout.tick(session)
+    assert (await _state(session, b))["state"] == "draining"
+    await _age_state(session, b)
     assert await rollout.tick(session) == 1
     second = [c for c in await cmd_repo.rollout_commands(session, rid) if c["collector_id"] == b]
-    await cmd_repo.finish(session, second[0]["id"], b, "succeeded", {"detail": "ok"})
-    await session.execute(text("""
-        UPDATE collector_instance SET version = :v, healthy_since = now() - interval '5 minutes'
-         WHERE id = :id"""), {"v": version, "id": b})
+    await _confirm(session, second[0]["id"], b, version, settled=True)
     await rollout.tick(session)
-    state = next(r for r in await cmd_repo.rollouts(session) if r["id"] == rid)["state"]
-    assert state == "succeeded"
+    assert (await _state(session, b))["state"] == "active"
+    await rollout.tick(session)
+    r = next(r for r in await cmd_repo.rollouts(session) if r["id"] == rid)
+    assert r["state"] == "succeeded" and version in r["detail"]
+
+
+async def test_a_failed_upgrade_returns_the_drained_member_once_it_heartbeats(session):
+    """The rollout fails; the member it drained is not left out of service -
+    but only once it is alive again on the build it rolled back to."""
+    from app.repositories import commands as cmd_repo
+    from app.services import rollout
+
+    dc_id, _ = await _datacenter_and_room(session, f"P{_tag()[:6]}")
+    pool = await svc.create(session, _payload(dc_id, cidrs=[], min_members=1, bbmd_settings={}))
+    a, b = sorted([f"col-{_tag()}", f"col-{_tag()}"])
+    for cid in (a, b):
+        await _collector(session, cid, pool["id"])
+    version = f"4.0.{_tag()[:4]}"
+    await _release(session, version)
+    rid = await cmd_repo.create_rollout(session, version, [pool["id"]], "test")
+    await rollout.tick(session)
+    await _age_state(session, a)
+    await rollout.tick(session)
+    c = (await cmd_repo.rollout_commands(session, rid))[0]
+    await cmd_repo.finish(session, c["id"], a, "failed", {"detail": "rolled back"})
+    # Still crash-looping: its heartbeat is stale, so it stays drained.
+    await session.execute(text("""
+        UPDATE collector_instance SET last_heartbeat = now() - interval '5 minutes'
+         WHERE id = :id"""), {"id": a})
+    await rollout.tick(session)
+    r = next(r for r in await cmd_repo.rollouts(session) if r["id"] == rid)
+    assert r["state"] == "failed"
+    assert (await _state(session, a))["state"] == "draining"
+    await session.execute(text(
+        "UPDATE collector_instance SET last_heartbeat = now() WHERE id = :id"),
+                          {"id": a})
+    await rollout.tick(session)
+    assert (await _state(session, a))["state"] == "active"
 
 
 async def test_a_failed_member_fails_the_rollout(session):
