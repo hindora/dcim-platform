@@ -503,6 +503,40 @@ Today every simulated device IP is bound on one host, so **any collector can rea
 
 **Verified:** all four new/changed areas' own test files pass (31 new tests total, all against real sockets/real HTTP, no mocks of the wire formats), plus the full simulator test suite (unrelated areas included) run clean afterward.
 
+## The dev estate runs six collectors: one per site per management network
+
+Brought up 2026-09-30 (`9573e7a`, `f33d1c3`), replacing the single `col-1` that had polled both sites since Phase 0. This is the layout the rest of this document argues for, run against the simulator rather than described.
+
+**Why six, not two or four.** Two sites suggest two collectors, and the IT-OOB / BMS split suggests four. The simulator's addressing has a third network per site, though: 10.50 production carries every server's OS SNMP agent (308 endpoints, the source of host CPU), beside 10.51 IT-OOB (BMCs, switches, routers, firewalls) and 10.52 BMS (plant, power, rack PDUs, sensors). With four collectors those 308 endpoints would belong to no pool, and pool isolation leaves them polled by nobody. The other ways out were worse. A second NIC on each IT-OOB collector would bridge the out-of-band plane into production, which management-plane separation (CIS, NIST) exists to forbid and site security teams refuse. Dropping OS polling is defensible DCIM scope, since commercial DCIM takes server power and thermals from the BMC, but it loses the host-CPU figures this platform shows. So it is one collector per site per network, each in exactly one network:
+
+| Collector | Pool | Discovery range | Endpoints | Protocols |
+|---|---|---|---|---|
+| `col-dc1-oob` | DC1/IT-OOB | 10.51.0.0/20 | 437 | SNMP, Redfish, gNMI |
+| `col-dc1-bms` | DC1/BMS | 10.52.0.0/20 | 179 | SNMP, BACnet, Modbus |
+| `col-dc1-prod` | DC1/Production | 10.50.0.0/20 | 180 | SNMP |
+| `col-dc2-oob` | DC2/IT-OOB | 10.51.16.0/20 | 327 | SNMP, Redfish, gNMI |
+| `col-dc2-bms` | DC2/BMS | 10.52.16.0/20 | 175 | SNMP, BACnet, Modbus |
+| `col-dc2-prod` | DC2/Production | 10.50.16.0/20 | 128 | SNMP |
+
+A /20 per network per site works because the estate's numbering already puts the site in the third octet (1x = DC1, 2x = DC2). Each /20 is exactly one site's slice of one network, and a /20 is also `discovery_ranges.WIDEST_PREFIX`, the widest range one sweep takes.
+
+**One host standing in for six VMs.** In production each collector is its own VM with its own address, and every one listens for traps on udp/162. Here all six share the WSL host that also holds the device plane, so `collector/configs/fleet/<id>.yaml` (generated from `collector.yaml`) differs only in what would collide on one host: trap port 11621-11626, metrics/health 9111-9122, and `state_dir`. Protocols the network does not carry are disabled outright. `internal/config/fleet_configs_test.go` loads every file through the real loader and fails on any collision. Each collector authenticates with its own scoped token (the create-time fallback bearer, because no mTLS front door runs in dev). The tokens are held only in WSL at `var/fleet/tokens.env`, which is gitignored and mode 0600. `scripts/dev.sh` starts one collector per fleet file whenever that file exists, and the single `col-1` config otherwise.
+
+**Traps follow ownership.** The simulator's per-plane trap destinations (Phase S, persisted in its settings) map each /20 to its collector's port. A trap's source is the interface that fired it: server OS traps come from the production address, and BMC and network traps from the management address. So every trap lands on the collector that owns the endpoint it resolves to, and the ingest ownership guard has nothing to drop. Verified with test traps: a DC2 UPS trap counted only on `col-dc2-bms`, a DC1 router trap only on `col-dc1-oob`.
+
+**Bring-up order, and why it is the only safe one.** Pools are isolating: the moment a discovery range resolves an endpoint into a pool, only that pool's members may serve it. So the sequence was:
+
+1. Create the six pools and collector records, and start the collectors, while no range exists. They heartbeat and own nothing, and `col-1` keeps serving everything.
+2. Add the six ranges. Within one assignment fetch every endpoint is served by its new owner: `sharding.effective` rejects `col-1`, which no longer serves pooled endpoints, and falls back to the plan.
+3. Point the simulator's traps at the six ports.
+4. Restart the stack in fleet mode and decommission `col-1`. Its row and history stay and its token is refused.
+
+No endpoint left ONLINE at any point; 1426/1426 throughout.
+
+**A real bug the bring-up found** (fixed in `f33d1c3`, migration 0094). After step 2 the assigner logged `moved: 0` on every tick. Its mandatory-move test asked only whether the owner was gone or draining, and the damping loop considers only a group's members, which the old holder no longer was. Collectors were already served correctly, but the record, the shard map and the move history would have named `col-1` indefinitely. An owner that is accepting but no longer serves the endpoint's pool or site is now a mandatory move (a pin still beats placement). It is recorded under its own reason, `placement`, rather than as a rebalance that damping let through. All 1426 moves carry it.
+
+**What this does not model.** The separation is logical, not physical. All six collectors and the whole device plane share one network namespace, so there is no WAN, no per-site latency, and no partition to survive. Phase S's network namespaces and `tc netem` are what would add those. The simulator's SNMP agent also serialises at roughly six requests a second in total, so a handful of SNMP timeouts at any moment come from it and are untouched by how many collectors poll it. Each pool still has a single member, so a dead collector blinds its network at its site. That is Phase 6's redundancy, exercised next.
+
 ## Operator journey: bringing up DC3's collectors in the future system
 
 The table below is what an administrator does once Phases 0–8 exist. It assumes DC3 is an enterprise-owned site with an IT-OOB network and a facilities-owned BMS network.

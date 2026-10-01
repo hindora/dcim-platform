@@ -314,6 +314,11 @@ BY_ALARM_TYPE: dict[str, str] = {
     # the load it agreed to take.
     "collector_capacity_high": VISIBILITY,
     "pool_rate_budget_exceeded": VISIBILITY,
+    # docs/26 Phase 6/7: a pool running with fewer healthy members than it
+    # was given, and a collector too far behind the platform's release. Both
+    # say "our sight of the estate is at risk", not "a device failed".
+    "pool_below_min_members": VISIBILITY,
+    "collector_outdated": VISIBILITY,
     "assignment_stale": VISIBILITY,
     "ingest_lag_high": VISIBILITY,
     "ingest_stalled": VISIBILITY,

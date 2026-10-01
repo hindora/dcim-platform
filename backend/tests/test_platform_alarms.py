@@ -496,6 +496,7 @@ def test_no_budget_or_no_measurement_means_no_budget_alarm():
 
 def test_capacity_alarm_types_are_classified():
     from app.core import alert_taxonomy as tax
-    for t in ("collector_capacity_high", "pool_rate_budget_exceeded"):
+    for t in ("collector_capacity_high", "pool_rate_budget_exceeded",
+              "pool_below_min_members", "collector_outdated"):
         assert t in p.PLATFORM_ALARM_TYPES
         assert tax.BY_ALARM_TYPE[t] == tax.VISIBILITY
