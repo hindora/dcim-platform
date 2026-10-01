@@ -120,6 +120,11 @@ func (a *App) handleUpgrade(ctx context.Context, base, id string, raw json.RawMe
 		fail("another upgrade is still being verified")
 		return
 	}
+	bin, err := update.RunningBinary(os.Args[0])
+	if err != nil {
+		fail("refused: " + err.Error())
+		return
+	}
 	a.log.Info("upgrade requested", "from", a.cfg.Collector.Version, "to", rel.Version)
 	dl, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
@@ -131,14 +136,6 @@ func (a *App) handleUpgrade(ctx context.Context, base, id string, raw json.RawMe
 	}
 	if err := update.Verify(data, rel, a.cfg.Update.TrustedKeys); err != nil {
 		fail("refused: " + err.Error())
-		return
-	}
-	bin, err := os.Executable()
-	if err == nil {
-		bin, err = filepath.EvalSymlinks(bin)
-	}
-	if err != nil {
-		fail("cannot locate the running binary: " + err.Error())
 		return
 	}
 	if err := update.Stage(bin, data); err != nil {

@@ -151,7 +151,10 @@ async def tick(session: AsyncSession) -> int:
             log.warning("rollout failed", rollout_id=r["id"], detail=d.failed)
             continue
         if d.done:
-            await repo.set_rollout_state(session, r["id"], "succeeded")
+            # An explicit detail: COALESCE would otherwise keep the last
+            # "<member> is upgrading" line on a finished rollout.
+            await repo.set_rollout_state(session, r["id"], "succeeded",
+                                         f"every member runs {r['version']}")
             log.info("rollout succeeded", rollout_id=r["id"], version=r["version"])
             continue
         for cid in d.upgrade:

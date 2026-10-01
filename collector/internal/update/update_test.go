@@ -134,3 +134,20 @@ func TestTheWatcherExitsQuietlyOnceConfirmed(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestRunningBinaryRefusesAFileItsSupervisorDoesNotLaunch(t *testing.T) {
+	self, err := RunningBinary(os.Args[0])
+	if err != nil {
+		t.Fatalf("this test binary, launched as itself, was refused: %v", err)
+	}
+	other := filepath.Join(t.TempDir(), "collector")
+	if err := os.WriteFile(other, []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := RunningBinary(other); err == nil {
+		t.Fatalf("running %s but launched as %s was accepted", self, other)
+	}
+	if _, err := RunningBinary(filepath.Join(t.TempDir(), "gone")); err == nil {
+		t.Fatal("a launch path that no longer exists was accepted")
+	}
+}

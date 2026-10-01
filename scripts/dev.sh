@@ -217,11 +217,24 @@ if want collector; then
       var="DCIM_COLLECTOR_TOKEN_$(tr 'a-z-' 'A-Z_' <<<"$id")"
       tok="$(grep -m1 "^$var=" "$FLEET_TOKENS" | cut -d= -f2-)"
       [[ -n "$tok" ]] || die "no $var in $FLEET_TOKENS for $cfg"
+      # Each collector runs its own copy, as each would on its own host. One
+      # shared file breaks self-update: the first upgrade renames it out from
+      # under every other running collector, and the next one stages its
+      # build into that renamed path, which no supervisor ever launches.
+      # Re-seeded only when the developer's build changes, so a self-update
+      # survives a restart of this script.
+      inst="$ROOT/var/fleet/install/$id"
+      mkdir -p "$inst"
+      src_sum="$(sha256sum "$BIN" | cut -d' ' -f1)"
+      if [[ ! -x "$inst/collector" || "$(cat "$inst/.seeded-from" 2>/dev/null)" != "$src_sum" ]]; then
+        cp "$BIN" "$inst/collector.next" && mv -f "$inst/collector.next" "$inst/collector"
+        echo "$src_sum" > "$inst/.seeded-from"
+      fi
       # Restarted when it exits, as systemd's Restart=always would - a
       # collector that self-updates (docs/26 Phase 7) relies on its
       # supervisor to bring it back if the new build dies, so the rollback
       # watcher can put the previous build in its place.
-      start "$id" env -C "$ROOT/collector" DCIM_COLLECTOR_TOKEN="$tok"         bash -c 'while :; do "$0" "$@"; echo "[supervisor] collector exited ($?), restarting in 2 s"; sleep 2; done'         "$BIN" --config "configs/fleet/$id.yaml"
+      start "$id" env -C "$ROOT/collector" DCIM_COLLECTOR_TOKEN="$tok"         bash -c 'while :; do "$0" "$@"; echo "[supervisor] collector exited ($?), restarting in 2 s"; sleep 2; done'         "$inst/collector" --config "configs/fleet/$id.yaml"
     done
   else
     start collector env -C "$ROOT/collector" "$BIN" --config configs/collector.yaml

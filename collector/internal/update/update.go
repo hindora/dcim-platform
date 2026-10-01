@@ -31,7 +31,9 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -175,6 +177,40 @@ func Stage(bin string, data []byte) error {
 		return fmt.Errorf("swapping in the new binary: %w", err)
 	}
 	return nil
+}
+
+// RunningBinary returns the file this process runs from, and refuses when it
+// is not the file its supervisor launches (argv[0], resolved). Upgrading any
+// other file is wasted: the supervisor restarts the launch path, so the new
+// build never runs there, and the failure reads as "did not take effect". It
+// happens when the install was replaced under a running process - a package
+// manager upgrade, or several collectors sharing one file - and the fix is a
+// restart, not an upgrade.
+func RunningBinary(argv0 string) (string, error) {
+	exe, err := os.Executable()
+	if err == nil {
+		exe, err = filepath.EvalSymlinks(exe)
+	}
+	if err != nil {
+		return "", fmt.Errorf("cannot locate the running binary: %w", err)
+	}
+	launch := argv0
+	if !strings.ContainsRune(launch, os.PathSeparator) {
+		if launch, err = exec.LookPath(launch); err != nil {
+			return "", fmt.Errorf("cannot resolve the launch path %q: %w", argv0, err)
+		}
+	}
+	if launch, err = filepath.Abs(launch); err == nil {
+		launch, err = filepath.EvalSymlinks(launch)
+	}
+	if err != nil {
+		return "", fmt.Errorf("the launch path %q is gone: %w", argv0, err)
+	}
+	if launch != exe {
+		return "", fmt.Errorf("running from %s but launched as %s: the install was "+
+			"replaced under this process; restart it before upgrading", exe, launch)
+	}
+	return exe, nil
 }
 
 // Restore puts .prev back. The failed build is kept as .failed for whoever
