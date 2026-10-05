@@ -37,6 +37,7 @@ type Metrics struct {
 	Endpoints     *prometheus.GaugeVec
 	FailuresTotal *prometheus.CounterVec
 	TrapsTotal    *prometheus.CounterVec
+	V3EngineTotal *prometheus.CounterVec
 
 	PublishQueueDepth prometheus.Gauge
 	PublishBatchSize  prometheus.Histogram
@@ -103,6 +104,14 @@ func NewMetrics() *Metrics {
 		TrapsTotal: promauto.NewCounterVec(prometheus.CounterOpts{
 			Name: "dcim_collector_traps_received_total",
 			Help: "SNMP traps received, by outcome.",
+		}, []string{"result"}),
+		// How each SNMPv3 session learned the agent's engine ID, boots and
+		// time. "cached" is the steady state; "discovered" costs a round
+		// trip; "refreshed" means a cached engine was stale (agent reboot or
+		// card swap) and was learned again.
+		V3EngineTotal: promauto.NewCounterVec(prometheus.CounterOpts{
+			Name: "dcim_collector_snmp_v3_engine_total",
+			Help: "SNMPv3 sessions by how the agent's engine parameters were obtained.",
 		}, []string{"result"}),
 
 		PublishQueueDepth: promauto.NewGauge(prometheus.GaugeOpts{

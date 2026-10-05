@@ -45,6 +45,8 @@ type Adapter struct {
 
 	mu         sync.Mutex
 	lastUptime map[string]float64 // endpoint id -> last sysUpTime in seconds
+
+	engines *engineCache // SNMPv3 engine ID/boots/time per agent
 }
 
 func New(maps *mapping.Registry, log *slog.Logger, mets *obs.Metrics,
@@ -57,6 +59,7 @@ func New(maps *mapping.Registry, log *slog.Logger, mets *obs.Metrics,
 		maxRepetitions: maxRepetitions,
 		anySourceReply: anySourceReply,
 		lastUptime:     make(map[string]float64),
+		engines:        newEngineCache(),
 	}
 }
 
@@ -116,17 +119,30 @@ func UseAnySourceSocket(client *g.GoSNMP, address string, port int) error {
 	return nil
 }
 
+func agentPort(ep *models.Endpoint) int {
+	if ep.Port == 0 {
+		return 161
+	}
+	return ep.Port
+}
+
+// engineKey identifies an agent, not an endpoint: endpoints that share an
+// agent share its engine.
+func engineKey(ep *models.Endpoint) string {
+	return fmt.Sprintf("%s:%d", ep.Address, agentPort(ep))
+}
+
 // dial opens a session to the endpoint's agent. The caller closes client.Conn.
 //
 // A "snmp_v3" credential (docs/26 Phase 4) gets a USM session instead of a
 // community string - everything else about the session (timeout, retries,
 // the any-source-reply socket swap below) is identical between the two.
+// With useCache, a v3 session starts from the agent's cached engine
+// parameters (see engineCache); the bool reports whether it did.
 func (a *Adapter) dial(ctx context.Context, ep *models.Endpoint,
-	retries int) (*g.GoSNMP, error) {
-	port := ep.Port
-	if port == 0 {
-		port = 161
-	}
+	retries int, useCache bool) (*g.GoSNMP, bool, error) {
+	port := agentPort(ep)
+	cached := false
 
 	client := &g.GoSNMP{
 		Target:             ep.Address,
@@ -141,31 +157,30 @@ func (a *Adapter) dial(ctx context.Context, ep *models.Endpoint,
 	if ep.Credential != nil && ep.Credential.Kind == "snmp_v3" {
 		usm, err := parseUSM(ep.Credential)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		client.Version = g.Version3
 		client.SecurityModel = g.UserSecurityModel
 		client.MsgFlags = usm.msgFlags()
-		// AuthoritativeEngineID is deliberately left empty: gosnmp performs
-		// USM's own discovery handshake against it on Connect and learns
-		// the agent's real engine ID, boots and time from there. Nothing
-		// here needs to know or cache a device's engine ID for polling -
-		// that only becomes this collector's problem on the TRAP side,
-		// where a message arrives unsolicited with no discovery round trip
-		// possible first (see traps.go).
-		client.SecurityParameters = &g.UsmSecurityParameters{
+		// With no cached engine, AuthoritativeEngineID stays empty and
+		// gosnmp runs USM's discovery handshake before the first request.
+		sp := &g.UsmSecurityParameters{
 			UserName:                 usm.securityName,
 			AuthenticationProtocol:   usm.authProtocol,
 			AuthenticationPassphrase: usm.authKey,
 			PrivacyProtocol:          usm.privProtocol,
 			PrivacyPassphrase:        usm.privKey,
 		}
+		if useCache {
+			cached = a.engines.apply(engineKey(ep), sp, time.Now())
+		}
+		client.SecurityParameters = sp
 	} else {
 		community := ep.Credential.Community()
 		if community == "" {
 			// Fail loudly: with a wildcard-listener agent plane, an empty
 			// community is not "use the default", it is a guaranteed silent drop.
-			return nil, fmt.Errorf("%w: no community for endpoint %s",
+			return nil, false, fmt.Errorf("%w: no community for endpoint %s",
 				models.ErrAuth, ep.ID)
 		}
 		client.Community = community
@@ -173,27 +188,79 @@ func (a *Adapter) dial(ctx context.Context, ep *models.Endpoint,
 	}
 
 	if err := client.Connect(); err != nil {
-		return nil, fmt.Errorf("%w: %v", models.ErrUnreachable, err)
+		return nil, false, fmt.Errorf("%w: %v", models.ErrUnreachable, err)
 	}
 	if a.anySourceReply {
 		if err := UseAnySourceSocket(client, ep.Address, port); err != nil {
 			client.Conn.Close()
-			return nil, fmt.Errorf("%w: %v", models.ErrUnreachable, err)
+			return nil, false, fmt.Errorf("%w: %v", models.ErrUnreachable, err)
 		}
 	}
-	return client, nil
+	return client, cached, nil
+}
+
+// firstGet opens a session and reads sysUpTime - the first request of every
+// poll and ping. dialErr is a session that could not be opened; getErr is
+// the request's own outcome, for the caller to classify.
+//
+// A v3 session starts from the cached engine. If the agent answered but
+// would not take it, the entry is dropped and the request is made once more
+// from a fresh discovery, so a swapped card whose agent does not report the
+// unknown engine cleanly costs one round trip, not a failed poll. If nobody
+// answered, the entry is dropped too - whatever comes back may have
+// rebooted - but there is nothing to retry.
+func (a *Adapter) firstGet(ctx context.Context, ep *models.Endpoint, retries int) (
+	client *g.GoSNMP, result *g.SnmpPacket, getErr, dialErr error) {
+
+	client, cached, dialErr := a.dial(ctx, ep, retries, true)
+	if dialErr != nil {
+		return nil, nil, nil, dialErr
+	}
+	result, getErr = client.Get([]string{sysUpTimeOID})
+	if client.Version != g.Version3 {
+		return client, result, getErr, nil
+	}
+
+	key := engineKey(ep)
+	outcome := "discovered"
+	if cached {
+		outcome = "cached"
+		if getErr != nil {
+			a.engines.forget(key)
+			if isRequestTimeout(getErr) {
+				return client, result, getErr, nil
+			}
+			client.Conn.Close()
+			if client, _, dialErr = a.dial(ctx, ep, retries, false); dialErr != nil {
+				return nil, nil, nil, dialErr
+			}
+			result, getErr = client.Get([]string{sysUpTimeOID})
+			outcome = "refreshed"
+		}
+	}
+	if getErr != nil {
+		return client, result, getErr, nil
+	}
+	sp, _ := client.SecurityParameters.(*g.UsmSecurityParameters)
+	if a.engines.learn(key, sp, time.Now()) && outcome == "cached" {
+		// gosnmp recovered from a report itself: a reboot or a new engine.
+		outcome = "refreshed"
+	}
+	if a.mets != nil {
+		a.mets.V3EngineTotal.WithLabelValues(outcome).Inc()
+	}
+	return client, result, nil, nil
 }
 
 // Ping asks the agent for sysUpTime and nothing else. One retry, not the
 // profile's: a liveness check that retries like a poll takes as long to say
 // "gone" as the poll it exists to get ahead of.
 func (a *Adapter) Ping(ctx context.Context, ep *models.Endpoint) error {
-	client, err := a.dial(ctx, ep, 1)
-	if err != nil {
-		return err
+	client, result, err, dialErr := a.firstGet(ctx, ep, 1)
+	if dialErr != nil {
+		return dialErr
 	}
 	defer client.Conn.Close()
-	result, err := client.Get([]string{sysUpTimeOID})
 	if err != nil {
 		if isUSMAuthError(err) {
 			return fmt.Errorf("%w: %v", models.ErrAuth, err)
@@ -208,7 +275,7 @@ func (a *Adapter) Ping(ctx context.Context, ep *models.Endpoint) error {
 
 func (a *Adapter) Poll(ctx context.Context, ep *models.Endpoint) (*models.PollOutcome, error) {
 	started := time.Now()
-	client, err := a.dial(ctx, ep, ep.Poll.Retries)
+	client, upResult, upErr, err := a.firstGet(ctx, ep, ep.Poll.Retries)
 	if err != nil {
 		return nil, err
 	}
@@ -223,7 +290,7 @@ func (a *Adapter) Poll(ctx context.Context, ep *models.Endpoint) (*models.PollOu
 	// identical way, so this returns immediately rather than let
 	// collectScalars/collectTables each rediscover the same fault one Miss
 	// at a time.
-	counterReset, hardErr := a.checkUptime(ep, client, outcome, now)
+	counterReset, hardErr := a.checkUptime(ep, upResult, upErr, outcome, now)
 	if hardErr != nil {
 		return nil, hardErr
 	}
@@ -282,10 +349,9 @@ func emptyPollError(misses []models.Miss, ep *models.Endpoint) error {
 // non-nil error only for a fault the whole session shares - currently just
 // a v3 USM auth failure - that Poll should stop on rather than keep polling
 // into.
-func (a *Adapter) checkUptime(ep *models.Endpoint, client *g.GoSNMP,
+func (a *Adapter) checkUptime(ep *models.Endpoint, result *g.SnmpPacket, err error,
 	outcome *models.PollOutcome, now int64) (bool, error) {
 
-	result, err := client.Get([]string{sysUpTimeOID})
 	if err != nil {
 		if isUSMAuthError(err) {
 			return false, fmt.Errorf("%w: %v", models.ErrAuth, err)
