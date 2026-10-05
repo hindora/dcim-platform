@@ -11,6 +11,19 @@ name: dcim
 services:
   postgres:
     image: timescale/timescaledb-ha:pg16
+    # Sized for a host Postgres SHARES - this compose file runs the API,
+    # workers, collectors and often a simulator beside it. The image tunes
+    # itself as if it owned the machine (shared_buffers 25%, ~470 MB per
+    # maintenance worker, 16 background workers); on a 3.8 GB WSL VM two
+    # TimescaleDB compression jobs alone then held ~1 GB, swap filled and
+    # every other process stalled. A dedicated database host overrides these
+    # in deploy/.env. Background workers: one scheduler per database (3 here)
+    # holds a slot, so 6 leaves 3 jobs running at once.
+    command: >
+      postgres
+      -c shared_buffers=${PG_SHARED_BUFFERS:-512MB}
+      -c maintenance_work_mem=${PG_MAINTENANCE_WORK_MEM:-128MB}
+      -c timescaledb.max_background_workers=${PG_TS_BACKGROUND_WORKERS:-6}
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-dcim}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}
