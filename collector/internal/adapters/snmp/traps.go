@@ -67,7 +67,7 @@ type TrapReceiver struct {
 	mu       sync.Mutex
 	seen     map[string]*rateWindow
 	perMin   int
-	listener *g.TrapListener
+	listener *trapSocket
 
 	// SNMPv3 (docs/26 Phase 4): the USM user devices send as, this
 	// receiver's own engine ID (for INFORMs), and the signal that rebuilds
@@ -255,19 +255,19 @@ func (t *TrapReceiver) Listen(ctx context.Context) error {
 		case <-t.reconfig:
 		default:
 		}
-		listener := g.NewTrapListener()
+		listener := newTrapSocket()
 		listener.Params = t.params()
 		listener.OnNewTrap = onTrap
 		t.listener = listener
 		errCh := make(chan error, 1)
 		go func() { errCh <- listener.Listen(t.listen) }()
 
-		// Never Close a listener that has not bound yet. gosnmp's Close finds
-		// no socket, marks it finished and returns; the listener then binds
-		// anyway and blocks forever handing Close a done signal nobody reads -
-		// a bound port that reads nothing, and a Listen that never returns.
-		// Found live: a collector re-keyed seconds after its first build
-		// stopped receiving every trap, v2c included.
+		// Wait for the bind before anything may Close the listener. gosnmp's
+		// own listener, used here until trapSocket replaced it, hung forever
+		// on a Close before the bind (found live: a collector re-keyed seconds
+		// after start stopped receiving every trap). trapSocket handles that
+		// case, but knowing the port is bound before logging "listening" is
+		// worth keeping anyway.
 		select {
 		case <-listener.Listening():
 		case err := <-errCh:

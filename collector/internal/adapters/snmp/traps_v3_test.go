@@ -3,6 +3,7 @@ package snmp
 import (
 	"context"
 	"net"
+	"runtime"
 	"strconv"
 	"testing"
 	"time"
@@ -147,28 +148,72 @@ func TestSetUSMIsANoOpWhenNothingChanged(t *testing.T) {
 
 const receiverID = "\x80\x00\x1f\x88\x04col-test"
 
-// Why Listen waits for gosnmp's Listening() before anything may Close a
-// listener. In gosnmp 1.37, a Close() that runs before the socket is bound
-// returns at once, and Listen then binds and never returns - a port that is
-// held and read by nothing. Found live (a collector re-keyed seconds after
-// start stopped taking every trap, v2c too); the receiver's own window is too
-// narrow to hit from a test, so this pins the library behaviour instead. If a
-// gosnmp upgrade fixes it, this fails, and the wait can go.
-func TestGosnmpCloseBeforeBindLeavesListenHanging(t *testing.T) {
-	hung := 0
-	for i := 0; i < 5; i++ {
-		l := g.NewTrapListener()
-		l.Params = g.Default
+// A Close that lands before the bind must not leave a socket held and read by
+// nothing. gosnmp's own listener did exactly that (found live: a collector
+// re-keyed seconds after start stopped taking every trap); trapSocket
+// returns without binding.
+func TestTrapSocketCloseBeforeBindReturns(t *testing.T) {
+	for i := 0; i < 20; i++ {
+		s := newTrapSocket()
+		s.Params = g.Default
 		errCh := make(chan error, 1)
-		go func() { errCh <- l.Listen("127.0.0.1:0") }()
-		l.Close()
+		s.Close()
+		go func() { errCh <- s.Listen("127.0.0.1:0") }()
 		select {
-		case <-errCh:
-		case <-time.After(500 * time.Millisecond):
-			hung++
+		case err := <-errCh:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("Listen did not return after an early Close")
 		}
 	}
-	if hung == 0 {
-		t.Fatal("gosnmp no longer hangs on an early Close; the Listening() wait in Listen can go")
+}
+
+// An INFORM sent to an address other than the one the kernel would pick for
+// the reply - a pool's trap VIP, here 127.0.0.2 - must be answered FROM that
+// address. The sender's socket is connected to it, as pysnmp effectively is:
+// a report or response from any other source is dropped, the engine-ID
+// discovery never completes, and the INFORM is never acknowledged. That was
+// every INFORM through a trap VIP until the receiver replied from the
+// datagram's own destination (IP_PKTINFO). Linux only: other platforms have
+// no IP_PKTINFO here and the kernel still picks.
+func TestV3InformThroughAnAliasIsAcknowledgedFromThatAlias(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("IP_PKTINFO source selection is Linux-only")
+	}
+	r, _, _ := newHoldReceiver(t)
+	port := freeUDPPort(t)
+	r.listen = "0.0.0.0:" + strconv.Itoa(port)
+	r.SetEngineID(string([]byte{0x80, 0x00, 0x1f, 0x88, 0x04}) + "col-test")
+	if err := r.SetUSM(trapUser("auth-pass-1", "priv-pass-1")); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = r.Listen(ctx) }()
+	waitBound(t, port)
+
+	c := &g.GoSNMP{
+		Target: "127.0.0.2", Port: uint16(port), Version: g.Version3,
+		SecurityModel: g.UserSecurityModel, MsgFlags: g.AuthPriv,
+		Timeout: 500 * time.Millisecond, Retries: 1,
+		SecurityParameters: &g.UsmSecurityParameters{
+			UserName: "dcim-poll", AuthenticationProtocol: g.SHA256, AuthenticationPassphrase: "auth-pass-1",
+			PrivacyProtocol: g.AES, PrivacyPassphrase: "priv-pass-1",
+		},
+	}
+	if err := c.Connect(); err != nil {
+		t.Fatal(err)
+	}
+	defer c.Conn.Close()
+	if _, err := c.SendTrap(g.SnmpTrap{IsInform: true, Variables: []g.SnmpPDU{
+		{Name: ".1.3.6.1.2.1.1.3.0", Type: g.TimeTicks, Value: uint32(42)},
+		{Name: ".1.3.6.1.6.3.1.1.4.1.0", Type: g.ObjectIdentifier, Value: ".1.3.6.1.6.3.1.1.5.3"},
+	}}); err != nil {
+		t.Fatalf("INFORM through 127.0.0.2 not acknowledged: %v", err)
+	}
+	if !waitReceived(r, 1) {
+		t.Fatal("acknowledged INFORM never reached the handler")
 	}
 }
