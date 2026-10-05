@@ -270,6 +270,53 @@ A real go.mod complication surfaced and was resolved along the way: `go get gola
 
 **Verified.** All of the above has full Go test coverage (`go build`/`go vet`/`gofmt` clean, every new package's own tests passing, including a real cross-language-style round trip for the credential rotation's Python-only logic run live against the real dev Postgres - 3 tests, transaction rolled back). SNMPv3's crypto correctness is not independently re-verified here; it is `gosnmp`'s own well-tested USM implementation, not code this session wrote or could have meaningfully re-tested against a real SNMPv3 agent (no working `snmpsim` v3 setup was available in this environment - its installed version has an unrelated, unfixed `pyasn1` incompatibility).
 
+**SNMPv3 end to end and credential sets, shipped 2026-10-05** (platform `448dc0a`; simulator `5160060`, `de357d3`). Until now v3 polling existed in the collector but had never run against a v3 agent: the simulator spoke v2c only, and its Python environment could not even encrypt (`cryptography` was missing, so every authPriv request failed with "Ciphering services not available").
+
+How real estates run v3, which both sides now model:
+
+- **v3 arrives by device class, not all at once.** Facility power and cooling cards on the BMS network go first. Server BMCs and OS agents often stay v2c, read-only on an isolated management network, for years. A card being migrated keeps answering v2c until the old consumers move.
+- **Every agent has its own engine ID** (RFC 3411: vendor enterprise number, format 01, then the IPv4 address). USM localises keys per device, so one device's traffic does not give away its neighbour's keys.
+- **One poll user per site and device class**, with different passphrases per site. The poller is given that one credential for the whole network, not one per device.
+
+**Scope, chosen by the operator:** the BMS plane of both sites, 210 SNMP endpoints on 178 agent addresses (probe endpoints share their PDU's agent). Everything else stays v2c.
+
+**Platform:**
+
+- **Credential sets:** `collector_pool_credential` (migration 0097) maps (pool, protocol) to a credential. The assignment serves an endpoint's own credential, else its pool's default for the protocol; the ETag already digests the credential.
+- **Credentials API:** `/credentials` lists (hints only), creates and rotates, with v3 validated in the collector's field names:
+  - authPriv, or authNoPriv for old cards; noAuthNoPriv is refused, being v2c with a user name;
+  - RFC 3414's 8-character minimum;
+  - MD5 and DES accepted but flagged weak in the hint.
+
+  The secret-access guard holds the module to writing secrets, never reading them.
+- **Pool defaults:** `/pools/{id}/credentials` sets defaults. *Adopt* is the bulk action that clears a protocol's per-endpoint credentials so the default takes over.
+- **Importer:** it no longer pins the per-address v2c credential on an endpoint whose pool has a default; a re-import used to undo the adoption.
+- **UI:** Settings > Credentials, and a credential-set panel on the pool sheet.
+
+**Simulator:**
+
+- **One engine per v3 device.** snmpsim chooses a v3 device's data by *context name*, but real pollers use the empty context. So each v3 device gets its own engine, bound to its address, over a `self.snmprec` (empty context) and an `<ip>.snmprec` (v2c still answers).
+- **The v2c engine binds every other address explicitly.** A specific bind beside `0.0.0.0` on the same port fails silently and the wildcard swallows every packet.
+- **The v3 copies are real files**, rewritten alongside every dataset write. snmpsim crashes on a symlink pointing outside its data dir, and a hard link would be orphaned by the generator's atomic replace.
+- **Turning it on:** `PUT /api/snmp/v3`. `GET /api/snmp/v3?reveal=true` is the facilities team handing the passphrases to the DCIM team.
+
+**Live switchover:**
+
+- Two per-site credentials (`authPriv SHA256/AES128`) were created and set as each BMS pool's SNMP default, then adopted onto 107 + 103 endpoints.
+- All 210 were ONLINE over v3 within 60 s.
+- Five minutes later the single snmpsim process collapsed. It is single-threaded Python, and doing the AES and HMAC for 178 devices on top of 716 v2c agents pinned it at 97% of a core; its timeouts then hit v2c devices too. A real device has its own CPU.
+- The v3 engines now run in their own processes, about 60 engines each (3 here, about 118 MB apiece). Over a 10-minute soak afterwards, 210/210 stayed ONLINE over v3 and 716/716 over v2c, apart from the usual handful of network-switch timeouts.
+- Checked on a live BMS agent: v2c still answers; a wrong v3 key gets `Wrong SNMP PDU digest`; snmpsim's built-in default user is refused.
+
+**Measured:** about 1 MB and a quarter of a second of agent start-up per v3 engine. That is why v3 is scoped to networks. The **v2c** primary process is itself at about 98% of a core even without v3. That limits what the simulator can serve and is the likely cause of the long-standing network-switch timeouts; sharding the v2c agents the same way is the obvious next step there.
+
+**Still owed:**
+
+- v3 traps and INFORMs. The simulator still sends v2c traps, and the collector's SNMP library warns its v3 trap support is unreliable.
+- Context names in the collector.
+- Caching engine IDs in the collector. It rediscovers on every poll, one extra round trip per v3 poll, where real pollers cache the engine ID, boots and time.
+- v3 in the discovery promote dialog.
+
 ### Phase 5: pools, zones and stable ownership (M–L, 4 weeks)
 
 **Goal:** assignment follows network reality (site × plane), ownership is persisted and damped, and operators can move work deliberately.
