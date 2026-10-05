@@ -736,6 +736,11 @@ class AssignmentPool(BaseModel):
     #: This collector's slice of the budget, which it enforces: the budget
     #: times its share of the pool's owned endpoints.
     rate_budget_share_points_per_s: float | None = None
+    #: The pool's default SNMP credential when it is SNMPv3: the USM user the
+    #: pool's devices send v3 TRAPs and INFORMs as, which the collector's trap
+    #: receiver needs to authenticate and decrypt them. Sealed like an
+    #: endpoint's credential.
+    snmp_v3_credential: AssignmentCredential | None = None
 
 
 class Assignment(BaseModel):

@@ -69,6 +69,14 @@ type TrapReceiver struct {
 	perMin   int
 	listener *g.TrapListener
 
+	// SNMPv3 (docs/26 Phase 4): the USM user devices send as, this
+	// receiver's own engine ID (for INFORMs), and the signal that rebuilds
+	// the listener when the user changes.
+	usmMu    sync.Mutex
+	usm      *usmParams
+	engineID string
+	reconfig chan struct{}
+
 	// Traps that arrived before the collector knew who sent them.
 	//
 	// The socket binds in milliseconds and the first assignment lands twenty
@@ -132,9 +140,66 @@ func NewTrapReceiver(table *mapping.TrapTable, resolver *assign.Resolver,
 	return &TrapReceiver{
 		table: table, resolver: resolver, sink: sink, log: log, mets: mets,
 		listen: listen, workers: workers, perMin: perMinute,
-		seen:    make(map[string]*rateWindow),
-		holdFor: defaultHoldFor,
-		holdMax: defaultHoldMax,
+		seen:     make(map[string]*rateWindow),
+		holdFor:  defaultHoldFor,
+		holdMax:  defaultHoldMax,
+		reconfig: make(chan struct{}, 1),
+	}
+}
+
+// SetEngineID is this receiver's own SNMPv3 engine ID - what a device
+// sending an INFORM localises its keys to (the receiver is authoritative for
+// an INFORM, the sender for a TRAP). Set before Listen.
+func (t *TrapReceiver) SetEngineID(id string) { t.engineID = id }
+
+// SetUSM gives the receiver the USM user its devices send v3 notifications
+// as (docs/26 Phase 4): the pool's default SNMPv3 credential. nil means v2c
+// only. One user is enough for every device that shares it: gosnmp
+// re-localises the keys to each packet's own engine ID. v2c keeps working
+// alongside - a network mid-migration sends both. A change rebuilds the
+// listener (milliseconds without a socket); an unchanged one is a no-op.
+func (t *TrapReceiver) SetUSM(cred *models.Credential) error {
+	var next *usmParams
+	if cred != nil && cred.Kind == "snmp_v3" {
+		p, err := parseUSM(cred)
+		if err != nil {
+			return err
+		}
+		next = &p
+	}
+	t.usmMu.Lock()
+	same := (t.usm == nil && next == nil) || (t.usm != nil && next != nil && *t.usm == *next)
+	t.usm = next
+	t.usmMu.Unlock()
+	if same {
+		return nil
+	}
+	select {
+	case t.reconfig <- struct{}{}:
+	default:
+	}
+	return nil
+}
+
+// params is the listener configuration for the current USM user.
+func (t *TrapReceiver) params() *g.GoSNMP {
+	t.usmMu.Lock()
+	u := t.usm
+	t.usmMu.Unlock()
+	if u == nil {
+		return g.Default
+	}
+	return &g.GoSNMP{
+		Version: g.Version3, SecurityModel: g.UserSecurityModel, MsgFlags: u.msgFlags(),
+		Logger: g.Default.Logger, Timeout: g.Default.Timeout,
+		SecurityParameters: &g.UsmSecurityParameters{
+			UserName:                 u.securityName,
+			AuthenticationProtocol:   u.authProtocol,
+			AuthenticationPassphrase: u.authKey,
+			PrivacyProtocol:          u.privProtocol,
+			PrivacyPassphrase:        u.privKey,
+			AuthoritativeEngineID:    t.engineID,
+		},
 	}
 }
 
@@ -152,16 +217,13 @@ func (t *TrapReceiver) Listen(ctx context.Context) error {
 	// while the handler talks to Redis.
 	queue := make(chan inbound, 10000)
 
-	listener := g.NewTrapListener()
-	listener.Params = g.Default
-	listener.OnNewTrap = func(p *g.SnmpPacket, addr *net.UDPAddr) {
+	onTrap := func(p *g.SnmpPacket, addr *net.UDPAddr) {
 		select {
 		case queue <- inbound{packet: p, addr: addr, at: time.Now().UTC()}:
 		default:
 			t.mets.TrapsTotal.WithLabelValues("queue_full").Inc()
 		}
 	}
-	t.listener = listener
 
 	var wg sync.WaitGroup
 	for i := 0; i < t.workers; i++ {
@@ -184,19 +246,43 @@ func (t *TrapReceiver) Listen(ctx context.Context) error {
 	// what delivers it once there is.
 	go t.drainHeld(ctx)
 
-	errCh := make(chan error, 1)
-	go func() { errCh <- listener.Listen(t.listen) }()
+	for {
+		// The listener about to be built reads the CURRENT user, so a change
+		// signalled before this point is already in it. Left queued, it tore
+		// the fresh listener straight down again, and a trap arriving in that
+		// gap went to a socket that was closing.
+		select {
+		case <-t.reconfig:
+		default:
+		}
+		listener := g.NewTrapListener()
+		listener.Params = t.params()
+		listener.OnNewTrap = onTrap
+		t.listener = listener
+		errCh := make(chan error, 1)
+		go func() { errCh <- listener.Listen(t.listen) }()
 
-	t.log.Info("trap receiver listening", "addr", t.listen,
-		"mappings", t.table.Len(), "workers", t.workers)
+		t.usmMu.Lock()
+		v3 := t.usm != nil
+		t.usmMu.Unlock()
+		t.log.Info("trap receiver listening", "addr", t.listen,
+			"mappings", t.table.Len(), "workers", t.workers, "snmpv3", v3)
 
-	select {
-	case <-ctx.Done():
-		listener.Close()
-		wg.Wait()
-		return nil
-	case err := <-errCh:
-		return fmt.Errorf("trap listener on %s: %w", t.listen, err)
+		select {
+		case <-ctx.Done():
+			listener.Close()
+			wg.Wait()
+			return nil
+		case err := <-errCh:
+			return fmt.Errorf("trap listener on %s: %w", t.listen, err)
+		case <-t.reconfig:
+			// The v3 user changed: a fresh listener with the new keys. Wait
+			// for the old one to give the socket back before binding again.
+			listener.Close()
+			if err := <-errCh; err != nil {
+				return fmt.Errorf("trap listener on %s: %w", t.listen, err)
+			}
+		}
 	}
 }
 

@@ -833,6 +833,11 @@ async def test_a_pool_default_credential_resolves_until_an_endpoint_has_its_own(
     assert r["credential_kind"] == "snmp_v2c" and not r["credential_from_pool"], \
         "the endpoint's own credential must still win"
 
+    trap = await fleet._pool_v3_credentials(session, [pool["id"]], None)
+    assert trap[pool["id"]].kind == "snmp_v3"
+    assert trap[pool["id"]].data["security_name"] == "dcim-poll", (
+        "the trap receiver is served the pool's v3 user")
+
     assert await creds.adopt_pool_default(session, pool["id"], "snmp") == 1
     r = await served()
     assert r["credential_kind"] == "snmp_v3" and r["credential_from_pool"]
@@ -843,5 +848,6 @@ async def test_a_pool_default_credential_resolves_until_an_endpoint_has_its_own(
     assert "authPriv SHA256/AES128" in listed[v3["id"]]["secret_hint"]
 
     await creds.set_pool_defaults(session, pool["id"], {"snmp": None}, "test")
+    assert await fleet._pool_v3_credentials(session, [pool["id"]], None) == {}
     r = await served()
     assert r["credential_kind"] is None, "no default and no own credential: none served"

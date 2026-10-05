@@ -166,6 +166,7 @@ async def build_assignment(session: AsyncSession, collector_id: str,
         pool_of = {str(r["id"]): r.get("pool_id")
                    for r in await repo.ownable_endpoints(session)}
         shares = target_limits.budget_shares(budgets, owners, pool_of, collector_id)
+    trap_users = await _pool_v3_credentials(session, [p["id"] for p in pool_rows], pubkey)
     pools: dict[str, AssignmentPool] = {}
     for p in pool_rows:
         bbmd = p.get("bbmd_settings") or {}
@@ -176,7 +177,8 @@ async def build_assignment(session: AsyncSession, collector_id: str,
                                 bbmd=bbmd.get("bbmd"),
                                 ttl_s=int(bbmd.get("ttl_s") or 300)),
             rate_budget_points_per_s=p.get("rate_budget_points_per_s"),
-            rate_budget_share_points_per_s=shares.get(p["id"]))
+            rate_budget_share_points_per_s=shares.get(p["id"]),
+            snmp_v3_credential=trap_users.get(p["id"]))
 
     return Assignment(version=version, generated_at=datetime.now(UTC),
                       collector_id=collector_id,
@@ -398,6 +400,40 @@ async def resolve_list(session: AsyncSession,
     return out
 
 
+async def _pool_v3_credentials(session: AsyncSession, pool_ids: list[str],
+                                pubkey: str | None) -> dict[str, AssignmentCredential]:
+    """Each pool's default SNMP credential, when it is SNMPv3 - for the trap
+    receiver (docs/26 Phase 4). Decrypted and re-sealed exactly as an
+    endpoint's credential is; one that cannot be is left out rather than
+    sent in clear to a collector that has a sealing key."""
+    if not pool_ids:
+        return {}
+    rows = (await session.execute(text("""
+        SELECT pc.pool_id::text AS pool_id, c.kind, c.secret_enc, c.key_id
+          FROM collector_pool_credential pc JOIN credential c ON c.id = pc.credential_id
+         WHERE pc.protocol = 'snmp' AND c.kind = 'snmp_v3'
+           AND pc.pool_id = ANY(CAST(:ids AS uuid[]))
+    """), {"ids": pool_ids})).mappings().all()
+    out: dict[str, AssignmentCredential] = {}
+    for r in rows:
+        try:
+            plain = decrypt_secret(bytes(r["secret_enc"]), key_id=r["key_id"])
+        except Exception:
+            log.error("pool v3 credential decryption failed", pool_id=r["pool_id"])
+            continue
+        digest = hashlib.sha256(json.dumps(plain, sort_keys=True, default=str).encode()).hexdigest()
+        if pubkey:
+            try:
+                out[r["pool_id"]] = AssignmentCredential(
+                    kind=r["kind"], digest=digest,
+                    sealed_b64=sealed_credential.seal_for_collector(plain, pubkey))
+            except sealed_credential.SealError:
+                log.error("pool v3 credential sealing failed", pool_id=r["pool_id"])
+            continue
+        out[r["pool_id"]] = AssignmentCredential(kind=r["kind"], data=plain, digest=digest)
+    return out
+
+
 def etag_for(assignment: Assignment) -> str:
     """Weak ETag over the version plus the served content of each endpoint.
 
@@ -453,5 +489,6 @@ def etag_for(assignment: Assignment) -> str:
         p = assignment.pools[pool_id]
         digest.update(f"|p|{pool_id}|{p.trap_vip}|{p.bbmd.enabled}|{p.bbmd.bbmd}"
                       f"|{p.bbmd.ttl_s}|{p.rate_budget_points_per_s}"
-                      f"|{p.rate_budget_share_points_per_s}".encode())
+                      f"|{p.rate_budget_share_points_per_s}"
+                      f"|{p.snmp_v3_credential.digest if p.snmp_v3_credential else ''}".encode())
     return f'W/"{digest.hexdigest()[:32]}"'

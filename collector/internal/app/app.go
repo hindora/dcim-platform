@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -325,6 +326,7 @@ func New(cfg *config.Config, version string, tlsStore *mtls.Store) (*App, error)
 		a.traps = snmp.NewTrapReceiver(trapTable, a.resolver, pub, log, mets,
 			cfg.Protocols.SNMPTrap.Listen, cfg.Protocols.SNMPTrap.Workers,
 			cfg.Protocols.SNMPTrap.RateLimitPerMinute)
+		a.traps.SetEngineID(receiverEngineID(cfg.Collector.ID))
 	}
 	if len(a.adapters) == 0 {
 		return nil, fmt.Errorf("no protocol adapters enabled")
@@ -708,6 +710,53 @@ func (a *App) refreshResolver() {
 	a.reconcileFDR()
 	a.limiter.SetBudgets(budgetShares(a.assign.Pools()))
 	a.limiter.Sync(a.assign.Endpoints())
+	a.syncTrapUSM()
+}
+
+// receiverEngineID is this collector's own SNMPv3 engine ID, which a device
+// sending an INFORM localises its keys to: RFC 3411 format 4 (text) under
+// net-snmp's enterprise number, from the collector id - stable across
+// restarts, unique per collector, at most 32 octets.
+func receiverEngineID(collectorID string) string {
+	id := collectorID
+	if len(id) > 27 {
+		id = id[:27]
+	}
+	return string([]byte{0x80, 0x00, 0x1f, 0x88, 0x04}) + id
+}
+
+// syncTrapUSM gives the trap receiver the SNMPv3 user its pools' devices
+// send as - the pool's default SNMP credential when it is v3. A collector
+// normally serves one pool; if its pools disagree, the first by id is used
+// and the rest said so, since one listener takes one user.
+func (a *App) syncTrapUSM() {
+	if a.traps == nil {
+		return
+	}
+	pools := a.assign.Pools()
+	ids := make([]string, 0, len(pools))
+	for id := range pools {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	var chosen *models.Credential
+	chosenPool := ""
+	for _, id := range ids {
+		c := pools[id].SNMPv3Credential
+		if c == nil || c.Data == nil {
+			continue
+		}
+		if chosen == nil {
+			chosen, chosenPool = c, id
+		} else if c.Data["security_name"] != chosen.Data["security_name"] {
+			a.log.Warn("pools carry different SNMPv3 trap users; receiving as one of them",
+				"using_pool", chosenPool, "ignored_pool", id)
+		}
+	}
+	if err := a.traps.SetUSM(chosen); err != nil {
+		a.log.Error("SNMPv3 trap credential unusable; receiving v2c only", "error", err)
+		_ = a.traps.SetUSM(nil)
+	}
 }
 
 // budgetShares is this collector's slice of each pool's budget, as the

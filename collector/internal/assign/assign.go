@@ -65,6 +65,11 @@ type Pool struct {
 	// ownership. A failover's survivor owns them all, so gets it all. nil
 	// with no budget, or from a platform that predates enforcement.
 	RateBudgetShare *float64 `json:"rate_budget_share_points_per_s"`
+	// The pool's default SNMP credential when it is SNMPv3 (docs/26 Phase
+	// 4): the USM user its devices send v3 TRAPs and INFORMs as, which the
+	// trap receiver needs to authenticate and decrypt them. Sealed on the
+	// wire like an endpoint's, unsealed on arrival. nil: v2c only.
+	SNMPv3Credential *models.Credential `json:"snmp_v3_credential,omitempty"`
 }
 
 // Diff is what changed between two assignments.
@@ -223,6 +228,9 @@ func (c *Client) Refresh(ctx context.Context) error {
 		return fmt.Errorf("decode assignment: %w", err)
 	}
 	c.unsealCredentials(assignment.Endpoints)
+	for id, p := range assignment.Pools {
+		c.unsealOne(p.SNMPv3Credential, "pool_id", id)
+	}
 	c.resolveCredentialRefs(ctx, assignment.Endpoints)
 
 	next := make(map[string]*models.Endpoint, len(assignment.Endpoints))
@@ -265,36 +273,41 @@ func (c *Client) Refresh(ctx context.Context) error {
 // assignment down.
 func (c *Client) unsealCredentials(endpoints []*models.Endpoint) {
 	for _, ep := range endpoints {
-		cred := ep.Credential
-		if cred == nil || cred.Sealed == "" {
-			continue
-		}
-		if c.seal == nil {
-			c.log.Warn("assignment carries a sealed credential but this "+
-				"collector has no sealing key; dropping it", "endpoint_id", ep.ID)
-			cred.Data = nil
-			cred.Sealed = ""
-			continue
-		}
-		blob, err := base64.StdEncoding.DecodeString(cred.Sealed)
-		if err != nil {
-			c.log.Error("sealed credential is not valid base64; dropping it",
-				"endpoint_id", ep.ID, "error", err)
-			cred.Data = nil
-			cred.Sealed = ""
-			continue
-		}
-		data, err := c.seal.Unseal(blob)
-		if err != nil {
-			c.log.Error("could not unseal credential; dropping it",
-				"endpoint_id", ep.ID, "error", err)
-			cred.Data = nil
-			cred.Sealed = ""
-			continue
-		}
-		cred.Data = data
-		cred.Sealed = ""
+		c.unsealOne(ep.Credential, "endpoint_id", ep.ID)
 	}
+}
+
+// unsealOne unseals one credential in place, or drops it (Data nil) when it
+// cannot be - the rule above, for an endpoint's credential or a pool's.
+func (c *Client) unsealOne(cred *models.Credential, whoKey, who string) {
+	if cred == nil || cred.Sealed == "" {
+		return
+	}
+	if c.seal == nil {
+		c.log.Warn("assignment carries a sealed credential but this "+
+			"collector has no sealing key; dropping it", whoKey, who)
+		cred.Data = nil
+		cred.Sealed = ""
+		return
+	}
+	blob, err := base64.StdEncoding.DecodeString(cred.Sealed)
+	if err != nil {
+		c.log.Error("sealed credential is not valid base64; dropping it",
+			whoKey, who, "error", err)
+		cred.Data = nil
+		cred.Sealed = ""
+		return
+	}
+	data, err := c.seal.Unseal(blob)
+	if err != nil {
+		c.log.Error("could not unseal credential; dropping it",
+			whoKey, who, "error", err)
+		cred.Data = nil
+		cred.Sealed = ""
+		return
+	}
+	cred.Data = data
+	cred.Sealed = ""
 }
 
 // resolveCredentialRefs replaces a "credential_ref" credential's Data
