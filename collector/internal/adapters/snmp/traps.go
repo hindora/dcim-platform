@@ -262,6 +262,22 @@ func (t *TrapReceiver) Listen(ctx context.Context) error {
 		errCh := make(chan error, 1)
 		go func() { errCh <- listener.Listen(t.listen) }()
 
+		// Never Close a listener that has not bound yet. gosnmp's Close finds
+		// no socket, marks it finished and returns; the listener then binds
+		// anyway and blocks forever handing Close a done signal nobody reads -
+		// a bound port that reads nothing, and a Listen that never returns.
+		// Found live: a collector re-keyed seconds after its first build
+		// stopped receiving every trap, v2c included.
+		select {
+		case <-listener.Listening():
+		case err := <-errCh:
+			return fmt.Errorf("trap listener on %s: %w", t.listen, err)
+		case <-ctx.Done():
+			listener.Close()
+			wg.Wait()
+			return nil
+		}
+
 		t.usmMu.Lock()
 		v3 := t.usm != nil
 		t.usmMu.Unlock()

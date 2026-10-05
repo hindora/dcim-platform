@@ -146,3 +146,29 @@ func TestSetUSMIsANoOpWhenNothingChanged(t *testing.T) {
 }
 
 const receiverID = "\x80\x00\x1f\x88\x04col-test"
+
+// Why Listen waits for gosnmp's Listening() before anything may Close a
+// listener. In gosnmp 1.37, a Close() that runs before the socket is bound
+// returns at once, and Listen then binds and never returns - a port that is
+// held and read by nothing. Found live (a collector re-keyed seconds after
+// start stopped taking every trap, v2c too); the receiver's own window is too
+// narrow to hit from a test, so this pins the library behaviour instead. If a
+// gosnmp upgrade fixes it, this fails, and the wait can go.
+func TestGosnmpCloseBeforeBindLeavesListenHanging(t *testing.T) {
+	hung := 0
+	for i := 0; i < 5; i++ {
+		l := g.NewTrapListener()
+		l.Params = g.Default
+		errCh := make(chan error, 1)
+		go func() { errCh <- l.Listen("127.0.0.1:0") }()
+		l.Close()
+		select {
+		case <-errCh:
+		case <-time.After(500 * time.Millisecond):
+			hung++
+		}
+	}
+	if hung == 0 {
+		t.Fatal("gosnmp no longer hangs on an early Close; the Listening() wait in Listen can go")
+	}
+}
