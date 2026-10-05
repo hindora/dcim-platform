@@ -3,8 +3,12 @@ package snmp
 import (
 	"context"
 	"net"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -215,5 +219,64 @@ func TestV3InformThroughAnAliasIsAcknowledgedFromThatAlias(t *testing.T) {
 	}
 	if !waitReceived(r, 1) {
 		t.Fatal("acknowledged INFORM never reached the handler")
+	}
+}
+
+// Interop with the simulator's SNMP stack: a pysnmp INFORM (engine discovery,
+// then authPriv) against the real receiver, which must acknowledge it and
+// read the notification's OID. Opt-in - set PYSNMP_PY to a Python with pysnmp
+// and cryptography - because CI has no pysnmp.
+func TestPysnmpInformIsAcknowledged(t *testing.T) {
+	py := os.Getenv("PYSNMP_PY")
+	if py == "" {
+		t.Skip("PYSNMP_PY not set")
+	}
+	r, _, _ := newHoldReceiver(t)
+	port := freeUDPPort(t)
+	r.listen = "127.0.0.1:" + strconv.Itoa(port)
+	r.SetEngineID(string([]byte{0x80, 0x00, 0x1f, 0x88, 0x04}) + "col-test")
+	if err := r.SetUSM(trapUser("auth-pass-1", "priv-pass-1")); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = r.Listen(ctx) }()
+	waitBound(t, port)
+
+	script := filepath.Join(t.TempDir(), "inform.py")
+	if err := os.WriteFile(script, []byte(`
+import asyncio, sys
+from pysnmp.hlapi.v3arch.asyncio import *
+from pysnmp.proto.rfc1902 import OctetString
+async def main():
+    eng = SnmpEngine(snmpEngineID=OctetString(hexValue="8000013e010a340b19"))
+    u = UsmUserData("dcim-poll", "auth-pass-1", "priv-pass-1",
+                    authProtocol=usmHMAC192SHA256AuthProtocol, privProtocol=usmAesCfb128Protocol)
+    t = await UdpTransportTarget.create(("127.0.0.1", int(sys.argv[1])), timeout=2, retries=0)
+    e, s, i, vb = await send_notification(eng, u, t, ContextData(), "inform",
+                                          NotificationType(ObjectIdentity("1.3.6.1.6.3.1.1.5.3")))
+    print("RESULT", e or s or "ACKED")
+asyncio.run(main())
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command(py, script, strconv.Itoa(port)).CombinedOutput()
+	if err != nil || !strings.Contains(string(out), "RESULT ACKED") {
+		t.Fatalf("pysnmp INFORM not acknowledged: %v; output: %s", err, out)
+	}
+	if !waitReceived(r, 1) {
+		t.Fatal("acknowledged INFORM never reached the handler")
+	}
+	time.Sleep(100 * time.Millisecond)
+	fams, _ := r.mets.Registry.Gather()
+	for _, f := range fams {
+		if f.GetName() != "dcim_collector_traps_received_total" {
+			continue
+		}
+		for _, m := range f.GetMetric() {
+			if m.GetLabel()[0].GetValue() == "no_trap_oid" {
+				t.Fatal("the INFORM's snmpTrapOID was not read")
+			}
+		}
 	}
 }

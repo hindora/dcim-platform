@@ -152,6 +152,9 @@ func NewTrapReceiver(table *mapping.TrapTable, resolver *assign.Resolver,
 // an INFORM, the sender for a TRAP). Set before Listen.
 func (t *TrapReceiver) SetEngineID(id string) { t.engineID = id }
 
+// EngineID is the engine ID SetEngineID gave this receiver.
+func (t *TrapReceiver) EngineID() string { return t.engineID }
+
 // SetUSM gives the receiver the USM user its devices send v3 notifications
 // as (docs/26 Phase 4): the pool's default SNMPv3 credential. nil means v2c
 // only. One user is enough for every device that shares it: gosnmp

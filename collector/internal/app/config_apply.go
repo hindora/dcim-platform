@@ -30,10 +30,22 @@ func (a *App) startTraps(parent context.Context, cfg config.TrapCfg) {
 
 	receiver := snmp.NewTrapReceiver(a.trapTable, a.resolver, a.pub, a.log,
 		a.mets, cfg.Listen, cfg.Workers, cfg.RateLimitPerMinute)
+	// This is the receiver that runs - at start and after every trap config
+	// change - so it is the one that needs the engine ID. Set only on the
+	// receiver New built, it never reached the socket: the live receiver's
+	// engine ID was empty, a sender's discovery probe (also empty) looked
+	// addressed to it, went to the handler as a trap with no OID, and was
+	// never answered. Every SNMPv3 INFORM failed that way.
+	receiver.SetEngineID(receiverEngineID(a.cfg.Collector.ID))
 
 	a.trapMu.Lock()
 	a.traps, a.trapCfg, a.trapStop, a.trapDone = receiver, cfg, cancel, done
 	a.trapMu.Unlock()
+	// And the v3 user, now rather than at the next assignment refresh: a
+	// rebuilt receiver would otherwise drop v3 notifications until then.
+	if a.assign != nil {
+		a.syncTrapUSM()
+	}
 
 	go func() {
 		defer close(done)
