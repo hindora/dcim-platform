@@ -1105,6 +1105,40 @@ export interface PoolDetail extends PoolRow {
   ranges: PoolRange[];
 }
 
+/** A device credential as any API returns it: the hint, never the secret
+ *  (docs/26 Phase 4). */
+export interface Credential {
+  id: string;
+  name: string;
+  protocol: string;
+  kind: 'snmp_v2c' | 'snmp_v3' | 'http_basic' | string;
+  secret_hint: string | null;
+  rotated_at?: string | null;
+  /** Endpoints pinned to it by their own credential. */
+  endpoints?: number;
+  /** Pools that use it as their default for its protocol. */
+  default_for?: string[];
+}
+
+/** A credential's secret, in the collector's own field names. */
+export type CredentialSecret =
+  | { community: string }
+  | { username: string; password: string }
+  | {
+      security_name: string;
+      auth_protocol: string;
+      auth_key: string;
+      priv_protocol?: string;
+      priv_key?: string;
+    };
+
+export interface PoolCredentialDefault {
+  id: string;
+  name: string;
+  kind: string;
+  secret_hint: string | null;
+}
+
 export interface PoolsPage {
   pools: PoolRow[];
   /** Endpoints that resolve to no pool at all - served by unplaced
@@ -3906,6 +3940,36 @@ export const api = {
     request<RebalancePreview>(`/pools/${id}/rebalance-preview`),
 
   /** Admin. 409 during a change freeze covering the pool. */
+  credentials: (opts: { q?: string; kind?: string; limit?: number } = {}) => {
+    const p = new URLSearchParams();
+    if (opts.q) p.set('q', opts.q);
+    if (opts.kind) p.set('kind', opts.kind);
+    if (opts.limit) p.set('limit', String(opts.limit));
+    return request<{ credentials: Credential[] }>(`/credentials?${p}`);
+  },
+
+  createCredential: (name: string, kind: string, secret: CredentialSecret) =>
+    request<Credential>('/credentials', {
+      method: 'POST', body: JSON.stringify({ name, kind, secret }),
+    }),
+
+  rotateCredential: (id: string, secret: CredentialSecret) =>
+    request<Credential>(`/credentials/${id}/rotate`, {
+      method: 'POST', body: JSON.stringify({ secret }),
+    }),
+
+  poolCredentials: (poolId: string) =>
+    request<{ pool_id: string; defaults: Record<string, PoolCredentialDefault> }>(
+      `/pools/${poolId}/credentials`),
+
+  setPoolCredentials: (poolId: string, defaults: Record<string, string | null>) =>
+    request<{ pool_id: string; defaults: Record<string, PoolCredentialDefault> }>(
+      `/pools/${poolId}/credentials`, { method: 'PUT', body: JSON.stringify({ defaults }) }),
+
+  adoptPoolCredential: (poolId: string, protocol: string) =>
+    request<{ pool_id: string; protocol: string; endpoints: number }>(
+      `/pools/${poolId}/credentials/${protocol}/adopt`, { method: 'POST' }),
+
   rebalancePool: (id: string) =>
     request<{ pool_id: string; preview: RebalancePreview; recorded_moves: number }>(
       `/pools/${id}/rebalance`, { method: 'POST' }),

@@ -262,15 +262,8 @@ async def assignment_endpoints(session: AsyncSession, collector_id: str,
                c.kind AS credential_kind, c.secret_enc, c.key_id AS credential_key_id,
                e.collector_id,
                dc.code AS site,
-               COALESCE(e.pool_id, (
-                   SELECT cp.id
-                     FROM discovery_range dr
-                     JOIN collector_pool cp
-                       ON cp.datacenter_id = dc.id AND cp.plane = dr.purpose
-                    WHERE e.address IS NOT NULL AND e.address <<= dr.cidr
-                    ORDER BY masklen(dr.cidr) DESC
-                    LIMIT 1
-               ))::text AS pool_id,
+               rp.id::text AS pool_id,
+               (e.credential_id IS NULL AND pc.credential_id IS NOT NULL) AS credential_from_pool,
                p.interval_s, p.timeout_ms, p.retries, p.metric_groups, p.push_enabled
         FROM device_endpoint e
         JOIN device d        ON d.id = e.device_id
@@ -281,7 +274,22 @@ async def assignment_endpoints(session: AsyncSession, collector_id: str,
         LEFT JOIN datacenter dc ON dc.id = rm.datacenter_id
         LEFT JOIN vendor v   ON v.id = d.vendor_id
         LEFT JOIN model m    ON m.id = d.model_id
-        LEFT JOIN credential c ON c.id = e.credential_id
+        -- The endpoint's pool, resolved once (the same rule as
+        -- repositories/pools._RESOLVED_POOL), so its default credential for
+        -- this protocol can stand in when the endpoint has none of its own
+        -- (docs/26 Phase 4 credential sets, migration 0097).
+        LEFT JOIN LATERAL (SELECT COALESCE(e.pool_id, (
+                   SELECT cp.id
+                     FROM discovery_range dr
+                     JOIN collector_pool cp
+                       ON cp.datacenter_id = dc.id AND cp.plane = dr.purpose
+                    WHERE e.address IS NOT NULL AND e.address <<= dr.cidr
+                    ORDER BY masklen(dr.cidr) DESC
+                    LIMIT 1
+               )) AS id) rp ON true
+        LEFT JOIN collector_pool_credential pc
+               ON pc.pool_id = rp.id AND pc.protocol = e.protocol::text
+        LEFT JOIN credential c ON c.id = COALESCE(e.credential_id, pc.credential_id)
         WHERE {' AND '.join(where)}
         ORDER BY e.id
     """), params)).mappings().all()

@@ -13,6 +13,7 @@ from app.api.v1 import (
     commissioning,
     contracts,
     cooling,
+    credentials,
     devices,
     discovery,
     estate,
@@ -56,6 +57,7 @@ api_router.include_router(collector.router)
 api_router.include_router(releases.router)
 api_router.include_router(collectors.router)
 api_router.include_router(pools.router)
+api_router.include_router(credentials.router)
 api_router.include_router(integrations.router)
 # Its own router because it is the one endpoint a stranger can
 # reach: kept apart so the auth dependency every other route

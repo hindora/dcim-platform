@@ -596,6 +596,8 @@ function ManageSheet({ row, onClose }: { row: PoolRow; onClose: () => void }) {
             </div>
           </fieldset>
 
+          <PoolCredentialsPanel row={row} />
+
           <RebalancePanel row={row} onDone={invalidate} />
 
           <fieldset className="proto">
@@ -668,6 +670,116 @@ function ManageSheet({ row, onClose }: { row: PoolRow; onClose: () => void }) {
  *  also means a member added to a nearly-even pool can sit under-used until
  *  the imbalance is real. This shows the exact move first - the assigner's
  *  own pass with this pool's damping bypassed - then makes it. */
+/** Protocols a pool can hold a default credential for, with what they mean. */
+const CRED_PROTOCOLS = [
+  { proto: 'snmp', label: 'SNMP', kinds: ['snmp_v3', 'snmp_v2c'] },
+  { proto: 'redfish', label: 'Redfish', kinds: ['http_basic'] },
+] as const;
+
+/** The importer's one-per-address v2c rows: never a pool default, and 900 of
+ *  them would bury the few shared credentials a picker is for. */
+const PER_ADDRESS = /^snmp-v2c-\d+\.\d+\.\d+\.\d+$/;
+
+/** A pool's credential set (docs/26 Phase 4): the default each protocol's
+ *  endpoints are polled with when they have no credential of their own. */
+function PoolCredentialsPanel({ row }: { row: PoolRow }) {
+  const qc = useQueryClient();
+  const current = useQuery({
+    queryKey: ['pool-credentials', row.id],
+    queryFn: () => api.poolCredentials(row.id),
+  });
+  const creds = useQuery({
+    queryKey: ['credentials', 'pickable'],
+    queryFn: () => api.credentials({ limit: 500 }),
+    staleTime: 30_000,
+  });
+  const [pick, setPick] = useState<Record<string, string>>({});
+  const [confirm, setConfirm] = useState<string | null>(null);
+  const refresh = () => {
+    void qc.invalidateQueries({ queryKey: ['pool-credentials', row.id] });
+    void qc.invalidateQueries({ queryKey: ['credentials'] });
+  };
+  const save = useMutation({
+    mutationFn: (args: { proto: string; id: string | null }) =>
+      api.setPoolCredentials(row.id, { [args.proto]: args.id }),
+    onSuccess: () => { setPick({}); refresh(); },
+  });
+  const adopt = useMutation({
+    mutationFn: (proto: string) => api.adoptPoolCredential(row.id, proto),
+    onSuccess: () => { setConfirm(null); refresh(); },
+  });
+  const defaults = current.data?.defaults ?? {};
+  const all = (creds.data?.credentials ?? []).filter((c) => !PER_ADDRESS.test(c.name));
+
+  return (
+    <fieldset className="proto">
+      <legend>Credentials</legend>
+      <p className="muted">
+        The credential this pool's endpoints are polled with when they have none of their
+        own - one SNMPv3 user per site and device class is how a v3 estate runs. An
+        endpoint's own credential still wins; <em>Apply to all</em> clears those so the
+        default takes over.
+      </p>
+      {(save.error || adopt.error) && (
+        <div className="banner">{errorText(save.error ?? adopt.error, 'Saving credentials')}</div>
+      )}
+      {adopt.data && (
+        <p className="muted">
+          {adopt.data.endpoints} endpoint(s) now use the pool's {adopt.data.protocol} default.
+        </p>
+      )}
+      <table>
+        <thead><tr><th>Protocol</th><th>Default</th><th>Change to</th><th /></tr></thead>
+        <tbody>
+          {CRED_PROTOCOLS.map(({ proto, label, kinds }) => {
+            const d = defaults[proto];
+            const options = all.filter((c) => (kinds as readonly string[]).includes(c.kind));
+            const chosen = pick[proto] ?? '';
+            return (
+              <tr key={proto}>
+                <td>{label}</td>
+                <td>
+                  {d ? (
+                    <><span>{d.name}</span><br /><span className="mono muted">{d.secret_hint}</span></>
+                  ) : <span className="muted">none - each endpoint's own</span>}
+                </td>
+                <td>
+                  <select value={chosen} onChange={(e) => setPick({ ...pick, [proto]: e.target.value })}>
+                    <option value="">{options.length ? 'Choose…' : 'No shared credential yet'}</option>
+                    {options.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    {d && <option value="__none">Remove the default</option>}
+                  </select>
+                </td>
+                <td style={{ whiteSpace: 'nowrap' }}>
+                  <button disabled={!chosen || save.isPending}
+                          onClick={() => save.mutate({ proto, id: chosen === '__none' ? null : chosen })}>
+                    Save
+                  </button>{' '}
+                  {d && (confirm === proto ? (
+                    <>
+                      <button className="primary" disabled={adopt.isPending}
+                              onClick={() => adopt.mutate(proto)}>
+                        {adopt.isPending ? 'Applying…' : `Yes, apply ${d.name}`}
+                      </button>{' '}
+                      <button onClick={() => setConfirm(null)}>Cancel</button>
+                    </>
+                  ) : (
+                    <Tip tip={oneLine(`Clears the ${label} credential of every endpoint in this pool
+                            so they all use ${d.name}. Undo means setting them per endpoint
+                            again.`)}>
+                      <button onClick={() => setConfirm(proto)}>Apply to all</button>
+                    </Tip>
+                  ))}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </fieldset>
+  );
+}
+
 function RebalancePanel({ row, onDone }: { row: PoolRow; onDone: () => void }) {
   const qc = useQueryClient();
   const preview = useMutation({ mutationFn: () => api.rebalancePreview(row.id) });

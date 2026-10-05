@@ -22,6 +22,7 @@ from app.core.logging import get_logger
 from app.core.security import Principal, current_principal, require_role
 from app.db.session import get_session
 from app.repositories import pools as repo
+from app.services import credentials as cred_service
 from app.services import pools as service
 from app.services import shard_map
 
@@ -276,3 +277,76 @@ async def rebalance_now(
     log.info("pool rebalanced", pool_id=pool_id, actor=principal.username,
              moving=preview["moving"], recorded=result.moved)
     return {"pool_id": pool_id, "preview": preview, "recorded_moves": result.moved}
+
+
+# --- docs/26 Phase 4: a pool's credential set ----------------------------------
+
+class CredentialDefaultsBody(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    #: {protocol: credential_id, or null to remove that protocol's default}
+    defaults: dict[str, str | None]
+
+
+@router.get("/{pool_id}/credentials", summary="This pool's default credential per protocol")
+async def get_pool_credentials(
+    pool_id: str,
+    session: AsyncSession = Depends(get_session),
+    _: Principal = Depends(current_principal),
+) -> dict[str, Any]:
+    return {"pool_id": pool_id, "defaults": await cred_service.pool_defaults(session, pool_id)}
+
+
+@router.put("/{pool_id}/credentials", summary="Set this pool's default credential per protocol")
+async def put_pool_credentials(
+    pool_id: str,
+    body: CredentialDefaultsBody,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    principal: Principal = Depends(require_role("admin")),
+) -> dict[str, Any]:
+    """An endpoint's own credential still wins; this is what the pool's
+    endpoints with none are polled with."""
+    before = await cred_service.pool_defaults(session, pool_id)
+    try:
+        after = await cred_service.set_pool_defaults(session, pool_id, body.defaults,
+                                                     principal.username)
+    except cred_service.CredentialError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from None
+    ip, agent = audit.client_of(request)
+    await audit.record(session, actor=audit.actor_of(principal), action="pool.credentials",
+                       target_type="collector_pool", target_id=pool_id, ip=ip,
+                       user_agent=agent,
+                       before={k: v["name"] for k, v in before.items()},
+                       after={k: v["name"] for k, v in after.items()})
+    await session.commit()
+    log.info("pool credential defaults set", pool_id=pool_id, actor=principal.username,
+             protocols=sorted(after))
+    return {"pool_id": pool_id, "defaults": after}
+
+
+@router.post("/{pool_id}/credentials/{protocol}/adopt",
+             summary="Hand every endpoint of a protocol in this pool to the pool default")
+async def adopt_pool_credential(
+    pool_id: str,
+    protocol: str,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    principal: Principal = Depends(require_role("admin")),
+) -> dict[str, Any]:
+    """Clears the endpoints' own credentials so the pool's default resolves -
+    a site moving a network to one credential set. Reversible only by setting
+    credentials back per endpoint, so it is audited with the count."""
+    try:
+        n = await cred_service.adopt_pool_default(session, pool_id, protocol)
+    except cred_service.CredentialError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from None
+    ip, agent = audit.client_of(request)
+    await audit.record(session, actor=audit.actor_of(principal),
+                       action="pool.credentials.adopt", target_type="collector_pool",
+                       target_id=pool_id, ip=ip, user_agent=agent,
+                       after={"protocol": protocol, "endpoints": n})
+    await session.commit()
+    log.warning("pool credential default adopted", pool_id=pool_id, protocol=protocol,
+                endpoints=n, actor=principal.username)
+    return {"pool_id": pool_id, "protocol": protocol, "endpoints": n}

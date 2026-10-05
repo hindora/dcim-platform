@@ -23,6 +23,11 @@ export const SETTINGS_NAV = [
     blurb: 'Which network each collector is on, and which devices that makes it responsible for',
   },
   {
+    to: 'credentials',
+    label: 'Credentials',
+    blurb: 'What devices are polled with, and the default set for each pool',
+  },
+  {
     to: 'releases',
     label: 'Releases',
     blurb: 'Which build every collector runs, and upgrading them a pool at a time',

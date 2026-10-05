@@ -37,6 +37,9 @@ ALLOWED_SECRET_READERS = {
     # and the handlers that configure it all name neither column. That is why
     # this list gains one entry rather than four.
     "repositories/integrations.py",
+    # The operator's credential editor (docs/26 Phase 4): creates and rotates.
+    # WRITE only - the test below holds it to INSERT and UPDATE ... SET.
+    "services/credentials.py",
 }
 
 
@@ -106,6 +109,19 @@ def test_promotion_writes_a_secret_and_never_reads_one():
     for line in src.splitlines():
         if "secret_enc" in line:
             assert "INSERT INTO credential" in line, line
+
+
+def test_the_credential_editor_writes_secrets_and_never_reads_one():
+    """Create and rotate take a secret in; nothing in the module can hand one
+    back - lists and responses carry the hint only."""
+    src = (APP / "services" / "credentials.py").read_text(encoding="utf-8")
+    assert "decrypt_secret" not in src
+    for line in src.splitlines():
+        if "secret_enc" in line:
+            assert ("INSERT INTO credential" in line
+                    or "UPDATE credential SET secret_enc" in line), line
+    assert "RETURNING" in src and not any(
+        "RETURNING" in line and "secret_enc" in line for line in src.splitlines())
 
 
 def test_no_request_handler_decrypts_a_secret():

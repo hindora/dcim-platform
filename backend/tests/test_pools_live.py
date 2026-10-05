@@ -797,3 +797,51 @@ async def test_a_failed_member_fails_the_rollout(session):
     await rollout.tick(session)
     r = next(r for r in await cmd_repo.rollouts(session) if r["id"] == rid)
     assert r["state"] == "failed" and "rolled back" in r["detail"]
+
+
+# --- docs/26 Phase 4: a pool's credential set (migration 0097) -------------------
+
+async def test_a_pool_default_credential_resolves_until_an_endpoint_has_its_own(session):
+    """The endpoint's own credential wins; adopting the pool default clears it
+    so the pool's v3 credential is what the collector is served; a credential
+    for another protocol cannot be a pool's default."""
+    from app.services import credentials as creds
+
+    dc_id, room_id = await _datacenter_and_room(session, f"P{_tag()[:6]}")
+    await _discovery_range(session, dc_id, "10.52.231.0/24")
+    pool = await svc.create(session, _payload(dc_id, cidrs=[], bbmd_settings={}))
+    profile = await _poll_profile(session)
+    eid = await _device_endpoint(session, room_id, profile, "10.52.231.10", "snmp")
+    v2c = await creds.create(session, f"v2c-{_tag()}", "snmp_v2c", {"community": "x"})
+    v3 = await creds.create(session, f"v3-{_tag()}", "snmp_v3", {
+        "security_name": "dcim-poll", "auth_protocol": "sha256", "auth_key": "authpass123",
+        "priv_protocol": "aes128", "priv_key": "privpass123"})
+    await session.execute(text("UPDATE device_endpoint SET credential_id = CAST(:c AS uuid) "
+                               "WHERE id = CAST(:e AS uuid)"), {"c": v2c["id"], "e": eid})
+
+    async def served():
+        rows = await fleet_repo.assignment_endpoints(session, "nobody")
+        return next(r for r in rows if r["id"] == eid)
+
+    with pytest.raises(creds.CredentialError, match="not redfish"):
+        await creds.set_pool_defaults(session, pool["id"], {"redfish": v3["id"]}, "test")
+    with pytest.raises(creds.CredentialError, match="no default snmp"):
+        await creds.adopt_pool_default(session, pool["id"], "snmp")
+
+    await creds.set_pool_defaults(session, pool["id"], {"snmp": v3["id"]}, "test")
+    r = await served()
+    assert r["credential_kind"] == "snmp_v2c" and not r["credential_from_pool"], \
+        "the endpoint's own credential must still win"
+
+    assert await creds.adopt_pool_default(session, pool["id"], "snmp") == 1
+    r = await served()
+    assert r["credential_kind"] == "snmp_v3" and r["credential_from_pool"]
+    assert r["pool_id"] == pool["id"]
+
+    listed = {c["id"]: c for c in await creds.listing(session, kind="snmp_v3")}
+    assert pool["name"] in listed[v3["id"]]["default_for"]
+    assert "authPriv SHA256/AES128" in listed[v3["id"]]["secret_hint"]
+
+    await creds.set_pool_defaults(session, pool["id"], {"snmp": None}, "test")
+    r = await served()
+    assert r["credential_kind"] is None, "no default and no own credential: none served"

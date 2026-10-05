@@ -944,7 +944,12 @@ class TopologyImporter:
             if profile_id is None:
                 self.report.warnings.append(f"missing poll profile {spec.poll_profile}")
                 continue
-            cred_id = await self._credential_id(spec)
+            # A pool with a default credential for this protocol (docs/26
+            # Phase 4 credential sets, migration 0097) owns its endpoints'
+            # credentials: pinning the per-address v2c row here would undo an
+            # adoption on every re-import and put a new BMS card on v2c.
+            cred_id = (None if await self._pool_has_default(spec)
+                       else await self._credential_id(spec))
             endpoint_id = await self._scalar("""
                 INSERT INTO device_endpoint (device_id, protocol, role, address, port,
                                              addressing, credential_id, poll_profile_id,
@@ -1098,6 +1103,24 @@ class TopologyImporter:
         self._model[key] = mid
         self.report.models += 1
         return mid
+
+    async def _pool_has_default(self, spec: EndpointSpec) -> bool:
+        """Whether the pool this address resolves into (the most specific
+        discovery range containing it) has a default credential for the
+        endpoint's protocol."""
+        if not spec.address:
+            return False
+        return bool((await self.s.execute(text("""
+            SELECT EXISTS (
+                SELECT 1 FROM collector_pool_credential pc
+                 WHERE pc.protocol = :proto
+                   AND pc.pool_id = (
+                       SELECT cp.id FROM discovery_range dr
+                         JOIN collector_pool cp
+                           ON cp.datacenter_id = dr.datacenter_id AND cp.plane = dr.purpose
+                        WHERE CAST(:addr AS inet) <<= dr.cidr
+                        ORDER BY masklen(dr.cidr) DESC LIMIT 1))
+        """), {"proto": spec.protocol, "addr": spec.address})).scalar())
 
     async def _credential_id(self, spec: EndpointSpec) -> str | None:
         if not spec.credential_name or spec.credential_payload is None:
