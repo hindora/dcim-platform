@@ -21,6 +21,8 @@ const (
 	oidUnknownEngineIDs = ".1.3.6.1.6.3.15.1.1.4.0"
 	oidNotInTimeWindows = ".1.3.6.1.6.3.15.1.1.2.0"
 	oidWrongDigests     = ".1.3.6.1.6.3.15.1.1.5.0"
+
+	oidUnavailableContexts = ".1.3.6.1.6.3.12.1.4.0"
 )
 
 // usmAgent is the authoritative side of RFC 3414, as much of it as a poller
@@ -38,7 +40,7 @@ type usmAgent struct {
 	digestOnUnknownEngine bool
 	silent                bool
 
-	discoveries, engineReports, timeReports, gets int
+	discoveries, engineReports, timeReports, contextReports, gets int
 }
 
 func newUSMAgent(t *testing.T, engineID string) *usmAgent {
@@ -126,6 +128,11 @@ func (a *usmAgent) handle(msg []byte, peer *net.UDPAddr) {
 	case in.AuthoritativeEngineBoots != a.boots || absDiff(in.AuthoritativeEngineTime, now) > 150:
 		a.timeReports++
 		a.reply(req, peer, g.AuthNoPriv, g.Report, oidNotInTimeWindows, agentUser)
+	case req.ContextEngineID != a.engineID:
+		// RFC 3413 3.2: a scoped PDU for a context engine this agent is not
+		// is refused - net-snmp and pysnmp both answer with a report.
+		a.contextReports++
+		a.reply(req, peer, g.AuthNoPriv, g.Report, oidUnavailableContexts, agentUser)
 	default:
 		a.gets++
 		a.reply(req, peer, g.AuthPriv, g.GetResponse, sysUpTimeOID, agentUser)
@@ -217,6 +224,9 @@ func TestV3DiscoversOnceThenPollsFromTheCachedEngine(t *testing.T) {
 	pingN(t, a, agentEndpoint(agent.port()), 5)
 
 	d, e, w, gets := agent.counts()
+	if agent.contextReports != 0 {
+		t.Fatalf("%d sessions sent the wrong contextEngineID", agent.contextReports)
+	}
 	if d != 1 || e != 0 || w != 0 || gets != 5 {
 		t.Fatalf("discoveries=%d engineReports=%d timeReports=%d gets=%d, want 1/0/0/5", d, e, w, gets)
 	}
@@ -248,10 +258,9 @@ func TestV3ARebootedAgentIsRelearnedFromItsTimeWindowReport(t *testing.T) {
 	}
 }
 
-// A swapped card has a new engine ID. An agent that reports it cleanly is
-// relearned by gosnmp's own retransmit; one that answers with a wrong-digest
-// report instead is relearned by a fresh discovery. Either way the poll
-// succeeds and the next one is cached again.
+// A swapped card has a new engine ID, whether the agent reports it as an
+// unknown engine or (as some vendors do) as a wrong digest. Either way the
+// poll succeeds from a fresh discovery and the next one is cached again.
 func TestV3ASwappedCardIsRelearned(t *testing.T) {
 	for _, digest := range []bool{false, true} {
 		agent := newUSMAgent(t, "\x80\x00\x01\x3e\x01\x0a\x34\x0b\x1b")
@@ -264,11 +273,11 @@ func TestV3ASwappedCardIsRelearned(t *testing.T) {
 		pingN(t, a, ep, 3)
 
 		d, e, _, gets := agent.counts()
-		wantD := 1
-		if digest {
-			wantD = 2
-		}
-		if d != wantD || e != 1 || gets != 4 {
+		// Both end in a fresh discovery: even when gosnmp retransmits with
+		// the new engine ID, the session's contextEngineID still names the
+		// old card, so the agent refuses that too and the fallback runs.
+		wantD := 2
+		if d != wantD || e < 1 || gets != 4 {
 			t.Fatalf("digest=%v: discoveries=%d engineReports=%d gets=%d, want %d/1/4",
 				digest, d, e, gets, wantD)
 		}

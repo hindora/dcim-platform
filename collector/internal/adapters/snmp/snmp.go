@@ -174,6 +174,14 @@ func (a *Adapter) dial(ctx context.Context, ep *models.Endpoint,
 		if useCache {
 			cached = a.engines.apply(engineKey(ep), sp, time.Now())
 		}
+		if cached {
+			// Discovery is what normally fills the scoped PDU's
+			// contextEngineID. Skip discovery and it goes out empty, which
+			// an agent refuses with a report (RFC 3413 3.2) - every cached
+			// session then fell back to a fresh discovery, three exchanges
+			// a poll instead of one. Found live on the simulator's pysnmp.
+			client.ContextEngineID = sp.AuthoritativeEngineID
+		}
 		client.SecurityParameters = sp
 	} else {
 		community := ep.Credential.Community()
