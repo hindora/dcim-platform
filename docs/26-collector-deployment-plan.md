@@ -249,7 +249,7 @@ What matches the table as written: the gateway is FastAPI, inside the existing c
 
 **Acceptance.** A v3 authPriv device polls and traps with SHA-256/AES-128. A wrong v3 key produces an explicit auth-failure endpoint state, not a timeout. gNMI rejects a bad password. Rotating a Redfish password in the UI reaches the collector within one long-poll cycle, and polls succeed with the new secret. A packet capture of assignment traffic shows no plaintext secret.
 
-**Partly shipped 2026-09-29, in two passes.** The first pass shipped credential sealing (below). This second pass added SNMPv3 polling, the gNMI credential/TLS wiring, `DCIM_CREDENTIAL_KEY` rotation, `credential_ref` passthrough with a HashiCorp Vault resolver, and read-only-account deploy docs - see the continuation after the sealing writeup. Still not started: SNMPv3 trap/INFORM support (deferred with a specific, verified reason - see below), a CyberArk CCP resolver, centrally-stored discovery credential sets, default `verify_tls` + a per-site CA bundle on the backend, and all frontend work (v3 credential forms, credential sets assignable to pools, last-rotated/last-delivered).
+**Partly shipped 2026-09-29, in two passes.** The first pass shipped credential sealing (below). This second pass added SNMPv3 polling, the gNMI credential/TLS wiring, `DCIM_CREDENTIAL_KEY` rotation, `credential_ref` passthrough with a HashiCorp Vault resolver, and read-only-account deploy docs - see the continuation after the sealing writeup. Still not started: SNMPv3 trap/INFORM support (deferred with a specific reason - see below; since shipped, see "SNMPv3 notifications" further down), a CyberArk CCP resolver, centrally-stored discovery credential sets, default `verify_tls` + a per-site CA bundle on the backend, and all frontend work (v3 credential forms, credential sets assignable to pools, last-rotated/last-delivered).
 
 What was built: `app/services/sealed_credential.py` seals a credential to a collector's X25519 public key - ephemeral ECDH, HKDF-SHA256, one AES-256-GCM seal, deliberately not literal libsodium/NaCl `crypto_box_seal` (see that module's docstring for why: same anonymous-sender security property, built from what was already in each side's dependency tree rather than adding PyNaCl for one function). `collector/internal/sealedbox` is the Go mirror - `Unseal` only, since only the platform ever seals. `collector_instance.encryption_pubkey` (added in Phase 2, unused until now) is populated at enroll (`dcim-collector enroll` generates and persists a long-term sealing keypair, separate from the mTLS identity, and sends its public half alongside the CSR) and read by `build_assignment`, which now seals every credential for a collector that has one registered and falls back to plaintext for one that does not - the same no-flag-day pattern every prior phase used. `assign.Client.Refresh` unseals in place right after decoding, before anything else in the collector sees the assignment.
 
@@ -310,9 +310,36 @@ How real estates run v3, which both sides now model:
 
 **Measured:** about 1 MB and a quarter of a second of agent start-up per v3 engine. That is why v3 is scoped to networks. The **v2c** primary process is itself at about 98% of a core even without v3. That limits what the simulator can serve and is the likely cause of the long-standing network-switch timeouts; sharding the v2c agents the same way is the obvious next step there.
 
+**SNMPv3 notifications and a sharded v2c simulator, shipped 2026-10-05** (platform `67345f3`, `e01918b`; simulator `524ef23`, `4c5b924`, `de9174d`).
+
+How real estates deliver v3 notifications:
+
+- **A TRAP comes from the device's engine.** The device is authoritative, so the receiver must know the user, and localise its keys to each device's engine ID. Real receivers (net-snmp `snmptrapd`, commercial NMS) do this per engine, from one configured user per site and device class.
+- **An INFORM goes to the receiver's engine.** The receiver is authoritative and acknowledges. The sender discovers the receiver's engine ID first (a REPORT round trip, RFC 3414). INFORM is what an operator picks to learn that a notification was lost; on facility gear it is vendor dependent and less common than TRAP.
+- **The receiver sits on the devices' network.** On a real site the trap destination is the pool's VIP on the management VLAN, not a loopback address.
+
+**Collector and platform:**
+
+- The spike that the Phase 4 deferral asked for was done against the simulator's pysnmp. gosnmp 1.37 re-localises the keys to each packet's engine ID, so one configured user decodes TRAPs from every device sharing it, and the listener answers INFORMs, sending the engine-ID report first. The upstream warning is older than that code.
+- Each pool in the assignment carries its default SNMP credential when it is v3 (`snmp_v3_credential`), sealed to the collector's key like an endpoint's, and digested into the ETag so a rotation reaches the receiver on the next fetch.
+- The receiver takes that user on every refresh, plus its own engine ID (RFC 3411 format 4, the collector id) for INFORM senders. A changed user rebuilds the listener; v2c keeps working beside it.
+- **gosnmp bug, found live:** a `Close()` before the socket is bound returns at once, and `Listen` then binds and blocks forever (50 of 50 reproductions). A collector re-keyed seconds after start held its trap port and read nothing, v2c included. `Listen` now waits on `Listening()` before anything can close it. A test pins the library behaviour, so an upgrade that fixes it says the wait can go.
+
+**Simulator:**
+
+- A v3 device sends from its own address and engine ID. On the BMS planes the trap destination is now each pool's trap VIP (DC1 `10.52.15.250`, DC2 `10.52.31.250`), bound on the host with the device IPs. Linux drops packets from a non-loopback source to `127.0.0.1`, so the old loopback destination could not have worked anyway. The orphan-IP reaper leaves the VIPs alone.
+- `notify: trap|inform` per v3 network.
+- The v2c agents are sharded across processes the same way as the v3 engines (about 300 agents each, `SNMPSIM_V2C_PROCESSES`).
+
+**Verified live:**
+
+- A trap fired by the simulator's own engine from MPPA-DC1-HA (`UPS_ON_BATTERY`, v3 authPriv SHA256/AES128) reached both DC1 BMS receivers (`result="ok"` on each) and became one CRITICAL `ups_on_battery` event attributed to the device.
+- A hand-built v3 TRAP from the device address and engine ID to each member's port was decoded and attributed by both members.
+- v2c primary snmpsim process: 90-98% of a core before sharding, 22.5% after; the two v2c shards 12% and 21.5%, the three v3 shards 7.4% or less. SNMP polling across all collectors over 10.4 minutes: 390 polls/min, 0 failures (the 15-minute baseline before sharding was also 0 failures; the gain is headroom, not a fixed fault).
+- INFORM is covered by the collector's tests against pysnmp, not yet exercised live: switching a network to `notify: inform` reloads snmpsim.
+
 **Still owed:**
 
-- v3 traps and INFORMs. The simulator still sends v2c traps, and the collector's SNMP library warns its v3 trap support is unreliable.
 - Context names in the collector.
 - Caching engine IDs in the collector. It rediscovers on every poll, one extra round trip per v3 poll, where real pollers cache the engine ID, boots and time.
 - v3 in the discovery promote dialog.
