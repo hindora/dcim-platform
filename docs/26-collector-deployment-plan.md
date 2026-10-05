@@ -338,10 +338,16 @@ How real estates deliver v3 notifications:
 - v2c primary snmpsim process: 90-98% of a core before sharding, 22.5% after; the two v2c shards 12% and 21.5%, the three v3 shards 7.4% or less. SNMP polling across all collectors over 10.4 minutes: 390 polls/min, 0 failures (the 15-minute baseline before sharding was also 0 failures; the gain is headroom, not a fixed fault).
 - INFORM is covered by the collector's tests against pysnmp, not yet exercised live: switching a network to `notify: inform` reloads snmpsim.
 
+**Engine-ID caching, shipped 2026-10-05** (platform `c492b5c`, `19a38cf`; collector 0.5.6). Every v3 poll used to open with USM discovery, two exchanges where real pollers need one: net-snmp and the pollers built on it keep each engine's ID, boots and time and advance the time locally (RFC 3414 2.3).
+
+- The SNMP adapter caches them per agent address and port (probe endpoints share their PDU's agent) and starts each session from the cache, with the time advanced by local elapsed time.
+- A reboot is a `usmStatsNotInTimeWindows` report, and gosnmp retransmits with the new boots and time inside the same request. A swapped card, an agent that refuses the cached engine any other way, or a vendor that sends wrong-digest for an unknown engine: the entry is dropped and the request made once more from a fresh discovery. A timeout drops the entry with no retry.
+- `dcim_collector_snmp_v3_engine_total{result=cached|discovered|refreshed}`.
+- **Found live on 0.5.5:** skipping discovery also skipped the step that fills the scoped PDU's contextEngineID. It went out empty, pysnmp refused it (as net-snmp would, RFC 3413 3.2), and every session fell back to discovery: `refreshed` 1166, `cached` 0, three exchanges a poll. The fake agent in the tests ignored the context engine; it now refuses a wrong one and failed before the fix. On 0.5.6: one discovery per agent, then `cached` only - over the first 10 minutes `discovered` stayed at 120/64/47 on the three BMS collectors while `cached` reached 2128/1174/1114, `refreshed` 0. Estate-wide SNMP over the same window: 380 polls/min, 1 failure (0.03%), every endpoint ONLINE afterwards.
+
 **Still owed:**
 
 - Context names in the collector.
-- Caching engine IDs in the collector. It rediscovers on every poll, one extra round trip per v3 poll, where real pollers cache the engine ID, boots and time.
 - v3 in the discovery promote dialog.
 
 ### Phase 5: pools, zones and stable ownership (M–L, 4 weeks)
