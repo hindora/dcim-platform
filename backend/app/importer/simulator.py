@@ -749,6 +749,20 @@ class TopologyImporter:
         for idx, iface in enumerate(dev.get("interfaces") or []):
             if_index = iface.get("index", idx)
             name = iface.get("name") or f"if{if_index}"
+            # A port that keeps its index and changes its name is the same port,
+            # relabelled - as ifName changes while ifIndex stays. Rename it in
+            # place, keeping its id and every connection to it. Without this the
+            # upsert below, keyed on the name, met the old row on the index
+            # (device_id, if_index is unique too) and the whole import failed:
+            # 23 servers' BMC ports went iLO/XCC -> IPMI when their vendor was
+            # corrected to the model's maker (2026-10-06).
+            await self.s.execute(text("""
+                UPDATE interface SET name = :name
+                 WHERE device_id = CAST(:dev AS uuid) AND if_index = :idx
+                   AND name <> :name
+                   AND NOT EXISTS (SELECT 1 FROM interface o
+                                    WHERE o.device_id = CAST(:dev AS uuid) AND o.name = :name)
+            """), {"dev": device_id, "idx": if_index, "name": name})
             iface_id = await self._scalar("""
                 INSERT INTO interface (device_id, if_index, name, role, speed_bps, mac, ip)
                 VALUES (CAST(:dev AS uuid), :idx, :name, :role, :speed,

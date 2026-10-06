@@ -31,3 +31,14 @@ def test_a_pool_default_still_means_no_pin_for_a_new_endpoint():
     endpoint has no own credential, so COALESCE leaves it on the default."""
     body = _upsert()
     assert "None if await self._pool_has_default(spec)" in body
+
+
+def test_a_relabelled_port_is_renamed_in_place_before_the_upsert():
+    """Same index, new name = the same port relabelled (ifName changes, ifIndex
+    stays). The upsert keys on the name, so without a rename first it met the old
+    row on (device_id, if_index) and the whole import failed - on the 23 servers
+    whose BMC port went iLO/XCC -> IPMI when their vendor was corrected."""
+    start = SRC.index("async def _upsert_terminations(")
+    body = SRC[start:SRC.index("INSERT INTO interface", start)]
+    assert "UPDATE interface SET name = :name" in body
+    assert "if_index = :idx" in body and "NOT EXISTS" in body
