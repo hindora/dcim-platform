@@ -60,7 +60,7 @@ func v3Receiver(t *testing.T) (*TrapReceiver, int) {
 func trapClient(t *testing.T, port int, flags g.SnmpV3MsgFlags, sp *g.UsmSecurityParameters) *g.GoSNMP {
 	t.Helper()
 	c := &g.GoSNMP{Target: "127.0.0.1", Port: uint16(port), Version: g.Version3,
-		SecurityModel: g.UserSecurityModel, MsgFlags: flags, Timeout: 500 * time.Millisecond,
+		SecurityModel: g.UserSecurityModel, MsgFlags: flags, Timeout: 2 * time.Second,
 		Retries: 1, SecurityParameters: sp}
 	if err := c.Connect(); err != nil {
 		t.Fatal(err)

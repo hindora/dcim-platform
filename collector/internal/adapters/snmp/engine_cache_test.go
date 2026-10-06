@@ -177,7 +177,9 @@ func (a *usmAgent) reply(req *g.SnmpPacket, peer *net.UDPAddr, flags g.SnmpV3Msg
 func agentEndpoint(port int) *models.Endpoint {
 	return &models.Endpoint{
 		ID: "ep-v3", Protocol: "snmp", Address: "127.0.0.1", Port: port,
-		Poll: models.PollProfile{TimeoutMs: 400},
+		// Generous: gosnmp spends this timeout on the UDP dial as well, and a
+		// loaded CI runner stalled past 400 ms before a packet was sent.
+		Poll: models.PollProfile{TimeoutMs: 1500},
 		Credential: v3Cred(map[string]any{
 			"security_name": agentUser, "auth_protocol": "sha256", "auth_key": agentAuth,
 			"priv_protocol": "aes", "priv_key": agentPriv,
@@ -387,9 +389,21 @@ func TestPysnmpAgentIsPolledFromTheCachedEngine(t *testing.T) {
 		t.Fatal("pysnmp agent did not start within 20 s")
 	}
 
+	// READY is printed before the dispatcher runs: wait until the agent
+	// answers, on an adapter of its own so these pings are not counted.
+	ep := agentEndpoint(port)
+	warm := New(nil, nil, obs.NewMetrics(), 25, false)
+	deadline := time.Now().Add(15 * time.Second)
+	for warm.Ping(context.Background(), ep) != nil {
+		if time.Now().After(deadline) {
+			t.Fatal("pysnmp agent never answered")
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+
 	mets := obs.NewMetrics()
 	a := New(nil, nil, mets, 25, false)
-	pingN(t, a, agentEndpoint(port), 4)
+	pingN(t, a, ep, 4)
 	if d, c, r := engineCount(mets, "discovered"), engineCount(mets, "cached"),
 		engineCount(mets, "refreshed"); d != 1 || c != 3 || r != 0 {
 		t.Fatalf("discovered=%d cached=%d refreshed=%d, want 1/3/0 - a cached session "+

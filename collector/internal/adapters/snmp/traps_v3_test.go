@@ -39,7 +39,7 @@ func sendV3Trap(t *testing.T, port int, engineID, auth, priv string) {
 	t.Helper()
 	c := &g.GoSNMP{
 		Target: "127.0.0.1", Port: uint16(port), Version: g.Version3,
-		SecurityModel: g.UserSecurityModel, MsgFlags: g.AuthPriv, Timeout: time.Second,
+		SecurityModel: g.UserSecurityModel, MsgFlags: g.AuthPriv, Timeout: 2 * time.Second,
 		SecurityParameters: &g.UsmSecurityParameters{
 			UserName: "dcim-poll", AuthenticationProtocol: g.SHA256, AuthenticationPassphrase: auth,
 			PrivacyProtocol: g.AES, PrivacyPassphrase: priv,
@@ -201,7 +201,7 @@ func TestV3InformThroughAnAliasIsAcknowledgedFromThatAlias(t *testing.T) {
 	c := &g.GoSNMP{
 		Target: "127.0.0.2", Port: uint16(port), Version: g.Version3,
 		SecurityModel: g.UserSecurityModel, MsgFlags: g.AuthPriv,
-		Timeout: 500 * time.Millisecond, Retries: 1,
+		Timeout: 2 * time.Second, Retries: 1,
 		SecurityParameters: &g.UsmSecurityParameters{
 			UserName: "dcim-poll", AuthenticationProtocol: g.SHA256, AuthenticationPassphrase: "auth-pass-1",
 			PrivacyProtocol: g.AES, PrivacyPassphrase: "priv-pass-1",
