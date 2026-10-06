@@ -1140,6 +1140,8 @@ export interface PoolCredentialDefault {
   name: string;
   kind: string;
   secret_hint: string | null;
+  /** The device types this default covers; null = every device in the pool. */
+  device_types: string[] | null;
 }
 
 export interface PoolsPage {
@@ -3965,12 +3967,20 @@ export const api = {
     request<{ pool_id: string; defaults: Record<string, PoolCredentialDefault> }>(
       `/pools/${poolId}/credentials`),
 
-  setPoolCredentials: (poolId: string, defaults: Record<string, string | null>) =>
+  /** `deviceTypes` scopes a protocol's default ({proto: [types] or null for
+   *  every device}); a protocol it leaves out keeps the scope it had. */
+  setPoolCredentials: (poolId: string, defaults: Record<string, string | null>,
+                       deviceTypes?: Record<string, string[] | null>) =>
     request<{ pool_id: string; defaults: Record<string, PoolCredentialDefault> }>(
-      `/pools/${poolId}/credentials`, { method: 'PUT', body: JSON.stringify({ defaults }) }),
+      `/pools/${poolId}/credentials`, {
+        method: 'PUT',
+        body: JSON.stringify(deviceTypes ? { defaults, device_types: deviceTypes } : { defaults }),
+      }),
 
+  /** With no types the server adopts the default's own scope. */
   adoptPoolCredential: (poolId: string, protocol: string) =>
-    request<{ pool_id: string; protocol: string; endpoints: number }>(
+    request<{ pool_id: string; protocol: string; endpoints: number;
+              device_types: string[] | null }>(
       `/pools/${poolId}/credentials/${protocol}/adopt`, { method: 'POST' }),
 
   rebalancePool: (id: string) =>

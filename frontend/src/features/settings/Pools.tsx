@@ -693,8 +693,16 @@ function PoolCredentialsPanel({ row }: { row: PoolRow }) {
     queryFn: () => api.credentials({ limit: 500 }),
     staleTime: 30_000,
   });
+  const types = useQuery({
+    queryKey: ['asset-filter-options'],
+    queryFn: () => api.assetFilterOptions(),
+    staleTime: 300_000,
+  });
   const [pick, setPick] = useState<Record<string, string>>({});
   const [confirm, setConfirm] = useState<string | null>(null);
+  // The protocol whose scope is being edited, and the types ticked so far.
+  const [scoping, setScoping] = useState<string | null>(null);
+  const [ticked, setTicked] = useState<string[]>([]);
   const refresh = () => {
     void qc.invalidateQueries({ queryKey: ['pool-credentials', row.id] });
     void qc.invalidateQueries({ queryKey: ['credentials'] });
@@ -704,6 +712,15 @@ function PoolCredentialsPanel({ row }: { row: PoolRow }) {
       api.setPoolCredentials(row.id, { [args.proto]: args.id }),
     onSuccess: () => { setPick({}); refresh(); },
   });
+  const saveScope = useMutation({
+    mutationFn: (args: { proto: string; id: string; types: string[] | null }) =>
+      api.setPoolCredentials(row.id, { [args.proto]: args.id }, { [args.proto]: args.types }),
+    onSuccess: () => { setScoping(null); refresh(); },
+  });
+  const typeName = (code: string) =>
+    types.data?.device_types.find((t) => t.code === code)?.display_name ?? code;
+  // Types that exist on the estate: a scope is chosen from what is there.
+  const present = (types.data?.device_types ?? []).filter((t) => t.device_count > 0);
   const adopt = useMutation({
     mutationFn: (proto: string) => api.adoptPoolCredential(row.id, proto),
     onSuccess: () => { setConfirm(null); refresh(); },
@@ -716,16 +733,21 @@ function PoolCredentialsPanel({ row }: { row: PoolRow }) {
       <legend>Credentials</legend>
       <p className="muted">
         The credential this pool's endpoints are polled with when they have none of their
-        own - one SNMPv3 user per site and device class is how a v3 estate runs. An
-        endpoint's own credential still wins; <em>Apply to all</em> clears those so the
-        default takes over.
+        own - one SNMPv3 user per site and device class is how a v3 estate runs. A default
+        can cover only some device types: on an IT-OOB network the switches and firewalls
+        move to v3 while the server BMCs beside them keep their own v2c. An endpoint's own
+        credential still wins; <em>Apply</em> clears those, on the covered devices only, so
+        the default takes over.
       </p>
-      {(save.error || adopt.error) && (
-        <div className="banner">{errorText(save.error ?? adopt.error, 'Saving credentials')}</div>
+      {(save.error || adopt.error || saveScope.error) && (
+        <div className="banner">
+          {errorText(save.error ?? adopt.error ?? saveScope.error, 'Saving credentials')}
+        </div>
       )}
       {adopt.data && (
         <p className="muted">
-          {adopt.data.endpoints} endpoint(s) now use the pool's {adopt.data.protocol} default.
+          {adopt.data.endpoints} endpoint(s) now use the pool's {adopt.data.protocol} default
+          {adopt.data.device_types ? ` (${adopt.data.device_types.map(typeName).join(', ')})` : ''}.
         </p>
       )}
       <table>
@@ -740,7 +762,37 @@ function PoolCredentialsPanel({ row }: { row: PoolRow }) {
                 <td>{label}</td>
                 <td>
                   {d ? (
-                    <><span>{d.name}</span><br /><span className="mono muted">{d.secret_hint}</span></>
+                    <>
+                      <span>{d.name}</span><br />
+                      <span className="mono muted">{d.secret_hint}</span><br />
+                      <span className="muted">
+                        Covers: {d.device_types
+                          ? <>{d.device_types.map(typeName).join(', ')} - other devices keep their own</>
+                          : 'every device'}
+                      </span>{' '}
+                      <button className="link-button"
+                              onClick={() => { setScoping(proto); setTicked(d.device_types ?? []); }}>
+                        Change
+                      </button>
+                      {scoping === proto && (
+                        <div className="scope-edit">
+                          {present.map((t) => (
+                            <label key={t.code} style={{ display: 'block' }}>
+                              <input type="checkbox" checked={ticked.includes(t.code)}
+                                     onChange={(e) => setTicked(e.target.checked
+                                       ? [...ticked, t.code] : ticked.filter((c) => c !== t.code))} />
+                              {' '}{t.display_name} <span className="muted">({t.device_count})</span>
+                            </label>
+                          ))}
+                          <button className="primary" disabled={saveScope.isPending}
+                                  onClick={() => saveScope.mutate({
+                                    proto, id: d.id, types: ticked.length ? ticked : null })}>
+                            {ticked.length ? `Cover ${ticked.length} type(s)` : 'Cover every device'}
+                          </button>{' '}
+                          <button onClick={() => setScoping(null)}>Cancel</button>
+                        </div>
+                      )}
+                    </>
                   ) : <span className="muted">none - each endpoint's own</span>}
                 </td>
                 <td>
@@ -759,15 +811,21 @@ function PoolCredentialsPanel({ row }: { row: PoolRow }) {
                     <>
                       <button className="primary" disabled={adopt.isPending}
                               onClick={() => adopt.mutate(proto)}>
-                        {adopt.isPending ? 'Applying…' : `Yes, apply ${d.name}`}
+                        {adopt.isPending ? 'Applying…' : `Yes, apply ${d.name}`
+                          + (d.device_types ? ' to covered devices' : '')}
                       </button>{' '}
                       <button onClick={() => setConfirm(null)}>Cancel</button>
                     </>
                   ) : (
-                    <Tip tip={oneLine(`Clears the ${label} credential of every endpoint in this pool
-                            so they all use ${d.name}. Undo means setting them per endpoint
-                            again.`)}>
-                      <button onClick={() => setConfirm(proto)}>Apply to all</button>
+                    <Tip tip={oneLine(d.device_types
+                      ? `Clears the ${label} credential of the ${d.device_types.map(typeName)
+                          .join(', ')} endpoints in this pool so they use ${d.name}. Other
+                          devices keep their own. Undo means setting them per endpoint again.`
+                      : `Clears the ${label} credential of every endpoint in this pool so they
+                          all use ${d.name}. Undo means setting them per endpoint again.`)}>
+                      <button onClick={() => setConfirm(proto)}>
+                        {d.device_types ? 'Apply to covered devices' : 'Apply to all'}
+                      </button>
                     </Tip>
                   ))}
                 </td>
