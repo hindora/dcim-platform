@@ -72,8 +72,19 @@ jobs:
         working-directory: collector
       - run: go build ./...
         working-directory: collector
+      # pysnmp is the simulator's SNMP stack, and the one real-world peer the
+      # collector is tested against: tests that only run gosnmp against gosnmp
+      # (or a fake agent written alongside the code) share its assumptions,
+      # and three SNMPv3 bugs passed them and failed live. Pinned to the
+      # simulator's version; cryptography is what its AES needs.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install "pysnmp==7.1.27" cryptography
       - run: go test ./...
         working-directory: collector
+        env:
+          PYSNMP_PY: python
 
   frontend:
     name: Frontend

@@ -1,8 +1,14 @@
 package snmp
 
 import (
+	"bufio"
 	"context"
 	"net"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -328,5 +334,72 @@ func TestEngineCacheAdvancesTheAgentsTime(t *testing.T) {
 	}
 	if sp.AuthoritativeEngineTime != 1600 || sp.AuthoritativeEngineBoots != 3 {
 		t.Fatalf("time=%d boots=%d, want 1600/3", sp.AuthoritativeEngineTime, sp.AuthoritativeEngineBoots)
+	}
+}
+
+// pysnmpAgent is the simulator's SNMP stack as a v3 agent: the peer the
+// fake agent above stands in for, so that what the fake does not check (it
+// once ignored the contextEngineID; 0.5.5 shipped that) is checked by a real
+// one. Opt-in via PYSNMP_PY, which CI sets.
+const pysnmpAgent = `
+import sys
+from pysnmp.entity import engine, config
+from pysnmp.entity.rfc3413 import cmdrsp, context
+from pysnmp.carrier.asyncio.dgram import udp
+from pysnmp.proto.rfc1902 import OctetString
+snmp = engine.SnmpEngine(snmpEngineID=OctetString(hexValue="8000013e010a340b19"))
+config.add_transport(snmp, udp.DOMAIN_NAME,
+                     udp.UdpTransport().open_server_mode(("127.0.0.1", int(sys.argv[1]))))
+config.add_v3_user(snmp, "dcim-poll", config.USM_AUTH_HMAC192_SHA256, "auth-passphrase-1",
+                   config.USM_PRIV_CFB128_AES, "priv-passphrase-1")
+config.add_vacm_user(snmp, 3, "dcim-poll", "authPriv", (1, 3, 6), (1, 3, 6))
+ctx = context.SnmpContext(snmp)
+cmdrsp.GetCommandResponder(snmp, ctx)
+cmdrsp.NextCommandResponder(snmp, ctx)
+print("READY", flush=True)
+snmp.open_dispatcher()
+`
+
+func TestPysnmpAgentIsPolledFromTheCachedEngine(t *testing.T) {
+	py := os.Getenv("PYSNMP_PY")
+	if py == "" {
+		t.Skip("PYSNMP_PY not set")
+	}
+	port := freeUDPPort(t)
+	script := filepath.Join(t.TempDir(), "agent.py")
+	if err := os.WriteFile(script, []byte(pysnmpAgent), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(py, script, strconv.Itoa(port))
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }()
+	ready := make(chan bool, 1)
+	go func() {
+		line, _ := bufio.NewReader(stdout).ReadString('\n')
+		ready <- strings.HasPrefix(line, "READY")
+	}()
+	select {
+	case ok := <-ready:
+		if !ok {
+			t.Fatal("pysnmp agent did not start")
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("pysnmp agent did not start within 20 s")
+	}
+
+	mets := obs.NewMetrics()
+	a := New(nil, nil, mets, 25, false)
+	pingN(t, a, agentEndpoint(port), 4)
+	if d, c, r := engineCount(mets, "discovered"), engineCount(mets, "cached"),
+		engineCount(mets, "refreshed"); d != 1 || c != 3 || r != 0 {
+		t.Fatalf("discovered=%d cached=%d refreshed=%d, want 1/3/0 - a cached session "+
+			"the agent refused falls back to discovery and counts as refreshed", d, c, r)
 	}
 }

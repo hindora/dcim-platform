@@ -315,19 +315,18 @@ func New(cfg *config.Config, version string, tlsStore *mtls.Store) (*App, error)
 			"message_ids", len(evMaps.MessageIDs), "patterns", len(evMaps.Patterns))
 	}
 
-	if cfg.Protocols.SNMPTrap.Enabled {
-		trapTable, err := mapping.LoadTraps(mapFS)
-		if err != nil {
-			return nil, fmt.Errorf("load trap mappings: %w", err)
-		}
-		log.Info("trap mappings loaded", "wire_oids", trapTable.Len())
-		a.trapTable = trapTable
-		a.trapCfg = cfg.Protocols.SNMPTrap
-		a.traps = snmp.NewTrapReceiver(trapTable, a.resolver, pub, log, mets,
-			cfg.Protocols.SNMPTrap.Listen, cfg.Protocols.SNMPTrap.Workers,
-			cfg.Protocols.SNMPTrap.RateLimitPerMinute)
-		a.traps.SetEngineID(receiverEngineID(cfg.Collector.ID))
+	// The receiver itself is built only by startTraps, at Run and on every
+	// trap config change. A second construction here once took the engine ID
+	// and was then replaced, so the receiver that ran had none and no SNMPv3
+	// INFORM was ever answered. The mappings load even with traps disabled:
+	// a config change can enable them on a running collector.
+	trapTable, err := mapping.LoadTraps(mapFS)
+	if err != nil {
+		return nil, fmt.Errorf("load trap mappings: %w", err)
 	}
+	log.Info("trap mappings loaded", "wire_oids", trapTable.Len())
+	a.trapTable = trapTable
+	a.trapCfg = cfg.Protocols.SNMPTrap
 	if len(a.adapters) == 0 {
 		return nil, fmt.Errorf("no protocol adapters enabled")
 	}
@@ -485,9 +484,7 @@ func (a *App) Run(ctx context.Context) error {
 
 	go a.pub.Run(ctx)
 
-	if a.traps != nil {
-		a.startTraps(ctx, a.trapCfg)
-	}
+	a.startTraps(ctx, a.trapCfg)
 	if a.cfgClient != nil {
 		a.cfgClient.OnChange = func(version uint32, o config.Overrides) {
 			a.applyConfig(ctx, version, o)
@@ -730,7 +727,8 @@ func receiverEngineID(collectorID string) string {
 // normally serves one pool; if its pools disagree, the first by id is used
 // and the rest said so, since one listener takes one user.
 func (a *App) syncTrapUSM() {
-	if a.traps == nil {
+	traps := a.trapReceiver()
+	if traps == nil {
 		return
 	}
 	pools := a.assign.Pools()
@@ -753,10 +751,18 @@ func (a *App) syncTrapUSM() {
 				"using_pool", chosenPool, "ignored_pool", id)
 		}
 	}
-	if err := a.traps.SetUSM(chosen); err != nil {
+	if err := traps.SetUSM(chosen); err != nil {
 		a.log.Error("SNMPv3 trap credential unusable; receiving v2c only", "error", err)
-		_ = a.traps.SetUSM(nil)
+		_ = traps.SetUSM(nil)
 	}
+}
+
+// trapReceiver is the running receiver, or nil. startTraps swaps it under
+// trapMu while the heartbeat and assignment loops read it.
+func (a *App) trapReceiver() *snmp.TrapReceiver {
+	a.trapMu.Lock()
+	defer a.trapMu.Unlock()
+	return a.traps
 }
 
 // budgetShares is this collector's slice of each pool's budget, as the
@@ -930,8 +936,8 @@ func (a *App) heartbeatLoop(ctx context.Context) {
 			hb.SpoolBytes = uint64(spoolStats.Bytes)
 			hb.SpoolOldestAgeS = uint32(spoolStats.OldestAge.Seconds())
 			hb.ReplayRate = a.pub.ReplayRateRPS()
-			if a.traps != nil {
-				hb.TrapsReceived = a.traps.Received()
+			if traps := a.trapReceiver(); traps != nil {
+				hb.TrapsReceived = traps.Received()
 			}
 			if a.rfEvents != nil {
 				hb.EventsReceived = a.rfEvents.Received()
