@@ -335,6 +335,7 @@ func New(cfg *config.Config, version string, tlsStore *mtls.Store) (*App, error)
 	a.engineBoots = nextEngineBoots(cfg.Collector.StateDir, log)
 	a.engineStart = time.Now()
 	a.trapTimes = snmp.NewEngineTimes()
+	loadEngineTimes(cfg.Collector.StateDir, a.trapTimes, log)
 	if len(a.adapters) == 0 {
 		return nil, fmt.Errorf("no protocol adapters enabled")
 	}
@@ -559,6 +560,7 @@ func (a *App) Run(ctx context.Context) error {
 		a.avail.Start(ctx)
 	}
 	go a.heartbeatLoop(ctx)
+	go persistEngineTimes(ctx, a.cfg.Collector.StateDir, a.trapTimes, engineTimesEvery, a.log)
 	go a.gaugeLoop(ctx)
 
 	a.log.Info("collector running",
@@ -605,6 +607,8 @@ func (a *App) Run(ctx context.Context) error {
 			a.log.Warn("spool close failed", "error", err)
 		}
 	}
+	// After the trap listener has closed, so no trap advances a clock unsaved.
+	saveEngineTimes(a.cfg.Collector.StateDir, a.trapTimes, a.log)
 	a.log.Info("stopped")
 	return nil
 }

@@ -46,6 +46,9 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "preflight" {
 		os.Exit(runPreflight(os.Args[2:]))
 	}
+	if len(os.Args) > 1 && os.Args[1] == "forget-engine" {
+		os.Exit(runForgetEngine(os.Args[2:]))
+	}
 
 	configPath := flag.String("config", "configs/collector.yaml", "path to the config file")
 	collectorID := flag.String("id", "",
@@ -187,6 +190,31 @@ func runEnroll(args []string) int {
 			"defaults - some checks will show as skipped\n", *configPath, loadErr)
 	}
 	runPreflightWith(ctx, cfg, *stateDir, true)
+	return 0
+}
+
+// runForgetEngine drops one SNMPv3 sending engine's saved clock, for a device
+// whose traps are refused as not_in_time_window because its boots went back
+// (a factory reset that kept its engine ID). Run it with the collector
+// STOPPED: a running collector writes its own table over the file.
+func runForgetEngine(args []string) int {
+	fs := flag.NewFlagSet("forget-engine", flag.ExitOnError)
+	stateDir := fs.String("state-dir", "", "the collector's state_dir")
+	_ = fs.Parse(args)
+	if *stateDir == "" || fs.NArg() != 1 {
+		fmt.Fprintln(os.Stderr, "usage: collector forget-engine -state-dir DIR <engine-id-hex>")
+		return 2
+	}
+	known, err := app.ForgetEngine(*stateDir, fs.Arg(0))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "forget-engine: %v\n", err)
+		return 1
+	}
+	if !known {
+		fmt.Println("engine not in the saved table; nothing to forget")
+		return 0
+	}
+	fmt.Println("forgotten: its next authentic trap sets a new baseline")
 	return 0
 }
 
