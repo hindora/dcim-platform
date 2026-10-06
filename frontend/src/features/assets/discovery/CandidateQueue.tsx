@@ -1060,12 +1060,16 @@ function PromoteDialog({ c, onClose, onDone }: {
 }
 
 
+/** Hardware fields too long to show inline: the row names the change instead. */
+const LONG_FIELDS = new Set(['sysObjectID', 'engineID']);
+
 /** What a change is called on the row. Hardware values are short and ARE the
  *  finding - "serial ABC → DEF" - so they are shown; a sysDescr is a paragraph,
  *  and the row only says it moved. The evidence row has both sides in full. */
 const CHANGE_LABEL: Record<string, string> = {
   sysDescr: 'description', redfishVersion: 'Redfish version',
   hostName: 'name', sysName: 'name', sysObjectID: 'platform OID',
+  engineID: 'SNMPv3 engine ID',
 };
 
 /** The change, and the one action it asks for, where the eye already is.
@@ -1092,7 +1096,7 @@ function ChangeSummary({ r, changes }: { r: Responder; changes: MachineChange[] 
       {shown.map((ch) => (
         <div key={`${ch.protocol}:${ch.field}`}
              className={HARDWARE_FIELDS.has(ch.field) ? 'hw' : ''}>
-          {HARDWARE_FIELDS.has(ch.field) && ch.field !== 'sysObjectID' ? (
+          {HARDWARE_FIELDS.has(ch.field) && !LONG_FIELDS.has(ch.field) ? (
             <>{ch.field} was <code>{ch.old ?? '—'}</code></>
           ) : (
             <>{CHANGE_LABEL[ch.field] ?? ch.field} changed</>

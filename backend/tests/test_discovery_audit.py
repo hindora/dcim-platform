@@ -64,8 +64,80 @@ def test_firmware_and_names_are_not_hardware():
     "needs action" overnight."""
     for soft in ("sysDescr", "redfishVersion", "hostName", "sysName"):
         assert soft not in svc.HARDWARE_FIELDS, soft
-    for hard in ("serial", "sysObjectID", "uuid", "model", "vendor"):
+    for hard in ("serial", "sysObjectID", "uuid", "model", "vendor", "engineID"):
         assert hard in svc.HARDWARE_FIELDS, hard
+
+
+V3 = {"version": "3", "credential": "pool", "port": "161"}
+
+
+def test_a_new_snmpv3_engine_id_is_a_swapped_box():
+    """An agent keeps its engine ID across reboots; a new one at the same address
+    is a swapped card or a factory reset - and every SNMPv3 key is localised to it."""
+    old = {"engineID": "80001F88010A340B0A", "access": V3}
+    new = {"engineID": "80007736010a340b0a", "access": V3}
+    assert svc.identity_changes(old, None, new, None) == [
+        ("engineID", "80001f88010a340b0a", "80007736010a340b0a")]
+    assert "engineID" in svc.HARDWARE_FIELDS
+
+
+def test_an_engine_id_seen_over_v2c_is_not_compared():
+    """A v2c answer from an agent that also speaks v3 carries an engine ID, but
+    nothing depends on it - and some agents mint a new one every start (snmpsim's
+    shared v2c engines do), which would read as a swapped box after each restart."""
+    v2c = {"version": "2c", "credential": "address"}
+    for old_access, new_access in ((v2c, v2c), (V3, v2c), (v2c, V3), (None, V3)):
+        old = {"engineID": "80001f88aaaa", "access": old_access}
+        new = {"engineID": "80001f88bbbb", "access": new_access}
+        assert svc.identity_changes(old, None, new, None) == [], (old_access, new_access)
+
+
+def test_the_same_engine_id_in_another_case_is_not_a_change():
+    old = {"engineID": "80007736010A340B0A", "access": V3}
+    new = {"engineID": "80007736010a340b0a", "access": V3}
+    assert svc.identity_changes(old, None, new, None) == []
+
+
+# ------------------------------------------------------- shared addresses
+
+def _row(name, via, protocol=None):
+    return {"device_id": f"id-{name}", "name": name, "via": via, "protocol": protocol}
+
+
+#: A BACnet/IP-to-MS/TP router and the trunk it fronts: the field devices are
+#: polled at the router's IP. Found live 2026-10-06, the router's SNMP answer filed
+#: against a pump because the address map kept whichever row came last.
+ROUTER_AND_TRUNK = [
+    *(_row(f"CHWP{i}-DC1-CP", "endpoint", "bacnet") for i in (4, 1, 3, 2)),
+    _row("BRTR1-DC1-CP", "endpoint", "snmp"),
+    _row("BRTR1-DC1-CP", "mgmt"),
+    _row("VCW-DC1-CP", "endpoint", "bacnet"),
+]
+
+
+def test_an_answer_goes_to_the_device_polled_on_its_protocol():
+    assert repo.pick_match(ROUTER_AND_TRUNK, "snmp")["name"] == "BRTR1-DC1-CP"
+
+
+def test_without_a_protocol_match_the_management_address_decides():
+    rows = [r for r in ROUTER_AND_TRUNK if r["protocol"] != "snmp"]
+    assert repo.pick_match(rows, "redfish")["name"] == "BRTR1-DC1-CP"
+
+
+def test_an_ambiguous_address_gets_the_same_answer_every_time():
+    """Never "whichever row came last": the same sweep must file the same answer
+    against the same device, or changes and alarms wander between machines."""
+    rows = [_row(n, "endpoint", "bacnet") for n in ("PUMP-B", "PUMP-A", "PUMP-C")]
+    picks = {repo.pick_match(list(reversed(rows)) if i % 2 else rows, "snmp")["name"]
+             for i in range(6)}
+    assert picks == {"PUMP-A"}
+    assert repo.pick_match([], "snmp") is None and repo.pick_match(None, "snmp") is None
+
+
+def test_record_results_chooses_by_protocol():
+    body = _body(SVC, "record_results")
+    assert "repo.pick_match(known.get(addr), protocol)" in body
+    assert body.index('protocol = r.get("protocol")') < body.index("repo.pick_match(")
 
 
 def test_changes_are_measured_against_what_was_there_before_the_upsert():

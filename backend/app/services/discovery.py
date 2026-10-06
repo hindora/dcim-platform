@@ -236,7 +236,14 @@ HARDWARE_FIELDS = repo.HARDWARE_FIELDS
 #: roll would otherwise put three hundred rows in "needs action" overnight.
 SOFT_FIELDS = ("sysDescr", "redfishVersion", "hostName", "sysName")
 
-WATCHED_FIELDS = ("serial", "sysObjectID", "uuid", "model", "vendor", *SOFT_FIELDS)
+WATCHED_FIELDS = ("serial", "sysObjectID", "uuid", "model", "vendor", "engineID",
+                  *SOFT_FIELDS)
+
+
+def _over_v3(identity: dict[str, Any] | None) -> bool:
+    """Did the sweep authenticate to this agent over SNMPv3?"""
+    access = (identity or {}).get("access")
+    return isinstance(access, dict) and str(access.get("version")) == "3"
 
 
 def _norm(field: str, value: Any) -> str | None:
@@ -249,6 +256,8 @@ def _norm(field: str, value: Any) -> str | None:
         return text_.upper()
     if field == "sysObjectID":
         return text_.lstrip(".")
+    if field == "engineID":
+        return text_.lower()
     return text_
 
 
@@ -262,7 +271,15 @@ def identity_changes(old_identity: dict[str, Any] | None, old_serial: str | None
     flap every time a slow agent dropped a varbind, and bury the real swaps.
     """
     out: list[tuple[str, str, str]] = []
+    # An engine ID counts only where BOTH readings authenticated over SNMPv3: that
+    # is the engine the keys are localised to and polls depend on. A v2c answer
+    # from an agent that also speaks v3 carries one too, incidentally - and some
+    # agents (snmpsim's shared v2c engines among them) mint a new one every start,
+    # which would read as a swapped box after each restart.
+    v3_both = _over_v3(old_identity) and _over_v3(new_identity)
     for field in WATCHED_FIELDS:
+        if field == "engineID" and not v3_both:
+            continue
         old = _norm(field, old_serial if field == "serial"
                     else (old_identity or {}).get(field))
         new = _norm(field, new_serial if field == "serial"
@@ -306,13 +323,13 @@ async def record_results(session: AsyncSession, run_id: str,
         # SERIAL FIRST. It is the only key that survives a device being
         # re-addressed, and address matching alone reported a moved machine as
         # brand new - so promoting it created a second record for one box.
+        protocol = r.get("protocol") or "snmp"
         match = by_serial.get(serial) if serial else None
         if match:
             if match.get("known_address") and match["known_address"] != addr:
                 moved += 1
         else:
-            match = known.get(addr)
-        protocol = r.get("protocol") or "snmp"
+            match = repo.pick_match(known.get(addr), protocol)
         dtype, vendor = classify(identity, protocol)
         before = prior.get((addr, protocol))
         row = await repo.upsert_candidate(

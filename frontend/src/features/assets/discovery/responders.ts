@@ -204,7 +204,8 @@ export function movedFrom(r: Responder): string | null {
 /** The fields whose change means the BOX changed - a different chassis at the same
  *  address. Mirrors the API's HARDWARE_FIELDS; anything else (firmware strings, OS
  *  images, hostnames) is ordinary drift. */
-export const HARDWARE_FIELDS = new Set(['serial', 'sysObjectID', 'uuid', 'model', 'vendor']);
+export const HARDWARE_FIELDS = new Set(['serial', 'sysObjectID', 'uuid', 'model', 'vendor',
+  'engineID']);
 
 /** What changed on this machine since the previous sweep, not yet acknowledged.
  *

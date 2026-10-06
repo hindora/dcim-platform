@@ -282,32 +282,64 @@ async def finish_run(session: AsyncSession, run_id: str, *, found: int,
 
 
 async def match_addresses(session: AsyncSession,
-                          addresses: list[str]) -> dict[str, dict[str, Any]]:
-    """Which of these addresses inventory already knows.
+                          addresses: list[str]) -> dict[str, list[dict[str, Any]]]:
+    """Which of these addresses inventory already knows, and through what.
 
     Checked against BOTH the device's management address and the addresses its
     endpoints are polled on. A device is frequently managed on one address and
     polled on another; matching on only one of them reports half the fleet as
     unmanaged, which is the fastest way to make an audit useless.
+
+    EVERY device at an address, not one: several share an address by design. A
+    BACnet/IP-to-MS/TP router fronts its trunk, and the pumps and valves on it are
+    polled at the router's IP - nine devices, one address. Keyed to a single
+    device, whichever row came last won, and the router's SNMP answer was filed
+    against a pump (found live, 2026-10-06). pick_match() chooses among them by
+    the responder's protocol.
     """
     if not addresses:
         return {}
     rows = (await session.execute(text("""
-        SELECT host(d.mgmt_ip) AS addr, d.id::text AS device_id, d.name
+        SELECT host(d.mgmt_ip) AS addr, d.id::text AS device_id, d.name,
+               'mgmt' AS via, NULL AS protocol
           FROM device d
          WHERE d.mgmt_ip IS NOT NULL
            AND host(d.mgmt_ip) = ANY(:addrs)
            AND d.lifecycle <> 'decommissioned'
         UNION
-        SELECT host(e.address) AS addr, d.id::text AS device_id, d.name
+        SELECT host(e.address) AS addr, d.id::text AS device_id, d.name,
+               'endpoint' AS via, e.protocol::text AS protocol
           FROM device_endpoint e
           JOIN device d ON d.id = e.device_id
          WHERE e.address IS NOT NULL
            AND host(e.address) = ANY(:addrs)
            AND d.lifecycle <> 'decommissioned'
     """), {"addrs": addresses})).mappings().all()
-    return {r["addr"]: {"device_id": r["device_id"], "name": r["name"]}
-            for r in rows}
+    out: dict[str, list[dict[str, Any]]] = {}
+    for r in rows:
+        out.setdefault(r["addr"], []).append(dict(r))
+    return out
+
+
+def pick_match(at_address: list[dict[str, Any]] | None,
+               protocol: str) -> dict[str, Any] | None:
+    """The device a responder on `protocol` at this address is.
+
+    1. A device POLLED there on the same protocol - the agent that answered.
+    2. Else the device whose management address it is.
+    3. Else, by name, a fixed choice - never whichever row the query returned
+       last, so the same sweep files the same answer against the same device.
+    """
+    if not at_address:
+        return None
+    for tier in (lambda r: r["via"] == "endpoint" and r["protocol"] == protocol,
+                 lambda r: r["via"] == "mgmt",
+                 lambda r: True):
+        hits = sorted({(r["name"], r["device_id"]) for r in at_address if tier(r)})
+        if hits:
+            name, device_id = hits[0]
+            return {"device_id": device_id, "name": name}
+    return None
 
 
 async def match_serials(session: AsyncSession,
@@ -645,7 +677,14 @@ async def attachable_devices(session: AsyncSession, *,
 #: A change here means the BOX changed: a different chassis serial, platform,
 #: board UUID or model at the same address is hardware that was swapped, and
 #: nobody recorded it. That needs somebody.
-HARDWARE_FIELDS = frozenset({"serial", "sysObjectID", "uuid", "model", "vendor"})
+#:
+#: engineID too (RFC 3411 SnmpEngineID, read when the sweep authenticated over
+#: SNMPv3): an agent keeps it across reboots - in NVRAM, usually derived from its
+#: MAC - so a new one at the same address is a swapped card or a factory reset,
+#: and every SNMPv3 key is localised to it. It is also what a different agent
+#: answering under the same user would look like.
+HARDWARE_FIELDS = frozenset({"serial", "sysObjectID", "uuid", "model", "vendor",
+                             "engineID"})
 
 async def prior_identities(session: AsyncSession, addresses: list[str]
                            ) -> dict[tuple[str, str], dict[str, Any]]:
