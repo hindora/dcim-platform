@@ -533,7 +533,7 @@ func (a *App) Run(ctx context.Context) error {
 			CollectorID: a.cfg.Collector.ID,
 			Token:       a.cfg.Token,
 			Interval:    a.cfg.DCIM.AssignmentInterval,
-			Sweeper:     discovery.New(a.log, a.discoveryCommunities(), 0),
+			Sweeper:     a.discoverySweeper(),
 			Redfish:     a.redfishSweeper(),
 			HTTP: &http.Client{Timeout: a.cfg.DCIM.RequestTimeout,
 				Transport: &http.Transport{TLSClientConfig: a.tlsConfig}},
@@ -728,6 +728,32 @@ func receiverEngineID(collectorID string) string {
 		id = id[:27]
 	}
 	return string([]byte{0x80, 0x00, 0x1f, 0x88, 0x04}) + id
+}
+
+// discoverySweeper is the SNMP sweep: the configured v2c communities, and
+// first the SNMPv3 credentials of the pools this collector serves - read on
+// every probe, so a credential set or rotated after start is the one tried.
+func (a *App) discoverySweeper() *discovery.Sweeper {
+	sw := discovery.New(a.log, a.discoveryCommunities(), 0)
+	sw.V3 = func() []discovery.V3Cred {
+		if a.assign == nil {
+			return nil
+		}
+		pools := a.assign.Pools()
+		ids := make([]string, 0, len(pools))
+		for id := range pools {
+			ids = append(ids, id)
+		}
+		sort.Strings(ids)
+		var out []discovery.V3Cred
+		for _, id := range ids {
+			if c := pools[id].SNMPv3Credential; c != nil && c.Data != nil {
+				out = append(out, discovery.V3Cred{PoolID: id, Cred: c})
+			}
+		}
+		return out
+	}
+	return sw
 }
 
 // syncTrapUSM gives the trap receiver the SNMPv3 user its pools' devices

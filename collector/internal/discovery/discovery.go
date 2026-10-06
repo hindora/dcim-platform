@@ -12,6 +12,7 @@ package discovery
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -23,6 +24,7 @@ import (
 	"github.com/gosnmp/gosnmp"
 
 	snmpadapter "github.com/hari/dcim-platform/collector/internal/adapters/snmp"
+	"github.com/hari/dcim-platform/collector/pkg/models"
 )
 
 const (
@@ -208,9 +210,38 @@ func add(ip net.IP, n uint32) {
 	ip[0], ip[1], ip[2], ip[3] = byte(v>>24), byte(v>>16), byte(v>>8), byte(v)
 }
 
+// V3Cred is an SNMPv3 credential the sweep may try: a pool's default, as the
+// assignment delivers it to this collector.
+type V3Cred struct {
+	PoolID string
+	Cred   *models.Credential
+}
+
+// v3Access describes an SNMPv3 answer: which pool's credential authenticated
+// ("pool"), or that the agent speaks v3 and none of ours was accepted
+// ("none"). The engine ID always travels - it is the agent's own identifier,
+// and usually built from its MAC, so it outlives a re-addressing.
+func v3Access(poolID, engineID string, port uint16) map[string]string {
+	if port == 0 {
+		port = 161
+	}
+	a := map[string]string{"version": "3", "port": fmt.Sprint(port),
+		"engine_id": hex.EncodeToString([]byte(engineID))}
+	if poolID != "" {
+		a["credential"], a["pool_id"] = "pool", poolID
+	} else {
+		a["credential"] = "none"
+	}
+	return a
+}
+
 // Sweeper probes addresses for an SNMP agent.
 type Sweeper struct {
-	Community   CommunityFor
+	Community CommunityFor
+	// V3 lists the SNMPv3 credentials to try first, or nil for a v2c-only
+	// sweep. A site that has moved a network to v3 often switches v2c off on
+	// it; a v2c-only sweep then reports the network empty.
+	V3          func() []V3Cred
 	Port        uint16
 	Timeout     time.Duration
 	Retries     int
@@ -263,17 +294,80 @@ func (s *Sweeper) Sweep(ctx context.Context, addrs []string) []Responder {
 // background audit rather than an emergency, and firing every community at every
 // address at once would multiply the traffic by the length of the list for no
 // gain. A device that answers the first one costs exactly what it did before.
+//
+// SNMPv3 first, when this collector holds a pool credential: the stronger
+// protocol is what a site that configured it wants used, and the order real
+// credential sets (LibreNMS, SolarWinds) try. USM discovery answers before
+// any key is checked, so even when no credential is accepted the agent's
+// engine ID is learned - and a device that speaks only v3 is reported as
+// such, not missed.
 func (s *Sweeper) probe(ctx context.Context, addr string) (Responder, bool) {
+	engine := ""
+	if s.V3 != nil {
+		for _, c := range s.V3() {
+			r, eng, ok := s.probeV3(ctx, addr, c)
+			if eng != "" {
+				engine = eng
+			}
+			if ok {
+				r.Access = v3Access(c.PoolID, eng, s.Port)
+				r.Identity["engineID"] = hex.EncodeToString([]byte(eng))
+				return r, true
+			}
+			// Nothing answered USM discovery: no v3 agent here, and another
+			// user would not change that.
+			if eng == "" || ctx.Err() != nil {
+				break
+			}
+		}
+	}
 	for i, community := range s.Community(addr) {
 		if r, ok := s.probeWith(ctx, addr, community); ok {
 			r.Access = snmpAccess(addr, community, i, s.Port)
+			if engine != "" {
+				// Answered v2c, speaks v3 too: what a network mid-migration
+				// looks like, worth showing whoever promotes it.
+				r.Access["v3_engine_id"] = hex.EncodeToString([]byte(engine))
+				r.Identity["engineID"] = r.Access["v3_engine_id"]
+			}
 			return r, true
 		}
 		if ctx.Err() != nil {
 			break
 		}
 	}
+	if engine != "" {
+		return Responder{Address: addr, Protocol: "snmp",
+			Identity: map[string]string{"engineID": hex.EncodeToString([]byte(engine))},
+			Access:   v3Access("", engine, s.Port)}, true
+	}
 	return Responder{}, false
+}
+
+// probeV3 tries one SNMPv3 credential. It returns the agent's engine ID
+// whenever USM discovery got one, authenticated or not.
+func (s *Sweeper) probeV3(ctx context.Context, addr string, c V3Cred) (Responder, string, bool) {
+	conn := &gosnmp.GoSNMP{Target: addr, Port: s.Port, Timeout: s.Timeout,
+		Retries: s.Retries, Context: ctx}
+	if err := snmpadapter.ConfigureV3(conn, c.Cred); err != nil {
+		return Responder{}, "", false
+	}
+	if err := conn.Connect(); err != nil {
+		return Responder{}, "", false
+	}
+	if err := snmpadapter.UseAnySourceSocket(conn, addr, int(s.Port)); err != nil {
+		return Responder{}, "", false
+	}
+	defer func() { _ = conn.Conn.Close() }()
+	if err := snmpadapter.GuardV3(conn, c.Cred); err != nil {
+		return Responder{}, "", false
+	}
+	r, ok := s.identify(conn, addr)
+	engine := ""
+	if sp, isUSM := conn.SecurityParameters.(*gosnmp.UsmSecurityParameters); isUSM {
+		engine = sp.AuthoritativeEngineID
+	}
+	return r, engine, ok
 }
 
 func (s *Sweeper) probeWith(ctx context.Context, addr, community string,
@@ -294,7 +388,11 @@ func (s *Sweeper) probeWith(ctx context.Context, addr, community string,
 		return Responder{}, false
 	}
 	defer func() { _ = conn.Conn.Close() }()
+	return s.identify(conn, addr)
+}
 
+// identify reads an agent's identity on an open session, v2c or v3.
+func (s *Sweeper) identify(conn *gosnmp.GoSNMP, addr string) (Responder, bool) {
 	res, err := conn.Get([]string{oidSysDescr, oidSysObjectID, oidSysName,
 		oidEntSerial})
 	if err != nil || res == nil || len(res.Variables) == 0 {

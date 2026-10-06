@@ -113,3 +113,35 @@ func isUSMAuthError(err error) bool {
 	return errors.Is(err, g.ErrWrongDigest) || errors.Is(err, g.ErrUnknownUsername) ||
 		errors.Is(err, g.ErrUnknownSecurityLevel) || errors.Is(err, g.ErrDecryption)
 }
+
+// ConfigureV3 makes client a USM session for a "snmp_v3" credential, on the
+// same rules polling uses - for the discovery sweep, which must not grow a
+// second copy of them. Call before Connect.
+func ConfigureV3(client *g.GoSNMP, cred *models.Credential) error {
+	usm, err := parseUSM(cred)
+	if err != nil {
+		return err
+	}
+	client.Version = g.Version3
+	client.SecurityModel = g.UserSecurityModel
+	client.MsgFlags = usm.msgFlags()
+	client.SecurityParameters = &g.UsmSecurityParameters{
+		UserName:                 usm.securityName,
+		AuthenticationProtocol:   usm.authProtocol,
+		AuthenticationPassphrase: usm.authKey,
+		PrivacyProtocol:          usm.privProtocol,
+		PrivacyPassphrase:        usm.privKey,
+	}
+	return nil
+}
+
+// GuardV3 puts the poll path's response guard (usmGuardConn) on a session
+// ConfigureV3 set up. Call after Connect and any socket swap.
+func GuardV3(client *g.GoSNMP, cred *models.Credential) error {
+	usm, err := parseUSM(cred)
+	if err != nil {
+		return err
+	}
+	client.Conn = guardUSM(client.Conn, usm, nil)
+	return nil
+}
