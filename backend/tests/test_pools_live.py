@@ -34,6 +34,11 @@ async def session():
     maker = async_sessionmaker(engine, expire_on_commit=False)
     async with maker() as s:
         trans = await s.begin()
+        # Migration 0098's column, inside this transaction: Postgres DDL rolls
+        # back with it, so the suite runs before the migration is applied, and
+        # this is a no-op after.
+        await s.execute(text("ALTER TABLE collector_pool_credential "
+                             "ADD COLUMN IF NOT EXISTS device_types text[]"))
         try:
             yield s
         finally:
@@ -889,3 +894,54 @@ async def test_adopting_by_device_type_moves_the_gear_and_leaves_the_bmcs(sessio
     assert served[switch]["credential_kind"] == "snmp_v3" and served[switch]["credential_from_pool"]
     assert served[bmc]["credential_kind"] == "snmp_v2c", "the BMC keeps its own v2c credential"
     assert not served[bmc]["credential_from_pool"]
+
+
+async def test_a_scoped_default_serves_its_types_and_no_one_else(session):
+    """The IT-OOB v3 default covers the network gear. A NEW BMC on the same subnet,
+    with no credential of its own, used to be served that v3 user - which it does
+    not have. Scoped, it is served none (and the importer pins its own v2c)."""
+    from app.services import credentials as creds
+
+    dc_id, room_id = await _datacenter_and_room(session, f"P{_tag()[:6]}")
+    await _discovery_range(session, dc_id, "10.51.232.0/24", purpose="it_oob")
+    pool = await svc.create(session, _payload(dc_id, name="DC/IT-OOB", plane="it_oob",
+                                              cidrs=[], bbmd_settings={}))
+    profile = await _poll_profile(session)
+    switch = await _device_endpoint(session, room_id, profile, "10.51.232.10", "snmp")
+    bmc = await _device_endpoint(session, room_id, profile, "10.51.232.40", "snmp")
+    for eid, dtype in ((switch, "switch"), (bmc, "server")):
+        await session.execute(text("""
+            UPDATE device SET device_type = :t
+             WHERE id = (SELECT device_id FROM device_endpoint WHERE id = CAST(:e AS uuid))
+        """), {"t": dtype, "e": eid})
+    v3 = await creds.create(session, f"v3-{_tag()}", "snmp_v3", {
+        "security_name": "dcim-poll", "auth_protocol": "sha256", "auth_key": "authpass123",
+        "priv_protocol": "aes128", "priv_key": "privpass123"})
+
+    with pytest.raises(creds.CredentialError, match="swich"):
+        await creds.set_pool_defaults(session, pool["id"], {"snmp": v3["id"]}, "test",
+                                      {"snmp": ["switch", "swich"]})
+    d = await creds.set_pool_defaults(session, pool["id"], {"snmp": v3["id"]}, "test",
+                                      {"snmp": ["switch", "router"]})
+    assert d["snmp"]["device_types"] == ["router", "switch"]
+
+    served = {r["id"]: r for r in await fleet_repo.assignment_endpoints(session, "nobody")}
+    assert served[switch]["credential_kind"] == "snmp_v3" and served[switch]["credential_from_pool"]
+    assert served[bmc]["credential_kind"] is None, "the BMC must not be served the gear's v3 user"
+
+    # Re-setting the credential without a scope keeps the scope it had.
+    d = await creds.set_pool_defaults(session, pool["id"], {"snmp": v3["id"]}, "test")
+    assert d["snmp"]["device_types"] == ["router", "switch"]
+
+    with pytest.raises(creds.CredentialError, match="does not cover server"):
+        await creds.adopt_pool_default(session, pool["id"], "snmp", ["server"])
+
+    # Adopt with no types adopts the scope - never the BMCs.
+    v2c = await creds.create(session, f"v2c-{_tag()}", "snmp_v2c", {"community": "x"})
+    await session.execute(text("UPDATE device_endpoint SET credential_id = CAST(:c AS uuid) "
+                               "WHERE id = ANY(CAST(:e AS uuid[]))"),
+                          {"c": v2c["id"], "e": [switch, bmc]})
+    assert await creds.adopt_pool_default(session, pool["id"], "snmp") == 1
+    served = {r["id"]: r for r in await fleet_repo.assignment_endpoints(session, "nobody")}
+    assert served[switch]["credential_from_pool"]
+    assert served[bmc]["credential_kind"] == "snmp_v2c"

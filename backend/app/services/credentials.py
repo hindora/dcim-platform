@@ -152,18 +152,45 @@ async def listing(session: AsyncSession, q: str | None = None, kind: str | None 
 
 async def pool_defaults(session: AsyncSession, pool_id: str) -> dict[str, dict[str, Any]]:
     rows = (await session.execute(text("""
-        SELECT pc.protocol, c.id::text AS id, c.name, c.kind, c.secret_hint
+        SELECT pc.protocol, c.id::text AS id, c.name, c.kind, c.secret_hint,
+               pc.device_types
           FROM collector_pool_credential pc JOIN credential c ON c.id = pc.credential_id
          WHERE pc.pool_id = CAST(:p AS uuid)
     """), {"p": pool_id})).mappings().all()
-    return {r["protocol"]: {k: r[k] for k in ("id", "name", "kind", "secret_hint")} for r in rows}
+    out: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        item = {k: r[k] for k in ("id", "name", "kind", "secret_hint")}
+        item["device_types"] = list(r["device_types"]) if r["device_types"] is not None else None
+        out[r["protocol"]] = item
+    return out
+
+
+async def _known_types(session: AsyncSession, types: list[str] | None) -> list[str] | None:
+    """The device types, sorted and de-duplicated, or None for "all". A type that
+    does not exist is refused rather than matching nothing."""
+    clean = sorted({t.strip() for t in types or [] if t and t.strip()}) or None
+    if clean:
+        known = set((await session.execute(text(
+            "SELECT code FROM device_type WHERE code = ANY(:t)"), {"t": clean})).scalars())
+        unknown = [t for t in clean if t not in known]
+        if unknown:
+            raise CredentialError(f"unknown device type(s): {', '.join(unknown)}")
+    return clean
 
 
 async def set_pool_defaults(session: AsyncSession, pool_id: str,
-                            defaults: dict[str, str | None], actor: str) -> dict[str, Any]:
+                            defaults: dict[str, str | None], actor: str,
+                            device_types: dict[str, list[str] | None] | None = None,
+                            ) -> dict[str, Any]:
     """{protocol: credential_id or None}. None removes that protocol's default.
     A credential must be for the protocol it is set on - an SNMP credential as
-    a pool's Redfish default would fail every BMC login in the pool."""
+    a pool's Redfish default would fail every BMC login in the pool.
+
+    `device_types` {protocol: [types] or None} scopes a default to those device
+    types (None: every device). A protocol it does not mention keeps the scope
+    it had. On the IT-OOB networks the v3 default covers the network gear only;
+    the server BMCs beside it stay on their own v2c."""
+    scopes = device_types or {}
     for proto, cid in defaults.items():
         if proto not in DEFAULT_PROTOCOLS:
             raise CredentialError(f"{proto!r} is not a polled protocol")
@@ -180,13 +207,20 @@ async def set_pool_defaults(session: AsyncSession, pool_id: str,
             raise CredentialError(f"no credential {cid}")
         if row[0] != proto:
             raise CredentialError(f"credential {cid} is for {row[0]}, not {proto}")
+        scoped = proto in scopes
+        types = await _known_types(session, scopes.get(proto)) if scoped else None
         await session.execute(text("""
-            INSERT INTO collector_pool_credential (pool_id, protocol, credential_id, updated_by)
-            VALUES (CAST(:p AS uuid), :proto, CAST(:c AS uuid), :actor)
+            INSERT INTO collector_pool_credential (pool_id, protocol, credential_id,
+                                                   updated_by, device_types)
+            VALUES (CAST(:p AS uuid), :proto, CAST(:c AS uuid), :actor,
+                    CAST(:types AS text[]))
             ON CONFLICT (pool_id, protocol) DO UPDATE
                SET credential_id = EXCLUDED.credential_id, updated_at = now(),
-                   updated_by = EXCLUDED.updated_by
-        """), {"p": pool_id, "proto": proto, "c": cid, "actor": actor})
+                   updated_by = EXCLUDED.updated_by,
+                   device_types = CASE WHEN :scoped THEN EXCLUDED.device_types
+                                       ELSE collector_pool_credential.device_types END
+        """), {"p": pool_id, "proto": proto, "c": cid, "actor": actor,
+               "types": types, "scoped": scoped})
     return await pool_defaults(session, pool_id)
 
 
@@ -206,15 +240,18 @@ async def adopt_pool_default(session: AsyncSession, pool_id: str, protocol: str,
     """
     from app.repositories.pools import _RESOLVED_POOL
 
-    if protocol not in (await pool_defaults(session, pool_id)):
+    defaults = await pool_defaults(session, pool_id)
+    if protocol not in defaults:
         raise CredentialError(f"the pool has no default {protocol} credential to adopt")
-    types = sorted({t.strip() for t in device_types or [] if t and t.strip()}) or None
-    if types:
-        known = set((await session.execute(text(
-            "SELECT code FROM device_type WHERE code = ANY(:t)"), {"t": types})).scalars())
-        unknown = [t for t in types if t not in known]
-        if unknown:
-            raise CredentialError(f"unknown device type(s): {', '.join(unknown)}")
+    types = await _known_types(session, device_types)
+    scope = defaults[protocol].get("device_types")
+    if scope:
+        # A scoped default can only be adopted by the types it covers: the rest
+        # would be served no credential at all.
+        outside = sorted(set(types or []) - set(scope))
+        if outside:
+            raise CredentialError(f"the pool's default does not cover {', '.join(outside)}")
+        types = types or scope
     result = await session.execute(text(f"""
         UPDATE device_endpoint SET credential_id = NULL, updated_at = now()
          WHERE id IN (

@@ -286,6 +286,9 @@ class CredentialDefaultsBody(BaseModel):
 
     #: {protocol: credential_id, or null to remove that protocol's default}
     defaults: dict[str, str | None]
+    #: {protocol: [device types] or null for every device}; a protocol left out
+    #: keeps its scope. The IT-OOB v3 default covers the network gear, not the BMCs.
+    device_types: dict[str, list[str] | None] | None = None
 
 
 @router.get("/{pool_id}/credentials", summary="This pool's default credential per protocol")
@@ -310,15 +313,17 @@ async def put_pool_credentials(
     before = await cred_service.pool_defaults(session, pool_id)
     try:
         after = await cred_service.set_pool_defaults(session, pool_id, body.defaults,
-                                                     principal.username)
+                                                     principal.username, body.device_types)
     except cred_service.CredentialError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from None
     ip, agent = audit.client_of(request)
     await audit.record(session, actor=audit.actor_of(principal), action="pool.credentials",
                        target_type="collector_pool", target_id=pool_id, ip=ip,
                        user_agent=agent,
-                       before={k: v["name"] for k, v in before.items()},
-                       after={k: v["name"] for k, v in after.items()})
+                       before={k: {"name": v["name"], "device_types": v.get("device_types")}
+                               for k, v in before.items()},
+                       after={k: {"name": v["name"], "device_types": v.get("device_types")}
+                              for k, v in after.items()})
     await session.commit()
     log.info("pool credential defaults set", pool_id=pool_id, actor=principal.username,
              protocols=sorted(after))

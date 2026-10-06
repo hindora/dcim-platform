@@ -969,7 +969,7 @@ class TopologyImporter:
             # each of the 310 server BMCs - which stay v2c - and moved them onto
             # a v3 user they do not have. An endpoint's own credential is an
             # override somebody chose; only an explicit adopt clears it.
-            cred_id = (None if await self._pool_has_default(spec)
+            cred_id = (None if await self._pool_has_default(spec, dev.get("device_type"))
                        else await self._credential_id(spec))
             endpoint_id = await self._scalar("""
                 INSERT INTO device_endpoint (device_id, protocol, role, address, port,
@@ -1126,23 +1126,28 @@ class TopologyImporter:
         self.report.models += 1
         return mid
 
-    async def _pool_has_default(self, spec: EndpointSpec) -> bool:
+    async def _pool_has_default(self, spec: EndpointSpec,
+                                device_type: str | None = None) -> bool:
         """Whether the pool this address resolves into (the most specific
         discovery range containing it) has a default credential for the
-        endpoint's protocol."""
+        endpoint's protocol that covers this device's type. A new IT-OOB BMC
+        is outside the network gear's v3 scope, so it gets its own v2c pinned
+        instead of a default it does not speak."""
         if not spec.address:
             return False
         return bool((await self.s.execute(text("""
             SELECT EXISTS (
                 SELECT 1 FROM collector_pool_credential pc
                  WHERE pc.protocol = :proto
+                   AND (pc.device_types IS NULL OR CAST(:dtype AS text) = ANY(pc.device_types))
                    AND pc.pool_id = (
                        SELECT cp.id FROM discovery_range dr
                          JOIN collector_pool cp
                            ON cp.datacenter_id = dr.datacenter_id AND cp.plane = dr.purpose
                         WHERE CAST(:addr AS inet) <<= dr.cidr
                         ORDER BY masklen(dr.cidr) DESC LIMIT 1))
-        """), {"proto": spec.protocol, "addr": spec.address})).scalar())
+        """), {"proto": spec.protocol, "addr": spec.address,
+               "dtype": device_type})).scalar())
 
     async def _credential_id(self, spec: EndpointSpec) -> str | None:
         if not spec.credential_name or spec.credential_payload is None:

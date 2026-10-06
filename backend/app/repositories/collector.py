@@ -287,8 +287,12 @@ async def assignment_endpoints(session: AsyncSession, collector_id: str,
                     ORDER BY masklen(dr.cidr) DESC
                     LIMIT 1
                )) AS id) rp ON true
+        -- A scoped default (migration 0098) stands in only for its device
+        -- types: an IT-OOB BMC with no credential of its own is served none,
+        -- not the network gear's v3 user it does not have.
         LEFT JOIN collector_pool_credential pc
                ON pc.pool_id = rp.id AND pc.protocol = e.protocol::text
+              AND (pc.device_types IS NULL OR d.device_type = ANY(pc.device_types))
         LEFT JOIN credential c ON c.id = COALESCE(e.credential_id, pc.credential_id)
         WHERE {' AND '.join(where)}
         ORDER BY e.id

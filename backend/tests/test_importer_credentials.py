@@ -30,7 +30,7 @@ def test_a_pool_default_still_means_no_pin_for_a_new_endpoint():
     """The adoption the pool-default branch protects still holds: an adopted
     endpoint has no own credential, so COALESCE leaves it on the default."""
     body = _upsert()
-    assert "None if await self._pool_has_default(spec)" in body
+    assert "None if await self._pool_has_default(spec, " in body
 
 
 def test_a_relabelled_port_is_renamed_in_place_before_the_upsert():
@@ -42,3 +42,13 @@ def test_a_relabelled_port_is_renamed_in_place_before_the_upsert():
     body = SRC[start:SRC.index("INSERT INTO interface", start)]
     assert "UPDATE interface SET name = :name" in body
     assert "if_index = :idx" in body and "NOT EXISTS" in body
+
+
+def test_a_new_device_outside_a_scoped_default_gets_its_own_credential():
+    """A new IT-OOB BMC is outside the network gear's v3 scope (migration 0098):
+    the importer must pin its per-device v2c rather than leave it to a default
+    it does not speak."""
+    assert '_pool_has_default(spec, dev.get("device_type"))' in SRC
+    start = SRC.index("async def _pool_has_default(")
+    body = SRC[start:SRC.index("async def _credential_id(", start)]
+    assert "pc.device_types IS NULL OR CAST(:dtype AS text) = ANY(pc.device_types)" in body
