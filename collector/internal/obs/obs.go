@@ -38,6 +38,8 @@ type Metrics struct {
 	FailuresTotal *prometheus.CounterVec
 	TrapsTotal    *prometheus.CounterVec
 	V3EngineTotal *prometheus.CounterVec
+	// SNMPv3 poll responses dropped before gosnmp saw them (usm_guard.go).
+	V3RejectedTotal *prometheus.CounterVec
 
 	PublishQueueDepth prometheus.Gauge
 	PublishBatchSize  prometheus.Histogram
@@ -113,6 +115,10 @@ func NewMetrics() *Metrics {
 			Name: "dcim_collector_snmp_v3_engine_total",
 			Help: "SNMPv3 sessions by how the agent's engine parameters were obtained.",
 		}, []string{"result"}),
+		V3RejectedTotal: promauto.NewCounterVec(prometheus.CounterOpts{
+			Name: "dcim_collector_snmp_v3_rejected_total",
+			Help: "SNMPv3 poll responses dropped as not authenticated the way the session requires.",
+		}, []string{"reason"}),
 
 		PublishQueueDepth: promauto.NewGauge(prometheus.GaugeOpts{
 			Name: "dcim_collector_publish_queue_depth",

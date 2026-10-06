@@ -45,6 +45,9 @@ type usmAgent struct {
 	// agents do, instead of usmStatsUnknownEngineIDs.
 	digestOnUnknownEngine bool
 	silent                bool
+	// forgeNoAuth answers a GET noAuthNoPriv in plaintext - what an on-path
+	// attacker with no key can send.
+	forgeNoAuth bool
 
 	discoveries, engineReports, timeReports, contextReports, gets int
 }
@@ -139,6 +142,9 @@ func (a *usmAgent) handle(msg []byte, peer *net.UDPAddr) {
 		// is refused - net-snmp and pysnmp both answer with a report.
 		a.contextReports++
 		a.reply(req, peer, g.AuthNoPriv, g.Report, oidUnavailableContexts, agentUser)
+	case a.forgeNoAuth:
+		a.gets++
+		a.reply(req, peer, g.NoAuthNoPriv, g.GetResponse, sysUpTimeOID, agentUser)
 	default:
 		a.gets++
 		a.reply(req, peer, g.AuthPriv, g.GetResponse, sysUpTimeOID, agentUser)
@@ -409,4 +415,47 @@ func TestPysnmpAgentIsPolledFromTheCachedEngine(t *testing.T) {
 		t.Fatalf("discovered=%d cached=%d refreshed=%d, want 1/3/0 - a cached session "+
 			"the agent refused falls back to discovery and counts as refreshed", d, c, r)
 	}
+}
+
+// A plaintext noAuthNoPriv response to an authPriv GET - what an on-path
+// attacker can write with no key - was accepted as the device's data. The
+// guard drops it; the request then times out rather than return forged data.
+func TestAForgedUnauthenticatedResponseIsDropped(t *testing.T) {
+	agent := newUSMAgent(t, string([]byte{0x80, 0x00, 0x01, 0x3e, 0x01, 0x0a, 0x34, 0x0b, 0x1d}))
+	mets := obs.NewMetrics()
+	a := New(nil, nil, mets, 25, false)
+	ep := agentEndpoint(agent.port())
+	pingN(t, a, ep, 1)
+
+	agent.mu.Lock()
+	agent.forgeNoAuth = true
+	agent.mu.Unlock()
+	if err := a.Ping(context.Background(), ep); err == nil {
+		t.Fatal("a forged noAuthNoPriv response was accepted")
+	}
+	if n := counterValue(mets, "dcim_collector_snmp_v3_rejected_total", "reason", "unauthenticated"); n < 1 {
+		t.Fatalf("forged responses counted: %d", n)
+	}
+
+	agent.mu.Lock()
+	agent.forgeNoAuth = false
+	agent.mu.Unlock()
+	pingN(t, a, ep, 1)
+}
+
+func counterValue(m *obs.Metrics, name, label, value string) int {
+	fams, _ := m.Registry.Gather()
+	for _, f := range fams {
+		if f.GetName() != name {
+			continue
+		}
+		for _, metric := range f.GetMetric() {
+			for _, l := range metric.GetLabel() {
+				if l.GetName() == label && l.GetValue() == value {
+					return int(metric.GetCounter().GetValue())
+				}
+			}
+		}
+	}
+	return 0
 }

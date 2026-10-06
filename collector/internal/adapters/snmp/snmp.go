@@ -154,11 +154,13 @@ func (a *Adapter) dial(ctx context.Context, ep *models.Endpoint,
 		Context:            ctx,
 	}
 
+	var usm *usmParams
 	if ep.Credential != nil && ep.Credential.Kind == "snmp_v3" {
-		usm, err := parseUSM(ep.Credential)
+		p, err := parseUSM(ep.Credential)
 		if err != nil {
 			return nil, false, err
 		}
+		usm = &p
 		client.Version = g.Version3
 		client.SecurityModel = g.UserSecurityModel
 		client.MsgFlags = usm.msgFlags()
@@ -203,6 +205,9 @@ func (a *Adapter) dial(ctx context.Context, ep *models.Endpoint,
 			client.Conn.Close()
 			return nil, false, fmt.Errorf("%w: %v", models.ErrUnreachable, err)
 		}
+	}
+	if usm != nil {
+		client.Conn = guardUSM(client.Conn, *usm, a.mets)
 	}
 	return client, cached, nil
 }
