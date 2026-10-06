@@ -535,6 +535,7 @@ func (a *App) Run(ctx context.Context) error {
 			Interval:    a.cfg.DCIM.AssignmentInterval,
 			Sweeper:     a.discoverySweeper(),
 			Redfish:     a.redfishSweeper(),
+			Liveness:    a.discoveryLiveness(),
 			HTTP: &http.Client{Timeout: a.cfg.DCIM.RequestTimeout,
 				Transport: &http.Transport{TLSClientConfig: a.tlsConfig}},
 			Log: a.log,
@@ -733,6 +734,15 @@ func receiverEngineID(collectorID string) string {
 // discoverySweeper is the SNMP sweep: the configured v2c communities, and
 // first the SNMPv3 credentials of the pools this collector serves - read on
 // every probe, so a credential set or rotated after start is the one tried.
+func (a *App) discoveryLiveness() *discovery.Liveness {
+	l := a.cfg.Discovery.Liveness
+	if !l.Enabled {
+		a.log.Info("discovery liveness check off; every address gets the full probe")
+		return nil
+	}
+	return discovery.NewLiveness(a.log, l.TCPPorts, l.Timeout, l.Concurrency)
+}
+
 func (a *App) discoverySweeper() *discovery.Sweeper {
 	sw := discovery.New(a.log, a.discoveryCommunities(), 0)
 	sw.V3 = func() []discovery.V3Cred {

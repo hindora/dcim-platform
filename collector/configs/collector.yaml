@@ -63,6 +63,20 @@ discovery:
   # a deployment's choice and a real site leaves it false.
   community_is_address: true
 
+  # Is anything at an address, asked cheaply before the SNMP probes. An empty
+  # address otherwise costs a v3 AND a v2c timeout (~24 s), and a /20 sweep took
+  # ~3.4 h. A TCP connect to these ports counts a refusal as an answer (a live
+  # host's kernel sends RST), plus ICMP echo when this process may open an ICMP
+  # socket. Addresses the platform already knows - inventory, earlier candidates
+  # - are probed in full whatever this hears. Set enabled: false where the
+  # collector's networks are ACL'd to SNMP only: there it hears nothing, and a
+  # device nobody has recorded yet would be skipped.
+  liveness:
+    enabled: true
+    tcp_ports: [22, 80, 443]
+    timeout: 1.5s
+    concurrency: 64
+
   # Redfish sweeping. What it finds that SNMP does not: a server racked and not yet
   # built has its BMC up and no operating system, so Redfish is the only thing it
   # answers - and plenty of real BMCs restrict SNMP entirely.

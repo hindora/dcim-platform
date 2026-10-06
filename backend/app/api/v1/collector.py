@@ -6,6 +6,7 @@ response contains decrypted device credentials.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import Any, Literal
 
@@ -475,6 +476,13 @@ async def claim_discovery(
     # Committed immediately: the claim is the point. Without it the row's
     # status never leaves 'pending' and every collector claims it forever.
     await session.commit()
+    if run:
+        # What the collector must probe in full even if its liveness check
+        # hears nothing. A collector without the check ignores the field.
+        scope = run.get("scope")
+        if isinstance(scope, str):
+            scope = json.loads(scope)
+        run["expected"] = await disc_repo.expected_addresses(session, scope or {})
     return {"run": run}
 
 

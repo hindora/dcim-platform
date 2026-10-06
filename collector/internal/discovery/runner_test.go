@@ -42,7 +42,9 @@ func TestAClaimSaysWhoIsAskingAndThatItCanExclude(t *testing.T) {
 
 // slowSweep is one silent agent asked with 20 communities in turn: ~4 s of
 // timeouts, long enough to see whether a cancel cuts it short.
-func slowSweep(t *testing.T, status func(w http.ResponseWriter)) (*Runner, *atomic.Int32) {
+//
+// expected is the claim's "expected" JSON, or "" for an API that sends none.
+func slowSweep(t *testing.T, expected string, status func(w http.ResponseWriter)) (*Runner, *atomic.Int32) {
 	t.Helper()
 	silent, err := net.ListenPacket("udp4", "127.0.0.1:0")
 	if err != nil {
@@ -57,7 +59,11 @@ func slowSweep(t *testing.T, status func(w http.ResponseWriter)) (*Runner, *atom
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/claim"):
-			_, _ = w.Write([]byte(`{"run":{"id":"r1","method":"sweep","scope":{"subnets":["127.0.0.1/32"]}}}`))
+			extra := ""
+			if expected != "" {
+				extra = `,"expected":` + expected
+			}
+			_, _ = w.Write([]byte(`{"run":{"id":"r1","method":"sweep","scope":{"subnets":["127.0.0.1/32"]}` + extra + `}}`))
 		case strings.HasSuffix(r.URL.Path, "/r1/status"):
 			status(w)
 		case strings.HasSuffix(r.URL.Path, "/r1/results"):
@@ -77,7 +83,7 @@ func slowSweep(t *testing.T, status func(w http.ResponseWriter)) (*Runner, *atom
 }
 
 func TestACancelledRunStopsItsSweepAndReportsNothing(t *testing.T) {
-	r, reports := slowSweep(t, func(w http.ResponseWriter) {
+	r, reports := slowSweep(t, "", func(w http.ResponseWriter) {
 		_, _ = w.Write([]byte(`{"status":"cancelled"}`))
 	})
 	start := time.Now()
@@ -95,7 +101,7 @@ func TestACancelledRunStopsItsSweepAndReportsNothing(t *testing.T) {
 func TestAnAPIWithoutTheStatusRouteLeavesTheSweepAlone(t *testing.T) {
 	// 404 from an API older than the route is not "stop": the sweep goes on
 	// and reports, as every sweep did before.
-	r, reports := slowSweep(t, func(w http.ResponseWriter) {
+	r, reports := slowSweep(t, "", func(w http.ResponseWriter) {
 		w.WriteHeader(http.StatusNotFound)
 	})
 	start := time.Now()
@@ -107,5 +113,55 @@ func TestAnAPIWithoutTheStatusRouteLeavesTheSweepAlone(t *testing.T) {
 	}
 	if n := reports.Load(); n != 1 {
 		t.Errorf("reported %d times, want 1", n)
+	}
+}
+
+func running(w http.ResponseWriter) { _, _ = w.Write([]byte(`{"status":"running"}`)) }
+
+// silentLiveness hears nothing anywhere: every address is "empty".
+func silentLiveness() *Liveness {
+	return &Liveness{TCPPorts: []int{22}, Timeout: 50 * time.Millisecond, dial: fakeDial()}
+}
+
+func TestAnAddressNothingAnswersGetsNoSNMPProbe(t *testing.T) {
+	r, reports := slowSweep(t, `[]`, running)
+	r.Liveness = silentLiveness()
+	start := time.Now()
+	if err := r.once(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if took := time.Since(start); took > time.Second {
+		t.Errorf("an empty address cost %v; the SNMP probes ran", took)
+	}
+	if n := reports.Load(); n != 1 {
+		t.Errorf("reported %d times, want 1", n)
+	}
+}
+
+func TestAnExpectedAddressIsProbedEvenWhenSilent(t *testing.T) {
+	// Inventory on a network ACL'd to SNMP only fails the liveness check; skipping
+	// it would report it missing.
+	r, _ := slowSweep(t, `["127.0.0.1"]`, running)
+	r.Liveness = silentLiveness()
+	start := time.Now()
+	if err := r.once(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if took := time.Since(start); took < 3*time.Second {
+		t.Errorf("sweep took %v; the expected address was skipped", took)
+	}
+}
+
+func TestAnAPIThatNamesNothingExpectedGetsTheFullSweep(t *testing.T) {
+	// No "expected" field: an older API. Skipping by liveness alone could skip
+	// inventory nobody named, so the check is not used at all.
+	r, _ := slowSweep(t, "", running)
+	r.Liveness = silentLiveness()
+	start := time.Now()
+	if err := r.once(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if took := time.Since(start); took < 3*time.Second {
+		t.Errorf("sweep took %v; liveness skipped addresses without an expected list", took)
 	}
 }

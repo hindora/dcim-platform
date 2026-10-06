@@ -239,6 +239,20 @@ def test_a_sweep_can_learn_its_run_was_cancelled():
     assert "FOR UPDATE" not in _body(REPO, "run_status")
 
 
+def test_a_claim_names_what_must_be_probed_whatever_liveness_hears():
+    """A collector skips addresses its liveness check hears nothing at. On a
+    network ACL'd to SNMP only that is everything - so whatever inventory or an
+    earlier sweep says is there is named, and probed in full, or it would read as
+    missing (inventory) or gone (a candidate)."""
+    claim = COLLECTOR_API[COLLECTOR_API.index("async def claim_discovery("):
+                          COLLECTOR_API.index("class DiscoveryResult(")]
+    assert 'run["expected"] = await disc_repo.expected_addresses(' in claim
+    body = _body(REPO, "expected_addresses")
+    assert "FROM device_endpoint e" in body and "e.enabled" in body
+    assert "FROM discovery_candidate c" in body
+    assert '_probed("k.a", "s.cidr")' in body   # network/broadcast never swept
+
+
 def test_the_report_and_a_cancel_cannot_interleave():
     assert "FOR UPDATE" in _body(REPO, "lock_run_status")
 

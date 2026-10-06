@@ -404,6 +404,36 @@ def _probed(addr: str, cidr: str) -> str:
             f" AND host({addr}) <> host(broadcast(CAST({cidr} AS inet))))))")
 
 
+async def expected_addresses(session: AsyncSession, scope: dict[str, Any]) -> list[str]:
+    """Addresses in a sweep's scope that something already says are there.
+
+    Handed to the collector with the run so it gives these the full SNMP probe
+    even when they fail its liveness check. A BMS network ACL'd to UDP/161 only
+    drops the check's ICMP and TCP, and skipping a device for that would read as
+    "missing" (inventory) or "gone" (an earlier candidate) - a false finding,
+    which is worse than a slow sweep. Inventory is every enabled endpoint on a
+    swept protocol; candidates are every address any sweep has heard.
+    """
+    subnets = [s for s in (scope.get("subnets") or []) if isinstance(s, str)]
+    if not subnets:
+        return []
+    rows = (await session.execute(text(f"""
+        WITH known AS (
+            SELECT e.address AS a FROM device_endpoint e
+             WHERE e.enabled AND e.admin_state = 'enabled'
+               AND e.protocol::text = ANY(:protocols) AND e.address IS NOT NULL
+            UNION
+            SELECT c.address FROM discovery_candidate c WHERE c.address IS NOT NULL
+        )
+        SELECT DISTINCT host(k.a) AS address
+          FROM known k
+          JOIN unnest(CAST(:subnets AS text[])) AS s(cidr)
+            ON {_probed("k.a", "s.cidr")}
+         ORDER BY 1
+    """), {"protocols": list(SWEPT_PROTOCOLS), "subnets": subnets})).scalars().all()
+    return list(rows)
+
+
 async def mark_gone(session: AsyncSession, run_id: str) -> int:
     """Mark the candidates this run covered but did not see.
 

@@ -294,6 +294,24 @@ type DiscoveryCfg struct {
 	// network is a deliberate act, not something a collector should start doing
 	// because it was upgraded.
 	Redfish RedfishDiscoveryCfg `yaml:"redfish"`
+
+	// Liveness is the cheap "is anything there" check before the SNMP probes.
+	Liveness LivenessCfg `yaml:"liveness"`
+}
+
+// LivenessCfg tunes the check that skips empty addresses.
+//
+// On by default: without it a v3-then-v2c sweep spends ~24 s on every empty
+// address, and a /20 took ~3.4 h. Addresses the platform already knows of are
+// probed in full regardless. Turn it OFF for a collector whose networks are
+// ACL'd to SNMP only (no TCP, no ICMP from the collector): there it hears
+// nothing, and a device nobody has recorded yet would be skipped.
+type LivenessCfg struct {
+	Enabled bool `yaml:"enabled"`
+	// TCPPorts are connected to; a refusal counts as an answer.
+	TCPPorts    []int         `yaml:"tcp_ports"`
+	Timeout     time.Duration `yaml:"timeout"`
+	Concurrency int           `yaml:"concurrency"`
 }
 
 // RedfishDiscoveryCfg is how a sweep looks for management controllers.
@@ -411,6 +429,8 @@ func Default() *Config {
 	// somebody upgraded it.
 	c.Discovery = DiscoveryCfg{
 		Redfish: RedfishDiscoveryCfg{Ports: []uint16{443}},
+		Liveness: LivenessCfg{Enabled: true, TCPPorts: []int{22, 80, 443},
+			Timeout: 1500 * time.Millisecond, Concurrency: 64},
 	}
 	c.Protocols.SNMP = ProtocolCfg{
 		Enabled: true, MaxConcurrent: 256, PerHost: 4,

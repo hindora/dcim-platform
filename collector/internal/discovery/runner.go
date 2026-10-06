@@ -33,8 +33,12 @@ type Runner struct {
 	// Redfish is optional. Nil means a run sweeps SNMP only, which is what a
 	// deployment that has not configured Redfish discovery should get.
 	Redfish *RedfishSweeper
-	HTTP    *http.Client
-	Log     *slog.Logger
+	// Liveness, when set, skips the full probes at addresses where nothing
+	// answers - unless the API names the address as expected. Nil probes
+	// every address, as sweeps always did.
+	Liveness *Liveness
+	HTTP     *http.Client
+	Log      *slog.Logger
 }
 
 type claimResponse struct {
@@ -42,6 +46,11 @@ type claimResponse struct {
 		ID     string          `json:"id"`
 		Method string          `json:"method"`
 		Scope  json.RawMessage `json:"scope"`
+		// Expected is what must be probed in full whatever the liveness
+		// check hears. Absent from an API that predates it - and then the
+		// check is not used, since skipping inventory nobody named would
+		// report it missing.
+		Expected *[]string `json:"expected"`
 	} `json:"run"`
 }
 
@@ -105,7 +114,22 @@ func (r *Runner) once(ctx context.Context) error {
 	go r.watchRun(runCtx, run.ID, stop)
 
 	started := time.Now()
-	found := r.Sweeper.Sweep(runCtx, addrs)
+	targets := addrs
+	if r.Liveness != nil && run.Expected != nil {
+		expected := make(map[string]bool, len(*run.Expected))
+		for _, a := range *run.Expected {
+			expected[a] = true
+		}
+		targets = r.Liveness.Filter(runCtx, addrs, expected)
+		if r.abandoned(runCtx, run.ID, started) {
+			return nil
+		}
+		r.Log.Info("discovery liveness checked", "run_id", run.ID,
+			"addresses", len(addrs), "expected", len(expected),
+			"probing", len(targets), "seconds", int(time.Since(started).Seconds()))
+	}
+
+	found := r.Sweeper.Sweep(runCtx, targets)
 	snmpCount := len(found)
 	if r.abandoned(runCtx, run.ID, started) {
 		return nil
@@ -119,7 +143,7 @@ func (r *Runner) once(ctx context.Context) error {
 	// answer that arrives sooner than the operator needs it.
 	var redfishCount int
 	if r.Redfish != nil {
-		rf := r.Redfish.Sweep(runCtx, addrs)
+		rf := r.Redfish.Sweep(runCtx, targets)
 		redfishCount = len(rf)
 		found = append(found, rf...)
 		if r.abandoned(runCtx, run.ID, started) {
