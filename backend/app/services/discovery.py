@@ -142,6 +142,29 @@ _VENDOR_HINTS: list[tuple[str, str]] = [
 ]
 
 
+#: IANA enterprise numbers -> vendor, for an SNMPv3 engine ID (RFC 3411: the
+#: first four octets are 0x80000000 | the agent vendor's enterprise number).
+#: net-snmp's own 8072 is left out: it names the agent software, not the box.
+_ENTERPRISE_VENDORS: dict[int, str] = {
+    9: "Cisco", 30065: "Arista", 2636: "Juniper", 674: "Dell", 11: "HPE",
+    232: "HPE", 19046: "Lenovo", 318: "Schneider Electric", 534: "Eaton",
+    476: "Vertiv", 13742: "Raritan", 10876: "Supermicro", 25461: "Palo Alto Networks",
+    3375: "F5", 8691: "Moxa",
+}
+
+
+def engine_enterprise(engine_hex: str | None) -> int | None:
+    """The enterprise number an RFC 3411 SNMPv3 engine ID carries, or None for
+    a pre-RFC 3411 ID (high bit clear) or anything unreadable."""
+    try:
+        b = bytes.fromhex(engine_hex or "")
+    except ValueError:
+        return None
+    if len(b) < 5 or not b[0] & 0x80:
+        return None
+    return int.from_bytes(bytes([b[0] & 0x7F]) + b[1:4], "big")
+
+
 def classify(identity: dict[str, Any],
              protocol: str = "snmp") -> tuple[str | None, str | None]:
     """Guess a device type and vendor from what the probe could read.
@@ -164,6 +187,10 @@ def classify(identity: dict[str, Any],
         if blob else None
     if dtype is None and protocol == "redfish":
         dtype = "server"
+    if vendor is None:
+        # An agent that answered USM discovery but no credential we hold: its
+        # engine ID is all there is, and it still names the vendor.
+        vendor = _ENTERPRISE_VENDORS.get(engine_enterprise(identity.get("engineID")) or -1)
     return dtype, vendor
 
 

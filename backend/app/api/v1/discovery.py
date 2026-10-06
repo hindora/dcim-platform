@@ -73,9 +73,13 @@ class EndpointCredentialChoice(BaseModel):
     `address` - the community is the device's own address (the simulator's
     convention, offered only when the sweep proved it). `existing` - a credential
     already in the store. `new` - typed here, encrypted on arrival, never echoed.
+    `pool` - no credential of its own: the endpoint inherits its pool's SNMP
+    default, offered when the sweep authenticated with that pool's SNMPv3
+    credential (`pool_id`, checked against where the address resolves).
     """
-    mode: Literal["existing", "new", "address"]
+    mode: Literal["existing", "new", "address", "pool"]
     id: str | None = None
+    pool_id: str | None = None
     community: str | None = None
     username: str | None = None
     password: str | None = None

@@ -129,3 +129,55 @@ def test_the_sweep_keeps_how_it_got_in():
     assert 'identity = {**identity, "access": dict(r["access"])}' in rec
     col = (APP / "api" / "v1" / "collector.py").read_text(encoding="utf-8")
     assert "access: dict[str, str]" in col
+
+
+# ------------------------------------------------------------------- SNMPv3
+
+def test_a_pool_v3_answer_proposes_inheriting_the_pool_credential():
+    cred, why = de.suggested_credential(_probe("snmp", {
+        "version": "3", "credential": "pool", "pool_id": "p-1", "engine_id": "80000"}))
+    assert cred == {"mode": "pool", "pool_id": "p-1"}
+    assert "pool's SNMPv3 credential" in why
+
+
+def test_a_v3_agent_no_credential_opened_proposes_nothing():
+    cred, why = de.suggested_credential(_probe("snmp", {
+        "version": "3", "credential": "none", "engine_id": "8000013e01"}))
+    assert cred is None
+    assert "8000013e01" in why and "no credential" in why
+
+
+def test_a_v2c_answer_says_it_also_speaks_v3():
+    cred, why = de.suggested_credential(_probe("snmp", {
+        "version": "2c", "community": "address", "v3_engine_id": "8000013e01"},
+        address="10.52.11.25"))
+    assert cred == {"mode": "address"}
+    assert "also speaks SNMPv3" in why
+
+
+def test_pool_mode_is_checked_against_where_the_address_resolves():
+    body = SRC[SRC.index("async def _credential("):SRC.index("async def _credential_by_name")]
+    assert "this address resolves to a different pool" in body
+    assert "no SNMP default credential to inherit" in body
+    assert "return None" in body, "pool mode leaves the endpoint without a credential of its own"
+
+
+@pytest.mark.parametrize("engine, enterprise", [
+    ("8000013e010a340b19", 318),     # APC, format 1 + IPv4
+    ("800001dc01c0a80001", 476),     # Vertiv
+    ("80001f8804636f6c", 8072),      # net-snmp text
+    ("0000000900000000", None),      # pre-RFC 3411: high bit clear
+    ("zz", None), (None, None), ("8000", None),
+])
+def test_the_engine_id_names_its_enterprise(engine, enterprise):
+    from app.services import discovery as disc
+    assert disc.engine_enterprise(engine) == enterprise
+
+
+def test_an_engine_id_names_the_vendor_when_nothing_else_does():
+    from app.services import discovery as disc
+    assert disc.classify({"engineID": "8000013e010a340b19"}) == (None, "Schneider Electric")
+    # Readable evidence wins over the engine ID.
+    assert disc.classify({"sysDescr": "Eaton 9PX", "engineID": "8000013e01aa"})[1] == "Eaton"
+    # net-snmp's own number names software, not a vendor.
+    assert disc.classify({"engineID": "80001f8804636f6c"})[1] is None

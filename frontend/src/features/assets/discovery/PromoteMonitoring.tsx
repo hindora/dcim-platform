@@ -11,7 +11,7 @@ import {
 export interface MonitoringRow {
   plan: PlannedEndpoint;
   include: boolean;
-  mode: 'address' | 'existing' | 'new';
+  mode: 'address' | 'pool' | 'existing' | 'new';
   credentialId: string;
   community: string;
   username: string;
@@ -24,7 +24,7 @@ export function initialRows(plan: PlannedEndpoint[]): MonitoringRow[] {
     include: true,
     // What the sweep proved, where it proved anything; otherwise a choice the
     // operator has to make before Promote is offered.
-    mode: p.suggested_credential ? 'address' : 'existing',
+    mode: p.suggested_credential?.mode ?? 'existing',
     credentialId: '', community: '', username: '', password: '',
   }));
 }
@@ -46,6 +46,8 @@ export function rowProblem(r: MonitoringRow): string | null {
 export function toRequest(r: MonitoringRow): EndpointChoice {
   const credential: EndpointChoice['credential'] =
     r.mode === 'address' ? { mode: 'address' }
+      : r.mode === 'pool' && r.plan.suggested_credential?.mode === 'pool'
+        ? { mode: 'pool', pool_id: r.plan.suggested_credential.pool_id }
       : r.mode === 'existing' ? { mode: 'existing', id: r.credentialId }
         : r.plan.protocol === 'snmp'
           ? { mode: 'new', community: r.community }
@@ -63,7 +65,9 @@ export function toRequest(r: MonitoringRow): EndpointChoice {
  *  disagree with the importer about how a BMC is polled.
  *
  *  The sweep names the credential that worked by reference only. Where that is
- *  enough to rebuild it (the community IS the address) it is pre-selected; a
+ *  enough to rebuild it (the community IS the address) it is pre-selected, and
+ *  where a pool's SNMPv3 credential answered, inheriting it is - so the endpoint
+ *  follows that credential's rotations instead of holding a copy; a
  *  Redfish login is never guessed, because a wrong one is a failed-login alarm
  *  on the BMC and, on some, a lockout.
  */
@@ -132,8 +136,11 @@ function CredentialChoice({ row, onChange }: {
     <div className="disc-mon-cred">
       <select value={row.mode} aria-label={`${protocol} credential`}
               onChange={(e) => onChange({ mode: e.target.value as MonitoringRow['mode'] })}>
-        {row.plan.suggested_credential && (
+        {row.plan.suggested_credential?.mode === 'address' && (
           <option value="address">Community = this address (what answered)</option>
+        )}
+        {row.plan.suggested_credential?.mode === 'pool' && (
+          <option value="pool">The pool's SNMPv3 credential (what answered)</option>
         )}
         <option value="existing">An existing credential</option>
         <option value="new">{protocol === 'snmp' ? 'A new community' : 'A new login'}</option>

@@ -36,6 +36,7 @@ from app.importer.endpoints import (
     pdu_profile,
 )
 from app.repositories import devices as devices_repo
+from app.services import credentials as credentials_svc
 from app.services import endpoint_config
 
 #: What a sweep speaks, and so what a promotion can wire up. A BACnet or Modbus
@@ -97,13 +98,27 @@ def suggested_credential(cand: dict[str, Any]) -> tuple[dict[str, Any] | None, s
     """What the sweep's evidence lets us propose, and why - or None and why not."""
     access = _access(cand)
     if cand["protocol"] == "snmp":
+        if access.get("version") == "3":
+            # docs/26 Phase 4: a pool's SNMPv3 credential answered. The endpoint
+            # inherits it rather than getting a copy, so a rotation of the
+            # pool's credential reaches it - and the sweep's evidence is about
+            # exactly that credential, by reference.
+            if access.get("credential") == "pool" and access.get("pool_id"):
+                return ({"mode": "pool", "pool_id": access["pool_id"]},
+                        "the sweep authenticated with its pool's SNMPv3 credential")
+            return (None, "speaks SNMPv3 (engine "
+                          f"{access.get('engine_id') or '?'}) but no credential this "
+                          "collector holds was accepted; set the pool's SNMPv3 "
+                          "credential, or choose one")
+        also = (" It also speaks SNMPv3: once its pool has an SNMPv3 credential, a "
+                "fresh sweep can move it off v2c.") if access.get("v3_engine_id") else ""
         if access.get("community") == "address":
             return ({"mode": "address"},
-                    "the sweep was answered with this address as the community")
+                    "the sweep was answered with this address as the community." + also)
         if access.get("community") == "configured":
             return (None, f"answered the collector's configured community "
                           f"#{access.get('community_index', '?')}; the value stays on "
-                          f"the collector, so choose the matching credential")
+                          f"the collector, so choose the matching credential." + also)
         return None, "this sweep did not record how it authenticated"
     if access.get("credential") == "configured":
         return (None, f"the collector's configured login #"
@@ -160,10 +175,50 @@ async def plan(session: AsyncSession, cand: dict[str, Any], *,
     return out
 
 
+async def _resolved_pool(session: AsyncSession, device_id: str,
+                         address: str) -> str | None:
+    """The pool an endpoint at `address` on this device will resolve into: the
+    most specific discovery range holding the address, in the device's
+    datacenter - repositories/pools._RESOLVED_POOL's rule, for an endpoint
+    that does not exist yet."""
+    return (await session.execute(text("""
+        SELECT cp.id::text
+          FROM device d
+          LEFT JOIN rack rk     ON rk.id = d.rack_id
+          LEFT JOIN rack_row rr ON rr.id = rk.row_id
+          LEFT JOIN room rm     ON rm.id = COALESCE(rr.room_id, d.room_id)
+          JOIN discovery_range dr ON CAST(:addr AS inet) <<= dr.cidr
+          JOIN collector_pool cp
+            ON cp.datacenter_id = rm.datacenter_id AND cp.plane = dr.purpose
+         WHERE d.id = CAST(:dev AS uuid)
+         ORDER BY masklen(dr.cidr) DESC
+         LIMIT 1
+    """), {"dev": device_id, "addr": address})).scalar_one_or_none()
+
+
 async def _credential(session: AsyncSession, protocol: str, address: str,
-                      choice: dict[str, Any]) -> str:
-    """Resolve the operator's credential choice to a credential id."""
+                      choice: dict[str, Any], device_id: str) -> str | None:
+    """Resolve the operator's credential choice to a credential id - or None
+    for "inherit the pool's default"."""
     mode = choice.get("mode")
+    if mode == "pool":
+        if protocol != "snmp":
+            raise EndpointPlanError("only an SNMP endpoint inherits a pool credential")
+        pool = await _resolved_pool(session, device_id, address)
+        if pool is None:
+            raise EndpointPlanError(
+                "this address is in no pool's range here, so there is no pool "
+                "credential to inherit; choose a credential")
+        want = str(choice.get("pool_id") or "")
+        if want and pool != want:
+            # The sweep proved ONE pool's credential. Inheriting another pool's
+            # would be a guess dressed up as evidence.
+            raise EndpointPlanError(
+                "this address resolves to a different pool from the one whose "
+                "credential answered the sweep; choose a credential")
+        if "snmp" not in await credentials_svc.pool_defaults(session, pool):
+            raise EndpointPlanError("the pool has no SNMP default credential to inherit")
+        return None
     if mode == "existing":
         cid = str(choice.get("id") or "").strip()
         if not cid:
@@ -300,7 +355,7 @@ async def create(session: AsyncSession, *, device_id: str, device_type: str,
                 raise EndpointPlanError(f"poll profile {profile_name} is missing")
             profile_id = found["id"]
         cred_id = await _credential(session, protocol, p["address"],
-                                    req.get("credential") or {})
+                                    req.get("credential") or {}, device_id)
         addressing: dict[str, Any] = {}
         if protocol == "redfish":
             # The scheme the sweep actually reached it on. A real BMC is https;

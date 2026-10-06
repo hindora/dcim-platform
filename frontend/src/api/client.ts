@@ -332,8 +332,10 @@ export interface PlannedEndpoint {
   poll_profile: string;
   /** The scheme the sweep reached a BMC on; null for SNMP. */
   scheme?: string | null;
-  /** Only where the sweep's own evidence can rebuild the credential. */
-  suggested_credential?: { mode: 'address' } | null;
+  /** Only where the sweep's own evidence can rebuild the credential: the
+   *  community is the address, or a pool's SNMPv3 credential answered and the
+   *  endpoint inherits it. */
+  suggested_credential?: { mode: 'address' } | { mode: 'pool'; pool_id: string } | null;
   credential_note: string;
 }
 
@@ -342,6 +344,7 @@ export interface EndpointChoice {
   candidate_id: string;
   credential:
     | { mode: 'address' }
+    | { mode: 'pool'; pool_id: string }
     | { mode: 'existing'; id: string }
     | { mode: 'new'; community?: string; username?: string; password?: string };
   port?: number;
