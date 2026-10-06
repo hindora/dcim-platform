@@ -77,6 +77,15 @@ type TrapReceiver struct {
 	engineID string
 	reconfig chan struct{}
 
+	// This receiver's engine clock and its notion of every sender's, for
+	// USM's timeliness check (see EngineTimes, trapSocket.secure). Owned by
+	// the app so they outlive a receiver rebuilt by a config change: a fresh
+	// clock with the same boots would reopen the window to old INFORMs, and
+	// fresh sender clocks to old TRAPs.
+	boots uint32
+	start time.Time
+	times *EngineTimes
+
 	// Traps that arrived before the collector knew who sent them.
 	//
 	// The socket binds in milliseconds and the first assignment lands twenty
@@ -144,6 +153,8 @@ func NewTrapReceiver(table *mapping.TrapTable, resolver *assign.Resolver,
 		holdFor:  defaultHoldFor,
 		holdMax:  defaultHoldMax,
 		reconfig: make(chan struct{}, 1),
+		// Until SetEngineClock: boots 1 from now, a clock of its own.
+		boots: 1, start: time.Now(), times: NewEngineTimes(),
 	}
 }
 
@@ -151,6 +162,13 @@ func NewTrapReceiver(table *mapping.TrapTable, resolver *assign.Resolver,
 // sending an INFORM localises its keys to (the receiver is authoritative for
 // an INFORM, the sender for a TRAP). Set before Listen.
 func (t *TrapReceiver) SetEngineID(id string) { t.engineID = id }
+
+// SetEngineClock gives the receiver its engine's boots - persisted across
+// restarts and incremented by each - and the moment its engine time counts
+// from, and the table of sending engines' clocks. Set before Listen.
+func (t *TrapReceiver) SetEngineClock(boots uint32, start time.Time, times *EngineTimes) {
+	t.boots, t.start, t.times = boots, start, times
+}
 
 // EngineID is the engine ID SetEngineID gave this receiver.
 func (t *TrapReceiver) EngineID() string { return t.engineID }
@@ -261,6 +279,10 @@ func (t *TrapReceiver) Listen(ctx context.Context) error {
 		listener := newTrapSocket()
 		listener.Params = t.params()
 		listener.OnNewTrap = onTrap
+		listener.OnReject = func(reason string) {
+			t.mets.TrapsTotal.WithLabelValues(reason).Inc()
+		}
+		listener.Boots, listener.Start, listener.Times = t.boots, t.start, t.times
 		t.listener = listener
 		errCh := make(chan error, 1)
 		go func() { errCh <- listener.Listen(t.listen) }()

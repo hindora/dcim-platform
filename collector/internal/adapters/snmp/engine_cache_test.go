@@ -174,13 +174,6 @@ func (a *usmAgent) reply(req *g.SnmpPacket, peer *net.UDPAddr, flags g.SnmpV3Msg
 	_, _ = a.conn.WriteToUDP(b, peer)
 }
 
-func absDiff(x, y uint32) uint32 {
-	if x > y {
-		return x - y
-	}
-	return y - x
-}
-
 func agentEndpoint(port int) *models.Endpoint {
 	return &models.Endpoint{
 		ID: "ep-v3", Protocol: "snmp", Address: "127.0.0.1", Port: port,

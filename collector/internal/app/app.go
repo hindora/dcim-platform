@@ -92,10 +92,15 @@ type App struct {
 	// and reopened in place. Everything else is read once, when the adapters
 	// are built.
 	trapTable *mapping.TrapTable
-	trapMu    sync.Mutex
-	trapCfg   config.TrapCfg
-	trapStop  context.CancelFunc
-	trapDone  chan struct{}
+	// SNMPv3 engine clock for the trap receiver, and its notion of each
+	// sender's: here, not on the receiver, so a rebuild keeps them.
+	engineBoots uint32
+	engineStart time.Time
+	trapTimes   *snmp.EngineTimes
+	trapMu      sync.Mutex
+	trapCfg     config.TrapCfg
+	trapStop    context.CancelFunc
+	trapDone    chan struct{}
 
 	cfgClient *config.RemoteClient
 	// What the process actually booted with, kept to answer "does this change
@@ -327,6 +332,9 @@ func New(cfg *config.Config, version string, tlsStore *mtls.Store) (*App, error)
 	log.Info("trap mappings loaded", "wire_oids", trapTable.Len())
 	a.trapTable = trapTable
 	a.trapCfg = cfg.Protocols.SNMPTrap
+	a.engineBoots = nextEngineBoots(cfg.Collector.StateDir, log)
+	a.engineStart = time.Now()
+	a.trapTimes = snmp.NewEngineTimes()
 	if len(a.adapters) == 0 {
 		return nil, fmt.Errorf("no protocol adapters enabled")
 	}

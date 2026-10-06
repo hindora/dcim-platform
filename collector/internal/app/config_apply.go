@@ -37,6 +37,9 @@ func (a *App) startTraps(parent context.Context, cfg config.TrapCfg) {
 	// addressed to it, went to the handler as a trap with no OID, and was
 	// never answered. Every SNMPv3 INFORM failed that way.
 	receiver.SetEngineID(receiverEngineID(a.cfg.Collector.ID))
+	if a.trapTimes != nil {
+		receiver.SetEngineClock(a.engineBoots, a.engineStart, a.trapTimes)
+	}
 
 	a.trapMu.Lock()
 	a.traps, a.trapCfg, a.trapStop, a.trapDone = receiver, cfg, cancel, done
