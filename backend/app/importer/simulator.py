@@ -948,6 +948,13 @@ class TopologyImporter:
             # Phase 4 credential sets, migration 0097) owns its endpoints'
             # credentials: pinning the per-address v2c row here would undo an
             # adoption on every re-import and put a new BMS card on v2c.
+            #
+            # And a re-import never takes away an endpoint's OWN credential
+            # (credential_id = COALESCE below). It did: with the IT-OOB pools on
+            # an SNMPv3 default, re-importing nulled the v2c community pinned on
+            # each of the 310 server BMCs - which stay v2c - and moved them onto
+            # a v3 user they do not have. An endpoint's own credential is an
+            # override somebody chose; only an explicit adopt clears it.
             cred_id = (None if await self._pool_has_default(spec)
                        else await self._credential_id(spec))
             endpoint_id = await self._scalar("""
@@ -962,7 +969,8 @@ class TopologyImporter:
                 DO UPDATE SET
                     port = EXCLUDED.port,
                     addressing = EXCLUDED.addressing,
-                    credential_id = EXCLUDED.credential_id,
+                    credential_id = COALESCE(device_endpoint.credential_id,
+                                             EXCLUDED.credential_id),
                     poll_profile_id = EXCLUDED.poll_profile_id,
                     collector_id = EXCLUDED.collector_id,
                     enabled = EXCLUDED.enabled,
