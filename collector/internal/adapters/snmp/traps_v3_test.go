@@ -226,14 +226,26 @@ func TestV3InformThroughAnAliasIsAcknowledgedFromThatAlias(t *testing.T) {
 // then authPriv) against the real receiver, which must acknowledge it and
 // read the notification's OID. Opt-in - set PYSNMP_PY to a Python with pysnmp
 // and cryptography - because CI has no pysnmp.
+//
+// Over IPv6 too, against the "0.0.0.0" listen address the fleet configures:
+// trapSocket bound that IPv4-only from 0.5.7, and IPv6 senders went unheard.
 func TestPysnmpInformIsAcknowledged(t *testing.T) {
 	py := os.Getenv("PYSNMP_PY")
 	if py == "" {
 		t.Skip("PYSNMP_PY not set")
 	}
+	for _, c := range []struct{ name, listen, target string }{
+		{"ipv4", "127.0.0.1", "127.0.0.1"},
+		{"ipv6 to a wildcard listener", "0.0.0.0", "::1"},
+	} {
+		t.Run(c.name, func(t *testing.T) { pysnmpInform(t, py, c.listen, c.target) })
+	}
+}
+
+func pysnmpInform(t *testing.T, py, listen, target string) {
 	r, _, _ := newHoldReceiver(t)
 	port := freeUDPPort(t)
-	r.listen = "127.0.0.1:" + strconv.Itoa(port)
+	r.listen = net.JoinHostPort(listen, strconv.Itoa(port))
 	r.SetEngineID(string([]byte{0x80, 0x00, 0x1f, 0x88, 0x04}) + "col-test")
 	if err := r.SetUSM(trapUser("auth-pass-1", "priv-pass-1")); err != nil {
 		t.Fatal(err)
@@ -252,7 +264,8 @@ async def main():
     eng = SnmpEngine(snmpEngineID=OctetString(hexValue="8000013e010a340b19"))
     u = UsmUserData("dcim-poll", "auth-pass-1", "priv-pass-1",
                     authProtocol=usmHMAC192SHA256AuthProtocol, privProtocol=usmAesCfb128Protocol)
-    t = await UdpTransportTarget.create(("127.0.0.1", int(sys.argv[1])), timeout=2, retries=0)
+    T = Udp6TransportTarget if ":" in sys.argv[2] else UdpTransportTarget
+    t = await T.create((sys.argv[2], int(sys.argv[1])), timeout=2, retries=0)
     e, s, i, vb = await send_notification(eng, u, t, ContextData(), "inform",
                                           NotificationType(ObjectIdentity("1.3.6.1.6.3.1.1.5.3")))
     print("RESULT", e or s or "ACKED")
@@ -260,7 +273,7 @@ asyncio.run(main())
 `), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	out, err := exec.Command(py, script, strconv.Itoa(port)).CombinedOutput()
+	out, err := exec.Command(py, script, strconv.Itoa(port), target).CombinedOutput()
 	if err != nil || !strings.Contains(string(out), "RESULT ACKED") {
 		t.Fatalf("pysnmp INFORM not acknowledged: %v; output: %s", err, out)
 	}

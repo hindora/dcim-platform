@@ -242,6 +242,10 @@ protocols:
     #   POST /api/snmp/trap-receiver {"ip": "<collector>", "port": 1162}
     # Without that step no trap arrives and the alarm path looks broken when it
     # is merely unaddressed.
+    #
+    # A wildcard ("0.0.0.0", "::" or no host) listens on IPv4 AND IPv6, as two
+    # sockets - snmptrapd's udp:162 plus udp6:162. A host without IPv6 is warned
+    # about and served on IPv4. A specific address listens on its own family only.
     listen: "0.0.0.0:1162"
     workers: 8
     # Per source. A flapping interface must not fill the stream or the disk.

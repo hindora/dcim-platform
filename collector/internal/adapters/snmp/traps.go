@@ -279,6 +279,7 @@ func (t *TrapReceiver) Listen(ctx context.Context) error {
 		listener := newTrapSocket()
 		listener.Params = t.params()
 		listener.OnNewTrap = onTrap
+		listener.Log = t.log
 		listener.OnReject = func(reason string) {
 			t.mets.TrapsTotal.WithLabelValues(reason).Inc()
 		}

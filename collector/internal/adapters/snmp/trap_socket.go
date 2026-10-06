@@ -2,6 +2,7 @@ package snmp
 
 import (
 	"errors"
+	"log/slog"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -9,6 +10,7 @@ import (
 
 	g "github.com/gosnmp/gosnmp"
 	"golang.org/x/net/ipv4"
+	"golang.org/x/net/ipv6"
 )
 
 // usmStatsUnknownEngineIDs is the report an authoritative engine sends a
@@ -56,6 +58,8 @@ type trapSocket struct {
 	OnNewTrap func(*g.SnmpPacket, *net.UDPAddr)
 	// OnReject counts a v3 message refused for one of the reject* reasons.
 	OnReject func(reason string)
+	// Log, if set, hears that a wildcard receiver could not open IPv6.
+	Log *slog.Logger
 
 	// This receiver's own engine clock, for the INFORMs it is authoritative
 	// for: boots persisted across restarts, time counted from start.
@@ -66,7 +70,7 @@ type trapSocket struct {
 
 	listening chan bool
 	mu        sync.Mutex
-	conn      *net.UDPConn
+	conns     []*net.UDPConn
 	closed    bool
 
 	unknownEngineIDs uint32
@@ -76,62 +80,212 @@ func newTrapSocket() *trapSocket {
 	return &trapSocket{listening: make(chan bool)}
 }
 
-// Listening is closed once the socket is bound.
+// Listening is closed once every socket is bound.
 func (s *trapSocket) Listening() <-chan bool { return s.listening }
+
+// replyConn sends a reply from dst, the address the request arrived on, when
+// the platform reports it; otherwise the kernel picks the source.
+type replyConn interface {
+	reply(b []byte, remote *net.UDPAddr, dst net.IP)
+}
+
+type v4Reply struct{ pc *ipv4.PacketConn }
+
+func (r v4Reply) reply(b []byte, remote *net.UDPAddr, dst net.IP) {
+	var cm *ipv4.ControlMessage
+	if dst != nil && !dst.IsUnspecified() {
+		cm = &ipv4.ControlMessage{Src: dst}
+	}
+	_, _ = r.pc.WriteTo(b, cm, remote)
+}
+
+type v6Reply struct{ pc *ipv6.PacketConn }
+
+func (r v6Reply) reply(b []byte, remote *net.UDPAddr, dst net.IP) {
+	var cm *ipv6.ControlMessage
+	if dst != nil && !dst.IsUnspecified() {
+		cm = &ipv6.ControlMessage{Src: dst}
+	}
+	_, _ = r.pc.WriteTo(b, cm, remote)
+}
+
+// trapBind is one socket Listen opens.
+type trapBind struct {
+	network string // "udp4" or "udp6"
+	addr    *net.UDPAddr
+}
+
+// trapBinds is what addr asks for. A wildcard - "0.0.0.0", "::" or no host -
+// is both families on one port, as two sockets: snmptrapd's udp:162 plus
+// udp6:162. A specific address is its own family only.
+//
+// Two sockets rather than one dual-stack one: on a dual-stack socket an IPv4
+// datagram's reply source is set through a v4-mapped IPV6_PKTINFO, which is
+// Linux-specific behaviour this receiver's INFORM path would then rest on.
+// Each family's own PKTINFO is the plain, portable route. gosnmp's listener,
+// used until 0.5.7, bound "udp" - which Go makes dual-stack - so IPv6 traps
+// arrived; trapSocket bound "udp4" and silently stopped hearing them.
+func trapBinds(addr string) ([]trapBind, error) {
+	host, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	port, err := net.LookupPort("udp", portStr)
+	if err != nil {
+		return nil, err
+	}
+	ip := net.ParseIP(host)
+	if host == "" || (ip != nil && ip.IsUnspecified()) {
+		return []trapBind{
+			{"udp4", &net.UDPAddr{IP: net.IPv4zero, Port: port}},
+			{"udp6", &net.UDPAddr{IP: net.IPv6unspecified, Port: port}},
+		}, nil
+	}
+	if ip == nil {
+		ua, err := net.ResolveUDPAddr("udp", addr)
+		if err != nil {
+			return nil, err
+		}
+		ip = ua.IP
+	}
+	if ip.To4() != nil {
+		return []trapBind{{"udp4", &net.UDPAddr{IP: ip, Port: port}}}, nil
+	}
+	return []trapBind{{"udp6", &net.UDPAddr{IP: ip, Port: port}}}, nil
+}
 
 // Listen binds addr and reads until Close. A Close before the bind makes
 // Listen return at once without binding - unlike gosnmp's listener, which
 // then bound and blocked forever.
+//
+// For a wildcard, IPv6 is best effort: a host without it (no address
+// family, or IPv6 disabled) is warned about and served on IPv4. An IPv4 or a
+// specific address that cannot be bound fails the listener.
 func (s *trapSocket) Listen(addr string) error {
-	ua, err := net.ResolveUDPAddr("udp4", addr)
+	binds, err := trapBinds(addr)
 	if err != nil {
 		return err
 	}
-	conn, err := net.ListenUDP("udp4", ua)
-	if err != nil {
-		return err
+	var conns []*net.UDPConn
+	closeAll := func() {
+		for _, c := range conns {
+			_ = c.Close()
+		}
+	}
+	for i, b := range binds {
+		if i > 0 && b.addr.Port == 0 {
+			// Port 0: the same port the first family was given.
+			b.addr.Port = conns[0].LocalAddr().(*net.UDPAddr).Port
+		}
+		conn, err := net.ListenUDP(b.network, b.addr)
+		if err != nil {
+			if len(binds) > 1 && b.network == "udp6" && len(conns) > 0 {
+				if s.Log != nil {
+					s.Log.Warn("trap receiver has no IPv6 socket; IPv6 traps will not be received",
+						"addr", b.addr.String(), "error", err)
+				}
+				continue
+			}
+			closeAll()
+			return err
+		}
+		conns = append(conns, conn)
 	}
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
-		_ = conn.Close()
+		closeAll()
 		return nil
 	}
-	s.conn = conn
+	s.conns = conns
 	s.mu.Unlock()
 
-	pc := ipv4.NewPacketConn(conn)
-	pktinfo := pc.SetControlMessage(ipv4.FlagDst, true) == nil
+	loops := make([]func(), 0, len(conns))
+	for _, conn := range conns {
+		if conn.LocalAddr().(*net.UDPAddr).IP.To4() != nil {
+			loops = append(loops, s.readV4(conn))
+		} else {
+			loops = append(loops, s.readV6(conn))
+		}
+	}
 	close(s.listening)
 
-	buf := make([]byte, 65535)
-	for {
-		n, cm, src, err := pc.ReadFrom(buf)
-		if err != nil {
-			if s.isClosed() || errors.Is(err, net.ErrClosed) {
-				return nil
+	var wg sync.WaitGroup
+	for _, loop := range loops {
+		wg.Add(1)
+		go func(loop func()) {
+			defer wg.Done()
+			loop()
+		}(loop)
+	}
+	wg.Wait()
+	return nil
+}
+
+// readV4 reads one IPv4 socket, learning each datagram's destination from
+// IP_PKTINFO where the platform has it.
+func (s *trapSocket) readV4(conn *net.UDPConn) func() {
+	pc := ipv4.NewPacketConn(conn)
+	pktinfo := pc.SetControlMessage(ipv4.FlagDst, true) == nil
+	rc := v4Reply{pc}
+	return func() {
+		buf := make([]byte, 65535)
+		for {
+			n, cm, src, err := pc.ReadFrom(buf)
+			if err != nil {
+				if s.isClosed() || errors.Is(err, net.ErrClosed) {
+					return
+				}
+				continue
 			}
-			continue
+			remote, ok := src.(*net.UDPAddr)
+			if !ok {
+				continue
+			}
+			var dst net.IP
+			if pktinfo && cm != nil {
+				dst = cm.Dst
+			}
+			s.handle(rc, append([]byte(nil), buf[:n]...), remote, dst)
 		}
-		remote, ok := src.(*net.UDPAddr)
-		if !ok {
-			continue
+	}
+}
+
+// readV6 is readV4 for an IPv6 socket, through IPV6_PKTINFO.
+func (s *trapSocket) readV6(conn *net.UDPConn) func() {
+	pc := ipv6.NewPacketConn(conn)
+	pktinfo := pc.SetControlMessage(ipv6.FlagDst, true) == nil
+	rc := v6Reply{pc}
+	return func() {
+		buf := make([]byte, 65535)
+		for {
+			n, cm, src, err := pc.ReadFrom(buf)
+			if err != nil {
+				if s.isClosed() || errors.Is(err, net.ErrClosed) {
+					return
+				}
+				continue
+			}
+			remote, ok := src.(*net.UDPAddr)
+			if !ok {
+				continue
+			}
+			var dst net.IP
+			if pktinfo && cm != nil {
+				dst = cm.Dst
+			}
+			s.handle(rc, append([]byte(nil), buf[:n]...), remote, dst)
 		}
-		var dst net.IP
-		if pktinfo && cm != nil {
-			dst = cm.Dst
-		}
-		s.handle(pc, append([]byte(nil), buf[:n]...), remote, dst)
 	}
 }
 
 func (s *trapSocket) Close() {
 	s.mu.Lock()
 	s.closed = true
-	conn := s.conn
+	conns := s.conns
 	s.mu.Unlock()
-	if conn != nil {
-		_ = conn.Close()
+	for _, c := range conns {
+		_ = c.Close()
 	}
 }
 
@@ -141,7 +295,7 @@ func (s *trapSocket) isClosed() bool {
 	return s.closed
 }
 
-func (s *trapSocket) handle(pc *ipv4.PacketConn, msg []byte, remote *net.UDPAddr, dst net.IP) {
+func (s *trapSocket) handle(rc replyConn, msg []byte, remote *net.UDPAddr, dst net.IP) {
 	trap, err := s.Params.UnmarshalTrap(msg, false)
 	if err != nil {
 		return
@@ -157,11 +311,11 @@ func (s *trapSocket) handle(pc *ipv4.PacketConn, msg []byte, remote *net.UDPAddr
 			// RFC 3411 5: an engine ID is 5-32 octets. Anything else is a
 			// sender discovering this receiver's engine before an INFORM.
 			if n := len(got.AuthoritativeEngineID); n < 5 || n > 32 {
-				s.reportEngineID(pc, trap, own.AuthoritativeEngineID, remote, dst)
+				s.reportEngineID(rc, trap, own.AuthoritativeEngineID, remote, dst)
 				return
 			}
 		}
-		if !s.secure(trap, own, got, pc, remote, dst) {
+		if !s.secure(trap, own, got, rc, remote, dst) {
 			return
 		}
 	}
@@ -173,7 +327,7 @@ func (s *trapSocket) handle(pc *ipv4.PacketConn, msg []byte, remote *net.UDPAddr
 		trap.PDUType = g.GetResponse
 		trap.Error = g.NoError
 		trap.ErrorIndex = 0
-		s.send(pc, trap, remote, dst)
+		s.send(rc, trap, remote, dst)
 	}
 }
 
@@ -191,7 +345,7 @@ func (s *trapSocket) handle(pc *ipv4.PacketConn, msg []byte, remote *net.UDPAddr
 // receiver is, and a stale sender gets a notInTimeWindow report with this
 // receiver's real boots and time so it can resynchronise and resend.
 func (s *trapSocket) secure(trap *g.SnmpPacket, own, got *g.UsmSecurityParameters,
-	pc *ipv4.PacketConn, remote *net.UDPAddr, dst net.IP) bool {
+	rc replyConn, remote *net.UDPAddr, dst net.IP) bool {
 
 	need := s.Params.MsgFlags & g.AuthPriv
 	if trap.MsgFlags&g.AuthPriv < need ||
@@ -208,7 +362,7 @@ func (s *trapSocket) secure(trap *g.SnmpPacket, own, got *g.UsmSecurityParameter
 			absDiff(got.AuthoritativeEngineTime, now) > timeWindow {
 			s.reject(rejectNotInTimeWindow)
 			if trap.MsgFlags&g.Reportable != 0 || trap.PDUType == g.InformRequest {
-				s.reportNotInTimeWindow(pc, trap, remote, dst)
+				s.reportNotInTimeWindow(rc, trap, remote, dst)
 			}
 			return false
 		}
@@ -238,7 +392,7 @@ func (s *trapSocket) reject(reason string) {
 // reportNotInTimeWindow tells an INFORM sender this receiver's real boots and
 // time. Authenticated (authNoPriv), as RFC 3414 3.2 step 7a has it, so the
 // sender can trust the clock it resynchronises to.
-func (s *trapSocket) reportNotInTimeWindow(pc *ipv4.PacketConn, trap *g.SnmpPacket,
+func (s *trapSocket) reportNotInTimeWindow(rc replyConn, trap *g.SnmpPacket,
 	remote *net.UDPAddr, dst net.IP) {
 	sp, ok := trap.SecurityParameters.Copy().(*g.UsmSecurityParameters)
 	if !ok {
@@ -250,10 +404,10 @@ func (s *trapSocket) reportNotInTimeWindow(pc *ipv4.PacketConn, trap *g.SnmpPack
 	trap.MsgFlags = g.AuthNoPriv
 	trap.SecurityParameters = sp
 	trap.Variables = []g.SnmpPDU{{Name: usmStatsNotInTimeWindows, Type: g.Integer, Value: 1}}
-	s.send(pc, trap, remote, dst)
+	s.send(rc, trap, remote, dst)
 }
 
-func (s *trapSocket) reportEngineID(pc *ipv4.PacketConn, trap *g.SnmpPacket, engineID string,
+func (s *trapSocket) reportEngineID(rc replyConn, trap *g.SnmpPacket, engineID string,
 	remote *net.UDPAddr, dst net.IP) {
 	sp, ok := trap.SecurityParameters.Copy().(*g.UsmSecurityParameters)
 	if !ok {
@@ -269,18 +423,17 @@ func (s *trapSocket) reportEngineID(pc *ipv4.PacketConn, trap *g.SnmpPacket, eng
 	trap.SecurityParameters = sp
 	trap.Variables = []g.SnmpPDU{{Name: usmStatsUnknownEngineIDs, Type: g.Integer,
 		Value: int(atomic.AddUint32(&s.unknownEngineIDs, 1))}}
-	s.send(pc, trap, remote, dst)
+	s.send(rc, trap, remote, dst)
 }
 
 // send replies to remote from dst, the address the request arrived on.
-func (s *trapSocket) send(pc *ipv4.PacketConn, p *g.SnmpPacket, remote *net.UDPAddr, dst net.IP) {
+func (s *trapSocket) send(rc replyConn, p *g.SnmpPacket, remote *net.UDPAddr, dst net.IP) {
+	if rc == nil {
+		return
+	}
 	b, err := p.MarshalMsg()
 	if err != nil {
 		return
 	}
-	var cm *ipv4.ControlMessage
-	if dst != nil && !dst.IsUnspecified() {
-		cm = &ipv4.ControlMessage{Src: dst}
-	}
-	_, _ = pc.WriteTo(b, cm, remote)
+	rc.reply(b, remote, dst)
 }
