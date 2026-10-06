@@ -190,16 +190,31 @@ async def set_pool_defaults(session: AsyncSession, pool_id: str,
     return await pool_defaults(session, pool_id)
 
 
-async def adopt_pool_default(session: AsyncSession, pool_id: str, protocol: str) -> int:
+async def adopt_pool_default(session: AsyncSession, pool_id: str, protocol: str,
+                             device_types: list[str] | None = None) -> int:
     """Hand every endpoint of `protocol` in the pool to the pool's default:
     clear their own credential, so the default resolves. The bulk action a
     site runs when it moves a network to one credential set - here, the BMS
     plane leaving 200 per-device v2c communities for one v3 user. Refused
-    without a default, which would leave them with no credential at all."""
+    without a default, which would leave them with no credential at all.
+
+    `device_types` narrows it to those types. A site moves a network to v3 by
+    device class: on an IT-OOB subnet the switches, routers, firewalls and load
+    balancers go while the BMCs beside them stay v2c - and adopting those too
+    would point them at a v3 user they do not have. A type that does not exist
+    is refused rather than matching nothing.
+    """
     from app.repositories.pools import _RESOLVED_POOL
 
     if protocol not in (await pool_defaults(session, pool_id)):
         raise CredentialError(f"the pool has no default {protocol} credential to adopt")
+    types = sorted({t.strip() for t in device_types or [] if t and t.strip()}) or None
+    if types:
+        known = set((await session.execute(text(
+            "SELECT code FROM device_type WHERE code = ANY(:t)"), {"t": types})).scalars())
+        unknown = [t for t in types if t not in known]
+        if unknown:
+            raise CredentialError(f"unknown device type(s): {', '.join(unknown)}")
     result = await session.execute(text(f"""
         UPDATE device_endpoint SET credential_id = NULL, updated_at = now()
          WHERE id IN (
@@ -211,6 +226,7 @@ async def adopt_pool_default(session: AsyncSession, pool_id: str, protocol: str)
               LEFT JOIN room rm    ON rm.id = COALESCE(rr.room_id, d.room_id)
               LEFT JOIN datacenter dc ON dc.id = rm.datacenter_id
              WHERE e.protocol::text = :proto AND e.credential_id IS NOT NULL
+               AND (CAST(:types AS text[]) IS NULL OR d.device_type = ANY(CAST(:types AS text[])))
                AND ({_RESOLVED_POOL}) = CAST(:pool AS uuid))
-    """), {"proto": protocol, "pool": pool_id})
+    """), {"proto": protocol, "pool": pool_id, "types": types})
     return result.rowcount or 0

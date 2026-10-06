@@ -325,28 +325,38 @@ async def put_pool_credentials(
     return {"pool_id": pool_id, "defaults": after}
 
 
+class AdoptRequest(BaseModel):
+    #: Only endpoints of devices of these types; omitted, every endpoint. A site
+    #: moves a network to a new credential set by device class.
+    device_types: list[str] | None = None
+
+
 @router.post("/{pool_id}/credentials/{protocol}/adopt",
              summary="Hand every endpoint of a protocol in this pool to the pool default")
 async def adopt_pool_credential(
     pool_id: str,
     protocol: str,
     request: Request,
+    body: AdoptRequest | None = None,
     session: AsyncSession = Depends(get_session),
     principal: Principal = Depends(require_role("admin")),
 ) -> dict[str, Any]:
     """Clears the endpoints' own credentials so the pool's default resolves -
     a site moving a network to one credential set. Reversible only by setting
     credentials back per endpoint, so it is audited with the count."""
+    types = body.device_types if body else None
     try:
-        n = await cred_service.adopt_pool_default(session, pool_id, protocol)
+        n = await cred_service.adopt_pool_default(session, pool_id, protocol, types)
     except cred_service.CredentialError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from None
     ip, agent = audit.client_of(request)
     await audit.record(session, actor=audit.actor_of(principal),
                        action="pool.credentials.adopt", target_type="collector_pool",
                        target_id=pool_id, ip=ip, user_agent=agent,
-                       after={"protocol": protocol, "endpoints": n})
+                       after={"protocol": protocol, "endpoints": n,
+                              "device_types": types})
     await session.commit()
     log.warning("pool credential default adopted", pool_id=pool_id, protocol=protocol,
                 endpoints=n, actor=principal.username)
-    return {"pool_id": pool_id, "protocol": protocol, "endpoints": n}
+    return {"pool_id": pool_id, "protocol": protocol, "endpoints": n,
+            "device_types": types}

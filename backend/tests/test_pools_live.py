@@ -851,3 +851,41 @@ async def test_a_pool_default_credential_resolves_until_an_endpoint_has_its_own(
     assert await fleet._pool_v3_credentials(session, [pool["id"]], None) == {}
     r = await served()
     assert r["credential_kind"] is None, "no default and no own credential: none served"
+
+
+async def test_adopting_by_device_type_moves_the_gear_and_leaves_the_bmcs(session):
+    """A site moves the IT-OOB network to SNMPv3 by device class: the switches go,
+    the server BMCs beside them on the same subnet keep their own v2c community -
+    adopting those too would point them at a v3 user they do not have."""
+    from app.services import credentials as creds
+
+    dc_id, room_id = await _datacenter_and_room(session, f"P{_tag()[:6]}")
+    await _discovery_range(session, dc_id, "10.51.231.0/24", purpose="it_oob")
+    pool = await svc.create(session, _payload(dc_id, name="DC/IT-OOB", plane="it_oob",
+                                              cidrs=[], bbmd_settings={}))
+    profile = await _poll_profile(session)
+    switch = await _device_endpoint(session, room_id, profile, "10.51.231.10", "snmp")
+    bmc = await _device_endpoint(session, room_id, profile, "10.51.231.40", "snmp")
+    for eid, dtype in ((switch, "switch"), (bmc, "server")):
+        await session.execute(text("""
+            UPDATE device SET device_type = :t
+             WHERE id = (SELECT device_id FROM device_endpoint WHERE id = CAST(:e AS uuid))
+        """), {"t": dtype, "e": eid})
+    v2c = await creds.create(session, f"v2c-{_tag()}", "snmp_v2c", {"community": "x"})
+    v3 = await creds.create(session, f"v3-{_tag()}", "snmp_v3", {
+        "security_name": "dcim-poll", "auth_protocol": "sha256", "auth_key": "authpass123",
+        "priv_protocol": "aes128", "priv_key": "privpass123"})
+    await session.execute(text("UPDATE device_endpoint SET credential_id = CAST(:c AS uuid) "
+                               "WHERE id = ANY(CAST(:e AS uuid[]))"),
+                          {"c": v2c["id"], "e": [switch, bmc]})
+    await creds.set_pool_defaults(session, pool["id"], {"snmp": v3["id"]}, "test")
+
+    with pytest.raises(creds.CredentialError, match="swich"):
+        await creds.adopt_pool_default(session, pool["id"], "snmp", ["switch", "swich"])
+    assert await creds.adopt_pool_default(session, pool["id"], "snmp",
+                                          ["switch", "router", "firewall"]) == 1
+
+    served = {r["id"]: r for r in await fleet_repo.assignment_endpoints(session, "nobody")}
+    assert served[switch]["credential_kind"] == "snmp_v3" and served[switch]["credential_from_pool"]
+    assert served[bmc]["credential_kind"] == "snmp_v2c", "the BMC keeps its own v2c credential"
+    assert not served[bmc]["credential_from_pool"]
