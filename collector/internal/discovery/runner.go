@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -25,6 +26,9 @@ type Runner struct {
 	CollectorID string
 	Token       func() string
 	Interval    time.Duration
+	// StatusEvery is how often a sweep in progress asks whether its run was
+	// cancelled. Zero means 15 s.
+	StatusEvery time.Duration
 	Sweeper     *Sweeper
 	// Redfish is optional. Nil means a run sweeps SNMP only, which is what a
 	// deployment that has not configured Redfish discovery should get.
@@ -92,9 +96,20 @@ func (r *Runner) once(ctx context.Context) error {
 			"skipped", skipped)
 	}
 
+	// The sweep runs under its own context, which a cancel on the API ends.
+	// Without it a cancelled /20 swept on for hours, and this collector claimed
+	// no other run until it was done. Reporting stays on ctx: the run's
+	// context is dead exactly when there is nothing to report.
+	runCtx, stop := context.WithCancelCause(ctx)
+	defer stop(nil)
+	go r.watchRun(runCtx, run.ID, stop)
+
 	started := time.Now()
-	found := r.Sweeper.Sweep(ctx, addrs)
+	found := r.Sweeper.Sweep(runCtx, addrs)
 	snmpCount := len(found)
+	if r.abandoned(runCtx, run.ID, started) {
+		return nil
+	}
 
 	// Both planes in one run, sequentially. One address can legitimately answer
 	// both - a server's BMC runs an SNMP agent AND Redfish - and the two arrive as
@@ -104,9 +119,12 @@ func (r *Runner) once(ctx context.Context) error {
 	// answer that arrives sooner than the operator needs it.
 	var redfishCount int
 	if r.Redfish != nil {
-		rf := r.Redfish.Sweep(ctx, addrs)
+		rf := r.Redfish.Sweep(runCtx, addrs)
 		redfishCount = len(rf)
 		found = append(found, rf...)
+		if r.abandoned(runCtx, run.ID, started) {
+			return nil
+		}
 	}
 
 	r.Log.Info("discovery sweep finished", "run_id", run.ID,
@@ -115,6 +133,78 @@ func (r *Runner) once(ctx context.Context) error {
 		"seconds", int(time.Since(started).Seconds()))
 
 	return r.report(ctx, run.ID, resultsBody{Responders: found})
+}
+
+// errRunStopped is the cause a run's context ends with when the API says the
+// run is no longer running - cancelled, or failed by the scheduler.
+var errRunStopped = errors.New("discovery run stopped by the API")
+
+// watchRun asks after the run until the sweep ends, and stops the sweep when
+// the run is no longer running. Only an answer stops it: an error, or a 404
+// from an API that predates the status route, leaves the sweep going, which
+// is what every sweep did before.
+func (r *Runner) watchRun(ctx context.Context, runID string, stop context.CancelCauseFunc) {
+	every := r.StatusEvery
+	if every <= 0 {
+		every = 15 * time.Second
+	}
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			st, err := r.runStatus(ctx, runID)
+			if err != nil {
+				r.Log.Debug("discovery run status unknown", "run_id", runID, "error", err)
+				continue
+			}
+			if st != "running" {
+				r.Log.Info("discovery run no longer running; stopping the sweep",
+					"run_id", runID, "status", st)
+				stop(errRunStopped)
+				return
+			}
+		}
+	}
+}
+
+// abandoned says whether the API stopped the run, logging it once.
+func (r *Runner) abandoned(runCtx context.Context, runID string, started time.Time) bool {
+	if !errors.Is(context.Cause(runCtx), errRunStopped) {
+		return false
+	}
+	r.Log.Info("discovery sweep abandoned", "run_id", runID,
+		"seconds", int(time.Since(started).Seconds()))
+	return true
+}
+
+func (r *Runner) runStatus(ctx context.Context, runID string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		r.BaseURL+"/api/v1/collector/discovery/"+url.PathEscape(runID)+"/status", nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+r.Token())
+	resp, err := r.HTTP.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("run status: HTTP %d", resp.StatusCode)
+	}
+	var out struct {
+		Status string `json:"status"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return "", err
+	}
+	if out.Status == "" {
+		return "", errors.New("run status: empty")
+	}
+	return out.Status, nil
 }
 
 func (r *Runner) claim(ctx context.Context) (*claimResponse, error) {

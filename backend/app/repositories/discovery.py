@@ -219,6 +219,14 @@ async def lock_run_status(session: AsyncSession, run_id: str) -> str | None:
     """), {"id": run_id})).scalar()
 
 
+async def run_status(session: AsyncSession, run_id: str) -> str | None:
+    """The run's status, unlocked: what a sweep in progress asks to learn it
+    was cancelled."""
+    return (await session.execute(text("""
+        SELECT status FROM discovery_run WHERE id = CAST(:id AS uuid)
+    """), {"id": run_id})).scalar()
+
+
 async def run_claimant(session: AsyncSession, run_id: str) -> str | None:
     """The collector a run belongs to: whoever claimed it, else whom it names."""
     return (await session.execute(text("""

@@ -492,6 +492,29 @@ class DiscoveryResults(BaseModel):
     error: str | None = None
 
 
+@router.get("/discovery/{run_id}/status",
+            summary="Whether a claimed sweep should go on (collector only)")
+async def discovery_run_status(run_id: str,
+                               session: AsyncSession = Depends(get_session),
+                               identity: str = Depends(require_collector),
+                               ) -> dict[str, Any]:
+    """Asked by the collector while it sweeps, so a cancel stops the traffic.
+
+    Without it a cancelled /20 swept on for hours - every address probed v3 then
+    v2c, and the collector claimed nothing else until it was done. Scoped like
+    results: a run's progress is its claimant's business.
+    """
+    if identity != UNSCOPED_COLLECTOR:
+        owner = await disc_repo.run_claimant(session, run_id)
+        if owner and owner != identity:
+            raise HTTPException(status.HTTP_403_FORBIDDEN,
+                                "this sweep was claimed by another collector")
+    current = await disc_repo.run_status(session, run_id)
+    if current is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "no such discovery run")
+    return {"status": current}
+
+
 @router.post("/discovery/{run_id}/results",
              summary="Report what a sweep found (collector only)")
 async def discovery_results(run_id: str, body: DiscoveryResults,
@@ -509,8 +532,8 @@ async def discovery_results(run_id: str, body: DiscoveryResults,
             raise HTTPException(status.HTTP_403_FORBIDDEN,
                                 "this sweep was claimed by another collector")
     # Only a run that is still running takes results. Locked, so a cancel and
-    # this report cannot interleave. A cancelled run's sweep still finishes -
-    # the collector cannot be interrupted - and what it found is discarded
+    # this report cannot interleave. A collector that predates the status check
+    # below sweeps a cancelled run to the end, and what it found is discarded
     # rather than recorded against a run somebody stopped. A duplicate report
     # for a run already done is refused the same way.
     current = await disc_repo.lock_run_status(session, run_id)

@@ -218,13 +218,25 @@ def test_only_an_unfinished_sweep_can_be_cancelled():
 
 
 def test_a_cancelled_sweeps_results_are_discarded_not_recorded():
-    """A collector cannot be interrupted mid-sweep, so it finishes and reports.
-    Recording that against a run somebody stopped would be the opposite of what
-    they asked for."""
+    """A collector older than the status route finishes a cancelled sweep and
+    reports. Recording that against a run somebody stopped would be the opposite
+    of what they asked for."""
     handler = COLLECTOR_API[COLLECTOR_API.index("async def discovery_results("):]
     assert handler.index("lock_run_status") < handler.index("record_results")
     assert 'if current != "running":' in handler
     assert '"discarded"' in handler
+
+
+def test_a_sweep_can_learn_its_run_was_cancelled():
+    """The collector asks while it sweeps, so a cancel stops the traffic rather
+    than only discarding hours of it. Its claimant's business only, like results,
+    and unlocked: the question must not wait behind a report."""
+    handler = COLLECTOR_API[COLLECTOR_API.index("async def discovery_run_status("):
+                            COLLECTOR_API.index("async def discovery_results(")]
+    assert '"/discovery/{run_id}/status"' in COLLECTOR_API
+    assert "run_claimant" in handler and "HTTP_403_FORBIDDEN" in handler
+    assert "run_status" in handler and "HTTP_404_NOT_FOUND" in handler
+    assert "FOR UPDATE" not in _body(REPO, "run_status")
 
 
 def test_the_report_and_a_cancel_cannot_interleave():
