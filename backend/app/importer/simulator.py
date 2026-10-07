@@ -574,6 +574,72 @@ class TopologyImporter:
 
     # ------------------------------------------------------------- device
 
+    def _placement_of(self, dev: dict) -> tuple[str | None, str | None, int | None]:
+        """(room_id, rack_id, u_start) for a device, from the caches
+        _ensure_placement filled."""
+        dc_code = dev.get("datacenter")
+        room_id = self._room.get((dc_code, dev.get("room"))) if dc_code else None
+        rack_id = None
+        u_start = None
+        if _is_rack_mounted(dev) and dev.get("rack_row") is not None \
+                and dev.get("rack_num") is not None:
+            row_id = self._row.get((room_id, f"R{dev['rack_row']}"))
+            if row_id:
+                rack_id = self._rack.get((row_id, f"R{dev['rack_row']}-{int(dev['rack_num']):02d}"))
+            # rack_unit 0 means the device is IN the rack but occupies no rack
+            # unit. That is the normal case for a vertically mounted rack PDU
+            # and for a probe strapped to a rail - both are genuinely zero-U.
+            # Storing it as U0 would make every such device collide with its
+            # neighbours under the rack-unit exclusion constraint.
+            raw_u = dev.get("rack_unit")
+            u_start = raw_u if isinstance(raw_u, int) and raw_u > 0 else None
+            # A probe on a strip's sensor port is cable-tied to the front door
+            # at a height, not screwed into the mounting rails. Its rack_unit
+            # is WHERE IT SITS - which is why a pair on one rack reads two
+            # different temperatures - and not a position it occupies. Storing
+            # it as one would block a mounting slot and, on a full rack,
+            # collide with the server already in it.
+            if dev.get("host_pdu_ip"):
+                u_start = None
+        return room_id, rack_id, u_start
+
+    async def run_geometry(self, topology: dict) -> ImportReport:
+        """Refresh ONLY the physical layer: rooms, aisles, rows, racks, and each
+        known device's placement and geometry.
+
+        For an estate that is already imported and live. The full run also
+        rewrites endpoints - including their collector shard, which it sets from
+        --collector-id and so CLEARS when that is not passed, leaving every
+        endpoint up for grabs by every collector - plus connections and
+        lifecycle. None of that is touched here. Devices this export does not
+        know are left alone, and so is anything whose geometry was corrected by
+        hand."""
+        self._read_floorplan(topology)
+        devices = [n["device"] for n in topology.get("nodes") or [] if n.get("device")]
+        for dev in devices:
+            await self._ensure_placement(dev)
+        for dev in devices:
+            if not dev.get("id"):
+                continue
+            room_id, rack_id, u_start = self._placement_of(dev)
+            res = await self.s.execute(text("""
+                UPDATE device
+                   SET room_id = CAST(:room AS uuid), rack_id = CAST(:rack AS uuid),
+                       u_start = :u_start, u_height = :u_height,
+                       floor_x = :fx, floor_y = :fy, mount = :mount,
+                       rotation_deg = :rot, footprint_w_m = :fw, footprint_d_m = :fd,
+                       height_m = :fh, mount_height_m = :mh, footprint_basis = :fbasis,
+                       geometry_source = 'import', updated_at = now()
+                 WHERE external_id = :ext
+                   AND geometry_source IS DISTINCT FROM 'manual'
+            """), {"ext": dev["id"], "room": room_id, "rack": rack_id,
+                   "u_start": u_start, "u_height": _u_height(dev),
+                   "fx": dev.get("floor_x"), "fy": dev.get("floor_y"), **_geometry(dev)})
+            self.report.devices += res.rowcount or 0
+        self.report.racks_pruned = await self._prune_plant_racks()
+        log.info("geometry import complete", **self.report.as_dict())
+        return self.report
+
     async def _upsert_device(self, dev: dict, position: dict) -> None:
         ext = dev.get("id")
         if not ext:
@@ -600,30 +666,7 @@ class TopologyImporter:
                                         or dev.get("power_draw_w"),
                                         dev.get("rated_cooling_w"))
 
-        dc_code = dev.get("datacenter")
-        room_id = self._room.get((dc_code, dev.get("room"))) if dc_code else None
-        rack_id = None
-        u_start = None
-        if _is_rack_mounted(dev) and dev.get("rack_row") is not None \
-                and dev.get("rack_num") is not None:
-            row_id = self._row.get((room_id, f"R{dev['rack_row']}"))
-            if row_id:
-                rack_id = self._rack.get((row_id, f"R{dev['rack_row']}-{int(dev['rack_num']):02d}"))
-            # rack_unit 0 means the device is IN the rack but occupies no rack
-            # unit. That is the normal case for a vertically mounted rack PDU
-            # and for a probe strapped to a rail - both are genuinely zero-U.
-            # Storing it as U0 would make every such device collide with its
-            # neighbours under the rack-unit exclusion constraint.
-            raw_u = dev.get("rack_unit")
-            u_start = raw_u if isinstance(raw_u, int) and raw_u > 0 else None
-            # A probe on a strip's sensor port is cable-tied to the front door
-            # at a height, not screwed into the mounting rails. Its rack_unit
-            # is WHERE IT SITS - which is why a pair on one rack reads two
-            # different temperatures - and not a position it occupies. Storing
-            # it as one would block a mounting slot and, on a full rack,
-            # collide with the server already in it.
-            if dev.get("host_pdu_ip"):
-                u_start = None
+        room_id, rack_id, u_start = self._placement_of(dev)
 
         device_id = await self._scalar("""
             INSERT INTO device (external_id, name, device_type, model_id, vendor_id,

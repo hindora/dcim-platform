@@ -97,3 +97,15 @@ def test_a_derived_aisle_does_not_claim_to_know_containment():
     racks = [{"floor_x": 1.0, "floor_y": 1.8, "facing": "S", "row_name": "R1"},
              {"floor_x": 1.0, "floor_y": 4.2, "facing": "N", "row_name": "R2"}]
     assert fp.derive_aisles(racks)[0].contained is None
+
+
+def test_geometry_only_import_leaves_endpoints_collectors_and_lifecycle_alone():
+    """The full run rewrites each endpoint's collector shard from --collector-id
+    and so CLEARS it when that is not passed; on a live, sharded estate that
+    hands every endpoint to every collector. The geometry refresh must not."""
+    start = SRC.index("async def run_geometry(")
+    body = SRC[start:SRC.index("async def _upsert_device(", start)]
+    for forbidden in ("device_endpoint", "_upsert_endpoints", "_upsert_connection",
+                      "_decommission_missing", "_resurrect", "collector_id", "lifecycle ="):
+        assert forbidden not in body, forbidden
+    assert "geometry_source IS DISTINCT FROM 'manual'" in body

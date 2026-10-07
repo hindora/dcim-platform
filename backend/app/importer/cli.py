@@ -65,7 +65,8 @@ async def _run(args: argparse.Namespace) -> int:
             gnmi_port=args.gnmi_port,
             collector_id=args.collector_id,
         )
-        report = await importer.run(topology)
+        report = await (importer.run_geometry(topology) if args.geometry_only
+                        else importer.run(topology))
 
     print(json.dumps(report.as_dict(), indent=2, default=str))
     if report.warnings:
@@ -104,6 +105,10 @@ def main() -> int:
                          "device while the listeners are on 50051.")
     ap.add_argument("--collector-id", default=None,
                     help="assign the created endpoints to this collector shard")
+    ap.add_argument("--geometry-only", action="store_true",
+                    help="refresh rooms, aisles, racks and device placement/geometry "
+                         "only; endpoints, collector shards, connections and "
+                         "lifecycle are left exactly as they are")
     ap.add_argument("--log-level", default="INFO")
     args = ap.parse_args()
 
