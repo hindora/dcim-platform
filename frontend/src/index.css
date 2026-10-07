@@ -528,10 +528,10 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .floorplan { width: 100%; max-width: 52rem; height: auto;
              background: var(--bg-inset); border-radius: var(--radius); }
 
-/* Dashed: the source has no room dimensions, so this outline is the extent of
-   the equipment plus a margin, not a surveyed wall. */
-.floor-outline { fill: none; stroke: var(--border-strong); stroke-width: 0.03;
-                 stroke-dasharray: 0.15 0.1; }
+/* Solid when the room's dimensions were imported. Dashed (.derived) when the
+   outline is the extent of the equipment plus a margin, not a surveyed wall. */
+.floor-outline { fill: none; stroke: var(--border-strong); stroke-width: 0.04; }
+.floor-outline.derived { stroke-width: 0.03; stroke-dasharray: 0.15 0.1; }
 
 .aisle { opacity: 0.22; }
 .aisle-cold { fill: #3b82f6; }
@@ -550,6 +550,16 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .rack-tag { font-size: 0.16px; fill: var(--text); font-family: var(--mono);
             text-anchor: middle; dominant-baseline: middle;
             pointer-events: none; }
+/* Plant at its true footprint, and point instruments (wall/pipe/panel). Neutral
+   unless the alarm overlay is on: inlet and power are rack measures. */
+.floor-equip { fill: var(--bg-raised); stroke: var(--border-strong); stroke-width: 0.03; }
+.floor-point { fill: var(--text-muted); stroke: var(--bg); stroke-width: 0.02; }
+.floor-equip-hit { cursor: pointer; }
+.floor-equip-hit:hover .floor-equip, .floor-equip-hit:focus-visible .floor-equip,
+.floor-equip-hit:hover .floor-point, .floor-equip-hit:focus-visible .floor-point {
+  stroke: var(--text); stroke-width: 0.05; }
+.equip-tag { fill: var(--text-muted); font-family: var(--mono);
+             text-anchor: middle; dominant-baseline: middle; pointer-events: none; }
 
 /* --- charts -------------------------------------------------------------- */
 

@@ -17,7 +17,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import INET, JSONB, MACADDR, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, INET, JSONB, MACADDR, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin
@@ -78,11 +78,42 @@ class Room(Base):
     width_m: Mapped[float | None] = mapped_column(Numeric(8, 2))
     depth_m: Mapped[float | None] = mapped_column(Numeric(8, 2))
     design_it_kw: Mapped[float | None] = mapped_column(Numeric(10, 2))
+    # Placement in the building (migration 0099). `floor` names the level; the
+    # origin is the room's (0, 0) corner in building metres on that level.
+    origin_x_m: Mapped[float | None] = mapped_column(Numeric(8, 2))
+    origin_y_m: Mapped[float | None] = mapped_column(Numeric(8, 2))
+    rotation_deg: Mapped[float | None] = mapped_column(Numeric(6, 2))
+    level_elevation_m: Mapped[float | None] = mapped_column(Numeric(8, 2))
+    #: 'import' or 'manual'. A manual row's geometry is never overwritten by
+    #: a re-import.
+    geometry_source: Mapped[str | None] = mapped_column(Text)
     attributes: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
 
     datacenter: Mapped[Datacenter] = relationship(back_populates="rooms")
     rows: Mapped[list[Row]] = relationship(back_populates="room",
                                            cascade="all, delete-orphan")
+
+
+class Aisle(Base):
+    """An aisle the room was drawn with (migration 0099).
+
+    Stored rather than derived from rack facing: derivation cannot see an aisle
+    with racks on one side only, nor whether it is contained.
+    """
+
+    __tablename__ = "aisle"
+    __table_args__ = (UniqueConstraint("room_id", "name"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True,
+                                          default=uuid.uuid4)
+    room_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("room.id", ondelete="CASCADE"), nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    kind: Mapped[str] = mapped_column(Text, nullable=False)        # cold | hot
+    y_m: Mapped[float] = mapped_column(Numeric(8, 2), nullable=False)
+    width_m: Mapped[float] = mapped_column(Numeric(8, 2), nullable=False)
+    between_rows: Mapped[list[int] | None] = mapped_column(ARRAY(Integer))
+    contained: Mapped[bool] = mapped_column(nullable=False, default=False)
 
 
 class Row(Base):
@@ -121,6 +152,11 @@ class Rack(Base):
     floor_y: Mapped[float | None] = mapped_column(Numeric(8, 2))
     rated_power_kw: Mapped[float | None] = mapped_column(Numeric(8, 2))
     rated_cool_kw: Mapped[float | None] = mapped_column(Numeric(8, 2))
+    # Cabinet footprint (migration 0099). NULL = the 600 x 1200 mm default.
+    width_m: Mapped[float | None] = mapped_column(Numeric(6, 3))
+    depth_m: Mapped[float | None] = mapped_column(Numeric(6, 3))
+    height_m: Mapped[float | None] = mapped_column(Numeric(6, 3))
+    geometry_source: Mapped[str | None] = mapped_column(Text)
     attributes: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
 
     row: Mapped[Row] = relationship(back_populates="racks")
@@ -228,6 +264,19 @@ class Device(Base, TimestampMixin):
     facing: Mapped[str | None] = mapped_column(String(1))
     floor_x: Mapped[float | None] = mapped_column(Numeric(8, 2))
     floor_y: Mapped[float | None] = mapped_column(Numeric(8, 2))
+    # Physical geometry (migration 0099): rack | zero_u | rack_front | rack_rear
+    # | floor | wall | pipe | panel | underfloor; the compass direction its
+    # front faces (free-standing units only - rack gear follows its rack); a
+    # footprint for floor-standing gear, with the basis it was taken from
+    # (datasheet or class estimate); and the height of its centre.
+    mount: Mapped[str | None] = mapped_column(Text)
+    rotation_deg: Mapped[float | None] = mapped_column(Numeric(6, 2))
+    footprint_w_m: Mapped[float | None] = mapped_column(Numeric(6, 3))
+    footprint_d_m: Mapped[float | None] = mapped_column(Numeric(6, 3))
+    height_m: Mapped[float | None] = mapped_column(Numeric(6, 3))
+    mount_height_m: Mapped[float | None] = mapped_column(Numeric(6, 3))
+    footprint_basis: Mapped[str | None] = mapped_column(Text)
+    geometry_source: Mapped[str | None] = mapped_column(Text)
 
     primary_ip: Mapped[str | None] = mapped_column(INET)
     mgmt_ip: Mapped[str | None] = mapped_column(INET)

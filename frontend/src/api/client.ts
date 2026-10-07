@@ -1690,8 +1690,12 @@ export interface FloorRack {
   max_inlet_c?: number | null;
   max_severity: string;
   free_u?: number | null;
+  /** Footprint in metres; absent = the plan's default cabinet. */
+  w_m?: number | null;
+  d_m?: number | null;
 }
 
+/** Not in a rack: floor-standing plant, or an instrument on a wall, pipe or panel. */
 export interface FloorEquipment {
   id: string;
   name: string;
@@ -1699,6 +1703,19 @@ export interface FloorEquipment {
   status: string;
   max_severity: string;
   power_w?: number | null;
+  inlet_c?: number | null;
+  /** Centre, room metres. Absent = listed, not drawn. */
+  x?: number | null;
+  y?: number | null;
+  mount?: string | null;
+  /** Compass direction the front faces, degrees clockwise from N (lower y). */
+  facing_deg?: number | null;
+  w_m?: number | null;
+  d_m?: number | null;
+  h_m?: number | null;
+  mount_height_m?: number | null;
+  /** 'datasheet' or 'class' (a class estimate for that kind of equipment). */
+  basis?: string | null;
 }
 
 export interface FloorAisle {
@@ -1707,6 +1724,8 @@ export interface FloorAisle {
   kind: 'cold' | 'hot' | 'unknown';
   label?: string | null;
   rows: string[];
+  /** Stored with the room; null when derived from rack facing. */
+  contained?: boolean | null;
 }
 
 export interface FloorPlan {
@@ -1717,9 +1736,18 @@ export interface FloorPlan {
   rack_w_m: number;
   rack_d_m: number;
   racks: FloorRack[];
+  /** Not in a rack, and placed: drawn at x/y with its footprint. */
+  equipment: FloorEquipment[];
   /** In the room, but with no coordinate to draw it at. */
   unpositioned_equipment: FloorEquipment[];
   aisles: FloorAisle[];
+  aisle_source: 'stored' | 'derived';
+  room_class?: string | null;
+  containment?: string | null;
+  level?: string | null;
+  level_elevation_m?: number | null;
+  origin_x_m?: number | null;
+  origin_y_m?: number | null;
 }
 
 export interface RoomSummary {

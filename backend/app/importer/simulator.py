@@ -66,6 +66,10 @@ class ImportReport:
     sites_sized: int = 0
     racks_rated: int = 0
     credentials: int = 0
+    aisles: int = 0
+    #: Racks an earlier import invented in plant rooms (a wall probe or a pipe
+    #: sensor filed under rack_row/rack_num), now empty and removed.
+    racks_pruned: int = 0
     decommissioned: int = 0
     #: Devices this importer had swept for being absent, now back in
     #: the export and restored to the state they were swept from.
@@ -136,6 +140,9 @@ class TopologyImporter:
         # {(dc_code, room_name): floor-plan record}. The simulator classifies
         # its own rooms; see _apply_floorplan.
         self._floorplan: dict[tuple[str, str], dict] = {}
+        # {dc_code: building record} - levels, elevations, outline (sim S1).
+        self._buildings: dict[str, dict] = {}
+        self._rack_footprint: dict = {}
 
     # ------------------------------------------------------------------ run
 
@@ -184,6 +191,8 @@ class TopologyImporter:
 
         self.report.racks_rated = await self._seed_rack_ratings()
 
+        self.report.racks_pruned = await self._prune_plant_racks()
+
         log.info("import complete", **self.report.as_dict())
         return self.report
 
@@ -202,8 +211,92 @@ class TopologyImporter:
                 dc, room = str(key).split("/", 1)
             if dc and room:
                 self._floorplan[(dc, room)] = rec
+        fp = topology.get("floorplan") or {}
+        self._buildings = fp.get("buildings") or {}
+        self._rack_footprint = fp.get("rack_footprint") or {}
         if rooms:
-            log.info("floor plan read", rooms=len(self._floorplan))
+            log.info("floor plan read", rooms=len(self._floorplan),
+                     buildings=len(self._buildings))
+
+    def _level_elevation(self, dc: str, level: str | None) -> float | None:
+        """Height of a level's finished floor above grade, from the building the
+        simulator derived. None when the export predates buildings."""
+        for lv in (self._buildings.get(dc) or {}).get("levels") or []:
+            if str(lv.get("name")) == str(level):
+                return lv.get("elevation_m")
+        return None
+
+    async def _seed_aisles(self, room_id: str, fp: dict) -> None:
+        """Store the aisles the room was drawn with, replacing the last import's.
+
+        A room whose geometry someone corrected by hand keeps its aisles."""
+        aisles = fp.get("aisles")
+        if aisles is None:
+            return
+        manual = await self._scalar(
+            "SELECT geometry_source = 'manual' FROM room WHERE id = CAST(:r AS uuid)",
+            r=room_id)
+        if manual:
+            return
+        # Containment is per room in the source: a cold-aisle-contained hall
+        # contains its cold aisles, never its hot ones.
+        contained_kind = {"cold_aisle": "cold", "hot_aisle": "hot"}.get(
+            fp.get("containment") or "")
+        names = []
+        for a in aisles:
+            kind = a.get("type")
+            if kind not in ("cold", "hot") or a.get("y") is None or not a.get("id"):
+                continue
+            names.append(a["id"])
+            await self.s.execute(text("""
+                INSERT INTO aisle (room_id, name, kind, y_m, width_m, between_rows,
+                                   contained)
+                VALUES (CAST(:room AS uuid), :name, :kind, :y, :w, :rows, :c)
+                ON CONFLICT (room_id, name) DO UPDATE
+                    SET kind = EXCLUDED.kind, y_m = EXCLUDED.y_m,
+                        width_m = EXCLUDED.width_m,
+                        between_rows = EXCLUDED.between_rows,
+                        contained = EXCLUDED.contained
+            """), {"room": room_id, "name": a["id"], "kind": kind, "y": a["y"],
+                   "w": a.get("width") or 1.2,
+                   "rows": [int(x) for x in (a.get("between_rows") or [])],
+                   "c": kind == contained_kind})
+            self.report.aisles += 1
+        await self.s.execute(text("""
+            DELETE FROM aisle WHERE room_id = CAST(:room AS uuid)
+                                AND NOT (name = ANY(:names))
+        """), {"room": room_id, "names": names})
+
+    async def _prune_plant_racks(self) -> int:
+        """Remove racks an earlier import invented in plant rooms.
+
+        Before devices said how they are mounted, anything not on a short list
+        of plant types was filed under its rack_row/rack_num - so a wall T/RH
+        probe made a 'rack' in the generator room and the plant header probes
+        made one in the central plant. Those racks are now empty. Only empty,
+        unreserved racks in FACILITY rooms that this export did not place
+        anything in are removed; white space is never touched, because an empty
+        rack in a hall is real capacity."""
+        keep = list(self._rack.values())
+        rows = (await self.s.execute(text("""
+            DELETE FROM rack r
+             USING rack_row rr, room rm
+             WHERE rr.id = r.row_id AND rm.id = rr.room_id
+               AND rm.room_class = 'facility'
+               AND NOT (r.id::text = ANY(:keep))
+               AND r.geometry_source IS DISTINCT FROM 'manual'
+               AND NOT EXISTS (SELECT 1 FROM device d WHERE d.rack_id = r.id)
+               AND NOT EXISTS (SELECT 1 FROM capacity_reservation cr
+                                WHERE cr.rack_id = r.id)
+            RETURNING r.id
+        """), {"keep": keep})).all()
+        await self.s.execute(text("""
+            DELETE FROM rack_row rr
+             USING room rm
+             WHERE rm.id = rr.room_id AND rm.room_class = 'facility'
+               AND NOT EXISTS (SELECT 1 FROM rack r WHERE r.row_id = rr.id)
+        """))
+        return len(rows)
 
     # UPS sizing target from the simulator's own selector (core/power_sizing.py):
     # a UPS SKU is chosen so the load it carries sits at ~80 % of nameplate.
@@ -348,6 +441,15 @@ class TopologyImporter:
             """, code=dc_code, name=dc_code,
                 city=dev.get("datacenter_city"), country=dev.get("country"))
             self.report.datacenters += 1
+            # Levels, elevations and outline: derived from the rooms by the
+            # source, with no identity of their own yet (migration 0099).
+            if self._buildings.get(dc_code):
+                await self.s.execute(text("""
+                    UPDATE datacenter
+                       SET attributes = attributes || CAST(:attrs AS jsonb)
+                     WHERE id = CAST(:dc AS uuid)
+                """), {"dc": self._dc[dc_code],
+                       "attrs": _json({"building": self._buildings[dc_code]})})
 
         room_name = dev.get("room")
         if not room_name:
@@ -363,12 +465,18 @@ class TopologyImporter:
             rows = fp.get("rows") or []
             per_row = fp.get("racks_per_row") or 0
             designed = (len(rows) * int(per_row)) or None
+            # The room's level comes from the floor plan when it says (the
+            # source placed every room in its building); a device's floor
+            # label is only the fallback - five probes once sat on the wrong one.
+            level = str(fp.get("level") or dev.get("floor") or "")
+            origin = fp.get("origin") or {}
             self._room[rkey] = await self._scalar("""
                 INSERT INTO room (datacenter_id, name, floor, room_type,
                                   room_class, width_m, depth_m, designed_racks,
-                                  attributes)
+                                  origin_x_m, origin_y_m, rotation_deg,
+                                  level_elevation_m, geometry_source, attributes)
                 VALUES (CAST(:dc AS uuid), :name, :floor, :rt, :rc, :w, :d, :dr,
-                        CAST(:attrs AS jsonb))
+                        :ox, :oy, :rot, :elev, 'import', CAST(:attrs AS jsonb))
                 ON CONFLICT (datacenter_id, name) DO UPDATE
                     SET floor = EXCLUDED.floor,
                         room_type = EXCLUDED.room_type,
@@ -376,21 +484,43 @@ class TopologyImporter:
                         -- when this run has no floor plan to offer, rather than
                         -- blanking a good value with a missing one.
                         room_class = COALESCE(EXCLUDED.room_class, room.room_class),
-                        width_m = COALESCE(EXCLUDED.width_m, room.width_m),
-                        depth_m = COALESCE(EXCLUDED.depth_m, room.depth_m),
                         designed_racks = COALESCE(EXCLUDED.designed_racks,
                                                   room.designed_racks),
+                        -- Geometry: a hand-corrected room keeps its own.
+                        width_m = CASE WHEN room.geometry_source = 'manual'
+                                       THEN room.width_m
+                                       ELSE COALESCE(EXCLUDED.width_m, room.width_m) END,
+                        depth_m = CASE WHEN room.geometry_source = 'manual'
+                                       THEN room.depth_m
+                                       ELSE COALESCE(EXCLUDED.depth_m, room.depth_m) END,
+                        origin_x_m = CASE WHEN room.geometry_source = 'manual'
+                                          THEN room.origin_x_m
+                                          ELSE COALESCE(EXCLUDED.origin_x_m, room.origin_x_m) END,
+                        origin_y_m = CASE WHEN room.geometry_source = 'manual'
+                                          THEN room.origin_y_m
+                                          ELSE COALESCE(EXCLUDED.origin_y_m, room.origin_y_m) END,
+                        rotation_deg = CASE WHEN room.geometry_source = 'manual'
+                                            THEN room.rotation_deg
+                                            ELSE COALESCE(EXCLUDED.rotation_deg,
+                                                          room.rotation_deg) END,
+                        level_elevation_m = COALESCE(EXCLUDED.level_elevation_m,
+                                                     room.level_elevation_m),
+                        geometry_source = COALESCE(room.geometry_source, 'import'),
                         attributes = room.attributes || EXCLUDED.attributes
                 RETURNING id::text
             """, dc=self._dc[dc_code], name=room_name,
-                floor=str(dev.get("floor") or ""), rt=room_type, rc=room_class,
+                floor=level, rt=room_type, rc=room_class,
                 w=fp.get("width_m"), d=fp.get("depth_m"), dr=designed,
+                ox=origin.get("x"), oy=origin.get("y"), rot=fp.get("rotation_deg"),
+                elev=self._level_elevation(dc_code, level),
                 attrs=_json({"containment": fp.get("containment"),
                              "designed_rows": len(rows) or None,
                              "racks_per_row": per_row or None,
                              "class_source": "simulator floor plan" if fp
                                              else "inferred from room name"}))
             self.report.rooms += 1
+            if fp:
+                await self._seed_aisles(self._room[rkey], fp)
 
         # Floor-standing plant has a synthetic room-grid coordinate rather than
         # a real rack position, so it gets no row/rack.
@@ -421,15 +551,25 @@ class TopologyImporter:
         rackkey = (self._row[rowkey], rack_name)
         if rackkey not in self._rack:
             self._rack[rackkey] = await self._scalar("""
-                INSERT INTO rack (row_id, name, ordinal, u_height, facing, floor_x, floor_y)
-                VALUES (CAST(:row AS uuid), :name, :ordinal, 42, :facing, :fx, :fy)
+                INSERT INTO rack (row_id, name, ordinal, u_height, facing, floor_x, floor_y,
+                                  width_m, depth_m, geometry_source)
+                VALUES (CAST(:row AS uuid), :name, :ordinal, 42, :facing, :fx, :fy,
+                        :w, :d, 'import')
                 ON CONFLICT (row_id, name) DO UPDATE
-                    SET floor_x = COALESCE(EXCLUDED.floor_x, rack.floor_x),
-                        floor_y = COALESCE(EXCLUDED.floor_y, rack.floor_y)
+                    SET floor_x = CASE WHEN rack.geometry_source = 'manual' THEN rack.floor_x
+                                       ELSE COALESCE(EXCLUDED.floor_x, rack.floor_x) END,
+                        floor_y = CASE WHEN rack.geometry_source = 'manual' THEN rack.floor_y
+                                       ELSE COALESCE(EXCLUDED.floor_y, rack.floor_y) END,
+                        width_m = CASE WHEN rack.geometry_source = 'manual' THEN rack.width_m
+                                       ELSE COALESCE(EXCLUDED.width_m, rack.width_m) END,
+                        depth_m = CASE WHEN rack.geometry_source = 'manual' THEN rack.depth_m
+                                       ELSE COALESCE(EXCLUDED.depth_m, rack.depth_m) END,
+                        geometry_source = COALESCE(rack.geometry_source, 'import')
                 RETURNING id::text
             """, row=self._row[rowkey], name=rack_name, ordinal=int(rack_num),
                 facing=dev.get("rack_facing"),
-                fx=dev.get("floor_x"), fy=dev.get("floor_y"))
+                fx=dev.get("floor_x"), fy=dev.get("floor_y"),
+                w=self._rack_footprint.get("width"), d=self._rack_footprint.get("depth"))
             self.report.racks += 1
 
     # ------------------------------------------------------------- device
@@ -489,11 +629,15 @@ class TopologyImporter:
             INSERT INTO device (external_id, name, device_type, model_id, vendor_id,
                                 serial_number,
                                 room_id, rack_id, u_start, u_height, facing,
-                                floor_x, floor_y, primary_ip, mgmt_ip, attributes)
+                                floor_x, floor_y, mount, rotation_deg,
+                                footprint_w_m, footprint_d_m, height_m, mount_height_m,
+                                footprint_basis, geometry_source,
+                                primary_ip, mgmt_ip, attributes)
             VALUES (:ext, :name, :dtype, CAST(:model AS uuid), CAST(:vendor AS uuid),
                     :serial,
                     CAST(:room AS uuid), CAST(:rack AS uuid), :u_start, :u_height, :facing,
-                    :fx, :fy, CAST(:pip AS inet), CAST(:mip AS inet), CAST(:attrs AS jsonb))
+                    :fx, :fy, :mount, :rot, :fw, :fd, :fh, :mh, :fbasis, 'import',
+                    CAST(:pip AS inet), CAST(:mip AS inet), CAST(:attrs AS jsonb))
             ON CONFLICT (external_id) DO UPDATE SET
                 name = EXCLUDED.name,
                 device_type = EXCLUDED.device_type,
@@ -510,8 +654,23 @@ class TopologyImporter:
                 u_start = EXCLUDED.u_start,
                 u_height = EXCLUDED.u_height,
                 facing = EXCLUDED.facing,
-                floor_x = EXCLUDED.floor_x,
-                floor_y = EXCLUDED.floor_y,
+                -- Geometry. A device someone placed by hand keeps its place.
+                floor_x = CASE WHEN device.geometry_source = 'manual'
+                               THEN device.floor_x ELSE EXCLUDED.floor_x END,
+                floor_y = CASE WHEN device.geometry_source = 'manual'
+                               THEN device.floor_y ELSE EXCLUDED.floor_y END,
+                mount = CASE WHEN device.geometry_source = 'manual'
+                             THEN device.mount ELSE EXCLUDED.mount END,
+                rotation_deg = CASE WHEN device.geometry_source = 'manual'
+                                    THEN device.rotation_deg ELSE EXCLUDED.rotation_deg END,
+                footprint_w_m = EXCLUDED.footprint_w_m,
+                footprint_d_m = EXCLUDED.footprint_d_m,
+                height_m = EXCLUDED.height_m,
+                mount_height_m = CASE WHEN device.geometry_source = 'manual'
+                                      THEN device.mount_height_m
+                                      ELSE EXCLUDED.mount_height_m END,
+                footprint_basis = EXCLUDED.footprint_basis,
+                geometry_source = COALESCE(device.geometry_source, 'import'),
                 primary_ip = EXCLUDED.primary_ip,
                 mgmt_ip = EXCLUDED.mgmt_ip,
                 attributes = device.attributes || EXCLUDED.attributes,
@@ -549,6 +708,7 @@ class TopologyImporter:
             # front/rear rack view would read as a real answer. The source
             # models no per-device mount side, so the honest value is nothing.
             u_start=u_start, u_height=_u_height(dev), facing=None,
+            **_geometry(dev),
             # floor_x/floor_y are metres within the room - the source documents
             # floor_x as "rack centre x within the room (m)". `position` is
             # something else entirely: pixel coordinates in the simulator's
@@ -1223,11 +1383,45 @@ _FACILITY_TYPES = frozenset({
 })
 
 
+#: Mounts that put a device IN a rack (simulator core/equipment_geometry).
+_RACK_MOUNTS = frozenset({"rack", "zero_u", "rack_front", "rack_rear"})
+
+
 def _is_rack_mounted(dev: dict) -> bool:
+    """Whether the device belongs under its rack_row/rack_num.
+
+    The export now SAYS how each device is held. Before it did, a short list of
+    plant types was the only test, so a wall T/RH probe or a pipe-mounted
+    header sensor was filed into a 'rack' that does not exist. The type list
+    stays as the fallback for an export that predates `mount`."""
+    mount = dev.get("mount")
+    if mount:
+        return mount in _RACK_MOUNTS
     return (dev.get("device_type") or "") not in _FACILITY_TYPES
 
 
+def _geometry(dev: dict) -> dict:
+    """The device's physical geometry as bind parameters.
+
+    Facing is stored for free-standing units only: rack gear faces the way its
+    rack does, and a copy on every server would drift from the rack's."""
+    fp = dev.get("footprint_m") or {}
+    free = not _is_rack_mounted(dev)
+    return {
+        "mount": dev.get("mount") or None,
+        "rot": dev.get("facing_deg") if free else None,
+        "fw": fp.get("width"), "fd": fp.get("depth"), "fh": fp.get("height"),
+        "fbasis": fp.get("basis"),
+        "mh": dev.get("mount_height_m"),
+    }
+
+
 def _u_height(dev: dict) -> int:
+    # The export carries the body's height in U from the SKU catalog; the
+    # model-name guess below is only for an export that predates it.
+    u = dev.get("u_height")
+    if isinstance(u, int) and u >= 1:
+        return u
     model = (dev.get("model_name") or "").lower()
     if "2u" in model:
         return 2

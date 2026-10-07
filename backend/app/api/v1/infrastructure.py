@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.security import Principal, current_principal
 from app.db.session import get_session
 from app.repositories import racks as repo
-from app.schemas import FloorPlan, RackElevation, RackSummary
+from app.schemas import FloorPlan, RackElevation, RackSummary, TwinSiteScene
 from app.services import devices as service
 
 router = APIRouter(tags=["infrastructure"])
@@ -78,3 +78,16 @@ async def room_floorplan(
         raise HTTPException(status.HTTP_404_NOT_FOUND,
                             "room not found, or nothing in it is positioned")
     return plan
+
+
+@router.get("/twin/sites/{datacenter_id}/scene", response_model=TwinSiteScene,
+            summary="A site as a building: levels and placed rooms")
+async def site_scene(
+    datacenter_id: str,
+    session: AsyncSession = Depends(get_session),
+    _: Principal = Depends(current_principal),
+) -> TwinSiteScene:
+    scene = await service.site_scene(session, datacenter_id)
+    if scene is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "site not found")
+    return scene

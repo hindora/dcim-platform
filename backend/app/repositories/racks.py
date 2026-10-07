@@ -163,11 +163,12 @@ def compute_free_blocks(u_height: int, occupied: list[tuple[int, int]]) -> list[
 _FLOORPLAN_RACKS = _RACK_SUMMARY.replace(
     "SELECT r.id::text, r.name, r.u_height, r.rated_power_kw,",
     "SELECT r.id::text, r.name, r.u_height, r.rated_power_kw,\n"
-    "           r.floor_x, r.floor_y, r.facing,\n"
+    "           r.floor_x, r.floor_y, r.facing, r.width_m AS rack_w, r.depth_m AS rack_d,\n"
     "           rr.ordinal AS row_ordinal, rr.cold_aisle, rr.hot_aisle,",
 ) + """
      WHERE rm.id = CAST(:room_id AS uuid) AND r.floor_x IS NOT NULL
-""" + _GROUP_BY + ", r.floor_x, r.floor_y, r.facing, rr.cold_aisle, rr.hot_aisle"
+""" + _GROUP_BY + (", r.floor_x, r.floor_y, r.facing, r.width_m, r.depth_m,"
+                   " rr.cold_aisle, rr.hot_aisle")
 
 
 async def floorplan_racks(session: AsyncSession, room_id: str) -> list[dict[str, Any]]:
@@ -178,19 +179,23 @@ async def floorplan_racks(session: AsyncSession, room_id: str) -> list[dict[str,
 
 async def floorplan_equipment(session: AsyncSession,
                               room_id: str) -> list[dict[str, Any]]:
-    """Floor-standing plant in the room.
+    """Everything in the room that is not in a rack: floor-standing plant and
+    the instruments on its walls and pipes.
 
-    The source carries no room coordinate for it - only a position in its
-    fleet-wide canvas diagram, which is pixels, not metres - so this returns
-    what is in the room without pretending to know where it stands. CRAH units
-    especially: a floor plan that omitted them entirely would show the load and
-    hide what cools it.
+    Each row carries its stored geometry (migration 0099) - room coordinate,
+    footprint, facing, mount - when the import supplied it. A row without a
+    coordinate is still returned, so a CRAH the source never placed is listed
+    rather than hidden: a plan that omitted it would show the load and hide
+    what cools it.
     """
     rows = (await session.execute(text("""
         SELECT d.id::text, d.name, d.device_type::text AS device_type,
                COALESCE(ds.status::text, 'UNKNOWN')     AS status,
                COALESCE(ds.max_severity::text, 'CLEAR') AS max_severity,
-               ds.power_w, ds.inlet_temp_c
+               ds.power_w, ds.inlet_temp_c,
+               d.floor_x, d.floor_y, d.mount, d.rotation_deg,
+               d.footprint_w_m, d.footprint_d_m, d.height_m, d.mount_height_m,
+               d.footprint_basis
           FROM device d
           LEFT JOIN device_state ds ON ds.device_id = d.id
          WHERE d.room_id = CAST(:room_id AS uuid)
@@ -199,3 +204,65 @@ async def floorplan_equipment(session: AsyncSession,
          ORDER BY d.device_type, d.name
     """), {"room_id": room_id})).mappings().all()
     return [dict(r) for r in rows]
+
+
+async def room_geometry(session: AsyncSession, room_id: str) -> dict[str, Any] | None:
+    """The room as drawn: size, level, and where it stands in its building."""
+    row = (await session.execute(text("""
+        SELECT rm.id::text, rm.name AS room_name, dc.id::text AS datacenter_id,
+               dc.code AS datacenter_code, rm.floor AS level, rm.room_class,
+               rm.width_m, rm.depth_m, rm.origin_x_m, rm.origin_y_m,
+               rm.rotation_deg, rm.level_elevation_m, rm.geometry_source,
+               rm.attributes->>'containment' AS containment
+          FROM room rm
+          JOIN datacenter dc ON dc.id = rm.datacenter_id
+         WHERE rm.id = CAST(:room_id AS uuid)
+    """), {"room_id": room_id})).mappings().first()
+    return dict(row) if row else None
+
+
+async def room_aisles(session: AsyncSession, room_id: str) -> list[dict[str, Any]]:
+    rows = (await session.execute(text("""
+        SELECT name, kind, y_m, width_m, between_rows, contained
+          FROM aisle
+         WHERE room_id = CAST(:room_id AS uuid)
+         ORDER BY y_m
+    """), {"room_id": room_id})).mappings().all()
+    return [dict(r) for r in rows]
+
+
+async def site_building(session: AsyncSession,
+                        datacenter_id: str) -> dict[str, Any] | None:
+    """A site as a building: its levels and every room placed on one, with the
+    counts and worst condition a building view colours a room by."""
+    dc = (await session.execute(text("""
+        SELECT id::text, code, name, attributes->'building' AS building
+          FROM datacenter WHERE id = CAST(:dc AS uuid)
+    """), {"dc": datacenter_id})).mappings().first()
+    if dc is None:
+        return None
+    rooms = (await session.execute(text("""
+        WITH placed AS (
+            -- A device's room is its rack's room, or its own when it stands on
+            -- the floor - the same rule the alarm roll-up uses.
+            SELECT d.id, COALESCE(rr.room_id, d.room_id) AS room_id
+              FROM device d
+              LEFT JOIN rack r      ON r.id = d.rack_id
+              LEFT JOIN rack_row rr ON rr.id = r.row_id
+             WHERE d.lifecycle <> 'decommissioned'
+        )
+        SELECT rm.id::text, rm.name, rm.floor AS level, rm.room_class,
+               rm.width_m, rm.depth_m, rm.origin_x_m, rm.origin_y_m,
+               rm.rotation_deg, rm.level_elevation_m,
+               (SELECT count(*) FROM rack r JOIN rack_row rr ON rr.id = r.row_id
+                 WHERE rr.room_id = rm.id)                    AS rack_count,
+               count(p.id)                                    AS device_count,
+               COALESCE(max(ds.max_severity)::text, 'CLEAR')  AS max_severity
+          FROM room rm
+          LEFT JOIN placed p        ON p.room_id = rm.id
+          LEFT JOIN device_state ds ON ds.device_id = p.id
+         WHERE rm.datacenter_id = CAST(:dc AS uuid)
+         GROUP BY rm.id
+         ORDER BY rm.level_elevation_m NULLS LAST, rm.origin_x_m NULLS LAST, rm.name
+    """), {"dc": datacenter_id})).mappings().all()
+    return {**dict(dc), "rooms": [dict(r) for r in rooms]}

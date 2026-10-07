@@ -1,17 +1,18 @@
-"""Room floor plan: rack positions, derived room extent, and aisle bands.
+"""Room floor plan: rack positions, room extent, and aisle bands.
 
-Coordinates come from the source in metres. Two things the source does NOT
-give us, handled explicitly rather than fudged:
+Coordinates come from the source in metres. Room size, aisles and rack
+footprint are STORED since migration 0099 (the simulator's floor plan carries
+them); the derivations below are the fallback for a room imported before that,
+and each result says which it is:
 
-* **Room dimensions.** width_m and depth_m are null for every room, so the
-  outline is derived from the bounding box of everything placed in the room
-  plus a margin. It is labelled derived, because a floor plan that silently
-  invents a wall in the wrong place is worse than one that admits the wall is
-  approximate.
+* **Room dimensions.** Stored width_m/depth_m when present. Otherwise the
+  outline is derived from the bounding box of what is placed in the room plus a
+  margin, and labelled derived - a floor plan that silently invents a wall in
+  the wrong place is worse than one that admits the wall is approximate.
 
-* **Rack footprint.** Not stored per rack. A 600 x 1200 mm cabinet is the
-  standard EIA/IEC size and is used as the default - an assumption about the
-  hardware, not about this particular room.
+* **Rack footprint.** Stored per rack when present; otherwise a 600 x 1200 mm
+  cabinet, the standard EIA/IEC size - an assumption about the hardware, not
+  about this particular room.
 
 The aisle bands are not decoration. Hot and cold aisle containment is the
 single most consequential fact about a room's airflow, and it is derivable:
@@ -47,6 +48,27 @@ class Aisle:
     kind: str          # "cold" | "hot" | "unknown"
     label: str | None
     rows: list[str]
+    contained: bool | None = None   # None = derived, so not known
+
+
+def stored_extent(width_m: Any, depth_m: Any) -> dict[str, Any] | None:
+    """The room's own dimensions, when the import supplied them."""
+    if width_m is None or depth_m is None or float(width_m) <= 0 or float(depth_m) <= 0:
+        return None
+    return {"width_m": float(width_m), "depth_m": float(depth_m), "derived": False}
+
+
+def stored_aisles(rows: list[dict[str, Any]]) -> list[Aisle]:
+    """The aisles the room was drawn with, as bands. Row labels come from the
+    rows the aisle sits between."""
+    out = []
+    for a in rows:
+        y, w = float(a["y_m"]), float(a["width_m"])
+        out.append(Aisle(y_start=round(y - w / 2, 3), y_end=round(y + w / 2, 3),
+                         kind=a["kind"], label=a.get("name"),
+                         rows=[f"R{r}" for r in (a.get("between_rows") or []) if r],
+                         contained=bool(a.get("contained"))))
+    return out
 
 
 def room_extent(points: list[tuple[float, float]]) -> dict[str, Any]:

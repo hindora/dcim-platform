@@ -286,14 +286,20 @@ class FloorRack(BaseModel):
     max_inlet_c: float | None = None
     max_severity: str = "CLEAR"
     free_u: int | None = None
+    # Footprint in metres; None = the 600 x 1200 mm default on the plan.
+    w_m: float | None = None
+    d_m: float | None = None
 
 
 class FloorEquipment(BaseModel):
-    """Plant in the room, listed rather than placed.
+    """Something in the room that is not in a rack: floor-standing plant, or an
+    instrument on a wall, a pipe or inside a panel.
 
-    It carries no x/y because the source has none for it: the only position it
-    has is a pixel coordinate in a fleet-wide canvas diagram, and drawing that
-    on a metre-scale room plan puts a CRAH kilometres outside its own room.
+    x/y (room metres, centre) come from the stored geometry. A unit with none
+    is listed, not drawn - a guessed position would put a CRAH outside its own
+    room. w_m/d_m/h_m is the footprint of floor-standing gear (basis says
+    whether from a datasheet or a class estimate); facing_deg is the compass
+    direction its front faces, clockwise from N (lower y).
     """
 
     id: str
@@ -302,6 +308,16 @@ class FloorEquipment(BaseModel):
     status: str = "UNKNOWN"
     max_severity: str = "CLEAR"
     power_w: float | None = None
+    inlet_c: float | None = None
+    x: float | None = None
+    y: float | None = None
+    mount: str | None = None
+    facing_deg: float | None = None
+    w_m: float | None = None
+    d_m: float | None = None
+    h_m: float | None = None
+    mount_height_m: float | None = None
+    basis: str | None = None
 
 
 class FloorAisle(BaseModel):
@@ -313,6 +329,8 @@ class FloorAisle(BaseModel):
     kind: str
     label: str | None = None
     rows: list[str] = Field(default_factory=list)
+    # True/False when stored with the room; None when derived from rack facing.
+    contained: bool | None = None
 
 
 class FloorPlan(BaseModel):
@@ -324,9 +342,55 @@ class FloorPlan(BaseModel):
     rack_w_m: float = 0.6
     rack_d_m: float = 1.2
     racks: list[FloorRack] = Field(default_factory=list)
+    # Not in a rack, and placed: drawn at x/y with its footprint.
+    equipment: list[FloorEquipment] = Field(default_factory=list)
     # In the room, but with no coordinate to draw it at.
     unpositioned_equipment: list[FloorEquipment] = Field(default_factory=list)
     aisles: list[FloorAisle] = Field(default_factory=list)
+    # "stored" when the room was imported with its aisles, else "derived".
+    aisle_source: str = "derived"
+    room_class: str | None = None
+    containment: str | None = None
+    # Where the room stands in its building (migration 0099).
+    level: str | None = None
+    level_elevation_m: float | None = None
+    origin_x_m: float | None = None
+    origin_y_m: float | None = None
+
+
+class TwinRoom(BaseModel):
+    id: str
+    name: str
+    level: str | None = None
+    room_class: str | None = None
+    width_m: float | None = None
+    depth_m: float | None = None
+    origin_x_m: float | None = None
+    origin_y_m: float | None = None
+    rotation_deg: float | None = None
+    level_elevation_m: float | None = None
+    rack_count: int = 0
+    device_count: int = 0
+    max_severity: str = "CLEAR"
+
+
+class TwinLevel(BaseModel):
+    name: str
+    ordinal: int
+    elevation_m: float
+
+
+class TwinSiteScene(BaseModel):
+    """A site as a building: levels and placed rooms (docs/27)."""
+
+    datacenter_id: str
+    code: str
+    name: str
+    floor_to_floor_m: float | None = None
+    levels: list[TwinLevel] = Field(default_factory=list)
+    # Plan outline in building metres, [[x, y], ...]; None before geometry import.
+    outline_m: list[list[float]] | None = None
+    rooms: list[TwinRoom] = Field(default_factory=list)
 
 
 class ImpactNode(BaseModel):

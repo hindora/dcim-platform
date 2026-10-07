@@ -28,6 +28,9 @@ from app.schemas import (
     RackElevation,
     RackSummary,
     RoomExtent,
+    TwinLevel,
+    TwinRoom,
+    TwinSiteScene,
 )
 from app.services import endpoint_config, floorplan
 from app.services import poll_profile_config as cfg
@@ -196,21 +199,39 @@ async def rack_elevation(session: AsyncSession, rack_id: str) -> RackElevation |
 
 
 async def room_floorplan(session: AsyncSession, room_id: str) -> FloorPlan | None:
-    """Everything needed to draw one room, in a single request."""
+    """Everything needed to draw one room, in a single request.
+
+    Geometry the import stored (migration 0099) wins - room size, aisles, rack
+    footprint, where each plant unit stands. The old derivations remain for a
+    room imported before it, and the response says which one it got."""
+    room = await rack_repo.room_geometry(session, room_id)
+    if room is None:
+        return None
     racks = await rack_repo.floorplan_racks(session, room_id)
-    equipment = await rack_repo.floorplan_equipment(session, room_id)
-    if not racks and not equipment:
+    things = await rack_repo.floorplan_equipment(session, room_id)
+    stored_aisles = await rack_repo.room_aisles(session, room_id)
+
+    # Placed only when imported WITH geometry (a mount). A row from before
+    # migration 0099 still holds the simulator's old synthetic grid slot for
+    # plant - every chiller at one point - and drawing that would be invented.
+    placed = [e for e in things if e.get("mount") and e.get("floor_x") is not None
+              and e.get("floor_y") is not None]
+    loose = [e for e in things if e not in placed]
+    if not racks and not placed and not loose:
         return None
 
-    # Racks only. They are the sole things with a real room coordinate.
-    points = [(float(r["floor_x"]), float(r["floor_y"])) for r in racks]
+    extent = floorplan.stored_extent(room.get("width_m"), room.get("depth_m"))
+    if extent is None:
+        points = [(float(r["floor_x"]), float(r["floor_y"])) for r in racks]
+        extent = floorplan.room_extent(points)
+    aisles = (floorplan.stored_aisles(stored_aisles) if stored_aisles
+              else floorplan.derive_aisles(racks))
 
-    first = racks[0] if racks else None
     return FloorPlan(
         room_id=room_id,
-        room_name=(first or {}).get("room_name") or "",
-        datacenter_code=(first or {}).get("datacenter_code"),
-        extent=RoomExtent(**floorplan.room_extent(points)),
+        room_name=room["room_name"],
+        datacenter_code=room.get("datacenter_code"),
+        extent=RoomExtent(**extent),
         rack_w_m=floorplan.RACK_W, rack_d_m=floorplan.RACK_D,
         racks=[FloorRack(
             id=r["id"], name=r["name"], row_name=r.get("row_name"),
@@ -220,16 +241,61 @@ async def room_floorplan(session: AsyncSession, room_id: str) -> FloorPlan | Non
             load_kw=_f(r.get("load_kw")), max_inlet_c=_f(r.get("max_inlet_c")),
             max_severity=r.get("max_severity") or "CLEAR",
             free_u=r.get("free_u"),
+            w_m=_f(r.get("rack_w")), d_m=_f(r.get("rack_d")),
         ) for r in racks],
-        unpositioned_equipment=[FloorEquipment(
-            id=e["id"], name=e["name"], device_type=e["device_type"],
-            status=e.get("status") or "UNKNOWN",
-            max_severity=e.get("max_severity") or "CLEAR",
-            power_w=_f(e.get("power_w")),
-        ) for e in equipment],
+        equipment=[_floor_equipment(e) for e in placed],
+        unpositioned_equipment=[_floor_equipment(e) for e in loose],
         aisles=[FloorAisle(y_start=a.y_start, y_end=a.y_end, kind=a.kind,
-                           label=a.label, rows=a.rows)
-                for a in floorplan.derive_aisles(racks)],
+                           label=a.label, rows=a.rows, contained=a.contained)
+                for a in aisles],
+        aisle_source="stored" if stored_aisles else "derived",
+        room_class=room.get("room_class"),
+        containment=room.get("containment"),
+        level=room.get("level"),
+        level_elevation_m=_f(room.get("level_elevation_m")),
+        origin_x_m=_f(room.get("origin_x_m")),
+        origin_y_m=_f(room.get("origin_y_m")),
+    )
+
+
+def _floor_equipment(e: dict[str, Any]) -> FloorEquipment:
+    return FloorEquipment(
+        id=e["id"], name=e["name"], device_type=e["device_type"],
+        status=e.get("status") or "UNKNOWN",
+        max_severity=e.get("max_severity") or "CLEAR",
+        power_w=_f(e.get("power_w")), inlet_c=_f(e.get("inlet_temp_c")),
+        x=_f(e.get("floor_x")), y=_f(e.get("floor_y")),
+        mount=e.get("mount"), facing_deg=_f(e.get("rotation_deg")),
+        w_m=_f(e.get("footprint_w_m")), d_m=_f(e.get("footprint_d_m")),
+        h_m=_f(e.get("height_m")), mount_height_m=_f(e.get("mount_height_m")),
+        basis=e.get("footprint_basis"),
+    )
+
+
+async def site_scene(session: AsyncSession, datacenter_id: str) -> TwinSiteScene | None:
+    """A site as a building - levels and every room placed on one (docs/27)."""
+    site = await rack_repo.site_building(session, datacenter_id)
+    if site is None:
+        return None
+    b = site.get("building") or {}
+    return TwinSiteScene(
+        datacenter_id=site["id"], code=site["code"], name=site["name"],
+        floor_to_floor_m=b.get("floor_to_floor_m"),
+        levels=[TwinLevel(name=str(lv["name"]), ordinal=int(lv.get("ordinal") or 0),
+                          elevation_m=float(lv.get("elevation_m") or 0))
+                for lv in b.get("levels") or []],
+        outline_m=b.get("outline_m"),
+        rooms=[TwinRoom(
+            id=r["id"], name=r["name"], level=r.get("level"),
+            room_class=r.get("room_class"),
+            width_m=_f(r.get("width_m")), depth_m=_f(r.get("depth_m")),
+            origin_x_m=_f(r.get("origin_x_m")), origin_y_m=_f(r.get("origin_y_m")),
+            rotation_deg=_f(r.get("rotation_deg")),
+            level_elevation_m=_f(r.get("level_elevation_m")),
+            rack_count=int(r.get("rack_count") or 0),
+            device_count=int(r.get("device_count") or 0),
+            max_severity=r.get("max_severity") or "CLEAR",
+        ) for r in site["rooms"]],
     )
 
 
