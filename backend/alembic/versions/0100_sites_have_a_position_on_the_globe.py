@@ -49,10 +49,11 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # The metadata naming convention prefixes check constraints
-    # (ck_<table>_<name>), so these are the names upgrade() actually created.
-    op.drop_constraint("ck_datacenter_datacenter_lon_range", "datacenter", type_="check")
-    op.drop_constraint("ck_datacenter_datacenter_lat_range", "datacenter", type_="check")
+    # Same bare names as upgrade(): with type_="check" alembic applies the
+    # ck_<table>_<name> naming convention on the drop exactly as it did on the
+    # create. Without type_ it cannot, and looks for the bare name.
+    op.drop_constraint("datacenter_lon_range", "datacenter", type_="check")
+    op.drop_constraint("datacenter_lat_range", "datacenter", type_="check")
     op.drop_column("datacenter", "location_source")
     op.drop_column("datacenter", "longitude")
     op.drop_column("datacenter", "latitude")
