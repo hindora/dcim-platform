@@ -91,14 +91,20 @@ export function FloorPlanView() {
     queryKey: ['floorplan', roomId], queryFn: () => api.floorplan(roomId),
     enabled: Boolean(roomId) && !webgl, refetchInterval: 20_000, retry: false,
   });
+  // The room KPI is a rolling-hour aggregate over every reading in the room -
+  // seconds on a quiet database, minutes on a busy one - and only the room
+  // panel's compliance and power rows read it. Fetched once while that panel
+  // is up, never polled: the picture itself comes from the scene.
   const kpi = useQuery<RoomKpi>({
     queryKey: ['room-kpi', roomId], queryFn: () => api.roomKpi(roomId),
-    enabled: Boolean(roomId), refetchInterval: 30_000, retry: false,
+    enabled: Boolean(roomId) && panel === 'info' && !sel, staleTime: 10 * 60_000, retry: false,
   });
   const thermal = useQuery<ThermalRoom>({
     queryKey: ['thermal-room', roomId], queryFn: () => api.thermal(roomId),
-    enabled: Boolean(roomId), refetchInterval: 30_000, retry: false,
+    enabled: Boolean(roomId), refetchInterval: 60_000, staleTime: 30_000, retry: false,
   });
+
+
   const units = useMemo(() => {
     const m = new Map<string, ThermalUnit>();
     for (const u of thermal.data?.crah_units ?? []) m.set(u.device_id, u);
@@ -243,7 +249,8 @@ export function FloorPlanView() {
         {room && <span>{room.datacenter_code ? `${room.datacenter_code} · ` : ''}{room.name}</span>}
         {plan && <span>{plan.extent.width_m} × {plan.extent.depth_m} m · {plan.racks.length} racks · {data?.devices.length ?? 0} devices</span>}
         <span className="spacer" />
-        <span>Drag to orbit · right-drag to pan · scroll to zoom</span>
+        <span>{mode === 'fpv' ? 'Pointer lock to look · W A S D to walk'
+          : mode === 'plan' ? 'Drag to pan · scroll to zoom' : 'Drag to orbit · right-drag to pan · scroll to zoom'}</span>
       </div>
     </div>
   );
