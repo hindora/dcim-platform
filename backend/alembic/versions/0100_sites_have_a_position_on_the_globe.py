@@ -49,8 +49,10 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_constraint("datacenter_lon_range", "datacenter")
-    op.drop_constraint("datacenter_lat_range", "datacenter")
+    # The metadata naming convention prefixes check constraints
+    # (ck_<table>_<name>), so these are the names upgrade() actually created.
+    op.drop_constraint("ck_datacenter_datacenter_lon_range", "datacenter", type_="check")
+    op.drop_constraint("ck_datacenter_datacenter_lat_range", "datacenter", type_="check")
     op.drop_column("datacenter", "location_source")
     op.drop_column("datacenter", "longitude")
     op.drop_column("datacenter", "latitude")
