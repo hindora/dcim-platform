@@ -2355,6 +2355,11 @@ export interface SiteRow {
   city?: string | null;
   country?: string | null;
   timezone: string;
+  /** Position on the world map; null when never set and the city is unknown. */
+  latitude?: number | null;
+  longitude?: number | null;
+  /** 'manual' or 'city centroid' (approximate). */
+  location_source?: string | null;
   room_count: number;
   device_count: number;
   online_count: number;

@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from pydantic import BaseModel, Field
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import audit
 from app.core.security import Principal, current_principal
 from app.db.session import get_session
 from app.repositories import racks as repo
@@ -12,6 +15,15 @@ from app.schemas import FloorPlan, RackElevation, RackSummary, TwinSiteScene
 from app.services import devices as service
 
 router = APIRouter(tags=["infrastructure"])
+
+
+def _num(v: object) -> float | None:
+    return float(v) if v is not None else None  # type: ignore[arg-type]
+
+
+class SiteLocation(BaseModel):
+    latitude: float = Field(ge=-90, le=90)
+    longitude: float = Field(ge=-180, le=180)
 
 
 @router.get("/datacenters", summary="List datacenters")
@@ -91,3 +103,38 @@ async def site_scene(
     if scene is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "site not found")
     return scene
+
+
+@router.put("/datacenters/{datacenter_id}/location",
+            summary="Set a site's position on the world map")
+async def set_site_location(
+    datacenter_id: str,
+    body: SiteLocation,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    principal: Principal = Depends(current_principal),
+) -> dict:
+    """The surveyed position replaces a city-centroid estimate, and no import
+    overwrites it afterwards."""
+    before = (await session.execute(text("""
+        SELECT latitude, longitude, location_source FROM datacenter
+         WHERE id = CAST(:dc AS uuid)
+    """), {"dc": datacenter_id})).mappings().first()
+    if before is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "site not found")
+    await session.execute(text("""
+        UPDATE datacenter SET latitude = :lat, longitude = :lon, location_source = 'manual'
+         WHERE id = CAST(:dc AS uuid)
+    """), {"dc": datacenter_id, "lat": body.latitude, "lon": body.longitude})
+    ip, agent = audit.client_of(request)
+    await audit.record(session, actor=audit.actor_of(principal),
+                       action="site.location", target_type="datacenter",
+                       target_id=datacenter_id, ip=ip, user_agent=agent,
+                       before={"latitude": _num(before["latitude"]),
+                               "longitude": _num(before["longitude"]),
+                               "location_source": before["location_source"]},
+                       after={"latitude": body.latitude, "longitude": body.longitude,
+                              "location_source": "manual"})
+    await session.commit()
+    return {"ok": True, "latitude": body.latitude, "longitude": body.longitude,
+            "location_source": "manual"}

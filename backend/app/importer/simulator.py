@@ -27,6 +27,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import audit
+from app.core.geo import city_centroid
 from app.core.logging import get_logger
 from app.core.security import encrypt_secret
 from app.importer.endpoints import EndpointSpec, derive_endpoints
@@ -441,6 +442,17 @@ class TopologyImporter:
             """, code=dc_code, name=dc_code,
                 city=dev.get("datacenter_city"), country=dev.get("country"))
             self.report.datacenters += 1
+            # Its place on the world map, when nobody has set one: the metro the
+            # source names, marked approximate. A manual position is never
+            # overwritten.
+            centroid = city_centroid(dev.get("datacenter_city"))
+            if centroid:
+                await self.s.execute(text("""
+                    UPDATE datacenter
+                       SET latitude = :lat, longitude = :lon,
+                           location_source = 'city centroid'
+                     WHERE id = CAST(:dc AS uuid) AND latitude IS NULL
+                """), {"dc": self._dc[dc_code], "lat": centroid[0], "lon": centroid[1]})
             # Levels, elevations and outline: derived from the rooms by the
             # source, with no identity of their own yet (migration 0099).
             if self._buildings.get(dc_code):

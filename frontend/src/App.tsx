@@ -28,6 +28,7 @@ import { DeviceDetail } from './features/devices/DeviceDetail';
 import { RackElevationView } from './features/racks/RackElevation';
 import { RackList } from './features/racks/RackList';
 import { FloorPlanView } from './features/floorplan/FloorPlan';
+import { NavMenu, type NavMenuItem } from './components/NavMenu';
 import { DeviceList } from './features/devices/DeviceList';
 import { AssetWorkspace } from './features/assets/AssetWorkspace';
 import { AssetOverview } from './features/assets/Overview';
@@ -62,6 +63,9 @@ import { useSocketStatus } from './ws/useSocket';
  */
 const Connectivity = lazy(() => import('./features/connectivity/Connectivity')
   .then((m) => ({ default: m.Connectivity })));
+/** Same reasoning: the world map carries d3-geo and a Natural Earth basemap
+ *  that no other page needs. */
+const WorldMap = lazy(() => import('./features/world/WorldMap'));
 
 function Login({ onDone, returnTo }: { onDone: () => void; returnTo?: string }) {
   const [username, setUsername] = useState('admin');
@@ -114,12 +118,22 @@ function Login({ onDone, returnTo }: { onDone: () => void; returnTo?: string }) 
  * balancers - those are a query string, and putting them in the nav is how a
  * sidebar reaches sixty items nobody reads.
  */
-const NAV = [
+/** The three ways of LOOKING at the estate, grouped under one entry: they
+ *  answer "where" and "what is connected to what", not one domain each. */
+const VISUALIZATION: NavMenuItem[] = [
+  { to: '/connectivity', label: 'Network map', hint: 'Devices and the links between them' },
+  { to: '/floorplan', label: 'Floor map', hint: 'Racks and plant, room by room' },
+  { to: '/world', label: 'World map', hint: 'Every site and its worst open alarm' },
+];
+
+type NavItem = { to: string; label: string; end?: boolean; menu?: NavMenuItem[] };
+
+const NAV: NavItem[] = [
   { to: '/', label: 'HOME', end: true },
   { to: '/thermal', label: 'THERMAL' },
   { to: '/power', label: 'POWER' },
   { to: '/capacity', label: 'CAPACITY' },
-  { to: '/connectivity', label: 'CONNECTIVITY' },
+  { to: '/visualization', label: 'VISUALIZATION', menu: VISUALIZATION },
   { to: '/assets', label: 'ASSETS' },
 ];
 
@@ -137,7 +151,9 @@ function TopBar({ onSignOut }: { onSignOut: () => void }) {
       <nav className="topnav" aria-label="Primary">
         {NAV.map((item, i) => (
           <Fragment key={item.to}>
-            <NavLink to={item.to} end={item.end}>{item.label}</NavLink>
+            {item.menu
+              ? <NavMenu label={item.label} items={item.menu} />
+              : <NavLink to={item.to} end={item.end}>{item.label}</NavLink>}
             {i < NAV.length - 1 && <span className="sep" aria-hidden>/</span>}
           </Fragment>
         ))}
@@ -283,6 +299,15 @@ export default function App() {
           <Route path="/racks" element={<Page><RackList /></Page>} />
           <Route path="/racks/:id" element={<Page><RackElevationView /></Page>} />
           <Route path="/floorplan" element={<Page><FloorPlanView /></Page>} />
+          <Route path="/world" element={
+            <Page>
+              <Suspense fallback={<p className="muted">Loading the map…</p>}>
+                <WorldMap />
+              </Suspense>
+            </Page>
+          } />
+          {/* The menu's own name, for a pasted or typed address. */}
+          <Route path="/visualization" element={<Navigate to="/connectivity" replace />} />
           <Route path="/topology" element={<Navigate to="/connectivity" replace />} />
           <Route path="/alarms" element={<Page><AlarmList /></Page>} />
           {/* Same component: the id selects, it does not replace the

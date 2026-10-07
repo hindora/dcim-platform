@@ -42,6 +42,11 @@ class Datacenter(Base, TimestampMixin):
     timezone: Mapped[str] = mapped_column(Text, nullable=False, default="UTC")
     design_it_kw: Mapped[float | None] = mapped_column(Numeric(10, 2))
     design_pue: Mapped[float | None] = mapped_column(Numeric(4, 3))
+    # Position on the globe (migration 0100). Asset data, never geocoded over
+    # the network; location_source is 'manual' or 'city centroid'.
+    latitude: Mapped[float | None] = mapped_column(Numeric(9, 6))
+    longitude: Mapped[float | None] = mapped_column(Numeric(9, 6))
+    location_source: Mapped[str | None] = mapped_column(Text)
     attributes: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
 
     rooms: Mapped[list[Room]] = relationship(back_populates="datacenter",

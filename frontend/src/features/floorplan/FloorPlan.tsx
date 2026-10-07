@@ -137,7 +137,7 @@ export function FloorPlanView() {
 
   return (
     <div className="stack">
-      <h2>Floor plan</h2>
+      <h2>Floor map</h2>
 
       <div className="floor-controls">
         <label>

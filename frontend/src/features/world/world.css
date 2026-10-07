@@ -1,0 +1,54 @@
+/* World map (features/world). Colour is tokens only; the hue of a site IS its
+   state, so the state tokens are the right ones. */
+
+.world-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.world-head h2 { margin: 0; }
+
+.world-body { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 16px; align-items: start; }
+@media (max-width: 1100px) { .world-body { grid-template-columns: minmax(0, 1fr); } }
+
+.world-panel { min-width: 0; contain: inline-size; position: relative; }
+.world-svg { display: block; }
+.world-sphere { fill: var(--bg-inset); stroke: var(--border); stroke-width: 1; }
+.world-graticule { fill: none; stroke: var(--border); stroke-width: 0.5; opacity: 0.5; }
+.world-land { fill: var(--bg-raised); stroke: var(--border-strong); stroke-width: 0.5; }
+.world-note { margin: 8px 0 0; font-size: 0.72rem; }
+
+.world-site { cursor: pointer; }
+.world-site:focus { outline: none; }
+.world-dot { stroke: var(--bg); stroke-width: 2; }
+.world-approx { fill: none; stroke: var(--text-faint); stroke-width: 1; stroke-dasharray: 3 3; }
+.world-site.is-selected .world-dot,
+.world-site:hover .world-dot,
+.world-site:focus-visible .world-dot { stroke: var(--text); }
+.world-label {
+  font-size: 11px; font-weight: 600; letter-spacing: .05em; fill: var(--text);
+  paint-order: stroke; stroke: var(--bg-inset); stroke-width: 3px; pointer-events: none;
+}
+
+.tone-critical .world-dot, .world-swatch.tone-critical { fill: var(--critical); background: var(--critical); }
+.tone-major .world-dot, .world-swatch.tone-major { fill: var(--major); background: var(--major); }
+.tone-warn .world-dot, .world-swatch.tone-warn { fill: var(--warn); background: var(--warn); }
+.tone-ok .world-dot, .world-swatch.tone-ok { fill: var(--ok); background: var(--ok); }
+.tone-unknown .world-dot, .world-swatch.tone-unknown { fill: var(--text-faint); background: var(--text-faint); }
+
+.world-side { display: flex; flex-direction: column; gap: 12px; }
+.world-side h3 .total { float: right; color: var(--text-faint); }
+.world-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.world-list button {
+  display: grid; grid-template-columns: 10px 48px minmax(0, 1fr) auto; align-items: center;
+  gap: 8px; width: 100%; padding: 6px 4px; border: none; border-bottom: 1px solid var(--border);
+  background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer;
+}
+.world-list button:hover { background: var(--bg-inset); }
+.world-list button.is-current { box-shadow: inset 2px 0 0 var(--accent); }
+.world-list .code { font-weight: 600; }
+.world-list .muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.world-list .count { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.world-swatch { width: 9px; height: 9px; border-radius: 2px; }
+
+.world-card h4 { margin: 0 0 6px; }
+.world-card dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0; font-size: 0.82rem; }
+.world-card dt { color: var(--text-faint); }
+.world-card dd { margin: 0; font-variant-numeric: tabular-nums; }
+.world-links { display: flex; gap: 14px; margin-top: 10px; font-size: 0.82rem; }

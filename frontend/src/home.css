@@ -109,6 +109,33 @@
 .topnav a { border-radius: 0; }
 .topnav .sep { color: var(--text-faint); font-size: 13px; }
 
+/* A nav entry that opens a list (components/NavMenu). Looks like its
+   neighbours: same type, same padding, same accent underline when one of its
+   views is the current page. */
+.topnav .nav-trigger {
+  display: flex; align-items: center; gap: 6px; flex: none; white-space: nowrap;
+  padding: 24px 18px 22px; font-size: 12px; font-weight: 600; letter-spacing: .09em;
+  color: var(--text-muted); background: none; border: none; border-radius: 0;
+  border-bottom: 2px solid transparent; cursor: pointer; font-family: inherit;
+}
+.topnav .nav-trigger:hover, .topnav .nav-trigger.open { color: var(--text); }
+.topnav .nav-trigger.active { color: var(--text); border-bottom-color: var(--accent); }
+.topnav .nav-trigger .chev { font-size: 10px; color: var(--text-faint); }
+.nav-menu {
+  position: fixed; z-index: 80; min-width: 260px; padding: 6px;
+  display: flex; flex-direction: column; gap: 2px;
+  background: var(--bg-raised); border: 1px solid var(--border-strong); border-radius: 6px;
+  box-shadow: 0 14px 34px color-mix(in srgb, var(--bg-inset) 70%, transparent);
+}
+.nav-menu a {
+  display: flex; flex-direction: column; gap: 2px; padding: 8px 10px;
+  border-radius: 4px; color: var(--text); text-decoration: none;
+}
+.nav-menu a:hover, .nav-menu a:focus-visible { background: var(--bg-inset); outline: none; }
+.nav-menu a.active { box-shadow: inset 2px 0 0 var(--accent); }
+.nav-menu .label { font-size: 13px; font-weight: 600; }
+.nav-menu .hint { font-size: 12px; color: var(--text-muted); }
+
 .topbar .utilities {
   margin-left: auto; display: flex; align-items: center; gap: 28px;
   font-size: 12px; font-weight: 600; letter-spacing: .09em;

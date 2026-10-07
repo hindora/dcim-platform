@@ -239,6 +239,11 @@ async def overview(session: AsyncSession) -> dict[str, Any]:
             "city": s["city"],
             "country": s["country"],
             "timezone": s["timezone"],
+            # Null until somebody sets it or the city is a known metro; the
+            # world map lists such a site rather than placing it anywhere.
+            "latitude": float(s["latitude"]) if s.get("latitude") is not None else None,
+            "longitude": float(s["longitude"]) if s.get("longitude") is not None else None,
+            "location_source": s.get("location_source"),
             "room_count": int(s["room_count"] or 0),
             "device_count": int(s["device_count"] or 0),
             "online_count": int(s["online_count"] or 0),
