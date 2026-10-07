@@ -31,3 +31,14 @@ def test_room_frames_carry_no_readings():
     body = src[start:src.index("async def device_status(", start)]
     assert '"event": "room_update"' in body
     assert "metrics" not in body
+
+
+def test_nothing_in_the_worker_is_defined_after_its_entry_point():
+    """`python -m app.ingest.worker` runs main() where the __main__ block
+    sits; a function defined below it does not exist yet when the worker
+    starts. The tests import the module, which runs the whole file, and so
+    never saw the NameError that stopped every ingest tick in production."""
+    src = (Path(__file__).resolve().parents[1] / "app" / "ingest" / "worker.py").read_text(
+        encoding="utf-8")
+    tail = src[src.index('if __name__ == "__main__"'):]
+    assert "\ndef " not in tail and "\nclass " not in tail

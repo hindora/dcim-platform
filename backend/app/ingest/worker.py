@@ -146,6 +146,16 @@ def _config_effective(hb) -> dict:
     return parsed if isinstance(parsed, dict) else {}
 
 
+def group_by_room(device_ids, room_of: dict[str, str]) -> dict[str, list[str]]:
+    """{room_id: [device_id, ...]} for the devices that have a room."""
+    out: dict[str, list[str]] = {}
+    for did in device_ids:
+        room = room_of.get(did)
+        if room:
+            out.setdefault(room, []).append(did)
+    return out
+
+
 class IngestWorker:
     def __init__(self, consumer_name: str | None = None) -> None:
         self.settings = get_settings()
@@ -1322,13 +1332,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-
-def group_by_room(device_ids, room_of: dict[str, str]) -> dict[str, list[str]]:
-    """{room_id: [device_id, ...]} for the devices that have a room."""
-    out: dict[str, list[str]] = {}
-    for did in device_ids:
-        room = room_of.get(did)
-        if room:
-            out.setdefault(room, []).append(did)
-    return out
