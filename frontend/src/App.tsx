@@ -298,7 +298,9 @@ export default function App() {
           <Route path="/devices/:id" element={<Page><DeviceDetail /></Page>} />
           <Route path="/racks" element={<Page><RackList /></Page>} />
           <Route path="/racks/:id" element={<Page><RackElevationView /></Page>} />
-          <Route path="/floorplan" element={<Page><FloorPlanView /></Page>} />
+          {/* Full-bleed like the network map: the room fills the window and
+              carries its own chrome. */}
+          <Route path="/floorplan" element={<FloorPlanView />} />
           <Route path="/world" element={
             <Page>
               <Suspense fallback={<p className="muted">Loading the map…</p>}>

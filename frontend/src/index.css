@@ -146,6 +146,28 @@
      an unknown thing must not borrow a plane's colour. */
   --node-default:        #50646c;
 
+  /* Room-viewer bands (features/floorplan/layers.ts). Perceptual data
+     encodings, the same in both themes: --band-t1..t8 is the temperature
+     scale cold -> hot (ASHRAE A1 cut finer), --band-p1..p5 a utilisation
+     scale from idle to over. */
+  --band-t1: #1d3fa8;
+  --band-t2: #2b63d9;
+  --band-t3: #38a6e8;
+  --band-t4: #52b86a;
+  --band-t5: #8ed05a;
+  --band-t6: #f2d233;
+  --band-t7: #f28c28;
+  --band-t8: #e23b3b;
+  --band-p1: #9ad7d0;
+  --band-p2: #4fb3a9;
+  --band-p3: #1f8f7f;
+  --band-p4: #f2a93b;
+  --band-p5: #e23b3b;
+  --band-none: #8a9099;
+  --band-plain: #2f3640;
+  --band-cooling: #7cc4cf;
+  --band-power: #d9d2c0;
+
   /* Node chrome: the parts that are not the fill. */
   --node-label:     rgba(255, 255, 255, 0.74);
   --node-label-dim: rgba(255, 255, 255, 0.54);

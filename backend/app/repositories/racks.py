@@ -12,7 +12,17 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-_RACK_SUMMARY = """
+# A rack's load is what its rack PDUs meter at their inputs - the standard
+# reading, and the only one that includes everything plugged in. Summing every
+# device instead counted each server twice: once as itself and again inside the
+# PDU that feeds it (R2-01 read 32.5 kW for a 16.5 kW rack). The devices' own
+# draw is the fallback for a rack with no PDU reporting.
+_RACK_LOAD_W = (
+    "COALESCE(NULLIF(sum(ds.power_w) FILTER ("
+    "WHERE d.device_type IN ('pdu', 'floor_pdu')), 0),"
+    " sum(ds.power_w) FILTER (WHERE d.device_type NOT IN ('pdu', 'floor_pdu')), 0)")
+
+_RACK_SUMMARY = f"""
     SELECT r.id::text, r.name, r.u_height, r.rated_power_kw,
            rr.name AS row_name,
            -- Where the rack stands, in words the name only encodes: "R2-04"
@@ -24,9 +34,9 @@ _RACK_SUMMARY = """
            count(d.id) FILTER (WHERE d.id IS NOT NULL)                AS device_count,
            count(*)    FILTER (WHERE ds.status = 'ONLINE')            AS online_count,
            count(*)    FILTER (WHERE ds.status = 'OFFLINE')           AS offline_count,
-           COALESCE(sum(ds.power_w), 0) / 1000.0                      AS load_kw,
+           {_RACK_LOAD_W} / 1000.0                                    AS load_kw,
            CASE WHEN r.rated_power_kw > 0
-                THEN 100.0 * COALESCE(sum(ds.power_w), 0) / 1000.0 / r.rated_power_kw
+                THEN 100.0 * {_RACK_LOAD_W} / 1000.0 / r.rated_power_kw
            END                                                        AS load_pct,
            max(ds.inlet_temp_c)                                       AS max_inlet_c,
            COALESCE(max(ds.max_severity)::text, 'CLEAR')              AS max_severity,
@@ -193,6 +203,11 @@ async def floorplan_equipment(session: AsyncSession,
                COALESCE(ds.status::text, 'UNKNOWN')     AS status,
                COALESCE(ds.max_severity::text, 'CLEAR') AS max_severity,
                ds.power_w, ds.inlet_temp_c,
+               (ds.metrics->'supply_air_temp'->>'v')::float AS supply_c,
+               (ds.metrics->'return_air_temp'->>'v')::float AS return_c,
+               (ds.metrics->'ambient_temperature'->>'v')::float AS temp_c,
+               COALESCE(ds.humidity_pct,
+                        (ds.metrics->'relative_humidity'->>'v')::float) AS rh_pct,
                d.floor_x, d.floor_y, d.mount, d.rotation_deg,
                d.footprint_w_m, d.footprint_d_m, d.height_m, d.mount_height_m,
                d.footprint_basis
@@ -276,7 +291,15 @@ async def room_rack_devices(session: AsyncSession, room_id: str) -> list[dict[st
                d.mount_height_m,
                COALESCE(ds.status::text, 'UNKNOWN')     AS status,
                COALESCE(ds.max_severity::text, 'CLEAR') AS max_severity,
-               ds.power_w, ds.inlet_temp_c
+               ds.power_w, ds.inlet_temp_c,
+               -- The air at the device, whatever it calls it: a server reports
+               -- its inlet, a door probe or a strip's probe the ambient air at
+               -- its height. One column, so the rack's vertical gradient can be
+               -- drawn from every reading in it.
+               COALESCE(ds.inlet_temp_c,
+                        (ds.metrics->'ambient_temperature'->>'v')::float) AS temp_c,
+               COALESCE(ds.humidity_pct,
+                        (ds.metrics->'relative_humidity'->>'v')::float)  AS rh_pct
           FROM device d
           JOIN rack r      ON r.id = d.rack_id
           JOIN rack_row rr ON rr.id = r.row_id

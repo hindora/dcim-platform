@@ -1,316 +1,250 @@
 import { useQuery } from '@tanstack/react-query';
-import { humanise } from '../../lib/format';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { lazy, Suspense } from 'react';
-import { Seg } from '../../components/estate';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
-  alarmColor, OVERLAYS, POWER_CRIT, POWER_WARN, rackFill, TEMP_MAX, TEMP_MIN,
-  TEMP_RECOMMENDED_MAX, type Overlay,
-} from './colors';
-
-// three.js and react-three-fiber load only when somebody opens the 3D view.
-const FloorPlan3D = lazy(() => import('./FloorPlan3D'));
-
-type View = '2d' | '3d';
-import {
-  api, type FloorEquipment, type FloorPlan as Plan, type FloorRack, type RoomSummary,
+  api, type FloorPlan as Plan, type RoomKpi, type RoomSummary, type ThermalRoom, type ThermalUnit,
+  type TwinRoomScene,
 } from '../../api/client';
-import { StatusChip } from '../../components/StatusChip';
+import { Seg } from '../../components/estate';
+import type { Overlay } from './colors';
+import {
+  coolingLegendFor, DEFAULT_VIS, legendFor, rackTiers, ventTiles,
+  type CoolingLayer, type RackLayer, type Sel, type ViewMode, type Visibility,
+} from './layers';
+import { DevicePanel, FiltersPanel, Legend, RackPanel, RoomPanel, UnitPanel } from './panels';
+import { Plan2D } from './Plan2D';
+import type { HoverTip } from './Scene';
+import './viewer.css';
 
-function rackTitle(r: FloorRack): string {
-  const bits = [
-    r.name,
-    r.row_name ? `row ${r.row_name}` : null,
-    `${r.device_count} devices`,
-    r.load_kw != null ? `${r.load_kw.toFixed(1)} kW` : null,
-    r.max_inlet_c != null ? `inlet ${r.max_inlet_c.toFixed(1)} °C` : 'no inlet reading',
-    r.offline_count ? `${r.offline_count} offline` : null,
-    r.facing ? `faces ${r.facing === 'N' ? 'north' : 'south'}` : null,
-  ];
-  return bits.filter(Boolean).join(' · ');
+/**
+ * Floor map: one room, drawn from its stored geometry and coloured by live
+ * readings. 3D orbit, a top-down PLAN of the same scene, or a first-person walk
+ * (FPV). Room, view and layers live in the URL so a view can be shared and
+ * survives the back button. The WebGL stage is lazy; a browser without WebGL
+ * gets the SVG plan.
+ */
+
+// three.js and friends load only when a room is opened.
+const Stage = lazy(() => import('./Stage'));
+
+const MODES: { key: ViewMode; label: string }[] = [
+  { key: '3d', label: '3D' }, { key: 'plan', label: 'PLAN' }, { key: 'fpv', label: 'FPV' },
+];
+const RACK_KEYS = new Set<string>(['temperature', 'rh', 'power', 'utilisation', 'space', 'compliance', 'alarm', 'none']);
+const COOLING_KEYS = new Set<string>(['air', 'supply', 'return', 'utilisation', 'none']);
+
+function hasWebGL(): boolean {
+  try {
+    const c = document.createElement('canvas');
+    return Boolean(c.getContext('webgl2') || c.getContext('webgl'));
+  } catch {
+    return false;
+  }
 }
 
-function equipTitle(e: FloorEquipment): string {
-  const bits = [
-    e.name,
-    humanise(e.device_type),
-    e.w_m != null && e.d_m != null
-      ? `${e.w_m} × ${e.d_m}${e.h_m != null ? ` × ${e.h_m}` : ''} m${e.basis === 'class' ? ' (class estimate)' : ''}`
-      : e.mount ? `${e.mount}-mounted` : null,
-    e.power_w != null ? `${(e.power_w / 1000).toFixed(1)} kW` : null,
-    e.max_severity !== 'CLEAR' ? e.max_severity.toLowerCase() : null,
-  ];
-  return bits.filter(Boolean).join(' · ');
-}
-
-// Plan-view size of a footprint after its facing: a unit turned to face east or
-// west shows its depth along x.
-function planSize(e: FloorEquipment): [number, number] {
-  const w = e.w_m ?? 0, d = e.d_m ?? 0;
-  const quarter = Math.round((((e.facing_deg ?? 0) % 360) + 360) % 360 / 90) % 4;
-  return quarter % 2 ? [d, w] : [w, d];
-}
-
-// The edge the front is on, as a thin rect: [x, y, width, height].
-function frontEdge(e: FloorEquipment, x0: number, y0: number, w: number, h: number,
-                   t: number): [number, number, number, number] | null {
-  if (e.facing_deg == null) return null;
-  const q = Math.round((((e.facing_deg % 360) + 360) % 360) / 90) % 4;
-  if (q === 0) return [x0, y0, w, t];
-  if (q === 1) return [x0 + w - t, y0, t, h];
-  if (q === 2) return [x0, y0 + h - t, w, t];
-  return [x0, y0, t, h];
+/** The SVG fallback knows the older overlay vocabulary. */
+function overlayFor(layer: RackLayer): Overlay {
+  if (layer === 'temperature' || layer === 'compliance') return 'thermal';
+  if (layer === 'power' || layer === 'utilisation') return 'power';
+  if (layer === 'space') return 'space';
+  return 'alarm';
 }
 
 export function FloorPlanView() {
-  // The room lives in the URL, not in component state. `OPEN FLOOR PLAN` on the
-  // room drawer links to /floorplan?room=<id>, and a page that kept the choice
-  // in useState ignored it and silently drew whichever room happened to sort
-  // first - the link appeared to work and showed the wrong hall. Keeping it in
-  // the query string also makes the view linkable and survives a back button.
   const [params, setParams] = useSearchParams();
-  // View and overlay live in the URL beside the room, so a 3D link to a hot
-  // rack is shareable and the back button returns to the same picture.
-  const view: View = params.get('view') === '3d' ? '3d' : '2d';
-  const overlay: Overlay = (OVERLAYS.some((o) => o.key === params.get('overlay'))
-    ? params.get('overlay') : 'thermal') as Overlay;
-  const setParam = (k: string, v: string) => {
-    params.set(k, v);
-    setParams(params, { replace: true });
-  };
-  const setOverlay = (o: Overlay) => setParam('overlay', o);
+  const webgl = useMemo(hasWebGL, []);
 
-  const rooms = useQuery<{ items: RoomSummary[] }>({
-    queryKey: ['rooms'],
-    queryFn: () => api.rooms(),
-  });
-
+  const rooms = useQuery<{ items: RoomSummary[] }>({ queryKey: ['rooms'], queryFn: () => api.rooms() });
   const requested = params.get('room') || '';
-  // A stale or hand-typed id must not leave the picker showing a room the list
-  // does not contain: fall back to the first room, the same as no parameter.
   const known = rooms.data?.items.some((r) => r.id === requested) ?? false;
-  const selected = (known ? requested : '') || rooms.data?.items[0]?.id || '';
+  const roomId = (known ? requested : '') || rooms.data?.items[0]?.id || '';
+  const room = rooms.data?.items.find((r) => r.id === roomId);
 
-  const setRoomId = (id: string) => {
-    // `replace` so paging through rooms does not build a back-button trail the
-    // reader has to click through to leave the page.
-    params.set('room', id);
-    setParams(params, { replace: true });
-  };
+  const rawView = params.get('view');
+  const mode: ViewMode = rawView === 'plan' || rawView === '2d' ? 'plan' : rawView === 'fpv' ? 'fpv' : '3d';
+  const rackLayer = (RACK_KEYS.has(params.get('layer') ?? '') ? params.get('layer') : 'temperature') as RackLayer;
+  const coolingLayer = (COOLING_KEYS.has(params.get('cooling') ?? '') ? params.get('cooling') : 'air') as CoolingLayer;
+  const setParam = (k: string, v: string) => { params.set(k, v); setParams(params, { replace: true }); };
 
-  const plan = useQuery<Plan>({
-    queryKey: ['floorplan', selected],
-    queryFn: () => api.floorplan(selected),
-    enabled: Boolean(selected) && view === '2d',
-    refetchInterval: 20_000,
-    retry: false,
+  const [panel, setPanel] = useState<'info' | 'filters' | null>('info');
+  const [sel, setSel] = useState<Sel>(null);
+  const [tip, setTip] = useState<HoverTip | null>(null);
+  const [focus, setFocus] = useState<string | null>(null);
+  const [vis, setVis] = useState<Visibility>(DEFAULT_VIS);
+  const [resetTick, setResetTick] = useState(0);
+  const [themeTick, setThemeTick] = useState(0);
+
+  useEffect(() => {
+    const mo = new MutationObserver(() => setThemeTick((t) => t + 1));
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'class'] });
+    return () => mo.disconnect();
+  }, []);
+  useEffect(() => { setSel(null); setFocus(null); }, [roomId]);
+  // Labels are what FPV is for; in the other views they are clutter until asked for.
+  useEffect(() => { setVis((v) => ({ ...v, labels: mode === 'fpv' })); }, [mode]);
+
+  const scene = useQuery<TwinRoomScene>({
+    queryKey: ['twin-scene', roomId], queryFn: () => api.roomScene(roomId),
+    enabled: Boolean(roomId) && webgl, refetchInterval: 15_000, retry: false,
   });
+  const plan2d = useQuery<Plan>({
+    queryKey: ['floorplan', roomId], queryFn: () => api.floorplan(roomId),
+    enabled: Boolean(roomId) && !webgl, refetchInterval: 20_000, retry: false,
+  });
+  const kpi = useQuery<RoomKpi>({
+    queryKey: ['room-kpi', roomId], queryFn: () => api.roomKpi(roomId),
+    enabled: Boolean(roomId), refetchInterval: 30_000, retry: false,
+  });
+  const thermal = useQuery<ThermalRoom>({
+    queryKey: ['thermal-room', roomId], queryFn: () => api.thermal(roomId),
+    enabled: Boolean(roomId), refetchInterval: 30_000, retry: false,
+  });
+  const units = useMemo(() => {
+    const m = new Map<string, ThermalUnit>();
+    for (const u of thermal.data?.crah_units ?? []) m.set(u.device_id, u);
+    return m;
+  }, [thermal.data]);
 
-  if (rooms.isLoading) return <p className="muted">Loading…</p>;
+  const data = scene.data;
+  const plan = data?.plan;
+  const vents = useMemo(() => plan ? ventTiles(plan.racks, plan.aisles, plan.room_class === 'white_space').length : 0, [plan]);
+  const legends = useMemo(() => {
+    const a = legendFor(rackLayer);
+    const b = coolingLegendFor(coolingLayer);
+    // One temperature legend serves both when both are read on it.
+    return [a, b && (!a || b.bands !== a.bands) ? b : null].filter((x): x is NonNullable<typeof x> => x != null);
+  }, [rackLayer, coolingLayer]);
 
-  return (
-    <div className="stack">
-      <h2>Floor map</h2>
+  const updatedAgo = scene.dataUpdatedAt ? Math.max(0, Math.round((Date.now() - scene.dataUpdatedAt) / 1000)) : null;
 
-      <div className="floor-controls">
-        <label>
-          Room{' '}
-          <select value={selected} onChange={(e) => setRoomId(e.target.value)}>
-            {rooms.data?.items.map((r) => (
-              <option key={r.id} value={r.id}>
-                {r.datacenter_code ? `${r.datacenter_code} · ` : ''}{r.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <Seg label="View" value={view} onChange={(v) => setParam('view', v)}
-             options={[{ key: '2d', label: '2D' }, { key: '3d', label: '3D' }]} />
-        <div className="overlay-picker" role="group" aria-label="Overlay">
-          {OVERLAYS.map((o) => (
-            <button key={o.key} type="button"
-                    className={overlay === o.key ? 'active' : undefined}
-                    onClick={() => setOverlay(o.key)}>
-              {o.label}
-            </button>
-          ))}
-        </div>
-      </div>
+  // --- selection panel content ----------------------------------------
+  let panelTitle = 'Room information';
+  let panelBody: React.ReactNode = null;
+  if (panel === 'filters') {
+    panelTitle = 'View filters';
+    panelBody = <FiltersPanel rackLayer={rackLayer} coolingLayer={coolingLayer} vis={vis}
+                              onRack={(l) => setParam('layer', l)} onCooling={(l) => setParam('cooling', l)} onVis={setVis} />;
+  } else if (sel && data) {
+    if (sel.kind === 'rack') {
+      const r = data.plan.racks.find((x) => x.id === sel.id);
+      if (r) { panelTitle = `Rack ${r.name}`; panelBody = <RackPanel rack={r} devices={data.devices.filter((d) => d.rack_id === r.id)} />; }
+    } else if (sel.kind === 'device') {
+      const d = data.devices.find((x) => x.id === sel.id);
+      if (d) { panelTitle = d.name; panelBody = <DevicePanel device={d} rack={data.plan.racks.find((r) => r.id === d.rack_id)} />; }
+    } else {
+      const e = data.plan.equipment.find((x) => x.id === sel.id);
+      if (e) { panelTitle = e.name; panelBody = <UnitPanel unit={e} thermal={units.get(e.id)} />; }
+    }
+  } else if (data) {
+    panelBody = <RoomPanel plan={data.plan} devices={data.devices} kpi={kpi.data} thermal={thermal.data} vents={vents} />;
+  }
 
-      {view === '2d' && plan.isError && (
-        <p className="muted">Nothing in this room is positioned, so it cannot be drawn.</p>
-      )}
+  const focused = focus && data ? data.plan.racks.find((r) => r.id === focus) : null;
+  const focusTiers = focused && data ? rackTiers(data.devices.filter((d) => d.rack_id === focused.id), focused.u_height ?? 42) : null;
 
-      {view === '2d' && plan.data && <Plan2D plan={plan.data} overlay={overlay} />}
+  if (rooms.isLoading) return <p className="muted viewer-fallback">Loading…</p>;
 
-      {view === '3d' && selected && (
-        <Suspense fallback={<p className="muted">Loading the 3D view…</p>}>
-          <FloorPlan3D roomId={selected} overlay={overlay} />
-        </Suspense>
-      )}
-    </div>
+  const roomSelect = (
+    <select value={roomId} onChange={(e) => { params.set('room', e.target.value); setParams(params, { replace: true }); }}
+            aria-label="Room">
+      {rooms.data?.items.map((r) => (
+        <option key={r.id} value={r.id}>{r.datacenter_code ? `${r.datacenter_code} · ` : ''}{r.name}</option>
+      ))}
+    </select>
   );
-}
 
-function Plan2D({ plan, overlay }: { plan: Plan; overlay: Overlay }) {
-  const navigate = useNavigate();
-  const { extent, racks, aisles, rack_w_m: rw, rack_d_m: rd } = plan;
-  const equipment = plan.equipment ?? [];
-  const open = (id: string) => navigate(`/devices/${id}`);
-  const peakKw = Math.max(0, ...racks.map((r) => r.load_kw ?? 0));
-  const pad = 0.3;
+  if (!webgl) {
+    return (
+      <div className="viewer-fallback stack">
+        <h2>Floor map</h2>
+        <div className="floor-controls">
+          <label>Room {roomSelect}</label>
+          <Seg label="Layer" value={overlayFor(rackLayer)}
+               onChange={(o) => setParam('layer', o === 'thermal' ? 'temperature' : o === 'power' ? 'utilisation' : o)}
+               options={[{ key: 'thermal', label: 'Inlet temp' }, { key: 'power', label: 'Power' },
+                         { key: 'space', label: 'Space' }, { key: 'alarm', label: 'Alarms' }]} />
+        </div>
+        <p className="muted">This browser has no WebGL, so the room is drawn as a plan.</p>
+        {plan2d.isError && <p className="muted">Nothing in this room is positioned, so it cannot be drawn.</p>}
+        {plan2d.data && <Plan2D plan={plan2d.data} overlay={overlayFor(rackLayer)} />}
+      </div>
+    );
+  }
 
   return (
-    <>
-      <div className="floor-wrap">
-        <svg
-          className="floorplan"
-          viewBox={`${-pad} ${-pad} ${extent.width_m + pad * 2} ${extent.depth_m + pad * 2}`}
-          role="img"
-          aria-label={`Floor plan of ${plan.room_name}`}
-        >
-          {/* Room outline: the room's own dimensions when the import carried
-              them. Dashed only when it had to be derived from what stands in
-              the room - then it is not a surveyed wall. */}
-          <rect x={0} y={0} width={extent.width_m} height={extent.depth_m}
-                className={extent.derived ? 'floor-outline derived' : 'floor-outline'} />
-
-          {aisles.map((a) => (
-            <g key={`${a.y_start}-${a.y_end}`}>
-              <rect x={0} y={a.y_start} width={extent.width_m}
-                    height={a.y_end - a.y_start}
-                    className={`aisle aisle-${a.kind}`} />
-              <text x={0.15} y={(a.y_start + a.y_end) / 2} className="aisle-label">
-                {a.kind === 'unknown' ? 'aisle' : `${a.kind} aisle`}
-                {a.label ? ` ${a.label}` : ''}
-                {a.contained ? ' · contained' : ''}
-              </text>
-            </g>
-          ))}
-
-          {/* Plant and instruments at their stored positions and true
-              footprints. Coloured only by the alarm overlay: the inlet and
-              power scales are rack measures, and painting a chiller on them
-              would read as a rack reading. */}
-          {equipment.map((e) => {
-            const x = e.x as number, y = e.y as number;
-            const hit = {
-              role: 'button', tabIndex: 0, 'aria-label': e.name,
-              className: 'floor-equip-hit',
-              onClick: () => open(e.id),
-              onKeyDown: (ev: React.KeyboardEvent) => {
-                if (ev.key === 'Enter' || ev.key === ' ') open(e.id);
-              },
-            } as const;
-            const fill = overlay === 'alarm' ? alarmColor(e.max_severity, 0) : undefined;
-            if (e.w_m == null || e.d_m == null) {
-              const s = 0.18;
-              return (
-                <g key={e.id} {...hit}>
-                  <title>{equipTitle(e)}</title>
-                  <path d={`M${x} ${y - s} L${x + s} ${y} L${x} ${y + s} L${x - s} ${y} Z`}
-                        className="floor-point" style={fill ? { fill } : undefined} />
-                </g>
-              );
-            }
-            const [w, h] = planSize(e);
-            const x0 = x - w / 2, y0 = y - h / 2;
-            const edge = frontEdge(e, x0, y0, w, h, Math.min(0.1, Math.min(w, h) * 0.15));
-            const tag = e.name.split('-')[0];
-            const fs = Math.min(0.4, Math.max(0.12, Math.min(w, h) * 0.22));
-            return (
-              <g key={e.id} {...hit}>
-                <title>{equipTitle(e)}</title>
-                <rect x={x0} y={y0} width={w} height={h} className="floor-equip"
-                      style={fill ? { fill } : undefined} />
-                {edge && <rect x={edge[0]} y={edge[1]} width={edge[2]} height={edge[3]}
-                               className="floor-front" />}
-                {w > fs * 2.5 && h > fs * 1.4 && (
-                  <text x={x} y={y} className="equip-tag" style={{ fontSize: `${fs}px` }}>
-                    {tag}
-                  </text>
-                )}
-              </g>
-            );
-          })}
-
-          {racks.map((r) => (
-            <g key={r.id} role="button" tabIndex={0} aria-label={r.name}
-               className="floor-rack-hit"
-               onClick={() => navigate(`/racks/${r.id}?from=floorplan`)}
-               onKeyDown={(e) => {
-                 if (e.key === 'Enter' || e.key === ' ') navigate(`/racks/${r.id}?from=floorplan`);
-               }}>
-              <title>{rackTitle(r)}</title>
-              <rect
-                x={r.x - (r.w_m ?? rw) / 2} y={r.y - (r.d_m ?? rd) / 2}
-                width={r.w_m ?? rw} height={r.d_m ?? rd}
-                fill={rackFill(r, overlay, peakKw)}
-                className="floor-rack"
-              />
-              {/* A tick on the side the rack's intake faces. Which way a rack
-                  points decides which aisle its air comes from, so it belongs
-                  on the drawing rather than in a tooltip. */}
-              {r.facing && (
-                <rect
-                  x={r.x - (r.w_m ?? rw) / 2}
-                  y={r.facing === 'N' ? r.y - (r.d_m ?? rd) / 2 : r.y + (r.d_m ?? rd) / 2 - 0.08}
-                  width={r.w_m ?? rw} height={0.08} className="floor-front"
-                />
-              )}
-              <text x={r.x} y={r.y} className="rack-tag">{r.name}</text>
-            </g>
-          ))}
-        </svg>
+    <div className="viewer">
+      <div className="viewer-stage">
+        {data && (
+          <Suspense fallback={<p className="muted viewer-fallback">Loading the room…</p>}>
+            <Stage data={data} units={units} rackLayer={rackLayer} coolingLayer={coolingLayer} vis={vis} mode={mode}
+                   sel={sel} resetTick={resetTick} themeTick={themeTick}
+                   onSelect={(s) => { setSel(s); if (s) setPanel('info'); }} onTip={setTip} onFocus={setFocus}
+                   label={`${mode === 'plan' ? 'Plan' : mode === 'fpv' ? 'Walk-through' : '3D view'} of ${data.plan.room_name}`} />
+          </Suspense>
+        )}
+        {scene.isError && <p className="muted viewer-fallback">Nothing in this room is positioned, so it cannot be drawn.</p>}
+        {scene.isLoading && <p className="muted viewer-fallback">Loading the room…</p>}
       </div>
 
-      <p className="muted">
-        {racks.length} racks
-        {equipment.length > 0 && ` · ${equipment.length} other items placed`}
-        {' · '}{extent.width_m} × {extent.depth_m} m
-        {extent.derived && ' (outline derived from equipment positions — no room dimensions imported)'}
-        {plan.level && ` · level ${plan.level}`}
-        {plan.level_elevation_m != null && ` (+${plan.level_elevation_m} m)`}
-        {racks.some((r) => r.w_m == null) && ' · rack footprint assumed 600 × 1200 mm'}
-        {plan.aisle_source === 'derived' && aisles.length > 0 && ' · aisles inferred from rack facing'}
-      </p>
+      <div className="vw-float vw-topleft">
+        <span className="muted">Room</span>{roomSelect}
+      </div>
+      <div className="vw-float vw-topcenter">
+        <Seg label="View" value={mode} onChange={(m) => setParam('view', m)} options={MODES} />
+        <button type="button" className="vw-icon" onClick={() => setResetTick((t) => t + 1)} title="Reset the camera">RESET</button>
+      </div>
+      <div className="vw-rail">
+        <button type="button" className={`vw-icon${panel === 'info' ? ' is-on' : ''}`}
+                onClick={() => setPanel(panel === 'info' ? null : 'info')}>INFO</button>
+        <button type="button" className={`vw-icon${panel === 'filters' ? ' is-on' : ''}`}
+                onClick={() => setPanel(panel === 'filters' ? null : 'filters')}>LAYERS</button>
+      </div>
 
-      {overlay === 'thermal' && (
-        <p className="muted">
-          Scaled to ASHRAE A1: {TEMP_MIN} °C to {TEMP_MAX} °C allowable,
-          recommended up to {TEMP_RECOMMENDED_MAX} °C. Racks with no inlet
-          reading are left unfilled rather than shown as cold.
-        </p>
-      )}
-      {overlay === 'power' && (
-        <p className="muted">
-          Load against the rack's rating (its smallest single feed): amber from{' '}
-          {POWER_WARN * 100} %, red from {POWER_CRIT * 100} %. A rack with no
-          rating is shaded against the busiest rack in the room instead.
-        </p>
-      )}
-      {overlay === 'space' && (
-        <p className="muted">Share of the rack's U in use: pale is empty, deep is full.</p>
+      {panel && (
+        <aside className="vw-panel" aria-label={panelTitle}>
+          <div className="vw-panel-head">
+            <h3>{panelTitle}</h3>
+            <button type="button" className="close" aria-label="Close"
+                    onClick={() => { if (sel && panel === 'info') setSel(null); else setPanel(null); }}>×</button>
+          </div>
+          {panelBody}
+        </aside>
       )}
 
-      {plan.unpositioned_equipment.length > 0 && (
-        <section>
-          <h3>Not placed</h3>
-          <p className="muted">
-            In this room, but imported without a room coordinate, so listed
-            rather than drawn — a guessed position could put a CRAH outside its
-            own room.
-          </p>
-          <ul className="zero-u">
-            {plan.unpositioned_equipment.map((e) => (
-              <li key={e.id}>
-                <Link to={`/devices/${e.id}`}>{e.name}</Link>
-                <span className="muted"> · {humanise(e.device_type)} · </span>
-                <StatusChip status={e.status} />
-              </li>
-            ))}
-          </ul>
-        </section>
+      {legends.length > 0 && (
+        <div className="vw-legends">{legends.map((l) => <Legend key={l.title} spec={l} />)}</div>
       )}
-    </>
+
+      {mode === 'fpv' && (
+        <>
+          <div className="vw-reticle" aria-hidden />
+          {focused && focusTiers && (
+            <div className="vw-focus">
+              <b>{focused.name}</b>
+              {focusTiers[0] != null || focusTiers[2] != null
+                ? `Inlet ${focusTiers.map((t) => (t == null ? '–' : t.toFixed(1))).join(' / ')} °C`
+                : 'no inlet reading'}
+              {focused.load_kw != null && ` · ${focused.load_kw.toFixed(1)} kW`}
+              {focused.free_u != null && ` · ${focused.free_u} U free`}
+            </div>
+          )}
+          <div className="vw-hint">Click the view to look around · W A S D to walk · Shift to hurry · Esc to release</div>
+        </>
+      )}
+
+      {tip && mode !== 'fpv' && (
+        <span className="hover-tip vw-tip" role="tooltip"
+              style={{ left: Math.min(tip.x + 14, window.innerWidth - 300), top: tip.y + 14 }}>{tip.text}</span>
+      )}
+
+      <div className="vw-status">
+        <span><span className="dot" style={{ background: scene.isError ? 'var(--critical)' : updatedAgo != null && updatedAgo < 45 ? 'var(--ok)' : 'var(--warn)' }} />
+          {updatedAgo == null ? 'Loading' : `Live · updated ${updatedAgo}s ago`}</span>
+        {room && <span>{room.datacenter_code ? `${room.datacenter_code} · ` : ''}{room.name}</span>}
+        {plan && <span>{plan.extent.width_m} × {plan.extent.depth_m} m · {plan.racks.length} racks · {data?.devices.length ?? 0} devices</span>}
+        <span className="spacer" />
+        <span>Drag to orbit · right-drag to pan · scroll to zoom</span>
+      </div>
+    </div>
   );
 }

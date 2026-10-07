@@ -268,6 +268,8 @@ def _floor_equipment(e: dict[str, Any]) -> FloorEquipment:
         status=e.get("status") or "UNKNOWN",
         max_severity=e.get("max_severity") or "CLEAR",
         power_w=_f(e.get("power_w")), inlet_c=_f(e.get("inlet_temp_c")),
+        supply_c=_f(e.get("supply_c")), return_c=_f(e.get("return_c")),
+        temp_c=_f(e.get("temp_c")), rh_pct=_f(e.get("rh_pct")),
         x=_f(e.get("floor_x")), y=_f(e.get("floor_y")),
         mount=e.get("mount"), facing_deg=_f(e.get("rotation_deg")),
         w_m=_f(e.get("footprint_w_m")), d_m=_f(e.get("footprint_d_m")),
@@ -289,6 +291,7 @@ async def room_scene(session: AsyncSession, room_id: str) -> TwinRoomScene | Non
         status=d.get("status") or "UNKNOWN",
         max_severity=d.get("max_severity") or "CLEAR",
         power_w=_f(d.get("power_w")), inlet_c=_f(d.get("inlet_temp_c")),
+        temp_c=_f(d.get("temp_c")), rh_pct=_f(d.get("rh_pct")),
     ) for d in rows])
 
 

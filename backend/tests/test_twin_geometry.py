@@ -121,3 +121,13 @@ def test_the_3d_scene_draws_only_live_devices_in_this_rooms_racks():
     assert "d.lifecycle <> 'decommissioned'" in body
     assert "rr.room_id = CAST(:room_id AS uuid)" in body
     assert "d.mount_height_m" in body          # door probes have no U to place them by
+
+
+def test_rack_load_is_metered_at_the_pdus_not_summed_twice():
+    """A rack PDU's reading already contains every server plugged into it.
+    Summing all devices counted each server twice - R2-01 read 32.5 kW for a
+    16.5 kW rack, and the power overlay painted healthy racks red."""
+    from app.repositories.racks import _RACK_LOAD_W, _RACK_SUMMARY
+    assert "d.device_type IN ('pdu', 'floor_pdu')" in _RACK_LOAD_W
+    assert "d.device_type NOT IN ('pdu', 'floor_pdu')" in _RACK_LOAD_W
+    assert "COALESCE(sum(ds.power_w), 0)" not in _RACK_SUMMARY

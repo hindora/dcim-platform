@@ -1,0 +1,105 @@
+/* The room viewer (features/floorplan). Chrome follows the theme tokens; the
+   picture inside the canvas follows the data bands (index.css --band-*). */
+
+.viewer { position: relative; height: calc(100dvh - 68px); min-height: 540px; overflow: hidden;
+          background: var(--bg-inset); }
+.viewer canvas { display: block; touch-action: none; outline: none; }
+.viewer-stage { position: absolute; inset: 0; }
+.viewer-fallback { padding: 20px 24px; }
+
+/* floating chrome ------------------------------------------------------ */
+.vw-float { position: absolute; z-index: 3; display: flex; align-items: center; gap: 8px;
+            background: color-mix(in srgb, var(--bg-raised) 92%, transparent);
+            border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px;
+            box-shadow: 0 6px 20px color-mix(in srgb, var(--bg-inset) 55%, transparent); }
+.vw-topleft { top: 12px; left: 12px; }
+.vw-topcenter { top: 12px; left: 50%; transform: translateX(-50%); }
+.vw-topleft select { background: var(--bg-raised); color: var(--text); border: 1px solid var(--border);
+                     border-radius: 4px; padding: 5px 8px; font: inherit; max-width: 260px; }
+.vw-float .seg { background: var(--bg-raised); }
+.vw-icon { background: none; border: 1px solid var(--border); border-radius: 4px; color: var(--text-muted);
+           font: inherit; font-size: 12px; font-weight: 600; letter-spacing: .06em; padding: 6px 10px;
+           cursor: pointer; }
+.vw-icon:hover { color: var(--text); border-color: var(--border-strong); }
+.vw-icon.is-on { color: var(--text); border-color: var(--accent); box-shadow: inset 0 -2px 0 var(--accent); }
+
+.vw-rail { position: absolute; z-index: 3; top: 64px; left: 12px; display: flex; flex-direction: column; gap: 6px; }
+
+/* right panel ----------------------------------------------------------- */
+.vw-panel { position: absolute; z-index: 4; top: 12px; right: 12px; bottom: 54px; width: 320px;
+            display: flex; flex-direction: column; background: var(--bg-raised);
+            border: 1px solid var(--border); border-radius: 6px; overflow: hidden;
+            box-shadow: 0 10px 30px color-mix(in srgb, var(--bg-inset) 60%, transparent); }
+.vw-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+                 padding: 10px 12px; border-bottom: 1px solid var(--border); }
+.vw-panel-head h3 { margin: 0; font-size: 0.82rem; letter-spacing: .06em; text-transform: uppercase;
+                    color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vw-panel-head .close { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 16px; }
+.vw-panel-body { overflow: auto; padding: 8px 12px 14px; font-size: 0.82rem; }
+.vw-kv { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+.vw-row { display: flex; justify-content: space-between; gap: 12px; padding: 3px 0; border-bottom: 1px solid var(--border); }
+.vw-row .k { color: var(--text-faint); }
+.vw-row .v { font-variant-numeric: tabular-nums; text-align: right; }
+.vw-section { border-top: 1px solid var(--border); }
+.vw-section summary { cursor: pointer; padding: 9px 0; font-size: 0.74rem; font-weight: 600; letter-spacing: .08em;
+                      text-transform: uppercase; color: var(--text-muted); list-style: none; display: flex;
+                      justify-content: space-between; }
+.vw-section summary::after { content: '›'; transform: rotate(90deg); color: var(--text-faint); }
+.vw-section[open] summary::after { transform: rotate(-90deg); }
+.vw-section-body { padding: 0 0 10px; }
+.vw-note { margin: 6px 0 0; font-size: 0.74rem; }
+.vw-tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 8px 0; }
+.vw-tile { background: var(--bg-inset); border: 1px solid var(--border); border-radius: 4px; padding: 8px 6px;
+           text-align: center; display: flex; flex-direction: column; gap: 2px; }
+.vw-tile b { font-size: 0.95rem; font-variant-numeric: tabular-nums; }
+.vw-tile span { font-size: 0.64rem; letter-spacing: .08em; color: var(--text-faint); }
+.vw-bar { margin: 4px 0 8px; }
+.vw-bar-head { display: flex; justify-content: space-between; font-variant-numeric: tabular-nums; }
+.vw-bar-head span { color: var(--text-muted); }
+.vw-bar-track { height: 6px; background: var(--bg-inset); border-radius: 3px; overflow: hidden; margin: 4px 0; }
+.vw-bar-fill { height: 100%; }
+.vw-bar-label { font-size: 0.7rem; color: var(--text-faint); text-transform: uppercase; letter-spacing: .06em; }
+.vw-list { margin: 0; padding-left: 16px; }
+.vw-links { display: flex; gap: 14px; margin-top: 12px; }
+.vw-radios { display: flex; flex-direction: column; gap: 2px; }
+.vw-radios label { display: grid; grid-template-columns: 16px 1fr; gap: 2px 8px; align-items: center;
+                   padding: 5px 6px; border-radius: 4px; cursor: pointer; }
+.vw-radios label:hover { background: var(--bg-inset); }
+.vw-radios label.is-on { box-shadow: inset 2px 0 0 var(--accent); }
+.vw-radios small { grid-column: 2; color: var(--text-faint); font-size: 0.7rem; }
+
+/* legend ----------------------------------------------------------------- */
+.vw-legends { position: absolute; z-index: 3; left: 12px; bottom: 54px; display: flex; gap: 8px; align-items: flex-end; }
+.vw-legend { background: color-mix(in srgb, var(--bg-raised) 92%, transparent); border: 1px solid var(--border);
+             border-radius: 6px; padding: 8px 10px; font-size: 0.72rem; min-width: 150px; }
+.vw-legend-title { font-weight: 600; letter-spacing: .06em; text-transform: uppercase; font-size: 0.66rem;
+                   color: var(--text-muted); margin-bottom: 4px; }
+.vw-legend-row { display: flex; align-items: center; gap: 8px; padding: 2px 0; font-variant-numeric: tabular-nums; }
+.vw-swatch { width: 22px; height: 11px; border-radius: 2px; flex: none; }
+
+/* status bar --------------------------------------------------------------- */
+.vw-status { position: absolute; z-index: 3; left: 0; right: 0; bottom: 0; height: 42px; display: flex;
+             align-items: center; gap: 18px; padding: 0 16px; font-size: 0.74rem; color: var(--text-muted);
+             background: var(--bg-raised); border-top: 1px solid var(--border); }
+.vw-status .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+.vw-status .spacer { flex: 1; }
+
+/* FPV HUD --------------------------------------------------------------- */
+.vw-reticle { position: absolute; z-index: 3; left: 50%; top: 50%; width: 28px; height: 28px;
+              margin: -14px 0 0 -14px; border: 2px solid var(--accent); border-radius: 50%; pointer-events: none;
+              opacity: 0.85; }
+.vw-reticle::after { content: ''; position: absolute; left: 50%; top: 50%; width: 4px; height: 4px; margin: -2px;
+                     background: var(--accent); border-radius: 50%; }
+.vw-focus { position: absolute; z-index: 3; left: 50%; top: calc(50% + 28px); transform: translateX(-50%);
+            background: color-mix(in srgb, var(--bg-raised) 92%, transparent); border: 1px solid var(--border);
+            border-radius: 6px; padding: 8px 12px; font-size: 0.82rem; pointer-events: none; text-align: center; }
+.vw-focus b { display: block; font-size: 0.95rem; }
+.vw-hint { position: absolute; z-index: 3; left: 50%; bottom: 60px; transform: translateX(-50%);
+           font-size: 0.74rem; color: var(--text-muted); background: color-mix(in srgb, var(--bg-raised) 92%, transparent);
+           border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; pointer-events: none; }
+.vw-tip { position: fixed; z-index: 60; }
+
+@media (max-width: 900px) {
+  .vw-panel { width: min(320px, calc(100% - 24px)); }
+  .vw-legends { bottom: 54px; }
+}

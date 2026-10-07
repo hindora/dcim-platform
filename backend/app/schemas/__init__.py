@@ -312,6 +312,11 @@ class FloorEquipment(BaseModel):
     max_severity: str = "CLEAR"
     power_w: float | None = None
     inlet_c: float | None = None
+    # Air handlers: discharge and return air; the gradient a unit is drawn with.
+    supply_c: float | None = None
+    return_c: float | None = None
+    temp_c: float | None = None
+    rh_pct: float | None = None
     x: float | None = None
     y: float | None = None
     mount: str | None = None
@@ -378,6 +383,10 @@ class TwinDevice(BaseModel):
     max_severity: str = "CLEAR"
     power_w: float | None = None
     inlet_c: float | None = None
+    # The air at the device from whichever sensor it has (inlet or ambient),
+    # and its humidity. What the rack's bottom/middle/top gradient is drawn from.
+    temp_c: float | None = None
+    rh_pct: float | None = None
 
 
 class TwinRoomScene(BaseModel):

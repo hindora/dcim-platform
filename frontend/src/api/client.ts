@@ -1713,6 +1713,9 @@ export interface TwinDevice {
   max_severity: string;
   power_w?: number | null;
   inlet_c?: number | null;
+  /** Air at the device from whichever sensor it has (inlet or ambient). */
+  temp_c?: number | null;
+  rh_pct?: number | null;
 }
 
 export interface TwinRoomScene {
@@ -1729,6 +1732,11 @@ export interface FloorEquipment {
   max_severity: string;
   power_w?: number | null;
   inlet_c?: number | null;
+  /** Air handlers: discharge and return air. */
+  supply_c?: number | null;
+  return_c?: number | null;
+  temp_c?: number | null;
+  rh_pct?: number | null;
   /** Centre, room metres. Absent = listed, not drawn. */
   x?: number | null;
   y?: number | null;
