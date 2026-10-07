@@ -109,3 +109,15 @@ def test_geometry_only_import_leaves_endpoints_collectors_and_lifecycle_alone():
                       "_decommission_missing", "_resurrect", "collector_id", "lifecycle ="):
         assert forbidden not in body, forbidden
     assert "geometry_source IS DISTINCT FROM 'manual'" in body
+
+
+def test_the_3d_scene_draws_only_live_devices_in_this_rooms_racks():
+    """The 3D room lists what is in each rack; a decommissioned box left on a
+    rack_id must not be drawn as if it were still there."""
+    repo = (Path(__file__).resolve().parents[1] / "app" / "repositories"
+            / "racks.py").read_text(encoding="utf-8")
+    start = repo.index("async def room_rack_devices(")
+    body = repo[start:repo.index("return [dict(r) for r in rows]", start)]
+    assert "d.lifecycle <> 'decommissioned'" in body
+    assert "rr.room_id = CAST(:room_id AS uuid)" in body
+    assert "d.mount_height_m" in body          # door probes have no U to place them by

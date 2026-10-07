@@ -1,57 +1,21 @@
 import { useQuery } from '@tanstack/react-query';
 import { humanise } from '../../lib/format';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { useState } from 'react';
+import { lazy, Suspense } from 'react';
+import { Seg } from '../../components/estate';
+import {
+  alarmColor, OVERLAYS, POWER_CRIT, POWER_WARN, rackFill, TEMP_MAX, TEMP_MIN,
+  TEMP_RECOMMENDED_MAX, type Overlay,
+} from './colors';
+
+// three.js and react-three-fiber load only when somebody opens the 3D view.
+const FloorPlan3D = lazy(() => import('./FloorPlan3D'));
+
+type View = '2d' | '3d';
 import {
   api, type FloorEquipment, type FloorPlan as Plan, type FloorRack, type RoomSummary,
 } from '../../api/client';
 import { StatusChip } from '../../components/StatusChip';
-
-type Overlay = 'thermal' | 'power' | 'alarm';
-
-const OVERLAYS: { key: Overlay; label: string }[] = [
-  { key: 'thermal', label: 'Inlet temp' },
-  { key: 'power', label: 'Power' },
-  { key: 'alarm', label: 'Alarms' },
-];
-
-// ASHRAE A1: 18-27 C recommended intake, allowable to 32. The scale is fixed to
-// that band rather than to the room's own spread, so a room sitting at a
-// uniform 24 C looks uniformly fine instead of manufacturing a hot spot out of
-// half a degree.
-const TEMP_MIN = 18;
-const TEMP_RECOMMENDED_MAX = 27;
-const TEMP_MAX = 32;
-
-function tempColor(c: number | null | undefined): string {
-  if (c == null) return 'var(--bg-inset)';
-  const t = Math.min(1, Math.max(0, (c - TEMP_MIN) / (TEMP_MAX - TEMP_MIN)));
-  // Blue (cold) through amber to red. hsl hue 210 -> 0.
-  return `hsl(${Math.round(210 - 210 * t)}, 70%, ${Math.round(55 - 15 * t)}%)`;
-}
-
-function powerColor(kw: number | null | undefined, peak: number): string {
-  if (kw == null || peak <= 0) return 'var(--bg-inset)';
-  const t = Math.min(1, kw / peak);
-  return `hsl(265, 60%, ${Math.round(22 + 38 * t)}%)`;
-}
-
-function alarmColor(sev: string, offline: number): string {
-  if (offline > 0) return 'var(--critical)';
-  switch (sev) {
-    case 'CRITICAL': return 'var(--critical)';
-    case 'MAJOR': return 'var(--major)';
-    case 'MINOR':
-    case 'WARNING': return 'var(--warn)';
-    default: return 'var(--ok)';
-  }
-}
-
-function rackFill(r: FloorRack, overlay: Overlay, peakKw: number): string {
-  if (overlay === 'thermal') return tempColor(r.max_inlet_c);
-  if (overlay === 'power') return powerColor(r.load_kw, peakKw);
-  return alarmColor(r.max_severity, r.offline_count);
-}
 
 function rackTitle(r: FloorRack): string {
   const bits = [
@@ -105,7 +69,16 @@ export function FloorPlanView() {
   // first - the link appeared to work and showed the wrong hall. Keeping it in
   // the query string also makes the view linkable and survives a back button.
   const [params, setParams] = useSearchParams();
-  const [overlay, setOverlay] = useState<Overlay>('thermal');
+  // View and overlay live in the URL beside the room, so a 3D link to a hot
+  // rack is shareable and the back button returns to the same picture.
+  const view: View = params.get('view') === '3d' ? '3d' : '2d';
+  const overlay: Overlay = (OVERLAYS.some((o) => o.key === params.get('overlay'))
+    ? params.get('overlay') : 'thermal') as Overlay;
+  const setParam = (k: string, v: string) => {
+    params.set(k, v);
+    setParams(params, { replace: true });
+  };
+  const setOverlay = (o: Overlay) => setParam('overlay', o);
 
   const rooms = useQuery<{ items: RoomSummary[] }>({
     queryKey: ['rooms'],
@@ -128,7 +101,7 @@ export function FloorPlanView() {
   const plan = useQuery<Plan>({
     queryKey: ['floorplan', selected],
     queryFn: () => api.floorplan(selected),
-    enabled: Boolean(selected),
+    enabled: Boolean(selected) && view === '2d',
     refetchInterval: 20_000,
     retry: false,
   });
@@ -150,6 +123,8 @@ export function FloorPlanView() {
             ))}
           </select>
         </label>
+        <Seg label="View" value={view} onChange={(v) => setParam('view', v)}
+             options={[{ key: '2d', label: '2D' }, { key: '3d', label: '3D' }]} />
         <div className="overlay-picker" role="group" aria-label="Overlay">
           {OVERLAYS.map((o) => (
             <button key={o.key} type="button"
@@ -161,11 +136,17 @@ export function FloorPlanView() {
         </div>
       </div>
 
-      {plan.isError && (
+      {view === '2d' && plan.isError && (
         <p className="muted">Nothing in this room is positioned, so it cannot be drawn.</p>
       )}
 
-      {plan.data && <Plan2D plan={plan.data} overlay={overlay} />}
+      {view === '2d' && plan.data && <Plan2D plan={plan.data} overlay={overlay} />}
+
+      {view === '3d' && selected && (
+        <Suspense fallback={<p className="muted">Loading the 3D view…</p>}>
+          <FloorPlan3D roomId={selected} overlay={overlay} />
+        </Suspense>
+      )}
     </div>
   );
 }
@@ -299,6 +280,16 @@ function Plan2D({ plan, overlay }: { plan: Plan; overlay: Overlay }) {
           recommended up to {TEMP_RECOMMENDED_MAX} °C. Racks with no inlet
           reading are left unfilled rather than shown as cold.
         </p>
+      )}
+      {overlay === 'power' && (
+        <p className="muted">
+          Load against the rack's rating (its smallest single feed): amber from{' '}
+          {POWER_WARN * 100} %, red from {POWER_CRIT * 100} %. A rack with no
+          rating is shaded against the busiest rack in the room instead.
+        </p>
+      )}
+      {overlay === 'space' && (
+        <p className="muted">Share of the rack's U in use: pale is empty, deep is full.</p>
       )}
 
       {plan.unpositioned_equipment.length > 0 && (

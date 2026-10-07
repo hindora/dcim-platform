@@ -11,7 +11,13 @@ from app.core import audit
 from app.core.security import Principal, current_principal
 from app.db.session import get_session
 from app.repositories import racks as repo
-from app.schemas import FloorPlan, RackElevation, RackSummary, TwinSiteScene
+from app.schemas import (
+    FloorPlan,
+    RackElevation,
+    RackSummary,
+    TwinRoomScene,
+    TwinSiteScene,
+)
 from app.services import devices as service
 
 router = APIRouter(tags=["infrastructure"])
@@ -138,3 +144,17 @@ async def set_site_location(
     await session.commit()
     return {"ok": True, "latitude": body.latitude, "longitude": body.longitude,
             "location_source": "manual"}
+
+
+@router.get("/twin/rooms/{room_id}/scene", response_model=TwinRoomScene,
+            summary="One room in 3D: geometry, state and rack contents")
+async def room_scene(
+    room_id: str,
+    session: AsyncSession = Depends(get_session),
+    _: Principal = Depends(current_principal),
+) -> TwinRoomScene:
+    scene = await service.room_scene(session, room_id)
+    if scene is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND,
+                            "room not found, or nothing in it is positioned")
+    return scene

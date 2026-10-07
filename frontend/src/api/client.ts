@@ -1693,6 +1693,31 @@ export interface FloorRack {
   /** Footprint in metres; absent = the plan's default cabinet. */
   w_m?: number | null;
   d_m?: number | null;
+  u_height?: number;
+  /** Smallest single rPDU feed; null = not known. */
+  rated_power_kw?: number | null;
+}
+
+/** A device in one of a room's racks (3D scene). */
+export interface TwinDevice {
+  id: string;
+  name: string;
+  device_type: string;
+  rack_id: string;
+  /** Bottom U; null = zero-U (rack PDU, door probe). */
+  u_start?: number | null;
+  u_height: number;
+  mount?: string | null;
+  mount_height_m?: number | null;
+  status: string;
+  max_severity: string;
+  power_w?: number | null;
+  inlet_c?: number | null;
+}
+
+export interface TwinRoomScene {
+  plan: FloorPlan;
+  devices: TwinDevice[];
 }
 
 /** Not in a rack: floor-standing plant, or an instrument on a wall, pipe or panel. */
@@ -4112,6 +4137,7 @@ export const api = {
     request<Impact>(`/topology/impact/${encodeURIComponent(deviceId)}`),
 
   floorplan: (roomId: string) => request<FloorPlan>(`/rooms/${roomId}/floorplan`),
+  roomScene: (roomId: string) => request<TwinRoomScene>(`/twin/rooms/${roomId}/scene`),
 
   rackElevation: (id: string) =>
     request<RackElevation>(`/racks/${id}/elevation`),

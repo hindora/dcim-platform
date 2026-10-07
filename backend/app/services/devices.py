@@ -28,8 +28,10 @@ from app.schemas import (
     RackElevation,
     RackSummary,
     RoomExtent,
+    TwinDevice,
     TwinLevel,
     TwinRoom,
+    TwinRoomScene,
     TwinSiteScene,
 )
 from app.services import endpoint_config, floorplan
@@ -242,6 +244,8 @@ async def room_floorplan(session: AsyncSession, room_id: str) -> FloorPlan | Non
             max_severity=r.get("max_severity") or "CLEAR",
             free_u=r.get("free_u"),
             w_m=_f(r.get("rack_w")), d_m=_f(r.get("rack_d")),
+            u_height=int(r.get("u_height") or 42),
+            rated_power_kw=_f(r.get("rated_power_kw")),
         ) for r in racks],
         equipment=[_floor_equipment(e) for e in placed],
         unpositioned_equipment=[_floor_equipment(e) for e in loose],
@@ -270,6 +274,22 @@ def _floor_equipment(e: dict[str, Any]) -> FloorEquipment:
         h_m=_f(e.get("height_m")), mount_height_m=_f(e.get("mount_height_m")),
         basis=e.get("footprint_basis"),
     )
+
+
+async def room_scene(session: AsyncSession, room_id: str) -> TwinRoomScene | None:
+    """The floor plan plus the contents of every rack (docs/27 Phase 1)."""
+    plan = await room_floorplan(session, room_id)
+    if plan is None:
+        return None
+    rows = await rack_repo.room_rack_devices(session, room_id)
+    return TwinRoomScene(plan=plan, devices=[TwinDevice(
+        id=d["id"], name=d["name"], device_type=d["device_type"], rack_id=d["rack_id"],
+        u_start=d.get("u_start"), u_height=int(d.get("u_height") or 1),
+        mount=d.get("mount"), mount_height_m=_f(d.get("mount_height_m")),
+        status=d.get("status") or "UNKNOWN",
+        max_severity=d.get("max_severity") or "CLEAR",
+        power_w=_f(d.get("power_w")), inlet_c=_f(d.get("inlet_temp_c")),
+    ) for d in rows])
 
 
 async def site_scene(session: AsyncSession, datacenter_id: str) -> TwinSiteScene | None:

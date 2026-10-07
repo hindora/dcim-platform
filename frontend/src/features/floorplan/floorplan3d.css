@@ -1,0 +1,22 @@
+/* The 3D room (features/floorplan/FloorPlan3D). Loaded with the 3D chunk only. */
+
+.room3d { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 16px; align-items: start; }
+@media (max-width: 1100px) { .room3d { grid-template-columns: minmax(0, 1fr); } }
+
+.room3d-stage {
+  position: relative; min-width: 0; height: min(72vh, 760px); min-height: 420px;
+  border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;
+  background: var(--bg-inset);
+}
+.room3d-stage canvas { display: block; touch-action: none; }
+.room3d-tools { position: absolute; top: 10px; left: 10px; z-index: 2; }
+.room3d-tools .seg { background: var(--bg-raised); }
+.room3d-tip b { color: var(--text); }
+
+.room3d-side { display: flex; flex-direction: column; gap: 12px; }
+.room3d-help { font-size: 0.76rem; margin: 0; }
+.room3d-card h4 { margin: 0 0 6px; }
+.room3d-card dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0 0 10px; font-size: 0.82rem; }
+.room3d-card dt { color: var(--text-faint); }
+.room3d-card dd { margin: 0; font-variant-numeric: tabular-nums; }
+.room3d-faults { margin: 0 0 10px; padding-left: 16px; font-size: 0.82rem; }

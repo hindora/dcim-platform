@@ -289,6 +289,9 @@ class FloorRack(BaseModel):
     # Footprint in metres; None = the 600 x 1200 mm default on the plan.
     w_m: float | None = None
     d_m: float | None = None
+    u_height: int = 42
+    # Smallest single rPDU feed (2N: the rack must run on one); None = unknown.
+    rated_power_kw: float | None = None
 
 
 class FloorEquipment(BaseModel):
@@ -356,6 +359,33 @@ class FloorPlan(BaseModel):
     level_elevation_m: float | None = None
     origin_x_m: float | None = None
     origin_y_m: float | None = None
+
+
+class TwinDevice(BaseModel):
+    """A device in one of the room's racks, for the 3D scene."""
+
+    id: str
+    name: str
+    device_type: str
+    rack_id: str
+    # Bottom U and height; u_start None = zero-U (rack PDU, door probe).
+    u_start: int | None = None
+    u_height: int = 1
+    mount: str | None = None
+    # Centre height above the floor - how a door probe with no U is placed.
+    mount_height_m: float | None = None
+    status: str = "UNKNOWN"
+    max_severity: str = "CLEAR"
+    power_w: float | None = None
+    inlet_c: float | None = None
+
+
+class TwinRoomScene(BaseModel):
+    """One room in 3D: the floor plan's geometry and state, plus what is in
+    each rack. One request, polled - the room is a few hundred rows."""
+
+    plan: FloorPlan
+    devices: list[TwinDevice] = Field(default_factory=list)
 
 
 class TwinRoom(BaseModel):
