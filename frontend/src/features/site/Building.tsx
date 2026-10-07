@@ -17,7 +17,10 @@ import './building.css';
  */
 
 const COS = 0.866, SIN = 0.5;        // 30-degree oblique
-const RISE = 0.7;                    // vertical metres per metre of elevation, exaggerated so levels separate
+// Vertical drawing units per metre of elevation. Exaggerated: at 1:1 a 5 m
+// floor-to-floor is less than a 12 m hall's projected depth and the levels
+// overlap; at this ratio each level clears the one below.
+const RISE = 2.6;
 
 function tone(sev: string): string {
   switch (sev) {
