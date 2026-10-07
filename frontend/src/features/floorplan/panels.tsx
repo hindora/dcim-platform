@@ -8,6 +8,7 @@ import {
   COOLING_LAYERS, RACK_LAYERS, dewPoint, gridRef, rackMeanRh, rackTiers, unitReadings,
   type CoolingLayer, type Legend as LegendSpec, type RackLayer, type Visibility,
 } from './layers';
+import type { PathKind, PathOverlay } from './paths';
 
 /** The viewer's side panel and legend. Facts only: every figure here is one
  *  the estate pages also show, read from the same endpoints. */
@@ -299,5 +300,74 @@ export function FiltersPanel({ rackLayer, coolingLayer, vis, onRack, onCooling, 
         </div>
       </details>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------- paths
+
+/** Power path, cooling path or impact for the selection. The picture draws
+ *  what stands in this room; the list here names every hop, with the room of
+ *  anything that stands elsewhere. */
+export function PathsPanel({ kind, overlay, loading, error, canImpact, inRoom, onPick, onClear }: {
+  kind: PathKind | null; overlay: PathOverlay | null; loading: boolean; error: boolean; canImpact: boolean;
+  inRoom: (id: string) => boolean; onPick: (k: PathKind) => void; onClear: () => void;
+}) {
+  const btn = (k: PathKind, label: string, disabled = false) => (
+    <button key={k} type="button" className={`vw-icon${kind === k ? ' is-on' : ''}`} disabled={disabled}
+            onClick={() => (kind === k ? onClear() : onPick(k))}>{label}</button>
+  );
+  return (
+    <Section title="Paths" open>
+      <div className="vw-btns">
+        {btn('power', 'POWER')}{btn('cooling', 'COOLING')}{btn('impact', 'IMPACT', !canImpact)}
+      </div>
+      {loading && <p className="muted vw-note">Tracing…</p>}
+      {error && <p className="muted vw-note">The topology service could not answer for this device.</p>}
+      {overlay && overlay.kind !== 'impact' && (
+        <div className="vw-chains">
+          {overlay.chains.length === 0 && <p className="muted vw-note">No path recorded on this layer.</p>}
+          {overlay.chains.map((c, i) => (
+            <div key={i} className="vw-chain">
+              <div className="vw-chain-head">
+                <b>{c.side ? `Side ${c.side}` : 'Path'}</b>
+                <span className={`muted${c.verdict !== 'complete' ? ' vw-bad' : ''}`}>{c.verdict}</span>
+              </div>
+              <ol>
+                {c.nodes.map((n, j) => (
+                  <li key={`${n.id}-${j}`} className={inRoom(n.id) ? undefined : 'is-away'}>
+                    <Link to={`/devices/${n.id}`}>{n.name}</Link>
+                    {!inRoom(n.id) && n.room_name && <span className="muted"> · {n.room_name}</span>}
+                  </li>
+                ))}
+              </ol>
+            </div>
+          ))}
+        </div>
+      )}
+      {overlay && overlay.kind === 'impact' && (
+        <div className="vw-chains">
+          <Row k="Cut off" v={overlay.cutOff.length} />
+          <Row k="Degraded" v={overlay.degraded.length} />
+          {overlay.cutOff.length > 0 && (
+            <ul className="vw-list">
+              {overlay.cutOff.slice(0, 12).map((n) => (
+                <li key={n.id}><Link to={`/devices/${n.id}`}>{n.name}</Link>
+                  <span className="muted"> · cut off{!inRoom(n.id) && n.room_name ? ` · ${n.room_name}` : ''}</span></li>
+              ))}
+              {overlay.cutOff.length > 12 && <li className="muted">and {overlay.cutOff.length - 12} more</li>}
+            </ul>
+          )}
+          {overlay.degraded.length > 0 && (
+            <ul className="vw-list">
+              {overlay.degraded.slice(0, 8).map((n) => (
+                <li key={n.id}><Link to={`/devices/${n.id}`}>{n.name}</Link>
+                  <span className="muted"> · one side left{!inRoom(n.id) && n.room_name ? ` · ${n.room_name}` : ''}</span></li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+      {overlay?.notes.map((n) => <p key={n} className="muted vw-note">{n}</p>)}
+    </Section>
   );
 }

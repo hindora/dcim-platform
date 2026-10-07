@@ -205,6 +205,7 @@ function SiteCard({ site }: { site: SiteRow }) {
         <dd>{site.rooms.length}</dd>
       </dl>
       <div className="world-links">
+        <Link to={`/twin/sites/${site.id}`}>Building</Link>
         {hall && <Link to={`/floorplan?room=${hall.id}`}>Floor map</Link>}
         <Link to={`/thermal?site=${site.id}&scope=rooms`}>Thermal</Link>
         <Link to="/connectivity">Network map</Link>

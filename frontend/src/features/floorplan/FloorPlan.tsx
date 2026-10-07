@@ -1,6 +1,6 @@
-import { useQuery } from '@tanstack/react-query';
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import {
   api, type FloorPlan as Plan, type RoomKpi, type RoomSummary, type ThermalRoom, type ThermalUnit,
   type TwinRoomScene,
@@ -11,8 +11,10 @@ import {
   coolingLegendFor, DEFAULT_VIS, legendFor, rackTiers, ventTiles,
   type CoolingLayer, type RackLayer, type Sel, type ViewMode, type Visibility,
 } from './layers';
-import { DevicePanel, FiltersPanel, Legend, RackPanel, RoomPanel, UnitPanel } from './panels';
+import { DevicePanel, FiltersPanel, Legend, PathsPanel, RackPanel, RoomPanel, UnitPanel } from './panels';
+import { fromImpact, fromTraces, type PathKind } from './paths';
 import { Plan2D } from './Plan2D';
+import { useFrames, useTopics } from '../../ws/useSocket';
 import type { HoverTip } from './Scene';
 import './viewer.css';
 
@@ -73,19 +75,35 @@ export function FloorPlanView() {
   const [vis, setVis] = useState<Visibility>(DEFAULT_VIS);
   const [resetTick, setResetTick] = useState(0);
   const [themeTick, setThemeTick] = useState(0);
+  const [pathKind, setPathKind] = useState<PathKind | null>(null);
+  const qc = useQueryClient();
 
   useEffect(() => {
     const mo = new MutationObserver(() => setThemeTick((t) => t + 1));
     mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'class'] });
     return () => mo.disconnect();
   }, []);
-  useEffect(() => { setSel(null); setFocus(null); }, [roomId]);
+  useEffect(() => { setSel(null); setFocus(null); setPathKind(null); }, [roomId]);
+  useEffect(() => { setPathKind(null); }, [sel?.kind, sel?.id]);
+
+  // Readings for this room arrive as one `room:{id}` frame per ingest batch;
+  // the scene is re-read at most every 5 s on them, with the 60 s poll as the
+  // backstop for a socket that has gone quiet.
+  useTopics(roomId ? [`room:${roomId}`] : []);
+  const lastPush = useRef(0);
+  useFrames(['room_update'], (f) => {
+    if (f.room_id !== roomId) return;
+    const now = Date.now();
+    if (now - lastPush.current < 5_000) return;
+    lastPush.current = now;
+    qc.invalidateQueries({ queryKey: ['twin-scene', roomId] });
+  });
   // Labels are what FPV is for; in the other views they are clutter until asked for.
   useEffect(() => { setVis((v) => ({ ...v, labels: mode === 'fpv' })); }, [mode]);
 
   const scene = useQuery<TwinRoomScene>({
     queryKey: ['twin-scene', roomId], queryFn: () => api.roomScene(roomId),
-    enabled: Boolean(roomId) && webgl, refetchInterval: 15_000, retry: false,
+    enabled: Boolean(roomId) && webgl, refetchInterval: 60_000, retry: false,
   });
   const plan2d = useQuery<Plan>({
     queryKey: ['floorplan', roomId], queryFn: () => api.floorplan(roomId),
@@ -113,6 +131,30 @@ export function FloorPlanView() {
 
   const data = scene.data;
   const plan = data?.plan;
+
+  // --- paths ------------------------------------------------------------
+  // A rack is traced through its rack PDUs - the cords that feed it - so a
+  // rack's power path is the union of its strips'. Impact is a question about
+  // one device, so it is offered for a device or a unit only.
+  const anchors = useMemo(() => {
+    if (!sel || !data) return [] as string[];
+    if (sel.kind === 'rack') return data.devices.filter((d) => d.rack_id === sel.id && d.device_type === 'pdu').map((d) => d.id);
+    return [sel.id];
+  }, [sel, data]);
+  const pathQ = useQuery({
+    queryKey: ['twin-path', pathKind, anchors],
+    queryFn: async () => pathKind === 'impact'
+      ? fromImpact(await api.impact(anchors[0]))
+      : fromTraces(pathKind as 'power' | 'cooling', await Promise.all(anchors.map((a) => api.trace(a, pathKind as string)))),
+    enabled: Boolean(pathKind) && anchors.length > 0, staleTime: 60_000, retry: false,
+  });
+  const overlay = pathKind && pathQ.data ? pathQ.data : null;
+  const inRoom = useMemo(() => {
+    const ids = new Set<string>();
+    for (const d of data?.devices ?? []) ids.add(d.id);
+    for (const e of data?.plan.equipment ?? []) ids.add(e.id);
+    return (id: string) => ids.has(id);
+  }, [data]);
   const vents = useMemo(() => plan ? ventTiles(plan.racks, plan.aisles, plan.room_class === 'white_space').length : 0, [plan]);
   const legends = useMemo(() => {
     const a = legendFor(rackLayer);
@@ -144,6 +186,11 @@ export function FloorPlanView() {
   } else if (data) {
     panelBody = <RoomPanel plan={data.plan} devices={data.devices} kpi={kpi.data} thermal={thermal.data} vents={vents} />;
   }
+  const paths = sel && data && panel === 'info' ? (
+    <PathsPanel kind={pathKind} overlay={overlay} loading={Boolean(pathKind) && pathQ.isLoading} error={pathQ.isError}
+                canImpact={sel.kind !== 'rack'} inRoom={inRoom}
+                onPick={(k) => setPathKind(k)} onClear={() => setPathKind(null)} />
+  ) : null;
 
   const focused = focus && data ? data.plan.racks.find((r) => r.id === focus) : null;
   const focusTiers = focused && data ? rackTiers(data.devices.filter((d) => d.rack_id === focused.id), focused.u_height ?? 42) : null;
@@ -183,7 +230,7 @@ export function FloorPlanView() {
         {data && (
           <Suspense fallback={<p className="muted viewer-fallback">Loading the room…</p>}>
             <Stage data={data} units={units} rackLayer={rackLayer} coolingLayer={coolingLayer} vis={vis} mode={mode}
-                   sel={sel} resetTick={resetTick} themeTick={themeTick}
+                   sel={sel} overlay={overlay} resetTick={resetTick} themeTick={themeTick}
                    onSelect={(s) => { setSel(s); if (s) setPanel('info'); }} onTip={setTip} onFocus={setFocus}
                    label={`${mode === 'plan' ? 'Plan' : mode === 'fpv' ? 'Walk-through' : '3D view'} of ${data.plan.room_name}`} />
           </Suspense>
@@ -214,6 +261,7 @@ export function FloorPlanView() {
                     onClick={() => { if (sel && panel === 'info') setSel(null); else setPanel(null); }}>×</button>
           </div>
           {panelBody}
+          {paths && <div className="vw-panel-body vw-paths">{paths}</div>}
         </aside>
       )}
 
@@ -246,7 +294,11 @@ export function FloorPlanView() {
       <div className="vw-status">
         <span><span className="dot" style={{ background: scene.isError ? 'var(--critical)' : updatedAgo != null && updatedAgo < 45 ? 'var(--ok)' : 'var(--warn)' }} />
           {updatedAgo == null ? 'Loading' : `Live · updated ${updatedAgo}s ago`}</span>
-        {room && <span>{room.datacenter_code ? `${room.datacenter_code} · ` : ''}{room.name}</span>}
+        <span className="vw-jumps">
+          <Link to="/world">World</Link>
+          {room?.datacenter_id && <Link to={`/twin/sites/${room.datacenter_id}`}>Building</Link>}
+          <span>{room ? `${room.datacenter_code ? `${room.datacenter_code} · ` : ''}${room.name}` : ''}</span>
+        </span>
         {plan && <span>{plan.extent.width_m} × {plan.extent.depth_m} m · {plan.racks.length} racks · {data?.devices.length ?? 0} devices</span>}
         <span className="spacer" />
         <span>{mode === 'fpv' ? 'Pointer lock to look · W A S D to walk'

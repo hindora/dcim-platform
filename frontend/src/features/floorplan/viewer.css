@@ -103,3 +103,14 @@
   .vw-panel { width: min(320px, calc(100% - 24px)); }
   .vw-legends { bottom: 54px; }
 }
+
+/* paths ------------------------------------------------------------------ */
+.vw-btns { display: flex; gap: 6px; margin: 2px 0 8px; }
+.vw-btns .vw-icon { padding: 5px 8px; }
+.vw-btns .vw-icon:disabled { opacity: 0.45; cursor: default; }
+.vw-chain { margin: 6px 0; }
+.vw-chain-head { display: flex; justify-content: space-between; font-size: 0.78rem; }
+.vw-chain ol { margin: 4px 0 0; padding-left: 18px; }
+.vw-chain li.is-away { color: var(--text-faint); }
+.vw-bad { color: var(--warn); }
+.vw-jumps { display: flex; gap: 12px; }

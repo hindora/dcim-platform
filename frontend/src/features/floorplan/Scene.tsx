@@ -11,6 +11,7 @@ import {
   paintEquipment, paintRack, rackTiers, unitReadings, ventTiles, RACK_BASE, U, TILE,
   type CoolingLayer, type RackLayer, type RackPaint, type Sel, type ViewMode, type Visibility,
 } from './layers';
+import type { PathOverlay, Role } from './paths';
 
 /**
  * The room in WebGL (docs/27 Phase 1, restyled after the reference viewer):
@@ -50,6 +51,8 @@ export interface SceneProps {
   vis: Visibility;
   mode: ViewMode;
   sel: Sel;
+  /** A power/cooling path or an impact answer to draw over the room. */
+  overlay?: PathOverlay | null;
   resetTick: number;
   themeTick: number;
   onSelect: (s: Sel) => void;
@@ -93,8 +96,10 @@ export interface GBox {
 /** One instanced mesh of boxes, each with its own bottom/middle/top colour.
  *  `part` 'solid' draws the filled share of each box, 'shell' the translucent
  *  remainder above it (only for boxes that are not full). */
-function GradientBoxes({ boxes, part, opacity, meshRef, onClick, onMove, onOut }: {
+function GradientBoxes({ boxes, part, opacity, dim, meshRef, onClick, onMove, onOut }: {
   boxes: GBox[]; part: 'solid' | 'shell'; opacity: number;
+  /** Boxes not part of the active overlay fade toward the walls. */
+  dim?: boolean[];
   meshRef?: React.MutableRefObject<THREE.InstancedMesh | null>;
   onClick?: (i: number) => void; onMove?: (i: number, e: ThreeEvent<PointerEvent>) => void; onOut?: () => void;
 }) {
@@ -129,7 +134,7 @@ function GradientBoxes({ boxes, part, opacity, meshRef, onClick, onMove, onOut }
     if (meshRef) meshRef.current = im;
     const m = new THREE.Matrix4(), q = new THREE.Quaternion(), p = new THREE.Vector3(), s = new THREE.Vector3();
     const up = new THREE.Vector3(0, 1, 0);
-    const col = new THREE.Color();
+    const col = new THREE.Color(), wall = new THREE.Color(SURF.wall);
     const attr = (k: string) => geometry.getAttribute(k) as THREE.InstancedBufferAttribute;
     const aB = attr('cBot'), aM = attr('cMid'), aT = attr('cTop');
     boxes.forEach((b, i) => {
@@ -141,6 +146,7 @@ function GradientBoxes({ boxes, part, opacity, meshRef, onClick, onMove, onOut }
       im.setMatrixAt(i, m.compose(p.set(b.x, yc, b.z), q, s.set(b.w, Math.max(h, 0), b.d)));
       for (const [a, c] of [[aB, b.paint.bot], [aM, b.paint.mid], [aT, b.paint.top]] as const) {
         col.set(part === 'shell' ? SURF.wall : c);
+        if (dim?.[i]) col.lerp(wall, 0.78);
         a.setXYZ(i, col.r, col.g, col.b);
       }
     });
@@ -148,7 +154,7 @@ function GradientBoxes({ boxes, part, opacity, meshRef, onClick, onMove, onOut }
     aB.needsUpdate = aM.needsUpdate = aT.needsUpdate = true;
     im.computeBoundingSphere();
     invalidate();
-  }, [boxes, part, geometry, invalidate, meshRef]);
+  }, [boxes, part, dim, geometry, invalidate, meshRef]);
 
   if (!n) return null;
   return (
@@ -226,7 +232,7 @@ function labelTexture(text: string, ink: string, bg: string): THREE.CanvasTextur
 // ----------------------------------------------------------- the scene
 
 export default function RoomScene(p: SceneProps) {
-  const { data, units, rackLayer, coolingLayer, vis, mode, sel, resetTick, themeTick, onSelect, onTip, onFocus } = p;
+  const { data, units, rackLayer, coolingLayer, vis, mode, sel, overlay, resetTick, themeTick, onSelect, onTip, onFocus } = p;
   const { plan, devices } = data;
   const W = plan.extent.width_m, D = plan.extent.depth_m;
   const whiteSpace = plan.room_class === 'white_space';
@@ -240,6 +246,8 @@ export default function RoomScene(p: SceneProps) {
     cold: resolveColor('var(--cat-cap)'), hot: resolveColor('var(--critical)'),
     ink: resolveColor('var(--text)'), inkMuted: resolveColor('var(--text-muted)'),
     raised: resolveColor('var(--bg-raised)'),
+    power: resolveColor('var(--layer-power)'), cooling: resolveColor('var(--layer-cooling)'),
+    warn: resolveColor('var(--warn)'), critical: resolveColor('var(--critical)'),
   }), [themeTick]);
 
   // --- data shaping -------------------------------------------------------
@@ -298,6 +306,20 @@ export default function RoomScene(p: SceneProps) {
   const fpv = mode === 'fpv';
   const anyShell = rackBoxes.some((b) => b.paint.fill < 1);
 
+  // Which racks and units the overlay touches, so the rest can fade.
+  const rackRole = useMemo(() => plan.racks.map((r) => {
+    if (!overlay) return null;
+    let best: Role | null = null;
+    for (const d of byRack.get(r.id) ?? []) {
+      const role = overlay.roles.get(d.id);
+      if (role && (best == null || RANK[role] > RANK[best])) best = role;
+    }
+    return best;
+  }), [plan.racks, byRack, overlay]);
+  const unitRole = useMemo(() => placedUnits.map((e) => overlay?.roles.get(e.id) ?? null), [placedUnits, overlay]);
+  const rackDim = useMemo(() => (overlay ? rackRole.map((x) => x == null) : undefined), [overlay, rackRole]);
+  const unitDim = useMemo(() => (overlay ? unitRole.map((x) => x == null) : undefined), [overlay, unitRole]);
+
   return (
     <>
       <color attach="background" args={[tones.bg]} />
@@ -315,7 +337,7 @@ export default function RoomScene(p: SceneProps) {
                    tones={tones} containment={vis.containment} />
       ))}
 
-      <GradientBoxes boxes={rackBoxes} part="solid" opacity={1} meshRef={rackMesh}
+      <GradientBoxes boxes={rackBoxes} part="solid" opacity={1} meshRef={rackMesh} dim={rackDim}
                      onClick={fpv ? undefined : (i) => onSelect({ kind: 'rack', id: plan.racks[i].id })}
                      onMove={fpv ? undefined : (i, e) => tip(e, rackText(plan.racks[i]))}
                      onOut={() => onTip(null)} />
@@ -328,7 +350,7 @@ export default function RoomScene(p: SceneProps) {
 
       {vis.plant && (
         <>
-          <GradientBoxes boxes={unitBoxes} part="solid" opacity={1}
+          <GradientBoxes boxes={unitBoxes} part="solid" opacity={1} dim={unitDim}
                          onClick={fpv ? undefined : (i) => onSelect({ kind: 'equipment', id: placedUnits[i].id })}
                          onMove={fpv ? undefined : (i, e) => tip(e, unitText(placedUnits[i]))}
                          onOut={() => onTip(null)} />
@@ -342,8 +364,92 @@ export default function RoomScene(p: SceneProps) {
                              ink={tones.ink} bg={tones.raised} />}
       <Highlight sel={sel} rackBoxes={rackBoxes} racks={plan.racks} unitBoxes={unitBoxes} units={placedUnits}
                  devices={devices} rackById={rackById} X={X} Z={Z} color={tones.accent} />
-      <Invalidator deps={[rackLayer, coolingLayer, vis, sel, mode]} invalidate={invalidate} />
+      {overlay && (
+        <Overlay overlay={overlay} rackBoxes={rackBoxes} racks={plan.racks} rackRole={rackRole}
+                 unitBoxes={unitBoxes} units={placedUnits} unitRole={unitRole} devices={devices}
+                 tones={tones} themeTick={themeTick} />
+      )}
+      <Invalidator deps={[rackLayer, coolingLayer, vis, sel, mode, overlay]} invalidate={invalidate} />
     </>
+  );
+}
+
+type Tones = Record<'bg' | 'accent' | 'cold' | 'hot' | 'ink' | 'inkMuted' | 'raised' | 'power' | 'cooling'
+  | 'warn' | 'critical', string>;
+const RANK: Record<Role, number> = { path: 1, degraded: 2, cut_off: 3, anchor: 4 };
+
+/** Box outline as line-segment vertices, in the box's rotation. */
+function boxEdges(b: GBox, pad: number, out: number[]): void {
+  const v = new THREE.Vector3(), q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), b.rot);
+  const c = (sx: number, sy: number, sz: number) => {
+    v.set(sx * (b.w / 2 + pad), sy * (b.h / 2 + pad), sz * (b.d / 2 + pad)).applyQuaternion(q);
+    return [v.x + b.x, v.y + b.y, v.z + b.z];
+  };
+  const P = [c(-1, -1, -1), c(1, -1, -1), c(1, -1, 1), c(-1, -1, 1), c(-1, 1, -1), c(1, 1, -1), c(1, 1, 1), c(-1, 1, 1)];
+  for (const [a, bb] of [[0, 1], [1, 2], [2, 3], [3, 0], [4, 5], [5, 6], [6, 7], [7, 4], [0, 4], [1, 5], [2, 6], [3, 7]]) {
+    out.push(...P[a], ...P[bb]);
+  }
+}
+
+/** A path or impact answer drawn over the room: outlines on every rack and
+ *  unit it names, in the role's colour, and each hop as a cable run arching
+ *  between the two boxes it joins. Hops to equipment outside this room are
+ *  not drawn - the panel lists them with the room they stand in. */
+function Overlay({ overlay, rackBoxes, racks, rackRole, unitBoxes, units, unitRole, devices, tones, themeTick }: {
+  overlay: PathOverlay; rackBoxes: GBox[]; racks: FloorRack[]; rackRole: (Role | null)[];
+  unitBoxes: GBox[]; units: FloorEquipment[]; unitRole: (Role | null)[]; devices: TwinDevice[];
+  tones: Tones; themeTick: number;
+}) {
+  const geoms = useMemo(() => {
+    const byRole: Record<Role, number[]> = { anchor: [], path: [], cut_off: [], degraded: [] };
+    rackBoxes.forEach((b, i) => { const r = rackRole[i]; if (r) boxEdges(b, 0.03, byRole[r]); });
+    unitBoxes.forEach((b, i) => { const r = unitRole[i]; if (r) boxEdges(b, 0.03, byRole[r]); });
+    // Where a device id sits: its rack's top, or its unit's top.
+    const top = new Map<string, [number, number, number]>();
+    racks.forEach((r, i) => {
+      const b = rackBoxes[i];
+      for (const d of devices) if (d.rack_id === r.id) top.set(d.id, [b.x, b.y + b.h / 2 + 0.05, b.z]);
+    });
+    units.forEach((e, i) => { const b = unitBoxes[i]; top.set(e.id, [b.x, b.y + b.h / 2 + 0.05, b.z]); });
+    const solid: number[] = [], dashed: number[] = [];
+    for (const h of overlay.hops) {
+      const a = top.get(h.from), b = top.get(h.to);
+      if (!a || !b) continue;
+      const rise = Math.max(a[1], b[1]) + 0.6 + Math.hypot(a[0] - b[0], a[2] - b[2]) * 0.08;
+      const m: [number, number, number] = [(a[0] + b[0]) / 2, rise, (a[2] + b[2]) / 2];
+      const into = h.side === 'B' ? dashed : solid;
+      into.push(...a, ...m, ...m, ...b);
+    }
+    const mk = (pts: number[]) => {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+      return g;
+    };
+    const roles = Object.fromEntries(
+      (Object.keys(byRole) as Role[]).map((k) => [k, mk(byRole[k])])) as Record<Role, THREE.BufferGeometry>;
+    return { roles, solid: mk(solid), dashed: mk(dashed) };
+  }, [overlay, rackBoxes, rackRole, unitBoxes, unitRole, racks, units, devices]);
+  useEffect(() => () => {
+    Object.values(geoms.roles).forEach((g) => g.dispose());
+    geoms.solid.dispose();
+    geoms.dashed.dispose();
+  }, [geoms]);
+  const line = overlay.kind === 'cooling' ? tones.cooling : tones.power;
+  const roleColor: Record<Role, string> = { anchor: tones.accent, path: line, cut_off: tones.critical, degraded: tones.warn };
+  const dashedRef = useRef<THREE.LineSegments>(null);
+  useLayoutEffect(() => { dashedRef.current?.computeLineDistances(); }, [geoms, themeTick]);
+  return (
+    <group>
+      {(Object.keys(geoms.roles) as Role[]).map((r) => (
+        <lineSegments key={r} geometry={geoms.roles[r]}>
+          <lineBasicMaterial color={roleColor[r]} />
+        </lineSegments>
+      ))}
+      <lineSegments geometry={geoms.solid}><lineBasicMaterial color={line} /></lineSegments>
+      <lineSegments ref={dashedRef} geometry={geoms.dashed}>
+        <lineDashedMaterial color={line} dashSize={0.18} gapSize={0.1} />
+      </lineSegments>
+    </group>
   );
 }
 

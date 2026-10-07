@@ -1723,6 +1723,23 @@ export interface TwinRoomScene {
   devices: TwinDevice[];
 }
 
+/** A site as a building (docs/27 Phase 3): levels and placed rooms. */
+export interface TwinLevel { name: string; ordinal: number; elevation_m: number }
+export interface TwinRoom {
+  id: string; name: string; level?: string | null; room_class?: string | null;
+  width_m?: number | null; depth_m?: number | null;
+  origin_x_m?: number | null; origin_y_m?: number | null; rotation_deg?: number | null;
+  level_elevation_m?: number | null;
+  rack_count: number; device_count: number; max_severity: string;
+}
+export interface TwinSiteScene {
+  datacenter_id: string; code: string; name: string;
+  floor_to_floor_m?: number | null;
+  levels: TwinLevel[];
+  outline_m?: number[][] | null;
+  rooms: TwinRoom[];
+}
+
 /** Not in a rack: floor-standing plant, or an instrument on a wall, pipe or panel. */
 export interface FloorEquipment {
   id: string;
@@ -4146,6 +4163,7 @@ export const api = {
 
   floorplan: (roomId: string) => request<FloorPlan>(`/rooms/${roomId}/floorplan`),
   roomScene: (roomId: string) => request<TwinRoomScene>(`/twin/rooms/${roomId}/scene`),
+  siteScene: (datacenterId: string) => request<TwinSiteScene>(`/twin/sites/${datacenterId}/scene`),
 
   rackElevation: (id: string) =>
     request<RackElevation>(`/racks/${id}/elevation`),

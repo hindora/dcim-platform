@@ -66,6 +66,7 @@ const Connectivity = lazy(() => import('./features/connectivity/Connectivity')
 /** Same reasoning: the world map carries d3-geo and a Natural Earth basemap
  *  that no other page needs. */
 const WorldMap = lazy(() => import('./features/world/WorldMap'));
+const Building = lazy(() => import('./features/site/Building'));
 
 function Login({ onDone, returnTo }: { onDone: () => void; returnTo?: string }) {
   const [username, setUsername] = useState('admin');
@@ -305,6 +306,13 @@ export default function App() {
             <Page>
               <Suspense fallback={<p className="muted">Loading the map…</p>}>
                 <WorldMap />
+              </Suspense>
+            </Page>
+          } />
+          <Route path="/twin/sites/:id" element={
+            <Page>
+              <Suspense fallback={<p className="muted">Loading the building…</p>}>
+                <Building />
               </Suspense>
             </Page>
           } />

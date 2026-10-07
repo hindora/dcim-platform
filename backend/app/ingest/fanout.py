@@ -69,6 +69,26 @@ class Fanout:
         except Exception as exc:
             log.warning("ws fanout failed", error=str(exc))
 
+    async def room_updates(self, by_room: dict[str, list[str]]) -> None:
+        """One frame per ROOM per batch: which devices in it just reported.
+
+        A room viewer subscribes to `room:{id}` instead of to every device in
+        the room, which the 50-topic session limit would not allow. The frame
+        carries no readings - the viewer re-reads the scene over REST, so a gap
+        in the stream can never leave it showing a stale picture as current.
+        """
+        if not by_room:
+            return
+        pipe = self._redis.pipeline()
+        for room_id, device_ids in by_room.items():
+            pipe.publish(channel(f"room:{room_id}"), _dumps({
+                "event": "room_update", "room_id": room_id,
+                "devices": len(device_ids)}))
+        try:
+            await pipe.execute()
+        except Exception as exc:
+            log.warning("ws fanout failed", error=str(exc))
+
     async def device_status(self, device_id: str, status: str,
                             previous: str | None) -> None:
         frame = {"event": "device_status_change", "device_id": device_id,

@@ -173,6 +173,10 @@ class IngestWorker:
         self.cache = InventoryCache()
         self.ownership = OwnershipGuard()
         self.fanout = Fanout(self.redis)
+        # device id -> room id, for the per-room websocket topic. Placement
+        # changes on import, not per sample, so a few minutes stale is fine.
+        self._room_of: dict[str, str] = {}
+        self._room_of_at: float = 0.0
         self.alarms = AlarmService(self.redis)
         # Outbound ticketing. Cheap when nothing is configured: its first
         # question each pass is whether any integration is enabled.
@@ -780,11 +784,13 @@ class IngestWorker:
             # order estate-wide, so there is nothing to invert.
             await writer.touch_endpoint_telemetry(session, produced)
             await writer.upsert_device_state(session, list(hot.values()))
+            by_room = await self._rooms_of(session, ws_frames.keys())
             alarm_actions = await self.alarms.evaluate_samples(session, rule_inputs)
             await integration_outbox.enqueue_actions(session, alarm_actions)
 
         # after commit
         await self.fanout.telemetry(ws_frames)
+        await self.fanout.room_updates(by_room)
         for action in alarm_actions:
             await self.fanout.alarm(action.kind, action.alarm)
 
@@ -1132,6 +1138,23 @@ class IngestWorker:
                     }),
                 })
 
+    _ROOM_MAP_TTL_S = 300.0
+
+    async def _rooms_of(self, session, device_ids) -> dict[str, list[str]]:
+        """Group devices by the room they stand in - a rack's room, or the
+        device's own for floor-standing plant - from a cached map."""
+        if time.monotonic() - self._room_of_at > self._ROOM_MAP_TTL_S:
+            rows = (await session.execute(text("""
+                SELECT d.id::text, COALESCE(rr.room_id, d.room_id)::text
+                  FROM device d
+                  LEFT JOIN rack r      ON r.id = d.rack_id
+                  LEFT JOIN rack_row rr ON rr.id = r.row_id
+                 WHERE d.lifecycle <> 'decommissioned'
+            """))).all()
+            self._room_of = {did: room for did, room in rows if room}
+            self._room_of_at = time.monotonic()
+        return group_by_room(device_ids, self._room_of)
+
     def _derive_load_pct(self, sample_rows: list, rule_inputs: list[dict],
                          hot: dict, ws_frames: list) -> None:
         """Draw as a fraction of the nameplate, for gear that reports only watts.
@@ -1299,3 +1322,13 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+def group_by_room(device_ids, room_of: dict[str, str]) -> dict[str, list[str]]:
+    """{room_id: [device_id, ...]} for the devices that have a room."""
+    out: dict[str, list[str]] = {}
+    for did in device_ids:
+        room = room_of.get(did)
+        if room:
+            out.setdefault(room, []).append(did)
+    return out
