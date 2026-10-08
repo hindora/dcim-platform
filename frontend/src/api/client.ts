@@ -1815,12 +1815,30 @@ export interface ThermalField {
 
 /** A site as a building (docs/27 Phase 3): levels and placed rooms. */
 export interface TwinLevel { name: string; ordinal: number; elevation_m: number }
+/** A rack as the building rung draws it: a block in room metres. */
+export interface TwinSiteRack { id: string; name: string; x: number; y: number; w_m?: number | null; d_m?: number | null; max_severity: string }
+/** Floor-standing plant as the building rung draws it: its true footprint. */
+export interface TwinSiteUnit {
+  id: string; name: string; device_type: string; x: number; y: number; w_m: number; d_m: number;
+  h_m?: number | null; facing_deg?: number | null; max_severity: string;
+}
 export interface TwinRoom {
-  id: string; name: string; level?: string | null; room_class?: string | null;
+  id: string; name: string; level?: string | null;
+  /** white_space | facility | support (docs/27 §8b) */
+  room_class?: string | null;
   width_m?: number | null; depth_m?: number | null;
   origin_x_m?: number | null; origin_y_m?: number | null; rotation_deg?: number | null;
   level_elevation_m?: number | null;
   rack_count: number; device_count: number; max_severity: string;
+  racks?: TwinSiteRack[];
+  equipment?: TwinSiteUnit[];
+}
+/** Building fabric with no state: corridor, lobby, dock, core, entrance, wall, door opening. Drawn grey. */
+export interface TwinSpace { id: string; level?: string | null; kind: string; name?: string | null; polygon_m: number[][] }
+/** A monitored door: a BMS contact on a wall. */
+export interface TwinDoor {
+  device_id: string; room_id?: string | null; level?: string | null; x_m: number; y_m: number;
+  facing_deg?: number | null; open?: boolean | null; max_severity: string;
 }
 export interface TwinSiteScene {
   datacenter_id: string; code: string; name: string;
@@ -1828,6 +1846,9 @@ export interface TwinSiteScene {
   levels: TwinLevel[];
   outline_m?: number[][] | null;
   rooms: TwinRoom[];
+  /** Empty until the simulator's S3 export supplies them. */
+  fabric?: TwinSpace[];
+  doors?: TwinDoor[];
 }
 
 /** Not in a rack: floor-standing plant, or an instrument on a wall, pipe or panel. */

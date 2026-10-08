@@ -727,7 +727,7 @@ function SiteDetail({ site, weather, alerts, covered, feedsUp, placing, onPlace 
         {placing ? 'Click the map…' : approx ? 'Set exact position' : 'Move position'}
       </button>
       <nav className="world-links" aria-label={`${site.code} pages`}>
-        <Link to={`/twin/sites/${site.id}`}><Icon kind="building" />Building</Link>
+        <Link to={`/floorplan?site=${site.id}`}><Icon kind="building" />Building</Link>
         {hall
           ? <Link to={`/floorplan?room=${hall.id}`}><Icon kind="floor" />Floor map</Link>
           : <span className="is-off" title="No room at this site yet"><Icon kind="floor" />Floor map</span>}

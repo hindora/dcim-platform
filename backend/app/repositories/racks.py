@@ -342,6 +342,41 @@ async def site_building(session: AsyncSession,
     return {**dict(dc), "rooms": [dict(r) for r in rooms]}
 
 
+async def site_blocks(session: AsyncSession, datacenter_id: str
+                      ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Every placed rack and every placed floor-standing unit at a site, as
+    blocks: position, footprint and worst condition, keyed by room.
+
+    The building view draws a whole site at once and must not cost one room
+    query per room; this is two reads for the lot, with none of the per-rack
+    power or thermal detail the room view carries.
+    """
+    racks = (await session.execute(text("""
+        SELECT r.id::text, r.name, rr.room_id::text AS room_id,
+               r.floor_x, r.floor_y, r.width_m, r.depth_m,
+               COALESCE(max(ds.max_severity)::text, 'CLEAR') AS max_severity
+          FROM rack r
+          JOIN rack_row rr ON rr.id = r.row_id
+          JOIN room rm     ON rm.id = rr.room_id
+          LEFT JOIN device d        ON d.rack_id = r.id AND d.lifecycle <> 'decommissioned'
+          LEFT JOIN device_state ds ON ds.device_id = d.id
+         WHERE rm.datacenter_id = CAST(:dc AS uuid) AND r.floor_x IS NOT NULL
+         GROUP BY r.id, rr.room_id
+    """), {"dc": datacenter_id})).mappings().all()
+    units = (await session.execute(text("""
+        SELECT d.id::text, d.name, d.device_type::text AS device_type, d.room_id::text AS room_id,
+               d.floor_x, d.floor_y, d.footprint_w_m, d.footprint_d_m, d.height_m, d.rotation_deg,
+               COALESCE(ds.max_severity::text, 'CLEAR') AS max_severity
+          FROM device d
+          JOIN room rm ON rm.id = d.room_id
+          LEFT JOIN device_state ds ON ds.device_id = d.id
+         WHERE rm.datacenter_id = CAST(:dc AS uuid)
+           AND d.rack_id IS NULL AND d.lifecycle <> 'decommissioned'
+           AND d.floor_x IS NOT NULL AND d.footprint_w_m IS NOT NULL AND d.footprint_d_m IS NOT NULL
+    """), {"dc": datacenter_id})).mappings().all()
+    return [dict(r) for r in racks], [dict(u) for u in units]
+
+
 async def room_rack_devices(session: AsyncSession, room_id: str) -> list[dict[str, Any]]:
     """Every live device in the room's racks, with its slot and state."""
     rows = (await session.execute(text("""

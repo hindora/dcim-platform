@@ -44,7 +44,9 @@ from app.schemas import (
     TwinRoom,
     TwinRoomIndices,
     TwinRoomScene,
+    TwinSiteRack,
     TwinSiteScene,
+    TwinSiteUnit,
 )
 from app.services import endpoint_config, floorplan
 from app.services import poll_profile_config as cfg
@@ -494,11 +496,27 @@ async def room_frame(session: AsyncSession, room_id: str, t: datetime,
 
 
 async def site_scene(session: AsyncSession, datacenter_id: str) -> TwinSiteScene | None:
-    """A site as a building - levels and every room placed on one (docs/27)."""
+    """A site as a building - levels and every room placed on one (docs/27),
+    with each room's racks and plant as blocks for the building rung (§8b)."""
     site = await rack_repo.site_building(session, datacenter_id)
     if site is None:
         return None
     b = site.get("building") or {}
+    racks, units = await rack_repo.site_blocks(session, datacenter_id)
+    racks_by_room: dict[str, list[TwinSiteRack]] = {}
+    for r in racks:
+        racks_by_room.setdefault(r["room_id"], []).append(TwinSiteRack(
+            id=r["id"], name=r["name"], x=float(r["floor_x"]), y=float(r["floor_y"]),
+            w_m=_f(r.get("width_m")), d_m=_f(r.get("depth_m")),
+            max_severity=r.get("max_severity") or "CLEAR"))
+    units_by_room: dict[str, list[TwinSiteUnit]] = {}
+    for u in units:
+        units_by_room.setdefault(u["room_id"], []).append(TwinSiteUnit(
+            id=u["id"], name=u["name"], device_type=u["device_type"],
+            x=float(u["floor_x"]), y=float(u["floor_y"]),
+            w_m=float(u["footprint_w_m"]), d_m=float(u["footprint_d_m"]),
+            h_m=_f(u.get("height_m")), facing_deg=_f(u.get("rotation_deg")),
+            max_severity=u.get("max_severity") or "CLEAR"))
     return TwinSiteScene(
         datacenter_id=site["id"], code=site["code"], name=site["name"],
         floor_to_floor_m=b.get("floor_to_floor_m"),
@@ -516,6 +534,8 @@ async def site_scene(session: AsyncSession, datacenter_id: str) -> TwinSiteScene
             rack_count=int(r.get("rack_count") or 0),
             device_count=int(r.get("device_count") or 0),
             max_severity=r.get("max_severity") or "CLEAR",
+            racks=racks_by_room.get(r["id"], []),
+            equipment=units_by_room.get(r["id"], []),
         ) for r in site["rooms"]],
     )
 

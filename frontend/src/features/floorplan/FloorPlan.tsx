@@ -3,7 +3,7 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
   api, type FloorPlan as Plan, type RoomKpi, type RoomSummary, type ThermalField, type ThermalRoom,
-  type ThermalUnit, type TwinHistoryRange, type TwinRoomScene,
+  type ThermalUnit, type TwinHistoryRange, type TwinRoomScene, type SitesOverview, type TwinSiteScene,
 } from '../../api/client';
 import { Seg } from '../../components/estate';
 import type { Overlay } from './colors';
@@ -11,8 +11,9 @@ import {
   coolingLegendFor, DEFAULT_VIS, legendFor, rackTiers, ventTiles, TEMP_BANDS,
   type CoolingLayer, type HeatPlane, type RackLayer, type Sel, type ViewMode, type Visibility,
 } from './layers';
-import { DevicePanel, FiltersPanel, Legend, PathsPanel, RackPanel, RoomPanel, UnitPanel } from './panels';
+import { BuildingPanel, DevicePanel, FiltersPanel, Legend, PathsPanel, RackPanel, RoomPanel, UnitPanel } from './panels';
 import { fromImpact, fromTraces, type PathKind } from './paths';
+import { BuildingPlan2D } from './BuildingPlan2D';
 import { Plan2D } from './Plan2D';
 import { paneCaption, snap, sourceLabel, STEP_OPTIONS, Timeline, type CompareMode } from './Timeline';
 import { numT, setTempUnit, unitLabel, useTempUnit, type TempUnit } from './units';
@@ -28,8 +29,16 @@ import './viewer.css';
  * gets the SVG plan.
  */
 
-// three.js and friends load only when a room is opened.
+// three.js and friends load only when the viewer opens.
 const Stage = lazy(() => import('./Stage'));
+const BuildingStage = lazy(() => import('./BuildingStage'));
+
+/** The ladder (docs/27 §8b): the building, then one room. */
+type Rung = 'building' | 'room';
+const SITE_KEY = 'dcim.viewer.site';
+const rememberedSite = (): string => { try { return localStorage.getItem(SITE_KEY) ?? ''; } catch { return ''; } };
+const rememberSite = (id: string) => { try { localStorage.setItem(SITE_KEY, id); } catch { /* private window */ } };
+const TIME_KEYS = ['t', 'cmp', 'cmp_t', 'step'];
 
 const MODES: { key: ViewMode; label: string }[] = [
   { key: '3d', label: '3D' }, { key: 'plan', label: 'PLAN' }, { key: 'fpv', label: 'FPV' },
@@ -61,10 +70,53 @@ export function FloorPlanView() {
   const webgl = useMemo(hasWebGL, []);
 
   const rooms = useQuery<{ items: RoomSummary[] }>({ queryKey: ['rooms'], queryFn: () => api.rooms() });
+  // --- the rung (docs/27 §8b) -------------------------------------------
+  // No room in the address is the building; a room is that room, which is
+  // what every alarm row, rack page and world-map tile links to. A deep link
+  // never lands on the building.
   const requested = params.get('room') || '';
   const known = rooms.data?.items.some((r) => r.id === requested) ?? false;
-  const roomId = (known ? requested : '') || rooms.data?.items[0]?.id || '';
+  const roomId = known ? requested : '';
   const room = rooms.data?.items.find((r) => r.id === roomId);
+  const rung: Rung = roomId ? 'room' : 'building';
+  const sitesQ = useQuery<SitesOverview>({ queryKey: ['sites-overview'], queryFn: () => api.sitesOverview(), staleTime: 60_000 });
+  const sites = useMemo(() => sitesQ.data?.sites ?? [], [sitesQ.data]);
+  const siteParam = params.get('site') || '';
+  const siteId = room?.datacenter_id
+    || (sites.some((x) => x.id === siteParam) ? siteParam : '')
+    || (sites.some((x) => x.id === rememberedSite()) ? rememberedSite() : '')
+    || sites[0]?.id || '';
+  useEffect(() => { if (siteId) rememberSite(siteId); }, [siteId]);
+  const level = params.get('level') || null;
+  const building = useQuery<TwinSiteScene>({
+    queryKey: ['site-scene', siteId], queryFn: () => api.siteScene(siteId),
+    enabled: Boolean(siteId), refetchInterval: 30_000, staleTime: 15_000, placeholderData: (prev) => prev,
+  });
+  const siteKpi = useQuery({
+    queryKey: ['site-kpi', siteId], queryFn: () => api.siteKpi(siteId),
+    enabled: Boolean(siteId) && rung === 'building', staleTime: 60_000, refetchInterval: 120_000,
+  });
+  const [hoverRoom, setHoverRoom] = useState<string | null>(null);
+  // Entering pushes history, so the back button climbs back to the building.
+  const enterRoom = (id: string) => {
+    const next = new URLSearchParams(params);
+    next.set('room', id); next.delete('level');
+    setParams(next);
+  };
+  const leaveRoom = () => {
+    const next = new URLSearchParams(params);
+    next.delete('room');
+    if (siteId) next.set('site', siteId);
+    for (const k of TIME_KEYS) next.delete(k);
+    if (next.get('view') === 'fpv') next.delete('view');
+    setParams(next);
+  };
+  const pickSite = (id: string) => {
+    const next = new URLSearchParams(params);
+    next.set('site', id); next.delete('room'); next.delete('level');
+    for (const k of TIME_KEYS) next.delete(k);
+    setParams(next, { replace: true });
+  };
 
   const rawView = params.get('view');
   const mode: ViewMode = rawView === 'plan' || rawView === '2d' ? 'plan' : rawView === 'fpv' ? 'fpv' : '3d';
@@ -301,23 +353,125 @@ export function FloorPlanView() {
   const focused = focus && data ? data.plan.racks.find((r) => r.id === focus) : null;
   const focusTiers = focused && data ? rackTiers(data.devices.filter((d) => d.rack_id === focused.id), focused.u_height ?? 42) : null;
 
-  if (rooms.isLoading) return <p className="muted viewer-fallback">Loading…</p>;
+  if (rooms.isLoading || (rung === 'building' && sitesQ.isLoading)) return <p className="muted viewer-fallback">Loading…</p>;
 
+  const siteRooms = (rooms.data?.items ?? []).filter((r) => !siteId || !r.datacenter_id || r.datacenter_id === siteId);
   const roomSelect = (
-    <select value={roomId} onChange={(e) => { params.set('room', e.target.value); setParams(params, { replace: true }); }}
-            aria-label="Room">
-      {rooms.data?.items.map((r) => (
-        <option key={r.id} value={r.id}>{r.datacenter_code ? `${r.datacenter_code} · ` : ''}{r.name}</option>
-      ))}
+    <select value={roomId} onChange={(e) => { if (e.target.value) enterRoom(e.target.value); }} aria-label="Room">
+      {!roomId && <option value="">Choose a room…</option>}
+      {siteRooms.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
     </select>
   );
+  const bs = building.data;
+  const roomLevel = roomId ? bs?.rooms.find((r) => r.id === roomId)?.level ?? null : null;
+  // The breadcrumb: site › level › room. Each crumb is a step up the ladder.
+  const crumbs = (
+    <nav className="vw-crumbs" aria-label="Where you are">
+      {sites.length > 1 ? (
+        <select value={siteId} onChange={(e) => pickSite(e.target.value)} aria-label="Site" className="vw-crumb-site">
+          {sites.map((x) => <option key={x.id} value={x.id}>{x.code}</option>)}
+        </select>
+      ) : (
+        <span className="vw-crumb is-text">{sites[0]?.code ?? bs?.code ?? 'Site'}</span>
+      )}
+      {rung === 'room' && <>
+        <span className="vw-crumb-sep" aria-hidden>›</span>
+        <button type="button" className="vw-crumb" onClick={leaveRoom} title="Back to the building">
+          {bs?.name ?? 'Building'}{roomLevel ? ` · Level ${roomLevel}` : ''}</button>
+        <span className="vw-crumb-sep" aria-hidden>›</span>
+        {roomSelect}
+      </>}
+      {rung === 'building' && level && <>
+        <span className="vw-crumb-sep" aria-hidden>›</span>
+        <span className="vw-crumb is-text">Level {level}</span>
+      </>}
+    </nav>
+  );
+
+  // --- the building rung ---------------------------------------------------
+  if (rung === 'building') {
+    const bMode: '3d' | 'plan' = mode === 'plan' ? 'plan' : '3d';
+    const levelNames = bs ? [...bs.levels].sort((a, b) => a.ordinal - b.ordinal).map((l) => l.name) : [];
+    const rackTotal = bs?.rooms.reduce((a, r) => a + r.rack_count, 0) ?? 0;
+    const devTotal = bs?.rooms.reduce((a, r) => a + r.device_count, 0) ?? 0;
+    const alarmed = bs?.rooms.filter((r) => r.max_severity !== 'CLEAR').length ?? 0;
+    const body = (
+      <>
+        <div className="vw-float vw-topleft">{crumbs}</div>
+        <div className="vw-float vw-topcenter">
+          {webgl && <Seg label="View" value={bMode} onChange={(m) => setParam('view', m)}
+                         options={[{ key: '3d', label: '3D' }, { key: 'plan', label: 'PLAN' }]} />}
+          {webgl && <button type="button" className="vw-icon" onClick={() => setResetTick((t) => t + 1)} title="Reset the camera">RESET</button>}
+          {levelNames.length > 1 && (
+            <Seg label="Level" value={level ?? 'all'}
+                 onChange={(v) => { const next = new URLSearchParams(params); if (v === 'all') next.delete('level'); else next.set('level', v); setParams(next, { replace: true }); }}
+                 options={[{ key: 'all', label: 'ALL' }, ...levelNames.map((n) => ({ key: n, label: /^\d+$/.test(n) ? `L${n}` : n.toUpperCase() }))]} />
+          )}
+        </div>
+        <div className="vw-rail">
+          <button type="button" className={`vw-icon${panel === 'info' ? ' is-on' : ''}`}
+                  onClick={() => setPanel(panel === 'info' ? null : 'info')}>INFO</button>
+        </div>
+        {panel && bs && (
+          <aside className="vw-panel" aria-label="Building information">
+            <div className="vw-panel-head">
+              <h3>Building</h3>
+              <button type="button" className="close" aria-label="Close" onClick={() => setPanel(null)}>×</button>
+            </div>
+            <BuildingPanel scene={bs} kpi={siteKpi.data} hover={hoverRoom} onHover={setHoverRoom} onEnter={enterRoom} />
+          </aside>
+        )}
+        <div className="vw-legends"><Legend spec={legendFor('alarm')!} /></div>
+        {tip && (
+          <span className="hover-tip vw-tip" role="tooltip"
+                style={{ left: Math.min(tip.x + 14, window.innerWidth - 300), top: tip.y + 14 }}>{tip.text}</span>
+        )}
+        <div className="vw-status">
+          <span><span className="dot" style={{ background: building.isError ? 'var(--critical)' : alarmed ? 'var(--warn)' : 'var(--ok)' }} />
+            {building.isError ? 'Not drawn' : bs ? `Live · ${alarmed ? `${alarmed} of ${bs.rooms.length} rooms with an open alarm` : 'no open alarms'}` : 'Loading'}</span>
+          <span className="vw-jumps"><Link to="/world">World</Link><span>{bs?.name ?? ''}</span></span>
+          {bs && <span>{bs.levels.length} levels · {bs.rooms.length} rooms · {rackTotal} racks · {devTotal} devices</span>}
+          <span className="spacer" />
+          <span>{webgl ? (bMode === 'plan' ? 'Drag to pan · scroll to zoom · click a room to enter it' : 'Drag to orbit · scroll to zoom · click a room to enter it')
+            : 'Click a room to enter it'}</span>
+        </div>
+      </>
+    );
+    if (!webgl) {
+      return (
+        <div className="viewer">
+          <div className="viewer-stage bld-fallback">
+            {bs && <BuildingPlan2D scene={bs} hover={hoverRoom} onHover={setHoverRoom} onEnter={enterRoom} />}
+            {building.isError && <p className="muted viewer-fallback">This site has no placed rooms yet. Import the floor plan first.</p>}
+          </div>
+          {body}
+        </div>
+      );
+    }
+    return (
+      <div className="viewer">
+        <div className="viewer-stage">
+          {bs && (
+            <Suspense fallback={<p className="muted viewer-fallback">Loading the building…</p>}>
+              <BuildingStage scene={bs} level={level} mode={bMode} resetTick={resetTick} themeTick={themeTick}
+                             hover={hoverRoom} onHover={setHoverRoom} onEnter={enterRoom} onTip={setTip}
+                             label={`Building view of ${bs.name}`} />
+            </Suspense>
+          )}
+          {building.isError && <p className="muted viewer-fallback">This site has no placed rooms yet. Import the floor plan first.</p>}
+          {building.isLoading && <p className="muted viewer-fallback">Loading the building…</p>}
+        </div>
+        {body}
+      </div>
+    );
+  }
 
   if (!webgl) {
     return (
       <div className="viewer-fallback stack">
         <h2>Floor map</h2>
         <div className="floor-controls">
-          <label>Room {roomSelect}</label>
+          {crumbs}
           <Seg label="Layer" value={overlayFor(rackLayer)}
                onChange={(o) => setParam('layer', o === 'thermal' ? 'temperature' : o === 'power' ? 'utilisation' : o)}
                options={[{ key: 'thermal', label: 'Inlet temp' }, { key: 'power', label: 'Power' },
@@ -363,9 +517,7 @@ export function FloorPlanView() {
         {scene.isLoading && <p className="muted viewer-fallback">Loading the room…</p>}
       </div>
 
-      <div className="vw-float vw-topleft">
-        <span className="muted">Room</span>{roomSelect}
-      </div>
+      <div className="vw-float vw-topleft">{crumbs}</div>
       <div className="vw-float vw-topcenter">
         <Seg label="View" value={mode} onChange={(m) => setParam('view', m)} options={MODES} />
         <button type="button" className="vw-icon" onClick={() => setResetTick((t) => t + 1)} title="Reset the camera">RESET</button>
@@ -429,7 +581,7 @@ export function FloorPlanView() {
             : updatedAgo == null ? 'Loading' : `Live · updated ${updatedAgo}s ago`}</span>
         <span className="vw-jumps">
           <Link to="/world">World</Link>
-          {room?.datacenter_id && <Link to={`/twin/sites/${room.datacenter_id}`}>Building</Link>}
+          <button type="button" className="vw-link" onClick={leaveRoom}>Building</button>
           <span>{room ? `${room.datacenter_code ? `${room.datacenter_code} · ` : ''}${room.name}` : ''}</span>
         </span>
         {plan && <span>{plan.extent.width_m} × {plan.extent.depth_m} m · {plan.racks.length} racks · {data?.devices.length ?? 0} devices</span>}

@@ -256,3 +256,38 @@
 @media (prefers-reduced-motion: no-preference) {
   .vw-live .dot, .vw-scrub-label { transition: background-color 160ms ease-out, color 160ms ease-out; }
 }
+
+/* --- the building rung (docs/27 §8b) -------------------------------------- */
+.vw-crumbs { display: flex; align-items: center; gap: 4px; }
+.vw-crumb { font: inherit; font-size: 0.8rem; font-weight: 600; color: var(--text); background: none; border: 1px solid transparent;
+  border-radius: 4px; padding: 3px 7px; cursor: pointer; }
+.vw-crumb:hover { background: var(--bg-inset); border-color: var(--border); }
+.vw-crumb:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.vw-crumb.is-text { cursor: default; font-weight: 600; }
+.vw-crumb-sep { color: var(--text-faint); padding: 0 2px; }
+.vw-topleft .vw-crumb-site { font-weight: 600; }
+.vw-link { font: inherit; color: var(--accent); background: none; border: none; padding: 0; cursor: pointer; }
+.vw-link:hover { text-decoration: underline; }
+.bld-rooms h4 { margin: 10px 0 4px; font-size: 0.7rem; letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted); }
+.bld-rooms ul { list-style: none; margin: 0; padding: 0; }
+.bld-rooms button { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto auto; gap: 8px; align-items: center;
+  width: 100%; min-height: 34px; padding: 5px 4px; border: none; border-bottom: 1px solid var(--border); border-radius: 0;
+  background: none; color: var(--text); font: inherit; font-size: 0.8rem; text-align: left; cursor: pointer; }
+.bld-rooms button:hover, .bld-rooms button.is-current { background: var(--bg-inset); }
+.bld-rooms button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.bld-rooms .swatch { width: 9px; height: 9px; border-radius: 2px; }
+.bld-rooms .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bld-rooms .count { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.bld-note { margin: 8px 0 0; font-size: 0.76rem; }
+/* no WebGL: the oblique stack fills the stage */
+.bld-fallback { display: flex; align-items: center; justify-content: center; padding: 56px 24px 60px; background: var(--bg-inset); }
+.bld-svg { width: 100%; max-width: 1100px; height: auto; max-height: 100%; display: block; }
+.bld-level { fill: var(--bg-raised); stroke: var(--border-strong); stroke-width: 0.08; }
+.bld-level-label { font-size: 1.1px; fill: var(--text-muted); text-anchor: end; dominant-baseline: middle; font-family: var(--sans); }
+.bld-room { cursor: pointer; }
+.bld-room polygon { stroke: var(--bg); stroke-width: 0.08; opacity: 0.85; }
+.bld-room.is-facility polygon { opacity: 0.55; }
+.bld-room:hover polygon, .bld-room.is-picked polygon, .bld-room:focus-visible polygon { opacity: 1; stroke: var(--text); stroke-width: 0.14; }
+.bld-room:focus { outline: none; }
+.bld-room-label { font-size: 0.9px; fill: var(--bg); font-family: var(--sans); font-weight: 600; text-anchor: middle;
+  dominant-baseline: middle; pointer-events: none; }

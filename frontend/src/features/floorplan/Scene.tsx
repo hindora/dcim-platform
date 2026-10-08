@@ -245,7 +245,7 @@ function stripTexture(labels: string[], ink: string): THREE.CanvasTexture {
   return t;
 }
 
-function labelTexture(text: string, ink: string, bg: string): THREE.CanvasTexture {
+export function labelTexture(text: string, ink: string, bg: string): THREE.CanvasTexture {
   const w = 320, h = 80;
   const cv = document.createElement('canvas');
   cv.width = w; cv.height = h;

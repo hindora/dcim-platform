@@ -1,7 +1,8 @@
 import { Fragment, Suspense, lazy, useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { NavLink, Navigate, Route, Routes, useLocation, useNavigate }
-  from 'react-router-dom';
+import {
+  NavLink, Navigate, Route, Routes, useLocation, useNavigate, useParams,
+} from 'react-router-dom';
 import { api, getToken, onAuthLost, setToken } from './api/client';
 import { useOrg } from './lib/useOrg';
 import { AlarmList } from './features/alarms/AlarmList';
@@ -66,7 +67,6 @@ const Connectivity = lazy(() => import('./features/connectivity/Connectivity')
 /** Same reasoning: the world map carries d3-geo and a Natural Earth basemap
  *  that no other page needs. */
 const WorldMap = lazy(() => import('./features/world/WorldMap'));
-const Building = lazy(() => import('./features/site/Building'));
 
 function Login({ onDone, returnTo }: { onDone: () => void; returnTo?: string }) {
   const [username, setUsername] = useState('admin');
@@ -119,6 +119,12 @@ function Login({ onDone, returnTo }: { onDone: () => void; returnTo?: string }) 
  * balancers - those are a query string, and putting them in the nav is how a
  * sidebar reaches sixty items nobody reads.
  */
+/** `/twin/sites/:id` was the building's own page; it is the floor plan's top rung now. */
+function SiteRedirect() {
+  const { id = '' } = useParams();
+  return <Navigate to={`/floorplan?site=${id}`} replace />;
+}
+
 /** The three ways of LOOKING at the estate, grouped under one entry: they
  *  answer "where" and "what is connected to what", not one domain each. */
 const VISUALIZATION: NavMenuItem[] = [
@@ -309,13 +315,8 @@ export default function App() {
               </Suspense>
             </Page>
           } />
-          <Route path="/twin/sites/:id" element={
-            <Page>
-              <Suspense fallback={<p className="muted">Loading the building…</p>}>
-                <Building />
-              </Suspense>
-            </Page>
-          } />
+          {/* The building is the floor plan's top rung now (docs/27 §8b). */}
+          <Route path="/twin/sites/:id" element={<SiteRedirect />} />
           {/* The menu's own name, for a pasted or typed address. */}
           <Route path="/visualization" element={<Navigate to="/connectivity" replace />} />
           <Route path="/topology" element={<Navigate to="/connectivity" replace />} />

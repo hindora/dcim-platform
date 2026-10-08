@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { api, ApiError, type Alarm } from '../../api/client';
+import { api, ApiError, type Alarm, type SiteKpi, type TwinSiteScene } from '../../api/client';
 import type {
   FloorEquipment, FloorPlan, FloorRack, RoomKpi, ThermalField, ThermalRoom, ThermalUnit, TwinDevice, TwinRackIndex,
   TwinRoomIndices,
@@ -13,6 +13,7 @@ import {
 } from './layers';
 import type { PathKind, PathOverlay } from './paths';
 import { fmtDT, fmtT, legendInUnit, numT, unitLabel } from './units';
+import { alarmColor } from './colors';
 
 /** The viewer's side panel and legend. Facts only: every figure here is one
  *  the estate pages also show, read from the same endpoints. */
@@ -160,6 +161,68 @@ export function RoomPanel({ plan, devices, kpi, thermal, vents, indices, field }
 /** The room's indices (docs/27 D6), each with what it was scored from.
  *  RCI and RTI are Herrlin's, SHI/RHI Sharma's; the counts are shown so a
  *  perfect score from two sensors reads as exactly that. */
+/** The building rung's panel (docs/27 §8b): the site's numbers, then its rooms by level. */
+export function BuildingPanel({ scene, kpi, hover, onHover, onEnter }: {
+  scene: TwinSiteScene; kpi?: SiteKpi; hover: string | null;
+  onHover: (id: string | null) => void; onEnter: (id: string) => void;
+}) {
+  const levels = [...scene.levels].sort((a, b) => b.ordinal - a.ordinal);
+  const racks = scene.rooms.reduce((a, r) => a + r.rack_count, 0);
+  const devices = scene.rooms.reduce((a, r) => a + r.device_count, 0);
+  const pct = (v: number | null | undefined, note?: string | null) =>
+    v == null ? <span className="muted" title={note ?? undefined}>–</span> : `${Math.round(v)} %`;
+  const w = kpi?.weather;
+  const unplaced = scene.rooms.filter((r) => r.origin_x_m == null || r.origin_y_m == null || !r.width_m || !r.depth_m);
+  return (
+    <div className="vw-panel-body">
+      <div className="vw-kv"><Row k="Site" v={scene.name && scene.name !== scene.code ? `${scene.code} · ${scene.name}` : scene.code} />
+        <Row k="Levels" v={scene.levels.length} /><Row k="Rooms" v={scene.rooms.length} />
+        <Row k="Racks" v={racks} /><Row k="Devices" v={devices} /></div>
+      <Section title="Site" open>
+        <Row k="PUE" v={kpi?.efficiency?.pue?.value != null ? kpi.efficiency.pue.value.toFixed(2)
+          : <span className="muted" title={kpi?.efficiency?.pue?.note ?? undefined}>–</span>} />
+        <Row k="IT load" v={kpi?.power?.it_load_kw != null ? `${kpi.power.it_load_kw.toFixed(0)} kW` : '–'} />
+        <Row k="Power used" v={pct(kpi?.utilisation?.power?.pct, kpi?.utilisation?.power?.note)} />
+        <Row k="Space used" v={pct(kpi?.utilisation?.space?.pct, kpi?.utilisation?.space?.note)} />
+        <Row k="Cooling used" v={pct(kpi?.utilisation?.cooling?.pct, kpi?.utilisation?.cooling?.note)} />
+        <Row k="Outdoor air" v={w?.available && w.dry_bulb_c != null
+          ? <>{fmtT(w.dry_bulb_c)}{w.humidity_pct != null && <span className="muted"> · {Math.round(w.humidity_pct)} % RH</span>}</>
+          : <span className="muted">{w?.note ?? '–'}</span>} />
+      </Section>
+      <Section title="Rooms" open>
+        <div className="bld-rooms">
+          {levels.map((l) => {
+            const rs = scene.rooms.filter((r) => r.level === l.name);
+            if (!rs.length) return null;
+            return (
+              <div key={l.name}>
+                <h4>{l.name === 'Roof' ? 'Roof' : `Level ${l.name}`} <span className="muted">+{l.elevation_m} m</span></h4>
+                <ul>
+                  {rs.map((r) => (
+                    <li key={r.id}>
+                      <button type="button" className={hover === r.id ? 'is-current' : undefined}
+                              onClick={() => onEnter(r.id)} onMouseEnter={() => onHover(r.id)} onMouseLeave={() => onHover(null)}
+                              onFocus={() => onHover(r.id)} onBlur={() => onHover(null)}>
+                        <span className="swatch" style={{ background: alarmColor(r.max_severity, 0) }} aria-hidden />
+                        <span className="name">{r.name}</span>
+                        <span className="muted">{r.rack_count ? `${r.rack_count} racks` : r.room_class === 'support' ? 'support' : 'plant'}</span>
+                        <span className="count">{r.device_count}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            );
+          })}
+        </div>
+        {unplaced.length > 0 && (
+          <p className="muted bld-note">Not placed: {unplaced.map((r) => r.name).join(', ')} - no position in the building yet.</p>
+        )}
+      </Section>
+    </div>
+  );
+}
+
 function IndicesSection({ ix, field }: { ix: TwinRoomIndices; field?: ThermalField | null }) {
   const verdict = rtiVerdict(ix.rti);
   return (

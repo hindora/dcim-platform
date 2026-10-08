@@ -504,10 +504,39 @@ class ThermalField(BaseModel):
     note: str | None = None
 
 
+class TwinSiteRack(BaseModel):
+    """A rack as the building view draws it: a block in room metres."""
+
+    id: str
+    name: str
+    x: float
+    y: float
+    w_m: float | None = None
+    d_m: float | None = None
+    max_severity: str = "CLEAR"
+
+
+class TwinSiteUnit(BaseModel):
+    """Floor-standing plant as the building view draws it: its true footprint."""
+
+    id: str
+    name: str
+    device_type: str
+    x: float
+    y: float
+    w_m: float
+    d_m: float
+    h_m: float | None = None
+    facing_deg: float | None = None
+    max_severity: str = "CLEAR"
+
+
 class TwinRoom(BaseModel):
     id: str
     name: str
     level: str | None = None
+    # white_space | facility | support (docs/27 §8b: a support room holds
+    # assets or a sensor but no IT racks - a store, the NOC, the meet-me room)
     room_class: str | None = None
     width_m: float | None = None
     depth_m: float | None = None
@@ -517,6 +546,32 @@ class TwinRoom(BaseModel):
     level_elevation_m: float | None = None
     rack_count: int = 0
     device_count: int = 0
+    max_severity: str = "CLEAR"
+    racks: list[TwinSiteRack] = Field(default_factory=list)
+    equipment: list[TwinSiteUnit] = Field(default_factory=list)
+
+
+class TwinSpace(BaseModel):
+    """Building fabric with no state: corridor, lobby, dock, core, entrance,
+    wall, door opening (docs/27 §8b B5). Drawn grey, never coloured."""
+
+    id: str
+    level: str | None = None
+    kind: str
+    name: str | None = None
+    polygon_m: list[list[float]]
+
+
+class TwinDoor(BaseModel):
+    """A monitored door: a BMS contact on a wall (docs/27 §8b B6)."""
+
+    device_id: str
+    room_id: str | None = None
+    level: str | None = None
+    x_m: float
+    y_m: float
+    facing_deg: float | None = None
+    open: bool | None = None
     max_severity: str = "CLEAR"
 
 
@@ -537,6 +592,9 @@ class TwinSiteScene(BaseModel):
     # Plan outline in building metres, [[x, y], ...]; None before geometry import.
     outline_m: list[list[float]] | None = None
     rooms: list[TwinRoom] = Field(default_factory=list)
+    # Empty until the simulator's S3 export (docs/27 §8b.3) supplies them.
+    fabric: list[TwinSpace] = Field(default_factory=list)
+    doors: list[TwinDoor] = Field(default_factory=list)
 
 
 class ImpactNode(BaseModel):
