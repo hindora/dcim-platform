@@ -150,8 +150,22 @@ def test_rack_pdus_and_sensors_are_not_loads():
 
 
 def test_a_model_budget_wins_over_the_derated_nameplate():
-    assert "COALESCE(NULLIF(m.attributes->>'budget_w','')::float,\n" \
-           "                                m.rated_power_w * :derate)" in RACKS_SRC
+    assert "COALESCE(NULLIF(m.attributes->>'budget_w','')::float," in RACKS_SRC
+
+
+def test_the_derate_is_cast_so_it_is_not_typed_as_an_integer():
+    """Live bug 2026-10-08: `rated_power_w * :derate` typed the parameter from
+    the integer column, 0.6 arrived as 0, every rack read zero allocated."""
+    assert "m.rated_power_w * CAST(:derate AS float8)" in RACKS_SRC
+    assert "rated_power_w * :derate" not in RACKS_SRC
+
+
+def test_exhaust_and_return_air_are_kept_as_current_state():
+    """Only hot metrics reach device_state.metrics, which the room viewer and
+    its indices read. Not hot, the twin saw no exhaust and no CRAH return."""
+    from app.core.metrics_gen import METRICS
+    assert METRICS["exhaust_temperature"].hot is True
+    assert METRICS["return_air_temp"].hot is True
 
 
 def test_only_held_reservations_count():

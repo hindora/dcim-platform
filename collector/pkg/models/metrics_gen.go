@@ -224,7 +224,7 @@ var MetricDefs = map[string]MetricDef{
 		ValueType: "gauge", Aggregation: "max",
 		MinValid: -20, HasMin: true,
 		MaxValid: 100, HasMax: true,
-		StaleAfterS: 120, Hot: false,
+		StaleAfterS: 120, Hot: true,
 		Group: "thermal", RateOf: "", RateScale: 1,
 	},
 	"power_draw": {
@@ -528,7 +528,7 @@ var MetricDefs = map[string]MetricDef{
 		ValueType: "gauge", Aggregation: "avg",
 		MinValid: -20, HasMin: true,
 		MaxValid: 80, HasMax: true,
-		StaleAfterS: 300, Hot: false,
+		StaleAfterS: 300, Hot: true,
 		Group: "cooling", RateOf: "", RateScale: 1,
 	},
 	"air_setpoint_temp": {

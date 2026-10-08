@@ -204,6 +204,7 @@ metrics:
     min_valid: -20
     max_valid: 100
     stale_after_s: 120
+    hot: true
     group: thermal
     device_types: [server]
 
@@ -649,6 +650,7 @@ metrics:
     min_valid: -20
     max_valid: 80
     stale_after_s: 300
+    hot: true
     group: cooling
     device_types: [crah]
     description: Entering air. A high return means the unit is holding setpoint and the hot aisle feeding it is too hot - a load symptom, not a unit fault.

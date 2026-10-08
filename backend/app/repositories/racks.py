@@ -245,8 +245,12 @@ async def room_rack_power_plan(session: AsyncSession,
     rows = (await session.execute(text("""
         WITH alloc AS (
             SELECT d.rack_id,
+                   -- The cast matters: a bare parameter multiplied into an
+                   -- integer column is typed integer, and 0.6 arrived as 0 -
+                   -- every rack read zero allocated on the live estate.
                    sum(COALESCE(NULLIF(m.attributes->>'budget_w','')::float,
-                                m.rated_power_w * :derate)) / 1000.0 AS allocated_kw,
+                                m.rated_power_w * CAST(:derate AS float8))) / 1000.0
+                       AS allocated_kw,
                    count(*) FILTER (WHERE NULLIF(m.attributes->>'budget_w','') IS NULL
                                       AND m.rated_power_w IS NOT NULL)  AS derated,
                    count(*) FILTER (WHERE m.rated_power_w IS NULL

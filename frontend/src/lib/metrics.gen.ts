@@ -229,7 +229,7 @@ export const METRICS: Record<MetricKey, MetricDef> = {
     aggregation: 'max',
     minValid: -20,
     maxValid: 100,
-    staleAfterS: 120, hot: false,
+    staleAfterS: 120, hot: true,
     group: 'thermal',
   },
   'power_draw': {
@@ -571,7 +571,7 @@ export const METRICS: Record<MetricKey, MetricDef> = {
     aggregation: 'avg',
     minValid: -20,
     maxValid: 80,
-    staleAfterS: 300, hot: false,
+    staleAfterS: 300, hot: true,
     group: 'cooling',
   },
   'air_setpoint_temp': {
