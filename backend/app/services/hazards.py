@@ -25,6 +25,7 @@ This is a read of somebody else's judgement. Nothing here is derived from the
 estate's own sensors, and nothing is raised as a platform alarm - a warning
 is context for the operator, not a fault in the plant.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -41,8 +42,10 @@ from app.core.config import get_settings
 from app.repositories import sites as repo
 
 NWS_ALERTS = "https://api.weather.gov/alerts/active"
-GDACS_EVENTS = ("https://www.gdacs.org/gdacsapi/api/events/geteventlist/SEARCH"
-                "?eventlist=EQ;TC;FL;VO;WF&alertlevel=Orange;Red")
+GDACS_EVENTS = (
+    "https://www.gdacs.org/gdacsapi/api/events/geteventlist/SEARCH"
+    "?eventlist=EQ;TC;FL;VO;WF&alertlevel=Orange;Red"
+)
 USER_AGENT = "dcim-platform world map (https://github.com/hindora/dcim-platform)"
 CACHE_TTL_S = 300.0
 TIMEOUT_S = 10.0
@@ -120,20 +123,22 @@ def _nws_alerts(body: Any) -> list[dict[str, Any]]:
         if p.get("status", "Actual") != "Actual":
             continue
         event = p.get("event") or "Weather alert"
-        out.append({
-            "id": p.get("id") or f.get("id"),
-            "source": "nws",
-            "kind": kind_of(event),
-            "event": event,
-            "severity": NWS_SEVERITY.get(p.get("severity"), "minor"),
-            "headline": p.get("headline"),
-            "area": p.get("areaDesc"),
-            "onset": p.get("onset") or p.get("effective"),
-            "ends": p.get("ends") or p.get("expires"),
-            "issuer": p.get("senderName"),
-            "url": None,
-            "distance_km": None,
-        })
+        out.append(
+            {
+                "id": p.get("id") or f.get("id"),
+                "source": "nws",
+                "kind": kind_of(event),
+                "event": event,
+                "severity": NWS_SEVERITY.get(p.get("severity"), "minor"),
+                "headline": p.get("headline"),
+                "area": p.get("areaDesc"),
+                "onset": p.get("onset") or p.get("effective"),
+                "ends": p.get("ends") or p.get("expires"),
+                "issuer": p.get("senderName"),
+                "url": None,
+                "distance_km": None,
+            }
+        )
     return out
 
 
@@ -152,43 +157,63 @@ def _gdacs_alerts(body: Any, lat: float, lon: float) -> list[dict[str, Any]]:
         if d > GDACS_RADIUS_KM[et]:
             continue
         sev = p.get("severitydata") or {}
-        out.append({
-            "id": f"gdacs-{et}-{p.get('eventid')}",
-            "source": "gdacs",
-            "kind": GDACS_KIND[et],
-            "event": p.get("name") or GDACS_KIND[et].title(),
-            "severity": GDACS_SEVERITY.get(p.get("alertlevel"), "moderate"),
-            "headline": sev.get("severitytext"),
-            "area": p.get("country"),
-            "onset": p.get("fromdate"),
-            "ends": p.get("todate"),
-            "issuer": "GDACS",
-            "url": (p.get("url") or {}).get("report"),
-            "distance_km": round(d),
-        })
+        out.append(
+            {
+                "id": f"gdacs-{et}-{p.get('eventid')}",
+                "source": "gdacs",
+                "kind": GDACS_KIND[et],
+                "event": p.get("name") or GDACS_KIND[et].title(),
+                "severity": GDACS_SEVERITY.get(p.get("alertlevel"), "moderate"),
+                "headline": sev.get("severitytext"),
+                "area": p.get("country"),
+                "onset": p.get("fromdate"),
+                "ends": p.get("todate"),
+                "issuer": "GDACS",
+                "url": (p.get("url") or {}).get("report"),
+                "distance_km": round(d),
+            }
+        )
     return out
 
 
 def _sort(alerts: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return sorted(alerts, key=lambda a: (SEVERITY_ORDER.get(a["severity"], 9), a.get("onset") or ""))
+    return sorted(
+        alerts, key=lambda a: (SEVERITY_ORDER.get(a["severity"], 9), a.get("onset") or "")
+    )
 
 
 async def site_hazards(session: AsyncSession, fetch: Fetch = fetch_json) -> dict[str, Any]:
     """Warnings per placed site, and the health of the feeds they came from."""
     now = datetime.now(UTC)
-    sites = [s for s in await repo.site_rollups(session)
-             if s.get("latitude") is not None and s.get("longitude") is not None]
+    sites = [
+        s
+        for s in await repo.site_rollups(session)
+        if s.get("latitude") is not None and s.get("longitude") is not None
+    ]
     if not get_settings().hazard_feeds_enabled:
-        return {"available": False, "as_of": now, "sources": [], "sites": {},
-                "note": "official warning feeds are switched off (DCIM_HAZARD_FEEDS_ENABLED)"}
+        return {
+            "available": False,
+            "as_of": now,
+            "sources": [],
+            "sites": {},
+            "note": "official warning feeds are switched off (DCIM_HAZARD_FEEDS_ENABLED)",
+        }
 
-    async with httpx.AsyncClient(timeout=TIMEOUT_S, follow_redirects=True,
-                                 headers={"User-Agent": USER_AGENT,
-                                          "Accept": "application/geo+json, application/json"}) as client:
+    async with httpx.AsyncClient(
+        timeout=TIMEOUT_S,
+        follow_redirects=True,
+        headers={"User-Agent": USER_AGENT, "Accept": "application/geo+json, application/json"},
+    ) as client:
         results = await asyncio.gather(
             fetch(client, GDACS_EVENTS),
-            *(fetch(client, f"{NWS_ALERTS}?point={float(s['latitude']):.4f},{float(s['longitude']):.4f}")
-              for s in sites))
+            *(
+                fetch(
+                    client,
+                    f"{NWS_ALERTS}?point={float(s['latitude']):.4f},{float(s['longitude']):.4f}",
+                )
+                for s in sites
+            ),
+        )
     gdacs_status, gdacs_body = results[0]
     gdacs_ok = gdacs_status == 200 and isinstance(gdacs_body, dict)
 
@@ -200,7 +225,7 @@ async def site_hazards(session: AsyncSession, fetch: Fetch = fetch_json) -> dict
         covered = status == 200 and isinstance(body, dict)
         if covered:
             alerts += _nws_alerts(body)
-        elif status != 400:          # 400 is NWS saying "not my country"
+        elif status != 400:  # 400 is NWS saying "not my country"
             nws_errors += 1
         if gdacs_ok:
             alerts += _gdacs_alerts(gdacs_body, lat, lon)
@@ -208,15 +233,27 @@ async def site_hazards(session: AsyncSession, fetch: Fetch = fetch_json) -> dict
 
     nws_ok = bool(sites) and nws_errors == 0
     sources = [
-        {"id": "nws", "name": "US National Weather Service", "ok": nws_ok,
-         "note": None if nws_ok else f"{nws_errors} of {len(sites)} point queries failed"},
-        {"id": "gdacs", "name": "GDACS (UN / European Commission)", "ok": gdacs_ok,
-         "note": None if gdacs_ok else (f"HTTP {gdacs_status}" if gdacs_status else str(gdacs_body)[:160])},
+        {
+            "id": "nws",
+            "name": "US National Weather Service",
+            "ok": nws_ok,
+            "note": None if nws_ok else f"{nws_errors} of {len(sites)} point queries failed",
+        },
+        {
+            "id": "gdacs",
+            "name": "GDACS (UN / European Commission)",
+            "ok": gdacs_ok,
+            "note": None
+            if gdacs_ok
+            else (f"HTTP {gdacs_status}" if gdacs_status else str(gdacs_body)[:160]),
+        },
     ]
     available = nws_ok or gdacs_ok
     return {
         "available": available,
-        "note": None if available else "neither warning feed could be reached from the platform host",
+        "note": None
+        if available
+        else "neither warning feed could be reached from the platform host",
         "as_of": now,
         "sources": sources,
         "sites": per_site,
