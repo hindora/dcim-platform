@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import text
@@ -15,6 +17,8 @@ from app.schemas import (
     FloorPlan,
     RackElevation,
     RackSummary,
+    ThermalField,
+    TwinHistoryRange,
     TwinRoomScene,
     TwinSiteScene,
 )
@@ -158,3 +162,58 @@ async def room_scene(
         raise HTTPException(status.HTTP_404_NOT_FOUND,
                             "room not found, or nothing in it is positioned")
     return scene
+
+
+@router.get("/twin/rooms/{room_id}/history", response_model=TwinHistoryRange,
+            summary="How far back a room can be replayed")
+async def room_history(
+    room_id: str,
+    session: AsyncSession = Depends(get_session),
+    _: Principal = Depends(current_principal),
+) -> TwinHistoryRange:
+    r = await service.room_history_range(session, room_id)
+    if r is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND,
+                            "room not found, or nothing in it is positioned")
+    return r
+
+
+@router.get("/twin/rooms/{room_id}/frame", response_model=TwinRoomScene,
+            summary="The room as it was at a moment in the past")
+async def room_frame(
+    room_id: str,
+    t: datetime = Query(..., description="The moment, ISO 8601 with offset"),
+    session: AsyncSession = Depends(get_session),
+    _: Principal = Depends(current_principal),
+) -> TwinRoomScene:
+    """Same shape as the live scene (docs/27 D8): today's geometry, the
+    readings at `t` from the hypertable (newest two hours), the five-minute
+    rollup (two days) or the hourly one, and the alarms open at `t`."""
+    if t.tzinfo is None:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "t needs a UTC offset")
+    scene = await service.room_frame(session, room_id, t)
+    if scene is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND,
+                            "room not found, or nothing in it is positioned")
+    return scene
+
+
+@router.get("/twin/rooms/{room_id}/field", response_model=ThermalField,
+            summary="The room's air on three planes, interpolated per aisle")
+async def room_field(
+    room_id: str,
+    t: datetime | None = Query(
+        None, description="A past moment (ISO 8601 with offset); omit for now"),
+    session: AsyncSession = Depends(get_session),
+    _: Principal = Depends(current_principal),
+) -> ThermalField:
+    """Cold aisles from the intake readings on the faces that open onto
+    them, hot aisles from the exhausts; never blended across a rack row.
+    Each cell carries a confidence so the viewer fades unmeasured air."""
+    if t is not None and t.tzinfo is None:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "t needs a UTC offset")
+    f = await service.room_field(session, room_id, t)
+    if f is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND,
+                            "room not found, or nothing in it is positioned")
+    return f

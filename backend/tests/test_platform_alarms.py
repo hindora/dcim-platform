@@ -552,3 +552,48 @@ def test_a_duplicate_suppresses_the_misconfiguration_it_causes():
     c = p.Collector(collector_id="col-1", heartbeat_age_s=5.0, endpoints_owned=95,
                     duplicate_age_s=10.0, config_error="bind: address already in use")
     assert types(p.evaluate(sig(collectors=[c]))) == {"collector_duplicate"}
+
+
+# --- hysteresis on the lag alarm (2026-10-08) --------------------------------
+# A backlog drains at a rate; on 2026-10-07 a 12-minute queue sat on the 60 s
+# line for a long time and every dip under it cleared the banner and every pop
+# back over re-raised it. These pin that an open alarm is held through the drain.
+
+def lag_findings(**kw) -> list[p.Finding]:
+    return [f for f in p.evaluate(sig(**kw)) if f.alarm_type == "ingest_lag_high"]
+
+
+def test_an_open_lag_alarm_is_held_when_the_lag_dips_under_the_warning_line():
+    held = lag_findings(ingest_lag_s=45.0, ingest_lag_open="WARNING", ingest_lag_recovered_s=0.0)
+    assert len(held) == 1 and held[0].severity == p.WARNING
+    assert "draining" in held[0].message
+
+
+def test_it_is_held_under_the_clear_line_until_the_recovery_time_has_run():
+    assert lag_findings(ingest_lag_s=10.0, ingest_lag_open="WARNING",
+                        ingest_lag_recovered_s=p.INGEST_LAG_RECOVER_S - 1)
+    assert lag_findings(ingest_lag_s=10.0, ingest_lag_open="WARNING",
+                        ingest_lag_recovered_s=p.INGEST_LAG_RECOVER_S) == []
+
+
+def test_a_held_critical_steps_down_to_warning_as_the_queue_drains():
+    held = lag_findings(ingest_lag_s=90.0, ingest_lag_open="CRITICAL",
+                        ingest_lag_sustained_s=10.0)
+    assert held[0].severity == p.WARNING
+
+
+def test_a_pop_back_over_the_line_while_open_needs_no_new_dwell():
+    # The over-the-line clock restarted on the dip; the alarm is already open,
+    # so it stays open at the value's severity rather than waiting two minutes.
+    held = lag_findings(ingest_lag_s=400.0, ingest_lag_open="WARNING",
+                        ingest_lag_sustained_s=3.0)
+    assert held[0].severity == p.CRITICAL
+
+
+def test_nothing_is_held_when_nothing_was_open():
+    assert lag_findings(ingest_lag_s=45.0, ingest_lag_open=None) == []
+
+
+def test_the_clear_line_sits_under_the_raise_line():
+    assert p.INGEST_LAG_CLEAR_S < p.INGEST_LAG_WARNING_S
+    assert p.INGEST_LAG_RECOVER_S >= p.INGEST_LAG_DWELL_S

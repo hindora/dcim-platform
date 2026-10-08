@@ -177,6 +177,10 @@ class IngestWorker:
         # and reporting zero would be a claim it cannot support.
         self._last_lag_s: float | None = None
         self._lag_over_since: float | None = None
+        # When the lag last went under the CLEAR line - the other half of the
+        # hysteresis (rules.INGEST_LAG_CLEAR_S): an open lag alarm is held
+        # until this has run for the recovery time.
+        self._lag_under_since: float | None = None
         self._batches = 0
         self._samples = 0
         self.redis: Redis = Redis.from_url(self.settings.redis_url)
@@ -365,9 +369,20 @@ class IngestWorker:
                 self._lag_over_since = time.monotonic()
         else:
             self._lag_over_since = None
+        if lag < rules.INGEST_LAG_CLEAR_S:
+            if self._lag_under_since is None:
+                self._lag_under_since = time.monotonic()
+        else:
+            self._lag_under_since = None
         self._batches += len(payloads)
         metrics.ingest_lag.labels(stream=Stream.TELEMETRY).set(lag)
         metrics.ingest_lag_hist.labels(stream=Stream.TELEMETRY).observe(lag)
+
+    def _lag_recovered_s(self) -> float:
+        """Seconds the lag has been continuously under the clear line."""
+        if self._lag_under_since is None:
+            return 0.0
+        return time.monotonic() - self._lag_under_since
 
     def _lag_sustained_s(self) -> float:
         """Seconds the lag has been continuously above the warning line."""
@@ -400,7 +415,8 @@ class IngestWorker:
                     streams=[Stream.TELEMETRY, Stream.EVENTS],
                     group=self.settings.ingest_group,
                     ingest_lag_s=self._last_lag_s,
-                    ingest_lag_sustained_s=self._lag_sustained_s())
+                    ingest_lag_sustained_s=self._lag_sustained_s(),
+                    ingest_lag_recovered_s=self._lag_recovered_s())
         except Exception as exc:
             # Self-monitoring must never be the thing that stops ingestion.
             log.error("platform monitor failed", error=str(exc), exc_info=True)

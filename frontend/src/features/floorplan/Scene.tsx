@@ -4,14 +4,18 @@ import {
 import { useFrame, useThree, type ThreeEvent } from '@react-three/fiber';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, type ElementRef } from 'react';
 import * as THREE from 'three';
-import type { FloorAisle, FloorEquipment, FloorRack, ThermalUnit, TwinDevice, TwinRoomScene } from '../../api/client';
+import type {
+  FloorAisle, FloorEquipment, FloorRack, ThermalField, ThermalUnit, TwinDevice, TwinRackIndex, TwinRoomIndices,
+  TwinRoomScene,
+} from '../../api/client';
 import { humanise } from '../../lib/format';
 import { alarmColor, resolveColor } from './colors';
 import {
-  paintEquipment, paintRack, rackTiers, unitReadings, ventTiles, RACK_BASE, U, TILE,
-  type CoolingLayer, type RackLayer, type RackPaint, type Sel, type ViewMode, type Visibility,
+  bandColor, paintEquipment, paintRack, rackTiers, unitReadings, ventTiles, HEAT_INDEX, RACK_BASE, TEMP_BANDS, U, TILE,
+  type CoolingLayer, type HeatPlane, type RackLayer, type RackPaint, type Sel, type ViewMode, type Visibility,
 } from './layers';
 import type { PathOverlay, Role } from './paths';
+import { fmtT, numT, unitLabel } from './units';
 
 /**
  * The room in WebGL (docs/27 Phase 1, restyled after the reference viewer):
@@ -53,6 +57,11 @@ export interface SceneProps {
   sel: Sel;
   /** A power/cooling path or an impact answer to draw over the room. */
   overlay?: PathOverlay | null;
+  /** The room's indices: hot-spot markers are drawn from them. */
+  indices?: TwinRoomIndices | null;
+  /** The interpolated air, and which of its planes to show. */
+  field?: ThermalField | null;
+  heat: HeatPlane;
   resetTick: number;
   themeTick: number;
   onSelect: (s: Sel) => void;
@@ -67,20 +76,33 @@ export function rackH(r: FloorRack): number {
 
 // ----------------------------------------------------------- gradient boxes
 
+// Each instance carries a bottom/middle/top colour for its front and, when a
+// layer reads the two faces apart (inlet / outlet), another set for its rear;
+// aFront says which local z sign is the front (0 = one gradient all round).
 const GRADIENT_VERT = /* glsl */`
   attribute vec3 cBot; attribute vec3 cMid; attribute vec3 cTop;
-  varying vec3 vBot; varying vec3 vMid; varying vec3 vTop; varying float vT; varying vec3 vN;
+  attribute vec3 rBot; attribute vec3 rMid; attribute vec3 rTop; attribute float aFront;
+  varying vec3 vBot; varying vec3 vMid; varying vec3 vTop;
+  varying vec3 vRBot; varying vec3 vRMid; varying vec3 vRTop;
+  varying float vT; varying float vZ; varying float vSplit; varying vec3 vN;
   void main() {
     vBot = cBot; vMid = cMid; vTop = cTop;
+    vRBot = rBot; vRMid = rMid; vRTop = rTop;
     vT = position.y + 0.5;
+    vZ = position.z * aFront;
+    vSplit = abs(aFront);
     vN = normalize((modelMatrix * instanceMatrix * vec4(normal, 0.0)).xyz);
     gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position, 1.0);
   }`;
 const GRADIENT_FRAG = /* glsl */`
   uniform vec3 uLight; uniform float uOpacity;
-  varying vec3 vBot; varying vec3 vMid; varying vec3 vTop; varying float vT; varying vec3 vN;
+  varying vec3 vBot; varying vec3 vMid; varying vec3 vTop;
+  varying vec3 vRBot; varying vec3 vRMid; varying vec3 vRTop;
+  varying float vT; varying float vZ; varying float vSplit; varying vec3 vN;
   void main() {
-    vec3 c = vT < 0.5 ? mix(vBot, vMid, vT * 2.0) : mix(vMid, vTop, (vT - 0.5) * 2.0);
+    bool rear = vSplit > 0.5 && vZ < 0.0;
+    vec3 b = rear ? vRBot : vBot; vec3 m = rear ? vRMid : vMid; vec3 t = rear ? vRTop : vTop;
+    vec3 c = vT < 0.5 ? mix(b, m, vT * 2.0) : mix(m, t, (vT - 0.5) * 2.0);
     float l = 0.64 + 0.36 * max(dot(normalize(vN), normalize(uLight)), 0.0);
     gl_FragColor = vec4(c * l, uOpacity);
     #include <colorspace_fragment>
@@ -90,6 +112,8 @@ export interface GBox {
   x: number; y: number; z: number;      // centre of the FULL box
   w: number; h: number; d: number;
   rot: number;                          // radians about +y
+  /** Which local z sign the front face is on: -1 (faces lower y), +1, or 0 unknown. */
+  front: number;
   paint: RackPaint;
 }
 
@@ -109,9 +133,10 @@ function GradientBoxes({ boxes, part, opacity, dim, meshRef, onClick, onMove, on
 
   const geometry = useMemo(() => {
     const g = new THREE.BoxGeometry(1, 1, 1);
-    for (const name of ['cBot', 'cMid', 'cTop']) {
+    for (const name of ['cBot', 'cMid', 'cTop', 'rBot', 'rMid', 'rTop']) {
       g.setAttribute(name, new THREE.InstancedBufferAttribute(new Float32Array(Math.max(1, n) * 3), 3));
     }
+    g.setAttribute('aFront', new THREE.InstancedBufferAttribute(new Float32Array(Math.max(1, n)), 1));
     return g;
   }, [n]);
   const material = useMemo(() => new THREE.ShaderMaterial({
@@ -137,6 +162,7 @@ function GradientBoxes({ boxes, part, opacity, dim, meshRef, onClick, onMove, on
     const col = new THREE.Color(), wall = new THREE.Color(SURF.wall);
     const attr = (k: string) => geometry.getAttribute(k) as THREE.InstancedBufferAttribute;
     const aB = attr('cBot'), aM = attr('cMid'), aT = attr('cTop');
+    const rB = attr('rBot'), rM = attr('rMid'), rT = attr('rTop'), aF = attr('aFront');
     boxes.forEach((b, i) => {
       const fill = Math.min(1, Math.max(0, b.paint.fill));
       let h: number, yc: number;
@@ -144,14 +170,19 @@ function GradientBoxes({ boxes, part, opacity, dim, meshRef, onClick, onMove, on
       else { h = fill < 1 ? b.h * (1 - fill) : 0; yc = b.y + b.h / 2 - h / 2; }
       q.setFromAxisAngle(up, b.rot);
       im.setMatrixAt(i, m.compose(p.set(b.x, yc, b.z), q, s.set(b.w, Math.max(h, 0), b.d)));
-      for (const [a, c] of [[aB, b.paint.bot], [aM, b.paint.mid], [aT, b.paint.top]] as const) {
+      const rear = b.paint.rear ?? b.paint;
+      const split = part === 'solid' && b.paint.rear && b.front ? b.front : 0;
+      for (const [a, c] of [[aB, b.paint.bot], [aM, b.paint.mid], [aT, b.paint.top],
+                            [rB, rear.bot], [rM, rear.mid], [rT, rear.top]] as const) {
         col.set(part === 'shell' ? SURF.wall : c);
         if (dim?.[i]) col.lerp(wall, 0.78);
         a.setXYZ(i, col.r, col.g, col.b);
       }
+      aF.setX(i, split);
     });
     im.instanceMatrix.needsUpdate = true;
     aB.needsUpdate = aM.needsUpdate = aT.needsUpdate = true;
+    rB.needsUpdate = rM.needsUpdate = rT.needsUpdate = aF.needsUpdate = true;
     im.computeBoundingSphere();
     invalidate();
   }, [boxes, part, dim, geometry, invalidate, meshRef]);
@@ -232,7 +263,8 @@ function labelTexture(text: string, ink: string, bg: string): THREE.CanvasTextur
 // ----------------------------------------------------------- the scene
 
 export default function RoomScene(p: SceneProps) {
-  const { data, units, rackLayer, coolingLayer, vis, mode, sel, overlay, resetTick, themeTick, onSelect, onTip, onFocus } = p;
+  const { data, units, rackLayer, coolingLayer, vis, mode, sel, overlay, indices, field, heat, resetTick, themeTick,
+          onSelect, onTip, onFocus } = p;
   const { plan, devices } = data;
   const W = plan.extent.width_m, D = plan.extent.depth_m;
   const whiteSpace = plan.room_class === 'white_space';
@@ -266,6 +298,7 @@ export default function RoomScene(p: SceneProps) {
     return plan.racks.map((r) => {
       const h = rackH(r);
       return { x: X(r.x), y: h / 2, z: Z(r.y), w: r.w_m ?? DEFAULT_W, h, d: r.d_m ?? DEFAULT_D, rot: 0,
+               front: r.facing === 'N' ? -1 : r.facing === 'S' ? 1 : 0,
                paint: paintRack(r, byRack.get(r.id) ?? [], rackLayer, peak) };
     });
   }, [plan.racks, byRack, rackLayer, X, Z, themeTick]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -276,7 +309,7 @@ export default function RoomScene(p: SceneProps) {
     const h = e.h_m ?? 1.5;
     const y = e.mount === 'wall' ? (e.mount_height_m ?? h / 2) : h / 2;
     return { x: X(e.x as number), y, z: Z(e.y as number), w: e.w_m as number, h, d: e.d_m as number,
-             rot: -((e.facing_deg ?? 0) * Math.PI) / 180,
+             rot: -((e.facing_deg ?? 0) * Math.PI) / 180, front: 0,
              paint: paintEquipment(e, coolingLayer, unitReadings(e, units.get(e.id))) };
   }), [placedUnits, units, coolingLayer, X, Z, themeTick]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -285,19 +318,27 @@ export default function RoomScene(p: SceneProps) {
   // --- tooltips -----------------------------------------------------------
   const tip = (e: ThreeEvent<PointerEvent>, text: string) =>
     onTip({ x: e.nativeEvent.clientX, y: e.nativeEvent.clientY, text });
+  const hotByRack = useMemo(() => {
+    const m = new Map<string, TwinRackIndex>();
+    for (const x of indices?.racks ?? []) m.set(x.rack_id, x);
+    return m;
+  }, [indices]);
   const rackText = (r: FloorRack) => {
     const [b, m, t] = rackTiers(byRack.get(r.id) ?? [], r.u_height ?? 42);
-    const f = (v: number | null) => (v == null ? '–' : `${v.toFixed(1)}`);
+    const f = (v: number | null) => numT(v);
+    const ix = hotByRack.get(r.id);
     return [r.name, `${r.device_count} devices`,
-      b != null || t != null ? `inlet ${f(b)} / ${f(m)} / ${f(t)} °C` : 'no inlet reading',
+      b != null || t != null ? `inlet ${f(b)} / ${f(m)} / ${f(t)} ${unitLabel()}` : 'no inlet reading',
+      ix?.exhaust_max_c != null ? `exhaust ${fmtT(ix.exhaust_max_c)}` : null,
+      ix?.hot ? (ix.hot === 'out' ? 'hot spot · out of allowable' : 'hot spot') : null,
       r.load_kw != null ? `${r.load_kw.toFixed(1)} kW` : null,
       r.free_u != null ? `${r.free_u} U free` : null].filter(Boolean).join(' · ');
   };
   const unitText = (e: FloorEquipment) => {
     const u = unitReadings(e, units.get(e.id));
     return [e.name, humanise(e.device_type),
-      u.supply_c != null ? `supply ${u.supply_c.toFixed(1)} °C` : null,
-      u.return_c != null ? `return ${u.return_c.toFixed(1)} °C` : null,
+      u.supply_c != null ? `supply ${fmtT(u.supply_c)}` : null,
+      u.return_c != null ? `return ${fmtT(u.return_c)}` : null,
       e.power_w != null ? `${(e.power_w / 1000).toFixed(1)} kW` : null,
       e.max_severity !== 'CLEAR' ? e.max_severity.toLowerCase() : null].filter(Boolean).join(' · ');
   };
@@ -337,13 +378,16 @@ export default function RoomScene(p: SceneProps) {
                    tones={tones} containment={vis.containment} />
       ))}
 
-      <GradientBoxes boxes={rackBoxes} part="solid" opacity={1} meshRef={rackMesh} dim={rackDim}
-                     onClick={fpv ? undefined : (i) => onSelect({ kind: 'rack', id: plan.racks[i].id })}
-                     onMove={fpv ? undefined : (i, e) => tip(e, rackText(plan.racks[i]))}
+      {/* See-into-racks: the layer's colour stays on the cabinet as a tinted
+          shell and the devices inside show through it. */}
+      <GradientBoxes boxes={rackBoxes} part="solid" opacity={vis.faces ? 0.32 : 1} meshRef={rackMesh} dim={rackDim}
+                     // Seen into, the shell lets the pointer through to the devices.
+                     onClick={fpv || vis.faces ? undefined : (i) => onSelect({ kind: 'rack', id: plan.racks[i].id })}
+                     onMove={fpv || vis.faces ? undefined : (i, e) => tip(e, rackText(plan.racks[i]))}
                      onOut={() => onTip(null)} />
       {anyShell && <GradientBoxes boxes={rackBoxes} part="shell" opacity={0.22} />}
       <RackFrames racks={plan.racks} X={X} Z={Z} />
-      {vis.devices && (
+      {(vis.devices || vis.faces) && (
         <RackDevices devices={devices} rackById={rackById} X={X} Z={Z} themeTick={themeTick}
                      onSelect={fpv ? undefined : onSelect} onTip={fpv ? undefined : onTip} />
       )}
@@ -360,6 +404,13 @@ export default function RoomScene(p: SceneProps) {
         </>
       )}
 
+      {heat !== 'off' && field && (
+        <HeatMap field={field} plane={HEAT_INDEX[heat]} W={W} D={D} themeTick={themeTick} />
+      )}
+      {vis.hotspots && indices && indices.hot_spots > 0 && (
+        <HotSpots indices={indices} racks={plan.racks} rackBoxes={rackBoxes} tones={tones}
+                  onSelect={fpv ? undefined : onSelect} onTip={fpv ? undefined : onTip} />
+      )}
       {vis.labels && <Labels racks={plan.racks} units={placedUnits} X={X} Z={Z}
                              ink={tones.ink} bg={tones.raised} />}
       <Highlight sel={sel} rackBoxes={rackBoxes} racks={plan.racks} unitBoxes={unitBoxes} units={placedUnits}
@@ -369,7 +420,7 @@ export default function RoomScene(p: SceneProps) {
                  unitBoxes={unitBoxes} units={placedUnits} unitRole={unitRole} devices={devices}
                  tones={tones} themeTick={themeTick} />
       )}
-      <Invalidator deps={[rackLayer, coolingLayer, vis, sel, mode, overlay]} invalidate={invalidate} />
+      <Invalidator deps={[rackLayer, coolingLayer, vis, sel, mode, overlay, heat, field, indices]} invalidate={invalidate} />
     </>
   );
 }
@@ -450,6 +501,112 @@ function Overlay({ overlay, rackBoxes, racks, rackRole, unitBoxes, units, unitRo
         <lineDashedMaterial color={line} dashSize={0.18} gapSize={0.1} />
       </lineSegments>
     </group>
+  );
+}
+
+/** One of the three interpolated planes as a texture on a sheet at its
+ *  height: a texel per cell, the legend's band colour for the air there,
+ *  and the cell's confidence as its opacity, so air no sensor reached fades
+ *  out instead of being painted. Cold aisles come from intakes, hot aisles
+ *  from exhausts (the backend never blends the two); between the rows the
+ *  racks themselves hide the sheet. */
+function HeatMap({ field, plane, W, D, themeTick }: {
+  field: ThermalField; plane: number; W: number; D: number; themeTick: number;
+}) {
+  const texture = useMemo(() => {
+    const pl = field.planes[plane];
+    const { nx, ny } = field;
+    const data = new Uint8Array(nx * ny * 4);
+    const col = new THREE.Color();
+    const cache = new Map<string, [number, number, number]>();
+    if (pl) {
+      for (let j = 0; j < ny; j++) {
+        for (let i = 0; i < nx; i++) {
+          const k = j * nx + i;
+          const t = pl.temp[k];
+          if (t == null) continue;
+          const token = bandColor(TEMP_BANDS, t);
+          let rgb = cache.get(token);
+          if (!rgb) {
+            col.set(resolveColor(token));
+            rgb = [Math.round(col.r * 255), Math.round(col.g * 255), Math.round(col.b * 255)];
+            cache.set(token, rgb);
+          }
+          // Room y grows away from the top wall; the sheet's v grows the other
+          // way once it lies flat, so rows are written bottom-up.
+          const o = ((ny - 1 - j) * nx + i) * 4;
+          data[o] = rgb[0]; data[o + 1] = rgb[1]; data[o + 2] = rgb[2];
+          data[o + 3] = Math.round(Math.min(1, pl.conf[k]) * 0.88 * 255);
+        }
+      }
+    }
+    const tx = new THREE.DataTexture(data, nx, ny, THREE.RGBAFormat);
+    tx.colorSpace = THREE.SRGBColorSpace;
+    tx.magFilter = THREE.LinearFilter;
+    tx.minFilter = THREE.LinearFilter;
+    tx.needsUpdate = true;
+    return tx;
+  }, [field, plane, themeTick]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => texture.dispose(), [texture]);
+  const h = field.planes[plane]?.height_m ?? 1.2;
+  // The texture covers nx*cell by ny*cell, which may overshoot the room by a
+  // part cell; the sheet is that size and centred on the room's origin corner.
+  const sw = field.nx * field.cell_m, sd = field.ny * field.cell_m;
+  return (
+    <mesh rotation-x={-Math.PI / 2} position={[sw / 2 - W / 2, h, sd / 2 - D / 2]} renderOrder={2}>
+      <planeGeometry args={[sw, sd]} />
+      <meshBasicMaterial map={texture} transparent depthWrite={false} side={THREE.DoubleSide} />
+    </mesh>
+  );
+}
+
+/** A marker over every rack whose intake is past the recommended ceiling:
+ *  amber inside the allowable band, red outside it. The rack's own colour
+ *  already says so on the temperature layers; the marker says it on every
+ *  other layer and from across the hall. */
+function HotSpots({ indices, racks, rackBoxes, tones, onSelect, onTip }: {
+  indices: TwinRoomIndices; racks: FloorRack[]; rackBoxes: GBox[]; tones: Tones;
+  onSelect?: (s: Sel) => void; onTip?: (t: HoverTip | null) => void;
+}) {
+  const ref = useRef<THREE.InstancedMesh>(null);
+  const { invalidate } = useThree();
+  const spots = useMemo(() => {
+    const at = new Map(racks.map((r, i) => [r.id, i]));
+    return indices.racks.filter((x) => x.hot && at.has(x.rack_id)).map((x) => ({ ix: x, box: rackBoxes[at.get(x.rack_id)!], rack: racks[at.get(x.rack_id)!] }));
+  }, [indices, racks, rackBoxes]);
+  const colors = useMemo(() => spots.map((s) => new THREE.Color(s.ix.hot === 'out' ? tones.critical : tones.warn)), [spots, tones]);
+  useLayoutEffect(() => {
+    const im = ref.current;
+    if (!im) return;
+    const m = new THREE.Matrix4(), p = new THREE.Vector3(), s = new THREE.Vector3(1, 1, 1);
+    const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.PI, 0, 0));   // tip down
+    spots.forEach((sp, i) => {
+      im.setMatrixAt(i, m.compose(p.set(sp.box.x, sp.box.y + sp.box.h / 2 + 0.36, sp.box.z), q, s));
+      im.setColorAt(i, colors[i]);
+    });
+    im.instanceMatrix.needsUpdate = true;
+    if (im.instanceColor) im.instanceColor.needsUpdate = true;
+    im.computeBoundingSphere();
+    invalidate();
+  }, [spots, colors, invalidate]);
+  if (!spots.length) return null;
+  return (
+    <instancedMesh key={spots.length} ref={ref} args={[undefined, undefined, spots.length]}
+                   onClick={onSelect && ((e) => { e.stopPropagation(); if (e.instanceId != null) onSelect({ kind: 'rack', id: spots[e.instanceId].rack.id }); })}
+                   onPointerMove={onTip && ((e) => {
+                     e.stopPropagation();
+                     if (e.instanceId == null) return;
+                     const sp = spots[e.instanceId];
+                     onTip({ x: e.nativeEvent.clientX, y: e.nativeEvent.clientY,
+                             text: [sp.rack.name, sp.ix.hot === 'out' ? 'hot spot · out of allowable' : 'hot spot · above recommended',
+                                    sp.ix.inlet_max_c != null ? `intake ${fmtT(sp.ix.inlet_max_c)}` : null].filter(Boolean).join(' · ') });
+                   })}
+                   onPointerOut={() => onTip?.(null)}>
+      <coneGeometry args={[0.17, 0.4, 14]} />
+      {/* Unlit: a marker is a flag, not a surface, and must read as the same
+          amber or red from every angle. */}
+      <meshBasicMaterial />
+    </instancedMesh>
   );
 }
 
@@ -872,7 +1029,7 @@ function RackDevices({ devices, rackById, X, Z, themeTick, onSelect, onTip }: {
                      const d = devices[e.instanceId];
                      onTip({ x: e.nativeEvent.clientX, y: e.nativeEvent.clientY,
                              text: [d.name, humanise(d.device_type), d.u_start ? `U${d.u_start}` : d.mount,
-                                    d.temp_c != null ? `${d.temp_c.toFixed(1)} °C` : null,
+                                    d.temp_c != null ? fmtT(d.temp_c) : null,
                                     d.power_w != null ? `${(d.power_w / 1000).toFixed(2)} kW` : null,
                                     d.status.toLowerCase(),
                                     d.max_severity !== 'CLEAR' ? d.max_severity.toLowerCase() : null]
@@ -901,7 +1058,8 @@ function Highlight({ sel, rackBoxes, racks, unitBoxes, units, devices, rackById,
     const d = devices.find((x) => x.id === sel.id);
     const r = d && rackById.get(d.rack_id);
     const b = d && r ? deviceBox(d, r, X, Z, 0) : null;
-    if (b) box = { x: b[0], y: b[1], z: b[2], w: b[3], h: b[4], d: b[5], rot: 0, paint: { bot: '', mid: '', top: '', fill: 1 } };
+    if (b) box = { x: b[0], y: b[1], z: b[2], w: b[3], h: b[4], d: b[5], rot: 0, front: 0,
+                   paint: { bot: '', mid: '', top: '', fill: 1 } };
   }
   const [bw, bh, bd] = box ? [box.w + 0.04, box.h + 0.04, box.d + 0.04] : [0, 0, 0];
   const geom = useMemo(() => new THREE.EdgesGeometry(new THREE.BoxGeometry(bw, bh, bd)), [bw, bh, bd]);

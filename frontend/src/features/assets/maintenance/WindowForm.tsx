@@ -12,7 +12,12 @@ import { DevicePicker } from '../components/DevicePicker';
  *  the impact graph and the power chain what this selection would actually
  *  cover and says so before anybody commits.
  */
-export function WindowForm({ onClose }: { onClose: () => void }) {
+export function WindowForm({ onClose, initialDeviceIds = [] }: {
+  onClose: () => void;
+  /** Devices already chosen - the floor map's unit panel opens the form
+   *  with the unit it was looking at. */
+  initialDeviceIds?: string[];
+}) {
   const qc = useQueryClient();
   const navigate = useNavigate();
   const [step, setStep] = useState<1 | 2 | 3>(1);
@@ -27,7 +32,7 @@ export function WindowForm({ onClose }: { onClose: () => void }) {
   const [requireApproval, setRequireApproval] = useState(false);
   const [startsAt, setStartsAt] = useState(defaultStart());
   const [endsAt, setEndsAt] = useState(defaultEnd());
-  const [deviceIds, setDeviceIds] = useState<string[]>([]);
+  const [deviceIds, setDeviceIds] = useState<string[]>(initialDeviceIds);
 
   const { data: preview, isFetching } = useQuery<MaintenancePreview>({
     queryKey: ['maintenance-preview', deviceIds.join(',')],

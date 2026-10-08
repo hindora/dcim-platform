@@ -1696,6 +1696,12 @@ export interface FloorRack {
   u_height?: number;
   /** Smallest single rPDU feed; null = not known. */
   rated_power_kw?: number | null;
+  /** Budgeted power of the installed equipment (model budget, else derated
+   *  nameplate) and power held for planned work. Planning figures. */
+  allocated_kw?: number | null;
+  reserved_kw?: number | null;
+  allocated_derated?: number;
+  allocated_unrated?: number;
 }
 
 /** A device in one of a room's racks (3D scene). */
@@ -1716,11 +1722,95 @@ export interface TwinDevice {
   /** Air at the device from whichever sensor it has (inlet or ambient). */
   temp_c?: number | null;
   rh_pct?: number | null;
+  /** Exhaust air; only servers report it. */
+  exhaust_c?: number | null;
+}
+
+/** One rack's thermal indices (docs/27 Phase 2). */
+export interface TwinRackIndex {
+  rack_id: string;
+  inlet_max_c?: number | null;
+  inlet_min_c?: number | null;
+  exhaust_max_c?: number | null;
+  /** Spread of the intake readings across the rack, K. */
+  spread_k?: number | null;
+  /** Mean exhaust minus mean inlet, K. */
+  rise_k?: number | null;
+  shi?: number | null;
+  rhi?: number | null;
+  /** 'allowable' above the recommended ceiling, 'out' above the allowable one. */
+  hot?: 'allowable' | 'out' | null;
+  intakes: number;
+  exhausts: number;
+}
+
+/** The room's RCI / RTI / SHI with the evidence they were scored from. */
+export interface TwinRoomIndices {
+  ashrae_class: string;
+  rci_hi?: number | null;
+  rci_lo?: number | null;
+  rci_rating?: 'good' | 'acceptable' | 'poor' | null;
+  rti?: number | null;
+  shi?: number | null;
+  rhi?: number | null;
+  supply_ref_c?: number | null;
+  return_ref_c?: number | null;
+  dt_equip_k?: number | null;
+  intakes: number;
+  exhausts: number;
+  /** Devices whose rise entered RTI with unit weight for want of power. */
+  unweighted: number;
+  units_in_ref: number;
+  hot_spots: number;
+  racks: TwinRackIndex[];
+}
+
+/** How far back a room can be replayed (docs/27 Phase 4). */
+export interface TwinHistoryRange {
+  room_id: string;
+  /** Oldest hourly record any device in the room has; null = no history yet. */
+  earliest?: string | null;
+  latest: string;
+  raw_hours: number;
+  five_min_days: number;
+}
+
+/** Where a replayed frame's readings came from (docs/27 D8). */
+export interface TwinFrameInfo {
+  t: string;
+  /** 'raw' (newest two hours), '5m' (two days), '1h' (older). */
+  source: 'raw' | '5m' | '1h' | string;
+  lookback_s: number;
+  devices_with_readings: number;
+  note?: string | null;
 }
 
 export interface TwinRoomScene {
   plan: FloorPlan;
   devices: TwinDevice[];
+  indices?: TwinRoomIndices | null;
+  /** Set when this is the room at a moment in the past, not now. */
+  frame?: TwinFrameInfo | null;
+}
+
+/** One horizontal plane of the room's air. Row-major, ny rows of nx. */
+export interface ThermalPlane {
+  height_m: number;
+  temp: (number | null)[];
+  /** 0-1: how near the nearest informing sensor is. */
+  conf: number[];
+}
+
+/** The room's air on three planes, interpolated per aisle (docs/27 D5). */
+export interface ThermalField {
+  room_id: string;
+  cell_m: number;
+  nx: number;
+  ny: number;
+  planes: ThermalPlane[];
+  intake_points: number;
+  exhaust_points: number;
+  note?: string | null;
 }
 
 /** A site as a building (docs/27 Phase 3): levels and placed rooms. */
@@ -1794,6 +1884,8 @@ export interface FloorPlan {
   aisle_source: 'stored' | 'derived';
   room_class?: string | null;
   containment?: string | null;
+  /** ASHRAE equipment class the room is graded against; absent = A1. */
+  ashrae_class?: string | null;
   level?: string | null;
   level_elevation_m?: number | null;
   origin_x_m?: number | null;
@@ -4163,6 +4255,11 @@ export const api = {
 
   floorplan: (roomId: string) => request<FloorPlan>(`/rooms/${roomId}/floorplan`),
   roomScene: (roomId: string) => request<TwinRoomScene>(`/twin/rooms/${roomId}/scene`),
+  roomField: (roomId: string, t?: string | null) =>
+    request<ThermalField>(`/twin/rooms/${roomId}/field${t ? `?t=${encodeURIComponent(t)}` : ''}`),
+  roomHistory: (roomId: string) => request<TwinHistoryRange>(`/twin/rooms/${roomId}/history`),
+  roomFrame: (roomId: string, t: string) =>
+    request<TwinRoomScene>(`/twin/rooms/${roomId}/frame?t=${encodeURIComponent(t)}`),
   siteScene: (datacenterId: string) => request<TwinSiteScene>(`/twin/sites/${datacenterId}/scene`),
 
   rackElevation: (id: string) =>

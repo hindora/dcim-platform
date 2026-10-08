@@ -2,18 +2,20 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
-  api, type FloorPlan as Plan, type RoomKpi, type RoomSummary, type ThermalRoom, type ThermalUnit,
-  type TwinRoomScene,
+  api, type FloorPlan as Plan, type RoomKpi, type RoomSummary, type ThermalField, type ThermalRoom,
+  type ThermalUnit, type TwinHistoryRange, type TwinRoomScene,
 } from '../../api/client';
 import { Seg } from '../../components/estate';
 import type { Overlay } from './colors';
 import {
-  coolingLegendFor, DEFAULT_VIS, legendFor, rackTiers, ventTiles,
-  type CoolingLayer, type RackLayer, type Sel, type ViewMode, type Visibility,
+  coolingLegendFor, DEFAULT_VIS, legendFor, rackTiers, ventTiles, TEMP_BANDS,
+  type CoolingLayer, type HeatPlane, type RackLayer, type Sel, type ViewMode, type Visibility,
 } from './layers';
 import { DevicePanel, FiltersPanel, Legend, PathsPanel, RackPanel, RoomPanel, UnitPanel } from './panels';
 import { fromImpact, fromTraces, type PathKind } from './paths';
 import { Plan2D } from './Plan2D';
+import { paneCaption, snap, sourceLabel, STEP_OPTIONS, Timeline, type CompareMode } from './Timeline';
+import { numT, setTempUnit, unitLabel, useTempUnit, type TempUnit } from './units';
 import { useFrames, useTopics } from '../../ws/useSocket';
 import type { HoverTip } from './Scene';
 import './viewer.css';
@@ -32,8 +34,10 @@ const Stage = lazy(() => import('./Stage'));
 const MODES: { key: ViewMode; label: string }[] = [
   { key: '3d', label: '3D' }, { key: 'plan', label: 'PLAN' }, { key: 'fpv', label: 'FPV' },
 ];
-const RACK_KEYS = new Set<string>(['temperature', 'rh', 'power', 'utilisation', 'space', 'compliance', 'alarm', 'none']);
+const RACK_KEYS = new Set<string>(['temperature', 'inlet_outlet', 'exhaust', 'variance', 'rh', 'power', 'utilisation', 'committed',
+                                   'space', 'compliance', 'alarm', 'none']);
 const COOLING_KEYS = new Set<string>(['air', 'supply', 'return', 'utilisation', 'none']);
+const HEAT_KEYS = new Set<string>(['bottom', 'mid', 'top']);
 
 function hasWebGL(): boolean {
   try {
@@ -47,7 +51,7 @@ function hasWebGL(): boolean {
 /** The SVG fallback knows the older overlay vocabulary. */
 function overlayFor(layer: RackLayer): Overlay {
   if (layer === 'temperature' || layer === 'compliance') return 'thermal';
-  if (layer === 'power' || layer === 'utilisation') return 'power';
+  if (layer === 'power' || layer === 'utilisation' || layer === 'committed') return 'power';
   if (layer === 'space') return 'space';
   return 'alarm';
 }
@@ -66,7 +70,56 @@ export function FloorPlanView() {
   const mode: ViewMode = rawView === 'plan' || rawView === '2d' ? 'plan' : rawView === 'fpv' ? 'fpv' : '3d';
   const rackLayer = (RACK_KEYS.has(params.get('layer') ?? '') ? params.get('layer') : 'temperature') as RackLayer;
   const coolingLayer = (COOLING_KEYS.has(params.get('cooling') ?? '') ? params.get('cooling') : 'air') as CoolingLayer;
+  const heat = (HEAT_KEYS.has(params.get('heat') ?? '') ? params.get('heat') : 'off') as HeatPlane;
   const setParam = (k: string, v: string) => { params.set(k, v); setParams(params, { replace: true }); };
+
+  // --- time (docs/27 Phase 4) ----------------------------------------------
+  // `t` in the URL is the moment shown; absent = live. `cmp` is the compare
+  // pane's offset in seconds before the main moment (0 = the live room).
+  const tRaw = params.get('t');
+  const t = useMemo(() => {
+    if (!tRaw) return null;
+    const d = new Date(tRaw);
+    return Number.isNaN(d.getTime()) ? null : snap(d);
+  }, [tRaw]);
+  const tIso = t ? t.toISOString() : null;
+  // `cmp` is an offset in seconds before the main moment (0 = the live room),
+  // or 'pick' with the compare row's own moment in `cmp_t`.
+  const cmpRaw = params.get('cmp');
+  const cmp: CompareMode = cmpRaw === 'pick' ? 'pick'
+    : cmpRaw != null && cmpRaw !== '' && !Number.isNaN(Number(cmpRaw)) ? Number(cmpRaw) : null;
+  const cmpTRaw = params.get('cmp_t');
+  const pickedT = useMemo(() => {
+    const d = cmpTRaw ? new Date(cmpTRaw) : null;
+    return d && !Number.isNaN(d.getTime()) ? snap(d) : null;
+  }, [cmpTRaw]);
+  const cmpT = cmp === 'pick' ? (pickedT ?? snap(new Date(Date.now() - 3600_000)))
+    : cmp == null || cmp === 0 ? null : new Date((t ?? snap(new Date())).getTime() - cmp * 1000);
+  const cmpIso = cmpT ? cmpT.toISOString() : null;
+  // Minutes per frame for play and the step buttons.
+  const stepRaw = Number(params.get('step'));
+  const step = STEP_OPTIONS.some((o) => o.value === stepRaw) ? stepRaw : 5;
+  const [playing, setPlaying] = useState(false);
+  const tUnit = useTempUnit();
+  const setTime = (d: Date | null) => {
+    if (d) params.set('t', snap(d).toISOString()); else params.delete('t');
+    setParams(params, { replace: true });
+  };
+  const setCmp = (v: CompareMode) => {
+    if (v == null) params.delete('cmp'); else params.set('cmp', String(v));
+    if (v === 'pick' && !params.get('cmp_t')) {
+      // Start the compare row an hour before whatever the main view shows.
+      params.set('cmp_t', snap(new Date((t ?? new Date()).getTime() - 3600_000)).toISOString());
+    }
+    if (v !== 'pick') params.delete('cmp_t');
+    setParams(params, { replace: true });
+  };
+  const setCmpTime = (d: Date) => { params.set('cmp_t', snap(d).toISOString()); setParams(params, { replace: true }); };
+  const setStep = (m: number) => {
+    if (m === 5) params.delete('step'); else params.set('step', String(m));
+    setParams(params, { replace: true });
+  };
+  const live = t == null;
 
   const [panel, setPanel] = useState<'info' | 'filters' | null>('info');
   const [sel, setSel] = useState<Sel>(null);
@@ -89,21 +142,63 @@ export function FloorPlanView() {
   // Readings for this room arrive as one `room:{id}` frame per ingest batch;
   // the scene is re-read at most every 5 s on them, with the 60 s poll as the
   // backstop for a socket that has gone quiet.
-  useTopics(roomId ? [`room:${roomId}`] : []);
+  useTopics(roomId && live ? [`room:${roomId}`] : []);
   const lastPush = useRef(0);
   useFrames(['room_update'], (f) => {
-    if (f.room_id !== roomId) return;
+    if (f.room_id !== roomId || !live) return;
     const now = Date.now();
     if (now - lastPush.current < 5_000) return;
     lastPush.current = now;
     qc.invalidateQueries({ queryKey: ['twin-scene', roomId] });
+    qc.invalidateQueries({ queryKey: ['twin-field', roomId] });
   });
   // Labels are what FPV is for; in the other views they are clutter until asked for.
   useEffect(() => { setVis((v) => ({ ...v, labels: mode === 'fpv' })); }, [mode]);
 
+  // Live: the scene, re-read on the room topic and every minute. Replay: one
+  // frame per moment, which never changes once read.
+  const sceneFor = (iso: string | null) => (iso ? api.roomFrame(roomId, iso) : api.roomScene(roomId));
   const scene = useQuery<TwinRoomScene>({
-    queryKey: ['twin-scene', roomId], queryFn: () => api.roomScene(roomId),
-    enabled: Boolean(roomId) && webgl, refetchInterval: 60_000, retry: false,
+    queryKey: ['twin-scene', roomId, tIso ?? 'live'], queryFn: () => sceneFor(tIso),
+    enabled: Boolean(roomId) && webgl, refetchInterval: live ? 60_000 : false,
+    staleTime: live ? 0 : 10 * 60_000, retry: false, placeholderData: (prev) => prev,
+  });
+  const cmpScene = useQuery<TwinRoomScene>({
+    queryKey: ['twin-scene', roomId, cmpIso ?? 'live'], queryFn: () => sceneFor(cmpIso),
+    enabled: Boolean(roomId) && webgl && cmp != null, refetchInterval: cmpIso ? false : 60_000,
+    staleTime: cmpIso ? 10 * 60_000 : 0, retry: false, placeholderData: (prev) => prev,
+  });
+  // Playback: five minutes forward every 1.5 s, the next frame fetched ahead
+  // so the picture never waits. Stops at now, on going live, or on a new room.
+  useEffect(() => { setPlaying(false); }, [roomId, live]);
+  useEffect(() => {
+    if (!playing || !t) return;
+    const next = new Date(t.getTime() + step * 60_000);
+    if (next > new Date()) { setPlaying(false); return; }
+    const iso = next.toISOString();
+    qc.prefetchQuery({ queryKey: ['twin-scene', roomId, iso], queryFn: () => api.roomFrame(roomId, iso),
+                       staleTime: 10 * 60_000 });
+    const id = window.setTimeout(() => setTime(next), 1500);
+    return () => window.clearTimeout(id);
+  }, [playing, t, roomId, step]); // eslint-disable-line react-hooks/exhaustive-deps
+  // How far back the room goes: bounds the date picker and greys the scrubber.
+  const history = useQuery<TwinHistoryRange>({
+    queryKey: ['twin-history', roomId], queryFn: () => api.roomHistory(roomId),
+    enabled: Boolean(roomId) && webgl, staleTime: 10 * 60_000, retry: false,
+  });
+  const earliest = history.data?.earliest ? new Date(history.data.earliest) : null;
+  // A shared link to a moment the room has no record of opens at its oldest one.
+  useEffect(() => {
+    if (!earliest) return;
+    if (t && t < earliest) setTime(new Date(earliest.getTime() + 5 * 60_000 - 1));
+    if (cmp === 'pick' && pickedT && pickedT < earliest) setCmpTime(new Date(earliest.getTime() + 5 * 60_000 - 1));
+  }, [history.data?.earliest, tIso, cmpTRaw]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The interpolated air is a second, heavier payload, asked for only while a
+  // heat-map plane is showing; it moves when the scene moves.
+  const field = useQuery<ThermalField>({
+    queryKey: ['twin-field', roomId, tIso ?? 'live'], queryFn: () => api.roomField(roomId, tIso),
+    enabled: Boolean(roomId) && webgl && heat !== 'off', refetchInterval: live ? 60_000 : false,
+    staleTime: live ? 0 : 10 * 60_000, retry: false, placeholderData: (prev) => prev,
   });
   const plan2d = useQuery<Plan>({
     queryKey: ['floorplan', roomId], queryFn: () => api.floorplan(roomId),
@@ -159,23 +254,33 @@ export function FloorPlanView() {
   const legends = useMemo(() => {
     const a = legendFor(rackLayer);
     const b = coolingLegendFor(coolingLayer);
-    // One temperature legend serves both when both are read on it.
-    return [a, b && (!a || b.bands !== a.bands) ? b : null].filter((x): x is NonNullable<typeof x> => x != null);
-  }, [rackLayer, coolingLayer]);
+    const h = heat !== 'off' ? { title: 'Heat map', unit: '°C', bands: TEMP_BANDS, none: 'no sensor reaches' } : null;
+    // One temperature legend serves every layer read on it.
+    const out = [a];
+    if (b && !out.some((x) => x && x.bands === b.bands)) out.push(b);
+    if (h && !out.some((x) => x && x.bands === h.bands)) out.push(h);
+    return out.filter((x): x is NonNullable<typeof x> => x != null);
+  }, [rackLayer, coolingLayer, heat, tUnit]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const updatedAgo = scene.dataUpdatedAt ? Math.max(0, Math.round((Date.now() - scene.dataUpdatedAt) / 1000)) : null;
+  const updatedAgo = live && scene.dataUpdatedAt ? Math.max(0, Math.round((Date.now() - scene.dataUpdatedAt) / 1000)) : null;
+  const frameInfo = data?.frame ?? null;
 
   // --- selection panel content ----------------------------------------
   let panelTitle = 'Room information';
   let panelBody: React.ReactNode = null;
   if (panel === 'filters') {
     panelTitle = 'View filters';
-    panelBody = <FiltersPanel rackLayer={rackLayer} coolingLayer={coolingLayer} vis={vis}
-                              onRack={(l) => setParam('layer', l)} onCooling={(l) => setParam('cooling', l)} onVis={setVis} />;
+    panelBody = <FiltersPanel rackLayer={rackLayer} coolingLayer={coolingLayer} heat={heat} vis={vis}
+                              onRack={(l) => setParam('layer', l)} onCooling={(l) => setParam('cooling', l)}
+                              onHeat={(h) => setParam('heat', h)} onVis={setVis} />;
   } else if (sel && data) {
     if (sel.kind === 'rack') {
       const r = data.plan.racks.find((x) => x.id === sel.id);
-      if (r) { panelTitle = `Rack ${r.name}`; panelBody = <RackPanel rack={r} devices={data.devices.filter((d) => d.rack_id === r.id)} />; }
+      if (r) {
+        panelTitle = `Rack ${r.name}`;
+        panelBody = <RackPanel rack={r} devices={data.devices.filter((d) => d.rack_id === r.id)}
+                               index={data.indices?.racks.find((x) => x.rack_id === r.id)} />;
+      }
     } else if (sel.kind === 'device') {
       const d = data.devices.find((x) => x.id === sel.id);
       if (d) { panelTitle = d.name; panelBody = <DevicePanel device={d} rack={data.plan.racks.find((r) => r.id === d.rack_id)} />; }
@@ -184,7 +289,8 @@ export function FloorPlanView() {
       if (e) { panelTitle = e.name; panelBody = <UnitPanel unit={e} thermal={units.get(e.id)} />; }
     }
   } else if (data) {
-    panelBody = <RoomPanel plan={data.plan} devices={data.devices} kpi={kpi.data} thermal={thermal.data} vents={vents} />;
+    panelBody = <RoomPanel plan={data.plan} devices={data.devices} kpi={kpi.data} thermal={thermal.data} vents={vents}
+                           indices={data.indices} field={heat !== 'off' ? field.data : null} />;
   }
   const paths = sel && data && panel === 'info' ? (
     <PathsPanel kind={pathKind} overlay={overlay} loading={Boolean(pathKind) && pathQ.isLoading} error={pathQ.isError}
@@ -224,18 +330,36 @@ export function FloorPlanView() {
     );
   }
 
+  const stage = (d: TwinRoomScene, withField: boolean) => (
+    <Suspense fallback={<p className="muted viewer-fallback">Loading the room…</p>}>
+      <Stage data={d} units={units} rackLayer={rackLayer} coolingLayer={coolingLayer} vis={vis} mode={mode}
+             sel={sel} overlay={overlay} indices={d.indices} field={withField && heat !== 'off' ? field.data : null} heat={heat}
+             resetTick={resetTick} themeTick={themeTick}
+             onSelect={(s) => { setSel(s); if (s) setPanel('info'); }} onTip={setTip} onFocus={setFocus}
+             label={`${mode === 'plan' ? 'Plan' : mode === 'fpv' ? 'Walk-through' : '3D view'} of ${d.plan.room_name}`} />
+    </Suspense>
+  );
+
   return (
-    <div className="viewer">
-      <div className="viewer-stage">
-        {data && (
-          <Suspense fallback={<p className="muted viewer-fallback">Loading the room…</p>}>
-            <Stage data={data} units={units} rackLayer={rackLayer} coolingLayer={coolingLayer} vis={vis} mode={mode}
-                   sel={sel} overlay={overlay} resetTick={resetTick} themeTick={themeTick}
-                   onSelect={(s) => { setSel(s); if (s) setPanel('info'); }} onTip={setTip} onFocus={setFocus}
-                   label={`${mode === 'plan' ? 'Plan' : mode === 'fpv' ? 'Walk-through' : '3D view'} of ${data.plan.room_name}`} />
-          </Suspense>
+    <div className={`viewer has-time${cmp === 'pick' ? ' has-compare-row' : ''}`}>
+      <div className={`viewer-stage${cmp != null ? ' is-split' : ''}`}>
+        {cmp == null && data && stage(data, true)}
+        {cmp != null && (
+          <>
+            <div className="vw-pane">
+              {data && stage(data, true)}
+              <div className="vw-pane-cap"><b>{paneCaption(t, frameInfo)}</b></div>
+            </div>
+            <div className="vw-pane">
+              {cmpScene.data && stage(cmpScene.data, false)}
+              {cmpScene.isLoading && <p className="muted viewer-fallback">Loading the earlier room…</p>}
+              <div className="vw-pane-cap">{paneCaption(cmpT, cmpScene.data?.frame)}</div>
+            </div>
+          </>
         )}
-        {scene.isError && <p className="muted viewer-fallback">Nothing in this room is positioned, so it cannot be drawn.</p>}
+        {scene.isError && <p className="muted viewer-fallback">{live
+          ? 'Nothing in this room is positioned, so it cannot be drawn.'
+          : 'No frame for this moment. Try a later time or go back to live.'}</p>}
         {scene.isLoading && <p className="muted viewer-fallback">Loading the room…</p>}
       </div>
 
@@ -245,6 +369,8 @@ export function FloorPlanView() {
       <div className="vw-float vw-topcenter">
         <Seg label="View" value={mode} onChange={(m) => setParam('view', m)} options={MODES} />
         <button type="button" className="vw-icon" onClick={() => setResetTick((t) => t + 1)} title="Reset the camera">RESET</button>
+        <Seg label="Temperature unit" value={tUnit} onChange={(u) => setTempUnit(u as TempUnit)}
+             options={[{ key: 'C', label: '°C' }, { key: 'F', label: '°F' }]} />
       </div>
       <div className="vw-rail">
         <button type="button" className={`vw-icon${panel === 'info' ? ' is-on' : ''}`}
@@ -276,7 +402,7 @@ export function FloorPlanView() {
             <div className="vw-focus">
               <b>{focused.name}</b>
               {focusTiers[0] != null || focusTiers[2] != null
-                ? `Inlet ${focusTiers.map((t) => (t == null ? '–' : t.toFixed(1))).join(' / ')} °C`
+                ? `Inlet ${focusTiers.map((x) => numT(x)).join(' / ')} ${unitLabel()}`
                 : 'no inlet reading'}
               {focused.load_kw != null && ` · ${focused.load_kw.toFixed(1)} kW`}
               {focused.free_u != null && ` · ${focused.free_u} U free`}
@@ -291,15 +417,27 @@ export function FloorPlanView() {
               style={{ left: Math.min(tip.x + 14, window.innerWidth - 300), top: tip.y + 14 }}>{tip.text}</span>
       )}
 
+      <Timeline t={t} playing={playing} step={step} cmp={cmp} cmpT={cmpT} earliest={earliest}
+                frame={frameInfo} cmpFrame={cmpScene.data?.frame}
+                onLive={() => setTime(null)} onTime={setTime} onPlay={setPlaying} onStep={setStep}
+                onCmp={setCmp} onCmpTime={setCmpTime} />
+
       <div className="vw-status">
-        <span><span className="dot" style={{ background: scene.isError ? 'var(--critical)' : updatedAgo != null && updatedAgo < 45 ? 'var(--ok)' : 'var(--warn)' }} />
-          {updatedAgo == null ? 'Loading' : `Live · updated ${updatedAgo}s ago`}</span>
+        <span><span className="dot" style={{ background: scene.isError ? 'var(--critical)' : !live ? 'var(--accent)'
+          : updatedAgo != null && updatedAgo < 45 ? 'var(--ok)' : 'var(--warn)' }} />
+          {!live ? `Replay · ${t.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}${frameInfo ? ` · ${sourceLabel(frameInfo)}` : ''}`
+            : updatedAgo == null ? 'Loading' : `Live · updated ${updatedAgo}s ago`}</span>
         <span className="vw-jumps">
           <Link to="/world">World</Link>
           {room?.datacenter_id && <Link to={`/twin/sites/${room.datacenter_id}`}>Building</Link>}
           <span>{room ? `${room.datacenter_code ? `${room.datacenter_code} · ` : ''}${room.name}` : ''}</span>
         </span>
         {plan && <span>{plan.extent.width_m} × {plan.extent.depth_m} m · {plan.racks.length} racks · {data?.devices.length ?? 0} devices</span>}
+        {data?.indices?.rci_hi != null && (
+          <span title="Rack Cooling Index (Herrlin): share of the way the intakes sit toward the allowable limit">
+            RCI {Math.round(data.indices.rci_hi)} %{data.indices.hot_spots ? ` · ${data.indices.hot_spots} hot spot${data.indices.hot_spots === 1 ? '' : 's'}` : ''}
+          </span>
+        )}
         <span className="spacer" />
         <span>{mode === 'fpv' ? 'Pointer lock to look · W A S D to walk'
           : mode === 'plan' ? 'Drag to pan · scroll to zoom' : 'Drag to orbit · right-drag to pan · scroll to zoom'}</span>

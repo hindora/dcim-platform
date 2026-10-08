@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { api, type MaintenanceWindow } from '../../../api/client';
 import { usePaged } from '../../../components/Pagination';
 import { humanise, untilTime } from '../../../lib/format';
@@ -13,7 +13,14 @@ import { WindowForm } from './WindowForm';
  *  shows before somebody discovers it as a missed outage.
  */
 export function WindowList() {
-  const [scheduling, setScheduling] = useState(false);
+  // `?schedule=<device id>` opens the form with that device picked.
+  const [params, setParams] = useSearchParams();
+  const preset = params.get('schedule');
+  const [scheduling, setScheduling] = useState(Boolean(preset));
+  const closeForm = () => {
+    setScheduling(false);
+    if (preset) { params.delete('schedule'); setParams(params, { replace: true }); }
+  };
   const { data, isLoading, error } = useQuery<{ items: MaintenanceWindow[] }>({
     queryKey: ['maintenance-windows'],
     queryFn: () => api.maintenanceWindows({ limit: '200' }),
@@ -36,7 +43,7 @@ export function WindowList() {
         </button>
       </p>
 
-      {scheduling && <WindowForm onClose={() => setScheduling(false)} />}
+      {scheduling && <WindowForm onClose={closeForm} initialDeviceIds={preset ? [preset] : []} />}
 
       {isLoading && <p className="muted">Loading…</p>}
 

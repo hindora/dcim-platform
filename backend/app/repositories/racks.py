@@ -221,6 +221,60 @@ async def floorplan_equipment(session: AsyncSession,
     return [dict(r) for r in rows]
 
 
+#: Share of nameplate budgeted per device when its model carries no budget of
+#: its own. A PSU nameplate is the supply's ceiling, not the server's draw -
+#: real draw is commonly a third to a half of it - so planning tools budget a
+#: derated figure. 0.6 is a common planning default, not a standard; a site
+#: sets its own per model with `model.attributes.budget_w`.
+BUDGET_DERATE = 0.6
+
+
+async def room_rack_power_plan(session: AsyncSession,
+                               room_id: str) -> dict[str, dict[str, Any]]:
+    """Allocated and reserved power per rack in the room (docs/27 §8a).
+
+    Allocated: the budget of every device physically in the rack (installed,
+    in service or in maintenance) - the model's `budget_w` when set, else its
+    nameplate derated. Rack PDUs and sensors distribute or measure power and
+    are not loads. `planned` devices are left out: a planned device standing in
+    a rack is a reservation's placeholder, and counting it here would count
+    the reservation twice.
+
+    Reserved: power held for planned work on the rack, status `held`.
+    """
+    rows = (await session.execute(text("""
+        WITH alloc AS (
+            SELECT d.rack_id,
+                   sum(COALESCE(NULLIF(m.attributes->>'budget_w','')::float,
+                                m.rated_power_w * :derate)) / 1000.0 AS allocated_kw,
+                   count(*) FILTER (WHERE NULLIF(m.attributes->>'budget_w','') IS NULL
+                                      AND m.rated_power_w IS NOT NULL)  AS derated,
+                   count(*) FILTER (WHERE m.rated_power_w IS NULL
+                                      AND NULLIF(m.attributes->>'budget_w','') IS NULL) AS unrated
+              FROM device d
+              JOIN rack r      ON r.id = d.rack_id
+              JOIN rack_row rr ON rr.id = r.row_id
+              LEFT JOIN model m ON m.id = d.model_id
+             WHERE rr.room_id = CAST(:room_id AS uuid)
+               AND d.lifecycle IN ('installed', 'in_service', 'maintenance')
+               AND d.device_type::text NOT IN ('pdu', 'sensor')
+             GROUP BY d.rack_id
+        ), held AS (
+            SELECT cr.rack_id, sum(cr.power_kw) AS reserved_kw
+              FROM capacity_reservation cr
+              JOIN rack r      ON r.id = cr.rack_id
+              JOIN rack_row rr ON rr.id = r.row_id
+             WHERE rr.room_id = CAST(:room_id AS uuid) AND cr.status = 'held'
+             GROUP BY cr.rack_id
+        )
+        SELECT COALESCE(a.rack_id, h.rack_id)::text AS rack_id,
+               a.allocated_kw, COALESCE(a.derated, 0) AS derated,
+               COALESCE(a.unrated, 0) AS unrated, h.reserved_kw
+          FROM alloc a FULL JOIN held h ON h.rack_id = a.rack_id
+    """), {"room_id": room_id, "derate": BUDGET_DERATE})).mappings().all()
+    return {r["rack_id"]: dict(r) for r in rows}
+
+
 async def room_geometry(session: AsyncSession, room_id: str) -> dict[str, Any] | None:
     """The room as drawn: size, level, and where it stands in its building."""
     row = (await session.execute(text("""
@@ -228,7 +282,8 @@ async def room_geometry(session: AsyncSession, room_id: str) -> dict[str, Any] |
                dc.code AS datacenter_code, rm.floor AS level, rm.room_class,
                rm.width_m, rm.depth_m, rm.origin_x_m, rm.origin_y_m,
                rm.rotation_deg, rm.level_elevation_m, rm.geometry_source,
-               rm.attributes->>'containment' AS containment
+               rm.attributes->>'containment' AS containment,
+               rm.ashrae_class
           FROM room rm
           JOIN datacenter dc ON dc.id = rm.datacenter_id
          WHERE rm.id = CAST(:room_id AS uuid)
@@ -299,7 +354,10 @@ async def room_rack_devices(session: AsyncSession, room_id: str) -> list[dict[st
                COALESCE(ds.inlet_temp_c,
                         (ds.metrics->'ambient_temperature'->>'v')::float) AS temp_c,
                COALESCE(ds.humidity_pct,
-                        (ds.metrics->'relative_humidity'->>'v')::float)  AS rh_pct
+                        (ds.metrics->'relative_humidity'->>'v')::float)  AS rh_pct,
+               -- Only servers report their exhaust; the rear face of the rack
+               -- and every rise-based index are drawn from it.
+               (ds.metrics->'exhaust_temperature'->>'v')::float          AS exhaust_c
           FROM device d
           JOIN rack r      ON r.id = d.rack_id
           JOIN rack_row rr ON rr.id = r.row_id

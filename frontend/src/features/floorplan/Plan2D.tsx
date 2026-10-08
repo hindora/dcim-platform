@@ -3,6 +3,7 @@ import type { FloorEquipment, FloorPlan as Plan, FloorRack } from '../../api/cli
 import { StatusChip } from '../../components/StatusChip';
 import { humanise } from '../../lib/format';
 import { alarmColor, rackFill, type Overlay } from './colors';
+import { fmtT } from './units';
 
 /** The SVG plan: the room drawn to scale in metres. The fallback for a browser
  *  with no WebGL, and the reference the viewer's PLAN mode must agree with. */
@@ -13,7 +14,7 @@ function rackTitle(r: FloorRack): string {
     r.row_name ? `row ${r.row_name}` : null,
     `${r.device_count} devices`,
     r.load_kw != null ? `${r.load_kw.toFixed(1)} kW` : null,
-    r.max_inlet_c != null ? `inlet ${r.max_inlet_c.toFixed(1)} °C` : 'no inlet reading',
+    r.max_inlet_c != null ? `inlet ${fmtT(r.max_inlet_c)}` : 'no inlet reading',
     r.offline_count ? `${r.offline_count} offline` : null,
     r.facing ? `faces ${r.facing === 'N' ? 'north' : 'south'}` : null,
   ].filter(Boolean).join(' · ');

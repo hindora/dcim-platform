@@ -139,6 +139,62 @@ async def history(
     return list(series.values()), table, label, truncated
 
 
+async def values_at(session: AsyncSession, *, device_ids: list[str], keys: list[str],
+                    t: datetime, table: str, lookback: timedelta,
+                    ) -> dict[str, dict[str, float]]:
+    """The last reading of each metric per device at or before `t`, within
+    `lookback` (docs/27 D8). From the hypertable (`telemetry_sample`) or a
+    rollup (`telemetry_5m`, `telemetry_1h`), whichever the caller chose by
+    the moment's age. Returns {device_id: {metric_key: value}}; a device or
+    metric with nothing in the window is simply absent."""
+    if table == "telemetry_sample":
+        stamp, value = "t.ts", "t.value"
+    else:
+        stamp, value = "t.bucket", "t.last_value"
+    rows = (await session.execute(text(f"""
+        SELECT t.device_id::text AS device_id, m.key AS key,
+               last({value}, {stamp}) AS value
+          FROM {table} t
+          JOIN metric m ON m.id = t.metric_id
+         WHERE t.device_id = ANY(CAST(:ids AS uuid[]))
+           AND m.key = ANY(:keys)
+           AND {stamp} > :since AND {stamp} <= :t
+         GROUP BY t.device_id, m.key
+    """), {"ids": device_ids, "keys": keys, "since": t - lookback, "t": t})).mappings().all()
+    out: dict[str, dict[str, float]] = {}
+    for r in rows:
+        if r["value"] is not None:
+            out.setdefault(r["device_id"], {})[r["key"]] = float(r["value"])
+    return out
+
+
+async def earliest_hour(session: AsyncSession, device_ids: list[str]) -> datetime | None:
+    """The oldest hourly bucket any of *device_ids* has. The hourly rollup is kept
+    for ever, so this is how far back a room can be replayed at all. An index
+    read: the cagg is indexed on (device_id, bucket)."""
+    row = (await session.execute(text("""
+        SELECT min(bucket) AS first FROM telemetry_1h
+         WHERE device_id = ANY(CAST(:ids AS uuid[]))
+    """), {"ids": device_ids})).mappings().first()
+    return row["first"] if row else None
+
+
+async def severities_at(session: AsyncSession, *, device_ids: list[str],
+                        t: datetime) -> dict[str, str]:
+    """The worst severity open on each device at `t`: raised at or before it
+    and not yet cleared. The enum's declared order is its ranking, the same
+    `max(severity)` the live roll-ups use."""
+    rows = (await session.execute(text("""
+        SELECT device_id::text AS device_id, max(severity)::text AS severity
+          FROM alarm
+         WHERE device_id = ANY(CAST(:ids AS uuid[]))
+           AND first_seen <= :t
+           AND (cleared_at IS NULL OR cleared_at > :t)
+         GROUP BY device_id
+    """), {"ids": device_ids, "t": t})).mappings().all()
+    return {r["device_id"]: r["severity"] for r in rows if r["severity"]}
+
+
 async def latest_values(session: AsyncSession, device_id: str) -> list[dict[str, Any]]:
     """Every metric the device currently reports, from device_state's hot set
     plus the newest raw sample for the rest."""

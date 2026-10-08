@@ -44,6 +44,16 @@ INGEST_LAG_CRITICAL_S = 300.0
 # indication that fires on every poll wave is one that gets ignored, which is
 # the failure mode worth designing against.
 INGEST_LAG_DWELL_S = 120.0
+# Hysteresis on the way DOWN. A backlog drains at a rate, not in a step: on
+# 2026-10-07 a 12-minute queue came down at ~1.2 entries/s and the lag sat on
+# the 60 s line for a long while, dipping under and popping back over. Each
+# dip cleared the alarm and each pop re-raised it, and both are banner
+# transitions. So an open lag alarm clears only once the lag has stayed
+# under a LOWER line - half the warning - for as long as it had to stay over
+# the warning line to raise. Severity still follows the value (a 70 s lag is
+# a warning, not a critical), only the clear is held.
+INGEST_LAG_CLEAR_S = 30.0
+INGEST_LAG_RECOVER_S = 120.0
 
 # A collector heartbeats every 30 s by contract; 60 s is two missed beats.
 COLLECTOR_STALE_S = 60.0
@@ -260,6 +270,12 @@ class Signals:
     # are handed, and can still be tested against states that are hard to
     # produce on purpose.
     ingest_lag_sustained_s: float = 0.0
+    # The severity of the ingest_lag_high alarm that is open right now, or
+    # None. With how long the lag has been continuously under the clear line,
+    # this is what lets the rule hold an alarm open through a drain instead of
+    # clearing and re-raising on every dip.
+    ingest_lag_open: str | None = None
+    ingest_lag_recovered_s: float = 0.0
     telemetry_age_s: float | None = None
     telemetry_present: bool = True
     worker_heartbeat_age_s: float | None = None
@@ -301,8 +317,17 @@ def evaluate(signals: Signals) -> list[Finding]:
         severity = _lag_severity(lag)
         # A spike that drains is the pipeline working, not the pipeline
         # failing. Only a lag that persists is worth a banner.
-        if severity and signals.ingest_lag_sustained_s < INGEST_LAG_DWELL_S:
+        if severity and signals.ingest_lag_sustained_s < INGEST_LAG_DWELL_S \
+                and signals.ingest_lag_open is None:
             severity = None
+        # Already open: hold it through the drain until the lag has stayed
+        # under the clear line for the recovery time. Held at warning when
+        # the value has fallen below the warning line.
+        if severity is None and signals.ingest_lag_open is not None:
+            recovered = (lag < INGEST_LAG_CLEAR_S
+                         and signals.ingest_lag_recovered_s >= INGEST_LAG_RECOVER_S)
+            if not recovered:
+                severity = WARNING
         if severity:
             out.append(Finding(
                 alarm_type="ingest_lag_high", instance="telemetry.v1",
@@ -315,7 +340,12 @@ def evaluate(signals: Signals) -> list[Finding]:
                     f"{signals.ingest_lag_sustained_s / 60:.0f} min. Samples "
                     f"are being written, but everything read from this "
                     f"platform - dashboards, alarms, analytics - is that far "
-                    f"behind the datacenter")))
+                    f"behind the datacenter")
+                if lag >= INGEST_LAG_WARNING_S else (
+                    f"The ingest backlog is draining: telemetry now takes "
+                    f"{lag:.0f}s to reach the database. This clears once it "
+                    f"has stayed under {INGEST_LAG_CLEAR_S:.0f}s for "
+                    f"{INGEST_LAG_RECOVER_S / 60:.0f} min")))
 
     # Freshness is judged against the poll interval, not against zero. A fleet
     # polled every 120 s is a fleet whose newest sample is routinely 120 s old,

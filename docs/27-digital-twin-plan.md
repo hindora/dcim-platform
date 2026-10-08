@@ -371,6 +371,14 @@ longer sits under a fake rack. **Still open:** each hall's 7 × 1.75 m CRAHs on 
 centres overlap. That waits for S2, which re-grids the halls.
 
 ### S2 — Spatial thermal model (medium–large; the critical path)
+
+**Full spec (2026-10-08):** `Datacenter_Network_Simulator/docs/S2_SPATIAL_THERMAL_MODEL.md`.
+It supersedes the sketch below. It adds: local starvation in place of the
+room-wide trip penalty; containment-aware recirculation (the halls are
+cold-aisle contained, so today's 0–3 K vertical rise is the uncontained figure);
+per-CRAH return; psychrometric humidity; decision **D-1** on where the seven
+CRAHs per hall stand (they can't fit on one 8.4 m wall); and a `shadow` flag
+that answers Q1 with a day of measured before/after.
 How it works in real halls: each CRAH dominates the racks nearest its
 discharge; inlet temperature rises with distance from the units, at row ends
 (wrap-around recirculation) and at the top of the rack (over-the-top
@@ -451,6 +459,164 @@ main bundle. Scene JSON ETag'd; state payload ≤ 50 KB per room.
 
 ---
 
+## 7.5 What was actually built (2026-10-07)
+
+**Phase 0** (`c937bb6`, `48cc144`): migration 0099 geometry, stored aisles,
+importer `--geometry-only` (the full importer unpins every endpoint's
+collector shard - never run it on the live estate). **Phase 1** (`ab086a0`):
+first 3D room view. **Viewer overhaul** (`3616b7b`, `df6394b`), after the
+user supplied EkkoSoft Critical screenshots as the reference for the room
+viewer itself (the page chrome stays ours): one WebGL scene with **3D | PLAN |
+FPV**, racks graded bottom→top by the air at each third of the rack (server
+inlets and door probes, `TwinDevice.temp_c`), air handlers graded
+supply→return, discrete legend bands (ASHRAE A1 cut finer, tokens
+`--band-t1..t8`, `--band-p1..p5`), a filters panel (rack layers: temperature,
+compliance, RH, power usage, power utilisation with solid-to-used-share fill,
+space, alarms; cooling layers: supply→return, supply, return, utilisation),
+a room / rack / unit information panel, tile grid, vent tiles (assumed, one
+per rack facing a cold aisle), grid references, containment, canvas-sprite
+labels (no CDN font). Files: `features/floorplan/{layers.ts, Scene.tsx,
+Stage.tsx, panels.tsx, FloorPlan.tsx, Plan2D.tsx, viewer.css}`.
+
+Measured on the live estate: `/estate/rooms/{id}/kpi` is 69-160 s under
+host memory pressure, so the viewer fetches it once per room, never polls
+it. Rack load in `repositories/racks.py` is now what the rack PDUs meter -
+summing every device counted each server twice.
+
+**Still open from the reference:** timeline playback (Phase 4), capacity
+tickets and the cooling advisor (not planned), rack faces showing their
+devices (racks are solid colour; devices are drawn inside and hidden),
+split screen, °F. **Known picture defects until S2:** the seven 1.75 m CRAHs
+per hall overlap on 1.0 m centres and read as one long block; the hall's air
+is uniform so the only gradient is the vertical 0-3 K ramp.
+
+**Phase 3 (re-shaped) SHIPPED 2026-10-07** (`19abee1`, hotfix `2aacccf`): path
+overlays in the viewer (POWER / COOLING trace back to the source, IMPACT; a
+rack is traced through its rack PDUs; hops in other rooms listed, not drawn),
+`/twin/sites/{id}` building picker (levels stacked in an oblique SVG
+projection, rooms coloured by worst alarm, click to open), `room:{id}`
+websocket topic from the ingest worker (one frame per room per batch, no
+readings; the viewer re-reads the scene at most every 5 s on it, 60 s poll
+as backstop). **Lesson:** `19abee1` defined the worker's helper below its
+`__main__` block; `python -m app.ingest.worker` ran `main()` before the name
+existed and every tick failed for ~8 minutes in production while the unit
+tests (which import the module) stayed green. A test now pins that nothing
+may follow the entry point.
+
+**Phase 2 (re-shaped per §8a) BUILT 2026-10-08, not yet live** (the stack was
+down for the RAM upgrade; verified against fixtures run through the real
+backend code). Centre of gravity on the racks, as the reference reads them:
+- **Rack layers** `inlet_outlet` (front face by intake tiers, rear face by
+  exhaust tiers - the gradient shader took a second colour set and a
+  per-instance front sign), `exhaust`, `variance` (spread of the intakes
+  across the rack, K, `SPREAD_BANDS`).
+- **Indices** in `core/thermal_indices.py`, pure: RCI_HI/LO (Herrlin 2005,
+  clamped at 0, rated good ≥96 / acceptable ≥91 / poor), RTI (Herrlin 2007;
+  equipment ΔT power-weighted as ΣP / Σ(P/ΔT), unit weight where power is
+  missing and the count published), SHI/RHI (Sharma 2002; reference = mean
+  supply of the non-offline air handlers). Capture Index deliberately not
+  shown. Attributed per the probe-first rule: rack-front probes and server
+  inlets are intakes, server exhausts and rack-rear probes are exhausts, a
+  rack PDU's ambient probe is neither. Scored against the room's
+  `ashrae_class` (now on the floor plan). Served inside the scene as
+  `indices` (room + per rack); shown in the room panel (tiles RCI HI / RCI LO
+  / RTI, verdicts, evidence counts), the rack panel (intake/exhaust max,
+  spread, SHI/RHI, rise, hot-spot verdict) and the status bar.
+- **Hot spots**: a rack whose max intake is above the recommended ceiling
+  (`allowable`) or the allowable one (`out`); cones over them in every layer,
+  toggle in Visibility.
+- **Heat map** (the optional toggle §8a asked for): `GET
+  /twin/rooms/{id}/field` → `core/thermal_field.py`, pure Python IDW (p = 2,
+  3D distance) PER AISLE: cold-aisle cells from the intake face points that
+  open onto that aisle, hot-aisle cells from the exhaust face points; never
+  across a row; cells under racks and in unclassed aisles stay unpainted.
+  Three planes at 0.5 / 1.2 / 1.8 m, 0.3 m cells, readings collapsed to one
+  point per face per rack third. Each cell carries a confidence from the
+  distance to its nearest sensor; the viewer draws the plane as a
+  `DataTexture` with the legend's band colour and confidence as opacity, so
+  unmeasured air fades rather than being painted. Fetched only while a plane
+  is showing (`?heat=bottom|mid|top`), ~85 KB for an 18 × 12 m hall.
+- Tests `tests/test_twin_thermal.py` pin the arithmetic (hand-worked RCI /
+  RTI / SHI cases) and the one rule that matters: an exhaust reading never
+  reaches a cold-aisle cell.
+- **Known limits until S2:** the simulator's air is uniform per room, so on
+  the live estate every rack will read the same band and the heat map will
+  be flat; RTI per air handler (D6 said "room, CRAH") needs per-unit rack
+  assignment and waits for the influence matrix (Phase 5). The headline
+  acceptance scenario (§8, trip one CRAH) cannot pass before S2 and was not
+  attempted.
+
+**Phase 4 BUILT 2026-10-08, not yet live** (same stack-down day; verified
+against fixtures run through the backend code plus a mock frame endpoint).
+- **Frame**: `GET /twin/rooms/{id}/frame?t=` → `core/twin_frame.py`, pure:
+  the live scene re-filled from history. Source by the moment's age, the
+  thermal-trend rule: newest 2 h from `telemetry_sample`, ≤ 2 days from
+  `telemetry_5m` (`last_value` in bucket), older from `telemetry_1h`; a
+  reading counts if it is the last within a lookback (15 min / 15 min / 3 h).
+  Severities = alarms with `first_seen <= t` and not cleared by t
+  (`max(severity)`, enum order). Rack roll-up recomputed from the frame
+  (load = rack PDUs' `power_draw`, hottest intake, worst severity,
+  `offline_count` 0). **Communication status has no history here** - the
+  frame says so in `frame.note`; `poll_result` is 14 days and per endpoint,
+  out of scope. Geometry untouched (D4). `GET …/field?t=` replays the heat
+  map the same way. Same `TwinRoomScene` shape + `frame` block, so the viewer
+  draws it with the Phase 1-3 code unchanged.
+- **Timeline bar** (`features/floorplan/Timeline.tsx`, per the reference's
+  bottom bar and §8a): Live toggle, date, step back / play / step forward
+  (inline SVG glyphs), a 24 h scrubber at 5 min steps with hour ticks and the
+  time riding on the thumb, the day's future greyed past "now", a source
+  note ("from the 5-minute record"), and **Compare** (1 h / 24 h / 7 d
+  earlier, or the live room) as a second canvas beside the first with
+  captions. URL carries `t=` and `cmp=`; playback steps 5 min every 1.5 s
+  and prefetches the next frame; the `room:{id}` topic and the 60 s poll are
+  off while replaying. Status bar: accent dot + "Replay · <when> · <source>".
+  Built with the ui-ux-pro-max + frontend-design skills (user rule
+  2026-10-08): native range (keyboard-operable), step buttons as the
+  single-pointer alternative to dragging, visible focus rings, disabled
+  states at 0.45 opacity, no emoji glyphs, reduced-motion respected.
+- Tests `tests/test_twin_frame.py` (9) pin source choice, the re-fill
+  (silent sensor → no reading, live status kept, severities replaced), the
+  rack roll-up and the enum ranking.
+- **Extras, same day:**
+  - **Independent compare time.** "Pick a time" in Compare adds a slimmer second row with its own date, step buttons and scrubber, and a dashed secondary-colour thumb. The URL carries `cmp=pick&cmp_t=`; the offset presets are unchanged.
+  - **History range.** `GET /twin/rooms/{id}/history` returns the oldest hourly bucket of any device in the room (an index read on the hourly rollup), cached 10 min in-process. The date picker stops there, the scrubber greys the hours before it, and a shared link to an earlier moment snaps to it.
+  - **Step size.** 5 min, 15 min or 1 h per frame, used by play and the step buttons; the URL carries `step=`.
+  - Two more tests in `tests/test_twin_frame.py` pin the cache and the empty case.
+
+**Small items 2026-10-08 (same tree):**
+- **°C / °F** switch beside RESET (`features/floorplan/units.ts`, per viewer in
+  localStorage). Data, bands and indices stay °C; every printed temperature
+  goes through `fmtT`, differences through `fmtDT` (K, or °F of difference),
+  and legends relabel from their band edges.
+- **See into racks** (Visibility): the cabinet becomes a tinted shell at the
+  layer's colour and the devices inside show; hover and click pass through
+  the shell to the devices.
+- **Ingest-lag hysteresis** (`alarms/platform.py`): an open `ingest_lag_high`
+  is held (at warning once under 60 s) until the lag has stayed under 30 s
+  for 2 min; a pop back over the line while open needs no new dwell. The
+  worker tracks time under the clear line; the monitor reads the open
+  alarm's severity. Answers the 2026-10-07 drain that flapped the banner.
+- **Reserved / allocated / measured power.** `repositories/racks.room_rack_power_plan`:
+  allocated = Σ over devices physically in the rack (installed / in service /
+  maintenance; rack PDUs and sensors excluded; `planned` placeholders
+  excluded so a reservation is not counted twice) of `model.attributes.budget_w`,
+  else nameplate × `BUDGET_DERATE` 0.6 (a common planning default, not a
+  standard; sites set their own per model). Reserved = Σ `capacity_reservation.power_kw`
+  with status `held`. On `FloorRack` as `allocated_kw`, `reserved_kw` and the
+  derated / unrated counts. Viewer: rack layer **Committed power** =
+  (allocated + reserved) / rating on the % bands with solid fill to that
+  share; rack panel **bullet bar** - track = one feed's rating with 80 / 90 %
+  marks, body = allocated + reserved (hatched), thin bar = measured, with an
+  "over by" line when committed exceeds the rating.
+- **Unit conditions in the panel.** Device and plant-unit panels list the
+  unit's open conditions (symptoms included, worst first, severity as a word
+  and a left rule) with **Acknowledge** and **Clear** on the existing audited
+  endpoints; clear confirms inline ("it reopens if the condition is still
+  there"); 409 / 403 explained in words. No ad-hoc shelving: suppression is
+  planned work (ISA-18.2), so the panel offers **Plan maintenance on this
+  unit**, which opens the maintenance form with the device picked
+  (`/maintenance?schedule=<id>`, new `initialDeviceIds` on WindowForm).
+
 ## 8. Phases
 
 | Phase | Scope | Size | Depends on |
@@ -476,6 +642,28 @@ across the hall stay green, RCI_HI drops, the THERMAL page shows the same racks
 — and the hall in DC1 does not change.
 
 ---
+
+## 8a. Amendments after the reference screenshots (2026-10-07)
+
+The user supplied 37 EkkoSoft Critical screenshots as the reference for the
+room viewer. Three things in them move the plan: the reference reads the room
+off the **racks**, not off interpolated air; its viewer carries a **timeline
+and an editor** our phases put late; and some of its layers need data the
+simulator does not yet expose.
+
+| Phase | Change |
+|---|---|
+| **S2** | Unchanged in substance. Two more outputs: per-rack **exhaust** (for an inlet/outlet layer) and per-rack **airflow** (the simulator already derives it from power). CRAH re-grid stays. |
+| **2** | Centre of gravity moves from the room's air to the racks. The three-height interpolated planes become an optional "heat map" toggle. The deliverable is the extra rack layers (inlet/outlet, temperature variance, smooth "temperature heatmap"), the ASHRAE scores (RCI, RTI, SHI/RHI) in the room and unit panels, and hot-spot markers. |
+| **3** | The building view becomes a light site → levels → rooms picker that opens the viewer (the reference has no building scene; its site level picks a room). Path overlays and the `room:{id}` push topic stay. |
+| **4** | Design fixed by the reference's bottom bar: Live toggle, date, play, scrubber, split screen (two times side by side). Data side unchanged. |
+| **5** | "Cooling zones" maps straight onto the influence matrix. Add a read-only cooling advisor (setpoint / vent recommendations, accept or dismiss) on the what-if. |
+| **6** | Grows to the reference's Editor and Capacity tabs: reposition a rack; capacity tickets (new rack, add to rack, decommission) with accept-and-place, on the existing `capacity_reservation` table. |
+
+New, small, unphased: rack faces showing their devices; a reserved /
+allocated / measured power layer; °C / °F; per-unit alarm management in the
+panel. Unchanged: no CFD, the ingest-lag fix, S2's dependency on the RAM
+upgrade.
 
 ## 9. Open questions
 

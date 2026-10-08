@@ -131,3 +131,33 @@ def test_rack_load_is_metered_at_the_pdus_not_summed_twice():
     assert "d.device_type IN ('pdu', 'floor_pdu')" in _RACK_LOAD_W
     assert "d.device_type NOT IN ('pdu', 'floor_pdu')" in _RACK_LOAD_W
     assert "COALESCE(sum(ds.power_w), 0)" not in _RACK_SUMMARY
+
+
+# --- allocated / reserved power per rack (docs/27 §8a, 2026-10-08) -----------
+
+RACKS_SRC = (Path(__file__).resolve().parents[1] / "app" / "repositories" / "racks.py").read_text(
+    encoding="utf-8")
+
+
+def test_allocated_power_counts_only_equipment_physically_in_the_rack():
+    # A planned device is a reservation's placeholder; counting it would
+    # count the reservation twice.
+    assert "d.lifecycle IN ('installed', 'in_service', 'maintenance')" in RACKS_SRC
+
+
+def test_rack_pdus_and_sensors_are_not_loads():
+    assert "d.device_type::text NOT IN ('pdu', 'sensor')" in RACKS_SRC
+
+
+def test_a_model_budget_wins_over_the_derated_nameplate():
+    assert "COALESCE(NULLIF(m.attributes->>'budget_w','')::float,\n" \
+           "                                m.rated_power_w * :derate)" in RACKS_SRC
+
+
+def test_only_held_reservations_count():
+    assert "cr.status = 'held'" in RACKS_SRC
+
+
+def test_the_derate_is_a_planning_share_of_nameplate():
+    from app.repositories import racks
+    assert 0 < racks.BUDGET_DERATE < 1

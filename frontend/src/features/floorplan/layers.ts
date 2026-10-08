@@ -16,16 +16,20 @@ export const U = 0.04445;          // one rack unit (EIA-310)
 export const RACK_BASE = 0.1;      // U1's bottom edge above the floor
 export const TILE = 0.6;           // raised-floor tile pitch
 
-export type RackLayer = 'temperature' | 'rh' | 'power' | 'utilisation' | 'space'
-  | 'compliance' | 'alarm' | 'none';
+export type RackLayer = 'temperature' | 'inlet_outlet' | 'exhaust' | 'variance' | 'rh'
+  | 'power' | 'utilisation' | 'committed' | 'space' | 'compliance' | 'alarm' | 'none';
 export type CoolingLayer = 'air' | 'supply' | 'return' | 'utilisation' | 'none';
 
 export const RACK_LAYERS: { key: RackLayer; label: string; hint: string }[] = [
   { key: 'temperature', label: 'Temperature', hint: 'Inlet air, bottom to top of the rack' },
+  { key: 'inlet_outlet', label: 'Inlet / outlet', hint: 'Front face by intake, rear face by exhaust' },
+  { key: 'exhaust', label: 'Exhaust temperature', hint: 'Server exhaust, bottom to top' },
+  { key: 'variance', label: 'Temperature variance', hint: 'Spread of the intake readings in the rack' },
   { key: 'compliance', label: 'ASHRAE compliance', hint: 'Against the A1 envelope' },
   { key: 'rh', label: 'Relative humidity', hint: 'Probes on the rack' },
   { key: 'power', label: 'Power usage', hint: 'kW metered at the rack PDUs' },
   { key: 'utilisation', label: 'Power utilisation', hint: 'Load against the rack rating' },
+  { key: 'committed', label: 'Committed power', hint: 'Allocated plus reserved, against the rating' },
   { key: 'space', label: 'Space', hint: 'U in use' },
   { key: 'alarm', label: 'Alarms', hint: 'Worst open condition in the rack' },
   { key: 'none', label: 'None', hint: 'Plain cabinets' },
@@ -93,18 +97,32 @@ export const SPACE_BANDS: Band[] = [
   { upTo: null, label: 'Full', color: P(5) },
 ];
 
+/** Spread of the intakes across one rack, K. Under 2 K is a rack breathing
+ *  one air; past 5 K the top is in a different aisle from the bottom. */
+export const SPREAD_BANDS: Band[] = [
+  { upTo: 1, label: '< 1', color: T(3) },
+  { upTo: 2, label: '1 – 2', color: T(4) },
+  { upTo: 3, label: '2 – 3', color: T(5) },
+  { upTo: 5, label: '3 – 5', color: T(6) },
+  { upTo: 8, label: '5 – 8', color: T(7) },
+  { upTo: null, label: '> 8', color: T(8) },
+];
+
+// Rank bands: the value is an integer rank and `upTo` is exclusive, so rank
+// 0 needs an `upTo` of 1. (`upTo: 0` sent every clear rack into the next
+// band and every reading a step too hot on the compliance layer.)
 export const COMPLIANCE_BANDS: Band[] = [
-  { upTo: 0, label: 'Below recommended', color: T(2) },
-  { upTo: 1, label: 'Recommended', color: T(4) },
-  { upTo: 2, label: 'Above recommended', color: T(6) },
+  { upTo: 1, label: 'Below recommended', color: T(2) },
+  { upTo: 2, label: 'Recommended', color: T(4) },
+  { upTo: 3, label: 'Above recommended', color: T(6) },
   { upTo: null, label: 'Out of allowable', color: T(8) },
 ];
 
 export const ALARM_BANDS: Band[] = [
-  { upTo: 0, label: 'Clear', color: 'var(--ok)' },
-  { upTo: 1, label: 'Minor / warning', color: 'var(--warn)' },
-  { upTo: 2, label: 'Major', color: 'var(--major)' },
-  { upTo: 3, label: 'Critical', color: 'var(--critical)' },
+  { upTo: 1, label: 'Clear', color: 'var(--ok)' },
+  { upTo: 2, label: 'Minor / warning', color: 'var(--warn)' },
+  { upTo: 3, label: 'Major', color: 'var(--major)' },
+  { upTo: 4, label: 'Critical', color: 'var(--critical)' },
   { upTo: null, label: 'Offline', color: 'var(--band-t1)' },
 ];
 
@@ -119,9 +137,13 @@ export function bandColor(bands: Band[], v: number | null | undefined): string {
 export function legendFor(layer: RackLayer): Legend | null {
   switch (layer) {
     case 'temperature': return { title: 'Temperature', unit: '°C', bands: TEMP_BANDS, none: 'no reading' };
+    case 'inlet_outlet': return { title: 'Inlet / outlet', unit: '°C', bands: TEMP_BANDS, none: 'no reading' };
+    case 'exhaust': return { title: 'Exhaust temperature', unit: '°C', bands: TEMP_BANDS, none: 'no exhaust' };
+    case 'variance': return { title: 'Intake spread', unit: 'K', bands: SPREAD_BANDS, none: 'one reading or none' };
     case 'rh': return { title: 'Relative humidity', unit: '%', bands: RH_BANDS, none: 'no probe' };
     case 'power': return { title: 'Power usage', unit: 'kW', bands: KW_BANDS, none: 'not metered' };
     case 'utilisation': return { title: 'Power utilisation', unit: '%', bands: PCT_BANDS, none: 'no rating' };
+    case 'committed': return { title: 'Committed power', unit: '%', bands: PCT_BANDS, none: 'no rating' };
     case 'space': return { title: 'Space used', unit: '%', bands: SPACE_BANDS };
     case 'compliance': return { title: 'ASHRAE A1', unit: '', bands: COMPLIANCE_BANDS, none: 'no reading' };
     case 'alarm': return { title: 'Alarms', unit: '', bands: ALARM_BANDS };
@@ -141,21 +163,26 @@ export function coolingLegendFor(layer: CoolingLayer): Legend | null {
 
 // ---------------------------------------------------------------- readings
 
+export type Tiers = [number | null, number | null, number | null];
+
 /** Mean air temperature in the bottom, middle and top third of a rack, from
  *  every reading in it - server inlets and door probes alike. A third with no
  *  reading takes its nearest neighbour's, so a rack with one probe is one
- *  colour rather than two-thirds grey; a rack with none is null throughout. */
-export function rackTiers(devices: TwinDevice[], uHeight: number): [number | null, number | null, number | null] {
+ *  colour rather than two-thirds grey; a rack with none is null throughout.
+ *  `pick` chooses the reading: the air at the device (default) or its exhaust. */
+export function rackTiers(devices: TwinDevice[], uHeight: number,
+                          pick: (d: TwinDevice) => number | null | undefined = (d) => d.temp_c): Tiers {
   const sums = [0, 0, 0], ns = [0, 0, 0];
   const third = Math.max(1, uHeight / 3);
   for (const d of devices) {
-    if (d.temp_c == null) continue;
+    const v = pick(d);
+    if (v == null) continue;
     let u: number | null = null;
     if (d.u_start != null && d.u_start > 0) u = d.u_start + d.u_height / 2;
     else if (d.mount_height_m != null) u = (d.mount_height_m - RACK_BASE) / U;
     if (u == null) continue;
     const i = Math.min(2, Math.max(0, Math.floor((u - 1) / third)));
-    sums[i] += d.temp_c;
+    sums[i] += v;
     ns[i] += 1;
   }
   const t = sums.map((s, i) => (ns[i] ? s / ns[i] : null));
@@ -166,6 +193,35 @@ export function rackTiers(devices: TwinDevice[], uHeight: number): [number | nul
     return null;
   };
   return [fill(0), fill(1), fill(2)];
+}
+
+export const pickExhaust = (d: TwinDevice) => d.exhaust_c;
+
+/** Intake readings the indices are scored from: rack-front probes and server
+ *  inlets. A rack PDU's probe sits among the cords at the rear and is neither. */
+export function intakeReadings(devices: TwinDevice[]): number[] {
+  const out: number[] = [];
+  for (const d of devices) {
+    if (d.mount === 'rack_rear' || d.device_type === 'pdu') continue;
+    const v = d.mount === 'rack_front' ? d.temp_c : d.u_start != null && d.u_start > 0 ? (d.inlet_c ?? d.temp_c) : null;
+    if (v != null) out.push(v);
+  }
+  return out;
+}
+
+/** Max minus min of the rack's intakes, K; null with fewer than two. */
+export function rackSpread(devices: TwinDevice[]): number | null {
+  const v = intakeReadings(devices);
+  return v.length >= 2 ? Math.max(...v) - Math.min(...v) : null;
+}
+
+/** Allocated plus reserved as a share of the rack's rating: what the rack
+ *  has been promised against what one feed can carry. Null without a rating
+ *  or with nothing allocated or held. */
+export function committedPct(r: FloorRack): number | null {
+  if (!r.rated_power_kw) return null;
+  if (r.allocated_kw == null && r.reserved_kw == null) return null;
+  return (100 * ((r.allocated_kw ?? 0) + (r.reserved_kw ?? 0))) / r.rated_power_kw;
 }
 
 export function rackMeanRh(devices: TwinDevice[]): number | null {
@@ -221,9 +277,17 @@ export function colLetters(i: number): string {
 export interface RackPaint {
   /** Bottom, middle, top colours (resolved CSS colours). */
   bot: string; mid: string; top: string;
+  /** The rear face's own colours when a layer reads the two faces apart
+   *  (inlet / outlet); absent = the whole box is one gradient. */
+  rear?: { bot: string; mid: string; top: string };
   /** Share of the rack's height drawn solid; the rest is a translucent shell.
    *  1 for every layer but the capacity ones. */
   fill: number;
+}
+
+function tierPaint(t: Tiers): { bot: string; mid: string; top: string } {
+  return { bot: resolveColor(bandColor(TEMP_BANDS, t[0])), mid: resolveColor(bandColor(TEMP_BANDS, t[1])),
+           top: resolveColor(bandColor(TEMP_BANDS, t[2])) };
 }
 
 export function paintRack(r: FloorRack, devices: TwinDevice[], layer: RackLayer, peakKw: number): RackPaint {
@@ -233,11 +297,11 @@ export function paintRack(r: FloorRack, devices: TwinDevice[], layer: RackLayer,
     return { bot: v, mid: v, top: v, fill };
   };
   switch (layer) {
-    case 'temperature': {
-      const [b, m, t] = rackTiers(devices, uH);
-      return { bot: resolveColor(bandColor(TEMP_BANDS, b)), mid: resolveColor(bandColor(TEMP_BANDS, m)),
-               top: resolveColor(bandColor(TEMP_BANDS, t)), fill: 1 };
-    }
+    case 'temperature': return { ...tierPaint(rackTiers(devices, uH)), fill: 1 };
+    case 'exhaust': return { ...tierPaint(rackTiers(devices, uH, pickExhaust)), fill: 1 };
+    case 'inlet_outlet':
+      return { ...tierPaint(rackTiers(devices, uH)), rear: tierPaint(rackTiers(devices, uH, pickExhaust)), fill: 1 };
+    case 'variance': return flat(bandColor(SPREAD_BANDS, rackSpread(devices)));
     case 'compliance': {
       const [b, m, t] = rackTiers(devices, uH);
       const worst = [b, m, t].filter((x): x is number => x != null);
@@ -253,6 +317,11 @@ export function paintRack(r: FloorRack, devices: TwinDevice[], layer: RackLayer,
     case 'utilisation': {
       if (r.load_kw == null || !r.rated_power_kw) return flat(NO_READING);
       const pct = (100 * r.load_kw) / r.rated_power_kw;
+      return flat(bandColor(PCT_BANDS, pct), Math.min(1, Math.max(0.04, pct / 100)));
+    }
+    case 'committed': {
+      const pct = committedPct(r);
+      if (pct == null) return flat(NO_READING);
       return flat(bandColor(PCT_BANDS, pct), Math.min(1, Math.max(0.04, pct / 100)));
     }
     case 'space': {
@@ -308,10 +377,26 @@ export type Sel = { kind: 'rack' | 'device' | 'equipment'; id: string } | null;
 export interface Visibility {
   devices: boolean; plant: boolean; aisles: boolean; containment: boolean;
   labels: boolean; vents: boolean;
+  /** Markers over racks whose intake is past the recommended ceiling. */
+  hotspots: boolean;
+  /** Cabinets drawn as a tinted glass shell so the equipment in them shows,
+   *  the way a rack reads with its perforated doors seen up close. */
+  faces: boolean;
 }
 export const DEFAULT_VIS: Visibility = {
-  devices: true, plant: true, aisles: true, containment: true, labels: false, vents: true,
+  devices: true, plant: true, aisles: true, containment: true, labels: false, vents: true, hotspots: true, faces: false,
 };
+
+/** The heat map: one of the three interpolated planes, or off. Optional by
+ *  design (docs/27 §8a) - the racks are the reading, the planes are context. */
+export type HeatPlane = 'off' | 'bottom' | 'mid' | 'top';
+export const HEAT_PLANES: { key: HeatPlane; label: string; hint: string }[] = [
+  { key: 'off', label: 'Off', hint: '' },
+  { key: 'bottom', label: 'Bottom', hint: '0.5 m, the lowest ASHRAE intake sensor' },
+  { key: 'mid', label: 'Middle', hint: '1.2 m' },
+  { key: 'top', label: 'Top', hint: '1.8 m' },
+];
+export const HEAT_INDEX: Record<Exclude<HeatPlane, 'off'>, number> = { bottom: 0, mid: 1, top: 2 };
 
 /** Perforated tiles: one in front of each rack that faces a cold aisle. The
  *  import carries no vent positions, so this is the layout a contained cold

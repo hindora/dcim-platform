@@ -1,22 +1,42 @@
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
+import { api, ApiError, type Alarm } from '../../api/client';
 import type {
-  FloorEquipment, FloorPlan, FloorRack, RoomKpi, ThermalRoom, ThermalUnit, TwinDevice,
+  FloorEquipment, FloorPlan, FloorRack, RoomKpi, ThermalField, ThermalRoom, ThermalUnit, TwinDevice, TwinRackIndex,
+  TwinRoomIndices,
 } from '../../api/client';
 import { humanise } from '../../lib/format';
 import {
-  COOLING_LAYERS, RACK_LAYERS, dewPoint, gridRef, rackMeanRh, rackTiers, unitReadings,
-  type CoolingLayer, type Legend as LegendSpec, type RackLayer, type Visibility,
+  COOLING_LAYERS, HEAT_PLANES, RACK_LAYERS, dewPoint, gridRef, pickExhaust, rackMeanRh, rackTiers, unitReadings,
+  type CoolingLayer, type HeatPlane, type Legend as LegendSpec, type RackLayer, type Visibility,
 } from './layers';
 import type { PathKind, PathOverlay } from './paths';
+import { fmtDT, fmtT, legendInUnit, numT, unitLabel } from './units';
 
 /** The viewer's side panel and legend. Facts only: every figure here is one
  *  the estate pages also show, read from the same endpoints. */
 
 const f1 = (v: number | null | undefined, unit = '') => (v == null ? '–' : `${v.toFixed(1)}${unit}`);
 const f0 = (v: number | null | undefined, unit = '') => (v == null ? '–' : `${Math.round(v)}${unit}`);
+const f2 = (v: number | null | undefined) => (v == null ? '–' : v.toFixed(2));
 
-export function Legend({ spec }: { spec: LegendSpec }) {
+/** Herrlin's RCI rating as a tone, so a 90 % reads as the problem it is. */
+function ratingTone(r: string | null | undefined): string {
+  return r === 'good' ? 'var(--ok)' : r === 'acceptable' ? 'var(--warn)' : r === 'poor' ? 'var(--critical)' : 'inherit';
+}
+
+/** RTI's verdict: Herrlin reads 100 % as balanced, above it as exhaust
+ *  recirculating into intakes, below it as supply bypassing the kit. */
+function rtiVerdict(v: number | null | undefined): string | null {
+  if (v == null) return null;
+  if (v > 110) return 'recirculation';
+  if (v < 90) return 'bypass';
+  return 'balanced';
+}
+
+export function Legend({ spec: raw }: { spec: LegendSpec }) {
+  const spec = legendInUnit(raw);
   return (
     <div className="vw-legend">
       <div className="vw-legend-title">{spec.title}{spec.unit && <span className="muted"> ({spec.unit})</span>}</div>
@@ -69,8 +89,9 @@ function Bar({ value, max, label, warn = 80, crit = 90 }: { value: number | null
 
 // ---------------------------------------------------------------- room
 
-export function RoomPanel({ plan, devices, kpi, thermal, vents }: {
+export function RoomPanel({ plan, devices, kpi, thermal, vents, indices, field }: {
   plan: FloorPlan; devices: TwinDevice[]; kpi?: RoomKpi; thermal?: ThermalRoom; vents: number;
+  indices?: TwinRoomIndices | null; field?: ThermalField | null;
 }) {
   const byRack = new Map<string, TwinDevice[]>();
   for (const d of devices) byRack.set(d.rack_id, [...(byRack.get(d.rack_id) ?? []), d]);
@@ -105,20 +126,21 @@ export function RoomPanel({ plan, devices, kpi, thermal, vents }: {
         {plan.unpositioned_equipment.length > 0 && <Row k="Not placed" v={plan.unpositioned_equipment.length} />}
       </Section>
       <Section title="Environmental" open>
-        <Row k="Avg rack temp" v={f1(avgT, ' °C')} />
-        <Row k="Max rack temp" v={f1(temps.length ? Math.max(...temps) : null, ' °C')} />
-        <Row k="Min rack temp" v={f1(temps.length ? Math.min(...temps) : null, ' °C')} />
+        <Row k="Avg rack temp" v={fmtT(avgT)} />
+        <Row k="Max rack temp" v={fmtT(temps.length ? Math.max(...temps) : null)} />
+        <Row k="Min rack temp" v={fmtT(temps.length ? Math.min(...temps) : null)} />
         <Row k="Avg rack RH" v={f1(avgRh, ' %')} />
-        <Row k="Avg dew point" v={f1(dewPoint(avgT, avgRh), ' °C')} />
+        <Row k="Avg dew point" v={fmtT(dewPoint(avgT, avgRh))} />
         <Row k="Compliance" v={kpi?.environmental.compliance_pct != null ? `${kpi.environmental.compliance_pct.toFixed(1)} %` : '–'} />
         {kpi?.environmental.note && <p className="muted vw-note">{kpi.environmental.note}</p>}
       </Section>
+      {indices && <IndicesSection ix={indices} field={field} />}
       <Section title="Cooling">
         <Row k="Units running" v={`${crahs.filter((u) => u.running).length} / ${crahs.length}`} />
         <Row k="Utilisation" v={ratedKw ? `${f0(dutyKw)} / ${f0(ratedKw)} kW` : '–'} />
         <Row k="Active utilisation" v={ratedKw ? `${((100 * dutyKw) / ratedKw).toFixed(1)} %` : '–'} />
-        <Row k="Avg supply" v={f1(avg(crahs.map((u) => u.supply_c).filter((x): x is number => x != null)), ' °C')} />
-        <Row k="Avg return" v={f1(avg(crahs.map((u) => u.return_c).filter((x): x is number => x != null)), ' °C')} />
+        <Row k="Avg supply" v={fmtT(avg(crahs.map((u) => u.supply_c).filter((x): x is number => x != null)))} />
+        <Row k="Avg return" v={fmtT(avg(crahs.map((u) => u.return_c).filter((x): x is number => x != null)))} />
         {thermal && (thermal.units_high_supply > 0 || thermal.units_high_return > 0) && (
           <p className="muted vw-note">{thermal.units_high_supply} high supply · {thermal.units_high_return} high return</p>
         )}
@@ -135,10 +157,189 @@ export function RoomPanel({ plan, devices, kpi, thermal, vents }: {
   );
 }
 
+/** The room's indices (docs/27 D6), each with what it was scored from.
+ *  RCI and RTI are Herrlin's, SHI/RHI Sharma's; the counts are shown so a
+ *  perfect score from two sensors reads as exactly that. */
+function IndicesSection({ ix, field }: { ix: TwinRoomIndices; field?: ThermalField | null }) {
+  const verdict = rtiVerdict(ix.rti);
+  return (
+    <Section title={`ASHRAE ${ix.ashrae_class} · indices`} open>
+      <div className="vw-tiles">
+        <div className="vw-tile" style={{ color: ratingTone(ix.rci_rating) }}>
+          <b>{f0(ix.rci_hi, ' %')}</b><span>RCI HI</span></div>
+        <div className="vw-tile"><b>{f0(ix.rci_lo, ' %')}</b><span>RCI LO</span></div>
+        <div className="vw-tile" style={{ color: verdict && verdict !== 'balanced' ? 'var(--warn)' : 'inherit' }}>
+          <b>{f0(ix.rti, ' %')}</b><span>RTI</span></div>
+      </div>
+      {ix.rci_rating && (
+        <p className="vw-note" style={{ color: ratingTone(ix.rci_rating) }}>
+          Rack cooling {ix.rci_rating}{verdict ? ` · return air ${verdict}` : ''}
+        </p>
+      )}
+      <Row k="SHI / RHI" v={ix.shi != null ? `${f2(ix.shi)} / ${f2(ix.rhi)}` : '–'} />
+      <Row k="Hot spots" v={ix.hot_spots} />
+      <Row k="Reference supply" v={fmtT(ix.supply_ref_c)} />
+      <Row k="Reference return" v={fmtT(ix.return_ref_c)} />
+      <Row k="Equipment ΔT" v={fmtDT(ix.dt_equip_k)} />
+      <Row k="Intakes · exhausts" v={`${ix.intakes} · ${ix.exhausts}`} />
+      <Row k="Air handlers in reference" v={ix.units_in_ref} />
+      <p className="muted vw-note">
+        RCI over every intake against the {ix.ashrae_class} band; RTI from the air handlers' rise against the
+        power-weighted rack rise{ix.unweighted ? ` (${ix.unweighted} unweighted, no power reading)` : ''}.
+      </p>
+      {field && (
+        <p className="muted vw-note">
+          Heat map from {field.intake_points} intake and {field.exhaust_points} exhaust face points, per aisle;
+          faded where no sensor reaches.{field.note ? ` ${field.note}` : ''}
+        </p>
+      )}
+    </Section>
+  );
+}
+
+// ---------------------------------------------------------------- conditions
+
+const SEV_RANK: Record<string, number> = { CRITICAL: 5, MAJOR: 4, MINOR: 3, WARNING: 2, INFO: 1 };
+
+/** The open conditions on one device, worst first, each with the two actions
+ *  an operator takes from where they are standing: acknowledge (I have it)
+ *  and clear (it is resolved and the source will not say so). Suppression is
+ *  not offered here - holding alarms back is planned work, so it goes through
+ *  a maintenance window, which is time-boxed and audited. */
+export function UnitAlarms({ deviceId, deviceName }: { deviceId: string; deviceName: string }) {
+  const qc = useQueryClient();
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const q = useQuery<{ items: Alarm[] }>({
+    queryKey: ['alarms', 'device', deviceId],
+    queryFn: () => api.alarms({ device_id: deviceId, include_symptoms: 'true', limit: '50' }),
+    refetchInterval: 30_000,
+  });
+  const refresh = () => {
+    for (const key of [['alarms'], ['alarm'], ['alarm-summary'], ['twin-scene'], ['estate-alarms'], ['dashboard']]) {
+      qc.invalidateQueries({ queryKey: key });
+    }
+  };
+  const fail = (e: unknown) => setError(
+    e instanceof ApiError && e.status === 409 ? 'Someone else got there first; the list has been refreshed.'
+      : e instanceof ApiError && e.status === 403 ? 'Acknowledging and clearing need the operator role.'
+      : `That did not go through: ${String(e instanceof Error ? e.message : e)}`);
+  const ack = useMutation({ mutationFn: (id: string) => api.acknowledgeAlarm(id),
+                            onSuccess: () => { setError(null); refresh(); }, onError: (e) => { fail(e); refresh(); } });
+  const clear = useMutation({ mutationFn: (id: string) => api.clearAlarm(id),
+                              onSuccess: () => { setError(null); setConfirming(null); refresh(); },
+                              onError: (e) => { fail(e); setConfirming(null); refresh(); } });
+
+  const items = [...(q.data?.items ?? [])].sort((a, b) =>
+    (SEV_RANK[b.severity] ?? 0) - (SEV_RANK[a.severity] ?? 0) || b.last_seen.localeCompare(a.last_seen));
+  const open = items.filter((a) => a.state === 'ACTIVE').length;
+  const title = q.isLoading ? 'Conditions' : items.length ? `Conditions (${items.length}${open ? `, ${open} new` : ''})` : 'Conditions';
+
+  return (
+    <Section title={title} open={items.length > 0}>
+      {q.isError && <p className="muted vw-note">The alarm list could not be read.</p>}
+      {!q.isLoading && !q.isError && items.length === 0 && (
+        <p className="muted vw-note">Nothing open on {deviceName}.</p>
+      )}
+      {error && <p className="vw-note vw-bad" role="alert">{error}</p>}
+      <ul className="vw-alarms">
+        {items.map((a) => (
+          <li key={a.id} className={`vw-alarm sev-${a.severity.toLowerCase()}${a.is_symptom ? ' is-symptom' : ''}`}>
+            <div className="vw-alarm-head">
+              <span className="vw-sev">{a.severity.toLowerCase()}</span>
+              <Link to={`/alarms/${a.id}`} className="vw-alarm-type">{humanise(a.alarm_type)}</Link>
+              {a.instance && <span className="muted">{a.instance}</span>}
+            </div>
+            <p className="vw-alarm-msg">{a.message}</p>
+            <div className="vw-alarm-meta muted">
+              {a.state === 'ACKNOWLEDGED' ? 'Acknowledged' : 'New'}
+              {a.is_symptom ? ' · explained by a root cause' : ''}
+              {` · since ${new Date(a.first_seen).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })}`}
+            </div>
+            {confirming === a.id ? (
+              <div className="vw-alarm-acts" role="group" aria-label="Confirm clear">
+                <span className="vw-note">Clear by hand? It reopens if the condition is still there.</span>
+                <button type="button" className="vw-icon is-danger" disabled={clear.isPending}
+                        onClick={() => clear.mutate(a.id)}>{clear.isPending ? 'Clearing…' : 'Clear it'}</button>
+                <button type="button" className="vw-icon" onClick={() => setConfirming(null)}>Keep it</button>
+              </div>
+            ) : (
+              <div className="vw-alarm-acts">
+                {a.state === 'ACTIVE' && (
+                  <button type="button" className="vw-icon" disabled={ack.isPending && ack.variables === a.id}
+                          onClick={() => ack.mutate(a.id)}>
+                    {ack.isPending && ack.variables === a.id ? 'Acknowledging…' : 'Acknowledge'}
+                  </button>
+                )}
+                <button type="button" className="vw-icon" onClick={() => setConfirming(a.id)}>Clear</button>
+              </div>
+            )}
+          </li>
+        ))}
+      </ul>
+      <div className="vw-links">
+        <Link to={`/maintenance?schedule=${deviceId}`}>Plan maintenance on this unit</Link>
+      </div>
+    </Section>
+  );
+}
+
+// ---------------------------------------------------------------- power
+
+/** The rack's power three ways against what one feed can carry: allocated
+ *  (budget of what is installed) and reserved (held for planned work) as the
+ *  wide bar, measured as the thin bar through it. A bullet chart: the plan is
+ *  the body, the meter is the reading, the rating is the track. */
+function PowerBullet({ rack }: { rack: FloorRack }) {
+  const cap = rack.rated_power_kw ?? null;
+  const alloc = rack.allocated_kw ?? null;
+  const held = rack.reserved_kw ?? null;
+  const meas = rack.load_kw ?? null;
+  const committed = (alloc ?? 0) + (held ?? 0);
+  // Scale to the larger of the rating and anything over it, so an
+  // over-committed rack shows its excess instead of clipping.
+  const scale = Math.max(cap ?? 0, committed, meas ?? 0) || 1;
+  const w = (v: number | null) => `${Math.max(0, (100 * (v ?? 0)) / scale)}%`;
+  const pct = (v: number | null) => (cap && v != null ? ` · ${Math.round((100 * v) / cap)} %` : '');
+  const over = cap != null && committed > cap ? committed - cap : null;
+  const derated = rack.allocated_derated ?? 0;
+  const unrated = rack.allocated_unrated ?? 0;
+  const summary = cap == null
+    ? 'No rating recorded for this rack, so nothing is measured against it.'
+    : `${f1(committed)} of ${f1(cap)} kW committed; ${f1(meas)} kW measured.`;
+  return (
+    <div className="vw-bullet">
+      <div className="vw-bullet-track" role="img" aria-label={summary}>
+        {cap != null && <div className="vw-bullet-cap" style={{ width: w(cap) }} />}
+        <div className="vw-bullet-alloc" style={{ width: w(alloc) }} />
+        <div className="vw-bullet-held" style={{ left: w(alloc), width: w(held) }} />
+        {meas != null && <div className="vw-bullet-meas" style={{ width: w(meas) }} />}
+        {cap != null && [0.8, 0.9].map((f) => (
+          <span key={f} className="vw-bullet-tick" style={{ left: w(cap * f) }} aria-hidden />
+        ))}
+      </div>
+      <dl className="vw-bullet-key">
+        <dt><span className="sw alloc" aria-hidden />Allocated</dt><dd>{f1(alloc, ' kW')}{pct(alloc)}</dd>
+        <dt><span className="sw held" aria-hidden />Reserved</dt><dd>{f1(held, ' kW')}{pct(held)}</dd>
+        <dt><span className="sw meas" aria-hidden />Measured</dt><dd>{f1(meas, ' kW')}{pct(meas)}</dd>
+        <dt><span className="sw cap" aria-hidden />Rating, one feed</dt><dd>{f1(cap, ' kW')}</dd>
+      </dl>
+      {over != null && <p className="vw-note vw-bullet-over">Committed past the rating by {f1(over, ' kW')}.</p>}
+      {(derated > 0 || unrated > 0) && (
+        <p className="muted vw-note">
+          {derated > 0 && `${derated} device${derated === 1 ? '' : 's'} budgeted at 60 % of nameplate. `}
+          {unrated > 0 && `${unrated} with no rating, counted as zero.`}
+        </p>
+      )}
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------- rack
 
-export function RackPanel({ rack, devices }: { rack: FloorRack; devices: TwinDevice[] }) {
+export function RackPanel({ rack, devices, index }: { rack: FloorRack; devices: TwinDevice[]; index?: TwinRackIndex | null }) {
   const [b, m, t] = rackTiers(devices, rack.u_height ?? 42);
+  const [eb, em, et] = rackTiers(devices, rack.u_height ?? 42, pickExhaust);
   const temps = [b, m, t].filter((x): x is number => x != null);
   const temp = temps.length ? Math.max(...temps) : null;
   const rh = rackMeanRh(devices);
@@ -150,15 +351,36 @@ export function RackPanel({ rack, devices }: { rack: FloorRack; devices: TwinDev
         <Row k="Grid reference" v={gridRef(rack.x, rack.y)} />
         <Row k="Row" v={rack.row_name ?? '–'} />
         <Row k="Faces" v={rack.facing === 'N' ? 'north' : rack.facing === 'S' ? 'south' : '–'} />
-        <Row k="ΔT bottom → top" v={b != null && t != null ? `${(t - b).toFixed(1)} K` : '–'} />
+        <Row k="ΔT bottom → top" v={b != null && t != null ? fmtDT(t - b) : '–'} />
       </div>
       <Tiles items={[
-        { label: 'TEMP', value: f1(temp, ' °C') },
+        { label: 'TEMP', value: fmtT(temp) },
         { label: 'RH', value: f1(rh, ' %') },
-        { label: 'DEW POINT', value: f1(dewPoint(temp, rh), ' °C') },
+        { label: 'DEW POINT', value: fmtT(dewPoint(temp, rh)) },
       ]} />
-      <Section title="Total power" open>
-        <Bar value={rack.load_kw ?? null} max={rack.rated_power_kw ?? null} label="rack PDUs" />
+      {index && (
+        <>
+          {index.hot && (
+            <p className="vw-note" style={{ color: index.hot === 'out' ? 'var(--critical)' : 'var(--warn)' }}>
+              Hot spot · intake {index.hot === 'out' ? 'outside the allowable band' : 'above the recommended ceiling'}
+            </p>
+          )}
+          <Tiles items={[
+            { label: 'INTAKE MAX', value: fmtT(index.inlet_max_c) },
+            { label: 'EXHAUST MAX', value: fmtT(index.exhaust_max_c) },
+            { label: 'SPREAD', value: fmtDT(index.spread_k) },
+          ]} />
+          <Section title="Indices" open>
+            <Row k="SHI / RHI" v={index.shi != null ? `${f2(index.shi)} / ${f2(index.rhi)}` : '–'} />
+            <Row k="Rise in → out" v={fmtDT(index.rise_k)} />
+            <Row k="Intakes · exhausts" v={`${index.intakes} · ${index.exhausts}`} />
+            <p className="muted vw-note">SHI is the share of this rack's heat its intake picked up before entering
+              (Sharma); 0 means it breathed pure supply air.</p>
+          </Section>
+        </>
+      )}
+      <Section title="Power" open>
+        <PowerBullet rack={rack} />
       </Section>
       <Section title="Rack PDU loads" open={pdus.length > 0}>
         {pdus.length === 0 && <p className="muted vw-note">No rack PDU reporting.</p>}
@@ -170,9 +392,10 @@ export function RackPanel({ rack, devices }: { rack: FloorRack; devices: TwinDev
         </div>
       </Section>
       <Section title="Readings" open>
-        <Row k="Inlet bottom" v={f1(b, ' °C')} />
-        <Row k="Inlet middle" v={f1(m, ' °C')} />
-        <Row k="Inlet top" v={f1(t, ' °C')} />
+        <Row k="Inlet bottom" v={fmtT(b)} />
+        <Row k="Inlet middle" v={fmtT(m)} />
+        <Row k="Inlet top" v={fmtT(t)} />
+        {(eb != null || et != null) && <Row k="Exhaust bottom / mid / top" v={`${numT(eb)} / ${numT(em)} / ${numT(et)} ${unitLabel()}`} />}
         <Row k="Devices" v={`${rack.device_count}${rack.offline_count ? ` · ${rack.offline_count} offline` : ''}`} />
         <Row k="Free" v={rack.free_u != null ? `${rack.free_u} of ${rack.u_height ?? 42} U` : '–'} />
       </Section>
@@ -203,10 +426,14 @@ export function DevicePanel({ device, rack }: { device: TwinDevice; rack?: Floor
         <Row k="Status" v={`${device.status.toLowerCase()}${device.max_severity !== 'CLEAR' ? ` · ${device.max_severity.toLowerCase()}` : ''}`} />
       </div>
       <Tiles items={[
-        { label: 'AIR', value: f1(device.temp_c, ' °C') },
-        { label: 'RH', value: f1(device.rh_pct, ' %') },
+        { label: 'AIR', value: fmtT(device.temp_c) },
+        { label: device.exhaust_c != null ? 'EXHAUST' : 'RH', value: device.exhaust_c != null ? fmtT(device.exhaust_c) : f1(device.rh_pct, ' %') },
         { label: 'POWER', value: device.power_w != null ? `${(device.power_w / 1000).toFixed(2)} kW` : '–' },
       ]} />
+      {device.exhaust_c != null && device.temp_c != null && (
+        <div className="vw-kv"><Row k="Rise in → out" v={fmtDT(device.exhaust_c - device.temp_c)} /></div>
+      )}
+      <UnitAlarms deviceId={device.id} deviceName={device.name} />
       <div className="vw-links"><Link to={`/devices/${device.id}`}>Device</Link>
         {rack && <Link to={`/racks/${rack.id}?from=floorplan`}>Rack elevation</Link>}</div>
     </div>
@@ -227,13 +454,13 @@ export function UnitPanel({ unit, thermal }: { unit: FloorEquipment; thermal?: T
       </div>
       {air ? (
         <Tiles items={[
-          { label: 'RETURN', value: f1(r.return_c, ' °C') },
-          { label: 'SUPPLY', value: f1(r.supply_c, ' °C') },
-          { label: 'SETPOINT', value: f1(thermal?.setpoint_c, ' °C') },
+          { label: 'RETURN', value: fmtT(r.return_c) },
+          { label: 'SUPPLY', value: fmtT(r.supply_c) },
+          { label: 'SETPOINT', value: fmtT(thermal?.setpoint_c) },
         ]} />
       ) : (
         <Tiles items={[
-          { label: 'AIR', value: f1(unit.temp_c, ' °C') },
+          { label: 'AIR', value: fmtT(unit.temp_c) },
           { label: 'RH', value: f1(unit.rh_pct, ' %') },
           { label: 'POWER', value: unit.power_w != null ? `${(unit.power_w / 1000).toFixed(1)} kW` : '–' },
         ]} />
@@ -243,10 +470,11 @@ export function UnitPanel({ unit, thermal }: { unit: FloorEquipment; thermal?: T
           <Bar value={thermal?.duty_kw ?? null} max={thermal?.rated_kw ?? null} label="delivered" warn={85} crit={95} />
           <Row k="Fan" v={f0(thermal?.fan_pct, ' %')} />
           <Row k="CHW valve" v={f0(thermal?.valve_pct, ' %')} />
-          <Row k="ΔT" v={f1(thermal?.delta_t_k, ' K')} />
+          <Row k="ΔT" v={fmtDT(thermal?.delta_t_k)} />
           <Row k="Power" v={unit.power_w != null ? `${(unit.power_w / 1000).toFixed(1)} kW` : '–'} />
         </Section>
       )}
+      <UnitAlarms deviceId={unit.id} deviceName={unit.name} />
       <div className="vw-links"><Link to={`/devices/${unit.id}`}>Device</Link></div>
     </div>
   );
@@ -254,15 +482,18 @@ export function UnitPanel({ unit, thermal }: { unit: FloorEquipment; thermal?: T
 
 // ---------------------------------------------------------------- filters
 
-export function FiltersPanel({ rackLayer, coolingLayer, vis, onRack, onCooling, onVis }: {
-  rackLayer: RackLayer; coolingLayer: CoolingLayer; vis: Visibility;
-  onRack: (l: RackLayer) => void; onCooling: (l: CoolingLayer) => void; onVis: (v: Visibility) => void;
+export function FiltersPanel({ rackLayer, coolingLayer, heat, vis, onRack, onCooling, onHeat, onVis }: {
+  rackLayer: RackLayer; coolingLayer: CoolingLayer; heat: HeatPlane; vis: Visibility;
+  onRack: (l: RackLayer) => void; onCooling: (l: CoolingLayer) => void; onHeat: (h: HeatPlane) => void;
+  onVis: (v: Visibility) => void;
 }) {
-  const [open, setOpen] = useState<'racks' | 'cooling' | 'vis'>('racks');
+  const [open, setOpen] = useState<'racks' | 'cooling' | 'heat' | 'vis'>('racks');
   const VIS: { key: keyof Visibility; label: string }[] = [
     { key: 'devices', label: 'Devices in racks' }, { key: 'plant', label: 'Plant and panels' },
     { key: 'aisles', label: 'Aisle tint' }, { key: 'containment', label: 'Containment' },
-    { key: 'vents', label: 'Vent tiles' }, { key: 'labels', label: 'Labels' },
+    { key: 'vents', label: 'Vent tiles' }, { key: 'hotspots', label: 'Hot-spot markers' },
+    { key: 'faces', label: 'See into racks' },
+    { key: 'labels', label: 'Labels' },
   ];
   return (
     <div className="vw-panel-body">
@@ -286,6 +517,20 @@ export function FiltersPanel({ rackLayer, coolingLayer, vis, onRack, onCooling, 
               <span>{l.label}</span>{l.hint && <small>{l.hint}</small>}
             </label>
           ))}
+        </div>
+      </details>
+      <details className="vw-section" open={open === 'heat'} onToggle={(e) => (e.currentTarget.open ? setOpen('heat') : null)}>
+        <summary>Heat map</summary>
+        <div className="vw-section-body vw-radios" role="radiogroup" aria-label="Heat map plane">
+          {HEAT_PLANES.map((l) => (
+            <label key={l.key} className={l.key === heat ? 'is-on' : undefined}>
+              <input type="radio" name="heat-plane" checked={l.key === heat} onChange={() => onHeat(l.key)} />
+              <span>{l.label}</span>{l.hint && <small>{l.hint}</small>}
+            </label>
+          ))}
+          <p className="muted vw-note">The air at that height, interpolated along each aisle from the rack faces that
+            open onto it - cold aisles from intakes, hot aisles from exhausts, never across a row. Faded where no
+            sensor reaches.</p>
         </div>
       </details>
       <details className="vw-section" open={open === 'vis'} onToggle={(e) => (e.currentTarget.open ? setOpen('vis') : null)}>

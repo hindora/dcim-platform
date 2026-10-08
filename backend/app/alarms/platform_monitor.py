@@ -258,6 +258,7 @@ async def gather(session: AsyncSession, redis: Redis, *,
                  poll_interval_s: float = 120.0,
                  ingest_lag_s: float | None = None,
                  ingest_lag_sustained_s: float = 0.0,
+                 ingest_lag_recovered_s: float = 0.0,
                  collectors_expected: int | None = None) -> rules.Signals:
     """Read every signal the evaluator needs, and export them as metrics.
 
@@ -294,9 +295,16 @@ async def gather(session: AsyncSession, redis: Redis, *,
             metrics.collector_heartbeat_age.labels(
                 collector_id=c.collector_id).set(c.heartbeat_age_s)
 
+    # The lag alarm's own state, so the rule can hold it through a drain.
+    from app.repositories import alarms as alarm_repo
+    lag_open = next((r["severity"] for r in await alarm_repo.open_platform_alarms(session)
+                     if r["alarm_type"] == "ingest_lag_high"), None)
+
     return rules.Signals(
         ingest_lag_s=lag,
         ingest_lag_sustained_s=ingest_lag_sustained_s,
+        ingest_lag_open=lag_open,
+        ingest_lag_recovered_s=ingest_lag_recovered_s,
         telemetry_age_s=age,
         telemetry_present=present,
         worker_heartbeat_age_s=hb.get("age_s") if hb else None,
@@ -395,11 +403,13 @@ async def apply(session: AsyncSession, findings: list[rules.Finding]
 async def run_once(session: AsyncSession, redis: Redis, *, streams: list[str],
                    group: str, poll_interval_s: float = 120.0,
                    ingest_lag_s: float | None = None,
-                   ingest_lag_sustained_s: float = 0.0) -> dict[str, Any]:
+                   ingest_lag_sustained_s: float = 0.0,
+                   ingest_lag_recovered_s: float = 0.0) -> dict[str, Any]:
     signals = await gather(session, redis, streams=streams, group=group,
                            poll_interval_s=poll_interval_s,
                            ingest_lag_s=ingest_lag_s,
-                           ingest_lag_sustained_s=ingest_lag_sustained_s)
+                           ingest_lag_sustained_s=ingest_lag_sustained_s,
+                           ingest_lag_recovered_s=ingest_lag_recovered_s)
     findings = rules.evaluate(signals)
     result = await apply(session, findings)
     result["signals"] = {

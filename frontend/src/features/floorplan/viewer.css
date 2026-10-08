@@ -114,3 +114,145 @@
 .vw-chain li.is-away { color: var(--text-faint); }
 .vw-bad { color: var(--warn); }
 .vw-jumps { display: flex; gap: 12px; }
+
+/* unit conditions ------------------------------------------------------- */
+/* Severity is a word and a left rule, not colour alone. */
+.vw-alarms { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.vw-alarm { padding: 7px 8px 8px 10px; border-left: 3px solid var(--border-strong); background: var(--bg-inset);
+            border-radius: 0 4px 4px 0; }
+.vw-alarm.sev-critical { border-left-color: var(--critical); }
+.vw-alarm.sev-major { border-left-color: var(--major); }
+.vw-alarm.sev-minor, .vw-alarm.sev-warning { border-left-color: var(--warn); }
+.vw-alarm.is-symptom { opacity: 0.8; }
+.vw-alarm-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.vw-sev { font-size: 0.7rem; font-weight: 700; text-transform: capitalize; color: var(--text); }
+.vw-alarm.sev-critical .vw-sev { color: var(--critical); }
+.vw-alarm.sev-major .vw-sev { color: var(--major); }
+.vw-alarm-type { font-weight: 600; }
+.vw-alarm-msg { margin: 4px 0 2px; font-size: 0.78rem; line-height: 1.45; overflow-wrap: anywhere; }
+.vw-alarm-meta { font-size: 0.7rem; }
+.vw-alarm-acts { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+.vw-alarm-acts .vw-icon { padding: 5px 9px; min-height: 28px; letter-spacing: 0; font-weight: 600; }
+.vw-alarm-acts .vw-icon:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.vw-alarm-acts .vw-icon:disabled { opacity: 0.45; cursor: not-allowed; }
+.vw-icon.is-danger { color: var(--critical); border-color: var(--critical); }
+
+/* power bullet (rack panel) ---------------------------------------------- */
+/* Track = the rack's rating; body = allocated + reserved (hatched, so the
+   difference does not rest on colour); thin bar = the meter. */
+.vw-bullet { margin: 2px 0 6px; }
+.vw-bullet-track { position: relative; height: 18px; border-radius: 3px; background: var(--bg-inset);
+                   border: 1px solid var(--border); overflow: hidden; }
+.vw-bullet-cap { position: absolute; inset: 0 auto 0 0; border-right: 2px solid var(--text-muted); }
+.vw-bullet-alloc { position: absolute; top: 3px; bottom: 3px; left: 0; background: var(--band-p2); }
+.vw-bullet-held { position: absolute; top: 3px; bottom: 3px;
+  background: repeating-linear-gradient(135deg, var(--band-p4) 0 3px, color-mix(in srgb, var(--band-p4) 35%, transparent) 3px 6px); }
+.vw-bullet-meas { position: absolute; top: 7px; height: 4px; left: 0; background: var(--text); border-radius: 2px; }
+.vw-bullet-tick { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--border-strong); }
+.vw-bullet-key { display: grid; grid-template-columns: 1fr auto; gap: 3px 10px; margin: 8px 0 0; font-size: 0.78rem; }
+.vw-bullet-key dt { color: var(--text-faint); display: flex; align-items: center; gap: 7px; }
+.vw-bullet-key dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+.vw-bullet-key .sw { width: 14px; height: 8px; border-radius: 2px; display: inline-block; }
+.vw-bullet-key .sw.alloc { background: var(--band-p2); }
+.vw-bullet-key .sw.held { background: repeating-linear-gradient(135deg, var(--band-p4) 0 2px, transparent 2px 4px);
+                          outline: 1px solid var(--band-p4); }
+.vw-bullet-key .sw.meas { height: 4px; background: var(--text); }
+.vw-bullet-key .sw.cap { width: 2px; height: 12px; background: var(--text-muted); }
+.vw-bullet-over { color: var(--critical); }
+
+/* timeline (docs/27 Phase 4) --------------------------------------------- */
+/* A 48 px band above the status bar. The scrubber is the instrument; the
+   rest of the bar stays quiet. Replay recolours the dot and label only. */
+.viewer.has-time .vw-status { bottom: 0; }
+.vw-time { position: absolute; z-index: 3; left: 0; right: 0; bottom: 42px; display: flex; flex-direction: column;
+           background: var(--bg-raised); border-top: 1px solid var(--border); font-size: 0.78rem;
+           color: var(--text-muted); }
+.vw-time-row { height: 48px; display: flex; align-items: center; gap: 12px; padding: 0 16px; }
+/* The compare row: slimmer, under the main one, its thumb in the secondary
+   colour so the two moments are never confused. */
+.vw-time-cmp { height: 40px; border-top: 1px dashed var(--border); background: color-mix(in srgb, var(--bg-inset) 55%, var(--bg-raised)); }
+.vw-cmp-tag { min-width: 62px; font-weight: 600; color: var(--text); }
+.vw-time-cmp .vw-scrub input[type="range"]::-webkit-slider-thumb { border-color: var(--cat-cap); border-style: dashed; }
+.vw-time-cmp .vw-scrub input[type="range"]::-moz-range-thumb { border-color: var(--cat-cap); border-style: dashed; }
+.vw-time-cmp .vw-scrub-label { background: var(--cat-cap); top: -3px; }
+.vw-time-cmp .vw-scrub { height: 40px; }
+.vw-time-cmp .vw-scrub input[type="range"] { height: 22px; }
+.vw-time-cmp .vw-scrub-ticks { top: 25px; }
+.vw-stepsel { display: inline-flex; align-items: center; gap: 6px; }
+.vw-stepsel select { padding: 0 6px; }
+.vw-src { white-space: nowrap; }
+.vw-time button, .vw-time select, .vw-time input[type="date"] {
+  font: inherit; color: var(--text); background: var(--bg-inset); border: 1px solid var(--border);
+  border-radius: 4px; min-height: 30px; cursor: pointer; touch-action: manipulation; }
+.vw-time button:focus-visible, .vw-time select:focus-visible, .vw-time input:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px; }
+.vw-time button:disabled { opacity: 0.45; cursor: not-allowed; }
+.vw-live { display: inline-flex; align-items: center; gap: 7px; padding: 0 11px; font-weight: 600; letter-spacing: .02em; }
+.vw-live .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-faint); }
+.vw-live.is-on { color: var(--text); border-color: var(--ok); }
+.vw-live.is-on .dot { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 25%, transparent); }
+.vw-time.is-replay .vw-live:not(.is-on):hover { border-color: var(--border-strong); }
+.vw-date { padding: 0 8px; min-width: 140px; }
+.vw-transport { display: inline-flex; gap: 4px; }
+.vw-transport button { width: 32px; display: inline-flex; align-items: center; justify-content: center; padding: 0; }
+.vw-transport .vw-play { width: 36px; }
+.vw-transport .vw-play[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
+.vw-scrub { position: relative; flex: 1; min-width: 220px; height: 48px; display: flex; align-items: center; }
+.vw-scrub input[type="range"] { width: 100%; height: 28px; margin: 0; background: none; -webkit-appearance: none;
+                                appearance: none; cursor: pointer; touch-action: pan-y; }
+/* The track: a thin rail that is only drawn as far as the day has reached
+   (--reach); beyond it the rail fades, so the future reads as not yet there. */
+.vw-scrub input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px; border-radius: 2px;
+  background: linear-gradient(to right,
+    color-mix(in srgb, var(--border) 55%, transparent) 0, color-mix(in srgb, var(--border) 55%, transparent) var(--from, 0%),
+    var(--border-strong) var(--from, 0%), var(--border-strong) var(--reach, 100%),
+    color-mix(in srgb, var(--border) 55%, transparent) var(--reach, 100%)); }
+.vw-scrub input[type="range"]::-moz-range-track {
+  height: 4px; border-radius: 2px;
+  background: linear-gradient(to right,
+    color-mix(in srgb, var(--border) 55%, transparent) 0, color-mix(in srgb, var(--border) 55%, transparent) var(--from, 0%),
+    var(--border-strong) var(--from, 0%), var(--border-strong) var(--reach, 100%),
+    color-mix(in srgb, var(--border) 55%, transparent) var(--reach, 100%)); }
+.vw-scrub input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 14px; height: 14px;
+  margin-top: -5px; border-radius: 50%; background: var(--bg-raised); border: 2px solid var(--text); }
+.vw-scrub input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border-radius: 50%;
+  background: var(--bg-raised); border: 2px solid var(--text); }
+.vw-time.is-replay .vw-scrub input[type="range"]::-webkit-slider-thumb { border-color: var(--accent); }
+.vw-time.is-replay .vw-scrub input[type="range"]::-moz-range-thumb { border-color: var(--accent); }
+.vw-scrub input[type="range"]:focus-visible { outline: none; }
+.vw-scrub input[type="range"]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 45%, transparent); }
+.vw-scrub-ticks { position: absolute; left: 7px; right: 7px; top: 30px; height: 14px; pointer-events: none; }
+.vw-scrub-ticks span { position: absolute; top: 0; width: 1px; height: 4px; background: var(--border-strong);
+                       transform: translateX(-0.5px); font-size: 0.62rem; line-height: 1; color: var(--text-faint);
+                       font-variant-numeric: tabular-nums; white-space: nowrap; }
+.vw-scrub-ticks span.major { height: 6px; }
+.vw-scrub-ticks span { text-indent: 4px; padding-top: 7px; }
+.vw-scrub-label { position: absolute; top: 1px; transform: translateX(-50%); padding: 1px 6px; border-radius: 3px;
+                  background: var(--text); color: var(--bg-raised); font-size: 0.68rem; font-weight: 600;
+                  font-variant-numeric: tabular-nums; white-space: nowrap; pointer-events: none; }
+.vw-time.is-replay .vw-scrub-label { background: var(--accent); color: var(--bg-raised); }
+.vw-cmp { padding: 0 8px; max-width: 180px; }
+
+/* compare: two canvases side by side, each with a caption of when it is. */
+.viewer-stage.is-split { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; background: var(--border); }
+.vw-pane { position: relative; overflow: hidden; background: var(--bg-inset); }
+/* Captions sit low in the pane, clear of the room select, the view switch and
+   the information panel that all live along the top edge. */
+.vw-pane-cap { position: absolute; z-index: 2; bottom: 12px; left: 50%; transform: translateX(-50%); padding: 4px 10px;
+               border-radius: 4px; background: color-mix(in srgb, var(--bg-raised) 92%, transparent);
+               border: 1px solid var(--border); font-size: 0.74rem; color: var(--text-muted);
+               font-variant-numeric: tabular-nums; white-space: nowrap; pointer-events: none; }
+.vw-pane-cap b { color: var(--text); font-weight: 600; }
+.viewer.has-time .vw-legends, .viewer.has-time .vw-panel { bottom: 102px; }
+.viewer.has-time .vw-hint { bottom: 108px; }
+.viewer.has-compare-row .vw-legends, .viewer.has-compare-row .vw-panel { bottom: 142px; }
+.viewer.has-compare-row .vw-hint { bottom: 148px; }
+@media (max-width: 900px) {
+  .vw-time-row { flex-wrap: wrap; height: auto; padding: 8px 12px; gap: 8px; }
+  .vw-scrub { min-width: 100%; order: 9; }
+  .viewer-stage.is-split { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .vw-live .dot, .vw-scrub-label { transition: background-color 160ms ease-out, color 160ms ease-out; }
+}

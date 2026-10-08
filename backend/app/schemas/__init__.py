@@ -292,6 +292,15 @@ class FloorRack(BaseModel):
     u_height: int = 42
     # Smallest single rPDU feed (2N: the rack must run on one); None = unknown.
     rated_power_kw: float | None = None
+    # Budgeted power of the equipment in the rack (model budget, else derated
+    # nameplate), and power held for planned work. Planning figures, not
+    # measurements; load_kw is the measurement.
+    allocated_kw: float | None = None
+    reserved_kw: float | None = None
+    # Devices whose budget is the derated nameplate, and devices with no
+    # rating at all (counted as zero).
+    allocated_derated: int = 0
+    allocated_unrated: int = 0
 
 
 class FloorEquipment(BaseModel):
@@ -359,6 +368,8 @@ class FloorPlan(BaseModel):
     aisle_source: str = "derived"
     room_class: str | None = None
     containment: str | None = None
+    # The ASHRAE equipment class the room is graded against; None = A1.
+    ashrae_class: str | None = None
     # Where the room stands in its building (migration 0099).
     level: str | None = None
     level_elevation_m: float | None = None
@@ -387,14 +398,110 @@ class TwinDevice(BaseModel):
     # and its humidity. What the rack's bottom/middle/top gradient is drawn from.
     temp_c: float | None = None
     rh_pct: float | None = None
+    # Exhaust air, which only servers report (Redfish). What the rear face of
+    # a rack is drawn from, and one leg of every rise-based index.
+    exhaust_c: float | None = None
+
+
+class TwinRackIndex(BaseModel):
+    """One rack's thermal indices (docs/27 Phase 2, core/thermal_indices)."""
+
+    rack_id: str
+    inlet_max_c: float | None = None
+    inlet_min_c: float | None = None
+    exhaust_max_c: float | None = None
+    # Spread of the intake readings across the rack, K ("temperature variance").
+    spread_k: float | None = None
+    # Mean exhaust minus mean inlet, K.
+    rise_k: float | None = None
+    shi: float | None = None
+    rhi: float | None = None
+    # 'allowable' above the recommended ceiling, 'out' above the allowable one.
+    hot: str | None = None
+    intakes: int = 0
+    exhausts: int = 0
+
+
+class TwinRoomIndices(BaseModel):
+    """The room's ASHRAE / Herrlin / Sharma indices and what they were scored
+    from. Every count is here so a 100 % from two sensors reads as such."""
+
+    ashrae_class: str = "A1"
+    rci_hi: float | None = None
+    rci_lo: float | None = None
+    rci_rating: str | None = None
+    rti: float | None = None
+    shi: float | None = None
+    rhi: float | None = None
+    supply_ref_c: float | None = None
+    return_ref_c: float | None = None
+    dt_equip_k: float | None = None
+    intakes: int = 0
+    exhausts: int = 0
+    unweighted: int = 0
+    units_in_ref: int = 0
+    hot_spots: int = 0
+    racks: list[TwinRackIndex] = Field(default_factory=list)
+
+
+class TwinFrameInfo(BaseModel):
+    """Where a replayed frame's readings came from (docs/27 D8)."""
+
+    # The moment asked for, and the table that answered: 'raw' (the newest
+    # two hours), '5m' (two days), '1h' (older).
+    t: datetime
+    source: str
+    # A reading counts if it is the last one within this many seconds before t.
+    lookback_s: int
+    devices_with_readings: int
+    note: str | None = None
+
+
+class TwinHistoryRange(BaseModel):
+    """How far back a room can be replayed, and which record answers where
+    (docs/27 Phase 4). The date picker is bounded by it."""
+
+    room_id: str
+    # Oldest hourly bucket any device in the room has; None = no history yet.
+    earliest: datetime | None = None
+    latest: datetime
+    # Moments newer than these read the raw record / the 5-minute rollup.
+    raw_hours: float
+    five_min_days: float
 
 
 class TwinRoomScene(BaseModel):
     """One room in 3D: the floor plan's geometry and state, plus what is in
-    each rack. One request, polled - the room is a few hundred rows."""
+    each rack. One request, polled - the room is a few hundred rows. With
+    `frame` set it is the same room at a moment in the past."""
 
     plan: FloorPlan
     devices: list[TwinDevice] = Field(default_factory=list)
+    indices: TwinRoomIndices | None = None
+    frame: TwinFrameInfo | None = None
+
+
+class ThermalPlane(BaseModel):
+    height_m: float
+    # Row-major, ny rows of nx; None where the cell is outside a drawn aisle
+    # or no sensor reaches it.
+    temp: list[float | None]
+    # 0-1, how near the nearest informing sensor is; the viewer fades on it.
+    conf: list[float]
+
+
+class ThermalField(BaseModel):
+    """The room's air on three horizontal planes, interpolated per aisle from
+    the readings on the rack faces that open onto it (docs/27 D5)."""
+
+    room_id: str
+    cell_m: float
+    nx: int
+    ny: int
+    planes: list[ThermalPlane]
+    intake_points: int = 0
+    exhaust_points: int = 0
+    note: str | None = None
 
 
 class TwinRoom(BaseModel):

@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import thermal_field as tf
+from app.core import thermal_indices as ti
+from app.core import twin_frame as frame
+from app.core.ashrae import envelope_for
 from app.repositories import devices as repo
 from app.repositories import racks as rack_repo
 from app.repositories import tags as tag_repo
+from app.repositories import telemetry as tele_repo
 from app.schemas import (
     DeviceDetail,
     DeviceStateOut,
@@ -28,9 +34,15 @@ from app.schemas import (
     RackElevation,
     RackSummary,
     RoomExtent,
+    ThermalField,
+    ThermalPlane,
     TwinDevice,
+    TwinFrameInfo,
+    TwinHistoryRange,
     TwinLevel,
+    TwinRackIndex,
     TwinRoom,
+    TwinRoomIndices,
     TwinRoomScene,
     TwinSiteScene,
 )
@@ -228,6 +240,7 @@ async def room_floorplan(session: AsyncSession, room_id: str) -> FloorPlan | Non
         extent = floorplan.room_extent(points)
     aisles = (floorplan.stored_aisles(stored_aisles) if stored_aisles
               else floorplan.derive_aisles(racks))
+    budget = await rack_repo.room_rack_power_plan(session, room_id)
 
     return FloorPlan(
         room_id=room_id,
@@ -246,6 +259,10 @@ async def room_floorplan(session: AsyncSession, room_id: str) -> FloorPlan | Non
             w_m=_f(r.get("rack_w")), d_m=_f(r.get("rack_d")),
             u_height=int(r.get("u_height") or 42),
             rated_power_kw=_f(r.get("rated_power_kw")),
+            allocated_kw=_f(budget.get(r["id"], {}).get("allocated_kw")),
+            reserved_kw=_f(budget.get(r["id"], {}).get("reserved_kw")),
+            allocated_derated=int(budget.get(r["id"], {}).get("derated") or 0),
+            allocated_unrated=int(budget.get(r["id"], {}).get("unrated") or 0),
         ) for r in racks],
         equipment=[_floor_equipment(e) for e in placed],
         unpositioned_equipment=[_floor_equipment(e) for e in loose],
@@ -255,6 +272,7 @@ async def room_floorplan(session: AsyncSession, room_id: str) -> FloorPlan | Non
         aisle_source="stored" if stored_aisles else "derived",
         room_class=room.get("room_class"),
         containment=room.get("containment"),
+        ashrae_class=room.get("ashrae_class"),
         level=room.get("level"),
         level_elevation_m=_f(room.get("level_elevation_m")),
         origin_x_m=_f(room.get("origin_x_m")),
@@ -279,12 +297,13 @@ def _floor_equipment(e: dict[str, Any]) -> FloorEquipment:
 
 
 async def room_scene(session: AsyncSession, room_id: str) -> TwinRoomScene | None:
-    """The floor plan plus the contents of every rack (docs/27 Phase 1)."""
+    """The floor plan plus the contents of every rack (docs/27 Phase 1), and
+    the room's thermal indices scored from them (Phase 2)."""
     plan = await room_floorplan(session, room_id)
     if plan is None:
         return None
     rows = await rack_repo.room_rack_devices(session, room_id)
-    return TwinRoomScene(plan=plan, devices=[TwinDevice(
+    devices = [TwinDevice(
         id=d["id"], name=d["name"], device_type=d["device_type"], rack_id=d["rack_id"],
         u_start=d.get("u_start"), u_height=int(d.get("u_height") or 1),
         mount=d.get("mount"), mount_height_m=_f(d.get("mount_height_m")),
@@ -292,7 +311,186 @@ async def room_scene(session: AsyncSession, room_id: str) -> TwinRoomScene | Non
         max_severity=d.get("max_severity") or "CLEAR",
         power_w=_f(d.get("power_w")), inlet_c=_f(d.get("inlet_temp_c")),
         temp_c=_f(d.get("temp_c")), rh_pct=_f(d.get("rh_pct")),
-    ) for d in rows])
+        exhaust_c=_f(d.get("exhaust_c")),
+    ) for d in rows]
+    return TwinRoomScene(plan=plan, devices=devices, indices=scene_indices(plan, devices))
+
+
+# --- thermal attribution (docs/27 Phase 2) ----------------------------------
+
+AIR_HANDLERS = {"crah", "crac"}
+
+
+def device_side_readings(d: TwinDevice) -> tuple[float | None, float | None]:
+    """(intake_c, exhaust_c) a device contributes, by where its sensor is.
+
+    The probe-first rule the THERMAL page uses: a rack-front probe and a
+    server's own inlet are intakes; a server's exhaust and a rack-rear probe
+    are exhausts. A rack PDU's ambient probe sits in the rear of the cabinet
+    among the cords and reads neither cleanly, so it is left out of both -
+    the rack's drawn gradient still uses it, the indices do not."""
+    if d.mount == "rack_front":
+        return d.temp_c, None
+    if d.mount == "rack_rear":
+        return None, d.temp_c
+    if d.u_start is not None and d.u_start > 0 and d.device_type != "pdu":
+        return (d.inlet_c if d.inlet_c is not None else d.temp_c), d.exhaust_c
+    return None, None
+
+
+def device_height_m(d: TwinDevice) -> float | None:
+    """Centre height of the device's sensor above the floor, from its U or
+    its mount height; None when it has neither."""
+    if d.u_start is not None and d.u_start > 0:
+        return tf.RACK_BASE_M + (d.u_start - 1 + d.u_height / 2.0) * tf.U_M
+    return d.mount_height_m
+
+
+def rack_thermals(plan: FloorPlan, devices: list[TwinDevice]) -> list[ti.RackThermal]:
+    by_rack: dict[str, ti.RackThermal] = {r.id: ti.RackThermal(rack_id=r.id) for r in plan.racks}
+    for d in devices:
+        rt = by_rack.get(d.rack_id)
+        if rt is None:
+            continue
+        intake, exhaust = device_side_readings(d)
+        if intake is not None:
+            rt.inlets_c.append(intake)
+        if exhaust is not None:
+            rt.exhausts_c.append(exhaust)
+        if intake is not None and exhaust is not None:
+            rt.device_rises.append((exhaust - intake, d.power_w))
+    return list(by_rack.values())
+
+
+def unit_pairs(plan: FloorPlan) -> list[tuple[float | None, float | None]]:
+    """(supply, return) of every air handler that is not offline."""
+    return [(e.supply_c, e.return_c) for e in plan.equipment + plan.unpositioned_equipment
+            if e.device_type in AIR_HANDLERS and e.status != "OFFLINE"]
+
+
+def scene_indices(plan: FloorPlan, devices: list[TwinDevice]) -> TwinRoomIndices:
+    env = envelope_for(plan.ashrae_class)
+    r = ti.room_indices(rack_thermals(plan, devices), env, unit_pairs(plan))
+    return TwinRoomIndices(
+        ashrae_class=r.ashrae_class, rci_hi=r.rci_hi, rci_lo=r.rci_lo, rci_rating=r.rci_rating,
+        rti=r.rti, shi=r.shi, rhi=r.rhi, supply_ref_c=r.supply_ref_c,
+        return_ref_c=r.return_ref_c, dt_equip_k=r.dt_equip_k, intakes=r.intakes,
+        exhausts=r.exhausts, unweighted=r.unweighted, units_in_ref=r.units_in_ref,
+        hot_spots=r.hot_spots,
+        racks=[TwinRackIndex(**x.__dict__) for x in r.racks if x.intakes or x.exhausts],
+    )
+
+
+def scene_face_points(plan: FloorPlan, devices: list[TwinDevice]) -> list[tf.FacePoint]:
+    """Every reading placed on the rack face it was taken at, collapsed to
+    three points per face. A rack whose facing is unknown has no face to put
+    them on and is left out of the map (its indices still count)."""
+    racks = {r.id: r for r in plan.racks}
+    faces: dict[tuple[str, str], list[tuple[float, float]]] = {}
+    for d in devices:
+        r = racks.get(d.rack_id)
+        if r is None or r.facing not in ("N", "S"):
+            continue
+        z = device_height_m(d)
+        if z is None:
+            continue
+        intake, exhaust = device_side_readings(d)
+        if intake is not None:
+            faces.setdefault((r.id, "intake"), []).append((z, intake))
+        if exhaust is not None:
+            faces.setdefault((r.id, "exhaust"), []).append((z, exhaust))
+    out: list[tf.FacePoint] = []
+    for (rack_id, side), readings in faces.items():
+        r = racks[rack_id]
+        depth = r.d_m if r.d_m is not None else plan.rack_d_m
+        # 'N' faces lower y: its front face is at y - d/2, its rear at y + d/2.
+        front = -1.0 if r.facing == "N" else 1.0
+        y = r.y + (front if side == "intake" else -front) * depth / 2.0
+        out.extend(tf.face_points(r.x, y, readings, side,
+                                  tf.RACK_BASE_M + r.u_height * tf.U_M))
+    return out
+
+
+async def room_field(session: AsyncSession, room_id: str,
+                     t: datetime | None = None) -> ThermalField | None:
+    """The room's air on three planes, per aisle (docs/27 D5, Phase 2) -
+    now, or at a moment in the past when `t` is given (Phase 4)."""
+    scene = await (room_frame(session, room_id, t) if t else room_scene(session, room_id))
+    if scene is None:
+        return None
+    plan = scene.plan
+    bands = [tf.Band(y_start=a.y_start, y_end=a.y_end, kind=a.kind) for a in plan.aisles]
+    pts = scene_face_points(plan, scene.devices)
+    f = tf.field(plan.extent.width_m, plan.extent.depth_m, bands, pts)
+    note = None
+    if not pts:
+        note = "No rack face carries a reading, so there is no air to draw."
+    elif not any(b.kind in ("cold", "hot") for b in bands):
+        note = "The room's aisles are not classed cold or hot, so the map has nowhere to draw."
+    elif not f["exhaust_points"]:
+        note = "No exhaust readings: hot aisles are not drawn."
+    return ThermalField(
+        room_id=room_id, cell_m=f["cell_m"], nx=f["nx"], ny=f["ny"],
+        planes=[ThermalPlane(**p) for p in f["planes"]],
+        intake_points=f["intake_points"], exhaust_points=f["exhaust_points"], note=note,
+    )
+
+
+#: room_id -> (when asked, earliest). The oldest hourly bucket only moves when
+#: retention or a new device changes it, and the date picker asks every time
+#: the viewer opens, so ten minutes of staleness costs nothing.
+_RANGE_CACHE: dict[str, tuple[datetime, datetime | None]] = {}
+_RANGE_TTL_S = 600.0
+
+
+async def room_history_range(session: AsyncSession, room_id: str,
+                             now: datetime | None = None) -> TwinHistoryRange | None:
+    """How far back room *room_id* can be replayed (docs/27 Phase 4)."""
+    now = now or datetime.now(UTC)
+    hit = _RANGE_CACHE.get(room_id)
+    if hit and (now - hit[0]).total_seconds() < _RANGE_TTL_S:
+        earliest = hit[1]
+    else:
+        live = await room_scene(session, room_id)
+        if live is None:
+            return None
+        ids = ([d.id for d in live.devices] + [e.id for e in live.plan.equipment]
+               + [e.id for e in live.plan.unpositioned_equipment])
+        earliest = await tele_repo.earliest_hour(session, ids) if ids else None
+        _RANGE_CACHE[room_id] = (now, earliest)
+    return TwinHistoryRange(
+        room_id=room_id, earliest=earliest, latest=now,
+        raw_hours=frame.RAW_HORIZON.total_seconds() / 3600.0,
+        five_min_days=frame.FIVE_MIN_HORIZON.total_seconds() / 86400.0)
+
+
+async def room_frame(session: AsyncSession, room_id: str, t: datetime,
+                     now: datetime | None = None) -> TwinRoomScene | None:
+    """The room as it was at `t` (docs/27 D8, Phase 4): today's geometry,
+    the readings the sensors gave then, the alarms that were open then, and
+    the indices scored from those. Same shape as the live scene so the viewer
+    draws it with the same code."""
+    live = await room_scene(session, room_id)
+    if live is None:
+        return None
+    now = now or datetime.now(UTC)
+    src = frame.choose_source(t, now)
+    ids = ([d.id for d in live.devices] + [e.id for e in live.plan.equipment]
+           + [e.id for e in live.plan.unpositioned_equipment])
+    values = await tele_repo.values_at(session, device_ids=ids, keys=list(frame.DEVICE_KEYS),
+                                       t=t, table=src.table, lookback=src.lookback)
+    sev = await tele_repo.severities_at(session, device_ids=ids, t=t)
+    plan, devices = frame.apply(live.plan, live.devices, values, sev)
+    note = ("Communication status is as known now; it has no history here. "
+            "Severities are the alarms open at this moment.")
+    if not values:
+        note = ("No reading survives from this moment: outside retention, "
+                "or before monitoring began.")
+    return TwinRoomScene(
+        plan=plan, devices=devices, indices=scene_indices(plan, devices),
+        frame=TwinFrameInfo(t=t, source=src.label, lookback_s=int(src.lookback.total_seconds()),
+                            devices_with_readings=len(values), note=note),
+    )
 
 
 async def site_scene(session: AsyncSession, datacenter_id: str) -> TwinSiteScene | None:
