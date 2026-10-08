@@ -11,6 +11,10 @@
 .world-panel { min-width: 0; contain: inline-size; position: relative; }
 .world-svg { display: block; cursor: grab; touch-action: none; border-radius: 4px; user-select: none; -webkit-user-select: none; }
 .world-svg:active { cursor: grabbing; }
+/* Chrome draws its own ring on a focused SVG root on :focus, mouse or not.
+   A click focuses the map so the keyboard works next, but only keyboard
+   focus (:focus-visible) may show a ring. Order matters: visible wins. */
+.world-svg:focus { outline: none; }
 .world-svg:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .world-svg.is-placing { cursor: crosshair; }
 /* Lines stay a hairline at every zoom; the map scales, the ink does not. */
@@ -34,6 +38,7 @@
 .world-layers { display: inline-flex; gap: 6px; }
 .world-layers button { border: 1px solid var(--border); border-radius: 4px; }
 .world-layers button[aria-pressed="true"] { color: var(--text); border-color: var(--border-strong); background: var(--bg-raised); }
+.world-layers button:disabled { opacity: 0.45; cursor: not-allowed; }
 .world-layers .sw { width: 10px; height: 10px; border-radius: 2px; opacity: 0.4; }
 .world-layers button[aria-pressed="true"] .sw { opacity: 1; }
 .world-layers .sw-clouds { background: var(--text); }
@@ -77,9 +82,9 @@
 .world-site:focus { outline: none; }
 .world-dot { stroke: var(--bg); stroke-width: 2; }
 .world-approx { fill: none; stroke: var(--text-faint); stroke-width: 1; stroke-dasharray: 3 3; }
+.world-site:hover .world-dot { stroke: var(--text); }
 .world-site.is-selected .world-dot,
-.world-site:hover .world-dot,
-.world-site:focus-visible .world-dot { stroke: var(--text); }
+.world-site:focus-visible .world-dot { stroke: var(--accent); stroke-width: 3; }
 .world-label {
   font-size: 11px; font-weight: 600; letter-spacing: .05em; fill: var(--text);
   paint-order: stroke; stroke: var(--bg-inset); stroke-width: 3px; pointer-events: none;
@@ -87,6 +92,7 @@
 .world-temp { font-size: 10px; font-weight: 500; fill: var(--text-muted); font-variant-numeric: tabular-nums;
   paint-order: stroke; stroke: var(--bg-inset); stroke-width: 3px; pointer-events: none; }
 .is-sat .world-dot { stroke: #fff; }
+.is-sat .world-site.is-selected .world-dot { stroke: var(--accent); }
 .is-sat .world-approx { stroke: #fff; stroke-opacity: 0.7; }
 .is-sat .world-label, .is-sat .world-temp { fill: #fff; stroke: #000; stroke-opacity: 0.75; }
 

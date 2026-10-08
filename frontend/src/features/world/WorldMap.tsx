@@ -145,6 +145,8 @@ export function WorldMap() {
     const next = new Set(wx);
     if (next.has(layer)) next.delete(layer); else next.add(layer);
     setParam('wx', next.size ? [...next].join(',') : null);
+    // Rain on the plain map changes its projection; start the view afresh.
+    if (layer === 'rain' && base === 'map') setView(IDENTITY);
   };
   const setFit = (f: Fit) => { setFitState(f); setParam('fit', f === 'sites' ? null : f); };
   const setSelected = (id: string | null) => { setSelectedState(id); setParam('site', id); };
@@ -212,8 +214,11 @@ export function WorldMap() {
     return m;
   }, [sites, kpis]);
 
+  // Raster tiles are Web Mercator, so any raster layer puts the map in
+  // Mercator; the plain map without one keeps Equal Earth.
+  const mercator = base === 'sat' || wx.has('rain');
   const projection = useMemo(() => {
-    const p = base === 'sat' ? geoMercator() : geoEqualEarth();
+    const p = mercator ? geoMercator() : geoEqualEarth();
     const pad = 24;
     const extent: [[number, number], [number, number]] = [[pad, pad], [size.w - pad, size.h - pad]];
     if (fit === 'sites' && onMap.length) {
@@ -235,7 +240,7 @@ export function WorldMap() {
       p.fitExtent(extent, { type: 'Sphere' });
     }
     return p;
-  }, [base, fit, size.w, size.h, onMap]);
+  }, [mercator, fit, size.w, size.h, onMap]);
   const path = useMemo(() => geoPath(projection), [projection]);
   const fine = projection.scale() * view.k > DETAIL_SCALE * size.w;
   // The finer coastline, only once the coarse one would show.
@@ -254,10 +259,11 @@ export function WorldMap() {
     [sat, projection, view, size.w, size.h]);
   const cloudTiles = useMemo(() => (sat && wx.has('clouds') ? tilesFor(projection, view, size.w, size.h, Z_MAX.clouds) : []),
     [sat, wx, projection, view, size.w, size.h]);
-  const radarTiles = useMemo(() => (sat && wx.has('rain') ? tilesFor(projection, view, size.w, size.h, Z_MAX.radar) : []),
-    [sat, wx, projection, view, size.w, size.h]);
-  const animated = sat && wx.size > 0;
-  const radar = useRadarIndex(sat && wx.has('rain'));
+  const radarTiles = useMemo(() => (wx.has('rain') ? tilesFor(projection, view, size.w, size.h, Z_MAX.radar) : []),
+    [wx, projection, view, size.w, size.h]);
+  const clouds = sat && wx.has('clouds');
+  const animated = wx.has('rain') || clouds;
+  const radar = useRadarIndex(wx.has('rain'));
 
   // The frame clock: recomputed every ten minutes so a wall display creeps
   // forward with the imagery.
@@ -285,13 +291,13 @@ export function WorldMap() {
     if (!animated) return;
     const urls: string[] = [];
     for (const t of frames) {
-      for (const tile of cloudTiles) urls.push(geoColorUrl('West', t, tile), geoColorUrl('East', t, tile));
+      if (clouds) for (const tile of cloudTiles) urls.push(geoColorUrl('West', t, tile), geoColorUrl('East', t, tile));
       const p = radar.data && radarPath(t);
       if (p) for (const tile of radarTiles) urls.push(radarUrl(radar.data!.host, p, tile));
     }
     const id = window.setTimeout(() => prefetch(urls), 300);   // not while the wheel is still turning
     return () => window.clearTimeout(id);
-  }, [animated, frames, cloudTiles, radarTiles, radar.data]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [animated, clouds, frames, cloudTiles, radarTiles, radar.data]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // --- zoom and pan ---------------------------------------------------------
   const zoomAt = useCallback((factor: number, px: number, py: number) => {
@@ -344,7 +350,7 @@ export function WorldMap() {
     setSaveError(null);
   };
   const centre = () => [size.w / 2, size.h / 2] as const;
-  const onKey = (e: React.KeyboardEvent) => {
+  const onKey = (e: React.KeyboardEvent<SVGSVGElement>) => {
     const [cx, cy] = centre();
     const step = 60;
     switch (e.key) {
@@ -422,16 +428,16 @@ export function WorldMap() {
                 <button type="button" className={sat ? 'is-on' : undefined} aria-pressed={sat}
                         onClick={() => setBase('sat')} title="NASA Blue Marble imagery, fetched from the internet">Satellite</button>
               </div>
-              {sat && (
-                <div className="world-layers" role="group" aria-label="Weather layers">
-                  <button type="button" aria-pressed={wx.has('clouds')} onClick={() => toggleWx('clouds')}
-                          title="GOES-East and GOES-West GeoColor, a frame every 20 minutes over the past 2 hours">
-                    <span className="sw sw-clouds" aria-hidden />Clouds</button>
-                  <button type="button" aria-pressed={wx.has('rain')} onClick={() => toggleWx('rain')}
-                          title="Ground weather radar composite (RainViewer), past 2 hours">
-                    <span className="sw sw-rain" aria-hidden />Rain</button>
-                </div>
-              )}
+              <div className="world-layers" role="group" aria-label="Weather layers">
+                <button type="button" aria-pressed={wx.has('rain')} onClick={() => toggleWx('rain')}
+                        title="Ground weather radar composite (RainViewer), past 2 hours. Draws on a Mercator map.">
+                  <span className="sw sw-rain" aria-hidden />Rain</button>
+                <button type="button" aria-pressed={clouds} onClick={() => toggleWx('clouds')} disabled={!sat}
+                        title={sat
+                          ? 'GOES-East and GOES-West GeoColor, a frame every 20 minutes over the past 2 hours'
+                          : 'Cloud imagery is a photograph of land and sea too, so it needs the Satellite basemap'}>
+                  <span className="sw sw-clouds" aria-hidden />Clouds</button>
+              </div>
             </div>
             <div className="world-bar-group">
               <div className="world-seg" role="group" aria-label="Framing">
@@ -497,18 +503,11 @@ export function WorldMap() {
                       <image key={`m${t.z}/${t.x}/${t.y}`} href={blueMarbleUrl(t)} x={t.px} y={t.py}
                              width={t.size} height={t.size} preserveAspectRatio="none" />))}
                   </g>
-                  {wx.has('clouds') && (
+                  {clouds && (
                     <g className="world-tiles">
                       {(['West', 'East'] as const).map((s) => cloudTiles.map((t) => (
                         <image key={`c${s}${t.z}/${t.x}/${t.y}`} href={geoColorUrl(s, at, t)} x={t.px} y={t.py}
                                width={t.size} height={t.size} preserveAspectRatio="none" />)))}
-                    </g>
-                  )}
-                  {wx.has('rain') && radar.data && radarPath(at) && (
-                    <g className="world-tiles world-radar">
-                      {radarTiles.map((t) => (
-                        <image key={`r${t.z}/${t.x}/${t.y}`} href={radarUrl(radar.data!.host, radarPath(at)!, t)}
-                               x={t.px} y={t.py} width={t.size} height={t.size} preserveAspectRatio="none" />))}
                     </g>
                   )}
                   <path d={landPath} className="world-borders" />
@@ -518,6 +517,13 @@ export function WorldMap() {
                   <path d={path(geoGraticule10()) ?? ''} className="world-graticule" />
                   <path d={landPath} className="world-land" />
                 </>
+              )}
+              {wx.has('rain') && radar.data && radarPath(at) && (
+                <g className="world-tiles world-radar">
+                  {radarTiles.map((t) => (
+                    <image key={`r${t.z}/${t.x}/${t.y}`} href={radarUrl(radar.data!.host, radarPath(at)!, t)}
+                           x={t.px} y={t.py} width={t.size} height={t.size} preserveAspectRatio="none" />))}
+                </g>
               )}
               {onMap.map((s) => {
                 const xy = projection([s.longitude, s.latitude]);
@@ -566,7 +572,7 @@ export function WorldMap() {
                      onChange={(e) => { setPlaying(false); setFi(Number(e.target.value)); }} />
               <span className="world-time-at"><b>{utcClock(at)}</b> <span className="muted">{ago(Date.now() / 1000 - at)}</span></span>
               <span className="muted world-time-note">
-                {wx.has('clouds') && 'Clouds cover the GOES-East and GOES-West discs. '}
+                {clouds && 'Clouds cover the GOES-East and GOES-West discs. '}
                 {wx.has('rain') && (radar.isError ? 'Radar index unreachable. ' : 'Rain shows where ground radar reports. ')}
               </span>
             </div>
@@ -580,8 +586,8 @@ export function WorldMap() {
             </ul>
             <p className="muted world-note">
               {sat
-                ? <>Imagery NASA GIBS: Blue Marble{wx.has('clouds') ? ', NOAA GOES GeoColor' : ''}{wx.has('rain') ? '; radar RainViewer' : ''}. Borders Natural Earth.</>
-                : <>Natural Earth 1:{fine && land50 ? '50' : '110'}m. Scroll or + − to zoom, drag to move.</>}
+                ? <>Imagery NASA GIBS: Blue Marble{clouds ? ', NOAA GOES GeoColor' : ''}{wx.has('rain') ? '; radar RainViewer' : ''}. Borders Natural Earth.</>
+                : <>Natural Earth 1:{fine && land50 ? '50' : '110'}m{wx.has('rain') ? ', Mercator; radar RainViewer' : ''}. Scroll or + − to zoom, drag to move.</>}
               {hz.data?.available === false
                 ? <> Warnings unavailable: {hz.data.note}.</>
                 : hz.data ? <> Warnings: {hz.data.sources.filter((x) => x.ok).map((x) => x.name).join(', ') || 'none reachable'}.</> : null}
