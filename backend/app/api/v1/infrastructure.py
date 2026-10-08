@@ -10,7 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import audit
-from app.core.security import Principal, current_principal
+from app.core.security import Principal, current_principal, require_role
 from app.db.session import get_session
 from app.repositories import racks as repo
 from app.schemas import (
@@ -122,7 +122,8 @@ async def set_site_location(
     body: SiteLocation,
     request: Request,
     session: AsyncSession = Depends(get_session),
-    principal: Principal = Depends(current_principal),
+    # Asset data, edited like the rest of the inventory: operator and up.
+    principal: Principal = Depends(require_role("operator")),
 ) -> dict:
     """The surveyed position replaces a city-centroid estimate, and no import
     overwrites it afterwards."""

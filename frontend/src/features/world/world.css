@@ -8,7 +8,44 @@
 @media (max-width: 1100px) { .world-body { grid-template-columns: minmax(0, 1fr); } }
 
 .world-panel { min-width: 0; contain: inline-size; position: relative; }
-.world-svg { display: block; }
+.world-svg { display: block; cursor: grab; touch-action: none; border-radius: 4px; user-select: none; -webkit-user-select: none; }
+.world-svg:active { cursor: grabbing; }
+.world-svg:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.world-svg.is-placing { cursor: crosshair; }
+/* Lines stay a hairline at every zoom; the map scales, the ink does not. */
+.world-sphere, .world-graticule, .world-land { vector-effect: non-scaling-stroke; }
+
+/* view controls, inside the map's top-right corner */
+.world-tools { position: absolute; z-index: 2; top: 16px; right: 16px; display: flex; align-items: center; gap: 4px;
+  padding: 4px; border: 1px solid var(--border); border-radius: 6px;
+  background: color-mix(in srgb, var(--bg-raised) 92%, transparent); }
+.world-tools button { font: inherit; font-size: 0.78rem; color: var(--text-muted); background: none;
+  border: 1px solid transparent; border-radius: 4px; min-height: 28px; padding: 0 9px; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; }
+.world-tools button:hover:not(:disabled) { color: var(--text); background: var(--bg-inset); }
+.world-tools button.is-on { color: var(--text); border-color: var(--accent); }
+.world-tools button:disabled { opacity: 0.45; cursor: not-allowed; }
+.world-tools button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.world-tools-sep { width: 1px; height: 18px; background: var(--border); margin: 0 2px; }
+
+/* placing a site */
+.world-placing { margin-bottom: 8px; padding: 8px 10px; border: 1px solid var(--accent); border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-raised)); font-size: 0.82rem; }
+.world-placing kbd { font: inherit; font-size: 0.74rem; padding: 0 4px; border: 1px solid var(--border-strong); border-radius: 3px; }
+.world-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 0; }
+.world-confirm label { display: inline-flex; align-items: center; gap: 6px; color: var(--text-muted); }
+.world-confirm input { width: 96px; font: inherit; font-variant-numeric: tabular-nums; padding: 3px 6px;
+  border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text); }
+.world-confirm button { font: inherit; padding: 4px 10px; border-radius: 4px; border: 1px solid var(--border);
+  background: var(--bg-raised); color: var(--text); cursor: pointer; }
+.world-confirm button.primary { border-color: var(--accent); background: var(--accent); color: var(--bg); }
+.world-confirm button:disabled { opacity: 0.45; cursor: not-allowed; }
+.world-error { margin: 6px 0 0; color: var(--critical); }
+.world-pin circle { fill: none; stroke: var(--accent); stroke-width: 2; }
+.world-pin path { stroke: var(--accent); stroke-width: 1.5; }
+.world-place { margin-top: 10px; font: inherit; font-size: 0.8rem; padding: 4px 10px; border-radius: 4px;
+  border: 1px solid var(--border-strong); background: none; color: var(--text); cursor: pointer; }
+.world-place:disabled { opacity: 0.6; cursor: default; }
 .world-sphere { fill: var(--bg-inset); stroke: var(--border); stroke-width: 1; }
 .world-graticule { fill: none; stroke: var(--border); stroke-width: 0.5; opacity: 0.5; }
 .world-land { fill: var(--bg-raised); stroke: var(--border-strong); stroke-width: 0.5; }
@@ -44,7 +81,9 @@
 .world-list button.is-current { box-shadow: inset 2px 0 0 var(--accent); }
 .world-list .code { font-weight: 600; }
 .world-list .muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.world-list .count { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.world-list .count { color: var(--text-muted); font-variant-numeric: tabular-nums; text-align: right;
+  display: flex; flex-direction: column; line-height: 1.25; font-size: 0.8rem; }
+.world-list .world-offline { color: var(--warn); font-size: 0.74rem; }
 .world-swatch { width: 9px; height: 9px; border-radius: 2px; }
 
 .world-card h4 { margin: 0 0 6px; }

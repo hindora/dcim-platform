@@ -161,3 +161,14 @@ def test_only_held_reservations_count():
 def test_the_derate_is_a_planning_share_of_nameplate():
     from app.repositories import racks
     assert 0 < racks.BUDGET_DERATE < 1
+
+
+def test_a_sites_position_is_set_by_an_operator_not_any_login():
+    """A site's position is asset data. Anyone signed in used to be able to move
+    a datacenter on the world map; now it takes the operator role, like the
+    rest of the inventory."""
+    import inspect
+
+    from app.api.v1 import infrastructure as infra
+    src = inspect.getsource(infra.set_site_location)
+    assert 'Depends(require_role("operator"))' in src

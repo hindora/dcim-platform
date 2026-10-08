@@ -3593,6 +3593,11 @@ export const api = {
 
   /** One call behind the entire home page - table, tabs and alert strip. */
   sitesOverview: () => request<SitesOverview>('/sites/overview'),
+  /** Record a site's surveyed position; replaces a city-centre estimate. Operator. */
+  setSiteLocation: (datacenterId: string, latitude: number, longitude: number) =>
+    request<{ ok: boolean; latitude: number; longitude: number; location_source: string }>(
+      `/datacenters/${datacenterId}/location`,
+      { method: 'PUT', body: JSON.stringify({ latitude, longitude }) }),
   platformState: () => request<PlatformState>('/sites/platform/state'),
 
   siteKpi: (datacenterId: string) =>
