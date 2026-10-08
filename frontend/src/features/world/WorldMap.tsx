@@ -376,6 +376,9 @@ export function WorldMap() {
     onSuccess: () => {
       setPlacing(null); setPending(null); setSaveError(null);
       qc.invalidateQueries({ queryKey: ['sites-overview'] });
+      // The warnings are looked up by the site's point, so a new position
+      // means a new answer - fetch it now rather than at the next 5-min tick.
+      qc.invalidateQueries({ queryKey: ['site-hazards'] });
     },
     onError: (e) => setSaveError(
       e instanceof ApiError && e.status === 403 ? 'Setting a position needs the operator role.'
