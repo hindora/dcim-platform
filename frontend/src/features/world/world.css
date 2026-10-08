@@ -1,21 +1,11 @@
 /* World map (features/world). Colour is tokens only; the hue of a site IS its
    state, so the state tokens are the right ones. */
 
-.world-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.world-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 .world-head h2 { margin: 0; }
-.world-colorby { display: inline-flex; align-items: center; gap: 8px; font-size: 0.82rem; color: var(--text-muted); }
-.world-colorby select { font: inherit; color: var(--text); background: var(--bg-raised); border: 1px solid var(--border);
-  border-radius: 4px; padding: 4px 8px; min-height: 30px; }
-.world-colorby select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.world-legend { position: absolute; z-index: 2; left: 16px; bottom: 40px; padding: 8px 10px; font-size: 0.74rem;
-  border: 1px solid var(--border); border-radius: 6px; background: color-mix(in srgb, var(--bg-raised) 92%, transparent); }
-.world-legend-title { font-weight: 600; color: var(--text); margin-bottom: 4px; }
-.world-legend-row { display: flex; align-items: center; gap: 8px; padding: 1px 0; color: var(--text-muted); }
-.world-legend-row .sw { width: 18px; height: 10px; border-radius: 2px; flex: none; }
-.world-value { font-weight: 500; fill: var(--text-muted); }
-.world-list .world-metric { color: var(--text); font-size: 0.78rem; }
+.world-sub { margin: 0; font-size: 0.82rem; }
 
-.world-body { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 16px; align-items: start; }
+.world-body { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 16px; align-items: start; }
 @media (max-width: 1100px) { .world-body { grid-template-columns: minmax(0, 1fr); } }
 
 .world-panel { min-width: 0; contain: inline-size; position: relative; }
@@ -24,20 +14,34 @@
 .world-svg:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .world-svg.is-placing { cursor: crosshair; }
 /* Lines stay a hairline at every zoom; the map scales, the ink does not. */
-.world-sphere, .world-graticule, .world-land { vector-effect: non-scaling-stroke; }
+.world-sphere, .world-graticule, .world-land, .world-borders { vector-effect: non-scaling-stroke; }
 
-/* view controls, inside the map's top-right corner */
-.world-tools { position: absolute; z-index: 2; top: 16px; right: 16px; display: flex; align-items: center; gap: 4px;
-  padding: 4px; border: 1px solid var(--border); border-radius: 6px;
-  background: color-mix(in srgb, var(--bg-raised) 92%, transparent); }
-.world-tools button { font: inherit; font-size: 0.78rem; color: var(--text-muted); background: none;
-  border: 1px solid transparent; border-radius: 4px; min-height: 28px; padding: 0 9px; cursor: pointer;
-  display: inline-flex; align-items: center; justify-content: center; }
-.world-tools button:hover:not(:disabled) { color: var(--text); background: var(--bg-inset); }
-.world-tools button.is-on { color: var(--text); border-color: var(--accent); }
-.world-tools button:disabled { opacity: 0.45; cursor: not-allowed; }
-.world-tools button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.world-tools-sep { width: 1px; height: 18px; background: var(--border); margin: 0 2px; }
+/* --- the bar above the map: basemap and layers left, framing and zoom right.
+   In normal flow, so nothing floats over the placing banner or the map. */
+.world-bar { display: flex; justify-content: space-between; align-items: center; gap: 8px 16px; flex-wrap: wrap; margin-bottom: 10px; }
+.world-bar-group { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.world-seg { display: inline-flex; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+.world-seg button, .world-layers button, .world-zoom button {
+  font: inherit; font-size: 0.78rem; color: var(--text-muted); background: var(--bg-inset);
+  border: none; border-radius: 0; min-height: 30px; padding: 0 11px; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.world-seg button + button { border-left: 1px solid var(--border); }
+.world-seg button:hover, .world-layers button:hover, .world-zoom button:hover:not(:disabled) { color: var(--text); }
+.world-seg button.is-on { color: var(--text); background: var(--bg-raised); box-shadow: inset 0 -2px 0 var(--accent); }
+.world-seg button:focus-visible, .world-layers button:focus-visible, .world-zoom button:focus-visible,
+.world-play:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.world-layers { display: inline-flex; gap: 6px; }
+.world-layers button { border: 1px solid var(--border); border-radius: 4px; }
+.world-layers button[aria-pressed="true"] { color: var(--text); border-color: var(--border-strong); background: var(--bg-raised); }
+.world-layers .sw { width: 10px; height: 10px; border-radius: 2px; opacity: 0.4; }
+.world-layers button[aria-pressed="true"] .sw { opacity: 1; }
+.world-layers .sw-clouds { background: var(--text); }
+.world-layers .sw-rain { background: var(--accent); }
+.world-zoom { display: inline-flex; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+.world-zoom button { padding: 0 8px; }
+.world-zoom button + button { border-left: 1px solid var(--border); }
+.world-zoom button:disabled { opacity: 0.4; cursor: not-allowed; }
 
 /* placing a site */
 .world-placing { margin-bottom: 8px; padding: 8px 10px; border: 1px solid var(--accent); border-radius: 6px;
@@ -52,16 +56,23 @@
 .world-confirm button.primary { border-color: var(--accent); background: var(--accent); color: var(--bg); }
 .world-confirm button:disabled { opacity: 0.45; cursor: not-allowed; }
 .world-error { margin: 6px 0 0; color: var(--critical); }
+.world-offline-note { margin: 0 0 8px; padding: 8px 10px; font-size: 0.82rem; border-radius: 6px;
+  border: 1px solid var(--border); border-left: 3px solid var(--warn); background: var(--bg-inset); }
 .world-pin circle { fill: none; stroke: var(--accent); stroke-width: 2; }
 .world-pin path { stroke: var(--accent); stroke-width: 1.5; }
-.world-place { margin-top: 10px; font: inherit; font-size: 0.8rem; padding: 4px 10px; border-radius: 4px;
-  border: 1px solid var(--border-strong); background: none; color: var(--text); cursor: pointer; }
-.world-place:disabled { opacity: 0.6; cursor: default; }
+
+/* --- the plain map */
 .world-sphere { fill: var(--bg-inset); stroke: var(--border); stroke-width: 1; }
 .world-graticule { fill: none; stroke: var(--border); stroke-width: 0.5; opacity: 0.5; }
 .world-land { fill: var(--bg-raised); stroke: var(--border-strong); stroke-width: 0.5; }
-.world-note { margin: 8px 0 0; font-size: 0.72rem; }
 
+/* --- satellite: imagery under, thin light borders over, markers on top */
+.is-sat .world-sphere { fill: #000; stroke: none; }
+.world-tiles image { image-rendering: auto; }
+.world-radar image { opacity: 0.85; mix-blend-mode: normal; }
+.world-borders { fill: none; stroke: #fff; stroke-opacity: 0.35; stroke-width: 0.6; }
+
+/* --- markers */
 .world-site { cursor: pointer; }
 .world-site:focus { outline: none; }
 .world-dot { stroke: var(--bg); stroke-width: 2; }
@@ -73,37 +84,133 @@
   font-size: 11px; font-weight: 600; letter-spacing: .05em; fill: var(--text);
   paint-order: stroke; stroke: var(--bg-inset); stroke-width: 3px; pointer-events: none;
 }
+.world-temp { font-size: 10px; font-weight: 500; fill: var(--text-muted); font-variant-numeric: tabular-nums;
+  paint-order: stroke; stroke: var(--bg-inset); stroke-width: 3px; pointer-events: none; }
+.is-sat .world-dot { stroke: #fff; }
+.is-sat .world-approx { stroke: #fff; stroke-opacity: 0.7; }
+.is-sat .world-label, .is-sat .world-temp { fill: #fff; stroke: #000; stroke-opacity: 0.75; }
 
-.tone-critical .world-dot, .world-swatch.tone-critical { fill: var(--critical); background: var(--critical); }
-.tone-major .world-dot, .world-swatch.tone-major { fill: var(--major); background: var(--major); }
-.tone-warn .world-dot, .world-swatch.tone-warn { fill: var(--warn); background: var(--warn); }
-.tone-ok .world-dot, .world-swatch.tone-ok { fill: var(--ok); background: var(--ok); }
-.tone-unknown .world-dot, .world-swatch.tone-unknown { fill: var(--text-faint); background: var(--text-faint); }
+.tone-critical .world-dot, .sw.tone-critical, .world-swatch.tone-critical { fill: var(--critical); background: var(--critical); }
+.tone-major .world-dot, .sw.tone-major, .world-swatch.tone-major { fill: var(--major); background: var(--major); }
+.tone-warn .world-dot, .sw.tone-warn, .world-swatch.tone-warn { fill: var(--warn); background: var(--warn); }
+.tone-ok .world-dot, .sw.tone-ok, .world-swatch.tone-ok { fill: var(--ok); background: var(--ok); }
+.tone-unknown .world-dot, .sw.tone-unknown, .world-swatch.tone-unknown { fill: var(--text-faint); background: var(--text-faint); }
 
-.world-side { display: flex; flex-direction: column; gap: 12px; }
+/* --- the weather loop's transport, under the map */
+.world-time { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 8px; padding: 6px 8px;
+  border: 1px solid var(--border); border-radius: 6px; background: var(--bg-inset); font-size: 0.8rem; }
+.world-play { width: 34px; min-height: 30px; display: inline-flex; align-items: center; justify-content: center; padding: 0;
+  font: inherit; color: var(--text); background: var(--bg-raised); border: 1px solid var(--border); border-radius: 4px; cursor: pointer; }
+.world-play[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
+.world-time input[type="range"] { flex: 1 1 160px; min-width: 120px; height: 28px; margin: 0; background: none;
+  -webkit-appearance: none; appearance: none; cursor: pointer; }
+.world-time input[type="range"]::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: var(--border-strong); }
+.world-time input[type="range"]::-moz-range-track { height: 4px; border-radius: 2px; background: var(--border-strong); }
+.world-time input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 14px; height: 14px;
+  margin-top: -5px; border-radius: 50%; background: var(--bg-raised); border: 2px solid var(--text); }
+.world-time input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border-radius: 50%; background: var(--bg-raised); border: 2px solid var(--text); }
+.world-time input[type="range"]:focus-visible { outline: none; }
+.world-time input[type="range"]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 45%, transparent); }
+.world-time-at { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.world-time-note { font-size: 0.74rem; flex-basis: 100%; }
+@media (min-width: 900px) { .world-time-note { flex-basis: auto; margin-left: auto; text-align: right; } }
+
+/* --- under the map: what the colours mean, and where the picture came from */
+.world-foot { display: flex; justify-content: space-between; align-items: baseline; gap: 8px 16px; flex-wrap: wrap; margin-top: 8px; }
+.world-legend { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 0.74rem; color: var(--text-muted); }
+.world-legend li { display: inline-flex; align-items: center; gap: 6px; }
+.world-legend .sw { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.world-legend .sw-approx { background: none; border: 1px dashed var(--text-faint); width: 10px; height: 10px; }
+.world-note { margin: 0; font-size: 0.72rem; }
+
+/* --- the Sites panel: one row per site, the selected one opened in place */
+.world-side { display: flex; flex-direction: column; gap: 10px; }
 .world-side h3 .total { float: right; color: var(--text-faint); }
 .world-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
-.world-list button {
-  display: grid; grid-template-columns: 10px 48px minmax(0, 1fr) auto; align-items: center;
-  gap: 8px; width: 100%; padding: 6px 4px; border: none; border-bottom: 1px solid var(--border);
+.world-list li { border-bottom: 1px solid var(--border); }
+.world-list li.is-open { background: var(--bg-inset); margin: 0 -8px; padding: 0 8px; border-radius: 4px; border-bottom-color: transparent; }
+.world-row {
+  display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; grid-template-areas: "dot main wx" ". hz hz";
+  align-items: center; column-gap: 10px; row-gap: 3px;
+  width: 100%; min-height: 52px; padding: 8px 2px; border: none; border-radius: 4px;
   background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer;
 }
-.world-list button:hover { background: var(--bg-inset); }
-.world-list button.is-current { box-shadow: inset 2px 0 0 var(--accent); }
-.world-list .code { font-weight: 600; }
-.world-list .muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.world-list .count { color: var(--text-muted); font-variant-numeric: tabular-nums; text-align: right;
-  display: flex; flex-direction: column; line-height: 1.25; font-size: 0.8rem; }
-.world-list .world-offline { color: var(--warn); font-size: 0.74rem; }
-.world-swatch { width: 9px; height: 9px; border-radius: 2px; }
+.world-row .world-swatch { grid-area: dot; align-self: start; margin-top: 5px; }
+.world-row-main { grid-area: main; }
+.world-row-wx { grid-area: wx; align-self: start; }
+.world-row:hover { background: var(--bg-inset); }
+.world-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.world-row-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; line-height: 1.3; }
+.world-row-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.world-row-title b { font-weight: 600; }
+.world-row-sub { font-size: 0.78rem; }
+.world-row-sub.is-critical { color: var(--critical); }
+.world-row-sub.is-major { color: var(--major); }
+.world-row-sub.is-warn { color: var(--warn); }
+.world-row .world-offline { color: var(--warn); }
+.world-row-wx { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; line-height: 1.25;
+  font-variant-numeric: tabular-nums; font-size: 0.78rem; white-space: nowrap; }
+.world-row-wx b { font-weight: 600; font-size: 0.9rem; }
+.world-row-nowx { font-size: 0.74rem; }
+.world-swatch { width: 10px; height: 10px; border-radius: 50%; }
+.world-hint { margin: 0; font-size: 0.78rem; }
 
-.world-card h4 { margin: 0 0 6px; }
-.world-card dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0; font-size: 0.82rem; }
-.world-card dt { color: var(--text-faint); }
-.world-card dd { margin: 0; font-variant-numeric: tabular-nums; }
-.world-links { display: flex; gap: 14px; margin-top: 10px; font-size: 0.82rem; }
-/* Narrow: the legend leaves the map and runs as one wrapped line under it. */
-@media (max-width: 900px) {
-  .world-legend { position: static; display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 8px 0 0; }
-  .world-legend-title { flex-basis: 100%; margin-bottom: 0; }
+.world-detail { padding: 2px 2px 12px 22px; }
+.world-detail dl { display: grid; grid-template-columns: auto 1fr; gap: 5px 12px; margin: 0; font-size: 0.8rem; }
+.world-detail dt { color: var(--text-faint); }
+.world-detail dd { margin: 0; font-variant-numeric: tabular-nums; }
+.world-wx-src { display: block; font-size: 0.74rem; }
+.world-place { margin-top: 10px; font: inherit; font-size: 0.8rem; min-height: 30px; padding: 0 10px; border-radius: 4px;
+  border: 1px solid var(--border-strong); background: none; color: var(--text); cursor: pointer; }
+.world-place:disabled { opacity: 0.6; cursor: default; }
+/* The three pages a site opens onto: one row of equal tiles, icon over label,
+   so "Network map" never breaks across two lines. */
+.world-links { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-top: 10px; }
+.world-links a, .world-links .is-off {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  min-height: 48px; padding: 6px 4px; font-size: 0.74rem; text-decoration: none; color: var(--text);
+  border: 1px solid var(--border); border-radius: 4px; background: var(--bg-raised); white-space: nowrap;
 }
+.world-links a:hover { border-color: var(--accent); color: var(--text); }
+.world-links a:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.world-links a svg { color: var(--text-muted); }
+.world-links a:hover svg { color: var(--accent); }
+.world-links .is-off { color: var(--text-faint); border-style: dashed; cursor: default; }
+
+/* --- official warnings: a ring in the issuer's severity colour, breathing
+   once every two seconds so a wall display's eye lands on it. Still under
+   reduced motion. */
+.world-warnring { fill: none; stroke-width: 2; transform-origin: center; transform-box: fill-box; }
+.world-warnring.sev-extreme, .world-warnring.sev-severe { stroke: var(--critical); }
+.world-warnring.sev-moderate { stroke: var(--major); }
+.world-warnring.sev-minor { stroke: var(--warn); }
+@media (prefers-reduced-motion: no-preference) {
+  .world-warnring { animation: world-breathe 2s ease-in-out infinite; }
+  @keyframes world-breathe { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.35); opacity: 0.35; } }
+}
+.world-legend .sw-warn { background: none; border: 2px solid var(--major); width: 8px; height: 8px; }
+.world-row-hz { grid-area: hz; display: flex; align-items: center; gap: 5px; min-width: 0; font-size: 0.78rem; font-weight: 500; }
+.world-row-hz svg { flex: none; }
+.world-row-hz-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sev-extreme, .sev-severe { color: var(--critical); }
+.sev-moderate { color: var(--major); }
+.sev-minor { color: var(--warn); }
+.world-hz { margin-top: 10px; }
+.world-hz h5 { margin: 0 0 4px; font-size: 0.74rem; font-weight: 600; color: var(--text-faint); }
+.world-hz p { margin: 0; font-size: 0.78rem; }
+.world-hz ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.world-hz li { display: flex; flex-direction: column; gap: 1px; padding: 6px 8px; border-radius: 4px; font-size: 0.78rem;
+  border: 1px solid var(--border); border-left-width: 3px; background: var(--bg-raised); color: var(--text); }
+.world-hz li.sev-extreme, .world-hz li.sev-severe { border-left-color: var(--critical); }
+.world-hz li.sev-moderate { border-left-color: var(--major); }
+.world-hz li.sev-minor { border-left-color: var(--warn); }
+.world-hz-head { display: flex; align-items: center; gap: 6px; }
+.world-hz li.sev-extreme .world-hz-head, .world-hz li.sev-severe .world-hz-head { color: var(--critical); }
+.world-hz li.sev-moderate .world-hz-head { color: var(--major); }
+.world-hz li.sev-minor .world-hz-head { color: var(--warn); }
+.world-hz-head b { color: var(--text); font-weight: 600; }
+.world-hz-sev { margin-left: auto; font-size: 0.7rem; }
+.world-hz-body { color: var(--text); }
+.world-hz-meta { font-size: 0.72rem; }
+.world-hz-meta a { display: inline-flex; align-items: center; gap: 2px; color: var(--accent); }
+.world-hz-meta a svg { width: 12px; height: 12px; }

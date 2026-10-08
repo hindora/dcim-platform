@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import Principal, current_principal
 from app.db.session import get_session
+from app.services import hazards as hazards_service
 from app.services import sites as service
 
 router = APIRouter(prefix="/sites", tags=["sites"])
@@ -44,6 +45,17 @@ async def platform_state(
     is most likely true.
     """
     return await service.platform_health(session)
+
+
+@router.get("/hazards", summary="Official weather and disaster warnings near each site")
+async def site_hazards(
+    session: AsyncSession = Depends(get_session),
+    _: Principal = Depends(current_principal),
+) -> dict:
+    """What the national warning service and GDACS have in effect over each
+    placed site. Read from public feeds by the platform and cached; see
+    services/hazards for what is and is not included."""
+    return await hazards_service.site_hazards(session)
 
 
 @router.get("/{datacenter_id}/kpi", summary="Efficiency, load and utilisation for one site")

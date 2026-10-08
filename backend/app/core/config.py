@@ -127,6 +127,11 @@ class Settings(BaseSettings):
     #: integration that needs a callback refuses until it is set.
     public_base_url: str = ""
 
+    #: World map: read official weather and disaster warnings (US NWS, GDACS)
+    #: for each site from the public internet, cached five minutes. Off for an
+    #: air-gapped host, where every refresh would otherwise wait on a timeout.
+    hazard_feeds_enabled: bool = True
+
     #: docs/26 Phase 7: where signed collector release artefacts are stored
     #: and served from. Relative paths resolve from the API's working
     #: directory (the repo root under scripts/dev.sh).

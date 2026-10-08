@@ -2587,6 +2587,33 @@ export interface Utilisation {
   note?: string | null;
 }
 
+export type HazardSeverity = 'extreme' | 'severe' | 'moderate' | 'minor';
+export interface HazardAlert {
+  id: string;
+  /** nws: US National Weather Service; gdacs: UN/EC Global Disaster Alert and Coordination System. */
+  source: 'nws' | 'gdacs';
+  /** flood, storm, tornado, cyclone, fire, heat, winter, wind, rain, earthquake, volcano, other */
+  kind: string;
+  event: string;
+  severity: HazardSeverity;
+  headline: string | null;
+  area: string | null;
+  onset: string | null;
+  ends: string | null;
+  issuer: string | null;
+  url: string | null;
+  /** GDACS only: how far the event's point is from the site. */
+  distance_km?: number | null;
+}
+export interface SiteHazards {
+  available: boolean;
+  note: string | null;
+  as_of: string;
+  sources: { id: string; name: string; ok: boolean; note: string | null }[];
+  /** keyed by datacenter id; `covered` is false where the national feed does not answer for that country */
+  sites: Record<string, { covered: boolean; alerts: HazardAlert[] }>;
+}
+
 export interface SiteKpi {
   site: {
     id: string; code: string; name: string;
@@ -3597,6 +3624,8 @@ export const api = {
 
   /** One call behind the entire home page - table, tabs and alert strip. */
   sitesOverview: () => request<SitesOverview>('/sites/overview'),
+  /** Official warnings (US NWS, GDACS) in effect near each placed site; read and cached by the platform. */
+  siteHazards: () => request<SiteHazards>('/sites/hazards'),
   /** Record a site's surveyed position; replaces a city-centre estimate. Operator. */
   setSiteLocation: (datacenterId: string, latitude: number, longitude: number) =>
     request<{ ok: boolean; latitude: number; longitude: number; location_source: string }>(

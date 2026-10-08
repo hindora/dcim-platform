@@ -1,36 +1,48 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
-import { geoEqualEarth, geoGraticule10, geoPath, type GeoPermissibleObjects } from 'd3-geo';
+import { geoEqualEarth, geoGraticule10, geoMercator, geoPath, type GeoPermissibleObjects } from 'd3-geo';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { feature } from 'topojson-client';
 import type { GeometryCollection, Topology } from 'topojson-specification';
 import countries110m from 'world-atlas/countries-110m.json';
-import { api, ApiError, type SiteKpi, type SiteRow, type SitesOverview } from '../../api/client';
+import { api, ApiError, type HazardAlert, type HazardSeverity, type SiteKpi, type SiteRow, type SitesOverview } from '../../api/client';
 import { useHoverTip } from '../../components/HoverTip';
+import { fmtT, useTempUnit } from '../floorplan/units';
+import {
+  ago, blueMarbleUrl, frameTimes, geoColorUrl, prefetch, radarUrl, tilesFor, useImageryReachable,
+  useRadarIndex, utcClock, Z_MAX, type View,
+} from './satellite';
 import './world.css';
 
 /**
- * Every site on the globe, coloured by the worst open alarm it holds.
+ * Every site on the globe, coloured by the worst open alarm it holds, with
+ * the outdoor air each site's cooling plant is working against.
  *
  * Positions are asset data (migration 0100): set by an operator - here, by
  * clicking the map - or the centroid of the site's metro when only the city is
  * known, drawn with a dashed ring and called approximate. Nothing is geocoded
- * over the network, so the map draws on an air-gapped install.
+ * over the network, so the plain map draws on an air-gapped install.
+ *
+ * Two basemaps. "Map" is Natural Earth vectors on an Equal Earth projection,
+ * shipped in this chunk. "Satellite" switches to Web Mercator and draws NASA
+ * Blue Marble tiles, with optional live cloud (GOES GeoColor) and rain (radar
+ * composite) loops - see satellite.ts for what those are and are not.
  *
  * The map zooms and pans: wheel around the pointer, drag, the +/- buttons, or
- * the keyboard when it has focus. Markers keep their size at every zoom. The
- * basemap is Natural Earth 1:110m, swapped for 1:50m once zoomed in far enough
- * for the coarse coastline to show; both ship inside this route's chunk only.
+ * the keyboard when it has focus. Markers keep their size at every zoom.
  */
 
 type Fit = 'sites' | 'world';
+type Base = 'map' | 'sat';
 type Tone = 'critical' | 'major' | 'warn' | 'ok' | 'unknown';
-interface View { k: number; x: number; y: number }
 
 const K_MIN = 1;
 const K_MAX = 40;
-const DETAIL_AT = 3;          // zoom past which the 1:50m coastline loads
+// The 1:50m coastline loads once the map is drawn larger than about twice
+// the whole-world fit - by zooming, or because "Fit sites" framed one country.
+const DETAIL_SCALE = 0.5;
 const IDENTITY: View = { k: 1, x: 0, y: 0 };
+const FRAME_MS = 700;
 
 const toLand = (t: unknown) => feature(t as Topology, (t as Topology).objects.countries as GeometryCollection);
 const LAND_110 = toLand(countries110m);
@@ -46,69 +58,59 @@ const TONE_LABEL: Record<Tone, string> = {
   critical: 'critical alarm open', major: 'major alarm open', warn: 'minor alarm open',
   ok: 'no open alarms', unknown: 'nothing monitored',
 };
+const LEGEND: { tone: Tone; label: string }[] = [
+  { tone: 'critical', label: 'critical' }, { tone: 'major', label: 'major' },
+  { tone: 'warn', label: 'minor' }, { tone: 'ok', label: 'clear' },
+];
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
-
-/* ---------------------------------------------------------------- colour by
- * What the markers are coloured by. Alarms come with the overview; the rest
- * are read from each site's KPI - the same numbers the site pages show, so
- * the map never disagrees with them. */
-type Metric = 'alarms' | 'power' | 'space' | 'cooling' | 'pue';
-interface Band { upTo: number | null; label: string; color: string }
-
-const P = (n: number) => `var(--band-p${n})`;
-const T = (n: number) => `var(--band-t${n})`;
-const PCT_BANDS: Band[] = [
-  { upTo: 20, label: 'under 20 %', color: P(1) }, { upTo: 50, label: '20 – 50 %', color: P(2) },
-  { upTo: 80, label: '50 – 80 %', color: P(3) }, { upTo: 90, label: '80 – 90 %', color: P(4) },
-  { upTo: null, label: 'over 90 %', color: P(5) },
-];
-// PUE: the Uptime Institute's surveyed average sits near 1.56; under 1.3 is a
-// very efficient site, over 2.0 spends as much on the building as on the IT.
-const PUE_BANDS: Band[] = [
-  { upTo: 1.3, label: 'under 1.3', color: T(4) }, { upTo: 1.5, label: '1.3 – 1.5', color: T(5) },
-  { upTo: 1.7, label: '1.5 – 1.7', color: T(6) }, { upTo: 2.0, label: '1.7 – 2.0', color: T(7) },
-  { upTo: null, label: 'over 2.0', color: T(8) },
-];
-const METRICS: { key: Metric; label: string; legend: string; bands?: Band[] }[] = [
-  { key: 'alarms', label: 'Open alarms', legend: 'Worst open alarm' },
-  { key: 'power', label: 'Power used', legend: 'IT power against capacity', bands: PCT_BANDS },
-  { key: 'space', label: 'Space used', legend: 'Rack space in use', bands: PCT_BANDS },
-  { key: 'cooling', label: 'Cooling used', legend: 'Cooling against capacity', bands: PCT_BANDS },
-  { key: 'pue', label: 'PUE', legend: 'Power usage effectiveness', bands: PUE_BANDS },
-];
-const METRIC_KEYS = new Set<string>(METRICS.map((m) => m.key));
-
-function metricValue(k: SiteKpi | undefined, m: Metric): { value: number | null; note?: string | null } {
-  if (!k) return { value: null, note: 'loading' };
-  switch (m) {
-    case 'power': return { value: k.utilisation.power.pct, note: k.utilisation.power.note };
-    case 'space': return { value: k.utilisation.space.pct, note: k.utilisation.space.note };
-    case 'cooling': return { value: k.utilisation.cooling.pct, note: k.utilisation.cooling.note };
-    case 'pue': return { value: k.efficiency.pue.value, note: k.efficiency.pue.note };
-    default: return { value: null };
-  }
-}
-const fmtMetric = (m: Metric, v: number | null) =>
-  v == null ? '–' : m === 'pue' ? v.toFixed(2) : `${Math.round(v)} %`;
-function bandOf(bands: Band[], v: number | null): string {
-  if (v == null || Number.isNaN(v)) return 'var(--band-none)';
-  for (const b of bands) if (b.upTo == null || v < b.upTo) return b.color;
-  return bands[bands.length - 1].color;
-}
-const TONE_COLOR: Record<Tone, string> = {
-  critical: 'var(--critical)', major: 'var(--major)', warn: 'var(--warn)', ok: 'var(--ok)', unknown: 'var(--text-faint)',
-};
 
 function placed(s: SiteRow): s is SiteRow & { latitude: number; longitude: number } {
   return s.latitude != null && s.longitude != null;
 }
 
-function MapIcon({ kind }: { kind: 'plus' | 'minus' }) {
+/** Alarm counts as a sentence: "1 major · 2 minor", or "no open alarms". */
+function alarmText(s: SiteRow): string {
+  const parts = [[s.alarms.critical, 'critical'], [s.alarms.major, 'major'], [s.alarms.minor, 'minor']] as const;
+  const open = parts.filter(([n]) => n > 0).map(([n, w]) => `${n} ${w}`);
+  return open.length ? open.join(' · ') : 'no open alarms';
+}
+
+type IconKind = 'plus' | 'minus' | 'play' | 'pause' | 'building' | 'floor' | 'network' | 'warning' | 'open';
+const ICON_PATHS: Record<IconKind, string> = {
+  plus: 'M10 4v12M4 10h12',
+  minus: 'M4 10h12',
+  play: 'M6 4l10 6-10 6z',
+  pause: 'M6 4v12M14 4v12',
+  building: 'M4 17V5l6-2v14M10 17V8l6-2v11M4 17h12M7 8h.01M7 11h.01M7 14h.01M13 10h.01M13 13h.01',
+  floor: 'M3 4h14v12H3zM3 10h14M9 4v6M12 10v6',
+  network: 'M10 3v4M10 7l-5 4M10 7l5 4M3 11h4v4H3zM13 11h4v4h-4zM8 3h4v4H8z',
+  warning: 'M10 3.5l7.5 13h-15zM10 8.5v3.5M10 14.3h.01',
+  open: 'M8 4H4v12h12v-4M11 4h5v5M16 4l-7 7',
+};
+
+/* ----------------------------------------------------------------- warnings
+ * Official warnings in effect over a site - the national weather service's
+ * watches and warnings, and GDACS disaster events nearby. Read by the
+ * platform (services/hazards); the map only shows them. Severity words are
+ * the issuers' own: extreme / severe / moderate / minor. */
+const SEV_RANK: Record<HazardSeverity, number> = { extreme: 0, severe: 1, moderate: 2, minor: 3 };
+const worstOf = (alerts: HazardAlert[]): HazardAlert | null =>
+  alerts.reduce<HazardAlert | null>((w, a) => (!w || SEV_RANK[a.severity] < SEV_RANK[w.severity] ? a : w), null);
+/** "until 18:00" / "until Thu 18:00" - the issuer's end time, in the viewer's clock. */
+function untilText(iso: string | null): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const sameDay = d.toDateString() === new Date().toDateString();
+  const t = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return `until ${sameDay ? t : `${d.toLocaleDateString([], { weekday: 'short' })} ${t}`}`;
+}
+function Icon({ kind }: { kind: IconKind }) {
   return (
     <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden focusable="false">
-      <path d={kind === 'plus' ? 'M10 4v12M4 10h12' : 'M4 10h12'} stroke="currentColor" strokeWidth="1.8"
-            strokeLinecap="round" fill="none" />
+      <path d={ICON_PATHS[kind]} stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"
+            fill={kind === 'play' ? 'currentColor' : 'none'} />
     </svg>
   );
 }
@@ -120,12 +122,15 @@ function parseView(raw: string | null): View {
     ? { k: p[0], x: p[1], y: p[2] } : IDENTITY;
 }
 
+const reducedMotion = () => typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+
 export function WorldMap() {
   const qc = useQueryClient();
-  // Colour, fit, zoom and selection live in the URL, so a view can be shared
-  // and the back button behaves.
+  // Basemap, layers, fit, zoom and selection live in the URL, so a view can
+  // be shared and the back button behaves.
   const [params, setParams] = useSearchParams();
-  const metric: Metric = METRIC_KEYS.has(params.get('color') ?? '') ? params.get('color') as Metric : 'alarms';
+  const base: Base = params.get('base') === 'sat' ? 'sat' : 'map';
+  const wx = useMemo(() => new Set((params.get('wx') ?? '').split(',').filter((x) => x === 'clouds' || x === 'rain')), [params]);
   const [fit, setFitState] = useState<Fit>(params.get('fit') === 'world' ? 'world' : 'sites');
   const [view, setView] = useState<View>(() => parseView(params.get('v')));
   const [selected, setSelectedState] = useState<string | null>(params.get('site'));
@@ -135,18 +140,24 @@ export function WorldMap() {
     if (v == null) next.delete(k); else next.set(k, v);
     return next;
   }, { replace: true });
-  const setMetric = (m: Metric) => setParam('color', m === 'alarms' ? null : m);
+  const setBase = (b: Base) => { setParam('base', b === 'map' ? null : b); setView(IDENTITY); };
+  const toggleWx = (layer: 'clouds' | 'rain') => {
+    const next = new Set(wx);
+    if (next.has(layer)) next.delete(layer); else next.add(layer);
+    setParam('wx', next.size ? [...next].join(',') : null);
+  };
   const setFit = (f: Fit) => { setFitState(f); setParam('fit', f === 'sites' ? null : f); };
   const setSelected = (id: string | null) => { setSelectedState(id); setParam('site', id); };
   // The view is written once zooming settles - a wheel spin is dozens of steps.
   useEffect(() => {
     const id = window.setTimeout(() => {
-      const v = view === IDENTITY || (view.k === 1 && view.x === 0 && view.y === 0)
+      const v = view.k === 1 && view.x === 0 && view.y === 0
         ? null : `${view.k.toFixed(2)}/${Math.round(view.x)}/${Math.round(view.y)}`;
       if ((params.get('v') ?? null) !== v) setParam('v', v);
     }, 400);
     return () => window.clearTimeout(id);
   }, [view]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const [placing, setPlacing] = useState<string | null>(null);         // site id being placed
   const [pending, setPending] = useState<{ lat: string; lon: string } | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -156,6 +167,7 @@ export function WorldMap() {
   const svgRef = useRef<SVGSVGElement>(null);
   const drag = useRef<{ x: number; y: number; vx: number; vy: number; moved: boolean } | null>(null);
   const [size, setSize] = useState({ w: 960, h: 520 });
+  useTempUnit();   // re-render when the viewer flips °C/°F
 
   const { data, error, isLoading } = useQuery<SitesOverview>({
     queryKey: ['sites-overview'],
@@ -176,58 +188,110 @@ export function WorldMap() {
     return () => ro.disconnect();
   }, [isLoading]);   // the panel only exists once the sites have loaded
 
-  // The finer coastline, only once somebody zooms in far enough to see the coarse one.
-  useEffect(() => {
-    if (view.k < DETAIL_AT || land50) return;
-    let live = true;
-    import('world-atlas/countries-50m.json').then((m) => { if (live) setLand50(toLand(m.default ?? m)); });
-    return () => { live = false; };
-  }, [view.k, land50]);
 
   const sites = useMemo(() => data?.sites ?? [], [data]);
-  const kpis = useQueries({
-    queries: sites.map((s) => ({
-      queryKey: ['site-kpi', s.id], queryFn: () => api.siteKpi(s.id),
-      enabled: metric !== 'alarms', staleTime: 60_000, refetchInterval: 120_000,
-    })),
-  });
-  const kpiBySite = useMemo(() => {
-    const m = new Map<string, SiteKpi>();
-    sites.forEach((s, i) => { const d = kpis[i]?.data; if (d) m.set(s.id, d); });
-    return m;
-  }, [sites, kpis]);
-  const metricDef = METRICS.find((m) => m.key === metric)!;
-  const siteColor = (s: SiteRow) => metric === 'alarms'
-    ? TONE_COLOR[tone(s)] : bandOf(metricDef.bands!, metricValue(kpiBySite.get(s.id), metric).value);
   const onMap = useMemo(() => sites.filter(placed), [sites]);
   const unplaced = sites.filter((s) => !placed(s));
 
+  // Each site's own weather: the dry/wet bulb its cooling towers read. The
+  // same endpoint the site page uses, so the two never disagree.
+  const kpis = useQueries({
+    queries: sites.map((s) => ({
+      queryKey: ['site-kpi', s.id], queryFn: () => api.siteKpi(s.id),
+      staleTime: 60_000, refetchInterval: 120_000,
+    })),
+  });
+  const hz = useQuery({
+    queryKey: ['site-hazards'], queryFn: () => api.siteHazards(),
+    staleTime: 4 * 60_000, refetchInterval: 5 * 60_000,
+  });
+  const alertsOf = (s: SiteRow): HazardAlert[] => hz.data?.sites[s.id]?.alerts ?? [];
+  const weather = useMemo(() => {
+    const m = new Map<string, SiteKpi['weather']>();
+    sites.forEach((s, i) => { const d = kpis[i]?.data; if (d) m.set(s.id, d.weather); });
+    return m;
+  }, [sites, kpis]);
+
   const projection = useMemo(() => {
-    const p = geoEqualEarth();
+    const p = base === 'sat' ? geoMercator() : geoEqualEarth();
     const pad = 24;
     const extent: [[number, number], [number, number]] = [[pad, pad], [size.w - pad, size.h - pad]];
     if (fit === 'sites' && onMap.length) {
       // Frame the sites with a margin of a few degrees, so two sites in one
       // country do not fill the window and one site is not a single point.
+      // The ring runs CLOCKWISE (north, then east): d3 treats a spherical
+      // polygon's exterior as clockwise, and the other way round means
+      // "everything but this box" - which fits the whole world.
       const lons = onMap.map((s) => s.longitude), lats = onMap.map((s) => s.latitude);
       const m = 8;
+      const w = Math.max(-179.9, Math.min(...lons) - m), e = Math.min(179.9, Math.max(...lons) + m);
+      const so = Math.max(-80, Math.min(...lats) - m), n = Math.min(80, Math.max(...lats) + m);
       const box: GeoPermissibleObjects = {
         type: 'Polygon',
-        coordinates: [[
-          [Math.min(...lons) - m, Math.min(...lats) - m], [Math.max(...lons) + m, Math.min(...lats) - m],
-          [Math.max(...lons) + m, Math.max(...lats) + m], [Math.min(...lons) - m, Math.max(...lats) + m],
-          [Math.min(...lons) - m, Math.min(...lats) - m],
-        ]],
+        coordinates: [[[w, so], [w, n], [e, n], [e, so], [w, so]]],
       };
       p.fitExtent(extent, box);
     } else {
       p.fitExtent(extent, { type: 'Sphere' });
     }
     return p;
-  }, [fit, size.w, size.h, onMap]);
+  }, [base, fit, size.w, size.h, onMap]);
   const path = useMemo(() => geoPath(projection), [projection]);
-  const landPath = useMemo(() => path((view.k >= DETAIL_AT && land50) || LAND_110) ?? '',
-    [path, view.k >= DETAIL_AT, land50]); // eslint-disable-line react-hooks/exhaustive-deps
+  const fine = projection.scale() * view.k > DETAIL_SCALE * size.w;
+  // The finer coastline, only once the coarse one would show.
+  useEffect(() => {
+    if (!fine || land50) return;
+    let live = true;
+    import('world-atlas/countries-50m.json').then((m) => { if (live) setLand50(toLand(m.default ?? m)); });
+    return () => { live = false; };
+  }, [fine, land50]);
+  const landPath = useMemo(() => path((fine && land50) || LAND_110) ?? '', [path, fine, land50]);
+
+  // --- satellite view ---------------------------------------------------------
+  const sat = base === 'sat';
+  const reachable = useImageryReachable(sat);
+  const marbleTiles = useMemo(() => (sat ? tilesFor(projection, view, size.w, size.h, Z_MAX.marble) : []),
+    [sat, projection, view, size.w, size.h]);
+  const cloudTiles = useMemo(() => (sat && wx.has('clouds') ? tilesFor(projection, view, size.w, size.h, Z_MAX.clouds) : []),
+    [sat, wx, projection, view, size.w, size.h]);
+  const radarTiles = useMemo(() => (sat && wx.has('rain') ? tilesFor(projection, view, size.w, size.h, Z_MAX.radar) : []),
+    [sat, wx, projection, view, size.w, size.h]);
+  const animated = sat && wx.size > 0;
+  const radar = useRadarIndex(sat && wx.has('rain'));
+
+  // The frame clock: recomputed every ten minutes so a wall display creeps
+  // forward with the imagery.
+  const [clockTick, setClockTick] = useState(0);
+  useEffect(() => {
+    if (!animated) return;
+    const id = window.setInterval(() => setClockTick((t) => t + 1), 10 * 60_000);
+    return () => window.clearInterval(id);
+  }, [animated]);
+  const frames = useMemo(() => frameTimes(), [clockTick]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [fi, setFi] = useState(frames.length - 1);
+  const [playing, setPlaying] = useState(() => !reducedMotion());
+  useEffect(() => { setFi(frames.length - 1); }, [frames]);
+  useEffect(() => {
+    if (!animated || !playing) return;
+    const id = window.setInterval(() => setFi((i) => (i + 1) % frames.length), FRAME_MS);
+    return () => window.clearInterval(id);
+  }, [animated, playing, frames.length]);
+  const at = frames[Math.min(fi, frames.length - 1)];
+  const radarPath = (t: number) => radar.data?.byTime.get(t) ?? null;
+
+  // Warm every frame's tiles for the current viewport, so the loop's first
+  // pass is not a slideshow of half-loaded images.
+  useEffect(() => {
+    if (!animated) return;
+    const urls: string[] = [];
+    for (const t of frames) {
+      for (const tile of cloudTiles) urls.push(geoColorUrl('West', t, tile), geoColorUrl('East', t, tile));
+      const p = radar.data && radarPath(t);
+      if (p) for (const tile of radarTiles) urls.push(radarUrl(radar.data!.host, p, tile));
+    }
+    const id = window.setTimeout(() => prefetch(urls), 300);   // not while the wheel is still turning
+    return () => window.clearTimeout(id);
+  }, [animated, frames, cloudTiles, radarTiles, radar.data]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // --- zoom and pan ---------------------------------------------------------
   const zoomAt = useCallback((factor: number, px: number, py: number) => {
@@ -297,6 +361,7 @@ export function WorldMap() {
     e.preventDefault();
   };
   const fitTo = (f: Fit) => { setFit(f); setView(IDENTITY); };
+  const atRest = view.k === 1 && view.x === 0 && view.y === 0;
 
   // --- placing a site -----------------------------------------------------
   const placingSite = sites.find((s) => s.id === placing) ?? null;
@@ -317,44 +382,73 @@ export function WorldMap() {
     && Math.abs(pendingLat) <= 90 && Math.abs(pendingLon) <= 180;
   const pendingXY = pendingValid ? projection([pendingLon, pendingLat]) : null;
 
-  const chosen = sites.find((s) => s.id === selected) ?? null;
-
   if (isLoading) return <p className="muted">Loading sites…</p>;
   if (error) return <p className="muted">Sites could not be loaded.</p>;
 
   const inv = 1 / view.k;
   // Labels read to the right of the dot; one that would run into a neighbour's
   // dot flips to the left. Screen space, so zooming in un-flips them.
-  const labelText = (s: SiteRow) => s.code + (metric === 'alarms' ? '' : ` ${fmtMetric(metric, metricValue(kpiBySite.get(s.id), metric).value)}`);
   const screen = onMap.map((s) => ({ s, xy: projection([s.longitude, s.latitude]) }))
     .filter((p): p is { s: typeof p.s; xy: [number, number] } => !!p.xy)
-    .map(({ s, xy }) => ({ id: s.id, x: xy[0] * view.k, y: xy[1] * view.k, w: 20 + labelText(s).length * 7 }));
+    .map(({ s, xy }) => ({ id: s.id, x: xy[0] * view.k, y: xy[1] * view.k, w: 20 + s.code.length * 8 }));
   const flipLeft = new Set(screen.filter((a) => screen.some((b) =>
-    b.id !== a.id && b.x > a.x - 4 && b.x - a.x < a.w && Math.abs(b.y - a.y) < 24)).map((a) => a.id));
+    b.id !== a.id && b.x > a.x - 4 && b.x - a.x < a.w && Math.abs(b.y - a.y) < 30)).map((a) => a.id));
+  const tempOf = (s: SiteRow) => {
+    const w = weather.get(s.id);
+    return w?.available && w.dry_bulb_c != null ? fmtT(w.dry_bulb_c, 0) : null;
+  };
+  const withAlarms = sites.filter((s) => s.alarms.total > 0).length;
+  const withWarnings = sites.filter((s) => alertsOf(s).length > 0).length;
+  const offline = sat && reachable.data === false;
+
   return (
     <div className="stack world-page">
       <div className="world-head">
         <h2>World map</h2>
-        <label className="world-colorby">
-          <span>Colour by</span>
-          <select value={metric} onChange={(e) => setMetric(e.target.value as Metric)}>
-            {METRICS.map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}
-          </select>
-        </label>
+        <p className="muted world-sub">
+          {plural(sites.length, 'site')}{withAlarms ? `, ${withAlarms} with open alarms` : ', no open alarms'}
+          {withWarnings ? `, ${withWarnings} under an official weather warning` : ''}
+          {unplaced.length ? `, ${unplaced.length} not yet placed` : ''}.
+        </p>
       </div>
 
       <div className="world-body">
         <div className="asset-panel world-panel" ref={frame}>
-          <div className="world-tools" role="toolbar" aria-label="Map view">
-            <button type="button" className={fit === 'sites' && view === IDENTITY ? 'is-on' : undefined}
-                    onClick={() => fitTo('sites')}>Fit sites</button>
-            <button type="button" className={fit === 'world' && view === IDENTITY ? 'is-on' : undefined}
-                    onClick={() => fitTo('world')}>Whole world</button>
-            <span className="world-tools-sep" aria-hidden />
-            <button type="button" aria-label="Zoom in" title="Zoom in (+)"
-                    onClick={() => zoomAt(1.5, ...centre())} disabled={view.k >= K_MAX}><MapIcon kind="plus" /></button>
-            <button type="button" aria-label="Zoom out" title="Zoom out (-)"
-                    onClick={() => zoomAt(1 / 1.5, ...centre())} disabled={view.k <= K_MIN}><MapIcon kind="minus" /></button>
+          <div className="world-bar">
+            <div className="world-bar-group">
+              <div className="world-seg" role="group" aria-label="Basemap">
+                <button type="button" className={!sat ? 'is-on' : undefined} aria-pressed={!sat}
+                        onClick={() => setBase('map')} title="Vector map, drawn from data shipped with the app">Map</button>
+                <button type="button" className={sat ? 'is-on' : undefined} aria-pressed={sat}
+                        onClick={() => setBase('sat')} title="NASA Blue Marble imagery, fetched from the internet">Satellite</button>
+              </div>
+              {sat && (
+                <div className="world-layers" role="group" aria-label="Weather layers">
+                  <button type="button" aria-pressed={wx.has('clouds')} onClick={() => toggleWx('clouds')}
+                          title="GOES-East and GOES-West GeoColor, a frame every 20 minutes over the past 2 hours">
+                    <span className="sw sw-clouds" aria-hidden />Clouds</button>
+                  <button type="button" aria-pressed={wx.has('rain')} onClick={() => toggleWx('rain')}
+                          title="Ground weather radar composite (RainViewer), past 2 hours">
+                    <span className="sw sw-rain" aria-hidden />Rain</button>
+                </div>
+              )}
+            </div>
+            <div className="world-bar-group">
+              <div className="world-seg" role="group" aria-label="Framing">
+                <button type="button" className={fit === 'sites' && atRest ? 'is-on' : undefined}
+                        aria-pressed={fit === 'sites' && atRest}
+                        onClick={() => fitTo('sites')} title="Frame every placed site">Fit sites</button>
+                <button type="button" className={fit === 'world' && atRest ? 'is-on' : undefined}
+                        aria-pressed={fit === 'world' && atRest}
+                        onClick={() => fitTo('world')} title="Show the whole globe">Whole world</button>
+              </div>
+              <div className="world-zoom">
+                <button type="button" aria-label="Zoom in" title="Zoom in (+)"
+                        onClick={() => zoomAt(1.5, ...centre())} disabled={view.k >= K_MAX}><Icon kind="plus" /></button>
+                <button type="button" aria-label="Zoom out" title="Zoom out (-)"
+                        onClick={() => zoomAt(1 / 1.5, ...centre())} disabled={view.k <= K_MIN}><Icon kind="minus" /></button>
+              </div>
+            </div>
           </div>
 
           {placingSite && (
@@ -380,8 +474,15 @@ export function WorldMap() {
             </div>
           )}
 
+          {offline && (
+            <p className="world-offline-note" role="status">
+              Satellite imagery needs internet access from this browser, and the NASA tile service did not answer.
+              The sites are still drawn; switch to Map for the basemap.
+            </p>
+          )}
+
           <svg ref={svgRef} width={size.w} height={size.h}
-               className={`world-svg${placing ? ' is-placing' : ''}`}
+               className={`world-svg${placing ? ' is-placing' : ''}${sat ? ' is-sat' : ''}`}
                role="application" tabIndex={0}
                aria-label={`World map of ${plural(onMap.length, 'site')}, coloured by worst open alarm. `
                  + 'Plus and minus zoom, arrow keys pan, 0 resets.'}
@@ -389,32 +490,61 @@ export function WorldMap() {
                onPointerCancel={() => { drag.current = null; }} onKeyDown={onKey}>
             <g transform={`translate(${view.x},${view.y}) scale(${view.k})`}>
               <path d={path({ type: 'Sphere' }) ?? ''} className="world-sphere" />
-              <path d={path(geoGraticule10()) ?? ''} className="world-graticule" />
-              <path d={landPath} className="world-land" />
+              {sat ? (
+                <>
+                  <g className="world-tiles">
+                    {marbleTiles.map((t) => (
+                      <image key={`m${t.z}/${t.x}/${t.y}`} href={blueMarbleUrl(t)} x={t.px} y={t.py}
+                             width={t.size} height={t.size} preserveAspectRatio="none" />))}
+                  </g>
+                  {wx.has('clouds') && (
+                    <g className="world-tiles">
+                      {(['West', 'East'] as const).map((s) => cloudTiles.map((t) => (
+                        <image key={`c${s}${t.z}/${t.x}/${t.y}`} href={geoColorUrl(s, at, t)} x={t.px} y={t.py}
+                               width={t.size} height={t.size} preserveAspectRatio="none" />)))}
+                    </g>
+                  )}
+                  {wx.has('rain') && radar.data && radarPath(at) && (
+                    <g className="world-tiles world-radar">
+                      {radarTiles.map((t) => (
+                        <image key={`r${t.z}/${t.x}/${t.y}`} href={radarUrl(radar.data!.host, radarPath(at)!, t)}
+                               x={t.px} y={t.py} width={t.size} height={t.size} preserveAspectRatio="none" />))}
+                    </g>
+                  )}
+                  <path d={landPath} className="world-borders" />
+                </>
+              ) : (
+                <>
+                  <path d={path(geoGraticule10()) ?? ''} className="world-graticule" />
+                  <path d={landPath} className="world-land" />
+                </>
+              )}
               {onMap.map((s) => {
                 const xy = projection([s.longitude, s.latitude]);
                 if (!xy) return null;
                 const t = tone(s);
                 const approx = s.location_source !== 'manual';
-                const mv = metric === 'alarms' ? null : metricValue(kpiBySite.get(s.id), metric);
+                const temp = tempOf(s);
+                const left = flipLeft.has(s.id);
+                const warn = worstOf(alertsOf(s));
                 return (
                   <g key={s.id} transform={`translate(${xy[0]},${xy[1]}) scale(${inv})`}
                      className={`world-site tone-${t}${selected === s.id ? ' is-selected' : ''}`}
                      role="button" tabIndex={placing ? -1 : 0}
-                     aria-label={`${s.code}, ${mv ? `${metricDef.label.toLowerCase()} ${fmtMetric(metric, mv.value)}` : TONE_LABEL[t]}`}
+                     aria-label={`${s.code}, ${TONE_LABEL[t]}${temp ? `, outdoor ${temp}` : ''}${warn ? `, ${warn.event} in effect` : ''}`}
                      onClick={(e) => { if (!placing) { e.stopPropagation(); setSelected(s.id === selected ? null : s.id); } }}
                      onKeyDown={(e) => {
                        if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); setSelected(s.id === selected ? null : s.id); }
                      }}
                      {...bind(<><b>{s.code}</b> {s.city ?? ''}{s.country ? `, ${s.country}` : ''}
-                       {' · '}{mv ? `${metricDef.label} ${fmtMetric(metric, mv.value)}${mv.value == null && mv.note ? ` (${mv.note})` : ''}` : TONE_LABEL[t]}
+                       {' · '}{TONE_LABEL[t]}{temp ? ` · outdoor ${temp}` : ''}
+                       {warn ? ` · ${warn.event} (${warn.issuer ?? warn.source.toUpperCase()})` : ''}
                        {approx ? ' · position approximate' : ''}</>)}>
+                    {warn && <circle r={15} className={`world-warnring sev-${warn.severity}`} />}
                     {approx && <circle r={12} className="world-approx" />}
-                    <circle r={7} className="world-dot" style={{ fill: siteColor(s) }} />
-                    <text x={flipLeft.has(s.id) ? -11 : 11} y={-10} className="world-label"
-                          textAnchor={flipLeft.has(s.id) ? 'end' : 'start'}>
-                      {s.code}{mv && <tspan className="world-value" dx={5}>{fmtMetric(metric, mv.value)}</tspan>}
-                    </text>
+                    <circle r={7} className="world-dot" />
+                    <text x={left ? -11 : 11} y={-9} className="world-label" textAnchor={left ? 'end' : 'start'}>{s.code}</text>
+                    {temp && <text x={left ? -11 : 11} y={4} className="world-temp" textAnchor={left ? 'end' : 'start'}>{temp}</text>}
                   </g>
                 );
               })}
@@ -426,51 +556,81 @@ export function WorldMap() {
             </g>
           </svg>
           {tipEl}
-          <div className="world-legend" aria-label={`Legend: ${metricDef.legend}`}>
-            <div className="world-legend-title">{metricDef.legend}</div>
-            {metric === 'alarms'
-              ? (['critical', 'major', 'warn', 'ok', 'unknown'] as Tone[]).map((t) => (
-                <div key={t} className="world-legend-row"><span className="sw" style={{ background: TONE_COLOR[t] }} aria-hidden />{TONE_LABEL[t]}</div>))
-              : <>
-                {metricDef.bands!.map((b) => (
-                  <div key={b.label} className="world-legend-row"><span className="sw" style={{ background: b.color }} aria-hidden />{b.label}</div>))}
-                <div className="world-legend-row muted"><span className="sw" style={{ background: 'var(--band-none)' }} aria-hidden />no reading</div>
-              </>}
+
+          {animated && (
+            <div className="world-time">
+              <button type="button" className="world-play" aria-pressed={playing} aria-label={playing ? 'Pause the loop' : 'Play the loop'}
+                      onClick={() => setPlaying((p) => !p)}><Icon kind={playing ? 'pause' : 'play'} /></button>
+              <input type="range" min={0} max={frames.length - 1} step={1} value={Math.min(fi, frames.length - 1)}
+                     aria-label="Weather frame" aria-valuetext={utcClock(at)}
+                     onChange={(e) => { setPlaying(false); setFi(Number(e.target.value)); }} />
+              <span className="world-time-at"><b>{utcClock(at)}</b> <span className="muted">{ago(Date.now() / 1000 - at)}</span></span>
+              <span className="muted world-time-note">
+                {wx.has('clouds') && 'Clouds cover the GOES-East and GOES-West discs. '}
+                {wx.has('rain') && (radar.isError ? 'Radar index unreachable. ' : 'Rain shows where ground radar reports. ')}
+              </span>
+            </div>
+          )}
+
+          <div className="world-foot">
+            <ul className="world-legend" aria-label="Marker colours">
+              {LEGEND.map((l) => <li key={l.tone}><span className={`sw tone-${l.tone}`} aria-hidden />{l.label}</li>)}
+              <li><span className="sw sw-approx" aria-hidden />approximate position</li>
+              <li><span className="sw sw-warn" aria-hidden />official warning in effect</li>
+            </ul>
+            <p className="muted world-note">
+              {sat
+                ? <>Imagery NASA GIBS: Blue Marble{wx.has('clouds') ? ', NOAA GOES GeoColor' : ''}{wx.has('rain') ? '; radar RainViewer' : ''}. Borders Natural Earth.</>
+                : <>Natural Earth 1:{fine && land50 ? '50' : '110'}m. Scroll or + − to zoom, drag to move.</>}
+              {hz.data?.available === false
+                ? <> Warnings unavailable: {hz.data.note}.</>
+                : hz.data ? <> Warnings: {hz.data.sources.filter((x) => x.ok).map((x) => x.name).join(', ') || 'none reachable'}.</> : null}
+            </p>
           </div>
-          <p className="muted world-note">
-            Natural Earth 1:{view.k >= DETAIL_AT && land50 ? '50' : '110'}m. Scroll or use + and − to zoom, drag to move.
-            A dashed ring marks a position taken from the city's centre because the site's own was never set.
-          </p>
         </div>
 
         <aside className="asset-panel world-side">
           <h3>Sites <span className="total">{sites.length}</span></h3>
           <ul className="world-list">
             {sites.map((s) => {
+              const open = selected === s.id;
+              const w = weather.get(s.id);
+              const t = tone(s);
               return (
-                <li key={s.id}>
-                  <button type="button" className={selected === s.id ? 'is-current' : undefined}
-                          onClick={() => setSelected(s.id === selected ? null : s.id)}>
-                    <span className="world-swatch" style={{ background: siteColor(s) }} aria-hidden />
-                    <span className="code">{s.code}</span>
-                    <span className="muted">{s.city ?? 'city not set'}</span>
-                    <span className="count">
-                      {metric !== 'alarms' && (
-                        <span className="world-metric">{metricDef.label} {fmtMetric(metric, metricValue(kpiBySite.get(s.id), metric).value)}</span>
-                      )}
-                      {plural(s.alarms.total, 'alarm')}
-                      {s.offline_count > 0 && <span className="world-offline">{s.offline_count} offline</span>}
+                <li key={s.id} className={open ? 'is-open' : undefined}>
+                  <button type="button" className="world-row" aria-expanded={open}
+                          onClick={() => setSelected(open ? null : s.id)}>
+                    <span className={`world-swatch tone-${t}`} aria-hidden />
+                    <span className="world-row-main">
+                      <span className="world-row-title"><b>{s.code}</b> <span className="muted">{[s.city, s.country].filter(Boolean).join(', ') || 'city not set'}</span></span>
+                      <span className={`world-row-sub${t === 'ok' || t === 'unknown' ? ' muted' : ` is-${t}`}`}>
+                        {alarmText(s)}
+                        {s.offline_count > 0 && <span className="world-offline"> · {s.offline_count} offline</span>}
+                      </span>
                     </span>
+                    <span className="world-row-wx" aria-label={w?.available ? 'outdoor air' : undefined}>
+                      {w?.available && w.dry_bulb_c != null
+                        ? <><b>{fmtT(w.dry_bulb_c, 1)}</b><span className="muted">{w.humidity_pct != null ? `${Math.round(w.humidity_pct)} % RH` : '–'}</span></>
+                        : <span className="muted world-row-nowx">{w ? 'no outdoor air' : '…'}</span>}
+                    </span>
+                    {(() => { const hw = worstOf(alertsOf(s)); return hw && (
+                      <span className={`world-row-hz sev-${hw.severity}`}
+                            title={`${hw.event}${alertsOf(s).length > 1 ? ` and ${alertsOf(s).length - 1} more` : ''} ${untilText(hw.ends)}`}>
+                        <Icon kind="warning" />
+                        <span className="world-row-hz-text">{hw.event}{alertsOf(s).length > 1 ? ` +${alertsOf(s).length - 1}` : ''}
+                          <span className="muted"> {untilText(hw.ends)}</span></span>
+                      </span>); })()}
                   </button>
+                  {open && (
+                    <SiteDetail site={s} weather={w} alerts={alertsOf(s)} covered={hz.data?.sites[s.id]?.covered ?? null}
+                                feedsUp={hz.data?.available ?? null} placing={placing === s.id}
+                                onPlace={() => { setPlacing(s.id); setPending(null); setSaveError(null); svgRef.current?.focus(); }} />
+                  )}
                 </li>
               );
             })}
           </ul>
-
-          {chosen && (
-            <SiteCard site={chosen} placing={placing === chosen.id}
-                      onPlace={() => { setPlacing(chosen.id); setPending(null); setSaveError(null); svgRef.current?.focus(); }} />
-          )}
+          {!selected && <p className="muted world-hint">Select a site for its position, devices, outdoor air and links.</p>}
 
           {unplaced.length > 0 && (
             <p className="muted">
@@ -484,15 +644,16 @@ export function WorldMap() {
   );
 }
 
-function SiteCard({ site, placing, onPlace }: { site: SiteRow; placing: boolean; onPlace: () => void }) {
+function SiteDetail({ site, weather, alerts, covered, feedsUp, placing, onPlace }: {
+  site: SiteRow; weather: SiteKpi['weather'] | undefined; alerts: HazardAlert[]; covered: boolean | null;
+  feedsUp: boolean | null; placing: boolean; onPlace: () => void;
+}) {
   const hall = site.rooms.find((r) => r.room_class === 'white_space') ?? site.rooms[0];
   const approx = site.location_source !== 'manual';
+  const stale = weather?.age_s != null && weather.age_s > 900;
   return (
-    <div className="world-card">
-      <h4>{site.name}</h4>
+    <div className="world-detail" role="region" aria-label={`${site.code} details`}>
       <dl>
-        <dt>Location</dt>
-        <dd>{[site.city, site.country].filter(Boolean).join(', ') || 'not set'}</dd>
         <dt>Position</dt>
         <dd>
           {site.latitude != null && site.longitude != null
@@ -511,16 +672,58 @@ function SiteCard({ site, placing, onPlace }: { site: SiteRow; placing: boolean;
         <dd>{site.alarms.critical} critical · {site.alarms.major} major · {site.alarms.minor} minor</dd>
         <dt>Rooms</dt>
         <dd>{site.rooms.length}</dd>
+        <dt>Outdoor air</dt>
+        <dd className={stale ? 'muted' : undefined}>
+          {weather == null ? 'loading…'
+            : !weather.available ? (weather.note ?? 'no reading')
+            : <>
+              {fmtT(weather.dry_bulb_c, 1)} dry bulb · {fmtT(weather.wet_bulb_c, 1)} wet bulb
+              {weather.humidity_pct != null && (
+                <> · {Math.round(weather.humidity_pct)} % RH<span className="muted" title={weather.humidity_note ?? undefined}> (derived)</span></>)}
+              <span className="muted world-wx-src">
+                {weather.source ?? 'site BMS'}{weather.age_s != null ? `, ${ago(weather.age_s)}` : ''}{stale ? ' - stale' : ''}
+              </span>
+            </>}
+        </dd>
       </dl>
+      <div className="world-hz">
+        <h5>Official warnings</h5>
+        {alerts.length > 0 ? (
+          <ul>
+            {alerts.map((a) => (
+              <li key={a.id} className={`sev-${a.severity}`}>
+                <span className="world-hz-head"><Icon kind="warning" /><b>{a.event}</b>
+                  <span className="world-hz-sev">{a.severity}</span></span>
+                <span className="world-hz-body">
+                  {a.headline && a.headline !== a.event ? a.headline : a.area}
+                  {a.distance_km != null ? ` · ${a.distance_km} km away` : ''}
+                </span>
+                <span className="muted world-hz-meta">
+                  {a.issuer ?? a.source.toUpperCase()}{a.ends ? ` · ${untilText(a.ends)}` : ''}
+                  {a.url && <> · <a href={a.url} target="_blank" rel="noreferrer noopener">report<Icon kind="open" /></a></>}
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="muted">
+            {feedsUp == null ? 'checking…'
+              : feedsUp === false ? 'warning feeds unreachable from the platform'
+              : covered === false ? 'none from GDACS; the national feed does not cover this country'
+              : 'none in effect'}
+          </p>
+        )}
+      </div>
       <button type="button" className="world-place" onClick={onPlace} disabled={placing}>
         {placing ? 'Click the map…' : approx ? 'Set exact position' : 'Move position'}
       </button>
-      <div className="world-links">
-        <Link to={`/twin/sites/${site.id}`}>Building</Link>
-        {hall && <Link to={`/floorplan?room=${hall.id}`}>Floor map</Link>}
-        <Link to={`/thermal?site=${site.id}&scope=rooms`}>Thermal</Link>
-        <Link to="/connectivity">Network map</Link>
-      </div>
+      <nav className="world-links" aria-label={`${site.code} pages`}>
+        <Link to={`/twin/sites/${site.id}`}><Icon kind="building" />Building</Link>
+        {hall
+          ? <Link to={`/floorplan?room=${hall.id}`}><Icon kind="floor" />Floor map</Link>
+          : <span className="is-off" title="No room at this site yet"><Icon kind="floor" />Floor map</span>}
+        <Link to="/connectivity"><Icon kind="network" />Network map</Link>
+      </nav>
     </div>
   );
 }
