@@ -2506,6 +2506,10 @@ export interface SiteRow {
   device_count: number;
   online_count: number;
   offline_count: number;
+  /** Devices with nothing to poll - passive panels such as RPPs, metered by
+   *  the EV2 clamped onto them. `device_count - passive_count` is the
+   *  monitored population the online count is a share of. */
+  passive_count?: number;
   alarms: AlarmCounts;
   rooms: SiteRoom[];
 }

@@ -248,6 +248,9 @@ async def overview(session: AsyncSession) -> dict[str, Any]:
             "device_count": int(s["device_count"] or 0),
             "online_count": int(s["online_count"] or 0),
             "offline_count": int(s["offline_count"] or 0),
+            # Devices with no endpoint to poll (passive panels); the rest are
+            # the monitored population the online count is a share of.
+            "passive_count": int(s.get("passive_count") or 0),
             "alarms": _alarms(s),
             "rooms": by_site.get(s["id"], []),
         } for s in sites],

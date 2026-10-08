@@ -146,7 +146,14 @@ async def site_rollups(session: AsyncSession) -> list[dict[str, Any]]:
             SELECT dev.datacenter_id,
                    count(*)                                          AS device_count,
                    count(*) FILTER (WHERE ds.status = 'ONLINE')      AS online_count,
-                   count(*) FILTER (WHERE ds.status = 'OFFLINE')     AS offline_count
+                   count(*) FILTER (WHERE ds.status = 'OFFLINE')     AS offline_count,
+                   -- Passive equipment: nothing to poll. A remote power panel
+                   -- is a panelboard - its circuits are metered by the EV2
+                   -- clamped onto it - so it has no endpoint and no state,
+                   -- and counting it as "not online" understated a healthy site.
+                   count(*) FILTER (WHERE NOT EXISTS (
+                       SELECT 1 FROM device_endpoint e
+                        WHERE e.device_id = dev.device_id))          AS passive_count
             FROM dev
             LEFT JOIN device_state ds ON ds.device_id = dev.device_id
             GROUP BY dev.datacenter_id
@@ -169,6 +176,7 @@ async def site_rollups(session: AsyncSession) -> list[dict[str, Any]]:
                COALESCE(devices.device_count, 0)  AS device_count,
                COALESCE(devices.online_count, 0)  AS online_count,
                COALESCE(devices.offline_count, 0) AS offline_count,
+               COALESCE(devices.passive_count, 0) AS passive_count,
                COALESCE(agg.alerts_total, 0)      AS alerts_total,
                COALESCE(agg.open_total, 0)        AS open_total,
                COALESCE(agg.crit, 0)              AS crit,

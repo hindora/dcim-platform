@@ -1,11 +1,11 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { geoEqualEarth, geoGraticule10, geoPath, type GeoPermissibleObjects } from 'd3-geo';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { feature } from 'topojson-client';
 import type { GeometryCollection, Topology } from 'topojson-specification';
 import countries110m from 'world-atlas/countries-110m.json';
-import { api, ApiError, type SiteRow, type SitesOverview } from '../../api/client';
+import { api, ApiError, type SiteKpi, type SiteRow, type SitesOverview } from '../../api/client';
 import { useHoverTip } from '../../components/HoverTip';
 import './world.css';
 
@@ -49,6 +49,57 @@ const TONE_LABEL: Record<Tone, string> = {
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
+/* ---------------------------------------------------------------- colour by
+ * What the markers are coloured by. Alarms come with the overview; the rest
+ * are read from each site's KPI - the same numbers the site pages show, so
+ * the map never disagrees with them. */
+type Metric = 'alarms' | 'power' | 'space' | 'cooling' | 'pue';
+interface Band { upTo: number | null; label: string; color: string }
+
+const P = (n: number) => `var(--band-p${n})`;
+const T = (n: number) => `var(--band-t${n})`;
+const PCT_BANDS: Band[] = [
+  { upTo: 20, label: 'under 20 %', color: P(1) }, { upTo: 50, label: '20 – 50 %', color: P(2) },
+  { upTo: 80, label: '50 – 80 %', color: P(3) }, { upTo: 90, label: '80 – 90 %', color: P(4) },
+  { upTo: null, label: 'over 90 %', color: P(5) },
+];
+// PUE: the Uptime Institute's surveyed average sits near 1.56; under 1.3 is a
+// very efficient site, over 2.0 spends as much on the building as on the IT.
+const PUE_BANDS: Band[] = [
+  { upTo: 1.3, label: 'under 1.3', color: T(4) }, { upTo: 1.5, label: '1.3 – 1.5', color: T(5) },
+  { upTo: 1.7, label: '1.5 – 1.7', color: T(6) }, { upTo: 2.0, label: '1.7 – 2.0', color: T(7) },
+  { upTo: null, label: 'over 2.0', color: T(8) },
+];
+const METRICS: { key: Metric; label: string; legend: string; bands?: Band[] }[] = [
+  { key: 'alarms', label: 'Open alarms', legend: 'Worst open alarm' },
+  { key: 'power', label: 'Power used', legend: 'IT power against capacity', bands: PCT_BANDS },
+  { key: 'space', label: 'Space used', legend: 'Rack space in use', bands: PCT_BANDS },
+  { key: 'cooling', label: 'Cooling used', legend: 'Cooling against capacity', bands: PCT_BANDS },
+  { key: 'pue', label: 'PUE', legend: 'Power usage effectiveness', bands: PUE_BANDS },
+];
+const METRIC_KEYS = new Set<string>(METRICS.map((m) => m.key));
+
+function metricValue(k: SiteKpi | undefined, m: Metric): { value: number | null; note?: string | null } {
+  if (!k) return { value: null, note: 'loading' };
+  switch (m) {
+    case 'power': return { value: k.utilisation.power.pct, note: k.utilisation.power.note };
+    case 'space': return { value: k.utilisation.space.pct, note: k.utilisation.space.note };
+    case 'cooling': return { value: k.utilisation.cooling.pct, note: k.utilisation.cooling.note };
+    case 'pue': return { value: k.efficiency.pue.value, note: k.efficiency.pue.note };
+    default: return { value: null };
+  }
+}
+const fmtMetric = (m: Metric, v: number | null) =>
+  v == null ? '–' : m === 'pue' ? v.toFixed(2) : `${Math.round(v)} %`;
+function bandOf(bands: Band[], v: number | null): string {
+  if (v == null || Number.isNaN(v)) return 'var(--band-none)';
+  for (const b of bands) if (b.upTo == null || v < b.upTo) return b.color;
+  return bands[bands.length - 1].color;
+}
+const TONE_COLOR: Record<Tone, string> = {
+  critical: 'var(--critical)', major: 'var(--major)', warn: 'var(--warn)', ok: 'var(--ok)', unknown: 'var(--text-faint)',
+};
+
 function placed(s: SiteRow): s is SiteRow & { latitude: number; longitude: number } {
   return s.latitude != null && s.longitude != null;
 }
@@ -62,11 +113,40 @@ function MapIcon({ kind }: { kind: 'plus' | 'minus' }) {
   );
 }
 
+/** `v=k/x/y` in the URL: the zoomed view, rounded so the link stays short. */
+function parseView(raw: string | null): View {
+  const p = (raw ?? '').split('/').map(Number);
+  return p.length === 3 && p.every(Number.isFinite) && p[0] >= K_MIN && p[0] <= K_MAX
+    ? { k: p[0], x: p[1], y: p[2] } : IDENTITY;
+}
+
 export function WorldMap() {
   const qc = useQueryClient();
-  const [fit, setFit] = useState<Fit>('sites');
-  const [view, setView] = useState<View>(IDENTITY);
-  const [selected, setSelected] = useState<string | null>(null);
+  // Colour, fit, zoom and selection live in the URL, so a view can be shared
+  // and the back button behaves.
+  const [params, setParams] = useSearchParams();
+  const metric: Metric = METRIC_KEYS.has(params.get('color') ?? '') ? params.get('color') as Metric : 'alarms';
+  const [fit, setFitState] = useState<Fit>(params.get('fit') === 'world' ? 'world' : 'sites');
+  const [view, setView] = useState<View>(() => parseView(params.get('v')));
+  const [selected, setSelectedState] = useState<string | null>(params.get('site'));
+  // Functional update: the debounced view write must not clobber a key set since.
+  const setParam = (k: string, v: string | null) => setParams((prev) => {
+    const next = new URLSearchParams(prev);
+    if (v == null) next.delete(k); else next.set(k, v);
+    return next;
+  }, { replace: true });
+  const setMetric = (m: Metric) => setParam('color', m === 'alarms' ? null : m);
+  const setFit = (f: Fit) => { setFitState(f); setParam('fit', f === 'sites' ? null : f); };
+  const setSelected = (id: string | null) => { setSelectedState(id); setParam('site', id); };
+  // The view is written once zooming settles - a wheel spin is dozens of steps.
+  useEffect(() => {
+    const id = window.setTimeout(() => {
+      const v = view === IDENTITY || (view.k === 1 && view.x === 0 && view.y === 0)
+        ? null : `${view.k.toFixed(2)}/${Math.round(view.x)}/${Math.round(view.y)}`;
+      if ((params.get('v') ?? null) !== v) setParam('v', v);
+    }, 400);
+    return () => window.clearTimeout(id);
+  }, [view]); // eslint-disable-line react-hooks/exhaustive-deps
   const [placing, setPlacing] = useState<string | null>(null);         // site id being placed
   const [pending, setPending] = useState<{ lat: string; lon: string } | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -105,6 +185,20 @@ export function WorldMap() {
   }, [view.k, land50]);
 
   const sites = useMemo(() => data?.sites ?? [], [data]);
+  const kpis = useQueries({
+    queries: sites.map((s) => ({
+      queryKey: ['site-kpi', s.id], queryFn: () => api.siteKpi(s.id),
+      enabled: metric !== 'alarms', staleTime: 60_000, refetchInterval: 120_000,
+    })),
+  });
+  const kpiBySite = useMemo(() => {
+    const m = new Map<string, SiteKpi>();
+    sites.forEach((s, i) => { const d = kpis[i]?.data; if (d) m.set(s.id, d); });
+    return m;
+  }, [sites, kpis]);
+  const metricDef = METRICS.find((m) => m.key === metric)!;
+  const siteColor = (s: SiteRow) => metric === 'alarms'
+    ? TONE_COLOR[tone(s)] : bandOf(metricDef.bands!, metricValue(kpiBySite.get(s.id), metric).value);
   const onMap = useMemo(() => sites.filter(placed), [sites]);
   const unplaced = sites.filter((s) => !placed(s));
 
@@ -229,10 +323,24 @@ export function WorldMap() {
   if (error) return <p className="muted">Sites could not be loaded.</p>;
 
   const inv = 1 / view.k;
+  // Labels read to the right of the dot; one that would run into a neighbour's
+  // dot flips to the left. Screen space, so zooming in un-flips them.
+  const labelText = (s: SiteRow) => s.code + (metric === 'alarms' ? '' : ` ${fmtMetric(metric, metricValue(kpiBySite.get(s.id), metric).value)}`);
+  const screen = onMap.map((s) => ({ s, xy: projection([s.longitude, s.latitude]) }))
+    .filter((p): p is { s: typeof p.s; xy: [number, number] } => !!p.xy)
+    .map(({ s, xy }) => ({ id: s.id, x: xy[0] * view.k, y: xy[1] * view.k, w: 20 + labelText(s).length * 7 }));
+  const flipLeft = new Set(screen.filter((a) => screen.some((b) =>
+    b.id !== a.id && b.x > a.x - 4 && b.x - a.x < a.w && Math.abs(b.y - a.y) < 24)).map((a) => a.id));
   return (
     <div className="stack world-page">
       <div className="world-head">
         <h2>World map</h2>
+        <label className="world-colorby">
+          <span>Colour by</span>
+          <select value={metric} onChange={(e) => setMetric(e.target.value as Metric)}>
+            {METRICS.map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}
+          </select>
+        </label>
       </div>
 
       <div className="world-body">
@@ -288,19 +396,25 @@ export function WorldMap() {
                 if (!xy) return null;
                 const t = tone(s);
                 const approx = s.location_source !== 'manual';
+                const mv = metric === 'alarms' ? null : metricValue(kpiBySite.get(s.id), metric);
                 return (
                   <g key={s.id} transform={`translate(${xy[0]},${xy[1]}) scale(${inv})`}
                      className={`world-site tone-${t}${selected === s.id ? ' is-selected' : ''}`}
-                     role="button" tabIndex={placing ? -1 : 0} aria-label={`${s.code}, ${TONE_LABEL[t]}`}
+                     role="button" tabIndex={placing ? -1 : 0}
+                     aria-label={`${s.code}, ${mv ? `${metricDef.label.toLowerCase()} ${fmtMetric(metric, mv.value)}` : TONE_LABEL[t]}`}
                      onClick={(e) => { if (!placing) { e.stopPropagation(); setSelected(s.id === selected ? null : s.id); } }}
                      onKeyDown={(e) => {
                        if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); setSelected(s.id === selected ? null : s.id); }
                      }}
                      {...bind(<><b>{s.code}</b> {s.city ?? ''}{s.country ? `, ${s.country}` : ''}
-                       {' · '}{TONE_LABEL[t]}{approx ? ' · position approximate' : ''}</>)}>
+                       {' · '}{mv ? `${metricDef.label} ${fmtMetric(metric, mv.value)}${mv.value == null && mv.note ? ` (${mv.note})` : ''}` : TONE_LABEL[t]}
+                       {approx ? ' · position approximate' : ''}</>)}>
                     {approx && <circle r={12} className="world-approx" />}
-                    <circle r={7} className="world-dot" />
-                    <text x={11} y={-10} className="world-label">{s.code}</text>
+                    <circle r={7} className="world-dot" style={{ fill: siteColor(s) }} />
+                    <text x={flipLeft.has(s.id) ? -11 : 11} y={-10} className="world-label"
+                          textAnchor={flipLeft.has(s.id) ? 'end' : 'start'}>
+                      {s.code}{mv && <tspan className="world-value" dx={5}>{fmtMetric(metric, mv.value)}</tspan>}
+                    </text>
                   </g>
                 );
               })}
@@ -312,6 +426,17 @@ export function WorldMap() {
             </g>
           </svg>
           {tipEl}
+          <div className="world-legend" aria-label={`Legend: ${metricDef.legend}`}>
+            <div className="world-legend-title">{metricDef.legend}</div>
+            {metric === 'alarms'
+              ? (['critical', 'major', 'warn', 'ok', 'unknown'] as Tone[]).map((t) => (
+                <div key={t} className="world-legend-row"><span className="sw" style={{ background: TONE_COLOR[t] }} aria-hidden />{TONE_LABEL[t]}</div>))
+              : <>
+                {metricDef.bands!.map((b) => (
+                  <div key={b.label} className="world-legend-row"><span className="sw" style={{ background: b.color }} aria-hidden />{b.label}</div>))}
+                <div className="world-legend-row muted"><span className="sw" style={{ background: 'var(--band-none)' }} aria-hidden />no reading</div>
+              </>}
+          </div>
           <p className="muted world-note">
             Natural Earth 1:{view.k >= DETAIL_AT && land50 ? '50' : '110'}m. Scroll or use + and − to zoom, drag to move.
             A dashed ring marks a position taken from the city's centre because the site's own was never set.
@@ -322,15 +447,17 @@ export function WorldMap() {
           <h3>Sites <span className="total">{sites.length}</span></h3>
           <ul className="world-list">
             {sites.map((s) => {
-              const t = tone(s);
               return (
                 <li key={s.id}>
                   <button type="button" className={selected === s.id ? 'is-current' : undefined}
                           onClick={() => setSelected(s.id === selected ? null : s.id)}>
-                    <span className={`world-swatch tone-${t}`} aria-hidden />
+                    <span className="world-swatch" style={{ background: siteColor(s) }} aria-hidden />
                     <span className="code">{s.code}</span>
                     <span className="muted">{s.city ?? 'city not set'}</span>
                     <span className="count">
+                      {metric !== 'alarms' && (
+                        <span className="world-metric">{metricDef.label} {fmtMetric(metric, metricValue(kpiBySite.get(s.id), metric).value)}</span>
+                      )}
                       {plural(s.alarms.total, 'alarm')}
                       {s.offline_count > 0 && <span className="world-offline">{s.offline_count} offline</span>}
                     </span>
@@ -374,8 +501,12 @@ function SiteCard({ site, placing, onPlace }: { site: SiteRow; placing: boolean;
           {approx && site.latitude != null && <span className="muted"> (city centre)</span>}
         </dd>
         <dt>Devices</dt>
-        <dd>{site.online_count} online of {site.device_count}
-          {site.offline_count > 0 && <span className="muted"> · {site.offline_count} offline</span>}</dd>
+        <dd>{site.online_count} online of {site.device_count - (site.passive_count ?? 0)} monitored
+          {site.offline_count > 0 && <span className="muted"> · {site.offline_count} offline</span>}
+          {(site.passive_count ?? 0) > 0 && (
+            <span className="muted" title="Panelboards and other equipment with nothing to poll; their circuits are metered by the meters clamped onto them">
+              {' · '}{plural(site.passive_count ?? 0, 'passive panel')}</span>
+          )}</dd>
         <dt>Open alarms</dt>
         <dd>{site.alarms.critical} critical · {site.alarms.major} major · {site.alarms.minor} minor</dd>
         <dt>Rooms</dt>
