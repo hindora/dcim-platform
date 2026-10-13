@@ -383,6 +383,28 @@ async def site_blocks(session: AsyncSession, datacenter_id: str
     return [dict(r) for r in racks], [dict(u) for u in units]
 
 
+async def site_doors(session: AsyncSession, datacenter_id: str) -> list[dict[str, Any]]:
+    """Every door contact on the site with what it reads now (docs/27 §8b B6).
+
+    A door contact is whatever reports `door_open`: the identity is in the
+    metric, not in a name or a role, so a contact from any source draws.
+    """
+    rows = (await session.execute(text("""
+        SELECT d.id::text, d.room_id::text AS room_id, rm.level, d.floor_x, d.floor_y,
+               d.rotation_deg,
+               (ds.metrics->'door_open'->>'v')::boolean AS open,
+               ds.metrics->'door_open'->>'t' AS at,
+               COALESCE(ds.max_severity::text, 'CLEAR') AS max_severity
+          FROM device d
+          JOIN device_state ds ON ds.device_id = d.id
+          JOIN room rm ON rm.id = d.room_id
+         WHERE rm.datacenter_id = CAST(:dc AS uuid)
+           AND d.lifecycle <> 'decommissioned'
+           AND ds.metrics ? 'door_open'
+    """), {"dc": datacenter_id})).mappings().all()
+    return [dict(r) for r in rows]
+
+
 async def room_rack_devices(session: AsyncSession, room_id: str) -> list[dict[str, Any]]:
     """Every live device in the room's racks, with its slot and state."""
     rows = (await session.execute(text("""

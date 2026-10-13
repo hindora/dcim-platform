@@ -1516,6 +1516,8 @@ def _room_type(name: str) -> str:
     # which is how a roof ended up listed as raised floor.
     if "generator" in low or "genset" in low:
         return "electrical"
+    if "substation" in low:
+        return "electrical"
     if "roof" in low or "yard" in low or "compound" in low:
         return "plant"
     return "data_hall"
@@ -1527,7 +1529,7 @@ def _room_type(name: str) -> str:
 _FACILITY_TYPES = frozenset({
     "generator", "utility_feed", "switchgear", "ats", "mcc", "mpp", "ups", "rpp",
     "crah", "crac", "chiller", "pump", "cooling_tower", "valve", "energy_monitor",
-    "modbus_gateway", "bacnet_router",
+    "modbus_gateway", "bacnet_router", "transformer",
 })
 
 

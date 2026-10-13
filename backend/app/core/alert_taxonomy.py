@@ -208,6 +208,9 @@ THRESHOLD_CROSSINGS: frozenset[str] = frozenset({
     # S3 instruments: a gas, a string, two tanks
     "hydrogen_high", "hydrogen_critical", "battery_temp_high", "battery_temp_critical",
     "bulk_fuel_low", "bulk_fuel_critical", "makeup_water_low", "makeup_water_critical",
+    # the service transformer's oil and winding (docs/27 §8c.2)
+    "transformer_oil_temp_high", "transformer_oil_temp_critical",
+    "transformer_winding_temp_high", "transformer_winding_temp_critical",
     "cpu_high_usage", "memory_high_usage", "cpu_temp_critical",
     # The same conditions as they arrive from a rack probe. Every one is a
     # number crossing a limit, however it travelled: without these a probe
@@ -387,6 +390,11 @@ BY_ALARM_TYPE: dict[str, str] = {
     "makeup_water_low": COOLING,
     "makeup_water_critical": COOLING,
     "door_held_open": SECURITY,
+    # The service transformer is the supply; hot oil is a supply at risk.
+    "transformer_oil_temp_high": POWER,
+    "transformer_oil_temp_critical": POWER,
+    "transformer_winding_temp_high": POWER,
+    "transformer_winding_temp_critical": POWER,
 
     # --- environmental: the room
     "ambient_temp_high": ENVIRONMENTAL,

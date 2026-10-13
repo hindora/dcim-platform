@@ -62,6 +62,10 @@ POINT_METRICS: dict[str, tuple[str, str]] = {
 
     # --- machine temperatures, each of which is ITS OWN and not the room's ---
     "Battery_Temperature": ("battery_temperature", ""),
+    # The service transformer's tank monitor (docs/27 §8c.2, S3 2b)
+    "Top_Oil_Temperature": ("oil_temperature", ""),
+    "Winding_Temperature": ("winding_temperature", ""),
+    "Tap_Position":        ("tap_position", ""),
 
     # --- S3 instruments on the BMS trunk (docs/27 §8b.3, §8c.2) ------------
     "H2_Concentration":    ("hydrogen_lel_pct", ""),
@@ -134,7 +138,7 @@ STATUS_BITS = {
     "Bus_Energized", "Breaker_Closed", "Tie_Closed", "Panel_Energized",
     "Source_Generator", "Source_Tie", "Service_Healthy", "Engine_Running",
     "Normal_Available", "Emergency_Available", "On_Emergency", "On_Battery",
-    "Bypass_Active",
+    "Bypass_Active", "Fans_Running",
 }
 
 # The validity bit is NOT telemetry. It says whether the other registers mean

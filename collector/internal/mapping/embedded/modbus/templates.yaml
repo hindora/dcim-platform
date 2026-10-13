@@ -142,6 +142,25 @@ templates:
       - { space: discrete, addr: 0x0002, name: Source_Generator, metric: equipment_state, instance: Source_Generator }
       - { space: discrete, addr: 0x0003, name: Data_Valid, role: validity }
 
+  SIM-XFMR-ITM-v1:
+    vendor: "Qualitrol"
+    product: "509 ITM transformer monitor"
+    word_order: big
+    device_types: [transformer]
+    points:
+      - { space: input, addr: 0x0000, name: Top_Oil_Temperature, dtype: u16, scale: 10, metric: oil_temperature }
+      - { space: input, addr: 0x0001, name: Winding_Temperature, dtype: u16, scale: 10, metric: winding_temperature }
+      - { space: input, addr: 0x0002, name: Load_Percent, dtype: u16, scale: 10, metric: load_pct }
+      - { space: input, addr: 0x0003, name: Tap_Position, dtype: u16, metric: tap_position }
+      - { space: input, addr: 0x0013, name: Current_A, dtype: u16, metric: current, instance: A }
+      - { space: input, addr: 0x0014, name: Current_B, dtype: u16, metric: current, instance: B }
+      - { space: input, addr: 0x0015, name: Current_C, dtype: u16, metric: current, instance: C }
+      - { space: discrete, addr: 0x0000, name: Fans_Running, metric: equipment_state, instance: Fans_Running }
+      - { space: discrete, addr: 0x0001, name: Oil_Temp_Alarm, metric: alarm_state, instance: Oil_Temp_Alarm }
+      - { space: discrete, addr: 0x0002, name: Winding_Temp_Alarm, metric: alarm_state, instance: Winding_Temp_Alarm }
+      - { space: discrete, addr: 0x0003, name: Gas_Relay_Alarm, metric: alarm_state, instance: Gas_Relay_Alarm }
+      - { space: discrete, addr: 0x0004, name: Data_Valid, role: validity }
+
   SIM-ISUNITY-EXL-v1:
     vendor: "Vertiv"
     product: "Liebert EXL S1 (IS-UNITY-DP)"

@@ -119,6 +119,11 @@ export function readings(m: FacilityMachine): { label: string; value: string }[]
         ['imbalance', n(m.imbalance_pct, 1, ' %')],
         ['PF', n(m.power_factor, 2)]);
       break;
+    case 'transformer':
+      out.push(['load', n(m.duty_pct, 0, ' %')],
+        ['oil', n(m.oil_c, 0, ' °C')], ['winding', n(m.winding_c, 0, ' °C')],
+        ['tap', n(m.tap_position, 0)]);
+      break;
     case 'utility_feed': case 'energy_monitor':
       out.push(['carries', n(m.carried_kw, 1, ' kW')],
         ['peak', n(m.peak_kw, 0, ' kW')], ['PF', n(m.power_factor, 2)],

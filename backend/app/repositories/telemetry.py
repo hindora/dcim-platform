@@ -207,7 +207,23 @@ async def latest_values(session: AsyncSession, device_id: str) -> list[dict[str,
         WHERE t.device_id = CAST(:id AS uuid) AND t.ts > now() - interval '1 hour'
         ORDER BY m.key, t.instance, t.ts DESC
     """), {"id": device_id})).mappings().all()
-    return [dict(r) for r in rows]
+    out = [dict(r) for r in rows]
+    # A door contact or a transfer switch position never lands in
+    # telemetry_sample. Booleans are written on change plus a heartbeat and
+    # words on change, so the newest row of each can be hours old and still
+    # be the current value; no time window on these.
+    for table in ("telemetry_bool", "telemetry_text"):
+        more = (await session.execute(text(f"""
+            SELECT DISTINCT ON (m.key, t.instance)
+                   m.key AS metric, m.unit, m.display_name, t.instance,
+                   t.value, t.ts, t.quality
+            FROM {table} t
+            JOIN metric m ON m.id = t.metric_id
+            WHERE t.device_id = CAST(:id AS uuid)
+            ORDER BY m.key, t.instance, t.ts DESC
+        """), {"id": device_id})).mappings().all()
+        out.extend(dict(r) for r in more)
+    return out
 
 
 async def top_by_metric(session: AsyncSession, *, metric: str, limit: int = 10,

@@ -380,7 +380,7 @@ export const TYPE_WORD: Record<string, string> = {
   chiller: 'Chiller', cooling_tower: 'Cooling tower',
   ups: 'UPS', generator: 'Generator', switchgear: 'Switchgear',
   ats: 'Transfer switch', mcc: 'Motor control centre', mpp: 'Mechanical panel',
-  energy_monitor: 'Meter', utility_feed: 'Incoming feed',
+  energy_monitor: 'Meter', utility_feed: 'Incoming feed', transformer: 'Transformer',
   sensor: 'Header instrument', bacnet_router: 'BACnet router',
   modbus_gateway: 'Modbus gateway', pdu: 'Power strip', rpp: 'Power panel',
   oob_switch: 'Access switch',

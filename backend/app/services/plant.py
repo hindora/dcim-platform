@@ -373,6 +373,25 @@ def _read_meter(v: dict, rated: float | None) -> dict[str, Any]:
     }
 
 
+def _read_transformer(v: dict, rated: float | None) -> dict[str, Any]:
+    """The service transformer, read off its tank monitor (docs/27 §8c.2).
+
+    A transformer carries everything the site draws and consumes a little of
+    it as heat; the monitor reports the heat, not the kilowatts, so there is
+    no carried figure here - the revenue meter on its secondary has that.
+    """
+    return {
+        "supply_c": None, "return_c": None, "setpoint_c": None,
+        "heat_kw": None,
+        "duty_pct": _val(v, "load_pct"),
+        "duty_of": "nameplate",
+        "oil_c": _val(v, "oil_temperature"),
+        "winding_c": _val(v, "winding_temperature"),
+        "tap_position": _val(v, "tap_position"),
+        "loop": "none",
+    }
+
+
 def _read_instrument(v: dict, rated: float | None) -> dict[str, Any]:
     """A header instrument: a temperature or flow tapping on a pipe.
 
@@ -432,6 +451,7 @@ _READERS = {
     "ups": _read_ups, "generator": _read_generator, "ats": _read_transfer,
     "switchgear": _read_bus, "mcc": _read_bus, "mpp": _read_bus,
     "energy_monitor": _read_meter, "utility_feed": _read_meter,
+    "transformer": _read_transformer,
     "sensor": _read_instrument,
 }
 
@@ -467,6 +487,12 @@ def _state_label(kind: str, states: dict[str, bool],
         if healthy is None:
             return None
         return "Healthy" if healthy else "Lost"
+    if kind == "transformer":
+        # ONAN until the oil asks for the fans; neither is a fault.
+        fans = states.get("Fans_Running")
+        if fans is None:
+            return None
+        return "Fans running" if fans else "Natural cooling"
     if running is None:
         return None
     return "Running" if running else "Off"

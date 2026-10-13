@@ -799,7 +799,7 @@ metrics:
     stale_after_s: 300
     hot: true
     group: cooling
-    device_types: [chiller, pump, cooling_tower, cdu, crah, valve]
+    device_types: [chiller, pump, cooling_tower, cdu, crah, valve, transformer]
     description: Running or stopped. instance carries the point name, so a device with several status points keeps them distinct.
 
   - key: alarm_state
@@ -810,7 +810,7 @@ metrics:
     stale_after_s: 300
     hot: true
     group: cooling
-    device_types: [chiller, pump, cooling_tower, cdu, crah, valve, energy_monitor, sensor]
+    device_types: [chiller, pump, cooling_tower, cdu, crah, valve, energy_monitor, sensor, transformer]
     description: One alarm point. instance carries the vendor alarm name - a key per vendor alarm would make the registry unmaintainable and the UI incomparable across makes.
 
   # -------------------------------------------------------------------- power
@@ -839,7 +839,7 @@ metrics:
     stale_after_s: 300
     hot: true
     group: power
-    device_types: [energy_monitor, pdu, rpp, ups]
+    device_types: [energy_monitor, pdu, rpp, ups, transformer]
     description: RMS current. instance is the phase or the branch circuit.
 
   - key: line_frequency
@@ -949,7 +949,7 @@ metrics:
     stale_after_s: 300
     hot: true
     group: power
-    device_types: [switchgear, mcc, mpp, generator, ups]
+    device_types: [switchgear, mcc, mpp, generator, ups, transformer]
     description: Load as a percentage of the device rating. The number capacity planning is actually written against, and the device knows its own nameplate where the DCIM may not.
 
   - key: phase_imbalance_pct
@@ -997,6 +997,55 @@ metrics:
     group: power
     device_types: [ups]
     description: Remaining battery capacity against nameplate. Degrades over years, so it trends rather than alarms.
+
+  # --- the service transformer's tank monitor (docs/27 §8c.2, S3 2b) ---
+  - key: oil_temperature
+    display_name: Top-Oil Temperature
+    unit: C
+    value_type: gauge
+    aggregation: max
+    min_valid: -40
+    max_valid: 150
+    stale_after_s: 900
+    hot: true
+    group: power
+    device_types: [transformer]
+    description: >-
+      Top-oil temperature of an oil-immersed transformer, from the RTD in the
+      tank's thermometer pocket. Where IEC 60076-7's thermal model starts.
+      The monitor's own relay is usually set at 85 C alarm, 95-105 C trip.
+
+  - key: winding_temperature
+    display_name: Winding Hot-Spot
+    unit: C
+    value_type: gauge
+    aggregation: max
+    min_valid: -40
+    max_valid: 200
+    stale_after_s: 900
+    hot: true
+    group: power
+    device_types: [transformer]
+    description: >-
+      The winding hot-spot from the monitor's thermal image - top oil plus a
+      CT-heated gradient, which is how a WTI works. 98 C continuous is the
+      loading guide's design hot-spot for normal ageing; relays are usually
+      105 C alarm, 115-120 C trip.
+
+  - key: tap_position
+    display_name: Tap Position
+    unit: ratio
+    value_type: gauge
+    aggregation: last
+    min_valid: 0
+    max_valid: 35
+    stale_after_s: 900
+    group: power
+    device_types: [transformer]
+    description: >-
+      The tap changer's position. Off-circuit on a distribution unit (set at
+      commissioning, moved de-energised), on-load on a larger one; a number
+      that changes on its own is a number worth looking at.
 
   - key: battery_temperature
     display_name: Battery Temperature

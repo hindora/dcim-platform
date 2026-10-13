@@ -232,6 +232,17 @@ function Condition({ m, unit }: { m: PlantMachine; unit: Unit }) {
   if (m.coolant_c !== null && m.coolant_c !== undefined) {
     bits.push(<span key="c">coolant {conv(m.coolant_c, unit)!.toFixed(0)} {deg}</span>);
   }
+  if (m.oil_c !== null && m.oil_c !== undefined) {
+    bits.push(<span key="oil" className={m.oil_c >= 85 ? 'warn' : undefined}>
+      oil {conv(m.oil_c, unit)!.toFixed(0)} {deg}</span>);
+  }
+  if (m.winding_c !== null && m.winding_c !== undefined) {
+    bits.push(<span key="wnd" className={m.winding_c >= 105 ? 'warn' : undefined}>
+      winding {conv(m.winding_c, unit)!.toFixed(0)} {deg}</span>);
+  }
+  if (m.tap_position !== null && m.tap_position !== undefined) {
+    bits.push(<span key="tap">tap {m.tap_position.toFixed(0)}</span>);
+  }
   if (m.thd_pct !== null && m.thd_pct !== undefined) {
     bits.push(<span key="thd" className={m.thd_pct > 5 ? 'warn' : undefined}>
       THD {m.thd_pct.toFixed(1)} %</span>);
@@ -312,7 +323,7 @@ const FAMILIES: {
   { key: 'valves', title: 'Valves', types: ['valve'], columns: valves },
   { key: 'instruments', title: 'Instruments', types: ['sensor'], columns: instruments },
   { key: 'electrical', title: 'Electrical',
-    types: ['utility_feed', 'switchgear', 'ats', 'ups', 'generator', 'mcc', 'mpp',
+    types: ['transformer', 'utility_feed', 'switchgear', 'ats', 'ups', 'generator', 'mcc', 'mpp',
             'energy_monitor'],
     columns: electrical },
   { key: 'carried', title: 'Distribution and gateways',

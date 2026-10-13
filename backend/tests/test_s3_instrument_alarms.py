@@ -20,6 +20,8 @@ def test_each_instrument_condition_is_filed_with_the_thing_that_fails():
         "battery_temp_high": tx.POWER, "battery_temp_critical": tx.POWER,
         "bulk_fuel_low": tx.POWER, "bulk_fuel_critical": tx.POWER,
         "makeup_water_low": tx.COOLING, "makeup_water_critical": tx.COOLING,
+        "transformer_oil_temp_high": tx.POWER, "transformer_oil_temp_critical": tx.POWER,
+        "transformer_winding_temp_high": tx.POWER, "transformer_winding_temp_critical": tx.POWER,
     }
     for alarm_type, category in cases.items():
         # Whatever the sensor's role says, the type decides.
@@ -27,7 +29,8 @@ def test_each_instrument_condition_is_filed_with_the_thing_that_fails():
 
 
 def test_the_thresholds_are_threshold_crossings_and_the_door_is_not():
-    for t in ("hydrogen_high", "battery_temp_critical", "bulk_fuel_low", "makeup_water_critical"):
+    for t in ("hydrogen_high", "battery_temp_critical", "bulk_fuel_low", "makeup_water_critical",
+              "transformer_oil_temp_high", "transformer_winding_temp_critical"):
         assert t in tx.THRESHOLD_CROSSINGS
     assert "door_held_open" not in tx.THRESHOLD_CROSSINGS
 
@@ -38,4 +41,10 @@ def test_the_registry_carries_the_instrument_keys_for_sensors():
     assert "sensor" in METRICS["battery_temperature"].device_types
     assert "sensor" in METRICS["fuel_level_pct"].device_types
     assert METRICS["door_open"].value_type == "bool" and METRICS["door_open"].group == "security"
+
+
+def test_the_registry_knows_the_transformer_monitor():
+    for key in ("oil_temperature", "winding_temperature", "tap_position", "load_pct", "current"):
+        assert "transformer" in METRICS[key].device_types, key
+    assert METRICS["oil_temperature"].group == "power"
     assert tx.BY_METRIC_GROUP["security"] == tx.SECURITY

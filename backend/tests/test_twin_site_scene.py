@@ -90,6 +90,12 @@ UNITS = [
 ]
 
 
+# One contact, on the hall's door, reading closed with nothing open against it.
+DOORS = [{"id": "door-ha", "room_id": "hall", "level": "1", "floor_x": 0.3, "floor_y": 12.2,
+          "rotation_deg": 180, "open": False, "at": "2026-10-13T09:00:00+00:00",
+          "max_severity": "CLEAR"}]
+
+
 def _scene(monkeypatch, racks=RACKS, units=UNITS):
     async def building(_s, _dc):
         return SITE
@@ -97,8 +103,12 @@ def _scene(monkeypatch, racks=RACKS, units=UNITS):
     async def blocks(_s, _dc):
         return racks, units
 
+    async def doors(_s, _dc):
+        return DOORS
+
     monkeypatch.setattr(rack_repo, "site_building", building)
     monkeypatch.setattr(rack_repo, "site_blocks", blocks)
+    monkeypatch.setattr(rack_repo, "site_doors", doors)
     return asyncio.run(service.site_scene(None, "dc1"))
 
 
@@ -115,9 +125,11 @@ def test_racks_and_plant_land_in_their_rooms(monkeypatch):
     assert ups.equipment[0].facing_deg == 90 and ups.equipment[0].h_m == 2.0
 
 
-def test_the_fabric_and_doors_are_present_and_empty_until_s3(monkeypatch):
+def test_the_fabric_is_empty_without_spaces_and_the_doors_carry_their_contacts(monkeypatch):
     out = _scene(monkeypatch)
-    assert out.fabric == [] and out.doors == []
+    assert out.fabric == []
+    assert [(d.device_id, d.room_id, d.open, d.max_severity) for d in out.doors] == [
+        ("door-ha", "hall", False, "CLEAR")]
     assert [lv.name for lv in out.levels] == ["G", "1"]
     assert out.model_dump()["rooms"][0]["racks"][0]["x"] == 1.2
 

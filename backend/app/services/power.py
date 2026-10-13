@@ -45,6 +45,7 @@ _CRITICAL_TYPES = frozenset({
 # Gear whose own load is worth reporting fleet-wide.
 _SUPPLY_TYPES = frozenset({
     "utility_feed", "generator", "switchgear", "ats", "ups", "mcc", "mpp", "rpp",
+    "transformer",
 })
 
 # A hop in this state breaks the path through it.

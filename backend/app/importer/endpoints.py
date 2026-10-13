@@ -56,6 +56,8 @@ GNMI_TYPES = frozenset({"switch", "router"})
 # without signal.
 MODBUS_NATIVE_TYPES = frozenset({
     "utility_feed", "switchgear", "mcc", "mpp", "generator", "ats", "ups",
+    # The transformer's tank monitor: its own Ethernet port on the BMS plane.
+    "transformer",
 })
 
 # Plant header probes, by the prefix of their name. Mirrors _PROBE_ROLES in

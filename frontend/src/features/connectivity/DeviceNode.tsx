@@ -28,6 +28,7 @@ const FILL: Record<string, string> = {
   load_balancer: 'var(--node-lb)',
   oob_switch: 'var(--node-oob)',
   utility_feed: 'var(--node-utility-feed)',
+  transformer: 'var(--node-transformer)',
   switchgear: 'var(--node-switchgear)',
   mcc: 'var(--node-mcc)',
   ats: 'var(--node-ats)',
@@ -58,7 +59,7 @@ export const fillOf = (t: string) => FILL[t] ?? 'var(--node-default)';
 type Klass = 'power' | 'cooling' | 'net' | 'it' | 'sensor';
 
 const KLASS: Record<string, Klass> = {
-  utility_feed: 'power', switchgear: 'power', generator: 'power', ats: 'power',
+  utility_feed: 'power', transformer: 'power', switchgear: 'power', generator: 'power', ats: 'power',
   ups: 'power', rpp: 'power', pdu: 'power', mcc: 'power', mpp: 'power',
   energy_monitor: 'power',
   chiller: 'cooling', cooling_tower: 'cooling', crah: 'cooling', cdu: 'cooling',

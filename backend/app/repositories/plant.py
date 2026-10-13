@@ -48,8 +48,8 @@ PLANT_TYPES = ["crah", "cdu", "pump", "valve", "chiller", "cooling_tower"]
 #: dashes that drills into racks the room does not have.
 FACILITY_TYPES = [
     "ups", "generator", "switchgear", "ats", "mcc", "mpp", "energy_monitor",
-    "utility_feed", "sensor", "bacnet_router", "modbus_gateway", "pdu",
-    "rpp", "oob_switch",
+    "utility_feed", "transformer", "sensor", "bacnet_router", "modbus_gateway",
+    "pdu", "rpp", "oob_switch",
 ]
 
 #: Both populations, for the queries that do not care which is which.

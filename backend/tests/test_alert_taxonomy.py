@@ -314,6 +314,8 @@ NON_TRAP_ALARM_TYPES = frozenset({
     "battery_temp_high", "battery_temp_critical",
     "bulk_fuel_low", "bulk_fuel_critical",
     "makeup_water_low", "makeup_water_critical",
+    "transformer_oil_temp_high", "transformer_oil_temp_critical",
+    "transformer_winding_temp_high", "transformer_winding_temp_critical",
 })
 
 

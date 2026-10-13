@@ -38,6 +38,7 @@ from app.schemas import (
     ThermalPlane,
     TwinCompound,
     TwinDevice,
+    TwinDoor,
     TwinFrameInfo,
     TwinHistoryRange,
     TwinLevel,
@@ -505,6 +506,7 @@ async def site_scene(session: AsyncSession, datacenter_id: str) -> TwinSiteScene
         return None
     b = site.get("building") or {}
     racks, units = await rack_repo.site_blocks(session, datacenter_id)
+    doors = await rack_repo.site_doors(session, datacenter_id)
     racks_by_room: dict[str, list[TwinSiteRack]] = {}
     for r in racks:
         racks_by_room.setdefault(r["room_id"], []).append(TwinSiteRack(
@@ -532,6 +534,11 @@ async def site_scene(session: AsyncSession, datacenter_id: str) -> TwinSiteScene
         compound=(TwinCompound(outline_m=comp.get("outline_m"), extent_m=comp.get("extent_m"),
                                zones=outdoor)
                   if (comp or outdoor) else None),
+        doors=[TwinDoor(device_id=dr["id"], room_id=dr.get("room_id"), level=dr.get("level"),
+                        x_m=float(dr["floor_x"] or 0), y_m=float(dr["floor_y"] or 0),
+                        facing_deg=_f(dr.get("rotation_deg")), open=dr.get("open"),
+                        max_severity=dr.get("max_severity") or "CLEAR")
+               for dr in doors],
         levels=[TwinLevel(name=str(lv["name"]), ordinal=int(lv.get("ordinal") or 0),
                           elevation_m=float(lv.get("elevation_m") or 0))
                 for lv in b.get("levels") or []],

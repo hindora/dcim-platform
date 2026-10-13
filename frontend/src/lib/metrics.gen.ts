@@ -81,6 +81,9 @@ export type MetricKey =
   | 'demand_peak_power'
   | 'battery_runtime'
   | 'battery_health_pct'
+  | 'oil_temperature'
+  | 'winding_temperature'
+  | 'tap_position'
   | 'battery_temperature'
   | 'coolant_temperature'
   | 'fuel_level_pct'
@@ -828,6 +831,33 @@ export const METRICS: Record<MetricKey, MetricDef> = {
     aggregation: 'min',
     minValid: 0,
     maxValid: 100,
+    staleAfterS: 900, hot: false,
+    group: 'power',
+  },
+  'oil_temperature': {
+    key: 'oil_temperature', displayName: 'Top-Oil Temperature'.replace(/^'|'$/g, ''),
+    unit: 'C', valueType: 'gauge',
+    aggregation: 'max',
+    minValid: -40,
+    maxValid: 150,
+    staleAfterS: 900, hot: true,
+    group: 'power',
+  },
+  'winding_temperature': {
+    key: 'winding_temperature', displayName: 'Winding Hot-Spot'.replace(/^'|'$/g, ''),
+    unit: 'C', valueType: 'gauge',
+    aggregation: 'max',
+    minValid: -40,
+    maxValid: 200,
+    staleAfterS: 900, hot: true,
+    group: 'power',
+  },
+  'tap_position': {
+    key: 'tap_position', displayName: 'Tap Position'.replace(/^'|'$/g, ''),
+    unit: 'ratio', valueType: 'gauge',
+    aggregation: 'last',
+    minValid: 0,
+    maxValid: 35,
     staleAfterS: 900, hot: false,
     group: 'power',
   },

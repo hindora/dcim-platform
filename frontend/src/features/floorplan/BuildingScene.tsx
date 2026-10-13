@@ -2,7 +2,7 @@ import { MapControls, OrbitControls, OrthographicCamera, PerspectiveCamera } fro
 import { useThree, type ThreeEvent } from '@react-three/fiber';
 import { useEffect, useMemo, useRef, type ElementRef } from 'react';
 import * as THREE from 'three';
-import type { TwinRoom, TwinSiteScene, TwinSpace } from '../../api/client';
+import type { TwinDoor, TwinRoom, TwinSiteScene, TwinSpace } from '../../api/client';
 import { alarmColor, resolveColor } from './colors';
 import { labelTexture, type HoverTip } from './Scene';
 
@@ -158,6 +158,22 @@ export default function BuildingScene(p: BuildingSceneProps) {
     return new THREE.BufferGeometry().setFromPoints(pts);
   }, [site, compound, cx, cz]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => () => fence?.dispose(), [fence]);
+  // The contacts, by the room whose opening they watch. A room with one door
+  // and one contact is every room the simulator exports; a second contact on
+  // the same room would take the first here, which is still that room's door.
+  const doorsByRoom = useMemo(() => {
+    const m = new Map<string, TwinDoor>();
+    for (const d of scene.doors ?? []) if (d.room_id && !m.has(d.room_id)) m.set(d.room_id, d);
+    return m;
+  }, [scene.doors]);
+  const doorOf = (f: TwinSpace) => (f.room_id ? doorsByRoom.get(f.room_id) : undefined);
+  const doorText = (f: TwinSpace, d: TwinDoor | undefined) => {
+    const name = f.name ?? 'Door';
+    if (!d) return `${name}${f.attrs?.monitored ? ' · monitored by the BMS, no contact reading yet' : ' · opening, drawing only'}`;
+    const state = d.open == null ? 'contact not reporting' : d.open ? 'open' : 'closed';
+    const sev = d.max_severity !== 'CLEAR' ? ` · ${d.max_severity.toLowerCase()} alarm open` : '';
+    return `${name} · ${state}${sev}`;
+  };
   const fabricGeos = useMemo(() => (!site ? (scene.fabric ?? [])
     .filter((f) => f.polygon_m.length >= 3)
     .map((f) => ({ f, geo: f.kind === 'door' || f.kind === 'entrance' ? null : flat(f.polygon_m), bb: bboxOf(f.polygon_m),
@@ -286,13 +302,12 @@ export default function BuildingScene(p: BuildingSceneProps) {
               <meshStandardMaterial color={tones.raised} roughness={1} transparent opacity={0.85} side={THREE.DoubleSide} depthWrite={false} />
             </mesh>
           ) : (
-            // A door opening: a short bar on the wall, a shade darker when the BMS watches it.
-            <mesh position={[X((bb.x0 + bb.x1) / 2), elev + 0.08, Z((bb.y0 + bb.y1) / 2)]}
-                  onPointerOver={(ev) => { ev.stopPropagation(); tip(ev, `${f.name ?? 'Door'}${f.attrs?.monitored ? ' · monitored by the BMS (contact not yet exported)' : ' · opening, drawing only'}`); }}
-                  onPointerOut={() => onTip(null)}>
-              <boxGeometry args={[Math.max(0.2, bb.x1 - bb.x0), 0.16, Math.max(0.2, bb.y1 - bb.y0)]} />
-              <meshStandardMaterial color={f.attrs?.monitored ? tones.ink : tones.faint} roughness={1} />
-            </mesh>
+            // A door opening: a short bar on the wall. With a contact on it the bar
+            // is the leaf - it swings open when the contact says so, and a held-open
+            // alarm colours it.
+            <DoorLeaf f={f} bb={bb} elev={elev} door={doorOf(f)} X={X} Z={Z} tones={tones}
+                      onOver={(ev) => { ev.stopPropagation(); tip(ev, doorText(f, doorOf(f))); }}
+                      onOut={() => onTip(null)} />
           )}
           {geo && LABELLED_FABRIC.has(f.kind) && (
             <Label text={f.name ?? f.kind} ink={tones.inkMuted} bg={tones.raised}
@@ -387,6 +402,38 @@ function RoomVolume({ room: r, e, h, X, Z, tones, dim, hot, quiet, flat, onOver,
           <spriteMaterial map={label} depthTest={false} transparent />
         </sprite>
       )}
+    </group>
+  );
+}
+
+/** The leaf of a door opening. Closed it lies in the wall; open it stands
+ *  at 75 degrees into the room, hinged at one end, the way a plan drawing
+ *  shows a door. Ink when the contact reads closed, accent when open, the
+ *  alarm colour when held open long enough to be one. */
+function DoorLeaf({ f, bb, elev, door, X, Z, tones, onOver, onOut }: {
+  f: TwinSpace; bb: { x0: number; y0: number; x1: number; y1: number }; elev: number;
+  door: TwinDoor | undefined; X: (x: number) => number; Z: (y: number) => number;
+  tones: { ink: string; faint: string; accent: string; sev: (s: string) => string };
+  onOver: (ev: ThreeEvent<PointerEvent>) => void; onOut: () => void;
+}) {
+  const w = Math.max(0.2, bb.x1 - bb.x0), d = Math.max(0.2, bb.y1 - bb.y0);
+  const alongX = w >= d;                       // the opening runs east-west
+  const len = alongX ? w : d;
+  const open = door?.open === true;
+  const colour = !door ? (f.attrs?.monitored ? tones.ink : tones.faint)
+    : door.max_severity !== 'CLEAR' ? tones.sev(door.max_severity)
+    : open ? tones.accent : tones.ink;
+  // Hinge at the opening's west (or north) end; the leaf swings into the
+  // room, which for a corridor door is away from the corridor - south of
+  // an east-west opening, east of a north-south one.
+  const swing = open ? (75 * Math.PI) / 180 : 0;
+  return (
+    <group position={[X(alongX ? bb.x0 : (bb.x0 + bb.x1) / 2), elev + 0.08, Z(alongX ? (bb.y0 + bb.y1) / 2 : bb.y0)]}
+           rotation-y={alongX ? -swing : Math.PI / 2 - swing}>
+      <mesh position={[len / 2, 0, 0]} onPointerOver={onOver} onPointerOut={onOut}>
+        <boxGeometry args={[len, open ? 0.6 : 0.16, 0.16]} />
+        <meshStandardMaterial color={colour} roughness={1} />
+      </mesh>
     </group>
   );
 }

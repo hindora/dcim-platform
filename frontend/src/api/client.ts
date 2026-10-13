@@ -2946,6 +2946,11 @@ export interface PlantMachine {
   /** Engine coolant. On a standby set this is the jacket-water heater holding
    *  the block ready, not the air around it. */
   coolant_c?: number | null;
+  /** A service transformer's tank monitor: top oil, the winding hot-spot
+   *  from its thermal image, and where the tap changer stands. */
+  oil_c?: number | null;
+  winding_c?: number | null;
+  tap_position?: number | null;
   /** What the duty figure is a share OF: rated cooling, fan speed, pump
    *  speed, or valve travel. One column, four meanings, said per row. */
   duty_of: string;
@@ -3380,6 +3385,8 @@ export interface FacilityMachine {
   status: string | null; running: boolean | null;
   /** What the machine's own binaries say it is doing, in plain words. */
   state_label?: string | null;
+  /** A service transformer's tank monitor. */
+  oil_c?: number | null; winding_c?: number | null; tap_position?: number | null;
   verdict: string; why?: string | null;
   monitored: boolean; alarms_open: number;
   /** Consumption. Only ever set on a machine that BURNS power. */
