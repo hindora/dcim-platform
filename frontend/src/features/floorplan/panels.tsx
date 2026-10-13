@@ -162,11 +162,16 @@ export function RoomPanel({ plan, devices, kpi, thermal, vents, indices, field }
  *  RCI and RTI are Herrlin's, SHI/RHI Sharma's; the counts are shown so a
  *  perfect score from two sensors reads as exactly that. */
 /** The building rung's panel (docs/27 §8b): the site's numbers, then its rooms by level. */
-export function BuildingPanel({ scene, kpi, hover, onHover, onEnter }: {
+export function BuildingPanel({ scene, kpi, hover, onHover, onEnter, rung = 'building', onEnterBuilding }: {
   scene: TwinSiteScene; kpi?: SiteKpi; hover: string | null;
   onHover: (id: string | null) => void; onEnter: (id: string) => void;
+  /** At the site rung the panel leads with the building and the compound. */
+  rung?: 'site' | 'building'; onEnterBuilding?: () => void;
 }) {
   const levels = [...scene.levels].sort((a, b) => b.ordinal - a.ordinal);
+  const outdoorRooms = scene.rooms.filter((r) => (r.level ?? '').toLowerCase() === 'site');
+  const zones = (scene.compound?.zones ?? []).filter((z) => !z.room_id && z.kind !== 'fence');
+  const word = (k: string) => k.replace(/_/g, ' ');
   const racks = scene.rooms.reduce((a, r) => a + r.rack_count, 0);
   const devices = scene.rooms.reduce((a, r) => a + r.device_count, 0);
   const pct = (v: number | null | undefined, note?: string | null) =>
@@ -189,7 +194,43 @@ export function BuildingPanel({ scene, kpi, hover, onHover, onEnter }: {
           ? <>{fmtT(w.dry_bulb_c)}{w.humidity_pct != null && <span className="muted"> · {Math.round(w.humidity_pct)} % RH</span>}</>
           : <span className="muted">{w?.note ?? '–'}</span>} />
       </Section>
-      <Section title="Rooms" open>
+      {rung === 'site' && (
+        <Section title="Compound" open>
+          <div className="bld-rooms">
+            <ul>
+              <li>
+                <button type="button" className={hover === '__building__' ? 'is-current' : undefined} onClick={onEnterBuilding}
+                        onMouseEnter={() => onHover('__building__')} onMouseLeave={() => onHover(null)}>
+                  <span className="swatch" style={{ background: 'var(--text-muted)' }} aria-hidden />
+                  <span className="name">{scene.name}</span>
+                  <span className="muted">{scene.levels.length} levels</span>
+                  <span className="count">{scene.rooms.filter((r) => (r.level ?? '').toLowerCase() !== 'site').length} rooms</span>
+                </button>
+              </li>
+              {outdoorRooms.map((r) => (
+                <li key={r.id}>
+                  <button type="button" className={hover === r.id ? 'is-current' : undefined}
+                          onClick={() => onEnter(r.id)} onMouseEnter={() => onHover(r.id)} onMouseLeave={() => onHover(null)}>
+                    <span className="swatch" style={{ background: alarmColor(r.max_severity, 0) }} aria-hidden />
+                    <span className="name">{r.name}</span>
+                    <span className="muted">outdoor</span>
+                    <span className="count">{r.device_count}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+            {zones.length > 0 && (
+              <ul className="bld-zones" aria-label="Drawing only">
+                {zones.map((z) => <li key={z.id}><span className="name">{z.name ?? word(z.kind)}</span><span className="muted">{word(z.kind)}</span></li>)}
+              </ul>
+            )}
+            {zones.length === 0 && outdoorRooms.length === 0 && (
+              <p className="muted bld-note">No compound in this import yet: the site is its building until the simulator's next export.</p>
+            )}
+          </div>
+        </Section>
+      )}
+      <Section title="Rooms" open={rung === 'building'}>
         <div className="bld-rooms">
           {levels.map((l) => {
             const rs = scene.rooms.filter((r) => r.level === l.name);

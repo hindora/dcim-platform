@@ -552,14 +552,27 @@ class TwinRoom(BaseModel):
 
 
 class TwinSpace(BaseModel):
-    """Building fabric with no state: corridor, lobby, dock, core, entrance,
-    wall, door opening (docs/27 §8b B5). Drawn grey, never coloured."""
+    """Building fabric or a compound zone, with no state of its own: corridor,
+    lobby, dock, core, door opening; fence, substation, generator yard, tanks
+    (docs/27 §8b B5, §8c C2). Drawn grey, never coloured."""
 
     id: str
     level: str | None = None
     kind: str
     name: str | None = None
     polygon_m: list[list[float]]
+    # Set when the zone is also an outdoor room (class "outdoor") - that room
+    # carries the equipment and the alarms.
+    room_id: str | None = None
+    attrs: dict[str, Any] = Field(default_factory=dict)
+
+
+class TwinCompound(BaseModel):
+    """The fenced site around the building (docs/27 §8c)."""
+
+    outline_m: list[list[float]] | None = None
+    extent_m: dict[str, float] | None = None
+    zones: list[TwinSpace] = Field(default_factory=list)
 
 
 class TwinDoor(BaseModel):
@@ -592,8 +605,10 @@ class TwinSiteScene(BaseModel):
     # Plan outline in building metres, [[x, y], ...]; None before geometry import.
     outline_m: list[list[float]] | None = None
     rooms: list[TwinRoom] = Field(default_factory=list)
-    # Empty until the simulator's S3 export (docs/27 §8b.3) supplies them.
+    # Indoor fabric and the compound arrive with floorplan 1.2 (docs/27 §8b.3,
+    # §8c.3); doors wait for the simulator's door contacts.
     fabric: list[TwinSpace] = Field(default_factory=list)
+    compound: TwinCompound | None = None
     doors: list[TwinDoor] = Field(default_factory=list)
 
 

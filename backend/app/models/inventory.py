@@ -121,6 +121,33 @@ class Aisle(Base):
     contained: Mapped[bool] = mapped_column(nullable=False, default=False)
 
 
+class Space(Base):
+    """Building fabric or a compound zone (migration 0102, docs/27 §8b/§8c).
+
+    Corridor, core, lobby, dock, door opening; fence, gate, road, apron,
+    substation, generator yard, tanks, pump house, telecom entrance. Drawn,
+    never coloured by state. A zone that holds equipment is also a room
+    (class `outdoor`), and `room_id` says which.
+    """
+
+    __tablename__ = "space"
+    __table_args__ = (UniqueConstraint("datacenter_id", "external_key", name="uq_space_key"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True,
+                                          default=uuid.uuid4)
+    datacenter_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("datacenter.id", ondelete="CASCADE"), nullable=False)
+    external_key: Mapped[str] = mapped_column(Text, nullable=False)
+    level: Mapped[str | None] = mapped_column(Text)            # a level, or "Site"
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    name: Mapped[str | None] = mapped_column(Text)
+    polygon_m: Mapped[list] = mapped_column(JSONB, nullable=False)
+    room_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("room.id", ondelete="SET NULL"))
+    attributes: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    source: Mapped[str] = mapped_column(Text, nullable=False, default="import")
+
+
 class Row(Base):
     # Named `rack_row` rather than `row`: `row` is a reserved word in SQL and
     # every hand-written query would need quoting.

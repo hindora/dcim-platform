@@ -1141,7 +1141,7 @@ async def plant(session: AsyncSession, view: str = "all") -> dict[str, Any]:
     # here", and half an answer sends somebody to the wrong room.
     in_rooms: dict[str, list[dict[str, Any]]] = {}
     for m in rows:
-        if m.get("room_class") == "facility" and m.get("room_id"):
+        if m.get("room_class") in ("facility", "outdoor") and m.get("room_id"):
             in_rooms.setdefault(m["room_id"], []).append(m)
     facility = [_facility_room(rid, ms) for rid, ms in in_rooms.items()]
     facility.sort(key=lambda r: (r["site_code"] or "", r["name"] or ""))

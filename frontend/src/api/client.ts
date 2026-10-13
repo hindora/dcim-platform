@@ -1833,8 +1833,14 @@ export interface TwinRoom {
   racks?: TwinSiteRack[];
   equipment?: TwinSiteUnit[];
 }
-/** Building fabric with no state: corridor, lobby, dock, core, entrance, wall, door opening. Drawn grey. */
-export interface TwinSpace { id: string; level?: string | null; kind: string; name?: string | null; polygon_m: number[][] }
+/** Building fabric or a compound zone with no state of its own: corridor, lobby, dock, core, door opening;
+ *  fence, substation, generator yard, tanks. Drawn grey. `room_id` is set when the zone is also an outdoor room. */
+export interface TwinSpace {
+  id: string; level?: string | null; kind: string; name?: string | null; polygon_m: number[][];
+  room_id?: string | null; attrs?: Record<string, unknown> & { room?: string; monitored?: boolean; external?: boolean };
+}
+/** The fenced site around the building (docs/27 §8c). */
+export interface TwinCompound { outline_m?: number[][] | null; extent_m?: { width: number; depth: number } | null; zones: TwinSpace[] }
 /** A monitored door: a BMS contact on a wall. */
 export interface TwinDoor {
   device_id: string; room_id?: string | null; level?: string | null; x_m: number; y_m: number;
@@ -1846,8 +1852,9 @@ export interface TwinSiteScene {
   levels: TwinLevel[];
   outline_m?: number[][] | null;
   rooms: TwinRoom[];
-  /** Empty until the simulator's S3 export supplies them. */
+  /** Indoor fabric and the compound arrive with floorplan 1.2; doors wait for the simulator's door contacts. */
   fabric?: TwinSpace[];
+  compound?: TwinCompound | null;
   doors?: TwinDoor[];
 }
 

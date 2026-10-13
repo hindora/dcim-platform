@@ -36,6 +36,7 @@ from app.schemas import (
     RoomExtent,
     ThermalField,
     ThermalPlane,
+    TwinCompound,
     TwinDevice,
     TwinFrameInfo,
     TwinHistoryRange,
@@ -47,6 +48,7 @@ from app.schemas import (
     TwinSiteRack,
     TwinSiteScene,
     TwinSiteUnit,
+    TwinSpace,
 )
 from app.services import endpoint_config, floorplan
 from app.services import poll_profile_config as cfg
@@ -517,9 +519,19 @@ async def site_scene(session: AsyncSession, datacenter_id: str) -> TwinSiteScene
             w_m=float(u["footprint_w_m"]), d_m=float(u["footprint_d_m"]),
             h_m=_f(u.get("height_m")), facing_deg=_f(u.get("rotation_deg")),
             max_severity=u.get("max_severity") or "CLEAR"))
+    spaces = [TwinSpace(id=sp["external_key"], level=sp.get("level"), kind=sp["kind"],
+                        name=sp.get("name"), polygon_m=sp["polygon_m"] or [],
+                        room_id=sp.get("room_id"), attrs=sp.get("attributes") or {})
+              for sp in site.get("spaces") or []]
+    comp = site.get("compound") or {}
+    outdoor = [sp for sp in spaces if (sp.level or "").lower() == "site"]
     return TwinSiteScene(
         datacenter_id=site["id"], code=site["code"], name=site["name"],
         floor_to_floor_m=b.get("floor_to_floor_m"),
+        fabric=[sp for sp in spaces if (sp.level or "").lower() != "site"],
+        compound=(TwinCompound(outline_m=comp.get("outline_m"), extent_m=comp.get("extent_m"),
+                               zones=outdoor)
+                  if (comp or outdoor) else None),
         levels=[TwinLevel(name=str(lv["name"]), ordinal=int(lv.get("ordinal") or 0),
                           elevation_m=float(lv.get("elevation_m") or 0))
                 for lv in b.get("levels") or []],

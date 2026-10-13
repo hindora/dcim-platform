@@ -2,24 +2,37 @@ import { MapControls, OrbitControls, OrthographicCamera, PerspectiveCamera } fro
 import { useThree, type ThreeEvent } from '@react-three/fiber';
 import { useEffect, useMemo, useRef, type ElementRef } from 'react';
 import * as THREE from 'three';
-import type { TwinRoom, TwinSiteScene } from '../../api/client';
+import type { TwinRoom, TwinSiteScene, TwinSpace } from '../../api/client';
 import { alarmColor, resolveColor } from './colors';
 import { labelTexture, type HoverTip } from './Scene';
 
 /**
- * The building rung (docs/27 §8b): a site's levels stacked in the same scene
- * the room viewer uses, at coarse detail. Slabs at their elevation, each room
- * as a translucent volume coloured by its worst open condition, its racks as
- * blocks and its floor-standing plant at true footprint. Nothing per device,
- * no air, no paths - those belong to the room, one click down.
+ * The site and building rungs (docs/27 §8b, §8c), drawn in the same scene
+ * the room viewer uses, at coarse detail.
  *
- * Coordinates: the import's site frame, metres, x east and y south on the
- * plan, elevation up. The scene is centred on the rooms' bounding box.
+ * Site rung: the fenced compound as a ground plane with its zones flat and
+ * grey (road, apron, substation, tanks, pump house, telecom entrances), the
+ * outdoor rooms with their equipment at true footprint, and the building as a
+ * translucent shell over its levels - click it to go in.
+ *
+ * Building rung: level slabs at their elevation with the indoor fabric
+ * (corridor, core, lobby, dock, door openings) flat on them, each room a
+ * translucent volume coloured by its worst open condition, its racks as
+ * blocks and its plant at true footprint. Nothing per device, no air, no
+ * paths - those belong to the room, one click down.
+ *
+ * Fabric and zones carry no state and are never coloured by it. Coordinates
+ * are the import's plan frame, metres, x east and y south, elevation up; the
+ * building's bounding box is the origin at both rungs so the camera moves
+ * between them without the world shifting.
  */
+
+export type Rung = 'site' | 'building';
 
 export interface BuildingSceneProps {
   scene: TwinSiteScene;
-  /** Focus one level: the others fade and stop answering the pointer. */
+  rung: Rung;
+  /** Focus one level (building rung): the others fade and stop answering the pointer. */
   level: string | null;
   mode: '3d' | 'plan';
   resetTick: number;
@@ -27,6 +40,7 @@ export interface BuildingSceneProps {
   hover: string | null;
   onHover: (roomId: string | null) => void;
   onEnter: (roomId: string) => void;
+  onEnterBuilding: () => void;
   onTip: (t: HoverTip | null) => void;
 }
 
@@ -34,53 +48,84 @@ const SLAB = 0.3;
 const RACK_H = 2.0;
 const RACK_W = 0.6, RACK_D = 1.2;
 const DEFAULT_F2F = 5.0;
+const OUTDOOR = 'site';
+/** Zones worth a name on the ground; the rest are read from their shape. */
+const LABELLED_ZONES = new Set(['substation', 'generator_yard', 'cooling_yard', 'fuel_tank', 'water_tank',
+                                'fire_pump_house', 'guardhouse', 'parking', 'apron', 'gate']);
+const LABELLED_FABRIC = new Set(['lobby', 'dock', 'core']);
+const ZONE_WORD: Record<string, string> = {
+  generator_yard: 'generator yard', fuel_tank: 'bulk fuel', water_tank: 'makeup water', fire_pump_house: 'fire pumps',
+  telecom_entrance: 'telecom entrance', cooling_yard: 'cooling yard',
+};
 
 type Placed = TwinRoom & { origin_x_m: number; origin_y_m: number; width_m: number; depth_m: number };
 const placed = (r: TwinRoom): r is Placed =>
   r.origin_x_m != null && r.origin_y_m != null && r.width_m != null && r.depth_m != null && r.width_m > 0 && r.depth_m > 0;
+const isOutdoor = (lv: string | null | undefined) => (lv ?? '').toLowerCase() === OUTDOOR;
+const bboxOf = (poly: number[][]) => ({
+  x0: Math.min(...poly.map((p) => p[0])), y0: Math.min(...poly.map((p) => p[1])),
+  x1: Math.max(...poly.map((p) => p[0])), y1: Math.max(...poly.map((p) => p[1])),
+});
 
 export default function BuildingScene(p: BuildingSceneProps) {
-  const { scene, level, mode, resetTick, themeTick, hover, onHover, onEnter, onTip } = p;
+  const { scene, rung, level, mode, resetTick, themeTick, hover, onHover, onEnter, onEnterBuilding, onTip } = p;
   const { invalidate } = useThree();
+  const site = rung === 'site';
 
   const tones = useMemo(() => ({
     bg: resolveColor('var(--bg-inset)'), ink: resolveColor('var(--text)'), inkMuted: resolveColor('var(--text-muted)'),
     faint: resolveColor('var(--text-faint)'), raised: resolveColor('var(--bg-raised)'),
-    border: resolveColor('var(--border-strong)'), accent: resolveColor('var(--accent)'),
+    border: resolveColor('var(--border)'), accent: resolveColor('var(--accent)'),
     slab: resolveColor('var(--border-strong)'),
     sev: (s: string) => resolveColor(alarmColor(s, 0)),
   }), [themeTick]);
 
   const levels = useMemo(() => [...scene.levels].sort((a, b) => a.ordinal - b.ordinal), [scene.levels]);
-  const rooms = useMemo(() => scene.rooms.filter(placed), [scene.rooms]);
-  const elevOf = (r: TwinRoom) => r.level_elevation_m ?? levels.find((l) => l.name === r.level)?.elevation_m ?? 0;
+  const allRooms = useMemo(() => scene.rooms.filter(placed), [scene.rooms]);
+  // Indoor rooms belong to the building; outdoor rooms stand in the compound
+  // and are drawn at the site rung only.
+  const rooms = useMemo(() => allRooms.filter((r) => !isOutdoor(r.level)), [allRooms]);
+  const yards = useMemo(() => (site ? allRooms.filter((r) => isOutdoor(r.level)) : []), [allRooms, site]);
+  const elevOf = (r: TwinRoom) => (isOutdoor(r.level) ? 0 : r.level_elevation_m ?? levels.find((l) => l.name === r.level)?.elevation_m ?? 0);
   const f2f = scene.floor_to_floor_m
     ?? (levels.length > 1 ? Math.min(...levels.slice(1).map((l, i) => l.elevation_m - levels[i].elevation_m)) : DEFAULT_F2F);
   const roomH = Math.max(2.4, f2f - SLAB - 0.2);
 
-  // Frame: the rooms' bounding box, centred.
+  // Frame: the building's bounding box is the origin at both rungs.
   const box = useMemo(() => {
     const pts = scene.outline_m?.length ? scene.outline_m.map(([x, y]) => [x, y] as const) : [];
     for (const r of rooms) pts.push([r.origin_x_m, r.origin_y_m], [r.origin_x_m + r.width_m, r.origin_y_m + r.depth_m]);
     if (!pts.length) return { x0: 0, y0: 0, x1: 10, y1: 10 };
-    return { x0: Math.min(...pts.map((p) => p[0])), y0: Math.min(...pts.map((p) => p[1])),
-             x1: Math.max(...pts.map((p) => p[0])), y1: Math.max(...pts.map((p) => p[1])) };
+    return { x0: Math.min(...pts.map((q) => q[0])), y0: Math.min(...pts.map((q) => q[1])),
+             x1: Math.max(...pts.map((q) => q[0])), y1: Math.max(...pts.map((q) => q[1])) };
   }, [scene.outline_m, rooms]);
   const cx = (box.x0 + box.x1) / 2, cz = (box.y0 + box.y1) / 2;
   const X = (x: number) => x - cx, Z = (y: number) => y - cz;
-  const span = Math.max(box.x1 - box.x0, box.y1 - box.y0, 8);
+  const compound = scene.compound ?? null;
+  const ground = useMemo(() => {
+    const poly = compound?.outline_m?.length ? compound.outline_m : null;
+    return poly ? bboxOf(poly) : { x0: box.x0 - 12, y0: box.y0 - 10, x1: box.x1 + 12, y1: box.y1 + 10 };
+  }, [compound, box]);
+  const frame = site ? ground : box;
+  const span = Math.max(frame.x1 - frame.x0, frame.y1 - frame.y0, 8);
   const top = (levels.length ? levels[levels.length - 1].elevation_m : 0) + roomH;
 
-  // In PLAN there is one level on the table: the focused one, else the one
-  // with the most racks.
-  const planLevel = level ?? rooms.reduce<{ name: string | null; n: number }>((best, r) => {
+  // In PLAN there is one level on the table: at the site rung the ground, at
+  // the building rung the focused level, else the one with the most racks.
+  const planLevel = site ? (levels[0]?.name ?? null) : level ?? rooms.reduce<{ name: string | null; n: number }>((best, r) => {
     const n = rooms.filter((x) => x.level === r.level).reduce((a, x) => a + x.rack_count, 0);
     return n > best.n ? { name: r.level ?? null, n } : best;
   }, { name: levels[0]?.name ?? null, n: -1 }).name;
   const shown = (lv: string | null | undefined) => (mode === 'plan' ? lv === planLevel : true);
-  const dimmed = (lv: string | null | undefined) => (mode === '3d' && level != null && lv !== level);
+  const dimmed = (lv: string | null | undefined) => (!site && mode === '3d' && level != null && lv !== level);
 
-  // Slab footprints: the site outline when it exists, else the level's rooms.
+  // A flat polygon in the plan frame, as a shape geometry lying on the ground.
+  const flat = (poly: number[][]) => {
+    const shape = new THREE.Shape(poly.map(([x, y]) => new THREE.Vector2(X(x), Z(y))));
+    return new THREE.ShapeGeometry(shape);
+  };
+
+  // Slab footprints: the building outline when it exists, else the level's rooms.
   const slabShapes = useMemo(() => levels.map((l) => {
     const rs = rooms.filter((r) => r.level === l.name);
     let pts: [number, number][];
@@ -96,13 +141,39 @@ export default function BuildingScene(p: BuildingSceneProps) {
   }).filter((s): s is NonNullable<typeof s> => s != null), [levels, rooms, scene.outline_m, cx, cz]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => () => slabShapes.forEach((s) => s.geo.dispose()), [slabShapes]);
 
+  // Ground, zones and fabric as flat geometries, rebuilt only when the data does.
+  const groundGeo = useMemo(() => (site ? flat([[ground.x0, ground.y0], [ground.x1, ground.y0], [ground.x1, ground.y1], [ground.x0, ground.y1]]) : null),
+    [site, ground, cx, cz]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => groundGeo?.dispose(), [groundGeo]);
+  const zoneGeos = useMemo(() => (site && compound ? compound.zones
+    .filter((z) => z.polygon_m.length >= 3 && z.kind !== 'fence' && !z.room_id)
+    .map((z) => ({ z, geo: flat(z.polygon_m), bb: bboxOf(z.polygon_m) })) : []),
+    [site, compound, cx, cz]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => zoneGeos.forEach((g) => g.geo.dispose()), [zoneGeos]);
+  const fence = useMemo(() => {
+    const f = site ? compound?.zones.find((z) => z.kind === 'fence') : null;
+    const poly = f?.polygon_m?.length ? f.polygon_m : compound?.outline_m ?? null;
+    if (!site || !poly) return null;
+    const pts = [...poly, poly[0]].map(([x, y]) => new THREE.Vector3(X(x), 0.03, Z(y)));
+    return new THREE.BufferGeometry().setFromPoints(pts);
+  }, [site, compound, cx, cz]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => fence?.dispose(), [fence]);
+  const fabricGeos = useMemo(() => (!site ? (scene.fabric ?? [])
+    .filter((f) => f.polygon_m.length >= 3)
+    .map((f) => ({ f, geo: f.kind === 'door' || f.kind === 'entrance' ? null : flat(f.polygon_m), bb: bboxOf(f.polygon_m),
+                   elev: levels.find((l) => l.name === f.level)?.elevation_m ?? 0 })) : []),
+    [site, scene.fabric, levels, cx, cz]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => fabricGeos.forEach((g) => g.geo?.dispose()), [fabricGeos]);
+  const shellGeo = useMemo(() => new THREE.BoxGeometry(box.x1 - box.x0, top, box.y1 - box.y0), [box, top]);
+  useEffect(() => () => shellGeo.dispose(), [shellGeo]);
+
   // Racks of the whole site as one instanced mesh, coloured by condition.
   const rackMesh = useRef<THREE.InstancedMesh | null>(null);
   const rackInstances = useMemo(() => {
     const out: { m: THREE.Matrix4; c: THREE.Color }[] = [];
     const tmp = new THREE.Object3D();
-    for (const r of rooms) {
-      if (!shown(r.level) || dimmed(r.level)) continue;
+    for (const r of [...rooms, ...yards]) {
+      if (!isOutdoor(r.level) && (!shown(r.level) || dimmed(r.level))) continue;
       const e = elevOf(r);
       for (const k of r.racks ?? []) {
         const w = k.w_m ?? RACK_W, d = k.d_m ?? RACK_D;
@@ -114,7 +185,7 @@ export default function BuildingScene(p: BuildingSceneProps) {
       }
     }
     return out;
-  }, [rooms, level, mode, tones, cx, cz]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [rooms, yards, level, mode, tones, cx, cz]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     const m = rackMesh.current;
     if (!m) return;
@@ -125,25 +196,79 @@ export default function BuildingScene(p: BuildingSceneProps) {
     invalidate();
   }, [rackInstances, invalidate]);
 
-  useEffect(() => { invalidate(); }, [hover, level, mode, themeTick, invalidate]);
+  useEffect(() => { invalidate(); }, [hover, level, mode, rung, themeTick, invalidate]);
 
   const tip = (e: ThreeEvent<PointerEvent>, text: string) => onTip({ x: e.nativeEvent.clientX, y: e.nativeEvent.clientY, text });
-  const roomText = (r: TwinRoom) => [r.name, r.level ? `level ${r.level}` : null,
-    r.room_class === 'white_space' ? 'white space' : r.room_class === 'support' ? 'support room' : 'plant room',
+  const roomText = (r: TwinRoom) => [r.name, isOutdoor(r.level) ? 'in the compound' : r.level ? `level ${r.level}` : null,
+    r.room_class === 'white_space' ? 'white space' : r.room_class === 'support' ? 'support room'
+      : r.room_class === 'outdoor' ? 'outdoor' : 'plant room',
     `${r.width_m} × ${r.depth_m} m`, r.rack_count ? `${r.rack_count} racks` : null, `${r.device_count} devices`,
     r.max_severity === 'CLEAR' ? 'no open alarms' : `${r.max_severity.toLowerCase()} alarm open`].filter(Boolean).join(' · ');
+  const zoneText = (z: TwinSpace) => `${z.name ?? ZONE_WORD[z.kind] ?? z.kind.replace(/_/g, ' ')} · ${ZONE_WORD[z.kind] ?? z.kind.replace(/_/g, ' ')} · drawing, no sensors`;
+  const buildingHot = hover === '__building__';
+  const buildingText = `${scene.name} · ${levels.length} levels · ${rooms.length} rooms · click to enter`;
+
+  const unitBoxes = (r: Placed) => (r.equipment ?? []).map((u) => {
+    const h = u.h_m ?? 1.5;
+    return (
+      <mesh key={u.id} position={[X(r.origin_x_m + u.x), elevOf(r) + h / 2, Z(r.origin_y_m + u.y)]}
+            rotation-y={-((u.facing_deg ?? 0) * Math.PI) / 180}
+            onPointerOver={(ev) => { ev.stopPropagation(); tip(ev, `${u.name} · ${u.device_type.replace(/_/g, ' ')} · ${u.w_m} × ${u.d_m} m${u.max_severity !== 'CLEAR' ? ` · ${u.max_severity.toLowerCase()}` : ''}`); }}
+            onPointerOut={() => onTip(null)}>
+        <boxGeometry args={[u.w_m, h, u.d_m]} />
+        <meshStandardMaterial color={u.max_severity === 'CLEAR' ? tones.faint : tones.sev(u.max_severity)} roughness={0.9} />
+      </mesh>
+    );
+  });
 
   return (
     <>
       <color attach="background" args={[tones.bg]} />
       <hemisphereLight args={['#ffffff', '#b9bec6', 0.9]} />
       <directionalLight position={[span * 0.6, top + 14, span * 0.4]} intensity={0.55} />
-      <Cameras mode={mode} span={span} top={top} planElev={levels.find((l) => l.name === planLevel)?.elevation_m ?? 0}
-               W={box.x1 - box.x0} D={box.y1 - box.y0} resetTick={resetTick} />
+      <Cameras mode={mode} span={span} top={site ? top * 0.6 : top} planElev={site ? 0 : levels.find((l) => l.name === planLevel)?.elevation_m ?? 0}
+               W={frame.x1 - frame.x0} D={frame.y1 - frame.y0} cx={X((frame.x0 + frame.x1) / 2)} cz={Z((frame.y0 + frame.y1) / 2)}
+               resetTick={resetTick} rung={rung} />
 
+      {/* --- the compound (site rung) --- */}
+      {groundGeo && (
+        <mesh geometry={groundGeo} rotation-x={Math.PI / 2} position={[0, -0.02, 0]}>
+          <meshStandardMaterial color={tones.raised} roughness={1} side={THREE.DoubleSide} />
+        </mesh>
+      )}
+      {fence && (
+        <line>
+          <primitive object={fence} attach="geometry" />
+          <lineBasicMaterial color={tones.inkMuted} />
+        </line>
+      )}
+      {zoneGeos.map(({ z, geo, bb }) => (
+        <group key={z.id}>
+          <mesh geometry={geo} rotation-x={Math.PI / 2} position={[0, 0.01, 0]}
+                onPointerOver={(ev) => { ev.stopPropagation(); tip(ev, zoneText(z)); }} onPointerOut={() => onTip(null)}>
+            <meshStandardMaterial color={tones.slab} roughness={1} transparent opacity={z.kind === 'telecom_entrance' ? 0.75 : 0.62}
+                                  side={THREE.DoubleSide} depthWrite={false} />
+          </mesh>
+          {LABELLED_ZONES.has(z.kind) && (
+            <Label text={z.name ?? ZONE_WORD[z.kind] ?? z.kind} ink={tones.inkMuted} bg={tones.raised}
+                   x={X((bb.x0 + bb.x1) / 2)} y={0.4} z={Z((bb.y0 + bb.y1) / 2)} w={Math.min(5, Math.max(2.5, (bb.x1 - bb.x0) * 0.6))} />
+          )}
+        </group>
+      ))}
+      {yards.map((r) => (
+        <group key={r.id}>
+          <RoomVolume room={r} e={0} h={0.25} X={X} Z={Z} tones={tones} dim={false} hot={hover === r.id} flat
+                      onOver={(ev) => { onHover(r.id); tip(ev, roomText(r)); }}
+                      onOut={() => { onHover(null); onTip(null); }}
+                      onClick={() => onEnter(r.id)} />
+          {unitBoxes(r)}
+        </group>
+      ))}
+
+      {/* --- the building --- */}
       {slabShapes.map(({ level: l, geo }) => shown(l.name) && (
         <mesh key={l.name} geometry={geo} rotation-x={Math.PI / 2} position={[0, l.elevation_m, 0]}>
-          <meshStandardMaterial color={tones.slab} roughness={1} transparent opacity={dimmed(l.name) ? 0.1 : 0.75} />
+          <meshStandardMaterial color={tones.slab} roughness={1} transparent opacity={dimmed(l.name) ? 0.1 : site ? 0.55 : 0.75} />
         </mesh>
       ))}
       {slabShapes.map(({ level: l, geo }) => shown(l.name) && !dimmed(l.name) && (
@@ -152,10 +277,33 @@ export default function BuildingScene(p: BuildingSceneProps) {
           <lineBasicMaterial color={tones.faint} />
         </lineSegments>
       ))}
+      {fabricGeos.map(({ f, geo, bb, elev }) => shown(f.level) && !dimmed(f.level) && (
+        <group key={f.id}>
+          {geo ? (
+            <mesh geometry={geo} rotation-x={Math.PI / 2} position={[0, elev + 0.02, 0]}
+                  onPointerOver={(ev) => { ev.stopPropagation(); tip(ev, `${f.name ?? f.kind} · level ${f.level} · drawing, no sensors`); }}
+                  onPointerOut={() => onTip(null)}>
+              <meshStandardMaterial color={tones.raised} roughness={1} transparent opacity={0.85} side={THREE.DoubleSide} depthWrite={false} />
+            </mesh>
+          ) : (
+            // A door opening: a short bar on the wall, a shade darker when the BMS watches it.
+            <mesh position={[X((bb.x0 + bb.x1) / 2), elev + 0.08, Z((bb.y0 + bb.y1) / 2)]}
+                  onPointerOver={(ev) => { ev.stopPropagation(); tip(ev, `${f.name ?? 'Door'}${f.attrs?.monitored ? ' · monitored by the BMS (contact not yet exported)' : ' · opening, drawing only'}`); }}
+                  onPointerOut={() => onTip(null)}>
+              <boxGeometry args={[Math.max(0.2, bb.x1 - bb.x0), 0.16, Math.max(0.2, bb.y1 - bb.y0)]} />
+              <meshStandardMaterial color={f.attrs?.monitored ? tones.ink : tones.faint} roughness={1} />
+            </mesh>
+          )}
+          {geo && LABELLED_FABRIC.has(f.kind) && (
+            <Label text={f.name ?? f.kind} ink={tones.inkMuted} bg={tones.raised}
+                   x={X((bb.x0 + bb.x1) / 2)} y={elev + 0.5} z={Z((bb.y0 + bb.y1) / 2)} w={2.6} />
+          )}
+        </group>
+      ))}
 
       {rooms.map((r) => shown(r.level) && (
         <RoomVolume key={r.id} room={r} e={elevOf(r)} h={roomH} X={X} Z={Z} tones={tones}
-                    dim={dimmed(r.level)} hot={hover === r.id}
+                    dim={dimmed(r.level)} hot={hover === r.id} quiet={site}
                     onOver={(ev) => { onHover(r.id); tip(ev, roomText(r)); }}
                     onOut={() => { onHover(null); onTip(null); }}
                     onClick={() => onEnter(r.id)} />
@@ -166,26 +314,52 @@ export default function BuildingScene(p: BuildingSceneProps) {
         <meshStandardMaterial roughness={0.85} />
       </instancedMesh>
 
-      {rooms.map((r) => shown(r.level) && !dimmed(r.level) && (r.equipment ?? []).map((u) => {
-        const h = u.h_m ?? 1.5;
-        return (
-          <mesh key={u.id} position={[X(r.origin_x_m + u.x), elevOf(r) + h / 2, Z(r.origin_y_m + u.y)]}
-                rotation-y={-((u.facing_deg ?? 0) * Math.PI) / 180}
-                onPointerOver={(ev) => { ev.stopPropagation(); tip(ev, `${u.name} · ${u.device_type.replace(/_/g, ' ')} · ${u.w_m} × ${u.d_m} m${u.max_severity !== 'CLEAR' ? ` · ${u.max_severity.toLowerCase()}` : ''}`); }}
-                onPointerOut={() => onTip(null)}>
-            <boxGeometry args={[u.w_m, h, u.d_m]} />
-            <meshStandardMaterial color={u.max_severity === 'CLEAR' ? tones.faint : tones.sev(u.max_severity)} roughness={0.9} />
+      {rooms.map((r) => shown(r.level) && !dimmed(r.level) && unitBoxes(r))}
+
+      {/* The building's shell: at the site rung it is the thing you click. */}
+      {site && mode === '3d' && (
+        <group position={[0, top / 2, 0]}>
+          <mesh geometry={shellGeo} onPointerOver={(ev) => { ev.stopPropagation(); onHover('__building__'); tip(ev, buildingText); }}
+                onPointerOut={() => { onHover(null); onTip(null); }}
+                onClick={(ev) => { ev.stopPropagation(); onEnterBuilding(); }}>
+            <meshStandardMaterial color={tones.inkMuted} transparent opacity={buildingHot ? 0.14 : 0.06} depthWrite={false} roughness={1} />
           </mesh>
-        );
-      }))}
+          <lineSegments>
+            <edgesGeometry args={[shellGeo]} />
+            <lineBasicMaterial color={buildingHot ? tones.accent : tones.inkMuted} />
+          </lineSegments>
+          <Label text={scene.name} ink={tones.ink} bg={tones.raised} x={0} y={top / 2 + 0.9} z={0} w={Math.min(6, (box.x1 - box.x0) * 0.4)} />
+        </group>
+      )}
+      {site && mode === 'plan' && (
+        <mesh geometry={shellGeo} position={[0, top / 2, 0]} onClick={(ev) => { ev.stopPropagation(); onEnterBuilding(); }}
+              onPointerOver={(ev) => { ev.stopPropagation(); onHover('__building__'); tip(ev, buildingText); }}
+              onPointerOut={() => { onHover(null); onTip(null); }}>
+          <meshBasicMaterial transparent opacity={buildingHot ? 0.08 : 0.001} depthWrite={false} />
+        </mesh>
+      )}
     </>
   );
 }
 
-function RoomVolume({ room: r, e, h, X, Z, tones, dim, hot, onOver, onOut, onClick }: {
+function Label({ text, ink, bg, x, y, z, w }: { text: string; ink: string; bg: string; x: number; y: number; z: number; w: number }) {
+  const tex = useMemo(() => labelTexture(text, ink, bg), [text, ink, bg]);
+  useEffect(() => () => tex.dispose(), [tex]);
+  return (
+    <sprite position={[x, y, z]} renderOrder={10} scale={[w, w / 4, 1]}>
+      <spriteMaterial map={tex} depthTest={false} transparent />
+    </sprite>
+  );
+}
+
+function RoomVolume({ room: r, e, h, X, Z, tones, dim, hot, quiet, flat, onOver, onOut, onClick }: {
   room: Placed; e: number; h: number; X: (x: number) => number; Z: (y: number) => number;
   tones: { ink: string; inkMuted: string; raised: string; accent: string; border: string; sev: (s: string) => string };
   dim: boolean; hot: boolean;
+  /** At the site rung the rooms sit inside the shell: no labels, lower alpha. */
+  quiet?: boolean;
+  /** An outdoor room: a footprint on the ground, not a volume. */
+  flat?: boolean;
   onOver: (ev: ThreeEvent<PointerEvent>) => void; onOut: () => void; onClick: () => void;
 }) {
   const colour = r.max_severity === 'CLEAR' ? tones.inkMuted : tones.sev(r.max_severity);
@@ -195,19 +369,20 @@ function RoomVolume({ room: r, e, h, X, Z, tones, dim, hot, onOver, onOut, onCli
   const x = X(r.origin_x_m + r.width_m / 2), z = Z(r.origin_y_m + r.depth_m / 2);
   const geo = useMemo(() => new THREE.BoxGeometry(r.width_m, h, r.depth_m), [r.width_m, h, r.depth_m]);
   useEffect(() => () => geo.dispose(), [geo]);
+  const inert = dim || quiet;
   return (
     <group position={[x, e + h / 2, z]}>
-      <mesh geometry={geo} onPointerOver={dim ? undefined : (ev) => { ev.stopPropagation(); onOver(ev); }}
-            onPointerOut={dim ? undefined : onOut} onClick={dim ? undefined : (ev) => { ev.stopPropagation(); onClick(); }}
-            raycast={dim ? () => null : undefined}>
+      <mesh geometry={geo} onPointerOver={inert ? undefined : (ev) => { ev.stopPropagation(); onOver(ev); }}
+            onPointerOut={inert ? undefined : onOut} onClick={inert ? undefined : (ev) => { ev.stopPropagation(); onClick(); }}
+            raycast={inert ? () => null : undefined}>
         <meshStandardMaterial color={colour} transparent depthWrite={false}
-                              opacity={dim ? 0.03 : hot ? 0.38 : alarmed ? 0.3 : 0.16} roughness={1} />
+                              opacity={dim ? 0.03 : hot ? 0.38 : quiet ? (alarmed ? 0.22 : 0.08) : alarmed ? 0.3 : flat ? 0.22 : 0.16} roughness={1} />
       </mesh>
       <lineSegments>
         <edgesGeometry args={[geo]} />
-        <lineBasicMaterial color={hot ? tones.accent : alarmed ? colour : tones.inkMuted} transparent opacity={dim ? 0.15 : 0.9} />
+        <lineBasicMaterial color={hot ? tones.accent : alarmed ? colour : tones.inkMuted} transparent opacity={dim ? 0.15 : quiet ? 0.5 : 0.9} />
       </lineSegments>
-      {!dim && (
+      {!dim && !quiet && (
         <sprite position={[0, h / 2 + 0.6, 0]} renderOrder={10} scale={[Math.min(4, r.width_m * 0.6), Math.min(4, r.width_m * 0.6) / 4, 1]}>
           <spriteMaterial map={label} depthTest={false} transparent />
         </sprite>
@@ -216,8 +391,9 @@ function RoomVolume({ room: r, e, h, X, Z, tones, dim, hot, onOver, onOut, onCli
   );
 }
 
-function Cameras({ mode, span, top, planElev, W, D, resetTick }: {
-  mode: '3d' | 'plan'; span: number; top: number; planElev: number; W: number; D: number; resetTick: number;
+function Cameras({ mode, span, top, planElev, W, D, cx, cz, resetTick, rung }: {
+  mode: '3d' | 'plan'; span: number; top: number; planElev: number; W: number; D: number; cx: number; cz: number;
+  resetTick: number; rung: Rung;
 }) {
   const orbit = useRef<ElementRef<typeof OrbitControls>>(null);
   const map = useRef<ElementRef<typeof MapControls>>(null);
@@ -225,34 +401,34 @@ function Cameras({ mode, span, top, planElev, W, D, resetTick }: {
   useEffect(() => {
     if (mode === '3d') {
       camera.up.set(0, 1, 0);
-      camera.position.set(span * 0.95, top + span * 0.55, span * 1.15);
-      orbit.current?.target.set(0, top / 2, 0);
+      camera.position.set(cx + span * 0.8, top + span * 0.5, cz + span * 0.95);
+      orbit.current?.target.set(cx, top / 2, cz);
       orbit.current?.update();
     } else {
-      camera.position.set(0, planElev + 60, 0);
+      camera.position.set(cx, planElev + 60, cz);
       camera.up.set(0, 0, -1);
-      camera.lookAt(0, planElev, 0);
+      camera.lookAt(cx, planElev, cz);
       const cam = camera as THREE.OrthographicCamera;
       if (cam.isOrthographicCamera) {
         cam.zoom = Math.min(size.width / (W + 4), size.height / (D + 4));
         cam.updateProjectionMatrix();
       }
-      map.current?.target.set(0, planElev, 0);
+      map.current?.target.set(cx, planElev, cz);
       map.current?.update();
     }
     invalidate();
-  }, [mode, resetTick, camera, span, top, planElev, W, D, size.width, size.height, invalidate]);
+  }, [mode, rung, resetTick, camera, span, top, planElev, W, D, cx, cz, size.width, size.height, invalidate]);
   if (mode === 'plan') {
     return (
       <>
         <OrthographicCamera makeDefault near={0.1} far={500} position={[0, 60, 0]} />
-        <MapControls ref={map} makeDefault enableRotate={false} screenSpacePanning minZoom={3} maxZoom={200} />
+        <MapControls ref={map} makeDefault enableRotate={false} screenSpacePanning minZoom={2} maxZoom={200} />
       </>
     );
   }
   return (
     <>
-      <PerspectiveCamera makeDefault fov={45} near={0.1} far={800} />
+      <PerspectiveCamera makeDefault fov={45} near={0.1} far={1000} />
       <OrbitControls ref={orbit} makeDefault enableDamping={false} maxPolarAngle={Math.PI / 2.05}
                      minDistance={3} maxDistance={span * 5} />
     </>

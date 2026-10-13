@@ -71,6 +71,11 @@ class ImportReport:
     #: Racks an earlier import invented in plant rooms (a wall probe or a pipe
     #: sensor filed under rack_row/rack_num), now empty and removed.
     racks_pruned: int = 0
+    #: Fabric and compound zones written from floorplan 1.2 (docs/27 §8b/§8c).
+    spaces: int = 0
+    #: Import-sourced rooms the source no longer has and nothing stands in -
+    #: the Generator Room after it became the Generator Yard.
+    rooms_pruned: int = 0
     decommissioned: int = 0
     #: Devices this importer had swept for being absent, now back in
     #: the export and restored to the state they were swept from.
@@ -159,6 +164,7 @@ class TopologyImporter:
 
         for dev in devices:
             await self._ensure_placement(dev)
+        await self._seed_floorplan_rooms()
         for node in nodes:
             dev = node.get("device")
             if dev:
@@ -193,6 +199,8 @@ class TopologyImporter:
         self.report.racks_rated = await self._seed_rack_ratings()
 
         self.report.racks_pruned = await self._prune_plant_racks()
+        self.report.spaces = await self._seed_spaces()
+        self.report.rooms_pruned = await self._prune_vanished_rooms()
 
         log.info("import complete", **self.report.as_dict())
         return self.report
@@ -215,9 +223,91 @@ class TopologyImporter:
         fp = topology.get("floorplan") or {}
         self._buildings = fp.get("buildings") or {}
         self._rack_footprint = fp.get("rack_footprint") or {}
+        # floorplan 1.2: indoor fabric and the compound, keyed by datacenter.
+        # Absent from a 1.1 export, and then nothing is written or pruned.
+        self._fabric = fp.get("fabric") or {}
+        self._compound = fp.get("compound") or {}
         if rooms:
             log.info("floor plan read", rooms=len(self._floorplan),
-                     buildings=len(self._buildings))
+                     buildings=len(self._buildings), fabric=len(self._fabric),
+                     compound=len(self._compound))
+
+    async def _seed_floorplan_rooms(self) -> None:
+        """Create the rooms the floor plan draws that no device stands in yet.
+
+        The support rooms arrive empty (a store before stock, an operations
+        room before its probe), and a room only a device could create would
+        never exist. Only for datacentres this export's devices have already
+        established - the floor plan does not invent sites."""
+        for (dc, room) in sorted(self._floorplan):
+            if dc in self._dc and (dc, room) not in self._room:
+                await self._ensure_placement({"datacenter": dc, "room": room,
+                                              "device_type": "rpp", "mount": "floor"})
+
+    async def _seed_spaces(self) -> int:
+        """Write the fabric and the compound zones (floorplan 1.2), replacing
+        the last import's; record the compound's outline on the datacenter."""
+        n = 0
+        for dc_code, dc_id in self._dc.items():
+            rows = spaces_for(dc_code, self._fabric, self._compound)
+            if not rows and dc_code not in self._fabric and dc_code not in self._compound:
+                continue
+            keys = []
+            for sp in rows:
+                keys.append(sp["key"])
+                room_id = self._room.get((dc_code, sp["room"])) if sp.get("room") else None
+                await self.s.execute(text("""
+                    INSERT INTO space (datacenter_id, external_key, level, kind, name,
+                                       polygon_m, room_id, attributes, source)
+                    VALUES (CAST(:dc AS uuid), :key, :level, :kind, :name,
+                            CAST(:poly AS jsonb), CAST(:room AS uuid),
+                            CAST(:attrs AS jsonb), 'import')
+                    ON CONFLICT (datacenter_id, external_key) DO UPDATE
+                        SET level = EXCLUDED.level, kind = EXCLUDED.kind,
+                            name = EXCLUDED.name, polygon_m = EXCLUDED.polygon_m,
+                            room_id = EXCLUDED.room_id, attributes = EXCLUDED.attributes
+                """), {"dc": dc_id, "key": sp["key"], "level": sp["level"], "kind": sp["kind"],
+                       "name": sp["name"], "poly": json.dumps(sp["polygon_m"]),
+                       "room": room_id, "attrs": json.dumps(sp["attrs"])})
+                n += 1
+            await self.s.execute(text("""
+                DELETE FROM space WHERE datacenter_id = CAST(:dc AS uuid)
+                                    AND source = 'import' AND NOT (external_key = ANY(:keys))
+            """), {"dc": dc_id, "keys": keys})
+            comp = self._compound.get(dc_code) or {}
+            if comp.get("outline_m"):
+                await self.s.execute(text("""
+                    UPDATE datacenter SET attributes = attributes || CAST(:attrs AS jsonb)
+                     WHERE id = CAST(:dc AS uuid)
+                """), {"dc": dc_id, "attrs": json.dumps({"compound": {
+                    "outline_m": comp.get("outline_m"), "extent_m": comp.get("extent_m")}})})
+        return n
+
+    async def _prune_vanished_rooms(self) -> int:
+        """Drop import-sourced rooms the floor plan no longer has and nothing
+        stands in. A room renamed at the source (Generator Room → Generator
+        Yard) otherwise lingers as an empty row forever. Hand-corrected rooms,
+        rooms with devices, racks or a store, and sites whose export carries
+        no floor plan are never touched."""
+        n = 0
+        for dc_code, dc_id in self._dc.items():
+            if not any(dc == dc_code for dc, _ in self._floorplan):
+                continue
+            keep = [rid for (dc, _), rid in self._room.items() if dc == dc_code]
+            rows = (await self.s.execute(text("""
+                DELETE FROM room rm
+                 WHERE rm.datacenter_id = CAST(:dc AS uuid)
+                   AND rm.geometry_source IS DISTINCT FROM 'manual'
+                   AND NOT (rm.id::text = ANY(:keep))
+                   AND NOT EXISTS (SELECT 1 FROM device d WHERE d.room_id = rm.id)
+                   AND NOT EXISTS (SELECT 1 FROM rack_row rr WHERE rr.room_id = rm.id)
+                   AND NOT EXISTS (SELECT 1 FROM store st WHERE st.room_id = rm.id)
+                RETURNING rm.name
+            """), {"dc": dc_id, "keep": keep})).all()
+            for r in rows:
+                log.info("room pruned", datacenter=dc_code, room=r[0])
+            n += len(rows)
+        return n
 
     def _level_elevation(self, dc: str, level: str | None) -> float | None:
         """Height of a level's finished floor above grade, from the building the
@@ -283,7 +373,7 @@ class TopologyImporter:
             DELETE FROM rack r
              USING rack_row rr, room rm
              WHERE rr.id = r.row_id AND rm.id = rr.room_id
-               AND rm.room_class = 'facility'
+               AND rm.room_class IN ('facility', 'outdoor')
                AND NOT (r.id::text = ANY(:keep))
                AND r.geometry_source IS DISTINCT FROM 'manual'
                AND NOT EXISTS (SELECT 1 FROM device d WHERE d.rack_id = r.id)
@@ -630,6 +720,7 @@ class TopologyImporter:
         devices = [n["device"] for n in topology.get("nodes") or [] if n.get("device")]
         for dev in devices:
             await self._ensure_placement(dev)
+        await self._seed_floorplan_rooms()
         for dev in devices:
             if not dev.get("id"):
                 continue
@@ -649,6 +740,8 @@ class TopologyImporter:
                    "fx": dev.get("floor_x"), "fy": dev.get("floor_y"), **_geometry(dev)})
             self.report.devices += res.rowcount or 0
         self.report.racks_pruned = await self._prune_plant_racks()
+        self.report.spaces = await self._seed_spaces()
+        self.report.rooms_pruned = await self._prune_vanished_rooms()
         log.info("geometry import complete", **self.report.as_dict())
         return self.report
 
@@ -1440,6 +1533,37 @@ _FACILITY_TYPES = frozenset({
 
 #: Mounts that put a device IN a rack (simulator core/equipment_geometry).
 _RACK_MOUNTS = frozenset({"rack", "zero_u", "rack_front", "rack_rear"})
+
+
+def spaces_for(dc_code: str, fabric: dict, compound: dict) -> list[dict[str, Any]]:
+    """The space rows one datacentre's floorplan 1.2 blocks describe.
+
+    Indoor fabric keeps its level; compound zones are on level "Site". A
+    space that stands for an outdoor room names it ("DC1/Generator Yard") so
+    the importer can point the row at the room. Pure, so it can be tested
+    without a database."""
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    items = [(s, None) for s in (fabric.get(dc_code) or [])]
+    items += [(z, "Site") for z in ((compound.get(dc_code) or {}).get("zones") or [])]
+    for s, forced_level in items:
+        key = str(s.get("id") or "").strip()
+        poly = s.get("polygon_m")
+        if not key or key in seen or not isinstance(poly, list) or len(poly) < 2:
+            continue
+        seen.add(key)
+        attrs = dict(s.get("attrs") or {})
+        room_ref = attrs.get("room")
+        room = None
+        if isinstance(room_ref, str) and "/" in room_ref:
+            rdc, room = room_ref.split("/", 1)
+            if rdc != dc_code:
+                room = None
+        out.append({"key": key, "level": forced_level or s.get("level"),
+                    "kind": str(s.get("kind") or "space"), "name": s.get("name"),
+                    "polygon_m": [[float(x), float(y)] for x, y in poly],
+                    "room": room, "attrs": attrs})
+    return out
 
 
 def _is_rack_mounted(dev: dict) -> bool:

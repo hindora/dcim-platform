@@ -33,8 +33,8 @@ import './viewer.css';
 const Stage = lazy(() => import('./Stage'));
 const BuildingStage = lazy(() => import('./BuildingStage'));
 
-/** The ladder (docs/27 §8b): the building, then one room. */
-type Rung = 'building' | 'room';
+/** The ladder (docs/27 §8b, §8c): the site, its building, then one room. */
+type Rung = 'site' | 'building' | 'room';
 const SITE_KEY = 'dcim.viewer.site';
 const rememberedSite = (): string => { try { return localStorage.getItem(SITE_KEY) ?? ''; } catch { return ''; } };
 const rememberSite = (id: string) => { try { localStorage.setItem(SITE_KEY, id); } catch { /* private window */ } };
@@ -78,7 +78,8 @@ export function FloorPlanView() {
   const known = rooms.data?.items.some((r) => r.id === requested) ?? false;
   const roomId = known ? requested : '';
   const room = rooms.data?.items.find((r) => r.id === roomId);
-  const rung: Rung = roomId ? 'room' : 'building';
+  // `b=1` is the building; nothing is the site (the compound), the top of the ladder.
+  const rung: Rung = roomId ? 'room' : params.get('b') === '1' ? 'building' : 'site';
   const sitesQ = useQuery<SitesOverview>({ queryKey: ['sites-overview'], queryFn: () => api.sitesOverview(), staleTime: 60_000 });
   const sites = useMemo(() => sitesQ.data?.sites ?? [], [sitesQ.data]);
   const siteParam = params.get('site') || '';
@@ -94,7 +95,7 @@ export function FloorPlanView() {
   });
   const siteKpi = useQuery({
     queryKey: ['site-kpi', siteId], queryFn: () => api.siteKpi(siteId),
-    enabled: Boolean(siteId) && rung === 'building', staleTime: 60_000, refetchInterval: 120_000,
+    enabled: Boolean(siteId) && rung !== 'room', staleTime: 60_000, refetchInterval: 120_000,
   });
   const [hoverRoom, setHoverRoom] = useState<string | null>(null);
   // Entering pushes history, so the back button climbs back to the building.
@@ -106,14 +107,23 @@ export function FloorPlanView() {
   const leaveRoom = () => {
     const next = new URLSearchParams(params);
     next.delete('room');
+    next.set('b', '1');
     if (siteId) next.set('site', siteId);
     for (const k of TIME_KEYS) next.delete(k);
     if (next.get('view') === 'fpv') next.delete('view');
     setParams(next);
   };
+  const enterBuilding = () => { const next = new URLSearchParams(params); next.set('b', '1'); if (siteId) next.set('site', siteId); setParams(next); };
+  const leaveBuilding = () => {
+    const next = new URLSearchParams(params);
+    next.delete('b'); next.delete('level'); next.delete('room');
+    if (siteId) next.set('site', siteId);
+    for (const k of TIME_KEYS) next.delete(k);
+    setParams(next);
+  };
   const pickSite = (id: string) => {
     const next = new URLSearchParams(params);
-    next.set('site', id); next.delete('room'); next.delete('level');
+    next.set('site', id); next.delete('room'); next.delete('level'); next.delete('b');
     for (const k of TIME_KEYS) next.delete(k);
     setParams(next, { replace: true });
   };
@@ -353,7 +363,7 @@ export function FloorPlanView() {
   const focused = focus && data ? data.plan.racks.find((r) => r.id === focus) : null;
   const focusTiers = focused && data ? rackTiers(data.devices.filter((d) => d.rack_id === focused.id), focused.u_height ?? 42) : null;
 
-  if (rooms.isLoading || (rung === 'building' && sitesQ.isLoading)) return <p className="muted viewer-fallback">Loading…</p>;
+  if (rooms.isLoading || (rung !== 'room' && sitesQ.isLoading)) return <p className="muted viewer-fallback">Loading…</p>;
 
   const siteRooms = (rooms.data?.items ?? []).filter((r) => !siteId || !r.datacenter_id || r.datacenter_id === siteId);
   const roomSelect = (
@@ -364,7 +374,9 @@ export function FloorPlanView() {
   );
   const bs = building.data;
   const roomLevel = roomId ? bs?.rooms.find((r) => r.id === roomId)?.level ?? null : null;
-  // The breadcrumb: site › level › room. Each crumb is a step up the ladder.
+  const roomIsOutdoor = roomId ? (bs?.rooms.find((r) => r.id === roomId)?.level ?? '').toLowerCase() === 'site' : false;
+  // The breadcrumb: site › compound › building · level › room. Each crumb is
+  // a step up the ladder; the one you are on is plain text.
   const crumbs = (
     <nav className="vw-crumbs" aria-label="Where you are">
       {sites.length > 1 ? (
@@ -374,27 +386,36 @@ export function FloorPlanView() {
       ) : (
         <span className="vw-crumb is-text">{sites[0]?.code ?? bs?.code ?? 'Site'}</span>
       )}
-      {rung === 'room' && <>
+      <span className="vw-crumb-sep" aria-hidden>›</span>
+      {rung === 'site'
+        ? <span className="vw-crumb is-text">Compound</span>
+        : <button type="button" className="vw-crumb" onClick={leaveBuilding} title="Back to the compound">Compound</button>}
+      {rung === 'building' && <>
         <span className="vw-crumb-sep" aria-hidden>›</span>
-        <button type="button" className="vw-crumb" onClick={leaveRoom} title="Back to the building">
-          {bs?.name ?? 'Building'}{roomLevel ? ` · Level ${roomLevel}` : ''}</button>
+        <span className="vw-crumb is-text">{bs?.name ?? 'Building'}{level ? ` · Level ${level}` : ''}</span>
+      </>}
+      {rung === 'room' && <>
+        {!roomIsOutdoor && <>
+          <span className="vw-crumb-sep" aria-hidden>›</span>
+          <button type="button" className="vw-crumb" onClick={leaveRoom} title="Back to the building">
+            {bs?.name ?? 'Building'}{roomLevel ? ` · Level ${roomLevel}` : ''}</button>
+        </>}
         <span className="vw-crumb-sep" aria-hidden>›</span>
         {roomSelect}
-      </>}
-      {rung === 'building' && level && <>
-        <span className="vw-crumb-sep" aria-hidden>›</span>
-        <span className="vw-crumb is-text">Level {level}</span>
       </>}
     </nav>
   );
 
-  // --- the building rung ---------------------------------------------------
-  if (rung === 'building') {
+  // --- the site and building rungs ------------------------------------------
+  if (rung !== 'room') {
+    const atSite = rung === 'site';
     const bMode: '3d' | 'plan' = mode === 'plan' ? 'plan' : '3d';
     const levelNames = bs ? [...bs.levels].sort((a, b) => a.ordinal - b.ordinal).map((l) => l.name) : [];
     const rackTotal = bs?.rooms.reduce((a, r) => a + r.rack_count, 0) ?? 0;
     const devTotal = bs?.rooms.reduce((a, r) => a + r.device_count, 0) ?? 0;
     const alarmed = bs?.rooms.filter((r) => r.max_severity !== 'CLEAR').length ?? 0;
+    const outdoorRooms = bs?.rooms.filter((r) => (r.level ?? '').toLowerCase() === 'site').length ?? 0;
+    const zoneCount = bs?.compound?.zones.filter((z) => !z.room_id && z.kind !== 'fence').length ?? 0;
     const body = (
       <>
         <div className="vw-float vw-topleft">{crumbs}</div>
@@ -402,7 +423,7 @@ export function FloorPlanView() {
           {webgl && <Seg label="View" value={bMode} onChange={(m) => setParam('view', m)}
                          options={[{ key: '3d', label: '3D' }, { key: 'plan', label: 'PLAN' }]} />}
           {webgl && <button type="button" className="vw-icon" onClick={() => setResetTick((t) => t + 1)} title="Reset the camera">RESET</button>}
-          {levelNames.length > 1 && (
+          {!atSite && levelNames.length > 1 && (
             <Seg label="Level" value={level ?? 'all'}
                  onChange={(v) => { const next = new URLSearchParams(params); if (v === 'all') next.delete('level'); else next.set('level', v); setParams(next, { replace: true }); }}
                  options={[{ key: 'all', label: 'ALL' }, ...levelNames.map((n) => ({ key: n, label: /^\d+$/.test(n) ? `L${n}` : n.toUpperCase() }))]} />
@@ -413,12 +434,13 @@ export function FloorPlanView() {
                   onClick={() => setPanel(panel === 'info' ? null : 'info')}>INFO</button>
         </div>
         {panel && bs && (
-          <aside className="vw-panel" aria-label="Building information">
+          <aside className="vw-panel" aria-label={atSite ? 'Site information' : 'Building information'}>
             <div className="vw-panel-head">
-              <h3>Building</h3>
+              <h3>{atSite ? 'Site' : 'Building'}</h3>
               <button type="button" className="close" aria-label="Close" onClick={() => setPanel(null)}>×</button>
             </div>
-            <BuildingPanel scene={bs} kpi={siteKpi.data} hover={hoverRoom} onHover={setHoverRoom} onEnter={enterRoom} />
+            <BuildingPanel scene={bs} kpi={siteKpi.data} hover={hoverRoom} onHover={setHoverRoom} onEnter={enterRoom}
+                           rung={atSite ? 'site' : 'building'} onEnterBuilding={enterBuilding} />
           </aside>
         )}
         <div className="vw-legends"><Legend spec={legendFor('alarm')!} /></div>
@@ -430,10 +452,13 @@ export function FloorPlanView() {
           <span><span className="dot" style={{ background: building.isError ? 'var(--critical)' : alarmed ? 'var(--warn)' : 'var(--ok)' }} />
             {building.isError ? 'Not drawn' : bs ? `Live · ${alarmed ? `${alarmed} of ${bs.rooms.length} rooms with an open alarm` : 'no open alarms'}` : 'Loading'}</span>
           <span className="vw-jumps"><Link to="/world">World</Link><span>{bs?.name ?? ''}</span></span>
-          {bs && <span>{bs.levels.length} levels · {bs.rooms.length} rooms · {rackTotal} racks · {devTotal} devices</span>}
+          {bs && (atSite
+            ? <span>{bs.compound?.extent_m ? `${bs.compound.extent_m.width} × ${bs.compound.extent_m.depth} m · ` : ''}{bs.levels.length} levels · {bs.rooms.length - outdoorRooms} rooms{outdoorRooms ? ` · ${outdoorRooms} outdoor` : ''}{zoneCount ? ` · ${zoneCount} zones` : ''}</span>
+            : <span>{bs.levels.length} levels · {bs.rooms.length - outdoorRooms} rooms · {rackTotal} racks · {devTotal} devices</span>)}
           <span className="spacer" />
-          <span>{webgl ? (bMode === 'plan' ? 'Drag to pan · scroll to zoom · click a room to enter it' : 'Drag to orbit · scroll to zoom · click a room to enter it')
-            : 'Click a room to enter it'}</span>
+          <span>{webgl
+            ? (bMode === 'plan' ? 'Drag to pan · scroll to zoom' : 'Drag to orbit · scroll to zoom') + (atSite ? ' · click the building to enter it' : ' · click a room to enter it')
+            : atSite ? 'Choose the building or a room' : 'Click a room to enter it'}</span>
         </div>
       </>
     );
@@ -453,9 +478,9 @@ export function FloorPlanView() {
         <div className="viewer-stage">
           {bs && (
             <Suspense fallback={<p className="muted viewer-fallback">Loading the building…</p>}>
-              <BuildingStage scene={bs} level={level} mode={bMode} resetTick={resetTick} themeTick={themeTick}
-                             hover={hoverRoom} onHover={setHoverRoom} onEnter={enterRoom} onTip={setTip}
-                             label={`Building view of ${bs.name}`} />
+              <BuildingStage scene={bs} rung={atSite ? 'site' : 'building'} level={level} mode={bMode} resetTick={resetTick} themeTick={themeTick}
+                             hover={hoverRoom} onHover={setHoverRoom} onEnter={enterRoom} onEnterBuilding={enterBuilding} onTip={setTip}
+                             label={atSite ? `Site view of ${bs.name}` : `Building view of ${bs.name}`} />
             </Suspense>
           )}
           {building.isError && <p className="muted viewer-fallback">This site has no placed rooms yet. Import the floor plan first.</p>}

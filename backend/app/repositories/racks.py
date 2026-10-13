@@ -310,11 +310,17 @@ async def site_building(session: AsyncSession,
     """A site as a building: its levels and every room placed on one, with the
     counts and worst condition a building view colours a room by."""
     dc = (await session.execute(text("""
-        SELECT id::text, code, name, attributes->'building' AS building
+        SELECT id::text, code, name, attributes->'building' AS building,
+               attributes->'compound' AS compound
           FROM datacenter WHERE id = CAST(:dc AS uuid)
     """), {"dc": datacenter_id})).mappings().first()
     if dc is None:
         return None
+    spaces = (await session.execute(text("""
+        SELECT external_key, level, kind, name, polygon_m, room_id::text AS room_id, attributes
+          FROM space WHERE datacenter_id = CAST(:dc AS uuid)
+         ORDER BY level NULLS LAST, kind, name
+    """), {"dc": datacenter_id})).mappings().all()
     rooms = (await session.execute(text("""
         WITH placed AS (
             -- A device's room is its rack's room, or its own when it stands on
@@ -339,7 +345,7 @@ async def site_building(session: AsyncSession,
          GROUP BY rm.id
          ORDER BY rm.level_elevation_m NULLS LAST, rm.origin_x_m NULLS LAST, rm.name
     """), {"dc": datacenter_id})).mappings().all()
-    return {**dict(dc), "rooms": [dict(r) for r in rooms]}
+    return {**dict(dc), "rooms": [dict(r) for r in rooms], "spaces": [dict(s) for s in spaces]}
 
 
 async def site_blocks(session: AsyncSession, datacenter_id: str

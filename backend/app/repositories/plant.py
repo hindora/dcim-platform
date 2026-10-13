@@ -64,7 +64,7 @@ ALL_TYPES = PLANT_TYPES + FACILITY_TYPES
 #: every one of them.
 _FACILITY_IN_FACILITY_ROOMS = """
     ( (d.device_type = ANY(:cool_types) AND NOT :facility_only)
-      OR (d.device_type = ANY(:all_types) AND rm.room_class = 'facility') )
+      OR (d.device_type = ANY(:all_types) AND rm.room_class IN ('facility', 'outdoor')) )
 """
 
 #: Which keys belong to which population. A chiller publishes no battery
@@ -184,12 +184,12 @@ _LATEST = text("""
        AND ( (d.device_type = ANY(:cool_types) AND m.key = ANY(:cool_keys)
               AND NOT :facility_only)
           OR (d.device_type = ANY(:all_types) AND m.key = ANY(:fac_keys)
-              AND rm.room_class = 'facility')
+              AND rm.room_class IN ('facility', 'outdoor'))
           -- A cooling machine standing in a facility room still needs its
           -- cooling points: a chiller is read the same way whichever view
           -- asked for it.
           OR (d.device_type = ANY(:cool_types) AND m.key = ANY(:cool_keys)
-              AND rm.room_class = 'facility') )
+              AND rm.room_class IN ('facility', 'outdoor')) )
      ORDER BY t.device_id, m.key, t.instance, t.ts DESC
 """)
 

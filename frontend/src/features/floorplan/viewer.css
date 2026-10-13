@@ -291,3 +291,7 @@
 .bld-room:focus { outline: none; }
 .bld-room-label { font-size: 0.9px; fill: var(--bg); font-family: var(--sans); font-weight: 600; text-anchor: middle;
   dominant-baseline: middle; pointer-events: none; }
+.bld-zones { margin-top: 6px !important; }
+.bld-zones li { display: flex; justify-content: space-between; gap: 8px; padding: 3px 4px; font-size: 0.78rem;
+  color: var(--text-muted); border-bottom: 1px dashed var(--border); }
+.bld-zones .name { color: var(--text); }
