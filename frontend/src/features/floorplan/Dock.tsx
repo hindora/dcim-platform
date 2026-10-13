@@ -7,7 +7,7 @@ import { useEffect, useState } from 'react';
  * it is looked at - the top centre keeps only 3D / PLAN / FPV.
  *
  * Two kinds of button, told apart by a rule between them: the panels
- * (information, filters, layers, search), which are toggles whose pressed
+ * (navigate, information, filters, layers, search), which are toggles whose pressed
  * state is the panel that is open; and the tools under the rule - reset the
  * camera, swap the temperature unit - which act at once.
  *
@@ -15,7 +15,7 @@ import { useEffect, useState } from 'react';
  * fold is a per-browser convenience kept in local storage.
  */
 
-export type DockItem = 'info' | 'filters' | 'layers' | 'search';
+export type DockItem = 'navigate' | 'info' | 'filters' | 'layers' | 'search';
 
 export interface DockTool {
   id: string;
@@ -34,6 +34,10 @@ function Glyph({ kind }: { kind: DockItem | 'fold' | 'unfold' | 'reset' }) {
   switch (kind) {
     case 'fold': return <svg {...common}><path d="M12 5l-5 5 5 5" /></svg>;
     case 'unfold': return <svg {...common}><path d="M8 5l5 5-5 5" /></svg>;
+    case 'navigate': return (
+      <svg {...common}><rect x="7.5" y="2.5" width="5" height="4" rx="1" /><rect x="2" y="13" width="5" height="4" rx="1" /><rect x="13" y="13" width="5" height="4" rx="1" />
+        <path d="M10 6.5V10M4.5 13v-3h11v3" /></svg>
+    );
     case 'info': return (
       <svg {...common}><circle cx="10" cy="10" r="7.5" /><path d="M10 9v5" /><circle cx="10" cy="6.3" r="0.9" fill="currentColor" stroke="none" /></svg>
     );
@@ -55,7 +59,7 @@ function Glyph({ kind }: { kind: DockItem | 'fold' | 'unfold' | 'reset' }) {
   }
 }
 
-const WORDS: Record<DockItem, string> = { info: 'Information', filters: 'Filters', layers: 'Layers', search: 'Search' };
+const WORDS: Record<DockItem, string> = { navigate: 'Navigate', info: 'Information', filters: 'Filters', layers: 'Layers', search: 'Search' };
 
 export function Dock({ items, open, onToggle, tools = [] }: {
   /** The panels this rung offers, in dock order. */

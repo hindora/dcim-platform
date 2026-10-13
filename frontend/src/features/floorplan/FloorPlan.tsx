@@ -14,6 +14,7 @@ import {
 } from './layers';
 import { Dock, type DockItem, type DockTool } from './Dock';
 import { SearchPanel, typeWord, type SearchHit } from './Search';
+import { Navigator } from './Navigator';
 import { BuildingPanel, DevicePanel, FiltersPanel, LayerPanel, Legend, PathsPanel, RackPanel, RoomPanel, UnitPanel } from './panels';
 import { fromImpact, fromTraces, type PathKind } from './paths';
 import { BuildingPlan2D } from './BuildingPlan2D';
@@ -229,6 +230,20 @@ export function FloorPlanView() {
   const live = t == null;
 
   const [panel, setPanel] = useState<DockItem | null>('info');
+  // Backspace climbs a rung - room to building to compound - and Escape
+  // clears the selection before it climbs. Not while typing, not in FPV,
+  // where the keys belong to the walk.
+  const climb = useRef<(gentle?: boolean) => void>(() => {});
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && /^(INPUT|SELECT|TEXTAREA)$/.test(t.tagName)) return;
+      if (document.pointerLockElement) return;
+      if (e.key === 'Backspace' || e.key === 'Escape') { e.preventDefault(); climb.current(e.key === 'Escape'); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
   // The dock's tools at the room rung: the camera, and the unit the air is read in.
   const roomTools: DockTool[] = [
     { id: 'reset', label: 'Reset the camera', glyph: 'reset', onClick: () => setResetTick((t) => t + 1) },
@@ -453,45 +468,48 @@ export function FloorPlanView() {
 
   if (rooms.isLoading || (rung !== 'room' && sitesQ.isLoading)) return <p className="muted viewer-fallback">Loading…</p>;
 
-  const siteRooms = (rooms.data?.items ?? []).filter((r) => !siteId || !r.datacenter_id || r.datacenter_id === siteId);
-  const roomSelect = (
-    <select value={roomId} onChange={(e) => { if (e.target.value) enterRoom(e.target.value); }} aria-label="Room">
-      {!roomId && <option value="">Choose a room…</option>}
-      {siteRooms.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-    </select>
-  );
   const bs = building.data;
+  climb.current = (gentle?: boolean) => {
+    if (gentle && (sel || panel === 'navigate' || panel === 'search')) { if (sel) setSel(null); else setPanel('info'); return; }
+    if (rung === 'room') leaveRoom(); else if (rung === 'building') leaveBuilding();
+  };
   const roomLevel = roomId ? bs?.rooms.find((r) => r.id === roomId)?.level ?? null : null;
   const roomIsOutdoor = roomId ? (bs?.rooms.find((r) => r.id === roomId)?.level ?? '').toLowerCase() === 'site' : false;
-  // The breadcrumb: site › compound › building · level › room. Each crumb is
-  // a step up the ladder; the one you are on is plain text.
+  // Where you are, as a label: the place in large type, its rung beneath.
+  // Opening the navigator is one click on it; the site picker stays here
+  // because switching site is the one move the tree cannot make from
+  // inside one site's scene.
+  const siteCode = sites.find((x) => x.id === siteId)?.code ?? bs?.code ?? 'Site';
+  const roomName = roomId ? bs?.rooms.find((r) => r.id === roomId)?.name ?? room?.name ?? 'Room' : '';
+  const here = rung === 'site' ? { title: 'Compound', sub: siteCode }
+    : rung === 'building' ? { title: level ? `Level ${level}` : 'Building', sub: level ? `${siteCode} · Building` : siteCode }
+    : { title: roomName, sub: roomIsOutdoor ? `${siteCode} · Compound` : roomLevel ? `${siteCode} · Level ${roomLevel}` : siteCode };
   const crumbs = (
-    <nav className="vw-crumbs" aria-label="Where you are">
-      {sites.length > 1 ? (
+    <div className="vw-here">
+      {sites.length > 1 && (
         <select value={siteId} onChange={(e) => pickSite(e.target.value)} aria-label="Site" className="vw-crumb-site">
           {sites.map((x) => <option key={x.id} value={x.id}>{x.code}</option>)}
         </select>
-      ) : (
-        <span className="vw-crumb is-text">{sites[0]?.code ?? bs?.code ?? 'Site'}</span>
       )}
-      <span className="vw-crumb-sep" aria-hidden>›</span>
-      {rung === 'site'
-        ? <span className="vw-crumb is-text">Compound</span>
-        : <button type="button" className="vw-crumb" onClick={leaveBuilding} title="Back to the compound">Compound</button>}
-      {rung === 'building' && <>
-        <span className="vw-crumb-sep" aria-hidden>›</span>
-        <span className="vw-crumb is-text">{bs?.name ?? 'Building'}{level ? ` · Level ${level}` : ''}</span>
-      </>}
-      {rung === 'room' && <>
-        {!roomIsOutdoor && <>
-          <span className="vw-crumb-sep" aria-hidden>›</span>
-          <button type="button" className="vw-crumb" onClick={leaveRoom} title="Back to the building">
-            {bs?.name ?? 'Building'}{roomLevel ? ` · Level ${roomLevel}` : ''}</button>
-        </>}
-        <span className="vw-crumb-sep" aria-hidden>›</span>
-        {roomSelect}
-      </>}
-    </nav>
+      <button type="button" className={`vw-here-label${panel === 'navigate' ? ' is-on' : ''}`} onClick={() => togglePanel('navigate')}
+              aria-pressed={panel === 'navigate'} title="Where you are - click to navigate">
+        <b>{here.title}</b>
+        <small>{here.sub}</small>
+      </button>
+    </div>
+  );
+  const navigator = panel === 'navigate' && (
+    <aside className="vw-panel" aria-label="Navigate">
+      <div className="vw-panel-head">
+        <h3>Navigate</h3>
+        <button type="button" className="close" aria-label="Close" onClick={() => setPanel(null)}>×</button>
+      </div>
+      <Navigator scene={bs} sites={sites} siteId={siteId} rung={rung} level={rung === 'room' ? roomLevel : level} roomId={roomId}
+                 onSite={pickSite} onCompound={() => { leaveBuilding(); }}
+                 onBuilding={(lv) => { const next = new URLSearchParams(params); next.delete('room'); next.set('b', '1'); if (siteId) next.set('site', siteId);
+                                       if (lv) next.set('level', lv); else next.delete('level'); for (const k of TIME_KEYS) next.delete(k); if (next.get('view') === 'fpv') next.delete('view'); setParams(next); }}
+                 onRoom={(id) => enterRoom(id)} />
+    </aside>
   );
 
   // --- the site and building rungs ------------------------------------------
@@ -511,7 +529,8 @@ export function FloorPlanView() {
           {webgl && <Seg label="View" value={bMode} onChange={(m) => setParam('view', m)}
                          options={[{ key: '3d', label: '3D' }, { key: 'plan', label: 'PLAN' }]} />}
         </div>
-        <Dock items={['info', 'layers', 'search']} open={panel === 'filters' ? null : panel} onToggle={togglePanel}
+        {navigator}
+        <Dock items={['navigate', 'info', 'layers', 'search']} open={panel === 'filters' ? null : panel} onToggle={togglePanel}
               tools={webgl ? [{ id: 'reset', label: 'Reset the camera', glyph: 'reset', onClick: () => setResetTick((t) => t + 1) }] : []} />
         {panel === 'layers' && (
           <aside className="vw-panel" aria-label="Layers">
@@ -647,9 +666,10 @@ export function FloorPlanView() {
       <div className="vw-float vw-topcenter">
         <Seg label="View" value={mode} onChange={(m) => setParam('view', m)} options={MODES} />
       </div>
-      <Dock items={['info', 'filters', 'search']} open={panel === 'layers' ? null : panel} onToggle={togglePanel} tools={roomTools} />
+      {navigator}
+      <Dock items={['navigate', 'info', 'filters', 'search']} open={panel === 'layers' ? null : panel} onToggle={togglePanel} tools={roomTools} />
 
-      {panel && (
+      {panel && panel !== 'navigate' && (
         <aside className="vw-panel" aria-label={panelTitle}>
           <div className="vw-panel-head">
             <h3>{panelTitle}</h3>

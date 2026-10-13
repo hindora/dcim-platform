@@ -293,6 +293,31 @@
 
 /* --- the building rung (docs/27 §8b) -------------------------------------- */
 .vw-crumbs { display: flex; align-items: center; gap: 4px; }
+/* where you are: a label that opens the navigator */
+.vw-here { display: flex; align-items: center; gap: 8px; }
+.vw-here-label { display: flex; flex-direction: column; align-items: flex-start; gap: 0; background: none; border: 1px solid transparent;
+                 border-radius: 4px; padding: 2px 8px; cursor: pointer; color: var(--text); font: inherit; text-align: left; }
+.vw-here-label b { font-size: 0.92rem; font-weight: 600; line-height: 1.2; }
+.vw-here-label small { font-size: 0.7rem; color: var(--text-muted); letter-spacing: .02em; }
+.vw-here-label:hover { background: var(--bg-inset); border-color: var(--border); }
+.vw-here-label.is-on { border-color: var(--accent); }
+.vw-here-label:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* the navigator's tree */
+.vw-tree-site { display: flex; align-items: center; gap: 8px; margin: 4px 0 10px; }
+.vw-tree-site select { flex: 1; background: var(--bg-inset); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 5px 8px; font: inherit; }
+.vw-tree ul { list-style: none; margin: 0; padding: 0; }
+.vw-tree-levels { margin-left: 12px !important; border-left: 1px solid var(--border); }
+.vw-tree-rooms { margin-left: 12px !important; border-left: 1px solid var(--border); }
+.vw-tree button, .vw-tree .rung.is-text { width: 100%; display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; gap: 8px; align-items: center;
+                                         background: none; border: none; color: var(--text); font: inherit; text-align: left;
+                                         padding: 6px 8px; border-radius: 4px; cursor: pointer; }
+.vw-tree .rung { grid-template-columns: minmax(0, 1fr) auto; font-weight: 600; }
+.vw-tree .rung.is-text { cursor: default; color: var(--text-muted); }
+.vw-tree button:hover { background: var(--bg-inset); }
+.vw-tree button.is-current { background: color-mix(in srgb, var(--accent) 14%, transparent); box-shadow: inset 3px 0 0 var(--accent); }
+.vw-tree button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.vw-tree .swatch { width: 9px; height: 9px; border-radius: 2px; }
+.vw-tree .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vw-crumb { font: inherit; font-size: 0.8rem; font-weight: 600; color: var(--text); background: none; border: 1px solid transparent;
   border-radius: 4px; padding: 3px 7px; cursor: pointer; }
 .vw-crumb:hover { background: var(--bg-inset); border-color: var(--border); }
