@@ -9,12 +9,12 @@ import { Seg } from '../../components/estate';
 import { alarmColor, type Overlay } from './colors';
 import { fireWords, type RoomDoor, type RoomFire } from './Fittings';
 import {
-  BUILDING_LAYERS, coolingLegendFor, DEFAULT_VIS, legendFor, rackTiers, ventTiles, TEMP_BANDS,
+  coolingLegendFor, DEFAULT_VIS, legendFor, rackTiers, ventTiles, TEMP_BANDS,
   type BuildingLayer, type CoolingLayer, type HeatPlane, type RackLayer, type Sel, type ViewMode, type Visibility,
 } from './layers';
-import { Dock, type DockItem } from './Dock';
+import { Dock, type DockItem, type DockTool } from './Dock';
 import { SearchPanel, typeWord, type SearchHit } from './Search';
-import { BuildingPanel, DevicePanel, FiltersPanel, Legend, PathsPanel, RackPanel, RoomPanel, UnitPanel } from './panels';
+import { BuildingPanel, DevicePanel, FiltersPanel, LayerPanel, Legend, PathsPanel, RackPanel, RoomPanel, UnitPanel } from './panels';
 import { fromImpact, fromTraces, type PathKind } from './paths';
 import { BuildingPlan2D } from './BuildingPlan2D';
 import { Plan2D } from './Plan2D';
@@ -229,6 +229,12 @@ export function FloorPlanView() {
   const live = t == null;
 
   const [panel, setPanel] = useState<DockItem | null>('info');
+  // The dock's tools at the room rung: the camera, and the unit the air is read in.
+  const roomTools: DockTool[] = [
+    { id: 'reset', label: 'Reset the camera', glyph: 'reset', onClick: () => setResetTick((t) => t + 1) },
+    { id: 'unit', label: `Temperatures in ${tUnit === 'C' ? '°C - switch to °F' : '°F - switch to °C'}`, text: tUnit === 'C' ? '°C' : '°F',
+      onClick: () => setTempUnit((tUnit === 'C' ? 'F' : 'C') as TempUnit) },
+  ];
   const togglePanel = (it: DockItem) => setPanel((p) => (p === it ? null : it));
   const [sel, setSel] = useState<Sel>(null);
   const [tip, setTip] = useState<HoverTip | null>(null);
@@ -504,17 +510,21 @@ export function FloorPlanView() {
         <div className="vw-float vw-topcenter">
           {webgl && <Seg label="View" value={bMode} onChange={(m) => setParam('view', m)}
                          options={[{ key: '3d', label: '3D' }, { key: 'plan', label: 'PLAN' }]} />}
-          {webgl && <button type="button" className="vw-icon" onClick={() => setResetTick((t) => t + 1)} title="Reset the camera">RESET</button>}
-          <Seg label="Layer" value={bLayer}
-               onChange={(v) => { const next = new URLSearchParams(params); if (v === 'alarm') next.delete('layer'); else next.set('layer', v); setParams(next, { replace: true }); }}
-               options={BUILDING_LAYERS.map((l) => ({ key: l.key, label: l.label.toUpperCase() }))} />
-          {!atSite && levelNames.length > 1 && (
-            <Seg label="Level" value={level ?? 'all'}
-                 onChange={(v) => { const next = new URLSearchParams(params); if (v === 'all') next.delete('level'); else next.set('level', v); setParams(next, { replace: true }); }}
-                 options={[{ key: 'all', label: 'ALL' }, ...levelNames.map((n) => ({ key: n, label: /^\d+$/.test(n) ? `L${n}` : n.toUpperCase() }))]} />
-          )}
         </div>
-        <Dock items={['info', 'search']} open={panel === 'info' || panel === 'search' ? panel : null} onToggle={togglePanel} />
+        <Dock items={['info', 'layers', 'search']} open={panel === 'filters' ? null : panel} onToggle={togglePanel}
+              tools={webgl ? [{ id: 'reset', label: 'Reset the camera', glyph: 'reset', onClick: () => setResetTick((t) => t + 1) }] : []} />
+        {panel === 'layers' && (
+          <aside className="vw-panel" aria-label="Layers">
+            <div className="vw-panel-head">
+              <h3>Layers</h3>
+              <button type="button" className="close" aria-label="Close" onClick={() => setPanel(null)}>×</button>
+            </div>
+            <LayerPanel layer={bLayer}
+                        onLayer={(v) => { const next = new URLSearchParams(params); if (v === 'alarm') next.delete('layer'); else next.set('layer', v); setParams(next, { replace: true }); }}
+                        levels={atSite ? [] : levelNames} level={level}
+                        onLevel={(v) => { const next = new URLSearchParams(params); if (v == null) next.delete('level'); else next.set('level', v); setParams(next, { replace: true }); }} />
+          </aside>
+        )}
         {panel === 'search' && (
           <aside className="vw-panel" aria-label="Search">
             <div className="vw-panel-head">
@@ -636,11 +646,8 @@ export function FloorPlanView() {
       <div className="vw-float vw-topleft">{crumbs}</div>
       <div className="vw-float vw-topcenter">
         <Seg label="View" value={mode} onChange={(m) => setParam('view', m)} options={MODES} />
-        <button type="button" className="vw-icon" onClick={() => setResetTick((t) => t + 1)} title="Reset the camera">RESET</button>
-        <Seg label="Temperature unit" value={tUnit} onChange={(u) => setTempUnit(u as TempUnit)}
-             options={[{ key: 'C', label: '°C' }, { key: 'F', label: '°F' }]} />
       </div>
-      <Dock items={['info', 'filters', 'search']} open={panel} onToggle={togglePanel} />
+      <Dock items={['info', 'filters', 'search']} open={panel === 'layers' ? null : panel} onToggle={togglePanel} tools={roomTools} />
 
       {panel && (
         <aside className="vw-panel" aria-label={panelTitle}>

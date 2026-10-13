@@ -14,7 +14,7 @@ import {
 import type { PathKind, PathOverlay } from './paths';
 import { fmtDT, fmtT, legendInUnit, numT, unitLabel } from './units';
 import { alarmColor } from './colors';
-import { NO_READING, bandColor, roomLayerBands, roomLayerText, roomLayerValue, type BuildingLayer } from './layers';
+import { BUILDING_LAYERS, NO_READING, bandColor, roomLayerBands, roomLayerText, roomLayerValue, type BuildingLayer } from './layers';
 
 /** The viewer's side panel and legend. Facts only: every figure here is one
  *  the estate pages also show, read from the same endpoints. */
@@ -600,6 +600,48 @@ export function UnitPanel({ unit, thermal }: { unit: FloorEquipment; thermal?: T
 }
 
 // ---------------------------------------------------------------- filters
+
+/** The building and site rungs' layers: what colours a room, and which
+ *  level is in focus. Radios, like the room's filters, so the dock's two
+ *  Layers doors read the same. */
+export function LayerPanel({ layer, onLayer, levels, level, onLevel }: {
+  layer: BuildingLayer; onLayer: (l: BuildingLayer) => void;
+  /** Level names in order; empty at the site rung, where there is no level to focus. */
+  levels: string[]; level: string | null; onLevel: (l: string | null) => void;
+}) {
+  return (
+    <div className="vw-panel-body">
+      <details className="vw-section" open>
+        <summary>Rooms</summary>
+        <div className="vw-section-body vw-radios" role="radiogroup" aria-label="Room layer">
+          {BUILDING_LAYERS.map((l) => (
+            <label key={l.key} className={l.key === layer ? 'is-on' : undefined}>
+              <input type="radio" name="room-layer" checked={l.key === layer} onChange={() => onLayer(l.key)} />
+              <span>{l.label}</span>{l.hint && <small>{l.hint}</small>}
+            </label>
+          ))}
+        </div>
+      </details>
+      {levels.length > 1 && (
+        <details className="vw-section" open>
+          <summary>Level</summary>
+          <div className="vw-section-body vw-radios" role="radiogroup" aria-label="Level in focus">
+            <label className={level == null ? 'is-on' : undefined}>
+              <input type="radio" name="level" checked={level == null} onChange={() => onLevel(null)} />
+              <span>All levels</span>
+            </label>
+            {levels.map((n) => (
+              <label key={n} className={n === level ? 'is-on' : undefined}>
+                <input type="radio" name="level" checked={n === level} onChange={() => onLevel(n)} />
+                <span>{/^\d+$/.test(n) ? `Level ${n}` : n}</span>
+              </label>
+            ))}
+          </div>
+        </details>
+      )}
+    </div>
+  );
+}
 
 export function FiltersPanel({ rackLayer, coolingLayer, heat, vis, onRack, onCooling, onHeat, onVis }: {
   rackLayer: RackLayer; coolingLayer: CoolingLayer; heat: HeatPlane; vis: Visibility;

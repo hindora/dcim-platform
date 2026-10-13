@@ -37,7 +37,9 @@
 .vw-dock .dock-fold { color: var(--text); border-radius: 4px 4px 0 0; border-bottom: 1px solid var(--border); margin-bottom: 2px; }
 .vw-dock.is-folded { gap: 0; }
 .vw-dock.is-folded .dock-fold { border-bottom: none; margin-bottom: 0; border-radius: 4px; }
-.vw-dock.is-folded button:not(.dock-fold) { display: none; }
+.vw-dock .dock-rule { height: 1px; margin: 3px 4px; background: var(--border); }
+.vw-dock .dock-text { font-size: 12px; font-weight: 700; letter-spacing: .02em; }
+.vw-dock.is-folded button:not(.dock-fold), .vw-dock.is-folded .dock-rule { display: none; }
 
 /* search */
 .vw-search input { width: 100%; box-sizing: border-box; background: var(--bg-inset); color: var(--text);
