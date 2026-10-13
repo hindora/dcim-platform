@@ -96,7 +96,13 @@ DOORS = [{"id": "door-ha", "room_id": "hall", "level": "1", "floor_x": 0.3, "flo
           "max_severity": "CLEAR"}]
 
 
-def _scene(monkeypatch, racks=RACKS, units=UNITS):
+# The hall's two racks, summed: 30 of 44 kW metered, 28 allocated and 4 held,
+# 61 of 84 U filled. The UPS room has no racks and so no row.
+CAPACITY = {"hall": {"room_id": "hall", "load_kw": 30.0, "rated_kw": 44.0, "allocated_kw": 28.0,
+                     "reserved_kw": 4.0, "u_used": 61, "u_total": 84}}
+
+
+def _scene(monkeypatch, racks=RACKS, units=UNITS, capacity=CAPACITY):
     async def building(_s, _dc):
         return SITE
 
@@ -108,7 +114,11 @@ def _scene(monkeypatch, racks=RACKS, units=UNITS):
 
     monkeypatch.setattr(rack_repo, "site_building", building)
     monkeypatch.setattr(rack_repo, "site_blocks", blocks)
+    async def room_capacity(_s, _dc):
+        return capacity
+
     monkeypatch.setattr(rack_repo, "site_doors", doors)
+    monkeypatch.setattr(rack_repo, "site_room_capacity", room_capacity)
     return asyncio.run(service.site_scene(None, "dc1"))
 
 
@@ -137,3 +147,21 @@ def test_the_fabric_is_empty_without_spaces_and_the_doors_carry_their_contacts(m
 def test_a_site_without_blocks_still_draws(monkeypatch):
     out = _scene(monkeypatch, racks=[], units=[])
     assert all(r.racks == [] and r.equipment == [] for r in out.rooms)
+
+
+def test_a_room_carries_the_sum_of_its_racks_and_a_plant_room_carries_nothing(monkeypatch):
+    out = _scene(monkeypatch)
+    hall = next(r for r in out.rooms if r.id == "hall")
+    ups = next(r for r in out.rooms if r.id == "ups")
+    assert (hall.power.load_kw, hall.power.rated_kw) == (30.0, 44.0)
+    assert (hall.power.allocated_kw, hall.power.reserved_kw) == (28.0, 4.0)
+    assert (hall.space.u_used, hall.space.u_total) == (61, 84)
+    assert ups.power is None and ups.space is None
+
+
+def test_an_unmetered_unrated_room_says_so_rather_than_reading_zero(monkeypatch):
+    bare = {"hall": {"room_id": "hall", "load_kw": None, "rated_kw": None, "allocated_kw": None,
+                     "reserved_kw": None, "u_used": 0, "u_total": 84}}
+    hall = next(r for r in _scene(monkeypatch, capacity=bare).rooms if r.id == "hall")
+    assert hall.power.load_kw is None and hall.power.rated_kw is None
+    assert hall.space.u_used == 0 and hall.space.u_total == 84

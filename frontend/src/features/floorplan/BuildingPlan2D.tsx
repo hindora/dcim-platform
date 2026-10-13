@@ -1,5 +1,6 @@
 import type { TwinRoom, TwinSiteScene } from '../../api/client';
 import { alarmColor } from './colors';
+import { NO_READING, bandColor, roomLayerBands, roomLayerValue, type BuildingLayer } from './layers';
 
 /**
  * The building without WebGL: its levels stacked in a 30° oblique SVG, each
@@ -17,9 +18,14 @@ function project(x: number, y: number, elev: number): [number, number] {
   return [(x - y) * COS, (x + y) * SIN - elev * RISE];
 }
 
-export function BuildingPlan2D({ scene, hover, onHover, onEnter }: {
-  scene: TwinSiteScene; hover: string | null; onHover: (id: string | null) => void; onEnter: (id: string) => void;
+export function BuildingPlan2D({ scene, layer = 'alarm', hover, onHover, onEnter }: {
+  scene: TwinSiteScene; layer?: BuildingLayer; hover: string | null; onHover: (id: string | null) => void; onEnter: (id: string) => void;
 }) {
+  const fillOf = (r: TwinRoom) => {
+    if (layer === 'alarm') return alarmColor(r.max_severity, 0);
+    const v = roomLayerValue(r, layer);
+    return v == null ? NO_READING : bandColor(roomLayerBands(layer)!, v);
+  };
   const placed = scene.rooms.filter((r) => r.origin_x_m != null && r.origin_y_m != null && r.width_m && r.depth_m);
   const levels = [...scene.levels].sort((a, b) => a.ordinal - b.ordinal);
   const elevOf = (r: TwinRoom) => r.level_elevation_m ?? levels.find((l) => l.name === r.level)?.elevation_m ?? 0;
@@ -68,7 +74,7 @@ export function BuildingPlan2D({ scene, hover, onHover, onEnter }: {
              className={`bld-room${hover === r.id ? ' is-picked' : ''}${r.room_class === 'facility' ? ' is-facility' : ''}`}
              onClick={() => onEnter(r.id)} onKeyDown={(ev) => { if (ev.key === 'Enter' || ev.key === ' ') onEnter(r.id); }}
              onMouseEnter={() => onHover(r.id)} onMouseLeave={() => onHover(null)}>
-            <polygon points={c.map((p) => p.join(',')).join(' ')} style={{ fill: alarmColor(r.max_severity, 0) }} />
+            <polygon points={c.map((p) => p.join(',')).join(' ')} style={{ fill: fillOf(r) }} />
             {w * d > 20 && <text x={cx} y={cy} className="bld-room-label">{r.name}</text>}
           </g>
         );

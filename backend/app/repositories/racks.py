@@ -348,6 +348,68 @@ async def site_building(session: AsyncSession,
     return {**dict(dc), "rooms": [dict(r) for r in rooms], "spaces": [dict(s) for s in spaces]}
 
 
+async def site_room_capacity(session: AsyncSession,
+                             datacenter_id: str) -> dict[str, dict[str, Any]]:
+    """What each room's racks carry and could carry, summed per room: the
+    building rung's power and space layers (docs/27 §8b.4).
+
+    One read for the site, by the rack page's own rules so a room is the sum
+    of its racks: load is what the rack PDUs meter (`_RACK_LOAD_W`), allocated
+    and reserved are `room_rack_power_plan`'s, space is rack units with a slot
+    over rack units fitted. A room with no racks has no row. `load_kw` is None
+    when nothing in the room's racks reports power, so an unmetered room is
+    not drawn as an idle one.
+    """
+    rows = (await session.execute(text(f"""
+        WITH rk AS (
+            SELECT r.id, rr.room_id, r.u_height, r.rated_power_kw
+              FROM rack r
+              JOIN rack_row rr ON rr.id = r.row_id
+              JOIN room rm     ON rm.id = rr.room_id
+             WHERE rm.datacenter_id = CAST(:dc AS uuid)
+        ), live AS (
+            SELECT rk.id AS rack_id,
+                   {_RACK_LOAD_W} / 1000.0 AS load_kw,
+                   count(ds.power_w)       AS metered,
+                   COALESCE(sum(d.u_height) FILTER (WHERE d.u_start IS NOT NULL), 0) AS u_used
+              FROM rk
+              LEFT JOIN device d        ON d.rack_id = rk.id AND d.lifecycle <> 'decommissioned'
+              LEFT JOIN device_state ds ON ds.device_id = d.id
+             GROUP BY rk.id
+        ), alloc AS (
+            SELECT d.rack_id,
+                   sum(COALESCE(NULLIF(m.attributes->>'budget_w','')::float,
+                                m.rated_power_w * CAST(:derate AS float8))) / 1000.0
+                       AS allocated_kw
+              FROM device d
+              JOIN rk ON rk.id = d.rack_id
+              LEFT JOIN model m ON m.id = d.model_id
+             WHERE d.lifecycle IN ('installed', 'in_service', 'maintenance')
+               AND d.device_type::text NOT IN ('pdu', 'sensor')
+             GROUP BY d.rack_id
+        ), held AS (
+            SELECT cr.rack_id, sum(cr.power_kw) AS reserved_kw
+              FROM capacity_reservation cr
+              JOIN rk ON rk.id = cr.rack_id
+             WHERE cr.status = 'held'
+             GROUP BY cr.rack_id
+        )
+        SELECT rk.room_id::text AS room_id,
+               CASE WHEN sum(live.metered) > 0 THEN sum(live.load_kw) END AS load_kw,
+               sum(rk.rated_power_kw)   AS rated_kw,
+               sum(a.allocated_kw)      AS allocated_kw,
+               sum(h.reserved_kw)       AS reserved_kw,
+               sum(live.u_used)         AS u_used,
+               sum(rk.u_height)         AS u_total
+          FROM rk
+          JOIN live         ON live.rack_id = rk.id
+          LEFT JOIN alloc a ON a.rack_id = rk.id
+          LEFT JOIN held h  ON h.rack_id = rk.id
+         GROUP BY rk.room_id
+    """), {"dc": datacenter_id, "derate": BUDGET_DERATE})).mappings().all()
+    return {r["room_id"]: dict(r) for r in rows}
+
+
 async def site_blocks(session: AsyncSession, datacenter_id: str
                       ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Every placed rack and every placed floor-standing unit at a site, as

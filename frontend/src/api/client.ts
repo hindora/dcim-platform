@@ -1830,9 +1830,16 @@ export interface TwinRoom {
   origin_x_m?: number | null; origin_y_m?: number | null; rotation_deg?: number | null;
   level_elevation_m?: number | null;
   rack_count: number; device_count: number; max_severity: string;
+  /** What the room's racks carry and could carry (docs/27 §8b.4 layers). Absent on a room with no racks. */
+  power?: TwinRoomPower | null;
+  space?: TwinRoomSpace | null;
   racks?: TwinSiteRack[];
   equipment?: TwinSiteUnit[];
 }
+/** The room's rack power, summed over its racks: metered at the rack PDUs, rated, allocated, reserved. */
+export interface TwinRoomPower { load_kw?: number | null; rated_kw?: number | null; allocated_kw?: number | null; reserved_kw?: number | null }
+/** Rack units filled and fitted, over the room's racks. */
+export interface TwinRoomSpace { u_used: number; u_total: number }
 /** Building fabric or a compound zone with no state of its own: corridor, lobby, dock, core, door opening;
  *  fence, substation, generator yard, tanks. Drawn grey. `room_id` is set when the zone is also an outdoor room. */
 export interface TwinSpace {

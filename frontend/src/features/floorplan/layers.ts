@@ -1,4 +1,4 @@
-import type { FloorEquipment, FloorRack, ThermalUnit, TwinDevice } from '../../api/client';
+import type { FloorEquipment, FloorRack, ThermalUnit, TwinDevice, TwinRoom } from '../../api/client';
 import { resolveColor } from './colors';
 
 /**
@@ -19,6 +19,16 @@ export const TILE = 0.6;           // raised-floor tile pitch
 export type RackLayer = 'temperature' | 'inlet_outlet' | 'exhaust' | 'variance' | 'rh'
   | 'power' | 'utilisation' | 'committed' | 'space' | 'compliance' | 'alarm' | 'none';
 export type CoolingLayer = 'air' | 'supply' | 'return' | 'utilisation' | 'none';
+/** What colours a ROOM at the building and site rungs (docs/27 §8b.4). The
+ *  three non-alarm keys are the room rung's own names for the same readings,
+ *  so the legend and the words carry over when the camera descends. */
+export type BuildingLayer = 'alarm' | 'utilisation' | 'committed' | 'space';
+export const BUILDING_LAYERS: { key: BuildingLayer; label: string; hint: string }[] = [
+  { key: 'alarm', label: 'Alarms', hint: 'Worst open condition in the room' },
+  { key: 'utilisation', label: 'Power', hint: 'What the rack PDUs meter, against the racks\' ratings' },
+  { key: 'committed', label: 'Committed', hint: 'Allocated plus reserved, against the racks\' ratings' },
+  { key: 'space', label: 'Space', hint: 'Rack units filled' },
+];
 
 export const RACK_LAYERS: { key: RackLayer; label: string; hint: string }[] = [
   { key: 'temperature', label: 'Temperature', hint: 'Inlet air, bottom to top of the rack' },
@@ -132,6 +142,38 @@ export function bandColor(bands: Band[], v: number | null | undefined): string {
   if (v == null || Number.isNaN(v)) return NO_READING;
   for (const b of bands) if (b.upTo == null || v < b.upTo) return b.color;
   return bands[bands.length - 1].color;
+}
+
+/** The room's figure for a building layer, as a percentage; null when the
+ *  room has nothing to measure it against (no racks, no rating). */
+export function roomLayerValue(r: TwinRoom, layer: BuildingLayer): number | null {
+  if (layer === 'space') {
+    if (!r.space || !r.space.u_total) return null;
+    return (100 * r.space.u_used) / r.space.u_total;
+  }
+  const p = r.power;
+  if (!p || !p.rated_kw) return null;
+  if (layer === 'utilisation') return p.load_kw == null ? null : (100 * p.load_kw) / p.rated_kw;
+  if (layer === 'committed') {
+    if (p.allocated_kw == null && p.reserved_kw == null) return null;
+    return (100 * ((p.allocated_kw ?? 0) + (p.reserved_kw ?? 0))) / p.rated_kw;
+  }
+  return null;
+}
+
+/** The same figure in words, for a tooltip or a list row. */
+export function roomLayerText(r: TwinRoom, layer: BuildingLayer): string | null {
+  const v = roomLayerValue(r, layer);
+  if (layer === 'space') return v == null ? (r.rack_count ? 'no rack units fitted' : null)
+    : `${v.toFixed(0)} % of ${r.space!.u_total} U filled`;
+  if (v == null) return r.rack_count ? 'racks without a rating' : null;
+  const p = r.power!;
+  if (layer === 'utilisation') return `${v.toFixed(0)} % · ${p.load_kw!.toFixed(p.load_kw! >= 100 ? 0 : 1)} of ${p.rated_kw!.toFixed(0)} kW`;
+  return `${v.toFixed(0)} % committed of ${p.rated_kw!.toFixed(0)} kW`;
+}
+
+export function roomLayerBands(layer: BuildingLayer): Band[] | null {
+  return layer === 'space' ? SPACE_BANDS : layer === 'alarm' ? null : PCT_BANDS;
 }
 
 export function legendFor(layer: RackLayer): Legend | null {

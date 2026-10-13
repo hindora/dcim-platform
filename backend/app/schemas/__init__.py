@@ -531,6 +531,23 @@ class TwinSiteUnit(BaseModel):
     max_severity: str = "CLEAR"
 
 
+class TwinRoomPower(BaseModel):
+    """A room's rack power, summed over its racks (docs/27 §8b.4): metered at
+    the rack PDUs, rated, allocated to what is installed, held for planned work."""
+
+    load_kw: float | None = None
+    rated_kw: float | None = None
+    allocated_kw: float | None = None
+    reserved_kw: float | None = None
+
+
+class TwinRoomSpace(BaseModel):
+    """Rack units filled and fitted, over the room's racks."""
+
+    u_used: int
+    u_total: int
+
+
 class TwinRoom(BaseModel):
     id: str
     name: str
@@ -547,6 +564,10 @@ class TwinRoom(BaseModel):
     rack_count: int = 0
     device_count: int = 0
     max_severity: str = "CLEAR"
+    # What the building rung's power and space layers colour the room by; None
+    # for a room with no racks, which has neither figure.
+    power: TwinRoomPower | None = None
+    space: TwinRoomSpace | None = None
     racks: list[TwinSiteRack] = Field(default_factory=list)
     equipment: list[TwinSiteUnit] = Field(default_factory=list)
 

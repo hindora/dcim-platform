@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, type ElementRef } from 'react';
 import * as THREE from 'three';
 import type { TwinDoor, TwinRoom, TwinSiteScene, TwinSpace } from '../../api/client';
 import { alarmColor, resolveColor } from './colors';
+import { NO_READING, bandColor, roomLayerBands, roomLayerText, roomLayerValue, type BuildingLayer } from './layers';
 import { labelTexture, type HoverTip } from './Scene';
 
 /**
@@ -34,6 +35,8 @@ export interface BuildingSceneProps {
   rung: Rung;
   /** Focus one level (building rung): the others fade and stop answering the pointer. */
   level: string | null;
+  /** What colours a room: its worst open condition, or a figure of its racks. */
+  layer: BuildingLayer;
   mode: '3d' | 'plan';
   resetTick: number;
   themeTick: number;
@@ -68,7 +71,7 @@ const bboxOf = (poly: number[][]) => ({
 });
 
 export default function BuildingScene(p: BuildingSceneProps) {
-  const { scene, rung, level, mode, resetTick, themeTick, hover, onHover, onEnter, onEnterBuilding, onTip } = p;
+  const { scene, rung, layer, level, mode, resetTick, themeTick, hover, onHover, onEnter, onEnterBuilding, onTip } = p;
   const { invalidate } = useThree();
   const site = rung === 'site';
 
@@ -78,7 +81,17 @@ export default function BuildingScene(p: BuildingSceneProps) {
     border: resolveColor('var(--border)'), accent: resolveColor('var(--accent)'),
     slab: resolveColor('var(--border-strong)'),
     sev: (s: string) => resolveColor(alarmColor(s, 0)),
+    none: resolveColor(NO_READING),
   }), [themeTick]);
+  // A room's colour under the chosen layer: alarm severity, or its figure's
+  // band; a room with nothing to measure keeps the "no reading" tone so it
+  // is not mistaken for a cool one.
+  const roomColour = (r: TwinRoom): { colour: string; lit: boolean } => {
+    if (layer === 'alarm') return { colour: r.max_severity === 'CLEAR' ? tones.inkMuted : tones.sev(r.max_severity), lit: r.max_severity !== 'CLEAR' };
+    const v = roomLayerValue(r, layer);
+    if (v == null) return { colour: tones.none, lit: false };
+    return { colour: resolveColor(bandColor(roomLayerBands(layer)!, v)), lit: true };
+  };
 
   const levels = useMemo(() => [...scene.levels].sort((a, b) => a.ordinal - b.ordinal), [scene.levels]);
   const allRooms = useMemo(() => scene.rooms.filter(placed), [scene.rooms]);
@@ -216,6 +229,7 @@ export default function BuildingScene(p: BuildingSceneProps) {
 
   const tip = (e: ThreeEvent<PointerEvent>, text: string) => onTip({ x: e.nativeEvent.clientX, y: e.nativeEvent.clientY, text });
   const roomText = (r: TwinRoom) => [r.name, isOutdoor(r.level) ? 'in the compound' : r.level ? `level ${r.level}` : null,
+    layer !== 'alarm' ? roomLayerText(r, layer) : null,
     r.room_class === 'white_space' ? 'white space' : r.room_class === 'support' ? 'support room'
       : r.room_class === 'outdoor' ? 'outdoor' : 'plant room',
     `${r.width_m} × ${r.depth_m} m`, r.rack_count ? `${r.rack_count} racks` : null, `${r.device_count} devices`,
@@ -273,7 +287,7 @@ export default function BuildingScene(p: BuildingSceneProps) {
       ))}
       {yards.map((r) => (
         <group key={r.id}>
-          <RoomVolume room={r} e={0} h={0.25} X={X} Z={Z} tones={tones} dim={false} hot={hover === r.id} flat
+          <RoomVolume room={r} e={0} h={0.25} X={X} Z={Z} tones={tones} dim={false} hot={hover === r.id} flat paint={roomColour(r)}
                       onOver={(ev) => { onHover(r.id); tip(ev, roomText(r)); }}
                       onOut={() => { onHover(null); onTip(null); }}
                       onClick={() => onEnter(r.id)} />
@@ -317,7 +331,7 @@ export default function BuildingScene(p: BuildingSceneProps) {
       ))}
 
       {rooms.map((r) => shown(r.level) && (
-        <RoomVolume key={r.id} room={r} e={elevOf(r)} h={roomH} X={X} Z={Z} tones={tones}
+        <RoomVolume key={r.id} room={r} e={elevOf(r)} h={roomH} X={X} Z={Z} tones={tones} paint={roomColour(r)}
                     dim={dimmed(r.level)} hot={hover === r.id} quiet={site}
                     onOver={(ev) => { onHover(r.id); tip(ev, roomText(r)); }}
                     onOut={() => { onHover(null); onTip(null); }}
@@ -367,9 +381,11 @@ function Label({ text, ink, bg, x, y, z, w }: { text: string; ink: string; bg: s
   );
 }
 
-function RoomVolume({ room: r, e, h, X, Z, tones, dim, hot, quiet, flat, onOver, onOut, onClick }: {
+function RoomVolume({ room: r, e, h, X, Z, tones, paint, dim, hot, quiet, flat, onOver, onOut, onClick }: {
   room: Placed; e: number; h: number; X: (x: number) => number; Z: (y: number) => number;
   tones: { ink: string; inkMuted: string; raised: string; accent: string; border: string; sev: (s: string) => string };
+  /** The room's colour under the current layer, and whether it is a reading rather than a resting tone. */
+  paint: { colour: string; lit: boolean };
   dim: boolean; hot: boolean;
   /** At the site rung the rooms sit inside the shell: no labels, lower alpha. */
   quiet?: boolean;
@@ -377,8 +393,8 @@ function RoomVolume({ room: r, e, h, X, Z, tones, dim, hot, quiet, flat, onOver,
   flat?: boolean;
   onOver: (ev: ThreeEvent<PointerEvent>) => void; onOut: () => void; onClick: () => void;
 }) {
-  const colour = r.max_severity === 'CLEAR' ? tones.inkMuted : tones.sev(r.max_severity);
-  const alarmed = r.max_severity !== 'CLEAR';
+  const colour = paint.colour;
+  const alarmed = paint.lit;
   const label = useMemo(() => labelTexture(r.name, tones.ink, tones.raised), [r.name, tones.ink, tones.raised]);
   useEffect(() => () => label.dispose(), [label]);
   const x = X(r.origin_x_m + r.width_m / 2), z = Z(r.origin_y_m + r.depth_m / 2);

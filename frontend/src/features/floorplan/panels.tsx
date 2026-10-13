@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { api, ApiError, type Alarm, type SiteKpi, type TwinSiteScene } from '../../api/client';
+import { api, ApiError, type Alarm, type SiteKpi, type TwinRoom, type TwinSiteScene } from '../../api/client';
 import type {
   FloorEquipment, FloorPlan, FloorRack, RoomKpi, ThermalField, ThermalRoom, ThermalUnit, TwinDevice, TwinRackIndex,
   TwinRoomIndices,
@@ -14,6 +14,7 @@ import {
 import type { PathKind, PathOverlay } from './paths';
 import { fmtDT, fmtT, legendInUnit, numT, unitLabel } from './units';
 import { alarmColor } from './colors';
+import { NO_READING, bandColor, roomLayerBands, roomLayerText, roomLayerValue, type BuildingLayer } from './layers';
 
 /** The viewer's side panel and legend. Facts only: every figure here is one
  *  the estate pages also show, read from the same endpoints. */
@@ -162,8 +163,20 @@ export function RoomPanel({ plan, devices, kpi, thermal, vents, indices, field }
  *  RCI and RTI are Herrlin's, SHI/RHI Sharma's; the counts are shown so a
  *  perfect score from two sensors reads as exactly that. */
 /** The building rung's panel (docs/27 §8b): the site's numbers, then its rooms by level. */
-export function BuildingPanel({ scene, kpi, hover, onHover, onEnter, rung = 'building', onEnterBuilding }: {
-  scene: TwinSiteScene; kpi?: SiteKpi; hover: string | null;
+/** A room's swatch and figure under a building layer, the same colour the
+ *  scene paints it so the list and the picture agree. */
+function roomSwatch(r: TwinRoom, layer: BuildingLayer): string {
+  if (layer === 'alarm') return alarmColor(r.max_severity, 0);
+  const v = roomLayerValue(r, layer);
+  return v == null ? NO_READING : bandColor(roomLayerBands(layer)!, v);
+}
+function roomFigure(r: TwinRoom, layer: BuildingLayer): string {
+  const v = roomLayerValue(r, layer);
+  return v == null ? '–' : `${v.toFixed(0)} %`;
+}
+
+export function BuildingPanel({ scene, kpi, hover, onHover, onEnter, rung = 'building', onEnterBuilding, layer = 'alarm' }: {
+  scene: TwinSiteScene; kpi?: SiteKpi; hover: string | null; layer?: BuildingLayer;
   onHover: (id: string | null) => void; onEnter: (id: string) => void;
   /** At the site rung the panel leads with the building and the compound. */
   rung?: 'site' | 'building'; onEnterBuilding?: () => void;
@@ -244,10 +257,12 @@ export function BuildingPanel({ scene, kpi, hover, onHover, onEnter, rung = 'bui
                       <button type="button" className={hover === r.id ? 'is-current' : undefined}
                               onClick={() => onEnter(r.id)} onMouseEnter={() => onHover(r.id)} onMouseLeave={() => onHover(null)}
                               onFocus={() => onHover(r.id)} onBlur={() => onHover(null)}>
-                        <span className="swatch" style={{ background: alarmColor(r.max_severity, 0) }} aria-hidden />
+                        <span className="swatch" style={{ background: roomSwatch(r, layer) }} aria-hidden />
                         <span className="name">{r.name}</span>
                         <span className="muted">{r.rack_count ? `${r.rack_count} racks` : r.room_class === 'support' ? 'support' : 'plant'}</span>
-                        <span className="count">{r.device_count}</span>
+                        {layer === 'alarm'
+                          ? <span className="count">{r.device_count}</span>
+                          : <span className="count" title={roomLayerText(r, layer) ?? undefined}>{roomFigure(r, layer)}</span>}
                       </button>
                     </li>
                   ))}

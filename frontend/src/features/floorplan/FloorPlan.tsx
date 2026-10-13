@@ -8,8 +8,8 @@ import {
 import { Seg } from '../../components/estate';
 import type { Overlay } from './colors';
 import {
-  coolingLegendFor, DEFAULT_VIS, legendFor, rackTiers, ventTiles, TEMP_BANDS,
-  type CoolingLayer, type HeatPlane, type RackLayer, type Sel, type ViewMode, type Visibility,
+  BUILDING_LAYERS, coolingLegendFor, DEFAULT_VIS, legendFor, rackTiers, ventTiles, TEMP_BANDS,
+  type BuildingLayer, type CoolingLayer, type HeatPlane, type RackLayer, type Sel, type ViewMode, type Visibility,
 } from './layers';
 import { BuildingPanel, DevicePanel, FiltersPanel, Legend, PathsPanel, RackPanel, RoomPanel, UnitPanel } from './panels';
 import { fromImpact, fromTraces, type PathKind } from './paths';
@@ -89,6 +89,13 @@ export function FloorPlanView() {
     || sites[0]?.id || '';
   useEffect(() => { if (siteId) rememberSite(siteId); }, [siteId]);
   const level = params.get('level') || null;
+  // The building and site rungs colour rooms by one of four readings. The
+  // room rung's own `layer` keys are reused where they mean the same thing,
+  // so a link down into a room keeps its layer and the climb back keeps the
+  // colouring; the room-only keys fall back to alarms up here.
+  const rawLayer = params.get('layer') ?? '';
+  const bLayer: BuildingLayer = rawLayer === 'power' || rawLayer === 'utilisation' ? 'utilisation'
+    : rawLayer === 'committed' ? 'committed' : rawLayer === 'space' ? 'space' : 'alarm';
   const building = useQuery<TwinSiteScene>({
     queryKey: ['site-scene', siteId], queryFn: () => api.siteScene(siteId),
     enabled: Boolean(siteId), refetchInterval: 30_000, staleTime: 15_000, placeholderData: (prev) => prev,
@@ -423,6 +430,9 @@ export function FloorPlanView() {
           {webgl && <Seg label="View" value={bMode} onChange={(m) => setParam('view', m)}
                          options={[{ key: '3d', label: '3D' }, { key: 'plan', label: 'PLAN' }]} />}
           {webgl && <button type="button" className="vw-icon" onClick={() => setResetTick((t) => t + 1)} title="Reset the camera">RESET</button>}
+          <Seg label="Layer" value={bLayer}
+               onChange={(v) => { const next = new URLSearchParams(params); if (v === 'alarm') next.delete('layer'); else next.set('layer', v); setParams(next, { replace: true }); }}
+               options={BUILDING_LAYERS.map((l) => ({ key: l.key, label: l.label.toUpperCase() }))} />
           {!atSite && levelNames.length > 1 && (
             <Seg label="Level" value={level ?? 'all'}
                  onChange={(v) => { const next = new URLSearchParams(params); if (v === 'all') next.delete('level'); else next.set('level', v); setParams(next, { replace: true }); }}
@@ -440,10 +450,10 @@ export function FloorPlanView() {
               <button type="button" className="close" aria-label="Close" onClick={() => setPanel(null)}>×</button>
             </div>
             <BuildingPanel scene={bs} kpi={siteKpi.data} hover={hoverRoom} onHover={setHoverRoom} onEnter={enterRoom}
-                           rung={atSite ? 'site' : 'building'} onEnterBuilding={enterBuilding} />
+                           rung={atSite ? 'site' : 'building'} onEnterBuilding={enterBuilding} layer={bLayer} />
           </aside>
         )}
-        <div className="vw-legends"><Legend spec={legendFor('alarm')!} /></div>
+        <div className="vw-legends"><Legend spec={legendFor(bLayer)!} /></div>
         {tip && (
           <span className="hover-tip vw-tip" role="tooltip"
                 style={{ left: Math.min(tip.x + 14, window.innerWidth - 300), top: tip.y + 14 }}>{tip.text}</span>
@@ -466,7 +476,7 @@ export function FloorPlanView() {
       return (
         <div className="viewer">
           <div className="viewer-stage bld-fallback">
-            {bs && <BuildingPlan2D scene={bs} hover={hoverRoom} onHover={setHoverRoom} onEnter={enterRoom} />}
+            {bs && <BuildingPlan2D scene={bs} layer={bLayer} hover={hoverRoom} onHover={setHoverRoom} onEnter={enterRoom} />}
             {building.isError && <p className="muted viewer-fallback">This site has no placed rooms yet. Import the floor plan first.</p>}
           </div>
           {body}
@@ -478,7 +488,7 @@ export function FloorPlanView() {
         <div className="viewer-stage">
           {bs && (
             <Suspense fallback={<p className="muted viewer-fallback">Loading the building…</p>}>
-              <BuildingStage scene={bs} rung={atSite ? 'site' : 'building'} level={level} mode={bMode} resetTick={resetTick} themeTick={themeTick}
+              <BuildingStage scene={bs} rung={atSite ? 'site' : 'building'} level={level} layer={bLayer} mode={bMode} resetTick={resetTick} themeTick={themeTick}
                              hover={hoverRoom} onHover={setHoverRoom} onEnter={enterRoom} onEnterBuilding={enterBuilding} onTip={setTip}
                              label={atSite ? `Site view of ${bs.name}` : `Building view of ${bs.name}`} />
             </Suspense>

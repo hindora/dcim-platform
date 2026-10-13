@@ -45,7 +45,9 @@ from app.schemas import (
     TwinRackIndex,
     TwinRoom,
     TwinRoomIndices,
+    TwinRoomPower,
     TwinRoomScene,
+    TwinRoomSpace,
     TwinSiteRack,
     TwinSiteScene,
     TwinSiteUnit,
@@ -498,6 +500,20 @@ async def room_frame(session: AsyncSession, room_id: str, t: datetime,
     )
 
 
+def _room_power(c: dict[str, Any] | None) -> TwinRoomPower | None:
+    if c is None:
+        return None
+    return TwinRoomPower(load_kw=_f(c.get("load_kw")), rated_kw=_f(c.get("rated_kw")),
+                         allocated_kw=_f(c.get("allocated_kw")),
+                         reserved_kw=_f(c.get("reserved_kw")))
+
+
+def _room_space(c: dict[str, Any] | None) -> TwinRoomSpace | None:
+    if c is None or not c.get("u_total"):
+        return None
+    return TwinRoomSpace(u_used=int(c.get("u_used") or 0), u_total=int(c["u_total"]))
+
+
 async def site_scene(session: AsyncSession, datacenter_id: str) -> TwinSiteScene | None:
     """A site as a building - levels and every room placed on one (docs/27),
     with each room's racks and plant as blocks for the building rung (§8b)."""
@@ -507,6 +523,7 @@ async def site_scene(session: AsyncSession, datacenter_id: str) -> TwinSiteScene
     b = site.get("building") or {}
     racks, units = await rack_repo.site_blocks(session, datacenter_id)
     doors = await rack_repo.site_doors(session, datacenter_id)
+    capacity = await rack_repo.site_room_capacity(session, datacenter_id)
     racks_by_room: dict[str, list[TwinSiteRack]] = {}
     for r in racks:
         racks_by_room.setdefault(r["room_id"], []).append(TwinSiteRack(
@@ -553,6 +570,8 @@ async def site_scene(session: AsyncSession, datacenter_id: str) -> TwinSiteScene
             rack_count=int(r.get("rack_count") or 0),
             device_count=int(r.get("device_count") or 0),
             max_severity=r.get("max_severity") or "CLEAR",
+            power=_room_power(capacity.get(r["id"])),
+            space=_room_space(capacity.get(r["id"])),
             racks=racks_by_room.get(r["id"], []),
             equipment=units_by_room.get(r["id"], []),
         ) for r in site["rooms"]],
