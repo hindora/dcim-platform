@@ -6,6 +6,7 @@ import type { TwinDoor, TwinRoom, TwinSiteScene, TwinSpace } from '../../api/cli
 import { alarmColor, resolveColor } from './colors';
 import { NO_READING, bandColor, roomLayerBands, roomLayerText, roomLayerValue, type BuildingLayer } from './layers';
 import { labelTexture, type HoverTip } from './Scene';
+import { Columns, CoreShaft, Facade, Fence, Ground, ZoneObject, ZoneSurface } from './SiteDressing';
 
 /**
  * The site and building rungs (docs/27 §8b, §8c), drawn in the same scene
@@ -122,6 +123,9 @@ export default function BuildingScene(p: BuildingSceneProps) {
   const frame = site ? ground : box;
   const span = Math.max(frame.x1 - frame.x0, frame.y1 - frame.y0, 8);
   const top = (levels.length ? levels[levels.length - 1].elevation_m : 0) + roomH;
+  // The structure stops at the roof slab: a level named for the roof is
+  // open air, and the plant on it stands in the weather, not in a glass box.
+  const roofElev = levels.find((l) => /roof/i.test(l.name))?.elevation_m ?? top;
 
   // In PLAN there is one level on the table: at the site rung the ground, at
   // the building rung the focused level, else the one with the most racks.
@@ -163,9 +167,12 @@ export default function BuildingScene(p: BuildingSceneProps) {
     .map((z) => ({ z, geo: flat(z.polygon_m), bb: bboxOf(z.polygon_m) })) : []),
     [site, compound, cx, cz]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => () => zoneGeos.forEach((g) => g.geo.dispose()), [zoneGeos]);
-  const fence = useMemo(() => {
+  const fencePoly = useMemo(() => {
     const f = site ? compound?.zones.find((z) => z.kind === 'fence') : null;
-    const poly = f?.polygon_m?.length ? f.polygon_m : compound?.outline_m ?? null;
+    return f?.polygon_m?.length ? f.polygon_m : compound?.outline_m ?? null;
+  }, [site, compound]);
+  const fence = useMemo(() => {
+    const poly = fencePoly;
     if (!site || !poly) return null;
     const pts = [...poly, poly[0]].map(([x, y]) => new THREE.Vector3(X(x), 0.03, Z(y)));
     return new THREE.BufferGeometry().setFromPoints(pts);
@@ -193,7 +200,14 @@ export default function BuildingScene(p: BuildingSceneProps) {
                    elev: levels.find((l) => l.name === f.level)?.elevation_m ?? 0 })) : []),
     [site, scene.fabric, levels, cx, cz]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => () => fabricGeos.forEach((g) => g.geo?.dispose()), [fabricGeos]);
-  const shellGeo = useMemo(() => new THREE.BoxGeometry(box.x1 - box.x0, top, box.y1 - box.y0), [box, top]);
+  const shellGeo = useMemo(() => new THREE.BoxGeometry(box.x1 - box.x0, roofElev, box.y1 - box.y0), [box, roofElev]);
+  // The compound's dressing: where the gate breaks the fence, and where the
+  // entrance and the dock door open the building's edge.
+  const gateBB = useMemo(() => { const g = compound?.zones.find((z) => z.kind === 'gate'); return g && g.polygon_m.length >= 3 ? bboxOf(g.polygon_m) : null; }, [compound]);
+  const openings = useMemo(() => (scene.fabric ?? [])
+    .filter((f) => f.polygon_m.length >= 3 && (f.kind === 'entrance' || (f.kind === 'door' && f.attrs?.external && !f.attrs?.room)))
+    .map((f) => ({ bb: bboxOf(f.polygon_m), kind: (f.kind === 'entrance' ? 'entrance' : 'dock') as 'entrance' | 'dock' })), [scene.fabric]);
+  const corePoly = useMemo(() => (scene.fabric ?? []).find((f) => f.kind === 'core' && f.polygon_m.length >= 3)?.polygon_m ?? null, [scene.fabric]);
   useEffect(() => () => shellGeo.dispose(), [shellGeo]);
 
   // Racks of the whole site as one instanced mesh, coloured by condition.
@@ -254,31 +268,36 @@ export default function BuildingScene(p: BuildingSceneProps) {
   return (
     <>
       <color attach="background" args={[tones.bg]} />
-      <hemisphereLight args={['#ffffff', '#b9bec6', 0.9]} />
-      <directionalLight position={[span * 0.6, top + 14, span * 0.4]} intensity={0.55} />
+      <hemisphereLight args={['#eef2f6', '#7a8089', 0.85]} />
+      <directionalLight position={[-span * 0.5, top + 20, -span * 0.35]} intensity={0.75} />
+      <directionalLight position={[span * 0.6, top + 8, span * 0.5]} intensity={0.25} />
+      {site && mode === '3d' && <fog attach="fog" args={[tones.bg, span * 1.6, span * 4.5]} />}
       <Cameras mode={mode} span={span} top={site ? top * 0.6 : top} planElev={site ? 0 : levels.find((l) => l.name === planLevel)?.elevation_m ?? 0}
                W={frame.x1 - frame.x0} D={frame.y1 - frame.y0} cx={X((frame.x0 + frame.x1) / 2)} cz={Z((frame.y0 + frame.y1) / 2)}
                resetTick={resetTick} rung={rung} />
 
       {/* --- the compound (site rung) --- */}
-      {groundGeo && (
-        <mesh geometry={groundGeo} rotation-x={Math.PI / 2} position={[0, -0.02, 0]}>
-          <meshStandardMaterial color={tones.raised} roughness={1} side={THREE.DoubleSide} />
-        </mesh>
-      )}
+      {groundGeo && <Ground ground={ground} X={X} Z={Z} faint={tones.faint} />}
       {fence && (
-        <line>
-          <primitive object={fence} attach="geometry" />
-          <lineBasicMaterial color={tones.inkMuted} />
-        </line>
+        <>
+          <line>
+            <primitive object={fence} attach="geometry" />
+            <lineBasicMaterial color={tones.inkMuted} />
+          </line>
+          {fencePoly && <Fence poly={fencePoly} gate={gateBB} X={X} Z={Z} ink={tones.inkMuted} />}
+        </>
       )}
       {zoneGeos.map(({ z, geo, bb }) => (
         <group key={z.id}>
           <mesh geometry={geo} rotation-x={Math.PI / 2} position={[0, 0.01, 0]}
                 onPointerOver={(ev) => { ev.stopPropagation(); tip(ev, zoneText(z)); }} onPointerOut={() => onTip(null)}>
-            <meshStandardMaterial color={tones.slab} roughness={1} transparent opacity={z.kind === 'telecom_entrance' ? 0.75 : 0.62}
+            <meshStandardMaterial color={tones.slab} roughness={1} transparent
+                                  opacity={z.kind === 'road' || z.kind === 'apron' || z.kind === 'parking' || z.kind === 'telecom_entrance' ? 0.0
+                                    : z.kind === 'gate' ? 0.2 : 0.5}
                                   side={THREE.DoubleSide} depthWrite={false} />
           </mesh>
+          <ZoneSurface z={z} bb={bb} X={X} Z={Z} />
+          <ZoneObject z={z} bb={bb} X={X} Z={Z} ink={tones.inkMuted} />
           {LABELLED_ZONES.has(z.kind) && (
             <Label text={z.name ?? ZONE_WORD[z.kind] ?? z.kind} ink={tones.inkMuted} bg={tones.raised}
                    x={X((bb.x0 + bb.x1) / 2)} y={0.4} z={Z((bb.y0 + bb.y1) / 2)} w={Math.min(5, Math.max(2.5, (bb.x1 - bb.x0) * 0.6))} />
@@ -333,6 +352,8 @@ export default function BuildingScene(p: BuildingSceneProps) {
         </group>
       ))}
 
+      {!site && mode === '3d' && <Columns box={box} top={roofElev} dim={level != null} />}
+      {corePoly && mode === '3d' && <CoreShaft poly={corePoly} top={roofElev} X={X} Z={Z} ink={tones.inkMuted} quiet={site || level != null} />}
       {rooms.map((r) => shown(r.level) && (
         <RoomVolume key={r.id} room={r} e={elevOf(r)} h={roomH} X={X} Z={Z} tones={tones} paint={roomColour(r)}
                     dim={dimmed(r.level)} hot={hover === r.id} quiet={site}
@@ -350,21 +371,24 @@ export default function BuildingScene(p: BuildingSceneProps) {
 
       {/* The building's shell: at the site rung it is the thing you click. */}
       {site && mode === '3d' && (
-        <group position={[0, top / 2, 0]}>
+        <group position={[0, roofElev / 2, 0]}>
           <mesh geometry={shellGeo} onPointerOver={(ev) => { ev.stopPropagation(); onHover('__building__'); tip(ev, buildingText); }}
                 onPointerOut={() => { onHover(null); onTip(null); }}
                 onClick={(ev) => { ev.stopPropagation(); onEnterBuilding(); }}>
-            <meshStandardMaterial color={tones.inkMuted} transparent opacity={buildingHot ? 0.14 : 0.06} depthWrite={false} roughness={1} />
+            <meshStandardMaterial color={tones.inkMuted} transparent opacity={0.02} depthWrite={false} roughness={1} />
           </mesh>
           <lineSegments>
             <edgesGeometry args={[shellGeo]} />
             <lineBasicMaterial color={buildingHot ? tones.accent : tones.inkMuted} />
           </lineSegments>
-          <Label text={scene.name} ink={tones.ink} bg={tones.raised} x={0} y={top / 2 + 0.9} z={0} w={Math.min(6, (box.x1 - box.x0) * 0.4)} />
+          <group position={[0, -roofElev / 2, 0]}>
+            <Facade box={box} top={roofElev} levels={levels} openings={openings} hot={buildingHot} ink={tones.inkMuted} accent={tones.accent} />
+          </group>
+          <Label text={scene.name} ink={tones.ink} bg={tones.raised} x={0} y={top - roofElev / 2 + 1.2} z={0} w={Math.min(6, (box.x1 - box.x0) * 0.4)} />
         </group>
       )}
       {site && mode === 'plan' && (
-        <mesh geometry={shellGeo} position={[0, top / 2, 0]} onClick={(ev) => { ev.stopPropagation(); onEnterBuilding(); }}
+        <mesh geometry={shellGeo} position={[0, roofElev / 2, 0]} onClick={(ev) => { ev.stopPropagation(); onEnterBuilding(); }}
               onPointerOver={(ev) => { ev.stopPropagation(); onHover('__building__'); tip(ev, buildingText); }}
               onPointerOut={() => { onHover(null); onTip(null); }}>
           <meshBasicMaterial transparent opacity={buildingHot ? 0.08 : 0.001} depthWrite={false} />
