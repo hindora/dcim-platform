@@ -99,6 +99,21 @@
 }
 .topbar .brand .wordmark { font-size: 16px; font-weight: 700; letter-spacing: .02em; }
 
+/* The maps take the window. The top bar comes back over them from a tab at
+   the top edge's right corner - the one corner every map leaves clear - and
+   goes again on Escape or the next page. */
+.shell.is-immersive { position: relative; }
+.shell.is-immersive .topbar { position: absolute; top: 0; left: 0; right: 0; z-index: 60; background: var(--bg);
+                              border-bottom: 1px solid var(--border);
+                              box-shadow: 0 10px 30px color-mix(in srgb, var(--bg-inset) 60%, transparent); }
+.nav-tab { position: fixed; top: 0; right: 14px; z-index: 61; width: 56px; height: 16px;
+           display: grid; place-items: center; padding: 0; cursor: pointer; color: var(--text-muted);
+           background: color-mix(in srgb, var(--bg-raised) 92%, transparent);
+           border: 1px solid var(--border); border-top: none; border-radius: 0 0 6px 6px; }
+.nav-tab:hover { color: var(--text); }
+.nav-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.shell.nav-open .nav-tab { top: 68px; }
+
 .topnav { display: flex; align-items: center; }
 .topnav a {
   display: block; padding: 24px 18px 22px; font-size: 12px; font-weight: 600;

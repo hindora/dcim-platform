@@ -601,14 +601,12 @@ export function UnitPanel({ unit, thermal }: { unit: FloorEquipment; thermal?: T
 
 // ---------------------------------------------------------------- filters
 
-export function FiltersPanel({ rackLayer, coolingLayer, heat, vis, onRack, onCooling, onHeat, onVis, initial = 'racks' }: {
+export function FiltersPanel({ rackLayer, coolingLayer, heat, vis, onRack, onCooling, onHeat, onVis }: {
   rackLayer: RackLayer; coolingLayer: CoolingLayer; heat: HeatPlane; vis: Visibility;
-  /** The section open when the panel appears: the dock's Layers door opens on the rack layers, Filters on visibility. */
-  initial?: 'racks' | 'vis';
   onRack: (l: RackLayer) => void; onCooling: (l: CoolingLayer) => void; onHeat: (h: HeatPlane) => void;
   onVis: (v: Visibility) => void;
 }) {
-  const [open, setOpen] = useState<'racks' | 'cooling' | 'heat' | 'vis'>(initial);
+  const [open, setOpen] = useState<'racks' | 'cooling' | 'heat' | 'vis'>('racks');
   const VIS: { key: keyof Visibility; label: string }[] = [
     { key: 'devices', label: 'Devices in racks' }, { key: 'plant', label: 'Plant and panels' },
     { key: 'aisles', label: 'Aisle tint' }, { key: 'containment', label: 'Containment' },

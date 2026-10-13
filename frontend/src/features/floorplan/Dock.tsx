@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 
 /**
  * The viewer's dock: a column of icon buttons on the left edge that opens
- * the side panels - information, layers, filters - with a chevron at the top
+ * the side panels - information, filters, search - with a chevron at the top
  * that folds the column away to the chevron alone. One place for every
  * panel the viewer has, at every rung, so the hand learns one spot.
  *
@@ -11,7 +11,7 @@ import { useEffect, useState } from 'react';
  * per-viewer convenience kept in local storage and nothing depends on it.
  */
 
-export type DockItem = 'info' | 'layers' | 'filters';
+export type DockItem = 'info' | 'filters' | 'search';
 
 const FOLD_KEY = 'dcim.viewer.dock';
 
@@ -24,8 +24,8 @@ function Glyph({ kind }: { kind: DockItem | 'fold' | 'unfold' }) {
     case 'info': return (
       <svg {...common}><circle cx="10" cy="10" r="7.5" /><path d="M10 9v5" /><circle cx="10" cy="6.3" r="0.9" fill="currentColor" stroke="none" /></svg>
     );
-    case 'layers': return (
-      <svg {...common}><path d="M10 3.5l7 3.8-7 3.8-7-3.8z" /><path d="M3 10.6l7 3.8 7-3.8" /><path d="M3 13.9l7 3.8 7-3.8" /></svg>
+    case 'search': return (
+      <svg {...common}><circle cx="8.5" cy="8.5" r="5" /><path d="M12.3 12.3L17 17" /></svg>
     );
     case 'filters': return (
       <svg {...common}>
@@ -36,7 +36,7 @@ function Glyph({ kind }: { kind: DockItem | 'fold' | 'unfold' }) {
   }
 }
 
-const WORDS: Record<DockItem, string> = { info: 'Information', layers: 'Layers', filters: 'Filters' };
+const WORDS: Record<DockItem, string> = { info: 'Information', filters: 'Filters', search: 'Search' };
 
 export function Dock({ items, open, onToggle }: {
   /** The panels this rung offers, in dock order. */

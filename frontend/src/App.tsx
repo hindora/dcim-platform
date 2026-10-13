@@ -177,6 +177,22 @@ function TopBar({ onSignOut }: { onSignOut: () => void }) {
   );
 }
 
+/** The visual pages - the maps - take the whole window: the top bar is
+ *  hidden and a tab at the top edge brings it back for the next move. */
+const IMMERSIVE = new Set(['/floorplan', '/connectivity', '/world']);
+
+function NavTab({ open, onToggle }: { open: boolean; onToggle: () => void }) {
+  return (
+    <button type="button" className="nav-tab" onClick={onToggle} aria-expanded={open}
+            aria-label={open ? 'Hide the menu' : 'Show the menu'} title={open ? 'Hide the menu' : 'Show the menu'}>
+      <svg width="14" height="10" viewBox="0 0 14 10" fill="none" stroke="currentColor" strokeWidth="1.6"
+           strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        {open ? <path d="M2 7l5-5 5 5" /> : <path d="M2 3l5 5 5-5" />}
+      </svg>
+    </button>
+  );
+}
+
 function Footer() {
   const qc = useQueryClient();
   const status = useSocketStatus();
@@ -214,6 +230,15 @@ export default function App() {
   const [returnTo, setReturnTo] = useState<string | null>(null);
   const location = useLocation();
   const navigate = useNavigate();
+  const immersive = IMMERSIVE.has(location.pathname);
+  const [navOpen, setNavOpen] = useState(false);
+  useEffect(() => { setNavOpen(false); }, [location.pathname]);
+  useEffect(() => {
+    if (!navOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setNavOpen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [navOpen]);
 
   // A 401 anywhere ends the session for everything, so the shell has to hear
   // about it. Without this the token was cleared and nothing else happened:
@@ -243,9 +268,10 @@ export default function App() {
   }
 
   return (
-    <div className="shell">
+    <div className={`shell${immersive ? ' is-immersive' : ''}${navOpen ? ' nav-open' : ''}`}>
       <TrustBanner />
-      <TopBar onSignOut={() => { setToken(null); setAuthed(false); }} />
+      {(!immersive || navOpen) && <TopBar onSignOut={() => { setToken(null); setAuthed(false); }} />}
+      {immersive && <NavTab open={navOpen} onToggle={() => setNavOpen((o) => !o)} />}
       <main>
         <Routes>
           <Route path="/" element={<Home />} />

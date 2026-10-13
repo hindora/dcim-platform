@@ -13,6 +13,7 @@ import {
   type BuildingLayer, type CoolingLayer, type HeatPlane, type RackLayer, type Sel, type ViewMode, type Visibility,
 } from './layers';
 import { Dock, type DockItem } from './Dock';
+import { SearchPanel, typeWord, type SearchHit } from './Search';
 import { BuildingPanel, DevicePanel, FiltersPanel, Legend, PathsPanel, RackPanel, RoomPanel, UnitPanel } from './panels';
 import { fromImpact, fromTraces, type PathKind } from './paths';
 import { BuildingPlan2D } from './BuildingPlan2D';
@@ -372,15 +373,48 @@ export function FloorPlanView() {
   const updatedAgo = live && scene.dataUpdatedAt ? Math.max(0, Math.round((Date.now() - scene.dataUpdatedAt) / 1000)) : null;
   const frameInfo = data?.frame ?? null;
 
+  // Everything a name can find: the site's rooms, their racks and plant,
+  // and the devices of the room that is open. A pick in another room goes
+  // there first and selects once that room's scene is in.
+  const hits = useMemo<SearchHit[]>(() => {
+    const out: SearchHit[] = [];
+    const roomsOf = building.data?.rooms ?? [];
+    for (const r of roomsOf) {
+      const lv = (r.level ?? '').toLowerCase() === 'site' ? 'in the compound' : r.level ? `level ${r.level}` : '';
+      out.push({ kind: 'room', id: r.id, name: r.name, where: [lv, r.rack_count ? `${r.rack_count} racks` : null].filter(Boolean).join(' · '), roomId: null });
+      for (const k of r.racks ?? []) out.push({ kind: 'rack', id: k.id, name: k.name, where: r.name, roomId: r.id });
+      for (const u of r.equipment ?? []) out.push({ kind: 'unit', id: u.id, name: u.name, where: `${typeWord(u.device_type)} · ${r.name}`, roomId: r.id });
+    }
+    if (data && roomId) {
+      const rackName = new Map(data.plan.racks.map((r) => [r.id, r.name]));
+      for (const d of data.devices) out.push({ kind: 'device', id: d.id, name: d.name, where: `${typeWord(d.device_type)} · ${rackName.get(d.rack_id) ?? ''} · ${data.plan.room_name}`, roomId });
+      // Plant the site scene has no footprint for still answers here.
+      const seen = new Set(out.filter((h) => h.kind === 'unit').map((h) => h.id));
+      for (const e of data.plan.equipment) if (!seen.has(e.id)) out.push({ kind: 'unit', id: e.id, name: e.name, where: `${typeWord(e.device_type)} · ${data.plan.room_name}`, roomId });
+    }
+    return out;
+  }, [building.data, data, roomId]);
+  const pendingSel = useRef<{ roomId: string; sel: Sel } | null>(null);
+  const pick = (h: SearchHit) => {
+    if (h.kind === 'room') { enterRoom(h.id); setPanel('info'); return; }
+    const s: Sel = { kind: h.kind === 'unit' ? 'equipment' : h.kind, id: h.id };
+    if (h.roomId && h.roomId !== roomId) { pendingSel.current = { roomId: h.roomId, sel: s }; enterRoom(h.roomId); return; }
+    setSel(s); setPanel('info');
+  };
+  useEffect(() => {
+    const p = pendingSel.current;
+    if (p && p.roomId === roomId && data && data.plan.room_id === roomId) { pendingSel.current = null; setSel(p.sel); setPanel('info'); }
+  }, [roomId, data]);
+
   // --- selection panel content ----------------------------------------
   let panelTitle = 'Room information';
   let panelBody: React.ReactNode = null;
-  if (panel === 'filters' || panel === 'layers') {
-    // One panel, two doors: Layers opens on what colours the racks, Filters on
-    // what is drawn at all. Keyed so each door opens on its own section.
-    panelTitle = panel === 'layers' ? 'Layers' : 'Filters';
-    panelBody = <FiltersPanel key={panel} initial={panel === 'layers' ? 'racks' : 'vis'}
-                              rackLayer={rackLayer} coolingLayer={coolingLayer} heat={heat} vis={vis}
+  if (panel === 'search') {
+    panelTitle = 'Search';
+    panelBody = <SearchPanel hits={hits} onPick={pick} />;
+  } else if (panel === 'filters') {
+    panelTitle = 'Filters';
+    panelBody = <FiltersPanel rackLayer={rackLayer} coolingLayer={coolingLayer} heat={heat} vis={vis}
                               onRack={(l) => setParam('layer', l)} onCooling={(l) => setParam('cooling', l)}
                               onHeat={(h) => setParam('heat', h)} onVis={setVis} />;
   } else if (sel && data) {
@@ -480,7 +514,16 @@ export function FloorPlanView() {
                  options={[{ key: 'all', label: 'ALL' }, ...levelNames.map((n) => ({ key: n, label: /^\d+$/.test(n) ? `L${n}` : n.toUpperCase() }))]} />
           )}
         </div>
-        <Dock items={['info']} open={panel === 'info' ? 'info' : null} onToggle={togglePanel} />
+        <Dock items={['info', 'search']} open={panel === 'info' || panel === 'search' ? panel : null} onToggle={togglePanel} />
+        {panel === 'search' && (
+          <aside className="vw-panel" aria-label="Search">
+            <div className="vw-panel-head">
+              <h3>Search</h3>
+              <button type="button" className="close" aria-label="Close" onClick={() => setPanel(null)}>×</button>
+            </div>
+            <SearchPanel hits={hits} onPick={pick} />
+          </aside>
+        )}
         {panel === 'info' && bs && (
           <aside className="vw-panel" aria-label={atSite ? 'Site information' : 'Building information'}>
             <div className="vw-panel-head">
@@ -597,7 +640,7 @@ export function FloorPlanView() {
         <Seg label="Temperature unit" value={tUnit} onChange={(u) => setTempUnit(u as TempUnit)}
              options={[{ key: 'C', label: '°C' }, { key: 'F', label: '°F' }]} />
       </div>
-      <Dock items={['info', 'layers', 'filters']} open={panel} onToggle={togglePanel} />
+      <Dock items={['info', 'filters', 'search']} open={panel} onToggle={togglePanel} />
 
       {panel && (
         <aside className="vw-panel" aria-label={panelTitle}>
