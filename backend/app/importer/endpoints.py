@@ -72,6 +72,15 @@ PROBE_ROLE_BY_PREFIX = {
     "CWR": "cw_return",
     "CTB": "ct_basin",
     "FLOW": "chw_flow",
+    # S3 (docs/27 §8b.3, §8c.2): the other instruments on the BMS trunk. The
+    # room transmitter (THR) is deliberately not here: its template is the
+    # role-less one the collector falls back to by device type, and its live
+    # endpoints predate roles.
+    "DOOR": "door_contact",
+    "H2": "hydrogen",
+    "BTT": "battery_temp",
+    "FUEL": "fuel_level",
+    "WTR": "water_level",
 }
 
 

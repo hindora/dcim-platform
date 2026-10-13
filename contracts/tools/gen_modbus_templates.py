@@ -172,6 +172,20 @@ PROBE_POINTS: dict[str, tuple[str, str]] = {
     "chw_flow":   ("water_flow", "CHW"),
 }
 
+# Named-point instruments that are still SELECTED by their installed role,
+# because "sensor" alone cannot tell a door contact from a gas detector. The
+# binding names the template's headline metric; the points carry their own.
+# The room transmitter is deliberately absent: it was the one role-less
+# sensor template, its live endpoints predate roles, and the collector's
+# fallback by device type is what keeps them polling.
+ROLE_SELECTED: dict[str, tuple[str, str]] = {
+    "door_contact": ("door_open", ""),
+    "hydrogen":     ("hydrogen_lel_pct", ""),
+    "battery_temp": ("battery_temperature", ""),
+    "fuel_level":   ("fuel_level_pct", "BULK"),
+    "water_level":  ("water_level_pct", ""),
+}
+
 
 def load_sim(sim_root: Path):
     if not (sim_root / "core" / "modbus_register_map.py").exists():
@@ -294,14 +308,20 @@ def build(m) -> tuple[str, list[str]]:
         # device's. Only the single-nameless-value kind - an RTD, a flow meter
         # - takes its meaning from where it is installed.
         named = [role for role in roles if role in PROBE_POINTS]
+        selected = [role for role in roles if role in ROLE_SELECTED]
         if named:
             a("    # A transmitter publishes one nameless process value; what it MEANS")
             a("    # comes from where it is installed. The probe role carried on the")
             a("    # endpoint selects the metric, which is how a field instrument")
             a("    # actually works.")
+        elif selected:
+            a("    # The points are named and carry their own metrics; the installed")
+            a("    # role on the endpoint is what selects this template among the")
+            a("    # instruments a BMS trunk carries.")
+        if named or selected:
             a("    probe_roles:")
-            for role in named:
-                metric, instance = PROBE_POINTS[role]
+            for role in named + selected:
+                metric, instance = (PROBE_POINTS.get(role) or ROLE_SELECTED[role])
                 line = f"      {role}: {{ metric: {metric}"
                 if instance:
                     line += f", instance: {instance}"

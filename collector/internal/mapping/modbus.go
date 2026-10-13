@@ -219,13 +219,22 @@ func (t *ModbusTemplate) ProcessValue() (ModbusPoint, bool) {
 // water chart.
 func (t *ModbusTemplate) Telemetry(probeRole string) []ModbusPoint {
 	if len(t.ProbeRoles) > 0 {
-		pv, ok := t.ProcessValue()
-		if !ok {
-			return nil
-		}
 		binding, ok := t.ProbeRoles[strings.ToLower(probeRole)]
 		if !ok {
 			return nil
+		}
+		pv, ok := t.ProcessValue()
+		if !ok {
+			// Named points: the role only chose the template (a door contact
+			// and a gas detector are both "sensor"); the points say what
+			// they measure.
+			var named []ModbusPoint
+			for _, p := range t.Points {
+				if p.Role == "" && p.Metric != "" {
+					named = append(named, p)
+				}
+			}
+			return named
 		}
 		pv.Metric = binding.Metric
 		pv.Instance = binding.Instance
