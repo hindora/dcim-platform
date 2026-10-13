@@ -478,6 +478,36 @@ async def site_doors(session: AsyncSession, datacenter_id: str) -> list[dict[str
     return [dict(r) for r in rows]
 
 
+async def site_fire(session: AsyncSession, datacenter_id: str) -> list[dict[str, Any]]:
+    """What the site's fire instruments read now, one row per instrument.
+
+    Like a door contact, a fire instrument is whatever reports the metric: a
+    panel reports `fire_alarm`, an aspirating detector `smoke_stage`, a
+    release panel `gas_release_state`. A site with none returns nothing, and
+    the viewer then draws its fire points by rule and says so.
+    """
+    rows = (await session.execute(text("""
+        SELECT d.id::text, d.name, d.room_id::text AS room_id,
+               (ds.metrics->'fire_alarm'->>'v')::boolean        AS fire_alarm,
+               (ds.metrics->'fire_trouble'->>'v')::boolean      AS fire_trouble,
+               (ds.metrics->'fire_supervisory'->>'v')::boolean  AS fire_supervisory,
+               (ds.metrics->'smoke_stage'->>'v')::float         AS smoke_stage,
+               (ds.metrics->'smoke_obscuration'->>'v')::float   AS smoke_obscuration,
+               (ds.metrics->'gas_release_state'->>'v')::float   AS gas_state,
+               (ds.metrics->'gas_discharge_countdown'->>'v')::float AS gas_countdown_s,
+               (ds.metrics->'agent_pressure'->>'v')::float      AS agent_kpa,
+               (ds.metrics->'agent_released'->>'v')::boolean    AS agent_released
+          FROM device d
+          JOIN device_state ds ON ds.device_id = d.id
+          JOIN room rm ON rm.id = d.room_id
+         WHERE rm.datacenter_id = CAST(:dc AS uuid)
+           AND d.lifecycle <> 'decommissioned'
+           AND (ds.metrics ? 'fire_alarm' OR ds.metrics ? 'smoke_stage'
+                OR ds.metrics ? 'gas_release_state')
+    """), {"dc": datacenter_id})).mappings().all()
+    return [dict(r) for r in rows]
+
+
 async def room_rack_devices(session: AsyncSession, room_id: str) -> list[dict[str, Any]]:
     """Every live device in the room's racks, with its slot and state."""
     rows = (await session.execute(text("""

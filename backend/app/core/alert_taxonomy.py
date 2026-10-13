@@ -52,9 +52,13 @@ CAPACITY = "capacity"
 #: gate, which is why it is not environmental - a NOC routes it elsewhere
 #: (docs/27 §8b B6, Q6).
 SECURITY = "security"
+#: Fire detection and suppression. Its own category because it has its own
+#: owner and its own response - the fire plan, not a work order - and because
+#: nothing else on the strip means "leave the room".
+FIRE = "fire"
 
 CATEGORIES = (VISIBILITY, ENVIRONMENTAL, COOLING, POWER, IT_EQUIPMENT,
-              NETWORK, CAPACITY, SECURITY)
+              NETWORK, CAPACITY, SECURITY, FIRE)
 
 #: Where a condition goes when nothing else claims it.
 #:
@@ -117,6 +121,12 @@ DESCRIPTIONS: dict[str, dict[str, str]] = {
         "owner": "security",
         "text": "Physical access: a watched door held open, a gate or a "
                 "guardhouse contact.",
+    },
+    FIRE: {
+        "label": "Fire",
+        "owner": "life safety",
+        "text": "Fire detection and suppression as the BMS sees them: smoke "
+                "stages, panel alarm, trouble and supervisory, gas release.",
     },
 }
 
@@ -208,6 +218,8 @@ THRESHOLD_CROSSINGS: frozenset[str] = frozenset({
     # S3 instruments: a gas, a string, two tanks
     "hydrogen_high", "hydrogen_critical", "battery_temp_high", "battery_temp_critical",
     "bulk_fuel_low", "bulk_fuel_critical", "makeup_water_low", "makeup_water_critical",
+    # fire: the detector's stages and the cylinder pressure are numbers
+    "smoke_alert", "smoke_action", "smoke_fire", "gas_release_imminent", "gas_agent_pressure_low",
     # the service transformer's oil and winding (docs/27 §8c.2)
     "transformer_oil_temp_high", "transformer_oil_temp_critical",
     "transformer_winding_temp_high", "transformer_winding_temp_critical",
@@ -390,6 +402,16 @@ BY_ALARM_TYPE: dict[str, str] = {
     "makeup_water_low": COOLING,
     "makeup_water_critical": COOLING,
     "door_held_open": SECURITY,
+    # --- fire: every one of them, whatever the instrument
+    "smoke_alert": FIRE,
+    "smoke_action": FIRE,
+    "smoke_fire": FIRE,
+    "fire_alarm_active": FIRE,
+    "fire_panel_trouble": FIRE,
+    "fire_panel_supervisory": FIRE,
+    "gas_release_imminent": FIRE,
+    "gas_agent_released": FIRE,
+    "gas_agent_pressure_low": FIRE,
     # The service transformer is the supply; hot oil is a supply at risk.
     "transformer_oil_temp_high": POWER,
     "transformer_oil_temp_critical": POWER,
@@ -593,6 +615,7 @@ BY_METRIC_GROUP: dict[str, str] = {
     "cooling": COOLING,
     "power": POWER,
     "security": SECURITY,
+    "fire": FIRE,
 }
 
 #: Metric -> group, for the metrics whose group cannot be looked up at call
@@ -741,6 +764,8 @@ STRIP_GROUPS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     # routed to the gate, not to facilities, and a counter that mixes the two
     # is one neither reads.
     ("security", "Security", (SECURITY,)),
+    # Never folded into anything: the one counter that means people move.
+    ("fire", "Fire", (FIRE,)),
 )
 
 

@@ -23,103 +23,113 @@ type MetricDef struct {
 }
 
 const (
-	MetricSysUptime            = "sys_uptime"
-	MetricReachable            = "reachable"
-	MetricPollLatency          = "poll_latency"
-	MetricCPUUtilization       = "cpu_utilization"
-	MetricCPUTemperature       = "cpu_temperature"
-	MetricMemoryUtilization    = "memory_utilization"
-	MetricMemoryUsed           = "memory_used"
-	MetricMemoryTotal          = "memory_total"
-	MetricMemoryAvailable      = "memory_available"
-	MetricDiskUtilization      = "disk_utilization"
-	MetricDiskUsed             = "disk_used"
-	MetricDiskTotal            = "disk_total"
-	MetricInletTemperature     = "inlet_temperature"
-	MetricExhaustTemperature   = "exhaust_temperature"
-	MetricPowerDraw            = "power_draw"
-	MetricFanSpeed             = "fan_speed"
-	MetricFanSpeedPct          = "fan_speed_pct"
-	MetricPSUInputVoltage      = "psu_input_voltage"
-	MetricPSUOutputPower       = "psu_output_power"
-	MetricPSUState             = "psu_state"
-	MetricEnergyConsumed       = "energy_consumed"
-	MetricIfAdminState         = "if_admin_state"
-	MetricIfOperState          = "if_oper_state"
-	MetricIfSpeed              = "if_speed"
-	MetricIfInOctets           = "if_in_octets"
-	MetricIfOutOctets          = "if_out_octets"
-	MetricIfInBps              = "if_in_bps"
-	MetricIfOutBps             = "if_out_bps"
-	MetricIfInErrors           = "if_in_errors"
-	MetricIfOutErrors          = "if_out_errors"
-	MetricIfInDiscards         = "if_in_discards"
-	MetricIfOutDiscards        = "if_out_discards"
-	MetricIfInErrorRate        = "if_in_error_rate"
-	MetricAmbientTemperature   = "ambient_temperature"
-	MetricRelativeHumidity     = "relative_humidity"
-	MetricDewPoint             = "dew_point"
-	MetricAirflow              = "airflow"
-	MetricWaterSupplyTemp      = "water_supply_temp"
-	MetricWaterReturnTemp      = "water_return_temp"
-	MetricWaterSetpointTemp    = "water_setpoint_temp"
-	MetricWaterFlow            = "water_flow"
-	MetricWaterPressure        = "water_pressure"
-	MetricWaterDiffPressure    = "water_diff_pressure"
-	MetricValvePositionPct     = "valve_position_pct"
-	MetricCompressorLoadPct    = "compressor_load_pct"
-	MetricCoolingCapacity      = "cooling_capacity"
-	MetricCoolingOutputPct     = "cooling_output_pct"
-	MetricThermalLoad          = "thermal_load"
-	MetricCop                  = "cop"
-	MetricApproachTemp         = "approach_temp"
-	MetricSupplyAirTemp        = "supply_air_temp"
-	MetricReturnAirTemp        = "return_air_temp"
-	MetricAirSetpointTemp      = "air_setpoint_temp"
-	MetricFilterDiffPressure   = "filter_diff_pressure"
-	MetricBasinLevelPct        = "basin_level_pct"
-	MetricMakeupWaterFlow      = "makeup_water_flow"
-	MetricOutdoorDryBulbTemp   = "outdoor_dry_bulb_temp"
-	MetricOutdoorWetBulbTemp   = "outdoor_wet_bulb_temp"
-	MetricVibration            = "vibration"
-	MetricMotorTemp            = "motor_temp"
-	MetricVfdFrequency         = "vfd_frequency"
-	MetricPumpSpeedPct         = "pump_speed_pct"
-	MetricRunHours             = "run_hours"
-	MetricEquipmentState       = "equipment_state"
-	MetricAlarmState           = "alarm_state"
-	MetricVoltageLn            = "voltage_ln"
-	MetricCurrent              = "current"
-	MetricLineFrequency        = "line_frequency"
-	MetricPowerFactor          = "power_factor"
-	MetricVoltageThdPct        = "voltage_thd_pct"
-	MetricCurrentThdPct        = "current_thd_pct"
-	MetricHarmonicCurrentPct   = "harmonic_current_pct"
-	MetricVoltageLl            = "voltage_ll"
-	MetricReactivePower        = "reactive_power"
-	MetricApparentPower        = "apparent_power"
-	MetricLoadPct              = "load_pct"
-	MetricPhaseImbalancePct    = "phase_imbalance_pct"
-	MetricDemandPeakPower      = "demand_peak_power"
-	MetricBatteryRuntime       = "battery_runtime"
-	MetricBatteryHealthPct     = "battery_health_pct"
-	MetricOilTemperature       = "oil_temperature"
-	MetricWindingTemperature   = "winding_temperature"
-	MetricTapPosition          = "tap_position"
-	MetricBatteryTemperature   = "battery_temperature"
-	MetricCoolantTemperature   = "coolant_temperature"
-	MetricFuelLevelPct         = "fuel_level_pct"
-	MetricFuelVolume           = "fuel_volume"
-	MetricWaterLevelPct        = "water_level_pct"
-	MetricWaterVolume          = "water_volume"
-	MetricHydrogenLelPct       = "hydrogen_lel_pct"
-	MetricDoorOpen             = "door_open"
-	MetricCurrentRunTime       = "current_run_time"
-	MetricStartAttempts        = "start_attempts"
-	MetricTransferCount        = "transfer_count"
-	MetricTimeOnEmergency      = "time_on_emergency"
-	MetricOperatingMode        = "operating_mode"
-	MetricComponentTemperature = "component_temperature"
+	MetricSysUptime             = "sys_uptime"
+	MetricReachable             = "reachable"
+	MetricPollLatency           = "poll_latency"
+	MetricCPUUtilization        = "cpu_utilization"
+	MetricCPUTemperature        = "cpu_temperature"
+	MetricMemoryUtilization     = "memory_utilization"
+	MetricMemoryUsed            = "memory_used"
+	MetricMemoryTotal           = "memory_total"
+	MetricMemoryAvailable       = "memory_available"
+	MetricDiskUtilization       = "disk_utilization"
+	MetricDiskUsed              = "disk_used"
+	MetricDiskTotal             = "disk_total"
+	MetricInletTemperature      = "inlet_temperature"
+	MetricExhaustTemperature    = "exhaust_temperature"
+	MetricPowerDraw             = "power_draw"
+	MetricFanSpeed              = "fan_speed"
+	MetricFanSpeedPct           = "fan_speed_pct"
+	MetricPSUInputVoltage       = "psu_input_voltage"
+	MetricPSUOutputPower        = "psu_output_power"
+	MetricPSUState              = "psu_state"
+	MetricEnergyConsumed        = "energy_consumed"
+	MetricIfAdminState          = "if_admin_state"
+	MetricIfOperState           = "if_oper_state"
+	MetricIfSpeed               = "if_speed"
+	MetricIfInOctets            = "if_in_octets"
+	MetricIfOutOctets           = "if_out_octets"
+	MetricIfInBps               = "if_in_bps"
+	MetricIfOutBps              = "if_out_bps"
+	MetricIfInErrors            = "if_in_errors"
+	MetricIfOutErrors           = "if_out_errors"
+	MetricIfInDiscards          = "if_in_discards"
+	MetricIfOutDiscards         = "if_out_discards"
+	MetricIfInErrorRate         = "if_in_error_rate"
+	MetricAmbientTemperature    = "ambient_temperature"
+	MetricRelativeHumidity      = "relative_humidity"
+	MetricDewPoint              = "dew_point"
+	MetricAirflow               = "airflow"
+	MetricWaterSupplyTemp       = "water_supply_temp"
+	MetricWaterReturnTemp       = "water_return_temp"
+	MetricWaterSetpointTemp     = "water_setpoint_temp"
+	MetricWaterFlow             = "water_flow"
+	MetricWaterPressure         = "water_pressure"
+	MetricWaterDiffPressure     = "water_diff_pressure"
+	MetricValvePositionPct      = "valve_position_pct"
+	MetricCompressorLoadPct     = "compressor_load_pct"
+	MetricCoolingCapacity       = "cooling_capacity"
+	MetricCoolingOutputPct      = "cooling_output_pct"
+	MetricThermalLoad           = "thermal_load"
+	MetricCop                   = "cop"
+	MetricApproachTemp          = "approach_temp"
+	MetricSupplyAirTemp         = "supply_air_temp"
+	MetricReturnAirTemp         = "return_air_temp"
+	MetricAirSetpointTemp       = "air_setpoint_temp"
+	MetricFilterDiffPressure    = "filter_diff_pressure"
+	MetricBasinLevelPct         = "basin_level_pct"
+	MetricMakeupWaterFlow       = "makeup_water_flow"
+	MetricOutdoorDryBulbTemp    = "outdoor_dry_bulb_temp"
+	MetricOutdoorWetBulbTemp    = "outdoor_wet_bulb_temp"
+	MetricVibration             = "vibration"
+	MetricMotorTemp             = "motor_temp"
+	MetricVfdFrequency          = "vfd_frequency"
+	MetricPumpSpeedPct          = "pump_speed_pct"
+	MetricRunHours              = "run_hours"
+	MetricEquipmentState        = "equipment_state"
+	MetricAlarmState            = "alarm_state"
+	MetricVoltageLn             = "voltage_ln"
+	MetricCurrent               = "current"
+	MetricLineFrequency         = "line_frequency"
+	MetricPowerFactor           = "power_factor"
+	MetricVoltageThdPct         = "voltage_thd_pct"
+	MetricCurrentThdPct         = "current_thd_pct"
+	MetricHarmonicCurrentPct    = "harmonic_current_pct"
+	MetricVoltageLl             = "voltage_ll"
+	MetricReactivePower         = "reactive_power"
+	MetricApparentPower         = "apparent_power"
+	MetricLoadPct               = "load_pct"
+	MetricPhaseImbalancePct     = "phase_imbalance_pct"
+	MetricDemandPeakPower       = "demand_peak_power"
+	MetricBatteryRuntime        = "battery_runtime"
+	MetricBatteryHealthPct      = "battery_health_pct"
+	MetricOilTemperature        = "oil_temperature"
+	MetricWindingTemperature    = "winding_temperature"
+	MetricTapPosition           = "tap_position"
+	MetricBatteryTemperature    = "battery_temperature"
+	MetricCoolantTemperature    = "coolant_temperature"
+	MetricFuelLevelPct          = "fuel_level_pct"
+	MetricFuelVolume            = "fuel_volume"
+	MetricWaterLevelPct         = "water_level_pct"
+	MetricWaterVolume           = "water_volume"
+	MetricHydrogenLelPct        = "hydrogen_lel_pct"
+	MetricDoorOpen              = "door_open"
+	MetricFireAlarm             = "fire_alarm"
+	MetricFireTrouble           = "fire_trouble"
+	MetricFireSupervisory       = "fire_supervisory"
+	MetricFireZoneCount         = "fire_zone_count"
+	MetricSmokeObscuration      = "smoke_obscuration"
+	MetricSmokeStage            = "smoke_stage"
+	MetricGasReleaseState       = "gas_release_state"
+	MetricGasDischargeCountdown = "gas_discharge_countdown"
+	MetricAgentPressure         = "agent_pressure"
+	MetricAgentReleased         = "agent_released"
+	MetricCurrentRunTime        = "current_run_time"
+	MetricStartAttempts         = "start_attempts"
+	MetricTransferCount         = "transfer_count"
+	MetricTimeOnEmergency       = "time_on_emergency"
+	MetricOperatingMode         = "operating_mode"
+	MetricComponentTemperature  = "component_temperature"
 )
 
 var MetricDefs = map[string]MetricDef{
@@ -851,6 +861,86 @@ var MetricDefs = map[string]MetricDef{
 		StaleAfterS: 900, Hot: true,
 		Group: "security", RateOf: "", RateScale: 1,
 	},
+	"fire_alarm": {
+		Key: "fire_alarm", DisplayName: "Fire Alarm", Unit: "bool",
+		ValueType: "bool", Aggregation: "last",
+		MinValid: 0, HasMin: false,
+		MaxValid: 0, HasMax: false,
+		StaleAfterS: 900, Hot: true,
+		Group: "fire", RateOf: "", RateScale: 1,
+	},
+	"fire_trouble": {
+		Key: "fire_trouble", DisplayName: "Fire Panel Trouble", Unit: "bool",
+		ValueType: "bool", Aggregation: "last",
+		MinValid: 0, HasMin: false,
+		MaxValid: 0, HasMax: false,
+		StaleAfterS: 900, Hot: true,
+		Group: "fire", RateOf: "", RateScale: 1,
+	},
+	"fire_supervisory": {
+		Key: "fire_supervisory", DisplayName: "Fire Panel Supervisory", Unit: "bool",
+		ValueType: "bool", Aggregation: "last",
+		MinValid: 0, HasMin: false,
+		MaxValid: 0, HasMax: false,
+		StaleAfterS: 900, Hot: true,
+		Group: "fire", RateOf: "", RateScale: 1,
+	},
+	"fire_zone_count": {
+		Key: "fire_zone_count", DisplayName: "Fire Zones In Alarm", Unit: "count",
+		ValueType: "gauge", Aggregation: "max",
+		MinValid: 0, HasMin: true,
+		MaxValid: 999, HasMax: true,
+		StaleAfterS: 900, Hot: true,
+		Group: "fire", RateOf: "", RateScale: 1,
+	},
+	"smoke_obscuration": {
+		Key: "smoke_obscuration", DisplayName: "Smoke Obscuration", Unit: "pct_per_m",
+		ValueType: "gauge", Aggregation: "max",
+		MinValid: 0, HasMin: true,
+		MaxValid: 35, HasMax: true,
+		StaleAfterS: 900, Hot: true,
+		Group: "fire", RateOf: "", RateScale: 1,
+	},
+	"smoke_stage": {
+		Key: "smoke_stage", DisplayName: "Smoke Alarm Stage", Unit: "enum",
+		ValueType: "gauge", Aggregation: "max",
+		MinValid: 0, HasMin: true,
+		MaxValid: 4, HasMax: true,
+		StaleAfterS: 900, Hot: true,
+		Group: "fire", RateOf: "", RateScale: 1,
+	},
+	"gas_release_state": {
+		Key: "gas_release_state", DisplayName: "Gas Release State", Unit: "enum",
+		ValueType: "gauge", Aggregation: "max",
+		MinValid: 0, HasMin: true,
+		MaxValid: 4, HasMax: true,
+		StaleAfterS: 900, Hot: true,
+		Group: "fire", RateOf: "", RateScale: 1,
+	},
+	"gas_discharge_countdown": {
+		Key: "gas_discharge_countdown", DisplayName: "Gas Discharge Countdown", Unit: "s",
+		ValueType: "gauge", Aggregation: "last",
+		MinValid: 0, HasMin: true,
+		MaxValid: 600, HasMax: true,
+		StaleAfterS: 900, Hot: true,
+		Group: "fire", RateOf: "", RateScale: 1,
+	},
+	"agent_pressure": {
+		Key: "agent_pressure", DisplayName: "Suppression Agent Pressure", Unit: "kPa",
+		ValueType: "gauge", Aggregation: "min",
+		MinValid: 0, HasMin: true,
+		MaxValid: 40000, HasMax: true,
+		StaleAfterS: 900, Hot: true,
+		Group: "fire", RateOf: "", RateScale: 1,
+	},
+	"agent_released": {
+		Key: "agent_released", DisplayName: "Suppression Agent Released", Unit: "bool",
+		ValueType: "bool", Aggregation: "last",
+		MinValid: 0, HasMin: false,
+		MaxValid: 0, HasMax: false,
+		StaleAfterS: 900, Hot: true,
+		Group: "fire", RateOf: "", RateScale: 1,
+	},
 	"current_run_time": {
 		Key: "current_run_time", DisplayName: "Current Run Time", Unit: "s",
 		ValueType: "gauge", Aggregation: "last",
@@ -906,6 +996,7 @@ var MetricGroups = map[string][]string{
 	"compute":     {"cpu_utilization", "memory_utilization", "memory_used", "memory_total", "memory_available", "disk_utilization", "disk_used", "disk_total"},
 	"cooling":     {"water_supply_temp", "water_return_temp", "water_setpoint_temp", "water_flow", "water_pressure", "water_diff_pressure", "valve_position_pct", "compressor_load_pct", "cooling_capacity", "cooling_output_pct", "thermal_load", "cop", "approach_temp", "supply_air_temp", "return_air_temp", "air_setpoint_temp", "filter_diff_pressure", "basin_level_pct", "makeup_water_flow", "vibration", "motor_temp", "vfd_frequency", "pump_speed_pct", "run_hours", "equipment_state", "alarm_state", "water_level_pct", "water_volume"},
 	"environment": {"ambient_temperature", "relative_humidity", "dew_point", "airflow", "outdoor_dry_bulb_temp", "outdoor_wet_bulb_temp", "hydrogen_lel_pct"},
+	"fire":        {"fire_alarm", "fire_trouble", "fire_supervisory", "fire_zone_count", "smoke_obscuration", "smoke_stage", "gas_release_state", "gas_discharge_countdown", "agent_pressure", "agent_released"},
 	"interfaces":  {"if_admin_state", "if_oper_state", "if_speed", "if_in_octets", "if_out_octets", "if_in_bps", "if_out_bps", "if_in_errors", "if_out_errors", "if_in_discards", "if_out_discards", "if_in_error_rate"},
 	"power":       {"power_draw", "psu_input_voltage", "psu_output_power", "psu_state", "energy_consumed", "voltage_ln", "current", "line_frequency", "power_factor", "voltage_thd_pct", "current_thd_pct", "harmonic_current_pct", "voltage_ll", "reactive_power", "apparent_power", "load_pct", "phase_imbalance_pct", "demand_peak_power", "battery_runtime", "battery_health_pct", "oil_temperature", "winding_temperature", "tap_position", "battery_temperature", "coolant_temperature", "fuel_level_pct", "fuel_volume", "current_run_time", "start_attempts", "transfer_count", "time_on_emergency", "operating_mode"},
 	"security":    {"door_open"},

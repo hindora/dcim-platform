@@ -1858,6 +1858,20 @@ export interface TwinDoor {
   device_id: string; room_id?: string | null; level?: string | null; x_m: number; y_m: number;
   facing_deg?: number | null; open?: boolean | null; max_severity: string;
 }
+/** What a room's fire instruments read. A field is null when no instrument in the room reports it. */
+export interface TwinRoomFire {
+  room_id: string;
+  /** Aspirating detector: 0 normal, 1 Alert, 2 Action, 3 Fire 1, 4 Fire 2. */
+  smoke_stage?: number | null; smoke_obscuration?: number | null;
+  /** Release panel: 0 normal, 1 first alarm, 2 pre-discharge, 3 released, 4 abort held. */
+  gas_state?: number | null; gas_countdown_s?: number | null;
+  agent_kpa?: number | null; agent_released?: boolean | null;
+}
+/** The fire panel's three states and each room's instruments. Read, never commanded. */
+export interface TwinSiteFire {
+  alarm?: boolean | null; trouble?: boolean | null; supervisory?: boolean | null;
+  rooms: TwinRoomFire[];
+}
 export interface TwinSiteScene {
   datacenter_id: string; code: string; name: string;
   floor_to_floor_m?: number | null;
@@ -1868,6 +1882,8 @@ export interface TwinSiteScene {
   fabric?: TwinSpace[];
   compound?: TwinCompound | null;
   doors?: TwinDoor[];
+  /** Absent or null when the site has no fire instrument. */
+  fire?: TwinSiteFire | null;
 }
 
 /** Not in a rack: floor-standing plant, or an instrument on a wall, pipe or panel. */
@@ -2440,7 +2456,7 @@ export interface CollectorHealth {
 
 export type AlarmCategory =
   | 'visibility' | 'environmental' | 'cooling' | 'power'
-  | 'it_equipment' | 'network' | 'capacity' | 'security';
+  | 'it_equipment' | 'network' | 'capacity' | 'security' | 'fire';
 
 export type AlarmDetection =
   | 'threshold' | 'state' | 'absence' | 'derived' | 'forecast';

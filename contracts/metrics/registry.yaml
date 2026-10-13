@@ -1172,6 +1172,152 @@ metrics:
       HELD open is the condition - a hall propped open is a cooling and a
       security problem at once.
 
+  # --- fire detection and gas suppression, as the BMS sees them -------------
+  # A fire system is its own listed system (NFPA 72 / EN 54); a DCIM reads a
+  # one-way feed from it and commands nothing. See the simulator's
+  # docs/FIRE_SYSTEM.md.
+  - key: fire_alarm
+    display_name: Fire Alarm
+    unit: bool
+    value_type: bool
+    aggregation: last
+    stale_after_s: 900
+    hot: true
+    group: fire
+    device_types: [sensor]
+    description: >-
+      The fire alarm control panel's common alarm: at least one zone is in a
+      fire condition. The first of the three states every panel reduces to.
+
+  - key: fire_trouble
+    display_name: Fire Panel Trouble
+    unit: bool
+    value_type: bool
+    aggregation: last
+    stale_after_s: 900
+    hot: true
+    group: fire
+    device_types: [sensor]
+    description: >-
+      The panel cannot vouch for itself: a broken loop, a detector with no
+      airflow, a failed battery. Not a fire - a fire that would not be seen.
+
+  - key: fire_supervisory
+    display_name: Fire Panel Supervisory
+    unit: bool
+    value_type: bool
+    aggregation: last
+    stale_after_s: 900
+    hot: true
+    group: fire
+    device_types: [sensor]
+    description: >-
+      Something that protects is off normal: a suppression cylinder below its
+      charge, an abort switch held, a valve shut.
+
+  - key: fire_zone_count
+    display_name: Fire Zones In Alarm
+    unit: count
+    value_type: gauge
+    aggregation: max
+    min_valid: 0
+    max_valid: 999
+    stale_after_s: 900
+    hot: true
+    group: fire
+    device_types: [sensor]
+    description: How many of the panel's zones are in alarm.
+
+  - key: smoke_obscuration
+    display_name: Smoke Obscuration
+    unit: pct_per_m
+    value_type: gauge
+    aggregation: max
+    min_valid: 0
+    max_valid: 35
+    stale_after_s: 900
+    hot: true
+    group: fire
+    device_types: [sensor]
+    description: >-
+      What an aspirating smoke detector reads at its laser chamber, in percent
+      obscuration per metre. A clean hall sits near 0.01; the detector's first
+      threshold is commonly 0.08, two orders of magnitude under what a spot
+      detector needs - which is why a data hall has one.
+
+  - key: smoke_stage
+    display_name: Smoke Alarm Stage
+    unit: enum
+    value_type: gauge
+    aggregation: max
+    min_valid: 0
+    max_valid: 4
+    stale_after_s: 900
+    hot: true
+    group: fire
+    device_types: [sensor]
+    description: >-
+      The stage an aspirating detector has reached: 0 normal, 1 Alert,
+      2 Action, 3 Fire 1, 4 Fire 2. The thresholds are set on the detector,
+      so the stage is the detector's word rather than ours.
+
+  - key: gas_release_state
+    display_name: Gas Release State
+    unit: enum
+    value_type: gauge
+    aggregation: max
+    min_valid: 0
+    max_valid: 4
+    stale_after_s: 900
+    hot: true
+    group: fire
+    device_types: [sensor]
+    description: >-
+      A clean-agent releasing panel: 0 normal, 1 first alarm, 2 pre-discharge
+      countdown, 3 released, 4 abort held.
+
+  - key: gas_discharge_countdown
+    display_name: Gas Discharge Countdown
+    unit: s
+    value_type: gauge
+    aggregation: last
+    min_valid: 0
+    max_valid: 600
+    stale_after_s: 900
+    hot: true
+    group: fire
+    device_types: [sensor]
+    description: Seconds until the agent discharges; zero when nothing is counting.
+
+  - key: agent_pressure
+    display_name: Suppression Agent Pressure
+    unit: kPa
+    value_type: gauge
+    aggregation: min
+    min_valid: 0
+    max_valid: 40000
+    stale_after_s: 900
+    hot: true
+    group: fire
+    device_types: [sensor]
+    description: >-
+      Pressure in the suppression cylinder bank. FK-5-1-12 and FM-200 are
+      charged to 2500 or 4200 kPa, inert gas to 20 000 or 30 000; a bank that has lost
+      a tenth of its charge will not make its design concentration.
+
+  - key: agent_released
+    display_name: Suppression Agent Released
+    unit: bool
+    value_type: bool
+    aggregation: last
+    stale_after_s: 900
+    hot: true
+    group: fire
+    device_types: [sensor]
+    description: >-
+      The agent has discharged. The room is unprotected until the cylinders
+      are replaced, and it must be held closed for the agent's hold time.
+
   - key: current_run_time
     display_name: Current Run Time
     unit: s

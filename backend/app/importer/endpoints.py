@@ -87,6 +87,10 @@ PROBE_ROLE_BY_PREFIX = {
     "BTT": "battery_temp",
     "FUEL": "fuel_level",
     "WTR": "water_level",
+    # Fire, as the BMS sees it (simulator docs/FIRE_SYSTEM.md).
+    "FACP": "fire_panel",
+    "ASD": "smoke_aspirating",
+    "GSP": "gas_release",
 }
 
 

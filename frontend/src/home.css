@@ -27,6 +27,7 @@
   --tint-vis: color-mix(in srgb, var(--cat-vis) 18%, var(--bg-raised));
   --tint-cap: color-mix(in srgb, var(--cat-cap) 18%, var(--bg-raised));
   --tint-sec: color-mix(in srgb, var(--cat-sec) 18%, var(--bg-raised));
+  --tint-fire: color-mix(in srgb, var(--cat-fire) 18%, var(--bg-raised));
   --tint-unc: color-mix(in srgb, var(--cat-unc) 18%, var(--bg-raised));
 }
 
@@ -618,6 +619,7 @@ button.ind:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px
 .ind.on.vis  { background: var(--tint-vis);  border-color: var(--cat-vis);  color: var(--cat-vis); }
 .ind.on.cap  { background: var(--tint-cap);  border-color: var(--cat-cap);  color: var(--cat-cap); }
 .ind.on.sec  { background: var(--tint-sec);  border-color: var(--cat-sec);  color: var(--cat-sec); }
+.ind.on.fire { background: var(--tint-fire); border-color: var(--cat-fire); color: var(--cat-fire); }
 .ind.on.unc  { background: var(--tint-unc);  border-color: var(--cat-unc);  color: var(--cat-unc); }
 
 .row-btn {

@@ -316,6 +316,10 @@ NON_TRAP_ALARM_TYPES = frozenset({
     "makeup_water_low", "makeup_water_critical",
     "transformer_oil_temp_high", "transformer_oil_temp_critical",
     "transformer_winding_temp_high", "transformer_winding_temp_critical",
+    # Seeded by 0105 for the fire system.
+    "smoke_alert", "smoke_action", "smoke_fire", "fire_alarm_active",
+    "fire_panel_trouble", "fire_panel_supervisory",
+    "gas_release_imminent", "gas_agent_released", "gas_agent_pressure_low",
 })
 
 

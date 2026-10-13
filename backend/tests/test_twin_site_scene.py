@@ -103,7 +103,7 @@ CAPACITY = {"hall": {"room_id": "hall", "load_kw": 30.0, "rated_kw": 44.0, "allo
                      "u_used": 61, "u_total": 84}}
 
 
-def _scene(monkeypatch, racks=RACKS, units=UNITS, capacity=CAPACITY):
+def _scene(monkeypatch, racks=RACKS, units=UNITS, capacity=CAPACITY, fire=()):
     async def building(_s, _dc):
         return SITE
 
@@ -119,7 +119,11 @@ def _scene(monkeypatch, racks=RACKS, units=UNITS, capacity=CAPACITY):
         return capacity
 
     monkeypatch.setattr(rack_repo, "site_doors", doors)
+    async def fire_read(_s, _dc):
+        return list(fire)
+
     monkeypatch.setattr(rack_repo, "site_room_capacity", room_capacity)
+    monkeypatch.setattr(rack_repo, "site_fire", fire_read)
     return asyncio.run(service.site_scene(None, "dc1"))
 
 
@@ -176,3 +180,33 @@ def test_a_room_with_an_unrated_rack_divides_only_the_rated_racks_load(monkeypat
     hall = next(r for r in _scene(monkeypatch, capacity=mixed).rooms if r.id == "hall")
     assert hall.power.load_kw == 36.0 and hall.power.rated_load_kw == 30.0
     assert hall.power.unrated_racks == 1
+
+
+def test_a_site_with_no_fire_instrument_says_nothing_about_fire(monkeypatch):
+    assert _scene(monkeypatch).fire is None
+
+
+def test_fire_folds_into_three_panel_states_and_one_entry_per_room(monkeypatch):
+    rows = [
+        {"id": "facp", "name": "FACP-DC1-OR", "room_id": "ops", "fire_alarm": True,
+         "fire_trouble": False, "fire_supervisory": True},
+        {"id": "asd", "name": "ASD-DC1-HA", "room_id": "hall", "smoke_stage": 4.0,
+         "smoke_obscuration": 4.8},
+        {"id": "gsp", "name": "GSP-DC1-HA", "room_id": "hall", "gas_state": 2.0,
+         "gas_countdown_s": 21.0, "agent_kpa": 2500.0, "agent_released": False},
+    ]
+    fire = _scene(monkeypatch, fire=rows).fire
+    assert (fire.alarm, fire.trouble, fire.supervisory) == (True, False, True)
+    (hall,) = fire.rooms                      # the panel's own room has no detector, so no entry
+    assert hall.room_id == "hall" and hall.smoke_stage == 4 and hall.gas_state == 2
+    assert hall.gas_countdown_s == 21.0 and hall.agent_kpa == 2500.0
+    assert hall.agent_released is False
+
+
+def test_a_room_with_a_detector_and_no_release_panel_reports_only_smoke(monkeypatch):
+    rows = [{"id": "asd", "name": "ASD-DC1-HA", "room_id": "hall", "smoke_stage": 0.0,
+             "smoke_obscuration": 0.009}]
+    fire = _scene(monkeypatch, fire=rows).fire
+    assert fire.alarm is None                 # no panel reports, so nothing is claimed for it
+    assert fire.rooms[0].smoke_stage == 0 and fire.rooms[0].gas_state is None
+    assert fire.rooms[0].agent_released is None

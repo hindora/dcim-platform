@@ -45,6 +45,29 @@ export interface RoomDoor {
   alarm: string | null;
 }
 
+/** What the room's fire instruments read; null = the room has none, and its
+ *  fire points are then drawn by rule with nothing to say. */
+export interface RoomFire {
+  /** 0 normal, 1 Alert, 2 Action, 3 Fire 1, 4 Fire 2; null = no detector. */
+  stage: number | null;
+  /** 0 normal, 1 first alarm, 2 pre-discharge, 3 released, 4 abort held; null = no release panel. */
+  gas: number | null;
+  countdown: number | null;
+  released: boolean;
+}
+
+/** The room's fire state in an operator's words, or null when there is nothing to say. */
+export function fireWords(f: RoomFire | null | undefined): { text: string; level: 'ok' | 'warn' | 'critical' } | null {
+  if (!f || (f.stage == null && f.gas == null)) return null;
+  if (f.released || f.gas === 3) return { text: 'Agent released - room unprotected', level: 'critical' };
+  if (f.gas === 2) return { text: `Gas release in ${Math.round(f.countdown ?? 0)} s - leave the room`, level: 'critical' };
+  if (f.gas === 4) return { text: `Gas release held by abort at ${Math.round(f.countdown ?? 0)} s`, level: 'critical' };
+  if ((f.stage ?? 0) >= 3) return { text: f.stage === 4 ? 'Smoke: Fire 2' : 'Smoke: Fire 1', level: 'critical' };
+  if (f.stage === 2) return { text: 'Smoke: Action', level: 'warn' };
+  if (f.stage === 1) return { text: 'Smoke: Alert', level: 'warn' };
+  return { text: 'Fire: normal', level: 'ok' };
+}
+
 interface Rect { x0: number; y0: number; x1: number; y1: number }
 const hits = (a: Rect, b: Rect) => a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1;
 
@@ -82,13 +105,21 @@ function canvasTex(w: number, h: number, draw: (c: CanvasRenderingContext2D, w: 
 
 // --------------------------------------------------------------- the room
 
-export function RoomFittings({ W, D, roomClass, roomName, doors, obstacles }: {
+export function RoomFittings({ W, D, roomClass, roomName, doors, obstacles, fire }: {
   W: number; D: number; roomClass: string | null | undefined; roomName: string;
   doors: RoomDoor[];
+  /** null = no fire instrument reports for this room. */
+  fire: RoomFire | null;
   /** Footprints already standing in the room, room metres. */
   obstacles: Rect[];
 }) {
-  const hall = roomClass === 'white_space';
+  // Gas suppression: where a release panel reports, the room has it; where
+  // nothing reports, white space is assumed to, which is the rule.
+  const hall = fire ? fire.gas != null : roomClass === 'white_space';
+  // The sounder over each door: dark at rest, amber on a pre-alarm, red on fire or release.
+  const sounder = !fire ? null
+    : fire.released || (fire.gas ?? 0) >= 1 || (fire.stage ?? 0) >= 3 ? '#ff3b30'
+    : (fire.stage ?? 0) >= 1 ? '#f5a623' : '#3a4048';
   const placed = useMemo(() => doors.map((d) => ({ d, ...wallOf(d, W, D) })), [doors, W, D]);
 
   // The cylinder bank of a gas-suppressed hall: against the first stretch of
@@ -124,13 +155,19 @@ export function RoomFittings({ W, D, roomClass, roomName, doors, obstacles }: {
         return (
           <group key={i} position={f.pos} rotation-y={f.ry}>
             <Door len={len} door={d} />
-            <FirePoint x={len / 2 + 0.45} gas={hall} />
+            <FirePoint x={len / 2 + 0.45} gas={hall} counting={fire?.gas === 2 || fire?.gas === 4} />
+            {sounder && (
+              <mesh position={[-(len / 2 + 0.3), DOOR_H + 0.26, 0.07]} raycast={() => null}>
+                <boxGeometry args={[0.16, 0.16, 0.1]} />
+                <meshStandardMaterial color={sounder} emissive={sounder} emissiveIntensity={sounder === '#3a4048' ? 0 : 0.9} />
+              </mesh>
+            )}
           </group>
         );
       })}
       {bank && (() => {
         const f = wallFrame(bank.wall, bank.at, W, D);
-        return <group position={f.pos} rotation-y={f.ry}><CylinderBank /></group>;
+        return <group position={f.pos} rotation-y={f.ry}><CylinderBank spent={Boolean(fire?.released || fire?.gas === 3)} /></group>;
       })()}
       {windowWall && (() => {
         const span = windowWall === 'W' || windowWall === 'E' ? D : W;
@@ -212,7 +249,7 @@ function Door({ len, door }: { len: number; door: RoomDoor }) {
 /** What stands by an exit: a handheld extinguisher on its bracket and a manual
  *  call point above it; at the door of a gas-suppressed room, the release
  *  (yellow) and abort (blue) stations too. */
-function FirePoint({ x, gas }: { x: number; gas: boolean }) {
+function FirePoint({ x, gas, counting }: { x: number; gas: boolean; counting?: boolean }) {
   return (
     <group position={[x, 0, 0.1]} raycast={() => null}>
       {/* backboard */}
@@ -235,7 +272,8 @@ function FirePoint({ x, gas }: { x: number; gas: boolean }) {
       {gas && (
         <>
           <mesh position={[0.3, 1.42, -0.05]}>
-            <boxGeometry args={[0.11, 0.11, 0.05]} /><meshStandardMaterial color={FIT.release} roughness={0.6} />
+            <boxGeometry args={[0.11, 0.11, 0.05]} />
+            <meshStandardMaterial color={FIT.release} roughness={0.6} emissive={FIT.release} emissiveIntensity={counting ? 0.8 : 0} />
           </mesh>
           <mesh position={[0.3, 1.24, -0.05]}>
             <boxGeometry args={[0.11, 0.11, 0.05]} /><meshStandardMaterial color={FIT.abort} roughness={0.6} />
@@ -248,17 +286,19 @@ function FirePoint({ x, gas }: { x: number; gas: boolean }) {
 
 /** Three clean-agent cylinders on a rack, valves joined by a manifold that
  *  turns up the wall toward the discharge pipework. */
-function CylinderBank() {
+function CylinderBank({ spent }: { spent: boolean }) {
   const xs = [-0.5, 0, 0.5];
+  // A discharged bank is drawn drained of its colour: it protects nothing until it is replaced.
+  const body = spent ? '#8a8f96' : FIT.fire;
   return (
     <group position={[0, 0, 0.3]} raycast={() => null}>
       {xs.map((x) => (
         <group key={x} position={[x, 0, 0]}>
           <mesh position={[0, 0.8, 0]}>
-            <cylinderGeometry args={[0.2, 0.2, 1.6, 20]} /><meshStandardMaterial color={FIT.fire} roughness={0.4} />
+            <cylinderGeometry args={[0.2, 0.2, 1.6, 20]} /><meshStandardMaterial color={body} roughness={0.4} />
           </mesh>
           <mesh position={[0, 1.66, 0]}>
-            <sphereGeometry args={[0.2, 20, 10, 0, Math.PI * 2, 0, Math.PI / 2]} /><meshStandardMaterial color={FIT.fire} roughness={0.4} />
+            <sphereGeometry args={[0.2, 20, 10, 0, Math.PI * 2, 0, Math.PI / 2]} /><meshStandardMaterial color={body} roughness={0.4} />
           </mesh>
           <mesh position={[0, 1.9, 0]}>
             <cylinderGeometry args={[0.05, 0.07, 0.16, 10]} /><meshStandardMaterial color={FIT.steel} roughness={0.4} metalness={0.4} />

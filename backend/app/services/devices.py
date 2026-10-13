@@ -44,10 +44,12 @@ from app.schemas import (
     TwinLevel,
     TwinRackIndex,
     TwinRoom,
+    TwinRoomFire,
     TwinRoomIndices,
     TwinRoomPower,
     TwinRoomScene,
     TwinRoomSpace,
+    TwinSiteFire,
     TwinSiteRack,
     TwinSiteScene,
     TwinSiteUnit,
@@ -500,6 +502,44 @@ async def room_frame(session: AsyncSession, room_id: str, t: datetime,
     )
 
 
+def site_fire_state(rows: list[dict[str, Any]]) -> TwinSiteFire | None:
+    """Fold the site's fire instruments into the panel's three states and one
+    entry per room. The worst reading wins where a room has more than one
+    instrument of a kind; None where it has none. Pure."""
+    if not rows:
+        return None
+
+    def worst(values: list[Any]) -> Any:
+        seen = [v for v in values if v is not None]
+        return max(seen) if seen else None
+
+    def flag(key: str) -> bool | None:
+        seen = [r[key] for r in rows if r.get(key) is not None]
+        return any(seen) if seen else None
+
+    by_room: dict[str, list[dict[str, Any]]] = {}
+    for r in rows:
+        reads = r.get("smoke_stage") is not None or r.get("gas_state") is not None
+        if r.get("room_id") and reads:
+            by_room.setdefault(r["room_id"], []).append(r)
+    rooms = []
+    for room_id, rs in sorted(by_room.items()):
+        stage = worst([r.get("smoke_stage") for r in rs])
+        gas = worst([r.get("gas_state") for r in rs])
+        kpa = [r["agent_kpa"] for r in rs if r.get("agent_kpa") is not None]
+        released = [r["agent_released"] for r in rs if r.get("agent_released") is not None]
+        rooms.append(TwinRoomFire(
+            room_id=room_id,
+            smoke_stage=int(stage) if stage is not None else None,
+            smoke_obscuration=worst([r.get("smoke_obscuration") for r in rs]),
+            gas_state=int(gas) if gas is not None else None,
+            gas_countdown_s=worst([r.get("gas_countdown_s") for r in rs]),
+            agent_kpa=min(kpa) if kpa else None,
+            agent_released=any(released) if released else None))
+    return TwinSiteFire(alarm=flag("fire_alarm"), trouble=flag("fire_trouble"),
+                        supervisory=flag("fire_supervisory"), rooms=rooms)
+
+
 def _room_power(c: dict[str, Any] | None) -> TwinRoomPower | None:
     if c is None:
         return None
@@ -526,6 +566,7 @@ async def site_scene(session: AsyncSession, datacenter_id: str) -> TwinSiteScene
     racks, units = await rack_repo.site_blocks(session, datacenter_id)
     doors = await rack_repo.site_doors(session, datacenter_id)
     capacity = await rack_repo.site_room_capacity(session, datacenter_id)
+    fire = site_fire_state(await rack_repo.site_fire(session, datacenter_id))
     racks_by_room: dict[str, list[TwinSiteRack]] = {}
     for r in racks:
         racks_by_room.setdefault(r["room_id"], []).append(TwinSiteRack(
@@ -550,6 +591,7 @@ async def site_scene(session: AsyncSession, datacenter_id: str) -> TwinSiteScene
         datacenter_id=site["id"], code=site["code"], name=site["name"],
         floor_to_floor_m=b.get("floor_to_floor_m"),
         fabric=[sp for sp in spaces if (sp.level or "").lower() != "site"],
+        fire=fire,
         compound=(TwinCompound(outline_m=comp.get("outline_m"), extent_m=comp.get("extent_m"),
                                zones=outdoor)
                   if (comp or outdoor) else None),

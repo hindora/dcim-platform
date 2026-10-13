@@ -14,7 +14,7 @@ import {
   bandColor, paintEquipment, paintRack, rackTiers, unitReadings, ventTiles, HEAT_INDEX, RACK_BASE, TEMP_BANDS, U, TILE,
   type CoolingLayer, type HeatPlane, type RackLayer, type RackPaint, type Sel, type ViewMode, type Visibility,
 } from './layers';
-import { OpenEnclosure, RackDetails, RoomFittings, UnitDetails, type RoomDoor } from './Fittings';
+import { OpenEnclosure, RackDetails, RoomFittings, UnitDetails, type RoomDoor, type RoomFire } from './Fittings';
 import type { PathOverlay, Role } from './paths';
 import { fmtT, numT, unitLabel } from './units';
 
@@ -65,6 +65,8 @@ export interface SceneProps {
   heat: HeatPlane;
   /** The room's door openings, from the building fabric and its door contacts. */
   doors?: RoomDoor[];
+  /** What the room's fire instruments read; null when it has none. */
+  fire?: RoomFire | null;
   resetTick: number;
   themeTick: number;
   onSelect: (s: Sel) => void;
@@ -266,7 +268,7 @@ export function labelTexture(text: string, ink: string, bg: string): THREE.Canva
 // ----------------------------------------------------------- the scene
 
 export default function RoomScene(p: SceneProps) {
-  const { data, units, rackLayer, coolingLayer, vis, mode, sel, overlay, indices, field, heat, doors, resetTick, themeTick,
+  const { data, units, rackLayer, coolingLayer, vis, mode, sel, overlay, indices, field, heat, doors, fire, resetTick, themeTick,
           onSelect, onTip, onFocus } = p;
   const { plan, devices } = data;
   const W = plan.extent.width_m, D = plan.extent.depth_m;
@@ -397,7 +399,7 @@ export default function RoomScene(p: SceneProps) {
       {enclosure !== 'walls' && <OpenEnclosure W={W} D={D} kind={enclosure} />}
       {vis.fittings && enclosure === 'walls' && (
         <RoomFittings W={W} D={D} roomClass={plan.room_class} roomName={plan.room_name}
-                      doors={fitDoors} obstacles={standing} />
+                      doors={fitDoors} obstacles={standing} fire={fire ?? null} />
       )}
       <GridRefs W={W} D={D} ink={tones.inkMuted} />
       {vis.vents && vents.length > 0 && <Vents vents={vents} X={X} Z={Z} />}
@@ -450,7 +452,7 @@ export default function RoomScene(p: SceneProps) {
                  unitBoxes={unitBoxes} units={placedUnits} unitRole={unitRole} devices={devices}
                  tones={tones} themeTick={themeTick} />
       )}
-      <Invalidator deps={[rackLayer, coolingLayer, vis, sel, mode, overlay, heat, field, indices, doors]} invalidate={invalidate} />
+      <Invalidator deps={[rackLayer, coolingLayer, vis, sel, mode, overlay, heat, field, indices, doors, fire]} invalidate={invalidate} />
     </>
   );
 }

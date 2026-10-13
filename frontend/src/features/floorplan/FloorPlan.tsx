@@ -7,7 +7,7 @@ import {
 } from '../../api/client';
 import { Seg } from '../../components/estate';
 import { alarmColor, type Overlay } from './colors';
-import type { RoomDoor } from './Fittings';
+import { fireWords, type RoomDoor, type RoomFire } from './Fittings';
 import {
   BUILDING_LAYERS, coolingLegendFor, DEFAULT_VIS, legendFor, rackTiers, ventTiles, TEMP_BANDS,
   type BuildingLayer, type CoolingLayer, type HeatPlane, type RackLayer, type Sel, type ViewMode, type Visibility,
@@ -122,6 +122,14 @@ export function FloorPlanView() {
         };
       });
   }, [building.data, roomId]);
+  // What the room's fire instruments read, from the same site read.
+  const roomFire = useMemo<RoomFire | null>(() => {
+    const f = building.data?.fire?.rooms.find((r) => r.room_id === roomId);
+    if (!f) return null;
+    return { stage: f.smoke_stage ?? null, gas: f.gas_state ?? null, countdown: f.gas_countdown_s ?? null,
+             released: Boolean(f.agent_released) };
+  }, [building.data, roomId]);
+  const fireSays = fireWords(roomFire);
   const siteKpi = useQuery({
     queryKey: ['site-kpi', siteId], queryFn: () => api.siteKpi(siteId),
     enabled: Boolean(siteId) && rung !== 'room', staleTime: 60_000, refetchInterval: 120_000,
@@ -551,7 +559,7 @@ export function FloorPlanView() {
     <Suspense fallback={<p className="muted viewer-fallback">Loading the room…</p>}>
       <Stage data={d} units={units} rackLayer={rackLayer} coolingLayer={coolingLayer} vis={vis} mode={mode}
              sel={sel} overlay={overlay} indices={d.indices} field={withField && heat !== 'off' ? field.data : null} heat={heat}
-             doors={roomDoors} resetTick={resetTick} themeTick={themeTick}
+             doors={roomDoors} fire={live ? roomFire : null} resetTick={resetTick} themeTick={themeTick}
              onSelect={(s) => { setSel(s); if (s) setPanel('info'); }} onTip={setTip} onFocus={setFocus}
              label={`${mode === 'plan' ? 'Plan' : mode === 'fpv' ? 'Walk-through' : '3D view'} of ${d.plan.room_name}`} />
     </Suspense>
@@ -652,6 +660,10 @@ export function FloorPlanView() {
           <span title="Rack Cooling Index (Herrlin): share of the way the intakes sit toward the allowable limit">
             RCI {Math.round(data.indices.rci_hi)} %{data.indices.hot_spots ? ` · ${data.indices.hot_spots} hot spot${data.indices.hot_spots === 1 ? '' : 's'}` : ''}
           </span>
+        )}
+        {live && fireSays && (
+          <span style={fireSays.level === 'ok' ? undefined : { color: `var(--${fireSays.level})`, fontWeight: 600 }}
+                role={fireSays.level === 'critical' ? 'alert' : undefined}>{fireSays.text}</span>
         )}
         <span className="spacer" />
         <span>{mode === 'fpv' ? 'Pointer lock to look · W A S D to walk'

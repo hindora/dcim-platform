@@ -73,6 +73,13 @@ POINT_METRICS: dict[str, tuple[str, str]] = {
     "Bulk_Fuel_Volume":    ("fuel_volume", "BULK"),
     "Water_Level":         ("water_level_pct", ""),
     "Water_Volume":        ("water_volume", ""),
+    # --- fire detection and gas suppression (simulator docs/FIRE_SYSTEM.md) --
+    "Zone_Alarm_Count":    ("fire_zone_count", ""),
+    "Smoke_Obscuration":   ("smoke_obscuration", ""),
+    "Alarm_Stage":         ("smoke_stage", ""),
+    "Release_State":       ("gas_release_state", ""),
+    "Discharge_Countdown": ("gas_discharge_countdown", ""),
+    "Agent_Pressure":      ("agent_pressure", ""),
     "Coolant_Temperature": ("coolant_temperature", ""),
     # --- volts, amps, hertz -------------------------------------------------
     "Voltage_LL_Avg":      ("voltage_ll", "AVG"),
@@ -150,6 +157,11 @@ VALIDITY_BITS = {"Data_Valid", "Reading_Valid"}
 # device that has other quantities.
 BIT_METRICS: dict[str, tuple[str, str]] = {
     "Door_Open": ("door_open", ""),
+    # A fire panel IS its three states; a release is the event itself.
+    "Fire_Alarm": ("fire_alarm", ""),
+    "Trouble": ("fire_trouble", ""),
+    "Supervisory": ("fire_supervisory", ""),
+    "Agent_Released": ("agent_released", ""),
 }
 
 # Unit conversions from what the register carries to what the registry stores.
@@ -162,6 +174,7 @@ FACTORS: dict[str, float] = {
     "demand_peak_power": 1000.0,   # kW -> W
     "battery_runtime": 60.0,       # minutes -> seconds
     "current_run_time": 60.0,      # minutes -> seconds
+    "agent_pressure": 100.0,       # bar -> kPa
 }
 
 # Probe roles map to the loop they measure. The transmitter itself has one
@@ -188,6 +201,9 @@ ROLE_SELECTED: dict[str, tuple[str, str]] = {
     "battery_temp": ("battery_temperature", ""),
     "fuel_level":   ("fuel_level_pct", "BULK"),
     "water_level":  ("water_level_pct", ""),
+    "fire_panel":       ("fire_alarm", ""),
+    "smoke_aspirating": ("smoke_obscuration", ""),
+    "gas_release":      ("gas_release_state", ""),
 }
 
 

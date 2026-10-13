@@ -92,6 +92,16 @@ export type MetricKey =
   | 'water_volume'
   | 'hydrogen_lel_pct'
   | 'door_open'
+  | 'fire_alarm'
+  | 'fire_trouble'
+  | 'fire_supervisory'
+  | 'fire_zone_count'
+  | 'smoke_obscuration'
+  | 'smoke_stage'
+  | 'gas_release_state'
+  | 'gas_discharge_countdown'
+  | 'agent_pressure'
+  | 'agent_released'
   | 'current_run_time'
   | 'start_attempts'
   | 'transfer_count'
@@ -932,6 +942,96 @@ export const METRICS: Record<MetricKey, MetricDef> = {
     maxValid: null,
     staleAfterS: 900, hot: true,
     group: 'security',
+  },
+  'fire_alarm': {
+    key: 'fire_alarm', displayName: 'Fire Alarm'.replace(/^'|'$/g, ''),
+    unit: 'bool', valueType: 'bool',
+    aggregation: 'last',
+    minValid: null,
+    maxValid: null,
+    staleAfterS: 900, hot: true,
+    group: 'fire',
+  },
+  'fire_trouble': {
+    key: 'fire_trouble', displayName: 'Fire Panel Trouble'.replace(/^'|'$/g, ''),
+    unit: 'bool', valueType: 'bool',
+    aggregation: 'last',
+    minValid: null,
+    maxValid: null,
+    staleAfterS: 900, hot: true,
+    group: 'fire',
+  },
+  'fire_supervisory': {
+    key: 'fire_supervisory', displayName: 'Fire Panel Supervisory'.replace(/^'|'$/g, ''),
+    unit: 'bool', valueType: 'bool',
+    aggregation: 'last',
+    minValid: null,
+    maxValid: null,
+    staleAfterS: 900, hot: true,
+    group: 'fire',
+  },
+  'fire_zone_count': {
+    key: 'fire_zone_count', displayName: 'Fire Zones In Alarm'.replace(/^'|'$/g, ''),
+    unit: 'count', valueType: 'gauge',
+    aggregation: 'max',
+    minValid: 0,
+    maxValid: 999,
+    staleAfterS: 900, hot: true,
+    group: 'fire',
+  },
+  'smoke_obscuration': {
+    key: 'smoke_obscuration', displayName: 'Smoke Obscuration'.replace(/^'|'$/g, ''),
+    unit: 'pct_per_m', valueType: 'gauge',
+    aggregation: 'max',
+    minValid: 0,
+    maxValid: 35,
+    staleAfterS: 900, hot: true,
+    group: 'fire',
+  },
+  'smoke_stage': {
+    key: 'smoke_stage', displayName: 'Smoke Alarm Stage'.replace(/^'|'$/g, ''),
+    unit: 'enum', valueType: 'gauge',
+    aggregation: 'max',
+    minValid: 0,
+    maxValid: 4,
+    staleAfterS: 900, hot: true,
+    group: 'fire',
+  },
+  'gas_release_state': {
+    key: 'gas_release_state', displayName: 'Gas Release State'.replace(/^'|'$/g, ''),
+    unit: 'enum', valueType: 'gauge',
+    aggregation: 'max',
+    minValid: 0,
+    maxValid: 4,
+    staleAfterS: 900, hot: true,
+    group: 'fire',
+  },
+  'gas_discharge_countdown': {
+    key: 'gas_discharge_countdown', displayName: 'Gas Discharge Countdown'.replace(/^'|'$/g, ''),
+    unit: 's', valueType: 'gauge',
+    aggregation: 'last',
+    minValid: 0,
+    maxValid: 600,
+    staleAfterS: 900, hot: true,
+    group: 'fire',
+  },
+  'agent_pressure': {
+    key: 'agent_pressure', displayName: 'Suppression Agent Pressure'.replace(/^'|'$/g, ''),
+    unit: 'kPa', valueType: 'gauge',
+    aggregation: 'min',
+    minValid: 0,
+    maxValid: 40000,
+    staleAfterS: 900, hot: true,
+    group: 'fire',
+  },
+  'agent_released': {
+    key: 'agent_released', displayName: 'Suppression Agent Released'.replace(/^'|'$/g, ''),
+    unit: 'bool', valueType: 'bool',
+    aggregation: 'last',
+    minValid: null,
+    maxValid: null,
+    staleAfterS: 900, hot: true,
+    group: 'fire',
   },
   'current_run_time': {
     key: 'current_run_time', displayName: 'Current Run Time'.replace(/^'|'$/g, ''),

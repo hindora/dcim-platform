@@ -613,6 +613,31 @@ class TwinDoor(BaseModel):
     max_severity: str = "CLEAR"
 
 
+class TwinRoomFire(BaseModel):
+    """What a room's fire instruments read (the simulator's docs/FIRE_SYSTEM.md).
+    Every field is None when the room has no instrument that reports it."""
+
+    room_id: str
+    # The aspirating detector: 0 normal, 1 Alert, 2 Action, 3 Fire 1, 4 Fire 2.
+    smoke_stage: int | None = None
+    smoke_obscuration: float | None = None
+    # The release panel: 0 normal, 1 first alarm, 2 pre-discharge, 3 released, 4 abort held.
+    gas_state: int | None = None
+    gas_countdown_s: float | None = None
+    agent_kpa: float | None = None
+    agent_released: bool | None = None
+
+
+class TwinSiteFire(BaseModel):
+    """The fire alarm panel's three states and each room's instruments. A
+    DCIM reads these; it commands nothing."""
+
+    alarm: bool | None = None
+    trouble: bool | None = None
+    supervisory: bool | None = None
+    rooms: list[TwinRoomFire] = Field(default_factory=list)
+
+
 class TwinLevel(BaseModel):
     name: str
     ordinal: int
@@ -633,6 +658,9 @@ class TwinSiteScene(BaseModel):
     # Indoor fabric and the compound arrive with floorplan 1.2 (docs/27 §8b.3,
     # §8c.3); doors wait for the simulator's door contacts.
     fabric: list[TwinSpace] = Field(default_factory=list)
+    # None when the site has no fire instrument: the viewer then draws fire
+    # points by rule rather than from state.
+    fire: TwinSiteFire | None = None
     compound: TwinCompound | None = None
     doors: list[TwinDoor] = Field(default_factory=list)
 

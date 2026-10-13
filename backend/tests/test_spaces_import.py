@@ -153,7 +153,11 @@ def test_the_site_scene_splits_fabric_from_the_compound(monkeypatch):
     monkeypatch.setattr(rack_repo, "site_building", building)
     monkeypatch.setattr(rack_repo, "site_blocks", blocks)
     monkeypatch.setattr(rack_repo, "site_doors", doors)
+    async def no_fire(_s, _dc):
+        return []
+
     monkeypatch.setattr(rack_repo, "site_room_capacity", capacity)
+    monkeypatch.setattr(rack_repo, "site_fire", no_fire)
     out = asyncio.run(service.site_scene(None, "dc1"))
     assert [f.kind for f in out.fabric] == ["corridor"] and out.fabric[0].level == "G"
     assert out.compound is not None and out.compound.extent_m == {"width": 65.0, "depth": 45.0}
