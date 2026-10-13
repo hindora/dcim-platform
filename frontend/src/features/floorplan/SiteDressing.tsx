@@ -99,21 +99,23 @@ export function Ground({ ground, X, Z, faint }: {
 
 type BB = { x0: number; y0: number; x1: number; y1: number };
 
-/** A road, an apron or a car park: the surface with its markings. Returns
- *  null for a zone kind that has no surface of its own. */
+/** A road, a driveway, an apron or a car park: the surface with its
+ *  markings. Returns null for a zone kind that has no surface of its own. */
 export function ZoneSurface({ z, bb, X, Z }: { z: TwinSpace; bb: BB; X: (x: number) => number; Z: (y: number) => number }) {
   const w = bb.x1 - bb.x0, d = bb.y1 - bb.y0;
   const alongX = w >= d;
-  const kind = z.kind === 'road' || z.kind === 'apron' || z.kind === 'parking' ? z.kind : null;
+  const kind = z.kind === 'road' || z.kind === 'driveway' || z.kind === 'apron' || z.kind === 'parking' ? z.kind : null;
   const tex = useMemo(() => {
     if (!kind) return null;
     return canvasTex(w * PX_PER_M, d * PX_PER_M, (c, cw, ch) => {
       const m = PX_PER_M;
-      if (kind === 'road') {
+      if (kind === 'road' || kind === 'driveway') {
         c.fillStyle = SURF.asphalt; c.fillRect(0, 0, cw, ch);
         c.strokeStyle = SURF.asphaltEdge; c.lineWidth = 0.12 * m;
         if (alongX) { for (const y of [0.2 * m, ch - 0.2 * m]) { c.beginPath(); c.moveTo(0, y); c.lineTo(cw, y); c.stroke(); } }
         else { for (const x of [0.2 * m, cw - 0.2 * m]) { c.beginPath(); c.moveTo(x, 0); c.lineTo(x, ch); c.stroke(); } }
+        // A driveway is one lane: edges only, no centre line.
+        if (kind === 'driveway') return;
         c.strokeStyle = SURF.lane; c.setLineDash([1.5 * m, 1.0 * m]);
         c.beginPath();
         if (alongX) { c.moveTo(0, ch / 2); c.lineTo(cw, ch / 2); } else { c.moveTo(cw / 2, 0); c.lineTo(cw / 2, ch); }

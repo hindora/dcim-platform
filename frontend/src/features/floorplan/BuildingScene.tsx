@@ -59,7 +59,7 @@ const LABELLED_ZONES = new Set(['substation', 'generator_yard', 'cooling_yard', 
 const LABELLED_FABRIC = new Set(['lobby', 'dock', 'core']);
 const ZONE_WORD: Record<string, string> = {
   generator_yard: 'generator yard', fuel_tank: 'bulk fuel', water_tank: 'makeup water', fire_pump_house: 'fire pumps',
-  telecom_entrance: 'telecom entrance', cooling_yard: 'cooling yard',
+  telecom_entrance: 'telecom entrance', cooling_yard: 'cooling yard', driveway: 'driveway',
 };
 
 type Placed = TwinRoom & { origin_x_m: number; origin_y_m: number; width_m: number; depth_m: number };
@@ -292,7 +292,7 @@ export default function BuildingScene(p: BuildingSceneProps) {
           <mesh geometry={geo} rotation-x={Math.PI / 2} position={[0, 0.01, 0]}
                 onPointerOver={(ev) => { ev.stopPropagation(); tip(ev, zoneText(z)); }} onPointerOut={() => onTip(null)}>
             <meshStandardMaterial color={tones.slab} roughness={1} transparent
-                                  opacity={z.kind === 'road' || z.kind === 'apron' || z.kind === 'parking' || z.kind === 'telecom_entrance' ? 0.0
+                                  opacity={z.kind === 'road' || z.kind === 'driveway' || z.kind === 'apron' || z.kind === 'parking' || z.kind === 'telecom_entrance' ? 0.0
                                     : z.kind === 'gate' ? 0.2 : 0.5}
                                   side={THREE.DoubleSide} depthWrite={false} />
           </mesh>
