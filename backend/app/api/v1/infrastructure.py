@@ -23,6 +23,7 @@ from app.schemas import (
     TwinSiteScene,
 )
 from app.services import devices as service
+from app.services import placement
 
 router = APIRouter(tags=["infrastructure"])
 
@@ -149,6 +150,94 @@ async def set_site_location(
     await session.commit()
     return {"ok": True, "latitude": body.latitude, "longitude": body.longitude,
             "location_source": "manual"}
+
+
+class Placement(BaseModel):
+    """Where a footprint's centre stands, in room metres from the room's origin corner."""
+
+    x: float = Field(ge=0, le=500)
+    y: float = Field(ge=0, le=500)
+    # Floor-standing units only; None keeps the facing the unit has.
+    rotation_deg: float | None = Field(default=None, ge=0, lt=360)
+
+
+async def _placed(session: AsyncSession, request: Request, principal: Principal, *,
+                  kind: str, object_id: str, before: dict, after: dict) -> dict:
+    ip, agent = audit.client_of(request)
+    await audit.record(session, actor=audit.actor_of(principal), action="geometry.place",
+                       target_type=kind, target_id=object_id, ip=ip, user_agent=agent,
+                       before=before, after=after)
+    await session.commit()
+    return {"ok": True, **after}
+
+
+@router.put("/twin/racks/{rack_id}/placement",
+            summary="Correct where a rack stands on the floor plan")
+async def place_rack(
+    rack_id: str,
+    body: Placement,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    # The drawing is asset data, edited like the rest of the inventory.
+    principal: Principal = Depends(require_role("operator")),
+) -> dict:
+    """The rack is drawn at the new position and no import moves it again.
+    Refused with 409 when the footprint leaves the room or lands on another."""
+    try:
+        before, after = await placement.move_rack(session, rack_id, x=body.x, y=body.y)
+    except placement.PlacementNotFoundError:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "rack not found") from None
+    except placement.PlacementRefusedError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            {"message": str(exc), "problems": exc.problems}) from None
+    return await _placed(session, request, principal, kind="rack", object_id=rack_id,
+                         before=before, after=after)
+
+
+@router.put("/twin/devices/{device_id}/placement",
+            summary="Correct where a floor-standing unit stands on the floor plan")
+async def place_unit(
+    device_id: str,
+    body: Placement,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    principal: Principal = Depends(require_role("operator")),
+) -> dict:
+    try:
+        before, after = await placement.move_unit(session, device_id, x=body.x, y=body.y,
+                                                  rotation_deg=body.rotation_deg)
+    except placement.PlacementNotFoundError:
+        raise HTTPException(status.HTTP_404_NOT_FOUND,
+                            "no floor-standing device with a footprint by that id") from None
+    except placement.PlacementRefusedError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            {"message": str(exc), "problems": exc.problems}) from None
+    return await _placed(session, request, principal, kind="device", object_id=device_id,
+                         before=before, after=after)
+
+
+@router.delete("/twin/{kind}/{object_id}/placement",
+               summary="Hand a hand-placed rack or unit back to the geometry import")
+async def release_placement(
+    kind: str,
+    object_id: str,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    principal: Principal = Depends(require_role("operator")),
+) -> dict:
+    """The position holds until the next geometry import, which owns it again."""
+    if kind not in ("racks", "devices"):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "not found")
+    target = "rack" if kind == "racks" else "device"
+    was = await placement.release(session, target, object_id)
+    if was is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"{target} not found")
+    ip, agent = audit.client_of(request)
+    await audit.record(session, actor=audit.actor_of(principal), action="geometry.release",
+                       target_type=target, target_id=object_id, ip=ip, user_agent=agent,
+                       before={"geometry_source": was}, after={"geometry_source": "import"})
+    await session.commit()
+    return {"ok": True, "geometry_source": "import"}
 
 
 @router.get("/twin/rooms/{room_id}/scene", response_model=TwinRoomScene,

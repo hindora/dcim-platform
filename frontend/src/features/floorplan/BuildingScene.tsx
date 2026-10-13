@@ -298,7 +298,10 @@ export default function BuildingScene(p: BuildingSceneProps) {
       {/* --- the building --- */}
       {slabShapes.map(({ level: l, geo }) => shown(l.name) && (
         <mesh key={l.name} geometry={geo} rotation-x={Math.PI / 2} position={[0, l.elevation_m, 0]}>
-          <meshStandardMaterial color={tones.slab} roughness={1} transparent opacity={dimmed(l.name) ? 0.1 : site ? 0.55 : 0.75} />
+          {/* Under a figure's layer the slabs thin out: the colour that matters is on the rooms
+              beneath them, and a stack of 75 % slabs greys every level but the top one. */}
+          <meshStandardMaterial color={tones.slab} roughness={1} transparent
+                                opacity={dimmed(l.name) ? 0.1 : layer !== 'alarm' ? (site ? 0.22 : 0.3) : site ? 0.55 : 0.75} />
         </mesh>
       ))}
       {slabShapes.map(({ level: l, geo }) => shown(l.name) && !dimmed(l.name) && (

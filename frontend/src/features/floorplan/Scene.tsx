@@ -14,6 +14,7 @@ import {
   bandColor, paintEquipment, paintRack, rackTiers, unitReadings, ventTiles, HEAT_INDEX, RACK_BASE, TEMP_BANDS, U, TILE,
   type CoolingLayer, type HeatPlane, type RackLayer, type RackPaint, type Sel, type ViewMode, type Visibility,
 } from './layers';
+import { OpenEnclosure, RackDetails, RoomFittings, UnitDetails, type RoomDoor } from './Fittings';
 import type { PathOverlay, Role } from './paths';
 import { fmtT, numT, unitLabel } from './units';
 
@@ -62,6 +63,8 @@ export interface SceneProps {
   /** The interpolated air, and which of its planes to show. */
   field?: ThermalField | null;
   heat: HeatPlane;
+  /** The room's door openings, from the building fabric and its door contacts. */
+  doors?: RoomDoor[];
   resetTick: number;
   themeTick: number;
   onSelect: (s: Sel) => void;
@@ -263,7 +266,7 @@ export function labelTexture(text: string, ink: string, bg: string): THREE.Canva
 // ----------------------------------------------------------- the scene
 
 export default function RoomScene(p: SceneProps) {
-  const { data, units, rackLayer, coolingLayer, vis, mode, sel, overlay, indices, field, heat, resetTick, themeTick,
+  const { data, units, rackLayer, coolingLayer, vis, mode, sel, overlay, indices, field, heat, doors, resetTick, themeTick,
           onSelect, onTip, onFocus } = p;
   const { plan, devices } = data;
   const W = plan.extent.width_m, D = plan.extent.depth_m;
@@ -312,6 +315,26 @@ export default function RoomScene(p: SceneProps) {
              rot: -((e.facing_deg ?? 0) * Math.PI) / 180, front: 0,
              paint: paintEquipment(e, coolingLayer, unitReadings(e, units.get(e.id))) };
   }), [placedUnits, units, coolingLayer, X, Z, themeTick]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // A yard stands in the open and a roof behind its parapet; everything else has walls.
+  const enclosure: 'walls' | 'fence' | 'parapet' = plan.room_class === 'outdoor' ? 'fence'
+    : /^roof$/i.test(plan.level ?? '') || /^roof$/i.test(plan.room_name) ? 'parapet' : 'walls';
+  // What already stands on the floor, room metres: the fittings keep off it.
+  const standing = useMemo(() => [
+    ...plan.racks.map((r) => {
+      const w = (r.w_m ?? DEFAULT_W) / 2, d = (r.d_m ?? DEFAULT_D) / 2;
+      return { x0: r.x - w, y0: r.y - d, x1: r.x + w, y1: r.y + d };
+    }),
+    ...placedUnits.map((e) => {
+      const quarter = Math.round(((e.facing_deg ?? 0) % 180) / 90) === 1;
+      const w = ((quarter ? e.d_m : e.w_m) as number) / 2, d = ((quarter ? e.w_m : e.d_m) as number) / 2;
+      return { x0: (e.x as number) - w, y0: (e.y as number) - d, x1: (e.x as number) + w, y1: (e.y as number) + d };
+    }),
+  ], [plan.racks, placedUnits]);
+  const unitTypes = useMemo(() => placedUnits.map((e) => e.device_type), [placedUnits]);
+  // A door's alarm colour arrives as a token; three.js needs the colour it resolves to.
+  const fitDoors = useMemo(() => (doors ?? []).map((d) => ({ ...d, alarm: d.alarm ? resolveColor(d.alarm) : null })),
+    [doors, themeTick]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const vents = useMemo(() => ventTiles(plan.racks, plan.aisles, whiteSpace), [plan.racks, plan.aisles, whiteSpace]);
 
@@ -370,7 +393,12 @@ export default function RoomScene(p: SceneProps) {
       <Cameras mode={mode} W={W} D={D} resetTick={resetTick} aisles={plan.aisles} X={X} Z={Z} />
       {fpv && <FpvRig W={W} D={D} rackMesh={rackMesh} racks={plan.racks} onFocus={onFocus} />}
 
-      <Room W={W} D={D} whiteSpace={whiteSpace} />
+      <Room W={W} D={D} whiteSpace={whiteSpace} walls={enclosure === 'walls'} />
+      {enclosure !== 'walls' && <OpenEnclosure W={W} D={D} kind={enclosure} />}
+      {vis.fittings && enclosure === 'walls' && (
+        <RoomFittings W={W} D={D} roomClass={plan.room_class} roomName={plan.room_name}
+                      doors={fitDoors} obstacles={standing} />
+      )}
       <GridRefs W={W} D={D} ink={tones.inkMuted} />
       {vis.vents && vents.length > 0 && <Vents vents={vents} X={X} Z={Z} />}
       {vis.aisles && plan.aisles.map((a) => (
@@ -387,6 +415,7 @@ export default function RoomScene(p: SceneProps) {
                      onOut={() => onTip(null)} />
       {anyShell && <GradientBoxes boxes={rackBoxes} part="shell" opacity={0.22} />}
       <RackFrames racks={plan.racks} X={X} Z={Z} />
+      {vis.detail && <RackDetails boxes={rackBoxes} open={vis.faces} />}
       {(vis.devices || vis.faces) && (
         <RackDevices devices={devices} rackById={rackById} X={X} Z={Z} themeTick={themeTick}
                      onSelect={fpv ? undefined : onSelect} onTip={fpv ? undefined : onTip} />
@@ -399,6 +428,7 @@ export default function RoomScene(p: SceneProps) {
                          onMove={fpv ? undefined : (i, e) => tip(e, unitText(placedUnits[i]))}
                          onOut={() => onTip(null)} />
           <UnitFrames boxes={unitBoxes} />
+          {vis.detail && <UnitDetails boxes={unitBoxes} types={unitTypes} />}
           <Instruments items={instruments} X={X} Z={Z}
                        onSelect={fpv ? undefined : onSelect} onTip={fpv ? undefined : onTip} />
         </>
@@ -420,7 +450,7 @@ export default function RoomScene(p: SceneProps) {
                  unitBoxes={unitBoxes} units={placedUnits} unitRole={unitRole} devices={devices}
                  tones={tones} themeTick={themeTick} />
       )}
-      <Invalidator deps={[rackLayer, coolingLayer, vis, sel, mode, overlay, heat, field, indices]} invalidate={invalidate} />
+      <Invalidator deps={[rackLayer, coolingLayer, vis, sel, mode, overlay, heat, field, indices, doors]} invalidate={invalidate} />
     </>
   );
 }
@@ -730,7 +760,7 @@ function FpvRig({ W, D, rackMesh, racks, onFocus }: {
 
 // ----------------------------------------------------------- room shell
 
-function Room({ W, D, whiteSpace }: { W: number; D: number; whiteSpace: boolean }) {
+function Room({ W, D, whiteSpace, walls: walled }: { W: number; D: number; whiteSpace: boolean; walls: boolean }) {
   const tiles = useMemo(() => tileTexture(W, D, !whiteSpace), [W, D, whiteSpace]);
   useEffect(() => () => tiles.dispose(), [tiles]);
   const edges = useMemo(() => new THREE.EdgesGeometry(new THREE.BoxGeometry(W, WALL_H, D)), [W, D]);
@@ -745,15 +775,17 @@ function Room({ W, D, whiteSpace }: { W: number; D: number; whiteSpace: boolean 
         <planeGeometry args={[W, D]} />
         <meshStandardMaterial map={tiles} roughness={0.95} />
       </mesh>
-      {walls.map(([x, z, ry, len], i) => (
+      {walled && walls.map(([x, z, ry, len], i) => (
         <mesh key={i} position={[x, WALL_H / 2, z]} rotation-y={ry}>
           <planeGeometry args={[len, WALL_H]} />
           <meshStandardMaterial color={SURF.wall} roughness={1} />
         </mesh>
       ))}
-      <lineSegments geometry={edges} position={[0, WALL_H / 2, 0]}>
-        <lineBasicMaterial color={SURF.wallEdge} />
-      </lineSegments>
+      {walled && (
+        <lineSegments geometry={edges} position={[0, WALL_H / 2, 0]}>
+          <lineBasicMaterial color={SURF.wallEdge} />
+        </lineSegments>
+      )}
     </group>
   );
 }

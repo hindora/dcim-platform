@@ -1049,6 +1049,107 @@ and 54 % of 336 U; the plant and support rooms read nothing.
 - **Q10** Substation: model the MV switchgear as a device (Modbus from a relay)
   or leave only the transformers? Recommendation: transformers only now.
 
+## 8d. Phase 6, the room builder (started 2026-10-13)
+
+Q3 answered yes: a real deployment has to be able to correct its drawing.
+
+### 8d.0 What the editor is, and is not
+
+No protocol reports where a rack stands. In production the drawing comes from
+CAD or a survey and is then maintained by hand in the DCIM (Sunbird dcTrack,
+Nlyte and NetEco all carry a floor editor; EkkoSense builds every room by
+hand). Two things follow.
+
+1. **An edit corrects a record; it moves nothing.** Dragging a rack says "the
+   drawing was wrong" or "this move has been carried out". A planned move is
+   a work order - the capacity-ticket half of Phase 6, on
+   `capacity_reservation` - and is not built here.
+2. **The rules are the drawing's, not a code's.** A footprint stays inside its
+   room and off every other footprint. Service clearances and aisle widths are
+   not judged: they depend on the equipment and on local rules, and a tool
+   that refused a real, non-compliant floor could not be made to match it.
+
+### 8d.1 Increment 1, backend (BUILT 2026-10-13, not deployed)
+
+- `core/placement.py`, pure: `footprint()` (quarter turns exact, any other
+  angle bounded), `problems()` (outside the room; overlaps, named), `snap()`
+  to the 600 mm tile. Racks in a row touch; a centimetre of tolerance - the
+  resolution of a stored coordinate - keeps touching from reading as overlap.
+- `PUT /twin/racks/{id}/placement` `{x, y}` and
+  `PUT /twin/devices/{id}/placement` `{x, y, rotation_deg?}` (floor-mounted
+  units with a footprint only): operator and up, 409 with the named problems
+  when refused, `geometry_source = 'manual'` on success, audited as
+  `geometry.place` with before and after.
+- `DELETE /twin/{racks|devices}/{id}/placement` hands the object back to the
+  import (`geometry.release`); the position holds until the next geometry
+  import, which then owns it again.
+- Nothing new in the schema: migration 0099 added `geometry_source` and every
+  geometry import has left `'manual'` rows alone since.
+- Checked read-only against the estate: Server Hall A's imported drawing has
+  17 footprints and no overlaps; a rack is accepted where it stands, refused
+  onto its neighbour and refused through the wall.
+
+### 8d.2 Owed
+
+- **The editor itself** (frontend): an Edit mode in the PLAN view only -
+  top-down, orthographic, the view a floor is drawn in - with drag, tile snap,
+  a live ghost that turns to the alarm colour where the server would refuse,
+  Save and Discard, and a mark on every hand-placed object with "Hand back to
+  the import". Not in 3D or FPV: nobody surveys a floor in perspective.
+- **Aisles after a move.** Stored aisles are the import's; a rack moved out of
+  its row leaves them stale. Either re-derive from rack facing when a room has
+  manual racks, or let the editor draw aisles.
+- **Room size and origin** by hand (`room.geometry_source` is honoured by the
+  importer, nothing writes it).
+- **Rack facing and footprint** edits; adding and removing racks.
+- **Capacity tickets**: new rack, add to rack, decommission, with
+  accept-and-place.
+- **The simulator's air model reads its own geometry**, not the platform's: a
+  rack moved here does not move in the simulator. On a real site there is no
+  such second copy; in the demo a hand edit makes the drawing and the air
+  disagree, and the editor should say so.
+
+## 8e. Rooms that read as rooms (2026-10-13)
+
+Asked for against the EkkoSoft Critical room view: doors, windows, fire
+points, and cabinets and plant that look like what they are - without
+disturbing the layers.
+
+**The rule that keeps it honest.** Two kinds of thing are drawn and they are
+kept apart (`features/floorplan/Fittings.tsx`):
+
+- *From data.* Door openings are the imported fabric's `door` spaces, turned
+  into room metres; a door with a BMS contact shows what the contact reads
+  (lamp on the lintel, leaf swung open, alarm colour when held). A rack's doors
+  hang on the face its `facing` names. A yard has a fence and a roof a
+  parapet, because `room_class = 'outdoor'` and the Roof level have no walls.
+- *By rule.* Nothing reports where an extinguisher hangs. Fire points are
+  drawn where a fire code puts them: a handheld and a manual call point at
+  every exit (NFPA 10 / BS 5306 travel distance); the yellow release and blue
+  abort stations at the door of a gas-suppressed room and its clean-agent
+  cylinder bank against a free wall (NFPA 2001 / EN 15004), in white space
+  only. They carry no state, answer no pointer and take no layer colour. The
+  "Doors and room fittings" switch turns them off.
+
+**Windows.** A data hall has none - no daylight, no solar gain, no line of
+sight (TIA-942, Uptime guidance) - so none is drawn in white space or plant.
+The Operations Room, a staffed room, gets a window and a console.
+
+**Cabinets and plant.** Dark trim over the layer's colour, never instead of
+it: perforated front door with handle, split rear doors, roof with brush-strip
+entries, plinth; "See into racks" takes the front door off. Air handlers get
+service doors, a display and a return grille; floor cabinets (UPS, switchgear,
+RPP, ATS, MCC) one door section per 0.8 m with a meter window and vent
+louvres; cooling towers fans and louvres; water-cooled chillers two
+shell-and-tube barrels and a starter panel, not condenser fans; generators
+louvres, exhaust stack and silencer; the transformer its bushings and
+conservator. The "Cabinet and plant detail" switch turns it off.
+
+**Owed.** A fire panel in the simulator (BACnet/Modbus points for zone alarm,
+agent release, VESDA level) would let the fire points carry state and move
+them from "by rule" to "from data". Surveyed positions for fittings belong to
+Phase 8's drawing import.
+
 ## 9. Open questions
 
 - **Q1** Should Phase S2 change the existing cooling numbers? Per-rack supply
@@ -1056,8 +1157,8 @@ and 54 % of 336 U; the plant and support rooms read nothing.
   before/after on the live estate.
 - **Q2** *Answered 2026-10-08 (§8b B1):* one entry, the floor plan, opening on
   the building; the separate building route is retired.
-- **Q3** Is a manual room builder (Phase 6) wanted, or does geometry stay
-  import-only? Real deployments need it; the demo does not.
+- **Q3** *Answered 2026-10-13 (§8d):* yes; started with the placement rules and
+  endpoints.
 - **Q4** Liquid cooling: draw CDU loops and DLC racks (EkkoSense 9.4 added
   these)? Data exists (`cooling` layer, `RoomLiquid.tsx`).
 

@@ -428,9 +428,15 @@ export interface Visibility {
   /** Cabinets drawn as a tinted glass shell so the equipment in them shows,
    *  the way a rack reads with its perforated doors seen up close. */
   faces: boolean;
+  /** Doors, fire points, windows: what makes the room read as a room. Doors come
+   *  from the building fabric; the rest is drawn where a fire code puts it. */
+  fittings: boolean;
+  /** Cabinet doors, plinths, grilles and fans on racks and plant. */
+  detail: boolean;
 }
 export const DEFAULT_VIS: Visibility = {
   devices: true, plant: true, aisles: true, containment: true, labels: false, vents: true, hotspots: true, faces: false,
+  fittings: true, detail: true,
 };
 
 /** The heat map: one of the three interpolated planes, or off. Optional by

@@ -6,7 +6,8 @@ import {
   type ThermalUnit, type TwinHistoryRange, type TwinRoomScene, type SitesOverview, type TwinSiteScene,
 } from '../../api/client';
 import { Seg } from '../../components/estate';
-import type { Overlay } from './colors';
+import { alarmColor, type Overlay } from './colors';
+import type { RoomDoor } from './Fittings';
 import {
   BUILDING_LAYERS, coolingLegendFor, DEFAULT_VIS, legendFor, rackTiers, ventTiles, TEMP_BANDS,
   type BuildingLayer, type CoolingLayer, type HeatPlane, type RackLayer, type Sel, type ViewMode, type Visibility,
@@ -100,6 +101,27 @@ export function FloorPlanView() {
     queryKey: ['site-scene', siteId], queryFn: () => api.siteScene(siteId),
     enabled: Boolean(siteId), refetchInterval: 30_000, staleTime: 15_000, placeholderData: (prev) => prev,
   });
+  // The room's doors: openings from the building fabric, in room metres, each
+  // with what its BMS contact reads when it has one. One contact per room today.
+  const roomDoors = useMemo<RoomDoor[]>(() => {
+    const site = building.data;
+    const here = site?.rooms.find((r) => r.id === roomId);
+    if (!site || !here || here.origin_x_m == null || here.origin_y_m == null) return [];
+    const contact = (site.doors ?? []).find((c) => c.room_id === roomId);
+    const ox = here.origin_x_m, oy = here.origin_y_m;
+    return (site.fabric ?? [])
+      .filter((f) => f.kind === 'door' && typeof f.attrs?.room === 'string' && (f.attrs.room as string).endsWith(`/${here.name}`)
+        && (f.level ?? '') === (here.level ?? ''))
+      .map((f) => {
+        const xs = f.polygon_m.map((p) => p[0] - ox), ys = f.polygon_m.map((p) => p[1] - oy);
+        const monitored = Boolean(f.attrs?.monitored) && contact != null;
+        return {
+          x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys), monitored,
+          open: monitored ? contact?.open ?? null : null,
+          alarm: monitored && contact && contact.max_severity !== 'CLEAR' ? alarmColor(contact.max_severity, 0) : null,
+        };
+      });
+  }, [building.data, roomId]);
   const siteKpi = useQuery({
     queryKey: ['site-kpi', siteId], queryFn: () => api.siteKpi(siteId),
     enabled: Boolean(siteId) && rung !== 'room', staleTime: 60_000, refetchInterval: 120_000,
@@ -529,7 +551,7 @@ export function FloorPlanView() {
     <Suspense fallback={<p className="muted viewer-fallback">Loading the room…</p>}>
       <Stage data={d} units={units} rackLayer={rackLayer} coolingLayer={coolingLayer} vis={vis} mode={mode}
              sel={sel} overlay={overlay} indices={d.indices} field={withField && heat !== 'off' ? field.data : null} heat={heat}
-             resetTick={resetTick} themeTick={themeTick}
+             doors={roomDoors} resetTick={resetTick} themeTick={themeTick}
              onSelect={(s) => { setSel(s); if (s) setPanel('info'); }} onTip={setTip} onFocus={setFocus}
              label={`${mode === 'plan' ? 'Plan' : mode === 'fpv' ? 'Walk-through' : '3D view'} of ${d.plan.room_name}`} />
     </Suspense>
