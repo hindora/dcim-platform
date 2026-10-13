@@ -461,7 +461,8 @@ def test_a_transformer_is_a_modbus_box_with_no_snmp_agent():
     of false endpoint_unreachable on the live estate (docs/27 §8c.2)."""
     dev = {"name": "TX1-DC1-SB", "device_type": "transformer", "mgmt_ip": "10.52.14.48",
            "ip_address": "", "modbus_role": ""}
-    specs = derive_endpoints(dev, include_protocols=frozenset({"snmp", "modbus", "bacnet", "redfish", "gnmi"}))
+    every = frozenset({"snmp", "modbus", "bacnet", "redfish", "gnmi"})
+    specs = derive_endpoints(dev, include_protocols=every)
     protocols = sorted(s.protocol for s in specs)
     assert protocols == ["modbus"], protocols
     assert specs[0].address == "10.52.14.48" and specs[0].port == 502
