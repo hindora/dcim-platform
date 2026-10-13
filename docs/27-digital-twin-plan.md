@@ -630,6 +630,9 @@ against fixtures run through the backend code plus a mock frame endpoint).
 | **4** | Time playback from caggs | M | 2 |
 | **5** | Zones of influence + CRAH-failure what-if (fitted, labelled as estimate) | L | S2, 4 weeks+ of history |
 | **6** | Room builder (manual geometry edits, `geometry_source='manual'`) | L | 0 |
+| **S3** | Simulator building fabric, support rooms, door contacts, the compound and the moved rooms, floorplan 1.2 (§8b.3, §8c.3) | M–L | S1; ships with S2's regeneration |
+| **7** | One viewer: building rung inside the floor plan, breadcrumb, `space` + doors, Building page retired (§8b.4) | M–L | 0; full value needs S3 |
+| **8** | Per-level drawing import under the fabric (§8b.5) | M | 7 |
 
 Each phase ends with live verification against the running stack, the
 standing rules (CI green, chart/table rules, ship-frontend rule) and the
@@ -665,14 +668,394 @@ allocated / measured power layer; °C / °F; per-unit alarm management in the
 panel. Unchanged: no CFD, the ingest-lag fix, S2's dependency on the RAM
 upgrade.
 
+## 8b. One viewer, building first (2026-10-08)
+
+Written against dcim-platform `708c1bd` and simulator `669ff90`, after the user
+asked why the building has its own page and whether the model should show
+operator rooms, stores, passages and doors. Nothing in this section is built.
+
+### 8b.0 The verdict
+
+1. **The Building page goes.** It is a picker in an oblique SVG - stacked
+   levels, click a room, land in the viewer - and it is the only rung of the
+   site → building → level → room ladder that lives on its own route. Every
+   reference product (Sunbird dcTrack, Nlyte, Schneider EcoStruxure IT,
+   Hyperview, NetEco) walks that ladder inside one spatial viewer with a
+   breadcrumb. So does ours from now on: the floor plan opens on the
+   building, a click descends, the breadcrumb ascends.
+
+2. **The building is the default, deep links are not.** `/floorplan` with no
+   room shows the building. `/floorplan?room=…` shows the room, exactly as
+   today, because every alarm row, rack page and world-map tile links to a
+   room and nobody arriving from an alarm wants a second click.
+
+3. **"Realistic" means "has data", not "looks like an architect's render".**
+   A real DCIM does not model offices, corridors or doors as objects; it lays
+   the architect's drawing (DWG/DXF/PDF) under the monitored rooms and places
+   assets on it. Corridors and doors come from the drawing. The twin keeps
+   its rule - it draws what has data - and gets its fabric from a drawing
+   layer, not from invented rooms with nothing in them. Spaces that *do*
+   carry assets or telemetry in a real facility are added as rooms, with
+   their data. Doors are drawn as monitored door contacts where the BMS has
+   one, and as openings in the drawing where it does not.
+
+### 8b.1 Design decisions
+
+| # | Decision |
+|---|---|
+| **B1** | One route. `/twin/sites/:id` redirects to `/floorplan?site=:id`. `features/site/Building.tsx` and `building.css` are deleted. |
+| **B2** | Rung from the URL: `site` (datacenter id; default = first site, remembered per viewer), `level` (optional: focus one slab, ghost the others), `room` (present = room rung; the existing `view`, `layer`, `cooling`, `heat`, `t`, `cmp`, `step` keep their meaning there). Breadcrumb `DC1 › Level 1 › Server Hall A`; each crumb is a link that drops the keys to its right. |
+| **B3** | The building rung is drawn in the **same three.js scene** as the room, at coarse level of detail: level slabs at their elevation (data: `levels[].elevation_m`, `floor_to_floor_m`), room volumes (`width_m × depth_m × (floor_to_floor − slab)`) with 12 % faces coloured by the room's worst open condition, free-standing plant as its true footprint (data exists since S1), rack rows as flat blocks (positions exist). No per-device meshes, no heat field, no cable paths at this rung. Target under 5 k triangles plus two instanced meshes. |
+| **B4** | Entering a room is a camera move, not a page load: the room's volume is framed, the room rung's scene query runs (`/twin/rooms/{id}/scene`), and the building geometry stays as a ghost while the detail streams in. Esc or the breadcrumb returns; the building geometry is still in memory. The SVG fallback (no WebGL) gets a 2D stack of level plans with the same colouring. |
+| **B5** | Three kinds of space, told apart in data and on screen: **monitored rooms** (today's `room` rows, `room_class` `white_space` / `facility`); **support rooms** (new `room_class = 'support'`: rooms that hold assets or a sensor but no racks of IT - see 8b.3); **fabric** (new `space` table: corridor, lobby, loading dock, stair/lift core, entrance, external wall, door opening). Fabric is drawn flat and grey with a label and is **never coloured by state**, because it has none. |
+| **B6** | Doors. A monitored door is a BMS binary input (`door_open`) on the plant controller, one per hall, electrical room and meet-me room door, with a `door_held_open` condition after 120 s and a platform alarm in the `security` category (new category; see Q6). It is drawn as a door leaf on the wall at the position the fabric gives, coloured by state and alarm. An unmonitored door is an opening in the fabric, uncoloured. The two never look alike. |
+| **B7** | Geometry is computed in the importer and stored, never derived per request. The site scene already comes from `datacenter.attributes.building` plus `room`; it grows by `space` rows and door points. The host is memory-tight; the API stays a read. |
+| **B8** | Nothing is generated that nothing reads. No NOC without a sensor, no store without stock, no corridor coloured by anything. |
+
+Q2 in §9 ("separate TWIN nav entry, or a toggle on the floor plan, plus a
+site-level entry for the building") is answered by B1: one entry, the floor
+plan, building first.
+
+### 8b.2 What the live building is (verified 2026-10-08)
+
+Both sites import the same envelope today: levels G (0 m), 1 (5 m), 2 (10 m),
+Roof (15 m); outline of four points; eight rooms:
+
+| Level | Room | Class | Size (m) | Origin (m) |
+|---|---|---|---|---|
+| G | UPS Room | facility | 9.0 × 6.0 | 0, 0 |
+| G | Mechanical Room | facility | 8.0 × 4.0 | 0, 6 |
+| G | Generator Room | facility | 10.0 × 12.6 | 9, 0 |
+| 1 | Server Hall A | white_space | 12.2 × 12.3 | 0, 0 |
+| 1 | Network Room | white_space | 3.0 × 5.4 | 12.2, 0 |
+| 1 | Central Plant | facility | 16.0 × 15.0 | 15.2, 0 |
+| 2 | Server Hall B | white_space | 12.2 × 12.3 | 0, 0 |
+| Roof | Roof | facility | 12.0 × 6.0 | 0, 0 |
+
+Two things the building rung will make visible that the room rung hides: the
+Central Plant sits on level 1 beside the hall (S1 placed the runtime hall
+"beside its level's rooms"; a chiller plant on the first floor is odd but is
+what the geometry says, and the view should show the geometry, not flatter
+it); and level 2 is a single hall with nothing beside it. Both are inputs to
+S3, not things the viewer should paper over.
+
+### 8b.3 Simulator Phase S3 - building fabric and data-bearing spaces
+
+All of it in `core/equipment_geometry.complete_building()` and the topology,
+exported in `floorplan` **1.2**. Needs Stop → Regenerate Datasets → Start, so
+it ships with S2's regeneration, after the RAM upgrade, not before.
+
+**Fabric** (`floorplan.fabric[]`, each `{level, kind, name, polygon_m, attrs}`),
+derived from the room layout so it stays right when the fleet opens a hall:
+
+- a 2.4 m corridor along the open side of each level's rooms, joining them;
+- a 3 × 6 m stair-and-lift core at the same plan position on every level;
+- on G: a lobby at the entrance and a loading dock against the generator room
+  wall (a real dock sits where the heavy kit arrives);
+- the external wall as the outline, with one entrance opening and one dock
+  door; a door opening in each room's corridor wall (`kind: 'door'`,
+  `attrs.room`, `attrs.monitored: bool`).
+
+**Support rooms** (`room_class: 'support'`), each with what makes it real:
+
+| Room | Level | What it holds | Protocol / data |
+|---|---|---|---|
+| Staging & Storage | G | Devices in lifecycle `planned` / `stock`: the fleet lifecycle moves a device from here into a rack on install, and back on decommission. Asset records, no telemetry. | Asset lifecycle only |
+| Operations Room (NOC) | 1 | One temperature / RH sensor; the wall display's home. | SNMP sensor |
+| Meet-Me Room | 1 | Two carrier handoff routers and an ODF, on the OOB plane. | SNMP / gNMI |
+| UPS Room (existing) | G | Gains battery string temperature and hydrogen concentration, which a UPS room with batteries is required to monitor. | BACnet AI on the plant controller |
+
+**Doors**: `door_<room>_open` BACnet binary inputs on the plant controller for
+Server Hall A/B, UPS Room, Generator Room, Meet-Me Room (the rooms a NOC
+alarms on). Normally closed; the lifecycle opens one for 20-200 s when it
+installs or decommissions in that room, and the scenario tool can hold one
+open. Export each as a device of type `sensor` with metric `door_open`
+(bool), rack-less, `mounting: 'wall'`, positioned on the door opening.
+
+### 8b.4 Platform Phase 7 - the building rung
+
+**Data (migration 0102).** `space` table: `id`, `datacenter_id`, `level`,
+`kind` (`corridor | lobby | dock | core | entrance | wall | door`), `name`,
+`polygon_m` (jsonb, metres in the site frame), `attributes`. `room.room_class`
+gains `support`. New metric key `door_open` (the five steps in the
+adding-a-metric-key rule: registry, codegen, migration marking it hot,
+collector rebuild, importer default). Alarm category `security` with the
+`door_held_open` condition.
+
+**Importer.** Reads floorplan 1.2: upserts `space`, support rooms, door
+sensors. `--geometry-only` covers `space` too.
+
+**API.** `/twin/sites/{id}/scene` gains `fabric: Space[]` and
+`doors: {device_id, room_id, level, x_m, y_m, facing_deg, open: bool|null,
+max_severity}[]`; `rooms[].room_class` may be `support`. Nothing else changes.
+
+**Frontend.**
+- `FloorPlan.tsx`: rung state from the URL (B2); site picker when the estate
+  has more than one site; breadcrumb; the room `<select>` becomes the level 3
+  crumb. The old `/twin/sites/:id` route redirects.
+- `Scene.tsx`: a `BuildingRung` group (slabs, room volumes, fabric, plant
+  footprints, rack blocks, doors) and a camera transition into a room; the
+  room rung as today. Hover on a room volume shows name, class, worst
+  condition, racks, devices; hover on a door shows state and age.
+- Panel at the building rung: the site's KPI card (`/sites/{id}/kpi`: PUE,
+  utilisation, outdoor air - already built for the world map), then rooms by
+  level with their worst condition, support rooms and fabric listed but
+  unlit. The world map's "Building" tile opens `/floorplan?site=`, its
+  "Floor map" tile opens the hall as now.
+- Layers at the building rung: alarm (default), power per room (from the
+  room KPI), space per room. Thermal and cooling layers are room-rung only.
+- SVG fallback: stacked level plans, same colouring, click to enter.
+
+**Acceptance.**
+1. `/floorplan` with no parameters shows DC1's building: four slabs, eight
+   room volumes in their stored positions, fabric grey, plant footprints at
+   true size; the breadcrumb reads `DC1`.
+2. Click Server Hall A: the camera frames it, the breadcrumb reads
+   `DC1 › Level 1 › Server Hall A`, the URL carries `room=`, and the view is
+   the room viewer as it is today, layers and timeline included.
+3. An alarm-row link to a room opens the room directly; `Esc` or the `DC1`
+   crumb returns to the building without a reload.
+4. A door held open in the simulator turns its leaf red within one poll,
+   raises a `security` alarm that the alarm list and the room's panel show,
+   and clears on close; a fabric door opening never changes colour.
+5. A device in `stock` sits in Staging & Storage on the building rung and
+   moves to its rack when the lifecycle installs it.
+6. `/twin/sites/:id` redirects; the Building component no longer exists;
+   type-check, build and the full backend suite pass; the estate pages agree
+   with the twin to the decimal.
+7. Building rung first paint under 300 ms after the scene query on the dev
+   host; room entry streams without a blank frame.
+
+**Phase 7, first increment, SHIPPED 2026-10-08 (`62e7da0`)** on today's data:
+B1-B4 and the panel. One route, building by default, room one click down
+with pushed history, breadcrumb, site picker, level filter, 3D and PLAN,
+oblique SVG without WebGL, `/twin/sites/:id` redirect, Building page
+deleted. `/twin/sites/{id}/scene` now carries each room's racks and placed
+plant from two site-wide reads, plus empty `fabric` and `doors`. Still owed
+from §8b.4: migration 0102 (`space`, `support`, `door_open`, `security`),
+importer and API for fabric and doors, the power and space layers at the
+building rung, and the door and support-room drawing - all waiting on the
+simulator's S3 export.
+
+### 8b.5 Phase 8 - drawing import (later, real sites)
+
+A per-level architectural drawing (SVG first; DXF via a converter) with scale
+and offset, stored in `level_drawing`, drawn under the fabric and rooms, and
+toggleable. This is how a real customer's corridors, offices and doors
+arrive, and it is the reason B5 keeps fabric separate from rooms: the
+drawing replaces generated fabric, never the monitored rooms.
+
+### 8b.6 Open questions
+
+- **Q5** Battery monitoring: hydrogen and string temperature on the UPS Room
+  (VRLA in cabinets, the common case) or a separate Battery Room (Li-ion,
+  the growing case)? Recommendation: UPS Room now; a battery room is a
+  topology option later.
+- **Q6** Door alarms: new `security` category, or under `environment`?
+  Recommendation: `security`; a NOC routes it differently.
+- **Q7** Single-site deployments: open on the building or on the only hall?
+  Recommendation: the building, with the viewer's choice remembered.
+- **Q8** Fabric generated from the rooms (S3) or curated per topology?
+  Recommendation: generated, with a curated override file, so the fleet can
+  open a hall without an architect.
+
+### 8b.7 What this does not do
+
+No architectural render; no furniture, people or vehicles; no corridor,
+office or door coloured by anything it cannot measure; no building geometry
+computed per request; no change to the room rung's layers, timeline or
+what-if.
+
+## 8c. The compound: a site rung above the building (2026-10-08)
+
+Amends §8b after the user asked whether the Central Plant and the Generator
+Room belong inside the building at all. Verified against the live scene:
+the Generator Room (two 2.6 × 6.6 m gensets with paralleling switchgear) is
+on the ground floor inside; the Central Plant (three water-cooled chillers,
+seven pumps) is on level 1 beside Server Hall A; the cooling towers are on
+the roof; the UPS Room (two UPS, two ATS, switchgear) is on the ground floor.
+
+### 8c.0 The verdict
+
+1. **Standby gensets of this size live in a yard, not a room.** Nearly every
+   enterprise and colocation site puts them outside in weatherproof
+   enclosures behind a fence, with bulk diesel, day tanks and fuel polishing.
+   Indoor generator halls are the urban, land-starved exception and need
+   exhaust stacks, louvres and a fire compartment. For a two-building
+   campus the yard is the normal answer; the paralleling switchgear stays
+   indoors in an electrical room.
+2. **Water-cooled chillers belong indoors, on the ground.** A plant room is
+   right; level 1 is not. A chiller is 8-15 t, vibrates and needs condenser
+   water risers and drainage, so plant rooms sit on the ground floor or in a
+   separate energy centre. Level 1 is S1's "beside its level's rooms" rule
+   placing a runtime room, not a design.
+3. **Cooling towers on the roof are fine**; a screened yard beside the plant
+   room is equally common. If the plant moves to the ground, the yard pairs
+   better, but the roof stays defensible and is kept.
+4. **The model has no compound.** A site is the building, nothing else. A
+   real site has a fenced substation with the utility transformers and MV
+   intake, a generator yard with bulk fuel, makeup-water storage for the
+   towers (a day or two), a fire water tank and pump house, two diverse
+   telecom entrances into the meet-me room, and the fence, gate, guardhouse,
+   car park and loading apron around them. None of it is modelled.
+
+### 8c.1 Decisions (amending §8b)
+
+| # | Decision |
+|---|---|
+| **C1** | **A site rung above the building.** The floor plan's ladder becomes site → building → level → room. `/floorplan?site=` opens on the compound: the ground plane with the site outline, the outdoor zones, and the building extruded with its levels visible through it. Clicking the building descends to the building rung (§8b B3); the breadcrumb climbs. `building=` in the URL names the building when a site has more than one. |
+| **C2** | **Outdoor zones are `space` rows too.** §8b B5's `space.kind` gains the outdoor kinds `generator_yard`, `substation`, `cooling_yard`, `fuel_tank`, `water_tank`, `fire_pump_house`, `guardhouse`, `parking`, `apron`, `fence`, `gate`, `telecom_entrance`. Outdoor fabric is drawn flat on the ground plane in the same grey as indoor fabric and is never coloured by state. |
+| **C3** | **Equipment outdoors stands in an `outdoor` room.** A yard that holds monitored equipment (gensets, transformers, towers, tanks) is a `room` row with `room_class = 'outdoor'`, `level = 'Site'`, elevation 0 and no walls, so the alarm roll-up, the room KPI, the paths and the twin's room rung keep working unchanged. A yard without equipment is fabric only. |
+| **C4** | **The simulator moves the rooms.** Generator Room → Generator Yard (`outdoor`), plus a bulk fuel tank with a level transmitter and the utility substation with two transformers. Central Plant → level G. Roof stays. Device names keep their room codes (`GR`, `CP`, `RF`): the platform keys device identity on them, and a rename would churn every device at both sites. The room's *name* and *class* change; its *code* does not. |
+| **C5** | **One geometry pass.** The compound outline, outdoor zones and the moved rooms ship in the same simulator export (floorplan 1.2) and the same platform migration (0102) as §8b's fabric, support rooms and doors. The dataset regeneration they all need happens once, with S2's. |
+| **C6** | **Nothing simulated for the sake of the picture.** Fence, gate, apron and car park are drawing only. The substation's transformers, the fuel tank's level, the water tank's level and the guardhouse door are modelled only because a real site monitors them (transformer temperature over SNMP or Modbus from a protection relay or a temperature monitor; tank levels over Modbus or BACnet from a level transmitter; the guardhouse door through the BMS). |
+
+### 8c.2 What the compound holds, and how it is known
+
+| Zone | Holds | Protocol / data | Why a NOC sees it |
+|---|---|---|---|
+| Substation | Two utility transformers, MV switchgear | Transformer winding temperature and load via SNMP (temperature monitor) or Modbus (protection relay); the intake meter already exists | Loss of a feed is the first event in most outages |
+| Generator Yard | The two gensets (moved), day tanks | As today (Modbus genset controllers) | Run status, fuel, failure to start |
+| Fuel tank | Bulk diesel tank, level transmitter | Modbus or BACnet AI, level % and litres; low-level alarm | Runtime at full load is the number the NOC asks for |
+| Cooling yard / Roof | Towers (roof, unchanged); makeup-water tank | Tank level AI on the plant controller | Tower makeup is the single point that empties a plant |
+| Fire pump house | Fire pump controller | BACnet BI run/fault, or dry contacts | Life safety; monitored, never controlled |
+| Telecom entrance | Two diverse duct routes to the meet-me room | Drawing only; the carriers' handoffs are in the MMR (§8b.3) | Diversity is an audit question, not a live one |
+| Guardhouse, gate, fence, parking, apron | Fabric; the guardhouse door through the BMS | Door BI (§8b B6) | Access |
+
+### 8c.3 Simulator S3, amended scope
+
+`core/equipment_geometry.complete_building()` grows into `complete_site()`:
+the building as before, plus a `compound` block in floorplan 1.2:
+
+```
+floorplan.compound = {
+  outline_m: [[x, y], ...],            # the fenced site, metres, same frame as the building
+  buildings: [{code, outline_m, levels}],
+  zones: [{id, kind, name, polygon_m, room?}],   # room set when the zone is an outdoor room
+}
+floorplan.fabric = [{id, level, kind, name, polygon_m}]   # indoor, from §8b.3
+```
+
+Site layout, derived from the building outline so a fleet-opened hall still
+fits: the building at the centre of a site roughly three times its
+footprint; a 3 m service road and apron along the dock side; the generator
+yard and fuel tank on the dock side beyond the apron; the substation on the
+far side from the halls, at the utility entrance; the makeup-water tank and
+fire pump house beside the plant room's wall; the guardhouse at the gate;
+two telecom entrance routes from opposite fence lines to the meet-me room.
+
+Room changes in `topologies/dual_dc_enterprise.json` by an idempotent tool
+(`tools/compound_and_support_rooms.py --check`), in the style of
+`tools/layout_buildings.py`: Generator Room → Generator Yard, class
+`outdoor`, level `Site`; Central Plant → level G, beside the UPS and
+Mechanical rooms; the §8b.3 support rooms added; new devices: two utility
+transformers (substation), one bulk fuel tank with a level transmitter, one
+makeup-water tank with a level transmitter, one fire pump controller, door
+contacts and the UPS Room's hydrogen and battery temperature points on the
+plant controller. New points follow the adding-a-metric-key rule in both
+repositories.
+
+### 8c.4 Platform Phase 7, amended scope
+
+Migration 0102 as in §8b.4, with `room_class` also admitting `outdoor` and
+`space.kind` admitting the outdoor kinds. `/twin/sites/{id}/scene` gains
+`compound: {outline_m, zones[]}`. The site rung in the viewer: ground plane,
+fence line, zones in fabric grey, outdoor rooms with their equipment at true
+footprint, the building extruded with ghosted levels; click the building for
+the building rung. The breadcrumb gains the site crumb's second role: at the
+site rung it is the title, at the building rung it climbs.
+
+**Phase 7 second increment and 0102 SHIPPED 2026-10-13 (`e77057f`, migrated
+live).** Migration 0102 (`space`, `support`/`outdoor`), importer for
+floorplan 1.2 (empty support rooms, spaces, compound outline, vanished-room
+prune), `/twin/sites/{id}/scene` with `fabric` and `compound`, and the site
+rung: the floor plan opens on the compound, the building is a shell to
+click, fabric and door openings draw on the slabs. The live estate shows no
+compound until the simulator is regenerated (it still exports 1.1). Still
+owed: doors as BMS contacts, the `door_open` metric and the `security`
+category, the power and space layers at the building rung - all waiting on
+S3's second increment.
+
+**S3 increment 2, part A, CODED 2026-10-13 (simulator + platform migration
+0103).** Door contacts on the halls, Network, UPS and Meet-Me rooms; a
+hydrogen detector and a battery string probe in the UPS Room; level
+transmitters on the bulk diesel and makeup water tanks; the operations room's
+T/RH - all Modbus instruments behind the BMS gateway, with the tank, gas and
+string dynamics in the state store, a lifecycle door hook and two scenario
+endpoints. Platform: registry keys, generated templates, a `security` category,
+rules at the standards' numbers (0103). See the simulator's
+`docs/S3_COMPOUND_AND_FABRIC.md`. Owed from §8b.3/§8c.3: the `transformer`
+device type, the door leaves coloured by state in the viewer, and the
+regeneration that puts all of it on the wire.
+
+**S3 increment 2, part A ON THE WIRE 2026-10-13.** Simulator regenerated on
+`bbc0d61` (704 devices, 586 SNMP / 46 gNMI datasets, five protocols), full
+import: both sites 11 rooms, fabric 19, compound 65 × 45 m with 13 zones,
+10 door contacts and every instrument profiled by the BMS collectors
+(SIM-DOORCT/H2DET/BATTEMP/FUELTANK/WATERTANK), samples landing, zero
+collector errors. Door bits go to `telemetry_bool` on change plus heartbeat;
+`/devices/{id}/metrics` had read only `telemetry_sample` and now reads all
+three tables.
+
+**S3 increment 2, part B, CODED 2026-10-13 (simulator + platform migration
+0104, platform `b9a4008`).** Q10 answered as recommended: one transformer per
+site, no MV switchgear device. Simulator: a `Substation` outdoor room on the
+west margin (the drawn zone becomes the room), `TX1-<DC>-SB` as device type
+`transformer` - the tank monitor on Modbus TCP (`SIM-XFMR-ITM-v1`), no SNMP,
+a power edge above the revenue meter - with IEC 60076-7's thermal model over
+the site's outdoor air, the ONAF fans and the monitor's relays
+(`tools/add_substation.py`, idempotent). Platform: the device type, keys
+`oil_temperature` / `winding_temperature` / `tap_position`, the generated
+template, plant-page readers, rules at the relays' settings (85/95, 105/115 C)
+and the load rule learning the type. The viewer draws each monitored opening
+as a door leaf from the scene's `doors` (whatever reports `door_open`, by
+room): in the wall when closed, swung into the room when open, alarm-coloured
+when held. Simulator committed `5c765fd`, regenerated and fully re-imported the same
+day: 12 rooms per site, Modbus 74 devices, both monitors answering (a new
+management address needs `POST /api/binding/bind` after the topology upload,
+then a Modbus restart). Owed: the power and space layers at the building rung
+(Phase 7 remainder).
+
+**Phase 7 remainder, the building rung's layers, BUILT 2026-10-13.** The site
+scene's rooms carry `power` (metered at the rack PDUs, rated, allocated,
+reserved) and `space` (rack units filled and fitted), each the sum of the
+room's racks by the rack page's own rules, in one read for the site
+(`site_room_capacity`). The site and building rungs gain a Layer switch -
+Alarms, Power, Committed, Space - sharing the room rung's `layer` keys, bands
+and legends, so the colouring survives the descent into a room and the climb
+back. A room with no racks, or racks with no rating, keeps the "no reading"
+tone and a dash in the panel: it is not drawn as an idle room. Checked against
+the estate's database: the halls read 57 % of 125 kW metered, 75 % committed
+and 54 % of 336 U; the plant and support rooms read nothing.
+
+### 8c.5 Acceptance additions
+
+8. `/floorplan?site=` opens on the compound: outline, substation, generator
+   yard with both gensets, fuel tank, water tank, fire pump house, the
+   building. The gensets are no longer inside the building.
+9. The Central Plant is on the ground floor; its three chillers and seven
+   pumps are where they were relative to each other.
+10. Every device keeps its name and id across the move; the platform's
+    device count does not change except for the devices added, and no
+    device's history is broken.
+11. A fuel tank below its low-level threshold raises an alarm that names the
+    runtime it implies.
+
+### 8c.6 Open questions
+
+- **Q9** Fuel: one bulk tank with two gensets drawing from it (simplest, common
+  for 2 N gensets), or one tank per genset (N+1 sites often do)? Recommendation:
+  one bulk tank, two day tanks drawn as fabric.
+- **Q10** Substation: model the MV switchgear as a device (Modbus from a relay)
+  or leave only the transformers? Recommendation: transformers only now.
+
 ## 9. Open questions
 
 - **Q1** Should Phase S2 change the existing cooling numbers? Per-rack supply
   will move room means slightly; alarms and estate compliance may shift. Needs a
   before/after on the live estate.
-- **Q2** Separate TWIN nav entry, or a 2D/3D toggle on the floor plan (NetEco
-  pattern)? Recommendation: toggle on the floor plan, plus a site-level TWIN
-  entry for the building view.
+- **Q2** *Answered 2026-10-08 (§8b B1):* one entry, the floor plan, opening on
+  the building; the separate building route is retired.
 - **Q3** Is a manual room builder (Phase 6) wanted, or does geometry stay
   import-only? Real deployments need it; the demo does not.
 - **Q4** Liquid cooling: draw CDU loops and DLC racks (EkkoSense 9.4 added
@@ -693,13 +1076,18 @@ dcim-platform: `backend/app/models/inventory.py`, `backend/app/importer/simulato
 `backend/app/repositories/racks.py`, `backend/app/repositories/estate.py`,
 new `backend/app/services/twin.py`, `backend/app/api/v1/twin.py`,
 `frontend/src/App.tsx`, new `frontend/src/features/twin/*`,
-`frontend/src/features/floorplan/FloorPlan.tsx`.
+`frontend/src/features/floorplan/FloorPlan.tsx`; §8b adds migration `0102`
+(`space`, `room_class='support'`, metric `door_open`, alarm category
+`security`), `frontend/src/features/floorplan/Scene.tsx` (`BuildingRung`),
+and deletes `frontend/src/features/site/Building.tsx` + `building.css`.
 
 Simulator: `core/hall_geometry.py`, `core/device_manager.py`,
 `core/device_state_store.py`, `core/fleet_lifecycle.py`,
 `core/topology_engine.py`, `api/routers/topology.py`,
 `topologies/dual_dc_enterprise.json`, `docs/heatmap_design.md`,
-`tools/build_floorplan_viewer.py` (mesh reference).
+`tools/build_floorplan_viewer.py` (mesh reference); §8b.3 adds
+`core/equipment_geometry.py` (fabric), `core/bacnet_plant_generator.py` (door
+BIs, battery AIs), `core/fleet_lifecycle.py` (storage ↔ rack, door events).
 
 ## Appendix B — Primary sources
 
