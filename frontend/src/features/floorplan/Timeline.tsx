@@ -24,6 +24,17 @@ export const STEP_OPTIONS: { value: number; label: string }[] = [
   { value: 60, label: '1 hour' },
 ];
 
+/** How long each frame stays up during play at 1× - the pace the timeline
+ *  shipped with. The faster rates are for walking a day, the slower for
+ *  watching one event. */
+export const FRAME_MS = 1500;
+export const SPEED_OPTIONS: { value: number; label: string }[] = [
+  { value: 0.5, label: '0.5×' },
+  { value: 1, label: '1×' },
+  { value: 2, label: '2×' },
+  { value: 4, label: '4×' },
+];
+
 /** Compare choices: null off, a number = seconds before the main moment
  *  (0 = the live room), 'pick' = a moment of its own on the compare row. */
 export type CompareMode = number | 'pick' | null;
@@ -160,6 +171,8 @@ export interface TimelineProps {
   playing: boolean;
   /** Minutes per frame for play and the step buttons. */
   step: number;
+  /** Play rate, a multiple of one frame per FRAME_MS. */
+  speed: number;
   cmp: CompareMode;
   /** The compare row's own moment, when cmp is 'pick'. */
   cmpT: Date | null;
@@ -171,12 +184,13 @@ export interface TimelineProps {
   onTime: (d: Date) => void;
   onPlay: (playing: boolean) => void;
   onStep: (minutes: number) => void;
+  onSpeed: (rate: number) => void;
   onCmp: (mode: CompareMode) => void;
   onCmpTime: (d: Date) => void;
 }
 
-export function Timeline({ t, playing, step, cmp, cmpT, earliest, frame, cmpFrame,
-  onLive, onTime, onPlay, onStep, onCmp, onCmpTime }: TimelineProps) {
+export function Timeline({ t, playing, step, speed, cmp, cmpT, earliest, frame, cmpFrame,
+  onLive, onTime, onPlay, onStep, onSpeed, onCmp, onCmpTime }: TimelineProps) {
   const atEnd = !t || t.getTime() + step * 60_000 > Date.now();
   return (
     <div className={`vw-time${t ? ' is-replay' : ''}${cmp === 'pick' ? ' has-compare' : ''}`} role="group" aria-label="Timeline">
@@ -199,6 +213,13 @@ export function Timeline({ t, playing, step, cmp, cmpT, earliest, frame, cmpFram
           <span>Step</span>
           <select value={step} onChange={(e) => onStep(Number(e.target.value))} aria-label="Step size for play and the step buttons">
             {STEP_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+        </label>
+
+        <label className="vw-stepsel">
+          <span>Speed</span>
+          <select value={speed} onChange={(e) => onSpeed(Number(e.target.value))} aria-label="Playback speed">
+            {SPEED_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
         </label>
 

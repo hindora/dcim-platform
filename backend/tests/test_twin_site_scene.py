@@ -99,7 +99,8 @@ DOORS = [{"id": "door-ha", "room_id": "hall", "level": "1", "floor_x": 0.3, "flo
 # The hall's two racks, summed: 30 of 44 kW metered, 28 allocated and 4 held,
 # 61 of 84 U filled. The UPS room has no racks and so no row.
 CAPACITY = {"hall": {"room_id": "hall", "load_kw": 30.0, "rated_kw": 44.0, "allocated_kw": 28.0,
-                     "reserved_kw": 4.0, "u_used": 61, "u_total": 84}}
+                     "reserved_kw": 4.0, "rated_load_kw": 30.0, "unrated_racks": 0,
+                     "u_used": 61, "u_total": 84}}
 
 
 def _scene(monkeypatch, racks=RACKS, units=UNITS, capacity=CAPACITY):
@@ -165,3 +166,13 @@ def test_an_unmetered_unrated_room_says_so_rather_than_reading_zero(monkeypatch)
     hall = next(r for r in _scene(monkeypatch, capacity=bare).rooms if r.id == "hall")
     assert hall.power.load_kw is None and hall.power.rated_kw is None
     assert hall.space.u_used == 0 and hall.space.u_total == 84
+
+
+def test_a_room_with_an_unrated_rack_divides_only_the_rated_racks_load(monkeypatch):
+    # Three racks metering 36 kW, two of them rated 22 kW each and carrying 30.
+    mixed = {"hall": {"room_id": "hall", "load_kw": 36.0, "rated_kw": 44.0, "allocated_kw": 28.0,
+                      "reserved_kw": None, "rated_load_kw": 30.0, "unrated_racks": 1,
+                      "u_used": 70, "u_total": 126}}
+    hall = next(r for r in _scene(monkeypatch, capacity=mixed).rooms if r.id == "hall")
+    assert hall.power.load_kw == 36.0 and hall.power.rated_load_kw == 30.0
+    assert hall.power.unrated_racks == 1

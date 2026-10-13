@@ -1837,7 +1837,12 @@ export interface TwinRoom {
   equipment?: TwinSiteUnit[];
 }
 /** The room's rack power, summed over its racks: metered at the rack PDUs, rated, allocated, reserved. */
-export interface TwinRoomPower { load_kw?: number | null; rated_kw?: number | null; allocated_kw?: number | null; reserved_kw?: number | null }
+export interface TwinRoomPower {
+  load_kw?: number | null; rated_kw?: number | null; allocated_kw?: number | null; reserved_kw?: number | null;
+  /** The load of the racks that carry a rating - what `rated_kw` divides into. */
+  rated_load_kw?: number | null;
+  unrated_racks?: number;
+}
 /** Rack units filled and fitted, over the room's racks. */
 export interface TwinRoomSpace { u_used: number; u_total: number }
 /** Building fabric or a compound zone with no state of its own: corridor, lobby, dock, core, door opening;

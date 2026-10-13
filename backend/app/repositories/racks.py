@@ -359,6 +359,12 @@ async def site_room_capacity(session: AsyncSession,
     over rack units fitted. A room with no racks has no row. `load_kw` is None
     when nothing in the room's racks reports power, so an unmetered room is
     not drawn as an idle one.
+
+    A percentage needs both halves from the same racks: `rated_load_kw` is the
+    load of the racks that carry a rating, the only load `rated_kw` can be
+    divided into, and allocated and reserved are summed over those racks too.
+    `load_kw` stays the whole room. `unrated_racks` says how many racks the
+    percentages leave out.
     """
     rows = (await session.execute(text(f"""
         WITH rk AS (
@@ -396,9 +402,14 @@ async def site_room_capacity(session: AsyncSession,
         )
         SELECT rk.room_id::text AS room_id,
                CASE WHEN sum(live.metered) > 0 THEN sum(live.load_kw) END AS load_kw,
-               sum(rk.rated_power_kw)   AS rated_kw,
-               sum(a.allocated_kw)      AS allocated_kw,
-               sum(h.reserved_kw)       AS reserved_kw,
+               CASE WHEN sum(live.metered) FILTER (WHERE rk.rated_power_kw > 0) > 0
+                    THEN sum(live.load_kw) FILTER (WHERE rk.rated_power_kw > 0)
+               END                      AS rated_load_kw,
+               count(*) FILTER (WHERE rk.rated_power_kw IS NULL OR rk.rated_power_kw <= 0)
+                                        AS unrated_racks,
+               sum(rk.rated_power_kw) FILTER (WHERE rk.rated_power_kw > 0) AS rated_kw,
+               sum(a.allocated_kw) FILTER (WHERE rk.rated_power_kw > 0)    AS allocated_kw,
+               sum(h.reserved_kw)  FILTER (WHERE rk.rated_power_kw > 0)    AS reserved_kw,
                sum(live.u_used)         AS u_used,
                sum(rk.u_height)         AS u_total
           FROM rk

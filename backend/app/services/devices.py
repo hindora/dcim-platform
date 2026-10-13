@@ -505,7 +505,9 @@ def _room_power(c: dict[str, Any] | None) -> TwinRoomPower | None:
         return None
     return TwinRoomPower(load_kw=_f(c.get("load_kw")), rated_kw=_f(c.get("rated_kw")),
                          allocated_kw=_f(c.get("allocated_kw")),
-                         reserved_kw=_f(c.get("reserved_kw")))
+                         reserved_kw=_f(c.get("reserved_kw")),
+                         rated_load_kw=_f(c.get("rated_load_kw")),
+                         unrated_racks=int(c.get("unrated_racks") or 0))
 
 
 def _room_space(c: dict[str, Any] | None) -> TwinRoomSpace | None:

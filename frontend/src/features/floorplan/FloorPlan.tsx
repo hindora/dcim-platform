@@ -15,7 +15,7 @@ import { BuildingPanel, DevicePanel, FiltersPanel, Legend, PathsPanel, RackPanel
 import { fromImpact, fromTraces, type PathKind } from './paths';
 import { BuildingPlan2D } from './BuildingPlan2D';
 import { Plan2D } from './Plan2D';
-import { paneCaption, snap, sourceLabel, STEP_OPTIONS, Timeline, type CompareMode } from './Timeline';
+import { FRAME_MS, paneCaption, snap, sourceLabel, SPEED_OPTIONS, STEP_OPTIONS, Timeline, type CompareMode } from './Timeline';
 import { numT, setTempUnit, unitLabel, useTempUnit, type TempUnit } from './units';
 import { useFrames, useTopics } from '../../ws/useSocket';
 import type { HoverTip } from './Scene';
@@ -38,7 +38,7 @@ type Rung = 'site' | 'building' | 'room';
 const SITE_KEY = 'dcim.viewer.site';
 const rememberedSite = (): string => { try { return localStorage.getItem(SITE_KEY) ?? ''; } catch { return ''; } };
 const rememberSite = (id: string) => { try { localStorage.setItem(SITE_KEY, id); } catch { /* private window */ } };
-const TIME_KEYS = ['t', 'cmp', 'cmp_t', 'step'];
+const TIME_KEYS = ['t', 'cmp', 'cmp_t', 'step', 'speed'];
 
 const MODES: { key: ViewMode; label: string }[] = [
   { key: '3d', label: '3D' }, { key: 'plan', label: 'PLAN' }, { key: 'fpv', label: 'FPV' },
@@ -184,6 +184,12 @@ export function FloorPlanView() {
     setParams(params, { replace: true });
   };
   const setCmpTime = (d: Date) => { params.set('cmp_t', snap(d).toISOString()); setParams(params, { replace: true }); };
+  const speedRaw = Number(params.get('speed'));
+  const speed = SPEED_OPTIONS.some((o) => o.value === speedRaw) ? speedRaw : 1;
+  const setSpeed = (r: number) => {
+    if (r === 1) params.delete('speed'); else params.set('speed', String(r));
+    setParams(params, { replace: true });
+  };
   const setStep = (m: number) => {
     if (m === 5) params.delete('step'); else params.set('step', String(m));
     setParams(params, { replace: true });
@@ -237,7 +243,7 @@ export function FloorPlanView() {
     enabled: Boolean(roomId) && webgl && cmp != null, refetchInterval: cmpIso ? false : 60_000,
     staleTime: cmpIso ? 10 * 60_000 : 0, retry: false, placeholderData: (prev) => prev,
   });
-  // Playback: five minutes forward every 1.5 s, the next frame fetched ahead
+  // Playback: one step forward every 1.5 s at 1×, the next frame fetched ahead
   // so the picture never waits. Stops at now, on going live, or on a new room.
   useEffect(() => { setPlaying(false); }, [roomId, live]);
   useEffect(() => {
@@ -247,9 +253,9 @@ export function FloorPlanView() {
     const iso = next.toISOString();
     qc.prefetchQuery({ queryKey: ['twin-scene', roomId, iso], queryFn: () => api.roomFrame(roomId, iso),
                        staleTime: 10 * 60_000 });
-    const id = window.setTimeout(() => setTime(next), 1500);
+    const id = window.setTimeout(() => setTime(next), FRAME_MS / speed);
     return () => window.clearTimeout(id);
-  }, [playing, t, roomId, step]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [playing, t, roomId, step, speed]); // eslint-disable-line react-hooks/exhaustive-deps
   // How far back the room goes: bounds the date picker and greys the scrubber.
   const history = useQuery<TwinHistoryRange>({
     queryKey: ['twin-history', roomId], queryFn: () => api.roomHistory(roomId),
@@ -604,9 +610,9 @@ export function FloorPlanView() {
               style={{ left: Math.min(tip.x + 14, window.innerWidth - 300), top: tip.y + 14 }}>{tip.text}</span>
       )}
 
-      <Timeline t={t} playing={playing} step={step} cmp={cmp} cmpT={cmpT} earliest={earliest}
+      <Timeline t={t} playing={playing} step={step} speed={speed} cmp={cmp} cmpT={cmpT} earliest={earliest}
                 frame={frameInfo} cmpFrame={cmpScene.data?.frame}
-                onLive={() => setTime(null)} onTime={setTime} onPlay={setPlaying} onStep={setStep}
+                onLive={() => setTime(null)} onTime={setTime} onPlay={setPlaying} onStep={setStep} onSpeed={setSpeed}
                 onCmp={setCmp} onCmpTime={setCmpTime} />
 
       <div className="vw-status">

@@ -86,11 +86,11 @@ export default function BuildingScene(p: BuildingSceneProps) {
   // A room's colour under the chosen layer: alarm severity, or its figure's
   // band; a room with nothing to measure keeps the "no reading" tone so it
   // is not mistaken for a cool one.
-  const roomColour = (r: TwinRoom): { colour: string; lit: boolean } => {
+  const roomColour = (r: TwinRoom): { colour: string; lit: boolean; band?: boolean } => {
     if (layer === 'alarm') return { colour: r.max_severity === 'CLEAR' ? tones.inkMuted : tones.sev(r.max_severity), lit: r.max_severity !== 'CLEAR' };
     const v = roomLayerValue(r, layer);
     if (v == null) return { colour: tones.none, lit: false };
-    return { colour: resolveColor(bandColor(roomLayerBands(layer)!, v)), lit: true };
+    return { colour: resolveColor(bandColor(roomLayerBands(layer)!, v)), lit: true, band: true };
   };
 
   const levels = useMemo(() => [...scene.levels].sort((a, b) => a.ordinal - b.ordinal), [scene.levels]);
@@ -384,8 +384,10 @@ function Label({ text, ink, bg, x, y, z, w }: { text: string; ink: string; bg: s
 function RoomVolume({ room: r, e, h, X, Z, tones, paint, dim, hot, quiet, flat, onOver, onOut, onClick }: {
   room: Placed; e: number; h: number; X: (x: number) => number; Z: (y: number) => number;
   tones: { ink: string; inkMuted: string; raised: string; accent: string; border: string; sev: (s: string) => string };
-  /** The room's colour under the current layer, and whether it is a reading rather than a resting tone. */
-  paint: { colour: string; lit: boolean };
+  /** The room's colour under the current layer, and whether it is a reading rather than a resting tone.
+   *  `band` marks a figure's band: an alarm tint stands out against grey neighbours, but under a figure
+   *  every measured room is coloured and the band has to be read, so the faces carry more of it. */
+  paint: { colour: string; lit: boolean; band?: boolean };
   dim: boolean; hot: boolean;
   /** At the site rung the rooms sit inside the shell: no labels, lower alpha. */
   quiet?: boolean;
@@ -407,7 +409,8 @@ function RoomVolume({ room: r, e, h, X, Z, tones, paint, dim, hot, quiet, flat, 
             onPointerOut={inert ? undefined : onOut} onClick={inert ? undefined : (ev) => { ev.stopPropagation(); onClick(); }}
             raycast={inert ? () => null : undefined}>
         <meshStandardMaterial color={colour} transparent depthWrite={false}
-                              opacity={dim ? 0.03 : hot ? 0.38 : quiet ? (alarmed ? 0.22 : 0.08) : alarmed ? 0.3 : flat ? 0.22 : 0.16} roughness={1} />
+                              opacity={dim ? 0.03 : paint.band ? (hot ? 0.62 : quiet ? 0.34 : 0.48)
+                                : hot ? 0.38 : quiet ? (alarmed ? 0.22 : 0.08) : alarmed ? 0.3 : flat ? 0.22 : 0.16} roughness={1} />
       </mesh>
       <lineSegments>
         <edgesGeometry args={[geo]} />

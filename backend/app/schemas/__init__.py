@@ -539,6 +539,10 @@ class TwinRoomPower(BaseModel):
     rated_kw: float | None = None
     allocated_kw: float | None = None
     reserved_kw: float | None = None
+    # The load of the racks that carry a rating: what `rated_kw` is divided
+    # into. Allocated and reserved are over those racks too.
+    rated_load_kw: float | None = None
+    unrated_racks: int = 0
 
 
 class TwinRoomSpace(BaseModel):

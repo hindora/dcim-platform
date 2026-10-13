@@ -153,7 +153,9 @@ export function roomLayerValue(r: TwinRoom, layer: BuildingLayer): number | null
   }
   const p = r.power;
   if (!p || !p.rated_kw) return null;
-  if (layer === 'utilisation') return p.load_kw == null ? null : (100 * p.load_kw) / p.rated_kw;
+  // Both halves from the same racks: a rack with no rating has no share of the denominator.
+  const load = p.rated_load_kw ?? p.load_kw;
+  if (layer === 'utilisation') return load == null ? null : (100 * load) / p.rated_kw;
   if (layer === 'committed') {
     if (p.allocated_kw == null && p.reserved_kw == null) return null;
     return (100 * ((p.allocated_kw ?? 0) + (p.reserved_kw ?? 0))) / p.rated_kw;
@@ -168,8 +170,10 @@ export function roomLayerText(r: TwinRoom, layer: BuildingLayer): string | null 
     : `${v.toFixed(0)} % of ${r.space!.u_total} U filled`;
   if (v == null) return r.rack_count ? 'racks without a rating' : null;
   const p = r.power!;
-  if (layer === 'utilisation') return `${v.toFixed(0)} % · ${p.load_kw!.toFixed(p.load_kw! >= 100 ? 0 : 1)} of ${p.rated_kw!.toFixed(0)} kW`;
-  return `${v.toFixed(0)} % committed of ${p.rated_kw!.toFixed(0)} kW`;
+  const left = p.unrated_racks ? `, ${p.unrated_racks} rack${p.unrated_racks === 1 ? '' : 's'} without a rating left out` : '';
+  const load = (p.rated_load_kw ?? p.load_kw)!;
+  if (layer === 'utilisation') return `${v.toFixed(0)} % · ${load.toFixed(load >= 100 ? 0 : 1)} of ${p.rated_kw!.toFixed(0)} kW${left}`;
+  return `${v.toFixed(0)} % committed of ${p.rated_kw!.toFixed(0)} kW${left}`;
 }
 
 export function roomLayerBands(layer: BuildingLayer): Band[] | null {
@@ -186,7 +190,7 @@ export function legendFor(layer: RackLayer): Legend | null {
     case 'power': return { title: 'Power usage', unit: 'kW', bands: KW_BANDS, none: 'not metered' };
     case 'utilisation': return { title: 'Power utilisation', unit: '%', bands: PCT_BANDS, none: 'no rating' };
     case 'committed': return { title: 'Committed power', unit: '%', bands: PCT_BANDS, none: 'no rating' };
-    case 'space': return { title: 'Space used', unit: '%', bands: SPACE_BANDS };
+    case 'space': return { title: 'Space used', unit: '%', bands: SPACE_BANDS, none: 'no rack units' };
     case 'compliance': return { title: 'ASHRAE A1', unit: '', bands: COMPLIANCE_BANDS, none: 'no reading' };
     case 'alarm': return { title: 'Alarms', unit: '', bands: ALARM_BANDS };
     default: return null;
