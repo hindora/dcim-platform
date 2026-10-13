@@ -454,3 +454,14 @@ def test_a_probe_with_no_port_recorded_is_not_polled():
         "host_pdu_ip": "10.52.11.30", "sensor_slot": 0,
     })
     assert not [s for s in specs if s.protocol == "snmp"]
+
+
+def test_a_transformer_is_a_modbus_box_with_no_snmp_agent():
+    """The tank monitor speaks Modbus TCP. An SNMP endpoint on it was an hour
+    of false endpoint_unreachable on the live estate (docs/27 §8c.2)."""
+    dev = {"name": "TX1-DC1-SB", "device_type": "transformer", "mgmt_ip": "10.52.14.48",
+           "ip_address": "", "modbus_role": ""}
+    specs = derive_endpoints(dev, include_protocols=frozenset({"snmp", "modbus", "bacnet", "redfish", "gnmi"}))
+    protocols = sorted(s.protocol for s in specs)
+    assert protocols == ["modbus"], protocols
+    assert specs[0].address == "10.52.14.48" and specs[0].port == 502

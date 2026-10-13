@@ -14,10 +14,12 @@ because these are exactly the rules that look arbitrary until they bite:
   management IP belongs to its BMC, which is a SECOND, SEPARATE agent with its
   own MIB subtree.
 
-* Five device types carry no SNMP agent at all (``_NO_SNMP_TYPES``): RPP,
-  chiller, pump, cooling tower, valve. That is realistic - real chillers and
-  pumps have no SNMP card, the BMS gateways their points - so creating SNMP
-  endpoints for them would produce permanent false "unreachable" alarms.
+* Six device types carry no SNMP agent at all (``_NO_SNMP_TYPES``): RPP,
+  chiller, pump, cooling tower, valve, transformer. That is realistic - real
+  chillers and pumps have no SNMP card, the BMS gateways their points, and a
+  transformer's tank monitor is a Modbus box - so creating SNMP endpoints for
+  them would produce permanent false "unreachable" alarms. (The transformer
+  did, for an hour, on the live estate.)
 
 * BACnet MS/TP devices and Modbus RTU slaves have NO IP of their own. They are
   reached through a router/gateway, which is what ``via`` expresses.
@@ -31,7 +33,9 @@ from typing import Any
 from app.core.security import credential_hint
 
 # core/snmprec_generator.py::_NO_SNMP_TYPES
-NO_SNMP_TYPES = frozenset({"rpp", "chiller", "pump", "cooling_tower", "valve"})
+NO_SNMP_TYPES = frozenset({"rpp", "chiller", "pump", "cooling_tower", "valve",
+                           # the transformer's tank monitor is a Modbus box
+                           "transformer"})
 
 # energy_monitor is the Verdigris EV2 branch-circuit panel, which is a
 # BACnet/IP device like the mechanical plant.
