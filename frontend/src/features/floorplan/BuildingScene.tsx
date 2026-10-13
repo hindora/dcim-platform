@@ -408,7 +408,8 @@ function RoomVolume({ room: r, e, h, X, Z, tones, paint, dim, hot, quiet, flat, 
       <mesh geometry={geo} onPointerOver={inert ? undefined : (ev) => { ev.stopPropagation(); onOver(ev); }}
             onPointerOut={inert ? undefined : onOut} onClick={inert ? undefined : (ev) => { ev.stopPropagation(); onClick(); }}
             raycast={inert ? () => null : undefined}>
-        <meshStandardMaterial color={colour} transparent depthWrite={false}
+        <meshStandardMaterial color={colour} emissive={paint.band ? colour : '#000000'} emissiveIntensity={paint.band ? 0.7 : 0}
+                              transparent depthWrite={false}
                               opacity={dim ? 0.03 : paint.band ? (hot ? 0.62 : quiet ? 0.34 : 0.48)
                                 : hot ? 0.38 : quiet ? (alarmed ? 0.22 : 0.08) : alarmed ? 0.3 : flat ? 0.22 : 0.16} roughness={1} />
       </mesh>
