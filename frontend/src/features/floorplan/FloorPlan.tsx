@@ -12,6 +12,7 @@ import {
   BUILDING_LAYERS, coolingLegendFor, DEFAULT_VIS, legendFor, rackTiers, ventTiles, TEMP_BANDS,
   type BuildingLayer, type CoolingLayer, type HeatPlane, type RackLayer, type Sel, type ViewMode, type Visibility,
 } from './layers';
+import { Dock, type DockItem } from './Dock';
 import { BuildingPanel, DevicePanel, FiltersPanel, Legend, PathsPanel, RackPanel, RoomPanel, UnitPanel } from './panels';
 import { fromImpact, fromTraces, type PathKind } from './paths';
 import { BuildingPlan2D } from './BuildingPlan2D';
@@ -226,7 +227,8 @@ export function FloorPlanView() {
   };
   const live = t == null;
 
-  const [panel, setPanel] = useState<'info' | 'filters' | null>('info');
+  const [panel, setPanel] = useState<DockItem | null>('info');
+  const togglePanel = (it: DockItem) => setPanel((p) => (p === it ? null : it));
   const [sel, setSel] = useState<Sel>(null);
   const [tip, setTip] = useState<HoverTip | null>(null);
   const [focus, setFocus] = useState<string | null>(null);
@@ -373,9 +375,12 @@ export function FloorPlanView() {
   // --- selection panel content ----------------------------------------
   let panelTitle = 'Room information';
   let panelBody: React.ReactNode = null;
-  if (panel === 'filters') {
-    panelTitle = 'View filters';
-    panelBody = <FiltersPanel rackLayer={rackLayer} coolingLayer={coolingLayer} heat={heat} vis={vis}
+  if (panel === 'filters' || panel === 'layers') {
+    // One panel, two doors: Layers opens on what colours the racks, Filters on
+    // what is drawn at all. Keyed so each door opens on its own section.
+    panelTitle = panel === 'layers' ? 'Layers' : 'Filters';
+    panelBody = <FiltersPanel key={panel} initial={panel === 'layers' ? 'racks' : 'vis'}
+                              rackLayer={rackLayer} coolingLayer={coolingLayer} heat={heat} vis={vis}
                               onRack={(l) => setParam('layer', l)} onCooling={(l) => setParam('cooling', l)}
                               onHeat={(h) => setParam('heat', h)} onVis={setVis} />;
   } else if (sel && data) {
@@ -475,11 +480,8 @@ export function FloorPlanView() {
                  options={[{ key: 'all', label: 'ALL' }, ...levelNames.map((n) => ({ key: n, label: /^\d+$/.test(n) ? `L${n}` : n.toUpperCase() }))]} />
           )}
         </div>
-        <div className="vw-rail">
-          <button type="button" className={`vw-icon${panel === 'info' ? ' is-on' : ''}`}
-                  onClick={() => setPanel(panel === 'info' ? null : 'info')}>INFO</button>
-        </div>
-        {panel && bs && (
+        <Dock items={['info']} open={panel === 'info' ? 'info' : null} onToggle={togglePanel} />
+        {panel === 'info' && bs && (
           <aside className="vw-panel" aria-label={atSite ? 'Site information' : 'Building information'}>
             <div className="vw-panel-head">
               <h3>{atSite ? 'Site' : 'Building'}</h3>
@@ -595,12 +597,7 @@ export function FloorPlanView() {
         <Seg label="Temperature unit" value={tUnit} onChange={(u) => setTempUnit(u as TempUnit)}
              options={[{ key: 'C', label: '°C' }, { key: 'F', label: '°F' }]} />
       </div>
-      <div className="vw-rail">
-        <button type="button" className={`vw-icon${panel === 'info' ? ' is-on' : ''}`}
-                onClick={() => setPanel(panel === 'info' ? null : 'info')}>INFO</button>
-        <button type="button" className={`vw-icon${panel === 'filters' ? ' is-on' : ''}`}
-                onClick={() => setPanel(panel === 'filters' ? null : 'filters')}>LAYERS</button>
-      </div>
+      <Dock items={['info', 'layers', 'filters']} open={panel} onToggle={togglePanel} />
 
       {panel && (
         <aside className="vw-panel" aria-label={panelTitle}>
