@@ -390,7 +390,7 @@ async def site_doors(session: AsyncSession, datacenter_id: str) -> list[dict[str
     metric, not in a name or a role, so a contact from any source draws.
     """
     rows = (await session.execute(text("""
-        SELECT d.id::text, d.room_id::text AS room_id, rm.level, d.floor_x, d.floor_y,
+        SELECT d.id::text, d.room_id::text AS room_id, rm.floor AS level, d.floor_x, d.floor_y,
                d.rotation_deg,
                (ds.metrics->'door_open'->>'v')::boolean AS open,
                ds.metrics->'door_open'->>'t' AS at,
