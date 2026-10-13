@@ -423,13 +423,16 @@ function DoorLeaf({ f, bb, elev, door, X, Z, tones, onOver, onOut }: {
   const colour = !door ? (f.attrs?.monitored ? tones.ink : tones.faint)
     : door.max_severity !== 'CLEAR' ? tones.sev(door.max_severity)
     : open ? tones.accent : tones.ink;
-  // Hinge at the opening's west (or north) end; the leaf swings into the
-  // room, which for a corridor door is away from the corridor - south of
-  // an east-west opening, east of a north-south one.
+  // Hinge at the opening's west (or north) end. Closed, the leaf lies along
+  // the wall from the hinge: east, or south. Open, it swings into the room:
+  // the corridor runs along the south side of every level, so a door in an
+  // east-west wall opens north, and a door in a west wall opens east. (An
+  // entrance in the north wall would swing out; the fabric has none.)
+  // three.js: rotation-y of +a turns local +x toward -z, which is north.
   const swing = open ? (75 * Math.PI) / 180 : 0;
   return (
     <group position={[X(alongX ? bb.x0 : (bb.x0 + bb.x1) / 2), elev + 0.08, Z(alongX ? (bb.y0 + bb.y1) / 2 : bb.y0)]}
-           rotation-y={alongX ? -swing : Math.PI / 2 - swing}>
+           rotation-y={alongX ? swing : -Math.PI / 2 + swing}>
       <mesh position={[len / 2, 0, 0]} onPointerOver={onOver} onPointerOut={onOut}>
         <boxGeometry args={[len, open ? 0.6 : 0.16, 0.16]} />
         <meshStandardMaterial color={colour} roughness={1} />
