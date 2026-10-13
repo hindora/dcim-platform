@@ -39,6 +39,7 @@
   --cat-it: #a371f7;
   --cat-vis: #8b949e;   /* grey: we cannot see it, which is not a fault */
   --cat-cap: #58a6ff;
+  --cat-sec: #d2a8ff;   /* lilac: access, a different owner from any plant colour */
   /* Magenta, not another amber: it sat next to --cat-pwr on the strip and
      the two read as the same counter at a glance. Nothing else on the page
      uses this hue, which is the point - an unclassified alarm should not
@@ -241,6 +242,7 @@
   --cat-it: #8250df;
   --cat-vis: #6e7681;
   --cat-cap: #0969da;
+  --cat-sec: #8250df;
   --cat-unc: #bf3989;
 
   /* Okabe-Ito's published values, which are drawn for a white ground. Same

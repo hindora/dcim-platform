@@ -48,9 +48,13 @@ POWER = "power"
 IT_EQUIPMENT = "it_equipment"
 NETWORK = "network"
 CAPACITY = "capacity"
+#: Physical access: a watched door held open. Owned by whoever runs the
+#: gate, which is why it is not environmental - a NOC routes it elsewhere
+#: (docs/27 §8b B6, Q6).
+SECURITY = "security"
 
 CATEGORIES = (VISIBILITY, ENVIRONMENTAL, COOLING, POWER, IT_EQUIPMENT,
-              NETWORK, CAPACITY)
+              NETWORK, CAPACITY, SECURITY)
 
 #: Where a condition goes when nothing else claims it.
 #:
@@ -107,6 +111,12 @@ DESCRIPTIONS: dict[str, dict[str, str]] = {
         "owner": "planning",
         "text": "Headroom and resilience: redundancy lost, single-corded "
                 "load, days of supply, efficiency excursions.",
+    },
+    SECURITY: {
+        "label": "Security",
+        "owner": "security",
+        "text": "Physical access: a watched door held open, a gate or a "
+                "guardhouse contact.",
     },
 }
 
@@ -195,6 +205,9 @@ THRESHOLD_CROSSINGS: frozenset[str] = frozenset({
     "ambient_temp_high", "ambient_temp_critical", "humidity_high",
     "humidity_critical", "humidity_low", "dew_point_alert",
     "airflow_high", "airflow_low",
+    # S3 instruments: a gas, a string, two tanks
+    "hydrogen_high", "hydrogen_critical", "battery_temp_high", "battery_temp_critical",
+    "bulk_fuel_low", "bulk_fuel_critical", "makeup_water_low", "makeup_water_critical",
     "cpu_high_usage", "memory_high_usage", "cpu_temp_critical",
     # The same conditions as they arrive from a rack probe. Every one is a
     # number crossing a limit, however it travelled: without these a probe
@@ -360,6 +373,20 @@ BY_ALARM_TYPE: dict[str, str] = {
     "device_restarted": IT_EQUIPMENT,
     "server_power_on": IT_EQUIPMENT,   # server_power_off is filed with the rest
     "rack_failure": IT_EQUIPMENT,
+
+    # --- S3 instruments (docs/27 §8b.3, §8c.2). Each filed with the thing
+    # that fails: hydrogen is the room people enter, a hot string is the
+    # electrical supply, fuel is power continuity, makeup water is cooling
+    # continuity, and a door is access.
+    "hydrogen_high": ENVIRONMENTAL,
+    "hydrogen_critical": ENVIRONMENTAL,
+    "battery_temp_high": POWER,
+    "battery_temp_critical": POWER,
+    "bulk_fuel_low": POWER,
+    "bulk_fuel_critical": POWER,
+    "makeup_water_low": COOLING,
+    "makeup_water_critical": COOLING,
+    "door_held_open": SECURITY,
 
     # --- environmental: the room
     "ambient_temp_high": ENVIRONMENTAL,
@@ -557,6 +584,7 @@ BY_METRIC_GROUP: dict[str, str] = {
     "environment": ENVIRONMENTAL,
     "cooling": COOLING,
     "power": POWER,
+    "security": SECURITY,
 }
 
 #: Metric -> group, for the metrics whose group cannot be looked up at call
@@ -701,6 +729,10 @@ STRIP_GROUPS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("it_network", "IT", (IT_EQUIPMENT, NETWORK)),
     ("visibility", "Visibility", (VISIBILITY,)),
     ("capacity", "Capacity", (CAPACITY,)),
+    # Its own counter rather than folded into environment: a propped door is
+    # routed to the gate, not to facilities, and a counter that mixes the two
+    # is one neither reads.
+    ("security", "Security", (SECURITY,)),
 )
 
 

@@ -194,6 +194,45 @@ templates:
       - { space: discrete, addr: 0x0000, name: Service_Healthy, metric: equipment_state, instance: Service_Healthy }
       - { space: discrete, addr: 0x0001, name: Data_Valid, role: validity }
 
+  SIM-BATTEMP-TX-v1:
+    vendor: "Generic"
+    product: "Battery Temperature Probe"
+    word_order: big
+    device_types: [sensor]
+    points:
+      - { space: input, addr: 0x0000, name: Battery_Temperature, dtype: s16, scale: 10, metric: battery_temperature }
+      - { space: discrete, addr: 0x0000, name: Reading_Valid, role: validity }
+
+  SIM-DOORCT-v1:
+    vendor: "Generic"
+    product: "Door Contact Input"
+    word_order: big
+    device_types: [sensor]
+    points:
+      - { space: discrete, addr: 0x0000, name: Door_Open, metric: door_open }
+      - { space: discrete, addr: 0x0001, name: Reading_Valid, role: validity }
+
+  SIM-FUELTANK-TX-v1:
+    vendor: "Generic"
+    product: "Bulk Fuel Tank Level Transmitter"
+    word_order: big
+    device_types: [sensor]
+    points:
+      - { space: input, addr: 0x0000, name: Bulk_Fuel_Level, dtype: u16, scale: 10, metric: fuel_level_pct, instance: BULK }
+      - { space: input, addr: 0x0001, name: Bulk_Fuel_Volume, dtype: u32, metric: fuel_volume, instance: BULK }
+      - { space: discrete, addr: 0x0000, name: Alarm_Low_Level, metric: alarm_state, instance: Alarm_Low_Level }
+      - { space: discrete, addr: 0x0001, name: Reading_Valid, role: validity }
+
+  SIM-H2DET-v1:
+    vendor: "Generic"
+    product: "Hydrogen Gas Detector"
+    word_order: big
+    device_types: [sensor]
+    points:
+      - { space: input, addr: 0x0000, name: H2_Concentration, dtype: u16, scale: 100, metric: hydrogen_lel_pct }
+      - { space: discrete, addr: 0x0000, name: Alarm_High, metric: alarm_state, instance: Alarm_High }
+      - { space: discrete, addr: 0x0001, name: Reading_Valid, role: validity }
+
   SIM-MAGFLOW-TX-v1:
     vendor: "Generic"
     product: "Magnetic Flow Meter"
@@ -237,3 +276,14 @@ templates:
     points:
       - { space: input, addr: 0x0000, name: Process_Value, dtype: s16, scale: 10, role: process_value }
       - { space: discrete, addr: 0x0000, name: Reading_Valid, role: validity }
+
+  SIM-WATERTANK-TX-v1:
+    vendor: "Generic"
+    product: "Makeup Water Tank Level Transmitter"
+    word_order: big
+    device_types: [sensor]
+    points:
+      - { space: input, addr: 0x0000, name: Water_Level, dtype: u16, scale: 10, metric: water_level_pct }
+      - { space: input, addr: 0x0001, name: Water_Volume, dtype: u32, metric: water_volume }
+      - { space: discrete, addr: 0x0000, name: Alarm_Low_Level, metric: alarm_state, instance: Alarm_Low_Level }
+      - { space: discrete, addr: 0x0001, name: Reading_Valid, role: validity }

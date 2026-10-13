@@ -137,5 +137,15 @@ export function CategoryGlyph({ kind, size = 15 }: { kind: GlyphKind; size?: num
           <line x1="8" y1="12" x2="12" y2="8.4" />
         </svg>
       );
+
+    // A door ajar: access, not the air behind it.
+    case 'security':
+      return (
+        <svg {...common} strokeWidth="1.4" strokeLinejoin="round">
+          <path d="M3 2.5h7v11H3z" />
+          <path d="M10 2.5l3.5 1.5v8.5L10 13.5" />
+          <circle cx="8.2" cy="8" r="0.9" fill="currentColor" stroke="none" />
+        </svg>
+      );
   }
 }

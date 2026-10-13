@@ -2428,7 +2428,7 @@ export interface CollectorHealth {
 
 export type AlarmCategory =
   | 'visibility' | 'environmental' | 'cooling' | 'power'
-  | 'it_equipment' | 'network' | 'capacity';
+  | 'it_equipment' | 'network' | 'capacity' | 'security';
 
 export type AlarmDetection =
   | 'threshold' | 'state' | 'absence' | 'derived' | 'forecast';

@@ -31,6 +31,7 @@ export const CATEGORY_META: Record<AlarmCategory, CategoryMeta> = {
   network:       { glyph: 'network',       head: 'NET',  tone: 'it' },
   visibility:    { glyph: 'visibility',    head: 'VIS',  tone: 'vis' },
   capacity:      { glyph: 'capacity',      head: 'CAP',  tone: 'cap' },
+  security:      { glyph: 'security',      head: 'SEC',  tone: 'sec' },
 };
 
 /** Tone per strip group, for the counters themselves. */
@@ -40,6 +41,7 @@ export const GROUP_TONE: Record<string, string> = {
   it_network: 'it',
   visibility: 'vis',
   capacity: 'cap',
+  security: 'sec',
 };
 
 /** A category the UI has never heard of still has to render.
@@ -63,5 +65,5 @@ export function metaFor(key: string): CategoryMeta {
  *  see any of it - rather than alphabetically. */
 export const COLUMN_ORDER: AlarmCategory[] = [
   'power', 'cooling', 'environmental', 'it_equipment', 'network',
-  'visibility', 'capacity',
+  'visibility', 'capacity', 'security',
 ];

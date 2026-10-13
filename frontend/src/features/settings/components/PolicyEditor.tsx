@@ -10,7 +10,7 @@ import { oneLine } from '../../../lib/format';
 
 const SEVERITIES = ['CRITICAL', 'MAJOR', 'MINOR', 'WARNING', 'INFO'] as const;
 const CATEGORIES = ['power', 'cooling', 'environmental', 'it_equipment',
-  'network', 'capacity', 'visibility'] as const;
+  'network', 'capacity', 'visibility', 'security'] as const;
 const CLASSES = ['alarm', 'alert'] as const;
 const RANGES = [7, 14, 30, 90] as const;
 

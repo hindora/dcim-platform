@@ -84,6 +84,11 @@ export type MetricKey =
   | 'battery_temperature'
   | 'coolant_temperature'
   | 'fuel_level_pct'
+  | 'fuel_volume'
+  | 'water_level_pct'
+  | 'water_volume'
+  | 'hydrogen_lel_pct'
+  | 'door_open'
   | 'current_run_time'
   | 'start_attempts'
   | 'transfer_count'
@@ -852,6 +857,51 @@ export const METRICS: Record<MetricKey, MetricDef> = {
     maxValid: 100,
     staleAfterS: 900, hot: true,
     group: 'power',
+  },
+  'fuel_volume': {
+    key: 'fuel_volume', displayName: 'Fuel Volume'.replace(/^'|'$/g, ''),
+    unit: 'L', valueType: 'gauge',
+    aggregation: 'min',
+    minValid: 0,
+    maxValid: null,
+    staleAfterS: 900, hot: true,
+    group: 'power',
+  },
+  'water_level_pct': {
+    key: 'water_level_pct', displayName: 'Makeup Water Level'.replace(/^'|'$/g, ''),
+    unit: 'pct', valueType: 'gauge',
+    aggregation: 'min',
+    minValid: 0,
+    maxValid: 100,
+    staleAfterS: 900, hot: true,
+    group: 'cooling',
+  },
+  'water_volume': {
+    key: 'water_volume', displayName: 'Makeup Water Volume'.replace(/^'|'$/g, ''),
+    unit: 'L', valueType: 'gauge',
+    aggregation: 'min',
+    minValid: 0,
+    maxValid: null,
+    staleAfterS: 900, hot: true,
+    group: 'cooling',
+  },
+  'hydrogen_lel_pct': {
+    key: 'hydrogen_lel_pct', displayName: 'Hydrogen'.replace(/^'|'$/g, ''),
+    unit: 'pct', valueType: 'gauge',
+    aggregation: 'max',
+    minValid: 0,
+    maxValid: 100,
+    staleAfterS: 900, hot: true,
+    group: 'environment',
+  },
+  'door_open': {
+    key: 'door_open', displayName: 'Door Open'.replace(/^'|'$/g, ''),
+    unit: 'bool', valueType: 'bool',
+    aggregation: 'last',
+    minValid: null,
+    maxValid: null,
+    staleAfterS: 900, hot: true,
+    group: 'security',
   },
   'current_run_time': {
     key: 'current_run_time', displayName: 'Current Run Time'.replace(/^'|'$/g, ''),

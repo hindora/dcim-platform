@@ -309,6 +309,11 @@ NON_TRAP_ALARM_TYPES = frozenset({
     # analysis and capacity
     "predicted_failure", "pue_excursion", "redundancy_lost",
     "single_corded_load", "days_of_supply_low", "headroom_exhausted",
+    # Seeded by 0103 for the BMS-trunk instruments (docs/27 §8b.3, §8c.2).
+    "door_held_open", "hydrogen_high", "hydrogen_critical",
+    "battery_temp_high", "battery_temp_critical",
+    "bulk_fuel_low", "bulk_fuel_critical",
+    "makeup_water_low", "makeup_water_critical",
 })
 
 

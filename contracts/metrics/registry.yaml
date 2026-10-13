@@ -810,7 +810,7 @@ metrics:
     stale_after_s: 300
     hot: true
     group: cooling
-    device_types: [chiller, pump, cooling_tower, cdu, crah, valve, energy_monitor]
+    device_types: [chiller, pump, cooling_tower, cdu, crah, valve, energy_monitor, sensor]
     description: One alarm point. instance carries the vendor alarm name - a key per vendor alarm would make the registry unmaintainable and the UI incomparable across makes.
 
   # -------------------------------------------------------------------- power
@@ -1008,7 +1008,9 @@ metrics:
     stale_after_s: 900
     hot: true
     group: power
-    device_types: [ups]
+    # A UPS reports its own string; a probe on a string in the battery room
+    # reports the same quantity for a string that is not a UPS's to report.
+    device_types: [ups, sensor]
     description: >-
       The string's own temperature, not the room's. VRLA capacity and service
       life halve for roughly each 10 K above the 25 C they are specified at, so
@@ -1044,8 +1046,82 @@ metrics:
     stale_after_s: 900
     hot: true
     group: power
-    device_types: [generator]
+    # Instance BULK on a sensor is the yard's bulk tank (S3); un-instanced on
+    # a generator it is the set's own day tank.
+    device_types: [generator, sensor]
     description: Day-tank level. Read with run time it answers the only question that matters during an outage - how long the generator can keep going.
+
+  - key: fuel_volume
+    display_name: Fuel Volume
+    unit: L
+    value_type: gauge
+    aggregation: min
+    min_valid: 0
+    stale_after_s: 900
+    hot: true
+    group: power
+    device_types: [sensor]
+    description: Litres in the bulk diesel tank. The level transmitter reports both; litres against the sets' burn rate is the runtime a NOC quotes.
+
+  - key: water_level_pct
+    display_name: Makeup Water Level
+    unit: pct
+    value_type: gauge
+    aggregation: min
+    min_valid: 0
+    max_valid: 100
+    stale_after_s: 900
+    hot: true
+    group: cooling
+    device_types: [sensor]
+    description: >-
+      The makeup water tank that feeds the cooling towers. A tower evaporates
+      what it rejects, and a site with no makeup is a site with no cooling
+      within hours - which is why the tank is sized for a day or two and its
+      level is monitored.
+
+  - key: water_volume
+    display_name: Makeup Water Volume
+    unit: L
+    value_type: gauge
+    aggregation: min
+    min_valid: 0
+    stale_after_s: 900
+    hot: true
+    group: cooling
+    device_types: [sensor]
+    description: Litres in the makeup water tank.
+
+  - key: hydrogen_lel_pct
+    display_name: Hydrogen
+    unit: pct
+    value_type: gauge
+    aggregation: max
+    min_valid: 0
+    max_valid: 100
+    stale_after_s: 900
+    hot: true
+    group: environment
+    device_types: [sensor]
+    description: >-
+      Hydrogen in the battery room as a share of the lower explosive limit.
+      A charging VRLA string evolves it, more as the string warms; IEEE 1635
+      and NFPA 1 cap the room at 1 % by volume, which is 25 % LEL, and a
+      detector there is what makes a battery room a room people may enter.
+
+  - key: door_open
+    display_name: Door Open
+    unit: bool
+    value_type: bool
+    aggregation: last
+    stale_after_s: 900
+    hot: true
+    group: security
+    device_types: [sensor]
+    description: >-
+      A door contact on a room the BMS watches. Opening is normal; a door
+      HELD open is the condition - a hall propped open is a cooling and a
+      security problem at once.
 
   - key: current_run_time
     display_name: Current Run Time

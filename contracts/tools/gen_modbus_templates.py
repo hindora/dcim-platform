@@ -62,6 +62,13 @@ POINT_METRICS: dict[str, tuple[str, str]] = {
 
     # --- machine temperatures, each of which is ITS OWN and not the room's ---
     "Battery_Temperature": ("battery_temperature", ""),
+
+    # --- S3 instruments on the BMS trunk (docs/27 §8b.3, §8c.2) ------------
+    "H2_Concentration":    ("hydrogen_lel_pct", ""),
+    "Bulk_Fuel_Level":     ("fuel_level_pct", "BULK"),
+    "Bulk_Fuel_Volume":    ("fuel_volume", "BULK"),
+    "Water_Level":         ("water_level_pct", ""),
+    "Water_Volume":        ("water_volume", ""),
     "Coolant_Temperature": ("coolant_temperature", ""),
     # --- volts, amps, hertz -------------------------------------------------
     "Voltage_LL_Avg":      ("voltage_ll", "AVG"),
@@ -134,6 +141,13 @@ STATUS_BITS = {
 # anything yet, and it gates them - see the adapter.
 VALIDITY_BITS = {"Data_Valid", "Reading_Valid"}
 
+# Bits that are a measurement in their own right rather than a machine's
+# status or fault word: a door contact is the quantity, not a state of a
+# device that has other quantities.
+BIT_METRICS: dict[str, tuple[str, str]] = {
+    "Door_Open": ("door_open", ""),
+}
+
 # Unit conversions from what the register carries to what the registry stores.
 # The scale in the map turns raw words into the VENDOR's unit; this turns the
 # vendor's unit into ours.
@@ -189,6 +203,12 @@ def emit_point(m, p, space: str, unmapped: list[str], template: str) -> str:
         return "      - { " + ", ".join(fields) + " }"
 
     if space in ("discrete", "coil"):
+        if p.name in BIT_METRICS:
+            metric, instance = BIT_METRICS[p.name]
+            fields.append(f"metric: {metric}")
+            if instance:
+                fields.append(f"instance: {instance}")
+            return "      - { " + ", ".join(fields) + " }"
         metric = "equipment_state" if p.name in STATUS_BITS else "alarm_state"
         fields.append(f"metric: {metric}")
         fields.append(f"instance: {p.name}")
