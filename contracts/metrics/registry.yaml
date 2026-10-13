@@ -1228,6 +1228,22 @@ metrics:
     device_types: [sensor]
     description: How many of the panel's zones are in alarm.
 
+  - key: fire_zone_mask
+    display_name: Fire Zones In Alarm (Word)
+    unit: count
+    value_type: gauge
+    aggregation: last
+    min_valid: 0
+    max_valid: 65535
+    stale_after_s: 900
+    hot: true
+    group: fire
+    device_types: [sensor]
+    description: >-
+      The panel gateway's zone word: one bit per zone in alarm. Which zone
+      is which bit is the gateway's configuration, so the word is kept as
+      it arrives and read against that site's zone list.
+
   - key: smoke_obscuration
     display_name: Smoke Obscuration
     unit: pct_per_m

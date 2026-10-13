@@ -883,6 +883,15 @@ METRICS: dict[str, MetricDef] = {
         device_types=("sensor",),
         alarm_scope="instance",
     ),
+    "fire_zone_mask": MetricDef(
+        key="fire_zone_mask", display_name="Fire Zones In Alarm (Word)", unit="count",
+        value_type="gauge", aggregation="last",
+        min_valid=0, max_valid=65535,
+        stale_after_s=900, hot=True,
+        group="fire", rate_of=None, rate_scale=1.0,
+        device_types=("sensor",),
+        alarm_scope="instance",
+    ),
     "smoke_obscuration": MetricDef(
         key="smoke_obscuration", display_name="Smoke Obscuration", unit="pct_per_m",
         value_type="gauge", aggregation="max",

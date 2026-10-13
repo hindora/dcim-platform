@@ -96,6 +96,7 @@ export type MetricKey =
   | 'fire_trouble'
   | 'fire_supervisory'
   | 'fire_zone_count'
+  | 'fire_zone_mask'
   | 'smoke_obscuration'
   | 'smoke_stage'
   | 'gas_release_state'
@@ -976,6 +977,15 @@ export const METRICS: Record<MetricKey, MetricDef> = {
     aggregation: 'max',
     minValid: 0,
     maxValid: 999,
+    staleAfterS: 900, hot: true,
+    group: 'fire',
+  },
+  'fire_zone_mask': {
+    key: 'fire_zone_mask', displayName: 'Fire Zones In Alarm (Word)'.replace(/^'|'$/g, ''),
+    unit: 'count', valueType: 'gauge',
+    aggregation: 'last',
+    minValid: 0,
+    maxValid: 65535,
     staleAfterS: 900, hot: true,
     group: 'fire',
   },

@@ -268,7 +268,7 @@ templates:
     probe_roles:
       fire_panel: { metric: fire_alarm }
     points:
-      - { space: input, addr: 0x0000, name: Zones_In_Alarm, dtype: u16, metric: "" }
+      - { space: input, addr: 0x0000, name: Zones_In_Alarm, dtype: u16, metric: fire_zone_mask }
       - { space: input, addr: 0x0001, name: Zone_Alarm_Count, dtype: u16, metric: fire_zone_count }
       - { space: discrete, addr: 0x0000, name: Fire_Alarm, metric: fire_alarm }
       - { space: discrete, addr: 0x0001, name: Trouble, metric: fire_trouble }

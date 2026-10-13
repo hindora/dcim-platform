@@ -74,6 +74,7 @@ POINT_METRICS: dict[str, tuple[str, str]] = {
     "Water_Level":         ("water_level_pct", ""),
     "Water_Volume":        ("water_volume", ""),
     # --- fire detection and gas suppression (simulator docs/FIRE_SYSTEM.md) --
+    "Zones_In_Alarm":      ("fire_zone_mask", ""),
     "Zone_Alarm_Count":    ("fire_zone_count", ""),
     "Smoke_Obscuration":   ("smoke_obscuration", ""),
     "Alarm_Stage":         ("smoke_stage", ""),

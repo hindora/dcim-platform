@@ -118,6 +118,7 @@ const (
 	MetricFireTrouble           = "fire_trouble"
 	MetricFireSupervisory       = "fire_supervisory"
 	MetricFireZoneCount         = "fire_zone_count"
+	MetricFireZoneMask          = "fire_zone_mask"
 	MetricSmokeObscuration      = "smoke_obscuration"
 	MetricSmokeStage            = "smoke_stage"
 	MetricGasReleaseState       = "gas_release_state"
@@ -893,6 +894,14 @@ var MetricDefs = map[string]MetricDef{
 		StaleAfterS: 900, Hot: true,
 		Group: "fire", RateOf: "", RateScale: 1,
 	},
+	"fire_zone_mask": {
+		Key: "fire_zone_mask", DisplayName: "Fire Zones In Alarm (Word)", Unit: "count",
+		ValueType: "gauge", Aggregation: "last",
+		MinValid: 0, HasMin: true,
+		MaxValid: 65535, HasMax: true,
+		StaleAfterS: 900, Hot: true,
+		Group: "fire", RateOf: "", RateScale: 1,
+	},
 	"smoke_obscuration": {
 		Key: "smoke_obscuration", DisplayName: "Smoke Obscuration", Unit: "pct_per_m",
 		ValueType: "gauge", Aggregation: "max",
@@ -996,7 +1005,7 @@ var MetricGroups = map[string][]string{
 	"compute":     {"cpu_utilization", "memory_utilization", "memory_used", "memory_total", "memory_available", "disk_utilization", "disk_used", "disk_total"},
 	"cooling":     {"water_supply_temp", "water_return_temp", "water_setpoint_temp", "water_flow", "water_pressure", "water_diff_pressure", "valve_position_pct", "compressor_load_pct", "cooling_capacity", "cooling_output_pct", "thermal_load", "cop", "approach_temp", "supply_air_temp", "return_air_temp", "air_setpoint_temp", "filter_diff_pressure", "basin_level_pct", "makeup_water_flow", "vibration", "motor_temp", "vfd_frequency", "pump_speed_pct", "run_hours", "equipment_state", "alarm_state", "water_level_pct", "water_volume"},
 	"environment": {"ambient_temperature", "relative_humidity", "dew_point", "airflow", "outdoor_dry_bulb_temp", "outdoor_wet_bulb_temp", "hydrogen_lel_pct"},
-	"fire":        {"fire_alarm", "fire_trouble", "fire_supervisory", "fire_zone_count", "smoke_obscuration", "smoke_stage", "gas_release_state", "gas_discharge_countdown", "agent_pressure", "agent_released"},
+	"fire":        {"fire_alarm", "fire_trouble", "fire_supervisory", "fire_zone_count", "fire_zone_mask", "smoke_obscuration", "smoke_stage", "gas_release_state", "gas_discharge_countdown", "agent_pressure", "agent_released"},
 	"interfaces":  {"if_admin_state", "if_oper_state", "if_speed", "if_in_octets", "if_out_octets", "if_in_bps", "if_out_bps", "if_in_errors", "if_out_errors", "if_in_discards", "if_out_discards", "if_in_error_rate"},
 	"power":       {"power_draw", "psu_input_voltage", "psu_output_power", "psu_state", "energy_consumed", "voltage_ln", "current", "line_frequency", "power_factor", "voltage_thd_pct", "current_thd_pct", "harmonic_current_pct", "voltage_ll", "reactive_power", "apparent_power", "load_pct", "phase_imbalance_pct", "demand_peak_power", "battery_runtime", "battery_health_pct", "oil_temperature", "winding_temperature", "tap_position", "battery_temperature", "coolant_temperature", "fuel_level_pct", "fuel_volume", "current_run_time", "start_attempts", "transfer_count", "time_on_emergency", "operating_mode"},
 	"security":    {"door_open"},

@@ -121,6 +121,16 @@ def test_each_instrument_is_chosen_by_its_installed_role_and_names_its_metrics()
     assert PROBE_ROLE_BY_PREFIX["GSP"] == "gas_release"
 
 
+def test_every_point_is_polled_into_a_metric_the_registry_has():
+    # An unmapped point is emitted with an empty metric, which the collector
+    # refuses at start and contracts/mapcheck.py refuses in CI.
+    for map_id in ("SIM-FACP-GW-v1", "SIM-ASD-HLI-v1", "SIM-GASREL-v1"):
+        for p in TEMPLATES[map_id]["points"]:
+            if p.get("role") == "validity":
+                continue
+            assert p.get("metric") in METRICS, (map_id, p["name"])
+
+
 def test_nothing_in_a_fire_template_is_writable():
     for map_id in ("SIM-FACP-GW-v1", "SIM-ASD-HLI-v1", "SIM-GASREL-v1"):
         spaces = {p["space"] for p in TEMPLATES[map_id]["points"]}
