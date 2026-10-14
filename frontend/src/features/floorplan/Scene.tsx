@@ -478,7 +478,7 @@ export default function RoomScene(p: SceneProps) {
       )}
       <GridRefs W={W} D={D} ink={tones.inkMuted} />
       {vis.vents && vents.length > 0 && <Vents vents={vents} X={X} Z={Z} />}
-      <ContactShadows boxes={[...rackBoxes, ...unitBoxes.filter((b) => b.y <= b.h / 2 + 0.05)]} />
+      {mode !== 'plan' && <ContactShadows boxes={[...rackBoxes, ...unitBoxes.filter((b) => b.y <= b.h / 2 + 0.05)]} />}
       {vis.aisles && plan.aisles.map((a) => (
         <AisleBand key={`${a.label}-${a.y_start}`} a={a} W={W} Z={Z} X={X} racks={plan.racks}
                    containment={vis.containment} />
