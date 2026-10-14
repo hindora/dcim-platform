@@ -5,6 +5,7 @@ import {
 import { useFrame, useThree, type ThreeEvent } from '@react-three/fiber';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, type ElementRef } from 'react';
 import * as THREE from 'three';
+import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import type {
   FloorAisle, FloorEquipment, FloorRack, ThermalField, ThermalUnit, TwinDevice, TwinRackIndex, TwinRoomIndices,
   TwinRoomScene,
@@ -38,9 +39,10 @@ import { fmtT, numT, unitLabel } from './units';
 const WALL_H = 3.0;
 const DEFAULT_W = 0.6, DEFAULT_D = 1.2;
 const EYE = 1.6;
-/** How solid a glass cabinet is drawn; the rim adds to it toward the edges. */
+/** How solid a glass rack is drawn; the rim adds to it toward the edges. */
 const GLASS = 0.58;
-const GLASS_PLANT = 0.7;
+/** Plant is solid: an appliance, not a window onto its contents. */
+const PLANT = 1;
 
 // The physical surfaces - concrete, steel, tile - are the same under both
 // themes, like the readings' bands; only the chrome around the picture follows
@@ -142,8 +144,10 @@ export interface GBox {
 /** One instanced mesh of boxes, each with its own bottom/middle/top colour.
  *  `part` 'solid' draws the filled share of each box, 'shell' the translucent
  *  remainder above it (only for boxes that are not full). */
-function GradientBoxes({ boxes, part, opacity, dim, meshRef, onClick, onMove, onOut }: {
+function GradientBoxes({ boxes, part, opacity, rounded, dim, meshRef, onClick, onMove, onOut }: {
   boxes: GBox[]; part: 'solid' | 'shell'; opacity: number;
+  /** Softened edges - the plant's appliance look. Racks stay sharp. */
+  rounded?: boolean;
   /** Boxes not part of the active overlay fade toward the walls. */
   dim?: boolean[];
   meshRef?: React.MutableRefObject<THREE.InstancedMesh | null>;
@@ -154,13 +158,13 @@ function GradientBoxes({ boxes, part, opacity, dim, meshRef, onClick, onMove, on
   const n = boxes.length;
 
   const geometry = useMemo(() => {
-    const g = new THREE.BoxGeometry(1, 1, 1);
+    const g: THREE.BufferGeometry = rounded ? new RoundedBoxGeometry(1, 1, 1, 3, 0.05) : new THREE.BoxGeometry(1, 1, 1);
     for (const name of ['cBot', 'cMid', 'cTop', 'rBot', 'rMid', 'rTop']) {
       g.setAttribute(name, new THREE.InstancedBufferAttribute(new Float32Array(Math.max(1, n) * 3), 3));
     }
     g.setAttribute('aFront', new THREE.InstancedBufferAttribute(new Float32Array(Math.max(1, n)), 1));
     return g;
-  }, [n]);
+  }, [n, rounded]);
   const material = useMemo(() => new THREE.ShaderMaterial({
     vertexShader: GRADIENT_VERT, fragmentShader: GRADIENT_FRAG,
     uniforms: { uLight: { value: new THREE.Vector3(0.35, 1, 0.75) }, uOpacity: { value: opacity } },
@@ -523,12 +527,13 @@ export default function RoomScene(p: SceneProps) {
 
       {vis.plant && (
         <>
-          <GradientBoxes boxes={unitBoxes} part="solid" opacity={GLASS_PLANT} dim={unitDim}
+          <GradientBoxes boxes={unitBoxes} part="solid" opacity={PLANT} rounded dim={unitDim}
                          onClick={fpv ? undefined : (i) => onSelect({ kind: 'equipment', id: placedUnits[i].id })}
                          onMove={fpv ? undefined : (i, e) => tip(e, unitText(placedUnits[i]))}
                          onOut={() => onTip(null)} />
           {vis.detail && <UnitDetails boxes={unitBoxes} types={unitTypes} />}
           {vis.detail && <FanMarks boxes={unitBoxes} types={unitTypes} />}
+          {vis.detail && <PlantAccents boxes={unitBoxes} />}
           <Instruments items={instruments} X={X} Z={Z}
                        onSelect={fpv ? undefined : onSelect} onTip={fpv ? undefined : onTip} />
         </>
@@ -1074,6 +1079,59 @@ function Instruments({ items, X, Z, onSelect, onTip }: {
       <boxGeometry args={[1, 1, 1]} />
       <meshStandardMaterial color={SURF.instrument} />
     </instancedMesh>
+  );
+}
+
+/** A ring of light that fades outward: the glow a unit stands in. */
+function glowRing(): THREE.CanvasTexture {
+  return canvasTexture(256, (c, s) => {
+    c.clearRect(0, 0, s, s);
+    const inset = s * 0.14;
+    // a soft square halo: bright at the body's footprint, gone a little outside it
+    for (let k = 10; k >= 0; k--) {
+      const a = 0.06 * (1 - k / 10);
+      const pad = inset - (k / 10) * inset;
+      c.strokeStyle = `rgba(140,225,255,${a + 0.02})`; c.lineWidth = 10;
+      c.strokeRect(pad + 5, pad + 5, s - 2 * pad - 10, s - 2 * pad - 10);
+    }
+    c.strokeStyle = 'rgba(190,240,255,0.95)'; c.lineWidth = 4;
+    c.strokeRect(inset + 2, inset + 2, s - 2 * inset - 4, s - 2 * inset - 4);
+  });
+}
+
+/** What makes a floor-standing unit read as an appliance from the future
+ *  rather than a crate: a light bar around its foot and a pale cap on top.
+ *  Wall-mounted plant gets the cap alone. */
+function PlantAccents({ boxes }: { boxes: GBox[] }) {
+  const base = useRef<THREE.InstancedMesh>(null), cap = useRef<THREE.InstancedMesh>(null);
+  const ring = useMemo(glowRing, []);
+  useEffect(() => () => ring.dispose(), [ring]);
+  const n = boxes.length;
+  useLayoutEffect(() => {
+    const m = new THREE.Matrix4(), p = new THREE.Vector3(), s = new THREE.Vector3();
+    const flat = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0));
+    const hide = new THREE.Matrix4().makeScale(0, 0, 0);
+    boxes.forEach((b, i) => {
+      const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), b.rot).multiply(flat);
+      const onFloor = b.y <= b.h / 2 + 0.05;
+      if (onFloor) base.current?.setMatrixAt(i, m.compose(p.set(b.x, 0.016, b.z), q, s.set(b.w * 1.36, b.d * 1.36, 1)));
+      else base.current?.setMatrixAt(i, hide);
+      cap.current?.setMatrixAt(i, m.compose(p.set(b.x, b.y + b.h / 2 + 0.004, b.z), q, s.set(b.w - 0.1, b.d - 0.1, 1)));
+    });
+    for (const r of [base, cap]) if (r.current) { r.current.instanceMatrix.needsUpdate = true; r.current.computeBoundingSphere(); }
+  }, [boxes]);
+  if (!n) return null;
+  return (
+    <group>
+      <instancedMesh key={`g${n}`} ref={base} args={[undefined, undefined, n]} raycast={() => null}>
+        <planeGeometry args={[1, 1]} />
+        <meshBasicMaterial map={ring} transparent depthWrite={false} blending={THREE.AdditiveBlending} />
+      </instancedMesh>
+      <instancedMesh key={`c${n}`} ref={cap} args={[undefined, undefined, n]} raycast={() => null}>
+        <planeGeometry args={[1, 1]} />
+        <meshBasicMaterial color="#ffffff" transparent opacity={0.3} depthWrite={false} polygonOffset polygonOffsetFactor={-2} />
+      </instancedMesh>
+    </group>
   );
 }
 

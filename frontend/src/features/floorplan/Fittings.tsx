@@ -508,10 +508,10 @@ function kindOf(deviceType: string): UnitKind {
 function sectionTexture(): THREE.CanvasTexture {
   const t = canvasTex(128, 320, (c, w, h) => {
     c.clearRect(0, 0, w, h);
-    c.strokeStyle = `rgba(${LITE},0.35)`; c.lineWidth = 2; c.strokeRect(12, 12, w - 24, h - 24);
-    c.fillStyle = `rgba(${LITE},0.6)`; c.fillRect(w - 20, h * 0.44, 4, 44);
-    c.fillStyle = `rgba(${INK},0.45)`; c.fillRect(26, 34, w - 64, 36);
-    c.fillStyle = 'rgba(120,220,170,0.9)'; c.fillRect(32, 42, 30, 5);
+    // Minimal: a hairline door seam and one bright status slit.
+    c.strokeStyle = `rgba(${LITE},0.28)`; c.lineWidth = 2; c.strokeRect(14, 14, w - 28, h - 28);
+    c.fillStyle = `rgba(${LITE},0.9)`; c.fillRect(22, 30, 3, h * 0.3);
+    c.fillStyle = 'rgba(140,225,255,0.95)'; c.fillRect(22, 30, 3, 14);
   });
   t.wrapS = THREE.RepeatWrapping;
   return t;
@@ -521,11 +521,14 @@ function sectionTexture(): THREE.CanvasTexture {
 function crahTexture(): THREE.CanvasTexture {
   return canvasTex(256, 288, (c, w, h) => {
     c.clearRect(0, 0, w, h);
+    // Minimal: two hairline seams and one bright status slit; the louvre is
+    // three light lines low on the face.
+    c.strokeStyle = `rgba(${LITE},0.28)`; c.lineWidth = 2;
+    for (const x of [w / 3, (2 * w) / 3]) { c.beginPath(); c.moveTo(x, 6); c.lineTo(x, h - 6); c.stroke(); }
+    c.fillStyle = `rgba(${LITE},0.9)`; c.fillRect(18, 24, 3, h * 0.28);
+    c.fillStyle = 'rgba(140,225,255,0.95)'; c.fillRect(18, 24, 3, 12);
     c.strokeStyle = `rgba(${LITE},0.35)`; c.lineWidth = 2;
-    for (const x of [w / 3, (2 * w) / 3]) { c.beginPath(); c.moveTo(x, 4); c.lineTo(x, h - 4); c.stroke(); }
-    c.fillStyle = `rgba(${INK},0.4)`; c.fillRect(w / 3 + 24, 22, 44, 12);
-    c.strokeStyle = `rgba(${LITE},0.3)`; c.lineWidth = 2;
-    for (let y = h * 0.8; y < h - 8; y += 8) { c.beginPath(); c.moveTo(12, y); c.lineTo(w - 12, y); c.stroke(); }
+    for (let y = h * 0.84; y < h - 8; y += 9) { c.beginPath(); c.moveTo(16, y); c.lineTo(w - 16, y); c.stroke(); }
   });
 }
 
