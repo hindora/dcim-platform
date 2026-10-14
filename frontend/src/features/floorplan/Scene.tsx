@@ -217,7 +217,7 @@ function canvasTexture(size: number, draw: (c: CanvasRenderingContext2D, s: numb
   draw(cv.getContext('2d')!, size);
   const t = new THREE.CanvasTexture(cv);
   t.colorSpace = THREE.SRGBColorSpace;
-  t.anisotropy = 4;
+  t.anisotropy = 16;
   if (repeat) { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(repeat[0], repeat[1]); }
   return t;
 }
@@ -247,9 +247,21 @@ function tileTexture(W: number, D: number, slab: boolean): THREE.CanvasTexture {
         c.fillRect(rnd() * s, rnd() * s, 1.5, 1.5);
       }
     }
-    c.strokeStyle = slab ? SURF.slabLine : SURF.tileLine; c.lineWidth = slab ? 1.5 : 2.5;
-    c.strokeRect(0.5, 0.5, s - 1, s - 1);
+    if (slab) { c.strokeStyle = SURF.slabLine; c.lineWidth = 1.5; c.strokeRect(0.5, 0.5, s - 1, s - 1); }
   }, [W / (slab ? 1.0 : TILE), D / (slab ? 1.0 : TILE)]);
+}
+
+/** The tile grid as lines, not texture: a line stays one pixel wide from any
+ *  distance, where a line painted into the tile melted into the white as the
+ *  floor shrank on screen. */
+function tileGrid(W: number, D: number): THREE.BufferGeometry {
+  const pts: number[] = [];
+  const cols = Math.round(W / TILE), rows = Math.round(D / TILE);
+  for (let i = 0; i <= cols; i++) { const x = -W / 2 + i * TILE; pts.push(x, 0, -D / 2, x, 0, D / 2); }
+  for (let j = 0; j <= rows; j++) { const z = -D / 2 + j * TILE; pts.push(-W / 2, 0, z, W / 2, 0, z); }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+  return g;
 }
 
 /** A soft dark pool under a cabinet: the contact shadow that seats it on the floor. */
@@ -889,6 +901,8 @@ function FpvRig({ W, D, rackMesh, racks, onFocus }: {
 function Room({ W, D, whiteSpace, walls: walled }: { W: number; D: number; whiteSpace: boolean; walls: boolean }) {
   const tiles = useMemo(() => tileTexture(W, D, !whiteSpace), [W, D, whiteSpace]);
   useEffect(() => () => tiles.dispose(), [tiles]);
+  const grid = useMemo(() => (whiteSpace ? tileGrid(W, D) : null), [W, D, whiteSpace]);
+  useEffect(() => () => grid?.dispose(), [grid]);
   // Four inward-facing walls: the far ones render, the near ones are culled, so
   // the room reads as a cutaway from any angle.
   const walls: [number, number, number, number][] = [
@@ -907,6 +921,11 @@ function Room({ W, D, whiteSpace, walls: walled }: { W: number; D: number; white
         <planeGeometry args={[W, D]} />
         <meshBasicMaterial map={tiles} />
       </mesh>
+      {grid && (
+        <lineSegments geometry={grid} position={[0, 0.002, 0]} raycast={() => null}>
+          <lineBasicMaterial color={SURF.tileLine} />
+        </lineSegments>
+      )}
       {walled && walls.map(([x, z, ry, len], i) => (
         <group key={i} position={[x, 0, z]} rotation-y={ry}>
           <mesh position={[0, WALL_H / 2, 0]}>
