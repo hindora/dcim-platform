@@ -18,6 +18,7 @@ import {
 import { OpenEnclosure, RackDetails, RoomFittings, UnitDetails, type RoomDoor, type RoomFire } from './Fittings';
 import { Hardware } from './Hardware';
 import { DeckEdge, Plenum, PLENUM_H } from './Underfloor';
+import { DeviceFaces } from './DeviceFaces';
 import type { PathOverlay, Role } from './paths';
 import { fmtT, numT, unitLabel } from './units';
 
@@ -40,6 +41,8 @@ import { fmtT, numT, unitLabel } from './units';
 const WALL_H = 3.0;
 const DEFAULT_W = 0.6, DEFAULT_D = 1.2;
 const NO_BOXES: GBox[] = [];
+/** A rack-mounted chassis: dark painted steel. */
+const CHASSIS = '#2e343b';
 const CAPACITY_LAYERS = new Set<RackLayer>(['power', 'utilisation', 'committed', 'space']);
 const EYE = 1.6;
 
@@ -1291,8 +1294,15 @@ function RackDevices({ devices, rackById, X, Z, themeTick, onSelect, onTip }: {
       return deviceBox(d, r, X, Z, n);
     });
   }, [devices, rackById, X, Z]);
+  // The meaning colour (category, or alarm) goes on the rack ears; the body is
+  // the dark steel of a real chassis unless the device is in alarm or offline.
   const colors = useMemo(() => devices.map((d) => new THREE.Color(resolveColor(deviceColor(d)))),
     [devices, themeTick]); // eslint-disable-line react-hooks/exhaustive-deps
+  const bodies = useMemo(() => devices.map((d, i) => {
+    const alarmed = d.status === 'OFFLINE' || d.max_severity !== 'CLEAR';
+    const zeroU = d.u_start == null || d.u_start <= 0;
+    return alarmed || zeroU ? colors[i] : new THREE.Color(CHASSIS);
+  }), [devices, colors]);
 
   useLayoutEffect(() => {
     const im = ref.current;
@@ -1302,16 +1312,18 @@ function RackDevices({ devices, rackById, X, Z, themeTick, onSelect, onTip }: {
       if (!b) m.makeScale(0, 0, 0);
       else m.compose(p.set(b[0], b[1], b[2]), q, s.set(b[3], b[4], b[5]));
       im.setMatrixAt(i, m);
-      im.setColorAt(i, colors[i]);
+      im.setColorAt(i, bodies[i]);
     });
     im.instanceMatrix.needsUpdate = true;
     if (im.instanceColor) im.instanceColor.needsUpdate = true;
     im.computeBoundingSphere();
     invalidate();
-  }, [boxes, colors, invalidate]);
+  }, [boxes, bodies, invalidate]);
 
   if (!devices.length) return null;
   return (
+    <>
+    <DeviceFaces devices={devices} boxes={boxes} rackById={rackById} colors={colors} />
     <instancedMesh key={devices.length} ref={ref} args={[undefined, undefined, devices.length]}
                    onClick={onSelect && ((e) => { e.stopPropagation(); if (e.instanceId != null) onSelect({ kind: 'device', id: devices[e.instanceId].id }); })}
                    onPointerMove={onTip && ((e) => {
@@ -1328,8 +1340,9 @@ function RackDevices({ devices, rackById, X, Z, themeTick, onSelect, onTip }: {
                    })}
                    onPointerOut={() => onTip?.(null)}>
       <boxGeometry args={[1, 1, 1]} />
-      <meshStandardMaterial roughness={0.7} />
+      <meshStandardMaterial roughness={0.55} metalness={0.1} />
     </instancedMesh>
+    </>
   );
 }
 
