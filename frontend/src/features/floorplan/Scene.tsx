@@ -532,7 +532,7 @@ export default function RoomScene(p: SceneProps) {
                      onClick={fpv || vis.faces ? undefined : (i) => onSelect({ kind: 'rack', id: plan.racks[i].id })}
                      onMove={fpv || vis.faces ? undefined : (i, e) => tip(e, rackText(plan.racks[i]))}
                      onOut={() => onTip(null)} />
-      {anyShell && <GradientBoxes boxes={rackBoxes} part="shell" opacity={frost ? 0.68 : 0.22} frost={frost} />}
+      {anyShell && <GradientBoxes boxes={rackBoxes} part="shell" opacity={frost ? 0.85 : 0.22} frost={frost} />}
       {anyShell && <FillLines boxes={rackBoxes} />}
       <RackFrames racks={plan.racks} X={X} Z={Z} />
       {vis.detail && <RackDetails boxes={rackBoxes} open={vis.faces} />}
