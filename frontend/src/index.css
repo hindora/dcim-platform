@@ -562,7 +562,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 
 .aisle { opacity: 0.4; }
 .aisle-cold { fill: #2f7fd1; }
-.aisle-hot { fill: #d64541; opacity: 0.22; }
+.aisle-hot { fill: #d64541; opacity: 0.14; }
 .aisle-unknown { fill: var(--unknown); }
 .aisle-label { font-size: 0.17px; fill: #4b5057;
                font-family: var(--sans); dominant-baseline: middle; }

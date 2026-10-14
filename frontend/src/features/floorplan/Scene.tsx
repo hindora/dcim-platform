@@ -1046,7 +1046,7 @@ function AisleBand({ a, W, X, Z, racks, containment }: {
         <planeGeometry args={[W, depth]} />
         {tiles
           ? <meshBasicMaterial map={tiles} transparent opacity={0.22} depthWrite={false} />
-          : <meshBasicMaterial color={tint} transparent opacity={0.14} depthWrite={false} />}
+          : <meshBasicMaterial color={tint} transparent opacity={0.09} depthWrite={false} />}
       </mesh>
       {containment && a.contained && flank.length > 0 && (
         <group>
