@@ -5,7 +5,6 @@ import {
 import { useFrame, useThree, type ThreeEvent } from '@react-three/fiber';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, type ElementRef } from 'react';
 import * as THREE from 'three';
-import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import type {
   FloorAisle, FloorEquipment, FloorRack, ThermalField, ThermalUnit, TwinDevice, TwinRackIndex, TwinRoomIndices,
   TwinRoomScene,
@@ -39,10 +38,6 @@ import { fmtT, numT, unitLabel } from './units';
 const WALL_H = 3.0;
 const DEFAULT_W = 0.6, DEFAULT_D = 1.2;
 const EYE = 1.6;
-/** How solid a glass rack is drawn; the rim adds to it toward the edges. */
-const GLASS = 0.58;
-/** Plant is solid: an appliance, not a window onto its contents. */
-const PLANT = 1;
 
 // The physical surfaces - concrete, steel, tile - are the same under both
 // themes, like the readings' bands; only the chrome around the picture follows
@@ -50,10 +45,10 @@ const PLANT = 1;
 const SURF = {
   floor: '#f7f8f9', tileLine: '#aab0b6', slab: '#dfe2e6', slabLine: '#cdd1d6',
   ventBg: '#5b6067', ventDot: '#c3c8cd', ventFrame: '#d7dbdf', wall: '#d5d8dc', wallSide: '#c7cacf', wallEdge: '#3b3e43',
-  instrument: '#4d8fa6',
+  rackEdge: '#23272e', front: '#5b6470', instrument: '#4d8fa6',
   /* the room stands on a concrete apron under a grey sky, in either theme */
   backdrop: '#5e6266', apron: '#c6c9ce',
-  coldAisle: '#3fae4a', hotAisle: '#8a9199', fan: '#5fc15f',
+  coldAisle: '#3fae4a', hotAisle: '#8a9199',
 };
 
 export interface HoverTip { x: number; y: number; text: string }
@@ -100,35 +95,27 @@ const GRADIENT_VERT = /* glsl */`
   attribute vec3 rBot; attribute vec3 rMid; attribute vec3 rTop; attribute float aFront;
   varying vec3 vBot; varying vec3 vMid; varying vec3 vTop;
   varying vec3 vRBot; varying vec3 vRMid; varying vec3 vRTop;
-  varying float vT; varying float vZ; varying float vSplit; varying vec3 vN; varying vec3 vV;
+  varying float vT; varying float vZ; varying float vSplit; varying vec3 vN;
   void main() {
     vBot = cBot; vMid = cMid; vTop = cTop;
     vRBot = rBot; vRMid = rMid; vRTop = rTop;
     vT = position.y + 0.5;
     vZ = position.z * aFront;
     vSplit = abs(aFront);
-    vec4 wp = modelMatrix * instanceMatrix * vec4(position, 1.0);
     vN = normalize((modelMatrix * instanceMatrix * vec4(normal, 0.0)).xyz);
-    vV = normalize(cameraPosition - wp.xyz);
-    gl_Position = projectionMatrix * viewMatrix * wp;
+    gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position, 1.0);
   }`;
 const GRADIENT_FRAG = /* glsl */`
   uniform vec3 uLight; uniform float uOpacity;
   varying vec3 vBot; varying vec3 vMid; varying vec3 vTop;
   varying vec3 vRBot; varying vec3 vRMid; varying vec3 vRTop;
-  varying float vT; varying float vZ; varying float vSplit; varying vec3 vN; varying vec3 vV;
+  varying float vT; varying float vZ; varying float vSplit; varying vec3 vN;
   void main() {
     bool rear = vSplit > 0.5 && vZ < 0.0;
     vec3 b = rear ? vRBot : vBot; vec3 m = rear ? vRMid : vMid; vec3 t = rear ? vRTop : vTop;
     vec3 c = vT < 0.5 ? mix(b, m, vT * 2.0) : mix(m, t, (vT - 0.5) * 2.0);
-    // A glass body: a gentle step between faces, the top brightest, and a
-    // rim that whitens toward the silhouette so the edge reads without a line.
-    vec3 n = normalize(vN);
-    float l = 0.72 + 0.28 * max(dot(n, normalize(uLight)), 0.0);
-    if (n.y > 0.9) l = 1.0;
-    float rim = pow(1.0 - max(dot(n, normalize(vV)), 0.0), 3.0);
-    vec3 col = mix(c * l, vec3(1.0), rim * 0.45);
-    gl_FragColor = vec4(col, uOpacity + rim * 0.25);
+    float l = 0.64 + 0.36 * max(dot(normalize(vN), normalize(uLight)), 0.0);
+    gl_FragColor = vec4(c * l, uOpacity);
     #include <colorspace_fragment>
   }`;
 
@@ -144,10 +131,8 @@ export interface GBox {
 /** One instanced mesh of boxes, each with its own bottom/middle/top colour.
  *  `part` 'solid' draws the filled share of each box, 'shell' the translucent
  *  remainder above it (only for boxes that are not full). */
-function GradientBoxes({ boxes, part, opacity, rounded, dim, meshRef, onClick, onMove, onOut }: {
+function GradientBoxes({ boxes, part, opacity, dim, meshRef, onClick, onMove, onOut }: {
   boxes: GBox[]; part: 'solid' | 'shell'; opacity: number;
-  /** Softened edges - the plant's appliance look. Racks stay sharp. */
-  rounded?: boolean;
   /** Boxes not part of the active overlay fade toward the walls. */
   dim?: boolean[];
   meshRef?: React.MutableRefObject<THREE.InstancedMesh | null>;
@@ -158,16 +143,16 @@ function GradientBoxes({ boxes, part, opacity, rounded, dim, meshRef, onClick, o
   const n = boxes.length;
 
   const geometry = useMemo(() => {
-    const g: THREE.BufferGeometry = rounded ? new RoundedBoxGeometry(1, 1, 1, 3, 0.05) : new THREE.BoxGeometry(1, 1, 1);
+    const g = new THREE.BoxGeometry(1, 1, 1);
     for (const name of ['cBot', 'cMid', 'cTop', 'rBot', 'rMid', 'rTop']) {
       g.setAttribute(name, new THREE.InstancedBufferAttribute(new Float32Array(Math.max(1, n) * 3), 3));
     }
     g.setAttribute('aFront', new THREE.InstancedBufferAttribute(new Float32Array(Math.max(1, n)), 1));
     return g;
-  }, [n, rounded]);
+  }, [n]);
   const material = useMemo(() => new THREE.ShaderMaterial({
     vertexShader: GRADIENT_VERT, fragmentShader: GRADIENT_FRAG,
-    uniforms: { uLight: { value: new THREE.Vector3(0.35, 1, 0.75) }, uOpacity: { value: opacity } },
+    uniforms: { uLight: { value: new THREE.Vector3(0.45, 1, 0.55) }, uOpacity: { value: opacity } },
     transparent: opacity < 1, depthWrite: opacity >= 1,
   }), []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
@@ -513,12 +498,13 @@ export default function RoomScene(p: SceneProps) {
 
       {/* See-into-racks: the layer's colour stays on the cabinet as a tinted
           shell and the devices inside show through it. */}
-      <GradientBoxes boxes={rackBoxes} part="solid" opacity={vis.faces ? 0.28 : GLASS} meshRef={rackMesh} dim={rackDim}
+      <GradientBoxes boxes={rackBoxes} part="solid" opacity={vis.faces ? 0.32 : 1} meshRef={rackMesh} dim={rackDim}
                      // Seen into, the shell lets the pointer through to the devices.
                      onClick={fpv || vis.faces ? undefined : (i) => onSelect({ kind: 'rack', id: plan.racks[i].id })}
                      onMove={fpv || vis.faces ? undefined : (i, e) => tip(e, rackText(plan.racks[i]))}
                      onOut={() => onTip(null)} />
       {anyShell && <GradientBoxes boxes={rackBoxes} part="shell" opacity={0.22} />}
+      <RackFrames racks={plan.racks} X={X} Z={Z} />
       {vis.detail && <RackDetails boxes={rackBoxes} open={vis.faces} />}
       {(vis.devices || vis.faces) && (
         <RackDevices devices={devices} rackById={rackById} X={X} Z={Z} themeTick={themeTick}
@@ -527,13 +513,12 @@ export default function RoomScene(p: SceneProps) {
 
       {vis.plant && (
         <>
-          <GradientBoxes boxes={unitBoxes} part="solid" opacity={PLANT} rounded dim={unitDim}
+          <GradientBoxes boxes={unitBoxes} part="solid" opacity={1} dim={unitDim}
                          onClick={fpv ? undefined : (i) => onSelect({ kind: 'equipment', id: placedUnits[i].id })}
                          onMove={fpv ? undefined : (i, e) => tip(e, unitText(placedUnits[i]))}
                          onOut={() => onTip(null)} />
+          <UnitFrames boxes={unitBoxes} />
           {vis.detail && <UnitDetails boxes={unitBoxes} types={unitTypes} />}
-          {vis.detail && <FanMarks boxes={unitBoxes} types={unitTypes} />}
-          {vis.detail && <PlantAccents boxes={unitBoxes} />}
           <Instruments items={instruments} X={X} Z={Z}
                        onSelect={fpv ? undefined : onSelect} onTip={fpv ? undefined : onTip} />
         </>
@@ -1051,6 +1036,60 @@ function AisleBand({ a, W, X, Z, racks, containment }: {
 
 // ----------------------------------------------------------- frames + labels
 
+function RackFrames({ racks, X, Z }: { racks: FloorRack[]; X: (x: number) => number; Z: (y: number) => number }) {
+  const [edges, fronts] = useMemo(() => {
+    const e: number[] = [], f: number[] = [];
+    for (const r of racks) {
+      const w = (r.w_m ?? DEFAULT_W) / 2, d = (r.d_m ?? DEFAULT_D) / 2, h = rackH(r);
+      const cx = X(r.x), cz = Z(r.y);
+      const c = [[-w, -d], [w, -d], [w, d], [-w, d]];
+      for (let k = 0; k < 4; k++) {
+        const [ax, az] = c[k], [bx, bz] = c[(k + 1) % 4];
+        e.push(cx + ax, 0, cz + az, cx + bx, 0, cz + bz, cx + ax, h, cz + az, cx + bx, h, cz + bz,
+               cx + ax, 0, cz + az, cx + ax, h, cz + az);
+      }
+      if (r.facing === 'N' || r.facing === 'S') {
+        const fz = cz + (r.facing === 'N' ? -d : d) + (r.facing === 'N' ? -0.004 : 0.004);
+        for (const y of [0.05, h * 0.5, h - 0.05]) f.push(cx - w, y, fz, cx + w, y, fz);
+      }
+    }
+    const ge = new THREE.BufferGeometry(); ge.setAttribute('position', new THREE.Float32BufferAttribute(e, 3));
+    const gf = new THREE.BufferGeometry(); gf.setAttribute('position', new THREE.Float32BufferAttribute(f, 3));
+    return [ge, gf];
+  }, [racks, X, Z]);
+  useEffect(() => () => { edges.dispose(); fronts.dispose(); }, [edges, fronts]);
+  return (
+    <group>
+      <lineSegments geometry={edges}><lineBasicMaterial color={SURF.rackEdge} transparent opacity={0.55} /></lineSegments>
+      <lineSegments geometry={fronts}><lineBasicMaterial color={SURF.front} /></lineSegments>
+    </group>
+  );
+}
+
+function UnitFrames({ boxes }: { boxes: GBox[] }) {
+  const geom = useMemo(() => {
+    const pts: number[] = [];
+    const v = new THREE.Vector3(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0);
+    for (const b of boxes) {
+      q.setFromAxisAngle(up, b.rot);
+      const c = (sx: number, sy: number, sz: number) => {
+        v.set(sx * b.w / 2, sy * b.h / 2, sz * b.d / 2).applyQuaternion(q);
+        return [v.x + b.x, v.y + b.y, v.z + b.z];
+      };
+      const P = [c(-1, -1, -1), c(1, -1, -1), c(1, -1, 1), c(-1, -1, 1), c(-1, 1, -1), c(1, 1, -1), c(1, 1, 1), c(-1, 1, 1)];
+      const E = [[0, 1], [1, 2], [2, 3], [3, 0], [4, 5], [5, 6], [6, 7], [7, 4], [0, 4], [1, 5], [2, 6], [3, 7]];
+      for (const [a, bb] of E) pts.push(...P[a], ...P[bb]);
+      // the front: a bar low on the face the unit discharges from (local -z)
+      pts.push(...c(-0.9, -0.8, -1.01), ...c(0.9, -0.8, -1.01));
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+    return g;
+  }, [boxes]);
+  useEffect(() => () => geom.dispose(), [geom]);
+  return <lineSegments geometry={geom}><lineBasicMaterial color={SURF.rackEdge} transparent opacity={0.5} /></lineSegments>;
+}
+
 function Instruments({ items, X, Z, onSelect, onTip }: {
   items: FloorEquipment[]; X: (x: number) => number; Z: (y: number) => number;
   onSelect?: (s: Sel) => void; onTip?: (t: HoverTip | null) => void;
@@ -1079,97 +1118,6 @@ function Instruments({ items, X, Z, onSelect, onTip }: {
       <boxGeometry args={[1, 1, 1]} />
       <meshStandardMaterial color={SURF.instrument} />
     </instancedMesh>
-  );
-}
-
-/** A ring of light that fades outward: the glow a unit stands in. */
-function glowRing(): THREE.CanvasTexture {
-  return canvasTexture(256, (c, s) => {
-    c.clearRect(0, 0, s, s);
-    const inset = s * 0.14;
-    // a soft square halo: bright at the body's footprint, gone a little outside it
-    for (let k = 10; k >= 0; k--) {
-      const a = 0.06 * (1 - k / 10);
-      const pad = inset - (k / 10) * inset;
-      c.strokeStyle = `rgba(140,225,255,${a + 0.02})`; c.lineWidth = 10;
-      c.strokeRect(pad + 5, pad + 5, s - 2 * pad - 10, s - 2 * pad - 10);
-    }
-    c.strokeStyle = 'rgba(190,240,255,0.95)'; c.lineWidth = 4;
-    c.strokeRect(inset + 2, inset + 2, s - 2 * inset - 4, s - 2 * inset - 4);
-  });
-}
-
-/** What makes a floor-standing unit read as an appliance from the future
- *  rather than a crate: a light bar around its foot and a pale cap on top.
- *  Wall-mounted plant gets the cap alone. */
-function PlantAccents({ boxes }: { boxes: GBox[] }) {
-  const base = useRef<THREE.InstancedMesh>(null), cap = useRef<THREE.InstancedMesh>(null);
-  const ring = useMemo(glowRing, []);
-  useEffect(() => () => ring.dispose(), [ring]);
-  const n = boxes.length;
-  useLayoutEffect(() => {
-    const m = new THREE.Matrix4(), p = new THREE.Vector3(), s = new THREE.Vector3();
-    const flat = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0));
-    const hide = new THREE.Matrix4().makeScale(0, 0, 0);
-    boxes.forEach((b, i) => {
-      const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), b.rot).multiply(flat);
-      const onFloor = b.y <= b.h / 2 + 0.05;
-      if (onFloor) base.current?.setMatrixAt(i, m.compose(p.set(b.x, 0.016, b.z), q, s.set(b.w * 1.36, b.d * 1.36, 1)));
-      else base.current?.setMatrixAt(i, hide);
-      cap.current?.setMatrixAt(i, m.compose(p.set(b.x, b.y + b.h / 2 + 0.004, b.z), q, s.set(b.w - 0.1, b.d - 0.1, 1)));
-    });
-    for (const r of [base, cap]) if (r.current) { r.current.instanceMatrix.needsUpdate = true; r.current.computeBoundingSphere(); }
-  }, [boxes]);
-  if (!n) return null;
-  return (
-    <group>
-      <instancedMesh key={`g${n}`} ref={base} args={[undefined, undefined, n]} raycast={() => null}>
-        <planeGeometry args={[1, 1]} />
-        <meshBasicMaterial map={ring} transparent depthWrite={false} blending={THREE.AdditiveBlending} />
-      </instancedMesh>
-      <instancedMesh key={`c${n}`} ref={cap} args={[undefined, undefined, n]} raycast={() => null}>
-        <planeGeometry args={[1, 1]} />
-        <meshBasicMaterial color="#ffffff" transparent opacity={0.3} depthWrite={false} polygonOffset polygonOffsetFactor={-2} />
-      </instancedMesh>
-    </group>
-  );
-}
-
-const FAN_TYPES = new Set(['crah', 'crac']);
-
-/** The fan glyph that floats over every air handler: the one mark that says
- *  "this moves air" from across the room. */
-function fanGlyph(): THREE.CanvasTexture {
-  return canvasTexture(128, (c, s) => {
-    c.clearRect(0, 0, s, s);
-    const cx = s / 2, cy = s / 2;
-    c.fillStyle = SURF.fan;
-    for (let k = 0; k < 4; k++) {
-      c.save(); c.translate(cx, cy); c.rotate((k * Math.PI) / 2);
-      c.beginPath(); c.moveTo(0, 0);
-      c.bezierCurveTo(14, -34, 44, -44, 50, -14);
-      c.bezierCurveTo(40, -2, 16, 4, 0, 0);
-      c.closePath(); c.fill();
-      c.restore();
-    }
-    c.fillStyle = '#ffffff'; c.beginPath(); c.arc(cx, cy, 9, 0, Math.PI * 2); c.fill();
-    c.strokeStyle = SURF.fan; c.lineWidth = 4; c.beginPath(); c.arc(cx, cy, 9, 0, Math.PI * 2); c.stroke();
-  });
-}
-
-function FanMarks({ boxes, types }: { boxes: GBox[]; types: string[] }) {
-  const tex = useMemo(fanGlyph, []);
-  useEffect(() => () => tex.dispose(), [tex]);
-  const marks = boxes.map((b, i) => ({ b, i })).filter(({ i }) => FAN_TYPES.has(types[i] ?? ''));
-  if (!marks.length) return null;
-  return (
-    <group>
-      {marks.map(({ b, i }) => (
-        <sprite key={i} position={[b.x, b.y + b.h / 2 + 0.42, b.z]} scale={[0.5, 0.5, 1]} raycast={() => null}>
-          <spriteMaterial map={tex} transparent depthWrite={false} />
-        </sprite>
-      ))}
-    </group>
   );
 }
 
