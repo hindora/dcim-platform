@@ -43,8 +43,8 @@ const EYE = 1.6;
 // themes, like the readings' bands; only the chrome around the picture follows
 // the theme. These are a rendering of the room, not UI colour.
 const SURF = {
-  floor: '#f3f4f5', tileLine: '#c9cdd2', slab: '#dfe2e6', slabLine: '#cdd1d6',
-  ventBg: '#b7bcc3', ventDot: '#5f656d', wall: '#d5d8dc', wallSide: '#c7cacf', wallEdge: '#3b3e43',
+  floor: '#f7f8f9', tileLine: '#aab0b6', slab: '#dfe2e6', slabLine: '#cdd1d6',
+  ventBg: '#5b6067', ventDot: '#c3c8cd', ventFrame: '#d7dbdf', wall: '#d5d8dc', wallSide: '#c7cacf', wallEdge: '#3b3e43',
   rackEdge: '#1f2328', front: '#5b6470', instrument: '#4d8fa6',
   /* the room stands on a concrete apron under a grey sky, in either theme */
   backdrop: '#5e6266', apron: '#c6c9ce',
@@ -238,16 +238,16 @@ function tileTexture(W: number, D: number, slab: boolean): THREE.CanvasTexture {
       for (let k = 0; k < 90; k++) {
         const x = rnd() * s, y = rnd() * s, r = 6 + rnd() * 26;
         const g = c.createRadialGradient(x, y, 0, x, y, r);
-        const a = 0.05 + rnd() * 0.09;
+        const a = 0.025 + rnd() * 0.045;
         g.addColorStop(0, `rgba(150,156,164,${a})`); g.addColorStop(1, 'rgba(150,156,164,0)');
         c.fillStyle = g; c.beginPath(); c.arc(x, y, r, 0, Math.PI * 2); c.fill();
       }
       for (let k = 0; k < 400; k++) {
-        c.fillStyle = `rgba(120,126,134,${0.04 + rnd() * 0.08})`;
+        c.fillStyle = `rgba(120,126,134,${0.03 + rnd() * 0.05})`;
         c.fillRect(rnd() * s, rnd() * s, 1.5, 1.5);
       }
     }
-    c.strokeStyle = slab ? SURF.slabLine : SURF.tileLine; c.lineWidth = slab ? 1.5 : 3;
+    c.strokeStyle = slab ? SURF.slabLine : SURF.tileLine; c.lineWidth = slab ? 1.5 : 2.5;
     c.strokeRect(0.5, 0.5, s - 1, s - 1);
   }, [W / (slab ? 1.0 : TILE), D / (slab ? 1.0 : TILE)]);
 }
@@ -274,7 +274,7 @@ function ContactShadows({ boxes }: { boxes: GBox[] }) {
     const flat = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0));
     boxes.forEach((b, i) => {
       const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), b.rot).multiply(flat);
-      im.setMatrixAt(i, m.compose(p.set(b.x, 0.0055, b.z), q, s.set(b.w * 1.9, b.d * 1.9, 1)));
+      im.setMatrixAt(i, m.compose(p.set(b.x, 0.012, b.z), q, s.set(b.w * 1.9, b.d * 1.9, 1)));
     });
     im.instanceMatrix.needsUpdate = true;
     im.computeBoundingSphere();
@@ -297,13 +297,15 @@ function aisleTexture(cols: number, rows: number): THREE.CanvasTexture {
   }, [Math.max(1, cols), Math.max(1, rows)]);
 }
 
+/** A perforated airflow tile: dark steel in a light frame, the holes a
+ *  regular field of light dots - read from across the room as a vent. */
 function ventTexture(): THREE.CanvasTexture {
   return canvasTexture(128, (c, s) => {
-    c.fillStyle = SURF.ventBg; c.fillRect(0, 0, s, s);
-    c.strokeStyle = SURF.tileLine; c.lineWidth = 2; c.strokeRect(1, 1, s - 2, s - 2);
+    c.fillStyle = SURF.ventFrame; c.fillRect(0, 0, s, s);
+    c.fillStyle = SURF.ventBg; c.fillRect(5, 5, s - 10, s - 10);
     c.fillStyle = SURF.ventDot;
-    for (let y = 12; y < s - 6; y += 10) for (let x = 12; x < s - 6; x += 10) {
-      c.beginPath(); c.arc(x, y, 2.4, 0, Math.PI * 2); c.fill();
+    for (let y = 13; y < s - 8; y += 9) for (let x = 13; x < s - 8; x += 9) {
+      c.beginPath(); c.arc(x, y, 2.1, 0, Math.PI * 2); c.fill();
     }
   });
 }
@@ -960,8 +962,8 @@ function Vents({ vents, X, Z }: { vents: { x: number; y: number }[]; X: (x: numb
     const im = ref.current;
     if (!im) return;
     const m = new THREE.Matrix4(), q = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0));
-    const p = new THREE.Vector3(), s = new THREE.Vector3(TILE * 0.96, TILE * 0.96, 1);
-    vents.forEach((v, i) => im.setMatrixAt(i, m.compose(p.set(X(v.x), 0.006, Z(v.y)), q, s)));
+    const p = new THREE.Vector3(), s = new THREE.Vector3(TILE, TILE, 1);
+    vents.forEach((v, i) => im.setMatrixAt(i, m.compose(p.set(X(v.x), 0.02, Z(v.y)), q, s)));
     im.instanceMatrix.needsUpdate = true;
     im.computeBoundingSphere();
   }, [vents, X, Z]);
@@ -990,10 +992,10 @@ function AisleBand({ a, W, X, Z, racks, containment }: {
   if (a.kind === 'unknown') return null;
   return (
     <group>
-      <mesh rotation-x={-Math.PI / 2} position={[0, 0.003, zc]}>
+      <mesh rotation-x={-Math.PI / 2} position={[0, 0.004, zc]}>
         <planeGeometry args={[W, depth]} />
         {tiles
-          ? <meshBasicMaterial map={tiles} transparent opacity={0.42} depthWrite={false} />
+          ? <meshBasicMaterial map={tiles} transparent opacity={0.22} depthWrite={false} />
           : <meshBasicMaterial color={tint} transparent opacity={0.06} depthWrite={false} />}
       </mesh>
       {containment && a.contained && flank.length > 0 && (
