@@ -44,7 +44,7 @@ const EYE = 1.6;
 // the theme. These are a rendering of the room, not UI colour.
 const SURF = {
   floor: '#f4f5f6', tileLine: '#d3d7dc', slab: '#dfe2e6', slabLine: '#cdd1d6',
-  ventBg: '#b7bcc3', ventDot: '#5f656d', wall: '#d5d8dc', wallEdge: '#3b3e43',
+  ventBg: '#b7bcc3', ventDot: '#5f656d', wall: '#d5d8dc', wallSide: '#c7cacf', wallEdge: '#3b3e43',
   rackEdge: '#1f2328', front: '#5b6470', instrument: '#4d8fa6',
   /* the room stands on a concrete apron under a grey sky, in either theme */
   backdrop: '#5e6266', apron: '#c6c9ce',
@@ -836,18 +836,21 @@ function Room({ W, D, whiteSpace, walls: walled }: { W: number; D: number; white
   ];
   return (
     <group>
+      {/* Flat, unlit surfaces: the tile white reads as white from any angle,
+          the way a drawn floor does, and the side walls take one shade more
+          than the back walls so the corner still reads. */}
       <mesh rotation-x={-Math.PI / 2} position={[0, -0.003, 0]}>
         <planeGeometry args={[W + 3, D + 3]} />
-        <meshStandardMaterial color={SURF.apron} roughness={1} />
+        <meshBasicMaterial color={SURF.apron} />
       </mesh>
-      <mesh rotation-x={-Math.PI / 2} receiveShadow>
+      <mesh rotation-x={-Math.PI / 2}>
         <planeGeometry args={[W, D]} />
-        <meshStandardMaterial map={tiles} roughness={0.95} />
+        <meshBasicMaterial map={tiles} />
       </mesh>
       {walled && walls.map(([x, z, ry, len], i) => (
         <mesh key={i} position={[x, WALL_H / 2, z]} rotation-y={ry}>
           <planeGeometry args={[len, WALL_H]} />
-          <meshStandardMaterial color={SURF.wall} roughness={1} />
+          <meshBasicMaterial color={i < 2 ? SURF.wall : SURF.wallSide} />
         </mesh>
       ))}
       {walled && (
