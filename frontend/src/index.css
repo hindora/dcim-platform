@@ -1289,3 +1289,9 @@ tr.is-selected > td { background: var(--bg-inset); }
   .wizard-rail { position: static; grid-auto-flow: column; grid-auto-columns: minmax(120px, 1fr);
                  overflow-x: auto; }
 }
+
+/* Focus rings belong to the keyboard. While the pointer drives (lib/inputModality
+   writes data-input on <html>), the ring stays off even on the form controls
+   that would ring on a click. Press a key and it is back at once. */
+html[data-input="pointer"] :focus-visible { outline: none !important; }
+html[data-input="pointer"] input[type="range"]:focus-visible::-webkit-slider-thumb { box-shadow: none !important; }

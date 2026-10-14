@@ -32,8 +32,10 @@
 .vw-round:hover { color: var(--text); background: var(--bg-raised); }
 .vw-round:active { transform: translateY(1px); }
 .vw-round:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.vw-round.is-on { color: var(--accent); border-color: var(--accent);
-                  box-shadow: var(--vw-shadow-sm), 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+/* "on" is a fill, not a ring: the accent tints the disc and the icon takes it. */
+.vw-round.is-on { color: var(--accent); background: color-mix(in srgb, var(--accent) 18%, var(--bg-raised));
+                  border-color: transparent; }
+.vw-round.is-on:hover { background: color-mix(in srgb, var(--accent) 26%, var(--bg-raised)); }
 
 /* the view bar: camera trio over the mode pill */
 .vw-viewbar { display: flex; flex-direction: column; align-items: center; gap: 8px; }
@@ -45,8 +47,7 @@
                   color: var(--text-muted); font: inherit; font-size: 11px; font-weight: 600; letter-spacing: .09em; }
 .vw-pill button:hover { color: var(--text); background: color-mix(in srgb, var(--text) 7%, transparent); }
 .vw-pill button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.vw-pill button.is-on { color: var(--text); background: color-mix(in srgb, var(--accent) 22%, transparent);
-                        box-shadow: inset 0 0 0 1px var(--accent); }
+.vw-pill button.is-on { color: var(--text); background: color-mix(in srgb, var(--accent) 26%, transparent); }
 .vw-icon { background: none; border: 1px solid var(--border); border-radius: 6px; color: var(--text-muted);
            font: inherit; font-size: 12px; font-weight: 600; letter-spacing: .06em; padding: 6px 10px;
            cursor: pointer; }
@@ -288,7 +289,8 @@
 .vw-transport { display: inline-flex; gap: 4px; }
 .vw-transport button { width: 32px; display: inline-flex; align-items: center; justify-content: center; padding: 0; }
 .vw-transport .vw-play { width: 36px; }
-.vw-transport .vw-play[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
+.vw-transport .vw-play[aria-pressed="true"] { color: var(--accent); background: color-mix(in srgb, var(--accent) 18%, transparent);
+                                               border-color: transparent; }
 .vw-scrub { position: relative; flex: 1; min-width: 220px; height: 48px; display: flex; align-items: center; }
 .vw-scrub input[type="range"] { width: 100%; height: 28px; margin: 0; background: none; -webkit-appearance: none;
                                 appearance: none; cursor: pointer; touch-action: pan-y; }
