@@ -436,7 +436,7 @@ export interface Visibility {
 }
 export const DEFAULT_VIS: Visibility = {
   devices: true, plant: true, aisles: true, containment: true, labels: false, vents: true, hotspots: true, faces: false,
-  fittings: true, detail: true,
+  fittings: true, detail: false,
 };
 
 /** The heat map: one of the three interpolated planes, or off. Optional by
