@@ -16,6 +16,7 @@ import {
   type CoolingLayer, type HeatPlane, type RackLayer, type RackPaint, type Sel, type ViewMode, type Visibility,
 } from './layers';
 import { OpenEnclosure, RackDetails, RoomFittings, UnitDetails, type RoomDoor, type RoomFire } from './Fittings';
+import { Hardware } from './Hardware';
 import type { PathOverlay, Role } from './paths';
 import { fmtT, numT, unitLabel } from './units';
 
@@ -37,6 +38,7 @@ import { fmtT, numT, unitLabel } from './units';
 
 const WALL_H = 3.0;
 const DEFAULT_W = 0.6, DEFAULT_D = 1.2;
+const NO_BOXES: GBox[] = [];
 const EYE = 1.6;
 
 // The physical surfaces - concrete, steel, tile - are the same under both
@@ -506,6 +508,8 @@ export default function RoomScene(p: SceneProps) {
       {anyShell && <GradientBoxes boxes={rackBoxes} part="shell" opacity={0.22} />}
       <RackFrames racks={plan.racks} X={X} Z={Z} />
       {vis.detail && <RackDetails boxes={rackBoxes} open={vis.faces} />}
+      {/* Frame, plinth, handles, nozzles, stacks - all outside the coloured body. */}
+      <Hardware racks={rackBoxes} units={vis.plant ? unitBoxes : NO_BOXES} unitTypes={unitTypes} open={vis.faces} />
       {(vis.devices || vis.faces) && (
         <RackDevices devices={devices} rackById={rackById} X={X} Z={Z} themeTick={themeTick}
                      onSelect={fpv ? undefined : onSelect} onTip={fpv ? undefined : onTip} />
