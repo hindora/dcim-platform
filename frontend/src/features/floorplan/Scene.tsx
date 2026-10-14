@@ -38,6 +38,9 @@ import { fmtT, numT, unitLabel } from './units';
 const WALL_H = 3.0;
 const DEFAULT_W = 0.6, DEFAULT_D = 1.2;
 const EYE = 1.6;
+/** How solid a glass cabinet is drawn; the rim adds to it toward the edges. */
+const GLASS = 0.58;
+const GLASS_PLANT = 0.7;
 
 // The physical surfaces - concrete, steel, tile - are the same under both
 // themes, like the readings' bands; only the chrome around the picture follows
@@ -45,7 +48,7 @@ const EYE = 1.6;
 const SURF = {
   floor: '#f7f8f9', tileLine: '#aab0b6', slab: '#dfe2e6', slabLine: '#cdd1d6',
   ventBg: '#5b6067', ventDot: '#c3c8cd', ventFrame: '#d7dbdf', wall: '#d5d8dc', wallSide: '#c7cacf', wallEdge: '#3b3e43',
-  rackEdge: '#15181c', front: '#5b6470', instrument: '#4d8fa6',
+  instrument: '#4d8fa6',
   /* the room stands on a concrete apron under a grey sky, in either theme */
   backdrop: '#5e6266', apron: '#c6c9ce',
   coldAisle: '#3fae4a', hotAisle: '#8a9199', fan: '#5fc15f',
@@ -95,30 +98,35 @@ const GRADIENT_VERT = /* glsl */`
   attribute vec3 rBot; attribute vec3 rMid; attribute vec3 rTop; attribute float aFront;
   varying vec3 vBot; varying vec3 vMid; varying vec3 vTop;
   varying vec3 vRBot; varying vec3 vRMid; varying vec3 vRTop;
-  varying float vT; varying float vZ; varying float vSplit; varying vec3 vN;
+  varying float vT; varying float vZ; varying float vSplit; varying vec3 vN; varying vec3 vV;
   void main() {
     vBot = cBot; vMid = cMid; vTop = cTop;
     vRBot = rBot; vRMid = rMid; vRTop = rTop;
     vT = position.y + 0.5;
     vZ = position.z * aFront;
     vSplit = abs(aFront);
+    vec4 wp = modelMatrix * instanceMatrix * vec4(position, 1.0);
     vN = normalize((modelMatrix * instanceMatrix * vec4(normal, 0.0)).xyz);
-    gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position, 1.0);
+    vV = normalize(cameraPosition - wp.xyz);
+    gl_Position = projectionMatrix * viewMatrix * wp;
   }`;
 const GRADIENT_FRAG = /* glsl */`
   uniform vec3 uLight; uniform float uOpacity;
   varying vec3 vBot; varying vec3 vMid; varying vec3 vTop;
   varying vec3 vRBot; varying vec3 vRMid; varying vec3 vRTop;
-  varying float vT; varying float vZ; varying float vSplit; varying vec3 vN;
+  varying float vT; varying float vZ; varying float vSplit; varying vec3 vN; varying vec3 vV;
   void main() {
     bool rear = vSplit > 0.5 && vZ < 0.0;
     vec3 b = rear ? vRBot : vBot; vec3 m = rear ? vRMid : vMid; vec3 t = rear ? vRTop : vTop;
     vec3 c = vT < 0.5 ? mix(b, m, vT * 2.0) : mix(m, t, (vT - 0.5) * 2.0);
-    // three tones a painted box reads in: the top full, the front a step
-    // down, the sides another - the cabinet's shape from across the room
-    float l = 0.55 + 0.45 * max(dot(normalize(vN), normalize(uLight)), 0.0);
-    if (vN.y > 0.9) l = 1.0;
-    gl_FragColor = vec4(c * l, uOpacity);
+    // A glass body: a gentle step between faces, the top brightest, and a
+    // rim that whitens toward the silhouette so the edge reads without a line.
+    vec3 n = normalize(vN);
+    float l = 0.72 + 0.28 * max(dot(n, normalize(uLight)), 0.0);
+    if (n.y > 0.9) l = 1.0;
+    float rim = pow(1.0 - max(dot(n, normalize(vV)), 0.0), 3.0);
+    vec3 col = mix(c * l, vec3(1.0), rim * 0.45);
+    gl_FragColor = vec4(col, uOpacity + rim * 0.25);
     #include <colorspace_fragment>
   }`;
 
@@ -501,13 +509,12 @@ export default function RoomScene(p: SceneProps) {
 
       {/* See-into-racks: the layer's colour stays on the cabinet as a tinted
           shell and the devices inside show through it. */}
-      <GradientBoxes boxes={rackBoxes} part="solid" opacity={vis.faces ? 0.32 : 1} meshRef={rackMesh} dim={rackDim}
+      <GradientBoxes boxes={rackBoxes} part="solid" opacity={vis.faces ? 0.28 : GLASS} meshRef={rackMesh} dim={rackDim}
                      // Seen into, the shell lets the pointer through to the devices.
                      onClick={fpv || vis.faces ? undefined : (i) => onSelect({ kind: 'rack', id: plan.racks[i].id })}
                      onMove={fpv || vis.faces ? undefined : (i, e) => tip(e, rackText(plan.racks[i]))}
                      onOut={() => onTip(null)} />
       {anyShell && <GradientBoxes boxes={rackBoxes} part="shell" opacity={0.22} />}
-      <RackFrames racks={plan.racks} X={X} Z={Z} />
       {vis.detail && <RackDetails boxes={rackBoxes} open={vis.faces} />}
       {(vis.devices || vis.faces) && (
         <RackDevices devices={devices} rackById={rackById} X={X} Z={Z} themeTick={themeTick}
@@ -516,11 +523,10 @@ export default function RoomScene(p: SceneProps) {
 
       {vis.plant && (
         <>
-          <GradientBoxes boxes={unitBoxes} part="solid" opacity={1} dim={unitDim}
+          <GradientBoxes boxes={unitBoxes} part="solid" opacity={GLASS_PLANT} dim={unitDim}
                          onClick={fpv ? undefined : (i) => onSelect({ kind: 'equipment', id: placedUnits[i].id })}
                          onMove={fpv ? undefined : (i, e) => tip(e, unitText(placedUnits[i]))}
                          onOut={() => onTip(null)} />
-          <UnitFrames boxes={unitBoxes} />
           {vis.detail && <UnitDetails boxes={unitBoxes} types={unitTypes} />}
           {vis.detail && <FanMarks boxes={unitBoxes} types={unitTypes} />}
           <Instruments items={instruments} X={X} Z={Z}
@@ -1039,60 +1045,6 @@ function AisleBand({ a, W, X, Z, racks, containment }: {
 }
 
 // ----------------------------------------------------------- frames + labels
-
-function RackFrames({ racks, X, Z }: { racks: FloorRack[]; X: (x: number) => number; Z: (y: number) => number }) {
-  const [edges, fronts] = useMemo(() => {
-    const e: number[] = [], f: number[] = [];
-    for (const r of racks) {
-      const w = (r.w_m ?? DEFAULT_W) / 2, d = (r.d_m ?? DEFAULT_D) / 2, h = rackH(r);
-      const cx = X(r.x), cz = Z(r.y);
-      const c = [[-w, -d], [w, -d], [w, d], [-w, d]];
-      for (let k = 0; k < 4; k++) {
-        const [ax, az] = c[k], [bx, bz] = c[(k + 1) % 4];
-        e.push(cx + ax, 0, cz + az, cx + bx, 0, cz + bz, cx + ax, h, cz + az, cx + bx, h, cz + bz,
-               cx + ax, 0, cz + az, cx + ax, h, cz + az);
-      }
-      if (r.facing === 'N' || r.facing === 'S') {
-        const fz = cz + (r.facing === 'N' ? -d : d) + (r.facing === 'N' ? -0.004 : 0.004);
-        for (const y of [0.05, h * 0.5, h - 0.05]) f.push(cx - w, y, fz, cx + w, y, fz);
-      }
-    }
-    const ge = new THREE.BufferGeometry(); ge.setAttribute('position', new THREE.Float32BufferAttribute(e, 3));
-    const gf = new THREE.BufferGeometry(); gf.setAttribute('position', new THREE.Float32BufferAttribute(f, 3));
-    return [ge, gf];
-  }, [racks, X, Z]);
-  useEffect(() => () => { edges.dispose(); fronts.dispose(); }, [edges, fronts]);
-  return (
-    <group>
-      <lineSegments geometry={edges}><lineBasicMaterial color={SURF.rackEdge} transparent opacity={0.75} /></lineSegments>
-      <lineSegments geometry={fronts}><lineBasicMaterial color={SURF.front} /></lineSegments>
-    </group>
-  );
-}
-
-function UnitFrames({ boxes }: { boxes: GBox[] }) {
-  const geom = useMemo(() => {
-    const pts: number[] = [];
-    const v = new THREE.Vector3(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0);
-    for (const b of boxes) {
-      q.setFromAxisAngle(up, b.rot);
-      const c = (sx: number, sy: number, sz: number) => {
-        v.set(sx * b.w / 2, sy * b.h / 2, sz * b.d / 2).applyQuaternion(q);
-        return [v.x + b.x, v.y + b.y, v.z + b.z];
-      };
-      const P = [c(-1, -1, -1), c(1, -1, -1), c(1, -1, 1), c(-1, -1, 1), c(-1, 1, -1), c(1, 1, -1), c(1, 1, 1), c(-1, 1, 1)];
-      const E = [[0, 1], [1, 2], [2, 3], [3, 0], [4, 5], [5, 6], [6, 7], [7, 4], [0, 4], [1, 5], [2, 6], [3, 7]];
-      for (const [a, bb] of E) pts.push(...P[a], ...P[bb]);
-      // the front: a bar low on the face the unit discharges from (local -z)
-      pts.push(...c(-0.9, -0.8, -1.01), ...c(0.9, -0.8, -1.01));
-    }
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
-    return g;
-  }, [boxes]);
-  useEffect(() => () => geom.dispose(), [geom]);
-  return <lineSegments geometry={geom}><lineBasicMaterial color={SURF.rackEdge} transparent opacity={0.5} /></lineSegments>;
-}
 
 function Instruments({ items, X, Z, onSelect, onTip }: {
   items: FloorEquipment[]; X: (x: number) => number; Z: (y: number) => number;

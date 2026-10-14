@@ -33,6 +33,8 @@ const FIT = {
 };
 const DOOR_H = 2.1;
 const INK = '20,24,30';
+/** Lines drawn on glass: white, faint. */
+const LITE = '255,255,255';
 
 /** A door opening, in room metres, with what is known about it. */
 export interface RoomDoor {
@@ -410,18 +412,15 @@ function doorTexture(split: boolean): THREE.CanvasTexture {
     // The front is a stack of server faces: a dark bezel line every 2U, a
     // lighter plate between, two dark rails down the sides. Bold, so a rack
     // reads as a rack from across the room, the way a glass door shows it.
-    for (let y = 9; y < h - 8; y += 16) {
-      c.fillStyle = `rgba(${INK},0.58)`; c.fillRect(9, y, w - 18, 6);
-      c.fillStyle = 'rgba(255,255,255,0.22)'; c.fillRect(9, y + 6, w - 18, 2);
-      c.fillStyle = `rgba(${INK},0.16)`; c.fillRect(13, y + 10, 9, 4); c.fillRect(w - 22, y + 10, 9, 4);
+    // Glass: the server stack reads as faint light lines across the door,
+    // nothing dark - the body's colour is the information.
+    for (let y = 12; y < h - 8; y += 16) {
+      c.fillStyle = `rgba(${LITE},0.34)`; c.fillRect(10, y, w - 20, 2);
     }
-    c.fillStyle = `rgba(${INK},0.68)`; c.fillRect(2, 2, 7, h - 4); c.fillRect(w - 9, 2, 7, h - 4);
-    c.strokeStyle = `rgba(${INK},0.6)`; c.lineWidth = 4; c.strokeRect(2, 2, w - 4, h - 4);
     if (split) {
-      c.lineWidth = 5; c.beginPath(); c.moveTo(w / 2, 6); c.lineTo(w / 2, h - 6); c.stroke();
+      c.fillStyle = `rgba(${LITE},0.4)`; c.fillRect(w / 2 - 1, 8, 2, h - 16);
     } else {
-      c.fillStyle = `rgba(${INK},0.85)`; c.fillRect(w - 26, h / 2 - 34, 9, 68);
-      c.fillStyle = 'rgba(235,238,242,0.9)'; c.fillRect(w - 24, h / 2 - 6, 5, 12);
+      c.fillStyle = `rgba(${LITE},0.55)`; c.fillRect(w - 20, h / 2 - 30, 4, 60);
     }
   });
 }
@@ -430,9 +429,7 @@ function doorTexture(split: boolean): THREE.CanvasTexture {
 function roofTexture(): THREE.CanvasTexture {
   return canvasTex(128, 256, (c, w, h) => {
     c.clearRect(0, 0, w, h);
-    // Plain: the frame alone. Cable entries and brush strips drew a busy
-    // top that read as clutter from the usual height.
-    c.strokeStyle = `rgba(${INK},0.5)`; c.lineWidth = 5; c.strokeRect(2.5, 2.5, w - 5, h - 5);
+    // Nothing: a glass top is its colour.
   });
 }
 
@@ -483,12 +480,6 @@ export function RackDetails({ boxes, open }: { boxes: GBox[]; open: boolean }) {
       <instancedMesh key={`r${n}`} ref={rear} args={[undefined, undefined, n]} frustumCulled={false} raycast={() => null}>
         <planeGeometry args={[1, 1]} />{skin(tex.rear)}
       </instancedMesh>
-      <instancedMesh key={`t${n}`} ref={roof} args={[undefined, undefined, n]} frustumCulled={false} raycast={() => null}>
-        <planeGeometry args={[1, 1]} />{skin(tex.roof)}
-      </instancedMesh>
-      <instancedMesh key={`p${n}`} ref={plinth} args={[undefined, undefined, n]} frustumCulled={false} raycast={() => null}>
-        <boxGeometry args={[1, 1, 1]} /><meshStandardMaterial color={FIT.plinth} roughness={0.9} />
-      </instancedMesh>
     </group>
   );
 }
@@ -517,13 +508,10 @@ function kindOf(deviceType: string): UnitKind {
 function sectionTexture(): THREE.CanvasTexture {
   const t = canvasTex(128, 320, (c, w, h) => {
     c.clearRect(0, 0, w, h);
-    c.fillStyle = `rgba(${INK},0.1)`; c.fillRect(12, 12, w - 24, h - 24);
-    c.strokeStyle = `rgba(${INK},0.5)`; c.lineWidth = 4; c.strokeRect(2, 2, w - 4, h - 4);
-    c.fillStyle = `rgba(${INK},0.8)`; c.fillRect(w - 20, h * 0.44, 7, 44);
-    c.fillStyle = 'rgba(16,20,26,0.82)'; c.fillRect(26, 34, w - 64, 40);
-    c.fillStyle = 'rgba(120,220,170,0.9)'; c.fillRect(32, 42, 30, 6);
-    c.strokeStyle = `rgba(${INK},0.4)`; c.lineWidth = 3;
-    for (let y = h - 62; y < h - 14; y += 9) { c.beginPath(); c.moveTo(18, y); c.lineTo(w - 18, y); c.stroke(); }
+    c.strokeStyle = `rgba(${LITE},0.35)`; c.lineWidth = 2; c.strokeRect(12, 12, w - 24, h - 24);
+    c.fillStyle = `rgba(${LITE},0.6)`; c.fillRect(w - 20, h * 0.44, 4, 44);
+    c.fillStyle = `rgba(${INK},0.45)`; c.fillRect(26, 34, w - 64, 36);
+    c.fillStyle = 'rgba(120,220,170,0.9)'; c.fillRect(32, 42, 30, 5);
   });
   t.wrapS = THREE.RepeatWrapping;
   return t;
@@ -533,11 +521,10 @@ function sectionTexture(): THREE.CanvasTexture {
 function crahTexture(): THREE.CanvasTexture {
   return canvasTex(256, 288, (c, w, h) => {
     c.clearRect(0, 0, w, h);
-    c.strokeStyle = `rgba(${INK},0.5)`; c.lineWidth = 4; c.strokeRect(2, 2, w - 4, h - 4);
-    c.strokeStyle = `rgba(${INK},0.3)`; c.lineWidth = 2;
+    c.strokeStyle = `rgba(${LITE},0.35)`; c.lineWidth = 2;
     for (const x of [w / 3, (2 * w) / 3]) { c.beginPath(); c.moveTo(x, 4); c.lineTo(x, h - 4); c.stroke(); }
-    c.fillStyle = 'rgba(16,20,26,0.75)'; c.fillRect(w / 3 + 24, 22, 44, 14);
-    c.strokeStyle = `rgba(${INK},0.18)`; c.lineWidth = 2;
+    c.fillStyle = `rgba(${INK},0.4)`; c.fillRect(w / 3 + 24, 22, 44, 12);
+    c.strokeStyle = `rgba(${LITE},0.3)`; c.lineWidth = 2;
     for (let y = h * 0.8; y < h - 8; y += 8) { c.beginPath(); c.moveTo(12, y); c.lineTo(w - 12, y); c.stroke(); }
   });
 }
@@ -546,10 +533,10 @@ function crahTexture(): THREE.CanvasTexture {
 function grilleTexture(): THREE.CanvasTexture {
   return canvasTex(256, 128, (c, w, h) => {
     c.clearRect(0, 0, w, h);
-    c.fillStyle = `rgba(${INK},0.3)`; c.fillRect(10, 10, w - 20, h - 20);
-    c.strokeStyle = `rgba(${INK},0.55)`; c.lineWidth = 2;
+    c.fillStyle = `rgba(${LITE},0.12)`; c.fillRect(10, 10, w - 20, h - 20);
+    c.strokeStyle = `rgba(${LITE},0.4)`; c.lineWidth = 2;
     for (let x = 10; x <= w - 10; x += 12) { c.beginPath(); c.moveTo(x, 10); c.lineTo(x, h - 10); c.stroke(); }
-    c.lineWidth = 5; c.strokeRect(10, 10, w - 20, h - 20);
+    c.lineWidth = 2; c.strokeRect(10, 10, w - 20, h - 20);
     for (const x of [w / 3, (2 * w) / 3]) { c.beginPath(); c.moveTo(x, 10); c.lineTo(x, h - 10); c.stroke(); }
   });
 }
@@ -559,14 +546,14 @@ function fanTexture(): THREE.CanvasTexture {
   const t = canvasTex(160, 160, (c, w, h) => {
     c.clearRect(0, 0, w, h);
     const r = w * 0.4;
-    c.fillStyle = `rgba(${INK},0.5)`; c.beginPath(); c.arc(w / 2, h / 2, r, 0, Math.PI * 2); c.fill();
-    c.strokeStyle = `rgba(${INK},0.8)`; c.lineWidth = 6; c.beginPath(); c.arc(w / 2, h / 2, r, 0, Math.PI * 2); c.stroke();
+    c.fillStyle = `rgba(${INK},0.25)`; c.beginPath(); c.arc(w / 2, h / 2, r, 0, Math.PI * 2); c.fill();
+    c.strokeStyle = `rgba(${LITE},0.6)`; c.lineWidth = 4; c.beginPath(); c.arc(w / 2, h / 2, r, 0, Math.PI * 2); c.stroke();
     c.strokeStyle = 'rgba(225,230,236,0.55)'; c.lineWidth = 9; c.lineCap = 'round';
     for (let k = 0; k < 5; k++) {
       const a = (k / 5) * Math.PI * 2;
       c.beginPath(); c.moveTo(w / 2, h / 2); c.lineTo(w / 2 + Math.cos(a) * r * 0.82, h / 2 + Math.sin(a) * r * 0.82); c.stroke();
     }
-    c.fillStyle = `rgba(${INK},0.9)`; c.beginPath(); c.arc(w / 2, h / 2, r * 0.2, 0, Math.PI * 2); c.fill();
+    c.fillStyle = `rgba(${LITE},0.8)`; c.beginPath(); c.arc(w / 2, h / 2, r * 0.2, 0, Math.PI * 2); c.fill();
   });
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
   return t;
@@ -576,7 +563,7 @@ function fanTexture(): THREE.CanvasTexture {
 function louvreTexture(): THREE.CanvasTexture {
   const t = canvasTex(64, 64, (c, w, h) => {
     c.clearRect(0, 0, w, h);
-    c.strokeStyle = `rgba(${INK},0.42)`; c.lineWidth = 3;
+    c.strokeStyle = `rgba(${LITE},0.3)`; c.lineWidth = 2;
     for (let y = 4; y < h; y += 8) { c.beginPath(); c.moveTo(0, y); c.lineTo(w, y); c.stroke(); }
   });
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
