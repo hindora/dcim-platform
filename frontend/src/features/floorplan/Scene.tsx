@@ -49,8 +49,9 @@ const SURF = {
   floor: '#f7f8f9', tileLine: '#aab0b6', slab: '#dfe2e6', slabLine: '#cdd1d6',
   ventBg: '#5b6067', ventDot: '#c3c8cd', ventFrame: '#d7dbdf', wall: '#d5d8dc', wallSide: '#c7cacf', wallEdge: '#3b3e43',
   rackEdge: '#23272e', front: '#5b6470', instrument: '#4d8fa6',
-  /* the room stands on a concrete apron under a grey sky, in either theme */
-  backdrop: '#5e6266', apron: '#c6c9ce',
+  /* the room stands on a concrete apron in a slate studio, darkening toward
+     the bottom; the light theme's is lighter, but always darker than the floor */
+  backdrop: ['#3a4048', '#1a1d22'], backdropLight: ['#8a9097', '#5e6266'], apron: '#c6c9ce',
   coldAisle: '#2f7fd1', hotAisle: '#d64541',
   /* the frosted headroom above a capacity gauge */
   frost: '#dde5ee',
@@ -504,7 +505,7 @@ export default function RoomScene(p: SceneProps) {
 
   return (
     <>
-      <color attach="background" args={[SURF.backdrop]} />
+      <Backdrop themeTick={themeTick} />
       <hemisphereLight args={['#ffffff', '#b9bec6', 0.9]} />
       <directionalLight position={[W * 0.6, 14, D * 0.4]} intensity={0.55} />
 
@@ -928,6 +929,28 @@ function FpvRig({ W, D, rackMesh, racks, onFocus }: {
 }
 
 // ----------------------------------------------------------- room shell
+
+/** The studio behind the room: a vertical gradient in screen space. */
+function Backdrop({ themeTick }: { themeTick: number }) {
+  const { scene, invalidate } = useThree();
+  useEffect(() => {
+    const bg = resolveColor('var(--bg)');
+    const light = /^#[0-9a-f]{6}$/i.test(bg) && parseInt(bg.slice(1, 3), 16) + parseInt(bg.slice(3, 5), 16) + parseInt(bg.slice(5, 7), 16) > 384;
+    const [top, bottom] = light ? SURF.backdropLight : SURF.backdrop;
+    const cv = document.createElement('canvas');
+    cv.width = 2; cv.height = 512;
+    const c = cv.getContext('2d') as CanvasRenderingContext2D;
+    const g = c.createLinearGradient(0, 0, 0, cv.height);
+    g.addColorStop(0, top); g.addColorStop(1, bottom);
+    c.fillStyle = g; c.fillRect(0, 0, cv.width, cv.height);
+    const tex = new THREE.CanvasTexture(cv);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    scene.background = tex;
+    invalidate();
+    return () => { if (scene.background === tex) scene.background = null; tex.dispose(); };
+  }, [scene, invalidate, themeTick]);
+  return null;
+}
 
 function Room({ W, D, whiteSpace, walls: walled }: { W: number; D: number; whiteSpace: boolean; walls: boolean }) {
   const tiles = useMemo(() => tileTexture(W, D, !whiteSpace), [W, D, whiteSpace]);
