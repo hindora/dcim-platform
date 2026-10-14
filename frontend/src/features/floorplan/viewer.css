@@ -45,7 +45,7 @@
 .vw-pill button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .vw-pill button.is-on { color: var(--text); background: color-mix(in srgb, var(--accent) 22%, transparent);
                         box-shadow: inset 0 0 0 1px var(--accent); }
-.vw-icon { background: none; border: 1px solid var(--border); border-radius: 4px; color: var(--text-muted);
+.vw-icon { background: none; border: 1px solid var(--border); border-radius: 6px; color: var(--text-muted);
            font: inherit; font-size: 12px; font-weight: 600; letter-spacing: .06em; padding: 6px 10px;
            cursor: pointer; }
 .vw-icon:hover { color: var(--text); border-color: var(--border-strong); }
@@ -60,7 +60,7 @@
 
 /* search */
 .vw-search input { width: 100%; box-sizing: border-box; background: var(--bg-inset); color: var(--text);
-                   border: 1px solid var(--border); border-radius: 4px; padding: 8px 10px; font: inherit; margin: 4px 0 8px; }
+                   border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; font: inherit; margin: 4px 0 8px; }
 .vw-search input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .vw-search-group h4 { margin: 10px 0 4px; font-size: 0.7rem; letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted); }
 .vw-search-group ul { list-style: none; margin: 0; padding: 0; }
@@ -96,7 +96,7 @@
 .vw-section-body { padding: 0 0 10px; }
 .vw-note { margin: 6px 0 0; font-size: 0.74rem; }
 .vw-tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 8px 0; }
-.vw-tile { background: var(--bg-inset); border: 1px solid var(--border); border-radius: 4px; padding: 8px 6px;
+.vw-tile { background: var(--bg-inset); border: 1px solid var(--border); border-radius: 6px; padding: 8px 6px;
            text-align: center; display: flex; flex-direction: column; gap: 2px; }
 .vw-tile b { font-size: 0.95rem; font-variant-numeric: tabular-nums; }
 .vw-tile span { font-size: 0.64rem; letter-spacing: .08em; color: var(--text-faint); }
@@ -110,7 +110,7 @@
 .vw-links { display: flex; gap: 14px; margin-top: 12px; }
 .vw-radios { display: flex; flex-direction: column; gap: 2px; }
 .vw-radios label { display: grid; grid-template-columns: 16px 1fr; gap: 2px 8px; align-items: center;
-                   padding: 5px 6px; border-radius: 4px; cursor: pointer; }
+                   padding: 5px 6px; border-radius: 6px; cursor: pointer; }
 .vw-radios label:hover { background: var(--bg-inset); }
 .vw-radios label.is-on { box-shadow: inset 2px 0 0 var(--accent); }
 .vw-radios small { grid-column: 2; color: var(--text-faint); font-size: 0.7rem; }
@@ -119,9 +119,20 @@
 .vw-legends { position: absolute; z-index: 3; left: 12px; bottom: 54px; display: flex; gap: 8px; align-items: flex-end; }
 .vw-legend { background: var(--vw-glass); backdrop-filter: var(--vw-blur); -webkit-backdrop-filter: var(--vw-blur);
              border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
-             border-radius: var(--vw-radius); padding: 8px 10px; font-size: 0.72rem; min-width: 150px; box-shadow: var(--vw-shadow-sm); }
+             border-radius: 999px; font-size: 0.72rem; box-shadow: var(--vw-shadow-sm); }
+.vw-legend[open] { border-radius: var(--vw-radius); min-width: 150px; }
+.vw-legend-chip { display: flex; align-items: center; justify-content: space-between; gap: 10px; list-style: none;
+                  height: 32px; padding: 0 10px 0 12px; cursor: pointer; border-radius: 999px; color: var(--text); }
+.vw-legend-chip::-webkit-details-marker { display: none; }
+.vw-legend-chip:hover { background: color-mix(in srgb, var(--text) 6%, transparent); }
+.vw-legend-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.vw-legend-chip .chev { width: 7px; height: 7px; border-right: 1.6px solid var(--text-muted); border-bottom: 1.6px solid var(--text-muted);
+                        transform: rotate(45deg) translate(-2px, -2px); }
+.vw-legend[open] .vw-legend-chip { border-radius: var(--vw-radius) var(--vw-radius) 0 0; }
+.vw-legend[open] .vw-legend-chip .chev { transform: rotate(-135deg) translate(-2px, -2px); }
+.vw-legend-body { padding: 2px 12px 8px; }
 .vw-legend-title { font-weight: 600; letter-spacing: .06em; text-transform: uppercase; font-size: 0.66rem;
-                   color: var(--text-muted); margin-bottom: 4px; }
+                   color: var(--text-muted); }
 .vw-legend-row { display: flex; align-items: center; gap: 8px; padding: 2px 0; font-variant-numeric: tabular-nums; }
 .vw-swatch { width: 22px; height: 11px; border-radius: 2px; flex: none; }
 
@@ -143,8 +154,22 @@
             border-radius: 6px; padding: 8px 12px; font-size: 0.82rem; pointer-events: none; text-align: center; }
 .vw-focus b { display: block; font-size: 0.95rem; }
 .vw-hint { position: absolute; z-index: 3; left: 50%; bottom: 60px; transform: translateX(-50%);
-           font-size: 0.74rem; color: var(--text-muted); background: color-mix(in srgb, var(--bg-raised) 92%, transparent);
-           border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; pointer-events: none; }
+           font-size: 0.74rem; color: var(--text-muted); background: var(--vw-glass);
+           backdrop-filter: var(--vw-blur); -webkit-backdrop-filter: var(--vw-blur);
+           border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); border-radius: 999px; padding: 6px 12px; pointer-events: none; }
+/* how to move around: a round "?" at the bottom right, a card above it */
+.vw-help { position: absolute; z-index: 4; right: 12px; bottom: 54px; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+.vw-help-card { width: 240px; padding: 10px 14px 12px; background: var(--vw-glass);
+                backdrop-filter: var(--vw-blur); -webkit-backdrop-filter: var(--vw-blur);
+                border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); border-radius: var(--vw-radius);
+                box-shadow: var(--vw-shadow-lg); font-size: 0.78rem; color: var(--text); }
+.vw-help-card h4 { margin: 0 0 6px; font-size: 0.66rem; letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted); }
+.vw-help-card ul { margin: 0; padding-left: 16px; display: flex; flex-direction: column; gap: 3px; }
+.vw-panel ~ .vw-help { right: 344px; }
+/* the name over what is picked */
+.vw-seltag { display: inline-block; padding: 3px 9px; border-radius: 999px; white-space: nowrap;
+             background: var(--accent); color: #fff; font-size: 0.72rem; font-weight: 600; letter-spacing: .02em;
+             box-shadow: var(--vw-shadow-sm); }
 .vw-tip { position: fixed; z-index: 60; }
 
 @media (max-width: 900px) {
@@ -212,10 +237,14 @@
 /* A 48 px band above the status bar. The scrubber is the instrument; the
    rest of the bar stays quiet. Replay recolours the dot and label only. */
 .viewer.has-time .vw-status { bottom: 0; }
-.vw-time { position: absolute; z-index: 3; left: 0; right: 0; bottom: 42px; display: flex; flex-direction: column;
-           background: var(--bg-raised); border-top: 1px solid var(--border); font-size: 0.78rem;
-           color: var(--text-muted); }
-.vw-time-row { height: 48px; display: flex; align-items: center; gap: 12px; padding: 0 16px; }
+.vw-time { position: absolute; z-index: 3; left: 12px; right: 12px; bottom: 54px; display: flex; flex-direction: column;
+           background: var(--vw-glass); backdrop-filter: var(--vw-blur); -webkit-backdrop-filter: var(--vw-blur);
+           border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); border-radius: var(--vw-radius);
+           box-shadow: var(--vw-shadow-lg); font-size: 0.78rem; color: var(--text-muted); overflow: hidden; }
+/* Live and untouched for a while, the strip steps back; any move brings it up. */
+.vw-time.is-idle { opacity: 0.6; }
+.vw-time.is-idle:hover, .vw-time.is-idle:focus-within { opacity: 1; }
+.vw-time-row { height: 48px; display: flex; align-items: center; gap: 12px; padding: 0 12px; }
 /* The compare row: slimmer, under the main one, its thumb in the secondary
    colour so the two moments are never confused. */
 .vw-time-cmp { height: 40px; border-top: 1px dashed var(--border); background: color-mix(in srgb, var(--bg-inset) 55%, var(--bg-raised)); }
@@ -230,8 +259,10 @@
 .vw-stepsel select { padding: 0 6px; }
 .vw-src { white-space: nowrap; }
 .vw-time button, .vw-time select, .vw-time input[type="date"] {
-  font: inherit; color: var(--text); background: var(--bg-inset); border: 1px solid var(--border);
-  border-radius: 4px; min-height: 30px; cursor: pointer; touch-action: manipulation; }
+  font: inherit; color: var(--text); background: color-mix(in srgb, var(--bg-inset) 70%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  border-radius: 999px; min-height: 30px; cursor: pointer; touch-action: manipulation; }
+.vw-time select, .vw-time input[type="date"] { border-radius: 6px; }
 .vw-time button:focus-visible, .vw-time select:focus-visible, .vw-time input:focus-visible {
   outline: 2px solid var(--accent); outline-offset: 2px; }
 .vw-time button:disabled { opacity: 0.45; cursor: not-allowed; }
@@ -288,12 +319,12 @@
 /* Captions sit low in the pane, clear of the room select, the view switch and
    the information panel that all live along the top edge. */
 .vw-pane-cap { position: absolute; z-index: 2; bottom: 12px; left: 50%; transform: translateX(-50%); padding: 4px 10px;
-               border-radius: 4px; background: color-mix(in srgb, var(--bg-raised) 92%, transparent);
+               border-radius: 6px; background: color-mix(in srgb, var(--bg-raised) 92%, transparent);
                border: 1px solid var(--border); font-size: 0.74rem; color: var(--text-muted);
                font-variant-numeric: tabular-nums; white-space: nowrap; pointer-events: none; }
 .vw-pane-cap b { color: var(--text); font-weight: 600; }
-.viewer.has-time .vw-legends, .viewer.has-time .vw-panel { bottom: 102px; }
-.viewer.has-time .vw-hint { bottom: 108px; }
+.viewer.has-time .vw-legends, .viewer.has-time .vw-panel, .viewer.has-time .vw-help { bottom: 114px; }
+.viewer.has-time .vw-hint { bottom: 120px; }
 .viewer.has-compare-row .vw-legends, .viewer.has-compare-row .vw-panel { bottom: 142px; }
 .viewer.has-compare-row .vw-hint { bottom: 148px; }
 @media (max-width: 900px) {
@@ -338,13 +369,13 @@
 }
 /* the navigator's tree */
 .vw-tree-site { display: flex; align-items: center; gap: 8px; margin: 4px 0 10px; }
-.vw-tree-site select { flex: 1; background: var(--bg-inset); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 5px 8px; font: inherit; }
+.vw-tree-site select { flex: 1; background: var(--bg-inset); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; font: inherit; }
 .vw-tree ul { list-style: none; margin: 0; padding: 0; }
 .vw-tree-levels { margin-left: 12px !important; border-left: 1px solid var(--border); }
 .vw-tree-rooms { margin-left: 12px !important; border-left: 1px solid var(--border); }
 .vw-tree button, .vw-tree .rung.is-text { width: 100%; display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; gap: 8px; align-items: center;
                                          background: none; border: none; color: var(--text); font: inherit; text-align: left;
-                                         padding: 6px 8px; border-radius: 4px; cursor: pointer; }
+                                         padding: 6px 8px; border-radius: 6px; cursor: pointer; }
 .vw-tree .rung { grid-template-columns: minmax(0, 1fr) auto; font-weight: 600; }
 .vw-tree .rung.is-text { cursor: default; color: var(--text-muted); }
 .vw-tree button:hover { background: var(--bg-inset); }
@@ -353,7 +384,7 @@
 .vw-tree .swatch { width: 9px; height: 9px; border-radius: 2px; }
 .vw-tree .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vw-crumb { font: inherit; font-size: 0.8rem; font-weight: 600; color: var(--text); background: none; border: 1px solid transparent;
-  border-radius: 4px; padding: 3px 7px; cursor: pointer; }
+  border-radius: 6px; padding: 3px 7px; cursor: pointer; }
 .vw-crumb:hover { background: var(--bg-inset); border-color: var(--border); }
 .vw-crumb:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .vw-crumb.is-text { cursor: default; font-weight: 600; }
@@ -390,6 +421,7 @@
 
 /* one rhythm for the chrome's state changes */
 @media (prefers-reduced-motion: no-preference) {
-  .vw-round, .vw-pill button, .vw-where-place { transition: color 140ms ease-out, background-color 140ms ease-out,
-                                                            box-shadow 140ms ease-out, transform 80ms ease-out; }
+  .vw-round, .vw-pill button, .vw-where-place, .vw-legend-chip { transition: color 140ms ease-out, background-color 140ms ease-out,
+                                                                            box-shadow 140ms ease-out, transform 80ms ease-out; }
+  .vw-time { transition: opacity 400ms ease-out; }
 }

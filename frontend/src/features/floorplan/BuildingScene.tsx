@@ -1,5 +1,5 @@
 import type { Spin } from './ViewBar';
-import { useQuarterTurn } from './Scene';
+import { useDolly, useQuarterTurn } from './Scene';
 import { MapControls, OrbitControls, OrthographicCamera, PerspectiveCamera } from '@react-three/drei';
 import { useThree, type ThreeEvent } from '@react-three/fiber';
 import { useEffect, useMemo, useRef, type ElementRef } from 'react';
@@ -499,11 +499,12 @@ function Cameras({ mode, span, top, planElev, W, D, cx, cz, resetTick, spin, run
   const map = useRef<ElementRef<typeof MapControls>>(null);
   const { camera, size, invalidate } = useThree();
   useQuarterTurn(spin, orbit, camera, invalidate);
+  const dolly = useDolly(orbit, camera, invalidate);
   useEffect(() => {
     if (mode === '3d') {
       camera.up.set(0, 1, 0);
-      camera.position.set(cx + span * 0.8, top + span * 0.5, cz + span * 0.95);
       orbit.current?.target.set(cx, top / 2, cz);
+      dolly(new THREE.Vector3(cx + span * 0.8, top + span * 0.5, cz + span * 0.95), new THREE.Vector3(cx, top / 2, cz));
       orbit.current?.update();
     } else {
       camera.position.set(cx, planElev + 60, cz);
@@ -518,7 +519,7 @@ function Cameras({ mode, span, top, planElev, W, D, cx, cz, resetTick, spin, run
       map.current?.update();
     }
     invalidate();
-  }, [mode, rung, resetTick, camera, span, top, planElev, W, D, cx, cz, size.width, size.height, invalidate]);
+  }, [mode, rung, resetTick, camera, span, top, planElev, W, D, cx, cz, size.width, size.height, invalidate, dolly]);
   if (mode === 'plan') {
     return (
       <>

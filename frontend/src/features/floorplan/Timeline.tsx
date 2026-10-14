@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from 'react';
+import { useMemo, type ReactNode, useEffect, useState } from 'react';
 import type { TwinFrameInfo } from '../../api/client';
 
 /**
@@ -59,7 +59,7 @@ function Glyph({ kind }: { kind: 'play' | 'pause' | 'back' | 'fwd' }) {
   return (
     <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden focusable="false">
       <path d={d} fill={filled ? 'currentColor' : 'none'} stroke={filled ? 'none' : 'currentColor'}
-            strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+            strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
@@ -189,11 +189,31 @@ export interface TimelineProps {
   onCmpTime: (d: Date) => void;
 }
 
+const IDLE_MS = 10_000;
+
+/** True once the pointer and keyboard have been still for IDLE_MS; false on
+ *  the next move. Only asked for while the room is live and not playing, so
+ *  a replay in progress never fades. */
+function useIdle(wanted: boolean): boolean {
+  const [idle, setIdle] = useState(false);
+  useEffect(() => {
+    if (!wanted) { setIdle(false); return; }
+    let timer = window.setTimeout(() => setIdle(true), IDLE_MS);
+    const wake = () => { setIdle(false); window.clearTimeout(timer); timer = window.setTimeout(() => setIdle(true), IDLE_MS); };
+    window.addEventListener('pointermove', wake, { passive: true });
+    window.addEventListener('keydown', wake);
+    return () => { window.clearTimeout(timer); window.removeEventListener('pointermove', wake); window.removeEventListener('keydown', wake); };
+  }, [wanted]);
+  return idle;
+}
+
 export function Timeline({ t, playing, step, speed, cmp, cmpT, earliest, frame, cmpFrame,
   onLive, onTime, onPlay, onStep, onSpeed, onCmp, onCmpTime }: TimelineProps) {
   const atEnd = !t || t.getTime() + step * 60_000 > Date.now();
+  const idle = useIdle(!t && !playing && cmp == null);
   return (
-    <div className={`vw-time${t ? ' is-replay' : ''}${cmp === 'pick' ? ' has-compare' : ''}`} role="group" aria-label="Timeline">
+    <div className={`vw-time${t ? ' is-replay' : ''}${cmp === 'pick' ? ' has-compare' : ''}${idle ? ' is-idle' : ''}`}
+         role="group" aria-label="Timeline">
       <div className="vw-time-row">
         <button type="button" className={`vw-live${t ? '' : ' is-on'}`} onClick={onLive}
                 aria-pressed={!t} title={t ? 'Back to the live room' : 'Showing the live room'}>

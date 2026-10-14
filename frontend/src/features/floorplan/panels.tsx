@@ -37,22 +37,43 @@ function rtiVerdict(v: number | null | undefined): string | null {
   return 'balanced';
 }
 
+const LEGEND_KEY = 'dcim.viewer.legend:';
+
+/** A legend is a chip that opens to its bands. Open or closed is remembered
+ *  per legend in this browser; a narrow window starts closed. */
 export function Legend({ spec: raw }: { spec: LegendSpec }) {
   const spec = legendInUnit(raw);
+  const [open, setOpen] = useState<boolean>(() => {
+    try {
+      const v = localStorage.getItem(LEGEND_KEY + raw.title);
+      if (v === 'open') return true;
+      if (v === 'closed') return false;
+    } catch { /* a private window */ }
+    return typeof window === 'undefined' ? true : window.innerWidth >= 1200;
+  });
+  const toggle = (next: boolean) => {
+    setOpen(next);
+    try { localStorage.setItem(LEGEND_KEY + raw.title, next ? 'open' : 'closed'); } catch { /* a private window */ }
+  };
   return (
-    <div className="vw-legend">
-      <div className="vw-legend-title">{spec.title}{spec.unit && <span className="muted"> ({spec.unit})</span>}</div>
-      {spec.bands.map((b) => (
-        <div key={b.label} className="vw-legend-row">
-          <span className="vw-swatch" style={{ background: b.color }} aria-hidden />{b.label}
-        </div>
-      ))}
-      {spec.none && (
-        <div className="vw-legend-row muted">
-          <span className="vw-swatch" style={{ background: 'var(--band-none)' }} aria-hidden />{spec.none}
-        </div>
-      )}
-    </div>
+    <details className="vw-legend" open={open} onToggle={(e) => toggle((e.currentTarget as HTMLDetailsElement).open)}>
+      <summary className="vw-legend-chip">
+        <span className="vw-legend-title">{spec.title}{spec.unit && <span className="muted"> ({spec.unit})</span>}</span>
+        <span className="chev" aria-hidden />
+      </summary>
+      <div className="vw-legend-body">
+        {spec.bands.map((b) => (
+          <div key={b.label} className="vw-legend-row">
+            <span className="vw-swatch" style={{ background: b.color }} aria-hidden />{b.label}
+          </div>
+        ))}
+        {spec.none && (
+          <div className="vw-legend-row muted">
+            <span className="vw-swatch" style={{ background: 'var(--band-none)' }} aria-hidden />{spec.none}
+          </div>
+        )}
+      </div>
+    </details>
   );
 }
 

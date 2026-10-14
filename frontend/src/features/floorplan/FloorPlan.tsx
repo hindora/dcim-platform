@@ -7,6 +7,7 @@ import {
 } from '../../api/client';
 import { Seg } from '../../components/estate';
 import { ViewBar, type Spin } from './ViewBar';
+import { Help } from './Help';
 import { alarmColor, type Overlay } from './colors';
 import { fireWords, type RoomDoor, type RoomFire } from './Fittings';
 import {
@@ -590,10 +591,12 @@ export function FloorPlanView() {
             ? <span>{bs.compound?.extent_m ? `${bs.compound.extent_m.width} × ${bs.compound.extent_m.depth} m · ` : ''}{bs.levels.length} levels · {bs.rooms.length - outdoorRooms} rooms{outdoorRooms ? ` · ${outdoorRooms} outdoor` : ''}{zoneCount ? ` · ${zoneCount} zones` : ''}</span>
             : <span>{bs.levels.length} levels · {bs.rooms.length - outdoorRooms} rooms · {rackTotal} racks · {devTotal} devices</span>)}
           <span className="spacer" />
-          <span>{webgl
-            ? (bMode === 'plan' ? 'Drag to pan · scroll to zoom' : 'Drag to orbit · scroll to zoom') + (atSite ? ' · click the building to enter it' : ' · click a room to enter it')
-            : atSite ? 'Choose the building or a room' : 'Click a room to enter it'}</span>
         </div>
+        <Help keyName={`${atSite ? 'site' : 'building'}:${bMode}`} lines={webgl
+          ? [bMode === 'plan' ? 'Drag to pan' : 'Drag to orbit', 'Scroll to zoom',
+             atSite ? 'Click the building to enter it' : 'Click a room to enter it',
+             'Backspace climbs a rung · Escape clears']
+          : [atSite ? 'Choose the building or a room' : 'Click a room to enter it', 'Backspace climbs a rung']} />
       </>
     );
     if (!webgl) {
@@ -748,9 +751,13 @@ export function FloorPlanView() {
                 role={fireSays.level === 'critical' ? 'alert' : undefined}>{fireSays.text}</span>
         )}
         <span className="spacer" />
-        <span>{mode === 'fpv' ? 'Pointer lock to look · W A S D to walk'
-          : mode === 'plan' ? 'Drag to pan · scroll to zoom' : 'Drag to orbit · right-drag to pan · scroll to zoom'}</span>
       </div>
+      <Help keyName={`room:${mode}`} lines={mode === 'fpv'
+        ? ['Click the view to look around', 'W A S D to walk · Shift to hurry', 'Esc releases the pointer']
+        : mode === 'plan'
+          ? ['Drag to pan', 'Scroll to zoom', 'Click a rack or a unit for its information', 'Backspace climbs to the building']
+          : ['Drag to orbit · right-drag to pan', 'Scroll to zoom', 'The round buttons turn and reset the camera',
+             'Click a rack or a unit for its information', 'Backspace climbs to the building']} />
     </div>
   );
 }

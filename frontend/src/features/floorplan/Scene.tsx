@@ -1,6 +1,6 @@
 import type { Spin } from './ViewBar';
 import {
-  MapControls, OrbitControls, OrthographicCamera, PerspectiveCamera, PointerLockControls,
+  Html, MapControls, OrbitControls, OrthographicCamera, PerspectiveCamera, PointerLockControls,
 } from '@react-three/drei';
 import { useFrame, useThree, type ThreeEvent } from '@react-three/fiber';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, type ElementRef } from 'react';
@@ -661,11 +661,12 @@ function Cameras({ mode, W, D, resetTick, spin, aisles, X, Z }: {
   const { camera, size, invalidate } = useThree();
   const span = Math.max(W, D);
   useQuarterTurn(spin, orbit, camera, invalidate);
+  const dolly = useDolly(orbit, camera, invalidate);
 
   useEffect(() => {
     if (mode === '3d') {
-      camera.position.set(span * 0.7, span * 0.75, span * 0.95);
       orbit.current?.target.set(0, 0.8, 0);
+      dolly(new THREE.Vector3(span * 0.7, span * 0.75, span * 0.95), new THREE.Vector3(0, 0.8, 0));
       orbit.current?.update();
     } else if (mode === 'plan') {
       camera.position.set(0, 60, 0);
@@ -686,7 +687,7 @@ function Cameras({ mode, W, D, resetTick, spin, aisles, X, Z }: {
       camera.lookAt(X(W), EYE, z);
     }
     invalidate();
-  }, [mode, resetTick, camera, span, W, D, size.width, size.height, aisles, X, Z, invalidate]);
+  }, [mode, resetTick, camera, span, W, D, size.width, size.height, aisles, X, Z, invalidate, dolly]);
 
   if (mode === 'plan') {
     return (
@@ -707,6 +708,33 @@ function Cameras({ mode, W, D, resetTick, spin, aisles, X, Z }: {
                      maxPolarAngle={Math.PI / 2.05} minDistance={1.2} maxDistance={span * 4} />
     </>
   );
+}
+
+const DOLLY_MS = 300;
+
+/** Arrive at a 3D home position with a short dolly in from a third further
+ *  out, so entering a room or resetting the camera is a move, not a cut.
+ *  Reduced motion, or no orbit yet, lands at once. */
+export function useDolly(orbit: React.RefObject<{ update: () => void } | null>, camera: THREE.Camera, invalidate: () => void) {
+  const run = useRef<{ from: THREE.Vector3; to: THREE.Vector3; t0: number } | null>(null);
+  useFrame(() => {
+    const d = run.current;
+    if (!d) return;
+    const k = Math.min(1, (performance.now() - d.t0) / DOLLY_MS);
+    const e = 1 - (1 - k) ** 3;
+    camera.position.lerpVectors(d.from, d.to, e);
+    orbit.current?.update();
+    invalidate();
+    if (k >= 1) run.current = null;
+  });
+  return useCallback((to: THREE.Vector3, target: THREE.Vector3) => {
+    const still = typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    if (still) { camera.position.copy(to); run.current = null; return; }
+    const from = to.clone().sub(target).multiplyScalar(1.3).add(target);
+    camera.position.copy(from);
+    run.current = { from, to, t0: performance.now() };
+    invalidate();
+  }, [camera, invalidate]);
 }
 
 /** Turn the orbit camera a quarter around its target on each new `spin`.
@@ -1104,26 +1132,42 @@ function Highlight({ sel, rackBoxes, racks, unitBoxes, units, devices, rackById,
   X: (x: number) => number; Z: (y: number) => number; color: string;
 }) {
   let box: GBox | null = null;
+  let name = '';
   if (sel?.kind === 'rack') {
     const i = racks.findIndex((r) => r.id === sel.id);
-    if (i >= 0) box = rackBoxes[i];
+    if (i >= 0) { box = rackBoxes[i]; name = racks[i].name; }
   } else if (sel?.kind === 'equipment') {
     const i = units.findIndex((e) => e.id === sel.id);
-    if (i >= 0) box = unitBoxes[i];
+    if (i >= 0) { box = unitBoxes[i]; name = units[i].name; }
   } else if (sel?.kind === 'device') {
     const d = devices.find((x) => x.id === sel.id);
     const r = d && rackById.get(d.rack_id);
     const b = d && r ? deviceBox(d, r, X, Z, 0) : null;
     if (b) box = { x: b[0], y: b[1], z: b[2], w: b[3], h: b[4], d: b[5], rot: 0, front: 0,
                    paint: { bot: '', mid: '', top: '', fill: 1 } };
+    if (d) name = d.name;
   }
   const [bw, bh, bd] = box ? [box.w + 0.04, box.h + 0.04, box.d + 0.04] : [0, 0, 0];
   const geom = useMemo(() => new THREE.EdgesGeometry(new THREE.BoxGeometry(bw, bh, bd)), [bw, bh, bd]);
-  useEffect(() => () => geom.dispose(), [geom]);
+  const glow = useMemo(() => new THREE.BoxGeometry(bw + 0.06, bh + 0.06, bd + 0.06), [bw, bh, bd]);
+  useEffect(() => () => { geom.dispose(); glow.dispose(); }, [geom, glow]);
   if (!box) return null;
+  // The selection: a soft glow of the accent around the box, the edges on
+  // top of it, and the name floating above - so what is picked reads as
+  // picked from any angle and at any zoom, without a loud yellow frame.
   return (
-    <lineSegments geometry={geom} position={[box.x, box.y, box.z]} rotation-y={box.rot}>
-      <lineBasicMaterial color={color} linewidth={2} />
-    </lineSegments>
+    <group position={[box.x, box.y, box.z]} rotation-y={box.rot}>
+      <mesh geometry={glow} renderOrder={5}>
+        <meshBasicMaterial color={color} transparent opacity={0.16} depthWrite={false} />
+      </mesh>
+      <lineSegments geometry={geom}>
+        <lineBasicMaterial color={color} linewidth={2} />
+      </lineSegments>
+      {name && (
+        <Html position={[0, bh / 2 + 0.25, 0]} center zIndexRange={[3, 3]} style={{ pointerEvents: 'none' }}>
+          <span className="vw-seltag">{name}</span>
+        </Html>
+      )}
+    </group>
   );
 }
