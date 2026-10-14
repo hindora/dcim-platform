@@ -410,13 +410,13 @@ function doorTexture(split: boolean): THREE.CanvasTexture {
     // The front is a stack of server faces: a dark bezel line every 2U, a
     // lighter plate between, two dark rails down the sides. Bold, so a rack
     // reads as a rack from across the room, the way a glass door shows it.
-    for (let y = 10; y < h - 8; y += 20) {
-      c.fillStyle = `rgba(${INK},0.42)`; c.fillRect(10, y, w - 20, 5);
-      c.fillStyle = 'rgba(255,255,255,0.16)'; c.fillRect(10, y + 5, w - 20, 3);
-      c.fillStyle = `rgba(${INK},0.14)`; c.fillRect(14, y + 10, 10, 6); c.fillRect(w - 24, y + 10, 10, 6);
+    for (let y = 9; y < h - 8; y += 16) {
+      c.fillStyle = `rgba(${INK},0.58)`; c.fillRect(9, y, w - 18, 6);
+      c.fillStyle = 'rgba(255,255,255,0.22)'; c.fillRect(9, y + 6, w - 18, 2);
+      c.fillStyle = `rgba(${INK},0.16)`; c.fillRect(13, y + 10, 9, 4); c.fillRect(w - 22, y + 10, 9, 4);
     }
-    c.fillStyle = `rgba(${INK},0.6)`; c.fillRect(2, 2, 7, h - 4); c.fillRect(w - 9, 2, 7, h - 4);
-    c.strokeStyle = `rgba(${INK},0.55)`; c.lineWidth = 4; c.strokeRect(2, 2, w - 4, h - 4);
+    c.fillStyle = `rgba(${INK},0.68)`; c.fillRect(2, 2, 7, h - 4); c.fillRect(w - 9, 2, 7, h - 4);
+    c.strokeStyle = `rgba(${INK},0.6)`; c.lineWidth = 4; c.strokeRect(2, 2, w - 4, h - 4);
     if (split) {
       c.lineWidth = 5; c.beginPath(); c.moveTo(w / 2, 6); c.lineTo(w / 2, h - 6); c.stroke();
     } else {
@@ -430,11 +430,9 @@ function doorTexture(split: boolean): THREE.CanvasTexture {
 function roofTexture(): THREE.CanvasTexture {
   return canvasTex(128, 256, (c, w, h) => {
     c.clearRect(0, 0, w, h);
-    c.strokeStyle = `rgba(${INK},0.6)`; c.lineWidth = 8; c.strokeRect(4, 4, w - 8, h - 8);
-    c.fillStyle = `rgba(${INK},0.5)`;
-    c.fillRect(22, 20, w - 44, 22); c.fillRect(22, 52, w - 44, 12);
-    c.strokeStyle = `rgba(${INK},0.22)`; c.lineWidth = 2;
-    for (let y = 96; y < h - 20; y += 12) { c.beginPath(); c.moveTo(22, y); c.lineTo(w - 22, y); c.stroke(); }
+    // Plain: the frame alone. Cable entries and brush strips drew a busy
+    // top that read as clutter from the usual height.
+    c.strokeStyle = `rgba(${INK},0.5)`; c.lineWidth = 5; c.strokeRect(2.5, 2.5, w - 5, h - 5);
   });
 }
 
@@ -519,7 +517,8 @@ function kindOf(deviceType: string): UnitKind {
 function sectionTexture(): THREE.CanvasTexture {
   const t = canvasTex(128, 320, (c, w, h) => {
     c.clearRect(0, 0, w, h);
-    c.strokeStyle = `rgba(${INK},0.6)`; c.lineWidth = 5; c.strokeRect(2.5, 2.5, w - 5, h - 5);
+    c.fillStyle = `rgba(${INK},0.1)`; c.fillRect(12, 12, w - 24, h - 24);
+    c.strokeStyle = `rgba(${INK},0.5)`; c.lineWidth = 4; c.strokeRect(2, 2, w - 4, h - 4);
     c.fillStyle = `rgba(${INK},0.8)`; c.fillRect(w - 20, h * 0.44, 7, 44);
     c.fillStyle = 'rgba(16,20,26,0.82)'; c.fillRect(26, 34, w - 64, 40);
     c.fillStyle = 'rgba(120,220,170,0.9)'; c.fillRect(32, 42, 30, 6);
@@ -534,13 +533,12 @@ function sectionTexture(): THREE.CanvasTexture {
 function crahTexture(): THREE.CanvasTexture {
   return canvasTex(256, 288, (c, w, h) => {
     c.clearRect(0, 0, w, h);
-    c.strokeStyle = `rgba(${INK},0.6)`; c.lineWidth = 5; c.strokeRect(2.5, 2.5, w - 5, h - 5);
-    for (const x of [w / 3, (2 * w) / 3]) { c.beginPath(); c.moveTo(x, 4); c.lineTo(x, h * 0.72); c.stroke(); }
-    c.beginPath(); c.moveTo(4, h * 0.72); c.lineTo(w - 4, h * 0.72); c.stroke();
-    c.fillStyle = 'rgba(16,20,26,0.85)'; c.fillRect(w / 3 + 22, 26, w / 3 - 44, 44);
-    c.fillStyle = 'rgba(120,200,235,0.92)'; c.fillRect(w / 3 + 30, 36, 40, 7);
-    c.strokeStyle = `rgba(${INK},0.45)`; c.lineWidth = 3;
-    for (let y = h * 0.72 + 10; y < h - 8; y += 8) { c.beginPath(); c.moveTo(12, y); c.lineTo(w - 12, y); c.stroke(); }
+    c.strokeStyle = `rgba(${INK},0.5)`; c.lineWidth = 4; c.strokeRect(2, 2, w - 4, h - 4);
+    c.strokeStyle = `rgba(${INK},0.3)`; c.lineWidth = 2;
+    for (const x of [w / 3, (2 * w) / 3]) { c.beginPath(); c.moveTo(x, 4); c.lineTo(x, h - 4); c.stroke(); }
+    c.fillStyle = 'rgba(16,20,26,0.75)'; c.fillRect(w / 3 + 24, 22, 44, 14);
+    c.strokeStyle = `rgba(${INK},0.18)`; c.lineWidth = 2;
+    for (let y = h * 0.8; y < h - 8; y += 8) { c.beginPath(); c.moveTo(12, y); c.lineTo(w - 12, y); c.stroke(); }
   });
 }
 

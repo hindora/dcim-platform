@@ -172,7 +172,7 @@
   --band-none: #2f343a;
   --band-plain: #2f3640;
   --band-cooling: #c3c7cc;
-  --band-power: #dfe2e6;
+  --band-power: #eef0f2;
 
   /* Node chrome: the parts that are not the fill. */
   --node-label:     rgba(255, 255, 255, 0.74);

@@ -45,7 +45,7 @@ const EYE = 1.6;
 const SURF = {
   floor: '#f7f8f9', tileLine: '#aab0b6', slab: '#dfe2e6', slabLine: '#cdd1d6',
   ventBg: '#5b6067', ventDot: '#c3c8cd', ventFrame: '#d7dbdf', wall: '#d5d8dc', wallSide: '#c7cacf', wallEdge: '#3b3e43',
-  rackEdge: '#1f2328', front: '#5b6470', instrument: '#4d8fa6',
+  rackEdge: '#15181c', front: '#5b6470', instrument: '#4d8fa6',
   /* the room stands on a concrete apron under a grey sky, in either theme */
   backdrop: '#5e6266', apron: '#c6c9ce',
   coldAisle: '#3fae4a', hotAisle: '#8a9199', fan: '#5fc15f',
@@ -114,7 +114,10 @@ const GRADIENT_FRAG = /* glsl */`
     bool rear = vSplit > 0.5 && vZ < 0.0;
     vec3 b = rear ? vRBot : vBot; vec3 m = rear ? vRMid : vMid; vec3 t = rear ? vRTop : vTop;
     vec3 c = vT < 0.5 ? mix(b, m, vT * 2.0) : mix(m, t, (vT - 0.5) * 2.0);
-    float l = 0.5 + 0.5 * max(dot(normalize(vN), normalize(uLight)), 0.0);
+    // three tones a painted box reads in: the top full, the front a step
+    // down, the sides another - the cabinet's shape from across the room
+    float l = 0.55 + 0.45 * max(dot(normalize(vN), normalize(uLight)), 0.0);
+    if (vN.y > 0.9) l = 1.0;
     gl_FragColor = vec4(c * l, uOpacity);
     #include <colorspace_fragment>
   }`;
@@ -1061,7 +1064,7 @@ function RackFrames({ racks, X, Z }: { racks: FloorRack[]; X: (x: number) => num
   useEffect(() => () => { edges.dispose(); fronts.dispose(); }, [edges, fronts]);
   return (
     <group>
-      <lineSegments geometry={edges}><lineBasicMaterial color={SURF.rackEdge} transparent opacity={0.4} /></lineSegments>
+      <lineSegments geometry={edges}><lineBasicMaterial color={SURF.rackEdge} transparent opacity={0.75} /></lineSegments>
       <lineSegments geometry={fronts}><lineBasicMaterial color={SURF.front} /></lineSegments>
     </group>
   );
