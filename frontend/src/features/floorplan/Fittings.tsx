@@ -26,7 +26,7 @@ import type { GBox } from './Scene';
 
 // Physical colours, the same under both themes - see SURF in Scene.tsx.
 const FIT = {
-  frame: '#3a4048', leaf: '#7d8792', leafEdge: '#4b535d', glass: '#9fc4d8', bar: '#d6dade',
+  frame: '#2f3338', leaf: '#a3764a', leafEdge: '#5c4330', glass: '#9fc4d8', bar: '#d6dade',
   fire: '#c62a26', fireDark: '#7f1a17', hose: '#1d2126', release: '#e0b020', abort: '#2f6fb3',
   exit: '#1f9d55', exitInk: '#ffffff', skirting: '#8f96a0', plinth: '#22262c',
   desk: '#b8a58a', screen: '#15181d', steel: '#aab1ba', fence: '#7c848e', stack: '#4a5058',
@@ -407,11 +407,15 @@ export function OpenEnclosure({ W, D, kind }: { W: number; D: number; kind: 'fen
 function doorTexture(split: boolean): THREE.CanvasTexture {
   return canvasTex(128, 448, (c, w, h) => {
     c.clearRect(0, 0, w, h);
-    c.fillStyle = `rgba(${INK},0.2)`;
+    // The mounted kit shows through as the slats of server fronts, one every
+    // few U, over a faint perforation - a lighter touch than a heavy frame.
+    c.fillStyle = `rgba(${INK},0.1)`;
     for (let y = 12; y < h - 10; y += 7) {
       for (let x = 12 + ((y / 7) % 2) * 3.5; x < w - 10; x += 7) c.fillRect(x, y, 3, 3);
     }
-    c.strokeStyle = `rgba(${INK},0.78)`; c.lineWidth = 9; c.strokeRect(4.5, 4.5, w - 9, h - 9);
+    c.strokeStyle = `rgba(${INK},0.22)`; c.lineWidth = 2;
+    for (let y = 18; y < h - 14; y += 11) { c.beginPath(); c.moveTo(10, y); c.lineTo(w - 10, y); c.stroke(); }
+    c.strokeStyle = `rgba(${INK},0.5)`; c.lineWidth = 5; c.strokeRect(2.5, 2.5, w - 5, h - 5);
     if (split) {
       c.lineWidth = 5; c.beginPath(); c.moveTo(w / 2, 6); c.lineTo(w / 2, h - 6); c.stroke();
     } else {

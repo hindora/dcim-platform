@@ -43,9 +43,12 @@ const EYE = 1.6;
 // themes, like the readings' bands; only the chrome around the picture follows
 // the theme. These are a rendering of the room, not UI colour.
 const SURF = {
-  floor: '#eef0f3', tileLine: '#cfd4da', slab: '#dadde1', slabLine: '#c6cad0',
-  ventBg: '#e2e6ea', ventDot: '#848c96', wall: '#d9dde3', wallEdge: '#9aa1ab',
-  rackEdge: '#23272e', front: '#5b6470', instrument: '#4d8fa6',
+  floor: '#f4f5f6', tileLine: '#d3d7dc', slab: '#dfe2e6', slabLine: '#cdd1d6',
+  ventBg: '#b7bcc3', ventDot: '#5f656d', wall: '#d5d8dc', wallEdge: '#3b3e43',
+  rackEdge: '#1f2328', front: '#5b6470', instrument: '#4d8fa6',
+  /* the room stands on a concrete apron under a grey sky, in either theme */
+  backdrop: '#5e6266', apron: '#c6c9ce',
+  coldAisle: '#3fae4a', hotAisle: '#8a9199', fan: '#5fc15f',
 };
 
 export interface HoverTip { x: number; y: number; text: string }
@@ -222,9 +225,18 @@ function canvasTexture(size: number, draw: (c: CanvasRenderingContext2D, s: numb
 function tileTexture(W: number, D: number, slab: boolean): THREE.CanvasTexture {
   return canvasTexture(128, (c, s) => {
     c.fillStyle = slab ? SURF.slab : SURF.floor; c.fillRect(0, 0, s, s);
-    c.strokeStyle = slab ? SURF.slabLine : SURF.tileLine; c.lineWidth = slab ? 1 : 2;
+    c.strokeStyle = slab ? SURF.slabLine : SURF.tileLine; c.lineWidth = slab ? 1 : 1.5;
     c.strokeRect(0.5, 0.5, s - 1, s - 1);
   }, [W / (slab ? 1.0 : TILE), D / (slab ? 1.0 : TILE)]);
+}
+
+/** One cold-aisle tile: green, with the dashed edge a marked-out tile wears. */
+function aisleTexture(cols: number, rows: number): THREE.CanvasTexture {
+  return canvasTexture(64, (c, s) => {
+    c.fillStyle = SURF.coldAisle; c.fillRect(0, 0, s, s);
+    c.strokeStyle = 'rgba(255,255,255,0.75)'; c.lineWidth = 2; c.setLineDash([6, 4]);
+    c.strokeRect(2, 2, s - 4, s - 4);
+  }, [Math.max(1, cols), Math.max(1, rows)]);
 }
 
 function ventTexture(): THREE.CanvasTexture {
@@ -391,7 +403,7 @@ export default function RoomScene(p: SceneProps) {
 
   return (
     <>
-      <color attach="background" args={[tones.bg]} />
+      <color attach="background" args={[SURF.backdrop]} />
       <hemisphereLight args={['#ffffff', '#b9bec6', 0.9]} />
       <directionalLight position={[W * 0.6, 14, D * 0.4]} intensity={0.55} />
 
@@ -408,7 +420,7 @@ export default function RoomScene(p: SceneProps) {
       {vis.vents && vents.length > 0 && <Vents vents={vents} X={X} Z={Z} />}
       {vis.aisles && plan.aisles.map((a) => (
         <AisleBand key={`${a.label}-${a.y_start}`} a={a} W={W} Z={Z} X={X} racks={plan.racks}
-                   tones={tones} containment={vis.containment} />
+                   containment={vis.containment} />
       ))}
 
       {/* See-into-racks: the layer's colour stays on the cabinet as a tinted
@@ -434,6 +446,7 @@ export default function RoomScene(p: SceneProps) {
                          onOut={() => onTip(null)} />
           <UnitFrames boxes={unitBoxes} />
           {vis.detail && <UnitDetails boxes={unitBoxes} types={unitTypes} />}
+          {vis.detail && <FanMarks boxes={unitBoxes} types={unitTypes} />}
           <Instruments items={instruments} X={X} Z={Z}
                        onSelect={fpv ? undefined : onSelect} onTip={fpv ? undefined : onTip} />
         </>
@@ -823,6 +836,10 @@ function Room({ W, D, whiteSpace, walls: walled }: { W: number; D: number; white
   ];
   return (
     <group>
+      <mesh rotation-x={-Math.PI / 2} position={[0, -0.003, 0]}>
+        <planeGeometry args={[W + 3, D + 3]} />
+        <meshStandardMaterial color={SURF.apron} roughness={1} />
+      </mesh>
       <mesh rotation-x={-Math.PI / 2} receiveShadow>
         <planeGeometry args={[W, D]} />
         <meshStandardMaterial map={tiles} roughness={0.95} />
@@ -889,13 +906,16 @@ function Vents({ vents, X, Z }: { vents: { x: number; y: number }[]; X: (x: numb
   );
 }
 
-function AisleBand({ a, W, X, Z, racks, tones, containment }: {
+function AisleBand({ a, W, X, Z, racks, containment }: {
   a: FloorAisle; W: number; X: (x: number) => number; Z: (y: number) => number;
-  racks: FloorRack[]; tones: { cold: string; hot: string }; containment: boolean;
+  racks: FloorRack[]; containment: boolean;
 }) {
   const depth = a.y_end - a.y_start;
   const zc = Z((a.y_start + a.y_end) / 2);
-  const tint = a.kind === 'hot' ? tones.hot : tones.cold;
+  const cold = a.kind !== 'hot';
+  const tint = cold ? SURF.coldAisle : SURF.hotAisle;
+  const tiles = useMemo(() => (cold ? aisleTexture(Math.round(W / TILE), Math.round(depth / TILE)) : null), [cold, W, depth]);
+  useEffect(() => () => tiles?.dispose(), [tiles]);
   const flank = racks.filter((r) => Math.abs(r.y - (a.y_start + a.y_end) / 2) <= depth / 2 + (r.d_m ?? DEFAULT_D));
   const x0 = flank.length ? Math.min(...flank.map((r) => r.x - (r.w_m ?? DEFAULT_W) / 2)) : 0;
   const x1 = flank.length ? Math.max(...flank.map((r) => r.x + (r.w_m ?? DEFAULT_W) / 2)) : 0;
@@ -905,7 +925,9 @@ function AisleBand({ a, W, X, Z, racks, tones, containment }: {
     <group>
       <mesh rotation-x={-Math.PI / 2} position={[0, 0.003, zc]}>
         <planeGeometry args={[W, depth]} />
-        <meshBasicMaterial color={tint} transparent opacity={0.1} depthWrite={false} />
+        {tiles
+          ? <meshBasicMaterial map={tiles} transparent opacity={0.42} depthWrite={false} />
+          : <meshBasicMaterial color={tint} transparent opacity={0.06} depthWrite={false} />}
       </mesh>
       {containment && a.contained && flank.length > 0 && (
         <group>
@@ -951,7 +973,7 @@ function RackFrames({ racks, X, Z }: { racks: FloorRack[]; X: (x: number) => num
   useEffect(() => () => { edges.dispose(); fronts.dispose(); }, [edges, fronts]);
   return (
     <group>
-      <lineSegments geometry={edges}><lineBasicMaterial color={SURF.rackEdge} transparent opacity={0.55} /></lineSegments>
+      <lineSegments geometry={edges}><lineBasicMaterial color={SURF.rackEdge} transparent opacity={0.4} /></lineSegments>
       <lineSegments geometry={fronts}><lineBasicMaterial color={SURF.front} /></lineSegments>
     </group>
   );
@@ -1009,6 +1031,44 @@ function Instruments({ items, X, Z, onSelect, onTip }: {
       <boxGeometry args={[1, 1, 1]} />
       <meshStandardMaterial color={SURF.instrument} />
     </instancedMesh>
+  );
+}
+
+const FAN_TYPES = new Set(['crah', 'crac']);
+
+/** The fan glyph that floats over every air handler: the one mark that says
+ *  "this moves air" from across the room. */
+function fanGlyph(): THREE.CanvasTexture {
+  return canvasTexture(128, (c, s) => {
+    c.clearRect(0, 0, s, s);
+    const cx = s / 2, cy = s / 2;
+    c.fillStyle = SURF.fan;
+    for (let k = 0; k < 4; k++) {
+      c.save(); c.translate(cx, cy); c.rotate((k * Math.PI) / 2);
+      c.beginPath(); c.moveTo(0, 0);
+      c.bezierCurveTo(14, -34, 44, -44, 50, -14);
+      c.bezierCurveTo(40, -2, 16, 4, 0, 0);
+      c.closePath(); c.fill();
+      c.restore();
+    }
+    c.fillStyle = '#ffffff'; c.beginPath(); c.arc(cx, cy, 9, 0, Math.PI * 2); c.fill();
+    c.strokeStyle = SURF.fan; c.lineWidth = 4; c.beginPath(); c.arc(cx, cy, 9, 0, Math.PI * 2); c.stroke();
+  });
+}
+
+function FanMarks({ boxes, types }: { boxes: GBox[]; types: string[] }) {
+  const tex = useMemo(fanGlyph, []);
+  useEffect(() => () => tex.dispose(), [tex]);
+  const marks = boxes.map((b, i) => ({ b, i })).filter(({ i }) => FAN_TYPES.has(types[i] ?? ''));
+  if (!marks.length) return null;
+  return (
+    <group>
+      {marks.map(({ b, i }) => (
+        <sprite key={i} position={[b.x, b.y + b.h / 2 + 0.42, b.z]} scale={[0.5, 0.5, 1]} raycast={() => null}>
+          <spriteMaterial map={tex} transparent depthWrite={false} />
+        </sprite>
+      ))}
+    </group>
   );
 }
 

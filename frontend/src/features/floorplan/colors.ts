@@ -23,11 +23,14 @@ export const TEMP_MAX = 32;
 export const POWER_WARN = 0.8;
 export const POWER_CRIT = 0.9;
 
+// The same eight bands the 3D room paints with (layers.ts TEMP_BANDS), so a
+// rack is one colour whichever way the room is looked at.
+const TEMP_STEPS = [15, 18, 21, 24, 27, 30, 32];
+
 export function tempColor(c: number | null | undefined): string {
-  if (c == null) return 'var(--bg-inset)';
-  const t = Math.min(1, Math.max(0, (c - TEMP_MIN) / (TEMP_MAX - TEMP_MIN)));
-  // Blue (cold) through amber to red. hsl hue 210 -> 0.
-  return `hsl(${Math.round(210 - 210 * t)}, 70%, ${Math.round(55 - 15 * t)}%)`;
+  if (c == null) return 'var(--band-none)';
+  const i = TEMP_STEPS.findIndex((s) => c < s);
+  return `var(--band-t${i < 0 ? TEMP_STEPS.length + 1 : i + 1})`;
 }
 
 /** Against the rating when the rack has one: past 80 % of a single feed is

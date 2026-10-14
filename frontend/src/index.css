@@ -153,23 +153,26 @@
      encodings, the same in both themes: --band-t1..t8 is the temperature
      scale cold -> hot (ASHRAE A1 cut finer), --band-p1..p5 a utilisation
      scale from idle to over. */
-  --band-t1: #1d3fa8;
-  --band-t2: #2b63d9;
-  --band-t3: #38a6e8;
-  --band-t4: #52b86a;
-  --band-t5: #8ed05a;
-  --band-t6: #f2d233;
-  --band-t7: #f28c28;
-  --band-t8: #e23b3b;
+  --band-t1: #1b2d8f;
+  --band-t2: #1e46d9;
+  --band-t3: #2fb8ea;
+  --band-t4: #7ac143;
+  --band-t5: #b7d335;
+  --band-t6: #ffe600;
+  --band-t7: #f7a21b;
+  --band-t8: #e3262f;
   --band-p1: #9ad7d0;
   --band-p2: #4fb3a9;
   --band-p3: #1f8f7f;
   --band-p4: #f2a93b;
   --band-p5: #e23b3b;
-  --band-none: #8a9099;
+  /* no reading: a dark cabinet, the way an unmonitored rack stands on a
+     monitored floor; plant that carries no layer reads as painted steel,
+     white for the power train and light grey for the rest */
+  --band-none: #2f343a;
   --band-plain: #2f3640;
-  --band-cooling: #7cc4cf;
-  --band-power: #d9d2c0;
+  --band-cooling: #d9dde2;
+  --band-power: #f2f3f5;
 
   /* Node chrome: the parts that are not the fill. */
   --node-label:     rgba(255, 255, 255, 0.74);
@@ -557,35 +560,35 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 
 /* Solid when the room's dimensions were imported. Dashed (.derived) when the
    outline is the extent of the equipment plus a margin, not a surveyed wall. */
-.floor-outline { fill: none; stroke: var(--border-strong); stroke-width: 0.04; }
+.floor-outline { fill: #f4f5f6; stroke: #3b3e43; stroke-width: 0.05; }
 .floor-outline.derived { stroke-width: 0.03; stroke-dasharray: 0.15 0.1; }
 
-.aisle { opacity: 0.22; }
-.aisle-cold { fill: #3b82f6; }
-.aisle-hot { fill: #f85149; }
+.aisle { opacity: 0.4; }
+.aisle-cold { fill: #3fae4a; }
+.aisle-hot { fill: #8a9199; opacity: 0.08; }
 .aisle-unknown { fill: var(--unknown); }
-.aisle-label { font-size: 0.17px; fill: var(--text-muted);
+.aisle-label { font-size: 0.17px; fill: #4b5057;
                font-family: var(--sans); dominant-baseline: middle; }
 
-.floor-rack { stroke: var(--bg); stroke-width: 0.02; }
+.floor-rack { stroke: #1f2328; stroke-width: 0.015; }
 .floor-rack-hit { cursor: pointer; }
 .floor-rack-hit:hover .floor-rack,
-.floor-rack-hit:focus-visible .floor-rack { stroke: var(--text);
+.floor-rack-hit:focus-visible .floor-rack { stroke: #1f2328;
                                             stroke-width: 0.04; }
 /* The intake side. Which way a rack points decides which aisle it breathes. */
-.floor-front { fill: var(--text); opacity: 0.65; }
-.rack-tag { font-size: 0.16px; fill: var(--text); font-family: var(--mono);
+.floor-front { fill: #1f2328; opacity: 0.7; }
+.rack-tag { font-size: 0.16px; fill: #1f2328; font-family: var(--mono);
             text-anchor: middle; dominant-baseline: middle;
             pointer-events: none; }
 /* Plant at its true footprint, and point instruments (wall/pipe/panel). Neutral
    unless the alarm overlay is on: inlet and power are rack measures. */
-.floor-equip { fill: var(--bg-raised); stroke: var(--border-strong); stroke-width: 0.03; }
-.floor-point { fill: var(--text-muted); stroke: var(--bg); stroke-width: 0.02; }
+.floor-equip { fill: #f2f3f5; stroke: #5f656d; stroke-width: 0.03; }
+.floor-point { fill: #5f656d; stroke: #f4f5f6; stroke-width: 0.02; }
 .floor-equip-hit { cursor: pointer; }
 .floor-equip-hit:hover .floor-equip, .floor-equip-hit:focus-visible .floor-equip,
 .floor-equip-hit:hover .floor-point, .floor-equip-hit:focus-visible .floor-point {
-  stroke: var(--text); stroke-width: 0.05; }
-.equip-tag { fill: var(--text-muted); font-family: var(--mono);
+  stroke: #1f2328; stroke-width: 0.05; }
+.equip-tag { fill: #4b5057; font-family: var(--mono);
              text-anchor: middle; dominant-baseline: middle; pointer-events: none; }
 
 /* --- charts -------------------------------------------------------------- */
