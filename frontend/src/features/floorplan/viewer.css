@@ -20,7 +20,10 @@
             background: var(--vw-glass); backdrop-filter: var(--vw-blur); -webkit-backdrop-filter: var(--vw-blur);
             border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); border-radius: var(--vw-radius); padding: 6px 8px;
             box-shadow: var(--vw-shadow-lg); }
-.vw-topleft { top: 12px; left: 12px; padding: 0; }
+/* where you are floats as text: no card, a halo in the canvas colour keeps
+   it legible over the picture in either theme */
+.vw-topleft { top: 14px; left: 16px; padding: 0; background: none; border: none; box-shadow: none;
+              backdrop-filter: none; -webkit-backdrop-filter: none; }
 .vw-topcenter { top: 12px; left: 50%; transform: translateX(-50%); background: none; border: none; box-shadow: none;
                 backdrop-filter: none; -webkit-backdrop-filter: none; padding: 0; }
 
@@ -354,11 +357,11 @@
 /* --- the building rung (docs/27 §8b) -------------------------------------- */
 .vw-crumbs { display: flex; align-items: center; gap: 4px; }
 /* where you are: the strip at the top left - site, place, moment */
-.vw-where { display: flex; align-items: stretch; }
+.vw-where { display: flex; align-items: stretch; gap: 20px;
+            text-shadow: 0 0 2px var(--bg-inset), 0 1px 6px var(--bg-inset), 0 0 12px var(--bg-inset); }
 .vw-where-cell { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 1px;
-                 min-height: 42px; padding: 4px 12px; border-left: 1px solid var(--border); color: var(--text);
+                 min-height: 40px; padding: 2px 6px; margin: 0 -6px; border: none; border-radius: 6px; color: var(--text);
                  background: none; font: inherit; text-align: left; }
-.vw-where-cell:first-child { border-left: none; }
 .vw-where-cell small { font-size: 0.64rem; line-height: 1.2; letter-spacing: .08em; text-transform: uppercase;
                        color: var(--text-muted); white-space: nowrap; }
 .vw-where-cell b { font-size: 0.9rem; font-weight: 600; line-height: 1.25; white-space: nowrap; max-width: 300px;
@@ -371,14 +374,15 @@
                         background-position: calc(100% - 9px) 55%, calc(100% - 5px) 55%; background-size: 4px 4px; background-repeat: no-repeat; }
 .vw-where-site select:hover { color: var(--accent); }
 .vw-where-site select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.vw-where-place { cursor: pointer; border-radius: 0; }
-.vw-where-place:hover { background: color-mix(in srgb, var(--text) 6%, transparent); }
-.vw-where-place.is-on { box-shadow: inset 0 -2px 0 var(--accent); }
+.vw-where-place { cursor: pointer; }
+.vw-where-place:hover { background: color-mix(in srgb, var(--text) 7%, transparent); }
+.vw-where-place.is-on b { box-shadow: inset 0 -2px 0 var(--accent); }
 .vw-where-place:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .vw-where-moment b { display: inline-flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
 .vw-where-moment .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-faint); }
 .vw-where-moment.is-live .dot { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 25%, transparent); }
 @media (max-width: 720px) {
+  .vw-where { gap: 12px; }
   .vw-where-site, .vw-where-moment { display: none; }
   .vw-where-cell b { max-width: 180px; }
 }
