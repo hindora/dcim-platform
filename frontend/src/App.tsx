@@ -168,6 +168,7 @@ function TopBar({ onSignOut }: { onSignOut: () => void }) {
 
       <div className="utilities">
         <NavLink to="/platform" style={{ padding: 0, border: 'none' }}>SYSTEM STATUS</NavLink>
+        <FullscreenButton />
         {/* Settings and the manual live behind the name rather than along the
             top row: they belong to the person signed in, not to the estate,
             and the row above is a set of views of the estate. */}
@@ -177,17 +178,28 @@ function TopBar({ onSignOut }: { onSignOut: () => void }) {
   );
 }
 
-/** The visual pages - the maps - take the whole window: the top bar is
- *  hidden and a tab at the top edge brings it back for the next move. */
-const IMMERSIVE = new Set(['/floorplan', '/connectivity', '/world']);
-
-function NavTab({ open, onToggle }: { open: boolean; onToggle: () => void }) {
+/** The browser's own full screen: the page keeps every part of itself,
+ *  including the menu bar, and the browser gives up its chrome. */
+function FullscreenButton() {
+  const [on, setOn] = useState(() => Boolean(document.fullscreenElement));
+  useEffect(() => {
+    const sync = () => setOn(Boolean(document.fullscreenElement));
+    document.addEventListener('fullscreenchange', sync);
+    return () => document.removeEventListener('fullscreenchange', sync);
+  }, []);
+  if (!document.fullscreenEnabled) return null;
+  const toggle = () => {
+    if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
+    else void document.documentElement.requestFullscreen().catch(() => undefined);
+  };
+  const label = on ? 'Exit full screen' : 'Full screen';
   return (
-    <button type="button" className="nav-tab" onClick={onToggle} aria-expanded={open}
-            aria-label={open ? 'Hide the menu' : 'Show the menu'} title={open ? 'Hide the menu' : 'Show the menu'}>
-      <svg width="14" height="10" viewBox="0 0 14 10" fill="none" stroke="currentColor" strokeWidth="1.6"
+    <button type="button" className="fullscreen" onClick={toggle} aria-pressed={on} aria-label={label} title={label}>
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6"
            strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-        {open ? <path d="M2 7l5-5 5 5" /> : <path d="M2 3l5 5 5-5" />}
+        {on
+          ? <><path d="M6 2v4H2" /><path d="M10 2v4h4" /><path d="M6 14v-4H2" /><path d="M10 14v-4h4" /></>
+          : <><path d="M2 6V2h4" /><path d="M14 6V2h-4" /><path d="M2 10v4h4" /><path d="M14 10v4h-4" /></>}
       </svg>
     </button>
   );
@@ -230,16 +242,6 @@ export default function App() {
   const [returnTo, setReturnTo] = useState<string | null>(null);
   const location = useLocation();
   const navigate = useNavigate();
-  const immersive = IMMERSIVE.has(location.pathname);
-  const [navOpen, setNavOpen] = useState(false);
-  useEffect(() => { setNavOpen(false); }, [location.pathname]);
-  useEffect(() => {
-    if (!navOpen) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setNavOpen(false); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [navOpen]);
-
   // A 401 anywhere ends the session for everything, so the shell has to hear
   // about it. Without this the token was cleared and nothing else happened:
   // the app kept rendering over a cache it could no longer refresh, and each
@@ -268,10 +270,9 @@ export default function App() {
   }
 
   return (
-    <div className={`shell${immersive ? ' is-immersive' : ''}${navOpen ? ' nav-open' : ''}`}>
+    <div className="shell">
       <TrustBanner />
-      {(!immersive || navOpen) && <TopBar onSignOut={() => { setToken(null); setAuthed(false); }} />}
-      {immersive && <NavTab open={navOpen} onToggle={() => setNavOpen((o) => !o)} />}
+      <TopBar onSignOut={() => { setToken(null); setAuthed(false); }} />
       <main>
         <Routes>
           <Route path="/" element={<Home />} />

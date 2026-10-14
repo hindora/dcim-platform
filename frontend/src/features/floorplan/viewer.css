@@ -52,11 +52,6 @@
 .vw-search-group li button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .vw-search-group li button .muted { font-size: 0.74rem; }
 
-/* with the top bar hidden the chrome moves up to the menu tab's foot */
-.shell.is-immersive .viewer { height: 100dvh; }
-.shell.is-immersive .vw-topright, .shell.is-immersive .vw-topcenter { top: 22px; }
-.shell.is-immersive .vw-dock, .shell.is-immersive .vw-panel { top: 74px; }
-
 /* right panel ----------------------------------------------------------- */
 .vw-panel { position: absolute; z-index: 4; top: 64px; right: 12px; bottom: 54px; width: 320px;
             display: flex; flex-direction: column; background: var(--bg-raised);
