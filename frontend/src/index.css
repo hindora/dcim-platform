@@ -171,8 +171,8 @@
      white for the power train and light grey for the rest */
   --band-none: #2f343a;
   --band-plain: #2f3640;
-  --band-cooling: #d9dde2;
-  --band-power: #f2f3f5;
+  --band-cooling: #c3c7cc;
+  --band-power: #dfe2e6;
 
   /* Node chrome: the parts that are not the fill. */
   --node-label:     rgba(255, 255, 255, 0.74);

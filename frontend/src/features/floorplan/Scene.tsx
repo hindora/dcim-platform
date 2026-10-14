@@ -43,7 +43,7 @@ const EYE = 1.6;
 // themes, like the readings' bands; only the chrome around the picture follows
 // the theme. These are a rendering of the room, not UI colour.
 const SURF = {
-  floor: '#f4f5f6', tileLine: '#d3d7dc', slab: '#dfe2e6', slabLine: '#cdd1d6',
+  floor: '#f3f4f5', tileLine: '#c9cdd2', slab: '#dfe2e6', slabLine: '#cdd1d6',
   ventBg: '#b7bcc3', ventDot: '#5f656d', wall: '#d5d8dc', wallSide: '#c7cacf', wallEdge: '#3b3e43',
   rackEdge: '#1f2328', front: '#5b6470', instrument: '#4d8fa6',
   /* the room stands on a concrete apron under a grey sky, in either theme */
@@ -114,7 +114,7 @@ const GRADIENT_FRAG = /* glsl */`
     bool rear = vSplit > 0.5 && vZ < 0.0;
     vec3 b = rear ? vRBot : vBot; vec3 m = rear ? vRMid : vMid; vec3 t = rear ? vRTop : vTop;
     vec3 c = vT < 0.5 ? mix(b, m, vT * 2.0) : mix(m, t, (vT - 0.5) * 2.0);
-    float l = 0.64 + 0.36 * max(dot(normalize(vN), normalize(uLight)), 0.0);
+    float l = 0.5 + 0.5 * max(dot(normalize(vN), normalize(uLight)), 0.0);
     gl_FragColor = vec4(c * l, uOpacity);
     #include <colorspace_fragment>
   }`;
@@ -152,7 +152,7 @@ function GradientBoxes({ boxes, part, opacity, dim, meshRef, onClick, onMove, on
   }, [n]);
   const material = useMemo(() => new THREE.ShaderMaterial({
     vertexShader: GRADIENT_VERT, fragmentShader: GRADIENT_FRAG,
-    uniforms: { uLight: { value: new THREE.Vector3(0.45, 1, 0.55) }, uOpacity: { value: opacity } },
+    uniforms: { uLight: { value: new THREE.Vector3(0.35, 1, 0.75) }, uOpacity: { value: opacity } },
     transparent: opacity < 1, depthWrite: opacity >= 1,
   }), []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
@@ -222,12 +222,70 @@ function canvasTexture(size: number, draw: (c: CanvasRenderingContext2D, s: numb
   return t;
 }
 
+/** A deterministic scatter, so every tile mottles the same way on every load. */
+function seeded(seed: number): () => number {
+  let x = seed | 0 || 1;
+  return () => { x ^= x << 13; x ^= x >>> 17; x ^= x << 5; return ((x >>> 0) % 10000) / 10000; };
+}
+
+/** One raised-floor tile: stone with a faint mottle, under a soft grid line.
+ *  A plain white square read as paper; the mottle is what makes it a floor. */
 function tileTexture(W: number, D: number, slab: boolean): THREE.CanvasTexture {
-  return canvasTexture(128, (c, s) => {
+  return canvasTexture(256, (c, s) => {
     c.fillStyle = slab ? SURF.slab : SURF.floor; c.fillRect(0, 0, s, s);
-    c.strokeStyle = slab ? SURF.slabLine : SURF.tileLine; c.lineWidth = slab ? 1 : 1.5;
+    if (!slab) {
+      const rnd = seeded(7);
+      for (let k = 0; k < 90; k++) {
+        const x = rnd() * s, y = rnd() * s, r = 6 + rnd() * 26;
+        const g = c.createRadialGradient(x, y, 0, x, y, r);
+        const a = 0.05 + rnd() * 0.09;
+        g.addColorStop(0, `rgba(150,156,164,${a})`); g.addColorStop(1, 'rgba(150,156,164,0)');
+        c.fillStyle = g; c.beginPath(); c.arc(x, y, r, 0, Math.PI * 2); c.fill();
+      }
+      for (let k = 0; k < 400; k++) {
+        c.fillStyle = `rgba(120,126,134,${0.04 + rnd() * 0.08})`;
+        c.fillRect(rnd() * s, rnd() * s, 1.5, 1.5);
+      }
+    }
+    c.strokeStyle = slab ? SURF.slabLine : SURF.tileLine; c.lineWidth = slab ? 1.5 : 3;
     c.strokeRect(0.5, 0.5, s - 1, s - 1);
   }, [W / (slab ? 1.0 : TILE), D / (slab ? 1.0 : TILE)]);
+}
+
+/** A soft dark pool under a cabinet: the contact shadow that seats it on the floor. */
+function shadowTexture(): THREE.CanvasTexture {
+  return canvasTexture(128, (c, s) => {
+    c.clearRect(0, 0, s, s);
+    const g = c.createRadialGradient(s / 2, s / 2, s * 0.18, s / 2, s / 2, s * 0.5);
+    g.addColorStop(0, 'rgba(20,24,30,0.55)'); g.addColorStop(0.55, 'rgba(20,24,30,0.28)'); g.addColorStop(1, 'rgba(20,24,30,0)');
+    c.fillStyle = g; c.fillRect(0, 0, s, s);
+  });
+}
+
+/** Contact shadows for every box on the floor, one instanced plane. */
+function ContactShadows({ boxes }: { boxes: GBox[] }) {
+  const ref = useRef<THREE.InstancedMesh>(null);
+  const tex = useMemo(shadowTexture, []);
+  useEffect(() => () => tex.dispose(), [tex]);
+  useLayoutEffect(() => {
+    const im = ref.current;
+    if (!im) return;
+    const m = new THREE.Matrix4(), p = new THREE.Vector3(), s = new THREE.Vector3();
+    const flat = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0));
+    boxes.forEach((b, i) => {
+      const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), b.rot).multiply(flat);
+      im.setMatrixAt(i, m.compose(p.set(b.x, 0.0055, b.z), q, s.set(b.w * 1.9, b.d * 1.9, 1)));
+    });
+    im.instanceMatrix.needsUpdate = true;
+    im.computeBoundingSphere();
+  }, [boxes]);
+  if (!boxes.length) return null;
+  return (
+    <instancedMesh key={boxes.length} ref={ref} args={[undefined, undefined, boxes.length]} raycast={() => null}>
+      <planeGeometry args={[1, 1]} />
+      <meshBasicMaterial map={tex} transparent depthWrite={false} />
+    </instancedMesh>
+  );
 }
 
 /** One cold-aisle tile: green, with the dashed edge a marked-out tile wears. */
@@ -418,6 +476,7 @@ export default function RoomScene(p: SceneProps) {
       )}
       <GridRefs W={W} D={D} ink={tones.inkMuted} />
       {vis.vents && vents.length > 0 && <Vents vents={vents} X={X} Z={Z} />}
+      <ContactShadows boxes={[...rackBoxes, ...unitBoxes.filter((b) => b.y <= b.h / 2 + 0.05)]} />
       {vis.aisles && plan.aisles.map((a) => (
         <AisleBand key={`${a.label}-${a.y_start}`} a={a} W={W} Z={Z} X={X} racks={plan.racks}
                    containment={vis.containment} />
@@ -828,7 +887,6 @@ function FpvRig({ W, D, rackMesh, racks, onFocus }: {
 function Room({ W, D, whiteSpace, walls: walled }: { W: number; D: number; whiteSpace: boolean; walls: boolean }) {
   const tiles = useMemo(() => tileTexture(W, D, !whiteSpace), [W, D, whiteSpace]);
   useEffect(() => () => tiles.dispose(), [tiles]);
-  const edges = useMemo(() => new THREE.EdgesGeometry(new THREE.BoxGeometry(W, WALL_H, D)), [W, D]);
   // Four inward-facing walls: the far ones render, the near ones are culled, so
   // the room reads as a cutaway from any angle.
   const walls: [number, number, number, number][] = [
@@ -848,16 +906,22 @@ function Room({ W, D, whiteSpace, walls: walled }: { W: number; D: number; white
         <meshBasicMaterial map={tiles} />
       </mesh>
       {walled && walls.map(([x, z, ry, len], i) => (
-        <mesh key={i} position={[x, WALL_H / 2, z]} rotation-y={ry}>
-          <planeGeometry args={[len, WALL_H]} />
-          <meshBasicMaterial color={i < 2 ? SURF.wall : SURF.wallSide} />
-        </mesh>
+        <group key={i} position={[x, 0, z]} rotation-y={ry}>
+          <mesh position={[0, WALL_H / 2, 0]}>
+            <planeGeometry args={[len, WALL_H]} />
+            <meshBasicMaterial color={i < 2 ? SURF.wall : SURF.wallSide} />
+          </mesh>
+          {/* the dark cap along the top, culled with its wall */}
+          <mesh position={[0, WALL_H - 0.05, 0.001]}>
+            <planeGeometry args={[len, 0.1]} />
+            <meshBasicMaterial color={SURF.wallEdge} />
+          </mesh>
+          <mesh position={[0, 0.03, 0.001]}>
+            <planeGeometry args={[len, 0.06]} />
+            <meshBasicMaterial color={SURF.wallEdge} />
+          </mesh>
+        </group>
       ))}
-      {walled && (
-        <lineSegments geometry={edges} position={[0, WALL_H / 2, 0]}>
-          <lineBasicMaterial color={SURF.wallEdge} />
-        </lineSegments>
-      )}
     </group>
   );
 }

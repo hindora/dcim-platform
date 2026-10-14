@@ -407,15 +407,16 @@ export function OpenEnclosure({ W, D, kind }: { W: number; D: number; kind: 'fen
 function doorTexture(split: boolean): THREE.CanvasTexture {
   return canvasTex(128, 448, (c, w, h) => {
     c.clearRect(0, 0, w, h);
-    // The mounted kit shows through as the slats of server fronts, one every
-    // few U, over a faint perforation - a lighter touch than a heavy frame.
-    c.fillStyle = `rgba(${INK},0.1)`;
-    for (let y = 12; y < h - 10; y += 7) {
-      for (let x = 12 + ((y / 7) % 2) * 3.5; x < w - 10; x += 7) c.fillRect(x, y, 3, 3);
+    // The front is a stack of server faces: a dark bezel line every 2U, a
+    // lighter plate between, two dark rails down the sides. Bold, so a rack
+    // reads as a rack from across the room, the way a glass door shows it.
+    for (let y = 10; y < h - 8; y += 20) {
+      c.fillStyle = `rgba(${INK},0.42)`; c.fillRect(10, y, w - 20, 5);
+      c.fillStyle = 'rgba(255,255,255,0.16)'; c.fillRect(10, y + 5, w - 20, 3);
+      c.fillStyle = `rgba(${INK},0.14)`; c.fillRect(14, y + 10, 10, 6); c.fillRect(w - 24, y + 10, 10, 6);
     }
-    c.strokeStyle = `rgba(${INK},0.22)`; c.lineWidth = 2;
-    for (let y = 18; y < h - 14; y += 11) { c.beginPath(); c.moveTo(10, y); c.lineTo(w - 10, y); c.stroke(); }
-    c.strokeStyle = `rgba(${INK},0.5)`; c.lineWidth = 5; c.strokeRect(2.5, 2.5, w - 5, h - 5);
+    c.fillStyle = `rgba(${INK},0.6)`; c.fillRect(2, 2, 7, h - 4); c.fillRect(w - 9, 2, 7, h - 4);
+    c.strokeStyle = `rgba(${INK},0.55)`; c.lineWidth = 4; c.strokeRect(2, 2, w - 4, h - 4);
     if (split) {
       c.lineWidth = 5; c.beginPath(); c.moveTo(w / 2, 6); c.lineTo(w / 2, h - 6); c.stroke();
     } else {
