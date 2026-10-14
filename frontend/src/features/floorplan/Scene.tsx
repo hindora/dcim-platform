@@ -985,13 +985,15 @@ function Room({ W, D, whiteSpace, walls: walled, seeUnder }: {
         <planeGeometry args={[W + 3, D + 3]} />
         <meshBasicMaterial color={SURF.apron} />
       </mesh>
+      {/* Keyed: three compiles a non-transparent material with alpha forced to
+          1, so flipping `transparent` in place leaves the tiles solid. */}
       <mesh rotation-x={-Math.PI / 2}>
         <planeGeometry args={[W, D]} />
-        <meshBasicMaterial map={tiles} transparent={seeUnder} opacity={seeUnder ? 0.05 : 1} depthWrite={!seeUnder} />
+        <meshBasicMaterial key={String(seeUnder)} map={tiles} transparent={seeUnder} opacity={seeUnder ? 0.05 : 1} depthWrite={!seeUnder} />
       </mesh>
       {grid && (
         <lineSegments geometry={grid} position={[0, 0.002, 0]} raycast={() => null}>
-          <lineBasicMaterial color={SURF.tileLine} transparent={seeUnder} opacity={seeUnder ? 0.35 : 1} />
+          <lineBasicMaterial key={String(seeUnder)} color={SURF.tileLine} transparent={seeUnder} opacity={seeUnder ? 0.35 : 1} />
         </lineSegments>
       )}
       {walled && walls.map(([x, z, ry, len], i) => (
@@ -1059,7 +1061,7 @@ function Vents({ vents, X, Z, glass }: {
   return (
     <instancedMesh key={vents.length} ref={ref} args={[undefined, undefined, vents.length]}>
       <planeGeometry args={[1, 1]} />
-      <meshBasicMaterial map={tex} transparent={glass} opacity={glass ? 0.3 : 1} depthWrite={!glass} />
+      <meshBasicMaterial key={String(glass)} map={tex} transparent={glass} opacity={glass ? 0.3 : 1} depthWrite={!glass} />
     </instancedMesh>
   );
 }
