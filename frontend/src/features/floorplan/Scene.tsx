@@ -487,6 +487,9 @@ export default function RoomScene(p: SceneProps) {
   // has nothing to do with the gauge's height, so they stay hidden unless the
   // viewer asks to see into the racks. The plan looks straight down through
   // the headroom at the gauge's top, so it keeps the clear shell.
+  // An opened raised floor: the tiles go almost clear, and the floor's overlays
+  // (aisle tint, shadows, solid vents) step aside so the void reads from a low angle.
+  const seeUnder = whiteSpace && vis.underfloor;
   const gauge = CAPACITY_LAYERS.has(rackLayer);
   const frost = gauge && !vis.faces && mode !== 'plan';
 
@@ -515,9 +518,9 @@ export default function RoomScene(p: SceneProps) {
 
       {/* A white-space room stands on a raised floor: its deck is always drawn;
           "See under the raised floor" turns the tiles to glass over the void. */}
-      <Room W={W} D={D} whiteSpace={whiteSpace} walls={enclosure === 'walls'} seeUnder={whiteSpace && vis.underfloor} />
-      {whiteSpace && !vis.underfloor && <DeckEdge W={W} D={D} />}
-      {whiteSpace && vis.underfloor && (
+      <Room W={W} D={D} whiteSpace={whiteSpace} walls={enclosure === 'walls'} seeUnder={seeUnder} />
+      {whiteSpace && !seeUnder && <DeckEdge W={W} D={D} />}
+      {seeUnder && (
         <Plenum W={W} D={D} X={X} Z={Z} racks={plan.racks} aisles={plan.aisles} units={plan.equipment} />
       )}
       {enclosure !== 'walls' && <OpenEnclosure W={W} D={D} kind={enclosure} />}
@@ -526,11 +529,11 @@ export default function RoomScene(p: SceneProps) {
                       doors={fitDoors} obstacles={standing} fire={fire ?? null} />
       )}
       <GridRefs W={W} D={D} ink={tones.inkMuted} />
-      {vis.vents && vents.length > 0 && <Vents vents={vents} X={X} Z={Z} />}
-      {mode !== 'plan' && <ContactShadows boxes={[...rackBoxes, ...unitBoxes.filter((b) => b.y <= b.h / 2 + 0.05)]} />}
+      {vis.vents && vents.length > 0 && <Vents vents={vents} X={X} Z={Z} glass={seeUnder} />}
+      {mode !== 'plan' && !seeUnder && <ContactShadows boxes={[...rackBoxes, ...unitBoxes.filter((b) => b.y <= b.h / 2 + 0.05)]} />}
       {vis.aisles && plan.aisles.map((a) => (
         <AisleBand key={`${a.label}-${a.y_start}`} a={a} W={W} Z={Z} X={X} racks={plan.racks}
-                   containment={vis.containment} />
+                   containment={vis.containment} tint={!seeUnder} />
       ))}
 
       {/* See-into-racks: the layer's colour stays on the cabinet as a tinted
@@ -984,11 +987,11 @@ function Room({ W, D, whiteSpace, walls: walled, seeUnder }: {
       </mesh>
       <mesh rotation-x={-Math.PI / 2}>
         <planeGeometry args={[W, D]} />
-        <meshBasicMaterial map={tiles} transparent={seeUnder} opacity={seeUnder ? 0.14 : 1} depthWrite={!seeUnder} />
+        <meshBasicMaterial map={tiles} transparent={seeUnder} opacity={seeUnder ? 0.05 : 1} depthWrite={!seeUnder} />
       </mesh>
       {grid && (
         <lineSegments geometry={grid} position={[0, 0.002, 0]} raycast={() => null}>
-          <lineBasicMaterial color={SURF.tileLine} />
+          <lineBasicMaterial color={SURF.tileLine} transparent={seeUnder} opacity={seeUnder ? 0.35 : 1} />
         </lineSegments>
       )}
       {walled && walls.map(([x, z, ry, len], i) => (
@@ -1038,7 +1041,9 @@ function colLetters(i: number): string {
   return s;
 }
 
-function Vents({ vents, X, Z }: { vents: { x: number; y: number }[]; X: (x: number) => number; Z: (y: number) => number }) {
+function Vents({ vents, X, Z, glass }: {
+  vents: { x: number; y: number }[]; X: (x: number) => number; Z: (y: number) => number; glass: boolean;
+}) {
   const ref = useRef<THREE.InstancedMesh>(null);
   const tex = useMemo(ventTexture, []);
   useEffect(() => () => tex.dispose(), [tex]);
@@ -1054,14 +1059,16 @@ function Vents({ vents, X, Z }: { vents: { x: number; y: number }[]; X: (x: numb
   return (
     <instancedMesh key={vents.length} ref={ref} args={[undefined, undefined, vents.length]}>
       <planeGeometry args={[1, 1]} />
-      <meshBasicMaterial map={tex} />
+      <meshBasicMaterial map={tex} transparent={glass} opacity={glass ? 0.3 : 1} depthWrite={!glass} />
     </instancedMesh>
   );
 }
 
-function AisleBand({ a, W, X, Z, racks, containment }: {
+function AisleBand({ a, W, X, Z, racks, containment, tint: tinted = true }: {
   a: FloorAisle; W: number; X: (x: number) => number; Z: (y: number) => number;
   racks: FloorRack[]; containment: boolean;
+  /** The floor tint; off while the raised floor is opened. */
+  tint?: boolean;
 }) {
   const depth = a.y_end - a.y_start;
   const zc = Z((a.y_start + a.y_end) / 2);
@@ -1076,12 +1083,12 @@ function AisleBand({ a, W, X, Z, racks, containment }: {
   if (a.kind === 'unknown') return null;
   return (
     <group>
-      <mesh rotation-x={-Math.PI / 2} position={[0, 0.004, zc]}>
+      {tinted && <mesh rotation-x={-Math.PI / 2} position={[0, 0.004, zc]}>
         <planeGeometry args={[W, depth]} />
         {tiles
           ? <meshBasicMaterial map={tiles} transparent opacity={0.22} depthWrite={false} />
           : <meshBasicMaterial color={tint} transparent opacity={0.09} depthWrite={false} />}
-      </mesh>
+      </mesh>}
       {containment && a.contained && flank.length > 0 && (
         <group>
           <mesh position={[X((x0 + x1) / 2), h + 0.01, zc]}>
