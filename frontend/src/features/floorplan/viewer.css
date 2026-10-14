@@ -129,7 +129,6 @@
 .vw-radios label { display: grid; grid-template-columns: 16px 1fr; gap: 2px 8px; align-items: center;
                    padding: 5px 6px; border-radius: 6px; cursor: pointer; }
 .vw-radios label:hover { background: var(--bg-inset); }
-.vw-radios label.is-on { box-shadow: inset 2px 0 0 var(--accent); }
 .vw-radios small { grid-column: 2; color: var(--text-faint); font-size: 0.7rem; }
 
 /* legend ----------------------------------------------------------------- */
