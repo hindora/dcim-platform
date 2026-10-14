@@ -39,6 +39,7 @@ import { fmtT, numT, unitLabel } from './units';
 const WALL_H = 3.0;
 const DEFAULT_W = 0.6, DEFAULT_D = 1.2;
 const NO_BOXES: GBox[] = [];
+const CAPACITY_LAYERS = new Set<RackLayer>(['power', 'utilisation', 'committed', 'space']);
 const EYE = 1.6;
 
 // The physical surfaces - concrete, steel, tile - are the same under both
@@ -51,6 +52,8 @@ const SURF = {
   /* the room stands on a concrete apron under a grey sky, in either theme */
   backdrop: '#5e6266', apron: '#c6c9ce',
   coldAisle: '#3fae4a', hotAisle: '#8a9199',
+  /* the frosted headroom above a capacity gauge */
+  frost: '#dde5ee',
 };
 
 export interface HoverTip { x: number; y: number; text: string }
@@ -98,7 +101,9 @@ const GRADIENT_VERT = /* glsl */`
   varying vec3 vBot; varying vec3 vMid; varying vec3 vTop;
   varying vec3 vRBot; varying vec3 vRMid; varying vec3 vRTop;
   varying float vT; varying float vZ; varying float vSplit; varying vec3 vN;
+  varying vec3 vP; varying vec3 vLN;
   void main() {
+    vP = position; vLN = normal;
     vBot = cBot; vMid = cMid; vTop = cTop;
     vRBot = rBot; vRMid = rMid; vRTop = rTop;
     vT = position.y + 0.5;
@@ -108,16 +113,28 @@ const GRADIENT_VERT = /* glsl */`
     gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position, 1.0);
   }`;
 const GRADIENT_FRAG = /* glsl */`
-  uniform vec3 uLight; uniform float uOpacity;
+  uniform vec3 uLight; uniform float uOpacity; uniform float uFrost;
   varying vec3 vBot; varying vec3 vMid; varying vec3 vTop;
   varying vec3 vRBot; varying vec3 vRMid; varying vec3 vRTop;
   varying float vT; varying float vZ; varying float vSplit; varying vec3 vN;
+  varying vec3 vP; varying vec3 vLN;
   void main() {
     bool rear = vSplit > 0.5 && vZ < 0.0;
     vec3 b = rear ? vRBot : vBot; vec3 m = rear ? vRMid : vMid; vec3 t = rear ? vRTop : vTop;
     vec3 c = vT < 0.5 ? mix(b, m, vT * 2.0) : mix(m, t, (vT - 0.5) * 2.0);
     float l = 0.64 + 0.36 * max(dot(normalize(vN), normalize(uLight)), 0.0);
-    gl_FragColor = vec4(c * l, uOpacity);
+    float a = uOpacity;
+    if (uFrost > 0.5) {
+      // Frosted glass: flatter, milkier light, and each face brightens and
+      // thickens toward its rim so the empty share still reads as a cabinet.
+      vec3 n = abs(vLN);
+      vec2 q = n.x > 0.5 ? vP.yz : n.y > 0.5 ? vP.xz : vP.xy;
+      float e = smoothstep(0.8, 1.0, max(abs(q.x), abs(q.y)) * 2.0);
+      l = mix(l, 1.0, 0.5);
+      c = mix(c, vec3(1.0), 0.35 * e);
+      a = min(1.0, a + 0.22 * e);
+    }
+    gl_FragColor = vec4(c * l, a);
     #include <colorspace_fragment>
   }`;
 
@@ -133,8 +150,10 @@ export interface GBox {
 /** One instanced mesh of boxes, each with its own bottom/middle/top colour.
  *  `part` 'solid' draws the filled share of each box, 'shell' the translucent
  *  remainder above it (only for boxes that are not full). */
-function GradientBoxes({ boxes, part, opacity, dim, meshRef, onClick, onMove, onOut }: {
+function GradientBoxes({ boxes, part, opacity, frost = false, dim, meshRef, onClick, onMove, onOut }: {
   boxes: GBox[]; part: 'solid' | 'shell'; opacity: number;
+  /** Draw as frosted glass (the headroom above a capacity gauge). */
+  frost?: boolean;
   /** Boxes not part of the active overlay fade toward the walls. */
   dim?: boolean[];
   meshRef?: React.MutableRefObject<THREE.InstancedMesh | null>;
@@ -154,15 +173,16 @@ function GradientBoxes({ boxes, part, opacity, dim, meshRef, onClick, onMove, on
   }, [n]);
   const material = useMemo(() => new THREE.ShaderMaterial({
     vertexShader: GRADIENT_VERT, fragmentShader: GRADIENT_FRAG,
-    uniforms: { uLight: { value: new THREE.Vector3(0.45, 1, 0.55) }, uOpacity: { value: opacity } },
+    uniforms: { uLight: { value: new THREE.Vector3(0.45, 1, 0.55) }, uOpacity: { value: opacity }, uFrost: { value: frost ? 1 : 0 } },
     transparent: opacity < 1, depthWrite: opacity >= 1,
   }), []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     material.uniforms.uOpacity.value = opacity;
+    material.uniforms.uFrost.value = frost ? 1 : 0;
     material.transparent = opacity < 1;
     material.depthWrite = opacity >= 1;
     material.needsUpdate = true;
-  }, [material, opacity]);
+  }, [material, opacity, frost]);
   useEffect(() => () => { geometry.dispose(); }, [geometry]);
   useEffect(() => () => { material.dispose(); }, [material]);
 
@@ -187,7 +207,7 @@ function GradientBoxes({ boxes, part, opacity, dim, meshRef, onClick, onMove, on
       const split = part === 'solid' && b.paint.rear && b.front ? b.front : 0;
       for (const [a, c] of [[aB, b.paint.bot], [aM, b.paint.mid], [aT, b.paint.top],
                             [rB, rear.bot], [rM, rear.mid], [rT, rear.top]] as const) {
-        col.set(part === 'shell' ? SURF.wall : c);
+        col.set(part === 'shell' ? (frost ? SURF.frost : SURF.wall) : c);
         if (dim?.[i]) col.lerp(wall, 0.78);
         a.setXYZ(i, col.r, col.g, col.b);
       }
@@ -198,7 +218,7 @@ function GradientBoxes({ boxes, part, opacity, dim, meshRef, onClick, onMove, on
     rB.needsUpdate = rM.needsUpdate = rT.needsUpdate = aF.needsUpdate = true;
     im.computeBoundingSphere();
     invalidate();
-  }, [boxes, part, dim, geometry, invalidate, meshRef]);
+  }, [boxes, part, frost, dim, geometry, invalidate, meshRef]);
 
   if (!n) return null;
   return (
@@ -460,6 +480,13 @@ export default function RoomScene(p: SceneProps) {
   const rackMesh = useRef<THREE.InstancedMesh | null>(null);
   const fpv = mode === 'fpv';
   const anyShell = rackBoxes.some((b) => b.paint.fill < 1);
+  // Capacity layers draw each rack as a gauge: the colour rises to the value
+  // and the headroom above it is frosted. Devices sit at their own U, which
+  // has nothing to do with the gauge's height, so they stay hidden unless the
+  // viewer asks to see into the racks. The plan looks straight down through
+  // the headroom at the gauge's top, so it keeps the clear shell.
+  const gauge = CAPACITY_LAYERS.has(rackLayer);
+  const frost = gauge && !vis.faces && mode !== 'plan';
 
   // Which racks and units the overlay touches, so the rest can fade.
   const rackRole = useMemo(() => plan.racks.map((r) => {
@@ -505,12 +532,13 @@ export default function RoomScene(p: SceneProps) {
                      onClick={fpv || vis.faces ? undefined : (i) => onSelect({ kind: 'rack', id: plan.racks[i].id })}
                      onMove={fpv || vis.faces ? undefined : (i, e) => tip(e, rackText(plan.racks[i]))}
                      onOut={() => onTip(null)} />
-      {anyShell && <GradientBoxes boxes={rackBoxes} part="shell" opacity={0.22} />}
+      {anyShell && <GradientBoxes boxes={rackBoxes} part="shell" opacity={frost ? 0.68 : 0.22} frost={frost} />}
+      {anyShell && <FillLines boxes={rackBoxes} />}
       <RackFrames racks={plan.racks} X={X} Z={Z} />
       {vis.detail && <RackDetails boxes={rackBoxes} open={vis.faces} />}
       {/* Frame, plinth, handles, nozzles, stacks - all outside the coloured body. */}
       <Hardware racks={rackBoxes} units={vis.plant ? unitBoxes : NO_BOXES} unitTypes={unitTypes} open={vis.faces} />
-      {(vis.devices || vis.faces) && (
+      {((vis.devices && !gauge) || vis.faces) && (
         <RackDevices devices={devices} rackById={rackById} X={X} Z={Z} themeTick={themeTick}
                      onSelect={fpv ? undefined : onSelect} onTip={fpv ? undefined : onTip} />
       )}
@@ -1068,6 +1096,29 @@ function RackFrames({ racks, X, Z }: { racks: FloorRack[]; X: (x: number) => num
       <lineSegments geometry={fronts}><lineBasicMaterial color={SURF.front} /></lineSegments>
     </group>
   );
+}
+
+/** A crisp ring round each partly filled rack at the gauge's level: that edge
+ *  is the reading, so it is drawn rather than left to the frost. */
+function FillLines({ boxes }: { boxes: GBox[] }) {
+  const geom = useMemo(() => {
+    const pts: number[] = [];
+    for (const b of boxes) {
+      const f = b.paint.fill;
+      if (!(f > 0 && f < 1)) continue;
+      const y = b.y - b.h / 2 + b.h * f, w = b.w / 2 + 0.004, d = b.d / 2 + 0.004;
+      const c = [[-w, -d], [w, -d], [w, d], [-w, d]];
+      for (let k = 0; k < 4; k++) {
+        const [ax, az] = c[k], [bx, bz] = c[(k + 1) % 4];
+        pts.push(b.x + ax, y, b.z + az, b.x + bx, y, b.z + bz);
+      }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+    return g;
+  }, [boxes]);
+  useEffect(() => () => geom.dispose(), [geom]);
+  return <lineSegments geometry={geom}><lineBasicMaterial color={SURF.rackEdge} transparent opacity={0.85} /></lineSegments>;
 }
 
 function UnitFrames({ boxes }: { boxes: GBox[] }) {
