@@ -61,15 +61,16 @@ export interface Legend { title: string; unit: string; bands: Band[]; none?: str
 const T = (n: number) => `var(--band-t${n})`;
 const P = (n: number) => `var(--band-p${n})`;
 
+// The reference scale (64 / 70 / 73 / 77 / 80 / 86 °F) in whole degrees C:
+// seven bands, navy to red, the recommended window green in the middle.
 export const TEMP_BANDS: Band[] = [
-  { upTo: 15, label: '< 15', color: T(1) },
-  { upTo: 18, label: '15 – 18', color: T(2) },
-  { upTo: 21, label: '18 – 21', color: T(3) },
-  { upTo: 24, label: '21 – 24', color: T(4) },
-  { upTo: 27, label: '24 – 27', color: T(5) },
-  { upTo: 30, label: '27 – 30', color: T(6) },
-  { upTo: 32, label: '30 – 32', color: T(7) },
-  { upTo: null, label: '> 32', color: T(8) },
+  { upTo: 18, label: '< 18', color: T(1) },
+  { upTo: 21, label: '18 – 21', color: T(2) },
+  { upTo: 23, label: '21 – 23', color: T(3) },
+  { upTo: 25, label: '23 – 25', color: T(4) },
+  { upTo: 27, label: '25 – 27', color: T(6) },
+  { upTo: 30, label: '27 – 30', color: T(7) },
+  { upTo: null, label: '> 30', color: T(8) },
 ];
 
 export const RH_BANDS: Band[] = [
