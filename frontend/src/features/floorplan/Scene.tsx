@@ -51,7 +51,7 @@ const SURF = {
   rackEdge: '#23272e', front: '#5b6470', instrument: '#4d8fa6',
   /* the room stands on a concrete apron under a grey sky, in either theme */
   backdrop: '#5e6266', apron: '#c6c9ce',
-  coldAisle: '#3fae4a', hotAisle: '#8a9199',
+  coldAisle: '#2f7fd1', hotAisle: '#d64541',
   /* the frosted headroom above a capacity gauge */
   frost: '#dde5ee',
 };
@@ -322,7 +322,7 @@ function ContactShadows({ boxes }: { boxes: GBox[] }) {
   );
 }
 
-/** One cold-aisle tile: green, with the dashed edge a marked-out tile wears. */
+/** One cold-aisle tile: blue, with the dashed edge a marked-out tile wears. */
 function aisleTexture(cols: number, rows: number): THREE.CanvasTexture {
   return canvasTexture(64, (c, s) => {
     c.fillStyle = SURF.coldAisle; c.fillRect(0, 0, s, s);
@@ -1046,7 +1046,7 @@ function AisleBand({ a, W, X, Z, racks, containment }: {
         <planeGeometry args={[W, depth]} />
         {tiles
           ? <meshBasicMaterial map={tiles} transparent opacity={0.22} depthWrite={false} />
-          : <meshBasicMaterial color={tint} transparent opacity={0.06} depthWrite={false} />}
+          : <meshBasicMaterial color={tint} transparent opacity={0.14} depthWrite={false} />}
       </mesh>
       {containment && a.contained && flank.length > 0 && (
         <group>
