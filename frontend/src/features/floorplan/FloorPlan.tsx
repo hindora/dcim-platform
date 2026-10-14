@@ -6,6 +6,7 @@ import {
   type ThermalUnit, type TwinHistoryRange, type TwinRoomScene, type SitesOverview, type TwinSiteScene,
 } from '../../api/client';
 import { Seg } from '../../components/estate';
+import { ViewBar, type Spin } from './ViewBar';
 import { alarmColor, type Overlay } from './colors';
 import { fireWords, type RoomDoor, type RoomFire } from './Fittings';
 import {
@@ -246,7 +247,6 @@ export function FloorPlanView() {
   }, []);
   // The dock's tools at the room rung: the camera, and the unit the air is read in.
   const roomTools: DockTool[] = [
-    { id: 'reset', label: 'Reset the camera', glyph: 'reset', onClick: () => setResetTick((t) => t + 1) },
     { id: 'unit', label: `Temperatures in ${tUnit === 'C' ? '°C - switch to °F' : '°F - switch to °C'}`, text: tUnit === 'C' ? '°C' : '°F',
       onClick: () => setTempUnit((tUnit === 'C' ? 'F' : 'C') as TempUnit) },
   ];
@@ -256,6 +256,8 @@ export function FloorPlanView() {
   const [focus, setFocus] = useState<string | null>(null);
   const [vis, setVis] = useState<Visibility>(DEFAULT_VIS);
   const [resetTick, setResetTick] = useState(0);
+  const [spin, setSpin] = useState<Spin>({ n: 0, dir: 1 });
+  const turn = (dir: 1 | -1) => setSpin((p) => ({ n: p.n + 1, dir }));
   const [themeTick, setThemeTick] = useState(0);
   const [pathKind, setPathKind] = useState<PathKind | null>(null);
   const qc = useQueryClient();
@@ -538,12 +540,12 @@ export function FloorPlanView() {
       <>
         <div className="vw-float vw-topleft">{crumbs}</div>
         <div className="vw-float vw-topcenter">
-          {webgl && <Seg label="View" value={bMode} onChange={(m) => setParam('view', m)}
-                         options={[{ key: '3d', label: '3D' }, { key: 'plan', label: 'PLAN' }]} />}
+          {webgl && <ViewBar value={bMode} onChange={(m) => setParam('view', m)}
+                             options={[{ key: '3d', label: '3D' }, { key: 'plan', label: 'PLAN' }]}
+                             canSpin={bMode === '3d'} onSpin={turn} onReset={() => setResetTick((t) => t + 1)} />}
         </div>
         {navigator}
-        <Dock items={['navigate', 'info', 'layers', 'search']} open={panel === 'filters' ? null : panel} onToggle={togglePanel}
-              tools={webgl ? [{ id: 'reset', label: 'Reset the camera', glyph: 'reset', onClick: () => setResetTick((t) => t + 1) }] : []} />
+        <Dock items={['navigate', 'info', 'layers', 'search']} open={panel === 'filters' ? null : panel} onToggle={togglePanel} />
         {panel === 'layers' && (
           <aside className="vw-panel" aria-label="Layers">
             <div className="vw-panel-head">
@@ -610,7 +612,7 @@ export function FloorPlanView() {
         <div className="viewer-stage">
           {bs && (
             <Suspense fallback={<p className="muted viewer-fallback">Loading the building…</p>}>
-              <BuildingStage scene={bs} rung={atSite ? 'site' : 'building'} level={level} layer={bLayer} mode={bMode} resetTick={resetTick} themeTick={themeTick}
+              <BuildingStage scene={bs} rung={atSite ? 'site' : 'building'} level={level} layer={bLayer} mode={bMode} resetTick={resetTick} spin={spin} themeTick={themeTick}
                              hover={hoverRoom} onHover={setHoverRoom} onEnter={enterRoom} onEnterBuilding={enterBuilding} onTip={setTip}
                              label={atSite ? `Site view of ${bs.name}` : `Building view of ${bs.name}`} />
             </Suspense>
@@ -645,7 +647,7 @@ export function FloorPlanView() {
     <Suspense fallback={<p className="muted viewer-fallback">Loading the room…</p>}>
       <Stage data={d} units={units} rackLayer={rackLayer} coolingLayer={coolingLayer} vis={vis} mode={mode}
              sel={sel} overlay={overlay} indices={d.indices} field={withField && heat !== 'off' ? field.data : null} heat={heat}
-             doors={roomDoors} fire={live ? roomFire : null} resetTick={resetTick} themeTick={themeTick}
+             doors={roomDoors} fire={live ? roomFire : null} resetTick={resetTick} spin={spin} themeTick={themeTick}
              onSelect={(s) => { setSel(s); if (s) setPanel('info'); }} onTip={setTip} onFocus={setFocus}
              label={`${mode === 'plan' ? 'Plan' : mode === 'fpv' ? 'Walk-through' : '3D view'} of ${d.plan.room_name}`} />
     </Suspense>
@@ -676,7 +678,8 @@ export function FloorPlanView() {
 
       <div className="vw-float vw-topleft">{crumbs}</div>
       <div className="vw-float vw-topcenter">
-        <Seg label="View" value={mode} onChange={(m) => setParam('view', m)} options={MODES} />
+        <ViewBar value={mode} onChange={(m) => setParam('view', m)} options={MODES}
+                 canSpin={mode === '3d'} onSpin={turn} onReset={() => setResetTick((t) => t + 1)} />
       </div>
       {navigator}
       <Dock items={['navigate', 'info', 'filters', 'search']} open={panel === 'layers' ? null : panel} onToggle={togglePanel} tools={roomTools} />

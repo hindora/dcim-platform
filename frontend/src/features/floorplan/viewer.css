@@ -2,19 +2,49 @@
    picture inside the canvas follows the data bands (index.css --band-*). */
 
 .viewer { position: relative; height: calc(100dvh - 68px); min-height: 540px; overflow: hidden;
-          background: var(--bg-inset); }
+          background: var(--bg-inset);
+          /* one surface for everything that floats over the picture */
+          --vw-glass: color-mix(in srgb, var(--bg-raised) 84%, transparent);
+          --vw-blur: blur(14px) saturate(1.2);
+          --vw-shadow-sm: 0 2px 8px color-mix(in srgb, var(--bg-inset) 45%, transparent);
+          --vw-shadow-lg: 0 10px 30px color-mix(in srgb, var(--bg-inset) 55%, transparent);
+          --vw-radius: 10px; }
 .viewer canvas { display: block; touch-action: none; outline: none; }
 .viewer-stage { position: absolute; inset: 0; }
 .viewer-fallback { padding: 20px 24px; }
 
 /* floating chrome ------------------------------------------------------ */
 .vw-float { position: absolute; z-index: 3; display: flex; align-items: center; gap: 8px;
-            background: color-mix(in srgb, var(--bg-raised) 92%, transparent);
-            border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px;
-            box-shadow: 0 6px 20px color-mix(in srgb, var(--bg-inset) 55%, transparent); }
+            background: var(--vw-glass); backdrop-filter: var(--vw-blur); -webkit-backdrop-filter: var(--vw-blur);
+            border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); border-radius: var(--vw-radius); padding: 6px 8px;
+            box-shadow: var(--vw-shadow-lg); }
 .vw-topleft { top: 12px; left: 12px; padding: 0; }
-.vw-topcenter { top: 12px; left: 50%; transform: translateX(-50%); }
-.vw-float .seg { background: var(--bg-raised); }
+.vw-topcenter { top: 12px; left: 50%; transform: translateX(-50%); background: none; border: none; box-shadow: none;
+                backdrop-filter: none; -webkit-backdrop-filter: none; padding: 0; }
+
+/* round floating buttons: the dock, the camera trio */
+.vw-round { width: 40px; height: 40px; display: grid; place-items: center; padding: 0; cursor: pointer;
+            border-radius: 999px; color: var(--text-muted); font: inherit;
+            background: var(--vw-glass); backdrop-filter: var(--vw-blur); -webkit-backdrop-filter: var(--vw-blur);
+            border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); box-shadow: var(--vw-shadow-sm); }
+.vw-round:hover { color: var(--text); background: var(--bg-raised); }
+.vw-round:active { transform: translateY(1px); }
+.vw-round:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.vw-round.is-on { color: var(--accent); border-color: var(--accent);
+                  box-shadow: var(--vw-shadow-sm), 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+
+/* the view bar: camera trio over the mode pill */
+.vw-viewbar { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.vw-orbit { display: flex; gap: 8px; }
+.vw-pill { display: flex; gap: 2px; padding: 3px; border-radius: 999px;
+           background: var(--vw-glass); backdrop-filter: var(--vw-blur); -webkit-backdrop-filter: var(--vw-blur);
+           border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); box-shadow: var(--vw-shadow-sm); }
+.vw-pill button { height: 30px; padding: 0 14px; border: none; border-radius: 999px; background: none; cursor: pointer;
+                  color: var(--text-muted); font: inherit; font-size: 11px; font-weight: 600; letter-spacing: .09em; }
+.vw-pill button:hover { color: var(--text); background: color-mix(in srgb, var(--text) 7%, transparent); }
+.vw-pill button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.vw-pill button.is-on { color: var(--text); background: color-mix(in srgb, var(--accent) 22%, transparent);
+                        box-shadow: inset 0 0 0 1px var(--accent); }
 .vw-icon { background: none; border: 1px solid var(--border); border-radius: 4px; color: var(--text-muted);
            font: inherit; font-size: 12px; font-weight: 600; letter-spacing: .06em; padding: 6px 10px;
            cursor: pointer; }
@@ -22,22 +52,11 @@
 .vw-icon.is-on { color: var(--text); border-color: var(--accent); box-shadow: inset 0 -2px 0 var(--accent); }
 
 /* the dock: the panel buttons, folded away to a chevron when not wanted */
-.vw-dock { position: absolute; z-index: 3; top: 64px; left: 12px; display: flex; flex-direction: column; gap: 2px;
-           padding: 3px; background: color-mix(in srgb, var(--bg-raised) 92%, transparent);
-           border: 1px solid var(--border); border-radius: 6px;
-           box-shadow: 0 6px 20px color-mix(in srgb, var(--bg-inset) 55%, transparent); }
-.vw-dock button { width: 38px; height: 38px; display: grid; place-items: center; background: none; border: none;
-                  border-radius: 4px; color: var(--text-muted); cursor: pointer; padding: 0; }
-.vw-dock button:hover { color: var(--text); background: color-mix(in srgb, var(--text) 8%, transparent); }
-.vw-dock button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.vw-dock button.is-on { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent);
-                        box-shadow: inset 3px 0 0 var(--accent); }
-.vw-dock .dock-fold { color: var(--text); border-radius: 4px 4px 0 0; border-bottom: 1px solid var(--border); margin-bottom: 2px; }
-.vw-dock.is-folded { gap: 0; }
-.vw-dock.is-folded .dock-fold { border-bottom: none; margin-bottom: 0; border-radius: 4px; }
-.vw-dock .dock-rule { height: 1px; margin: 3px 4px; background: var(--border); }
+.vw-dock { position: absolute; z-index: 3; top: 68px; left: 12px; display: flex; flex-direction: column; gap: 6px; }
+.vw-dock .dock-fold { color: var(--text); }
+.vw-dock .dock-gap { height: 6px; }
 .vw-dock .dock-text { font-size: 12px; font-weight: 700; letter-spacing: .02em; }
-.vw-dock.is-folded button:not(.dock-fold), .vw-dock.is-folded .dock-rule { display: none; }
+.vw-dock.is-folded button:not(.dock-fold), .vw-dock.is-folded .dock-gap { display: none; }
 
 /* search */
 .vw-search input { width: 100%; box-sizing: border-box; background: var(--bg-inset); color: var(--text);
@@ -54,9 +73,10 @@
 
 /* right panel ----------------------------------------------------------- */
 .vw-panel { position: absolute; z-index: 4; top: 12px; right: 12px; bottom: 54px; width: 320px;
-            display: flex; flex-direction: column; background: var(--bg-raised);
-            border: 1px solid var(--border); border-radius: 6px; overflow: hidden;
-            box-shadow: 0 10px 30px color-mix(in srgb, var(--bg-inset) 60%, transparent); }
+            display: flex; flex-direction: column;
+            background: var(--vw-glass); backdrop-filter: var(--vw-blur); -webkit-backdrop-filter: var(--vw-blur);
+            border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); border-radius: var(--vw-radius); overflow: hidden;
+            box-shadow: var(--vw-shadow-lg); }
 .vw-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 8px;
                  padding: 10px 12px; border-bottom: 1px solid var(--border); }
 .vw-panel-head h3 { margin: 0; font-size: 0.82rem; letter-spacing: .06em; text-transform: uppercase;
@@ -97,8 +117,9 @@
 
 /* legend ----------------------------------------------------------------- */
 .vw-legends { position: absolute; z-index: 3; left: 12px; bottom: 54px; display: flex; gap: 8px; align-items: flex-end; }
-.vw-legend { background: color-mix(in srgb, var(--bg-raised) 92%, transparent); border: 1px solid var(--border);
-             border-radius: 6px; padding: 8px 10px; font-size: 0.72rem; min-width: 150px; }
+.vw-legend { background: var(--vw-glass); backdrop-filter: var(--vw-blur); -webkit-backdrop-filter: var(--vw-blur);
+             border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+             border-radius: var(--vw-radius); padding: 8px 10px; font-size: 0.72rem; min-width: 150px; box-shadow: var(--vw-shadow-sm); }
 .vw-legend-title { font-weight: 600; letter-spacing: .06em; text-transform: uppercase; font-size: 0.66rem;
                    color: var(--text-muted); margin-bottom: 4px; }
 .vw-legend-row { display: flex; align-items: center; gap: 8px; padding: 2px 0; font-variant-numeric: tabular-nums; }
@@ -366,3 +387,9 @@
 .bld-zones li { display: flex; justify-content: space-between; gap: 8px; padding: 3px 4px; font-size: 0.78rem;
   color: var(--text-muted); border-bottom: 1px dashed var(--border); }
 .bld-zones .name { color: var(--text); }
+
+/* one rhythm for the chrome's state changes */
+@media (prefers-reduced-motion: no-preference) {
+  .vw-round, .vw-pill button, .vw-where-place { transition: color 140ms ease-out, background-color 140ms ease-out,
+                                                            box-shadow 140ms ease-out, transform 80ms ease-out; }
+}

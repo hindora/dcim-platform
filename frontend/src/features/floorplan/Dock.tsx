@@ -1,15 +1,15 @@
 import { useEffect, useState } from 'react';
 
 /**
- * The viewer's dock: a column of icon buttons on the left edge, with a
- * chevron at the top that folds the column away to the chevron alone. One
+ * The viewer's dock: a column of round buttons floating on the left edge,
+ * with a "more" button at the top that folds the column away to itself. One
  * place for everything the viewer offers besides the picture and the way
- * it is looked at - the top centre keeps only 3D / PLAN / FPV.
+ * it is looked at - the top centre keeps the camera and 3D / PLAN / FPV.
  *
- * Two kinds of button, told apart by a rule between them: the panels
- * (navigate, information, filters, layers, search), which are toggles whose pressed
- * state is the panel that is open; and the tools under the rule - reset the
- * camera, swap the temperature unit - which act at once.
+ * Two kinds of button, told apart by a gap between them: the panels
+ * (navigate, information, filters, layers, search), which are toggles whose
+ * pressed state is the panel that is open; and the tools under the gap - the
+ * temperature unit - which act at once.
  *
  * Each button carries its name for the screen reader and the tooltip. The
  * fold is a per-browser convenience kept in local storage.
@@ -28,12 +28,15 @@ export interface DockTool {
 
 const FOLD_KEY = 'dcim.viewer.dock';
 
-function Glyph({ kind }: { kind: DockItem | 'fold' | 'unfold' | 'reset' }) {
+function Glyph({ kind }: { kind: DockItem | 'more' | 'less' | 'reset' }) {
   const common = { width: 18, height: 18, viewBox: '0 0 20 20', fill: 'none', stroke: 'currentColor',
                    strokeWidth: 1.6, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const, 'aria-hidden': true };
   switch (kind) {
-    case 'fold': return <svg {...common}><path d="M12 5l-5 5 5 5" /></svg>;
-    case 'unfold': return <svg {...common}><path d="M8 5l5 5-5 5" /></svg>;
+    case 'more': return (
+      <svg {...common}><circle cx="10" cy="4.5" r="1.3" fill="currentColor" stroke="none" />
+        <circle cx="10" cy="10" r="1.3" fill="currentColor" stroke="none" /><circle cx="10" cy="15.5" r="1.3" fill="currentColor" stroke="none" /></svg>
+    );
+    case 'less': return <svg {...common}><path d="M6 6l8 8M14 6l-8 8" /></svg>;
     case 'navigate': return (
       <svg {...common}><rect x="7.5" y="2.5" width="5" height="4" rx="1" /><rect x="2" y="13" width="5" height="4" rx="1" /><rect x="13" y="13" width="5" height="4" rx="1" />
         <path d="M10 6.5V10M4.5 13v-3h11v3" /></svg>
@@ -76,19 +79,19 @@ export function Dock({ items, open, onToggle, tools = [] }: {
   useEffect(() => { try { localStorage.setItem(FOLD_KEY, folded ? 'folded' : 'open'); } catch { /* a private window */ } }, [folded]);
   return (
     <nav className={`vw-dock${folded ? ' is-folded' : ''}`} aria-label="Viewer panels and tools">
-      <button type="button" className="dock-fold" onClick={() => setFolded((f) => !f)} aria-expanded={!folded}
-              aria-label={folded ? 'Show the dock' : 'Hide the dock'} title={folded ? 'Show the dock' : 'Hide the dock'}>
-        <Glyph kind={folded ? 'unfold' : 'fold'} />
+      <button type="button" className="vw-round dock-fold" onClick={() => setFolded((f) => !f)} aria-expanded={!folded}
+              aria-label={folded ? 'Show the tools' : 'Hide the tools'} title={folded ? 'Show the tools' : 'Hide the tools'}>
+        <Glyph kind={folded ? 'more' : 'less'} />
       </button>
       {items.map((it) => (
-        <button key={it} type="button" className={open === it ? 'is-on' : undefined} aria-pressed={open === it}
+        <button key={it} type="button" className={`vw-round${open === it ? ' is-on' : ''}`} aria-pressed={open === it}
                 aria-label={WORDS[it]} title={WORDS[it]} onClick={() => onToggle(it)}>
           <Glyph kind={it} />
         </button>
       ))}
-      {tools.length > 0 && <span className="dock-rule" aria-hidden />}
+      {tools.length > 0 && <span className="dock-gap" aria-hidden />}
       {tools.map((t) => (
-        <button key={t.id} type="button" className="dock-tool" aria-label={t.label} title={t.label} onClick={t.onClick}>
+        <button key={t.id} type="button" className="vw-round dock-tool" aria-label={t.label} title={t.label} onClick={t.onClick}>
           {t.text != null ? <span className="dock-text">{t.text}</span> : <Glyph kind={t.glyph ?? 'reset'} />}
         </button>
       ))}

@@ -1,3 +1,5 @@
+import type { Spin } from './ViewBar';
+import { useQuarterTurn } from './Scene';
 import { MapControls, OrbitControls, OrthographicCamera, PerspectiveCamera } from '@react-three/drei';
 import { useThree, type ThreeEvent } from '@react-three/fiber';
 import { useEffect, useMemo, useRef, type ElementRef } from 'react';
@@ -40,6 +42,7 @@ export interface BuildingSceneProps {
   layer: BuildingLayer;
   mode: '3d' | 'plan';
   resetTick: number;
+  spin?: Spin;
   themeTick: number;
   hover: string | null;
   onHover: (roomId: string | null) => void;
@@ -72,7 +75,7 @@ const bboxOf = (poly: number[][]) => ({
 });
 
 export default function BuildingScene(p: BuildingSceneProps) {
-  const { scene, rung, layer, level, mode, resetTick, themeTick, hover, onHover, onEnter, onEnterBuilding, onTip } = p;
+  const { scene, rung, layer, level, mode, resetTick, spin, themeTick, hover, onHover, onEnter, onEnterBuilding, onTip } = p;
   const { invalidate } = useThree();
   const site = rung === 'site';
 
@@ -274,7 +277,7 @@ export default function BuildingScene(p: BuildingSceneProps) {
       {site && mode === '3d' && <fog attach="fog" args={[tones.bg, span * 1.6, span * 4.5]} />}
       <Cameras mode={mode} span={span} top={site ? top * 0.6 : top} planElev={site ? 0 : levels.find((l) => l.name === planLevel)?.elevation_m ?? 0}
                W={frame.x1 - frame.x0} D={frame.y1 - frame.y0} cx={X((frame.x0 + frame.x1) / 2)} cz={Z((frame.y0 + frame.y1) / 2)}
-               resetTick={resetTick} rung={rung} />
+               resetTick={resetTick} spin={spin} rung={rung} />
 
       {/* --- the compound (site rung) --- */}
       {groundGeo && <Ground ground={ground} X={X} Z={Z} faint={tones.faint} />}
@@ -488,13 +491,14 @@ function DoorLeaf({ f, bb, elev, door, X, Z, tones, onOver, onOut }: {
   );
 }
 
-function Cameras({ mode, span, top, planElev, W, D, cx, cz, resetTick, rung }: {
+function Cameras({ mode, span, top, planElev, W, D, cx, cz, resetTick, spin, rung }: {
   mode: '3d' | 'plan'; span: number; top: number; planElev: number; W: number; D: number; cx: number; cz: number;
-  resetTick: number; rung: Rung;
+  resetTick: number; spin?: Spin; rung: Rung;
 }) {
   const orbit = useRef<ElementRef<typeof OrbitControls>>(null);
   const map = useRef<ElementRef<typeof MapControls>>(null);
   const { camera, size, invalidate } = useThree();
+  useQuarterTurn(spin, orbit, camera, invalidate);
   useEffect(() => {
     if (mode === '3d') {
       camera.up.set(0, 1, 0);

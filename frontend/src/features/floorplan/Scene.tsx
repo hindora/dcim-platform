@@ -1,3 +1,4 @@
+import type { Spin } from './ViewBar';
 import {
   MapControls, OrbitControls, OrthographicCamera, PerspectiveCamera, PointerLockControls,
 } from '@react-three/drei';
@@ -68,6 +69,8 @@ export interface SceneProps {
   /** What the room's fire instruments read; null when it has none. */
   fire?: RoomFire | null;
   resetTick: number;
+  /** A quarter turn of the orbit camera, counted so each press lands. */
+  spin?: Spin;
   themeTick: number;
   onSelect: (s: Sel) => void;
   onTip: (t: HoverTip | null) => void;
@@ -268,7 +271,7 @@ export function labelTexture(text: string, ink: string, bg: string): THREE.Canva
 // ----------------------------------------------------------- the scene
 
 export default function RoomScene(p: SceneProps) {
-  const { data, units, rackLayer, coolingLayer, vis, mode, sel, overlay, indices, field, heat, doors, fire, resetTick, themeTick,
+  const { data, units, rackLayer, coolingLayer, vis, mode, sel, overlay, indices, field, heat, doors, fire, resetTick, spin, themeTick,
           onSelect, onTip, onFocus } = p;
   const { plan, devices } = data;
   const W = plan.extent.width_m, D = plan.extent.depth_m;
@@ -392,7 +395,7 @@ export default function RoomScene(p: SceneProps) {
       <hemisphereLight args={['#ffffff', '#b9bec6', 0.9]} />
       <directionalLight position={[W * 0.6, 14, D * 0.4]} intensity={0.55} />
 
-      <Cameras mode={mode} W={W} D={D} resetTick={resetTick} aisles={plan.aisles} X={X} Z={Z} />
+      <Cameras mode={mode} W={W} D={D} resetTick={resetTick} spin={spin} aisles={plan.aisles} X={X} Z={Z} />
       {fpv && <FpvRig W={W} D={D} rackMesh={rackMesh} racks={plan.racks} onFocus={onFocus} />}
 
       <Room W={W} D={D} whiteSpace={whiteSpace} walls={enclosure === 'walls'} />
@@ -649,14 +652,15 @@ function Invalidator({ deps, invalidate }: { deps: unknown[]; invalidate: () => 
 
 // ----------------------------------------------------------- cameras
 
-function Cameras({ mode, W, D, resetTick, aisles, X, Z }: {
-  mode: ViewMode; W: number; D: number; resetTick: number; aisles: FloorAisle[];
+function Cameras({ mode, W, D, resetTick, spin, aisles, X, Z }: {
+  mode: ViewMode; W: number; D: number; resetTick: number; spin?: Spin; aisles: FloorAisle[];
   X: (x: number) => number; Z: (y: number) => number;
 }) {
   const orbit = useRef<ElementRef<typeof OrbitControls>>(null);
   const map = useRef<ElementRef<typeof MapControls>>(null);
   const { camera, size, invalidate } = useThree();
   const span = Math.max(W, D);
+  useQuarterTurn(spin, orbit, camera, invalidate);
 
   useEffect(() => {
     if (mode === '3d') {
@@ -703,6 +707,24 @@ function Cameras({ mode, W, D, resetTick, aisles, X, Z }: {
                      maxPolarAngle={Math.PI / 2.05} minDistance={1.2} maxDistance={span * 4} />
     </>
   );
+}
+
+/** Turn the orbit camera a quarter around its target on each new `spin`.
+ *  The first render's value is not a press, so it is skipped. */
+export function useQuarterTurn(spin: Spin | undefined, orbit: React.RefObject<{ target: THREE.Vector3; update: () => void } | null>,
+                               camera: THREE.Camera, invalidate: () => void) {
+  const seen = useRef(spin?.n ?? 0);
+  useEffect(() => {
+    if (!spin || spin.n === seen.current) return;
+    seen.current = spin.n;
+    const o = orbit.current;
+    if (!o) return;
+    const v = camera.position.clone().sub(o.target);
+    v.applyAxisAngle(new THREE.Vector3(0, 1, 0), spin.dir * Math.PI / 2);
+    camera.position.copy(o.target).add(v);
+    o.update();
+    invalidate();
+  }, [spin, orbit, camera, invalidate]);
 }
 
 const KEYS: Record<string, 'f' | 'b' | 'l' | 'r' | 'run'> = {
