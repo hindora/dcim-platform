@@ -8,7 +8,9 @@
           --vw-blur: blur(14px) saturate(1.2);
           --vw-shadow-sm: 0 2px 8px color-mix(in srgb, var(--bg-inset) 45%, transparent);
           --vw-shadow-lg: 0 10px 30px color-mix(in srgb, var(--bg-inset) 55%, transparent);
-          --vw-radius: 10px; }
+          --vw-radius: 10px; color-scheme: dark; }
+@media (prefers-color-scheme: light) { :root:not([data-theme='dark']) .viewer { color-scheme: light; } }
+:root[data-theme='light'] .viewer { color-scheme: light; }
 .viewer canvas { display: block; touch-action: none; outline: none; }
 .viewer-stage { position: absolute; inset: 0; }
 .viewer-fallback { padding: 20px 24px; }
@@ -82,7 +84,18 @@
 .vw-panel-head h3 { margin: 0; font-size: 0.82rem; letter-spacing: .06em; text-transform: uppercase;
                     color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vw-panel-head .close { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 16px; }
-.vw-panel-body { overflow: auto; padding: 8px 12px 14px; font-size: 0.82rem; }
+.vw-panel-body { overflow: auto; padding: 8px 12px 14px; font-size: 0.82rem; scrollbar-gutter: stable; }
+/* The panel's rail: a thin floating thumb on a clear track, inset by a
+   transparent border so it never touches the content, after the treatment
+   the Assets page set. The platform's grey trough read as a broken border
+   on the glass. */
+.vw-panel-body, .vw-help-card { scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
+.vw-panel-body::-webkit-scrollbar { width: 10px; height: 10px; }
+.vw-panel-body::-webkit-scrollbar-track { background: transparent; }
+.vw-panel-body::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 99px;
+                                          border: 3px solid transparent; background-clip: content-box; }
+.vw-panel-body:hover::-webkit-scrollbar-thumb { background-color: var(--text-faint); }
+.vw-panel-body::-webkit-scrollbar-corner { background: transparent; }
 .vw-kv { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
 .vw-row { display: flex; justify-content: space-between; gap: 12px; padding: 3px 0; border-bottom: 1px solid var(--border); }
 .vw-row .k { color: var(--text-faint); }
