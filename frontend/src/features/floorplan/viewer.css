@@ -12,7 +12,7 @@
             background: color-mix(in srgb, var(--bg-raised) 92%, transparent);
             border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px;
             box-shadow: 0 6px 20px color-mix(in srgb, var(--bg-inset) 55%, transparent); }
-.vw-topright { top: 12px; right: 12px; padding: 0; }
+.vw-topleft { top: 12px; left: 12px; padding: 0; }
 .vw-topcenter { top: 12px; left: 50%; transform: translateX(-50%); }
 .vw-float .seg { background: var(--bg-raised); }
 .vw-icon { background: none; border: 1px solid var(--border); border-radius: 4px; color: var(--text-muted);
@@ -53,7 +53,7 @@
 .vw-search-group li button .muted { font-size: 0.74rem; }
 
 /* right panel ----------------------------------------------------------- */
-.vw-panel { position: absolute; z-index: 4; top: 64px; right: 12px; bottom: 54px; width: 320px;
+.vw-panel { position: absolute; z-index: 4; top: 12px; right: 12px; bottom: 54px; width: 320px;
             display: flex; flex-direction: column; background: var(--bg-raised);
             border: 1px solid var(--border); border-radius: 6px; overflow: hidden;
             box-shadow: 0 10px 30px color-mix(in srgb, var(--bg-inset) 60%, transparent); }
@@ -286,7 +286,7 @@
 
 /* --- the building rung (docs/27 §8b) -------------------------------------- */
 .vw-crumbs { display: flex; align-items: center; gap: 4px; }
-/* where you are: the strip at the top right - site, place, moment */
+/* where you are: the strip at the top left - site, place, moment */
 .vw-where { display: flex; align-items: stretch; }
 .vw-where-cell { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 1px;
                  min-height: 42px; padding: 4px 12px; border-left: 1px solid var(--border); color: var(--text);

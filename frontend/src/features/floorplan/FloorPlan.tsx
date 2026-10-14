@@ -475,7 +475,7 @@ export function FloorPlanView() {
   };
   const roomLevel = roomId ? bs?.rooms.find((r) => r.id === roomId)?.level ?? null : null;
   const roomIsOutdoor = roomId ? (bs?.rooms.find((r) => r.id === roomId)?.level ?? '').toLowerCase() === 'site' : false;
-  // Where you are, read at the top right like a station board: the site, the
+  // Where you are, read at the top left like a station board: the site, the
   // place (its rung above it in small type) and the moment the picture shows.
   // The place opens the navigator; the site is a picker because switching
   // site is the one move the tree cannot make from inside one site's scene.
@@ -536,7 +536,7 @@ export function FloorPlanView() {
     const zoneCount = bs?.compound?.zones.filter((z) => !z.room_id && z.kind !== 'fence').length ?? 0;
     const body = (
       <>
-        <div className="vw-float vw-topright">{crumbs}</div>
+        <div className="vw-float vw-topleft">{crumbs}</div>
         <div className="vw-float vw-topcenter">
           {webgl && <Seg label="View" value={bMode} onChange={(m) => setParam('view', m)}
                          options={[{ key: '3d', label: '3D' }, { key: 'plan', label: 'PLAN' }]} />}
@@ -674,7 +674,7 @@ export function FloorPlanView() {
         {scene.isLoading && <p className="muted viewer-fallback">Loading the room…</p>}
       </div>
 
-      <div className="vw-float vw-topright">{crumbs}</div>
+      <div className="vw-float vw-topleft">{crumbs}</div>
       <div className="vw-float vw-topcenter">
         <Seg label="View" value={mode} onChange={(m) => setParam('view', m)} options={MODES} />
       </div>
