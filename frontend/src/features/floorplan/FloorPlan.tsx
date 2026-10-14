@@ -475,27 +475,39 @@ export function FloorPlanView() {
   };
   const roomLevel = roomId ? bs?.rooms.find((r) => r.id === roomId)?.level ?? null : null;
   const roomIsOutdoor = roomId ? (bs?.rooms.find((r) => r.id === roomId)?.level ?? '').toLowerCase() === 'site' : false;
-  // Where you are, as a label: the place in large type, its rung beneath.
-  // Opening the navigator is one click on it; the site picker stays here
-  // because switching site is the one move the tree cannot make from
-  // inside one site's scene.
-  const siteCode = sites.find((x) => x.id === siteId)?.code ?? bs?.code ?? 'Site';
+  // Where you are, read at the top right like a station board: the site, the
+  // place (its rung above it in small type) and the moment the picture shows.
+  // The place opens the navigator; the site is a picker because switching
+  // site is the one move the tree cannot make from inside one site's scene.
+  const site = sites.find((x) => x.id === siteId);
+  const siteCode = site?.code ?? bs?.code ?? 'Site';
+  const siteName = site?.name && site.name !== siteCode ? site.name : (bs?.name && bs.name !== siteCode ? bs.name : '');
   const roomName = roomId ? bs?.rooms.find((r) => r.id === roomId)?.name ?? room?.name ?? 'Room' : '';
-  const here = rung === 'site' ? { title: 'Compound', sub: siteCode }
-    : rung === 'building' ? { title: level ? `Level ${level}` : 'Building', sub: level ? `${siteCode} · Building` : siteCode }
-    : { title: roomName, sub: roomIsOutdoor ? `${siteCode} · Compound` : roomLevel ? `${siteCode} · Level ${roomLevel}` : siteCode };
+  const here = rung === 'site' ? { rung: 'Compound', place: 'Whole site' }
+    : rung === 'building' ? { rung: 'Building', place: level ? `Level ${level}` : 'All levels' }
+    : { rung: roomIsOutdoor ? 'Compound · Outdoor' : roomLevel ? `Room · Level ${roomLevel}` : 'Room', place: roomName };
+  const moment = t
+    ? t.toLocaleString(undefined, { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+    : 'Live';
   const crumbs = (
-    <div className="vw-here">
-      {sites.length > 1 && (
-        <select value={siteId} onChange={(e) => pickSite(e.target.value)} aria-label="Site" className="vw-crumb-site">
-          {sites.map((x) => <option key={x.id} value={x.id}>{x.code}</option>)}
-        </select>
-      )}
-      <button type="button" className={`vw-here-label${panel === 'navigate' ? ' is-on' : ''}`} onClick={() => togglePanel('navigate')}
-              aria-pressed={panel === 'navigate'} title="Where you are - click to navigate">
-        <b>{here.title}</b>
-        <small>{here.sub}</small>
+    <div className="vw-where" role="group" aria-label="Where you are">
+      <div className="vw-where-cell vw-where-site">
+        <small>Site</small>
+        {sites.length > 1
+          ? <select value={siteId} onChange={(e) => pickSite(e.target.value)} aria-label="Site" title="Switch site">
+              {sites.map((x) => <option key={x.id} value={x.id}>{x.name && x.name !== x.code ? `${x.code} ${x.name}` : x.code}</option>)}
+            </select>
+          : <b>{siteName ? `${siteCode} ${siteName}` : siteCode}</b>}
+      </div>
+      <button type="button" className={`vw-where-cell vw-where-place${panel === 'navigate' ? ' is-on' : ''}`}
+              onClick={() => togglePanel('navigate')} aria-pressed={panel === 'navigate'} title="Where you are - click to navigate">
+        <small>{here.rung}</small>
+        <b>{here.place}</b>
       </button>
+      <div className={`vw-where-cell vw-where-moment${t ? '' : ' is-live'}`} title={t ? 'The moment shown' : 'Showing the live estate'}>
+        <small>Moment</small>
+        <b><span className="dot" aria-hidden />{moment}</b>
+      </div>
     </div>
   );
   const navigator = panel === 'navigate' && (
@@ -524,7 +536,7 @@ export function FloorPlanView() {
     const zoneCount = bs?.compound?.zones.filter((z) => !z.room_id && z.kind !== 'fence').length ?? 0;
     const body = (
       <>
-        <div className="vw-float vw-topleft">{crumbs}</div>
+        <div className="vw-float vw-topright">{crumbs}</div>
         <div className="vw-float vw-topcenter">
           {webgl && <Seg label="View" value={bMode} onChange={(m) => setParam('view', m)}
                          options={[{ key: '3d', label: '3D' }, { key: 'plan', label: 'PLAN' }]} />}
@@ -662,7 +674,7 @@ export function FloorPlanView() {
         {scene.isLoading && <p className="muted viewer-fallback">Loading the room…</p>}
       </div>
 
-      <div className="vw-float vw-topleft">{crumbs}</div>
+      <div className="vw-float vw-topright">{crumbs}</div>
       <div className="vw-float vw-topcenter">
         <Seg label="View" value={mode} onChange={(m) => setParam('view', m)} options={MODES} />
       </div>
