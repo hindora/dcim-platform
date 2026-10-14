@@ -52,7 +52,7 @@ const SURF = {
   rackEdge: '#23272e', front: '#5b6470', instrument: '#4d8fa6',
   /* the room stands on a concrete apron in a slate studio, darkening toward
      the bottom; the light theme's is lighter, but always darker than the floor */
-  backdrop: ['#3a4048', '#1a1d22'], backdropLight: ['#8a9097', '#5e6266'], apron: '#c6c9ce',
+  backdrop: ['#3d434b', '#272c33'], backdropLight: ['#8a9097', '#5e6266'], apron: '#c6c9ce',
   coldAisle: '#2f7fd1', hotAisle: '#d64541',
   /* the frosted headroom above a capacity gauge */
   frost: '#dde5ee',

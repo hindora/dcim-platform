@@ -4,7 +4,7 @@
 .viewer { position: relative; height: calc(100dvh - 68px); min-height: 540px; overflow: hidden;
           background: var(--bg-inset);
           /* one surface for everything that floats over the picture */
-          --vw-glass: color-mix(in srgb, var(--bg-raised) 84%, transparent);
+          --vw-glass: color-mix(in srgb, var(--bg-raised) 94%, transparent);
           --vw-blur: blur(14px) saturate(1.2);
           --vw-shadow-sm: 0 2px 8px color-mix(in srgb, var(--bg-inset) 45%, transparent);
           --vw-shadow-lg: 0 10px 30px color-mix(in srgb, var(--bg-inset) 55%, transparent);
@@ -18,7 +18,7 @@
 /* floating chrome ------------------------------------------------------ */
 .vw-float { position: absolute; z-index: 3; display: flex; align-items: center; gap: 8px;
             background: var(--vw-glass); backdrop-filter: var(--vw-blur); -webkit-backdrop-filter: var(--vw-blur);
-            border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); border-radius: var(--vw-radius); padding: 6px 8px;
+            border: 1px solid color-mix(in srgb, var(--border-strong) 85%, transparent); border-radius: var(--vw-radius); padding: 6px 8px;
             box-shadow: var(--vw-shadow-lg); }
 /* where you are floats as text: no card, a halo in the canvas colour keeps
    it legible over the picture in either theme */
@@ -31,7 +31,7 @@
 .vw-round { width: 40px; height: 40px; display: grid; place-items: center; padding: 0; cursor: pointer;
             border-radius: 999px; color: var(--text-muted); font: inherit;
             background: var(--vw-glass); backdrop-filter: var(--vw-blur); -webkit-backdrop-filter: var(--vw-blur);
-            border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); box-shadow: var(--vw-shadow-sm); }
+            border: 1px solid color-mix(in srgb, var(--border-strong) 85%, transparent); box-shadow: var(--vw-shadow-sm); }
 .vw-round:hover { color: var(--text); background: var(--bg-raised); }
 .vw-round:active { transform: translateY(1px); }
 .vw-round:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -45,7 +45,7 @@
 .vw-orbit { display: flex; gap: 8px; }
 .vw-pill { display: flex; gap: 2px; padding: 3px; border-radius: 999px;
            background: var(--vw-glass); backdrop-filter: var(--vw-blur); -webkit-backdrop-filter: var(--vw-blur);
-           border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); box-shadow: var(--vw-shadow-sm); }
+           border: 1px solid color-mix(in srgb, var(--border-strong) 85%, transparent); box-shadow: var(--vw-shadow-sm); }
 .vw-pill button { height: 30px; padding: 0 14px; border: none; border-radius: 999px; background: none; cursor: pointer;
                   color: var(--text-muted); font: inherit; font-size: 11px; font-weight: 600; letter-spacing: .09em; }
 .vw-pill button:hover { color: var(--text); background: color-mix(in srgb, var(--text) 7%, transparent); }
@@ -81,7 +81,7 @@
 .vw-panel { position: absolute; z-index: 4; top: 12px; right: 12px; bottom: 54px; width: 320px;
             display: flex; flex-direction: column;
             background: var(--vw-glass); backdrop-filter: var(--vw-blur); -webkit-backdrop-filter: var(--vw-blur);
-            border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); border-radius: var(--vw-radius); overflow: hidden;
+            border: 1px solid color-mix(in srgb, var(--border-strong) 85%, transparent); border-radius: var(--vw-radius); overflow: hidden;
             box-shadow: var(--vw-shadow-lg); }
 .vw-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 8px;
                  padding: 10px 12px; border-bottom: 1px solid var(--border); }
@@ -135,7 +135,7 @@
 /* legend ----------------------------------------------------------------- */
 .vw-legends { position: absolute; z-index: 3; left: 12px; bottom: 54px; display: flex; gap: 8px; align-items: flex-end; }
 .vw-legend { background: var(--vw-glass); backdrop-filter: var(--vw-blur); -webkit-backdrop-filter: var(--vw-blur);
-             border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+             border: 1px solid color-mix(in srgb, var(--border-strong) 85%, transparent);
              border-radius: 999px; font-size: 0.72rem; box-shadow: var(--vw-shadow-sm); }
 .vw-legend[open] { border-radius: var(--vw-radius); min-width: 150px; }
 .vw-legend-chip { display: flex; align-items: center; justify-content: space-between; gap: 10px; list-style: none;
@@ -173,12 +173,12 @@
 .vw-hint { position: absolute; z-index: 3; left: 50%; bottom: 60px; transform: translateX(-50%);
            font-size: 0.74rem; color: var(--text-muted); background: var(--vw-glass);
            backdrop-filter: var(--vw-blur); -webkit-backdrop-filter: var(--vw-blur);
-           border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); border-radius: 999px; padding: 6px 12px; pointer-events: none; }
+           border: 1px solid color-mix(in srgb, var(--border-strong) 85%, transparent); border-radius: 999px; padding: 6px 12px; pointer-events: none; }
 /* how to move around: a round "?" at the bottom right, a card above it */
 .vw-help { position: absolute; z-index: 4; right: 12px; bottom: 54px; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
 .vw-help-card { width: 240px; padding: 10px 14px 12px; background: var(--vw-glass);
                 backdrop-filter: var(--vw-blur); -webkit-backdrop-filter: var(--vw-blur);
-                border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); border-radius: var(--vw-radius);
+                border: 1px solid color-mix(in srgb, var(--border-strong) 85%, transparent); border-radius: var(--vw-radius);
                 box-shadow: var(--vw-shadow-lg); font-size: 0.78rem; color: var(--text); }
 .vw-help-card h4 { margin: 0 0 6px; font-size: 0.66rem; letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted); }
 .vw-help-card ul { margin: 0; padding-left: 16px; display: flex; flex-direction: column; gap: 3px; }
@@ -256,11 +256,13 @@
 .viewer.has-time .vw-status { bottom: 0; }
 .vw-time { position: absolute; z-index: 3; left: 12px; right: 12px; bottom: 54px; display: flex; flex-direction: column;
            background: var(--vw-glass); backdrop-filter: var(--vw-blur); -webkit-backdrop-filter: var(--vw-blur);
-           border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); border-radius: var(--vw-radius);
+           border: 1px solid color-mix(in srgb, var(--border-strong) 85%, transparent); border-radius: var(--vw-radius);
            box-shadow: var(--vw-shadow-lg); font-size: 0.78rem; color: var(--text-muted); overflow: hidden; }
-/* Live and untouched for a while, the strip steps back; any move brings it up. */
-.vw-time.is-idle { opacity: 0.6; }
-.vw-time.is-idle:hover, .vw-time.is-idle:focus-within { opacity: 1; }
+/* Live and untouched for a while, the strip's controls step back; any move
+   brings them up. The surface stays solid so the room never shows through it. */
+.vw-time-row { transition: opacity .2s; }
+.vw-time.is-idle .vw-time-row { opacity: 0.75; }
+.vw-time.is-idle:hover .vw-time-row, .vw-time.is-idle:focus-within .vw-time-row { opacity: 1; }
 .vw-time-row { height: 48px; display: flex; align-items: center; gap: 12px; padding: 0 12px; }
 /* The compare row: slimmer, under the main one, its thumb in the secondary
    colour so the two moments are never confused. */
