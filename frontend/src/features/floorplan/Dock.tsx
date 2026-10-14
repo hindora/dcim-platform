@@ -36,7 +36,7 @@ function Glyph({ kind }: { kind: DockItem | 'more' | 'less' | 'reset' }) {
       <svg {...common}><circle cx="10" cy="4.5" r="1.3" fill="currentColor" stroke="none" />
         <circle cx="10" cy="10" r="1.3" fill="currentColor" stroke="none" /><circle cx="10" cy="15.5" r="1.3" fill="currentColor" stroke="none" /></svg>
     );
-    case 'less': return <svg {...common}><path d="M6 6l8 8M14 6l-8 8" /></svg>;
+    case 'less': return <svg {...common}><path d="M12 5l-5 5 5 5" /></svg>;
     case 'navigate': return (
       <svg {...common}><rect x="7.5" y="2.5" width="5" height="4" rx="1" /><rect x="2" y="13" width="5" height="4" rx="1" /><rect x="13" y="13" width="5" height="4" rx="1" />
         <path d="M10 6.5V10M4.5 13v-3h11v3" /></svg>
