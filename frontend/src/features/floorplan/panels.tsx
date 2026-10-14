@@ -675,6 +675,7 @@ export function FiltersPanel({ rackLayer, coolingLayer, heat, vis, onRack, onCoo
     { key: 'aisles', label: 'Aisle tint' }, { key: 'containment', label: 'Containment' },
     { key: 'vents', label: 'Vent tiles' }, { key: 'hotspots', label: 'Hot-spot markers' },
     { key: 'faces', label: 'See into racks' },
+    { key: 'underfloor', label: 'See under the raised floor' },
     { key: 'fittings', label: 'Doors and room fittings' },
     { key: 'labels', label: 'Labels' },
   ];

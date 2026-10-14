@@ -433,10 +433,13 @@ export interface Visibility {
   fittings: boolean;
   /** Cabinet doors, plinths, grilles and fans on racks and plant. */
   detail: boolean;
+  /** The raised floor's tiles turn to glass and the void under them opens:
+   *  pedestals, cable trays, chilled-water headers (drawn by rule). */
+  underfloor: boolean;
 }
 export const DEFAULT_VIS: Visibility = {
   devices: true, plant: true, aisles: true, containment: true, labels: false, vents: true, hotspots: true, faces: false,
-  fittings: true, detail: false,
+  fittings: true, detail: false, underfloor: false,
 };
 
 /** The heat map: one of the three interpolated planes, or off. Optional by

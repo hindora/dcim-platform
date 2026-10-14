@@ -17,6 +17,7 @@ import {
 } from './layers';
 import { OpenEnclosure, RackDetails, RoomFittings, UnitDetails, type RoomDoor, type RoomFire } from './Fittings';
 import { Hardware } from './Hardware';
+import { DeckEdge, Plenum, PLENUM_H } from './Underfloor';
 import type { PathOverlay, Role } from './paths';
 import { fmtT, numT, unitLabel } from './units';
 
@@ -512,7 +513,13 @@ export default function RoomScene(p: SceneProps) {
       <Cameras mode={mode} W={W} D={D} resetTick={resetTick} spin={spin} aisles={plan.aisles} X={X} Z={Z} />
       {fpv && <FpvRig W={W} D={D} rackMesh={rackMesh} racks={plan.racks} onFocus={onFocus} />}
 
-      <Room W={W} D={D} whiteSpace={whiteSpace} walls={enclosure === 'walls'} />
+      {/* A white-space room stands on a raised floor: its deck is always drawn;
+          "See under the raised floor" turns the tiles to glass over the void. */}
+      <Room W={W} D={D} whiteSpace={whiteSpace} walls={enclosure === 'walls'} seeUnder={whiteSpace && vis.underfloor} />
+      {whiteSpace && !vis.underfloor && <DeckEdge W={W} D={D} />}
+      {whiteSpace && vis.underfloor && (
+        <Plenum W={W} D={D} X={X} Z={Z} racks={plan.racks} aisles={plan.aisles} units={plan.equipment} />
+      )}
       {enclosure !== 'walls' && <OpenEnclosure W={W} D={D} kind={enclosure} />}
       {vis.fittings && enclosure === 'walls' && (
         <RoomFittings W={W} D={D} roomClass={plan.room_class} roomName={plan.room_name}
@@ -952,7 +959,11 @@ function Backdrop({ themeTick }: { themeTick: number }) {
   return null;
 }
 
-function Room({ W, D, whiteSpace, walls: walled }: { W: number; D: number; whiteSpace: boolean; walls: boolean }) {
+function Room({ W, D, whiteSpace, walls: walled, seeUnder }: {
+  W: number; D: number; whiteSpace: boolean; walls: boolean; seeUnder: boolean;
+}) {
+  // A raised floor sits PLENUM_H over the slab: the apron and the walls go down to the slab.
+  const base = whiteSpace ? -PLENUM_H : 0;
   const tiles = useMemo(() => tileTexture(W, D, !whiteSpace), [W, D, whiteSpace]);
   useEffect(() => () => tiles.dispose(), [tiles]);
   const grid = useMemo(() => (whiteSpace ? tileGrid(W, D) : null), [W, D, whiteSpace]);
@@ -967,13 +978,13 @@ function Room({ W, D, whiteSpace, walls: walled }: { W: number; D: number; white
       {/* Flat, unlit surfaces: the tile white reads as white from any angle,
           the way a drawn floor does, and the side walls take one shade more
           than the back walls so the corner still reads. */}
-      <mesh rotation-x={-Math.PI / 2} position={[0, -0.003, 0]}>
+      <mesh rotation-x={-Math.PI / 2} position={[0, base - 0.003, 0]}>
         <planeGeometry args={[W + 3, D + 3]} />
         <meshBasicMaterial color={SURF.apron} />
       </mesh>
       <mesh rotation-x={-Math.PI / 2}>
         <planeGeometry args={[W, D]} />
-        <meshBasicMaterial map={tiles} />
+        <meshBasicMaterial map={tiles} transparent={seeUnder} opacity={seeUnder ? 0.14 : 1} depthWrite={!seeUnder} />
       </mesh>
       {grid && (
         <lineSegments geometry={grid} position={[0, 0.002, 0]} raycast={() => null}>
@@ -982,8 +993,8 @@ function Room({ W, D, whiteSpace, walls: walled }: { W: number; D: number; white
       )}
       {walled && walls.map(([x, z, ry, len], i) => (
         <group key={i} position={[x, 0, z]} rotation-y={ry}>
-          <mesh position={[0, WALL_H / 2, 0]}>
-            <planeGeometry args={[len, WALL_H]} />
+          <mesh position={[0, (WALL_H + base) / 2, 0]}>
+            <planeGeometry args={[len, WALL_H - base]} />
             <meshBasicMaterial color={i < 2 ? SURF.wall : SURF.wallSide} />
           </mesh>
           {/* the dark cap along the top, culled with its wall */}
