@@ -103,7 +103,7 @@ CAPACITY = {"hall": {"room_id": "hall", "load_kw": 30.0, "rated_kw": 44.0, "allo
                      "u_used": 61, "u_total": 84}}
 
 
-def _scene(monkeypatch, racks=RACKS, units=UNITS, capacity=CAPACITY, fire=()):
+def _scene(monkeypatch, racks=RACKS, units=UNITS, capacity=CAPACITY, fire=(), marks=()):
     async def building(_s, _dc):
         return SITE
 
@@ -124,6 +124,11 @@ def _scene(monkeypatch, racks=RACKS, units=UNITS, capacity=CAPACITY, fire=()):
 
     monkeypatch.setattr(rack_repo, "site_room_capacity", room_capacity)
     monkeypatch.setattr(rack_repo, "site_fire", fire_read)
+
+    async def marks_read(_s, _dc):
+        return list(marks)
+
+    monkeypatch.setattr(rack_repo, "site_alarm_marks", marks_read)
     return asyncio.run(service.site_scene(None, "dc1"))
 
 
@@ -210,3 +215,37 @@ def test_a_room_with_a_detector_and_no_release_panel_reports_only_smoke(monkeypa
     assert fire.alarm is None                 # no panel reports, so nothing is claimed for it
     assert fire.rooms[0].smoke_stage == 0 and fire.rooms[0].gas_state is None
     assert fire.rooms[0].agent_released is None
+
+
+def test_a_rack_unit_and_room_carry_their_worst_alarms_category(monkeypatch):
+    marks = [
+        # two on a server in rack r1: the critical power alarm outranks the minor IT one
+        {"device_id": "srv1", "rack_id": "r1", "room_id": "hall", "category": "it_equipment",
+         "severity": "MINOR", "last_seen": "2026-10-15T10:00:00Z"},
+        {"device_id": "pdu1", "rack_id": "r1", "room_id": "hall", "category": "power",
+         "severity": "CRITICAL", "last_seen": "2026-10-15T09:00:00Z"},
+        # a wall sensor in the UPS room: no rack, the room carries it
+        {"device_id": "thr1", "rack_id": None, "room_id": "ups", "category": "environmental",
+         "severity": "MAJOR", "last_seen": "2026-10-15T10:00:00Z"},
+    ]
+    out = _scene(monkeypatch, marks=marks)
+    hall = next(r for r in out.rooms if r.id == "hall")
+    ups = next(r for r in out.rooms if r.id == "ups")
+    r1 = next(k for k in hall.racks if k.id == "r1")
+    assert (r1.alarm_category, r1.alarm_count) == ("power", 2)
+    assert (hall.alarm_category, hall.alarm_count) == ("power", 2)
+    assert (ups.alarm_category, ups.alarm_count) == ("environmental", 1)
+    clear = [k for k in hall.racks if k.id != "r1"]
+    assert all(k.alarm_category is None and k.alarm_count == 0 for k in clear)
+
+
+def test_alarm_marks_breaks_a_severity_tie_on_the_latest():
+    rows = [
+        {"device_id": "a", "rack_id": "r", "room_id": "m", "category": "cooling",
+         "severity": "MAJOR", "last_seen": "2026-10-15T09:00:00Z"},
+        {"device_id": "b", "rack_id": "r", "room_id": "m", "category": "network",
+         "severity": "MAJOR", "last_seen": "2026-10-15T10:00:00Z"},
+    ]
+    out = service.alarm_marks(rows)
+    assert out[("rack", "r")] == {"alarm_category": "network", "alarm_count": 2}
+    assert out[("device", "a")] == {"alarm_category": "cooling", "alarm_count": 1}

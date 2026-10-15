@@ -514,6 +514,10 @@ class TwinSiteRack(BaseModel):
     w_m: float | None = None
     d_m: float | None = None
     max_severity: str = "CLEAR"
+    # The category of its worst open alarm (the building view's badge icon)
+    # and how many are open. None / 0 when clear.
+    alarm_category: str | None = None
+    alarm_count: int = 0
 
 
 class TwinSiteUnit(BaseModel):
@@ -529,6 +533,8 @@ class TwinSiteUnit(BaseModel):
     h_m: float | None = None
     facing_deg: float | None = None
     max_severity: str = "CLEAR"
+    alarm_category: str | None = None
+    alarm_count: int = 0
 
 
 class TwinRoomPower(BaseModel):
@@ -568,6 +574,9 @@ class TwinRoom(BaseModel):
     rack_count: int = 0
     device_count: int = 0
     max_severity: str = "CLEAR"
+    # Worst open alarm in the room, over every device in it (racked or not).
+    alarm_category: str | None = None
+    alarm_count: int = 0
     # What the building rung's power and space layers colour the room by; None
     # for a room with no racks, which has neither figure.
     power: TwinRoomPower | None = None

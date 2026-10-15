@@ -456,6 +456,29 @@ async def site_blocks(session: AsyncSession, datacenter_id: str
     return [dict(r) for r in racks], [dict(u) for u in units]
 
 
+async def site_alarm_marks(session: AsyncSession, datacenter_id: str) -> list[dict[str, Any]]:
+    """Every open, unshelved alarm on a device at a site, with the device, rack
+    and room it belongs to - what the building view marks, and with what icon.
+
+    One read for the whole site; the roll-up to the worst alarm per rack, unit
+    and room is the service's. Shelved alarms are left out, as the console
+    leaves them out.
+    """
+    rows = (await session.execute(text("""
+        SELECT a.device_id::text AS device_id, d.rack_id::text AS rack_id,
+               COALESCE(rr.room_id, d.room_id)::text AS room_id,
+               a.category, a.severity::text AS severity, a.last_seen
+          FROM alarm a
+          JOIN device d        ON d.id = a.device_id
+          LEFT JOIN rack r     ON r.id = d.rack_id
+          LEFT JOIN rack_row rr ON rr.id = r.row_id
+          JOIN room rm         ON rm.id = COALESCE(rr.room_id, d.room_id)
+         WHERE rm.datacenter_id = CAST(:dc AS uuid)
+           AND a.state <> 'CLEARED' AND a.shelved_reason IS NULL
+    """), {"dc": datacenter_id})).mappings().all()
+    return [dict(r) for r in rows]
+
+
 async def site_doors(session: AsyncSession, datacenter_id: str) -> list[dict[str, Any]]:
     """Every door contact on the site with what it reads now (docs/27 §8b B6).
 

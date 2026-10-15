@@ -556,6 +556,35 @@ def _room_space(c: dict[str, Any] | None) -> TwinRoomSpace | None:
     return TwinRoomSpace(u_used=int(c.get("u_used") or 0), u_total=int(c["u_total"]))
 
 
+# severity_t's declaration order is its precedence (alembic 0001).
+_SEVERITY_RANK = {s: i for i, s in enumerate(
+    ["CLEAR", "INFO", "WARNING", "MINOR", "MAJOR", "CRITICAL"])}
+
+
+def alarm_marks(rows: list[dict[str, Any]]) -> dict[tuple[str, str], dict[str, Any]]:
+    """Open alarms rolled up to what the building view badges: for each rack,
+    each device and each room, the category of the worst alarm (by severity,
+    then the most recently seen) and how many are open.
+
+    Keys are ("rack", id), ("device", id), ("room", id); the values unpack
+    straight into TwinSiteRack / TwinSiteUnit / TwinRoom.
+    """
+    best: dict[tuple[str, str], tuple[tuple[int, str], str | None]] = {}
+    count: dict[tuple[str, str], int] = {}
+    for a in rows:
+        rank = (_SEVERITY_RANK.get(a.get("severity") or "", 0), str(a.get("last_seen") or ""))
+        keys = (("rack", a.get("rack_id")), ("device", a.get("device_id")),
+                ("room", a.get("room_id")))
+        for key in keys:
+            if not key[1]:
+                continue
+            k = (key[0], str(key[1]))
+            count[k] = count.get(k, 0) + 1
+            if k not in best or rank > best[k][0]:
+                best[k] = (rank, a.get("category"))
+    return {k: {"alarm_category": best[k][1], "alarm_count": n} for k, n in count.items()}
+
+
 async def site_scene(session: AsyncSession, datacenter_id: str) -> TwinSiteScene | None:
     """A site as a building - levels and every room placed on one (docs/27),
     with each room's racks and plant as blocks for the building rung (§8b)."""
@@ -564,6 +593,7 @@ async def site_scene(session: AsyncSession, datacenter_id: str) -> TwinSiteScene
         return None
     b = site.get("building") or {}
     racks, units = await rack_repo.site_blocks(session, datacenter_id)
+    marks = alarm_marks(await rack_repo.site_alarm_marks(session, datacenter_id))
     doors = await rack_repo.site_doors(session, datacenter_id)
     capacity = await rack_repo.site_room_capacity(session, datacenter_id)
     fire = site_fire_state(await rack_repo.site_fire(session, datacenter_id))
@@ -572,7 +602,8 @@ async def site_scene(session: AsyncSession, datacenter_id: str) -> TwinSiteScene
         racks_by_room.setdefault(r["room_id"], []).append(TwinSiteRack(
             id=r["id"], name=r["name"], x=float(r["floor_x"]), y=float(r["floor_y"]),
             w_m=_f(r.get("width_m")), d_m=_f(r.get("depth_m")),
-            max_severity=r.get("max_severity") or "CLEAR"))
+            max_severity=r.get("max_severity") or "CLEAR",
+            **marks.get(("rack", r["id"]), {})))
     units_by_room: dict[str, list[TwinSiteUnit]] = {}
     for u in units:
         units_by_room.setdefault(u["room_id"], []).append(TwinSiteUnit(
@@ -580,7 +611,8 @@ async def site_scene(session: AsyncSession, datacenter_id: str) -> TwinSiteScene
             x=float(u["floor_x"]), y=float(u["floor_y"]),
             w_m=float(u["footprint_w_m"]), d_m=float(u["footprint_d_m"]),
             h_m=_f(u.get("height_m")), facing_deg=_f(u.get("rotation_deg")),
-            max_severity=u.get("max_severity") or "CLEAR"))
+            max_severity=u.get("max_severity") or "CLEAR",
+            **marks.get(("device", u["id"]), {})))
     spaces = [TwinSpace(id=sp["external_key"], level=sp.get("level"), kind=sp["kind"],
                         name=sp.get("name"), polygon_m=sp["polygon_m"] or [],
                         room_id=sp.get("room_id"), attrs=sp.get("attributes") or {})
@@ -614,6 +646,7 @@ async def site_scene(session: AsyncSession, datacenter_id: str) -> TwinSiteScene
             rack_count=int(r.get("rack_count") or 0),
             device_count=int(r.get("device_count") or 0),
             max_severity=r.get("max_severity") or "CLEAR",
+            **marks.get(("room", r["id"]), {}),
             power=_room_power(capacity.get(r["id"])),
             space=_room_space(capacity.get(r["id"])),
             racks=racks_by_room.get(r["id"], []),
