@@ -19,13 +19,15 @@ import type { TwinSpace } from '../../api/client';
  * polygons and keep their tooltips; everything else is inert.
  */
 
+// The compound in the building view's studio: dark slate ground, near-black
+// asphalt, light only where something is drawn on it - lines, tanks, rims.
 const SURF = {
-  ground: '#c9cdd3', gridInk: 'rgba(30,34,40,0.10)',
-  asphalt: '#4b5057', asphaltEdge: 'rgba(240,242,245,0.85)', lane: 'rgba(240,242,245,0.6)',
-  concrete: '#a7adb5', joint: 'rgba(30,34,40,0.22)', bay: 'rgba(240,242,245,0.7)',
-  steel: '#9aa1ab', fencePost: '#6f7680', barrierRed: '#c62a26', barrierWhite: '#f1f2f4',
-  tank: '#dde1e6', tankBand: '#8c939c', bund: '#8e949c', house: '#b7bcc4', houseEdge: '#4b535d',
-  glass: '#8fb8d3', spandrel: '#5d6672', plinth: '#3a4048', parapet: '#6b737e', column: '#7c8591',
+  ground: '#1f252d', gridInk: 'rgba(200,215,230,0.05)', gridMajor: 'rgba(200,215,230,0.10)',
+  asphalt: '#12161b', asphaltEdge: 'rgba(220,230,240,0.55)', lane: 'rgba(220,230,240,0.35)',
+  concrete: '#2b323b', joint: 'rgba(220,230,240,0.08)', bay: 'rgba(220,230,240,0.4)',
+  steel: '#6f7882', fencePost: '#59616b', barrierRed: '#c62a26', barrierWhite: '#f1f2f4',
+  tank: '#b9c1ca', tankBand: '#6c747e', bund: '#343b45', house: '#3a424d', houseEdge: '#aeb9c7',
+  glass: '#8fb8d3', spandrel: '#5d6672', plinth: '#262c34', parapet: '#6b737e', column: '#7c8591',
   canopy: '#4b535d', shadow: 'rgba(0,0,0,1)',
 };
 const FENCE_H = 2.4;
@@ -73,7 +75,7 @@ export function Ground({ ground, X, Z, faint }: {
     c.strokeStyle = SURF.gridInk; c.lineWidth = 1;
     for (let m = 0; m <= w; m++) { const x = m * PX_PER_M + 0.5; c.beginPath(); c.moveTo(x, 0); c.lineTo(x, ch); c.stroke(); }
     for (let m = 0; m <= d; m++) { const y = m * PX_PER_M + 0.5; c.beginPath(); c.moveTo(0, y); c.lineTo(cw, y); c.stroke(); }
-    c.strokeStyle = 'rgba(30,34,40,0.2)'; c.lineWidth = 2;
+    c.strokeStyle = SURF.gridMajor; c.lineWidth = 2;
     for (let m = 0; m <= w; m += 5) { const x = m * PX_PER_M; c.beginPath(); c.moveTo(x, 0); c.lineTo(x, ch); c.stroke(); }
     for (let m = 0; m <= d; m += 5) { const y = m * PX_PER_M; c.beginPath(); c.moveTo(0, y); c.lineTo(cw, y); c.stroke(); }
   }), [w, d]);

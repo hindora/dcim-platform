@@ -11,7 +11,7 @@ import { alarmColor, resolveColor } from './colors';
 import { NO_READING, bandColor, roomLayerBands, roomLayerText, roomLayerValue, type BuildingLayer } from './layers';
 import { labelTexture, type GBox, type HoverTip } from './Scene';
 import { Hardware } from './Hardware';
-import { Columns, CoreShaft, Facade, Fence, Ground, ZoneObject, ZoneSurface } from './SiteDressing';
+import { Fence, Ground, ZoneObject, ZoneSurface } from './SiteDressing';
 
 /**
  * The site and building rungs (docs/27 §8b, §8c), drawn in the same scene
@@ -126,8 +126,10 @@ export default function BuildingScene(p: BuildingSceneProps) {
 
   // The split, eased: t runs 0 (stacked) to 1 (apart) over ~0.45 s, at once
   // under reduced motion. Each level rises by its index times the gap.
-  const glass = !site && mode === '3d';
-  const want = glass && split ? 1 : 0;
+  // The glass studio is the 3D view at both rungs: the compound draws the
+  // building exactly as the building view does, with the yards around it.
+  const glass = mode === '3d';
+  const want = glass && split && !site ? 1 : 0;
   const [t, setT] = useState(want);
   useEffect(() => {
     if (t === want) return undefined;
@@ -246,13 +248,8 @@ export default function BuildingScene(p: BuildingSceneProps) {
     [site, scene.fabric, levels, cx, cz]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => () => fabricGeos.forEach((g) => g.geo?.dispose()), [fabricGeos]);
   const shellGeo = useMemo(() => new THREE.BoxGeometry(box.x1 - box.x0, roofElev, box.y1 - box.y0), [box, roofElev]);
-  // The compound's dressing: where the gate breaks the fence, and where the
-  // entrance and the dock door open the building's edge.
+  // The compound's dressing: where the gate breaks the fence.
   const gateBB = useMemo(() => { const g = compound?.zones.find((z) => z.kind === 'gate'); return g && g.polygon_m.length >= 3 ? bboxOf(g.polygon_m) : null; }, [compound]);
-  const openings = useMemo(() => (scene.fabric ?? [])
-    .filter((f) => f.polygon_m.length >= 3 && (f.kind === 'entrance' || (f.kind === 'door' && f.attrs?.external && !f.attrs?.room)))
-    .map((f) => ({ bb: bboxOf(f.polygon_m), kind: (f.kind === 'entrance' ? 'entrance' : 'dock') as 'entrance' | 'dock' })), [scene.fabric]);
-  const corePoly = useMemo(() => (scene.fabric ?? []).find((f) => f.kind === 'core' && f.polygon_m.length >= 3)?.polygon_m ?? null, [scene.fabric]);
   useEffect(() => () => shellGeo.dispose(), [shellGeo]);
 
   // Racks of the whole site as one instanced mesh, coloured by condition.
@@ -368,7 +365,7 @@ export default function BuildingScene(p: BuildingSceneProps) {
       <hemisphereLight args={['#eef2f6', '#7a8089', 0.85]} />
       <directionalLight position={[-span * 0.5, top + 20, -span * 0.35]} intensity={0.75} />
       <directionalLight position={[span * 0.6, top + 8, span * 0.5]} intensity={0.25} />
-      {site && mode === '3d' && <fog attach="fog" args={[tones.bg, span * 1.6, span * 4.5]} />}
+      {site && mode === '3d' && <fog attach="fog" args={[GLASS.glowOut, span * 1.8, span * 4.5]} />}
       <Cameras mode={mode} span={span} top={site ? top * 0.6 : camTop} planElev={site ? 0 : levels.find((l) => l.name === planLevel)?.elevation_m ?? 0}
                W={frame.x1 - frame.x0} D={frame.y1 - frame.y0} cx={X((frame.x0 + frame.x1) / 2)} cz={Z((frame.y0 + frame.y1) / 2)}
                resetTick={resetTick} spin={spin} rung={rung} />
@@ -388,14 +385,14 @@ export default function BuildingScene(p: BuildingSceneProps) {
         <group key={z.id}>
           <mesh geometry={geo} rotation-x={Math.PI / 2} position={[0, 0.01, 0]}
                 onPointerOver={(ev) => { ev.stopPropagation(); tip(ev, zoneText(z)); }} onPointerOut={() => onTip(null)}>
-            <meshStandardMaterial color={tones.slab} roughness={1} transparent
+            <meshStandardMaterial color={glass ? GLASS.slab : tones.slab} roughness={1} transparent
                                   opacity={z.kind === 'road' || z.kind === 'driveway' || z.kind === 'apron' || z.kind === 'parking' || z.kind === 'telecom_entrance' ? 0.0
                                     : z.kind === 'gate' ? 0.2 : 0.5}
                                   side={THREE.DoubleSide} depthWrite={false} />
           </mesh>
           <ZoneSurface z={z} bb={bb} X={X} Z={Z} />
           <ZoneObject z={z} bb={bb} X={X} Z={Z} ink={tones.inkMuted} />
-          {LABELLED_ZONES.has(z.kind) && (
+          {!glass && LABELLED_ZONES.has(z.kind) && (
             <Label text={z.name ?? ZONE_WORD[z.kind] ?? z.kind} ink={tones.inkMuted} bg={tones.raised}
                    x={X((bb.x0 + bb.x1) / 2)} y={0.4} z={Z((bb.y0 + bb.y1) / 2)} w={Math.min(5, Math.max(2.5, (bb.x1 - bb.x0) * 0.6))} />
           )}
@@ -403,7 +400,7 @@ export default function BuildingScene(p: BuildingSceneProps) {
       ))}
       {yards.map((r) => (
         <group key={r.id}>
-          <RoomVolume room={r} e={0} h={0.25} X={X} Z={Z} tones={tones} dim={false} hot={hover === r.id} flat paint={roomColour(r)}
+          <RoomVolume room={r} e={0} h={0.25} X={X} Z={Z} tones={tones} dim={false} hot={hover === r.id} flat glass={glass} paint={roomColour(r)}
                       onOver={(ev) => { onHover(r.id); tip(ev, roomText(r)); }}
                       onOut={() => { onHover(null); onTip(null); }}
                       onClick={() => onEnter(r.id)} />
@@ -455,10 +452,6 @@ export default function BuildingScene(p: BuildingSceneProps) {
         </group>
       ); })}
 
-      {/* The structure is left out of the glass view: the floors read as trays, and a split
-          stack would leave columns and the core standing in the gaps. */}
-      {!site && !glass && mode === '3d' && <Columns box={box} top={roofElev} dim={level != null} />}
-      {corePoly && mode === '3d' && !glass && <CoreShaft poly={corePoly} top={roofElev} X={X} Z={Z} ink={tones.inkMuted} quiet={site || level != null} />}
       {rooms.map((r) => shown(r.level) && (
         <RoomVolume key={r.id} room={r} e={elevOf(r)} h={roomH} X={X} Z={Z} tones={tones} paint={roomColour(r)}
                     dim={dimmed(r.level)} hot={hover === r.id} quiet={site} glass={glass}
@@ -485,14 +478,13 @@ export default function BuildingScene(p: BuildingSceneProps) {
                 onClick={(ev) => { ev.stopPropagation(); onEnterBuilding(); }}>
             <meshStandardMaterial color={tones.inkMuted} transparent opacity={0.02} depthWrite={false} roughness={1} />
           </mesh>
-          <lineSegments>
-            <edgesGeometry args={[shellGeo]} />
-            <lineBasicMaterial color={buildingHot ? tones.accent : tones.inkMuted} />
-          </lineSegments>
-          <group position={[0, -roofElev / 2, 0]}>
-            <Facade box={box} top={roofElev} levels={levels} openings={openings} hot={buildingHot} ink={tones.inkMuted} accent={tones.accent} />
-          </group>
-          <Label text={scene.name} ink={tones.ink} bg={tones.raised} x={0} y={top - roofElev / 2 + 1.2} z={0} w={Math.min(6, (box.x1 - box.x0) * 0.4)} />
+          {/* The glass floors are the building; its outline only answers a hover. */}
+          {buildingHot && (
+            <lineSegments>
+              <edgesGeometry args={[shellGeo]} />
+              <lineBasicMaterial color={tones.accent} />
+            </lineSegments>
+          )}
         </group>
       )}
       {site && mode === 'plan' && (
@@ -560,7 +552,7 @@ function RoomVolume({ room: r, e, h, X, Z, tones, paint, dim, hot, quiet, flat, 
       </lineSegments>
       {/* Only the compound's yards carry a name on the ground; a room in the building is
           named by its hover tooltip and the Rooms list. */}
-      {flat && !dim && !quiet && (
+      {flat && !dim && !quiet && !glass && (
         <sprite position={[0, h / 2 + 0.6, 0]} renderOrder={10} scale={[Math.min(4, r.width_m * 0.6), Math.min(4, r.width_m * 0.6) / 4, 1]}>
           <spriteMaterial map={label} depthTest={false} transparent />
         </sprite>
