@@ -379,7 +379,6 @@
 .vw-where-site select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .vw-where-place { cursor: pointer; }
 .vw-where-place:hover { background: rgba(255,255,255,0.12); }
-.vw-where-place.is-on b { box-shadow: inset 0 -2px 0 var(--accent); }
 .vw-where-place:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .vw-where-moment b { display: inline-flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
 .vw-where-moment .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-faint); }
