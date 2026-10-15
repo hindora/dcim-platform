@@ -659,6 +659,8 @@ interface Pin { x: number; y: number; z: number; c: string; cat: AlarmCategory |
  *  in a bubble when more than one is open. The tip is the image's bottom
  *  centre, which is where the sprite is anchored. */
 const PIN_W = 128, PIN_H = 168;
+/** The category glyph's size inside the pin's white disc (r 39), px of the texture. */
+const GLYPH = 56;
 /** A sprite's anchor at the pin's tip: bottom centre. */
 const PIN_TIP = new THREE.Vector2(0.5, 0);
 function pinTexture(cat: AlarmCategory | null, colour: string, n: number, onReady: () => void): THREE.CanvasTexture {
@@ -678,7 +680,7 @@ function pinTexture(cat: AlarmCategory | null, colour: string, n: number, onRead
     c.closePath();
     c.fillStyle = colour; c.fill();
     c.strokeStyle = 'rgba(10,12,16,0.9)'; c.lineWidth = 5; c.lineJoin = 'round'; c.stroke();
-    c.fillStyle = '#ffffff'; c.beginPath(); c.arc(cx, cy, 34, 0, Math.PI * 2); c.fill();
+    c.fillStyle = '#ffffff'; c.beginPath(); c.arc(cx, cy, 39, 0, Math.PI * 2); c.fill();
   };
   const count = () => {
     if (n <= 1) return;
@@ -689,10 +691,13 @@ function pinTexture(cat: AlarmCategory | null, colour: string, n: number, onRead
     c.fillText(t, PIN_W - 22, 23);
   };
   body(); count();
-  const svg = renderToStaticMarkup(<CategoryGlyph kind={cat ?? 'alarms'} size={44} />)
-    .replace('<svg', '<svg xmlns="http://www.w3.org/2000/svg" color="#14181e" stroke-width="1.6"');
+  // Only the namespace and the ink are added: most glyphs set their own
+  // stroke-width on the root, and a second one there is a duplicate attribute
+  // - invalid SVG, the image never loads, and the pin shows an empty disc.
+  const svg = renderToStaticMarkup(<CategoryGlyph kind={cat ?? 'alarms'} size={GLYPH} />)
+    .replace('<svg', '<svg xmlns="http://www.w3.org/2000/svg" color="#14181e"');
   const img = new Image();
-  img.onload = () => { body(); c.drawImage(img, cx - 22, cy - 22, 44, 44); count(); tex.needsUpdate = true; onReady(); };
+  img.onload = () => { body(); c.drawImage(img, cx - GLYPH / 2, cy - GLYPH / 2, GLYPH, GLYPH); count(); tex.needsUpdate = true; onReady(); };
   img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
   return tex;
 }
@@ -729,7 +734,7 @@ function AlarmPins({ pins }: { pins: Pin[] }) {
     <group ref={group}>
       {pins.map((p, i) => (
         <sprite key={i} position={[p.x, p.y, p.z]} center={PIN_TIP} renderOrder={20}
-                scale={[0.04 * (PIN_W / PIN_H), 0.04, 1]} raycast={() => null}>
+                scale={[0.054 * (PIN_W / PIN_H), 0.054, 1]} raycast={() => null}>
           <spriteMaterial map={texFor(p)} sizeAttenuation={false} depthTest={false} transparent />
         </sprite>
       ))}
