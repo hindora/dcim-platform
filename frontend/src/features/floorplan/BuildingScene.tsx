@@ -69,6 +69,8 @@ const GLASS = {
 };
 /** How far a split pulls each floor from the one below, as a share of the floor-to-floor height. */
 const SPLIT_GAP = 0.9;
+/** How high an alarm badge stands over the device it marks, on its stem. */
+const PIN_RISE = 0.9;
 /** The hardware pass reads geometry only; a block's paint is the instanced colour. */
 const NO_PAINT = { bot: '#000000', mid: '#000000', top: '#000000', fill: 1 };
 const OUTDOOR = 'site';
@@ -328,19 +330,21 @@ export default function BuildingScene(p: BuildingSceneProps) {
       let own = false;
       for (const k of r.racks ?? []) {
         if (k.max_severity === 'CLEAR') continue;
-        out.push({ x: X(r.origin_x_m + k.x), y: e + RACK_H + 0.45, z: Z(r.origin_y_m + k.y), c: tones.sev(k.max_severity),
-                   cat: k.alarm_category ?? null, n: k.alarm_count ?? 1 });
+        out.push({ x: X(r.origin_x_m + k.x), y: e + RACK_H + PIN_RISE, base: e + RACK_H, z: Z(r.origin_y_m + k.y), c: tones.sev(k.max_severity),
+                   cat: k.alarm_category ?? null, n: k.alarm_count ?? 1, w: k.w_m ?? RACK_W, d: k.d_m ?? RACK_D, rot: 0 });
         own = true;
       }
       for (const u of r.equipment ?? []) {
         if (u.max_severity === 'CLEAR') continue;
-        out.push({ x: X(r.origin_x_m + u.x), y: e + (u.h_m ?? 1.5) + 0.45, z: Z(r.origin_y_m + u.y), c: tones.sev(u.max_severity),
-                   cat: u.alarm_category ?? null, n: u.alarm_count ?? 1 });
+        out.push({ x: X(r.origin_x_m + u.x), y: e + (u.h_m ?? 1.5) + PIN_RISE, base: e + (u.h_m ?? 1.5), z: Z(r.origin_y_m + u.y),
+                   c: tones.sev(u.max_severity), cat: u.alarm_category ?? null, n: u.alarm_count ?? 1,
+                   w: u.w_m, d: u.d_m, rot: -((u.facing_deg ?? 0) * Math.PI) / 180 });
         own = true;
       }
       if (!own && r.max_severity !== 'CLEAR') {
-        out.push({ x: X(r.origin_x_m + r.width_m / 2), y: e + 1.6, z: Z(r.origin_y_m + r.depth_m / 2), c: tones.sev(r.max_severity),
-                   cat: r.alarm_category ?? null, n: r.alarm_count ?? 1 });
+        // nothing drawn to stand on: the stem rises from the room's floor
+        out.push({ x: X(r.origin_x_m + r.width_m / 2), y: e + 1.6 + PIN_RISE, base: e, z: Z(r.origin_y_m + r.depth_m / 2),
+                   c: tones.sev(r.max_severity), cat: r.alarm_category ?? null, n: r.alarm_count ?? 1, w: 0, d: 0, rot: 0 });
       }
     }
     return out;
@@ -647,7 +651,12 @@ function RackDoors({ boxes }: { boxes: GBox[] }) {
   );
 }
 
-interface Pin { x: number; y: number; z: number; c: string; cat: AlarmCategory | null; n: number }
+/** One alarm marker: the badge at (x, y, z), standing on `base` - the top of the
+ *  device that raised it, whose footprint (w x d, turned by rot) takes a cap. */
+interface Pin {
+  x: number; y: number; z: number; base: number; c: string; cat: AlarmCategory | null; n: number;
+  w: number; d: number; rot: number;
+}
 
 /** One alarm badge as an image: a disc in the severity colour, the category's
  *  glyph in white (the same icons as Home's indicator strip; a bell when the
@@ -708,14 +717,42 @@ function AlarmPins({ pins }: { pins: Pin[] }) {
     }, 60);
     return () => window.clearInterval(id);
   }, [pins.length, invalidate]);
+  // The stems, one line each in the severity colour: the badge reads as a pin
+  // standing on its device from any angle, and the stem hides behind what is
+  // in front of it, which says how deep it is.
+  const stems = useMemo(() => {
+    const g = new THREE.BufferGeometry();
+    const pos: number[] = [], col: number[] = [], c = new THREE.Color();
+    for (const p of pins) {
+      c.set(p.c);
+      pos.push(p.x, p.base, p.z, p.x, p.y - 0.12, p.z);
+      col.push(c.r, c.g, c.b, c.r, c.g, c.b);
+    }
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    return g;
+  }, [pins]);
+  useEffect(() => () => stems.dispose(), [stems]);
   return (
-    <group ref={group}>
-      {pins.map((p, i) => (
-        <sprite key={i} position={[p.x, p.y, p.z]} renderOrder={20} scale={[0.04, 0.04, 1]} raycast={() => null}>
-          <spriteMaterial map={texFor(p)} sizeAttenuation={false} depthTest={false} transparent />
-        </sprite>
+    <>
+      <lineSegments geometry={stems} raycast={() => null}>
+        <lineBasicMaterial vertexColors transparent opacity={0.9} />
+      </lineSegments>
+      {/* the device's own top, lit in the severity colour - fixed to it whatever the camera does */}
+      {pins.filter((p) => p.w > 0).map((p, i) => (
+        <mesh key={`cap${i}`} position={[p.x, p.base + 0.02, p.z]} rotation-y={p.rot} raycast={() => null}>
+          <boxGeometry args={[p.w * 0.92, 0.03, p.d * 0.92]} />
+          <meshBasicMaterial color={p.c} transparent opacity={0.85} />
+        </mesh>
       ))}
-    </group>
+      <group ref={group}>
+        {pins.map((p, i) => (
+          <sprite key={i} position={[p.x, p.y, p.z]} renderOrder={20} scale={[0.04, 0.04, 1]} raycast={() => null}>
+            <spriteMaterial map={texFor(p)} sizeAttenuation={false} depthTest={false} transparent />
+          </sprite>
+        ))}
+      </group>
+    </>
   );
 }
 
