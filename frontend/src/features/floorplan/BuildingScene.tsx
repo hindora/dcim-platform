@@ -246,11 +246,13 @@ export default function BuildingScene(p: BuildingSceneProps) {
     const sev = d.max_severity !== 'CLEAR' ? ` · ${d.max_severity.toLowerCase()} alarm open` : '';
     return `${name} · ${state}${sev}`;
   };
-  const fabricGeos = useMemo(() => (!site ? (scene.fabric ?? [])
+  // The indoor fabric draws at the building rung, and at the site rung in 3D,
+  // where the glass building shows its corridors and doors as the building view does.
+  const fabricGeos = useMemo(() => (!site || mode === '3d' ? (scene.fabric ?? [])
     .filter((f) => f.polygon_m.length >= 3)
     .map((f) => ({ f, geo: f.kind === 'door' || f.kind === 'entrance' ? null : flat(f.polygon_m), bb: bboxOf(f.polygon_m),
                    elev: levels.find((l) => l.name === f.level)?.elevation_m ?? 0 })) : []),
-    [site, scene.fabric, levels, cx, cz]); // eslint-disable-line react-hooks/exhaustive-deps
+    [site, mode, scene.fabric, levels, cx, cz]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => () => fabricGeos.forEach((g) => g.geo?.dispose()), [fabricGeos]);
   const shellGeo = useMemo(() => new THREE.BoxGeometry(box.x1 - box.x0, roofElev, box.y1 - box.y0), [box, roofElev]);
   // The compound's dressing: where the gate breaks the fence.
@@ -462,6 +464,7 @@ export default function BuildingScene(p: BuildingSceneProps) {
                             onOut={() => onTip(null)} />
             ) : (
             <DoorLeaf f={f} bb={bb} elev={elev} door={doorOf(f)} X={X} Z={Z} tones={tones} flat={mode === 'plan'}
+                      room={f.room_id ? rooms.find((r) => r.id === f.room_id) ?? null : null}
                       onOver={(ev) => { ev.stopPropagation(); tip(ev, doorText(f, doorOf(f))); }}
                       onOut={() => onTip(null)} />
             )
@@ -584,35 +587,44 @@ function RoomVolume({ room: r, e, h, X, Z, tones, paint, dim, hot, quiet, flat, 
  *  alarm colour when held open long enough to be one. */
 // Physical colours for the doors, the same under both themes.
 const DOOR = {
-  leaf: '#8a939d', frame: '#3a4048', handle: '#d6dade', glass: '#9fc4d8', mullion: '#2c3238',
+  leaf: '#8a939d', frame: '#9aa3ad', handle: '#e4e8ec', glass: '#9fc4d8', mullion: '#7f8892',
   shutter: '#7a838d', shutterRib: '#4e565f', canopy: '#3a4048', concrete: '#3a424c', concreteEdge: '#8a949f', bumper: '#1a1d21',
 };
 const DOOR_H = 2.1;
 
-/** A room's door: a frame in the opening and the leaf hung at its west (or
- *  north) end. Closed it stands in the wall; open it swings 75 degrees into
- *  the room (the corridor runs along the south side of every level, so a
- *  door in an east-west wall opens north and one in a west wall opens east).
- *  Steel grey at rest, the accent when its contact reads open, the alarm
- *  colour when held open long enough to be one. In PLAN the leaf is the
- *  short bar a drawing shows, since a standing door is a line from above. */
-function DoorLeaf({ f, bb, elev, door, X, Z, tones, flat, onOver, onOut }: {
+/** A room's door: a steel frame in the opening and a glazed leaf hung at
+ *  its west (or north) end. Closed it stands in the wall; open it swings 75
+ *  degrees into its own room - toward the room's centre, whichever wall it
+ *  is in. Clear glass at rest, tinted the accent when its contact reads
+ *  open, the alarm colour when held open long enough to be one. In PLAN the
+ *  leaf is the short bar a drawing shows, since a standing door is a line
+ *  from above. */
+function DoorLeaf({ f, bb, elev, door, X, Z, tones, flat, room, onOver, onOut }: {
   f: TwinSpace; bb: { x0: number; y0: number; x1: number; y1: number }; elev: number;
   door: TwinDoor | undefined; X: (x: number) => number; Z: (y: number) => number;
   tones: { ink: string; faint: string; accent: string; sev: (s: string) => string };
   flat: boolean;
+  /** The room the door serves, for the side it swings to; null = north / east. */
+  room: Placed | null;
   onOver: (ev: ThreeEvent<PointerEvent>) => void; onOut: () => void;
 }) {
   const w = Math.max(0.2, bb.x1 - bb.x0), d = Math.max(0.2, bb.y1 - bb.y0);
   const alongX = w >= d;                       // the opening runs east-west
   const len = alongX ? w : d;
   const open = door?.open === true;
-  const colour = !door ? (flat ? (f.attrs?.monitored ? tones.ink : tones.faint) : DOOR.leaf)
+  const colour = !door ? (flat ? (f.attrs?.monitored ? tones.ink : tones.faint) : DOOR.glass)
     : door.max_severity !== 'CLEAR' ? tones.sev(door.max_severity)
-    : open ? tones.accent : flat ? tones.ink : DOOR.leaf;
-  // three.js: rotation-y of +a turns local +x toward -z, which is north.
-  const swing = open ? (75 * Math.PI) / 180 : 0;
-  const hinge: [number, number, number] = [X(alongX ? bb.x0 : (bb.x0 + bb.x1) / 2), elev, Z(alongX ? (bb.y0 + bb.y1) / 2 : bb.y0)];
+    : open ? tones.accent : flat ? tones.ink : DOOR.glass;
+  const tinted = !flat && colour !== DOOR.glass;
+  // The leaf lies along local +x from the hinge; a +rotation-y swings it
+  // toward local -z, which is north for an east-west wall and east for a
+  // north-south one. Into the room means toward its centre.
+  const cx = (bb.x0 + bb.x1) / 2, cy = (bb.y0 + bb.y1) / 2;
+  const into = !room ? 1 : alongX
+    ? ((room.origin_y_m + room.depth_m / 2) < cy ? 1 : -1)
+    : ((room.origin_x_m + room.width_m / 2) > cx ? 1 : -1);
+  const swing = open ? into * (75 * Math.PI) / 180 : 0;
+  const hinge: [number, number, number] = [X(alongX ? bb.x0 : cx), elev, Z(alongX ? cy : bb.y0)];
   if (flat) {
     return (
       <group position={[hinge[0], elev + 0.08, hinge[2]]} rotation-y={alongX ? swing : -Math.PI / 2 + swing}>
@@ -637,11 +649,17 @@ function DoorLeaf({ f, bb, elev, door, X, Z, tones, flat, onOver, onOut }: {
       {/* the leaf, hinged at the origin */}
       <group rotation-y={swing}>
         <mesh position={[len / 2, DOOR_H / 2, 0]} onPointerOver={onOver} onPointerOut={onOut}>
-          <boxGeometry args={[len - 0.06, DOOR_H - 0.04, 0.05]} />
-          <meshStandardMaterial color={colour} roughness={0.7} />
+          <boxGeometry args={[len - 0.06, DOOR_H - 0.04, 0.04]} />
+          <meshStandardMaterial color={colour} roughness={0.15} metalness={0.1} transparent opacity={tinted ? 0.6 : 0.42}
+                                emissive={tinted ? colour : '#000000'} emissiveIntensity={tinted ? 0.35 : 0} depthWrite={false} />
         </mesh>
+        {/* the leaf's own metal rim, and the handle */}
+        <lineSegments position={[len / 2, DOOR_H / 2, 0]} raycast={() => null}>
+          <edgesGeometry args={[new THREE.BoxGeometry(len - 0.06, DOOR_H - 0.04, 0.04)]} />
+          <lineBasicMaterial color={DOOR.frame} transparent opacity={0.8} />
+        </lineSegments>
         <mesh position={[len - 0.14, 1.0, 0.045]} raycast={() => null}>
-          <boxGeometry args={[0.03, 0.14, 0.03]} /><meshStandardMaterial color={DOOR.handle} roughness={0.4} />
+          <boxGeometry args={[0.03, 0.16, 0.03]} /><meshStandardMaterial color={DOOR.handle} metalness={0.3} roughness={0.35} />
         </mesh>
       </group>
     </group>
@@ -752,10 +770,12 @@ function BuildingDoor({ kind, bb, box, elev, podium, X, Z, onOver, onOut }: {
 /** The podium the building stands on: a concrete slab a step above the
  *  compound's ground, its edge picked out. */
 function Podium({ x, z, w, d }: { x: number; z: number; w: number; d: number }) {
-  const geo = useMemo(() => new THREE.BoxGeometry(w, PODIUM, d), [w, d]);
+  // Its top sits 12 mm under the ground slab's, so the two faces do not z-fight.
+  const h = PODIUM - 0.012;
+  const geo = useMemo(() => new THREE.BoxGeometry(w, h, d), [w, d, h]);
   useEffect(() => () => geo.dispose(), [geo]);
   return (
-    <group position={[x, PODIUM / 2, z]} raycast={() => null}>
+    <group position={[x, h / 2, z]} raycast={() => null}>
       <mesh geometry={geo}><meshStandardMaterial color={DOOR.concrete} roughness={1} /></mesh>
       <lineSegments><edgesGeometry args={[geo]} /><lineBasicMaterial color={DOOR.concreteEdge} transparent opacity={0.6} /></lineSegments>
     </group>
