@@ -1,5 +1,5 @@
 import type { Spin } from './ViewBar';
-import { useDolly, useQuarterTurn } from './Scene';
+import { useClickGuard, useDolly, useQuarterTurn } from './Scene';
 import { MapControls, OrbitControls, OrthographicCamera, PerspectiveCamera } from '@react-three/drei';
 import { useThree, type ThreeEvent } from '@react-three/fiber';
 import { useEffect, useMemo, useRef, useState, type ElementRef } from 'react';
@@ -95,6 +95,7 @@ const bboxOf = (poly: number[][]) => ({
 export default function BuildingScene(p: BuildingSceneProps) {
   const { scene, rung, layer, level, mode, split = false, resetTick, spin, themeTick, hover, onHover, onEnter, onEnterBuilding, onTip } = p;
   const { invalidate } = useThree();
+  const clean = useClickGuard();
   const site = rung === 'site';
 
   const tones = useMemo(() => ({
@@ -416,7 +417,7 @@ export default function BuildingScene(p: BuildingSceneProps) {
           <RoomVolume room={r} e={0} h={0.25} X={X} Z={Z} tones={tones} dim={false} hot={hover === r.id} flat glass={glass} paint={roomColour(r)}
                       onOver={(ev) => { onHover(r.id); tip(ev, roomText(r)); }}
                       onOut={() => { onHover(null); onTip(null); }}
-                      onClick={() => onEnter(r.id)} />
+                      onClick={(ev) => { if (clean(ev)) onEnter(r.id); }} />
           {unitBoxes(r)}
         </group>
       ))}
@@ -477,7 +478,7 @@ export default function BuildingScene(p: BuildingSceneProps) {
                     dim={dimmed(r.level)} hot={hover === r.id} quiet={site} glass={glass}
                     onOver={(ev) => { onHover(r.id); tip(ev, roomText(r)); }}
                     onOut={() => { onHover(null); onTip(null); }}
-                    onClick={() => onEnter(r.id)} />
+                    onClick={(ev) => { if (clean(ev)) onEnter(r.id); }} />
       ))}
 
       <instancedMesh ref={rackMesh} args={[undefined, undefined, Math.max(1, rackInstances.length)]} frustumCulled={false}>
@@ -495,7 +496,7 @@ export default function BuildingScene(p: BuildingSceneProps) {
         <group position={[0, roofElev / 2 + podium, 0]}>
           <mesh geometry={shellGeo} onPointerOver={(ev) => { ev.stopPropagation(); onHover('__building__'); tip(ev, buildingText); }}
                 onPointerOut={() => { onHover(null); onTip(null); }}
-                onClick={(ev) => { ev.stopPropagation(); onEnterBuilding(); }}>
+                onClick={(ev) => { ev.stopPropagation(); if (clean(ev)) onEnterBuilding(); }}>
             <meshStandardMaterial color={tones.inkMuted} transparent opacity={0.02} depthWrite={false} roughness={1} />
           </mesh>
           {/* The glass floors are the building; its outline only answers a hover. */}
@@ -508,7 +509,7 @@ export default function BuildingScene(p: BuildingSceneProps) {
         </group>
       )}
       {site && mode === 'plan' && (
-        <mesh geometry={shellGeo} position={[0, roofElev / 2, 0]} onClick={(ev) => { ev.stopPropagation(); onEnterBuilding(); }}
+        <mesh geometry={shellGeo} position={[0, roofElev / 2, 0]} onClick={(ev) => { ev.stopPropagation(); if (clean(ev)) onEnterBuilding(); }}
               onPointerOver={(ev) => { ev.stopPropagation(); onHover('__building__'); tip(ev, buildingText); }}
               onPointerOut={() => { onHover(null); onTip(null); }}>
           <meshBasicMaterial transparent opacity={buildingHot ? 0.08 : 0.001} depthWrite={false} />
@@ -542,7 +543,7 @@ function RoomVolume({ room: r, e, h, X, Z, tones, paint, dim, hot, quiet, flat, 
   flat?: boolean;
   /** The building's glass view: a room at rest is a glass partition; its name is in the hover tooltip, not a label. */
   glass?: boolean;
-  onOver: (ev: ThreeEvent<PointerEvent>) => void; onOut: () => void; onClick: () => void;
+  onOver: (ev: ThreeEvent<PointerEvent>) => void; onOut: () => void; onClick: (ev: ThreeEvent<MouseEvent>) => void;
 }) {
   const alarmed = paint.lit;
   // At rest in the glass view a room is clear glass; a reading still tints it.
@@ -557,7 +558,7 @@ function RoomVolume({ room: r, e, h, X, Z, tones, paint, dim, hot, quiet, flat, 
   return (
     <group position={[x, e + h / 2, z]}>
       <mesh geometry={geo} onPointerOver={inert ? undefined : (ev) => { ev.stopPropagation(); onOver(ev); }}
-            onPointerOut={inert ? undefined : onOut} onClick={inert ? undefined : (ev) => { ev.stopPropagation(); onClick(); }}
+            onPointerOut={inert ? undefined : onOut} onClick={inert ? undefined : (ev) => { ev.stopPropagation(); onClick(ev); }}
             raycast={inert ? () => null : undefined}>
         <meshStandardMaterial color={colour} emissive={paint.band ? colour : '#000000'} emissiveIntensity={paint.band ? 0.7 : 0}
                               transparent depthWrite={false}

@@ -95,6 +95,34 @@ export function rackH(r: FloorRack): number {
   return RACK_BASE + (r.u_height ?? 42) * U;
 }
 
+/** Tells a click from the end of an orbit drag. react-three-fiber fires
+ *  onClick on whatever was under the pointer at both pointer-down and
+ *  pointer-up, however far it travelled between, so a drag that starts and
+ *  ends over the building "clicks" it. A click is a press that moved at most
+ *  four pixels. */
+export function useClickGuard(): (ev: ThreeEvent<MouseEvent>) => boolean {
+  const { gl } = useThree();
+  // Where the press began and whether it has strayed since: an orbit that
+  // comes back to its starting pixel still turned the camera, so it is the
+  // farthest the pointer went that counts, not where it let go.
+  const press = useRef<{ x: number; y: number; moved: boolean } | null>(null);
+  useEffect(() => {
+    const el = gl.domElement;
+    const onDown = (e: PointerEvent) => { press.current = { x: e.clientX, y: e.clientY, moved: false }; };
+    const onMove = (e: PointerEvent) => {
+      const p = press.current;
+      if (p && !p.moved && Math.hypot(e.clientX - p.x, e.clientY - p.y) > 4) p.moved = true;
+    };
+    el.addEventListener('pointerdown', onDown);
+    window.addEventListener('pointermove', onMove);
+    return () => { el.removeEventListener('pointerdown', onDown); window.removeEventListener('pointermove', onMove); };
+  }, [gl]);
+  return useCallback((ev: ThreeEvent<MouseEvent>) => {
+    const p = press.current;
+    return !p || (!p.moved && Math.hypot(ev.nativeEvent.clientX - p.x, ev.nativeEvent.clientY - p.y) <= 4);
+  }, []);
+}
+
 // ----------------------------------------------------------- gradient boxes
 
 // Each instance carries a bottom/middle/top colour for its front and, when a
@@ -166,6 +194,7 @@ function GradientBoxes({ boxes, part, opacity, frost = false, dim, meshRef, onCl
 }) {
   const inner = useRef<THREE.InstancedMesh>(null);
   const { invalidate } = useThree();
+  const clean = useClickGuard();
   const n = boxes.length;
 
   const geometry = useMemo(() => {
@@ -229,7 +258,7 @@ function GradientBoxes({ boxes, part, opacity, frost = false, dim, meshRef, onCl
   return (
     <instancedMesh key={`${part}${n}`} ref={inner} args={[geometry, material, n]}
                    frustumCulled={false}
-                   onClick={onClick && ((e) => { e.stopPropagation(); if (e.instanceId != null) onClick(e.instanceId); })}
+                   onClick={onClick && ((e) => { e.stopPropagation(); if (clean(e) && e.instanceId != null) onClick(e.instanceId); })}
                    onPointerMove={onMove && ((e) => { e.stopPropagation(); if (e.instanceId != null) onMove(e.instanceId, e); })}
                    onPointerOut={onOut} />
   );
@@ -738,6 +767,7 @@ function HotSpots({ indices, racks, rackBoxes, tones, onSelect, onTip }: {
   onSelect?: (s: Sel) => void; onTip?: (t: HoverTip | null) => void;
 }) {
   const ref = useRef<THREE.InstancedMesh>(null);
+  const clean = useClickGuard();
   const { invalidate } = useThree();
   const spots = useMemo(() => {
     const at = new Map(racks.map((r, i) => [r.id, i]));
@@ -761,7 +791,7 @@ function HotSpots({ indices, racks, rackBoxes, tones, onSelect, onTip }: {
   if (!spots.length) return null;
   return (
     <instancedMesh key={spots.length} ref={ref} args={[undefined, undefined, spots.length]}
-                   onClick={onSelect && ((e) => { e.stopPropagation(); if (e.instanceId != null) onSelect({ kind: 'rack', id: spots[e.instanceId].rack.id }); })}
+                   onClick={onSelect && ((e) => { e.stopPropagation(); if (clean(e) && e.instanceId != null) onSelect({ kind: 'rack', id: spots[e.instanceId].rack.id }); })}
                    onPointerMove={onTip && ((e) => {
                      e.stopPropagation();
                      if (e.instanceId == null) return;
@@ -1199,6 +1229,7 @@ function Instruments({ items, X, Z, onSelect, onTip }: {
   onSelect?: (s: Sel) => void; onTip?: (t: HoverTip | null) => void;
 }) {
   const ref = useRef<THREE.InstancedMesh>(null);
+  const clean = useClickGuard();
   useLayoutEffect(() => {
     const im = ref.current;
     if (!im) return;
@@ -1210,7 +1241,7 @@ function Instruments({ items, X, Z, onSelect, onTip }: {
   if (!items.length) return null;
   return (
     <instancedMesh key={items.length} ref={ref} args={[undefined, undefined, items.length]}
-                   onClick={onSelect && ((e) => { e.stopPropagation(); if (e.instanceId != null) onSelect({ kind: 'equipment', id: items[e.instanceId].id }); })}
+                   onClick={onSelect && ((e) => { e.stopPropagation(); if (clean(e) && e.instanceId != null) onSelect({ kind: 'equipment', id: items[e.instanceId].id }); })}
                    onPointerMove={onTip && ((e) => {
                      e.stopPropagation();
                      if (e.instanceId == null) return;
@@ -1292,6 +1323,7 @@ function RackDevices({ devices, show, rackById, X, Z, themeTick, onSelect, onTip
   onSelect?: (s: Sel) => void; onTip?: (t: HoverTip | null) => void;
 }) {
   const ref = useRef<THREE.InstancedMesh>(null);
+  const clean = useClickGuard();
   const { invalidate } = useThree();
   const boxes = useMemo(() => {
     const perRack = new Map<string, number>();
@@ -1334,7 +1366,7 @@ function RackDevices({ devices, show, rackById, X, Z, themeTick, onSelect, onTip
     <>
     {!show && <DeviceFaces devices={devices} boxes={boxes} rackById={rackById} colors={colors} />}
     <instancedMesh key={devices.length} ref={ref} args={[undefined, undefined, devices.length]}
-                   onClick={onSelect && ((e) => { e.stopPropagation(); if (e.instanceId != null) onSelect({ kind: 'device', id: devices[e.instanceId].id }); })}
+                   onClick={onSelect && ((e) => { e.stopPropagation(); if (clean(e) && e.instanceId != null) onSelect({ kind: 'device', id: devices[e.instanceId].id }); })}
                    onPointerMove={onTip && ((e) => {
                      e.stopPropagation();
                      if (e.instanceId == null) return;
