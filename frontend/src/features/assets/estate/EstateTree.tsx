@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { api, type RackSummary, type RoomSummary } from '../../../api/client';
+import { toCss } from '../../../lib/zoom';
 
 /** Sites and rooms, ranked by what fits.
  *
@@ -26,7 +27,7 @@ function InfoTip({ label, children }: {
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
   const show = (e: React.SyntheticEvent<HTMLElement>) => {
     const r = e.currentTarget.getBoundingClientRect();
-    setPos({ x: r.right + 4, y: r.bottom + 8 });
+    setPos({ x: toCss(r.right) + 4, y: toCss(r.bottom) + 8 });
   };
   return (
     <span

@@ -5,7 +5,7 @@ import BuildingScene, { type BuildingSceneProps } from './BuildingScene';
 export default function BuildingStage(props: BuildingSceneProps & { label: string }) {
   const { label, ...scene } = props;
   return (
-    <Canvas frameloop="demand" dpr={[1, 2]} shadows={false}
+    <Canvas className="r3f-fill" frameloop="demand" dpr={[1, 2]} shadows={false}
             gl={{ antialias: true, powerPreference: 'high-performance' }}
             onPointerMissed={() => scene.onHover(null)} aria-label={label}>
       <BuildingScene {...scene} />

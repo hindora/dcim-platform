@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { NavLink, useLocation } from 'react-router-dom';
+import { toCss } from '../lib/zoom';
 
 export interface NavMenuItem {
   to: string;
@@ -49,7 +50,7 @@ export function NavMenu({ label, items }: { label: string; items: NavMenuItem[] 
     };
     const place = () => {
       const r = trigger.current?.getBoundingClientRect();
-      if (r) setPos({ left: r.left, top: r.bottom });
+      if (r) setPos({ left: toCss(r.left), top: toCss(r.bottom) });
     };
     place();
     document.addEventListener('mousedown', away);

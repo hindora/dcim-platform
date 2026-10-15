@@ -1,7 +1,7 @@
 /* The room viewer (features/floorplan). Chrome follows the theme tokens; the
    picture inside the canvas follows the data bands (index.css --band-*). */
 
-.viewer { position: relative; height: calc(100dvh - 68px); min-height: 540px; overflow: hidden;
+.viewer { position: relative; height: calc(100dvh / var(--dz) - 68px); min-height: 540px; overflow: hidden;
           background: var(--bg-inset);
           /* one surface for everything that floats over the picture */
           --vw-glass: color-mix(in srgb, var(--bg-raised) 94%, transparent);

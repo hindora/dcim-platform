@@ -26,6 +26,7 @@ import { numT, setTempUnit, unitLabel, useTempUnit, type TempUnit } from './unit
 import { useFrames, useTopics } from '../../ws/useSocket';
 import type { HoverTip } from './Scene';
 import './viewer.css';
+import { toCss } from '../../lib/zoom';
 
 /**
  * Floor map: one room, drawn from its stored geometry and coloured by live
@@ -581,7 +582,7 @@ export function FloorPlanView() {
         <div className="vw-legends"><Legend spec={legendFor(bLayer)!} /></div>
         {tip && (
           <span className="hover-tip vw-tip" role="tooltip"
-                style={{ left: Math.min(tip.x + 14, window.innerWidth - 300), top: tip.y + 14 }}>{tip.text}</span>
+                style={{ left: Math.min(toCss(tip.x) + 14, toCss(window.innerWidth) - 300), top: toCss(tip.y) + 14 }}>{tip.text}</span>
         )}
         <div className="vw-status">
           <span><span className="dot" style={{ background: building.isError ? 'var(--critical)' : alarmed ? 'var(--warn)' : 'var(--ok)' }} />
@@ -722,7 +723,7 @@ export function FloorPlanView() {
 
       {tip && mode !== 'fpv' && (
         <span className="hover-tip vw-tip" role="tooltip"
-              style={{ left: Math.min(tip.x + 14, window.innerWidth - 300), top: tip.y + 14 }}>{tip.text}</span>
+              style={{ left: Math.min(toCss(tip.x) + 14, toCss(window.innerWidth) - 300), top: toCss(tip.y) + 14 }}>{tip.text}</span>
       )}
 
       <Timeline t={t} playing={playing} step={step} speed={speed} cmp={cmp} cmpT={cmpT} earliest={earliest}

@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from 'react';
+import { toCss } from '../lib/zoom';
 
 /** A cursor-anchored tooltip card, replacing the browser's native title
  *  balloon - which cannot be styled, waits a full second, and reads as a
@@ -13,9 +14,9 @@ export function useHoverTip() {
 
   const bind = (node: ReactNode) => ({
     onMouseEnter: (e: React.MouseEvent) =>
-      setTip({ x: e.clientX, y: e.clientY, node }),
+      setTip({ x: toCss(e.clientX), y: toCss(e.clientY), node }),
     onMouseMove: (e: React.MouseEvent) =>
-      setTip((t) => (t ? { ...t, x: e.clientX, y: e.clientY } : t)),
+      setTip((t) => (t ? { ...t, x: toCss(e.clientX), y: toCss(e.clientY) } : t)),
     onMouseLeave: () => setTip(null),
   });
 
@@ -27,7 +28,7 @@ export function useHoverTip() {
         top: tip.y + 16,
         // Clamped so a mark near the right edge does not push the card
         // off-screen.
-        left: Math.min(tip.x + 12, window.innerWidth - 230),
+        left: Math.min(tip.x + 12, toCss(window.innerWidth) - 230),
       }}
     >
       {tip.node}

@@ -53,6 +53,7 @@ import { AlarmLegend } from './AlarmModals';
 import { AlarmPanel } from './AlarmPanel';
 import { Pagination } from '../../components/Pagination';
 import { RailCards } from './RailCards';
+import { toCss } from '../../lib/zoom';
 
 const ALARM_EVENTS = ['alarm_created', 'alarm_updated', 'alarm_cleared'];
 
@@ -72,7 +73,7 @@ function measureColumns(el: HTMLElement | null): Record<string, number> {
   const out: Record<string, number> = {};
   for (const th of Array.from(row.children) as HTMLElement[]) {
     const key = th.dataset.col;
-    if (key) out[key] = th.getBoundingClientRect().width;
+    if (key) out[key] = toCss(th.getBoundingClientRect().width);
   }
   return out;
 }

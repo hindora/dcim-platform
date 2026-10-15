@@ -8,7 +8,7 @@ export default function Stage(props: SceneProps & { label: string }) {
   // `flat`: no filmic tone mapping. The room is drawn in exact colours - a
   // white tile is white and a band is its hex - not a photograph.
   return (
-    <Canvas flat frameloop={scene.mode === 'fpv' ? 'always' : 'demand'} dpr={[1, 2]} shadows={false}
+    <Canvas className="r3f-fill" flat frameloop={scene.mode === 'fpv' ? 'always' : 'demand'} dpr={[1, 2]} shadows={false}
             gl={{ antialias: true, powerPreference: 'high-performance' }}
             onPointerMissed={() => { if (scene.mode !== 'fpv') scene.onSelect(null); }}
             aria-label={label}>

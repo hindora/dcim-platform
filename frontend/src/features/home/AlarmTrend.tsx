@@ -18,6 +18,7 @@ import { api, type AlarmCategory, type AlarmTrend as TrendData } from '../../api
 import { Seg } from '../../components/estate';
 import { useHoverTip } from '../../components/HoverTip';
 import { MaxGlyph, MaxModal } from '../../components/MaxModal';
+import { toCss } from '../../lib/zoom';
 
 /** Whether a maximized chart is up. The sheet and the drawers close on
  *  Escape from a window listener of their own; while a modal is open the
@@ -95,7 +96,7 @@ function TrendBars({ data, said }: { data: TrendData; said: string }) {
       setWidth(entries[0]?.contentRect.width ?? 0);
     });
     ro.observe(el);
-    setWidth(el.getBoundingClientRect().width);
+    setWidth(toCss(el.getBoundingClientRect().width));
     return () => ro.disconnect();
   }, []);
 

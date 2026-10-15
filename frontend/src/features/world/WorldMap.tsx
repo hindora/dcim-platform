@@ -13,6 +13,7 @@ import {
   useRadarIndex, utcClock, Z_MAX, type View,
 } from './satellite';
 import './world.css';
+import { toCss } from '../../lib/zoom';
 
 /**
  * Every site on the globe, coloured by the worst open alarm it holds, with
@@ -309,7 +310,7 @@ export function WorldMap() {
   }, []);
   const local = (e: { clientX: number; clientY: number }) => {
     const r = svgRef.current?.getBoundingClientRect();
-    return r ? [e.clientX - r.left, e.clientY - r.top] as const : [0, 0] as const;
+    return r ? [toCss(e.clientX - r.left), toCss(e.clientY - r.top)] as const : [0, 0] as const;
   };
   // Wheel has to be non-passive to stop the page scrolling under the map.
   useEffect(() => {
@@ -333,7 +334,7 @@ export function WorldMap() {
   const onPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
     const d = drag.current;
     if (!d) return;
-    const dx = e.clientX - d.x, dy = e.clientY - d.y;
+    const dx = toCss(e.clientX - d.x), dy = toCss(e.clientY - d.y);
     if (!d.moved && Math.hypot(dx, dy) < 4) return;        // a click is not a drag
     if (!d.moved) { d.moved = true; e.currentTarget.setPointerCapture(e.pointerId); }
     setView((v) => ({ ...v, x: d.vx + dx, y: d.vy + dy }));

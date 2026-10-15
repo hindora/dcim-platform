@@ -57,7 +57,7 @@ main:has(.asset-shell) { overflow: visible; }
 .asset-nav {
   position: sticky;
   top: 12px;
-  max-height: calc(100vh - 24px);
+  max-height: calc(100vh / var(--dz) - 24px);
   overflow-y: auto;
   /* Reserve the scrollbar's width always, so the labels do not shift sideways
      the moment the rail becomes tall enough to need one. */
@@ -351,7 +351,7 @@ a.asset-tile:hover { border-color: var(--border-strong); }
   padding: 10px 12px;
   position: sticky;
   top: 12px;
-  max-height: calc(100vh - 24px);
+  max-height: calc(100vh / var(--dz) - 24px);
   overflow-y: auto;
   scrollbar-gutter: stable;
 }
@@ -803,7 +803,7 @@ a.asset-tile:hover { border-color: var(--border-strong); }
   display: flex;
   align-items: flex-start;
   justify-content: center;
-  padding: 6vh 16px 16px;
+  padding: calc(6vh / var(--dz)) 16px 16px;
   overflow-y: auto;
   /* Dim rather than blur: the page behind is context an operator is still
      reading off - which rack, which room - and blurring it removes that. */

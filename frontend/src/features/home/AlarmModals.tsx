@@ -97,7 +97,7 @@ function Catalogue({ data }: { data: AlarmTaxonomy }) {
         ))}
       </div>
 
-      <div className="estate-scroll" style={{ maxHeight: '46vh' }}>
+      <div className="estate-scroll" style={{ maxHeight: 'calc(46vh / var(--dz))' }}>
         <table className="estate-table catalogue">
           <thead>
             <tr>

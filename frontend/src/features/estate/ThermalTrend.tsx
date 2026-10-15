@@ -55,6 +55,7 @@ import { useHoverTip } from '../../components/HoverTip';
 import { MaxGlyph, MaxModal } from '../../components/MaxModal';
 import { Plot, type PlotSeries } from '../../components/Plot';
 import { DASHES, useChartColors } from '../../components/seriesColors';
+import { toCss } from '../../lib/zoom';
 
 export interface ThermalTrendScope { kind: 'site' | 'room' | 'rack'; id: string; label: string }
 
@@ -107,7 +108,7 @@ function TrendPlot({ data, unit }: { data: TrendData; unit: Unit }) {
       if (w > 0) setWidth(Math.round(w));
     });
     ro.observe(el);
-    const w = el.getBoundingClientRect().width;
+    const w = toCss(el.getBoundingClientRect().width);
     if (w > 0) setWidth(Math.round(w));
     return () => ro.disconnect();
   }, []);
@@ -171,7 +172,7 @@ function ComplianceColumns({ data, said, band, unit }: {
       setWidth(entries[0]?.contentRect.width ?? 0);
     });
     ro.observe(el);
-    setWidth(el.getBoundingClientRect().width);
+    setWidth(toCss(el.getBoundingClientRect().width));
     return () => ro.disconnect();
   }, []);
 
@@ -482,7 +483,7 @@ function DeltaPlot({ data, unit }: { data: DeltaData; unit: Unit }) {
       if (w > 0) setWidth(Math.round(w));
     });
     ro.observe(el);
-    const w = el.getBoundingClientRect().width;
+    const w = toCss(el.getBoundingClientRect().width);
     if (w > 0) setWidth(Math.round(w));
     return () => ro.disconnect();
   }, []);

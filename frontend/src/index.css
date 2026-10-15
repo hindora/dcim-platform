@@ -324,7 +324,7 @@ body {
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 
-.app { display: grid; grid-template-columns: 220px 1fr; min-height: 100vh; }
+.app { display: grid; grid-template-columns: 220px 1fr; min-height: calc(100vh / var(--dz)); }
 
 .sidebar {
   background: var(--bg-raised);
@@ -465,7 +465,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .kv dd { margin: 0; }
 
 .login {
-  max-width: 320px; margin: 12vh auto; background: var(--bg-raised);
+  max-width: 320px; margin: calc(12vh / var(--dz)) auto; background: var(--bg-raised);
   border: 1px solid var(--border); border-radius: var(--radius); padding: 22px;
 }
 .login h1 { margin: 0 0 4px; font-size: 18px; }
@@ -799,7 +799,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
  * with six fields stretched across a 4K monitor is unreadable in a way a table
  * of two hundred rows is not.
  */
-.sheet.narrow { max-width: 720px; margin: 0 auto; height: auto; max-height: 88vh; }
+.sheet.narrow { max-width: 720px; margin: 0 auto; height: auto; max-height: calc(88vh / var(--dz)); }
 .sheet.narrow .sheet-foot {
   padding: 14px 34px 20px; margin-top: 0; flex: none;
   border-top: 1px solid var(--border);
@@ -999,7 +999,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   inset: 0;
   z-index: 80;
   display: flex;
-  padding: 3vh 3vw;
+  padding: calc(3vh / var(--dz)) 3vw;
   background: rgb(0 0 0 / 0.6);
 }
 
@@ -1295,3 +1295,20 @@ tr.is-selected > td { background: var(--bg-inset); }
    that would ring on a click. Press a key and it is back at once. */
 html[data-input="pointer"] :focus-visible { outline: none !important; }
 html[data-input="pointer"] input[type="range"]:focus-visible::-webkit-slider-thumb { box-shadow: none !important; }
+
+/* Compact density (laptops). The UI is laid out in px for a window of about
+   1800 x 1000 CSS px; Windows' default 125 % scaling leaves a 1920 x 1080
+   laptop only 1536 x 864, and everything reads a size too big. On a desktop
+   window smaller than 1700 x 950 the whole page is drawn at 85 %, the same as
+   setting the browser to 85 % by hand. Viewport heights (vh) shrink with the
+   zoom, so every one of them is written as calc(Nvh / var(--dz)). Phones and
+   narrow windows keep 1:1. */
+:root { --dz: 1; }
+@media (min-width: 1100px) and (max-width: 1699px), (min-width: 1100px) and (max-height: 949px) {
+  :root { --dz: 0.85; zoom: 0.85; }
+}
+/* react-three-fiber sizes its canvas in px from a measured (screen-pixel)
+   rect, which the zoom would shrink again; the canvas fills its wrapper
+   instead. Pointer maths stays right: offsetX and the measured size are both
+   screen pixels. */
+.r3f-fill canvas { width: 100% !important; height: 100% !important; }

@@ -12,6 +12,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { toCss } from './zoom';
 
 /** Below this a column stops being a column and becomes a sliver. */
 const MIN_WIDTH = 44;
@@ -65,7 +66,7 @@ export function useColumnWidths(storageKey: string): ColumnWidths {
     const move = (e: PointerEvent) => {
       const d = drag.current;
       if (!d) return;
-      const next = Math.max(MIN_WIDTH, Math.round(d.startW + (e.clientX - d.startX)));
+      const next = Math.max(MIN_WIDTH, Math.round(d.startW + toCss(e.clientX - d.startX)));
       setWidths((w) => ({ ...w, [d.key]: next }));
     };
     const up = () => { drag.current = null; setResizing(null); };

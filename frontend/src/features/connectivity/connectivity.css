@@ -14,7 +14,7 @@
 /* Full bleed. `:has` scopes this to the connectivity route so no other page
    gets a flex column it did not ask for, and `min-height: 0` is what lets the
    canvas shrink inside it instead of overflowing the viewport. */
-.shell:has(.conn-app) { height: 100vh; overflow: hidden; }
+.shell:has(.conn-app) { height: calc(100vh / var(--dz)); overflow: hidden; }
 .shell:has(.conn-app) > main {
   display: flex; flex-direction: column;
   /* HEIGHT, not min-height. The shell is min-height: 100vh everywhere else so a
@@ -1078,3 +1078,8 @@
   border-color: var(--warn);
   color: var(--warn);
 }
+
+/* React Flow mixes screen pixels (pointer, client rects) with its own CSS
+   pixels, so under the page's compact zoom (index.css) a pan or a node drag
+   trails the cursor by 15 %. The canvas undoes the zoom and runs 1:1. */
+.conn-app .react-flow { zoom: calc(1 / var(--dz)); }

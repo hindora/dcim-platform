@@ -13,6 +13,7 @@ import { LifecycleChip } from '../components/LifecycleChip';
 import { BulkBar } from './BulkBar';
 import { ImportDialog } from './ImportDialog';
 import { Pagination } from '../../../components/Pagination';
+import { toCss } from '../../../lib/zoom';
 
 /** The asset table.
  *
@@ -50,7 +51,7 @@ function measureRow(th: HTMLTableCellElement | null): Record<string, number> {
   const out: Record<string, number> = {};
   for (const cell of Array.from(row.children) as HTMLElement[]) {
     const key = (cell as HTMLElement).dataset.col;
-    if (key) out[key] = cell.getBoundingClientRect().width;
+    if (key) out[key] = toCss(cell.getBoundingClientRect().width);
   }
   return out;
 }
