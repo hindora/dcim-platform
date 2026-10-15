@@ -69,8 +69,6 @@ const GLASS = {
 };
 /** How far a split pulls each floor from the one below, as a share of the floor-to-floor height. */
 const SPLIT_GAP = 0.9;
-/** How high an alarm badge stands over the device it marks, on its stem. */
-const PIN_RISE = 0.9;
 /** The hardware pass reads geometry only; a block's paint is the instanced colour. */
 const NO_PAINT = { bot: '#000000', mid: '#000000', top: '#000000', fill: 1 };
 const OUTDOOR = 'site';
@@ -330,21 +328,20 @@ export default function BuildingScene(p: BuildingSceneProps) {
       let own = false;
       for (const k of r.racks ?? []) {
         if (k.max_severity === 'CLEAR') continue;
-        out.push({ x: X(r.origin_x_m + k.x), y: e + RACK_H + PIN_RISE, base: e + RACK_H, z: Z(r.origin_y_m + k.y), c: tones.sev(k.max_severity),
-                   cat: k.alarm_category ?? null, n: k.alarm_count ?? 1, w: k.w_m ?? RACK_W, d: k.d_m ?? RACK_D, rot: 0 });
+        out.push({ x: X(r.origin_x_m + k.x), y: e + RACK_H, z: Z(r.origin_y_m + k.y), c: tones.sev(k.max_severity),
+                   cat: k.alarm_category ?? null, n: k.alarm_count ?? 1 });
         own = true;
       }
       for (const u of r.equipment ?? []) {
         if (u.max_severity === 'CLEAR') continue;
-        out.push({ x: X(r.origin_x_m + u.x), y: e + (u.h_m ?? 1.5) + PIN_RISE, base: e + (u.h_m ?? 1.5), z: Z(r.origin_y_m + u.y),
-                   c: tones.sev(u.max_severity), cat: u.alarm_category ?? null, n: u.alarm_count ?? 1,
-                   w: u.w_m, d: u.d_m, rot: -((u.facing_deg ?? 0) * Math.PI) / 180 });
+        out.push({ x: X(r.origin_x_m + u.x), y: e + (u.h_m ?? 1.5), z: Z(r.origin_y_m + u.y),
+                   c: tones.sev(u.max_severity), cat: u.alarm_category ?? null, n: u.alarm_count ?? 1 });
         own = true;
       }
       if (!own && r.max_severity !== 'CLEAR') {
-        // nothing drawn to stand on: the stem rises from the room's floor
-        out.push({ x: X(r.origin_x_m + r.width_m / 2), y: e + 1.6 + PIN_RISE, base: e, z: Z(r.origin_y_m + r.depth_m / 2),
-                   c: tones.sev(r.max_severity), cat: r.alarm_category ?? null, n: r.alarm_count ?? 1, w: 0, d: 0, rot: 0 });
+        // nothing drawn to stand on: the pin stands on the room's floor centre
+        out.push({ x: X(r.origin_x_m + r.width_m / 2), y: e, z: Z(r.origin_y_m + r.depth_m / 2),
+                   c: tones.sev(r.max_severity), cat: r.alarm_category ?? null, n: r.alarm_count ?? 1 });
       }
     }
     return out;
@@ -651,49 +648,58 @@ function RackDoors({ boxes }: { boxes: GBox[] }) {
   );
 }
 
-/** One alarm marker: the badge at (x, y, z), standing on `base` - the top of the
- *  device that raised it, whose footprint (w x d, turned by rot) takes a cap. */
-interface Pin {
-  x: number; y: number; z: number; base: number; c: string; cat: AlarmCategory | null; n: number;
-  w: number; d: number; rot: number;
-}
+/** One alarm marker: a map pin whose tip is at (x, y, z) - the top centre of
+ *  the device that raised it. */
+interface Pin { x: number; y: number; z: number; c: string; cat: AlarmCategory | null; n: number }
 
-/** One alarm badge as an image: a disc in the severity colour, the category's
- *  glyph in white (the same icons as Home's indicator strip; a bell when the
- *  category is not known), a dark ring so it reads on the white tile and the
- *  dark studio alike, and the count in a bubble when more than one is open. */
-function badgeTexture(cat: AlarmCategory | null, colour: string, n: number, onReady: () => void): THREE.CanvasTexture {
-  const S = 128;
+/** One alarm marker as an image: a map pin - a teardrop in the severity
+ *  colour, a dark outline so it reads on the white tile and the dark studio,
+ *  and a white disc holding the category's glyph (the same icons as Home's
+ *  indicator strip; a bell when the category is not known) - with the count
+ *  in a bubble when more than one is open. The tip is the image's bottom
+ *  centre, which is where the sprite is anchored. */
+const PIN_W = 128, PIN_H = 168;
+/** A sprite's anchor at the pin's tip: bottom centre. */
+const PIN_TIP = new THREE.Vector2(0.5, 0);
+function pinTexture(cat: AlarmCategory | null, colour: string, n: number, onReady: () => void): THREE.CanvasTexture {
   const cv = document.createElement('canvas');
-  cv.width = cv.height = S;
+  cv.width = PIN_W; cv.height = PIN_H;
   const c = cv.getContext('2d') as CanvasRenderingContext2D;
   const tex = new THREE.CanvasTexture(cv);
   tex.colorSpace = THREE.SRGBColorSpace;
-  const disc = () => {
-    c.clearRect(0, 0, S, S);
-    c.fillStyle = colour; c.beginPath(); c.arc(S / 2, S / 2, 46, 0, Math.PI * 2); c.fill();
-    c.strokeStyle = 'rgba(10,12,16,0.9)'; c.lineWidth = 6; c.stroke();
+  const cx = PIN_W / 2, cy = 60, R = 50;
+  const body = () => {
+    c.clearRect(0, 0, PIN_W, PIN_H);
+    // the teardrop: the head's circle, its sides running tangent down to the tip
+    const tipY = PIN_H - 4, a = Math.acos(R / (tipY - cy));   // where the sides run tangent to the head
+    c.beginPath();
+    c.arc(cx, cy, R, Math.PI / 2 + a, Math.PI / 2 - a);
+    c.lineTo(cx, tipY);
+    c.closePath();
+    c.fillStyle = colour; c.fill();
+    c.strokeStyle = 'rgba(10,12,16,0.9)'; c.lineWidth = 5; c.lineJoin = 'round'; c.stroke();
+    c.fillStyle = '#ffffff'; c.beginPath(); c.arc(cx, cy, 34, 0, Math.PI * 2); c.fill();
   };
   const count = () => {
     if (n <= 1) return;
     const t = n > 9 ? '9+' : String(n);
-    c.fillStyle = '#0d1117'; c.beginPath(); c.arc(S - 26, 26, 22, 0, Math.PI * 2); c.fill();
+    c.fillStyle = '#0d1117'; c.beginPath(); c.arc(PIN_W - 22, 22, 20, 0, Math.PI * 2); c.fill();
     c.strokeStyle = '#ffffff'; c.lineWidth = 3; c.stroke();
-    c.fillStyle = '#ffffff'; c.font = 'bold 24px system-ui, sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
-    c.fillText(t, S - 26, 27);
+    c.fillStyle = '#ffffff'; c.font = 'bold 22px system-ui, sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.fillText(t, PIN_W - 22, 23);
   };
-  disc(); count();
-  const svg = renderToStaticMarkup(<CategoryGlyph kind={cat ?? 'alarms'} size={56} />)
-    .replace('<svg', '<svg xmlns="http://www.w3.org/2000/svg" color="#ffffff" stroke-width="1.6"');
+  body(); count();
+  const svg = renderToStaticMarkup(<CategoryGlyph kind={cat ?? 'alarms'} size={44} />)
+    .replace('<svg', '<svg xmlns="http://www.w3.org/2000/svg" color="#14181e" stroke-width="1.6"');
   const img = new Image();
-  img.onload = () => { disc(); c.drawImage(img, S / 2 - 28, S / 2 - 28, 56, 56); count(); tex.needsUpdate = true; onReady(); };
+  img.onload = () => { body(); c.drawImage(img, cx - 22, cy - 22, 44, 44); count(); tex.needsUpdate = true; onReady(); };
   img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
   return tex;
 }
 
-/** Alarm markers: a badge over whatever raised it - severity by colour, what
- *  kind of alarm by its icon. The same size on screen at any distance and
- *  drawn over the glass, so a far-off alarm is never lost. The badges pulse
+/** Alarm markers: a map pin standing on whatever raised it - severity by
+ *  colour, what kind of alarm by its icon. The same size on screen at any
+ *  distance and drawn over the glass, so a far-off alarm is never lost. The pins pulse
  *  (1.2 s, a soft fade, not a flash), and hold still under reduced motion; the
  *  scene only repaints while a badge is on screen. */
 function AlarmPins({ pins }: { pins: Pin[] }) {
@@ -704,7 +710,7 @@ function AlarmPins({ pins }: { pins: Pin[] }) {
   const texFor = (p: Pin) => {
     const key = `${p.cat ?? 'alarms'}|${p.c}|${Math.min(p.n, 10)}`;
     let t = textures.get(key);
-    if (!t) { t = badgeTexture(p.cat, p.c, p.n, invalidate); textures.set(key, t); }
+    if (!t) { t = pinTexture(p.cat, p.c, p.n, invalidate); textures.set(key, t); }
     return t;
   };
   useEffect(() => {
@@ -717,42 +723,17 @@ function AlarmPins({ pins }: { pins: Pin[] }) {
     }, 60);
     return () => window.clearInterval(id);
   }, [pins.length, invalidate]);
-  // The stems, one line each in the severity colour: the badge reads as a pin
-  // standing on its device from any angle, and the stem hides behind what is
-  // in front of it, which says how deep it is.
-  const stems = useMemo(() => {
-    const g = new THREE.BufferGeometry();
-    const pos: number[] = [], col: number[] = [], c = new THREE.Color();
-    for (const p of pins) {
-      c.set(p.c);
-      pos.push(p.x, p.base, p.z, p.x, p.y - 0.12, p.z);
-      col.push(c.r, c.g, c.b, c.r, c.g, c.b);
-    }
-    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-    g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
-    return g;
-  }, [pins]);
-  useEffect(() => () => stems.dispose(), [stems]);
+  // Anchored at its bottom centre (the pin's tip), so the tip stays on the
+  // device's top centre from any angle and the pin cannot drift onto a neighbour.
   return (
-    <>
-      <lineSegments geometry={stems} raycast={() => null}>
-        <lineBasicMaterial vertexColors transparent opacity={0.9} />
-      </lineSegments>
-      {/* the device's own top, lit in the severity colour - fixed to it whatever the camera does */}
-      {pins.filter((p) => p.w > 0).map((p, i) => (
-        <mesh key={`cap${i}`} position={[p.x, p.base + 0.02, p.z]} rotation-y={p.rot} raycast={() => null}>
-          <boxGeometry args={[p.w * 0.92, 0.03, p.d * 0.92]} />
-          <meshBasicMaterial color={p.c} transparent opacity={0.85} />
-        </mesh>
+    <group ref={group}>
+      {pins.map((p, i) => (
+        <sprite key={i} position={[p.x, p.y, p.z]} center={PIN_TIP} renderOrder={20}
+                scale={[0.04 * (PIN_W / PIN_H), 0.04, 1]} raycast={() => null}>
+          <spriteMaterial map={texFor(p)} sizeAttenuation={false} depthTest={false} transparent />
+        </sprite>
       ))}
-      <group ref={group}>
-        {pins.map((p, i) => (
-          <sprite key={i} position={[p.x, p.y, p.z]} renderOrder={20} scale={[0.04, 0.04, 1]} raycast={() => null}>
-            <spriteMaterial map={texFor(p)} sizeAttenuation={false} depthTest={false} transparent />
-          </sprite>
-        ))}
-      </group>
-    </>
+    </group>
   );
 }
 
