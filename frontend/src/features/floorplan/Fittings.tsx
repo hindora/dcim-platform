@@ -105,13 +105,15 @@ function canvasTex(w: number, h: number, draw: (c: CanvasRenderingContext2D, w: 
 
 // --------------------------------------------------------------- the room
 
-export function RoomFittings({ W, D, roomClass, roomName, doors, obstacles, fire }: {
+export function RoomFittings({ W, D, roomClass, roomName, doors, obstacles, fire, marks = [] }: {
   W: number; D: number; roomClass: string | null | undefined; roomName: string;
   doors: RoomDoor[];
   /** null = no fire instrument reports for this room. */
   fire: RoomFire | null;
   /** Footprints already standing in the room, room metres. */
   obstacles: Rect[];
+  /** Wall-hung instruments (sensors, panels), room metres: a board or screen slides clear of them. */
+  marks?: { x: number; y: number }[];
 }) {
   // Gas suppression: where a release panel reports, the room has it; where
   // nothing reports, white space is assumed to, which is the rule.
@@ -142,10 +144,29 @@ export function RoomFittings({ W, D, roomClass, roomName, doors, obstacles, fire
     return null;
   }, [hall, obstacles, doors, W, D]);
 
-  // A staffed room gets a window and a desk: the wall facing its door.
-  const staffed = roomClass === 'support' && /operat|noc|control/i.test(roomName);
-  const windowWall: Wall | null = staffed
-    ? ({ W: 'E', E: 'W', N: 'S', S: 'N' } as const)[placed[0]?.wall ?? 'W'] : null;
+  // Support rooms are furnished by what they are for (drawn by rule, like the
+  // fire points): the far wall faces the door, the side walls flank it.
+  const furnish = roomClass === 'support' ? kindOfRoom(roomName) : null;
+  const doorWall: Wall = placed[0]?.wall ?? 'W';
+  const front: Wall = ({ W: 'E', E: 'W', N: 'S', S: 'N' } as const)[doorWall];
+  const sides: [Wall, Wall] = front === 'N' || front === 'S' ? ['W', 'E'] : ['N', 'S'];
+  const span = (w: Wall) => (w === 'N' || w === 'S' ? W : D);
+  const deep = (w: Wall) => (w === 'N' || w === 'S' ? D : W);
+  // Where along a wall something `len` long hangs: centred, unless an
+  // instrument on that wall is in the way, then just clear of it.
+  const clearAt = (w: Wall, len: number) => {
+    const sp = span(w), mid = sp / 2;
+    const near = marks.filter((m) => (w === 'N' ? m.y : w === 'S' ? D - m.y : w === 'W' ? m.x : W - m.x) < 0.35)
+      .map((m) => (w === 'N' || w === 'S' ? m.x : m.y));
+    if (!near.some((a) => Math.abs(a - mid) < len / 2 + 0.2)) return mid;
+    const fits = (a: number) => a >= len / 2 + 0.1 && a <= sp - len / 2 - 0.1 && !near.some((m) => Math.abs(m - a) < len / 2 + 0.2);
+    const tries = near.flatMap((m) => [m + len / 2 + 0.25, m - len / 2 - 0.25]).filter(fits);
+    return tries.length ? tries.sort((a, b) => Math.abs(a - mid) - Math.abs(b - mid))[0] : mid;
+  };
+  const on = (w: Wall, node: React.ReactNode, len?: number) => {
+    const f = wallFrame(w, len ? clearAt(w, len) : span(w) / 2, W, D);
+    return <group position={f.pos} rotation-y={f.ry}>{node}</group>;
+  };
 
   return (
     <group>
@@ -169,16 +190,41 @@ export function RoomFittings({ W, D, roomClass, roomName, doors, obstacles, fire
         const f = wallFrame(bank.wall, bank.at, W, D);
         return <group position={f.pos} rotation-y={f.ry}><CylinderBank spent={Boolean(fire?.released || fire?.gas === 3)} /></group>;
       })()}
-      {windowWall && (() => {
-        const span = windowWall === 'W' || windowWall === 'E' ? D : W;
-        const f = wallFrame(windowWall, span / 2, W, D);
-        return (
-          <group position={f.pos} rotation-y={f.ry}>
-            <Window len={Math.min(2.4, span * 0.5)} />
-            <Desk len={Math.min(2.2, span * 0.45)} />
-          </group>
-        );
-      })()}
+      {furnish === 'ops' && (
+        <>
+          {/* A NOC faces its video wall; the consoles stand back from it, one operator each. */}
+          {on(front, <VideoWall w={Math.min(3.6, span(front) * 0.62)} />, Math.min(3.6, span(front) * 0.62))}
+          {on(front, (() => {
+            const len = Math.min(1.8, span(front) * 0.32), z = Math.min(2.2, deep(front) * 0.45);
+            return [-1, 1].map((k) => (
+              <group key={k} position={[k * (len / 2 + 0.15), 0, z]}>
+                <Console len={len} screens={3} />
+                <Chair z={0.75} />
+              </group>
+            ));
+          })())}
+          {on(sides[0], <Whiteboard len={Math.min(1.8, span(sides[0]) * 0.4)} />, Math.min(1.8, span(sides[0]) * 0.4))}
+        </>
+      )}
+      {furnish === 'mmr' && (
+        <>
+          {/* A meet-me room is the carriers' demarcation, not an office: a cross-connect
+              records board and a small bench for the crash-cart screen. */}
+          {on(front, <Whiteboard len={Math.min(1.6, span(front) * 0.45)} />, Math.min(1.6, span(front) * 0.45))}
+          {on(sides[0], <group position={[0, 0, 0.4]}><Bench len={Math.min(1.4, span(sides[0]) * 0.35)} screens={1} /><Stool z={0.75} /></group>)}
+        </>
+      )}
+      {furnish === 'staging' && (
+        <>
+          {/* Spares on steel shelving, a build and burn-in bench, the job board. */}
+          {on(front, <Shelving len={Math.min(4, span(front) * 0.6)} />)}
+          {on(sides[0], <group position={[0, 0, 0.4]}>
+            <Bench len={Math.min(2.4, span(sides[0]) * 0.5)} screens={2} />
+            {[-0.5, 0.5].map((x) => <Stool key={x} x={x} z={0.75} />)}
+          </group>)}
+          {on(sides[1], <Whiteboard len={Math.min(1.8, span(sides[1]) * 0.4)} />, Math.min(1.8, span(sides[1]) * 0.4))}
+        </>
+      )}
     </group>
   );
 }
@@ -319,43 +365,148 @@ function CylinderBank({ spent }: { spent: boolean }) {
   );
 }
 
-function Window({ len }: { len: number }) {
+// ------------------------------------------------------------ furniture
+
+type RoomKind = 'ops' | 'mmr' | 'staging';
+function kindOfRoom(name: string): RoomKind | null {
+  if (/operat|noc|control/i.test(name)) return 'ops';
+  if (/meet.?me|\bmmr\b/i.test(name)) return 'mmr';
+  if (/stag|storage|store/i.test(name)) return 'staging';
+  return null;
+}
+
+const FURN = {
+  top: '#c9ced4', frame: '#3a4048', seat: '#2b3036', screen: '#0e141b', glow: '#2a6fb0',
+  bench: '#8f979f', mat: '#5d7468', shelf: '#9aa3ad', box: '#b08a5a', board: '#f4f6f8', boardRim: '#9aa3ad',
+};
+
+/** A monitor on a short stand, its face toward +z (the person using it). */
+function Monitor({ x = 0, z = 0, y = 0.74, w = 0.55 }: { x?: number; z?: number; y?: number; w?: number }) {
   return (
-    <group position={[0, 1.55, 0.03]} raycast={() => null}>
-      <mesh>
-        <planeGeometry args={[len + 0.12, 1.22]} /><meshStandardMaterial color={FIT.frame} roughness={0.8} />
-      </mesh>
-      <mesh position={[0, 0, 0.01]}>
-        <planeGeometry args={[len, 1.1]} /><meshStandardMaterial color={FIT.glass} roughness={0.15} transparent opacity={0.8} />
-      </mesh>
-      <mesh position={[0, 0, 0.02]}>
-        <planeGeometry args={[0.04, 1.1]} /><meshStandardMaterial color={FIT.frame} roughness={0.8} />
-      </mesh>
+    <group position={[x, y, z]}>
+      <mesh position={[0, 0.3, 0]}><boxGeometry args={[w, w * 0.6, 0.03]} /><meshStandardMaterial color={FURN.frame} roughness={0.6} /></mesh>
+      <mesh position={[0, 0.3, 0.017]}><planeGeometry args={[w * 0.93, w * 0.54]} />
+        <meshStandardMaterial color={FURN.screen} emissive={FURN.glow} emissiveIntensity={0.35} roughness={0.3} /></mesh>
+      <mesh position={[0, 0.07, -0.02]}><boxGeometry args={[0.05, 0.14, 0.05]} /><meshStandardMaterial color={FURN.frame} /></mesh>
+      <mesh position={[0, 0.005, -0.02]}><boxGeometry args={[0.22, 0.01, 0.16]} /><meshStandardMaterial color={FURN.frame} /></mesh>
     </group>
   );
 }
 
-/** An operator's console under the window: a desk and two screens. */
-function Desk({ len }: { len: number }) {
+/** An operator's console: a desk with its screens along the back edge. */
+function Console({ len, screens }: { len: number; screens: number }) {
+  const step = Math.min(0.58, (len - 0.1) / screens);
   return (
-    <group position={[0, 0, 0.55]} raycast={() => null}>
-      <mesh position={[0, 0.73, 0]}>
-        <boxGeometry args={[len, 0.04, 0.8]} /><meshStandardMaterial color={FIT.desk} roughness={0.8} />
-      </mesh>
-      {[-1, 1].map((s) => (
-        <mesh key={s} position={[s * (len / 2 - 0.05), 0.36, 0]}>
-          <boxGeometry args={[0.05, 0.72, 0.74]} /><meshStandardMaterial color={FIT.frame} roughness={0.8} />
-        </mesh>
+    <group raycast={() => null}>
+      <mesh position={[0, 0.73, 0]}><boxGeometry args={[len, 0.04, 0.8]} /><meshStandardMaterial color={FURN.top} roughness={0.7} /></mesh>
+      {[-1, 1].map((k) => (
+        <mesh key={k} position={[k * (len / 2 - 0.03), 0.36, 0]}><boxGeometry args={[0.04, 0.72, 0.76]} />
+          <meshStandardMaterial color={FURN.frame} roughness={0.8} /></mesh>
       ))}
-      {[-0.35, 0.35].map((x) => (
-        <group key={x} position={[x, 0, -0.2]}>
-          <mesh position={[0, 1.0, 0]}>
-            <boxGeometry args={[0.6, 0.36, 0.03]} /><meshStandardMaterial color={FIT.screen} roughness={0.3} />
+      <mesh position={[0, 0.45, -0.36]}><boxGeometry args={[len - 0.08, 0.5, 0.02]} /><meshStandardMaterial color={FURN.frame} roughness={0.8} /></mesh>
+      {Array.from({ length: screens }, (_, i) => (
+        <Monitor key={i} x={(i - (screens - 1) / 2) * step} z={-0.22} w={step - 0.03} />
+      ))}
+    </group>
+  );
+}
+
+/** A workbench: steel frame, an ESD mat on the top, a lower shelf, its screens at the back. */
+function Bench({ len, screens }: { len: number; screens: number }) {
+  return (
+    <group raycast={() => null}>
+      <mesh position={[0, 0.88, 0]}><boxGeometry args={[len, 0.04, 0.7]} /><meshStandardMaterial color={FURN.bench} roughness={0.6} /></mesh>
+      <mesh position={[0, 0.905, 0.05]}><boxGeometry args={[len - 0.1, 0.005, 0.55]} /><meshStandardMaterial color={FURN.mat} roughness={0.9} /></mesh>
+      <mesh position={[0, 0.2, 0]}><boxGeometry args={[len - 0.06, 0.03, 0.62]} /><meshStandardMaterial color={FURN.bench} roughness={0.7} /></mesh>
+      {[-1, 1].map((kx) => [-1, 1].map((kz) => (
+        <mesh key={`${kx}${kz}`} position={[kx * (len / 2 - 0.04), 0.44, kz * 0.31]}><boxGeometry args={[0.04, 0.88, 0.04]} />
+          <meshStandardMaterial color={FURN.frame} /></mesh>
+      )))}
+      {Array.from({ length: screens }, (_, i) => (
+        <Monitor key={i} x={(i - (screens - 1) / 2) * 0.62} z={-0.2} y={0.9} />
+      ))}
+    </group>
+  );
+}
+
+/** A task chair: five-star base, gas lift, seat and back; it faces -z (the desk). */
+function Chair({ x = 0, z = 0 }: { x?: number; z?: number }) {
+  return (
+    <group position={[x, 0, z]} raycast={() => null}>
+      <mesh position={[0, 0.03, 0]}><cylinderGeometry args={[0.3, 0.3, 0.04, 5]} /><meshStandardMaterial color={FURN.seat} roughness={0.7} /></mesh>
+      <mesh position={[0, 0.25, 0]}><cylinderGeometry args={[0.025, 0.025, 0.4, 8]} /><meshStandardMaterial color={FURN.frame} /></mesh>
+      <mesh position={[0, 0.48, 0]}><boxGeometry args={[0.48, 0.07, 0.46]} /><meshStandardMaterial color={FURN.seat} roughness={0.9} /></mesh>
+      <mesh position={[0, 0.82, 0.22]} rotation-x={-0.12}><boxGeometry args={[0.44, 0.52, 0.05]} /><meshStandardMaterial color={FURN.seat} roughness={0.9} /></mesh>
+    </group>
+  );
+}
+
+/** A lab stool at bench height. */
+function Stool({ x = 0, z = 0 }: { x?: number; z?: number }) {
+  return (
+    <group position={[x, 0, z]} raycast={() => null}>
+      <mesh position={[0, 0.02, 0]}><cylinderGeometry args={[0.24, 0.24, 0.03, 5]} /><meshStandardMaterial color={FURN.seat} /></mesh>
+      <mesh position={[0, 0.33, 0]}><cylinderGeometry args={[0.025, 0.025, 0.6, 8]} /><meshStandardMaterial color={FURN.frame} /></mesh>
+      <mesh position={[0, 0.66, 0]}><cylinderGeometry args={[0.19, 0.19, 0.06, 16]} /><meshStandardMaterial color={FURN.seat} roughness={0.9} /></mesh>
+    </group>
+  );
+}
+
+/** A whiteboard on the wall, with its pen tray. */
+function Whiteboard({ len }: { len: number }) {
+  return (
+    <group position={[0, 1.45, 0.02]} raycast={() => null}>
+      <mesh><boxGeometry args={[len + 0.06, 1.16, 0.02]} /><meshStandardMaterial color={FURN.boardRim} roughness={0.6} /></mesh>
+      {/* unlit, like the walls it hangs on, so white reads as white */}
+      <mesh position={[0, 0, 0.012]}><planeGeometry args={[len, 1.1]} /><meshBasicMaterial color={FURN.board} /></mesh>
+      <mesh position={[0, -0.6, 0.05]}><boxGeometry args={[len * 0.6, 0.03, 0.08]} /><meshStandardMaterial color={FURN.boardRim} /></mesh>
+    </group>
+  );
+}
+
+/** A NOC video wall: a grid of thin-bezel panels, lit. */
+function VideoWall({ w, cols = 3, rows = 2 }: { w: number; cols?: number; rows?: number }) {
+  const pw = w / cols, ph = pw * 0.5625;
+  return (
+    <group position={[0, 1.15 + (rows * ph) / 2, 0.04]} raycast={() => null}>
+      <mesh><boxGeometry args={[w + 0.06, rows * ph + 0.06, 0.06]} /><meshStandardMaterial color={FURN.frame} roughness={0.6} /></mesh>
+      {Array.from({ length: cols * rows }, (_, i) => {
+        const c = i % cols, r = Math.floor(i / cols);
+        return (
+          <mesh key={i} position={[(c - (cols - 1) / 2) * pw, (r - (rows - 1) / 2) * ph, 0.032]}>
+            <planeGeometry args={[pw - 0.015, ph - 0.015]} />
+            <meshStandardMaterial color={FURN.screen} emissive={FURN.glow} emissiveIntensity={0.45 + 0.15 * ((i * 7) % 3) / 2} roughness={0.3} />
           </mesh>
-          <mesh position={[0, 0.8, 0]}>
-            <boxGeometry args={[0.05, 0.12, 0.05]} /><meshStandardMaterial color={FIT.frame} />
-          </mesh>
-        </group>
+        );
+      })}
+    </group>
+  );
+}
+
+/** Steel shelving bays against the wall, stocked with boxed spares. */
+function Shelving({ len }: { len: number }) {
+  const bays = Math.max(1, Math.round(len / 0.9)), bw = len / bays, deepS = 0.5;
+  const boxes: [number, number, number, number][] = [];
+  for (let b = 0; b < bays; b++) {
+    for (const [k, y] of [0.17, 0.62, 1.07, 1.52].entries()) {
+      const n = 1 + ((b * 3 + k * 5) % 3);
+      for (let i = 0; i < n; i++) {
+        const w = bw / (n + 0.6), h = 0.18 + (((b + i + k) * 13) % 5) * 0.04;
+        boxes.push([-len / 2 + b * bw + (i + 0.5) * (bw / n), y + h / 2 + 0.02, w, h]);
+      }
+    }
+  }
+  return (
+    <group position={[0, 0, 0.05 + deepS / 2]} raycast={() => null}>
+      {Array.from({ length: bays + 1 }, (_, i) => [-1, 1].map((k) => (
+        <mesh key={`${i}${k}`} position={[-len / 2 + i * bw, 0.95, k * (deepS / 2 - 0.02)]}><boxGeometry args={[0.035, 1.9, 0.035]} />
+          <meshStandardMaterial color={FURN.frame} /></mesh>
+      )))}
+      {[0.15, 0.6, 1.05, 1.5, 1.95].map((y) => (
+        <mesh key={y} position={[0, y, 0]}><boxGeometry args={[len, 0.025, deepS]} /><meshStandardMaterial color={FURN.shelf} roughness={0.6} /></mesh>
+      ))}
+      {boxes.map(([x, y, w, h], i) => (
+        <mesh key={i} position={[x, y, 0]}><boxGeometry args={[w, h, deepS * 0.8]} /><meshStandardMaterial color={FURN.box} roughness={0.9} /></mesh>
       ))}
     </group>
   );

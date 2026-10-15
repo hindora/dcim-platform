@@ -529,7 +529,8 @@ export default function RoomScene(p: SceneProps) {
       {enclosure !== 'walls' && <OpenEnclosure W={W} D={D} kind={enclosure} />}
       {vis.fittings && enclosure === 'walls' && (
         <RoomFittings W={W} D={D} roomClass={plan.room_class} roomName={plan.room_name}
-                      doors={fitDoors} obstacles={standing} fire={fire ?? null} />
+                      doors={fitDoors} obstacles={standing} fire={fire ?? null}
+                      marks={instruments.filter((e) => e.x != null && e.y != null).map((e) => ({ x: e.x as number, y: e.y as number }))} />
       )}
       <GridRefs W={W} D={D} ink={tones.inkMuted} />
       {vis.vents && vents.length > 0 && <Vents vents={vents} X={X} Z={Z} glass={seeUnder} />}

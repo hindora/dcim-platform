@@ -359,7 +359,25 @@ export function FloorPlanView() {
     return m;
   }, [thermal.data]);
 
-  const data = scene.data;
+  // A room with nothing positioned in it (a store, an empty support room)
+  // has no scene of its own; the building knows its size and kind, so it is
+  // drawn empty - walls, door, fittings - rather than not at all.
+  const emptyRoom = useMemo<TwinRoomScene | null>(() => {
+    if (!live || !scene.isError) return null;
+    const r = building.data?.rooms.find((x) => x.id === roomId);
+    if (!r || r.width_m == null || r.depth_m == null) return null;
+    return {
+      plan: {
+        room_id: r.id, room_name: r.name, datacenter_code: building.data?.code ?? null,
+        extent: { width_m: r.width_m, depth_m: r.depth_m, derived: false },
+        rack_w_m: 0.6, rack_d_m: 1.2, racks: [], equipment: [], unpositioned_equipment: [], aisles: [],
+        aisle_source: 'derived', room_class: r.room_class ?? null, level: r.level ?? null,
+        level_elevation_m: r.level_elevation_m ?? null, origin_x_m: r.origin_x_m ?? null, origin_y_m: r.origin_y_m ?? null,
+      },
+      devices: [],
+    };
+  }, [live, scene.isError, building.data, roomId]);
+  const data = scene.data ?? emptyRoom ?? undefined;
   const plan = data?.plan;
 
   // --- paths ------------------------------------------------------------
@@ -679,7 +697,7 @@ export function FloorPlanView() {
             </div>
           </>
         )}
-        {scene.isError && <p className="muted viewer-fallback">{live
+        {scene.isError && !emptyRoom && <p className="muted viewer-fallback">{live
           ? 'Nothing in this room is positioned, so it cannot be drawn.'
           : 'No frame for this moment. Try a later time or go back to live.'}</p>}
         {scene.isLoading && <p className="muted viewer-fallback">Loading the room…</p>}
@@ -737,9 +755,9 @@ export function FloorPlanView() {
                 onCmp={setCmp} onCmpTime={setCmpTime} />
 
       <div className="vw-status">
-        <span><span className="dot" style={{ background: scene.isError ? 'var(--critical)' : !live ? 'var(--accent)'
+        <span><span className="dot" style={{ background: emptyRoom ? 'var(--text-faint)' : scene.isError ? 'var(--critical)' : !live ? 'var(--accent)'
           : updatedAgo != null && updatedAgo < 45 ? 'var(--ok)' : 'var(--warn)' }} />
-          {!live ? `Replay · ${t.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}${frameInfo ? ` · ${sourceLabel(frameInfo)}` : ''}`
+          {emptyRoom ? 'Live · nothing in this room reports' : !live ? `Replay · ${t.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}${frameInfo ? ` · ${sourceLabel(frameInfo)}` : ''}`
             : updatedAgo == null ? 'Loading' : `Live · updated ${updatedAgo}s ago`}</span>
         <span className="vw-jumps">
           <Link to="/world">World</Link>
