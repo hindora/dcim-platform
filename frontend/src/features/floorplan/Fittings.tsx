@@ -1,7 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import type { GBox } from './Scene';
-import { kindOfRoom } from './furniture';
 
 /**
  * What makes a room read as a room, and a cabinet as a cabinet, without
@@ -367,6 +366,14 @@ function CylinderBank({ spent }: { spent: boolean }) {
 }
 
 // ------------------------------------------------------------ furniture
+
+type RoomKind = 'ops' | 'mmr' | 'staging';
+function kindOfRoom(name: string): RoomKind | null {
+  if (/operat|noc|control/i.test(name)) return 'ops';
+  if (/meet.?me|\bmmr\b/i.test(name)) return 'mmr';
+  if (/stag|storage|store/i.test(name)) return 'staging';
+  return null;
+}
 
 const FURN = {
   top: '#c9ced4', frame: '#3a4048', seat: '#2b3036', screen: '#0e141b', glow: '#2a6fb0',

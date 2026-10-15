@@ -9,7 +9,6 @@ import { alarmColor, resolveColor } from './colors';
 import { NO_READING, bandColor, roomLayerBands, roomLayerText, roomLayerValue, type BuildingLayer } from './layers';
 import { labelTexture, type HoverTip } from './Scene';
 import { Columns, CoreShaft, Facade, Fence, Ground, ZoneObject, ZoneSurface } from './SiteDressing';
-import { furnitureBlocks, kindOfRoom, wallNearest, type Block } from './furniture';
 
 /**
  * The site and building rungs (docs/27 §8b, §8c), drawn in the same scene
@@ -64,7 +63,6 @@ const DEFAULT_F2F = 5.0;
 const GLASS = {
   slab: '#aeb9c7', rim: '#dfe7f0', wall: '#c8d3df', room: '#b9c4d1', roomEdge: '#cfd8e3',
   rack: '#2a2f36', plant: '#3b4148', glowIn: '#1d2532', glowOut: '#090c11',
-  screen: '#0e141b', screenGlow: '#2a6fb0', board: '#e9edf1',
 };
 /** How far a split pulls each floor from the one below, as a share of the floor-to-floor height. */
 const SPLIT_GAP = 0.9;
@@ -294,16 +292,6 @@ export default function BuildingScene(p: BuildingSceneProps) {
   const buildingHot = hover === '__building__';
   const buildingText = `${scene.name} · ${levels.length} levels · ${rooms.length} rooms · click to enter`;
 
-  // Each support room's furniture, by the room view's rule: the far wall faces its door.
-  const furnished = useMemo(() => rooms.flatMap((r) => {
-    const kind = r.room_class === 'support' ? kindOfRoom(r.name) : null;
-    if (!kind) return [];
-    const door = (scene.fabric ?? []).find((f) => f.kind === 'door' && f.room_id === r.id && f.polygon_m.length >= 3);
-    const bb = door ? bboxOf(door.polygon_m) : null;
-    const wall = bb ? wallNearest((bb.x0 + bb.x1) / 2 - r.origin_x_m, (bb.y0 + bb.y1) / 2 - r.origin_y_m, r.width_m, r.depth_m) : 'W';
-    return [{ r, blocks: furnitureBlocks(kind, r.width_m, r.depth_m, wall) as Block[] }];
-  }), [rooms, scene.fabric]);
-
   const unitBoxes = (r: Placed) => (r.equipment ?? []).map((u) => {
     const h = u.h_m ?? 1.5;
     return (
@@ -432,16 +420,6 @@ export default function BuildingScene(p: BuildingSceneProps) {
       </instancedMesh>
 
       {rooms.map((r) => shown(r.level) && !dimmed(r.level) && unitBoxes(r))}
-      {/* Support rooms carry their furniture as blocks, by the same rule the room view draws. */}
-      {!site && furnished.map(({ r, blocks }) => shown(r.level) && !dimmed(r.level) && blocks.map((b, i) => (
-        <mesh key={`${r.id}f${i}`} position={[X(r.origin_x_m + b.x), elevOf(r) + b.y0 + b.h / 2, Z(r.origin_y_m + b.y)]} raycast={() => null}>
-          <boxGeometry args={[b.sx, b.h, b.sy]} />
-          {b.kind === 'screen'
-            ? <meshStandardMaterial color={GLASS.screen} emissive={GLASS.screenGlow} emissiveIntensity={0.5} roughness={0.3} />
-            : b.kind === 'board' ? <meshBasicMaterial color={GLASS.board} />
-            : <meshStandardMaterial color={glass ? GLASS.plant : tones.faint} roughness={0.7} />}
-        </mesh>
-      )))}
 
       {/* The building's shell: at the site rung it is the thing you click. */}
       {site && mode === '3d' && (
