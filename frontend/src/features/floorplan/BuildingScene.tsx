@@ -70,7 +70,6 @@ const OUTDOOR = 'site';
 /** Zones worth a name on the ground; the rest are read from their shape. */
 const LABELLED_ZONES = new Set(['substation', 'generator_yard', 'cooling_yard', 'fuel_tank', 'water_tank',
                                 'fire_pump_house', 'guardhouse', 'parking', 'apron', 'gate']);
-const LABELLED_FABRIC = new Set(['lobby', 'dock', 'core']);
 const ZONE_WORD: Record<string, string> = {
   generator_yard: 'generator yard', fuel_tank: 'bulk fuel', water_tank: 'makeup water', fire_pump_house: 'fire pumps',
   telecom_entrance: 'telecom entrance', cooling_yard: 'cooling yard', driveway: 'driveway',
@@ -395,10 +394,6 @@ export default function BuildingScene(p: BuildingSceneProps) {
                       onOver={(ev) => { ev.stopPropagation(); tip(ev, doorText(f, doorOf(f))); }}
                       onOut={() => onTip(null)} />
           )}
-          {geo && !glass && LABELLED_FABRIC.has(f.kind) && (
-            <Label text={f.name ?? f.kind} ink={tones.inkMuted} bg={tones.raised}
-                   x={X((bb.x0 + bb.x1) / 2)} y={elev + 0.5} z={Z((bb.y0 + bb.y1) / 2)} w={2.6} />
-          )}
         </group>
       ); })}
 
@@ -502,7 +497,9 @@ function RoomVolume({ room: r, e, h, X, Z, tones, paint, dim, hot, quiet, flat, 
         <lineBasicMaterial color={hot ? tones.accent : alarmed ? colour : resting ? GLASS.roomEdge : tones.inkMuted} transparent
                            opacity={dim ? 0.15 : quiet ? 0.5 : resting && !hot ? 0.35 : 0.9} />
       </lineSegments>
-      {!dim && !quiet && !glass && (
+      {/* Only the compound's yards carry a name on the ground; a room in the building is
+          named by its hover tooltip and the Rooms list. */}
+      {flat && !dim && !quiet && (
         <sprite position={[0, h / 2 + 0.6, 0]} renderOrder={10} scale={[Math.min(4, r.width_m * 0.6), Math.min(4, r.width_m * 0.6) / 4, 1]}>
           <spriteMaterial map={label} depthTest={false} transparent />
         </sprite>
