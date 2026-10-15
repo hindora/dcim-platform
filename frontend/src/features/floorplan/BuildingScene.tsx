@@ -472,7 +472,7 @@ function RoomVolume({ room: r, e, h, X, Z, tones, paint, dim, hot, quiet, flat, 
   quiet?: boolean;
   /** An outdoor room: a footprint on the ground, not a volume. */
   flat?: boolean;
-  /** The building's glass view: a room at rest is a glass partition, its name shown on hover only. */
+  /** The building's glass view: a room at rest is a glass partition; its name is in the hover tooltip, not a label. */
   glass?: boolean;
   onOver: (ev: ThreeEvent<PointerEvent>) => void; onOut: () => void; onClick: () => void;
 }) {
@@ -502,7 +502,7 @@ function RoomVolume({ room: r, e, h, X, Z, tones, paint, dim, hot, quiet, flat, 
         <lineBasicMaterial color={hot ? tones.accent : alarmed ? colour : resting ? GLASS.roomEdge : tones.inkMuted} transparent
                            opacity={dim ? 0.15 : quiet ? 0.5 : resting && !hot ? 0.35 : 0.9} />
       </lineSegments>
-      {!dim && !quiet && (!glass || hot) && (
+      {!dim && !quiet && !glass && (
         <sprite position={[0, h / 2 + 0.6, 0]} renderOrder={10} scale={[Math.min(4, r.width_m * 0.6), Math.min(4, r.width_m * 0.6) / 4, 1]}>
           <spriteMaterial map={label} depthTest={false} transparent />
         </sprite>
