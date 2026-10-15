@@ -4,7 +4,9 @@ import { MapControls, OrbitControls, OrthographicCamera, PerspectiveCamera } fro
 import { useThree, type ThreeEvent } from '@react-three/fiber';
 import { useEffect, useMemo, useRef, useState, type ElementRef } from 'react';
 import * as THREE from 'three';
-import type { TwinDoor, TwinRoom, TwinSiteScene, TwinSpace } from '../../api/client';
+import { renderToStaticMarkup } from 'react-dom/server';
+import type { AlarmCategory, TwinDoor, TwinRoom, TwinSiteScene, TwinSpace } from '../../api/client';
+import { CategoryGlyph } from '../../components/CategoryGlyph';
 import { alarmColor, resolveColor } from './colors';
 import { NO_READING, bandColor, roomLayerBands, roomLayerText, roomLayerValue, type BuildingLayer } from './layers';
 import { labelTexture, type HoverTip } from './Scene';
@@ -296,23 +298,26 @@ export default function BuildingScene(p: BuildingSceneProps) {
   // centre when its alarm comes from something not drawn up here (a wall
   // sensor, a door contact), so no open alarm goes unseen.
   const pins = useMemo(() => {
-    const out: { x: number; y: number; z: number; c: string }[] = [];
+    const out: Pin[] = [];
     for (const r of [...rooms, ...yards]) {
       if (!isOutdoor(r.level) && (!shown(r.level) || dimmed(r.level))) continue;
       const e = elevOf(r);
       let own = false;
       for (const k of r.racks ?? []) {
         if (k.max_severity === 'CLEAR') continue;
-        out.push({ x: X(r.origin_x_m + k.x), y: e + RACK_H + 0.45, z: Z(r.origin_y_m + k.y), c: tones.sev(k.max_severity) });
+        out.push({ x: X(r.origin_x_m + k.x), y: e + RACK_H + 0.45, z: Z(r.origin_y_m + k.y), c: tones.sev(k.max_severity),
+                   cat: k.alarm_category ?? null, n: k.alarm_count ?? 1 });
         own = true;
       }
       for (const u of r.equipment ?? []) {
         if (u.max_severity === 'CLEAR') continue;
-        out.push({ x: X(r.origin_x_m + u.x), y: e + (u.h_m ?? 1.5) + 0.45, z: Z(r.origin_y_m + u.y), c: tones.sev(u.max_severity) });
+        out.push({ x: X(r.origin_x_m + u.x), y: e + (u.h_m ?? 1.5) + 0.45, z: Z(r.origin_y_m + u.y), c: tones.sev(u.max_severity),
+                   cat: u.alarm_category ?? null, n: u.alarm_count ?? 1 });
         own = true;
       }
       if (!own && r.max_severity !== 'CLEAR') {
-        out.push({ x: X(r.origin_x_m + r.width_m / 2), y: e + 1.6, z: Z(r.origin_y_m + r.depth_m / 2), c: tones.sev(r.max_severity) });
+        out.push({ x: X(r.origin_x_m + r.width_m / 2), y: e + 1.6, z: Z(r.origin_y_m + r.depth_m / 2), c: tones.sev(r.max_severity),
+                   cat: r.alarm_category ?? null, n: r.alarm_count ?? 1 });
       }
     }
     return out;
@@ -571,14 +576,57 @@ function DoorLeaf({ f, bb, elev, door, X, Z, tones, onOver, onOut }: {
   );
 }
 
-/** Alarm markers: a glowing dot in the severity colour over whatever raised
- *  it. The same size on screen at any distance, and drawn over the glass, so a
- *  far-off alarm is never lost. The dots pulse (1.2 s, a soft fade, not a
- *  flash), and hold still under reduced motion; the scene only repaints while
- *  a dot is on screen. */
-function AlarmPins({ pins }: { pins: { x: number; y: number; z: number; c: string }[] }) {
+interface Pin { x: number; y: number; z: number; c: string; cat: AlarmCategory | null; n: number }
+
+/** One alarm badge as an image: a disc in the severity colour, the category's
+ *  glyph in white (the same icons as Home's indicator strip; a bell when the
+ *  category is not known), a dark ring so it reads on the white tile and the
+ *  dark studio alike, and the count in a bubble when more than one is open. */
+function badgeTexture(cat: AlarmCategory | null, colour: string, n: number, onReady: () => void): THREE.CanvasTexture {
+  const S = 128;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = S;
+  const c = cv.getContext('2d') as CanvasRenderingContext2D;
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const disc = () => {
+    c.clearRect(0, 0, S, S);
+    c.fillStyle = colour; c.beginPath(); c.arc(S / 2, S / 2, 46, 0, Math.PI * 2); c.fill();
+    c.strokeStyle = 'rgba(10,12,16,0.9)'; c.lineWidth = 6; c.stroke();
+  };
+  const count = () => {
+    if (n <= 1) return;
+    const t = n > 9 ? '9+' : String(n);
+    c.fillStyle = '#0d1117'; c.beginPath(); c.arc(S - 26, 26, 22, 0, Math.PI * 2); c.fill();
+    c.strokeStyle = '#ffffff'; c.lineWidth = 3; c.stroke();
+    c.fillStyle = '#ffffff'; c.font = 'bold 24px system-ui, sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.fillText(t, S - 26, 27);
+  };
+  disc(); count();
+  const svg = renderToStaticMarkup(<CategoryGlyph kind={cat ?? 'alarms'} size={56} />)
+    .replace('<svg', '<svg xmlns="http://www.w3.org/2000/svg" color="#ffffff" stroke-width="1.6"');
+  const img = new Image();
+  img.onload = () => { disc(); c.drawImage(img, S / 2 - 28, S / 2 - 28, 56, 56); count(); tex.needsUpdate = true; onReady(); };
+  img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+  return tex;
+}
+
+/** Alarm markers: a badge over whatever raised it - severity by colour, what
+ *  kind of alarm by its icon. The same size on screen at any distance and
+ *  drawn over the glass, so a far-off alarm is never lost. The badges pulse
+ *  (1.2 s, a soft fade, not a flash), and hold still under reduced motion; the
+ *  scene only repaints while a badge is on screen. */
+function AlarmPins({ pins }: { pins: Pin[] }) {
   const group = useRef<THREE.Group>(null);
   const { invalidate } = useThree();
+  const textures = useMemo(() => new Map<string, THREE.CanvasTexture>(), []);
+  useEffect(() => () => { textures.forEach((t) => t.dispose()); textures.clear(); }, [textures]);
+  const texFor = (p: Pin) => {
+    const key = `${p.cat ?? 'alarms'}|${p.c}|${Math.min(p.n, 10)}`;
+    let t = textures.get(key);
+    if (!t) { t = badgeTexture(p.cat, p.c, p.n, invalidate); textures.set(key, t); }
+    return t;
+  };
   useEffect(() => {
     if (!pins.length || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return undefined;
     const t0 = performance.now();
@@ -589,24 +637,11 @@ function AlarmPins({ pins }: { pins: { x: number; y: number; z: number; c: strin
     }, 60);
     return () => window.clearInterval(id);
   }, [pins.length, invalidate]);
-  const tex = useMemo(() => {
-    const cv = document.createElement('canvas');
-    cv.width = cv.height = 64;
-    const c = cv.getContext('2d') as CanvasRenderingContext2D;
-    const g = c.createRadialGradient(32, 32, 0, 32, 32, 32);
-    g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(0.42, 'rgba(255,255,255,1)');
-    g.addColorStop(0.5, 'rgba(255,255,255,0.55)'); g.addColorStop(1, 'rgba(255,255,255,0)');
-    c.fillStyle = g; c.fillRect(0, 0, 64, 64);
-    // a dark ring so the dot reads on the white tile as well as on the dark studio
-    c.strokeStyle = 'rgba(10,12,16,0.85)'; c.lineWidth = 3; c.beginPath(); c.arc(32, 32, 14, 0, Math.PI * 2); c.stroke();
-    return new THREE.CanvasTexture(cv);
-  }, []);
-  useEffect(() => () => tex.dispose(), [tex]);
   return (
     <group ref={group}>
       {pins.map((p, i) => (
-        <sprite key={i} position={[p.x, p.y, p.z]} renderOrder={20} scale={[0.028, 0.028, 1]} raycast={() => null}>
-          <spriteMaterial map={tex} color={p.c} sizeAttenuation={false} depthTest={false} transparent />
+        <sprite key={i} position={[p.x, p.y, p.z]} renderOrder={20} scale={[0.04, 0.04, 1]} raycast={() => null}>
+          <spriteMaterial map={texFor(p)} sizeAttenuation={false} depthTest={false} transparent />
         </sprite>
       ))}
     </group>

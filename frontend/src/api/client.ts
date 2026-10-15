@@ -1816,11 +1816,16 @@ export interface ThermalField {
 /** A site as a building (docs/27 Phase 3): levels and placed rooms. */
 export interface TwinLevel { name: string; ordinal: number; elevation_m: number }
 /** A rack as the building rung draws it: a block in room metres. */
-export interface TwinSiteRack { id: string; name: string; x: number; y: number; w_m?: number | null; d_m?: number | null; max_severity: string }
+export interface TwinSiteRack {
+  id: string; name: string; x: number; y: number; w_m?: number | null; d_m?: number | null; max_severity: string;
+  /** Category of its worst open alarm (the building view's badge icon), and how many are open. */
+  alarm_category?: AlarmCategory | null; alarm_count?: number;
+}
 /** Floor-standing plant as the building rung draws it: its true footprint. */
 export interface TwinSiteUnit {
   id: string; name: string; device_type: string; x: number; y: number; w_m: number; d_m: number;
   h_m?: number | null; facing_deg?: number | null; max_severity: string;
+  alarm_category?: AlarmCategory | null; alarm_count?: number;
 }
 export interface TwinRoom {
   id: string; name: string; level?: string | null;
@@ -1833,6 +1838,8 @@ export interface TwinRoom {
   /** What the room's racks carry and could carry (docs/27 §8b.4 layers). Absent on a room with no racks. */
   power?: TwinRoomPower | null;
   space?: TwinRoomSpace | null;
+  /** Worst open alarm in the room, over every device in it. */
+  alarm_category?: AlarmCategory | null; alarm_count?: number;
   racks?: TwinSiteRack[];
   equipment?: TwinSiteUnit[];
 }
