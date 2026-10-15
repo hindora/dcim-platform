@@ -259,6 +259,8 @@ export function FloorPlanView() {
   const [vis, setVis] = useState<Visibility>(DEFAULT_VIS);
   const [resetTick, setResetTick] = useState(0);
   const [spin, setSpin] = useState<Spin>({ n: 0, dir: 1 });
+  /** The building rung's exploded stack: floors pulled apart to see into each. */
+  const [split, setSplit] = useState(false);
   const turn = (dir: 1 | -1) => setSpin((p) => ({ n: p.n + 1, dir }));
   const [themeTick, setThemeTick] = useState(0);
   const [pathKind, setPathKind] = useState<PathKind | null>(null);
@@ -544,7 +546,10 @@ export function FloorPlanView() {
         <div className="vw-float vw-topcenter">
           {webgl && <ViewBar value={bMode} onChange={(m) => setParam('view', m)}
                              options={[{ key: '3d', label: '3D' }, { key: 'plan', label: 'PLAN' }]}
-                             canSpin={bMode === '3d'} onSpin={turn} onReset={() => setResetTick((t) => t + 1)} />}
+                             canSpin={bMode === '3d'} onSpin={turn} onReset={() => setResetTick((t) => t + 1)}
+                             toggle={!atSite && bMode === '3d' ? { label: 'SPLIT FLOORS', on: split,
+                               title: split ? 'Stack the floors again' : 'Pull the floors apart to see into each one',
+                               onChange: setSplit } : undefined} />}
         </div>
         {navigator}
         <Dock items={['navigate', 'info', 'layers', 'search']} open={panel === 'filters' ? null : panel} onToggle={togglePanel} />
@@ -616,7 +621,7 @@ export function FloorPlanView() {
         <div className="viewer-stage">
           {bs && (
             <Suspense fallback={<p className="muted viewer-fallback">Loading the building…</p>}>
-              <BuildingStage scene={bs} rung={atSite ? 'site' : 'building'} level={level} layer={bLayer} mode={bMode} resetTick={resetTick} spin={spin} themeTick={themeTick}
+              <BuildingStage scene={bs} rung={atSite ? 'site' : 'building'} level={level} layer={bLayer} mode={bMode} split={split} resetTick={resetTick} spin={spin} themeTick={themeTick}
                              hover={hoverRoom} onHover={setHoverRoom} onEnter={enterRoom} onEnterBuilding={enterBuilding} onTip={setTip}
                              label={atSite ? `Site view of ${bs.name}` : `Building view of ${bs.name}`} />
             </Suspense>

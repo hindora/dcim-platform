@@ -21,7 +21,7 @@ function Icon({ kind }: { kind: 'left' | 'right' | 'reset' }) {
   }
 }
 
-export function ViewBar<T extends string>({ value, options, onChange, canSpin, onSpin, onReset }: {
+export function ViewBar<T extends string>({ value, options, onChange, canSpin, onSpin, onReset, toggle }: {
   value: T;
   options: { key: T; label: string }[];
   onChange: (v: T) => void;
@@ -29,6 +29,8 @@ export function ViewBar<T extends string>({ value, options, onChange, canSpin, o
   canSpin: boolean;
   onSpin: (dir: 1 | -1) => void;
   onReset: () => void;
+  /** An on/off view switch beside the modes (the building's "Split floors"). */
+  toggle?: { label: string; title: string; on: boolean; onChange: (on: boolean) => void };
 }) {
   return (
     <div className="vw-viewbar">
@@ -47,13 +49,23 @@ export function ViewBar<T extends string>({ value, options, onChange, canSpin, o
           </button>
         )}
       </div>
-      <div className="vw-pill" role="group" aria-label="View">
-        {options.map((o) => (
-          <button key={o.key} type="button" className={o.key === value ? 'is-on' : undefined}
-                  aria-pressed={o.key === value} onClick={() => onChange(o.key)}>
-            {o.label}
-          </button>
-        ))}
+      <div className="vw-viewrow">
+        <div className="vw-pill" role="group" aria-label="View">
+          {options.map((o) => (
+            <button key={o.key} type="button" className={o.key === value ? 'is-on' : undefined}
+                    aria-pressed={o.key === value} onClick={() => onChange(o.key)}>
+              {o.label}
+            </button>
+          ))}
+        </div>
+        {toggle && (
+          <div className="vw-pill">
+            <button type="button" className={toggle.on ? 'is-on' : undefined} aria-pressed={toggle.on}
+                    title={toggle.title} onClick={() => toggle.onChange(!toggle.on)}>
+              {toggle.label}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -2,7 +2,7 @@ import type { Spin } from './ViewBar';
 import { useDolly, useQuarterTurn } from './Scene';
 import { MapControls, OrbitControls, OrthographicCamera, PerspectiveCamera } from '@react-three/drei';
 import { useThree, type ThreeEvent } from '@react-three/fiber';
-import { useEffect, useMemo, useRef, type ElementRef } from 'react';
+import { useEffect, useMemo, useRef, useState, type ElementRef } from 'react';
 import * as THREE from 'three';
 import type { TwinDoor, TwinRoom, TwinSiteScene, TwinSpace } from '../../api/client';
 import { alarmColor, resolveColor } from './colors';
@@ -41,6 +41,8 @@ export interface BuildingSceneProps {
   /** What colours a room: its worst open condition, or a figure of its racks. */
   layer: BuildingLayer;
   mode: '3d' | 'plan';
+  /** Building rung, 3D: the floors pulled apart (eased), to see into each one. */
+  split?: boolean;
   resetTick: number;
   spin?: Spin;
   themeTick: number;
@@ -55,6 +57,15 @@ const SLAB = 0.3;
 const RACK_H = 2.0;
 const RACK_W = 0.6, RACK_D = 1.2;
 const DEFAULT_F2F = 5.0;
+/** The building rung in 3D: each floor a frosted-glass tray, the racks and
+ *  plant charcoal inside it, on a dark studio. Physical colours, the same in
+ *  both themes, like the room's SURF. */
+const GLASS = {
+  slab: '#aeb9c7', rim: '#dfe7f0', wall: '#c8d3df', room: '#b9c4d1', roomEdge: '#cfd8e3',
+  rack: '#2a2f36', plant: '#3b4148', glowIn: '#1d2532', glowOut: '#090c11',
+};
+/** How far a split pulls each floor from the one below, as a share of the floor-to-floor height. */
+const SPLIT_GAP = 0.9;
 const OUTDOOR = 'site';
 /** Zones worth a name on the ground; the rest are read from their shape. */
 const LABELLED_ZONES = new Set(['substation', 'generator_yard', 'cooling_yard', 'fuel_tank', 'water_tank',
@@ -75,7 +86,7 @@ const bboxOf = (poly: number[][]) => ({
 });
 
 export default function BuildingScene(p: BuildingSceneProps) {
-  const { scene, rung, layer, level, mode, resetTick, spin, themeTick, hover, onHover, onEnter, onEnterBuilding, onTip } = p;
+  const { scene, rung, layer, level, mode, split = false, resetTick, spin, themeTick, hover, onHover, onEnter, onEnterBuilding, onTip } = p;
   const { invalidate } = useThree();
   const site = rung === 'site';
 
@@ -103,10 +114,34 @@ export default function BuildingScene(p: BuildingSceneProps) {
   // and are drawn at the site rung only.
   const rooms = useMemo(() => allRooms.filter((r) => !isOutdoor(r.level)), [allRooms]);
   const yards = useMemo(() => (site ? allRooms.filter((r) => isOutdoor(r.level)) : []), [allRooms, site]);
-  const elevOf = (r: TwinRoom) => (isOutdoor(r.level) ? 0 : r.level_elevation_m ?? levels.find((l) => l.name === r.level)?.elevation_m ?? 0);
+  const baseElev = (r: TwinRoom) => (isOutdoor(r.level) ? 0 : r.level_elevation_m ?? levels.find((l) => l.name === r.level)?.elevation_m ?? 0);
   const f2f = scene.floor_to_floor_m
     ?? (levels.length > 1 ? Math.min(...levels.slice(1).map((l, i) => l.elevation_m - levels[i].elevation_m)) : DEFAULT_F2F);
   const roomH = Math.max(2.4, f2f - SLAB - 0.2);
+
+  // The split, eased: t runs 0 (stacked) to 1 (apart) over ~0.45 s, at once
+  // under reduced motion. Each level rises by its index times the gap.
+  const glass = !site && mode === '3d';
+  const want = glass && split ? 1 : 0;
+  const [t, setT] = useState(want);
+  useEffect(() => {
+    if (t === want) return undefined;
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) { setT(want); return undefined; }
+    const from = t, t0 = performance.now();
+    let raf = 0;
+    const step = (now: number) => {
+      const k = Math.min(1, (now - t0) / 450), e = k < 0.5 ? 2 * k * k : 1 - (-2 * k + 2) ** 2 / 2;
+      setT(from + (want - from) * e);
+      invalidate();
+      if (k < 1) raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [want]); // eslint-disable-line react-hooks/exhaustive-deps
+  const gap = f2f * SPLIT_GAP;
+  const levelIdx = useMemo(() => new Map(levels.map((l, i) => [l.name, i])), [levels]);
+  const lift = (lv: string | null | undefined) => (isOutdoor(lv) ? 0 : t * (levelIdx.get(lv ?? '') ?? 0) * gap);
+  const elevOf = (r: TwinRoom) => baseElev(r) + lift(r.level);
 
   // Frame: the building's bounding box is the origin at both rungs.
   const box = useMemo(() => {
@@ -126,6 +161,8 @@ export default function BuildingScene(p: BuildingSceneProps) {
   const frame = site ? ground : box;
   const span = Math.max(frame.x1 - frame.x0, frame.y1 - frame.y0, 8);
   const top = (levels.length ? levels[levels.length - 1].elevation_m : 0) + roomH;
+  // The camera frames the stack it is going to: the split one when asked for.
+  const camTop = top + (want ? Math.max(0, levels.length - 1) * gap : 0);
   // The structure stops at the roof slab: a level named for the roof is
   // open air, and the plant on it stands in the weather, not in a glass box.
   const roofElev = levels.find((l) => /roof/i.test(l.name))?.elevation_m ?? top;
@@ -227,11 +264,11 @@ export default function BuildingScene(p: BuildingSceneProps) {
         tmp.scale.set(w, RACK_H, d);
         tmp.rotation.set(0, 0, 0);
         tmp.updateMatrix();
-        out.push({ m: tmp.matrix.clone(), c: new THREE.Color(k.max_severity === 'CLEAR' ? tones.inkMuted : tones.sev(k.max_severity)) });
+        out.push({ m: tmp.matrix.clone(), c: new THREE.Color(k.max_severity !== 'CLEAR' ? tones.sev(k.max_severity) : glass ? GLASS.rack : tones.inkMuted) });
       }
     }
     return out;
-  }, [rooms, yards, level, mode, tones, cx, cz]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [rooms, yards, level, mode, tones, cx, cz, t]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     const m = rackMesh.current;
     if (!m) return;
@@ -263,19 +300,19 @@ export default function BuildingScene(p: BuildingSceneProps) {
             onPointerOver={(ev) => { ev.stopPropagation(); tip(ev, `${u.name} · ${u.device_type.replace(/_/g, ' ')} · ${u.w_m} × ${u.d_m} m${u.max_severity !== 'CLEAR' ? ` · ${u.max_severity.toLowerCase()}` : ''}`); }}
             onPointerOut={() => onTip(null)}>
         <boxGeometry args={[u.w_m, h, u.d_m]} />
-        <meshStandardMaterial color={u.max_severity === 'CLEAR' ? tones.faint : tones.sev(u.max_severity)} roughness={0.9} />
+        <meshStandardMaterial color={u.max_severity !== 'CLEAR' ? tones.sev(u.max_severity) : glass ? GLASS.plant : tones.faint} roughness={glass ? 0.6 : 0.9} />
       </mesh>
     );
   });
 
   return (
     <>
-      <color attach="background" args={[tones.bg]} />
+      {glass ? <Studio /> : <color attach="background" args={[tones.bg]} />}
       <hemisphereLight args={['#eef2f6', '#7a8089', 0.85]} />
       <directionalLight position={[-span * 0.5, top + 20, -span * 0.35]} intensity={0.75} />
       <directionalLight position={[span * 0.6, top + 8, span * 0.5]} intensity={0.25} />
       {site && mode === '3d' && <fog attach="fog" args={[tones.bg, span * 1.6, span * 4.5]} />}
-      <Cameras mode={mode} span={span} top={site ? top * 0.6 : top} planElev={site ? 0 : levels.find((l) => l.name === planLevel)?.elevation_m ?? 0}
+      <Cameras mode={mode} span={span} top={site ? top * 0.6 : camTop} planElev={site ? 0 : levels.find((l) => l.name === planLevel)?.elevation_m ?? 0}
                W={frame.x1 - frame.x0} D={frame.y1 - frame.y0} cx={X((frame.x0 + frame.x1) / 2)} cz={Z((frame.y0 + frame.y1) / 2)}
                resetTick={resetTick} spin={spin} rung={rung} />
 
@@ -319,26 +356,36 @@ export default function BuildingScene(p: BuildingSceneProps) {
 
       {/* --- the building --- */}
       {slabShapes.map(({ level: l, geo }) => shown(l.name) && (
-        <mesh key={l.name} geometry={geo} rotation-x={Math.PI / 2} position={[0, l.elevation_m, 0]}>
+        <mesh key={l.name} geometry={geo} rotation-x={Math.PI / 2} position={[0, l.elevation_m + lift(l.name), 0]}>
           {/* Under a figure's layer the slabs thin out: the colour that matters is on the rooms
-              beneath them, and a stack of 75 % slabs greys every level but the top one. */}
-          <meshStandardMaterial color={tones.slab} roughness={1} transparent
-                                opacity={dimmed(l.name) ? 0.1 : layer !== 'alarm' ? (site ? 0.22 : 0.3) : site ? 0.55 : 0.75} />
+              beneath them, and a stack of 75 % slabs greys every level but the top one. In the
+              building's 3D view a slab is frosted glass. */}
+          {glass
+            ? <meshStandardMaterial color={GLASS.slab} emissive={GLASS.slab} emissiveIntensity={0.18} roughness={0.4}
+                                    transparent depthWrite={false} opacity={dimmed(l.name) ? 0.06 : 0.26} />
+            : <meshStandardMaterial color={tones.slab} roughness={1} transparent
+                                    opacity={dimmed(l.name) ? 0.1 : layer !== 'alarm' ? (site ? 0.22 : 0.3) : site ? 0.55 : 0.75} />}
         </mesh>
       ))}
       {slabShapes.map(({ level: l, geo }) => shown(l.name) && !dimmed(l.name) && (
-        <lineSegments key={`e${l.name}`} rotation-x={Math.PI / 2} position={[0, l.elevation_m, 0]}>
+        <lineSegments key={`e${l.name}`} rotation-x={Math.PI / 2} position={[0, l.elevation_m + lift(l.name), 0]}>
           <edgesGeometry args={[geo]} />
-          <lineBasicMaterial color={tones.faint} />
+          <lineBasicMaterial color={glass ? GLASS.rim : tones.faint} transparent={glass} opacity={glass ? 0.85 : 1} />
         </lineSegments>
       ))}
-      {fabricGeos.map(({ f, geo, bb, elev }) => shown(f.level) && !dimmed(f.level) && (
+      {glass && slabShapes.map(({ level: l, geo }) => (
+        <GlassTray key={`g${l.name}`} geo={geo} y={l.elevation_m + lift(l.name)}
+                   h={/roof/i.test(l.name) ? 1.1 : roomH} dim={dimmed(l.name)} />
+      ))}
+      {fabricGeos.map(({ f, geo, bb, elev: e0 }) => { const elev = e0 + lift(f.level); return shown(f.level) && !dimmed(f.level) && (
         <group key={f.id}>
           {geo ? (
             <mesh geometry={geo} rotation-x={Math.PI / 2} position={[0, elev + 0.02, 0]}
                   onPointerOver={(ev) => { ev.stopPropagation(); tip(ev, `${f.name ?? f.kind} · level ${f.level} · drawing, no sensors`); }}
                   onPointerOut={() => onTip(null)}>
-              <meshStandardMaterial color={tones.raised} roughness={1} transparent opacity={0.85} side={THREE.DoubleSide} depthWrite={false} />
+              {/* In the glass view the corridor and lobby are a faint frosting on the slab, not a dark fill. */}
+              <meshStandardMaterial color={glass ? GLASS.slab : tones.raised} roughness={1} transparent opacity={glass ? 0.12 : 0.85}
+                                    side={THREE.DoubleSide} depthWrite={false} />
             </mesh>
           ) : (
             // A door opening: a short bar on the wall. With a contact on it the bar
@@ -348,18 +395,20 @@ export default function BuildingScene(p: BuildingSceneProps) {
                       onOver={(ev) => { ev.stopPropagation(); tip(ev, doorText(f, doorOf(f))); }}
                       onOut={() => onTip(null)} />
           )}
-          {geo && LABELLED_FABRIC.has(f.kind) && (
+          {geo && !glass && LABELLED_FABRIC.has(f.kind) && (
             <Label text={f.name ?? f.kind} ink={tones.inkMuted} bg={tones.raised}
                    x={X((bb.x0 + bb.x1) / 2)} y={elev + 0.5} z={Z((bb.y0 + bb.y1) / 2)} w={2.6} />
           )}
         </group>
-      ))}
+      ); })}
 
-      {!site && mode === '3d' && <Columns box={box} top={roofElev} dim={level != null} />}
-      {corePoly && mode === '3d' && <CoreShaft poly={corePoly} top={roofElev} X={X} Z={Z} ink={tones.inkMuted} quiet={site || level != null} />}
+      {/* The structure is left out of the glass view: the floors read as trays, and a split
+          stack would leave columns and the core standing in the gaps. */}
+      {!site && !glass && mode === '3d' && <Columns box={box} top={roofElev} dim={level != null} />}
+      {corePoly && mode === '3d' && !glass && <CoreShaft poly={corePoly} top={roofElev} X={X} Z={Z} ink={tones.inkMuted} quiet={site || level != null} />}
       {rooms.map((r) => shown(r.level) && (
         <RoomVolume key={r.id} room={r} e={elevOf(r)} h={roomH} X={X} Z={Z} tones={tones} paint={roomColour(r)}
-                    dim={dimmed(r.level)} hot={hover === r.id} quiet={site}
+                    dim={dimmed(r.level)} hot={hover === r.id} quiet={site} glass={glass}
                     onOver={(ev) => { onHover(r.id); tip(ev, roomText(r)); }}
                     onOut={() => { onHover(null); onTip(null); }}
                     onClick={() => onEnter(r.id)} />
@@ -367,7 +416,7 @@ export default function BuildingScene(p: BuildingSceneProps) {
 
       <instancedMesh ref={rackMesh} args={[undefined, undefined, Math.max(1, rackInstances.length)]} frustumCulled={false}>
         <boxGeometry args={[1, 1, 1]} />
-        <meshStandardMaterial roughness={0.85} />
+        <meshStandardMaterial roughness={glass ? 0.55 : 0.85} />
       </instancedMesh>
 
       {rooms.map((r) => shown(r.level) && !dimmed(r.level) && unitBoxes(r))}
@@ -411,7 +460,7 @@ function Label({ text, ink, bg, x, y, z, w }: { text: string; ink: string; bg: s
   );
 }
 
-function RoomVolume({ room: r, e, h, X, Z, tones, paint, dim, hot, quiet, flat, onOver, onOut, onClick }: {
+function RoomVolume({ room: r, e, h, X, Z, tones, paint, dim, hot, quiet, flat, glass, onOver, onOut, onClick }: {
   room: Placed; e: number; h: number; X: (x: number) => number; Z: (y: number) => number;
   tones: { ink: string; inkMuted: string; raised: string; accent: string; border: string; sev: (s: string) => string };
   /** The room's colour under the current layer, and whether it is a reading rather than a resting tone.
@@ -423,10 +472,14 @@ function RoomVolume({ room: r, e, h, X, Z, tones, paint, dim, hot, quiet, flat, 
   quiet?: boolean;
   /** An outdoor room: a footprint on the ground, not a volume. */
   flat?: boolean;
+  /** The building's glass view: a room at rest is a glass partition, its name shown on hover only. */
+  glass?: boolean;
   onOver: (ev: ThreeEvent<PointerEvent>) => void; onOut: () => void; onClick: () => void;
 }) {
-  const colour = paint.colour;
   const alarmed = paint.lit;
+  // At rest in the glass view a room is clear glass; a reading still tints it.
+  const resting = !!glass && !alarmed && !paint.band;
+  const colour = resting ? GLASS.room : paint.colour;
   const label = useMemo(() => labelTexture(r.name, tones.ink, tones.raised), [r.name, tones.ink, tones.raised]);
   useEffect(() => () => label.dispose(), [label]);
   const x = X(r.origin_x_m + r.width_m / 2), z = Z(r.origin_y_m + r.depth_m / 2);
@@ -441,13 +494,15 @@ function RoomVolume({ room: r, e, h, X, Z, tones, paint, dim, hot, quiet, flat, 
         <meshStandardMaterial color={colour} emissive={paint.band ? colour : '#000000'} emissiveIntensity={paint.band ? 0.7 : 0}
                               transparent depthWrite={false}
                               opacity={dim ? 0.03 : paint.band ? (hot ? 0.62 : quiet ? 0.34 : 0.48)
+                                : resting ? (hot ? 0.16 : 0.05)
                                 : hot ? 0.38 : quiet ? (alarmed ? 0.22 : 0.08) : alarmed ? 0.3 : flat ? 0.22 : 0.16} roughness={1} />
       </mesh>
       <lineSegments>
         <edgesGeometry args={[geo]} />
-        <lineBasicMaterial color={hot ? tones.accent : alarmed ? colour : tones.inkMuted} transparent opacity={dim ? 0.15 : quiet ? 0.5 : 0.9} />
+        <lineBasicMaterial color={hot ? tones.accent : alarmed ? colour : resting ? GLASS.roomEdge : tones.inkMuted} transparent
+                           opacity={dim ? 0.15 : quiet ? 0.5 : resting && !hot ? 0.35 : 0.9} />
       </lineSegments>
-      {!dim && !quiet && (
+      {!dim && !quiet && (!glass || hot) && (
         <sprite position={[0, h / 2 + 0.6, 0]} renderOrder={10} scale={[Math.min(4, r.width_m * 0.6), Math.min(4, r.width_m * 0.6) / 4, 1]}>
           <spriteMaterial map={label} depthTest={false} transparent />
         </sprite>
@@ -491,6 +546,65 @@ function DoorLeaf({ f, bb, elev, door, X, Z, tones, onOver, onOut }: {
   );
 }
 
+/** The glass view's backdrop: a dark navy studio with a soft glow behind the building. */
+function Studio() {
+  const { scene, invalidate } = useThree();
+  useEffect(() => {
+    const cv = document.createElement('canvas');
+    cv.width = cv.height = 512;
+    const c = cv.getContext('2d') as CanvasRenderingContext2D;
+    const g = c.createRadialGradient(256, 230, 20, 256, 256, 380);
+    g.addColorStop(0, GLASS.glowIn); g.addColorStop(1, GLASS.glowOut);
+    c.fillStyle = g; c.fillRect(0, 0, 512, 512);
+    const tex = new THREE.CanvasTexture(cv);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    scene.background = tex;
+    invalidate();
+    return () => { if (scene.background === tex) scene.background = null; tex.dispose(); };
+  }, [scene, invalidate]);
+  return null;
+}
+
+/** A floor's glass sides: the slab's outline raised to the ceiling, brightest
+ *  at the floor and fading upward, with a faint rim along the top. */
+function GlassTray({ geo, y, h, dim }: { geo: THREE.ExtrudeGeometry; y: number; h: number; dim: boolean }) {
+  const { walls, rim } = useMemo(() => {
+    geo.computeBoundingBox();
+    const b = geo.boundingBox as THREE.Box3;
+    const w = b.max.x - b.min.x, d = b.max.y - b.min.y;
+    return { walls: { w, d, cx: (b.max.x + b.min.x) / 2, cz: (b.max.y + b.min.y) / 2 },
+             rim: new THREE.EdgesGeometry(new THREE.BoxGeometry(w, h, d)) };
+  }, [geo, h]);
+  useEffect(() => () => rim.dispose(), [rim]);
+  const alpha = useMemo(() => {
+    const cv = document.createElement('canvas');
+    cv.width = 4; cv.height = 128;
+    const c = cv.getContext('2d') as CanvasRenderingContext2D;
+    const g = c.createLinearGradient(0, 128, 0, 0);
+    g.addColorStop(0, '#5a5a5a'); g.addColorStop(0.25, '#262626'); g.addColorStop(0.92, '#121212'); g.addColorStop(1, '#3a3a3a');
+    c.fillStyle = g; c.fillRect(0, 0, 4, 128);
+    return new THREE.CanvasTexture(cv);
+  }, []);
+  useEffect(() => () => alpha.dispose(), [alpha]);
+  const mats = useMemo(() => {
+    const side = new THREE.MeshBasicMaterial({ color: GLASS.wall, alphaMap: alpha, transparent: true, opacity: dim ? 0.25 : 1,
+                                               depthWrite: false, side: THREE.DoubleSide });
+    const none = new THREE.MeshBasicMaterial({ visible: false });
+    return [side, side, none, none, side, side];
+  }, [alpha, dim]);
+  useEffect(() => () => { mats[0].dispose(); mats[2].dispose(); }, [mats]);
+  return (
+    <group position={[walls.cx, y + h / 2, walls.cz]}>
+      <mesh material={mats} raycast={() => null}>
+        <boxGeometry args={[walls.w, h, walls.d]} />
+      </mesh>
+      <lineSegments geometry={rim} raycast={() => null}>
+        <lineBasicMaterial color={GLASS.rim} transparent opacity={dim ? 0.12 : 0.45} />
+      </lineSegments>
+    </group>
+  );
+}
+
 function Cameras({ mode, span, top, planElev, W, D, cx, cz, resetTick, spin, rung }: {
   mode: '3d' | 'plan'; span: number; top: number; planElev: number; W: number; D: number; cx: number; cz: number;
   resetTick: number; spin?: Spin; rung: Rung;
@@ -504,7 +618,14 @@ function Cameras({ mode, span, top, planElev, W, D, cx, cz, resetTick, spin, run
     if (mode === '3d') {
       camera.up.set(0, 1, 0);
       orbit.current?.target.set(cx, top / 2, cz);
-      dolly(new THREE.Vector3(cx + span * 0.8, top + span * 0.5, cz + span * 0.95), new THREE.Vector3(cx, top / 2, cz));
+      if (rung === 'building') {
+        // Frame the whole stack: back off until its bounding sphere fits the 45 degree view.
+        const r = 0.5 * Math.hypot(W, D, top), dist = (r / Math.sin((22.5 * Math.PI) / 180)) * 1.15;
+        const dir = new THREE.Vector3(0.62, 0.42, 0.66).normalize().multiplyScalar(dist);
+        dolly(new THREE.Vector3(cx + dir.x, top / 2 + dir.y, cz + dir.z), new THREE.Vector3(cx, top / 2, cz));
+      } else {
+        dolly(new THREE.Vector3(cx + span * 0.8, top + span * 0.5, cz + span * 0.95), new THREE.Vector3(cx, top / 2, cz));
+      }
       orbit.current?.update();
     } else {
       camera.position.set(cx, planElev + 60, cz);
