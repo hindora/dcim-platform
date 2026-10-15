@@ -69,6 +69,9 @@ const GLASS = {
 };
 /** How far a split pulls each floor from the one below, as a share of the floor-to-floor height. */
 const SPLIT_GAP = 0.9;
+/** The building's finished floor above the compound's ground, m: the podium
+ *  slab it stands on, with its edge, the entrance steps and the dock face. */
+const PODIUM = 0.45, PODIUM_OUT = 0.4;
 /** The hardware pass reads geometry only; a block's paint is the instanced colour. */
 const NO_PAINT = { bot: '#000000', mid: '#000000', top: '#000000', fill: 1 };
 const OUTDOOR = 'site';
@@ -148,7 +151,9 @@ export default function BuildingScene(p: BuildingSceneProps) {
   const gap = f2f * SPLIT_GAP;
   const levelIdx = useMemo(() => new Map(levels.map((l, i) => [l.name, i])), [levels]);
   const lift = (lv: string | null | undefined) => (isOutdoor(lv) ? 0 : t * (levelIdx.get(lv ?? '') ?? 0) * gap);
-  const elevOf = (r: TwinRoom) => baseElev(r) + lift(r.level);
+  // At the site rung the building stands on its podium; everything indoors rises with it.
+  const podium = site && mode === '3d' ? PODIUM : 0;
+  const elevOf = (r: TwinRoom) => baseElev(r) + lift(r.level) + (isOutdoor(r.level) ? 0 : podium);
 
   // Frame: the building's bounding box is the origin at both rungs.
   const box = useMemo(() => {
@@ -374,6 +379,10 @@ export default function BuildingScene(p: BuildingSceneProps) {
       {/* --- the compound (site rung) --- */}
       {groundGeo && <Ground ground={ground} X={X} Z={Z} faint={tones.faint} />}
       {site && glass && <CompoundDetail zones={zoneGeos} building={box} X={X} Z={Z} />}
+      {site && glass && (
+        <Podium x={X((box.x0 + box.x1) / 2)} z={Z((box.y0 + box.y1) / 2)}
+                w={box.x1 - box.x0 + 2 * PODIUM_OUT} d={box.y1 - box.y0 + 2 * PODIUM_OUT} />
+      )}
       {fence && (
         <>
           <line>
@@ -412,7 +421,7 @@ export default function BuildingScene(p: BuildingSceneProps) {
 
       {/* --- the building --- */}
       {slabShapes.map(({ level: l, geo }) => shown(l.name) && (
-        <mesh key={l.name} geometry={geo} rotation-x={Math.PI / 2} position={[0, l.elevation_m + lift(l.name), 0]}>
+        <mesh key={l.name} geometry={geo} rotation-x={Math.PI / 2} position={[0, l.elevation_m + lift(l.name) + podium, 0]}>
           {/* Under a figure's layer the slabs thin out: the colour that matters is on the rooms
               beneath them, and a stack of 75 % slabs greys every level but the top one. In the
               building's 3D view a slab is frosted glass. */}
@@ -424,16 +433,16 @@ export default function BuildingScene(p: BuildingSceneProps) {
         </mesh>
       ))}
       {slabShapes.map(({ level: l, geo }) => shown(l.name) && !dimmed(l.name) && (
-        <lineSegments key={`e${l.name}`} rotation-x={Math.PI / 2} position={[0, l.elevation_m + lift(l.name), 0]}>
+        <lineSegments key={`e${l.name}`} rotation-x={Math.PI / 2} position={[0, l.elevation_m + lift(l.name) + podium, 0]}>
           <edgesGeometry args={[geo]} />
           <lineBasicMaterial color={glass ? GLASS.rim : tones.faint} transparent={glass} opacity={glass ? 0.85 : 1} />
         </lineSegments>
       ))}
       {glass && slabShapes.map(({ level: l, geo }) => (
-        <GlassTray key={`g${l.name}`} geo={geo} y={l.elevation_m + lift(l.name)}
+        <GlassTray key={`g${l.name}`} geo={geo} y={l.elevation_m + lift(l.name) + podium}
                    h={/roof/i.test(l.name) ? 1.1 : roomH} dim={dimmed(l.name)} />
       ))}
-      {fabricGeos.map(({ f, geo, bb, elev: e0 }) => { const elev = e0 + lift(f.level); return shown(f.level) && !dimmed(f.level) && (
+      {fabricGeos.map(({ f, geo, bb, elev: e0 }) => { const elev = e0 + lift(f.level) + podium; return shown(f.level) && !dimmed(f.level) && (
         <group key={f.id}>
           {geo ? (
             <mesh geometry={geo} rotation-x={Math.PI / 2} position={[0, elev + 0.02, 0]}
@@ -447,9 +456,15 @@ export default function BuildingScene(p: BuildingSceneProps) {
             // A door opening: a short bar on the wall. With a contact on it the bar
             // is the leaf - it swings open when the contact says so, and a held-open
             // alarm colours it.
-            <DoorLeaf f={f} bb={bb} elev={elev} door={doorOf(f)} X={X} Z={Z} tones={tones}
+            f.kind === 'entrance' || (f.kind === 'door' && f.attrs?.external && !f.attrs?.room) ? (
+              <BuildingDoor kind={f.kind === 'entrance' ? 'entrance' : 'dock'} bb={bb} box={box} elev={elev} podium={podium} X={X} Z={Z}
+                            onOver={(ev) => { ev.stopPropagation(); tip(ev, `${f.name ?? (f.kind === 'entrance' ? 'Main entrance' : 'Loading dock')} · drawing, no sensors`); }}
+                            onOut={() => onTip(null)} />
+            ) : (
+            <DoorLeaf f={f} bb={bb} elev={elev} door={doorOf(f)} X={X} Z={Z} tones={tones} flat={mode === 'plan'}
                       onOver={(ev) => { ev.stopPropagation(); tip(ev, doorText(f, doorOf(f))); }}
                       onOut={() => onTip(null)} />
+            )
           )}
         </group>
       ); })}
@@ -474,7 +489,7 @@ export default function BuildingScene(p: BuildingSceneProps) {
 
       {/* The building's shell: at the site rung it is the thing you click. */}
       {site && mode === '3d' && (
-        <group position={[0, roofElev / 2, 0]}>
+        <group position={[0, roofElev / 2 + podium, 0]}>
           <mesh geometry={shellGeo} onPointerOver={(ev) => { ev.stopPropagation(); onHover('__building__'); tip(ev, buildingText); }}
                 onPointerOut={() => { onHover(null); onTip(null); }}
                 onClick={(ev) => { ev.stopPropagation(); onEnterBuilding(); }}>
@@ -567,33 +582,182 @@ function RoomVolume({ room: r, e, h, X, Z, tones, paint, dim, hot, quiet, flat, 
  *  at 75 degrees into the room, hinged at one end, the way a plan drawing
  *  shows a door. Ink when the contact reads closed, accent when open, the
  *  alarm colour when held open long enough to be one. */
-function DoorLeaf({ f, bb, elev, door, X, Z, tones, onOver, onOut }: {
+// Physical colours for the doors, the same under both themes.
+const DOOR = {
+  leaf: '#8a939d', frame: '#3a4048', handle: '#d6dade', glass: '#9fc4d8', mullion: '#2c3238',
+  shutter: '#7a838d', shutterRib: '#4e565f', canopy: '#3a4048', concrete: '#3a424c', concreteEdge: '#8a949f', bumper: '#1a1d21',
+};
+const DOOR_H = 2.1;
+
+/** A room's door: a frame in the opening and the leaf hung at its west (or
+ *  north) end. Closed it stands in the wall; open it swings 75 degrees into
+ *  the room (the corridor runs along the south side of every level, so a
+ *  door in an east-west wall opens north and one in a west wall opens east).
+ *  Steel grey at rest, the accent when its contact reads open, the alarm
+ *  colour when held open long enough to be one. In PLAN the leaf is the
+ *  short bar a drawing shows, since a standing door is a line from above. */
+function DoorLeaf({ f, bb, elev, door, X, Z, tones, flat, onOver, onOut }: {
   f: TwinSpace; bb: { x0: number; y0: number; x1: number; y1: number }; elev: number;
   door: TwinDoor | undefined; X: (x: number) => number; Z: (y: number) => number;
   tones: { ink: string; faint: string; accent: string; sev: (s: string) => string };
+  flat: boolean;
   onOver: (ev: ThreeEvent<PointerEvent>) => void; onOut: () => void;
 }) {
   const w = Math.max(0.2, bb.x1 - bb.x0), d = Math.max(0.2, bb.y1 - bb.y0);
   const alongX = w >= d;                       // the opening runs east-west
   const len = alongX ? w : d;
   const open = door?.open === true;
-  const colour = !door ? (f.attrs?.monitored ? tones.ink : tones.faint)
+  const colour = !door ? (flat ? (f.attrs?.monitored ? tones.ink : tones.faint) : DOOR.leaf)
     : door.max_severity !== 'CLEAR' ? tones.sev(door.max_severity)
-    : open ? tones.accent : tones.ink;
-  // Hinge at the opening's west (or north) end. Closed, the leaf lies along
-  // the wall from the hinge: east, or south. Open, it swings into the room:
-  // the corridor runs along the south side of every level, so a door in an
-  // east-west wall opens north, and a door in a west wall opens east. (An
-  // entrance in the north wall would swing out; the fabric has none.)
+    : open ? tones.accent : flat ? tones.ink : DOOR.leaf;
   // three.js: rotation-y of +a turns local +x toward -z, which is north.
   const swing = open ? (75 * Math.PI) / 180 : 0;
+  const hinge: [number, number, number] = [X(alongX ? bb.x0 : (bb.x0 + bb.x1) / 2), elev, Z(alongX ? (bb.y0 + bb.y1) / 2 : bb.y0)];
+  if (flat) {
+    return (
+      <group position={[hinge[0], elev + 0.08, hinge[2]]} rotation-y={alongX ? swing : -Math.PI / 2 + swing}>
+        <mesh position={[len / 2, 0, 0]} onPointerOver={onOver} onPointerOut={onOut}>
+          <boxGeometry args={[len, open ? 0.6 : 0.16, 0.16]} />
+          <meshStandardMaterial color={colour} roughness={1} />
+        </mesh>
+      </group>
+    );
+  }
   return (
-    <group position={[X(alongX ? bb.x0 : (bb.x0 + bb.x1) / 2), elev + 0.08, Z(alongX ? (bb.y0 + bb.y1) / 2 : bb.y0)]}
-           rotation-y={alongX ? swing : -Math.PI / 2 + swing}>
-      <mesh position={[len / 2, 0, 0]} onPointerOver={onOver} onPointerOut={onOut}>
-        <boxGeometry args={[len, open ? 0.6 : 0.16, 0.16]} />
-        <meshStandardMaterial color={colour} roughness={1} />
+    <group position={hinge} rotation-y={alongX ? 0 : -Math.PI / 2}>
+      {/* the frame: two jambs and the head, in the wall */}
+      {[0, len].map((x) => (
+        <mesh key={x} position={[x, (DOOR_H + 0.06) / 2, 0]} raycast={() => null}>
+          <boxGeometry args={[0.08, DOOR_H + 0.06, 0.16]} /><meshStandardMaterial color={DOOR.frame} roughness={0.8} />
+        </mesh>
+      ))}
+      <mesh position={[len / 2, DOOR_H + 0.03, 0]} raycast={() => null}>
+        <boxGeometry args={[len + 0.08, 0.08, 0.16]} /><meshStandardMaterial color={DOOR.frame} roughness={0.8} />
       </mesh>
+      {/* the leaf, hinged at the origin */}
+      <group rotation-y={swing}>
+        <mesh position={[len / 2, DOOR_H / 2, 0]} onPointerOver={onOver} onPointerOut={onOut}>
+          <boxGeometry args={[len - 0.06, DOOR_H - 0.04, 0.05]} />
+          <meshStandardMaterial color={colour} roughness={0.7} />
+        </mesh>
+        <mesh position={[len - 0.14, 1.0, 0.045]} raycast={() => null}>
+          <boxGeometry args={[0.03, 0.14, 0.03]} /><meshStandardMaterial color={DOOR.handle} roughness={0.4} />
+        </mesh>
+      </group>
+    </group>
+  );
+}
+
+/** The ribbed face of a roller shutter. */
+function shutterTexture(): THREE.CanvasTexture {
+  const cv = document.createElement('canvas');
+  cv.width = 32; cv.height = 128;
+  const c = cv.getContext('2d') as CanvasRenderingContext2D;
+  c.fillStyle = DOOR.shutter; c.fillRect(0, 0, 32, 128);
+  c.fillStyle = DOOR.shutterRib;
+  for (let y = 0; y < 128; y += 8) c.fillRect(0, y, 32, 2);
+  const t = new THREE.CanvasTexture(cv);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  return t;
+}
+
+/** The building's own doors, in its outer wall: the main entrance - a pair
+ *  of glazed leaves in a dark frame under a cantilevered canopy, with steps
+ *  down from the podium - and the loading dock, a roller shutter under its
+ *  own canopy, with rubber bumpers on the podium face below it. Drawn from
+ *  the fabric's openings; nothing here reports. */
+function BuildingDoor({ kind, bb, box, elev, podium, X, Z, onOver, onOut }: {
+  kind: 'entrance' | 'dock'; bb: { x0: number; y0: number; x1: number; y1: number };
+  box: { x0: number; y0: number; x1: number; y1: number }; elev: number; podium: number;
+  X: (x: number) => number; Z: (y: number) => number;
+  onOver: (ev: ThreeEvent<PointerEvent>) => void; onOut: () => void;
+}) {
+  const ox = (bb.x0 + bb.x1) / 2, oy = (bb.y0 + bb.y1) / 2;
+  // The wall the opening is in: the building's edge it is nearest to.
+  const gaps: ['N' | 'S' | 'W' | 'E', number][] = [['N', Math.abs(oy - box.y0)], ['S', Math.abs(oy - box.y1)], ['W', Math.abs(ox - box.x0)], ['E', Math.abs(ox - box.x1)]];
+  const wall = gaps.sort((a, b) => a[1] - b[1])[0][0];
+  const along = wall === 'N' || wall === 'S';
+  const len = Math.max(1.2, along ? bb.x1 - bb.x0 : bb.y1 - bb.y0);
+  // The frame: origin on the wall line at the opening's centre, local +x along
+  // the wall, local +z outward from the building.
+  const pos: [number, number, number] = along
+    ? [X(ox), elev, Z(wall === 'N' ? box.y0 : box.y1)]
+    : [X(wall === 'W' ? box.x0 : box.x1), elev, Z(oy)];
+  const ry = wall === 'S' ? 0 : wall === 'N' ? Math.PI : wall === 'E' ? Math.PI / 2 : -Math.PI / 2;
+  const h = kind === 'dock' ? 3.6 : 2.4;
+  const shutter = useMemo(() => (kind === 'dock' ? shutterTexture() : null), [kind]);
+  useEffect(() => () => shutter?.dispose(), [shutter]);
+  if (shutter) shutter.repeat.set(1, h / 0.4);
+  const canopyOut = kind === 'dock' ? 2.4 : 1.8, canopyH = kind === 'dock' ? 4.0 : 3.0, canopyW = len + (kind === 'dock' ? 1.0 : 1.6);
+  // Steps down from the podium's edge to the ground, 150 mm risers on 300 mm treads.
+  const steps = kind === 'entrance' && podium > 0
+    ? Array.from({ length: Math.ceil(podium / 0.15) - 1 }, (_, k) => k + 1).map((k) => ({ top: podium - k * 0.15, out: PODIUM_OUT + (k - 0.5) * 0.3 }))
+    : [];
+  return (
+    <group position={pos} rotation-y={ry}>
+      {/* the frame */}
+      {[-1, 1].map((k) => (
+        <mesh key={k} position={[k * (len / 2 + 0.05), (h + 0.08) / 2, 0]} raycast={() => null}>
+          <boxGeometry args={[0.1, h + 0.08, 0.2]} /><meshStandardMaterial color={DOOR.frame} roughness={0.8} />
+        </mesh>
+      ))}
+      <mesh position={[0, h + 0.04, 0]} raycast={() => null}>
+        <boxGeometry args={[len + 0.2, 0.1, 0.2]} /><meshStandardMaterial color={DOOR.frame} roughness={0.8} />
+      </mesh>
+      {kind === 'entrance' ? (
+        <>
+          {/* two glazed leaves, a mullion between, a push bar across each */}
+          {[-1, 1].map((k) => (
+            <mesh key={k} position={[k * len / 4, h / 2, 0]} onPointerOver={onOver} onPointerOut={onOut}>
+              <boxGeometry args={[len / 2 - 0.04, h - 0.04, 0.05]} />
+              <meshStandardMaterial color={DOOR.glass} roughness={0.15} metalness={0.1} transparent opacity={0.55} />
+            </mesh>
+          ))}
+          <mesh position={[0, h / 2, 0]} raycast={() => null}>
+            <boxGeometry args={[0.06, h, 0.08]} /><meshStandardMaterial color={DOOR.mullion} roughness={0.7} />
+          </mesh>
+          {[-1, 1].map((k) => (
+            <mesh key={`bar${k}`} position={[k * len / 4, 1.0, 0.05]} raycast={() => null}>
+              <boxGeometry args={[len / 2 - 0.3, 0.04, 0.04]} /><meshStandardMaterial color={DOOR.handle} roughness={0.4} />
+            </mesh>
+          ))}
+        </>
+      ) : (
+        <mesh position={[0, h / 2, 0]} onPointerOver={onOver} onPointerOut={onOut}>
+          <boxGeometry args={[len, h, 0.06]} />
+          <meshStandardMaterial map={shutter ?? undefined} color={shutter ? '#ffffff' : DOOR.shutter} roughness={0.6} />
+        </mesh>
+      )}
+      {/* the canopy, cantilevered out over the door */}
+      <mesh position={[0, canopyH, canopyOut / 2 + 0.1]} raycast={() => null}>
+        <boxGeometry args={[canopyW, 0.16, canopyOut]} /><meshStandardMaterial color={DOOR.canopy} roughness={0.8} />
+      </mesh>
+      {/* the steps, on the ground beyond the podium's edge */}
+      {steps.map((st, i) => (
+        <mesh key={`s${i}`} position={[0, -podium + st.top / 2, st.out]} raycast={() => null}>
+          <boxGeometry args={[len + 1.2, st.top, 0.3]} /><meshStandardMaterial color={DOOR.concrete} roughness={1} />
+        </mesh>
+      ))}
+      {/* the dock's bumpers, on the podium face */}
+      {kind === 'dock' && podium > 0 && [-1, 1].map((k) => (
+        <mesh key={`b${k}`} position={[k * (len / 2 - 0.4), -podium * 0.45, PODIUM_OUT + 0.06]} raycast={() => null}>
+          <boxGeometry args={[0.3, podium * 0.7, 0.12]} /><meshStandardMaterial color={DOOR.bumper} roughness={0.95} />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+/** The podium the building stands on: a concrete slab a step above the
+ *  compound's ground, its edge picked out. */
+function Podium({ x, z, w, d }: { x: number; z: number; w: number; d: number }) {
+  const geo = useMemo(() => new THREE.BoxGeometry(w, PODIUM, d), [w, d]);
+  useEffect(() => () => geo.dispose(), [geo]);
+  return (
+    <group position={[x, PODIUM / 2, z]} raycast={() => null}>
+      <mesh geometry={geo}><meshStandardMaterial color={DOOR.concrete} roughness={1} /></mesh>
+      <lineSegments><edgesGeometry args={[geo]} /><lineBasicMaterial color={DOOR.concreteEdge} transparent opacity={0.6} /></lineSegments>
     </group>
   );
 }
