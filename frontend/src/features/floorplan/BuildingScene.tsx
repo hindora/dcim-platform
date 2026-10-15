@@ -101,7 +101,8 @@ export default function BuildingScene(p: BuildingSceneProps) {
   // band; a room with nothing to measure keeps the "no reading" tone so it
   // is not mistaken for a cool one.
   const roomColour = (r: TwinRoom): { colour: string; lit: boolean; band?: boolean } => {
-    if (layer === 'alarm') return { colour: r.max_severity === 'CLEAR' ? tones.inkMuted : tones.sev(r.max_severity), lit: r.max_severity !== 'CLEAR' };
+    // An alarm is a marker on the rack or unit that raised it (AlarmPins), never a red room.
+    if (layer === 'alarm') return { colour: tones.inkMuted, lit: false };
     const v = roomLayerValue(r, layer);
     if (v == null) return { colour: tones.none, lit: false };
     return { colour: resolveColor(bandColor(roomLayerBands(layer)!, v)), lit: true, band: true };
@@ -263,7 +264,7 @@ export default function BuildingScene(p: BuildingSceneProps) {
         tmp.scale.set(w, RACK_H, d);
         tmp.rotation.set(0, 0, 0);
         tmp.updateMatrix();
-        out.push({ m: tmp.matrix.clone(), c: new THREE.Color(k.max_severity !== 'CLEAR' ? tones.sev(k.max_severity) : glass ? GLASS.rack : tones.inkMuted) });
+        out.push({ m: tmp.matrix.clone(), c: new THREE.Color(glass ? GLASS.rack : tones.inkMuted) });
       }
     }
     return out;
@@ -291,6 +292,32 @@ export default function BuildingScene(p: BuildingSceneProps) {
   const buildingHot = hover === '__building__';
   const buildingText = `${scene.name} · ${levels.length} levels · ${rooms.length} rooms · click to enter`;
 
+  // Alarm markers: one over each alarmed rack and unit, and one at the room's
+  // centre when its alarm comes from something not drawn up here (a wall
+  // sensor, a door contact), so no open alarm goes unseen.
+  const pins = useMemo(() => {
+    const out: { x: number; y: number; z: number; c: string }[] = [];
+    for (const r of [...rooms, ...yards]) {
+      if (!isOutdoor(r.level) && (!shown(r.level) || dimmed(r.level))) continue;
+      const e = elevOf(r);
+      let own = false;
+      for (const k of r.racks ?? []) {
+        if (k.max_severity === 'CLEAR') continue;
+        out.push({ x: X(r.origin_x_m + k.x), y: e + RACK_H + 0.45, z: Z(r.origin_y_m + k.y), c: tones.sev(k.max_severity) });
+        own = true;
+      }
+      for (const u of r.equipment ?? []) {
+        if (u.max_severity === 'CLEAR') continue;
+        out.push({ x: X(r.origin_x_m + u.x), y: e + (u.h_m ?? 1.5) + 0.45, z: Z(r.origin_y_m + u.y), c: tones.sev(u.max_severity) });
+        own = true;
+      }
+      if (!own && r.max_severity !== 'CLEAR') {
+        out.push({ x: X(r.origin_x_m + r.width_m / 2), y: e + 1.6, z: Z(r.origin_y_m + r.depth_m / 2), c: tones.sev(r.max_severity) });
+      }
+    }
+    return out;
+  }, [rooms, yards, level, mode, tones, cx, cz, t]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const unitBoxes = (r: Placed) => (r.equipment ?? []).map((u) => {
     const h = u.h_m ?? 1.5;
     return (
@@ -299,7 +326,7 @@ export default function BuildingScene(p: BuildingSceneProps) {
             onPointerOver={(ev) => { ev.stopPropagation(); tip(ev, `${u.name} · ${u.device_type.replace(/_/g, ' ')} · ${u.w_m} × ${u.d_m} m${u.max_severity !== 'CLEAR' ? ` · ${u.max_severity.toLowerCase()}` : ''}`); }}
             onPointerOut={() => onTip(null)}>
         <boxGeometry args={[u.w_m, h, u.d_m]} />
-        <meshStandardMaterial color={u.max_severity !== 'CLEAR' ? tones.sev(u.max_severity) : glass ? GLASS.plant : tones.faint} roughness={glass ? 0.6 : 0.9} />
+        <meshStandardMaterial color={glass ? GLASS.plant : tones.faint} roughness={glass ? 0.6 : 0.9} />
       </mesh>
     );
   });
@@ -415,6 +442,7 @@ export default function BuildingScene(p: BuildingSceneProps) {
       </instancedMesh>
 
       {rooms.map((r) => shown(r.level) && !dimmed(r.level) && unitBoxes(r))}
+      <AlarmPins pins={pins} />
 
       {/* The building's shell: at the site rung it is the thing you click. */}
       {site && mode === '3d' && (
@@ -539,6 +567,34 @@ function DoorLeaf({ f, bb, elev, door, X, Z, tones, onOver, onOut }: {
         <boxGeometry args={[len, open ? 0.6 : 0.16, 0.16]} />
         <meshStandardMaterial color={colour} roughness={1} />
       </mesh>
+    </group>
+  );
+}
+
+/** Alarm markers: a glowing dot in the severity colour over whatever raised
+ *  it. The same size on screen at any distance, and drawn over the glass, so a
+ *  far-off alarm is never lost. */
+function AlarmPins({ pins }: { pins: { x: number; y: number; z: number; c: string }[] }) {
+  const tex = useMemo(() => {
+    const cv = document.createElement('canvas');
+    cv.width = cv.height = 64;
+    const c = cv.getContext('2d') as CanvasRenderingContext2D;
+    const g = c.createRadialGradient(32, 32, 0, 32, 32, 32);
+    g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(0.42, 'rgba(255,255,255,1)');
+    g.addColorStop(0.5, 'rgba(255,255,255,0.55)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+    c.fillStyle = g; c.fillRect(0, 0, 64, 64);
+    // a dark ring so the dot reads on the white tile as well as on the dark studio
+    c.strokeStyle = 'rgba(10,12,16,0.85)'; c.lineWidth = 3; c.beginPath(); c.arc(32, 32, 14, 0, Math.PI * 2); c.stroke();
+    return new THREE.CanvasTexture(cv);
+  }, []);
+  useEffect(() => () => tex.dispose(), [tex]);
+  return (
+    <group>
+      {pins.map((p, i) => (
+        <sprite key={i} position={[p.x, p.y, p.z]} renderOrder={20} scale={[0.028, 0.028, 1]} raycast={() => null}>
+          <spriteMaterial map={tex} color={p.c} sizeAttenuation={false} depthTest={false} transparent />
+        </sprite>
+      ))}
     </group>
   );
 }

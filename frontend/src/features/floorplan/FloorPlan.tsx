@@ -17,7 +17,7 @@ import {
 import { Dock, type DockItem, type DockTool } from './Dock';
 import { SearchPanel, typeWord, type SearchHit } from './Search';
 import { Navigator } from './Navigator';
-import { BuildingPanel, DevicePanel, FiltersPanel, LayerPanel, Legend, PathsPanel, RackPanel, RoomPanel, UnitPanel } from './panels';
+import { BuildingPanel, DevicePanel, FiltersPanel, Legend, PathsPanel, RackPanel, RoomPanel, UnitPanel } from './panels';
 import { fromImpact, fromTraces, type PathKind } from './paths';
 import { BuildingPlan2D } from './BuildingPlan2D';
 import { Plan2D } from './Plan2D';
@@ -96,13 +96,9 @@ export function FloorPlanView() {
     || sites[0]?.id || '';
   useEffect(() => { if (siteId) rememberSite(siteId); }, [siteId]);
   const level = params.get('level') || null;
-  // The building and site rungs colour rooms by one of four readings. The
-  // room rung's own `layer` keys are reused where they mean the same thing,
-  // so a link down into a room keeps its layer and the climb back keeps the
-  // colouring; the room-only keys fall back to alarms up here.
-  const rawLayer = params.get('layer') ?? '';
-  const bLayer: BuildingLayer = rawLayer === 'power' || rawLayer === 'utilisation' ? 'utilisation'
-    : rawLayer === 'committed' ? 'committed' : rawLayer === 'space' ? 'space' : 'alarm';
+  // The building and site rungs show alarms only: no layer picker up there,
+  // and an alarm is a marker on the rack or unit that raised it, not a red room.
+  const bLayer: BuildingLayer = 'alarm';
   const building = useQuery<TwinSiteScene>({
     queryKey: ['site-scene', siteId], queryFn: () => api.siteScene(siteId),
     enabled: Boolean(siteId), refetchInterval: 30_000, staleTime: 15_000, placeholderData: (prev) => prev,
@@ -552,7 +548,6 @@ export function FloorPlanView() {
   if (rung !== 'room') {
     const atSite = rung === 'site';
     const bMode: '3d' | 'plan' = mode === 'plan' ? 'plan' : '3d';
-    const levelNames = bs ? [...bs.levels].sort((a, b) => a.ordinal - b.ordinal).map((l) => l.name) : [];
     const rackTotal = bs?.rooms.reduce((a, r) => a + r.rack_count, 0) ?? 0;
     const devTotal = bs?.rooms.reduce((a, r) => a + r.device_count, 0) ?? 0;
     const alarmed = bs?.rooms.filter((r) => r.max_severity !== 'CLEAR').length ?? 0;
@@ -570,19 +565,7 @@ export function FloorPlanView() {
                                onChange: setSplit } : undefined} />}
         </div>
         {navigator}
-        <Dock items={['navigate', 'info', 'layers', 'search']} open={panel === 'filters' ? null : panel} onToggle={togglePanel} />
-        {panel === 'layers' && (
-          <aside className="vw-panel" aria-label="Layers">
-            <div className="vw-panel-head">
-              <h3>Layers</h3>
-              <button type="button" className="close" aria-label="Close" onClick={() => setPanel(null)}>×</button>
-            </div>
-            <LayerPanel layer={bLayer}
-                        onLayer={(v) => { const next = new URLSearchParams(params); if (v === 'alarm') next.delete('layer'); else next.set('layer', v); setParams(next, { replace: true }); }}
-                        levels={atSite ? [] : levelNames} level={level}
-                        onLevel={(v) => { const next = new URLSearchParams(params); if (v == null) next.delete('level'); else next.set('level', v); setParams(next, { replace: true }); }} />
-          </aside>
-        )}
+        <Dock items={['navigate', 'info', 'search']} open={panel === 'filters' || panel === 'layers' ? null : panel} onToggle={togglePanel} />
         {panel === 'search' && (
           <aside className="vw-panel" aria-label="Search">
             <div className="vw-panel-head">
