@@ -9,7 +9,8 @@ import type { AlarmCategory, TwinDoor, TwinRoom, TwinSiteScene, TwinSpace } from
 import { CategoryGlyph } from '../../components/CategoryGlyph';
 import { alarmColor, resolveColor } from './colors';
 import { NO_READING, bandColor, roomLayerBands, roomLayerText, roomLayerValue, type BuildingLayer } from './layers';
-import { labelTexture, type HoverTip } from './Scene';
+import { labelTexture, type GBox, type HoverTip } from './Scene';
+import { Hardware } from './Hardware';
 import { Columns, CoreShaft, Facade, Fence, Ground, ZoneObject, ZoneSurface } from './SiteDressing';
 
 /**
@@ -68,6 +69,8 @@ const GLASS = {
 };
 /** How far a split pulls each floor from the one below, as a share of the floor-to-floor height. */
 const SPLIT_GAP = 0.9;
+/** The hardware pass reads geometry only; a block's paint is the instanced colour. */
+const NO_PAINT = { bot: '#000000', mid: '#000000', top: '#000000', fill: 1 };
 const OUTDOOR = 'site';
 /** Zones worth a name on the ground; the rest are read from their shape. */
 const LABELLED_ZONES = new Set(['substation', 'generator_yard', 'cooling_yard', 'fuel_tank', 'water_tank',
@@ -271,6 +274,29 @@ export default function BuildingScene(p: BuildingSceneProps) {
     }
     return out;
   }, [rooms, yards, level, mode, tones, cx, cz, t]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The physical detail the room view gives cabinets and plant (Hardware.tsx),
+  // at building scale: the racks' steel frame, the plant's pads, nozzles,
+  // stacks, fins and handles. Same filters as the blocks themselves.
+  const hw = useMemo(() => {
+    const racksB: GBox[] = [], unitsB: GBox[] = [], types: string[] = [];
+    for (const r of [...rooms, ...yards]) {
+      const indoor = !isOutdoor(r.level);
+      if (indoor && (!shown(r.level) || dimmed(r.level))) continue;
+      const e = elevOf(r);
+      for (const k of r.racks ?? []) {
+        racksB.push({ x: X(r.origin_x_m + k.x), y: e + RACK_H / 2, z: Z(r.origin_y_m + k.y),
+                      w: k.w_m ?? RACK_W, h: RACK_H, d: k.d_m ?? RACK_D, rot: 0, front: 0, paint: NO_PAINT });
+      }
+      for (const u of r.equipment ?? []) {
+        const h = u.h_m ?? 1.5;
+        unitsB.push({ x: X(r.origin_x_m + u.x), y: e + h / 2, z: Z(r.origin_y_m + u.y), w: u.w_m, h, d: u.d_m,
+                      rot: -((u.facing_deg ?? 0) * Math.PI) / 180, front: 0, paint: NO_PAINT });
+        types.push(u.device_type);
+      }
+    }
+    return { racks: racksB, units: unitsB, types };
+  }, [rooms, yards, level, mode, cx, cz, t]); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     const m = rackMesh.current;
     if (!m) return;
@@ -447,6 +473,8 @@ export default function BuildingScene(p: BuildingSceneProps) {
       </instancedMesh>
 
       {rooms.map((r) => shown(r.level) && !dimmed(r.level) && unitBoxes(r))}
+      <RackDoors boxes={hw.racks} />
+      <Hardware racks={hw.racks} units={hw.units} unitTypes={hw.types} open={false} />
       <AlarmPins pins={pins} />
 
       {/* The building's shell: at the site rung it is the thing you click. */}
@@ -573,6 +601,56 @@ function DoorLeaf({ f, bb, elev, door, X, Z, tones, onOver, onOut }: {
         <meshStandardMaterial color={colour} roughness={1} />
       </mesh>
     </group>
+  );
+}
+
+/** A rack door seen from the aisle: dark perforated steel in a frame, the
+ *  handle, and a few lit status LEDs on the gear behind it. Front and back
+ *  both get one - the building does not know which way a rack faces. */
+function doorTexture(): THREE.CanvasTexture {
+  const W = 64, H = 192;
+  const cv = document.createElement('canvas');
+  cv.width = W; cv.height = H;
+  const c = cv.getContext('2d') as CanvasRenderingContext2D;
+  c.fillStyle = '#1f242b'; c.fillRect(0, 0, W, H);
+  c.fillStyle = '#2b323b';
+  for (let y = 10; y < H - 8; y += 4) for (let x = 7 + ((y / 4) % 2) * 2; x < W - 6; x += 4) c.fillRect(x, y, 2, 2);
+  c.strokeStyle = '#3c4550'; c.lineWidth = 3; c.strokeRect(1.5, 1.5, W - 3, H - 3);
+  c.fillStyle = '#8a939d'; c.fillRect(W - 9, H * 0.45, 3, 18);
+  const leds = [[14, 30], [22, 30], [14, 62], [30, 94], [14, 126], [22, 158]];
+  for (const [x, y] of leds) { c.fillStyle = '#3a8dde'; c.fillRect(x, y, 3, 2); }
+  c.fillStyle = '#3ddc84'; c.fillRect(38, 30, 2, 2); c.fillRect(38, 94, 2, 2);
+  const t = new THREE.CanvasTexture(cv);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 4;
+  return t;
+}
+
+function RackDoors({ boxes }: { boxes: GBox[] }) {
+  const ref = useRef<THREE.InstancedMesh>(null);
+  const tex = useMemo(doorTexture, []);
+  useEffect(() => () => tex.dispose(), [tex]);
+  const n = boxes.length * 2;
+  useEffect(() => {
+    const im = ref.current;
+    if (!im) return;
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), p = new THREE.Vector3(), sc = new THREE.Vector3();
+    const up = new THREE.Vector3(0, 1, 0);
+    boxes.forEach((b, i) => {
+      for (const [k, sign] of [[0, 1], [1, -1]] as const) {
+        q.setFromAxisAngle(up, sign > 0 ? 0 : Math.PI);
+        im.setMatrixAt(i * 2 + k, m.compose(p.set(b.x, b.y, b.z + sign * (b.d / 2 + 0.003)), q, sc.set(b.w * 0.94, b.h * 0.96, 1)));
+      }
+    });
+    im.instanceMatrix.needsUpdate = true;
+    im.computeBoundingSphere();
+  }, [boxes]);
+  if (!n) return null;
+  return (
+    <instancedMesh key={n} ref={ref} args={[undefined, undefined, n]} frustumCulled={false} raycast={() => null}>
+      <planeGeometry args={[1, 1]} />
+      <meshBasicMaterial map={tex} />
+    </instancedMesh>
   );
 }
 
