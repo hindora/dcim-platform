@@ -43,7 +43,6 @@
 /* the view bar: camera trio over the mode pill */
 .vw-viewbar { display: flex; flex-direction: column; align-items: center; gap: 8px; }
 .vw-orbit { display: flex; gap: 8px; }
-.vw-viewrow { display: flex; gap: 8px; align-items: center; }
 .vw-pill { display: flex; gap: 2px; padding: 3px; border-radius: 999px;
            background: var(--vw-glass); backdrop-filter: var(--vw-blur); -webkit-backdrop-filter: var(--vw-blur);
            border: 1px solid color-mix(in srgb, var(--border-strong) 85%, transparent); box-shadow: var(--vw-shadow-sm); }

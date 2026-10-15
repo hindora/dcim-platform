@@ -573,8 +573,22 @@ function DoorLeaf({ f, bb, elev, door, X, Z, tones, onOver, onOut }: {
 
 /** Alarm markers: a glowing dot in the severity colour over whatever raised
  *  it. The same size on screen at any distance, and drawn over the glass, so a
- *  far-off alarm is never lost. */
+ *  far-off alarm is never lost. The dots pulse (1.2 s, a soft fade, not a
+ *  flash), and hold still under reduced motion; the scene only repaints while
+ *  a dot is on screen. */
 function AlarmPins({ pins }: { pins: { x: number; y: number; z: number; c: string }[] }) {
+  const group = useRef<THREE.Group>(null);
+  const { invalidate } = useThree();
+  useEffect(() => {
+    if (!pins.length || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return undefined;
+    const t0 = performance.now();
+    const id = window.setInterval(() => {
+      const k = 0.62 + 0.38 * Math.cos(((performance.now() - t0) / 1200) * Math.PI * 2);
+      group.current?.children.forEach((o) => { ((o as THREE.Sprite).material as THREE.SpriteMaterial).opacity = k; });
+      invalidate();
+    }, 60);
+    return () => window.clearInterval(id);
+  }, [pins.length, invalidate]);
   const tex = useMemo(() => {
     const cv = document.createElement('canvas');
     cv.width = cv.height = 64;
@@ -589,7 +603,7 @@ function AlarmPins({ pins }: { pins: { x: number; y: number; z: number; c: strin
   }, []);
   useEffect(() => () => tex.dispose(), [tex]);
   return (
-    <group>
+    <group ref={group}>
       {pins.map((p, i) => (
         <sprite key={i} position={[p.x, p.y, p.z]} renderOrder={20} scale={[0.028, 0.028, 1]} raycast={() => null}>
           <spriteMaterial map={tex} color={p.c} sizeAttenuation={false} depthTest={false} transparent />

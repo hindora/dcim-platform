@@ -559,13 +559,12 @@ export function FloorPlanView() {
         <div className="vw-float vw-topcenter">
           {webgl && <ViewBar value={bMode} onChange={(m) => setParam('view', m)}
                              options={[{ key: '3d', label: '3D' }, { key: 'plan', label: 'PLAN' }]}
-                             canSpin={bMode === '3d'} onSpin={turn} onReset={() => setResetTick((t) => t + 1)}
-                             toggle={!atSite && bMode === '3d' ? { label: 'SPLIT FLOORS', on: split,
-                               title: split ? 'Stack the floors again' : 'Pull the floors apart to see into each one',
-                               onChange: setSplit } : undefined} />}
+                             canSpin={bMode === '3d'} onSpin={turn} onReset={() => setResetTick((t) => t + 1)} />}
         </div>
         {navigator}
-        <Dock items={['navigate', 'info', 'search']} open={panel === 'filters' || panel === 'layers' ? null : panel} onToggle={togglePanel} />
+        <Dock items={['navigate', 'info', 'search']} open={panel === 'filters' || panel === 'layers' ? null : panel} onToggle={togglePanel}
+              tools={!atSite && bMode === '3d' ? [{ id: 'split', glyph: 'split', pressed: split, onClick: () => setSplit((v) => !v),
+                label: split ? 'Stack the floors again' : 'Split the floors apart to see into each one' }] : []} />
         {panel === 'search' && (
           <aside className="vw-panel" aria-label="Search">
             <div className="vw-panel-head">

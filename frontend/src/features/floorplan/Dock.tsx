@@ -21,14 +21,16 @@ export interface DockTool {
   id: string;
   label: string;
   /** A glyph, or short text (a unit) drawn in its place. */
-  glyph?: 'reset';
+  glyph?: 'reset' | 'split';
   text?: string;
+  /** Set for a tool that is a switch (split floors): its on state. */
+  pressed?: boolean;
   onClick: () => void;
 }
 
 const FOLD_KEY = 'dcim.viewer.dock';
 
-function Glyph({ kind }: { kind: DockItem | 'more' | 'less' | 'reset' }) {
+function Glyph({ kind }: { kind: DockItem | 'more' | 'less' | 'reset' | 'split' }) {
   const common = { width: 18, height: 18, viewBox: '0 0 20 20', fill: 'none', stroke: 'currentColor',
                    strokeWidth: 1.6, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const, 'aria-hidden': true };
   switch (kind) {
@@ -55,6 +57,10 @@ function Glyph({ kind }: { kind: DockItem | 'more' | 'less' | 'reset' }) {
     );
     case 'search': return (
       <svg {...common}><circle cx="8.5" cy="8.5" r="5" /><path d="M12.3 12.3L17 17" /></svg>
+    );
+    case 'split': return (
+      <svg {...common}><path d="M10 2.5l6.5 3-6.5 3-6.5-3z" /><path d="M3.5 11.5l6.5 3 6.5-3" /><path d="M10 9.8v2.4" strokeDasharray="1 1.4" />
+        <path d="M3.5 16l6.5 2.5 6.5-2.5" /></svg>
     );
     case 'reset': return (
       <svg {...common}><circle cx="10" cy="10" r="5.5" /><path d="M10 2.5v3M10 14.5v3M2.5 10h3M14.5 10h3" /><circle cx="10" cy="10" r="1" fill="currentColor" stroke="none" /></svg>
@@ -91,7 +97,8 @@ export function Dock({ items, open, onToggle, tools = [] }: {
       ))}
       {tools.length > 0 && <span className="dock-gap" aria-hidden />}
       {tools.map((t) => (
-        <button key={t.id} type="button" className="vw-round dock-tool" aria-label={t.label} title={t.label} onClick={t.onClick}>
+        <button key={t.id} type="button" className={`vw-round dock-tool${t.pressed ? ' is-on' : ''}`} aria-label={t.label} title={t.label}
+                aria-pressed={t.pressed} onClick={t.onClick}>
           {t.text != null ? <span className="dock-text">{t.text}</span> : <Glyph kind={t.glyph ?? 'reset'} />}
         </button>
       ))}
