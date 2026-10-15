@@ -142,7 +142,7 @@
   border-radius: 4px; color: var(--text); text-decoration: none;
 }
 .nav-menu a:hover, .nav-menu a:focus-visible { background: var(--bg-inset); outline: none; }
-.nav-menu a.active { box-shadow: inset 2px 0 0 var(--accent); }
+.nav-menu a.active { background: color-mix(in srgb, var(--accent) 14%, transparent); }
 .nav-menu .label { font-size: 13px; font-weight: 600; }
 .nav-menu .hint { font-size: 12px; color: var(--text-muted); }
 
