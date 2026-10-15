@@ -11,7 +11,7 @@ import { alarmColor, resolveColor } from './colors';
 import { NO_READING, bandColor, roomLayerBands, roomLayerText, roomLayerValue, type BuildingLayer } from './layers';
 import { labelTexture, type GBox, type HoverTip } from './Scene';
 import { Hardware } from './Hardware';
-import { Fence, Ground, ZoneObject, ZoneSurface } from './SiteDressing';
+import { CompoundDetail, Fence, Ground, ZoneObject, ZoneSurface } from './SiteDressing';
 
 /**
  * The site and building rungs (docs/27 §8b, §8c), drawn in the same scene
@@ -372,6 +372,7 @@ export default function BuildingScene(p: BuildingSceneProps) {
 
       {/* --- the compound (site rung) --- */}
       {groundGeo && <Ground ground={ground} X={X} Z={Z} faint={tones.faint} />}
+      {site && glass && <CompoundDetail zones={zoneGeos} building={box} X={X} Z={Z} />}
       {fence && (
         <>
           <line>

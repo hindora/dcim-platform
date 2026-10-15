@@ -31,6 +31,10 @@ const SURF = {
   canopy: '#4b535d', shadow: 'rgba(0,0,0,1)',
 };
 const FENCE_H = 2.4;
+const DETAIL = {
+  kerb: '#4a535e', pole: '#5b636d', lamp: '#ffd9a0', zebra: '#d9dee4', bollard: '#59616b', band: '#e8eaed',
+  manhole: '#0b0e12', manholeRim: '#3a424c', path: '#2c333c', pathJoint: 'rgba(220,230,240,0.10)',
+};
 const PX_PER_M = 14;
 
 function canvasTex(w: number, h: number, draw: (c: CanvasRenderingContext2D, w: number, h: number) => void): THREE.CanvasTexture {
@@ -46,8 +50,12 @@ function canvasTex(w: number, h: number, draw: (c: CanvasRenderingContext2D, w: 
 
 /** A flat textured rectangle on the ground: plan x east, plan y south; the
  *  canvas's top row is north. */
-function Sheet({ x, z, w, d, y, tex, opacity = 1, order }: {
-  x: number; z: number; w: number; d: number; y: number; tex: THREE.Texture; opacity?: number; order?: number;
+function Sheet({ x, z, w, d, y, tex, opacity = 1, order = -10 }: {
+  x: number; z: number; w: number; d: number; y: number; tex: THREE.Texture; opacity?: number;
+  /** Ground surfaces draw before anything see-through. A canvas texture is
+   *  RGBA, so a sheet lands in the transparent pass; drawn after the glass
+   *  walls (which write no depth) it would paint over the ground floor. */
+  order?: number;
 }) {
   return (
     <mesh position={[x, y, z]} rotation-x={-Math.PI / 2} raycast={() => null} renderOrder={order}>
@@ -93,6 +101,124 @@ export function Ground({ ground, X, Z, faint }: {
     <group>
       <Sheet x={cx} z={cz} w={ow} d={od} y={-0.06} tex={outer} opacity={0.35} />
       <Sheet x={cx} z={cz} w={w} d={d} y={-0.03} tex={inner} />
+    </group>
+  );
+}
+
+// --------------------------------------------------------------- detail
+
+/** The small things a compound floor carries, kept to a few per kind: kerbs
+ *  along every paved edge, street lights down the service road, a zebra
+ *  crossing from the car park to the building, bollards where the apron meets
+ *  the road, manhole covers in the carriageway, and a paved path round the
+ *  building. Drawn by rule; nothing here reports or answers the pointer. */
+export function CompoundDetail({ zones, building, X, Z }: {
+  zones: { z: TwinSpace; bb: BB }[]; building: BB; X: (x: number) => number; Z: (y: number) => number;
+}) {
+  const pick = (k: string) => zones.filter((v) => v.z.kind === k).map((v) => v.bb);
+  const roads = pick('road'), paved = [...roads, ...pick('driveway'), ...pick('apron'), ...pick('parking')];
+  const apron = pick('apron')[0] ?? null, park = pick('parking')[0] ?? null;
+  const bcx = (building.x0 + building.x1) / 2, bcy = (building.y0 + building.y1) / 2;
+
+  const parts = useMemo(() => {
+    const kerbs: { x: number; z: number; w: number; d: number }[] = [];
+    for (const b of paved) {
+      const w = b.x1 - b.x0, d = b.y1 - b.y0, along = w >= d;
+      // the two long edges of a road; all four of an apron or a car park, less the side on the building
+      const edges: [number, number, number, number][] = along
+        ? [[b.x0, b.y0, b.x1, b.y0], [b.x0, b.y1, b.x1, b.y1]]
+        : [[b.x0, b.y0, b.x0, b.y1], [b.x1, b.y0, b.x1, b.y1]];
+      for (const [x0, y0, x1, y1] of edges) {
+        kerbs.push({ x: X((x0 + x1) / 2), z: Z((y0 + y1) / 2), w: Math.max(0.15, Math.abs(x1 - x0)), d: Math.max(0.15, Math.abs(y1 - y0)) });
+      }
+    }
+    const lights: { x: number; z: number; ax: number; az: number }[] = [];
+    const holes: { x: number; z: number }[] = [];
+    const zebra: { x: number; z: number; w: number; d: number }[] = [];
+    for (const r of roads) {
+      const w = r.x1 - r.x0, d = r.y1 - r.y0, along = w >= d;
+      // poles on the edge away from the building, every 12 m, the arm reaching over the road
+      if (along) {
+        const far = Math.abs(r.y0 - bcy) > Math.abs(r.y1 - bcy) ? r.y0 : r.y1, inward = far === r.y0 ? 1 : -1;
+        for (let x = r.x0 + 4; x < r.x1 - 2; x += 12) lights.push({ x: X(x), z: Z(far - inward * 0.4), ax: 0, az: inward });
+        for (let x = r.x0 + 10; x < r.x1 - 2; x += 20) holes.push({ x: X(x), z: Z((r.y0 + r.y1) / 2 + d * 0.22) });
+        if (park) {
+          const cx = Math.min(r.x1 - 2, Math.max(r.x0 + 2, (park.x0 + park.x1) / 2));
+          for (let k = 0; k < 7; k++) {
+            const y = r.y0 + 0.4 + k * ((d - 0.8) / 7);
+            zebra.push({ x: X(cx), z: Z(y + (d - 0.8) / 14), w: 2.4, d: (d - 0.8) / 14 });
+          }
+        }
+      } else {
+        const far = Math.abs(r.x0 - bcx) > Math.abs(r.x1 - bcx) ? r.x0 : r.x1, inward = far === r.x0 ? 1 : -1;
+        for (let y = r.y0 + 4; y < r.y1 - 2; y += 12) lights.push({ x: X(far - inward * 0.4), z: Z(y), ax: inward, az: 0 });
+        for (let y = r.y0 + 10; y < r.y1 - 2; y += 20) holes.push({ x: X((r.x0 + r.x1) / 2 + w * 0.22), z: Z(y) });
+      }
+    }
+    // bollards along the apron's edge on the road side
+    const bollards: { x: number; z: number }[] = [];
+    if (apron && roads.length) {
+      const r = roads[0], along = (r.x1 - r.x0) >= (r.y1 - r.y0);
+      if (along) {
+        const y = Math.abs(apron.y0 - r.y1) < Math.abs(apron.y1 - r.y0) ? apron.y0 + 0.3 : apron.y1 - 0.3;
+        for (let x = apron.x0 + 0.6; x <= apron.x1 - 0.6; x += 1.6) bollards.push({ x: X(x), z: Z(y) });
+      }
+    }
+    return { kerbs, lights, holes, zebra, bollards };
+  }, [zones, building, X, Z]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // the paved path round the building: four strips, 1.2 m wide
+  const pathTex = useMemo(() => canvasTex(64, 64, (c, w, h) => {
+    c.fillStyle = DETAIL.path; c.fillRect(0, 0, w, h);
+    c.strokeStyle = DETAIL.pathJoint; c.lineWidth = 2; c.strokeRect(0, 0, w, h);
+  }), []);
+  useEffect(() => () => pathTex.dispose(), [pathTex]);
+  const P = 1.2;
+  const strips = useMemo(() => {
+    const bw = building.x1 - building.x0, bd = building.y1 - building.y0;
+    return [
+      { x: (building.x0 + building.x1) / 2, y: building.y0 - P / 2, w: bw + 2 * P, d: P },
+      { x: (building.x0 + building.x1) / 2, y: building.y1 + P / 2, w: bw + 2 * P, d: P },
+      { x: building.x0 - P / 2, y: (building.y0 + building.y1) / 2, w: P, d: bd },
+      { x: building.x1 + P / 2, y: (building.y0 + building.y1) / 2, w: P, d: bd },
+    ].map((st) => {
+      const t = pathTex.clone(); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(st.w / P, st.d / P); t.needsUpdate = true;
+      return { ...st, t };
+    });
+  }, [building, pathTex]);
+  useEffect(() => () => strips.forEach((st) => st.t.dispose()), [strips]);
+  return (
+    <group raycast={() => null}>
+      {strips.map((st, i) => <Sheet key={i} x={X(st.x)} z={Z(st.y)} w={st.w} d={st.d} y={0.006} tex={st.t} />)}
+      {parts.kerbs.map((k, i) => (
+        <mesh key={`k${i}`} position={[k.x, 0.06, k.z]}><boxGeometry args={[k.w, 0.12, k.d]} />
+          <meshStandardMaterial color={DETAIL.kerb} roughness={0.9} /></mesh>
+      ))}
+      {parts.zebra.map((z, i) => (
+        <mesh key={`z${i}`} position={[z.x, 0.022, z.z]} rotation-x={-Math.PI / 2}><planeGeometry args={[z.w, z.d]} />
+          <meshBasicMaterial color={DETAIL.zebra} transparent opacity={0.7} /></mesh>
+      ))}
+      {parts.holes.map((h, i) => (
+        <group key={`h${i}`} position={[h.x, 0.02, h.z]}>
+          <mesh rotation-x={-Math.PI / 2}><circleGeometry args={[0.42, 20]} /><meshBasicMaterial color={DETAIL.manholeRim} /></mesh>
+          <mesh rotation-x={-Math.PI / 2} position={[0, 0.002, 0]}><circleGeometry args={[0.34, 20]} /><meshBasicMaterial color={DETAIL.manhole} /></mesh>
+        </group>
+      ))}
+      {parts.lights.map((l, i) => (
+        <group key={`l${i}`} position={[l.x, 0, l.z]}>
+          <mesh position={[0, 3, 0]}><cylinderGeometry args={[0.06, 0.08, 6, 8]} /><meshStandardMaterial color={DETAIL.pole} roughness={0.6} /></mesh>
+          <mesh position={[l.ax * 0.5, 5.95, l.az * 0.5]}><boxGeometry args={[l.ax ? 1 : 0.08, 0.06, l.az ? 1 : 0.08]} />
+            <meshStandardMaterial color={DETAIL.pole} roughness={0.6} /></mesh>
+          <mesh position={[l.ax * 1.0, 5.88, l.az * 1.0]}><boxGeometry args={[0.36, 0.08, 0.22]} />
+            <meshStandardMaterial color={DETAIL.lamp} emissive={DETAIL.lamp} emissiveIntensity={0.9} /></mesh>
+        </group>
+      ))}
+      {parts.bollards.map((b, i) => (
+        <group key={`b${i}`} position={[b.x, 0, b.z]}>
+          <mesh position={[0, 0.45, 0]}><cylinderGeometry args={[0.08, 0.08, 0.9, 10]} /><meshStandardMaterial color={DETAIL.bollard} roughness={0.7} /></mesh>
+          <mesh position={[0, 0.78, 0]}><cylinderGeometry args={[0.085, 0.085, 0.07, 10]} /><meshBasicMaterial color={DETAIL.band} /></mesh>
+        </group>
+      ))}
     </group>
   );
 }
