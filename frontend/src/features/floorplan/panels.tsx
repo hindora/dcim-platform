@@ -671,7 +671,7 @@ export function FiltersPanel({ rackLayer, coolingLayer, heat, vis, onRack, onCoo
 }) {
   const [open, setOpen] = useState<'racks' | 'cooling' | 'heat' | 'vis'>('racks');
   const VIS: { key: keyof Visibility; label: string }[] = [
-    { key: 'devices', label: 'Devices in racks' }, { key: 'plant', label: 'Plant and panels' },
+    { key: 'doorSensors', label: 'Rack door sensors' }, { key: 'plant', label: 'Plant and panels' },
     { key: 'aisles', label: 'Aisle tint' }, { key: 'containment', label: 'Containment' },
     { key: 'vents', label: 'Vent tiles' }, { key: 'hotspots', label: 'Hot-spot markers' },
     { key: 'faces', label: 'See into racks' },

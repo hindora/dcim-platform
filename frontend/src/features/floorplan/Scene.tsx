@@ -552,8 +552,10 @@ export default function RoomScene(p: SceneProps) {
       {vis.detail && <RackDetails boxes={rackBoxes} open={vis.faces} />}
       {/* Frame, plinth, handles, nozzles, stacks - all outside the coloured body. */}
       <Hardware racks={rackBoxes} units={vis.plant ? unitBoxes : NO_BOXES} unitTypes={unitTypes} open={vis.faces} />
-      {((vis.devices && !gauge) || vis.faces) && (
-        <RackDevices devices={devices} rackById={rackById} X={X} Z={Z} themeTick={themeTick}
+      {/* Racks solid: only the probes on their doors show, if asked for. Seen
+          into: everything mounted in them. */}
+      {(vis.faces || vis.doorSensors) && (
+        <RackDevices devices={devices} show={vis.faces ? undefined : onRackDoor} rackById={rackById} X={X} Z={Z} themeTick={themeTick}
                      onSelect={fpv ? undefined : onSelect} onTip={fpv ? undefined : onTip} />
       )}
 
@@ -1277,8 +1279,14 @@ export function deviceBox(d: TwinDevice, r: FloorRack, X: (x: number) => number,
   return null;
 }
 
-function RackDevices({ devices, rackById, X, Z, themeTick, onSelect, onTip }: {
+/** A probe hung on a rack's front or rear door (inlet / exhaust). */
+const onRackDoor = (d: TwinDevice) => d.mount === 'rack_front' || d.mount === 'rack_rear';
+
+function RackDevices({ devices, show, rackById, X, Z, themeTick, onSelect, onTip }: {
   devices: TwinDevice[]; rackById: Map<string, FloorRack>;
+  /** Draw only these; the rest keep their slots (so door probes sit where
+   *  they do when everything is shown) but are not drawn. */
+  show?: (d: TwinDevice) => boolean;
   X: (x: number) => number; Z: (y: number) => number; themeTick: number;
   onSelect?: (s: Sel) => void; onTip?: (t: HoverTip | null) => void;
 }) {
@@ -1309,7 +1317,7 @@ function RackDevices({ devices, rackById, X, Z, themeTick, onSelect, onTip }: {
     if (!im) return;
     const m = new THREE.Matrix4(), q = new THREE.Quaternion(), p = new THREE.Vector3(), s = new THREE.Vector3();
     boxes.forEach((b, i) => {
-      if (!b) m.makeScale(0, 0, 0);
+      if (!b || (show && !show(devices[i]))) m.makeScale(0, 0, 0);
       else m.compose(p.set(b[0], b[1], b[2]), q, s.set(b[3], b[4], b[5]));
       im.setMatrixAt(i, m);
       im.setColorAt(i, bodies[i]);
@@ -1318,12 +1326,12 @@ function RackDevices({ devices, rackById, X, Z, themeTick, onSelect, onTip }: {
     if (im.instanceColor) im.instanceColor.needsUpdate = true;
     im.computeBoundingSphere();
     invalidate();
-  }, [boxes, bodies, invalidate]);
+  }, [boxes, bodies, show, devices, invalidate]);
 
   if (!devices.length) return null;
   return (
     <>
-    <DeviceFaces devices={devices} boxes={boxes} rackById={rackById} colors={colors} />
+    {!show && <DeviceFaces devices={devices} boxes={boxes} rackById={rackById} colors={colors} />}
     <instancedMesh key={devices.length} ref={ref} args={[undefined, undefined, devices.length]}
                    onClick={onSelect && ((e) => { e.stopPropagation(); if (e.instanceId != null) onSelect({ kind: 'device', id: devices[e.instanceId].id }); })}
                    onPointerMove={onTip && ((e) => {

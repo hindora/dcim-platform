@@ -421,7 +421,10 @@ export type ViewMode = '3d' | 'plan' | 'fpv';
 export type Sel = { kind: 'rack' | 'device' | 'equipment'; id: string } | null;
 
 export interface Visibility {
-  devices: boolean; plant: boolean; aisles: boolean; containment: boolean;
+  /** The inlet and exhaust probes on the rack doors (racks solid; "See into
+   *  racks" shows them with everything else). */
+  doorSensors: boolean;
+  plant: boolean; aisles: boolean; containment: boolean;
   labels: boolean; vents: boolean;
   /** Markers over racks whose intake is past the recommended ceiling. */
   hotspots: boolean;
@@ -438,7 +441,7 @@ export interface Visibility {
   underfloor: boolean;
 }
 export const DEFAULT_VIS: Visibility = {
-  devices: true, plant: true, aisles: true, containment: true, labels: false, vents: true, hotspots: true, faces: false,
+  doorSensors: true, plant: true, aisles: true, containment: true, labels: false, vents: true, hotspots: true, faces: false,
   fittings: true, detail: false, underfloor: false,
 };
 
