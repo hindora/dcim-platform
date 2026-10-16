@@ -7,7 +7,7 @@ import type { GBox } from './Scene';
  * The glass studio: the one look the 3D views share, from the compound down
  * to a room. A dark studio with a soft glow behind the subject, floors as
  * frosted-glass trays with a bright rim, glass sides that fade upward, racks
- * in charcoal steel with their doors on and plant in light equipment grey. Physical colours, the
+ * in charcoal steel with their doors on and plant a lighter graphite. Physical colours, the
  * same under both themes, like the room's SURF: this is a rendering of the
  * place, not UI chrome.
  *
@@ -18,10 +18,10 @@ import type { GBox } from './Scene';
 export const GLASS = {
   slab: '#aeb9c7', rim: '#dfe7f0', wall: '#c8d3df', room: '#b9c4d1', roomEdge: '#cfd8e3',
   rack: '#2a2f36', glowIn: '#1d2532', glowOut: '#090c11',
-  /* Plant is light equipment grey, the RAL 7035 most air handlers, UPS cabinets and
-     switchgear ship in; racks are the charcoal they ship in. One look at a box says
-     which it is, with no colour that could read as a measurement. */
-  plant: '#c3c8cd',
+  /* Plant is a lighter charcoal than the racks: graphite panels against the racks'
+     near-black perforated doors, so one look at a box says which it is, with no colour
+     that could read as a measurement. */
+  plant: '#4b5560',
 };
 
 /** The studio behind the subject: a radial glow from the centre into near-black. */
