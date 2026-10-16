@@ -261,7 +261,10 @@ export function FloorPlanView() {
       onClick: () => setTempUnit((tUnit === 'C' ? 'F' : 'C') as TempUnit) },
   ];
   const togglePanel = (it: DockItem) => setPanel((p) => (p === it ? null : it));
-  const [sel, setSel] = useState<Sel>(null);
+  const [selState, setSel] = useState<Sel>(null);
+  // The rack in the URL is the selection while it is looked at: a link that
+  // opens on a rack opens its panel, without leaning on effect order.
+  const sel: Sel = selState ?? (rackFocus ? { kind: 'rack', id: rackFocus } : null);
   const [tip, setTip] = useState<HoverTip | null>(null);
   const [focus, setFocus] = useState<string | null>(null);
   const [vis, setVis] = useState<Visibility>(DEFAULT_VIS);
@@ -280,8 +283,6 @@ export function FloorPlanView() {
     return () => mo.disconnect();
   }, []);
   useEffect(() => { setSel(null); setFocus(null); setPathKind(null); }, [roomId]);
-  // A link that opens on a rack opens its panel too, as the double-click did.
-  useEffect(() => { if (rackFocus) { setSel({ kind: 'rack', id: rackFocus }); setPanel('info'); } }, [rackFocus]);
   useEffect(() => { setPathKind(null); }, [sel?.kind, sel?.id]);
 
   // Readings for this room arrive as one `room:{id}` frame per ingest batch;

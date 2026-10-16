@@ -988,7 +988,9 @@ function Cameras({ mode, W, D, resetTick, spin, aisles, X, Z, focus }: {
       hadFocus.current = true;
       const target = new THREE.Vector3(focus.x, focus.h / 2, focus.z);
       orbit.current?.target.copy(target);
-      dolly(new THREE.Vector3(focus.x, Math.max(1.45, focus.h * 0.6), focus.z + focus.front * (focus.d / 2 + 3.0)), target);
+      // Far enough that the whole cabinet sits in the 45 degree view with air
+      // above and below it, a little above its middle so the top is not foreshortened.
+      dolly(new THREE.Vector3(focus.x, focus.h * 0.62, focus.z + focus.front * (focus.d / 2 + 4.2)), target);
       orbit.current?.update();
       invalidate();
     } else if (hadFocus.current) {
