@@ -280,6 +280,8 @@ export function FloorPlanView() {
     return () => mo.disconnect();
   }, []);
   useEffect(() => { setSel(null); setFocus(null); setPathKind(null); }, [roomId]);
+  // A link that opens on a rack opens its panel too, as the double-click did.
+  useEffect(() => { if (rackFocus) { setSel({ kind: 'rack', id: rackFocus }); setPanel('info'); } }, [rackFocus]);
   useEffect(() => { setPathKind(null); }, [sel?.kind, sel?.id]);
 
   // Readings for this room arrive as one `room:{id}` frame per ingest batch;
