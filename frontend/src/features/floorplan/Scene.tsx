@@ -603,43 +603,61 @@ export default function RoomScene(p: SceneProps) {
   // others (a glass cabinet with its gear showing) and the camera goes to it.
   const focusIdx = mode === '3d' && focusRack ? plan.racks.findIndex((r) => r.id === focusRack) : -1;
   const focusId = focusIdx >= 0 ? plan.racks[focusIdx].id : null;
+  const othersIdx = useMemo(() => plan.racks.map((_, i) => i).filter((i) => i !== focusIdx), [plan.racks, focusIdx]);
+  const otherBoxes = useMemo(() => othersIdx.map((i) => rackBoxes[i]), [othersIdx, rackBoxes]);
+  const otherDim = useMemo(() => (rackDim ? othersIdx.map((i) => rackDim[i]) : undefined), [othersIdx, rackDim]);
+  const focusBox = useMemo(() => (focusIdx >= 0 ? [rackBoxes[focusIdx]] : NO_BOXES), [focusIdx, rackBoxes]);
+  const focusDevices = useMemo(() => (focusId ? devices.filter((d) => d.rack_id === focusId) : []), [devices, focusId]);
   const focusCam = useMemo(() => {
     if (focusIdx < 0) return null;
     const b = rackBoxes[focusIdx];
     return { x: b.x, z: b.z, h: b.h, d: b.d, front: b.front || 1 };
   }, [focusIdx, rackBoxes]);
-  // The section cut (docs/27 §7.3): the camera stands 3 m off the rack's front
-  // door, which in a 1.2 m aisle is behind the row across it, so whatever
-  // stands between the camera and the rack - that row's cabinets and in-row
-  // plant within a few metres along the aisle - is cut away. The rest of the
-  // room stays, so the rack is still seen in its place.
-  const cut = useMemo(() => (focusCam
-    ? (b: { x: number; z: number }) => focusCam.front * (b.z - focusCam.z) > focusCam.d / 2 + 0.3 && Math.abs(b.x - focusCam.x) < 3.5
-    : null), [focusCam]);
-  const othersIdx = useMemo(() => plan.racks.map((_, i) => i).filter((i) => i !== focusIdx && !(cut && cut(rackBoxes[i]))),
-    [plan.racks, focusIdx, cut, rackBoxes]);
-  const cutRacks = useMemo(() => new Set(plan.racks.filter((_, i) => cut && cut(rackBoxes[i])).map((r) => r.id)), [plan.racks, cut, rackBoxes]);
-  const keptRacks = useMemo(() => plan.racks.filter((r) => !cutRacks.has(r.id)), [plan.racks, cutRacks]);
-  const keptRackBoxes = useMemo(() => rackBoxes.filter((_, i) => !cutRacks.has(plan.racks[i].id)), [rackBoxes, plan.racks, cutRacks]);
-  const keptUnitIdx = useMemo(() => placedUnits.map((_, i) => i).filter((i) => !(cut && cut(unitBoxes[i]))), [placedUnits, cut, unitBoxes]);
-  const keptUnitBoxes = useMemo(() => keptUnitIdx.map((i) => unitBoxes[i]), [keptUnitIdx, unitBoxes]);
-  const keptUnitTypes = useMemo(() => keptUnitIdx.map((i) => unitTypes[i]), [keptUnitIdx, unitTypes]);
-  const otherBoxes = useMemo(() => othersIdx.map((i) => rackBoxes[i]), [othersIdx, rackBoxes]);
-  const otherDim = useMemo(() => (rackDim ? othersIdx.map((i) => rackDim[i]) : undefined), [othersIdx, rackDim]);
-  const focusBox = useMemo(() => (focusIdx >= 0 ? [rackBoxes[focusIdx]] : NO_BOXES), [focusIdx, rackBoxes]);
-  const focusDevices = useMemo(() => (focusId ? devices.filter((d) => d.rack_id === focusId) : []), [devices, focusId]);
 
   // Plain plant in the studio is drawn the way the building rung draws it: a lit
   // surface under the tone curve, so a unit is the same dark box one rung down.
   // A unit a layer or an alarm colours keeps the exact-colour shader.
   const litIdx = useMemo(() => (glass && coolingLayer === 'none'
-    ? keptUnitIdx.filter((i) => placedUnits[i].max_severity === 'CLEAR') : []),
-    [glass, coolingLayer, placedUnits, keptUnitIdx]);
+    ? placedUnits.map((e, i) => (e.max_severity === 'CLEAR' ? i : -1)).filter((i) => i >= 0) : []),
+    [glass, coolingLayer, placedUnits]);
   const paintIdx = useMemo(() => {
     const lit = new Set(litIdx);
-    return keptUnitIdx.filter((i) => !lit.has(i));
-  }, [litIdx, keptUnitIdx]);
+    return placedUnits.map((_, i) => i).filter((i) => !lit.has(i));
+  }, [litIdx, placedUnits]);
   const pick = <T,>(arr: T[] | undefined, idx: number[]) => (arr ? idx.map((i) => arr[i]) : undefined);
+
+  // The rack on its own (docs/27 §7.1 "rack focus"): the cabinet alone on the
+  // studio floor, a glass shell with its gear by U and faceplates, the camera
+  // orbiting about it. Nothing of the room around it: this is the rack's own
+  // picture, the 3D counterpart of its 2D elevation page.
+  if (focusId && focusCam) {
+    return (
+      <>
+        <Tone filmic />
+        <Studio />
+        <hemisphereLight args={['#eef2f6', '#7a8089', 0.85]} />
+        <directionalLight position={[focusCam.x - 4, 6, focusCam.z - 3]} intensity={0.75} />
+        <directionalLight position={[focusCam.x + 4, 3, focusCam.z + 4]} intensity={0.3} />
+        <Cameras mode={mode} W={W} D={D} resetTick={resetTick} spin={spin} aisles={plan.aisles} X={X} Z={Z} focus={focusCam} />
+        {/* a pad of the room's tile under it, so it stands on something */}
+        <mesh rotation-x={-Math.PI / 2} position={[focusCam.x, -0.003, focusCam.z]} raycast={() => null}>
+          <planeGeometry args={[2.4, 3.2]} />
+          <meshStandardMaterial color={GLASS.tile} emissive={GLASS.tile} emissiveIntensity={0.35} roughness={0.4}
+                                transparent depthWrite={false} opacity={0.8} toneMapped={false} />
+        </mesh>
+        <GradientBoxes boxes={focusBox} part="solid" opacity={0.32}
+                       onClick={() => onSelect({ kind: 'rack', id: focusId })}
+                       onMove={(_, e) => tip(e, rackText(plan.racks[focusIdx]))} onOut={() => onTip(null)} />
+        <RackFrames racks={[plan.racks[focusIdx]]} X={X} Z={Z} />
+        <Hardware racks={focusBox} units={NO_BOXES} unitTypes={[]} open />
+        <RackDevices devices={focusDevices} rackById={rackById} X={X} Z={Z} themeTick={themeTick}
+                     onSelect={onSelect} onTip={onTip} />
+        <Highlight sel={sel?.kind === 'device' ? sel : null} rackBoxes={rackBoxes} racks={plan.racks} unitBoxes={unitBoxes} units={placedUnits}
+                   devices={devices} rackById={rackById} X={X} Z={Z} color={tones.accent} />
+        <Invalidator deps={[sel, focusId, themeTick]} invalidate={invalidate} />
+      </>
+    );
+  }
 
   return (
     <>
@@ -691,36 +709,24 @@ export default function RoomScene(p: SceneProps) {
                      onDoubleClick={fpv || !onFocusRack ? undefined : (i) => onFocusRack(plan.racks[othersIdx[i]].id)}
                      onMove={fpv || vis.faces ? undefined : (i, e) => tip(e, rackText(plan.racks[othersIdx[i]]))}
                      onOut={() => onTip(null)} />
-      {/* The rack looked into: a glass cabinet, its gear and faceplates showing, by U. */}
-      {focusId && (
-        <>
-          <GradientBoxes boxes={focusBox} part="solid" opacity={0.32}
-                         onClick={() => onSelect({ kind: 'rack', id: focusId })}
-                         onMove={(_, e) => tip(e, rackText(plan.racks[focusIdx]))} onOut={() => onTip(null)} />
-          {!vis.faces && (
-            <RackDevices devices={focusDevices} rackById={rackById} X={X} Z={Z} themeTick={themeTick}
-                         onSelect={onSelect} onTip={onTip} />
-          )}
-        </>
-      )}
-      {anyShell && <GradientBoxes boxes={keptRackBoxes} part="shell" opacity={frost ? 0.85 : 0.22} frost={frost} />}
-      {anyShell && <FillLines boxes={keptRackBoxes} />}
-      <RackFrames racks={keptRacks} X={X} Z={Z} />
+      {anyShell && <GradientBoxes boxes={rackBoxes} part="shell" opacity={frost ? 0.85 : 0.22} frost={frost} />}
+      {anyShell && <FillLines boxes={rackBoxes} />}
+      <RackFrames racks={plan.racks} X={X} Z={Z} />
       {/* A plain cabinet in the studio wears its doors, as it does at the building rung;
           a layer's colour, a look inside, or the detail switch's own doors take them off. */}
       {glass && rackLayer === 'none' && !vis.faces && !vis.detail && (
         <>
-          <RackDoors boxes={rackBoxes.filter((_, i) => i !== focusIdx && !cutRacks.has(plan.racks[i].id) && plan.racks[i].device_count > 0)} />
-          <RackDoors boxes={rackBoxes.filter((_, i) => i !== focusIdx && !cutRacks.has(plan.racks[i].id) && plan.racks[i].device_count === 0)} blank />
+          <RackDoors boxes={rackBoxes.filter((_, i) => i !== focusIdx && plan.racks[i].device_count > 0)} />
+          <RackDoors boxes={rackBoxes.filter((_, i) => i !== focusIdx && plan.racks[i].device_count === 0)} blank />
         </>
       )}
-      {vis.detail && <RackDetails boxes={keptRackBoxes} open={vis.faces} />}
+      {vis.detail && <RackDetails boxes={rackBoxes} open={vis.faces} />}
       {/* Frame, plinth, handles, nozzles, stacks - all outside the coloured body. */}
-      <Hardware racks={keptRackBoxes} units={vis.plant ? keptUnitBoxes : NO_BOXES} unitTypes={keptUnitTypes} open={vis.faces} />
+      <Hardware racks={rackBoxes} units={vis.plant ? unitBoxes : NO_BOXES} unitTypes={unitTypes} open={vis.faces} />
       {/* Racks solid: only the probes on their doors show, if asked for. Seen
           into: everything mounted in them. */}
       {(vis.faces || vis.doorSensors) && (
-        <RackDevices devices={devices} show={vis.faces && !cut ? undefined : (d) => (vis.faces || onRackDoor(d)) && d.rack_id !== focusId && !cutRacks.has(d.rack_id)} rackById={rackById} X={X} Z={Z} themeTick={themeTick}
+        <RackDevices devices={devices} show={vis.faces ? undefined : (d) => onRackDoor(d) && d.rack_id !== focusId} rackById={rackById} X={X} Z={Z} themeTick={themeTick}
                      onSelect={fpv ? undefined : onSelect} onTip={fpv ? undefined : onTip} />
       )}
 
@@ -734,8 +740,8 @@ export default function RoomScene(p: SceneProps) {
                     onClick={fpv ? undefined : (k) => onSelect({ kind: 'equipment', id: placedUnits[litIdx[k]].id })}
                     onMove={fpv ? undefined : (k, e) => tip(e, unitText(placedUnits[litIdx[k]]))}
                     onOut={() => onTip(null)} />
-          <UnitFrames boxes={keptUnitBoxes} />
-          {vis.detail && <UnitDetails boxes={keptUnitBoxes} types={keptUnitTypes} />}
+          <UnitFrames boxes={unitBoxes} />
+          {vis.detail && <UnitDetails boxes={unitBoxes} types={unitTypes} />}
           <Instruments items={instruments} X={X} Z={Z}
                        onSelect={fpv ? undefined : onSelect} onTip={fpv ? undefined : onTip} />
         </>
