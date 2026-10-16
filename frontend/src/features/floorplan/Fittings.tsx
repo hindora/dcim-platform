@@ -81,6 +81,32 @@ function wallOf(d: RoomDoor, W: number, D: number): { wall: Wall; at: number; le
   return { wall, at: alongY ? cy : cx, len: Math.max(0.9, alongY ? d.y1 - d.y0 : d.x1 - d.x0) };
 }
 
+/** Where a door's fire point hangs: beside the door on whichever side has
+ *  clear wall, else on the adjoining wall by the door's nearer corner - a door
+ *  near a corner, with a rack against the wall on its other side, must not
+ *  put the extinguisher past the corner or inside the rack. Clear wall = in
+ *  the room and nothing standing within 0.4 m of it across the backboard. */
+function firePointSpot(wall: Wall, at: number, len: number, W: number, D: number, obstacles: Rect[]): { wall: Wall; at: number } {
+  const span = (w: Wall) => (w === 'N' || w === 'S' ? W : D);
+  const clear = (w: Wall, a: number) => {
+    if (a < 0.25 || a > span(w) - 0.25) return false;
+    const r: Rect = w === 'W' ? { x0: 0, x1: 0.4, y0: a - 0.2, y1: a + 0.2 }
+      : w === 'E' ? { x0: W - 0.4, x1: W, y0: a - 0.2, y1: a + 0.2 }
+      : w === 'N' ? { x0: a - 0.2, x1: a + 0.2, y0: 0, y1: 0.4 }
+      : { x0: a - 0.2, x1: a + 0.2, y0: D - 0.4, y1: D };
+    return !obstacles.some((o) => hits(r, o));
+  };
+  const off = len / 2 + 0.45;
+  const nearLow = at < span(wall) / 2;
+  // the adjoining wall at the door's nearer end, and how far along it the corner is
+  const corner: { wall: Wall; at: number } = wall === 'W' || wall === 'E'
+    ? { wall: nearLow ? 'N' : 'S', at: wall === 'W' ? 0.45 : W - 0.45 }
+    : { wall: wall === 'N' ? (nearLow ? 'W' : 'E') : (nearLow ? 'W' : 'E'), at: wall === 'N' ? 0.45 : D - 0.45 };
+  const tries: { wall: Wall; at: number }[] = [
+    { wall, at: nearLow ? at + off : at - off }, { wall, at: nearLow ? at - off : at + off }, corner];
+  return tries.find((t) => clear(t.wall, t.at)) ?? tries[0];
+}
+
 /** A frame placed on a wall: local +x runs along the wall, local +z points
  *  into the room, origin on the wall line at floor level. */
 function wallFrame(wall: Wall, at: number, W: number, D: number): { pos: [number, number, number]; ry: number } {
@@ -173,16 +199,23 @@ export function RoomFittings({ W, D, roomClass, roomName, doors, obstacles, fire
       <Skirting W={W} D={D} />
       {placed.map(({ d, wall, at, len }, i) => {
         const f = wallFrame(wall, at, W, D);
+        const spot = firePointSpot(wall, at, len, W, D, obstacles);
+        const g = wallFrame(spot.wall, spot.at, W, D);
         return (
-          <group key={i} position={f.pos} rotation-y={f.ry}>
-            <Door len={len} door={d} />
-            <FirePoint x={len / 2 + 0.45} gas={hall} counting={fire?.gas === 2 || fire?.gas === 4} />
-            {sounder && (
-              <mesh position={[-(len / 2 + 0.3), DOOR_H + 0.26, 0.07]} raycast={() => null}>
-                <boxGeometry args={[0.16, 0.16, 0.1]} />
-                <meshStandardMaterial color={sounder} emissive={sounder} emissiveIntensity={sounder === '#3a4048' ? 0 : 0.9} />
-              </mesh>
-            )}
+          <group key={i}>
+            <group position={f.pos} rotation-y={f.ry}>
+              <Door len={len} door={d} />
+              {/* The sounder-beacon over the door, where a site mounts it. */}
+              {sounder && (
+                <mesh position={[0, DOOR_H + 0.26, 0.07]} raycast={() => null}>
+                  <boxGeometry args={[0.16, 0.16, 0.1]} />
+                  <meshStandardMaterial color={sounder} emissive={sounder} emissiveIntensity={sounder === '#3a4048' ? 0 : 0.9} />
+                </mesh>
+              )}
+            </group>
+            <group position={g.pos} rotation-y={g.ry}>
+              <FirePoint x={0} gas={hall} counting={fire?.gas === 2 || fire?.gas === 4} />
+            </group>
           </group>
         );
       })}
