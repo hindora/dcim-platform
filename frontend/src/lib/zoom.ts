@@ -1,12 +1,12 @@
 /**
- * The page's CSS zoom (compact density, index.css: 0.85 on a laptop-sized
+ * The page's CSS zoom (compact density, index.css: 0.9 on a laptop-sized
  * window, otherwise 1).
  *
  * Under a zoomed root, Chrome reports mouse positions and
  * getBoundingClientRect() in SCREEN pixels, while `left`, `top` and `width`
  * written in CSS are in the page's own, unzoomed pixels. Anything that takes a
  * position or size from the one and writes it to the other goes through
- * `toCss`, or it lands at 85 % of where it should.
+ * `toCss`, or it lands at 90 % of where it should.
  */
 export function pageZoom(): number {
   if (typeof document === 'undefined') return 1;

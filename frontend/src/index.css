@@ -1299,13 +1299,13 @@ html[data-input="pointer"] input[type="range"]:focus-visible::-webkit-slider-thu
 /* Compact density (laptops). The UI is laid out in px for a window of about
    1800 x 1000 CSS px; Windows' default 125 % scaling leaves a 1920 x 1080
    laptop only 1536 x 864, and everything reads a size too big. On a desktop
-   window smaller than 1700 x 950 the whole page is drawn at 85 %, the same as
-   setting the browser to 85 % by hand. Viewport heights (vh) shrink with the
+   window smaller than 1700 x 950 the whole page is drawn at 90 %, the same as
+   setting the browser to 90 % by hand. Viewport heights (vh) shrink with the
    zoom, so every one of them is written as calc(Nvh / var(--dz)). Phones and
    narrow windows keep 1:1. */
 :root { --dz: 1; }
 @media (min-width: 1100px) and (max-width: 1699px), (min-width: 1100px) and (max-height: 949px) {
-  :root { --dz: 0.85; zoom: 0.85; }
+  :root { --dz: 0.9; zoom: 0.9; }
 }
 /* react-three-fiber sizes its canvas in px from a measured (screen-pixel)
    rect, which the zoom would shrink again; the canvas fills its wrapper
