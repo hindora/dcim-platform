@@ -3,8 +3,9 @@ import type { TwinRoom, TwinSiteScene } from '../../api/client';
 import { alarmColor } from './colors';
 
 /**
- * The dock's navigator: the estate as a tree - site, compound and its
- * outdoor rooms, building, levels, rooms - with the rung you are on lit and
+ * The dock's navigator: the estate as a tree - site, then the compound
+ * holding its outdoor rooms and the building, the building its levels, each
+ * level its rooms - with the rung you are on lit and
  * every node a place to go. It shows the whole shape at once, which a
  * breadcrumb never did, and sits beside Search so the two ways of getting
  * somewhere are in one spot.
@@ -72,45 +73,48 @@ export function Navigator({ scene, sites, siteId, rung, level, roomId, onSite, o
             <span className="name">Compound</span>
             <span className="muted">{site?.code ?? scene?.code ?? ''}</span>
           </button>
+          {/* The building stands inside the compound fence, beside the yards: its child, not its sibling. */}
           {outdoor.length > 0 && (
             <ul className="vw-tree-rooms">
               {outdoor.map((r) => <RoomRow key={r.id} r={r} current={r.id === roomId} onPick={() => onRoom(r.id)} />)}
             </ul>
           )}
-        </li>
-        <li>
-          <button type="button" className={`rung${atBuilding ? ' is-current' : ''}`} aria-current={atBuilding ? 'location' : undefined}
-                  onClick={() => onBuilding(null)}>
-            <span className="name">Building</span>
-            <span className="muted">{levels.length ? `${levels.length} levels` : ''}</span>
-          </button>
           <ul className="vw-tree-levels">
-            {levels.map((l) => {
-              const here = rung === 'building' && level === l.name;
-              const rs = byLevel(l.name);
-              return (
-                <li key={l.name}>
-                  <button type="button" className={`rung${here ? ' is-current' : ''}`} aria-current={here ? 'location' : undefined}
-                          onClick={() => onBuilding(l.name)}>
-                    <span className="name">{levelWord(l.name)}</span>
-                    <span className="muted">+{l.elevation_m} m</span>
-                  </button>
-                  {rs.length > 0 && (
+            <li>
+              <button type="button" className={`rung${atBuilding ? ' is-current' : ''}`} aria-current={atBuilding ? 'location' : undefined}
+                      onClick={() => onBuilding(null)}>
+                <span className="name">Building</span>
+                <span className="muted">{levels.length ? `${levels.length} levels` : ''}</span>
+              </button>
+              <ul className="vw-tree-levels">
+                {levels.map((l) => {
+                  const here = rung === 'building' && level === l.name;
+                  const rs = byLevel(l.name);
+                  return (
+                    <li key={l.name}>
+                      <button type="button" className={`rung${here ? ' is-current' : ''}`} aria-current={here ? 'location' : undefined}
+                              onClick={() => onBuilding(l.name)}>
+                        <span className="name">{levelWord(l.name)}</span>
+                        <span className="muted">+{l.elevation_m} m</span>
+                      </button>
+                      {rs.length > 0 && (
+                        <ul className="vw-tree-rooms">
+                          {rs.map((r) => <RoomRow key={r.id} r={r} current={r.id === roomId} onPick={() => onRoom(r.id)} />)}
+                        </ul>
+                      )}
+                    </li>
+                  );
+                })}
+                {unplaced.length > 0 && (
+                  <li>
+                    <span className="rung is-text"><span className="name">No level</span></span>
                     <ul className="vw-tree-rooms">
-                      {rs.map((r) => <RoomRow key={r.id} r={r} current={r.id === roomId} onPick={() => onRoom(r.id)} />)}
+                      {unplaced.map((r) => <RoomRow key={r.id} r={r} current={r.id === roomId} onPick={() => onRoom(r.id)} />)}
                     </ul>
-                  )}
-                </li>
-              );
-            })}
-            {unplaced.length > 0 && (
-              <li>
-                <span className="rung is-text"><span className="name">No level</span></span>
-                <ul className="vw-tree-rooms">
-                  {unplaced.map((r) => <RoomRow key={r.id} r={r} current={r.id === roomId} onPick={() => onRoom(r.id)} />)}
-                </ul>
-              </li>
-            )}
+                  </li>
+                )}
+              </ul>
+            </li>
           </ul>
         </li>
       </ul>
