@@ -621,14 +621,14 @@ export function FloorPlanView() {
       <div className="viewer">
         <div className="viewer-stage">
           {bs && (
-            <Suspense fallback={<p className="muted viewer-fallback">Loading the building…</p>}>
+            <Suspense fallback={<p className="vw-loading" role="status">Loading the building…</p>}>
               <BuildingStage scene={bs} rung={atSite ? 'site' : 'building'} level={level} layer={bLayer} mode={bMode} split={split} resetTick={resetTick} spin={spin} themeTick={themeTick}
                              hover={hoverRoom} onHover={setHoverRoom} onEnter={enterRoom} onEnterBuilding={enterBuilding} onTip={setTip}
                              label={atSite ? `Site view of ${bs.name}` : `Building view of ${bs.name}`} />
             </Suspense>
           )}
           {building.isError && <p className="muted viewer-fallback">This site has no placed rooms yet. Import the floor plan first.</p>}
-          {building.isLoading && <p className="muted viewer-fallback">Loading the building…</p>}
+          {building.isLoading && <p className="vw-loading" role="status">Loading the building…</p>}
         </div>
         {body}
       </div>
@@ -654,7 +654,7 @@ export function FloorPlanView() {
   }
 
   const stage = (d: TwinRoomScene, withField: boolean) => (
-    <Suspense fallback={<p className="muted viewer-fallback">Loading the room…</p>}>
+    <Suspense fallback={<p className="vw-loading" role="status">Loading the room…</p>}>
       <Stage data={d} units={units} rackLayer={rackLayer} coolingLayer={coolingLayer} vis={vis} mode={mode}
              sel={sel} overlay={overlay} indices={d.indices} field={withField && heat !== 'off' ? field.data : null} heat={heat}
              doors={roomDoors} fire={live ? roomFire : null} resetTick={resetTick} spin={spin} themeTick={themeTick}
@@ -675,7 +675,7 @@ export function FloorPlanView() {
             </div>
             <div className="vw-pane">
               {cmpScene.data && stage(cmpScene.data, false)}
-              {cmpScene.isLoading && <p className="muted viewer-fallback">Loading the earlier room…</p>}
+              {cmpScene.isLoading && <p className="vw-loading" role="status">Loading the earlier room…</p>}
               <div className="vw-pane-cap">{paneCaption(cmpT, cmpScene.data?.frame)}</div>
             </div>
           </>
@@ -683,7 +683,7 @@ export function FloorPlanView() {
         {scene.isError && !emptyRoom && <p className="muted viewer-fallback">{live
           ? 'Nothing in this room is positioned, so it cannot be drawn.'
           : 'No frame for this moment. Try a later time or go back to live.'}</p>}
-        {scene.isLoading && <p className="muted viewer-fallback">Loading the room…</p>}
+        {scene.isLoading && <p className="vw-loading" role="status">Loading the room…</p>}
       </div>
 
       <div className="vw-float vw-topleft">{crumbs}</div>
