@@ -34,12 +34,11 @@ import { fmtT, numT, unitLabel } from './units';
  * orthographic PLAN, and a first-person walk (FPV) down the aisle with a
  * reticle that reads whichever rack it rests on.
  *
- * In 3D the room stands in the same glass studio as the building above it
+ * In all three views the room stands in the same glass studio as the building above it
  * (studio.tsx): a white frosted-glass deck with its tile grid, glass walls fading
  * upward with a bright rim, the dark studio behind, charcoal cabinets with
  * their doors on when no layer colours them. Every reading, tint, fitting
- * and the opened floor draw exactly as before, on that deck. PLAN and FPV
- * keep the white room: a plan is a drawing, and a walk is the real aisle.
+ * and the opened floor draw exactly as before, on that deck.
  *
  * Cost: racks and units are instanced meshes with a per-instance gradient in
  * the shader (three colour attributes), so a hall is a handful of draw calls;
@@ -560,8 +559,9 @@ export default function RoomScene(p: SceneProps) {
 
   const rackMesh = useRef<THREE.InstancedMesh | null>(null);
   const fpv = mode === 'fpv';
-  // The glass studio is the orbit view; the plan and the walk keep the white room.
-  const glass = mode === '3d';
+  // The glass studio in all three views: orbit, plan and walk see the same room.
+  // (The white room's branches stay below, unused, as the fallback look.)
+  const glass: boolean = true;
   const anyShell = rackBoxes.some((b) => b.paint.fill < 1);
   // Capacity layers draw each rack as a gauge: the colour rises to the value
   // and the headroom above it is frosted. Devices sit at their own U, which
