@@ -21,10 +21,11 @@ export const GLASS = {
   /* A room's deck: white frosted glass, its tile joints and grid letters a mid grey
      that still reads on white. The building's trays keep the cooler slab above. */
   tile: '#e6ebf0', tileLine: '#88949f', tileInk: '#6f7b89',
-  /* Plant is dark charcoal, a shade above the racks: plain dark panels against the
-     racks' near-black perforated doors, so one look at a box says which it is, with
-     no colour that could read as a measurement. */
-  plant: '#363c44',
+  /* Plant is RAL 7021 black-grey, a real equipment paint: as dark as the racks but
+     neutral where they are cool blue-grey, and plain panels against their perforated
+     doors, so one look at a box says which it is, with no colour that could read as
+     a measurement. */
+  plant: '#2f3234',
 };
 
 /** The studio behind the subject: a radial glow from the centre into near-black. */
