@@ -48,12 +48,13 @@ function RoomRow({ r, current, onPick }: { r: TwinRoom; current: boolean; onPick
 }
 
 const FOLD_KEY = 'dcim.nav.folded';
-type Group = 'outdoor' | 'building';
+/** 'outdoor', 'building', or 'level:<name>' - each level folds on its own. */
+type Group = string;
 function readFolded(): Record<Group, boolean> {
   try {
     const v = JSON.parse(localStorage.getItem(FOLD_KEY) ?? '{}');
-    return { outdoor: Boolean(v.outdoor), building: Boolean(v.building) };
-  } catch { return { outdoor: false, building: false }; }
+    return v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, Boolean(x)])) : {};
+  } catch { return {}; }
 }
 
 /** The fold toggle of a group: a chevron button beside its row, separate
@@ -88,10 +89,15 @@ export function Navigator({ scene, sites, siteId, rung, level, roomId, onSite, o
   });
   const inOutdoor = outdoor.some((r) => r.id === roomId);
   const inBuilding = rung === 'building' || (rung === 'room' && !inOutdoor && rooms.some((r) => r.id === roomId));
+  // The level you are in: the building rung's focused level, or the open room's.
+  const hereLevel = rung === 'room' ? rooms.find((r) => r.id === roomId)?.level ?? null : rung === 'building' ? level : null;
   useEffect(() => {
-    if (inOutdoor && folded.outdoor) setFolded((f) => ({ ...f, outdoor: false }));
-    if (inBuilding && folded.building) setFolded((f) => ({ ...f, building: false }));
-  }, [inOutdoor, inBuilding]); // eslint-disable-line react-hooks/exhaustive-deps
+    const open: Group[] = [];
+    if (inOutdoor) open.push('outdoor');
+    if (inBuilding) open.push('building');
+    if (hereLevel && rung === 'room') open.push(`level:${hereLevel}`);
+    if (open.some((g) => folded[g])) setFolded((f) => ({ ...f, ...Object.fromEntries(open.map((g) => [g, false])) }));
+  }, [inOutdoor, inBuilding, hereLevel, rung]); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <div className="vw-panel-body vw-tree">
       {sites.length > 1 && (
@@ -137,14 +143,20 @@ export function Navigator({ scene, sites, siteId, rung, level, roomId, onSite, o
                 {levels.map((l) => {
                   const here = rung === 'building' && level === l.name;
                   const rs = byLevel(l.name);
+                  const key = `level:${l.name}`;
+                  const levelBtn = (
+                    <button type="button" className={`rung${here ? ' is-current' : ''}`} aria-current={here ? 'location' : undefined}
+                            onClick={() => onBuilding(l.name)}>
+                      <span className="name">{levelWord(l.name)}</span>
+                      <span className="muted">+{l.elevation_m} m</span>
+                    </button>
+                  );
                   return (
                     <li key={l.name}>
-                      <button type="button" className={`rung${here ? ' is-current' : ''}`} aria-current={here ? 'location' : undefined}
-                              onClick={() => onBuilding(l.name)}>
-                        <span className="name">{levelWord(l.name)}</span>
-                        <span className="muted">+{l.elevation_m} m</span>
-                      </button>
-                      {rs.length > 0 && (
+                      {rs.length > 0
+                        ? <div className="vw-tree-group"><Fold open={!folded[key]} label={levelWord(l.name)} onToggle={() => toggle(key)} />{levelBtn}</div>
+                        : levelBtn}
+                      {rs.length > 0 && !folded[key] && (
                         <ul className="vw-tree-rooms">
                           {rs.map((r) => <RoomRow key={r.id} r={r} current={r.id === roomId} onPick={() => onRoom(r.id)} />)}
                         </ul>
