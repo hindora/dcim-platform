@@ -96,6 +96,8 @@ export function FloorPlanView() {
     || sites[0]?.id || '';
   useEffect(() => { if (siteId) rememberSite(siteId); }, [siteId]);
   const level = params.get('level') || null;
+  /** The rack looked into in the room's 3D view (docs/27 §7.1), kept in the URL. */
+  const rackFocus = params.get('rack') || null;
   // The building and site rungs show alarms only: no layer picker up there,
   // and an alarm is a marker on the rack or unit that raised it, not a red room.
   const bLayer: BuildingLayer = 'alarm';
@@ -140,12 +142,21 @@ export function FloorPlanView() {
   // Entering pushes history, so the back button climbs back to the building.
   const enterRoom = (id: string) => {
     const next = new URLSearchParams(params);
-    next.set('room', id); next.delete('level');
+    next.set('room', id); next.delete('level'); next.delete('rack');
     setParams(next);
   };
+  // Looking into a rack: the orbit view, the rack in the URL, its panel open.
+  const focusRack = (id: string) => {
+    const next = new URLSearchParams(params);
+    next.set('rack', id);
+    if (next.get('view')) next.delete('view');
+    setParams(next);
+    setSel({ kind: 'rack', id }); setPanel('info');
+  };
+  const unfocusRack = () => { const next = new URLSearchParams(params); next.delete('rack'); setParams(next); };
   const leaveRoom = () => {
     const next = new URLSearchParams(params);
-    next.delete('room');
+    next.delete('room'); next.delete('rack');
     next.set('b', '1');
     if (siteId) next.set('site', siteId);
     for (const k of TIME_KEYS) next.delete(k);
@@ -491,6 +502,8 @@ export function FloorPlanView() {
 
   const bs = building.data;
   climb.current = (gentle?: boolean) => {
+    // Looking into a rack: Escape and Backspace both step back to the room first.
+    if (rackFocus && rung === 'room') { unfocusRack(); return; }
     if (gentle && (sel || panel === 'navigate' || panel === 'search')) { if (sel) setSel(null); else setPanel('info'); return; }
     if (rung === 'room') leaveRoom(); else if (rung === 'building') leaveBuilding();
   };
@@ -511,7 +524,8 @@ export function FloorPlanView() {
   const roomName = roomId ? bs?.rooms.find((r) => r.id === roomId)?.name ?? room?.name ?? 'Room' : '';
   const here = rung === 'site' ? { rung: 'Compound', place: 'Whole site' }
     : rung === 'building' ? { rung: 'Building', place: planLevel ? levelWord(planLevel) : 'All levels' }
-    : { rung: roomIsOutdoor ? 'Compound · Outdoor' : roomLevel ? `Room · Level ${roomLevel}` : 'Room', place: roomName };
+    : rackFocus && mode === '3d' ? { rung: `Rack · ${roomName}`, place: data?.plan.racks.find((r) => r.id === rackFocus)?.name ?? 'Rack' }
+    : { rung: roomIsOutdoor ? 'Compound · Outdoor' : roomLevel ? `Room · ${levelWord(roomLevel)}` : 'Room', place: roomName };
   const moment = t
     ? t.toLocaleString(undefined, { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
     : 'Live';
@@ -663,6 +677,7 @@ export function FloorPlanView() {
       <Stage data={d} units={units} rackLayer={rackLayer} coolingLayer={coolingLayer} vis={vis} mode={mode}
              sel={sel} overlay={overlay} indices={d.indices} field={withField && heat !== 'off' ? field.data : null} heat={heat}
              doors={roomDoors} fire={live ? roomFire : null} resetTick={resetTick} spin={spin} themeTick={themeTick}
+             focusRack={rackFocus} onFocusRack={focusRack}
              onSelect={(s) => { setSel(s); if (s) setPanel('info'); }} onTip={setTip} onFocus={setFocus}
              label={`${mode === 'plan' ? 'Plan' : mode === 'fpv' ? 'Walk-through' : '3D view'} of ${d.plan.room_name}`} />
     </Suspense>
@@ -694,7 +709,7 @@ export function FloorPlanView() {
       <div className="vw-float vw-topleft">{crumbs}</div>
       <div className="vw-float vw-topcenter">
         <ViewBar value={mode} onChange={(m) => setParam('view', m)} options={MODES}
-                 canSpin={mode === '3d'} onSpin={turn} onReset={() => setResetTick((t) => t + 1)} />
+                 canSpin={mode === '3d'} onSpin={turn} onReset={() => { if (rackFocus) unfocusRack(); setResetTick((t) => t + 1); }} />
       </div>
       {navigator}
       <Dock items={['navigate', 'info', 'filters', 'search']} open={panel === 'layers' ? null : panel} onToggle={togglePanel} tools={roomTools} />
@@ -768,8 +783,11 @@ export function FloorPlanView() {
         ? ['Click the view to look around', 'W A S D to walk · Shift to hurry', 'Esc releases the pointer']
         : mode === 'plan'
           ? ['Drag to pan', 'Scroll to zoom', 'Click a rack or a unit for its information', 'Backspace climbs to the building']
-          : ['Drag to orbit · right-drag to pan', 'Scroll to zoom', 'The round buttons turn and reset the camera',
-             'Click a rack or a unit for its information', 'Backspace climbs to the building']} />
+          : rackFocus
+            ? ['Drag to orbit the rack · the round buttons turn to its rear', 'Click a device for its information',
+               'Escape or Backspace steps back to the room']
+            : ['Drag to orbit · right-drag to pan', 'Scroll to zoom', 'The round buttons turn and reset the camera',
+               'Click a rack or a unit for its information · double-click a rack to look into it', 'Backspace climbs to the building']} />
     </div>
   );
 }

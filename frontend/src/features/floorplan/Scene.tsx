@@ -91,6 +91,11 @@ export interface SceneProps {
   resetTick: number;
   /** A quarter turn of the orbit camera, counted so each press lands. */
   spin?: Spin;
+  /** The rack looked into (docs/27 §7.1 "Rack focus"): the camera stands at
+   *  its front door, the cabinet goes to glass and its devices show by U with
+   *  their faceplates. Set by a double-click on a rack; null = the whole room. */
+  focusRack?: string | null;
+  onFocusRack?: (id: string) => void;
   themeTick: number;
   onSelect: (s: Sel) => void;
   onTip: (t: HoverTip | null) => void;
@@ -190,14 +195,15 @@ export interface GBox {
 /** One instanced mesh of boxes, each with its own bottom/middle/top colour.
  *  `part` 'solid' draws the filled share of each box, 'shell' the translucent
  *  remainder above it (only for boxes that are not full). */
-function GradientBoxes({ boxes, part, opacity, frost = false, dim, meshRef, onClick, onMove, onOut }: {
+function GradientBoxes({ boxes, part, opacity, frost = false, dim, meshRef, onClick, onDoubleClick, onMove, onOut }: {
   boxes: GBox[]; part: 'solid' | 'shell'; opacity: number;
   /** Draw as frosted glass (the headroom above a capacity gauge). */
   frost?: boolean;
   /** Boxes not part of the active overlay fade toward the walls. */
   dim?: boolean[];
   meshRef?: React.MutableRefObject<THREE.InstancedMesh | null>;
-  onClick?: (i: number) => void; onMove?: (i: number, e: ThreeEvent<PointerEvent>) => void; onOut?: () => void;
+  onClick?: (i: number) => void; onDoubleClick?: (i: number) => void;
+  onMove?: (i: number, e: ThreeEvent<PointerEvent>) => void; onOut?: () => void;
 }) {
   const inner = useRef<THREE.InstancedMesh>(null);
   const { invalidate } = useThree();
@@ -266,6 +272,7 @@ function GradientBoxes({ boxes, part, opacity, frost = false, dim, meshRef, onCl
     <instancedMesh key={`${part}${n}`} ref={inner} args={[geometry, material, n]}
                    frustumCulled={false}
                    onClick={onClick && ((e) => { e.stopPropagation(); if (clean(e) && e.instanceId != null) onClick(e.instanceId); })}
+                   onDoubleClick={onDoubleClick && ((e) => { e.stopPropagation(); if (clean(e) && e.instanceId != null) onDoubleClick(e.instanceId); })}
                    onPointerMove={onMove && ((e) => { e.stopPropagation(); if (e.instanceId != null) onMove(e.instanceId, e); })}
                    onPointerOut={onOut} />
   );
@@ -458,7 +465,7 @@ export function labelTexture(text: string, ink: string, bg: string): THREE.Canva
 
 export default function RoomScene(p: SceneProps) {
   const { data, units, rackLayer, coolingLayer, vis, mode, sel, overlay, indices, field, heat, doors, fire, resetTick, spin, themeTick,
-          onSelect, onTip, onFocus } = p;
+          focusRack, onFocusRack, onSelect, onTip, onFocus } = p;
   const { plan, devices } = data;
   const W = plan.extent.width_m, D = plan.extent.depth_m;
   const whiteSpace = plan.room_class === 'white_space';
@@ -592,6 +599,21 @@ export default function RoomScene(p: SceneProps) {
   const rackDim = useMemo(() => (overlay ? rackRole.map((x) => x == null) : undefined), [overlay, rackRole]);
   const unitDim = useMemo(() => (overlay ? unitRole.map((x) => x == null) : undefined), [overlay, unitRole]);
 
+  // The rack looked into, in the orbit view only: it is drawn apart from the
+  // others (a glass cabinet with its gear showing) and the camera goes to it.
+  const focusIdx = mode === '3d' && focusRack ? plan.racks.findIndex((r) => r.id === focusRack) : -1;
+  const focusId = focusIdx >= 0 ? plan.racks[focusIdx].id : null;
+  const othersIdx = useMemo(() => plan.racks.map((_, i) => i).filter((i) => i !== focusIdx), [plan.racks, focusIdx]);
+  const otherBoxes = useMemo(() => othersIdx.map((i) => rackBoxes[i]), [othersIdx, rackBoxes]);
+  const otherDim = useMemo(() => (rackDim ? othersIdx.map((i) => rackDim[i]) : undefined), [othersIdx, rackDim]);
+  const focusBox = useMemo(() => (focusIdx >= 0 ? [rackBoxes[focusIdx]] : NO_BOXES), [focusIdx, rackBoxes]);
+  const focusDevices = useMemo(() => (focusId ? devices.filter((d) => d.rack_id === focusId) : []), [devices, focusId]);
+  const focusCam = useMemo(() => {
+    if (focusIdx < 0) return null;
+    const b = rackBoxes[focusIdx];
+    return { x: b.x, z: b.z, h: b.h, d: b.d, front: b.front || 1 };
+  }, [focusIdx, rackBoxes]);
+
   // Plain plant in the studio is drawn the way the building rung draws it: a lit
   // surface under the tone curve, so a unit is the same dark box one rung down.
   // A unit a layer or an alarm colours keeps the exact-colour shader.
@@ -621,7 +643,7 @@ export default function RoomScene(p: SceneProps) {
         </>
       )}
 
-      <Cameras mode={mode} W={W} D={D} resetTick={resetTick} spin={spin} aisles={plan.aisles} X={X} Z={Z} />
+      <Cameras mode={mode} W={W} D={D} resetTick={resetTick} spin={spin} aisles={plan.aisles} X={X} Z={Z} focus={focusCam} />
       {fpv && <FpvRig W={W} D={D} rackMesh={rackMesh} racks={plan.racks} onFocus={onFocus} />}
 
       {/* A white-space room stands on a raised floor: its deck is always drawn;
@@ -648,11 +670,24 @@ export default function RoomScene(p: SceneProps) {
 
       {/* See-into-racks: the layer's colour stays on the cabinet as a tinted
           shell and the devices inside show through it. */}
-      <GradientBoxes boxes={rackBoxes} part="solid" opacity={vis.faces ? 0.32 : 1} meshRef={rackMesh} dim={rackDim}
+      <GradientBoxes boxes={otherBoxes} part="solid" opacity={vis.faces ? 0.32 : 1} meshRef={rackMesh} dim={otherDim}
                      // Seen into, the shell lets the pointer through to the devices.
-                     onClick={fpv || vis.faces ? undefined : (i) => onSelect({ kind: 'rack', id: plan.racks[i].id })}
-                     onMove={fpv || vis.faces ? undefined : (i, e) => tip(e, rackText(plan.racks[i]))}
+                     onClick={fpv || vis.faces ? undefined : (i) => onSelect({ kind: 'rack', id: plan.racks[othersIdx[i]].id })}
+                     onDoubleClick={fpv || !onFocusRack ? undefined : (i) => onFocusRack(plan.racks[othersIdx[i]].id)}
+                     onMove={fpv || vis.faces ? undefined : (i, e) => tip(e, rackText(plan.racks[othersIdx[i]]))}
                      onOut={() => onTip(null)} />
+      {/* The rack looked into: a glass cabinet, its gear and faceplates showing, by U. */}
+      {focusId && (
+        <>
+          <GradientBoxes boxes={focusBox} part="solid" opacity={0.32}
+                         onClick={() => onSelect({ kind: 'rack', id: focusId })}
+                         onMove={(_, e) => tip(e, rackText(plan.racks[focusIdx]))} onOut={() => onTip(null)} />
+          {!vis.faces && (
+            <RackDevices devices={focusDevices} rackById={rackById} X={X} Z={Z} themeTick={themeTick}
+                         onSelect={onSelect} onTip={onTip} />
+          )}
+        </>
+      )}
       {anyShell && <GradientBoxes boxes={rackBoxes} part="shell" opacity={frost ? 0.85 : 0.22} frost={frost} />}
       {anyShell && <FillLines boxes={rackBoxes} />}
       <RackFrames racks={plan.racks} X={X} Z={Z} />
@@ -660,8 +695,8 @@ export default function RoomScene(p: SceneProps) {
           a layer's colour, a look inside, or the detail switch's own doors take them off. */}
       {glass && rackLayer === 'none' && !vis.faces && !vis.detail && (
         <>
-          <RackDoors boxes={rackBoxes.filter((_, i) => plan.racks[i].device_count > 0)} />
-          <RackDoors boxes={rackBoxes.filter((_, i) => plan.racks[i].device_count === 0)} blank />
+          <RackDoors boxes={rackBoxes.filter((_, i) => i !== focusIdx && plan.racks[i].device_count > 0)} />
+          <RackDoors boxes={rackBoxes.filter((_, i) => i !== focusIdx && plan.racks[i].device_count === 0)} blank />
         </>
       )}
       {vis.detail && <RackDetails boxes={rackBoxes} open={vis.faces} />}
@@ -670,7 +705,7 @@ export default function RoomScene(p: SceneProps) {
       {/* Racks solid: only the probes on their doors show, if asked for. Seen
           into: everything mounted in them. */}
       {(vis.faces || vis.doorSensors) && (
-        <RackDevices devices={devices} show={vis.faces ? undefined : onRackDoor} rackById={rackById} X={X} Z={Z} themeTick={themeTick}
+        <RackDevices devices={devices} show={vis.faces ? undefined : (d) => onRackDoor(d) && d.rack_id !== focusId} rackById={rackById} X={X} Z={Z} themeTick={themeTick}
                      onSelect={fpv ? undefined : onSelect} onTip={fpv ? undefined : onTip} />
       )}
 
@@ -905,9 +940,11 @@ function Invalidator({ deps, invalidate }: { deps: unknown[]; invalidate: () => 
 
 // ----------------------------------------------------------- cameras
 
-function Cameras({ mode, W, D, resetTick, spin, aisles, X, Z }: {
+function Cameras({ mode, W, D, resetTick, spin, aisles, X, Z, focus }: {
   mode: ViewMode; W: number; D: number; resetTick: number; spin?: Spin; aisles: FloorAisle[];
   X: (x: number) => number; Z: (y: number) => number;
+  /** The rack looked into: the camera stands at its front door, eye height, and orbits about it. */
+  focus?: { x: number; z: number; h: number; d: number; front: number } | null;
 }) {
   const orbit = useRef<ElementRef<typeof OrbitControls>>(null);
   const map = useRef<ElementRef<typeof MapControls>>(null);
@@ -915,12 +952,35 @@ function Cameras({ mode, W, D, resetTick, spin, aisles, X, Z }: {
   const span = Math.max(W, D);
   useQuarterTurn(spin, orbit, camera, invalidate);
   const dolly = useDolly(orbit, camera, invalidate);
+  const frameRoom = useCallback(() => {
+    orbit.current?.target.set(0, 0.8, 0);
+    dolly(new THREE.Vector3(span * 0.7, span * 0.75, span * 0.95), new THREE.Vector3(0, 0.8, 0));
+    orbit.current?.update();
+  }, [dolly, span]);
+  // Standing at the rack: 3 m off its front face at eye height, the whole
+  // cabinet in a 45 degree view, the orbit about the cabinet so the turn
+  // buttons walk round it to the rear door. Lifting the focus frames the room.
+  const hadFocus = useRef(false);
+  useEffect(() => {
+    if (mode !== '3d') return;
+    if (focus) {
+      hadFocus.current = true;
+      const target = new THREE.Vector3(focus.x, focus.h / 2, focus.z);
+      orbit.current?.target.copy(target);
+      dolly(new THREE.Vector3(focus.x, Math.max(1.45, focus.h * 0.6), focus.z + focus.front * (focus.d / 2 + 3.0)), target);
+      orbit.current?.update();
+      invalidate();
+    } else if (hadFocus.current) {
+      hadFocus.current = false;
+      frameRoom();
+      invalidate();
+    }
+  }, [focus?.x, focus?.z, focus?.front, mode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (mode === '3d') {
-      orbit.current?.target.set(0, 0.8, 0);
-      dolly(new THREE.Vector3(span * 0.7, span * 0.75, span * 0.95), new THREE.Vector3(0, 0.8, 0));
-      orbit.current?.update();
+      if (focus) return;                      // the focus effect has the camera
+      frameRoom();
     } else if (mode === 'plan') {
       camera.position.set(0, 60, 0);
       camera.up.set(0, 0, -1);
@@ -940,7 +1000,7 @@ function Cameras({ mode, W, D, resetTick, spin, aisles, X, Z }: {
       camera.lookAt(X(W), EYE, z);
     }
     invalidate();
-  }, [mode, resetTick, camera, span, W, D, size.width, size.height, aisles, X, Z, invalidate, dolly]);
+  }, [mode, resetTick, camera, span, W, D, size.width, size.height, aisles, X, Z, invalidate, dolly]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (mode === 'plan') {
     return (
