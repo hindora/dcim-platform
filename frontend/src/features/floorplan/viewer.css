@@ -31,9 +31,7 @@
 .vw-topleft { top: 14px; left: 16px; padding: 0; background: none; border: none; box-shadow: none;
               backdrop-filter: none; -webkit-backdrop-filter: none; }
 .vw-topcenter { top: 12px; left: 50%; transform: translateX(-50%); background: none; border: none; box-shadow: none;
-                backdrop-filter: none; -webkit-backdrop-filter: none; padding: 0;
-                /* a column: the view bar, and under it the floor plan's level tabs when there are any */
-                flex-direction: column; }
+                backdrop-filter: none; -webkit-backdrop-filter: none; padding: 0; }
 
 /* round floating buttons: the dock, the camera trio */
 .vw-round { width: 40px; height: 40px; display: grid; place-items: center; padding: 0; cursor: pointer;
@@ -54,8 +52,6 @@
 .vw-pill { display: flex; gap: 2px; padding: 3px; border-radius: 999px;
            background: var(--vw-glass); backdrop-filter: var(--vw-blur); -webkit-backdrop-filter: var(--vw-blur);
            border: 1px solid color-mix(in srgb, var(--border-strong) 85%, transparent); box-shadow: var(--vw-shadow-sm); }
-/* the level tabs: the same pill, one cell per floor, under the view modes */
-.vw-levels button { letter-spacing: .02em; text-transform: none; font-size: 12px; }
 .vw-pill button { height: 30px; padding: 0 14px; border: none; border-radius: 999px; background: none; cursor: pointer;
                   color: var(--text-muted); font: inherit; font-size: 11px; font-weight: 600; letter-spacing: .09em; }
 .vw-pill button:hover { color: var(--text); background: color-mix(in srgb, var(--text) 7%, transparent); }

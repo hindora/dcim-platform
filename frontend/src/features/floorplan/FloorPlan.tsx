@@ -566,18 +566,6 @@ export function FloorPlanView() {
           {webgl && <ViewBar value={bMode} onChange={(m) => setParam('view', m)}
                              options={[{ key: '3d', label: '3D' }, { key: 'plan', label: 'PLAN' }]}
                              canSpin={bMode === '3d'} onSpin={turn} onReset={() => setResetTick((t) => t + 1)} />}
-          {/* The floor plan's level tabs: one floor at a time, picked here, kept in the URL. */}
-          {webgl && bMode === 'plan' && !atSite && levelsSorted.length > 1 && (
-            <div className="vw-pill vw-levels" role="group" aria-label="Level">
-              {levelsSorted.map((l) => (
-                <button key={l.name} type="button" className={l.name === planLevel ? 'is-on' : undefined}
-                        aria-pressed={l.name === planLevel} title={`${levelWord(l.name)} · +${l.elevation_m} m`}
-                        onClick={() => { const next = new URLSearchParams(params); next.set('level', l.name); setParams(next); }}>
-                  {levelWord(l.name)}
-                </button>
-              ))}
-            </div>
-          )}
         </div>
         {navigator}
         <Dock items={['navigate', 'info', 'search']} open={panel === 'filters' || panel === 'layers' ? null : panel} onToggle={togglePanel}
@@ -617,7 +605,7 @@ export function FloorPlanView() {
           <span className="spacer" />
         </div>
         <Help keyName={`${atSite ? 'site' : 'building'}:${bMode}`} lines={webgl
-          ? [bMode === 'plan' ? (atSite ? 'Drag to pan' : 'Pick a level above · Drag to pan') : 'Drag to orbit', 'Scroll to zoom',
+          ? [bMode === 'plan' ? (atSite ? 'Drag to pan' : 'Pick a level in Navigate · Drag to pan') : 'Drag to orbit', 'Scroll to zoom',
              atSite ? 'Click a room, or the building, to enter it' : 'Click a room to enter it',
              'Backspace climbs a rung · Escape clears']
           : [atSite ? 'Choose the building or a room' : 'Click a room to enter it', 'Backspace climbs a rung']} />
