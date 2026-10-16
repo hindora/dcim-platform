@@ -491,13 +491,17 @@ export default function BuildingScene(p: BuildingSceneProps) {
       <Hardware racks={hw.racks} units={hw.units} unitTypes={hw.types} open={false} />
       <AlarmPins pins={pins} />
 
-      {/* The building's shell: at the site rung it is the thing you click. */}
+      {/* The building's shell: at the site rung, clicking the building enters it - unless the
+          click lands on a room seen through the glass, which enters that room. The shell is
+          raycast on its BACK face (the far wall), so every room inside sits nearer than it:
+          a room takes the pointer first and stops it, and the shell answers only where the
+          ray passes through no room. */}
       {site && mode === '3d' && (
         <group position={[0, roofElev / 2 + podium, 0]}>
           <mesh geometry={shellGeo} onPointerOver={(ev) => { ev.stopPropagation(); onHover('__building__'); tip(ev, buildingText); }}
                 onPointerOut={() => { onHover(null); onTip(null); }}
                 onClick={(ev) => { ev.stopPropagation(); if (clean(ev)) onEnterBuilding(); }}>
-            <meshStandardMaterial color={tones.inkMuted} transparent opacity={0.02} depthWrite={false} roughness={1} />
+            <meshStandardMaterial color={tones.inkMuted} transparent opacity={0.02} depthWrite={false} roughness={1} side={THREE.BackSide} />
           </mesh>
           {/* The glass floors are the building; its outline only answers a hover. */}
           {buildingHot && (
@@ -512,7 +516,7 @@ export default function BuildingScene(p: BuildingSceneProps) {
         <mesh geometry={shellGeo} position={[0, roofElev / 2, 0]} onClick={(ev) => { ev.stopPropagation(); if (clean(ev)) onEnterBuilding(); }}
               onPointerOver={(ev) => { ev.stopPropagation(); onHover('__building__'); tip(ev, buildingText); }}
               onPointerOut={() => { onHover(null); onTip(null); }}>
-          <meshBasicMaterial transparent opacity={buildingHot ? 0.08 : 0.001} depthWrite={false} />
+          <meshBasicMaterial transparent opacity={buildingHot ? 0.08 : 0.001} depthWrite={false} side={THREE.BackSide} />
         </mesh>
       )}
     </>
@@ -537,7 +541,8 @@ function RoomVolume({ room: r, e, h, X, Z, tones, paint, dim, hot, quiet, flat, 
    *  every measured room is coloured and the band has to be read, so the faces carry more of it. */
   paint: { colour: string; lit: boolean; band?: boolean };
   dim: boolean; hot: boolean;
-  /** At the site rung the rooms sit inside the shell: no labels, lower alpha. */
+  /** At the site rung the rooms sit inside the shell: no labels, lower alpha.
+   *  They still answer the pointer - a room seen through the glass is a room you can enter. */
   quiet?: boolean;
   /** An outdoor room: a footprint on the ground, not a volume. */
   flat?: boolean;
@@ -554,7 +559,7 @@ function RoomVolume({ room: r, e, h, X, Z, tones, paint, dim, hot, quiet, flat, 
   const x = X(r.origin_x_m + r.width_m / 2), z = Z(r.origin_y_m + r.depth_m / 2);
   const geo = useMemo(() => new THREE.BoxGeometry(r.width_m, h, r.depth_m), [r.width_m, h, r.depth_m]);
   useEffect(() => () => geo.dispose(), [geo]);
-  const inert = dim || quiet;
+  const inert = dim;
   return (
     <group position={[x, e + h / 2, z]}>
       <mesh geometry={geo} onPointerOver={inert ? undefined : (ev) => { ev.stopPropagation(); onOver(ev); }}

@@ -600,7 +600,7 @@ export function FloorPlanView() {
         </div>
         <Help keyName={`${atSite ? 'site' : 'building'}:${bMode}`} lines={webgl
           ? [bMode === 'plan' ? 'Drag to pan' : 'Drag to orbit', 'Scroll to zoom',
-             atSite ? 'Click the building to enter it' : 'Click a room to enter it',
+             atSite ? 'Click a room, or the building, to enter it' : 'Click a room to enter it',
              'Backspace climbs a rung · Escape clears']
           : [atSite ? 'Choose the building or a room' : 'Click a room to enter it', 'Backspace climbs a rung']} />
       </>
