@@ -1234,13 +1234,28 @@ function AisleBand({ a, W, X, Z, racks, units = [], containment, tint: tinted = 
   const tiles = useMemo(() => (cold ? aisleTexture(Math.round(W / TILE), Math.round(depth / TILE)) : null), [cold, W, depth]);
   useEffect(() => () => tiles?.dispose(), [tiles]);
   const flank = racks.filter((r) => Math.abs(r.y - (a.y_start + a.y_end) / 2) <= depth / 2 + (r.d_m ?? DEFAULT_D));
-  // In-row plant on a flanking row line: same y as one of those racks, within half a cabinet.
-  const inRow = units.filter((e) => e.x != null && e.y != null && e.w_m != null
-    && flank.some((r) => Math.abs((e.y as number) - r.y) < (r.d_m ?? DEFAULT_D) / 2));
-  const spans = [...flank.map((r) => [r.x - (r.w_m ?? DEFAULT_W) / 2, r.x + (r.w_m ?? DEFAULT_W) / 2]),
-                 ...inRow.map((e) => [(e.x as number) - (e.w_m as number) / 2, (e.x as number) + (e.w_m as number) / 2])];
-  const x0 = spans.length ? Math.min(...spans.map((s) => s[0])) : 0;
-  const x1 = spans.length ? Math.max(...spans.map((s) => s[1])) : 0;
+  // The containment runs the row line: its racks, and a floor unit that stands
+  // IN the line, touching the row (an in-row RPP at its end). A unit merely on
+  // the same y - an air handler on the end wall, a metre off - is not part of
+  // the row and must not stretch the containment out to the wall. Footprints
+  // are turned the way the unit stands: a CRAH at 90 deg is 0.89 m along x.
+  let x0 = flank.length ? Math.min(...flank.map((r) => r.x - (r.w_m ?? DEFAULT_W) / 2)) : 0;
+  let x1 = flank.length ? Math.max(...flank.map((r) => r.x + (r.w_m ?? DEFAULT_W) / 2)) : 0;
+  const along = units.filter((e) => e.x != null && e.y != null && e.w_m != null && e.d_m != null
+    && flank.some((r) => Math.abs((e.y as number) - r.y) < (r.d_m ?? DEFAULT_D) / 2))
+    .map((e) => {
+      const quarter = Math.round((((e.facing_deg ?? 0) % 180) + 180) % 180 / 90) === 1;
+      const half = ((quarter ? e.d_m : e.w_m) as number) / 2;
+      return [(e.x as number) - half, (e.x as number) + half];
+    });
+  for (let grew = flank.length > 0; grew;) {
+    grew = false;
+    for (const [u0, u1] of along) {
+      if (u1 < x0 - 0.05 || u0 > x1 + 0.05) continue;          // not touching the row
+      if (u0 < x0 - 1e-6) { x0 = u0; grew = true; }
+      if (u1 > x1 + 1e-6) { x1 = u1; grew = true; }
+    }
+  }
   const h = flank.length ? Math.max(...flank.map(rackH)) : 2;
   if (a.kind === 'unknown') return null;
   return (
