@@ -1058,7 +1058,8 @@ function Room({ W, D, whiteSpace, walls: walled, seeUnder, glass }: {
             <lineBasicMaterial key={String(seeUnder)} color={GLASS.tileLine} transparent opacity={seeUnder ? 0.15 : 0.8} toneMapped={false} />
           </lineSegments>
         )}
-        {walled && <GlassBox w={W} d={D} cx={0} cz={0} y={0} h={WALL_H} />}
+        {/* Seen into, never through: the walls between the camera and the room fall away. */}
+        {walled && <GlassBox w={W} d={D} cx={0} cz={0} y={0} h={WALL_H} cutaway />}
       </group>
     );
   }

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
-import { useThree } from '@react-three/fiber';
+import { useFrame, useThree } from '@react-three/fiber';
 import type { GBox } from './Scene';
 
 /**
@@ -62,12 +62,43 @@ export function Tone({ filmic }: { filmic: boolean }) {
 
 /** A box of glass sides over a footprint: brightest at the floor and fading
  *  upward, with a faint rim along the edges. The floor and ceiling are open;
- *  the sides answer no pointer. */
-export function GlassBox({ w, d, cx, cz, y, h, dim = false }: {
-  w: number; d: number; cx: number; cz: number; y: number; h: number; dim?: boolean;
+ *  the sides answer no pointer. `cutaway` draws each side from the inside
+ *  only, so the walls between the camera and the room fall away as it orbits
+ *  and the far walls stay - the room is always seen into, never through its
+ *  own front wall. Each wall's rim goes with its pane. */
+export function GlassBox({ w, d, cx, cz, y, h, dim = false, cutaway = false }: {
+  w: number; d: number; cx: number; cz: number; y: number; h: number; dim?: boolean; cutaway?: boolean;
 }) {
   const rim = useMemo(() => new THREE.EdgesGeometry(new THREE.BoxGeometry(w, h, d)), [w, h, d]);
   useEffect(() => () => rim.dispose(), [rim]);
+  // One rim per wall: its two uprights and its top and bottom edges, so a culled
+  // wall takes its outline with it. Order matches the box faces: +x, -x, +z, -z.
+  const wallRims = useMemo(() => {
+    const hw = w / 2, hd = d / 2, hh = h / 2;
+    const quad = (pts: number[][]) => {
+      const g = new THREE.BufferGeometry();
+      const seg: number[] = [];
+      for (let i = 0; i < 4; i++) seg.push(...pts[i], ...pts[(i + 1) % 4]);
+      g.setAttribute('position', new THREE.Float32BufferAttribute(seg, 3));
+      return g;
+    };
+    return [
+      quad([[hw, -hh, -hd], [hw, -hh, hd], [hw, hh, hd], [hw, hh, -hd]]),
+      quad([[-hw, -hh, -hd], [-hw, -hh, hd], [-hw, hh, hd], [-hw, hh, -hd]]),
+      quad([[-hw, -hh, hd], [hw, -hh, hd], [hw, hh, hd], [-hw, hh, hd]]),
+      quad([[-hw, -hh, -hd], [hw, -hh, -hd], [hw, hh, -hd], [-hw, hh, -hd]]),
+    ];
+  }, [w, d, h]);
+  useEffect(() => () => wallRims.forEach((g) => g.dispose()), [wallRims]);
+  const rimRefs = useRef<(THREE.LineSegments | null)[]>([null, null, null, null]);
+  // Which walls face the camera from inside: the camera lies on the inner side of
+  // the wall's plane. Those show; the rest are the walls we look through.
+  useFrame(({ camera }) => {
+    if (!cutaway) return;
+    const c = camera.position;
+    const inside = [c.x < cx + w / 2, c.x > cx - w / 2, c.z < cz + d / 2, c.z > cz - d / 2];
+    rimRefs.current.forEach((l, i) => { if (l) l.visible = inside[i]; });
+  });
   const alpha = useMemo(() => {
     const cv = document.createElement('canvas');
     cv.width = 4; cv.height = 128;
@@ -79,20 +110,29 @@ export function GlassBox({ w, d, cx, cz, y, h, dim = false }: {
   }, []);
   useEffect(() => () => alpha.dispose(), [alpha]);
   const mats = useMemo(() => {
+    // Cut away: back faces only, which on a box are the inner faces of the far walls.
     const side = new THREE.MeshBasicMaterial({ color: GLASS.wall, alphaMap: alpha, transparent: true, opacity: dim ? 0.25 : 1,
-                                               depthWrite: false, side: THREE.DoubleSide });
+                                               depthWrite: false, side: cutaway ? THREE.BackSide : THREE.DoubleSide });
     const none = new THREE.MeshBasicMaterial({ visible: false });
     return [side, side, none, none, side, side];
-  }, [alpha, dim]);
+  }, [alpha, dim, cutaway]);
   useEffect(() => () => { mats[0].dispose(); mats[2].dispose(); }, [mats]);
   return (
     <group position={[cx, y + h / 2, cz]}>
       <mesh material={mats} raycast={() => null}>
         <boxGeometry args={[w, h, d]} />
       </mesh>
-      <lineSegments geometry={rim} raycast={() => null}>
-        <lineBasicMaterial color={GLASS.rim} transparent opacity={dim ? 0.12 : 0.45} />
-      </lineSegments>
+      {cutaway
+        ? wallRims.map((g, i) => (
+          <lineSegments key={i} geometry={g} raycast={() => null} ref={(el) => { rimRefs.current[i] = el; }}>
+            <lineBasicMaterial color={GLASS.rim} transparent opacity={dim ? 0.12 : 0.45} />
+          </lineSegments>
+        ))
+        : (
+          <lineSegments geometry={rim} raycast={() => null}>
+            <lineBasicMaterial color={GLASS.rim} transparent opacity={dim ? 0.12 : 0.45} />
+          </lineSegments>
+        )}
     </group>
   );
 }
