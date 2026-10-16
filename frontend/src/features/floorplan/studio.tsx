@@ -21,6 +21,8 @@ export const GLASS = {
   /* A room's deck: white frosted glass, its tile joints and grid letters a mid grey
      that still reads on white. The building's trays keep the cooler slab above. */
   tile: '#e6ebf0', tileLine: '#98a4b2', tileInk: '#6f7b89',
+  /* The raised-floor tile itself: plain white, a touch cool. */
+  tileWhite: '#f3f5f7',
   /* The joints between raised-floor tiles: the dark seam a stringer shows. */
   joint: '#2f353c',
   /* Plant is a lighter charcoal than the racks: graphite panels against the racks'

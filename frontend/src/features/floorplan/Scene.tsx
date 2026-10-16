@@ -373,17 +373,12 @@ function aisleTexture(cols: number, rows: number): THREE.CanvasTexture {
   }, [Math.max(1, cols), Math.max(1, rows)]);
 }
 
-/** A perforated vent tile as the photo shows one: the same white HPL as its
+/** A perforated vent tile as the photo shows one: the same white as its
  *  neighbours, with a 4 x 4 field of square perforated panels, each a block
  *  of small dark holes, inside a plain border. Air comes up through the holes. */
 function ventTexture(): THREE.CanvasTexture {
   return canvasTexture(256, (c, s) => {
     c.fillStyle = SURF.floor; c.fillRect(0, 0, s, s);
-    const rnd = seeded(11);
-    for (let k = 0; k < 300; k++) {
-      c.fillStyle = `rgba(120,126,134,${0.03 + rnd() * 0.05})`;
-      c.fillRect(rnd() * s, rnd() * s, 1.5, 1.5);
-    }
     const pad = s * 0.075, cells = 4, cell = (s - 2 * pad) / cells, gap = cell * 0.13, holes = 6;
     const pitch = (cell - 2 * gap) / holes, r = pitch * 0.3;
     c.fillStyle = SURF.ventHole;
@@ -1050,8 +1045,8 @@ function Room({ W, D, whiteSpace, walls: walled, seeUnder, glass }: {
   if (glass) {
     return (
       <group>
-        {/* The deck. A white-space room stands on raised-floor tiles: the speckled
-            white HPL tile, glossy, with the dark seam of the stringers between tiles.
+        {/* The deck. A white-space room stands on raised-floor tiles: plain white
+            tile, glossy, with the dark seam of the stringers between tiles.
             The gloss is a planar reflection of the room, blurred and fading with
             height, so the cabinet bases, their LEDs and the glow at the foot of the
             glass walls lie on the floor the way they do on a polished tile. A slab
@@ -1060,10 +1055,12 @@ function Room({ W, D, whiteSpace, walls: walled, seeUnder, glass }: {
           <planeGeometry args={[W, D]} />
           {whiteSpace
             ? seeUnder
-              ? <meshBasicMaterial key="t-open" map={tiles} transparent depthWrite={false} opacity={0.08} toneMapped={false} />
-              : <MeshReflectorMaterial key="t-gloss" map={tiles} mirror={0.3} mixStrength={0.45} mixBlur={1} blur={[240, 80]} resolution={1024}
+              ? <meshBasicMaterial key="t-open" color={GLASS.tileWhite} transparent depthWrite={false} opacity={0.08} toneMapped={false} />
+              // Exempt from the tone curve: under it a lit white came out grey. The
+              // mirror term keeps the floor a shade under white so the reflections read.
+              : <MeshReflectorMaterial key="t-gloss" color={GLASS.tileWhite} mirror={0.2} mixStrength={0.5} mixBlur={1} blur={[240, 80]} resolution={1024}
                                        roughness={0.45} metalness={0} depthScale={1} minDepthThreshold={0.85} maxDepthThreshold={1.25}
-                                       depthToBlurRatioBias={0.25} />
+                                       depthToBlurRatioBias={0.25} toneMapped={false} />
             : <meshStandardMaterial key={`s${seeUnder}`} color={GLASS.tile} emissive={GLASS.tile} emissiveIntensity={0.35} roughness={0.4}
                                     transparent depthWrite={false} opacity={seeUnder ? 0.08 : 0.8} side={THREE.DoubleSide} toneMapped={false} />}
         </mesh>
