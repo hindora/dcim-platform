@@ -450,7 +450,10 @@ export default function BuildingScene(p: BuildingSceneProps) {
           {geo ? (
             <mesh geometry={geo} rotation-x={Math.PI / 2} position={[0, elev + 0.02, 0]}
                   onPointerOver={(ev) => { ev.stopPropagation(); tip(ev, `${f.name ?? f.kind} · level ${f.level} · drawing, no sensors`); }}
-                  onPointerOut={() => onTip(null)}>
+                  onPointerOut={() => onTip(null)}
+                  // At the site rung a corridor or lobby is the building's own floor: clicking it
+                  // enters the building, not whatever room the ray would reach beneath it.
+                  onClick={site ? (ev) => { ev.stopPropagation(); if (clean(ev)) onEnterBuilding(); } : undefined}>
               {/* In the glass view the corridor and lobby are a faint frosting on the slab, not a dark fill. */}
               <meshStandardMaterial color={glass ? GLASS.slab : tones.raised} roughness={1} transparent opacity={glass ? 0.12 : 0.85}
                                     side={THREE.DoubleSide} depthWrite={false} />
