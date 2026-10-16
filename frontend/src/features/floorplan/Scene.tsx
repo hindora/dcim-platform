@@ -996,7 +996,9 @@ function Cameras({ mode, W, D, resetTick, spin, aisles, X, Z, focus }: {
       frameRoom();
       invalidate();
     }
-  }, [focus?.x, focus?.z, focus?.front, mode]); // eslint-disable-line react-hooks/exhaustive-deps
+  // `camera` is a dep: the rack's own scene mounts a fresh camera, and the
+  // framing has to run again for it or it is left at the default position.
+  }, [focus?.x, focus?.z, focus?.front, mode, camera]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (mode === '3d') {
