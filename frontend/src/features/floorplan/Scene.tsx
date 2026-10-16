@@ -1055,7 +1055,7 @@ function Room({ W, D, whiteSpace, walls: walled, seeUnder, glass }: {
         </mesh>
         {grid && (
           <lineSegments geometry={grid} position={[0, 0.002, 0]} raycast={() => null}>
-            <lineBasicMaterial key={String(seeUnder)} color={GLASS.tileLine} transparent opacity={seeUnder ? 0.15 : 0.7} toneMapped={false} />
+            <lineBasicMaterial key={String(seeUnder)} color={GLASS.tileLine} transparent opacity={seeUnder ? 0.15 : 0.8} toneMapped={false} />
           </lineSegments>
         )}
         {walled && <GlassBox w={W} d={D} cx={0} cz={0} y={0} h={WALL_H} />}
