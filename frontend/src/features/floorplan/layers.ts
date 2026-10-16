@@ -399,7 +399,7 @@ export function paintEquipment(e: FloorEquipment, layer: CoolingLayer, reads: Un
     return { bot: v, mid: v, top: v, fill: 1 };
   };
   if (e.max_severity !== 'CLEAR') return flat(bandColor(ALARM_BANDS, alarmRank(e.max_severity, 0)));
-  // No layer: plain plant, the charcoal the building rung draws it in.
+  // No layer: plain plant in the light equipment grey it ships in, as at the building rung.
   if (layer === 'none') return flat('var(--band-plant)');
   if (!AIR_HANDLERS.has(e.device_type)) {
     return flat(COOLING.has(e.device_type) ? 'var(--band-cooling)' : 'var(--band-power)');
