@@ -497,7 +497,7 @@ export function FloorPlanView() {
   const roomLevel = roomId ? bs?.rooms.find((r) => r.id === roomId)?.level ?? null : null;
   // A floor plan is one floor at a time: the level in the URL, else the ground
   // floor - what an operator expects a floor plan to open on.
-  const levelsSorted = useMemo(() => (bs ? [...bs.levels].sort((a, b) => a.ordinal - b.ordinal) : []), [bs]);
+  const levelsSorted = bs ? [...bs.levels].sort((a, b) => a.ordinal - b.ordinal) : [];   // below an early return: no hook here
   const groundLevel = levelsSorted[0]?.name ?? null;
   const planLevel = mode === 'plan' ? (level ?? groundLevel) : level;
   const roomIsOutdoor = roomId ? (bs?.rooms.find((r) => r.id === roomId)?.level ?? '').toLowerCase() === 'site' : false;
