@@ -35,7 +35,7 @@ import { fmtT, numT, unitLabel } from './units';
  * reticle that reads whichever rack it rests on.
  *
  * In 3D the room stands in the same glass studio as the building above it
- * (studio.tsx): a frosted-glass deck with its tile grid, glass walls fading
+ * (studio.tsx): a white frosted-glass deck with its tile grid, glass walls fading
  * upward with a bright rim, the dark studio behind, charcoal cabinets with
  * their doors on when no layer colours them. Every reading, tint, fitting
  * and the opened floor draw exactly as before, on that deck. PLAN and FPV
@@ -582,7 +582,7 @@ export default function RoomScene(p: SceneProps) {
                       doors={fitDoors} obstacles={standing} fire={fire ?? null}
                       marks={instruments.filter((e) => e.x != null && e.y != null).map((e) => ({ x: e.x as number, y: e.y as number }))} />
       )}
-      <GridRefs W={W} D={D} ink={glass ? GLASS.rim : tones.inkMuted} />
+      <GridRefs W={W} D={D} ink={glass ? GLASS.tileInk : tones.inkMuted} />
       {vis.vents && vents.length > 0 && <Vents vents={vents} X={X} Z={Z} glass={seeUnder} />}
       {/* Cabinets stand on the glass without a shadow pool: the studio has no floor to pool on. */}
       {!glass && mode !== 'plan' && !seeUnder && <ContactShadows boxes={[...rackBoxes, ...unitBoxes.filter((b) => b.y <= b.h / 2 + 0.05)]} />}
@@ -1042,16 +1042,17 @@ function Room({ W, D, whiteSpace, walls: walled, seeUnder, glass }: {
   if (glass) {
     return (
       <group>
-        {/* The deck as the building draws a floor: frosted glass, the studio dark
-            beneath it. Opened, it goes almost clear over the void. */}
+        {/* The deck: white frosted glass, the studio dark beneath it, so the tile
+            reads as tile and the cabinets stand on something. Opened, it goes
+            almost clear over the void. */}
         <mesh rotation-x={-Math.PI / 2} position={[0, -0.003, 0]}>
           <planeGeometry args={[W, D]} />
-          <meshStandardMaterial key={String(seeUnder)} color={GLASS.slab} emissive={GLASS.slab} emissiveIntensity={0.18} roughness={0.4}
-                                transparent depthWrite={false} opacity={seeUnder ? 0.06 : 0.34} side={THREE.DoubleSide} />
+          <meshStandardMaterial key={String(seeUnder)} color={GLASS.tile} emissive={GLASS.tile} emissiveIntensity={0.22} roughness={0.4}
+                                transparent depthWrite={false} opacity={seeUnder ? 0.08 : 0.5} side={THREE.DoubleSide} />
         </mesh>
         {grid && (
           <lineSegments geometry={grid} position={[0, 0.002, 0]} raycast={() => null}>
-            <lineBasicMaterial key={String(seeUnder)} color={GLASS.rim} transparent opacity={seeUnder ? 0.12 : 0.3} />
+            <lineBasicMaterial key={String(seeUnder)} color={GLASS.tileLine} transparent opacity={seeUnder ? 0.15 : 0.55} />
           </lineSegments>
         )}
         {walled && <GlassBox w={W} d={D} cx={0} cz={0} y={0} h={WALL_H} />}

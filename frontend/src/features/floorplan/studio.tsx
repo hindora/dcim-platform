@@ -18,6 +18,9 @@ import type { GBox } from './Scene';
 export const GLASS = {
   slab: '#aeb9c7', rim: '#dfe7f0', wall: '#c8d3df', room: '#b9c4d1', roomEdge: '#cfd8e3',
   rack: '#2a2f36', glowIn: '#1d2532', glowOut: '#090c11',
+  /* A room's deck: white frosted glass, its tile joints and grid letters a mid grey
+     that still reads on white. The building's trays keep the cooler slab above. */
+  tile: '#e6ebf0', tileLine: '#98a4b2', tileInk: '#6f7b89',
   /* Plant is a lighter charcoal than the racks: graphite panels against the racks'
      near-black perforated doors, so one look at a box says which it is, with no colour
      that could read as a measurement. */
