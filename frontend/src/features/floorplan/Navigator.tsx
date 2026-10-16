@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { TwinRoom, TwinSiteScene } from '../../api/client';
 import { alarmColor } from './colors';
 
@@ -47,6 +47,28 @@ function RoomRow({ r, current, onPick }: { r: TwinRoom; current: boolean; onPick
   );
 }
 
+const FOLD_KEY = 'dcim.nav.folded';
+type Group = 'outdoor' | 'building';
+function readFolded(): Record<Group, boolean> {
+  try {
+    const v = JSON.parse(localStorage.getItem(FOLD_KEY) ?? '{}');
+    return { outdoor: Boolean(v.outdoor), building: Boolean(v.building) };
+  } catch { return { outdoor: false, building: false }; }
+}
+
+/** The fold toggle of a group: a chevron button beside its row, separate
+ *  from the row itself so a click on the name still navigates. */
+function Fold({ open, label, onToggle }: { open: boolean; label: string; onToggle: () => void }) {
+  return (
+    <button type="button" className="vw-tree-fold" aria-expanded={open} aria-label={`${open ? 'Collapse' : 'Expand'} ${label}`}
+            onClick={onToggle}>
+      <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden style={{ transform: open ? 'rotate(90deg)' : undefined }}>
+        <path d="M3 1.5 L7 5 L3 8.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    </button>
+  );
+}
+
 export function Navigator({ scene, sites, siteId, rung, level, roomId, onSite, onCompound, onBuilding, onRoom }: NavigatorProps) {
   const levels = useMemo(() => (scene ? [...scene.levels].sort((a, b) => a.ordinal - b.ordinal) : []), [scene]);
   const rooms = scene?.rooms ?? [];
@@ -56,6 +78,20 @@ export function Navigator({ scene, sites, siteId, rung, level, roomId, onSite, o
   const site = sites.find((s) => s.id === siteId);
   const atCompound = rung === 'site';
   const atBuilding = rung === 'building' && level == null;
+  // Outdoor and Building fold away; each remembers it per viewer, and opens
+  // itself when you navigate to somewhere inside it so the lit row is seen.
+  const [folded, setFolded] = useState<Record<Group, boolean>>(readFolded);
+  const toggle = (g: Group) => setFolded((f) => {
+    const next = { ...f, [g]: !f[g] };
+    try { localStorage.setItem(FOLD_KEY, JSON.stringify(next)); } catch { /* private window: fold for this visit only */ }
+    return next;
+  });
+  const inOutdoor = outdoor.some((r) => r.id === roomId);
+  const inBuilding = rung === 'building' || (rung === 'room' && !inOutdoor && rooms.some((r) => r.id === roomId));
+  useEffect(() => {
+    if (inOutdoor && folded.outdoor) setFolded((f) => ({ ...f, outdoor: false }));
+    if (inBuilding && folded.building) setFolded((f) => ({ ...f, building: false }));
+  }, [inOutdoor, inBuilding]); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <div className="vw-panel-body vw-tree">
       {sites.length > 1 && (
@@ -73,20 +109,31 @@ export function Navigator({ scene, sites, siteId, rung, level, roomId, onSite, o
             <span className="name">Compound</span>
             <span className="muted">{site?.code ?? scene?.code ?? ''}</span>
           </button>
-          {/* The building stands inside the compound fence, beside the yards: its child, not its sibling. */}
-          {outdoor.length > 0 && (
-            <ul className="vw-tree-rooms">
-              {outdoor.map((r) => <RoomRow key={r.id} r={r} current={r.id === roomId} onPick={() => onRoom(r.id)} />)}
-            </ul>
-          )}
+          {/* Inside the compound fence: the outdoor yards and the building, each a group that folds. */}
           <ul className="vw-tree-levels">
+            {outdoor.length > 0 && (
+              <li>
+                <div className="vw-tree-group">
+                  <Fold open={!folded.outdoor} label="Outdoor" onToggle={() => toggle('outdoor')} />
+                  <span className="rung is-text"><span className="name">Outdoor</span><span className="muted">{outdoor.length} {outdoor.length === 1 ? 'yard' : 'yards'}</span></span>
+                </div>
+                {!folded.outdoor && (
+                  <ul className="vw-tree-rooms">
+                    {outdoor.map((r) => <RoomRow key={r.id} r={r} current={r.id === roomId} onPick={() => onRoom(r.id)} />)}
+                  </ul>
+                )}
+              </li>
+            )}
             <li>
-              <button type="button" className={`rung${atBuilding ? ' is-current' : ''}`} aria-current={atBuilding ? 'location' : undefined}
-                      onClick={() => onBuilding(null)}>
-                <span className="name">Building</span>
-                <span className="muted">{levels.length ? `${levels.length} levels` : ''}</span>
-              </button>
-              <ul className="vw-tree-levels">
+              <div className="vw-tree-group">
+                <Fold open={!folded.building} label="Building" onToggle={() => toggle('building')} />
+                <button type="button" className={`rung${atBuilding ? ' is-current' : ''}`} aria-current={atBuilding ? 'location' : undefined}
+                        onClick={() => onBuilding(null)}>
+                  <span className="name">Building</span>
+                  <span className="muted">{levels.length ? `${levels.length} levels` : ''}</span>
+                </button>
+              </div>
+              {!folded.building && <ul className="vw-tree-levels">
                 {levels.map((l) => {
                   const here = rung === 'building' && level === l.name;
                   const rs = byLevel(l.name);
@@ -113,7 +160,7 @@ export function Navigator({ scene, sites, siteId, rung, level, roomId, onSite, o
                     </ul>
                   </li>
                 )}
-              </ul>
+              </ul>}
             </li>
           </ul>
         </li>
