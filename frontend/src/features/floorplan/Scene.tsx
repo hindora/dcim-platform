@@ -272,6 +272,45 @@ function GradientBoxes({ boxes, part, opacity, frost = false, dim, meshRef, onCl
   );
 }
 
+/** Boxes in one physical colour, lit and tone-mapped like the building rung's
+ *  blocks (BuildingScene: meshStandardMaterial, roughness 0.6), so plain plant
+ *  reads the same at both rungs. Dimmed boxes fade toward the wall tone. */
+function LitBoxes({ boxes, color, dim, onClick, onMove, onOut }: {
+  boxes: GBox[]; color: string; dim?: boolean[];
+  onClick?: (i: number) => void; onMove?: (i: number, e: ThreeEvent<PointerEvent>) => void; onOut?: () => void;
+}) {
+  const ref = useRef<THREE.InstancedMesh>(null);
+  const { invalidate } = useThree();
+  const clean = useClickGuard();
+  const n = boxes.length;
+  useLayoutEffect(() => {
+    const im = ref.current;
+    if (!im) return;
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), p = new THREE.Vector3(), s = new THREE.Vector3();
+    const up = new THREE.Vector3(0, 1, 0);
+    const base = new THREE.Color(color), wall = new THREE.Color(SURF.wall), c = new THREE.Color();
+    boxes.forEach((b, i) => {
+      q.setFromAxisAngle(up, b.rot);
+      im.setMatrixAt(i, m.compose(p.set(b.x, b.y, b.z), q, s.set(b.w, b.h, b.d)));
+      im.setColorAt(i, dim?.[i] ? c.copy(base).lerp(wall, 0.78) : base);
+    });
+    im.instanceMatrix.needsUpdate = true;
+    if (im.instanceColor) im.instanceColor.needsUpdate = true;
+    im.computeBoundingSphere();
+    invalidate();
+  }, [boxes, color, dim, invalidate]);
+  if (!n) return null;
+  return (
+    <instancedMesh key={n} ref={ref} args={[undefined, undefined, n]} frustumCulled={false}
+                   onClick={onClick && ((e) => { e.stopPropagation(); if (clean(e) && e.instanceId != null) onClick(e.instanceId); })}
+                   onPointerMove={onMove && ((e) => { e.stopPropagation(); if (e.instanceId != null) onMove(e.instanceId, e); })}
+                   onPointerOut={onOut}>
+      <boxGeometry args={[1, 1, 1]} />
+      <meshStandardMaterial roughness={0.6} />
+    </instancedMesh>
+  );
+}
+
 // ----------------------------------------------------------- textures
 
 function canvasTexture(size: number, draw: (c: CanvasRenderingContext2D, s: number) => void,
@@ -549,6 +588,18 @@ export default function RoomScene(p: SceneProps) {
   const rackDim = useMemo(() => (overlay ? rackRole.map((x) => x == null) : undefined), [overlay, rackRole]);
   const unitDim = useMemo(() => (overlay ? unitRole.map((x) => x == null) : undefined), [overlay, unitRole]);
 
+  // Plain plant in the studio is drawn the way the building rung draws it: a lit
+  // surface under the tone curve, so a unit is the same dark box one rung down.
+  // A unit a layer or an alarm colours keeps the exact-colour shader.
+  const litIdx = useMemo(() => (glass && coolingLayer === 'none'
+    ? placedUnits.map((e, i) => (e.max_severity === 'CLEAR' ? i : -1)).filter((i) => i >= 0) : []),
+    [glass, coolingLayer, placedUnits]);
+  const paintIdx = useMemo(() => {
+    const lit = new Set(litIdx);
+    return placedUnits.map((_, i) => i).filter((i) => !lit.has(i));
+  }, [litIdx, placedUnits]);
+  const pick = <T,>(arr: T[] | undefined, idx: number[]) => (arr ? idx.map((i) => arr[i]) : undefined);
+
   return (
     <>
       <Tone filmic={glass} />
@@ -616,10 +667,14 @@ export default function RoomScene(p: SceneProps) {
 
       {vis.plant && (
         <>
-          <GradientBoxes boxes={unitBoxes} part="solid" opacity={1} dim={unitDim}
-                         onClick={fpv ? undefined : (i) => onSelect({ kind: 'equipment', id: placedUnits[i].id })}
-                         onMove={fpv ? undefined : (i, e) => tip(e, unitText(placedUnits[i]))}
+          <GradientBoxes boxes={pick(unitBoxes, paintIdx) ?? NO_BOXES} part="solid" opacity={1} dim={pick(unitDim, paintIdx)}
+                         onClick={fpv ? undefined : (k) => onSelect({ kind: 'equipment', id: placedUnits[paintIdx[k]].id })}
+                         onMove={fpv ? undefined : (k, e) => tip(e, unitText(placedUnits[paintIdx[k]]))}
                          onOut={() => onTip(null)} />
+          <LitBoxes boxes={pick(unitBoxes, litIdx) ?? NO_BOXES} color={GLASS.plant} dim={pick(unitDim, litIdx)}
+                    onClick={fpv ? undefined : (k) => onSelect({ kind: 'equipment', id: placedUnits[litIdx[k]].id })}
+                    onMove={fpv ? undefined : (k, e) => tip(e, unitText(placedUnits[litIdx[k]]))}
+                    onOut={() => onTip(null)} />
           <UnitFrames boxes={unitBoxes} />
           {vis.detail && <UnitDetails boxes={unitBoxes} types={unitTypes} />}
           <Instruments items={instruments} X={X} Z={Z}
