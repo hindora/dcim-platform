@@ -419,6 +419,15 @@ export function paintEquipment(e: FloorEquipment, layer: CoolingLayer, reads: Un
 
 // ---------------------------------------------------------------- viewer state
 
+/** A level's name as a person says it: "Level 2", "Ground floor", "Roof". */
+export function levelWord(name: string | null | undefined): string {
+  const s = (name ?? '').trim();
+  if (!s) return '';
+  if (/^\d+$/.test(s)) return `Level ${s}`;
+  if (/^g$/i.test(s)) return 'Ground floor';
+  return s;
+}
+
 export type ViewMode = '3d' | 'plan' | 'fpv';
 export type Sel = { kind: 'rack' | 'device' | 'equipment'; id: string } | null;
 

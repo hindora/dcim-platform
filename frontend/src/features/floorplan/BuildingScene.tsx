@@ -124,9 +124,10 @@ export default function BuildingScene(p: BuildingSceneProps) {
 
   // The split, eased: t runs 0 (stacked) to 1 (apart) over ~0.45 s, at once
   // under reduced motion. Each level rises by its index times the gap.
-  // The glass studio is the 3D view at both rungs: the compound draws the
-  // building exactly as the building view does, with the yards around it.
-  const glass = mode === '3d';
+  // The glass studio at both rungs and in both views: the compound draws the
+  // building exactly as the building view does, with the yards around it, and
+  // the floor plan is the same picture seen from above, one floor at a time.
+  const glass = true;
   const want = glass && split && !site ? 1 : 0;
   const [t, setT] = useState(want);
   useEffect(() => {
@@ -175,11 +176,8 @@ export default function BuildingScene(p: BuildingSceneProps) {
   const roofElev = levels.find((l) => /roof/i.test(l.name))?.elevation_m ?? top;
 
   // In PLAN there is one level on the table: at the site rung the ground, at
-  // the building rung the focused level, else the one with the most racks.
-  const planLevel = site ? (levels[0]?.name ?? null) : level ?? rooms.reduce<{ name: string | null; n: number }>((best, r) => {
-    const n = rooms.filter((x) => x.level === r.level).reduce((a, x) => a + x.rack_count, 0);
-    return n > best.n ? { name: r.level ?? null, n } : best;
-  }, { name: levels[0]?.name ?? null, n: -1 }).name;
+  // the building rung the level asked for, else the ground floor.
+  const planLevel = site ? (levels[0]?.name ?? null) : level ?? levels[0]?.name ?? null;
   const shown = (lv: string | null | undefined) => (mode === 'plan' ? lv === planLevel : true);
   const dimmed = (lv: string | null | undefined) => (!site && mode === '3d' && level != null && lv !== level);
 
@@ -423,11 +421,11 @@ export default function BuildingScene(p: BuildingSceneProps) {
           {/* Under a figure's layer the slabs thin out: the colour that matters is on the rooms
               beneath them, and a stack of 75 % slabs greys every level but the top one. In the
               building's 3D view a slab is frosted glass. */}
-          {glass
-            ? <meshStandardMaterial color={GLASS.slab} emissive={GLASS.slab} emissiveIntensity={0.18} roughness={0.4}
-                                    transparent depthWrite={false} opacity={dimmed(l.name) ? 0.06 : 0.26} />
-            : <meshStandardMaterial color={tones.slab} roughness={1} transparent
-                                    opacity={dimmed(l.name) ? 0.1 : layer !== 'alarm' ? (site ? 0.22 : 0.3) : site ? 0.55 : 0.75} />}
+          {mode === 'plan'
+            ? <meshStandardMaterial color={GLASS.tile} emissive={GLASS.tile} emissiveIntensity={0.35} roughness={0.4}
+                                    transparent depthWrite={false} opacity={0.8} toneMapped={false} />
+            : <meshStandardMaterial color={GLASS.slab} emissive={GLASS.slab} emissiveIntensity={0.18} roughness={0.4}
+                                    transparent depthWrite={false} opacity={dimmed(l.name) ? 0.06 : 0.26} />}
         </mesh>
       ))}
       {slabShapes.map(({ level: l, geo }) => shown(l.name) && !dimmed(l.name) && (
@@ -436,7 +434,7 @@ export default function BuildingScene(p: BuildingSceneProps) {
           <lineBasicMaterial color={glass ? GLASS.rim : tones.faint} transparent={glass} opacity={glass ? 0.85 : 1} />
         </lineSegments>
       ))}
-      {glass && slabShapes.map(({ level: l, geo }) => (
+      {glass && slabShapes.map(({ level: l, geo }) => shown(l.name) && (
         <GlassTray key={`g${l.name}`} geo={geo} y={l.elevation_m + lift(l.name) + podium}
                    h={/roof/i.test(l.name) ? 1.1 : roomH} dim={dimmed(l.name)} />
       ))}
@@ -473,7 +471,7 @@ export default function BuildingScene(p: BuildingSceneProps) {
 
       {rooms.map((r) => shown(r.level) && (
         <RoomVolume key={r.id} room={r} e={elevOf(r)} h={roomH} X={X} Z={Z} tones={tones} paint={roomColour(r)}
-                    dim={dimmed(r.level)} hot={hover === r.id} quiet={site} glass={glass}
+                    dim={dimmed(r.level)} hot={hover === r.id} quiet={site} glass={glass} plan={mode === 'plan'}
                     onOver={(ev) => { onHover(r.id); tip(ev, roomText(r)); }}
                     onOut={() => { onHover(null); onTip(null); }}
                     onClick={(ev) => { if (clean(ev)) onEnter(r.id); }} />
@@ -532,7 +530,7 @@ function Label({ text, ink, bg, x, y, z, w }: { text: string; ink: string; bg: s
   );
 }
 
-function RoomVolume({ room: r, e, h, X, Z, tones, paint, dim, hot, quiet, flat, glass, onOver, onOut, onClick }: {
+function RoomVolume({ room: r, e, h, X, Z, tones, paint, dim, hot, quiet, flat, glass, plan, onOver, onOut, onClick }: {
   room: Placed; e: number; h: number; X: (x: number) => number; Z: (y: number) => number;
   tones: { ink: string; inkMuted: string; raised: string; accent: string; border: string; sev: (s: string) => string };
   /** The room's colour under the current layer, and whether it is a reading rather than a resting tone.
@@ -547,6 +545,8 @@ function RoomVolume({ room: r, e, h, X, Z, tones, paint, dim, hot, quiet, flat, 
   flat?: boolean;
   /** The building's glass view: a room at rest is a glass partition; its name is in the hover tooltip, not a label. */
   glass?: boolean;
+  /** Seen from above on the floor plan: a room at rest still reads as a footprint. */
+  plan?: boolean;
   onOver: (ev: ThreeEvent<PointerEvent>) => void; onOut: () => void; onClick: (ev: ThreeEvent<MouseEvent>) => void;
 }) {
   const alarmed = paint.lit;
@@ -567,13 +567,13 @@ function RoomVolume({ room: r, e, h, X, Z, tones, paint, dim, hot, quiet, flat, 
         <meshStandardMaterial color={colour} emissive={paint.band ? colour : '#000000'} emissiveIntensity={paint.band ? 0.7 : 0}
                               transparent depthWrite={false}
                               opacity={dim ? 0.03 : paint.band ? (hot ? 0.62 : quiet ? 0.34 : 0.48)
-                                : resting ? (hot ? 0.16 : 0.05)
+                                : resting ? (hot ? 0.2 : plan ? 0.12 : 0.05)
                                 : hot ? 0.38 : quiet ? (alarmed ? 0.22 : 0.08) : alarmed ? 0.3 : flat ? 0.22 : 0.16} roughness={1} />
       </mesh>
       <lineSegments>
         <edgesGeometry args={[geo]} />
-        <lineBasicMaterial color={hot ? tones.accent : alarmed ? colour : resting ? GLASS.roomEdge : tones.inkMuted} transparent
-                           opacity={dim ? 0.15 : quiet ? 0.5 : resting && !hot ? 0.35 : 0.9} />
+        <lineBasicMaterial color={hot ? tones.accent : alarmed ? colour : resting ? (plan ? GLASS.tileInk : GLASS.roomEdge) : tones.inkMuted} transparent
+                           opacity={dim ? 0.15 : quiet ? 0.5 : resting && !hot ? (plan ? 0.7 : 0.35) : 0.9} />
       </lineSegments>
       {/* Only the compound's yards carry a name on the ground; a room in the building is
           named by its hover tooltip and the Rooms list. */}
@@ -894,7 +894,24 @@ function Cameras({ mode, span, top, planElev, W, D, cx, cz, resetTick, spin, run
   const { camera, size, invalidate } = useThree();
   useQuarterTurn(spin, orbit, camera, invalidate);
   const dolly = useDolly(orbit, camera, invalidate);
+  // The plan's level is read through a ref by the framing effect, so switching
+  // floors does not re-frame; the effect below lifts the camera to the new
+  // floor instead and keeps where you were looking and how close.
+  const planElevRef = useRef(planElev);
+  planElevRef.current = planElev;
   useEffect(() => {
+    if (mode !== 'plan') return;
+    const t = map.current?.target;
+    if (!t) return;
+    const dy = planElev - t.y;
+    if (Math.abs(dy) < 1e-6) return;
+    camera.position.y += dy;
+    t.y = planElev;
+    map.current?.update();
+    invalidate();
+  }, [planElev, mode, camera, invalidate]);
+  useEffect(() => {
+    const planElev = planElevRef.current;
     if (mode === '3d') {
       camera.up.set(0, 1, 0);
       orbit.current?.target.set(cx, top / 2, cz);
@@ -920,7 +937,7 @@ function Cameras({ mode, span, top, planElev, W, D, cx, cz, resetTick, spin, run
       map.current?.update();
     }
     invalidate();
-  }, [mode, rung, resetTick, camera, span, top, planElev, W, D, cx, cz, size.width, size.height, invalidate, dolly]);
+  }, [mode, rung, resetTick, camera, span, top, W, D, cx, cz, size.width, size.height, invalidate, dolly]); // eslint-disable-line react-hooks/exhaustive-deps
   if (mode === 'plan') {
     return (
       <>

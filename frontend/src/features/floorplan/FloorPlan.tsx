@@ -12,7 +12,7 @@ import { alarmColor, type Overlay } from './colors';
 import { fireWords, type RoomDoor, type RoomFire } from './Fittings';
 import {
   coolingLegendFor, DEFAULT_VIS, legendFor, rackTiers, ventTiles, TEMP_BANDS,
-  type BuildingLayer, type CoolingLayer, type HeatPlane, type RackLayer, type Sel, type ViewMode, type Visibility,
+  levelWord, type BuildingLayer, type CoolingLayer, type HeatPlane, type RackLayer, type Sel, type ViewMode, type Visibility,
 } from './layers';
 import { Dock, type DockItem, type DockTool } from './Dock';
 import { SearchPanel, typeWord, type SearchHit } from './Search';
@@ -495,6 +495,11 @@ export function FloorPlanView() {
     if (rung === 'room') leaveRoom(); else if (rung === 'building') leaveBuilding();
   };
   const roomLevel = roomId ? bs?.rooms.find((r) => r.id === roomId)?.level ?? null : null;
+  // A floor plan is one floor at a time: the level in the URL, else the ground
+  // floor - what an operator expects a floor plan to open on.
+  const levelsSorted = useMemo(() => (bs ? [...bs.levels].sort((a, b) => a.ordinal - b.ordinal) : []), [bs]);
+  const groundLevel = levelsSorted[0]?.name ?? null;
+  const planLevel = mode === 'plan' ? (level ?? groundLevel) : level;
   const roomIsOutdoor = roomId ? (bs?.rooms.find((r) => r.id === roomId)?.level ?? '').toLowerCase() === 'site' : false;
   // Where you are, read at the top left like a station board: the site, the
   // place (its rung above it in small type) and the moment the picture shows.
@@ -505,7 +510,7 @@ export function FloorPlanView() {
   const siteName = site?.name && site.name !== siteCode ? site.name : (bs?.name && bs.name !== siteCode ? bs.name : '');
   const roomName = roomId ? bs?.rooms.find((r) => r.id === roomId)?.name ?? room?.name ?? 'Room' : '';
   const here = rung === 'site' ? { rung: 'Compound', place: 'Whole site' }
-    : rung === 'building' ? { rung: 'Building', place: level ? `Level ${level}` : 'All levels' }
+    : rung === 'building' ? { rung: 'Building', place: planLevel ? levelWord(planLevel) : 'All levels' }
     : { rung: roomIsOutdoor ? 'Compound · Outdoor' : roomLevel ? `Room · Level ${roomLevel}` : 'Room', place: roomName };
   const moment = t
     ? t.toLocaleString(undefined, { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
@@ -561,6 +566,18 @@ export function FloorPlanView() {
           {webgl && <ViewBar value={bMode} onChange={(m) => setParam('view', m)}
                              options={[{ key: '3d', label: '3D' }, { key: 'plan', label: 'PLAN' }]}
                              canSpin={bMode === '3d'} onSpin={turn} onReset={() => setResetTick((t) => t + 1)} />}
+          {/* The floor plan's level tabs: one floor at a time, picked here, kept in the URL. */}
+          {webgl && bMode === 'plan' && !atSite && levelsSorted.length > 1 && (
+            <div className="vw-pill vw-levels" role="group" aria-label="Level">
+              {levelsSorted.map((l) => (
+                <button key={l.name} type="button" className={l.name === planLevel ? 'is-on' : undefined}
+                        aria-pressed={l.name === planLevel} title={`${levelWord(l.name)} · +${l.elevation_m} m`}
+                        onClick={() => { const next = new URLSearchParams(params); next.set('level', l.name); setParams(next); }}>
+                  {levelWord(l.name)}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
         {navigator}
         <Dock items={['navigate', 'info', 'search']} open={panel === 'filters' || panel === 'layers' ? null : panel} onToggle={togglePanel}
@@ -600,7 +617,7 @@ export function FloorPlanView() {
           <span className="spacer" />
         </div>
         <Help keyName={`${atSite ? 'site' : 'building'}:${bMode}`} lines={webgl
-          ? [bMode === 'plan' ? 'Drag to pan' : 'Drag to orbit', 'Scroll to zoom',
+          ? [bMode === 'plan' ? (atSite ? 'Drag to pan' : 'Pick a level above · Drag to pan') : 'Drag to orbit', 'Scroll to zoom',
              atSite ? 'Click a room, or the building, to enter it' : 'Click a room to enter it',
              'Backspace climbs a rung · Escape clears']
           : [atSite ? 'Choose the building or a room' : 'Click a room to enter it', 'Backspace climbs a rung']} />
@@ -622,7 +639,7 @@ export function FloorPlanView() {
         <div className="viewer-stage">
           {bs && (
             <Suspense fallback={<p className="vw-loading" role="status">Loading the building…</p>}>
-              <BuildingStage scene={bs} rung={atSite ? 'site' : 'building'} level={level} layer={bLayer} mode={bMode} split={split} resetTick={resetTick} spin={spin} themeTick={themeTick}
+              <BuildingStage scene={bs} rung={atSite ? 'site' : 'building'} level={planLevel} layer={bLayer} mode={bMode} split={split} resetTick={resetTick} spin={spin} themeTick={themeTick}
                              hover={hoverRoom} onHover={setHoverRoom} onEnter={enterRoom} onEnterBuilding={enterBuilding} onTip={setTip}
                              label={atSite ? `Site view of ${bs.name}` : `Building view of ${bs.name}`} />
             </Suspense>

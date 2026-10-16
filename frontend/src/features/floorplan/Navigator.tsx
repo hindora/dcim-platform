@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { TwinRoom, TwinSiteScene } from '../../api/client';
 import { alarmColor } from './colors';
+import { levelWord } from './layers';
 
 /**
  * The dock's navigator: the estate as a tree - site, then the compound
@@ -33,7 +34,6 @@ export interface NavigatorProps {
 
 const OUTDOOR = 'site';
 const isOutdoor = (r: TwinRoom) => (r.level ?? '').toLowerCase() === OUTDOOR;
-const levelWord = (name: string) => (/^\d+$/.test(name) ? `Level ${name}` : name);
 
 function RoomRow({ r, current, onPick }: { r: TwinRoom; current: boolean; onPick: () => void }) {
   return (
