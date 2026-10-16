@@ -1820,6 +1820,8 @@ export interface TwinSiteRack {
   id: string; name: string; x: number; y: number; w_m?: number | null; d_m?: number | null; max_severity: string;
   /** Category of its worst open alarm (the building view's badge icon), and how many are open. */
   alarm_category?: AlarmCategory | null; alarm_count?: number;
+  /** Installed equipment; 0 = an empty, blanked cabinet completing a row. */
+  device_count?: number;
 }
 /** Floor-standing plant as the building rung draws it: its true footprint. */
 export interface TwinSiteUnit {

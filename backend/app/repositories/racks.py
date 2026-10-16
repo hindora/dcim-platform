@@ -433,7 +433,8 @@ async def site_blocks(session: AsyncSession, datacenter_id: str
     racks = (await session.execute(text("""
         SELECT r.id::text, r.name, rr.room_id::text AS room_id,
                r.floor_x, r.floor_y, r.width_m, r.depth_m,
-               COALESCE(max(ds.max_severity)::text, 'CLEAR') AS max_severity
+               COALESCE(max(ds.max_severity)::text, 'CLEAR') AS max_severity,
+               count(d.id) AS device_count
           FROM rack r
           JOIN rack_row rr ON rr.id = r.row_id
           JOIN room rm     ON rm.id = rr.room_id

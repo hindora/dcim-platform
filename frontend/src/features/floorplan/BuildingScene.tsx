@@ -277,7 +277,7 @@ export default function BuildingScene(p: BuildingSceneProps) {
   // at building scale: the racks' steel frame, the plant's pads, nozzles,
   // stacks, fins and handles. Same filters as the blocks themselves.
   const hw = useMemo(() => {
-    const racksB: GBox[] = [], unitsB: GBox[] = [], types: string[] = [];
+    const racksB: GBox[] = [], unitsB: GBox[] = [], types: string[] = [], empty: boolean[] = [];
     for (const r of [...rooms, ...yards]) {
       const indoor = !isOutdoor(r.level);
       if (indoor && (!shown(r.level) || dimmed(r.level))) continue;
@@ -285,6 +285,7 @@ export default function BuildingScene(p: BuildingSceneProps) {
       for (const k of r.racks ?? []) {
         racksB.push({ x: X(r.origin_x_m + k.x), y: e + RACK_H / 2, z: Z(r.origin_y_m + k.y),
                       w: k.w_m ?? RACK_W, h: RACK_H, d: k.d_m ?? RACK_D, rot: 0, front: 0, paint: NO_PAINT });
+        empty.push(k.device_count === 0);
       }
       for (const u of r.equipment ?? []) {
         const h = u.h_m ?? 1.5;
@@ -293,7 +294,7 @@ export default function BuildingScene(p: BuildingSceneProps) {
         types.push(u.device_type);
       }
     }
-    return { racks: racksB, units: unitsB, types };
+    return { racks: racksB, units: unitsB, types, empty };
   }, [rooms, yards, level, mode, cx, cz, t]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -484,7 +485,8 @@ export default function BuildingScene(p: BuildingSceneProps) {
       </instancedMesh>
 
       {rooms.map((r) => shown(r.level) && !dimmed(r.level) && unitBoxes(r))}
-      <RackDoors boxes={hw.racks} />
+      <RackDoors boxes={hw.racks.filter((_, i) => !hw.empty[i])} />
+      <RackDoors boxes={hw.racks.filter((_, i) => hw.empty[i])} blank />
       <Hardware racks={hw.racks} units={hw.units} unitTypes={hw.types} open={false} />
       <AlarmPins pins={pins} />
 

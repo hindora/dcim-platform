@@ -538,6 +538,10 @@ export default function RoomScene(p: SceneProps) {
     return m;
   }, [indices]);
   const rackText = (r: FloorRack) => {
+    if (r.device_count === 0) {
+      return [r.name, 'empty cabinet, fully blanked', r.free_u != null ? `${r.free_u} U free` : null,
+              'no PDUs fitted'].filter(Boolean).join(' · ');
+    }
     const [b, m, t] = rackTiers(byRack.get(r.id) ?? [], r.u_height ?? 42);
     const f = (v: number | null) => numT(v);
     const ix = hotByRack.get(r.id);
@@ -638,7 +642,7 @@ export default function RoomScene(p: SceneProps) {
       {/* Cabinets stand on the glass without a shadow pool: the studio has no floor to pool on. */}
       {!glass && mode !== 'plan' && !seeUnder && <ContactShadows boxes={[...rackBoxes, ...unitBoxes.filter((b) => b.y <= b.h / 2 + 0.05)]} />}
       {vis.aisles && plan.aisles.map((a) => (
-        <AisleBand key={`${a.label}-${a.y_start}`} a={a} W={W} Z={Z} X={X} racks={plan.racks}
+        <AisleBand key={`${a.label}-${a.y_start}`} a={a} W={W} Z={Z} X={X} racks={plan.racks} units={placedUnits}
                    containment={vis.containment} tint={!seeUnder} />
       ))}
 
@@ -654,7 +658,12 @@ export default function RoomScene(p: SceneProps) {
       <RackFrames racks={plan.racks} X={X} Z={Z} />
       {/* A plain cabinet in the studio wears its doors, as it does at the building rung;
           a layer's colour, a look inside, or the detail switch's own doors take them off. */}
-      {glass && rackLayer === 'none' && !vis.faces && !vis.detail && <RackDoors boxes={rackBoxes} />}
+      {glass && rackLayer === 'none' && !vis.faces && !vis.detail && (
+        <>
+          <RackDoors boxes={rackBoxes.filter((_, i) => plan.racks[i].device_count > 0)} />
+          <RackDoors boxes={rackBoxes.filter((_, i) => plan.racks[i].device_count === 0)} blank />
+        </>
+      )}
       {vis.detail && <RackDetails boxes={rackBoxes} open={vis.faces} />}
       {/* Frame, plinth, handles, nozzles, stacks - all outside the coloured body. */}
       <Hardware racks={rackBoxes} units={vis.plant ? unitBoxes : NO_BOXES} unitTypes={unitTypes} open={vis.faces} />
@@ -1208,9 +1217,13 @@ function Vents({ vents, X, Z, glass }: {
   );
 }
 
-function AisleBand({ a, W, X, Z, racks, containment, tint: tinted = true }: {
+function AisleBand({ a, W, X, Z, racks, units = [], containment, tint: tinted = true }: {
   a: FloorAisle; W: number; X: (x: number) => number; Z: (y: number) => number;
-  racks: FloorRack[]; containment: boolean;
+  racks: FloorRack[];
+  /** Floor plant: a unit standing in a flanking row's line (an in-row RPP) is
+   *  part of the row the containment closes against. */
+  units?: FloorEquipment[];
+  containment: boolean;
   /** The floor tint; off while the raised floor is opened. */
   tint?: boolean;
 }) {
@@ -1221,8 +1234,13 @@ function AisleBand({ a, W, X, Z, racks, containment, tint: tinted = true }: {
   const tiles = useMemo(() => (cold ? aisleTexture(Math.round(W / TILE), Math.round(depth / TILE)) : null), [cold, W, depth]);
   useEffect(() => () => tiles?.dispose(), [tiles]);
   const flank = racks.filter((r) => Math.abs(r.y - (a.y_start + a.y_end) / 2) <= depth / 2 + (r.d_m ?? DEFAULT_D));
-  const x0 = flank.length ? Math.min(...flank.map((r) => r.x - (r.w_m ?? DEFAULT_W) / 2)) : 0;
-  const x1 = flank.length ? Math.max(...flank.map((r) => r.x + (r.w_m ?? DEFAULT_W) / 2)) : 0;
+  // In-row plant on a flanking row line: same y as one of those racks, within half a cabinet.
+  const inRow = units.filter((e) => e.x != null && e.y != null && e.w_m != null
+    && flank.some((r) => Math.abs((e.y as number) - r.y) < (r.d_m ?? DEFAULT_D) / 2));
+  const spans = [...flank.map((r) => [r.x - (r.w_m ?? DEFAULT_W) / 2, r.x + (r.w_m ?? DEFAULT_W) / 2]),
+                 ...inRow.map((e) => [(e.x as number) - (e.w_m as number) / 2, (e.x as number) + (e.w_m as number) / 2])];
+  const x0 = spans.length ? Math.min(...spans.map((s) => s[0])) : 0;
+  const x1 = spans.length ? Math.max(...spans.map((s) => s[1])) : 0;
   const h = flank.length ? Math.max(...flank.map(rackH)) : 2;
   if (a.kind === 'unknown') return null;
   return (
@@ -1240,13 +1258,48 @@ function AisleBand({ a, W, X, Z, racks, containment, tint: tinted = true }: {
             <meshBasicMaterial color={tint} transparent opacity={0.16} depthWrite={false} toneMapped={false} />
           </mesh>
           {[x0, x1].map((xe) => (
-            <mesh key={xe} position={[X(xe), h / 2, zc]}>
-              <boxGeometry args={[0.02, h, depth]} />
-              <meshBasicMaterial color={tint} transparent opacity={0.16} depthWrite={false} toneMapped={false} />
-            </mesh>
+            <AisleDoors key={xe} x={X(xe)} z={zc} w={depth} h={h} tint={tint} />
           ))}
         </group>
       )}
+    </group>
+  );
+}
+
+/** A contained aisle's end doors: a steel frame across the aisle mouth and two
+ *  sliding glass leaves meeting in the middle, each with a pull, tinted the
+ *  aisle's colour. Real ones are aluminium-framed polycarbonate or tempered
+ *  glass on a top track; they close the aisle at both ends so the cold air
+ *  has nowhere to go but through the racks. Nothing here answers the pointer. */
+function AisleDoors({ x, z, w, h, tint }: { x: number; z: number; w: number; h: number; tint: string }) {
+  const post = 0.04, head = 0.06, leaf = (w - 2 * post) / 2;
+  const frame = '#3a4048', pull = '#c9ced4';
+  const leafGeo = useMemo(() => new THREE.BoxGeometry(0.012, h - head - 0.02, leaf - 0.01), [h, leaf]);
+  useEffect(() => () => leafGeo.dispose(), [leafGeo]);
+  return (
+    <group position={[x, 0, z]} raycast={() => null}>
+      {[-1, 1].map((s) => (
+        <mesh key={`p${s}`} position={[0, h / 2, s * (w / 2 - post / 2)]}>
+          <boxGeometry args={[0.05, h, post]} /><meshStandardMaterial color={frame} roughness={0.6} />
+        </mesh>
+      ))}
+      <mesh position={[0, h - head / 2, 0]}>
+        <boxGeometry args={[0.07, head, w]} /><meshStandardMaterial color={frame} roughness={0.6} />
+      </mesh>
+      {[-1, 1].map((s) => (
+        <group key={`l${s}`} position={[0, (h - head) / 2, s * leaf / 2]}>
+          <mesh geometry={leafGeo}>
+            <meshBasicMaterial color={tint} transparent opacity={0.22} depthWrite={false} toneMapped={false} />
+          </mesh>
+          <lineSegments>
+            <edgesGeometry args={[leafGeo]} />
+            <lineBasicMaterial color={frame} />
+          </lineSegments>
+          <mesh position={[0.02, 0, -s * (leaf / 2 - 0.08)]}>
+            <boxGeometry args={[0.02, 0.35, 0.02]} /><meshStandardMaterial color={pull} roughness={0.35} />
+          </mesh>
+        </group>
+      ))}
     </group>
   );
 }

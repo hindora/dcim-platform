@@ -71,6 +71,8 @@ class ImportReport:
     #: Racks an earlier import invented in plant rooms (a wall probe or a pipe
     #: sensor filed under rack_row/rack_num), now empty and removed.
     racks_pruned: int = 0
+    #: Installed-but-empty cabinets the floor plan stands to complete a row.
+    empty_racks: int = 0
     #: Fabric and compound zones written from floorplan 1.2 (docs/27 §8b/§8c).
     spaces: int = 0
     #: Import-sourced rooms the source no longer has and nothing stands in -
@@ -165,6 +167,7 @@ class TopologyImporter:
         for dev in devices:
             await self._ensure_placement(dev)
         await self._seed_floorplan_rooms()
+        self.report.empty_racks = await self._seed_empty_racks()
         for node in nodes:
             dev = node.get("device")
             if dev:
@@ -243,6 +246,34 @@ class TopologyImporter:
             if dc in self._dc and (dc, room) not in self._room:
                 await self._ensure_placement({"datacenter": dc, "room": room,
                                               "device_type": "rpp", "mount": "floor"})
+
+    async def _seed_empty_racks(self) -> int:
+        """Stand the empty cabinets the floor plan lists for each room.
+
+        The source completes every white-space row that holds gear with
+        installed, fully blanked, empty cabinets - the hall built out a row at a
+        time, and the containment kept whole. They are inventory and free space:
+        a rack row and a rack with no device and no rating. Each goes through the
+        same placement path a device's rack does, so it lands on the same grid,
+        row and name it would have if a server stood in it, and a server that
+        later arrives in that slot simply takes it over. A hand-placed rack keeps
+        its own geometry. Only for datacentres this export has established."""
+        n = 0
+        for (dc, room), rec in sorted(self._floorplan.items()):
+            if dc not in self._dc:
+                continue
+            for c in rec.get("empty_racks") or []:
+                if c.get("rack_row") is None or c.get("rack_num") is None:
+                    continue
+                before = self.report.racks
+                await self._ensure_placement({
+                    "datacenter": dc, "room": room, "device_type": "server", "mount": "rack",
+                    "rack_row": c["rack_row"], "rack_num": c["rack_num"],
+                    "rack_facing": c.get("rack_facing"), "cold_aisle": c.get("cold_aisle"),
+                    "hot_aisle": c.get("hot_aisle"),
+                    "floor_x": c.get("floor_x"), "floor_y": c.get("floor_y")})
+                n += self.report.racks - before
+        return n
 
     async def _seed_spaces(self) -> int:
         """Write the fabric and the compound zones (floorplan 1.2), replacing
@@ -721,6 +752,7 @@ class TopologyImporter:
         for dev in devices:
             await self._ensure_placement(dev)
         await self._seed_floorplan_rooms()
+        self.report.empty_racks = await self._seed_empty_racks()
         for dev in devices:
             if not dev.get("id"):
                 continue

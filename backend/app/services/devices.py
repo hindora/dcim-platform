@@ -603,6 +603,7 @@ async def site_scene(session: AsyncSession, datacenter_id: str) -> TwinSiteScene
             id=r["id"], name=r["name"], x=float(r["floor_x"]), y=float(r["floor_y"]),
             w_m=_f(r.get("width_m")), d_m=_f(r.get("depth_m")),
             max_severity=r.get("max_severity") or "CLEAR",
+            device_count=int(r.get("device_count") or 0),
             **marks.get(("rack", r["id"]), {})))
     units_by_room: dict[str, list[TwinSiteUnit]] = {}
     for u in units:

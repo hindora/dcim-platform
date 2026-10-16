@@ -186,3 +186,28 @@ def test_a_sites_position_is_set_by_an_operator_not_any_login():
     from app.api.v1 import infrastructure as infra
     src = inspect.getsource(infra.set_site_location)
     assert 'Depends(require_role("operator"))' in src
+
+
+# --- empty cabinets that complete a row -------------------------------------
+
+def test_empty_cabinets_are_seeded_by_both_import_paths():
+    """The floor plan's empty cabinets stand in the full run and in the
+    geometry-only refresh, after the rooms exist and before any device is
+    placed, so a server already in that slot reuses the same rack."""
+    for start_at, end_at in (("async def run(", "def _read_floorplan("),
+                             ("async def run_geometry(", "async def _upsert_device(")):
+        start = SRC.index(start_at)
+        body = SRC[start:SRC.index(end_at, start)]
+        assert body.index("_seed_floorplan_rooms()") < body.index("_seed_empty_racks()"), start_at
+
+
+def test_an_empty_cabinet_goes_through_the_racks_own_placement_path():
+    """Same grid, row and name a device's rack would get: a rack-mounted
+    stand-in through _ensure_placement, never a separate INSERT that could
+    drift from it. No device, no endpoint, no rating is written."""
+    start = SRC.index("async def _seed_empty_racks(")
+    body = SRC[start:SRC.index("async def _seed_spaces(", start)]
+    assert "_ensure_placement(" in body and '"mount": "rack"' in body
+    for forbidden in ("INSERT INTO", "device_endpoint", "rated_power_kw"):
+        assert forbidden not in body, forbidden
+    assert "if dc not in self._dc" in body           # the floor plan never invents a site

@@ -460,13 +460,16 @@ export const HEAT_INDEX: Record<Exclude<HeatPlane, 'off'>, number> = { bottom: 0
 
 /** Perforated tiles: one in front of each rack that faces a cold aisle. The
  *  import carries no vent positions, so this is the layout a contained cold
- *  aisle is normally built with, and the viewer says it is assumed. */
+ *  aisle is normally built with, and the viewer says it is assumed. An empty,
+ *  blanked cabinet gets a solid tile: a perforated one there would only pour
+ *  cold air past a cabinet with nothing in it to cool. */
 export function ventTiles(racks: FloorRack[], aisles: { y_start: number; y_end: number; kind: string }[],
                           whiteSpace: boolean): { x: number; y: number }[] {
   if (!whiteSpace) return [];
   const out: { x: number; y: number }[] = [];
   for (const r of racks) {
     if (r.facing !== 'N' && r.facing !== 'S') continue;
+    if (r.device_count === 0) continue;
     const d = r.d_m ?? 1.2;
     const y = r.facing === 'N' ? r.y - d / 2 - TILE / 2 : r.y + d / 2 + TILE / 2;
     const cold = aisles.some((a) => a.kind === 'cold' && y >= a.y_start - 1e-6 && y <= a.y_end + 1e-6);

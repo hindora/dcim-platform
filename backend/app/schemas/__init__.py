@@ -518,6 +518,8 @@ class TwinSiteRack(BaseModel):
     # and how many are open. None / 0 when clear.
     alarm_category: str | None = None
     alarm_count: int = 0
+    # Installed equipment in it; 0 = an empty, blanked cabinet completing a row.
+    device_count: int = 0
 
 
 class TwinSiteUnit(BaseModel):

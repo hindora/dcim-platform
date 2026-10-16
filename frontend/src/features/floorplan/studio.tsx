@@ -150,30 +150,40 @@ export function GlassTray({ geo, y, h, dim }: { geo: THREE.ExtrudeGeometry; y: n
 /** A rack door seen from the aisle: dark perforated steel in a frame, the
  *  handle, and a few lit status LEDs on the gear behind it. Front and back
  *  both get one - the building does not know which way a rack faces, and a
- *  cabinet has a door at each end anyway. */
-function doorTexture(): THREE.CanvasTexture {
+ *  cabinet has a door at each end anyway. `blank`: the same door on an empty
+ *  cabinet - no lights behind it, only the seams of the blanking panels that
+ *  fill it top to bottom so the containment stays sealed. */
+function doorTexture(blank = false): THREE.CanvasTexture {
   const W = 64, H = 192;
   const cv = document.createElement('canvas');
   cv.width = W; cv.height = H;
   const c = cv.getContext('2d') as CanvasRenderingContext2D;
-  c.fillStyle = '#1f242b'; c.fillRect(0, 0, W, H);
-  c.fillStyle = '#2b323b';
+  c.fillStyle = blank ? '#16191e' : '#1f242b'; c.fillRect(0, 0, W, H);
+  if (blank) {
+    // Blanking panels behind the mesh: a faint seam every few U.
+    c.fillStyle = '#23282f';
+    for (let y = 14; y < H - 8; y += 12) c.fillRect(6, y, W - 12, 1);
+  }
+  c.fillStyle = blank ? '#262b32' : '#2b323b';
   for (let y = 10; y < H - 8; y += 4) for (let x = 7 + ((y / 4) % 2) * 2; x < W - 6; x += 4) c.fillRect(x, y, 2, 2);
   c.strokeStyle = '#3c4550'; c.lineWidth = 3; c.strokeRect(1.5, 1.5, W - 3, H - 3);
   c.fillStyle = '#8a939d'; c.fillRect(W - 9, H * 0.45, 3, 18);
-  const leds = [[14, 30], [22, 30], [14, 62], [30, 94], [14, 126], [22, 158]];
-  for (const [x, y] of leds) { c.fillStyle = '#3a8dde'; c.fillRect(x, y, 3, 2); }
-  c.fillStyle = '#3ddc84'; c.fillRect(38, 30, 2, 2); c.fillRect(38, 94, 2, 2);
+  if (!blank) {
+    const leds = [[14, 30], [22, 30], [14, 62], [30, 94], [14, 126], [22, 158]];
+    for (const [x, y] of leds) { c.fillStyle = '#3a8dde'; c.fillRect(x, y, 3, 2); }
+    c.fillStyle = '#3ddc84'; c.fillRect(38, 30, 2, 2); c.fillRect(38, 94, 2, 2);
+  }
   const t = new THREE.CanvasTexture(cv);
   t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = 4;
   return t;
 }
 
-/** The door skins on a set of plain cabinets, one instanced plane for all. */
-export function RackDoors({ boxes }: { boxes: GBox[] }) {
+/** The door skins on a set of plain cabinets, one instanced plane for all.
+ *  `blank`: empty cabinets - the door with no lit gear behind it. */
+export function RackDoors({ boxes, blank = false }: { boxes: GBox[]; blank?: boolean }) {
   const ref = useRef<THREE.InstancedMesh>(null);
-  const tex = useMemo(doorTexture, []);
+  const tex = useMemo(() => doorTexture(blank), [blank]);
   useEffect(() => () => tex.dispose(), [tex]);
   const n = boxes.length * 2;
   useEffect(() => {
