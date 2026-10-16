@@ -1047,12 +1047,15 @@ function Room({ W, D, whiteSpace, walls: walled, seeUnder, glass }: {
             almost clear over the void. */}
         <mesh rotation-x={-Math.PI / 2} position={[0, -0.003, 0]}>
           <planeGeometry args={[W, D]} />
-          <meshStandardMaterial key={String(seeUnder)} color={GLASS.tile} emissive={GLASS.tile} emissiveIntensity={0.22} roughness={0.4}
-                                transparent depthWrite={false} opacity={seeUnder ? 0.08 : 0.5} side={THREE.DoubleSide} />
+          {/* Exempt from the tone curve and lit past white, so the tile is white and not
+              the grey a filmic curve makes of it; the studio still shows through at the
+              edges and wholly once the floor is opened. */}
+          <meshStandardMaterial key={String(seeUnder)} color={GLASS.tile} emissive={GLASS.tile} emissiveIntensity={0.35} roughness={0.4}
+                                transparent depthWrite={false} opacity={seeUnder ? 0.08 : 0.8} side={THREE.DoubleSide} toneMapped={false} />
         </mesh>
         {grid && (
           <lineSegments geometry={grid} position={[0, 0.002, 0]} raycast={() => null}>
-            <lineBasicMaterial key={String(seeUnder)} color={GLASS.tileLine} transparent opacity={seeUnder ? 0.15 : 0.55} />
+            <lineBasicMaterial key={String(seeUnder)} color={GLASS.tileLine} transparent opacity={seeUnder ? 0.15 : 0.7} toneMapped={false} />
           </lineSegments>
         )}
         {walled && <GlassBox w={W} d={D} cx={0} cz={0} y={0} h={WALL_H} />}
