@@ -1,6 +1,6 @@
 import type { Spin } from './ViewBar';
 import {
-  Html, MapControls, OrbitControls, OrthographicCamera, PerspectiveCamera, PointerLockControls,
+  Html, MapControls, MeshReflectorMaterial, OrbitControls, OrthographicCamera, PerspectiveCamera, PointerLockControls,
 } from '@react-three/drei';
 import { useFrame, useThree, type ThreeEvent } from '@react-three/fiber';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, type ElementRef } from 'react';
@@ -59,7 +59,7 @@ const EYE = 1.6;
 // the theme. These are a rendering of the room, not UI colour.
 const SURF = {
   floor: '#f7f8f9', tileLine: '#aab0b6', slab: '#dfe2e6', slabLine: '#cdd1d6',
-  ventBg: '#5b6067', ventDot: '#c3c8cd', ventFrame: '#d7dbdf', wall: '#d5d8dc', wallSide: '#c7cacf', wallEdge: '#3b3e43',
+  ventHole: '#3a4048', wall: '#d5d8dc', wallSide: '#c7cacf', wallEdge: '#3b3e43',
   rackEdge: '#23272e', front: '#5b6470', instrument: '#4d8fa6',
   /* the room stands on a concrete apron in a slate studio, darkening toward
      the bottom; the light theme's is lighter, but always darker than the floor */
@@ -373,20 +373,29 @@ function aisleTexture(cols: number, rows: number): THREE.CanvasTexture {
   }, [Math.max(1, cols), Math.max(1, rows)]);
 }
 
-/** A perforated airflow tile: dark steel in a light frame, the holes a
- *  regular field of light dots - read from across the room as a vent. */
+/** A perforated vent tile as the photo shows one: the same white HPL as its
+ *  neighbours, with a 4 x 4 field of square perforated panels, each a block
+ *  of small dark holes, inside a plain border. Air comes up through the holes. */
 function ventTexture(): THREE.CanvasTexture {
-  return canvasTexture(128, (c, s) => {
-    c.fillStyle = SURF.ventFrame; c.fillRect(0, 0, s, s);
-    c.fillStyle = SURF.ventBg; c.fillRect(5, 5, s - 10, s - 10);
-    c.fillStyle = SURF.ventDot;
-    for (let y = 13; y < s - 8; y += 9) for (let x = 13; x < s - 8; x += 9) {
-      c.beginPath(); c.arc(x, y, 2.1, 0, Math.PI * 2); c.fill();
+  return canvasTexture(256, (c, s) => {
+    c.fillStyle = SURF.floor; c.fillRect(0, 0, s, s);
+    const rnd = seeded(11);
+    for (let k = 0; k < 300; k++) {
+      c.fillStyle = `rgba(120,126,134,${0.03 + rnd() * 0.05})`;
+      c.fillRect(rnd() * s, rnd() * s, 1.5, 1.5);
+    }
+    const pad = s * 0.075, cells = 4, cell = (s - 2 * pad) / cells, gap = cell * 0.13, holes = 6;
+    const pitch = (cell - 2 * gap) / holes, r = pitch * 0.3;
+    c.fillStyle = SURF.ventHole;
+    for (let i = 0; i < cells; i++) for (let j = 0; j < cells; j++) {
+      const x0 = pad + i * cell + gap, y0 = pad + j * cell + gap;
+      for (let a = 0; a < holes; a++) for (let b = 0; b < holes; b++) {
+        c.beginPath(); c.arc(x0 + (a + 0.5) * pitch, y0 + (b + 0.5) * pitch, r, 0, Math.PI * 2); c.fill();
+      }
     }
   });
 }
 
-/** A strip of grid-reference labels, one per tile, as a single texture. */
 function stripTexture(labels: string[], ink: string): THREE.CanvasTexture {
   const cell = 64;
   const cv = document.createElement('canvas');
@@ -584,8 +593,7 @@ export default function RoomScene(p: SceneProps) {
       )}
       <GridRefs W={W} D={D} ink={glass ? GLASS.tileInk : tones.inkMuted} />
       {vis.vents && vents.length > 0 && <Vents vents={vents} X={X} Z={Z} glass={seeUnder} />}
-      {/* Cabinets stand on the glass without a shadow pool: the studio has no floor to pool on. */}
-      {!glass && mode !== 'plan' && !seeUnder && <ContactShadows boxes={[...rackBoxes, ...unitBoxes.filter((b) => b.y <= b.h / 2 + 0.05)]} />}
+      {mode !== 'plan' && !seeUnder && <ContactShadows boxes={[...rackBoxes, ...unitBoxes.filter((b) => b.y <= b.h / 2 + 0.05)]} />}
       {vis.aisles && plan.aisles.map((a) => (
         <AisleBand key={`${a.label}-${a.y_start}`} a={a} W={W} Z={Z} X={X} racks={plan.racks}
                    containment={vis.containment} tint={!seeUnder} />
@@ -1042,20 +1050,26 @@ function Room({ W, D, whiteSpace, walls: walled, seeUnder, glass }: {
   if (glass) {
     return (
       <group>
-        {/* The deck: white frosted glass, the studio dark beneath it, so the tile
-            reads as tile and the cabinets stand on something. Opened, it goes
-            almost clear over the void. */}
+        {/* The deck. A white-space room stands on raised-floor tiles: the speckled
+            white HPL tile, glossy, with the dark seam of the stringers between tiles.
+            The gloss is a planar reflection of the room, blurred and fading with
+            height, so the cabinet bases, their LEDs and the glow at the foot of the
+            glass walls lie on the floor the way they do on a polished tile. A slab
+            room keeps a frosted deck. Opened, either goes almost clear over the void. */}
         <mesh rotation-x={-Math.PI / 2} position={[0, -0.003, 0]}>
           <planeGeometry args={[W, D]} />
-          {/* Exempt from the tone curve and lit past white, so the tile is white and not
-              the grey a filmic curve makes of it; the studio still shows through at the
-              edges and wholly once the floor is opened. */}
-          <meshStandardMaterial key={String(seeUnder)} color={GLASS.tile} emissive={GLASS.tile} emissiveIntensity={0.35} roughness={0.4}
-                                transparent depthWrite={false} opacity={seeUnder ? 0.08 : 0.8} side={THREE.DoubleSide} toneMapped={false} />
+          {whiteSpace
+            ? seeUnder
+              ? <meshBasicMaterial key="t-open" map={tiles} transparent depthWrite={false} opacity={0.08} toneMapped={false} />
+              : <MeshReflectorMaterial key="t-gloss" map={tiles} mirror={0.3} mixStrength={0.45} mixBlur={1} blur={[240, 80]} resolution={1024}
+                                       roughness={0.45} metalness={0} depthScale={1} minDepthThreshold={0.85} maxDepthThreshold={1.25}
+                                       depthToBlurRatioBias={0.25} />
+            : <meshStandardMaterial key={`s${seeUnder}`} color={GLASS.tile} emissive={GLASS.tile} emissiveIntensity={0.35} roughness={0.4}
+                                    transparent depthWrite={false} opacity={seeUnder ? 0.08 : 0.8} side={THREE.DoubleSide} toneMapped={false} />}
         </mesh>
         {grid && (
           <lineSegments geometry={grid} position={[0, 0.002, 0]} raycast={() => null}>
-            <lineBasicMaterial key={String(seeUnder)} color={GLASS.tileLine} transparent opacity={seeUnder ? 0.15 : 0.7} toneMapped={false} />
+            <lineBasicMaterial key={String(seeUnder)} color={GLASS.joint} transparent opacity={seeUnder ? 0.15 : 0.85} toneMapped={false} />
           </lineSegments>
         )}
         {walled && <GlassBox w={W} d={D} cx={0} cz={0} y={0} h={WALL_H} />}
