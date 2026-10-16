@@ -169,8 +169,9 @@ export function FloorPlanView() {
 
   const rawView = params.get('view');
   const mode: ViewMode = rawView === 'plan' || rawView === '2d' ? 'plan' : rawView === 'fpv' ? 'fpv' : '3d';
-  const rackLayer = (RACK_KEYS.has(params.get('layer') ?? '') ? params.get('layer') : 'temperature') as RackLayer;
-  const coolingLayer = (COOLING_KEYS.has(params.get('cooling') ?? '') ? params.get('cooling') : 'air') as CoolingLayer;
+  // A room opens plain - cabinets and plant in their own steel - and a layer is asked for.
+  const rackLayer = (RACK_KEYS.has(params.get('layer') ?? '') ? params.get('layer') : 'none') as RackLayer;
+  const coolingLayer = (COOLING_KEYS.has(params.get('cooling') ?? '') ? params.get('cooling') : 'none') as CoolingLayer;
   const heat = (HEAT_KEYS.has(params.get('heat') ?? '') ? params.get('heat') : 'off') as HeatPlane;
   const setParam = (k: string, v: string) => { params.set(k, v); setParams(params, { replace: true }); };
 

@@ -19,6 +19,7 @@ import { OpenEnclosure, RackDetails, RoomFittings, UnitDetails, type RoomDoor, t
 import { Hardware } from './Hardware';
 import { DeckEdge, Plenum, PLENUM_H } from './Underfloor';
 import { DeviceFaces } from './DeviceFaces';
+import { GLASS, GlassBox, RackDoors, Studio, Tone } from './studio';
 import type { PathOverlay, Role } from './paths';
 import { fmtT, numT, unitLabel } from './units';
 
@@ -32,6 +33,13 @@ import { fmtT, numT, unitLabel } from './units';
  * Three ways of looking at it on one scene: orbit (3D), a true top-down
  * orthographic PLAN, and a first-person walk (FPV) down the aisle with a
  * reticle that reads whichever rack it rests on.
+ *
+ * In 3D the room stands in the same glass studio as the building above it
+ * (studio.tsx): a frosted-glass deck with its tile grid, glass walls fading
+ * upward with a bright rim, the dark studio behind, charcoal cabinets with
+ * their doors on when no layer colours them. Every reading, tint, fitting
+ * and the opened floor draw exactly as before, on that deck. PLAN and FPV
+ * keep the white room: a plan is a drawing, and a walk is the real aisle.
  *
  * Cost: racks and units are instanced meshes with a per-instance gradient in
  * the shader (three colour attributes), so a hall is a handful of draw calls;
@@ -513,6 +521,8 @@ export default function RoomScene(p: SceneProps) {
 
   const rackMesh = useRef<THREE.InstancedMesh | null>(null);
   const fpv = mode === 'fpv';
+  // The glass studio is the orbit view; the plan and the walk keep the white room.
+  const glass = mode === '3d';
   const anyShell = rackBoxes.some((b) => b.paint.fill < 1);
   // Capacity layers draw each rack as a gauge: the colour rises to the value
   // and the headroom above it is frosted. Devices sit at their own U, which
@@ -541,16 +551,27 @@ export default function RoomScene(p: SceneProps) {
 
   return (
     <>
-      <Backdrop themeTick={themeTick} />
-      <hemisphereLight args={['#ffffff', '#b9bec6', 0.9]} />
-      <directionalLight position={[W * 0.6, 14, D * 0.4]} intensity={0.55} />
+      <Tone filmic={glass} />
+      {glass ? <Studio /> : <Backdrop themeTick={themeTick} />}
+      {glass ? (
+        <>
+          <hemisphereLight args={['#eef2f6', '#7a8089', 0.85]} />
+          <directionalLight position={[-W * 0.5, 20, -D * 0.35]} intensity={0.75} />
+          <directionalLight position={[W * 0.6, 8, D * 0.5]} intensity={0.25} />
+        </>
+      ) : (
+        <>
+          <hemisphereLight args={['#ffffff', '#b9bec6', 0.9]} />
+          <directionalLight position={[W * 0.6, 14, D * 0.4]} intensity={0.55} />
+        </>
+      )}
 
       <Cameras mode={mode} W={W} D={D} resetTick={resetTick} spin={spin} aisles={plan.aisles} X={X} Z={Z} />
       {fpv && <FpvRig W={W} D={D} rackMesh={rackMesh} racks={plan.racks} onFocus={onFocus} />}
 
       {/* A white-space room stands on a raised floor: its deck is always drawn;
           "See under the raised floor" turns the tiles to glass over the void. */}
-      <Room W={W} D={D} whiteSpace={whiteSpace} walls={enclosure === 'walls'} seeUnder={seeUnder} />
+      <Room W={W} D={D} whiteSpace={whiteSpace} walls={enclosure === 'walls'} seeUnder={seeUnder} glass={glass} />
       {whiteSpace && !seeUnder && <DeckEdge W={W} D={D} />}
       {seeUnder && (
         <Plenum W={W} D={D} X={X} Z={Z} racks={plan.racks} aisles={plan.aisles} units={plan.equipment} />
@@ -561,9 +582,10 @@ export default function RoomScene(p: SceneProps) {
                       doors={fitDoors} obstacles={standing} fire={fire ?? null}
                       marks={instruments.filter((e) => e.x != null && e.y != null).map((e) => ({ x: e.x as number, y: e.y as number }))} />
       )}
-      <GridRefs W={W} D={D} ink={tones.inkMuted} />
+      <GridRefs W={W} D={D} ink={glass ? GLASS.rim : tones.inkMuted} />
       {vis.vents && vents.length > 0 && <Vents vents={vents} X={X} Z={Z} glass={seeUnder} />}
-      {mode !== 'plan' && !seeUnder && <ContactShadows boxes={[...rackBoxes, ...unitBoxes.filter((b) => b.y <= b.h / 2 + 0.05)]} />}
+      {/* Cabinets stand on the glass without a shadow pool: the studio has no floor to pool on. */}
+      {!glass && mode !== 'plan' && !seeUnder && <ContactShadows boxes={[...rackBoxes, ...unitBoxes.filter((b) => b.y <= b.h / 2 + 0.05)]} />}
       {vis.aisles && plan.aisles.map((a) => (
         <AisleBand key={`${a.label}-${a.y_start}`} a={a} W={W} Z={Z} X={X} racks={plan.racks}
                    containment={vis.containment} tint={!seeUnder} />
@@ -579,6 +601,9 @@ export default function RoomScene(p: SceneProps) {
       {anyShell && <GradientBoxes boxes={rackBoxes} part="shell" opacity={frost ? 0.85 : 0.22} frost={frost} />}
       {anyShell && <FillLines boxes={rackBoxes} />}
       <RackFrames racks={plan.racks} X={X} Z={Z} />
+      {/* A plain cabinet in the studio wears its doors, as it does at the building rung;
+          a layer's colour, a look inside, or the detail switch's own doors take them off. */}
+      {glass && rackLayer === 'none' && !vis.faces && !vis.detail && <RackDoors boxes={rackBoxes} />}
       {vis.detail && <RackDetails boxes={rackBoxes} open={vis.faces} />}
       {/* Frame, plinth, handles, nozzles, stacks - all outside the coloured body. */}
       <Hardware racks={rackBoxes} units={vis.plant ? unitBoxes : NO_BOXES} unitTypes={unitTypes} open={vis.faces} />
@@ -691,12 +716,12 @@ function Overlay({ overlay, rackBoxes, racks, rackRole, unitBoxes, units, unitRo
     <group>
       {(Object.keys(geoms.roles) as Role[]).map((r) => (
         <lineSegments key={r} geometry={geoms.roles[r]}>
-          <lineBasicMaterial color={roleColor[r]} />
+          <lineBasicMaterial color={roleColor[r]} toneMapped={false} />
         </lineSegments>
       ))}
-      <lineSegments geometry={geoms.solid}><lineBasicMaterial color={line} /></lineSegments>
+      <lineSegments geometry={geoms.solid}><lineBasicMaterial color={line} toneMapped={false} /></lineSegments>
       <lineSegments ref={dashedRef} geometry={geoms.dashed}>
-        <lineDashedMaterial color={line} dashSize={0.18} gapSize={0.1} />
+        <lineDashedMaterial color={line} dashSize={0.18} gapSize={0.1} toneMapped={false} />
       </lineSegments>
     </group>
   );
@@ -753,7 +778,7 @@ function HeatMap({ field, plane, W, D, themeTick }: {
   return (
     <mesh rotation-x={-Math.PI / 2} position={[sw / 2 - W / 2, h, sd / 2 - D / 2]} renderOrder={2}>
       <planeGeometry args={[sw, sd]} />
-      <meshBasicMaterial map={texture} transparent depthWrite={false} side={THREE.DoubleSide} />
+      <meshBasicMaterial map={texture} transparent depthWrite={false} side={THREE.DoubleSide} toneMapped={false} />
     </mesh>
   );
 }
@@ -804,7 +829,7 @@ function HotSpots({ indices, racks, rackBoxes, tones, onSelect, onTip }: {
       <coneGeometry args={[0.17, 0.4, 14]} />
       {/* Unlit: a marker is a flag, not a surface, and must read as the same
           amber or red from every angle. */}
-      <meshBasicMaterial />
+      <meshBasicMaterial toneMapped={false} />
     </instancedMesh>
   );
 }
@@ -998,8 +1023,10 @@ function Backdrop({ themeTick }: { themeTick: number }) {
   return null;
 }
 
-function Room({ W, D, whiteSpace, walls: walled, seeUnder }: {
+function Room({ W, D, whiteSpace, walls: walled, seeUnder, glass }: {
   W: number; D: number; whiteSpace: boolean; walls: boolean; seeUnder: boolean;
+  /** The glass studio: a frosted deck and glass sides instead of white tile and plaster. */
+  glass: boolean;
 }) {
   // A raised floor sits PLENUM_H over the slab: the apron and the walls go down to the slab.
   const base = whiteSpace ? -PLENUM_H : 0;
@@ -1012,6 +1039,25 @@ function Room({ W, D, whiteSpace, walls: walled, seeUnder }: {
   const walls: [number, number, number, number][] = [
     [0, -D / 2, 0, W], [0, D / 2, Math.PI, W], [-W / 2, 0, Math.PI / 2, D], [W / 2, 0, -Math.PI / 2, D],
   ];
+  if (glass) {
+    return (
+      <group>
+        {/* The deck as the building draws a floor: frosted glass, the studio dark
+            beneath it. Opened, it goes almost clear over the void. */}
+        <mesh rotation-x={-Math.PI / 2} position={[0, -0.003, 0]}>
+          <planeGeometry args={[W, D]} />
+          <meshStandardMaterial key={String(seeUnder)} color={GLASS.slab} emissive={GLASS.slab} emissiveIntensity={0.18} roughness={0.4}
+                                transparent depthWrite={false} opacity={seeUnder ? 0.06 : 0.34} side={THREE.DoubleSide} />
+        </mesh>
+        {grid && (
+          <lineSegments geometry={grid} position={[0, 0.002, 0]} raycast={() => null}>
+            <lineBasicMaterial key={String(seeUnder)} color={GLASS.rim} transparent opacity={seeUnder ? 0.12 : 0.3} />
+          </lineSegments>
+        )}
+        {walled && <GlassBox w={W} d={D} cx={0} cz={0} y={0} h={WALL_H} />}
+      </group>
+    );
+  }
   return (
     <group>
       {/* Flat, unlit surfaces: the tile white reads as white from any angle,
@@ -1124,19 +1170,19 @@ function AisleBand({ a, W, X, Z, racks, containment, tint: tinted = true }: {
       {tinted && <mesh rotation-x={-Math.PI / 2} position={[0, 0.004, zc]}>
         <planeGeometry args={[W, depth]} />
         {tiles
-          ? <meshBasicMaterial map={tiles} transparent opacity={0.22} depthWrite={false} />
-          : <meshBasicMaterial color={tint} transparent opacity={0.09} depthWrite={false} />}
+          ? <meshBasicMaterial map={tiles} transparent opacity={0.22} depthWrite={false} toneMapped={false} />
+          : <meshBasicMaterial color={tint} transparent opacity={0.09} depthWrite={false} toneMapped={false} />}
       </mesh>}
       {containment && a.contained && flank.length > 0 && (
         <group>
           <mesh position={[X((x0 + x1) / 2), h + 0.01, zc]}>
             <boxGeometry args={[x1 - x0, 0.02, depth]} />
-            <meshBasicMaterial color={tint} transparent opacity={0.16} depthWrite={false} />
+            <meshBasicMaterial color={tint} transparent opacity={0.16} depthWrite={false} toneMapped={false} />
           </mesh>
           {[x0, x1].map((xe) => (
             <mesh key={xe} position={[X(xe), h / 2, zc]}>
               <boxGeometry args={[0.02, h, depth]} />
-              <meshBasicMaterial color={tint} transparent opacity={0.16} depthWrite={false} />
+              <meshBasicMaterial color={tint} transparent opacity={0.16} depthWrite={false} toneMapped={false} />
             </mesh>
           ))}
         </group>
@@ -1381,7 +1427,7 @@ function RackDevices({ devices, show, rackById, X, Z, themeTick, onSelect, onTip
                    })}
                    onPointerOut={() => onTip?.(null)}>
       <boxGeometry args={[1, 1, 1]} />
-      <meshStandardMaterial roughness={0.55} metalness={0.1} />
+      <meshStandardMaterial roughness={0.55} metalness={0.1} toneMapped={false} />
     </instancedMesh>
     </>
   );

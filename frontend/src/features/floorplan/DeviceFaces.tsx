@@ -287,7 +287,7 @@ function FacePlanes({ map, mats }: { map: THREE.Texture; mats: THREE.Matrix4[] }
   return (
     <instancedMesh ref={ref} args={[undefined, undefined, mats.length]} frustumCulled={false} raycast={() => null}>
       <planeGeometry args={[1, 1]} />
-      <meshBasicMaterial map={map} polygonOffset polygonOffsetFactor={-2} />
+      <meshBasicMaterial map={map} polygonOffset polygonOffsetFactor={-2} toneMapped={false} />
     </instancedMesh>
   );
 }
@@ -306,7 +306,7 @@ function Ears({ mats, cols }: { mats: THREE.Matrix4[]; cols: THREE.Color[] }) {
   return (
     <instancedMesh key={mats.length} ref={ref} args={[undefined, undefined, mats.length]} frustumCulled={false} raycast={() => null}>
       <boxGeometry args={[1, 1, 1]} />
-      <meshBasicMaterial />
+      <meshBasicMaterial toneMapped={false} />
     </instancedMesh>
   );
 }

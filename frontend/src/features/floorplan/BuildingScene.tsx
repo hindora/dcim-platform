@@ -12,6 +12,7 @@ import { NO_READING, bandColor, roomLayerBands, roomLayerText, roomLayerValue, t
 import { labelTexture, type GBox, type HoverTip } from './Scene';
 import { Hardware } from './Hardware';
 import { CompoundDetail, Fence, Ground, ZoneObject, ZoneSurface } from './SiteDressing';
+import { GLASS, GlassTray, RackDoors, Studio } from './studio';
 
 /**
  * The site and building rungs (docs/27 §8b, §8c), drawn in the same scene
@@ -60,13 +61,6 @@ const SLAB = 0.3;
 const RACK_H = 2.0;
 const RACK_W = 0.6, RACK_D = 1.2;
 const DEFAULT_F2F = 5.0;
-/** The building rung in 3D: each floor a frosted-glass tray, the racks and
- *  plant charcoal inside it, on a dark studio. Physical colours, the same in
- *  both themes, like the room's SURF. */
-const GLASS = {
-  slab: '#aeb9c7', rim: '#dfe7f0', wall: '#c8d3df', room: '#b9c4d1', roomEdge: '#cfd8e3',
-  rack: '#2a2f36', plant: '#3b4148', glowIn: '#1d2532', glowOut: '#090c11',
-};
 /** How far a split pulls each floor from the one below, as a share of the floor-to-floor height. */
 const SPLIT_GAP = 0.9;
 /** The building's finished floor above the compound's ground, m: the podium
@@ -791,55 +785,6 @@ function Podium({ x, z, w, d }: { x: number; z: number; w: number; d: number }) 
   );
 }
 
-/** A rack door seen from the aisle: dark perforated steel in a frame, the
- *  handle, and a few lit status LEDs on the gear behind it. Front and back
- *  both get one - the building does not know which way a rack faces. */
-function doorTexture(): THREE.CanvasTexture {
-  const W = 64, H = 192;
-  const cv = document.createElement('canvas');
-  cv.width = W; cv.height = H;
-  const c = cv.getContext('2d') as CanvasRenderingContext2D;
-  c.fillStyle = '#1f242b'; c.fillRect(0, 0, W, H);
-  c.fillStyle = '#2b323b';
-  for (let y = 10; y < H - 8; y += 4) for (let x = 7 + ((y / 4) % 2) * 2; x < W - 6; x += 4) c.fillRect(x, y, 2, 2);
-  c.strokeStyle = '#3c4550'; c.lineWidth = 3; c.strokeRect(1.5, 1.5, W - 3, H - 3);
-  c.fillStyle = '#8a939d'; c.fillRect(W - 9, H * 0.45, 3, 18);
-  const leds = [[14, 30], [22, 30], [14, 62], [30, 94], [14, 126], [22, 158]];
-  for (const [x, y] of leds) { c.fillStyle = '#3a8dde'; c.fillRect(x, y, 3, 2); }
-  c.fillStyle = '#3ddc84'; c.fillRect(38, 30, 2, 2); c.fillRect(38, 94, 2, 2);
-  const t = new THREE.CanvasTexture(cv);
-  t.colorSpace = THREE.SRGBColorSpace;
-  t.anisotropy = 4;
-  return t;
-}
-
-function RackDoors({ boxes }: { boxes: GBox[] }) {
-  const ref = useRef<THREE.InstancedMesh>(null);
-  const tex = useMemo(doorTexture, []);
-  useEffect(() => () => tex.dispose(), [tex]);
-  const n = boxes.length * 2;
-  useEffect(() => {
-    const im = ref.current;
-    if (!im) return;
-    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), p = new THREE.Vector3(), sc = new THREE.Vector3();
-    const up = new THREE.Vector3(0, 1, 0);
-    boxes.forEach((b, i) => {
-      for (const [k, sign] of [[0, 1], [1, -1]] as const) {
-        q.setFromAxisAngle(up, sign > 0 ? 0 : Math.PI);
-        im.setMatrixAt(i * 2 + k, m.compose(p.set(b.x, b.y, b.z + sign * (b.d / 2 + 0.003)), q, sc.set(b.w * 0.94, b.h * 0.96, 1)));
-      }
-    });
-    im.instanceMatrix.needsUpdate = true;
-    im.computeBoundingSphere();
-  }, [boxes]);
-  if (!n) return null;
-  return (
-    <instancedMesh key={n} ref={ref} args={[undefined, undefined, n]} frustumCulled={false} raycast={() => null}>
-      <planeGeometry args={[1, 1]} />
-      <meshBasicMaterial map={tex} />
-    </instancedMesh>
-  );
-}
 
 /** One alarm marker: a map pin whose tip is at (x, y, z) - the top centre of
  *  the device that raised it. */
@@ -936,63 +881,7 @@ function AlarmPins({ pins }: { pins: Pin[] }) {
 }
 
 /** The glass view's backdrop: a dark navy studio with a soft glow behind the building. */
-function Studio() {
-  const { scene, invalidate } = useThree();
-  useEffect(() => {
-    const cv = document.createElement('canvas');
-    cv.width = cv.height = 512;
-    const c = cv.getContext('2d') as CanvasRenderingContext2D;
-    const g = c.createRadialGradient(256, 230, 20, 256, 256, 380);
-    g.addColorStop(0, GLASS.glowIn); g.addColorStop(1, GLASS.glowOut);
-    c.fillStyle = g; c.fillRect(0, 0, 512, 512);
-    const tex = new THREE.CanvasTexture(cv);
-    tex.colorSpace = THREE.SRGBColorSpace;
-    scene.background = tex;
-    invalidate();
-    return () => { if (scene.background === tex) scene.background = null; tex.dispose(); };
-  }, [scene, invalidate]);
-  return null;
-}
 
-/** A floor's glass sides: the slab's outline raised to the ceiling, brightest
- *  at the floor and fading upward, with a faint rim along the top. */
-function GlassTray({ geo, y, h, dim }: { geo: THREE.ExtrudeGeometry; y: number; h: number; dim: boolean }) {
-  const { walls, rim } = useMemo(() => {
-    geo.computeBoundingBox();
-    const b = geo.boundingBox as THREE.Box3;
-    const w = b.max.x - b.min.x, d = b.max.y - b.min.y;
-    return { walls: { w, d, cx: (b.max.x + b.min.x) / 2, cz: (b.max.y + b.min.y) / 2 },
-             rim: new THREE.EdgesGeometry(new THREE.BoxGeometry(w, h, d)) };
-  }, [geo, h]);
-  useEffect(() => () => rim.dispose(), [rim]);
-  const alpha = useMemo(() => {
-    const cv = document.createElement('canvas');
-    cv.width = 4; cv.height = 128;
-    const c = cv.getContext('2d') as CanvasRenderingContext2D;
-    const g = c.createLinearGradient(0, 128, 0, 0);
-    g.addColorStop(0, '#5a5a5a'); g.addColorStop(0.25, '#262626'); g.addColorStop(0.92, '#121212'); g.addColorStop(1, '#3a3a3a');
-    c.fillStyle = g; c.fillRect(0, 0, 4, 128);
-    return new THREE.CanvasTexture(cv);
-  }, []);
-  useEffect(() => () => alpha.dispose(), [alpha]);
-  const mats = useMemo(() => {
-    const side = new THREE.MeshBasicMaterial({ color: GLASS.wall, alphaMap: alpha, transparent: true, opacity: dim ? 0.25 : 1,
-                                               depthWrite: false, side: THREE.DoubleSide });
-    const none = new THREE.MeshBasicMaterial({ visible: false });
-    return [side, side, none, none, side, side];
-  }, [alpha, dim]);
-  useEffect(() => () => { mats[0].dispose(); mats[2].dispose(); }, [mats]);
-  return (
-    <group position={[walls.cx, y + h / 2, walls.cz]}>
-      <mesh material={mats} raycast={() => null}>
-        <boxGeometry args={[walls.w, h, walls.d]} />
-      </mesh>
-      <lineSegments geometry={rim} raycast={() => null}>
-        <lineBasicMaterial color={GLASS.rim} transparent opacity={dim ? 0.12 : 0.45} />
-      </lineSegments>
-    </group>
-  );
-}
 
 function Cameras({ mode, span, top, planElev, W, D, cx, cz, resetTick, spin, rung }: {
   mode: '3d' | 'plan'; span: number; top: number; planElev: number; W: number; D: number; cx: number; cz: number;

@@ -50,7 +50,7 @@ export const COOLING_LAYERS: { key: CoolingLayer; label: string; hint: string }[
   { key: 'supply', label: 'Supply temperature', hint: '' },
   { key: 'return', label: 'Return temperature', hint: '' },
   { key: 'utilisation', label: 'Cooling utilisation', hint: 'Delivered against rating' },
-  { key: 'none', label: 'None', hint: '' },
+  { key: 'none', label: 'None', hint: 'Plain plant' },
 ];
 
 export interface Band { upTo: number | null; label: string; color: string }
@@ -399,7 +399,9 @@ export function paintEquipment(e: FloorEquipment, layer: CoolingLayer, reads: Un
     return { bot: v, mid: v, top: v, fill: 1 };
   };
   if (e.max_severity !== 'CLEAR') return flat(bandColor(ALARM_BANDS, alarmRank(e.max_severity, 0)));
-  if (!AIR_HANDLERS.has(e.device_type) || layer === 'none') {
+  // No layer: plain plant, the charcoal the building rung draws it in.
+  if (layer === 'none') return flat('var(--band-plant)');
+  if (!AIR_HANDLERS.has(e.device_type)) {
     return flat(COOLING.has(e.device_type) ? 'var(--band-cooling)' : 'var(--band-power)');
   }
   switch (layer) {
