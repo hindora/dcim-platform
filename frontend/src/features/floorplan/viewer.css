@@ -408,6 +408,7 @@
    indent to the row's left, so folded and plain rows keep one name column. */
 .vw-tree-group { position: relative; }
 .vw-tree-group > .rung, .vw-tree-group > button.rung { width: 100%; }
+.vw-tree .vw-tree-group > .rung.is-text { grid-template-columns: minmax(0, 1fr) auto; color: var(--text); }
 .vw-tree .vw-tree-fold { position: absolute; left: -14px; top: 50%; transform: translateY(-50%); width: 14px; height: 24px;
   display: grid; place-items: center; padding: 0; border: none; background: none; color: var(--text-muted); cursor: pointer;
   grid-template-columns: none; }
