@@ -14,6 +14,7 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.alarms.rule_edit import rules_that_can_fire
 from app.core import alert_taxonomy
 
 # ------------------------------------------------------------------- rules
@@ -109,12 +110,26 @@ async def load_overrides(session: AsyncSession) -> list[dict[str, Any]]:
 
 
 async def device_rules(session: AsyncSession, device_id: str) -> list[dict[str, Any]] | None:
-    """Every rule that applies to this device's type, with its override."""
+    """Every rule that can fire on this device, with its override.
+
+    A rule fires on a metric the device reports (engine: rules_for_metric), so
+    a type match alone is not applicability. `sensor` is one device type that
+    covers a rack door probe, a fuel tank, a hydrogen detector and a smoke
+    panel; by type alone a temperature probe listed twenty-four rules, of
+    which four could ever fire. The list is cut to the metrics the device has
+    reported in the last week. A device that has reported nothing yet keeps
+    the type-matched list: nothing is known to rule anything out.
+    """
     dtype = (await session.execute(text(
         "SELECT device_type::text FROM device WHERE id = CAST(:id AS uuid)"),
         {"id": device_id})).scalar()
     if dtype is None:
         return None
+    reported = {r[0] for r in (await session.execute(text("""
+        SELECT DISTINCT m.key
+          FROM telemetry_sample t JOIN metric m ON m.id = t.metric_id
+         WHERE t.device_id = CAST(:dev AS uuid)
+           AND t.ts > now() - interval '7 days'"""), {"dev": device_id})).all()}
     rows = (await session.execute(text("""
         SELECT r.id::text, r.name, r.alarm_type, r.metric_key, r.operator,
                r.threshold::float8 AS threshold,
@@ -136,7 +151,7 @@ async def device_rules(session: AsyncSession, device_id: str) -> list[dict[str, 
            AND r.metric_kind = 'numeric' AND r.operator IN ('>', '>=', '<', '<=')
          ORDER BY r.metric_key, r.threshold NULLS LAST, r.name"""),
         {"dev": device_id, "dtype": dtype})).mappings().all()
-    return [dict(r) for r in rows]
+    return rules_that_can_fire([dict(r) for r in rows], reported)
 
 
 async def upsert_override(session: AsyncSession, rule_id: str, device_id: str,

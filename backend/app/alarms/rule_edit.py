@@ -248,3 +248,17 @@ def apply_override(rule: Rule, ov: dict[str, Any]) -> Rule:
                                   "dwell_seconds", "clear_dwell_samples", "severity")
                if ov.get(k) is not None}
     return replace(rule, **changes) if changes else rule
+
+
+def rules_that_can_fire(rules: list[dict[str, Any]], reported: set[str]) -> list[dict[str, Any]]:
+    """The subset of type-matched rules whose metric this device reports.
+
+    Mirrors the engine, which looks rules up by the metric of the sample in
+    hand: a rule for a metric the device never sends can never raise, and
+    listing it offers an override that changes nothing. An empty `reported`
+    means the device has sent nothing yet, and the type-matched list stands,
+    because an absence of telemetry is not evidence about what it will send.
+    """
+    if not reported:
+        return rules
+    return [r for r in rules if r.get("metric_key") in reported]

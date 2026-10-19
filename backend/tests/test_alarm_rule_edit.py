@@ -192,3 +192,19 @@ def test_the_sample_loop_skips_a_muted_rule_and_applies_an_override():
     import inspect
     src = inspect.getsource(svc.AlarmService.evaluate_samples)
     assert 'ov.get("enabled") is False' in src and "apply_override(rule, ov)" in src
+
+
+# ------------------------------------------------- which rules a device lists
+
+def test_a_device_lists_only_the_rules_its_metrics_can_fire():
+    probe = [{"name": "ambient-temp-high", "metric_key": "ambient_temperature"},
+             {"name": "humidity-high", "metric_key": "relative_humidity"},
+             {"name": "bulk-fuel-low", "metric_key": "fuel_level_pct"},
+             {"name": "smoke-fire", "metric_key": "smoke_stage"}]
+    kept = re_.rules_that_can_fire(probe, {"ambient_temperature", "relative_humidity"})
+    assert [r["name"] for r in kept] == ["ambient-temp-high", "humidity-high"]
+
+
+def test_a_device_that_has_reported_nothing_keeps_its_type_rules():
+    probe = [{"name": "bulk-fuel-low", "metric_key": "fuel_level_pct"}]
+    assert re_.rules_that_can_fire(probe, set()) == probe
