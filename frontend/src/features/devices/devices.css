@@ -1,0 +1,224 @@
+/* The device page.
+ *
+ * One device, read the way an operator reads a front panel: the name and
+ * where it stands, a readout band of the four numbers that matter for its
+ * class, the worst thing wrong with it, and then tabs for the questions that
+ * follow - is it fed, is it patched, is it polled, what can I do to it.
+ *
+ * Everything here is colour from :root tokens. The only colour that ISN'T
+ * status or chrome is the accent under the open tab and the meter fill. */
+
+/* ------------------------------------------------------------------ head */
+
+.dv-crumb {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  margin: 0 0 8px; font-size: 12px; color: var(--text-faint);
+}
+.dv-crumb a { color: var(--text-muted); }
+.dv-crumb a:hover { color: var(--text); text-decoration: none; }
+
+/* Title left, readout band right, on ONE row: the title column gives way and
+   wraps, the band does not. Same rule as the estate header. */
+.dv-head {
+  display: flex; flex-wrap: wrap; align-items: flex-start; gap: 14px 28px;
+  padding: 2px 0 16px 14px; margin-left: -16px;
+  border-left: 3px solid transparent;
+}
+/* The severity rail: the one thing wrong with the device, said before the
+   name is read. The rail is the head's left edge, so it reads as a flag on
+   the page rather than a decoration on a box. */
+.dv-head.sev-warning, .dv-head.sev-minor { border-left-color: var(--warn); }
+.dv-head.sev-major    { border-left-color: var(--major); }
+.dv-head.sev-critical { border-left-color: var(--critical); }
+
+.dv-title { flex: 1 1 360px; min-width: 0; }
+.dv-title h2 {
+  margin: 0; font-size: 22px; line-height: 1.2; letter-spacing: -0.01em;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px;
+  overflow-wrap: anywhere;
+}
+.dv-title h2 .chip { font-size: 11px; }
+.dv-title .subtitle { margin: 5px 0 0; font-size: 13px; }
+.dv-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
+.dv-tools a { font-size: 13px; }
+
+.dv-band { flex: 0 0 auto; display: flex; flex-wrap: wrap; gap: 6px; }
+.dv-tile {
+  display: grid; grid-template-columns: auto 1fr; grid-template-rows: auto auto;
+  column-gap: 9px; align-items: center;
+  min-width: 108px; padding: 8px 12px 9px;
+  background: var(--bg-raised); border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.dv-tile .dv-glyph {
+  grid-row: 1 / span 2; display: block; width: 18px; height: 18px;
+  color: var(--text-muted);
+}
+.dv-tile .dv-glyph svg { display: block; width: 18px; height: 18px; }
+.dv-tile b {
+  font-size: 17px; font-weight: 600; line-height: 1.15;
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.dv-tile span {
+  font-size: 10.5px; letter-spacing: .07em; text-transform: uppercase;
+  color: var(--text-faint); white-space: nowrap;
+}
+/* A reading the collector flagged is not a confident number. */
+.dv-tile.is-flagged b { color: var(--warn); }
+.dv-tile.tone-ok b       { color: var(--ok); }
+.dv-tile.tone-warn b     { color: var(--warn); }
+.dv-tile.tone-major b    { color: var(--major); }
+.dv-tile.tone-critical b { color: var(--critical); }
+/* Loading: the shape of the number before the number. */
+.dv-skel {
+  display: inline-block; min-width: 3.2em; border-radius: 4px; color: transparent !important;
+  background: linear-gradient(90deg, var(--bg-inset) 25%, var(--border) 50%, var(--bg-inset) 75%);
+  background-size: 200% 100%; animation: dv-shimmer 1.3s linear infinite;
+}
+@keyframes dv-shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) { .dv-skel { animation: none; } }
+
+/* ------------------------------------------------------------------ tabs */
+
+.dv-tabs {
+  display: flex; gap: 2px; margin: 0 0 18px;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto; scrollbar-width: none;
+}
+.dv-tabs::-webkit-scrollbar { display: none; }
+.dv-tabs button {
+  background: none; border: none; border-radius: 0;
+  padding: 10px 14px; font-size: 13px; font-weight: 500; white-space: nowrap;
+  color: var(--text-muted); cursor: pointer;
+  box-shadow: inset 0 -2px 0 transparent;
+  transition: color .12s ease, box-shadow .12s ease;
+}
+.dv-tabs button:hover { color: var(--text); }
+.dv-tabs button[aria-selected="true"] { color: var(--text); box-shadow: inset 0 -2px 0 var(--accent); }
+.dv-tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.dv-tabs .n {
+  margin-left: 6px; padding: 0 6px; font-size: 11px; line-height: 16px;
+  border-radius: 9px; border: 1px solid var(--border); background: var(--bg-inset);
+  color: var(--text-muted); font-variant-numeric: tabular-nums;
+}
+.dv-tabs .n.sev-warning, .dv-tabs .n.sev-minor { color: var(--warn); border-color: var(--warn); }
+.dv-tabs .n.sev-major    { color: var(--major); border-color: var(--major); }
+.dv-tabs .n.sev-critical { color: var(--critical); border-color: var(--critical); }
+
+/* ----------------------------------------------------------------- bodies */
+
+/* Every top-level section in a tab wears the same frame, including the
+   history, actions and thresholds panels that render their own <section>. */
+.dv-tab { display: grid; gap: 18px; }
+.dv-tab > section, .dv-card {
+  background: var(--bg-raised); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 14px 16px 16px;
+  min-width: 0;
+}
+.dv-tab > section > h3, .dv-card > h3 {
+  display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  margin: 0 0 12px; font-size: 13.5px; font-weight: 600;
+}
+.dv-card > h3 .more, .dv-tab > section > h3 .more {
+  margin-left: auto; font-size: 12px; font-weight: 400;
+}
+.dv-card > h3 .lead { font-weight: 400; color: var(--text-muted); font-size: 12px; }
+
+.dv-grid {
+  display: grid; grid-template-columns: minmax(0, 3fr) minmax(300px, 2fr);
+  gap: 18px; align-items: start;
+}
+.dv-col { display: grid; gap: 18px; min-width: 0; }
+@media (max-width: 960px) { .dv-grid { grid-template-columns: 1fr; } }
+
+.dv-facts {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px 22px;
+}
+.dv-fact .k {
+  font-size: 11px; letter-spacing: .05em; text-transform: uppercase;
+  color: var(--text-faint);
+}
+.dv-fact .v { margin-top: 2px; font-size: 13px; overflow-wrap: anywhere; }
+.dv-fact .v.mono { font-size: 12px; }
+.dv-none { color: var(--text-faint); }
+
+/* Nameplate meter: the draw against the rating, as a bar. */
+.dv-meter { margin-top: 6px; max-width: 420px; }
+.dv-meter-track { height: 6px; background: var(--bg-inset); border-radius: 3px; overflow: hidden; }
+.dv-meter-fill { height: 100%; background: var(--accent); transition: width .3s ease; }
+.dv-meter-fill.warn { background: var(--warn); }
+.dv-meter-fill.critical { background: var(--critical); }
+.dv-meter-label { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; color: var(--text-muted); margin-top: 4px; font-variant-numeric: tabular-nums; }
+
+/* Verdict dot: a coloured dot and a word, never the colour alone. */
+.dv-verdict { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; }
+.dv-verdict::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: none; }
+.dv-verdict.ok   { color: var(--ok); }
+.dv-verdict.warn { color: var(--warn); }
+
+.dv-rows { list-style: none; margin: 0; padding: 0; }
+.dv-row {
+  display: flex; justify-content: space-between; align-items: baseline; gap: 12px;
+  padding: 7px 0; border-bottom: 1px solid var(--border); font-size: 13px;
+}
+.dv-row:last-child { border-bottom: none; padding-bottom: 0; }
+.dv-row .k { color: var(--text-muted); white-space: nowrap; }
+.dv-row .v { text-align: right; min-width: 0; overflow-wrap: anywhere; }
+.dv-row .chip { font-size: 11px; }
+
+/* ----------------------------------------------------------------- alarms */
+
+.dv-alarms { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.dv-alarm {
+  display: grid; grid-template-columns: 70px minmax(0, 1fr) auto; gap: 4px 12px;
+  align-items: start; padding: 9px 12px 10px;
+  border: 1px solid var(--border); border-left-width: 3px; border-radius: var(--radius);
+  background: var(--bg-inset);
+}
+.dv-alarms.is-compact .dv-alarm { grid-template-columns: 70px minmax(0, 1fr); padding: 8px 10px 9px; }
+.dv-alarm.sev-warning, .dv-alarm.sev-minor { border-left-color: var(--warn); }
+.dv-alarm.sev-major    { border-left-color: var(--major); }
+.dv-alarm.sev-critical { border-left-color: var(--critical); }
+.dv-alarm.is-symptom { opacity: .8; }
+.dv-alarm.is-cleared { opacity: .62; border-left-color: var(--border-strong); }
+.dv-alarm .sev {
+  padding-top: 3px; font-size: 11px; font-weight: 700; letter-spacing: .05em;
+  text-transform: uppercase; color: var(--text-muted);
+}
+.dv-alarm.sev-warning .sev, .dv-alarm.sev-minor .sev { color: var(--warn); }
+.dv-alarm.sev-major .sev    { color: var(--major); }
+.dv-alarm.sev-critical .sev { color: var(--critical); }
+.dv-alarm .body { min-width: 0; }
+.dv-alarm .type { font-weight: 600; }
+.dv-alarm .msg { margin: 2px 0 0; font-size: 12.5px; line-height: 1.45; overflow-wrap: anywhere; }
+.dv-alarm .meta { margin-top: 3px; font-size: 11.5px; color: var(--text-muted); }
+.dv-alarm .acts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; justify-content: flex-end; }
+.dv-alarm .acts button { padding: 4px 9px; font-size: 12px; }
+.dv-alarm .acts .ask { font-size: 12px; color: var(--text-muted); }
+.dv-alarm-tools { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.dv-alarm-tools .overlay-picker button { font-size: 12.5px; padding: 0.25rem 0.65rem; }
+
+/* --------------------------------------------------------------- readings */
+
+.dv-readings {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 14px 28px;
+}
+.dv-rgroup h4 {
+  margin: 0 0 4px; font-size: 11px; font-weight: 600; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--text-faint);
+}
+.dv-reading {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 10px;
+  padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 13px;
+}
+.dv-reading:last-child { border-bottom: none; }
+.dv-reading .v { text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.dv-reading .t { grid-column: 1 / -1; font-size: 11px; color: var(--text-faint); }
+.dv-reading.is-flagged .v { color: var(--warn); }
+
+.dv-empty { margin: 0; color: var(--text-muted); }
+.dv-note { margin: 10px 0 0; font-size: 12px; color: var(--text-muted); }
+.dv-locks { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.dv-locks .chip { font-size: 11px; }

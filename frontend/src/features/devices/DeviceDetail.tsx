@@ -1,29 +1,61 @@
-import { useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import {
   api,
   atLeast,
   type DeviceDetail as Detail,
   type DeviceState,
-  type EndpointSummary,
+  type MetricValue,
   type NetworkInterface,
 } from '../../api/client';
 import { StatusChip } from '../../components/StatusChip';
-import { Tip } from '../../components/HoverTip';
+import { CategoryGlyph } from '../../components/CategoryGlyph';
+import { TileGlyph, type GlyphName } from '../floorplan/glyphs';
 import { DeviceHistory } from './DeviceHistory';
 import { chartGroupsFor } from './chartGroups';
-import { EndpointEditor } from './EndpointEditor';
 import { DeviceEditor } from './DeviceEditor';
 import { DeviceActions } from './DeviceActions';
 import { DeviceThresholds } from './DeviceThresholds';
+import { DeviceAlarms } from './DeviceAlarms';
+import { DeviceEndpoints } from './DeviceEndpoints';
+import { DeviceConnections, portSummary, psuVerdict } from './DeviceConnections';
+import { METRICS, type MetricKey } from '../../lib/metrics.gen';
 import {
-  formatMetric, formatSpeed, humanise, metricLabel, relativeTime,
+  formatMetric, humanise, metricLabel, relativeTime, statusClass,
 } from '../../lib/format';
+import './devices.css';
+
+/** One device, the way an operator reads it.
+ *
+ *  The head answers "what is it, where is it, is it all right" without a
+ *  scroll: name and placement, a readout band of the four numbers that matter
+ *  for its class, and a severity rail when something is open. The tabs are
+ *  the questions that follow, one each: what it is on record, what it reports,
+ *  what is wrong, what it is plugged into, how it is polled, what can be done
+ *  to it. The asset record (lifecycle, warranty, contracts) is its own page
+ *  and is linked, not copied. */
+
+const TABS = [
+  { id: 'overview', label: 'Overview' },
+  { id: 'telemetry', label: 'Telemetry' },
+  { id: 'alarms', label: 'Alarms' },
+  { id: 'connections', label: 'Connections' },
+  { id: 'monitoring', label: 'Monitoring' },
+  { id: 'operations', label: 'Operations' },
+] as const;
+type Tab = typeof TABS[number]['id'];
+const isTab = (s: string | null): s is Tab => TABS.some((t) => t.id === s);
 
 export function DeviceDetail() {
   const { id = '' } = useParams();
-  const [editing, setEditing] = useState<EndpointSummary | null>(null);
+  const [params, setParams] = useSearchParams();
+  const tab: Tab = isTab(params.get('tab')) ? (params.get('tab') as Tab) : 'overview';
+  const goTab = (t: Tab) => {
+    const next = new URLSearchParams(params);
+    if (t === 'overview') next.delete('tab'); else next.set('tab', t);
+    setParams(next, { replace: true });
+  };
   const [editingDevice, setEditingDevice] = useState(false);
 
   const device = useQuery<Detail>({
@@ -45,10 +77,9 @@ export function DeviceDetail() {
     queryKey: ['device-state', id],
     queryFn: () => api.deviceState(id),
     enabled: Boolean(id),
-    // 30s, not 10s. The slowest source behind this table is a 120s BMC poll and
-    // the fastest a 10s sensor, so a 10s refetch spent up to twelve requests per
-    // new reading. This still beats every source to the punch without asking the
-    // API for numbers that cannot have changed.
+    // 30s: the slowest source behind this is a 120s BMC poll and the fastest a
+    // 10s sensor, so this beats every source without asking for numbers that
+    // cannot have changed.
     refetchInterval: 30_000,
     // A device with no telemetry yet is a normal state, not an error.
     retry: false,
@@ -60,441 +91,462 @@ export function DeviceDetail() {
 
   const d = device.data;
   const metrics = state.data?.metrics ?? {};
-  // A curated page asks for exactly the keys its panels plot, rather than
-  // everything the device happens to report - and it asks for them even when
-  // none have arrived, so an absent metric can be named as absent instead of
-  // silently missing from a chart that still looks complete.
-  /** Whether the supplies actually buy anything.
-   *
-   *  Two PSUs are redundancy only if they are fed from different sources. Two
-   *  cords into one strip is a single point of failure wearing a pair of
-   *  supplies, and it looks identical from a count - which is what this said
-   *  before: `psus.length > 1` labelled "redundant". True across this estate
-   *  today, and it would have gone on saying so the moment somebody re-cabled
-   *  both cords to one PDU, which is precisely the state worth flagging.
-   */
-  const feeds = new Set((d.psus ?? []).map((p) => p.feed_device_id)
-                                      .filter((x): x is string => Boolean(x)));
-  const uncorded = (d.psus ?? []).filter((p) => !p.feed_device_id).length;
-  const psuVerdict = d.psus.length === 0 ? null
-    : uncorded > 0 ? { text: `${uncorded} not corded`, warn: true }
-    : d.psus.length === 1 ? { text: 'single-corded', warn: true }
-    : feeds.size > 1 ? { text: `${feeds.size} independent feeds`, warn: false }
-    : { text: 'both cords on one PDU', warn: true };
-
-  // "4 x 1 Gb/s data, 1 x 1 Gb/s mgmt" - the port inventory as one line, which
-  // is the nameplate fact. Grouped by role AND speed because a server with two
-  // 25G NICs and a 1G BMC is three different things on one chassis, and a bare
-  // count of five would say none of it.
-  const fitted = ports.data?.length ?? 0;
-  const cabled = ports.data?.filter((p) => p.peer_device).length ?? null;
-  const portSummary = (() => {
-    if (!ports.data?.length) return null;
-    const buckets = new Map<string, number>();
-    for (const p of ports.data) {
-      const k = `${formatSpeed(p.speed_bps)}|${humanise(p.role)}`;
-      buckets.set(k, (buckets.get(k) ?? 0) + 1);
-    }
-    return [...buckets.entries()]
-      .map(([k, n]) => { const [sp, role] = k.split('|'); return `${n} × ${sp} ${role}`; })
-      .join(', ');
-  })();
-
-  // The live draw, for the headroom line beside the rating. Only meaningful
-  // next to a nameplate, which is why it is read here and not in the metrics
-  // table - that one shows every reading without ranking them.
-  const draw = typeof metrics.power_draw?.v === 'number'
-    ? metrics.power_draw.v
-    : null;
+  const openAlarms = state.data?.active_alarms ?? 0;
+  const sev = (state.data?.max_severity ?? d.max_severity ?? '').toLowerCase();
+  const loc = d.location;
   const groups = chartGroupsFor(d.device_type);
   const chartMetrics = groups
     ? [...new Set(groups.flatMap((g) => g.metrics))]
     : Object.keys(metrics);
 
+  const bodies: Record<Tab, ReactNode> = {
+    overview: <Overview d={d} ports={ports.data} metrics={metrics} state={state.data}
+                        onAlarms={() => goTab('alarms')} onMonitoring={() => goTab('monitoring')} />,
+    telemetry: (
+      <>
+        <Readings d={d} metrics={metrics} loading={state.isLoading} />
+        <DeviceHistory deviceId={id} metrics={chartMetrics} groups={groups} />
+      </>
+    ),
+    alarms: (
+      <>
+        <section>
+          <h3>Conditions</h3>
+          <DeviceAlarms deviceId={id} deviceName={d.name} />
+        </section>
+        <DeviceThresholds deviceId={id} />
+      </>
+    ),
+    connections: <DeviceConnections device={d} ports={ports} />,
+    monitoring: <DeviceEndpoints device={d} />,
+    operations: (
+      <>
+        <DeviceActions deviceId={id} />
+        <section>
+          <h3>Record</h3>
+          <p className="dv-empty">
+            Name, make, model, addresses and ownership are edited here and kept
+            across a re-import. Lifecycle, warranty and contracts live on the{' '}
+            <Link to={`/assets/inventory/${d.id}`}>asset record</Link>.
+          </p>
+          {atLeast('operator') && (
+            <p style={{ margin: '12px 0 0' }}>
+              <button onClick={() => setEditingDevice(true)}>Edit device</button>
+            </p>
+          )}
+          {(d.locked_fields?.length ?? 0) > 0 && (
+            <>
+              <p className="dv-note">Set by hand and kept across re-imports:</p>
+              <div className="dv-locks">
+                {d.locked_fields!.map((f) => <span key={f} className="chip">{humanise(f)}</span>)}
+              </div>
+            </>
+          )}
+          <p className="dv-note">
+            Plant setpoints are not set from here: the building management
+            system holds the interlocks.
+          </p>
+        </section>
+      </>
+    ),
+  };
+
   return (
-    <div className="stack">
-      <div>
-        <h2>{d.name}</h2>
-        <p className="subtitle">
-          {humanise(d.device_type)} · {d.vendor ?? 'unknown vendor'} {d.model ?? ''}
-        </p>
-        <StatusChip status={d.status} />
-        {d.priority && d.priority !== 'normal' && (
-          <span className={`chip prio-${d.priority}`}> {d.priority} priority</span>
+    <div className="dv-page">
+      <nav className="dv-crumb" aria-label="Breadcrumb">
+        <Link to="/devices">Devices</Link>
+        {loc.datacenter_code && <><span aria-hidden>›</span><span>{loc.datacenter_code}</span></>}
+        {loc.room_name && <><span aria-hidden>›</span><span>{loc.room_name}</span></>}
+        {loc.rack_name && (
+          <>
+            <span aria-hidden>›</span>
+            {loc.rack_id
+              ? <Link to={`/racks/${loc.rack_id}`}>{loc.rack_name}</Link>
+              : <span>{loc.rack_name}</span>}
+          </>
         )}
-        {atLeast('operator') && (
-          <button style={{ marginLeft: 12 }} onClick={() => setEditingDevice(true)}>
-            Edit device
-          </button>
-        )}
-        <Link to={`/assets/inventory/${d.id}`} style={{ marginLeft: 12 }}>
-          Asset record →
-        </Link>
-      </div>
+      </nav>
+
+      <header className={`dv-head${sev && openAlarms > 0 ? ` sev-${sev}` : ''}`}>
+        <div className="dv-title">
+          <h2>
+            {d.name}
+            <StatusChip status={d.status} />
+            {d.priority && d.priority !== 'normal' && (
+              <span className={`chip prio-${d.priority}`}>{d.priority} priority</span>
+            )}
+            {d.admin_state && d.admin_state !== 'enabled' && (
+              <span className="chip">{humanise(d.admin_state)}</span>
+            )}
+          </h2>
+          <p className="subtitle">
+            {humanise(d.device_type)} · {d.vendor ?? 'unknown vendor'} {d.model ?? ''}
+            {loc.rack_name ? ` · ${loc.rack_name}` : ''}
+            {loc.u_start ? ` U${loc.u_start}` : ''}
+            {d.u_height ? `, ${d.u_height}U` : ''}
+          </p>
+          <div className="dv-tools">
+            {atLeast('operator') && (
+              <button onClick={() => setEditingDevice(true)}>Edit device</button>
+            )}
+            <Link to={`/assets/inventory/${d.id}`}>Asset record →</Link>
+          </div>
+        </div>
+        <Band d={d} state={state.data} loading={state.isLoading} />
+      </header>
       {editingDevice && (
         <DeviceEditor device={d} onClose={() => setEditingDevice(false)} />
       )}
 
-      <section>
-        <h3>Identity and location</h3>
-        <dl className="kv">
-          <dt>Device type</dt><dd>{humanise(d.device_type)}</dd>
-          <dt>Vendor</dt><dd>{d.vendor ?? '—'}</dd>
-          <dt>Model</dt><dd>{d.model ?? '—'}</dd>
-          <dt>Serial</dt><dd className="mono">{d.serial_number ?? '—'}</dd>
-          <dt>Owner</dt><dd>{d.owner_group ?? '—'}{d.cost_centre ? <span className="muted"> · {d.cost_centre}</span> : null}</dd>
-          <dt>Management IP</dt><dd className="mono">{d.mgmt_ip ?? '—'}</dd>
-          <dt>Production IP</dt><dd className="mono">{d.primary_ip ?? '—'}</dd>
-          <dt>Datacenter</dt><dd>{d.location.datacenter_code ?? '—'}</dd>
-          <dt>Room</dt><dd>{d.location.room_name ?? '—'}</dd>
-          <dt>Row / Rack</dt>
-          <dd>
-            {d.location.row_name ?? '—'} / {d.location.rack_name ?? '—'}
-            {d.location.u_start ? ` · U${d.location.u_start}` : ''}
-          </dd>
-          <dt>Lifecycle</dt><dd>{humanise(d.lifecycle)}</dd>
-        </dl>
-      </section>
-
-      <section>
-        <h3>Nameplate</h3>
-        <dl className="kv">
-          <dt>Rated power</dt>
-          <dd>
-            {d.rated_power_w != null ? `${d.rated_power_w} W` : '—'}
-            {d.rated_power_w != null && draw != null && (
-              <span className="muted">
-                {' · '}drawing {Math.round(draw)} W
-                {' '}({Math.round((draw / d.rated_power_w) * 100)}% of nameplate)
-              </span>
+      <div className="dv-tabs" role="tablist" aria-label="Device sections">
+        {TABS.map((t) => (
+          <button key={t.id} type="button" role="tab" id={`dv-tab-${t.id}`}
+                  aria-selected={tab === t.id} aria-controls="dv-panel"
+                  onClick={() => goTab(t.id)}>
+            {t.label}
+            {t.id === 'alarms' && openAlarms > 0 && (
+              <span className={`n sev-${sev}`}>{openAlarms}</span>
             )}
-          </dd>
-          <dt>Power supplies</dt>
-          <dd>
-            {d.psus.length === 0 ? '—' : (
-              <>
-                {d.psus.length} × {d.psus[0].rated_watts ?? '?'} W
-                {' '}({[...new Set(d.psus.map((p) => p.connector ?? '?'))].join(', ')})
-                {/* The verdict, not the count: supplies are only redundancy if
-                    something separate feeds each one. */}
-                {psuVerdict && (
-                  <span className={psuVerdict.warn ? 'warn' : 'muted'}>
-                    {' · '}{psuVerdict.text}
-                  </span>
-                )}
-              </>
-            )}
-          </dd>
-          <dt>Network ports</dt>
-          <dd>
-            {portSummary ?? '—'}
-            {/* Patched vs fitted. A rack with no spare ports is a constraint on
-                the next install, and it is invisible from a port count alone. */}
-            {cabled != null && fitted > 0 && (
-              <span className="muted">
-                {' · '}{cabled} of {fitted} patched
-              </span>
-            )}
-          </dd>
-          <dt>Rack units</dt>
-          <dd>
-            {d.u_height}U
-            {d.location.u_start ? ` at U${d.location.u_start}` : ''}
-          </dd>
-          <dt>Serial</dt><dd className="mono">{d.serial_number || '—'}</dd>
-          <dt>Asset tag</dt><dd className="mono">{d.asset_tag || '—'}</dd>
-        </dl>
-      </section>
+          </button>
+        ))}
+      </div>
 
-      {d.psus.length > 0 && (
-        <section>
-          <h3>Power supplies<span className="count"> {d.psus.length}</span></h3>
-          {/* Framed like every other table here, but not scrollable: a chassis
-              has one to four supplies, and capping four rows would add a
-              scrollbar to a list that was never going to need one. */}
-          <div className="table-frame">
-          <table>
-            <thead>
-              <tr>
-                <th>Slot</th><th>Inlet</th><th className="num">Rated</th>
-                <th>Fed from</th>
-              </tr>
-            </thead>
-            <tbody>
-              {d.psus.map((p) => (
-                <tr key={p.number}>
-                  <td>PSU{p.number}</td>
-                  <td className="muted">{p.connector ?? '—'}</td>
-                  <td className="num">
-                    {p.rated_watts != null ? `${p.rated_watts} W` : '—'}
-                  </td>
-                  <td>
-                    {p.feed_device_id ? (
-                      <>
-                        <Link to={`/devices/${p.feed_device_id}`}>{p.feed_device}</Link>
-                        {p.feed_outlet != null && (
-                          <span className="muted"> · outlet {p.feed_outlet}</span>
-                        )}
-                      </>
-                    ) : (
-                      /* Fitted but not corded. A blank would read as missing
-                         data; this is a real state and a finding. */
-                      <span className="warn">not corded</span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          </div>
-        </section>
-      )}
-
-      <section>
-        <h3>
-          Network ports
-          {/* The count belongs in the heading once the table can scroll: with
-              only a dozen rows visible, nothing else says whether this is a
-              five-port server or a sixty-five-port switch. */}
-          {fitted > 0 && <span className="count"> {fitted}</span>}
-        </h3>
-        {ports.isLoading && <p className="muted">Loading…</p>}
-        {ports.error && <p className="warn">Could not load ports.</p>}
-        {ports.data && ports.data.length === 0 && (
-          <p className="muted">No ports recorded for this device.</p>
-        )}
-        {ports.data && ports.data.length > 0 && (
-          <div className="table-frame is-scrollable">
-          <table>
-            <thead>
-              <tr>
-                <th>Port</th><th>Role</th><th>Speed</th><th>MAC</th>
-                <th>Cabled to</th>
-              </tr>
-            </thead>
-            <tbody>
-              {ports.data.map((p) => (
-                <tr key={p.id}>
-                  <td>{p.name}</td>
-                  <td className="muted">{humanise(p.role)}</td>
-                  <td>{formatSpeed(p.speed_bps)}</td>
-                  <td className="mono muted">{p.mac ?? '—'}</td>
-                  <td>
-                    {p.peer_device_id ? (
-                      <>
-                        <Link to={`/devices/${p.peer_device_id}`}>{p.peer_device}</Link>
-                        {p.peer_port && <span className="muted"> · {p.peer_port}</span>}
-                        {/* Which plane the cable belongs to. A BMC on the
-                            management fabric and a NIC on production fail
-                            separately, and the row should say which is which. */}
-                        {p.peer_layer && (
-                          <span className="muted small"> · {p.peer_layer}</span>
-                        )}
-                      </>
-                    ) : (
-                      <span className="muted">not patched</span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          </div>
-        )}
-      </section>
-
-      <DeviceActions deviceId={id} />
-
-      <DeviceThresholds deviceId={id} />
-
-      <section>
-        <h3>Communication</h3>
-        {/* Rendered only when it has rows. It used to draw unconditionally with
-            the "none configured" note underneath, which framed reads as an empty
-            box with a header floating in it. */}
-        {d.endpoints.length > 0 && (
-        <div className="table-frame">
-        <table>
-          <thead>
-            <tr>
-              <th>Protocol</th><th>Role</th><th>Address</th><th>Selector</th>
-              <th>Status</th><th>Credential</th><th className="num">Interval</th>
-              {/* Seen and Success are not the same question, and the column
-                  names alone do not say so: a fresh Seen beside a stale Success
-                  is an endpoint being polled and failing, which is a different
-                  fault from one nothing polls at all. Said where the confusion
-                  happens rather than in a paragraph above the table. */}
-              <th><Tip tip="Last poll attempt">Seen</Tip></th>
-              <th><Tip tip="Last poll that answered">Success</Tip></th>
-              <th className="num">Latency</th>
-              <th className="num">
-                <Tip tip="Cumulative for the life of the endpoint, not a recent window">
-                  Polls
-                </Tip>
-              </th>
-              <th>Last error</th><th />
-            </tr>
-          </thead>
-          <tbody>
-            {d.endpoints.map((e) => (
-              <tr key={e.id}>
-                <td>{humanise(e.protocol)}</td>
-                <td className="muted">{humanise(e.role)}</td>
-                <td className="mono">
-                  {e.address}{e.port ? `:${e.port}` : ''}
-                  {e.via_name && (
-                    <Tip className="muted" tip="reached through a gateway">
-                      {' '}via {e.via_name}
-                    </Tip>
-                  )}
-                </td>
-                {/* What selects this device when the address alone does not:
-                    a Modbus unit ID, a BACnet device instance. Empty for gear
-                    that answers on its own IP. */}
-                <td className="mono muted">{selector(e)}</td>
-                <td>
-                  <StatusChip status={e.status} />
-                  {/* Who is actually watching it, and on whose behalf: the
-                      collector that last reported, and the pool an operator
-                      pinned it into if any (docs/26 Phase 8's "monitored by
-                      DC2-BMS-01 (pool DC2/BMS)"). Range-resolved pools are
-                      not shown - only the assigner knows those. */}
-                  {e.reported_by && (
-                    <div className="muted">
-                      monitored by <span className="mono">{e.reported_by}</span>
-                      {e.pool_name ? ` (pool ${e.pool_name})` : ''}
-                    </div>
-                  )}
-                  {/* Two different "off" states, and they answer different
-                      questions. admin_state is what an operator asked for;
-                      `enabled` is whether the collector is given this endpoint
-                      at all, which the importer turns off when a device type
-                      turns out not to speak the protocol - a firewall has no
-                      gNMI to poll however anyone feels about it. Showing only
-                      admin_state left 52 retired endpoints reading as
-                      "enabled" while nothing polled them. */}
-                  {!e.enabled ? (
-                    <Tip className="muted"
-                         tip="Retired: this device type does not serve this protocol, so the collector is not given it.">
-                      {' · retired'}
-                    </Tip>
-                  ) : e.admin_state !== 'enabled' && (
-                    <span className="muted"> · {humanise(e.admin_state)}</span>
-                  )}
-                </td>
-                {/* Only ever the hint - the secret itself never leaves the server. */}
-                <td className="muted mono">
-                  {e.credential_hint
-                    ? <Tip tip={e.credential_hint}>{e.credential_name ?? '—'}</Tip>
-                    : (e.credential_name ?? '—')}
-                </td>
-                <td className="num">{e.poll_interval_s ? `${e.poll_interval_s}s` : '—'}</td>
-                <td className="muted">{relativeTime(e.last_seen)}</td>
-                <td className="muted">{relativeTime(e.last_success)}</td>
-                <td className="num muted">
-                  {e.last_latency_ms != null ? `${e.last_latency_ms} ms` : '—'}
-                </td>
-                <td className="num"><PollCounts endpoint={e} /></td>
-                <td className="muted">
-                  {e.last_error
-                    ? `${e.last_error_class ?? 'error'}: ${e.last_error}`
-                    : '—'}
-                </td>
-                <td>
-                  <button onClick={() => setEditing(e)}>Edit</button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        </div>
-        )}
-        {d.endpoints.length === 0 && (
-          <p className="muted">No endpoints configured for this device.</p>
-        )}
-        {editing && (
-          <EndpointEditor deviceId={id} endpoint={editing}
-                          onClose={() => setEditing(null)} />
-        )}
-      </section>
-
-      <section>
-        <h3>Current metrics</h3>
-        {Object.keys(metrics).length === 0 ? (
-          <p className="muted">
-            No telemetry yet. The first poll lands within one interval of the
-            collector picking this endpoint up.
-          </p>
-        ) : (
-          <div className="table-frame">
-          <table>
-            <thead>
-              <tr><th>Metric</th><th className="num">Value</th><th>Quality</th><th>Age</th></tr>
-            </thead>
-            <tbody>
-              {Object.entries(metrics).map(([key, m]) => (
-                <tr key={key}>
-                  <td>{metricLabel(key)}</td>
-                  <td className="num">{formatMetric(key, m.v)}</td>
-                  <td className="muted">{humanise(m.q)}</td>
-                  <td className="muted">{relativeTime(m.t)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          </div>
-        )}
-      </section>
-
-      {/* Charted from the same metric keys the device is actually reporting,
-          so a device with no telemetry gets an explanation rather than an
-          empty axis. Curated panels where the device type has them; anything
-          else still groups by unit, which is a fallback rather than a layout. */}
-      <DeviceHistory deviceId={id} metrics={chartMetrics} groups={groups} />
-
-      <p><Link to="/devices">← All devices</Link></p>
+      <div className="dv-tab" id="dv-panel" role="tabpanel" aria-labelledby={`dv-tab-${tab}`}>
+        {bodies[tab]}
+      </div>
     </div>
   );
 }
 
-/** Poll totals for one endpoint, with the failure breakdown only when there is
- *  one. A bare "2547" reads as healthy at a glance; "2547 · 12 failed" does
- *  not, and that is the whole job of this cell.
- *
- *  Timeouts and auth failures are separated because they send an operator to
- *  different places: a timeout is a network or device problem, while auth
- *  failures mean the stored credential is wrong and no amount of waiting will
- *  fix it. */
-function PollCounts({ endpoint }: { endpoint: EndpointSummary }) {
-  const { poll_count: polls, fail_count: fails } = endpoint;
-  if (!polls && !fails) return <span className="muted">—</span>;
+// ------------------------------------------------------------------ band
 
-  const parts: string[] = [];
-  if (endpoint.timeout_count) parts.push(`${endpoint.timeout_count} timeout`);
-  if (endpoint.auth_fail_count) parts.push(`${endpoint.auth_fail_count} auth`);
-  // Failures that are neither: refused, decode, unreachable and the rest.
-  const other = fails - endpoint.timeout_count - endpoint.auth_fail_count;
-  if (other > 0) parts.push(`${other} other`);
+/** The readings an operator looks at first, by class. The curated chart
+ *  groups say which metrics matter for a device type; the generic list
+ *  catches the types nobody has curated. */
+const PREFERRED = [
+  'power_draw', 'load_pct', 'current', 'apparent_power', 'inlet_temperature',
+  'ambient_temperature', 'cpu_temperature', 'cpu_utilization', 'memory_utilization',
+  'relative_humidity', 'water_supply_temp', 'water_return_temp', 'water_flow',
+  'supply_air_temp', 'return_air_temp', 'battery_runtime', 'fuel_level_pct',
+  'component_temperature',
+];
+const NOT_A_READING = new Set(['sys_uptime', 'reachable', 'poll_latency', 'energy_consumed']);
+
+const GLYPH: Record<string, GlyphName> = {
+  power_draw: 'power', psu_output_power: 'power', apparent_power: 'power', reactive_power: 'power',
+  inlet_temperature: 'air-in', supply_air_temp: 'air-in', ambient_temperature: 'air-in',
+  exhaust_temperature: 'air-out', return_air_temp: 'air-out',
+  cpu_temperature: 'heat', component_temperature: 'heat', motor_temp: 'heat',
+  oil_temperature: 'heat', winding_temperature: 'heat', battery_temperature: 'heat',
+  cpu_utilization: 'chip', memory_utilization: 'memory', disk_utilization: 'memory',
+  load_pct: 'load', compressor_load_pct: 'load', cooling_output_pct: 'load',
+  current: 'current', relative_humidity: 'humidity', dew_point: 'dew',
+  water_supply_temp: 'water-in', water_return_temp: 'water-out',
+  water_flow: 'flow', makeup_water_flow: 'flow', airflow: 'flow',
+  water_setpoint_temp: 'setpoint', air_setpoint_temp: 'setpoint', approach_temp: 'spread',
+};
+
+const SHORT: Record<string, string> = {
+  power_draw: 'power', inlet_temperature: 'inlet', exhaust_temperature: 'exhaust',
+  cpu_temperature: 'cpu temp', cpu_utilization: 'cpu', memory_utilization: 'memory',
+  disk_utilization: 'disk', ambient_temperature: 'ambient', relative_humidity: 'humidity',
+  dew_point: 'dew point', water_supply_temp: 'supply', water_return_temp: 'return',
+  water_flow: 'flow', load_pct: 'load', current: 'current', apparent_power: 'load',
+  voltage_ln: 'voltage', supply_air_temp: 'supply air', return_air_temp: 'return air',
+  fan_speed_pct: 'fan', battery_runtime: 'runtime', fuel_level_pct: 'fuel',
+  component_temperature: 'temp', psu_output_power: 'psu out',
+};
+
+function pickReadout(type: string, m: Record<string, MetricValue>): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  const candidates = [
+    ...(chartGroupsFor(type) ?? []).flatMap((g) => g.metrics),
+    ...PREFERRED,
+    ...Object.keys(m).sort(),
+  ];
+  for (const k of candidates) {
+    if (seen.has(k) || out.length >= 4) continue;
+    seen.add(k);
+    if (NOT_A_READING.has(k) || k.startsWith('if_')) continue;
+    if (typeof m[k]?.v !== 'number') continue;
+    out.push(k);
+  }
+  return out;
+}
+
+function withUnit(k: string, m: MetricValue): string {
+  const unit = METRICS[k as MetricKey]?.unit;
+  const val = formatMetric(k, m.v);
+  const bare = typeof m.v === 'number' && unit && !/[a-zA-Z°%]/.test(val);
+  return bare ? `${val} ${unit}` : val;
+}
+
+function Band({ d, state, loading }: { d: Detail; state?: DeviceState; loading: boolean }) {
+  const m = state?.metrics ?? {};
+  const keys = useMemo(() => pickReadout(d.device_type, m), [d.device_type, m]);
+  const open = state?.active_alarms ?? 0;
+  const sev = (state?.max_severity ?? '').toLowerCase();
+  const alarmTone = open === 0 ? 'tone-ok' : sev === 'critical' ? 'tone-critical'
+    : sev === 'major' ? 'tone-major' : 'tone-warn';
+
+  if (loading) {
+    return (
+      <div className="dv-band" aria-busy="true" aria-label="Reading the device">
+        {[0, 1, 2, 3].map((i) => (
+          <div key={i} className="dv-tile">
+            <span className="dv-glyph" aria-hidden />
+            <b className="dv-skel">00.0</b><span className="dv-skel">reading</span>
+          </div>
+        ))}
+      </div>
+    );
+  }
 
   return (
-    <>
-      <span>{polls.toLocaleString()}</span>
-      {fails > 0 && (
-        <Tip className="warn" tip={parts.join(', ')}>
-          {' · '}{fails.toLocaleString()} failed
-        </Tip>
-      )}
-    </>
+    <div className="dv-band" aria-label="Live readings">
+      {keys.map((k) => {
+        const mv = m[k];
+        const g = GLYPH[k];
+        const flagged = mv.q !== 'good';
+        return (
+          <div key={k} className={`dv-tile${flagged ? ' is-flagged' : ''}`}
+               title={`${metricLabel(k)}${mv.t ? ` · ${relativeTime(mv.t)}` : ''}${flagged ? ` · quality: ${mv.q}` : ''}`}>
+            <span className="dv-glyph" aria-hidden>{g && <TileGlyph name={g} />}</span>
+            <b>{withUnit(k, mv)}</b>
+            <span>{SHORT[k] ?? metricLabel(k).toLowerCase()}</span>
+          </div>
+        );
+      })}
+      <div className={`dv-tile ${alarmTone}`} title={open ? `worst: ${sev}` : 'nothing open'}>
+        <span className="dv-glyph" aria-hidden><CategoryGlyph kind="alarms" size={18} /></span>
+        <b>{open}</b>
+        <span>{open === 1 ? 'open alarm' : 'open alarms'}</span>
+      </div>
+      <div className="dv-tile" title={state?.last_seen ? new Date(state.last_seen).toLocaleString() : 'never polled'}>
+        <span className="dv-glyph" aria-hidden />
+        <b>{state?.last_seen ? relativeTime(state.last_seen) : '—'}</b>
+        <span>last seen</span>
+      </div>
+    </div>
   );
 }
 
-/** The protocol-specific identifier that picks this device out, rendered for a
- *  table cell. A Modbus slave behind a gateway and a BACnet device on a routed
- *  trunk are both reached at somebody else's address; this column is where an
- *  operator sees which one they actually are. */
-function selector(e: EndpointSummary): string {
-  const bits = Object.entries(e.addressing ?? {})
-    .filter(([, v]) => v !== '' && v != null)
-    .map(([k, v]) => `${k.replace(/_/g, ' ')} ${v}`);
-  return bits.length ? bits.join(' · ') : '—';
+// -------------------------------------------------------------- overview
+
+function Fact({ k, v, mono }: { k: string; v: ReactNode; mono?: boolean }) {
+  const empty = v == null || v === '' || v === '—';
+  return (
+    <div className="dv-fact">
+      <div className="k">{k}</div>
+      <div className={`v${mono ? ' mono' : ''}`}>{empty ? <span className="dv-none">—</span> : v}</div>
+    </div>
+  );
+}
+
+function Overview({ d, ports, metrics, state, onAlarms, onMonitoring }: {
+  d: Detail;
+  ports?: NetworkInterface[];
+  metrics: Record<string, MetricValue>;
+  state?: DeviceState;
+  onAlarms: () => void;
+  onMonitoring: () => void;
+}) {
+  const loc = d.location;
+  const draw = typeof metrics.power_draw?.v === 'number' ? metrics.power_draw.v : null;
+  const rated = d.rated_power_w ?? null;
+  const pct = draw != null && rated ? Math.round((draw / rated) * 100) : null;
+  const verdict = psuVerdict(d);
+  const fitted = ports?.length ?? 0;
+  const cabled = ports?.filter((p) => p.peer_device).length ?? 0;
+  const summary = portSummary(ports);
+
+  return (
+    <div className="dv-grid">
+      <div className="dv-col">
+        <section className="dv-card">
+          <h3>Record <Link className="more" to={`/assets/inventory/${d.id}`}>Asset record →</Link></h3>
+          <div className="dv-facts">
+            <Fact k="Type" v={humanise(d.device_type)} />
+            <Fact k="Vendor" v={d.vendor} />
+            <Fact k="Model" v={d.model} />
+            <Fact k="Serial" v={d.serial_number} mono />
+            <Fact k="Asset tag" v={d.asset_tag} mono />
+            <Fact k="Owner" v={d.owner_group
+              ? <>{d.owner_group}{d.cost_centre && <span className="muted"> · {d.cost_centre}</span>}</>
+              : null} />
+            <Fact k="Management IP" v={d.mgmt_ip} mono />
+            <Fact k="Production IP" v={d.primary_ip} mono />
+            <Fact k="Lifecycle" v={humanise(d.lifecycle)} />
+            <Fact k="Priority" v={d.priority ? humanise(d.priority) : 'Normal'} />
+          </div>
+          {d.notes && <p className="dv-note">{d.notes}</p>}
+        </section>
+
+        <section className="dv-card">
+          <h3>Placement</h3>
+          <div className="dv-facts">
+            <Fact k="Datacenter" v={loc.datacenter_code} />
+            <Fact k="Room" v={loc.room_name} />
+            <Fact k="Row" v={loc.row_name} />
+            <Fact k="Rack" v={loc.rack_id && loc.rack_name
+              ? <Link to={`/racks/${loc.rack_id}`}>{loc.rack_name}</Link> : loc.rack_name} />
+            <Fact k="Position" v={loc.u_start
+              ? `U${loc.u_start}, ${d.u_height}U${d.facing ? `, facing ${d.facing}` : ''}` : null} />
+          </div>
+        </section>
+
+        <section className="dv-card">
+          <h3>Nameplate</h3>
+          <div className="dv-facts">
+            <Fact k="Rated power" v={rated != null ? `${rated} W` : null} />
+            <Fact k="Power supplies" v={d.psus.length
+              ? `${d.psus.length} × ${d.psus[0].rated_watts ?? '?'} W (${[...new Set(d.psus.map((p) => p.connector ?? '?'))].join(', ')})`
+              : null} />
+            <Fact k="Network ports" v={summary
+              ? <>{summary}<span className="muted"> · {cabled} of {fitted} patched</span></> : null} />
+            <Fact k="Height" v={`${d.u_height}U`} />
+          </div>
+          {rated != null && (
+            <div className="dv-meter" aria-label="Draw against the nameplate rating">
+              <div className="dv-meter-track">
+                <div className={`dv-meter-fill${pct != null && pct >= 95 ? ' critical' : pct != null && pct >= 80 ? ' warn' : ''}`}
+                     style={{ width: `${Math.min(100, pct ?? 0)}%` }} />
+              </div>
+              <div className="dv-meter-label">
+                <span>{draw != null ? `drawing ${Math.round(draw)} W` : 'no draw reported'}</span>
+                <span>{pct != null ? `${pct}% of ${rated} W` : `${rated} W rated`}</span>
+              </div>
+            </div>
+          )}
+        </section>
+      </div>
+
+      <div className="dv-col">
+        <section className="dv-card">
+          <h3>
+            Open conditions
+            <button type="button" className="linklike more" onClick={onAlarms}>All alarms →</button>
+          </h3>
+          <DeviceAlarms deviceId={d.id} deviceName={d.name} compact limit={4} onMore={onAlarms} />
+        </section>
+
+        <section className="dv-card">
+          <h3>
+            Power feeds
+            {verdict && <span className={`dv-verdict ${verdict.warn ? 'warn' : 'ok'}`} style={{ marginLeft: 'auto' }}>{verdict.text}</span>}
+          </h3>
+          {d.psus.length === 0 ? (
+            <p className="dv-empty">No power supplies recorded.</p>
+          ) : (
+            <ul className="dv-rows">
+              {d.psus.map((p) => (
+                <li key={p.number} className="dv-row">
+                  <span className="k">PSU{p.number}{p.rated_watts != null ? ` · ${p.rated_watts} W` : ''}</span>
+                  <span className="v">
+                    {p.feed_device_id ? (
+                      <>
+                        <Link to={`/devices/${p.feed_device_id}`}>{p.feed_device}</Link>
+                        {p.feed_outlet != null && <span className="muted"> · outlet {p.feed_outlet}</span>}
+                      </>
+                    ) : <span className="warn">not corded</span>}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        <section className="dv-card">
+          <h3>
+            Monitoring
+            <button type="button" className="linklike more" onClick={onMonitoring}>Details →</button>
+          </h3>
+          {d.endpoints.length === 0 ? (
+            <p className="dv-empty">No endpoints configured.</p>
+          ) : (
+            <ul className="dv-rows">
+              {d.endpoints.filter((e) => e.enabled).map((e) => (
+                <li key={e.id} className="dv-row">
+                  <span className="k">
+                    {humanise(e.protocol)} <span className="muted">· {humanise(e.role)}</span>
+                  </span>
+                  <span className="v">
+                    <span className={`chip ${statusClass(e.status)}`}>
+                      <span className="dot" aria-hidden /> {e.status}
+                    </span>
+                    <span className="muted small"> {relativeTime(e.last_success)}</span>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {state?.last_seen && (
+            <p className="dv-note">Last reading {relativeTime(state.last_seen)}.</p>
+          )}
+        </section>
+      </div>
+    </div>
+  );
+}
+
+// -------------------------------------------------------------- readings
+
+/** Every current reading, grouped the way the charts are: the curated panels
+ *  for the type first, then the catalogue's groups for the rest. */
+function Readings({ d, metrics, loading }: {
+  d: Detail; metrics: Record<string, MetricValue>; loading: boolean;
+}) {
+  const groups = useMemo(() => {
+    const keys = Object.keys(metrics).filter((k) => !k.startsWith('if_'));
+    const used = new Set<string>();
+    const out: { title: string; keys: string[] }[] = [];
+    for (const g of chartGroupsFor(d.device_type) ?? []) {
+      const have = g.metrics.filter((k) => keys.includes(k));
+      if (have.length) { out.push({ title: g.title, keys: have }); have.forEach((k) => used.add(k)); }
+    }
+    const rest = new Map<string, string[]>();
+    for (const k of keys.sort()) {
+      if (used.has(k)) continue;
+      const grp = METRICS[k as MetricKey]?.group ?? 'other';
+      rest.set(grp, [...(rest.get(grp) ?? []), k]);
+    }
+    for (const [grp, ks] of rest) out.push({ title: humanise(grp), keys: ks });
+    return out;
+  }, [metrics, d.device_type]);
+  const n = groups.reduce((a, g) => a + g.keys.length, 0);
+
+  return (
+    <section>
+      <h3>Current readings{n > 0 && <span className="count"> {n}</span>}</h3>
+      {loading && <p className="dv-empty">Reading…</p>}
+      {!loading && n === 0 && (
+        <p className="dv-empty">
+          No telemetry yet. The first poll lands within one interval of the
+          collector picking this endpoint up.
+        </p>
+      )}
+      {n > 0 && (
+        <div className="dv-readings">
+          {groups.map((g) => (
+            <div key={g.title} className="dv-rgroup">
+              <h4>{g.title}</h4>
+              {g.keys.map((k) => {
+                const m = metrics[k];
+                const good = m.q === 'good';
+                return (
+                  <div key={k} className={`dv-reading${good ? '' : ' is-flagged'}`}
+                       title={good ? undefined : `quality: ${m.q}`}>
+                    <span className="k">{metricLabel(k)}</span>
+                    <span className="v">{withUnit(k, m)}</span>
+                    <span className="t">{m.t ? relativeTime(m.t) : ''}{good ? '' : ` · ${humanise(m.q)}`}</span>
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
 }
