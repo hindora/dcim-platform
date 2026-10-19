@@ -470,15 +470,18 @@ export function FloorPlanView() {
   // then on the address follows the selection - set on select, dropped on
   // close - rather than the other way round, so closing the panel does not
   // reselect what the address still names.
-  const wantedDevice = useRef<string | null>(params.get('device'));
+  // State, not a ref: the select and the "consumed" mark must land in ONE
+  // render, or the address-follows-selection effect below sees the mark
+  // cleared while the selection is still empty and drops the device from
+  // the address it was just read from.
+  const [wantedDevice, setWantedDevice] = useState<string | null>(() => params.get('device'));
   useEffect(() => {
-    const id = wantedDevice.current;
-    if (!id || !data || data.plan.room_id !== roomId) return;
-    wantedDevice.current = null;
-    if (data.devices.some((d) => d.id === id)) { setSel({ kind: 'device', id }); setPanel('info'); }
-  }, [data, roomId]);
+    if (!wantedDevice || !data || data.plan.room_id !== roomId) return;
+    setWantedDevice(null);
+    if (data.devices.some((d) => d.id === wantedDevice)) { setSel({ kind: 'device', id: wantedDevice }); setPanel('info'); }
+  }, [wantedDevice, data, roomId]);
   useEffect(() => {
-    if (wantedDevice.current) return;
+    if (wantedDevice) return;
     const cur = params.get('device');
     const want = selState?.kind === 'device' ? selState.id : null;
     if (cur === want) return;
@@ -486,7 +489,7 @@ export function FloorPlanView() {
     if (want) next.set('device', want); else next.delete('device');
     setParams(next, { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selState?.kind, selState?.id, data]);
+  }, [selState?.kind, selState?.id, wantedDevice]);
 
   // --- selection panel content ----------------------------------------
   let panelTitle = 'Room information';
