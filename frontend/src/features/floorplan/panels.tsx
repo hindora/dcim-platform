@@ -2,14 +2,14 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useMemo, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  api, ApiError, type Alarm, type DeviceDetail, type DeviceState, type MetricValue, type SiteKpi, type TwinRoom,
-  type TwinSiteScene,
+  api, ApiError, type Alarm, type DeviceDetail, type DeviceState, type Impact, type MetricValue, type NetworkInterface,
+  type PowerChain, type SiteKpi, type TwinRoom, type TwinSiteScene,
 } from '../../api/client';
 import type {
   FloorEquipment, FloorPlan, FloorRack, RoomKpi, ThermalField, ThermalRoom, ThermalUnit, TwinDevice, TwinRackIndex,
   TwinRoomIndices,
 } from '../../api/client';
-import { formatMetric, humanise, metricLabel, relativeTime } from '../../lib/format';
+import { formatMetric, formatSpeed, humanise, metricLabel, relativeTime } from '../../lib/format';
 import { METRICS, type MetricKey } from '../../lib/metrics.gen';
 import { chartGroupsFor } from '../devices/chartGroups';
 import {
@@ -91,7 +91,7 @@ function Section({ title, open = false, children }: { title: string; open?: bool
   );
 }
 
-function Row({ k, v }: { k: string; v: ReactNode }) {
+function Row({ k, v }: { k: ReactNode; v: ReactNode }) {
   return <div className="vw-row"><span className="k">{k}</span><span className="v">{v}</span></div>;
 }
 
@@ -561,12 +561,33 @@ export function RackPanel({ rack, devices, index }: { rack: FloorRack; devices: 
   );
 }
 
-/** What a server's or a switch's own front says about it, with everything the
- *  platform holds on it: the nameplate and where it is (inventory), every
- *  reading its collector last brought back (device_state), its cords and
- *  endpoints, and the conditions open on it. The same facts the device page
- *  shows, read from the same endpoints, in the order an operator at the rack
- *  wants them: is it alright, what is it, what is it doing. */
+/** What a box in a rack says about itself, by what it is.
+ *
+ *  Each class of gear has its own first screen in a real hall, because each
+ *  answers to a different system: a server to its BMC (Redfish: air in and
+ *  out, draw, supplies), a switch to IF-MIB (ports, peers, control plane), a
+ *  rack strip to the PDU MIB (load, current, what it feeds and what feeds it),
+ *  a door probe to the environmental sensor it is (temperature, humidity,
+ *  against the ASHRAE envelope), an in-rack CDU to its BMS card (the water
+ *  loop). So the panel's head, its tiles and its own section follow the class;
+ *  the readings, the conditions and the links are the same for all. Every
+ *  figure is one the device page also shows, from the same endpoints. */
+type DeviceClass = 'server' | 'network' | 'pdu' | 'sensor' | 'cdu' | 'other';
+
+function deviceClass(t: string): DeviceClass {
+  switch (t) {
+    case 'server': case 'storage': return 'server';
+    case 'switch': case 'oob_switch': case 'router': case 'firewall': case 'load_balancer': return 'network';
+    case 'pdu': return 'pdu';
+    case 'sensor': return 'sensor';
+    case 'cdu': return 'cdu';
+    default: return 'other';
+  }
+}
+
+const num = (m: MetricValue | undefined): number | null => (typeof m?.v === 'number' ? m.v : null);
+const fW = (w: number | null | undefined) => (w == null ? '–' : w >= 1000 ? `${(w / 1000).toFixed(2)} kW` : `${Math.round(w)} W`);
+
 export function DevicePanel({ device, rack }: { device: TwinDevice; rack?: FloorRack }) {
   const detail = useQuery<DeviceDetail>({
     queryKey: ['device', device.id],
@@ -581,37 +602,12 @@ export function DevicePanel({ device, rack }: { device: TwinDevice; rack?: Floor
     retry: false,
   });
   const d = detail.data;
-  const metrics = useMemo(() => state.data?.metrics ?? {}, [state.data]);
-  const slot = device.u_start
-    ? `U${device.u_start}${device.u_height > 1 ? `–${device.u_start + device.u_height - 1}` : ''}`
-    : humanise(device.mount ?? '') || '–';
+  const m = useMemo(() => state.data?.metrics ?? {}, [state.data]);
+  const cls = deviceClass(device.device_type);
   const status = state.data?.status ?? device.status;
   const sev = state.data?.max_severity ?? device.max_severity;
-  const draw = typeof metrics.power_draw?.v === 'number' ? metrics.power_draw.v : device.power_w ?? null;
-  const rated = d?.rated_power_w ?? null;
-
-  // Readings in the order the device's own page charts them, then whatever
-  // else it reports, by the catalogue's group. Per-port counters are left to
-  // the device page: a switch has a hundred of them.
-  const groups = useMemo(() => {
-    const keys = Object.keys(metrics).filter((k) => !k.startsWith('if_'));
-    const used = new Set<string>();
-    const out: { title: string; keys: string[] }[] = [];
-    for (const g of chartGroupsFor(device.device_type) ?? []) {
-      const have = g.metrics.filter((k) => k in metrics);
-      if (have.length) { out.push({ title: g.title, keys: have }); have.forEach((k) => used.add(k)); }
-    }
-    const rest = new Map<string, string[]>();
-    for (const k of keys.sort()) {
-      if (used.has(k)) continue;
-      const grp = METRICS[k as MetricKey]?.group ?? 'other';
-      rest.set(grp, [...(rest.get(grp) ?? []), k]);
-    }
-    for (const [grp, ks] of rest) out.push({ title: humanise(grp), keys: ks });
-    return out;
-  }, [metrics, device.device_type]);
-  const readingCount = groups.reduce((n, g) => n + g.keys.length, 0);
   const seen = state.data?.last_seen ?? d?.last_seen ?? null;
+  const ctx: ClassCtx = { device, rack, d, m, cls, stateLoading: state.isLoading, stateError: state.isError };
 
   return (
     <div className="vw-panel-body">
@@ -625,91 +621,104 @@ export function DevicePanel({ device, rack }: { device: TwinDevice; rack?: Floor
         {sev !== 'CLEAR' && <span className={`vw-sev sev-${sev.toLowerCase()}`}>{sev.toLowerCase()}</span>}
         <span className="muted">{seen ? `seen ${relativeTime(seen)}` : 'never seen'}</span>
       </div>
-      <Tiles items={[
-        { label: 'AIR', value: fmtT(device.temp_c) },
-        { label: device.exhaust_c != null ? 'EXHAUST' : 'RH', value: device.exhaust_c != null ? fmtT(device.exhaust_c) : f1(device.rh_pct, ' %') },
-        { label: 'POWER', value: draw != null ? `${(draw / 1000).toFixed(2)} kW` : '–' },
-      ]} />
-      {device.exhaust_c != null && device.temp_c != null && (
-        <div className="vw-kv"><Row k="Rise in → out" v={fmtDT(device.exhaust_c - device.temp_c)} /></div>
-      )}
-
-      <Section title="Identity" open>
-        <div className="vw-kv">
-          <Row k="Type" v={humanise(device.device_type)} />
-          <Row k="Vendor" v={d?.vendor ?? device.vendor ?? '–'} />
-          <Row k="Model" v={d?.model ?? device.model ?? '–'} />
-          {rack && <Row k="Rack" v={`${rack.name}${rack.row_name ? ` · row ${rack.row_name}` : ''}`} />}
-          <Row k="Slot" v={slot} />
-          <Row k="Serial" v={<span className="mono">{d?.serial_number ?? '–'}</span>} />
-          <Row k="Asset tag" v={<span className="mono">{d?.asset_tag ?? '–'}</span>} />
-          <Row k="Management IP" v={<span className="mono">{d?.mgmt_ip ?? '–'}</span>} />
-          {d?.primary_ip && <Row k="Production IP" v={<span className="mono">{d.primary_ip}</span>} />}
-          <Row k="Lifecycle" v={d?.lifecycle ? humanise(d.lifecycle) : '–'} />
-          {d?.warranty_expires && (
-            <Row k="Warranty" v={
-              <span className={d.warranty_state === 'expired' ? 'vw-bad' : d.warranty_state === 'expiring' ? 'vw-warn' : undefined}>
-                {d.warranty_state === 'expired' ? 'expired ' : 'to '}
-                {new Date(d.warranty_expires).toLocaleDateString(undefined, { dateStyle: 'medium' })}
-              </span>} />
-          )}
-          {d?.owner_group && <Row k="Owner" v={d.owner_group} />}
-        </div>
-        {detail.isError && <p className="muted vw-note">The inventory record could not be read.</p>}
-      </Section>
-
-      <Section title={readingCount ? `Readings (${readingCount})` : 'Readings'} open>
-        {state.isLoading && <p className="muted vw-note">Reading…</p>}
-        {!state.isLoading && readingCount === 0 && (
-          <p className="muted vw-note">{state.isError ? 'No telemetry yet from this device.' : 'Nothing reported yet.'}</p>
-        )}
-        {groups.map((g) => (
-          <div key={g.title} className="vw-readings">
-            <p className="vw-sub">{g.title}</p>
-            {g.keys.map((k) => <Reading key={k} k={k} m={metrics[k]} />)}
-          </div>
-        ))}
-        {rated != null && (
-          <p className="muted vw-note">
-            Rated {rated} W{draw != null ? ` · drawing ${Math.round(draw)} W, ${Math.round((100 * draw) / rated)} % of nameplate` : ''}.
-          </p>
-        )}
-      </Section>
-
-      {d && d.psus.length > 0 && (
-        <Section title={`Power supplies (${d.psus.length})`}>
-          <div className="vw-kv">
-            {d.psus.map((p) => (
-              <Row key={p.number}
-                   k={`PSU${p.number}${p.rated_watts ? ` · ${p.rated_watts} W` : ''}${p.connector ? ` ${p.connector}` : ''}`}
-                   v={p.feed_device_id
-                     ? <><Link to={`/devices/${p.feed_device_id}`}>{p.feed_device}</Link>
-                         {p.feed_outlet != null && <span className="muted"> · outlet {p.feed_outlet}</span>}</>
-                     : <span className="vw-warn">not corded</span>} />
-            ))}
-          </div>
-          <p className="muted vw-note"><PsuVerdict psus={d.psus} /></p>
-        </Section>
-      )}
-
-      {d && d.endpoints.length > 0 && (
-        <Section title={`Endpoints (${d.endpoints.length})`}>
-          <div className="vw-kv">
-            {d.endpoints.map((e) => (
-              <Row key={e.id} k={`${humanise(e.protocol)} · ${humanise(e.role)}`}
-                   v={<span className={e.status === 'ONLINE' ? undefined : 'vw-warn'}>
-                        {(e.status ?? 'unknown').toLowerCase()}
-                        {e.last_seen ? <span className="muted"> · {relativeTime(e.last_seen)}</span> : null}
-                      </span>} />
-            ))}
-          </div>
-        </Section>
-      )}
-
+      {cls === 'server' && <ServerBody {...ctx} />}
+      {cls === 'network' && <NetworkBody {...ctx} />}
+      {cls === 'pdu' && <PduBody {...ctx} />}
+      {cls === 'sensor' && <SensorBody {...ctx} />}
+      {cls === 'cdu' && <CduBody {...ctx} />}
+      {cls === 'other' && <OtherBody {...ctx} />}
       <UnitAlarms deviceId={device.id} deviceName={device.name} />
       <div className="vw-links"><Link to={`/devices/${device.id}`}>Device page</Link>
         {rack && <Link to={`/racks/${rack.id}?from=floorplan`}>Rack elevation</Link>}</div>
     </div>
+  );
+}
+
+interface ClassCtx {
+  device: TwinDevice; rack?: FloorRack; d?: DeviceDetail; m: Record<string, MetricValue>; cls: DeviceClass;
+  stateLoading: boolean; stateError: boolean;
+}
+
+// ---------------------------------------------------------------- shared pieces
+
+function slotOf(device: TwinDevice): string {
+  if (device.u_start) return `U${device.u_start}${device.u_height > 1 ? `–${device.u_start + device.u_height - 1}` : ''}`;
+  switch (device.mount) {
+    case 'zero_u': return 'zero-U, rear';
+    case 'rack_front': return `front door${device.mount_height_m != null ? `, ${device.mount_height_m.toFixed(1)} m up` : ''}`;
+    case 'rack_rear': return `rear door${device.mount_height_m != null ? `, ${device.mount_height_m.toFixed(1)} m up` : ''}`;
+    default: return humanise(device.mount ?? '') || '–';
+  }
+}
+
+/** The inventory rows a class wants; `full` adds the commercial ones. */
+function Identity({ device, rack, d, full = true, open = true }: ClassCtx & { full?: boolean; open?: boolean }) {
+  return (
+    <Section title="Identity" open={open}>
+      <div className="vw-kv">
+        <Row k="Type" v={humanise(device.device_type)} />
+        {rack && <Row k="Rack" v={`${rack.name}${rack.row_name ? ` · row ${rack.row_name}` : ''}`} />}
+        <Row k="Slot" v={slotOf(device)} />
+        <Row k="Serial" v={<span className="mono">{d?.serial_number ?? '–'}</span>} />
+        {(full || d?.asset_tag) && <Row k="Asset tag" v={<span className="mono">{d?.asset_tag ?? '–'}</span>} />}
+        {(full || d?.mgmt_ip) && <Row k="Management IP" v={<span className="mono">{d?.mgmt_ip ?? '–'}</span>} />}
+        {d?.primary_ip && <Row k="Production IP" v={<span className="mono">{d.primary_ip}</span>} />}
+        <Row k="Lifecycle" v={d?.lifecycle ? humanise(d.lifecycle) : '–'} />
+        {d?.warranty_expires && (
+          <Row k="Warranty" v={
+            <span className={d.warranty_state === 'expired' ? 'vw-bad' : d.warranty_state === 'expiring' ? 'vw-warn' : undefined}>
+              {d.warranty_state === 'expired' ? 'expired ' : 'to '}
+              {new Date(d.warranty_expires).toLocaleDateString(undefined, { dateStyle: 'medium' })}
+            </span>} />
+        )}
+        {full && d?.owner_group && <Row k="Owner" v={d.owner_group} />}
+      </div>
+    </Section>
+  );
+}
+
+/** Every reading the collector last brought back, in the order the device's
+ *  own page charts them, then the rest by the catalogue's group. Per-port
+ *  counters are left to the device page: a switch has a hundred of them. */
+function Readings({ device, m, stateLoading, stateError, d, skip = [] }: ClassCtx & { skip?: string[] }) {
+  const groups = useMemo(() => {
+    const keys = Object.keys(m).filter((k) => !k.startsWith('if_') && !skip.includes(k));
+    const used = new Set<string>();
+    const out: { title: string; keys: string[] }[] = [];
+    for (const g of chartGroupsFor(device.device_type) ?? []) {
+      const have = g.metrics.filter((k) => keys.includes(k));
+      if (have.length) { out.push({ title: g.title, keys: have }); have.forEach((k) => used.add(k)); }
+    }
+    const rest = new Map<string, string[]>();
+    for (const k of keys.sort()) {
+      if (used.has(k)) continue;
+      const grp = METRICS[k as MetricKey]?.group ?? 'other';
+      rest.set(grp, [...(rest.get(grp) ?? []), k]);
+    }
+    for (const [grp, ks] of rest) out.push({ title: humanise(grp), keys: ks });
+    return out;
+  }, [m, device.device_type, skip]);
+  const n = groups.reduce((a, g) => a + g.keys.length, 0);
+  const draw = num(m.power_draw) ?? device.power_w ?? null;
+  const rated = d?.rated_power_w ?? null;
+  return (
+    <Section title={n ? `Readings (${n})` : 'Readings'} open>
+      {stateLoading && <p className="muted vw-note">Reading…</p>}
+      {!stateLoading && n === 0 && (
+        <p className="muted vw-note">{stateError ? 'No telemetry yet from this device.' : 'Nothing reported yet.'}</p>
+      )}
+      {groups.map((g) => (
+        <div key={g.title} className="vw-readings">
+          <p className="vw-sub">{g.title}</p>
+          {g.keys.map((k) => <Reading key={k} k={k} m={m[k]} />)}
+        </div>
+      ))}
+      {rated != null && (
+        <p className="muted vw-note">
+          Rated {rated} W{draw != null ? ` · drawing ${Math.round(draw)} W, ${Math.round((100 * draw) / rated)} % of nameplate` : ''}.
+        </p>
+      )}
+    </Section>
   );
 }
 
@@ -730,6 +739,27 @@ function Reading({ k, m }: { k: string; m: MetricValue }) {
   );
 }
 
+/** The cords: each supply, what strip and outlet it lands on, and whether the
+ *  pair is redundancy or just two cords. */
+function Supplies({ d, open = false }: { d?: DeviceDetail; open?: boolean }) {
+  if (!d || d.psus.length === 0) return null;
+  return (
+    <Section title={`Power supplies (${d.psus.length})`} open={open}>
+      <div className="vw-kv">
+        {d.psus.map((p) => (
+          <Row key={p.number}
+               k={`PSU${p.number}${p.rated_watts ? ` · ${p.rated_watts} W` : ''}${p.connector ? ` ${p.connector}` : ''}`}
+               v={p.feed_device_id
+                 ? <><Link to={`/devices/${p.feed_device_id}`}>{p.feed_device}</Link>
+                     {p.feed_outlet != null && <span className="muted"> · outlet {p.feed_outlet}</span>}</>
+                 : <span className="vw-warn">not corded</span>} />
+        ))}
+      </div>
+      <p className="muted vw-note"><PsuVerdict psus={d.psus} /></p>
+    </Section>
+  );
+}
+
 /** Two supplies are redundancy only when something separate feeds each. */
 function PsuVerdict({ psus }: { psus: DeviceDetail['psus'] }) {
   const feeds = new Set(psus.map((p) => p.feed_device_id).filter((x): x is string => Boolean(x)));
@@ -738,6 +768,288 @@ function PsuVerdict({ psus }: { psus: DeviceDetail['psus'] }) {
   if (psus.length === 1) return <>Single-corded: one feed, no redundancy.</>;
   if (feeds.size > 1) return <>Fed from {feeds.size} independent sources.</>;
   return <>Both cords land on one strip: a pair of supplies, one point of failure.</>;
+}
+
+function Endpoints({ d }: { d?: DeviceDetail }) {
+  if (!d || d.endpoints.length === 0) return null;
+  return (
+    <Section title={`Endpoints (${d.endpoints.length})`}>
+      <div className="vw-kv">
+        {d.endpoints.map((e) => (
+          <Row key={e.id} k={`${humanise(e.protocol)} · ${humanise(e.role)}`}
+               v={<span className={e.status === 'ONLINE' ? undefined : 'vw-warn'}>
+                    {(e.status ?? 'unknown').toLowerCase()}
+                    {e.last_seen ? <span className="muted"> · {relativeTime(e.last_seen)}</span> : null}
+                  </span>} />
+        ))}
+      </div>
+    </Section>
+  );
+}
+
+/** The port inventory: fitted by speed and role, how many are patched, and
+ *  where the patched ones go. A rack with no spare ports is a constraint on
+ *  the next install, which a count alone never says. */
+function Ports({ deviceId, open, max = 12 }: { deviceId: string; open: boolean; max?: number }) {
+  const q = useQuery<NetworkInterface[]>({
+    queryKey: ['device-interfaces', deviceId],
+    queryFn: () => api.interfaces(deviceId),
+    retry: false,
+    staleTime: 300_000,
+  });
+  const ports = q.data ?? [];
+  const patched = ports.filter((p) => p.peer_device_id);
+  const buckets = new Map<string, number>();
+  for (const p of ports) {
+    const k = `${formatSpeed(p.speed_bps)} ${humanise(p.role)}`;
+    buckets.set(k, (buckets.get(k) ?? 0) + 1);
+  }
+  // Where the cables go, by far-end device: the uplinks and the servers behind
+  // a leaf, the leaves behind a spine, without listing every port.
+  const peers = new Map<string, { id: string; n: number; layer: string | null }>();
+  for (const p of patched) {
+    const e = peers.get(p.peer_device!) ?? { id: p.peer_device_id!, n: 0, layer: p.peer_layer ?? null };
+    e.n += 1; peers.set(p.peer_device!, e);
+  }
+  const peerRows = [...peers.entries()].sort((a, b) => b[1].n - a[1].n);
+  const title = q.isLoading ? 'Ports' : `Ports (${patched.length} of ${ports.length} patched)`;
+  return (
+    <Section title={title} open={open}>
+      {q.isError && <p className="muted vw-note">The port list could not be read.</p>}
+      {q.data && ports.length === 0 && <p className="muted vw-note">No ports recorded.</p>}
+      {ports.length > 0 && (
+        <>
+          <p className="vw-note">
+            {[...buckets.entries()].map(([k, n]) => `${n} × ${k}`).join(', ')}
+            {ports.length - patched.length > 0 ? ` · ${ports.length - patched.length} spare` : ' · none spare'}
+          </p>
+          <div className="vw-kv">
+            {peerRows.slice(0, max).map(([name, e]) => (
+              <Row key={name} k={<><Link to={`/devices/${e.id}`}>{name}</Link>{e.layer && <span className="muted"> · {e.layer}</span>}</>}
+                   v={`${e.n} ${e.n === 1 ? 'cable' : 'cables'}`} />
+            ))}
+          </div>
+          {peerRows.length > max && <p className="muted vw-note">and {peerRows.length - max} more far ends on the device page.</p>}
+        </>
+      )}
+    </Section>
+  );
+}
+
+// ---------------------------------------------------------------- classes
+
+/** A server: the air it breathes and blows, what it draws, its cords. */
+function ServerBody(c: ClassCtx) {
+  const { device, m } = c;
+  const inlet = num(m.inlet_temperature) ?? device.temp_c ?? null;
+  const exhaust = num(m.exhaust_temperature) ?? device.exhaust_c ?? null;
+  const draw = num(m.power_draw) ?? device.power_w ?? null;
+  const cpu = num(m.cpu_temperature);
+  return (
+    <>
+      <Tiles items={[
+        { label: 'POWER', value: fW(draw) },
+        { label: 'INLET', value: fmtT(inlet) },
+        { label: cpu != null ? 'CPU' : 'EXHAUST', value: cpu != null ? fmtT(cpu) : fmtT(exhaust) },
+      ]} />
+      {exhaust != null && inlet != null && (
+        <div className="vw-kv">
+          <Row k="Exhaust" v={fmtT(exhaust)} />
+          <Row k="Rise in → out" v={fmtDT(exhaust - inlet)} />
+        </div>
+      )}
+      <Identity {...c} />
+      <Readings {...c} />
+      <Supplies d={c.d} open />
+      <Ports deviceId={device.id} open={false} max={6} />
+      <Endpoints d={c.d} />
+    </>
+  );
+}
+
+/** A switch, router, firewall or balancer: its ports and their far ends
+ *  first, the control plane under them. */
+function NetworkBody(c: ClassCtx) {
+  const { device, m } = c;
+  const cpu = num(m.cpu_utilization), mem = num(m.memory_utilization), t = num(m.cpu_temperature);
+  return (
+    <>
+      <Tiles items={[
+        { label: 'CPU', value: cpu != null ? `${Math.round(cpu)} %` : '–' },
+        { label: 'MEMORY', value: mem != null ? `${Math.round(mem)} %` : '–' },
+        { label: 'CPU TEMP', value: fmtT(t) },
+      ]} />
+      <Ports deviceId={device.id} open />
+      <Identity {...c} />
+      <Readings {...c} />
+      <Supplies d={c.d} />
+      <Endpoints d={c.d} />
+    </>
+  );
+}
+
+/** A rack strip: how full it is, what feeds it, and what hangs off it. */
+function PduBody(c: ClassCtx) {
+  const { device, m, d } = c;
+  const chain = useQuery<PowerChain>({
+    queryKey: ['power-chain', device.id],
+    queryFn: () => api.powerChain(device.id),
+    retry: false, staleTime: 60_000,
+  });
+  const impact = useQuery<Impact>({
+    queryKey: ['impact', device.id],
+    queryFn: () => api.impact(device.id),
+    retry: false, staleTime: 60_000,
+  });
+  const load = num(m.load_pct), amps = num(m.current), draw = num(m.power_draw) ?? device.power_w ?? null;
+  const volts = num(m.voltage_ln) ?? num(m.voltage_ll);
+  const rated = d?.rated_power_w ?? null;
+  const tone = load == null ? undefined : load >= 90 ? 'vw-bad' : load >= 80 ? 'vw-warn' : undefined;
+  const power = impact.data?.layers.find((l) => l.layer === 'power');
+  const loads = power ? [...power.cut_off, ...power.degraded] : [];
+  const side = chain.data?.paths[0]?.side ?? null;
+  return (
+    <>
+      <Tiles items={[
+        { label: 'LOAD', value: load != null ? `${load.toFixed(0)} %` : '–' },
+        { label: 'CURRENT', value: amps != null ? `${amps.toFixed(1)} A` : '–' },
+        { label: 'POWER', value: fW(draw) },
+      ]} />
+      <div className="vw-kv">
+        {rated != null && <Row k="Rated" v={<span className={tone}>{fW(rated)}{draw != null ? ` · ${Math.round((100 * draw) / rated)} % used` : ''}</span>} />}
+        {volts != null && <Row k="Input voltage" v={`${Math.round(volts)} V`} />}
+        {num(m.energy_consumed) != null && <Row k="Energy" v={formatMetric('energy_consumed', m.energy_consumed.v)} />}
+        {(num(m.ambient_temperature) != null || device.temp_c != null) && (
+          <Row k="Air at the strip" v={`${fmtT(num(m.ambient_temperature) ?? device.temp_c)}${num(m.relative_humidity) != null ? ` · ${Math.round(num(m.relative_humidity)!)} % RH` : ''}`} />
+        )}
+      </div>
+      <Section title={`Fed from${side ? ` · side ${side}` : ''}`} open>
+        {chain.isLoading && <p className="muted vw-note">Tracing the feed…</p>}
+        {chain.isError && <p className="muted vw-note">No power path recorded for this strip.</p>}
+        {chain.data && (
+          <>
+            <ol className="vw-chain">
+              {chain.data.paths[0]?.hops.map((h) => (
+                <li key={h.device_id}>
+                  <Link to={`/devices/${h.device_id}`}>{h.name}</Link>
+                  <span className="muted"> · {humanise(h.device_type)}{h.load_pct != null ? ` · ${Math.round(h.load_pct)} %` : h.load_w != null ? ` · ${fW(h.load_w)}` : ''}</span>
+                  {h.status === 'OFFLINE' && <span className="vw-bad"> · offline</span>}
+                </li>
+              ))}
+            </ol>
+            <p className="muted vw-note">{humanise(chain.data.redundancy)} · {chain.data.reason}.</p>
+          </>
+        )}
+      </Section>
+      <Section title={power ? `Feeds (${power.dependents})` : 'Feeds'} open>
+        {impact.isLoading && <p className="muted vw-note">Counting the loads…</p>}
+        {impact.isError && <p className="muted vw-note">The load list could not be read.</p>}
+        {power && loads.length === 0 && <p className="muted vw-note">Nothing corded to this strip.</p>}
+        {power && loads.length > 0 && (
+          <>
+            {power.cut_off.length > 0 && (
+              <p className="vw-note vw-warn">{power.cut_off.length} {power.cut_off.length === 1 ? 'load goes' : 'loads go'} dark if this strip is lost; the rest keep their other cord.</p>
+            )}
+            <ul className="vw-list vw-loads">
+              {loads.slice(0, 14).map((x) => (
+                <li key={x.id}><Link to={`/devices/${x.id}`}>{x.name}</Link>
+                  <span className="muted"> · {humanise(x.device_type)}{power.cut_off.some((y) => y.id === x.id) ? ' · only cord' : ''}</span></li>
+              ))}
+            </ul>
+            {loads.length > 14 && <p className="muted vw-note">and {loads.length - 14} more on the device page.</p>}
+          </>
+        )}
+      </Section>
+      <Identity {...c} full={false} open={false} />
+      <Readings {...c} skip={['load_pct', 'current', 'power_draw', 'ambient_temperature', 'relative_humidity', 'voltage_ln', 'voltage_ll', 'energy_consumed']} />
+      <Endpoints d={c.d} />
+    </>
+  );
+}
+
+/** ASHRAE TC 9.9 class A1: the recommended intake envelope and the allowable one. */
+const A1 = { recLo: 18, recHi: 27, allLo: 15, allHi: 32, rhHi: 60, dewHi: 15 };
+
+function envelopeVerdict(t: number | null, rh: number | null): { text: string; tone?: string } | null {
+  if (t == null) return null;
+  if (t < A1.allLo || t > A1.allHi) return { text: `outside the A1 allowable band (${A1.allLo}–${A1.allHi} °C)`, tone: 'vw-bad' };
+  if (t < A1.recLo || t > A1.recHi) return { text: `outside the A1 recommended band (${A1.recLo}–${A1.recHi} °C), inside allowable`, tone: 'vw-warn' };
+  if (rh != null && rh > A1.rhHi) return { text: `temperature in band; humidity over ${A1.rhHi} % RH`, tone: 'vw-warn' };
+  const dp = dewPoint(t, rh);
+  if (dp != null && dp > A1.dewHi) return { text: `temperature in band; dew point over ${A1.dewHi} °C`, tone: 'vw-warn' };
+  return { text: 'inside the A1 recommended envelope' };
+}
+
+/** A door probe: what the air is where it hangs, against the envelope. */
+function SensorBody(c: ClassCtx) {
+  const { device, m } = c;
+  const t = num(m.ambient_temperature) ?? device.temp_c ?? null;
+  const rh = num(m.relative_humidity) ?? device.rh_pct ?? null;
+  const dp = dewPoint(t, rh);
+  const v = envelopeVerdict(t, rh);
+  const where = device.mount === 'rack_rear' ? 'exhaust side' : device.mount === 'rack_front' ? 'intake side' : null;
+  return (
+    <>
+      <Tiles items={[
+        { label: 'TEMP', value: fmtT(t) },
+        { label: 'RH', value: f1(rh, ' %') },
+        { label: 'DEW POINT', value: fmtT(dp) },
+      ]} />
+      <div className="vw-kv">
+        <Row k="Hangs on" v={`${slotOf(device)}${where ? ` · ${where}` : ''}`} />
+        {v && device.mount !== 'rack_rear' && <Row k="Envelope" v={<span className={v.tone}>{v.text}</span>} />}
+        {device.mount === 'rack_rear' && t != null && <Row k="Exhaust" v="not graded: the envelope is for intake air" />}
+      </div>
+      <Readings {...c} skip={['ambient_temperature', 'relative_humidity', 'dew_point']} />
+      <Identity {...c} full={false} />
+      <Endpoints d={c.d} />
+    </>
+  );
+}
+
+/** An in-rack coolant distribution unit: the loop it serves, its state, its cords. */
+function CduBody(c: ClassCtx) {
+  const { device, m } = c;
+  const supply = num(m.water_supply_temp), ret = num(m.water_return_temp), flow = num(m.water_flow);
+  const draw = num(m.power_draw) ?? device.power_w ?? null;
+  const running = typeof m.equipment_state?.v === 'boolean' ? m.equipment_state.v : null;
+  const alarm = typeof m.alarm_state?.v === 'boolean' ? m.alarm_state.v : null;
+  return (
+    <>
+      <Tiles items={[
+        { label: 'SUPPLY', value: fmtT(supply) },
+        { label: ret != null ? 'RETURN' : 'FLOW', value: ret != null ? fmtT(ret) : flow != null ? formatMetric('water_flow', flow) : '–' },
+        { label: 'POWER', value: fW(draw) },
+      ]} />
+      <div className="vw-kv">
+        {running != null && <Row k="Pumps" v={running ? 'running' : <span className="vw-bad">stopped</span>} />}
+        {alarm != null && <Row k="Unit alarm" v={alarm ? <span className="vw-bad">raised</span> : 'none'} />}
+        {supply != null && ret != null && <Row k="Loop ΔT" v={fmtDT(ret - supply)} />}
+      </div>
+      <Readings {...c} skip={['equipment_state', 'alarm_state']} />
+      <Supplies d={c.d} open />
+      <Identity {...c} open={false} />
+      <Endpoints d={c.d} />
+    </>
+  );
+}
+
+function OtherBody(c: ClassCtx) {
+  const { device, m } = c;
+  const draw = num(m.power_draw) ?? device.power_w ?? null;
+  return (
+    <>
+      <Tiles items={[
+        { label: 'AIR', value: fmtT(device.temp_c) },
+        { label: 'RH', value: f1(device.rh_pct, ' %') },
+        { label: 'POWER', value: fW(draw) },
+      ]} />
+      <Identity {...c} />
+      <Readings {...c} />
+      <Supplies d={c.d} />
+      <Endpoints d={c.d} />
+    </>
+  );
 }
 
 export function UnitPanel({ unit, thermal }: { unit: FloorEquipment; thermal?: ThermalUnit }) {

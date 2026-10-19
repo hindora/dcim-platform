@@ -150,6 +150,11 @@
 .vw-reading .t { font-size: 0.66rem; color: var(--text-faint); text-align: right; font-variant-numeric: tabular-nums; }
 .vw-reading.is-flagged .v { color: var(--text-muted); font-style: italic; }
 .vw-warn { color: var(--warn); }
+/* a strip's feed, source to strip, and the loads on it */
+.vw-chain { margin: 2px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 3px; }
+.vw-chain li::marker { color: var(--text-faint); font-size: 0.7rem; }
+.vw-loads { display: flex; flex-direction: column; gap: 2px; }
+.vw-row .k a { color: inherit; }
 .vw-panel-body .mono { font-family: var(--font-mono, ui-monospace, monospace); font-size: 0.76rem; }
 .vw-links { display: flex; gap: 14px; margin-top: 12px; }
 .vw-radios { display: flex; flex-direction: column; gap: 2px; }
