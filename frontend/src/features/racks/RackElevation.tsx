@@ -113,7 +113,14 @@ export function RackElevationView() {
     <div className="stack">
       <header className="rack-head">
         <div>
-          <p><button type="button" className="link-button" onClick={goBack}>← {from.label}</button></p>
+          <p>
+            <button type="button" className="link-button" onClick={goBack}>← {from.label}</button>
+            {rack.room_id && (
+              <Link to={`/floorplan?room=${rack.room_id}&rack=${rack.id}`} style={{ marginLeft: 14 }}>
+                View in 3D →
+              </Link>
+            )}
+          </p>
           <h2>{rack.name}</h2>
           <p className="muted">
             {[rack.datacenter_code, rack.room_name,

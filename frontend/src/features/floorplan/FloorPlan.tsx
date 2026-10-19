@@ -285,6 +285,7 @@ export function FloorPlanView() {
   useEffect(() => { setSel(null); setFocus(null); setPathKind(null); }, [roomId]);
   useEffect(() => { setPathKind(null); }, [sel?.kind, sel?.id]);
 
+
   // Readings for this room arrive as one `room:{id}` frame per ingest batch;
   // the scene is re-read at most every 5 s on them, with the 60 s poll as the
   // backstop for a socket that has gone quiet.
@@ -461,6 +462,31 @@ export function FloorPlanView() {
     const p = pendingSel.current;
     if (p && p.roomId === roomId && data && data.plan.room_id === roomId) { pendingSel.current = null; setSel(p.sel); setPanel('info'); }
   }, [roomId, data]);
+
+  // The selected device lives in the address, like the room and the rack:
+  // a device page's "View in 3D" lands on the device with its panel open,
+  // the link is shareable, and reload and Back restore the same picture.
+  // `?device=` is read once, when the room's devices have arrived, and from
+  // then on the address follows the selection - set on select, dropped on
+  // close - rather than the other way round, so closing the panel does not
+  // reselect what the address still names.
+  const wantedDevice = useRef<string | null>(params.get('device'));
+  useEffect(() => {
+    const id = wantedDevice.current;
+    if (!id || !data || data.plan.room_id !== roomId) return;
+    wantedDevice.current = null;
+    if (data.devices.some((d) => d.id === id)) { setSel({ kind: 'device', id }); setPanel('info'); }
+  }, [data, roomId]);
+  useEffect(() => {
+    if (wantedDevice.current) return;
+    const cur = params.get('device');
+    const want = selState?.kind === 'device' ? selState.id : null;
+    if (cur === want) return;
+    const next = new URLSearchParams(params);
+    if (want) next.set('device', want); else next.delete('device');
+    setParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selState?.kind, selState?.id, data]);
 
   // --- selection panel content ----------------------------------------
   let panelTitle = 'Room information';

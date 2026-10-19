@@ -221,6 +221,12 @@ export function DeviceDetail() {
               <button onClick={() => setEditingDevice(true)}>Edit device</button>
             )}
             <Link to={`/assets/inventory/${d.id}`}>Asset record →</Link>
+            {/* The device in the room, selected, its panel open. A place
+                link rather than a back link: it is right from any arrival,
+                and Back stays the way to retrace steps. */}
+            {loc.room_id && loc.rack_id && (
+              <Link to={`/floorplan?room=${loc.room_id}&rack=${loc.rack_id}&device=${d.id}`}>View in 3D →</Link>
+            )}
           </div>
         </div>
         <Band d={d} state={state.data} loading={state.isLoading} />

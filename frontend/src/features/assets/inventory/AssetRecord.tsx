@@ -437,6 +437,9 @@ export function AssetRecord() {
             <button onClick={() => setEditingTags(true)}>Edit tags</button>
             {/* Out to the operational view: telemetry, alarms, actions. */}
             <Link to={`/devices/${d.id}`}>Open in Devices →</Link>
+            {loc.room_id && loc.rack_id && (
+              <Link to={`/floorplan?room=${loc.room_id}&rack=${loc.rack_id}&device=${d.id}`}>View in 3D →</Link>
+            )}
           </div>
         </div>
 
