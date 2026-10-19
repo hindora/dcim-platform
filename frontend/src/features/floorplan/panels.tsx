@@ -19,6 +19,7 @@ import {
 import type { PathKind, PathOverlay } from './paths';
 import { fmtDT, fmtT, legendInUnit, numT, unitLabel } from './units';
 import { alarmColor } from './colors';
+import { glyphFor, TileGlyph, type GlyphName } from './glyphs';
 import { BUILDING_LAYERS, NO_READING, bandColor, roomLayerBands, roomLayerText, roomLayerValue, type BuildingLayer } from './layers';
 
 /** The viewer's side panel and legend. Facts only: every figure here is one
@@ -95,10 +96,21 @@ function Row({ k, v }: { k: ReactNode; v: ReactNode }) {
   return <div className="vw-row"><span className="k">{k}</span><span className="v">{v}</span></div>;
 }
 
-function Tiles({ items }: { items: { label: string; value: string }[] }) {
+/** The headline readings as tiles: a glyph for the kind of reading, the
+ *  value, the label. The glyph comes from the label (glyphs.tsx), or is named
+ *  outright for a tile whose label is not in that table. */
+function Tiles({ items }: { items: { label: string; value: string; icon?: GlyphName }[] }) {
   return (
     <div className="vw-tiles">
-      {items.map((t) => <div key={t.label} className="vw-tile"><b>{t.value}</b><span>{t.label}</span></div>)}
+      {items.map((t) => {
+        const g = t.icon ?? glyphFor(t.label);
+        return (
+          <div key={t.label} className="vw-tile">
+            {g ? <TileGlyph name={g} /> : <span className="vw-glyph" aria-hidden />}
+            <b>{t.value}</b><span>{t.label}</span>
+          </div>
+        );
+      })}
     </div>
   );
 }
