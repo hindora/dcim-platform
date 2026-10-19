@@ -1730,3 +1730,42 @@ tr.is-selected > td { background: var(--accent-dim); }
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* ---------------------------------------------------------- record track */
+
+/* The asset's life as a track. Dots on a rail, in the order a life is
+   lived; the current state is the lit one, the states it may move to are
+   outlined, the ones it has been through are filled and dim. Colour is
+   never the only cue: "now" and "next" are written under the names. */
+.ar-track {
+  list-style: none; margin: 4px 0 0; padding: 0;
+  display: grid; grid-template-columns: repeat(7, 1fr); gap: 0;
+  position: relative;
+}
+.ar-track::before {
+  content: ''; position: absolute; left: 7%; right: 7%; top: 7px;
+  height: 2px; background: var(--border);
+}
+.ar-step { position: relative; text-align: center; padding-top: 18px; min-width: 0; }
+.ar-dot {
+  position: absolute; top: 2px; left: 50%; transform: translateX(-50%);
+  width: 12px; height: 12px; border-radius: 50%;
+  background: var(--bg-raised); border: 2px solid var(--border-strong);
+  box-sizing: border-box;
+}
+.ar-name { display: block; font-size: 12px; color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ar-hint { display: block; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--text-faint); margin-top: 1px; }
+.ar-step.is-visited .ar-dot { background: var(--border-strong); border-color: var(--border-strong); }
+.ar-step.is-visited .ar-name { color: var(--text-muted); }
+.ar-step.is-next .ar-dot { border-color: var(--accent); border-style: dashed; }
+.ar-step.is-next .ar-name, .ar-step.is-next .ar-hint { color: var(--accent); }
+.ar-step.is-current .ar-dot {
+  background: var(--accent); border-color: var(--accent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+.ar-step.is-current .ar-name { color: var(--text); font-weight: 600; }
+.ar-step.is-current .ar-hint { color: var(--text); }
+@media (max-width: 720px) {
+  .ar-track { grid-template-columns: repeat(4, 1fr); row-gap: 14px; }
+  .ar-track::before { display: none; }
+}
