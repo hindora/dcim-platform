@@ -94,7 +94,19 @@
 .vw-panel-head h3 { margin: 0; font-size: 0.82rem; letter-spacing: .06em; text-transform: uppercase;
                     color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vw-panel-head .close { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 16px; }
-.vw-panel-body { overflow: auto; padding: 8px 12px 14px; font-size: 0.82rem; scrollbar-gutter: stable; }
+.vw-panel-body { overflow: auto; padding: 8px 12px 14px; font-size: 0.82rem; scrollbar-gutter: stable;
+                 flex: 1 1 auto; min-height: 0; }
+
+/* The trace footer. Folded, it is one row pinned under the body; open, it
+   takes at most a third of the panel and scrolls on its own, so the hops
+   and the line through the room are on screen together. The body above
+   keeps the rest, so there is one scrollbar until a trace is asked for. */
+.vw-paths { flex: none; border-top: 1px solid var(--border); background: color-mix(in srgb, var(--bg-inset) 55%, transparent); }
+.vw-paths-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 12px; }
+.vw-paths-title { font-size: 0.74rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted); }
+.vw-paths .vw-btns { margin: 0; }
+.vw-paths .vw-panel-body { flex: none; max-height: 240px; padding: 0 12px 12px; border-top: 1px dashed var(--border); }
+.vw-paths.is-open .vw-paths-head { padding-bottom: 8px; }
 /* The panel's rail: a thin floating thumb on a clear track, inset by a
    transparent border so it never touches the content, after the treatment
    the Assets page set. The platform's grey trough read as a broken border

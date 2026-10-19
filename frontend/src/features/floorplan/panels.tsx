@@ -1285,7 +1285,15 @@ export function FiltersPanel({ rackLayer, coolingLayer, heat, vis, onRack, onCoo
 
 /** Power path, cooling path or impact for the selection. The picture draws
  *  what stands in this room; the list here names every hop, with the room of
- *  anything that stands elsewhere. */
+ *  anything that stands elsewhere.
+ *
+ *  A folded footer, not a section: closed it is one row - the word and the
+ *  three buttons - pinned under the device body so it is always in the same
+ *  place under the hand. Picking a trace opens it to a capped height with
+ *  its own scroll, so the hops and the line drawn through the room stay on
+ *  screen together; clearing it folds it back and the panel is one column
+ *  again. Tracing is the second question, and it should cost nothing until
+ *  it is asked. */
 export function PathsPanel({ kind, overlay, loading, error, canImpact, inRoom, onPick, onClear }: {
   kind: PathKind | null; overlay: PathOverlay | null; loading: boolean; error: boolean; canImpact: boolean;
   inRoom: (id: string) => boolean; onPick: (k: PathKind) => void; onClear: () => void;
@@ -1295,10 +1303,15 @@ export function PathsPanel({ kind, overlay, loading, error, canImpact, inRoom, o
             onClick={() => (kind === k ? onClear() : onPick(k))}>{label}</button>
   );
   return (
-    <Section title="Paths" open>
-      <div className="vw-btns">
-        {btn('power', 'POWER')}{btn('cooling', 'COOLING')}{btn('impact', 'IMPACT', !canImpact)}
+    <>
+      <div className="vw-paths-head">
+        <span className="vw-paths-title" id="vw-paths-title">Trace</span>
+        <div className="vw-btns" role="group" aria-labelledby="vw-paths-title">
+          {btn('power', 'POWER')}{btn('cooling', 'COOLING')}{btn('impact', 'IMPACT', !canImpact)}
+        </div>
       </div>
+      {kind && (
+      <div className="vw-panel-body vw-paths-body">
       {loading && <p className="muted vw-note">Tracing…</p>}
       {error && <p className="muted vw-note">The topology service could not answer for this device.</p>}
       {overlay && overlay.kind !== 'impact' && (
@@ -1346,6 +1359,8 @@ export function PathsPanel({ kind, overlay, loading, error, canImpact, inRoom, o
         </div>
       )}
       {overlay?.notes.map((n) => <p key={n} className="muted vw-note">{n}</p>)}
-    </Section>
+      </div>
+      )}
+    </>
   );
 }

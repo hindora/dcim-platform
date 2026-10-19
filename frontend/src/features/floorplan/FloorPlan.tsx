@@ -725,7 +725,7 @@ export function FloorPlanView() {
                     onClick={() => { if (sel && panel === 'info') setSel(null); else setPanel(null); }}>×</button>
           </div>
           {panelBody}
-          {paths && <div className="vw-panel-body vw-paths">{paths}</div>}
+          {paths && <div className={`vw-paths${pathKind ? ' is-open' : ''}`}>{paths}</div>}
         </aside>
       )}
 
