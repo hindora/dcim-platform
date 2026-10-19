@@ -220,7 +220,6 @@ export function DeviceDetail() {
             {atLeast('operator') && (
               <button onClick={() => setEditingDevice(true)}>Edit device</button>
             )}
-            <Link to={`/assets/inventory/${d.id}`}>Asset record →</Link>
             {/* The device in the room, selected, its panel open. A place
                 link rather than a back link: it is right from any arrival,
                 and Back stays the way to retrace steps. */}
