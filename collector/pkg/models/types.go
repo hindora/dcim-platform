@@ -31,7 +31,11 @@ type Endpoint struct {
 	// settings (BBMD, trap VIP) live rather than being repeated per endpoint.
 	PoolID     string      `json:"pool_id"`
 	Credential *Credential `json:"credential"`
-	Poll       PollProfile `json:"poll"`
+	// WriteCredential is used for device actions and nothing else. A polling
+	// credential is read-only by design, so a write needs its own; nil means
+	// this endpoint cannot be written to.
+	WriteCredential *Credential `json:"write_credential,omitempty"`
+	Poll            PollProfile `json:"poll"`
 	// How hard this endpoint's address may be driven (internal/throttle),
 	// resolved by the platform: the endpoint's own override, else its
 	// pool's default for the protocol. nil: no limit beyond the protocol's.

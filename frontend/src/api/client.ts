@@ -1602,6 +1602,8 @@ export interface EndpointPatch {
   port?: number | null;
   addressing?: Record<string, string | number | boolean>;
   credential_id?: string | null;
+  /** The credential device actions are made with. Admin only. */
+  write_credential_id?: string | null;
   poll_profile_id?: string | null;
   enabled?: boolean;
   admin_state?: string;
@@ -1629,6 +1631,9 @@ export interface EndpointSummary {
   addressing: Record<string, string | number | boolean>;
   credential_id?: string | null;
   credential_name?: string | null;
+  /** Used for device actions only; null means the endpoint cannot be written to. */
+  write_credential_id?: string | null;
+  write_credential_name?: string | null;
   credential_hint?: string | null;
   poll_profile_id?: string | null;
   poll_profile_name?: string | null;

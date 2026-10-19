@@ -398,6 +398,8 @@ async def list_endpoints(session: AsyncSession, device_id: str) -> list[dict[str
                e.credential_id::text AS credential_id,
                c.name AS credential_name,
                c.secret_hint AS credential_hint,
+               e.write_credential_id::text AS write_credential_id,
+               wc.name AS write_credential_name,
                e.poll_profile_id::text AS poll_profile_id,
                p.name AS poll_profile_name,
                e.via_endpoint_id::text AS via_endpoint_id,
@@ -427,6 +429,7 @@ async def list_endpoints(session: AsyncSession, device_id: str) -> list[dict[str
                COALESCE(es.auth_fail_count, 0) AS auth_fail_count
         FROM device_endpoint e
         LEFT JOIN credential c     ON c.id = e.credential_id
+        LEFT JOIN credential wc    ON wc.id = e.write_credential_id
         JOIN poll_profile p        ON p.id = e.poll_profile_id
         LEFT JOIN endpoint_state es ON es.endpoint_id = e.id
         LEFT JOIN device_endpoint ve ON ve.id = e.via_endpoint_id
@@ -447,6 +450,7 @@ async def get_endpoint(session: AsyncSession, endpoint_id: str
                host(e.address) AS address, e.port, e.enabled,
                e.admin_state::text AS admin_state, e.addressing,
                e.credential_id::text AS credential_id,
+               e.write_credential_id::text AS write_credential_id,
                e.poll_profile_id::text AS poll_profile_id,
                e.via_endpoint_id::text AS via_endpoint_id,
                vd.name AS via_name, d.name AS device_name,
@@ -470,6 +474,7 @@ _EDITABLE = {
     "port":            "port = :port",
     "addressing":      "addressing = CAST(:addressing AS jsonb)",
     "credential_id":   "credential_id = CAST(:credential_id AS uuid)",
+    "write_credential_id": "write_credential_id = CAST(:write_credential_id AS uuid)",
     "poll_profile_id": "poll_profile_id = CAST(:poll_profile_id AS uuid)",
     "enabled":         "enabled = :enabled",
     "admin_state":     "admin_state = CAST(:admin_state AS admin_state_t)",

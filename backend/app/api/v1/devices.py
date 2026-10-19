@@ -334,6 +334,9 @@ class EndpointPatch(BaseModel):
     addressing: dict[str, Any] | None = Field(
         None, description="protocol-specific: modbus unit_id, bacnet instance")
     credential_id: str | None = None
+    #: The credential device actions (outlet control) are made with. Admin only:
+    #: it can change things, where the polling credential cannot.
+    write_credential_id: str | None = None
     poll_profile_id: str | None = None
     enabled: bool | None = None
     admin_state: str | None = Field(None, pattern="^(enabled|disabled|maintenance)$")
@@ -474,10 +477,16 @@ async def update_endpoint(
     assignment interval, with nothing restarted - because the update bumps
     `updated_at`, which the assignment version is derived from.
     """
+    changes = body.model_dump(exclude_unset=True)
+    if "write_credential_id" in changes and principal.role != "admin":
+        # The one credential on an endpoint that can change things: choosing it
+        # is choosing who may switch the power, so it is an admin's decision.
+        raise HTTPException(status.HTTP_403_FORBIDDEN,
+                            "choosing the write credential needs an admin account")
     try:
         before, after = await service.update_endpoint(
             session, device_id=device_id, endpoint_id=endpoint_id,
-            changes=body.model_dump(exclude_unset=True))
+            changes=changes)
     except service.EndpointNotFoundError:
         raise HTTPException(status.HTTP_404_NOT_FOUND,
                             "no such endpoint on this device") from None

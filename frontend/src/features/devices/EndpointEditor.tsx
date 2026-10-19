@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ApiError,
   api,
+  atLeast,
   type AddressingField,
   type CollectorsPage,
   type EndpointOptions,
@@ -57,6 +58,7 @@ export function EndpointEditor({
     port: endpoint.port == null ? '' : String(endpoint.port),
     addressing: { ...endpoint.addressing } as AddressingValues,
     credential_id: endpoint.credential_id ?? '',
+    write_credential_id: endpoint.write_credential_id ?? '',
     poll_profile_id: endpoint.poll_profile_id ?? '',
     admin_state: endpoint.admin_state,
     collector_id: endpoint.pinned_collector ?? '',
@@ -233,6 +235,31 @@ export function EndpointEditor({
               </em>
             </label>
 
+            {endpoint.protocol === 'snmp' && (
+              <label>
+                <span>Write credential</span>
+                <select value={form.write_credential_id} disabled={!atLeast('admin')}
+                        onChange={(e) => set('write_credential_id', e.target.value)}>
+                  <option value="">None: this device cannot be written to</option>
+                  {credentials.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name} · {c.kind}</option>
+                  ))}
+                  {endpoint.write_credential_id
+                    && !credentials.some((c) => c.id === endpoint.write_credential_id) && (
+                    <option value={endpoint.write_credential_id}>
+                      {endpoint.write_credential_name ?? 'current write credential'}
+                    </option>
+                  )}
+                </select>
+                <em className="hint">
+                  {atLeast('admin')
+                    ? 'Used only to switch outlets and the like. A polling credential is read-only '
+                      + 'by design, so writing needs its own, held by the few who need it.'
+                    : 'Choosing the write credential needs an admin account.'}
+                </em>
+              </label>
+            )}
+
             <label>
               <span>Poll profile</span>
               <select value={form.poll_profile_id}
@@ -366,7 +393,8 @@ type AddressingValues = Record<string, string | number | boolean>;
 
 type Form = {
   address: string; port: string; addressing: AddressingValues;
-  credential_id: string; poll_profile_id: string; admin_state: string;
+  credential_id: string; write_credential_id: string;
+  poll_profile_id: string; admin_state: string;
   collector_id: string; pool_id: string;
   limit_mc: string; limit_gap: string;
 };
@@ -439,6 +467,9 @@ function diff(current: EndpointSummary, form: Form,
 
   const cred = form.credential_id || null;
   if (cred !== (current.credential_id ?? null)) patch.credential_id = cred;
+
+  const wcred = form.write_credential_id || null;
+  if (wcred !== (current.write_credential_id ?? null)) patch.write_credential_id = wcred;
 
   if (form.poll_profile_id && form.poll_profile_id !== current.poll_profile_id)
     patch.poll_profile_id = form.poll_profile_id;

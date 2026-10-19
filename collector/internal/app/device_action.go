@@ -60,6 +60,9 @@ func validateAction(act *deviceAction, ep *models.Endpoint) error {
 		if ep.Protocol != "snmp" {
 			return fmt.Errorf("an SNMP write was aimed at a %s endpoint", ep.Protocol)
 		}
+		if ep.WriteCredential == nil {
+			return fmt.Errorf("this endpoint has no write credential: refused")
+		}
 		if act.Type != "integer" {
 			return fmt.Errorf("only INTEGER writes are allowed, not %q", act.Type)
 		}

@@ -15,7 +15,8 @@ SRV = {"id": "srv1", "name": "SRV03-DC1-HB-R2-05", "device_type": "server",
        "lifecycle": "in_service", "vendor": "Dell Technologies", "model": "Dell PowerEdge R7525"}
 
 SNMP_EP = {"id": "ep-snmp", "protocol": "snmp", "role": "native_card", "enabled": True,
-           "admin_state": "enabled", "addressing": {}, "owner": "col-dc1-bms"}
+           "admin_state": "enabled", "addressing": {}, "owner": "col-dc1-bms",
+           "write_credential_id": "cred-w"}
 RF_EP = {"id": "ep-rf", "protocol": "redfish", "role": "bmc", "enabled": True,
          "admin_state": "enabled", "addressing": {}, "owner": "col-dc1-oob"}
 
@@ -157,6 +158,20 @@ def test_the_live_plan_names_the_owner_when_nothing_has_been_recorded(fake):
     run(da.submit(None, device_id="pdu1", action_id="outlet_on", outlet=4, confirm=None,
                   reason=None, actor="hari", role="operator"))
     assert fake["created"][0][0] == "col-dc1-bms-2"
+
+
+def test_an_snmp_endpoint_with_only_a_polling_credential_cannot_be_written(fake):
+    """A polling credential is read-only by design; offering outlet buttons on it
+    would offer actions guaranteed to fail."""
+    fake["eps"] = [SNMP_EP | {"write_credential_id": None}]
+    cap = run(da.capabilities(None, "pdu1", "admin"))
+    assert not cap["available"] and "no write credential" in cap["reason"]
+    assert cap["actions"] == []
+
+
+def test_a_bmc_needs_no_second_credential(fake):
+    fake["device"], fake["eps"] = SRV, [RF_EP]            # no write_credential_id
+    assert run(da.capabilities(None, "srv1", "admin"))["available"]
 
 
 def test_a_metered_strip_says_so_even_when_its_endpoint_has_no_owner(fake):

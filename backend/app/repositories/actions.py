@@ -33,6 +33,7 @@ async def endpoints_with_owner(session: AsyncSession, device_id: str) -> list[di
     rows = (await session.execute(text("""
         SELECT e.id::text AS id, e.protocol::text AS protocol, e.role::text AS role,
                e.enabled, e.admin_state::text AS admin_state, e.addressing,
+               e.write_credential_id::text AS write_credential_id,
                COALESCE(ea.collector_id, e.collector_id) AS owner
           FROM device_endpoint e
           LEFT JOIN endpoint_assignment ea ON ea.endpoint_id = e.id

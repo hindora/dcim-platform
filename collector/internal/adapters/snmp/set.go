@@ -24,7 +24,13 @@ import (
 // hardware and not a fault of the request.
 func (a *Adapter) SetInteger(ctx context.Context, ep *models.Endpoint, port int,
 	oid string, value int) error {
+	if ep.WriteCredential == nil {
+		return fmt.Errorf("%w: this endpoint has no write credential; the one it is "+
+			"polled with is read-only", models.ErrAuth)
+	}
+	// The write credential stands in for the polling one for this session only.
 	target := *ep
+	target.Credential = ep.WriteCredential
 	if port > 0 {
 		target.Port = port
 	}

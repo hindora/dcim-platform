@@ -78,38 +78,46 @@ async def build_assignment(session: AsyncSession, collector_id: str,
     endpoints: list[AssignmentEndpoint] = []
     decrypt_failures = 0
     seal_failures = 0
+    def build_credential(kind: str | None, secret_enc: Any,
+                         key_id: str | None) -> AssignmentCredential | None:
+        """Decrypt one stored credential and present it the way this collector
+        takes it: sealed to its key when it has registered one, else plain."""
+        nonlocal decrypt_failures, seal_failures
+        if secret_enc is None:
+            return None
+        try:
+            plain = decrypt_secret(bytes(secret_enc), key_id=key_id)
+        except Exception:
+            # A credential encrypted under a previous key must not take the
+            # whole assignment down - the other endpoints still work. (Now
+            # a real, named case: a row whose key_id names a ring entry
+            # that has since been removed - see docs/26 Phase 4's
+            # rotation script.)
+            decrypt_failures += 1
+            return None
+        kind = kind or "none"
+        cred_digest = hashlib.sha256(
+            json.dumps(plain, sort_keys=True, default=str).encode()).hexdigest()
+        if not pubkey:
+            return AssignmentCredential(kind=kind, data=plain, digest=cred_digest)
+        try:
+            return AssignmentCredential(
+                kind=kind, digest=cred_digest,
+                sealed_b64=sealed_credential.seal_for_collector(plain, pubkey))
+        except sealed_credential.SealError:
+            # A malformed stored pubkey must not silently fall back to
+            # plaintext - that would defeat the point of sealing the moment
+            # the stored key is ever corrupt. It drops this one endpoint's
+            # credential instead, same as a decrypt failure above.
+            seal_failures += 1
+            return None
+
     for r in rows:
-        credential = None
-        if r.get("secret_enc") is not None:
-            try:
-                plain = decrypt_secret(bytes(r["secret_enc"]), key_id=r.get("credential_key_id"))
-            except Exception:
-                # A credential encrypted under a previous key must not take the
-                # whole assignment down - the other endpoints still work. (Now
-                # a real, named case: a row whose key_id names a ring entry
-                # that has since been removed - see docs/26 Phase 4's
-                # rotation script.)
-                decrypt_failures += 1
-            else:
-                kind = r.get("credential_kind") or "none"
-                cred_digest = hashlib.sha256(
-                    json.dumps(plain, sort_keys=True, default=str).encode()).hexdigest()
-                if pubkey:
-                    try:
-                        credential = AssignmentCredential(
-                            kind=kind, digest=cred_digest,
-                            sealed_b64=sealed_credential.seal_for_collector(
-                                plain, pubkey))
-                    except sealed_credential.SealError:
-                        # A malformed stored pubkey must not silently fall
-                        # back to plaintext - that would defeat the point of
-                        # sealing the moment the stored key is ever corrupt.
-                        # It drops this one endpoint's credential instead,
-                        # same as a decrypt failure above.
-                        seal_failures += 1
-                else:
-                    credential = AssignmentCredential(kind=kind, data=plain,
-                                                       digest=cred_digest)
+        credential = build_credential(r.get("credential_kind"), r.get("secret_enc"),
+                                      r.get("credential_key_id"))
+        write_credential = build_credential(r.get("write_credential_kind"),
+                                            r.get("write_secret_enc"),
+                                            r.get("write_credential_key_id"))
 
         endpoints.append(AssignmentEndpoint(
             id=r["id"], device_id=r["device_id"], device_name=r["device_name"],
@@ -120,6 +128,7 @@ async def build_assignment(session: AsyncSession, collector_id: str,
             via_endpoint_id=r.get("via_endpoint_id"),
             pool_id=r.get("pool_id"),
             credential=credential,
+            write_credential=write_credential,
             poll=AssignmentPoll(
                 interval_s=r["interval_s"], timeout_ms=r["timeout_ms"],
                 retries=r["retries"],
@@ -478,6 +487,10 @@ def etag_for(assignment: Assignment) -> str:
             digest.update(b"|cred|")
             digest.update(e.credential.kind.encode())
             digest.update(e.credential.digest.encode())
+        if e.write_credential is not None:
+            digest.update(b"|wcred|")
+            digest.update(e.write_credential.kind.encode())
+            digest.update(e.write_credential.digest.encode())
     for r in assignment.resolve:
         digest.update(f"|r|{r.id}|{r.address}|{r.site}|{r.community_sha256}"
                       .encode())

@@ -260,6 +260,10 @@ async def assignment_endpoints(session: AsyncSession, collector_id: str,
                host(e.address) AS address, e.port, e.addressing, e.target_limit,
                e.via_endpoint_id::text,
                c.kind AS credential_kind, c.secret_enc, c.key_id AS credential_key_id,
+               -- The credential for device actions only (migration 0110); never
+               -- the polling one, which is read-only by design.
+               wc.kind AS write_credential_kind, wc.secret_enc AS write_secret_enc,
+               wc.key_id AS write_credential_key_id,
                e.collector_id,
                dc.code AS site,
                rp.id::text AS pool_id,
@@ -294,6 +298,7 @@ async def assignment_endpoints(session: AsyncSession, collector_id: str,
                ON pc.pool_id = rp.id AND pc.protocol = e.protocol::text
               AND (pc.device_types IS NULL OR d.device_type = ANY(pc.device_types))
         LEFT JOIN credential c ON c.id = COALESCE(e.credential_id, pc.credential_id)
+        LEFT JOIN credential wc ON wc.id = e.write_credential_id
         WHERE {' AND '.join(where)}
         ORDER BY e.id
     """), params)).mappings().all()

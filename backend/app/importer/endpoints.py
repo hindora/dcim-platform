@@ -177,6 +177,10 @@ class EndpointSpec:
     # to a via_endpoint_id once every endpoint row exists.
     via_address: str | None = None
     enabled: bool = True
+    # A credential for device actions only (migration 0110), in the same shape
+    # as the credential_* fields above. A polling credential is read-only by
+    # design, so writing needs its own.
+    write_credential: dict[str, Any] | None = None
 
 
 def snmp_address(dev: dict) -> str | None:
@@ -204,6 +208,18 @@ def _snmp_credential(addr: str) -> dict[str, Any]:
         # Never "community: {addr}": on this fleet the community IS the
         # address, so that hint is the credential written out in plaintext -
         # stored unencrypted and served to every reader by GET /devices.
+        "credential_hint": credential_hint("snmp_v2c", {"community": addr}),
+    }
+
+
+def _snmp_write_credential(addr: str) -> dict[str, Any]:
+    """The simulator's write community for a device, which is its address like
+    the read one. A distinct credential row: rotating or revoking write access
+    must not touch what the monitor polls with."""
+    return {
+        "credential_kind": "snmp_v2c",
+        "credential_payload": {"community": addr},
+        "credential_name": f"snmp-v2c-write-{addr}",
         "credential_hint": credential_hint("snmp_v2c", {"community": addr}),
     }
 
@@ -261,6 +277,8 @@ def derive_endpoints(
                 # is ever written to (outlet control), so only its endpoint.
                 addressing=({"set_port": snmp_set_port}
                             if dtype == "pdu" and snmp_set_port else {}),
+                write_credential=(_snmp_write_credential(addr)
+                                  if dtype == "pdu" and snmp_set_port else None),
                 **_snmp_credential(addr),
             ))
         # Only when it is genuinely a different agent from the OS one - the

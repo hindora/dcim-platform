@@ -90,6 +90,10 @@ class EndpointSummary(BaseModel):
     credential_id: str | None = None
     credential_name: str | None = None
     credential_hint: str | None = None      # never the secret itself
+    #: The credential device actions are made with (migration 0110); null
+    #: means this endpoint cannot be written to.
+    write_credential_id: str | None = None
+    write_credential_name: str | None = None
     poll_profile_id: str | None = None
     poll_profile_name: str | None = None
     # Set when this endpoint is reached THROUGH another one - a serial gateway
@@ -1032,6 +1036,8 @@ class AssignmentEndpoint(BaseModel):
     #: the key into Assignment.pools, where that pool's own settings live.
     pool_id: str | None = None
     credential: AssignmentCredential | None = None
+    #: For device actions only: a polling credential is read-only by design.
+    write_credential: AssignmentCredential | None = None
     poll: AssignmentPoll
     #: How hard this endpoint's address may be driven - its own override,
     #: else its pool's default for the protocol (services/target_limits).

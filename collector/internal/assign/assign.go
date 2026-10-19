@@ -274,6 +274,7 @@ func (c *Client) Refresh(ctx context.Context) error {
 func (c *Client) unsealCredentials(endpoints []*models.Endpoint) {
 	for _, ep := range endpoints {
 		c.unsealOne(ep.Credential, "endpoint_id", ep.ID)
+		c.unsealOne(ep.WriteCredential, "endpoint_id", ep.ID)
 	}
 }
 
@@ -328,21 +329,22 @@ func (c *Client) resolveCredentialRefs(ctx context.Context, endpoints []*models.
 		return
 	}
 	for _, ep := range endpoints {
-		cred := ep.Credential
-		if cred == nil || cred.Kind != "credential_ref" {
-			continue
+		for _, cred := range []*models.Credential{ep.Credential, ep.WriteCredential} {
+			if cred == nil || cred.Kind != "credential_ref" {
+				continue
+			}
+			ref, _ := cred.Data["ref"].(string)
+			if ref == "" {
+				continue
+			}
+			resolved, err := c.vault.Resolve(ctx, ref)
+			if err != nil {
+				c.log.Error("could not resolve credential_ref; endpoint will fail to "+
+					"authenticate until it can be", "endpoint_id", ep.ID, "ref", ref, "error", err)
+				continue
+			}
+			cred.Data = resolved
 		}
-		ref, _ := cred.Data["ref"].(string)
-		if ref == "" {
-			continue
-		}
-		resolved, err := c.vault.Resolve(ctx, ref)
-		if err != nil {
-			c.log.Error("could not resolve credential_ref; endpoint will fail to "+
-				"authenticate until it can be", "endpoint_id", ep.ID, "ref", ref, "error", err)
-			continue
-		}
-		cred.Data = resolved
 	}
 }
 

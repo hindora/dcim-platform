@@ -1322,13 +1322,26 @@ class TopologyImporter:
             # override somebody chose; only an explicit adopt clears it.
             cred_id = (None if await self._pool_has_default(spec, dev.get("device_type"))
                        else await self._credential_id(spec))
+            # A credential for device actions, where the spec carries one. Like
+            # the polling credential it is only ever filled in: a re-import never
+            # takes away one an operator chose.
+            write_id = None
+            if spec.write_credential:
+                w = spec.write_credential
+                write_id = await self._credential_id(EndpointSpec(
+                    protocol=spec.protocol, role=spec.role, address=spec.address,
+                    port=spec.port, poll_profile=spec.poll_profile,
+                    credential_kind=w["credential_kind"],
+                    credential_payload=w["credential_payload"],
+                    credential_name=w["credential_name"],
+                    credential_hint=w["credential_hint"]))
             endpoint_id = await self._scalar("""
                 INSERT INTO device_endpoint (device_id, protocol, role, address, port,
-                                             addressing, credential_id, poll_profile_id,
-                                             collector_id, enabled)
+                                             addressing, credential_id, write_credential_id,
+                                             poll_profile_id, collector_id, enabled)
                 VALUES (CAST(:dev AS uuid), CAST(:proto AS protocol_t),
                         CAST(:role AS endpoint_role_t), CAST(:addr AS inet), :port,
-                        CAST(:addressing AS jsonb), CAST(:cred AS uuid),
+                        CAST(:addressing AS jsonb), CAST(:cred AS uuid), CAST(:wcred AS uuid),
                         CAST(:profile AS uuid), :collector, :enabled)
                 ON CONFLICT (device_id, protocol, role, coalesce(host(address), ''))
                 DO UPDATE SET
@@ -1336,6 +1349,8 @@ class TopologyImporter:
                     addressing = EXCLUDED.addressing,
                     credential_id = COALESCE(device_endpoint.credential_id,
                                              EXCLUDED.credential_id),
+                    write_credential_id = COALESCE(device_endpoint.write_credential_id,
+                                                   EXCLUDED.write_credential_id),
                     poll_profile_id = EXCLUDED.poll_profile_id,
                     collector_id = EXCLUDED.collector_id,
                     enabled = EXCLUDED.enabled,
@@ -1343,7 +1358,8 @@ class TopologyImporter:
                 RETURNING id::text
             """, dev=device_id, proto=spec.protocol, role=spec.role,
                 addr=spec.address, port=spec.port,
-                addressing=_json(spec.addressing), cred=cred_id, profile=profile_id,
+                addressing=_json(spec.addressing), cred=cred_id, wcred=write_id,
+                profile=profile_id,
                 collector=self.collector_id, enabled=spec.enabled)
             if spec.address:
                 self._endpoint_by_addr.setdefault((spec.protocol, spec.address), endpoint_id)

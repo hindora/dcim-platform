@@ -180,6 +180,13 @@ async def capabilities(session, device_id: str, role: str) -> dict[str, Any] | N
                          else "no enabled Redfish BMC endpoint to write to")
         return out
     ep = eps[0]
+    # A polling credential is read-only by design, so an SNMP write needs its
+    # own. A BMC's one account either may reset the machine or it may not.
+    if cls == "pdu" and not ep.get("write_credential_id"):
+        out["reason"] = ("this endpoint has no write credential: the one it is polled with "
+                         "is read-only, so an admin has to give it one before outlets "
+                         "can be switched")
+        return out
     # The collector that actually owns it now: the pin, then the assigner's
     # record, then the live plan - the one answer every reader of ownership
     # shares. The recorded owner alone is empty on a fleet that has never

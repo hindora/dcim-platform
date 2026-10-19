@@ -687,7 +687,7 @@ async def one_endpoint(session: AsyncSession, device_id: str,
 #: Not the whole row: an audit entry that repeats everything hides the one
 #: thing that moved, and this is the trail somebody reads after a device went
 #: quiet at 3am.
-_AUDITED = ("address", "port", "addressing", "credential_id",
+_AUDITED = ("address", "port", "addressing", "credential_id", "write_credential_id",
             "poll_profile_id", "enabled", "admin_state", "collector_id", "pool_id",
             "target_limit")
 
@@ -717,7 +717,11 @@ async def update_endpoint(session: AsyncSession, *, device_id: str,
         elif key == "addressing":
             clean[key] = endpoint_config.validate_addressing(
                 current["protocol"], value or {})
-        elif key == "credential_id" and value is not None:
+        elif key in ("credential_id", "write_credential_id") and value is not None:
+            # The write credential is checked like the polling one: it must
+            # speak this endpoint's protocol, or every action is a guaranteed
+            # failure. (It is read-write where the polling one is read-only; the
+            # platform cannot tell, so who may choose it is the role on the edit.)
             cred = await repo.get_credential(session, value)
             if cred is None:
                 raise endpoint_config.EndpointConfigError(

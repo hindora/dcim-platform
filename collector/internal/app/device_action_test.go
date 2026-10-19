@@ -8,7 +8,12 @@ import (
 )
 
 func epOf(proto string, addressing map[string]any) *models.Endpoint {
-	return &models.Endpoint{ID: "ep1", Protocol: proto, Address: "10.52.12.26", Addressing: addressing}
+	ep := &models.Endpoint{ID: "ep1", Protocol: proto, Address: "10.52.12.26", Addressing: addressing}
+	if proto == "snmp" {
+		ep.WriteCredential = &models.Credential{Kind: "snmp_v2c",
+			Data: map[string]any{"community": "10.52.12.26"}}
+	}
+	return ep
 }
 
 func TestOnlyOutletControlAndTheOneResetGetThrough(t *testing.T) {
@@ -80,6 +85,17 @@ func TestAnythingElseIsRefusedHere(t *testing.T) {
 		if !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%s: got %q, want it to say %q", c.name, err, c.want)
 		}
+	}
+}
+
+func TestAnSnmpWriteNeedsItsOwnCredential(t *testing.T) {
+	ep := epOf("snmp", nil)
+	ep.WriteCredential = nil // polled with a read-only credential only
+	act := deviceAction{Op: "snmp_set", Type: "integer", Value: 2,
+		OID: "1.3.6.1.4.1.318.1.1.26.9.2.4.1.5.12"}
+	err := validateAction(&act, ep)
+	if err == nil || !strings.Contains(err.Error(), "no write credential") {
+		t.Fatalf("a write with only a polling credential was not refused: %v", err)
 	}
 }
 
