@@ -29,6 +29,7 @@ from typing import Any
 
 from app.core.security import ROLES
 from app.repositories import actions as repo
+from app.services.collector import ownership
 
 _RANK = {r: i for i, r in enumerate(ROLES)}
 
@@ -156,21 +157,9 @@ async def capabilities(session, device_id: str, role: str) -> dict[str, Any] | N
         out["reason"] = f"the device is {d['lifecycle']}"
         return out
 
-    wanted = ("snmp", "native_card") if cls == "pdu" else ("redfish", "bmc")
-    eps = [e for e in await repo.endpoints_with_owner(session, device_id)
-           if e["enabled"] and e["admin_state"] == "enabled"
-           and (e["protocol"], e["role"]) == wanted]
-    if not eps:
-        out["reason"] = ("no enabled SNMP management card to write to" if cls == "pdu"
-                         else "no enabled Redfish BMC endpoint to write to")
-        return out
-    ep = eps[0]
-    out["endpoint"] = {"id": ep["id"], "protocol": ep["protocol"], "role": ep["role"],
-                       "owner": ep["owner"]}
-    if ep["owner"] is None:
-        out["reason"] = "no collector owns this device's endpoint yet"
-        return out
-
+    # What the hardware can do comes before what the platform can reach: a
+    # metered strip answers "no relay", whatever its endpoint looks like.
+    sw = None
     if cls == "pdu":
         sw = switching(d["model"])
         if sw is False:
@@ -181,6 +170,29 @@ async def capabilities(session, device_id: str, role: str) -> dict[str, Any] | N
             out["reason"] = (f"no known outlet-control MIB for {d['vendor'] or 'this make'} "
                              f"(APC and Raritan are supported)")
             return out
+
+    wanted = ("snmp", "native_card") if cls == "pdu" else ("redfish", "bmc")
+    eps = [e for e in await repo.endpoints_with_owner(session, device_id)
+           if e["enabled"] and e["admin_state"] == "enabled"
+           and (e["protocol"], e["role"]) == wanted]
+    if not eps:
+        out["reason"] = ("no enabled SNMP management card to write to" if cls == "pdu"
+                         else "no enabled Redfish BMC endpoint to write to")
+        return out
+    ep = eps[0]
+    # The collector that actually owns it now: the pin, then the assigner's
+    # record, then the live plan - the one answer every reader of ownership
+    # shares. The recorded owner alone is empty on a fleet that has never
+    # failed over, and would have said nobody owns a device that is polled
+    # every minute.
+    owner = (await ownership(session)).get(ep["id"]) or ep["owner"]
+    out["endpoint"] = {"id": ep["id"], "protocol": ep["protocol"], "role": ep["role"],
+                       "owner": owner}
+    if owner is None:
+        out["reason"] = "no collector owns this device's endpoint yet"
+        return out
+
+    if cls == "pdu":
         loads = await repo.outlet_loads(session, device_id)
         out["outlets"] = [{
             "outlet": r["outlet"], "connector": r["connector"], "branch": r["branch"],

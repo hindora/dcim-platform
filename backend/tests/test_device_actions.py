@@ -51,7 +51,7 @@ def _loads():
 @pytest.fixture
 def fake(monkeypatch):
     """The repository, replaced: one device, its endpoints and loads."""
-    state = {"device": PDU, "eps": [SNMP_EP], "open": None, "created": []}
+    state = {"device": PDU, "eps": [SNMP_EP], "open": None, "created": [], "plan": {}}
 
     async def basics(_s, _id):
         return state["device"]
@@ -69,6 +69,10 @@ def fake(monkeypatch):
         state["created"].append((collector_id, payload, actor))
         return "cmd-1"
 
+    async def plan(_s):
+        return state["plan"]
+
+    monkeypatch.setattr(da, "ownership", plan)
     monkeypatch.setattr(da.repo, "device_basics", basics)
     monkeypatch.setattr(da.repo, "endpoints_with_owner", eps)
     monkeypatch.setattr(da.repo, "outlet_loads", loads)
@@ -141,6 +145,24 @@ def test_a_metered_strip_is_refused_up_front_not_offered_and_failed(fake):
     fake["device"] = PDU | {"model": "APC AP8886"}
     cap = run(da.capabilities(None, "pdu1", "admin"))
     assert not cap["available"] and "metered" in cap["reason"] and cap["actions"] == []
+
+
+def test_the_live_plan_names_the_owner_when_nothing_has_been_recorded(fake):
+    """The assigner's record is empty on a fleet that has never failed over, yet
+    every endpoint is polled every minute by the collector the plan gives it."""
+    fake["eps"] = [SNMP_EP | {"owner": None}]
+    fake["plan"] = {"ep-snmp": "col-dc1-bms-2"}
+    cap = run(da.capabilities(None, "pdu1", "admin"))
+    assert cap["available"] and cap["endpoint"]["owner"] == "col-dc1-bms-2"
+    run(da.submit(None, device_id="pdu1", action_id="outlet_on", outlet=4, confirm=None,
+                  reason=None, actor="hari", role="operator"))
+    assert fake["created"][0][0] == "col-dc1-bms-2"
+
+
+def test_a_metered_strip_says_so_even_when_its_endpoint_has_no_owner(fake):
+    fake["device"] = PDU | {"model": "APC AP8886"}
+    fake["eps"] = [SNMP_EP | {"owner": None}]
+    assert "metered" in run(da.capabilities(None, "pdu1", "admin"))["reason"]
 
 
 def test_no_endpoint_owner_means_no_actions(fake):
