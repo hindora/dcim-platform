@@ -666,7 +666,6 @@ export function DevicePanel({ device, rack }: { device: TwinDevice; rack?: Floor
     for (const s of spark.data?.series ?? []) if (!out[s.metric] && s.points.length > 1) out[s.metric] = s.points;
     return out;
   }, [spark.data]);
-  const openAlarms = state.data?.active_alarms ?? 0;
   const ctx: ClassCtx = { device, rack, d, m, cls, spark: sparkBy, stateLoading: state.isLoading, stateError: state.isError };
 
   return (
@@ -681,18 +680,6 @@ export function DevicePanel({ device, rack }: { device: TwinDevice; rack?: Floor
         {sev !== 'CLEAR' && <span className={`vw-sev sev-${sev.toLowerCase()}`}>{sev.toLowerCase()}</span>}
         <span className="muted">{seen ? `seen ${relativeTime(seen)}` : 'never seen'}</span>
       </div>
-      {/* The way out, up top where the hand already is: each goes to the
-          matching tab of the device page, so "Alarms" lands on the alarms
-          and "Edit" opens the editor rather than a page to find it on. */}
-      <div className="vw-acts" role="group" aria-label="Open this device">
-        <Link className="vw-icon" to={`/devices/${device.id}`}>Open</Link>
-        {atLeast('operator') && <Link className="vw-icon" to={`/devices/${device.id}?edit=1`}>Edit</Link>}
-        <Link className={`vw-icon${openAlarms ? ` has-${(sev || 'clear').toLowerCase()}` : ''}`}
-              to={`/devices/${device.id}?tab=alarms`}>
-          Alarms{openAlarms > 0 && <span className="n">{openAlarms}</span>}
-        </Link>
-        <Link className="vw-icon" to={`/devices/${device.id}?tab=operations`}>Operations</Link>
-      </div>
       {cls === 'server' && <ServerBody {...ctx} />}
       {cls === 'network' && <NetworkBody {...ctx} />}
       {cls === 'pdu' && <PduBody {...ctx} />}
@@ -700,7 +687,13 @@ export function DevicePanel({ device, rack }: { device: TwinDevice; rack?: Floor
       {cls === 'cdu' && <CduBody {...ctx} />}
       {cls === 'other' && <OtherBody {...ctx} />}
       <UnitAlarms deviceId={device.id} deviceName={device.name} />
+      {/* The ways out, together at the foot where links live. One to the
+          device page - alarms and operations are a tab away on it - and Edit
+          beside it because without it editing from the rack is open, scroll,
+          find the button. */}
       <div className="vw-links">
+        <Link to={`/devices/${device.id}`}>Device page</Link>
+        {atLeast('operator') && <Link to={`/devices/${device.id}?edit=1`}>Edit device</Link>}
         <Link to={`/assets/inventory/${device.id}`}>Asset record</Link>
         {rack && <Link to={`/racks/${rack.id}?from=floorplan`}>Rack elevation</Link>}
       </div>
