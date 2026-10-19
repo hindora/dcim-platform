@@ -1715,6 +1715,9 @@ export interface TwinDevice {
   u_height: number;
   mount?: string | null;
   mount_height_m?: number | null;
+  /** Make and model, which the rack draws the faceplate from. */
+  vendor?: string | null;
+  model?: string | null;
   status: string;
   max_severity: string;
   power_w?: number | null;

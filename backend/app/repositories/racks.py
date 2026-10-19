@@ -538,6 +538,9 @@ async def room_rack_devices(session: AsyncSession, room_id: str) -> list[dict[st
         SELECT d.id::text, d.name, d.device_type::text AS device_type,
                d.rack_id::text AS rack_id, d.u_start, d.u_height, d.mount,
                d.mount_height_m,
+               -- Make and model: what the 3D rack draws the faceplate from
+               -- (a PowerEdge and a ProLiant do not look alike across an aisle).
+               v.name AS vendor, m.name AS model,
                COALESCE(ds.status::text, 'UNKNOWN')     AS status,
                COALESCE(ds.max_severity::text, 'CLEAR') AS max_severity,
                ds.power_w, ds.inlet_temp_c,
@@ -555,6 +558,8 @@ async def room_rack_devices(session: AsyncSession, room_id: str) -> list[dict[st
           FROM device d
           JOIN rack r      ON r.id = d.rack_id
           JOIN rack_row rr ON rr.id = r.row_id
+          LEFT JOIN model m  ON m.id = d.model_id
+          LEFT JOIN vendor v ON v.id = COALESCE(d.vendor_id, m.vendor_id)
           LEFT JOIN device_state ds ON ds.device_id = d.id
          WHERE rr.room_id = CAST(:room_id AS uuid)
            AND d.lifecycle <> 'decommissioned'

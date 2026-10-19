@@ -121,6 +121,10 @@ def test_the_3d_scene_draws_only_live_devices_in_this_rooms_racks():
     assert "d.lifecycle <> 'decommissioned'" in body
     assert "rr.room_id = CAST(:room_id AS uuid)" in body
     assert "d.mount_height_m" in body          # door probes have no U to place them by
+    # The faceplate is drawn from the make and model; a device with no vendor
+    # of its own takes its model's, and one with neither still draws.
+    assert "v.name AS vendor, m.name AS model" in body
+    assert "LEFT JOIN vendor v ON v.id = COALESCE(d.vendor_id, m.vendor_id)" in body
 
 
 def test_rack_load_is_metered_at_the_pdus_not_summed_twice():

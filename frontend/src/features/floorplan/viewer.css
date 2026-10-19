@@ -130,6 +130,27 @@
 .vw-bar-fill { height: 100%; }
 .vw-bar-label { font-size: 0.7rem; color: var(--text-faint); text-transform: uppercase; letter-spacing: .06em; }
 .vw-list { margin: 0; padding-left: 16px; }
+/* the device panel: make and model under the name, the state line, the readings */
+.vw-make { margin: 2px 0 6px; color: var(--text-muted); font-size: 0.78rem; }
+.vw-state { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; font-size: 0.78rem; }
+.vw-state .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-faint); flex: none; }
+.vw-state.is-online .dot { background: var(--ok); }
+.vw-state.is-degraded .dot { background: var(--warn); }
+.vw-state.is-offline .dot { background: var(--critical); }
+.vw-state .vw-sev { font-weight: 600; text-transform: lowercase; }
+.vw-state .vw-sev.sev-critical { color: var(--critical); }
+.vw-state .vw-sev.sev-major { color: var(--major); }
+.vw-state .vw-sev.sev-minor, .vw-state .vw-sev.sev-warning { color: var(--warn); }
+.vw-sub { margin: 6px 0 2px; font-size: 0.7rem; font-weight: 600; letter-spacing: .04em; color: var(--text-muted); }
+.vw-readings + .vw-readings { margin-top: 4px; }
+.vw-reading { display: grid; grid-template-columns: 1fr auto minmax(42px, auto); gap: 0 10px; align-items: baseline;
+              padding: 3px 0; border-bottom: 1px solid var(--border); }
+.vw-reading .k { color: var(--text-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vw-reading .v { font-variant-numeric: tabular-nums; text-align: right; }
+.vw-reading .t { font-size: 0.66rem; color: var(--text-faint); text-align: right; font-variant-numeric: tabular-nums; }
+.vw-reading.is-flagged .v { color: var(--text-muted); font-style: italic; }
+.vw-warn { color: var(--warn); }
+.vw-panel-body .mono { font-family: var(--font-mono, ui-monospace, monospace); font-size: 0.76rem; }
 .vw-links { display: flex; gap: 14px; margin-top: 12px; }
 .vw-radios { display: flex; flex-direction: column; gap: 2px; }
 .vw-radios label { display: grid; grid-template-columns: 16px 1fr; gap: 2px 8px; align-items: center;

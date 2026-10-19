@@ -1,12 +1,17 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState, type ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { api, ApiError, type Alarm, type SiteKpi, type TwinRoom, type TwinSiteScene } from '../../api/client';
+import {
+  api, ApiError, type Alarm, type DeviceDetail, type DeviceState, type MetricValue, type SiteKpi, type TwinRoom,
+  type TwinSiteScene,
+} from '../../api/client';
 import type {
   FloorEquipment, FloorPlan, FloorRack, RoomKpi, ThermalField, ThermalRoom, ThermalUnit, TwinDevice, TwinRackIndex,
   TwinRoomIndices,
 } from '../../api/client';
-import { humanise } from '../../lib/format';
+import { formatMetric, humanise, metricLabel, relativeTime } from '../../lib/format';
+import { METRICS, type MetricKey } from '../../lib/metrics.gen';
+import { chartGroupsFor } from '../devices/chartGroups';
 import {
   COOLING_LAYERS, HEAT_PLANES, RACK_LAYERS, dewPoint, gridRef, pickExhaust, rackMeanRh, rackTiers, unitReadings,
   type CoolingLayer, type HeatPlane, type Legend as LegendSpec, type RackLayer, type Visibility,
@@ -556,28 +561,183 @@ export function RackPanel({ rack, devices, index }: { rack: FloorRack; devices: 
   );
 }
 
+/** What a server's or a switch's own front says about it, with everything the
+ *  platform holds on it: the nameplate and where it is (inventory), every
+ *  reading its collector last brought back (device_state), its cords and
+ *  endpoints, and the conditions open on it. The same facts the device page
+ *  shows, read from the same endpoints, in the order an operator at the rack
+ *  wants them: is it alright, what is it, what is it doing. */
 export function DevicePanel({ device, rack }: { device: TwinDevice; rack?: FloorRack }) {
+  const detail = useQuery<DeviceDetail>({
+    queryKey: ['device', device.id],
+    queryFn: () => api.device(device.id),
+    staleTime: 60_000,
+  });
+  const state = useQuery<DeviceState>({
+    queryKey: ['device-state', device.id],
+    queryFn: () => api.deviceState(device.id),
+    refetchInterval: 30_000,
+    // A device with no telemetry yet is a normal state, not an error.
+    retry: false,
+  });
+  const d = detail.data;
+  const metrics = useMemo(() => state.data?.metrics ?? {}, [state.data]);
+  const slot = device.u_start
+    ? `U${device.u_start}${device.u_height > 1 ? `–${device.u_start + device.u_height - 1}` : ''}`
+    : humanise(device.mount ?? '') || '–';
+  const status = state.data?.status ?? device.status;
+  const sev = state.data?.max_severity ?? device.max_severity;
+  const draw = typeof metrics.power_draw?.v === 'number' ? metrics.power_draw.v : device.power_w ?? null;
+  const rated = d?.rated_power_w ?? null;
+
+  // Readings in the order the device's own page charts them, then whatever
+  // else it reports, by the catalogue's group. Per-port counters are left to
+  // the device page: a switch has a hundred of them.
+  const groups = useMemo(() => {
+    const keys = Object.keys(metrics).filter((k) => !k.startsWith('if_'));
+    const used = new Set<string>();
+    const out: { title: string; keys: string[] }[] = [];
+    for (const g of chartGroupsFor(device.device_type) ?? []) {
+      const have = g.metrics.filter((k) => k in metrics);
+      if (have.length) { out.push({ title: g.title, keys: have }); have.forEach((k) => used.add(k)); }
+    }
+    const rest = new Map<string, string[]>();
+    for (const k of keys.sort()) {
+      if (used.has(k)) continue;
+      const grp = METRICS[k as MetricKey]?.group ?? 'other';
+      rest.set(grp, [...(rest.get(grp) ?? []), k]);
+    }
+    for (const [grp, ks] of rest) out.push({ title: humanise(grp), keys: ks });
+    return out;
+  }, [metrics, device.device_type]);
+  const readingCount = groups.reduce((n, g) => n + g.keys.length, 0);
+  const seen = state.data?.last_seen ?? d?.last_seen ?? null;
+
   return (
     <div className="vw-panel-body">
-      <div className="vw-kv">
-        <Row k="Type" v={humanise(device.device_type)} />
-        {rack && <Row k="Rack" v={rack.name} />}
-        <Row k="Slot" v={device.u_start ? `U${device.u_start}${device.u_height > 1 ? `–${device.u_start + device.u_height - 1}` : ''}` : (device.mount ?? '–')} />
-        <Row k="Status" v={`${device.status.toLowerCase()}${device.max_severity !== 'CLEAR' ? ` · ${device.max_severity.toLowerCase()}` : ''}`} />
+      <p className="vw-make">
+        {d ? `${d.vendor ?? 'Unknown make'}${d.model ? ` · ${d.model}` : ''}`
+           : [device.vendor, device.model].filter(Boolean).join(' · ') || humanise(device.device_type)}
+      </p>
+      <div className={`vw-state is-${status.toLowerCase()}`}>
+        <span className="dot" aria-hidden />
+        <b>{status.toLowerCase()}</b>
+        {sev !== 'CLEAR' && <span className={`vw-sev sev-${sev.toLowerCase()}`}>{sev.toLowerCase()}</span>}
+        <span className="muted">{seen ? `seen ${relativeTime(seen)}` : 'never seen'}</span>
       </div>
       <Tiles items={[
         { label: 'AIR', value: fmtT(device.temp_c) },
         { label: device.exhaust_c != null ? 'EXHAUST' : 'RH', value: device.exhaust_c != null ? fmtT(device.exhaust_c) : f1(device.rh_pct, ' %') },
-        { label: 'POWER', value: device.power_w != null ? `${(device.power_w / 1000).toFixed(2)} kW` : '–' },
+        { label: 'POWER', value: draw != null ? `${(draw / 1000).toFixed(2)} kW` : '–' },
       ]} />
       {device.exhaust_c != null && device.temp_c != null && (
         <div className="vw-kv"><Row k="Rise in → out" v={fmtDT(device.exhaust_c - device.temp_c)} /></div>
       )}
+
+      <Section title="Identity" open>
+        <div className="vw-kv">
+          <Row k="Type" v={humanise(device.device_type)} />
+          <Row k="Vendor" v={d?.vendor ?? device.vendor ?? '–'} />
+          <Row k="Model" v={d?.model ?? device.model ?? '–'} />
+          {rack && <Row k="Rack" v={`${rack.name}${rack.row_name ? ` · row ${rack.row_name}` : ''}`} />}
+          <Row k="Slot" v={slot} />
+          <Row k="Serial" v={<span className="mono">{d?.serial_number ?? '–'}</span>} />
+          <Row k="Asset tag" v={<span className="mono">{d?.asset_tag ?? '–'}</span>} />
+          <Row k="Management IP" v={<span className="mono">{d?.mgmt_ip ?? '–'}</span>} />
+          {d?.primary_ip && <Row k="Production IP" v={<span className="mono">{d.primary_ip}</span>} />}
+          <Row k="Lifecycle" v={d?.lifecycle ? humanise(d.lifecycle) : '–'} />
+          {d?.warranty_expires && (
+            <Row k="Warranty" v={
+              <span className={d.warranty_state === 'expired' ? 'vw-bad' : d.warranty_state === 'expiring' ? 'vw-warn' : undefined}>
+                {d.warranty_state === 'expired' ? 'expired ' : 'to '}
+                {new Date(d.warranty_expires).toLocaleDateString(undefined, { dateStyle: 'medium' })}
+              </span>} />
+          )}
+          {d?.owner_group && <Row k="Owner" v={d.owner_group} />}
+        </div>
+        {detail.isError && <p className="muted vw-note">The inventory record could not be read.</p>}
+      </Section>
+
+      <Section title={readingCount ? `Readings (${readingCount})` : 'Readings'} open>
+        {state.isLoading && <p className="muted vw-note">Reading…</p>}
+        {!state.isLoading && readingCount === 0 && (
+          <p className="muted vw-note">{state.isError ? 'No telemetry yet from this device.' : 'Nothing reported yet.'}</p>
+        )}
+        {groups.map((g) => (
+          <div key={g.title} className="vw-readings">
+            <p className="vw-sub">{g.title}</p>
+            {g.keys.map((k) => <Reading key={k} k={k} m={metrics[k]} />)}
+          </div>
+        ))}
+        {rated != null && (
+          <p className="muted vw-note">
+            Rated {rated} W{draw != null ? ` · drawing ${Math.round(draw)} W, ${Math.round((100 * draw) / rated)} % of nameplate` : ''}.
+          </p>
+        )}
+      </Section>
+
+      {d && d.psus.length > 0 && (
+        <Section title={`Power supplies (${d.psus.length})`}>
+          <div className="vw-kv">
+            {d.psus.map((p) => (
+              <Row key={p.number}
+                   k={`PSU${p.number}${p.rated_watts ? ` · ${p.rated_watts} W` : ''}${p.connector ? ` ${p.connector}` : ''}`}
+                   v={p.feed_device_id
+                     ? <><Link to={`/devices/${p.feed_device_id}`}>{p.feed_device}</Link>
+                         {p.feed_outlet != null && <span className="muted"> · outlet {p.feed_outlet}</span>}</>
+                     : <span className="vw-warn">not corded</span>} />
+            ))}
+          </div>
+          <p className="muted vw-note"><PsuVerdict psus={d.psus} /></p>
+        </Section>
+      )}
+
+      {d && d.endpoints.length > 0 && (
+        <Section title={`Endpoints (${d.endpoints.length})`}>
+          <div className="vw-kv">
+            {d.endpoints.map((e) => (
+              <Row key={e.id} k={`${humanise(e.protocol)} · ${humanise(e.role)}`}
+                   v={<span className={e.status === 'ONLINE' ? undefined : 'vw-warn'}>
+                        {(e.status ?? 'unknown').toLowerCase()}
+                        {e.last_seen ? <span className="muted"> · {relativeTime(e.last_seen)}</span> : null}
+                      </span>} />
+            ))}
+          </div>
+        </Section>
+      )}
+
       <UnitAlarms deviceId={device.id} deviceName={device.name} />
-      <div className="vw-links"><Link to={`/devices/${device.id}`}>Device</Link>
+      <div className="vw-links"><Link to={`/devices/${device.id}`}>Device page</Link>
         {rack && <Link to={`/racks/${rack.id}?from=floorplan`}>Rack elevation</Link>}</div>
     </div>
   );
+}
+
+/** One reading: the catalogue's name, the value in its unit, how old it is.
+ *  A reading the collector flagged (stale, out of range) is said so, not shown
+ *  as a confident number. */
+function Reading({ k, m }: { k: string; m: MetricValue }) {
+  const good = m.q === 'good';
+  const unit = METRICS[k as MetricKey]?.unit;
+  const val = formatMetric(k, m.v);
+  const bare = typeof m.v === 'number' && unit && !/[a-zA-Z°%]/.test(val);
+  return (
+    <div className={`vw-reading${good ? '' : ' is-flagged'}`} title={good ? undefined : `quality: ${m.q}`}>
+      <span className="k">{metricLabel(k)}</span>
+      <span className="v">{val}{bare ? ` ${unit}` : ''}</span>
+      <span className="t">{m.t ? relativeTime(m.t) : ''}</span>
+    </div>
+  );
+}
+
+/** Two supplies are redundancy only when something separate feeds each. */
+function PsuVerdict({ psus }: { psus: DeviceDetail['psus'] }) {
+  const feeds = new Set(psus.map((p) => p.feed_device_id).filter((x): x is string => Boolean(x)));
+  const uncorded = psus.filter((p) => !p.feed_device_id).length;
+  if (uncorded > 0) return <>{uncorded === 1 ? 'One supply' : `${uncorded} supplies`} fitted but not corded.</>;
+  if (psus.length === 1) return <>Single-corded: one feed, no redundancy.</>;
+  if (feeds.size > 1) return <>Fed from {feeds.size} independent sources.</>;
+  return <>Both cords land on one strip: a pair of supplies, one point of failure.</>;
 }
 
 export function UnitPanel({ unit, thermal }: { unit: FloorEquipment; thermal?: ThermalUnit }) {

@@ -316,6 +316,7 @@ async def room_scene(session: AsyncSession, room_id: str) -> TwinRoomScene | Non
         id=d["id"], name=d["name"], device_type=d["device_type"], rack_id=d["rack_id"],
         u_start=d.get("u_start"), u_height=int(d.get("u_height") or 1),
         mount=d.get("mount"), mount_height_m=_f(d.get("mount_height_m")),
+        vendor=d.get("vendor"), model=d.get("model"),
         status=d.get("status") or "UNKNOWN",
         max_severity=d.get("max_severity") or "CLEAR",
         power_w=_f(d.get("power_w")), inlet_c=_f(d.get("inlet_temp_c")),

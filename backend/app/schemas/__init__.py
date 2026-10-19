@@ -390,6 +390,9 @@ class TwinDevice(BaseModel):
     mount: str | None = None
     # Centre height above the floor - how a door probe with no U is placed.
     mount_height_m: float | None = None
+    # Make and model, so the rack can draw this chassis as what it is.
+    vendor: str | None = None
+    model: str | None = None
     status: str = "UNKNOWN"
     max_severity: str = "CLEAR"
     power_w: float | None = None

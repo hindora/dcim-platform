@@ -18,7 +18,7 @@ import {
 import { OpenEnclosure, RackDetails, RoomFittings, UnitDetails, type RoomDoor, type RoomFire } from './Fittings';
 import { Hardware } from './Hardware';
 import { DeckEdge, Plenum, PLENUM_H } from './Underfloor';
-import { DeviceFaces } from './DeviceFaces';
+import { DeviceFaces, RackRails } from './DeviceFaces';
 import { GLASS, GlassBox, RackDoors, Studio, Tone } from './studio';
 import type { PathOverlay, Role } from './paths';
 import { fmtT, numT, unitLabel } from './units';
@@ -645,12 +645,14 @@ export default function RoomScene(p: SceneProps) {
           <meshStandardMaterial color={GLASS.tile} emissive={GLASS.tile} emissiveIntensity={0.35} roughness={0.4}
                                 transparent depthWrite={false} opacity={0.8} toneMapped={false} />
         </mesh>
-        <GradientBoxes boxes={focusBox} part="solid" opacity={0.32}
-                       onClick={() => onSelect({ kind: 'rack', id: focusId })}
-                       onMove={(_, e) => tip(e, rackText(plan.racks[focusIdx]))} onOut={() => onTip(null)} />
+        {/* The glass shell answers no pointer: a click goes through it to the
+            gear inside, and a click on nothing falls back to the rack itself
+            (the selection derives from the focus). */}
+        <GradientBoxes boxes={focusBox} part="solid" opacity={0.32} />
         <RackFrames racks={[plan.racks[focusIdx]]} X={X} Z={Z} />
+        <RackRails box={rackBoxes[focusIdx]} units={plan.racks[focusIdx].u_height ?? 42} />
         <Hardware racks={focusBox} units={NO_BOXES} unitTypes={[]} open />
-        <RackDevices devices={focusDevices} rackById={rackById} X={X} Z={Z} themeTick={themeTick}
+        <RackDevices devices={focusDevices} rackById={rackById} X={X} Z={Z} themeTick={themeTick} labels
                      onSelect={onSelect} onTip={onTip} />
         <Highlight sel={sel?.kind === 'device' ? sel : null} rackBoxes={rackBoxes} racks={plan.racks} unitBoxes={unitBoxes} units={placedUnits}
                    devices={devices} rackById={rackById} X={X} Z={Z} color={tones.accent} />
@@ -1573,11 +1575,13 @@ export function deviceBox(d: TwinDevice, r: FloorRack, X: (x: number) => number,
 /** A probe hung on a rack's front or rear door (inlet / exhaust). */
 const onRackDoor = (d: TwinDevice) => d.mount === 'rack_front' || d.mount === 'rack_rear';
 
-function RackDevices({ devices, show, rackById, X, Z, themeTick, onSelect, onTip }: {
+function RackDevices({ devices, show, rackById, X, Z, themeTick, labels, onSelect, onTip }: {
   devices: TwinDevice[]; rackById: Map<string, FloorRack>;
   /** Draw only these; the rest keep their slots (so door probes sit where
    *  they do when everything is shown) but are not drawn. */
   show?: (d: TwinDevice) => boolean;
+  /** Print each device's name on its faceplate (the rack's own view). */
+  labels?: boolean;
   X: (x: number) => number; Z: (y: number) => number; themeTick: number;
   onSelect?: (s: Sel) => void; onTip?: (t: HoverTip | null) => void;
 }) {
@@ -1623,7 +1627,7 @@ function RackDevices({ devices, show, rackById, X, Z, themeTick, onSelect, onTip
   if (!devices.length) return null;
   return (
     <>
-    {!show && <DeviceFaces devices={devices} boxes={boxes} rackById={rackById} colors={colors} />}
+    {!show && <DeviceFaces devices={devices} boxes={boxes} rackById={rackById} colors={colors} labels={labels} />}
     <instancedMesh key={devices.length} ref={ref} args={[undefined, undefined, devices.length]}
                    onClick={onSelect && ((e) => { e.stopPropagation(); if (clean(e) && e.instanceId != null) onSelect({ kind: 'device', id: devices[e.instanceId].id }); })}
                    onPointerMove={onTip && ((e) => {
@@ -1631,7 +1635,8 @@ function RackDevices({ devices, show, rackById, X, Z, themeTick, onSelect, onTip
                      if (e.instanceId == null) return;
                      const d = devices[e.instanceId];
                      onTip({ x: e.nativeEvent.clientX, y: e.nativeEvent.clientY,
-                             text: [d.name, humanise(d.device_type), d.u_start ? `U${d.u_start}` : d.mount,
+                             text: [d.name, [d.vendor, d.model].filter(Boolean).join(' ') || humanise(d.device_type),
+                            d.u_start ? `U${d.u_start}` : d.mount,
                                     d.temp_c != null ? fmtT(d.temp_c) : null,
                                     d.power_w != null ? `${(d.power_w / 1000).toFixed(2)} kW` : null,
                                     d.status.toLowerCase(),
