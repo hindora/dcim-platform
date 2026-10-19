@@ -95,12 +95,11 @@ export function DeviceAlarms({ deviceId, deviceName, compact = false, limit, onM
             <button type="button" className={view === 'all' ? 'active' : undefined}
                     onClick={() => setView('all')}>Everything</button>
           </div>
-          <span className="muted small">
-            {q.isLoading ? 'Reading…'
-              : view === 'open'
-                ? (open ? `${open} open on ${deviceName}` : `Nothing open on ${deviceName}`)
-                : `${all.length} recorded, ${open} open`}
-          </span>
+          {!q.isLoading && items.length > 0 && (
+            <span className="muted small">
+              {view === 'open' ? `${open} open` : `${all.length} recorded, ${open} open`}
+            </span>
+          )}
         </div>
       )}
 

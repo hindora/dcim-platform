@@ -47,6 +47,15 @@ const TABS = [
 type Tab = typeof TABS[number]['id'];
 const isTab = (s: string | null): s is Tab => TABS.some((t) => t.id === s);
 
+/** "Supermicro SYS-221H-TNR" once, not "Supermicro Supermicro SYS-221H-TNR":
+ *  many model strings already carry the make. */
+function makeModel(d: Detail): string {
+  const v = d.vendor ?? 'unknown vendor';
+  const m = d.model ?? '';
+  if (m && d.vendor && m.toLowerCase().startsWith(d.vendor.toLowerCase())) return m;
+  return `${v} ${m}`.trim();
+}
+
 export function DeviceDetail() {
   const { id = '' } = useParams();
   const [params, setParams] = useSearchParams();
@@ -180,7 +189,7 @@ export function DeviceDetail() {
             )}
           </h2>
           <p className="subtitle">
-            {humanise(d.device_type)} · {d.vendor ?? 'unknown vendor'} {d.model ?? ''}
+            {humanise(d.device_type)} · {makeModel(d)}
             {loc.rack_name ? ` · ${loc.rack_name}` : ''}
             {loc.u_start ? ` U${loc.u_start}` : ''}
             {d.u_height ? `, ${d.u_height}U` : ''}
@@ -238,6 +247,7 @@ const GLYPH: Record<string, GlyphName> = {
   exhaust_temperature: 'air-out', return_air_temp: 'air-out',
   cpu_temperature: 'heat', component_temperature: 'heat', motor_temp: 'heat',
   oil_temperature: 'heat', winding_temperature: 'heat', battery_temperature: 'heat',
+  thermal_load: 'heat', cooling_capacity: 'heat',
   cpu_utilization: 'chip', memory_utilization: 'memory', disk_utilization: 'memory',
   load_pct: 'load', compressor_load_pct: 'load', cooling_output_pct: 'load',
   current: 'current', relative_humidity: 'humidity', dew_point: 'dew',
@@ -323,8 +333,7 @@ function Band({ d, state, loading }: { d: Detail; state?: DeviceState; loading: 
         <b>{open}</b>
         <span>{open === 1 ? 'open alarm' : 'open alarms'}</span>
       </div>
-      <div className="dv-tile" title={state?.last_seen ? new Date(state.last_seen).toLocaleString() : 'never polled'}>
-        <span className="dv-glyph" aria-hidden />
+      <div className="dv-tile no-glyph" title={state?.last_seen ? new Date(state.last_seen).toLocaleString() : 'never polled'}>
         <b>{state?.last_seen ? relativeTime(state.last_seen) : '—'}</b>
         <span>last seen</span>
       </div>
@@ -431,6 +440,7 @@ function Overview({ d, ports, metrics, state, onAlarms, onMonitoring }: {
           <DeviceAlarms deviceId={d.id} deviceName={d.name} compact limit={4} onMore={onAlarms} />
         </section>
 
+        {d.psus.length > 0 && (
         <section className="dv-card">
           <h3>
             Power feeds
@@ -456,6 +466,7 @@ function Overview({ d, ports, metrics, state, onAlarms, onMonitoring }: {
             </ul>
           )}
         </section>
+        )}
 
         <section className="dv-card">
           <h3>
