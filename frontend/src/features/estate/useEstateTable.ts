@@ -27,6 +27,21 @@ export interface EstateRowLike {
   room_class?: string | null;
 }
 
+/** Whether a room is somewhere a rack position is a unit of capacity.
+ *
+ *  Only white space is. Plant rooms, switchrooms, the yard, the meet-me room,
+ *  the operations room and staging are real and metered, but they have no
+ *  racks to grade or allocate, so the room tables hide them by default. The
+ *  test is "is white space", not "is not facility": the floor plan carries
+ *  four classes, and testing for one of them let the other two through.
+ *
+ *  Unclassified rooms are shown: null means nobody has classified it, and
+ *  hiding a room on the strength of a missing field is how a real hall
+ *  disappears from the estate view. */
+export function isWhiteSpace(roomClass: string | null | undefined): boolean {
+  return roomClass == null || roomClass === 'white_space';
+}
+
 /** `racks` is the optional third tier. When it is supplied, drilling into a
  *  room shows that room's racks; when it is not, a room is the floor and
  *  the page decides what a room click means. Same payload rule as sites:
@@ -62,17 +77,11 @@ export function useEstateTable<Row extends EstateRowLike>(
   );
 
   const visibleRooms = useMemo(
-    () => (includeFacility
-      ? rooms
-      // Unclassified rooms are shown: null means nobody has classified it, and
-      // hiding a room on the strength of a missing field is how a real hall
-      // disappears from the estate view.
-      : rooms.filter((r) => r.room_class !== 'facility')),
+    () => (includeFacility ? rooms : rooms.filter((r) => isWhiteSpace(r.room_class))),
     [rooms, includeFacility],
   );
 
-  const facilityCount = rooms.length - rooms.filter(
-    (r) => r.room_class !== 'facility').length;
+  const facilityCount = rooms.filter((r) => !isWhiteSpace(r.room_class)).length;
 
   const base = useMemo(() => {
     if (selectedRoom && racks) return racks.filter((r) => r.room_id === selectedRoom.id);

@@ -43,6 +43,7 @@ import {
 import { CategoryGlyph } from '../../components/CategoryGlyph';
 import { COLUMN_ORDER, GROUP_TONE, metaFor } from '../../components/alertMeta';
 import { FacilityToggle } from '../../components/estate';
+import { isWhiteSpace } from '../estate/useEstateTable';
 import { useHoverTip } from '../../components/HoverTip';
 import { useColumnWidths } from '../../lib/useColumnWidths';
 import { useOrg, useOrgTitle } from '../../lib/useOrg';
@@ -311,9 +312,9 @@ export function Home() {
     !search || name.toLowerCase().includes(search.toLowerCase());
 
   const visibleSites = sites.filter((s) => matches(`${s.code} ${s.name}`));
-  // Unclassified rooms are never hidden: null means nobody classified it,
-  // which is not the same claim as "this is plant".
-  const isFacility = (r: SiteRoom) => r.room_class === 'facility';
+  // Everything that is not white space: plant, switchrooms, the yard and the
+  // support rooms. Unclassified rooms are never hidden (see isWhiteSpace).
+  const isFacility = (r: SiteRoom) => !isWhiteSpace(r.room_class);
   const facilityCount = rooms.filter(isFacility).length;
   const scopedRooms = (roomsSite
     ? rooms.filter((r) => r.datacenter_id === roomsSite.id)

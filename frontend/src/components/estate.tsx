@@ -164,10 +164,10 @@ export function FacilityToggle({ on, count, onChange }: {
     <button type="button" className={`facility-toggle ${on ? 'on' : ''}`}
             aria-pressed={on} onClick={() => onChange(!on)}
             title={on
-              ? 'Hide plant, switchrooms and the roof'
-              : `Show the ${count} facility room${count === 1 ? '' : 's'} - `
-                + 'their load is already counted in the totals'}>
-      {on ? '−' : '+'} FACILITY <span className="n">{count}</span>
+              ? 'Hide plant, switchrooms, the yard and the support rooms'
+              : `Show the ${count} facility and support room${count === 1 ? '' : 's'} - `
+                + 'no racks to grade, and their load is already counted in the totals'}>
+      {on ? '−' : '+'} OTHER ROOMS <span className="n">{count}</span>
     </button>
   );
 }
