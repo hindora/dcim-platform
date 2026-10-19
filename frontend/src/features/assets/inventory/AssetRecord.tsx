@@ -19,6 +19,7 @@ import { MaintenanceTab } from './MaintenanceTab';
 import { SupportTab } from './SupportTab';
 import { TagAssignForm } from './RecordWorkForm';
 import { DeviceEditor } from '../../devices/DeviceEditor';
+import { ActionGlyph } from '../../../components/ActionGlyph';
 import '../../devices/devices.css';
 
 /** One asset, as an asset.
@@ -432,13 +433,19 @@ export function AssetRecord() {
           </p>
           <div className="dv-tools">
             {atLeast('operator') && (
-              <button onClick={() => setEditingDevice(true)}>Edit device</button>
+              <button type="button" className="dv-act" onClick={() => setEditingDevice(true)}>
+                <ActionGlyph kind="edit" />Edit device
+              </button>
             )}
-            <button onClick={() => setEditingTags(true)}>Edit tags</button>
+            <button type="button" className="dv-act" onClick={() => setEditingTags(true)}>
+              <ActionGlyph kind="tag" />Edit tags
+            </button>
             {/* Out to the operational view: telemetry, alarms, actions. */}
-            <Link to={`/devices/${d.id}`}>Open in Devices →</Link>
+            <Link className="dv-act" to={`/devices/${d.id}`}><ActionGlyph kind="open" />Open in Devices</Link>
             {loc.room_id && loc.rack_id && (
-              <Link to={`/floorplan?room=${loc.room_id}&rack=${loc.rack_id}&device=${d.id}`}>View in 3D →</Link>
+              <Link className="dv-act" to={`/floorplan?room=${loc.room_id}&rack=${loc.rack_id}&device=${d.id}`}>
+                <ActionGlyph kind="cube" />View in 3D
+              </Link>
             )}
           </div>
         </div>

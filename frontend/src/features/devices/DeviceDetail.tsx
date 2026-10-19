@@ -11,6 +11,7 @@ import {
 } from '../../api/client';
 import { StatusChip } from '../../components/StatusChip';
 import { CategoryGlyph } from '../../components/CategoryGlyph';
+import { ActionGlyph } from '../../components/ActionGlyph';
 import { TileGlyph, type GlyphName } from '../floorplan/glyphs';
 import { DeviceHistory } from './DeviceHistory';
 import { chartGroupsFor } from './chartGroups';
@@ -218,13 +219,17 @@ export function DeviceDetail() {
           </p>
           <div className="dv-tools">
             {atLeast('operator') && (
-              <button onClick={() => setEditingDevice(true)}>Edit device</button>
+              <button type="button" className="dv-act" onClick={() => setEditingDevice(true)}>
+                <ActionGlyph kind="edit" />Edit device
+              </button>
             )}
             {/* The device in the room, selected, its panel open. A place
                 link rather than a back link: it is right from any arrival,
                 and Back stays the way to retrace steps. */}
             {loc.room_id && loc.rack_id && (
-              <Link to={`/floorplan?room=${loc.room_id}&rack=${loc.rack_id}&device=${d.id}`}>View in 3D →</Link>
+              <Link className="dv-act" to={`/floorplan?room=${loc.room_id}&rack=${loc.rack_id}&device=${d.id}`}>
+                <ActionGlyph kind="cube" />View in 3D
+              </Link>
             )}
           </div>
         </div>

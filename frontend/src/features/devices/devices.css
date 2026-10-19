@@ -40,7 +40,20 @@
 .dv-title h2 .chip { font-size: 11px; }
 .dv-title .subtitle { margin: 5px 0 0; font-size: 13px; }
 .dv-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
-.dv-tools a { font-size: 13px; }
+/* One shape for every action in the head, link or button: a glyph before
+   its word on a quiet field. The glyph is muted and the word is not, so the
+   row scans as words first and the shapes only help the eye land. */
+.dv-act {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 6px 11px 6px 9px; min-height: 32px;
+  background: var(--bg-inset); border: 1px solid var(--border); border-radius: var(--radius);
+  color: var(--text); font: inherit; font-size: 13px; line-height: 1.2;
+  text-decoration: none; cursor: pointer;
+}
+.dv-act:hover { border-color: var(--border-strong); text-decoration: none; }
+.dv-act:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.dv-act .act-glyph { width: 16px; height: 16px; color: var(--text-muted); flex: none; }
+.dv-act:hover .act-glyph { color: var(--text); }
 
 .dv-band { flex: 0 0 auto; display: flex; flex-wrap: wrap; gap: 6px; }
 .dv-tile {
