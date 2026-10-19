@@ -443,7 +443,7 @@ var MetricDefs = map[string]MetricDef{
 		ValueType: "gauge", Aggregation: "avg",
 		MinValid: -20, HasMin: true,
 		MaxValid: 120, HasMax: true,
-		StaleAfterS: 300, Hot: false,
+		StaleAfterS: 300, Hot: true,
 		Group: "cooling", RateOf: "", RateScale: 1,
 	},
 	"water_setpoint_temp": {
@@ -459,7 +459,7 @@ var MetricDefs = map[string]MetricDef{
 		ValueType: "gauge", Aggregation: "avg",
 		MinValid: 0, HasMin: true,
 		MaxValid: 0, HasMax: false,
-		StaleAfterS: 300, Hot: false,
+		StaleAfterS: 300, Hot: true,
 		Group: "cooling", RateOf: "", RateScale: 1,
 	},
 	"water_pressure": {
@@ -515,7 +515,7 @@ var MetricDefs = map[string]MetricDef{
 		ValueType: "gauge", Aggregation: "avg",
 		MinValid: 0, HasMin: true,
 		MaxValid: 0, HasMax: false,
-		StaleAfterS: 300, Hot: false,
+		StaleAfterS: 300, Hot: true,
 		Group: "cooling", RateOf: "", RateScale: 1,
 	},
 	"cop": {

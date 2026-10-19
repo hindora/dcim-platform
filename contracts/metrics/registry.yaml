@@ -500,6 +500,7 @@ metrics:
     min_valid: -20
     max_valid: 120
     stale_after_s: 300
+    hot: true
     group: cooling
     device_types: [chiller, cdu, crah, pump]
     description: Entering water temperature. instance names the loop.
@@ -523,6 +524,7 @@ metrics:
     aggregation: avg
     min_valid: 0
     stale_after_s: 300
+    hot: true
     group: cooling
     device_types: [chiller, cdu, pump, cooling_tower]
     description: Volumetric flow. instance names the loop.
@@ -603,6 +605,7 @@ metrics:
     aggregation: avg
     min_valid: 0
     stale_after_s: 300
+    hot: true
     group: cooling
     device_types: [cdu]
     description: Heat rejected into the facility loop. Not electrical draw, which is power_draw.

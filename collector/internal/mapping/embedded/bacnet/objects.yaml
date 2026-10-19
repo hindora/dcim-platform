@@ -121,13 +121,18 @@ device_types:
   # ------------------------------------------------------------------- cdu
   cdu:
     points:
-      - { name: TCS_Supply_Temp,    metric: water_supply_temp,   instance: TCS }
-      - { name: TCS_Return_Temp,    metric: water_return_temp,   instance: TCS }
-      - { name: TCS_Setpoint,       metric: water_setpoint_temp, instance: TCS }
-      - { name: TCS_Flow,           metric: water_flow,          instance: TCS }
+      # The TCS loop is the unit's own loop, so its points are the device's
+      # totals (no instance): a sample with no instance sets and locks the hot
+      # state, where a sub-instance only fills in while no total has spoken.
+      # Instanced, the facility-side flow landed last and the rack view read
+      # a 0.2 L/s cold-plate loop as the 16 L/s building main.
+      - { name: TCS_Supply_Temp,    metric: water_supply_temp }
+      - { name: TCS_Return_Temp,    metric: water_return_temp }
+      - { name: TCS_Setpoint,       metric: water_setpoint_temp }
+      - { name: TCS_Flow,           metric: water_flow }
       - { name: Facility_CHW_Valve, metric: valve_position_pct,  instance: FACILITY_CHW }
       - { name: Facility_CHW_Flow,  metric: water_flow,          instance: FACILITY_CHW }
-      - { name: TCS_Loop_Pressure,  metric: water_pressure,      instance: TCS }
+      - { name: TCS_Loop_Pressure,  metric: water_pressure }
       - { name: Heat_Load,          metric: thermal_load, scale: 1000 }
       - { name: Pump_Power,         metric: power_draw,   scale: 1000 }
       - { name: Pump_Speed,         metric: pump_speed_pct }

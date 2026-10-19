@@ -473,7 +473,7 @@ export const METRICS: Record<MetricKey, MetricDef> = {
     aggregation: 'avg',
     minValid: -20,
     maxValid: 120,
-    staleAfterS: 300, hot: false,
+    staleAfterS: 300, hot: true,
     group: 'cooling',
   },
   'water_setpoint_temp': {
@@ -491,7 +491,7 @@ export const METRICS: Record<MetricKey, MetricDef> = {
     aggregation: 'avg',
     minValid: 0,
     maxValid: null,
-    staleAfterS: 300, hot: false,
+    staleAfterS: 300, hot: true,
     group: 'cooling',
   },
   'water_pressure': {
@@ -554,7 +554,7 @@ export const METRICS: Record<MetricKey, MetricDef> = {
     aggregation: 'avg',
     minValid: 0,
     maxValid: null,
-    staleAfterS: 300, hot: false,
+    staleAfterS: 300, hot: true,
     group: 'cooling',
   },
   'cop': {
