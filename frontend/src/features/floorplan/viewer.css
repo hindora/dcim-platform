@@ -123,7 +123,7 @@
    the label - left-aligned, as a meter's face is read. */
 .vw-tile { background: var(--bg-inset); border: 1px solid var(--border); border-radius: 6px; padding: 7px 8px 8px;
            text-align: left; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.vw-tile .vw-glyph { display: block; width: 16px; height: 16px; color: var(--text-muted); margin-bottom: 2px; }
+.vw-tile .vw-glyph { display: block; width: 18px; height: 18px; color: var(--text-muted); margin-bottom: 3px; }
 .vw-tile b { font-size: 0.95rem; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .vw-tile span { font-size: 0.64rem; letter-spacing: .08em; color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .vw-bar { margin: 4px 0 8px; }

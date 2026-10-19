@@ -40,7 +40,7 @@ export function glyphFor(label: string): GlyphName | null {
   return BY_LABEL[label.trim().toUpperCase()] ?? null;
 }
 
-export function TileGlyph({ name, size = 16 }: { name: GlyphName; size?: number }) {
+export function TileGlyph({ name, size = 18 }: { name: GlyphName; size?: number }) {
   const common = {
     width: size, height: size, viewBox: '0 0 16 16',
     fill: 'none', stroke: 'currentColor', strokeWidth: 1.4,
