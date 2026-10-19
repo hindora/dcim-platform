@@ -9,6 +9,26 @@ export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
 }
 
+export type Role = 'viewer' | 'operator' | 'admin';
+const ROLE_RANK: Record<Role, number> = { viewer: 0, operator: 1, admin: 2 };
+
+/** The signed-in user's role, read from the token's claim.
+ *
+ *  For DISPLAY only: it decides which controls to offer, never what is
+ *  allowed. The server re-checks every write against the token it verifies,
+ *  so a tampered claim shows a button that answers 403. */
+export function getRole(): Role {
+  try {
+    const part = (getToken() ?? '').split('.')[1] ?? '';
+    const claims = JSON.parse(atob(part.replace(/-/g, '+').replace(/_/g, '/')));
+    return claims.role in ROLE_RANK ? (claims.role as Role) : 'viewer';
+  } catch {
+    return 'viewer';
+  }
+}
+
+export const atLeast = (need: Role): boolean => ROLE_RANK[getRole()] >= ROLE_RANK[need];
+
 /** Told when the session ends underneath whatever the user was doing.
  *
  *  Clearing the token is not enough on its own: the app decides once, at
@@ -1408,6 +1428,21 @@ export interface EndpointOptions {
   addressing: Record<string, Record<string, AddressingField>>;
 }
 
+/** An edit to the device record: only the keys that changed. */
+export interface DevicePatch {
+  name?: string;
+  vendor?: string | null;
+  model?: string | null;
+  serial_number?: string | null;
+  asset_tag?: string | null;
+  mgmt_ip?: string | null;
+  primary_ip?: string | null;
+  owner_group?: string | null;
+  cost_centre?: string | null;
+  priority?: 'high' | 'normal' | 'low';
+  notes?: string | null;
+}
+
 export interface EndpointPatch {
   address?: string | null;
   port?: number | null;
@@ -1513,6 +1548,11 @@ export interface DeviceDetail extends DeviceSummary {
   u_height: number;
   /** Which way the chassis faces in the rack. */
   facing?: string | null;
+  /** How much the device matters when something is wrong with it. */
+  priority?: 'high' | 'normal' | 'low';
+  /** Identity fields set by hand; a re-import leaves them alone. */
+  locked_fields?: string[];
+  notes?: string | null;
   admin_state: string;
   attributes: Record<string, unknown>;
   endpoints: EndpointSummary[];
@@ -4326,6 +4366,16 @@ export const api = {
     }),
 
   deviceState: (id: string) => request<DeviceState>(`/devices/${id}/state`),
+
+  /** Edit the device record. Send only what changed; an empty string clears
+   *  a field. Identity fields need an admin, and stay as set across a
+   *  re-import until handed back with `unlockDevice`. */
+  editDevice: (id: string, patch: DevicePatch) =>
+    request<DeviceDetail>(`/devices/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+  unlockDevice: (id: string, fields: string[]) =>
+    request<{ device_id: string; locked_fields: string[] }>(`/devices/${id}/unlock`, {
+      method: 'POST', body: JSON.stringify({ fields }),
+    }),
 
   rooms: () => request<{ items: RoomSummary[] }>('/rooms'),
 

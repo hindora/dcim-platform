@@ -427,6 +427,8 @@ h3 .count { color: var(--text-muted); font-weight: 500;
   border: 1px solid var(--border-strong); color: var(--text-muted);
 }
 .chip .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.chip.prio-high { color: var(--critical); }
+.chip.prio-low  { color: var(--text-faint); }
 .chip.ok       { color: var(--ok); }
 .chip.warn     { color: var(--warn); }
 .chip.major    { color: var(--major); }
@@ -823,6 +825,25 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   font-style: normal; font-size: 12px; color: var(--text-faint); max-width: 62ch;
 }
 .form-grid .hint.bad { color: var(--critical); }
+.form-grid textarea {
+  font: inherit; color: inherit; background: var(--bg-inset); resize: vertical;
+  border: 1px solid var(--border-strong); border-radius: 6px; padding: 8px 10px;
+}
+.sheet-sub {
+  margin: 22px 0 10px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--text-muted); font-weight: 600;
+}
+.sheet-sub:first-of-type { margin-top: 0; }
+/* A field an operator set by hand: said beside its label, not hidden in a tooltip */
+.lock-chip {
+  margin-left: 6px; padding: 1px 6px; border-radius: 99px; text-transform: none; letter-spacing: 0;
+  font-size: 11px; color: var(--accent); border: 1px solid var(--accent);
+}
+button.linklike {
+  background: none; border: none; padding: 0; color: var(--accent); cursor: pointer; font: inherit;
+  text-decoration: underline;
+}
+button.linklike:disabled { opacity: .5; cursor: default; }
 /* A switch reads as a statement, so its label sits beside the box rather than
    above it like a field that takes a value. */
 .form-grid label.switch {

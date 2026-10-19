@@ -341,7 +341,8 @@ async def get_device(session: AsyncSession, device_id: str) -> dict[str, Any] | 
         # The nameplate. rated_power_w is the MODEL's, not the device's:
         # every R640 draws from the same datasheet, and a per-device override
         # would be a measurement pretending to be a rating.
-        "           m.rated_power_w, m.u_height AS model_u_height\n",
+        "           m.rated_power_w, m.u_height AS model_u_height,\n"
+        "           d.priority, d.locked_fields, d.notes\n",
     ) + " WHERE d.id = CAST(:id AS uuid)"
     row = (await session.execute(text(sql), {"id": device_id})).mappings().first()
     return dict(row) if row else None

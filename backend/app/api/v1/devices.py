@@ -28,8 +28,8 @@ from app.schemas import (
     Page,
 )
 from app.services import dashboard as dashboard_service
+from app.services import device_edit, endpoint_config
 from app.services import devices as service
-from app.services import endpoint_config
 from app.services import lifecycle as lifecycle_service
 
 router = APIRouter(prefix="/devices", tags=["devices"])
@@ -348,6 +348,103 @@ class EndpointPatch(BaseModel):
     #: This endpoint's own per-address limit - {"max_concurrent"?,
     #: "min_interval_ms"?} - over its pool's default. Null clears it.
     target_limit: dict[str, Any] | None = None
+
+
+class DevicePatch(BaseModel):
+    """An edit to the device record itself.
+
+    Absence means "leave it alone"; an empty string or null clears the field
+    where clearing makes sense. Operators may set the commercial and
+    operational fields; the identity fields (name, vendor, model, serial,
+    asset tag, addresses) need an admin, and the ones the importer would
+    overwrite are locked against it once set.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    name: str | None = Field(None, max_length=200)
+    vendor: str | None = Field(None, max_length=200)
+    model: str | None = Field(None, max_length=200)
+    serial_number: str | None = Field(None, max_length=120)
+    asset_tag: str | None = Field(None, max_length=120)
+    mgmt_ip: str | None = Field(None, max_length=64)
+    primary_ip: str | None = Field(None, max_length=64)
+    owner_group: str | None = Field(None, max_length=120)
+    cost_centre: str | None = Field(None, max_length=120)
+    priority: str | None = None
+    notes: str | None = Field(None, max_length=4000)
+    supplier_id: str | None = None
+    purchase_order: str | None = Field(None, max_length=120)
+    purchase_date: str | None = None
+    install_date: str | None = None
+    eol_date: str | None = None
+    eos_date: str | None = None
+
+
+@router.patch("/{device_id}", response_model=DeviceDetail,
+              summary="Edit the device record")
+async def edit_device(
+    device_id: str,
+    body: DevicePatch,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    principal: Principal = Depends(require_role("operator")),
+) -> DeviceDetail:
+    """Change what a device IS on record.
+
+    Identity fields are admin-only and locked against the importer, so a
+    re-import does not put the export's value back. The audit row carries the
+    before and after of exactly what changed.
+    """
+    try:
+        changes = device_edit.normalise(body.model_dump(exclude_unset=True))
+        device_edit.check_role(principal.role, changes)
+        before, after = await device_edit.apply(session, device_id, changes)
+    except device_edit.DeviceNotFoundError:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "device not found") from None
+    except device_edit.DeviceEditError as exc:
+        await session.rollback()
+        raise HTTPException(exc.code, str(exc)) from None
+    if after:
+        ip, agent = audit.client_of(request)
+        await audit.record(session, actor=audit.actor_of(principal),
+                           action="device.edit", target_type="device",
+                           target_id=device_id, ip=ip, user_agent=agent,
+                           before=before, after=after)
+        log.info("device edited", device_id=device_id, actor=principal.username,
+                 changed=sorted(after))
+    await session.commit()
+    device = await service.get_device(session, device_id)
+    assert device is not None
+    return device
+
+
+class UnlockBody(BaseModel):
+    model_config = {"extra": "forbid"}
+    fields: list[str] = Field(min_length=1)
+
+
+@router.post("/{device_id}/unlock", summary="Hand identity fields back to the importer")
+async def unlock_device(
+    device_id: str,
+    body: UnlockBody,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    principal: Principal = Depends(require_role("admin")),
+) -> dict[str, Any]:
+    try:
+        left = await device_edit.unlock(session, device_id, body.fields)
+    except device_edit.DeviceNotFoundError:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "device not found") from None
+    except device_edit.DeviceEditError as exc:
+        raise HTTPException(exc.code, str(exc)) from None
+    ip, agent = audit.client_of(request)
+    await audit.record(session, actor=audit.actor_of(principal),
+                       action="device.unlock", target_type="device",
+                       target_id=device_id, ip=ip, user_agent=agent,
+                       before=None, after={"released": body.fields})
+    await session.commit()
+    return {"device_id": device_id, "locked_fields": left}
 
 
 @router.get("/{device_id}/endpoints", response_model=list[EndpointSummary],

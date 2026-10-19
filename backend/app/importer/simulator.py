@@ -819,16 +819,24 @@ class TopologyImporter:
                     :fx, :fy, :mount, :rot, :fw, :fd, :fh, :mh, :fbasis, 'import',
                     CAST(:pip AS inet), CAST(:mip AS inet), CAST(:attrs AS jsonb))
             ON CONFLICT (external_id) DO UPDATE SET
-                name = EXCLUDED.name,
+                -- A field an operator has set by hand (device_edit) keeps the
+                -- operator's value: re-importing is not a way to undo an edit.
+                name = CASE WHEN 'name' = ANY(device.locked_fields)
+                            THEN device.name ELSE EXCLUDED.name END,
                 device_type = EXCLUDED.device_type,
-                model_id = EXCLUDED.model_id,
-                vendor_id = EXCLUDED.vendor_id,
+                model_id = CASE WHEN 'model' = ANY(device.locked_fields)
+                                OR 'vendor' = ANY(device.locked_fields)
+                                THEN device.model_id ELSE EXCLUDED.model_id END,
+                vendor_id = CASE WHEN 'vendor' = ANY(device.locked_fields)
+                                 THEN device.vendor_id ELSE EXCLUDED.vendor_id END,
                 -- COALESCE, not a plain assignment: an export taken before the
                 -- simulator carried serials would otherwise ERASE the identity
                 -- the estate reconciles on. asset_tag is deliberately absent
                 -- from this statement entirely - it is entered by facilities off
                 -- a physical sticker and the importer has no business owning it.
-                serial_number = COALESCE(EXCLUDED.serial_number, device.serial_number),
+                serial_number = CASE WHEN 'serial_number' = ANY(device.locked_fields)
+                                     THEN device.serial_number
+                                     ELSE COALESCE(EXCLUDED.serial_number, device.serial_number) END,
                 room_id = EXCLUDED.room_id,
                 rack_id = EXCLUDED.rack_id,
                 u_start = EXCLUDED.u_start,
@@ -851,8 +859,10 @@ class TopologyImporter:
                                       ELSE EXCLUDED.mount_height_m END,
                 footprint_basis = EXCLUDED.footprint_basis,
                 geometry_source = COALESCE(device.geometry_source, 'import'),
-                primary_ip = EXCLUDED.primary_ip,
-                mgmt_ip = EXCLUDED.mgmt_ip,
+                primary_ip = CASE WHEN 'primary_ip' = ANY(device.locked_fields)
+                                  THEN device.primary_ip ELSE EXCLUDED.primary_ip END,
+                mgmt_ip = CASE WHEN 'mgmt_ip' = ANY(device.locked_fields)
+                               THEN device.mgmt_ip ELSE EXCLUDED.mgmt_ip END,
                 attributes = device.attributes || EXCLUDED.attributes,
                 -- NO lifecycle here, and no decommissioned_at. Nothing in the
                 -- export says anything about either: the simulator has no such

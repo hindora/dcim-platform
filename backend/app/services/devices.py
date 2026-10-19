@@ -130,6 +130,9 @@ async def get_device(session: AsyncSession, device_id: str) -> DeviceDetail | No
         admin_state=row.get("admin_state") or "enabled",
         attributes=row.get("attributes") or {},
         rated_power_w=row.get("rated_power_w"),
+        priority=row.get("priority") or "normal",
+        locked_fields=list(row.get("locked_fields") or []),
+        notes=row.get("notes"),
         psus=[PowerSupplyOut(**ps)
               for ps in await repo.list_power_supplies(session, device_id)],
         endpoints=endpoints,

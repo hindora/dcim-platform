@@ -153,6 +153,12 @@ class DeviceDetail(DeviceSummary):
     admin_state: str = "enabled"
     attributes: dict[str, Any] = Field(default_factory=dict)
     endpoints: list[EndpointSummary] = Field(default_factory=list)
+    #: How much this device matters when something is wrong with it
+    #: (high | normal | low): an operator's statement, not a measurement.
+    priority: str = "normal"
+    #: Identity fields an operator has set by hand; a re-import leaves them.
+    locked_fields: list[str] = Field(default_factory=list)
+    notes: str | None = None
 
 
 class Termination(BaseModel):

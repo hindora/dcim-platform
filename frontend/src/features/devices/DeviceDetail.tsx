@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
 import {
   api,
+  atLeast,
   type DeviceDetail as Detail,
   type DeviceState,
   type EndpointSummary,
@@ -13,6 +14,7 @@ import { Tip } from '../../components/HoverTip';
 import { DeviceHistory } from './DeviceHistory';
 import { chartGroupsFor } from './chartGroups';
 import { EndpointEditor } from './EndpointEditor';
+import { DeviceEditor } from './DeviceEditor';
 import {
   formatMetric, formatSpeed, humanise, metricLabel, relativeTime,
 } from '../../lib/format';
@@ -20,6 +22,7 @@ import {
 export function DeviceDetail() {
   const { id = '' } = useParams();
   const [editing, setEditing] = useState<EndpointSummary | null>(null);
+  const [editingDevice, setEditingDevice] = useState(false);
 
   const device = useQuery<Detail>({
     queryKey: ['device', id],
@@ -114,7 +117,18 @@ export function DeviceDetail() {
           {humanise(d.device_type)} · {d.vendor ?? 'unknown vendor'} {d.model ?? ''}
         </p>
         <StatusChip status={d.status} />
+        {d.priority && d.priority !== 'normal' && (
+          <span className={`chip prio-${d.priority}`}> {d.priority} priority</span>
+        )}
+        {atLeast('operator') && (
+          <button style={{ marginLeft: 12 }} onClick={() => setEditingDevice(true)}>
+            Edit device
+          </button>
+        )}
       </div>
+      {editingDevice && (
+        <DeviceEditor device={d} onClose={() => setEditingDevice(false)} />
+      )}
 
       <section>
         <h3>Identity and location</h3>
@@ -123,6 +137,8 @@ export function DeviceDetail() {
           <dt>Vendor</dt><dd>{d.vendor ?? '—'}</dd>
           <dt>Model</dt><dd>{d.model ?? '—'}</dd>
           <dt>Serial</dt><dd className="mono">{d.serial_number ?? '—'}</dd>
+          <dt>Asset tag</dt><dd className="mono">{d.asset_tag ?? '—'}</dd>
+          <dt>Owner</dt><dd>{d.owner_group ?? '—'}{d.cost_centre ? <span className="muted"> · {d.cost_centre}</span> : null}</dd>
           <dt>Management IP</dt><dd className="mono">{d.mgmt_ip ?? '—'}</dd>
           <dt>Production IP</dt><dd className="mono">{d.primary_ip ?? '—'}</dd>
           <dt>Datacenter</dt><dd>{d.location.datacenter_code ?? '—'}</dd>
