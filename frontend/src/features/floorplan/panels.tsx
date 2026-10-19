@@ -701,11 +701,17 @@ function Readings({ device, m, stateLoading, stateError, d, skip = [] }: ClassCt
   const n = groups.reduce((a, g) => a + g.keys.length, 0);
   const draw = num(m.power_draw) ?? device.power_w ?? null;
   const rated = d?.rated_power_w ?? null;
+  // Everything the device reports is already in the class's own tiles and
+  // rows: no second list of the same numbers, and no "nothing reported".
+  if (!stateLoading && n === 0 && skip.length > 0 && Object.keys(m).some((k) => skip.includes(k)) && rated == null) return null;
   return (
     <Section title={n ? `Readings (${n})` : 'Readings'} open>
       {stateLoading && <p className="muted vw-note">Reading…</p>}
       {!stateLoading && n === 0 && (
-        <p className="muted vw-note">{stateError ? 'No telemetry yet from this device.' : 'Nothing reported yet.'}</p>
+        <p className="muted vw-note">
+          {stateError ? 'No telemetry yet from this device.'
+            : Object.keys(m).some((k) => skip.includes(k)) ? 'Every reading is shown above.' : 'Nothing reported yet.'}
+        </p>
       )}
       {groups.map((g) => (
         <div key={g.title} className="vw-readings">
@@ -1018,7 +1024,7 @@ function CduBody(c: ClassCtx) {
     <>
       <Tiles items={[
         { label: 'SUPPLY', value: fmtT(supply) },
-        { label: ret != null ? 'RETURN' : 'FLOW', value: ret != null ? fmtT(ret) : flow != null ? formatMetric('water_flow', flow) : '–' },
+        { label: flow != null && ret == null ? 'FLOW' : 'RETURN', value: ret != null ? fmtT(ret) : flow != null ? formatMetric('water_flow', flow) : '–' },
         { label: 'POWER', value: fW(draw) },
       ]} />
       <div className="vw-kv">
@@ -1026,7 +1032,7 @@ function CduBody(c: ClassCtx) {
         {alarm != null && <Row k="Unit alarm" v={alarm ? <span className="vw-bad">raised</span> : 'none'} />}
         {supply != null && ret != null && <Row k="Loop ΔT" v={fmtDT(ret - supply)} />}
       </div>
-      <Readings {...c} skip={['equipment_state', 'alarm_state']} />
+      <Readings {...c} skip={['equipment_state', 'alarm_state', 'water_supply_temp', 'water_return_temp', 'water_flow', 'power_draw']} />
       <Supplies d={c.d} open />
       <Identity {...c} open={false} />
       <Endpoints d={c.d} />
