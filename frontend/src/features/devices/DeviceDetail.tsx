@@ -15,6 +15,7 @@ import { DeviceHistory } from './DeviceHistory';
 import { chartGroupsFor } from './chartGroups';
 import { EndpointEditor } from './EndpointEditor';
 import { DeviceEditor } from './DeviceEditor';
+import { DeviceThresholds } from './DeviceThresholds';
 import {
   formatMetric, formatSpeed, humanise, metricLabel, relativeTime,
 } from '../../lib/format';
@@ -298,6 +299,8 @@ export function DeviceDetail() {
           </div>
         )}
       </section>
+
+      <DeviceThresholds deviceId={id} />
 
       <section>
         <h3>Communication</h3>

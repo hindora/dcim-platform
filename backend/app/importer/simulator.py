@@ -834,9 +834,10 @@ class TopologyImporter:
                 -- the estate reconciles on. asset_tag is deliberately absent
                 -- from this statement entirely - it is entered by facilities off
                 -- a physical sticker and the importer has no business owning it.
-                serial_number = CASE WHEN 'serial_number' = ANY(device.locked_fields)
-                                     THEN device.serial_number
-                                     ELSE COALESCE(EXCLUDED.serial_number, device.serial_number) END,
+                serial_number = CASE
+                    WHEN 'serial_number' = ANY(device.locked_fields)
+                        THEN device.serial_number
+                    ELSE COALESCE(EXCLUDED.serial_number, device.serial_number) END,
                 room_id = EXCLUDED.room_id,
                 rack_id = EXCLUDED.rack_id,
                 u_start = EXCLUDED.u_start,

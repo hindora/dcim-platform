@@ -40,10 +40,144 @@ async def list_rules(session: AsyncSession) -> list[dict[str, Any]]:
                dwell_samples, dwell_seconds, clear_dwell_samples,
                severity::text AS severity, device_types, message_tpl,
                stale_after_s, enabled, device_total_only, category, detection,
-               response_class, metric_kind, raise_on, instances
+               response_class, metric_kind, raise_on, instances,
+               custom, edited_by, edited_at,
+               (SELECT count(*) FROM alarm_rule_override o
+                 WHERE o.rule_id = alarm_rule.id) AS overrides
         FROM alarm_rule ORDER BY alarm_type, name
     """))).mappings().all()
     return [dict(r) for r in rows]
+
+
+_RULE_COLS = """
+    id::text, name, alarm_type, metric_key, operator,
+    threshold::float8 AS threshold, clear_threshold::float8 AS clear_threshold,
+    dwell_samples, dwell_seconds, clear_dwell_samples,
+    severity::text AS severity, device_types, message_tpl, stale_after_s,
+    enabled, metric_kind, custom"""
+
+
+async def get_rule(session: AsyncSession, rule_id: str) -> dict[str, Any] | None:
+    row = (await session.execute(text(
+        f"SELECT {_RULE_COLS} FROM alarm_rule WHERE id = CAST(:id AS uuid)"),
+        {"id": rule_id})).mappings().first()
+    return dict(row) if row else None
+
+
+async def update_rule(session: AsyncSession, rule_id: str,
+                      changes: dict[str, Any], actor: str) -> None:
+    sets = []
+    params: dict[str, Any] = {"id": rule_id, "actor": actor}
+    for k, v in changes.items():
+        params[k] = v
+        sets.append("severity = CAST(:severity AS severity_t)" if k == "severity"
+                    else f"{k} = :{k}")
+    await session.execute(text(
+        f"UPDATE alarm_rule SET {', '.join(sets)}, edited_by = :actor, "
+        f"edited_at = now() WHERE id = CAST(:id AS uuid)"), params)
+
+
+async def insert_rule(session: AsyncSession, r: dict[str, Any], actor: str) -> str:
+    return (await session.execute(text("""
+        INSERT INTO alarm_rule (name, alarm_type, enabled, device_types, metric_key,
+            metric_kind, operator, threshold, clear_threshold, dwell_samples,
+            dwell_seconds, clear_dwell_samples, severity, message_tpl, detection,
+            custom, edited_by, edited_at)
+        VALUES (:name, :alarm_type, true, :device_types, :metric_key, 'numeric',
+            :operator, :threshold, :clear_threshold, :dwell_samples, :dwell_seconds,
+            :clear_dwell_samples, CAST(:severity AS severity_t), :message_tpl,
+            'threshold', true, :actor, now())
+        RETURNING id::text"""), {**r, "actor": actor})).scalar_one()
+
+
+async def delete_custom_rule(session: AsyncSession, rule_id: str) -> bool:
+    res = await session.execute(text(
+        "DELETE FROM alarm_rule WHERE id = CAST(:id AS uuid) AND custom RETURNING id"),
+        {"id": rule_id})
+    return res.first() is not None
+
+
+async def load_overrides(session: AsyncSession) -> list[dict[str, Any]]:
+    rows = (await session.execute(text("""
+        SELECT rule_id::text, device_id::text,
+               threshold::float8 AS threshold,
+               clear_threshold::float8 AS clear_threshold,
+               dwell_samples, dwell_seconds, clear_dwell_samples,
+               severity::text AS severity, enabled
+          FROM alarm_rule_override"""))).mappings().all()
+    return [dict(r) for r in rows]
+
+
+async def device_rules(session: AsyncSession, device_id: str) -> list[dict[str, Any]] | None:
+    """Every rule that applies to this device's type, with its override."""
+    dtype = (await session.execute(text(
+        "SELECT device_type::text FROM device WHERE id = CAST(:id AS uuid)"),
+        {"id": device_id})).scalar()
+    if dtype is None:
+        return None
+    rows = (await session.execute(text("""
+        SELECT r.id::text, r.name, r.alarm_type, r.metric_key, r.operator,
+               r.threshold::float8 AS threshold,
+               r.clear_threshold::float8 AS clear_threshold,
+               r.dwell_samples, r.dwell_seconds, r.clear_dwell_samples,
+               r.severity::text AS severity, r.device_types, r.message_tpl,
+               r.enabled, r.metric_kind, r.custom,
+               o.threshold::float8 AS o_threshold,
+               o.clear_threshold::float8 AS o_clear_threshold,
+               o.dwell_samples AS o_dwell_samples, o.dwell_seconds AS o_dwell_seconds,
+               o.clear_dwell_samples AS o_clear_dwell_samples,
+               o.severity::text AS o_severity, o.enabled AS o_enabled,
+               o.reason AS o_reason, o.created_by AS o_by, o.updated_at AS o_at,
+               (o.rule_id IS NOT NULL) AS overridden
+          FROM alarm_rule r
+          LEFT JOIN alarm_rule_override o
+                 ON o.rule_id = r.id AND o.device_id = CAST(:dev AS uuid)
+         WHERE (cardinality(r.device_types) = 0 OR :dtype = ANY(r.device_types))
+           AND r.metric_kind = 'numeric' AND r.operator IN ('>', '>=', '<', '<=')
+         ORDER BY r.metric_key, r.threshold NULLS LAST, r.name"""),
+        {"dev": device_id, "dtype": dtype})).mappings().all()
+    return [dict(r) for r in rows]
+
+
+async def upsert_override(session: AsyncSession, rule_id: str, device_id: str,
+                          fields: dict[str, Any], actor: str) -> None:
+    cols = ("threshold", "clear_threshold", "dwell_samples", "dwell_seconds",
+            "clear_dwell_samples", "severity", "enabled", "reason")
+    params = {c: fields.get(c) for c in cols}
+    params.update(rule=rule_id, dev=device_id, actor=actor)
+    await session.execute(text("""
+        INSERT INTO alarm_rule_override (rule_id, device_id, threshold, clear_threshold,
+            dwell_samples, dwell_seconds, clear_dwell_samples, severity, enabled,
+            reason, created_by)
+        VALUES (CAST(:rule AS uuid), CAST(:dev AS uuid), :threshold, :clear_threshold,
+            :dwell_samples, :dwell_seconds, :clear_dwell_samples,
+            CAST(:severity AS severity_t), :enabled, :reason, :actor)
+        ON CONFLICT (rule_id, device_id) DO UPDATE SET
+            threshold = EXCLUDED.threshold, clear_threshold = EXCLUDED.clear_threshold,
+            dwell_samples = EXCLUDED.dwell_samples, dwell_seconds = EXCLUDED.dwell_seconds,
+            clear_dwell_samples = EXCLUDED.clear_dwell_samples,
+            severity = EXCLUDED.severity, enabled = EXCLUDED.enabled,
+            reason = EXCLUDED.reason, updated_at = now()"""), params)
+
+
+async def delete_override(session: AsyncSession, rule_id: str, device_id: str) -> bool:
+    res = await session.execute(text(
+        "DELETE FROM alarm_rule_override WHERE rule_id = CAST(:r AS uuid) "
+        "AND device_id = CAST(:d AS uuid) RETURNING rule_id"),
+        {"r": rule_id, "d": device_id})
+    return res.first() is not None
+
+
+async def get_override(session: AsyncSession, rule_id: str,
+                       device_id: str) -> dict[str, Any] | None:
+    row = (await session.execute(text("""
+        SELECT threshold::float8 AS threshold, clear_threshold::float8 AS clear_threshold,
+               dwell_samples, dwell_seconds, clear_dwell_samples,
+               severity::text AS severity, enabled, reason
+          FROM alarm_rule_override
+         WHERE rule_id = CAST(:r AS uuid) AND device_id = CAST(:d AS uuid)"""),
+        {"r": rule_id, "d": device_id})).mappings().first()
+    return dict(row) if row else None
 
 
 async def set_rule_enabled(session: AsyncSession, rule_id: str,

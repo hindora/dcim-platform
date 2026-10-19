@@ -53,9 +53,13 @@ def test_a_reimport_never_erases_an_existing_serial():
     estate reconciles on, and the next discovery sweep would report every device
     as new.
     """
+    # The COALESCE is the ELSE of the lock: a serial an operator set by hand is
+    # kept outright, and any other is only ever replaced by a non-null export.
     assert re.search(
-        r"serial_number\s*=\s*COALESCE\(\s*EXCLUDED\.serial_number,\s*"
-        r"device\.serial_number\s*\)", SOURCE)
+        r"serial_number\s*=\s*CASE\s+WHEN\s+'serial_number'\s*=\s*ANY\(device\.locked_fields\)"
+        r"\s+THEN\s+device\.serial_number\s+"
+        r"ELSE\s+COALESCE\(\s*EXCLUDED\.serial_number,\s*device\.serial_number\s*\)\s+END",
+        SOURCE)
 
 
 def test_the_importer_does_not_own_asset_tags():

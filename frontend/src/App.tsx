@@ -6,6 +6,7 @@ import {
 import { api, getToken, onAuthLost, setToken } from './api/client';
 import { useOrg } from './lib/useOrg';
 import { AlarmList } from './features/alarms/AlarmList';
+import { AlarmRules } from './features/alarms/AlarmRules';
 import { Analytics } from './features/analytics/Analytics';
 import { PlatformHealth } from './features/platform/PlatformHealth';
 import { Appearance } from './features/settings/Appearance';
@@ -348,6 +349,8 @@ export default function App() {
           <Route path="/visualization" element={<Navigate to="/connectivity" replace />} />
           <Route path="/topology" element={<Navigate to="/connectivity" replace />} />
           <Route path="/alarms" element={<Page><AlarmList /></Page>} />
+          {/* Ahead of /alarms/:id, which would take "rules" for an alarm id. */}
+          <Route path="/alarms/rules" element={<Page><AlarmRules /></Page>} />
           {/* Same component: the id selects, it does not replace the
               list. An alarm has to be addressable - a Jira back-link,
               a line pasted into an incident channel - without costing

@@ -1428,6 +1428,99 @@ export interface EndpointOptions {
   addressing: Record<string, Record<string, AddressingField>>;
 }
 
+/** One alarm rule, as the rules page lists it. */
+export interface AlarmRule {
+  id: string;
+  name: string;
+  alarm_type: string;
+  metric_key: string | null;
+  operator: string | null;
+  threshold: number | null;
+  clear_threshold: number | null;
+  dwell_samples: number;
+  dwell_seconds: number | null;
+  clear_dwell_samples: number;
+  severity: string;
+  device_types: string[];
+  message_tpl: string;
+  enabled: boolean;
+  /** numeric compares against a threshold; boolean watches a state. */
+  metric_kind: 'numeric' | 'boolean' | string;
+  category?: string | null;
+  detection?: string | null;
+  /** Written by an operator, so it can be deleted. */
+  custom: boolean;
+  edited_by?: string | null;
+  edited_at?: string | null;
+  /** How many devices carry their own exception to this rule. */
+  overrides: number;
+}
+
+export interface AlarmRulePatch {
+  threshold?: number | null;
+  clear_threshold?: number | null;
+  dwell_samples?: number;
+  dwell_seconds?: number | null;
+  clear_dwell_samples?: number;
+  severity?: string;
+  message_tpl?: string;
+}
+
+export interface AlarmRuleNew {
+  name: string;
+  metric_key: string;
+  operator: string;
+  threshold: number;
+  clear_threshold?: number | null;
+  severity: string;
+  device_types: string[];
+  dwell_samples?: number;
+  dwell_seconds?: number | null;
+  clear_dwell_samples?: number;
+  message_tpl?: string;
+}
+
+/** A rule as it applies to one device: the estate's values, and the device's
+ *  own exception when it has one (the o_ fields; null inherits). */
+export interface DeviceAlarmRule {
+  id: string;
+  name: string;
+  alarm_type: string;
+  metric_key: string;
+  operator: string;
+  threshold: number | null;
+  clear_threshold: number | null;
+  dwell_samples: number;
+  dwell_seconds: number | null;
+  clear_dwell_samples: number;
+  severity: string;
+  enabled: boolean;
+  custom: boolean;
+  overridden: boolean;
+  o_threshold: number | null;
+  o_clear_threshold: number | null;
+  o_dwell_samples: number | null;
+  o_dwell_seconds: number | null;
+  o_clear_dwell_samples: number | null;
+  o_severity: string | null;
+  o_enabled: boolean | null;
+  o_reason: string | null;
+  o_by: string | null;
+  o_at: string | null;
+}
+
+/** A device's exception to one rule. Null inherits; `enabled: false` mutes. */
+export interface RuleOverrideBody {
+  threshold?: number | null;
+  clear_threshold?: number | null;
+  dwell_samples?: number | null;
+  dwell_seconds?: number | null;
+  clear_dwell_samples?: number | null;
+  severity?: string | null;
+  enabled?: boolean | null;
+  reason?: string | null;
+}
+
 /** An edit to the device record: only the keys that changed. */
 export interface DevicePatch {
   name?: string;
@@ -4366,6 +4459,30 @@ export const api = {
     }),
 
   deviceState: (id: string) => request<DeviceState>(`/devices/${id}/state`),
+
+  alarmRules: () => request<{ items: AlarmRule[] }>('/alarm-rules'),
+  /** Estate policy: moves the alarm for every device the rule applies to. Admin. */
+  editAlarmRule: (id: string, patch: AlarmRulePatch) =>
+    request<{ ok: boolean; changed: string[]; rule?: AlarmRule }>(`/alarm-rules/${id}`, {
+      method: 'PATCH', body: JSON.stringify(patch),
+    }),
+  createAlarmRule: (body: AlarmRuleNew) =>
+    request<{ ok: boolean; rule_id: string }>('/alarm-rules', {
+      method: 'POST', body: JSON.stringify(body),
+    }),
+  deleteAlarmRule: (id: string) =>
+    request<{ ok: boolean }>(`/alarm-rules/${id}`, { method: 'DELETE' }),
+  setAlarmRuleEnabled: (id: string, enabled: boolean) =>
+    request<{ ok: boolean }>(`/alarm-rules/${id}/${enabled ? 'enable' : 'disable'}`, { method: 'POST' }),
+  /** The rules that apply to a device, with its own exceptions. */
+  deviceAlarmRules: (deviceId: string) =>
+    request<{ items: DeviceAlarmRule[] }>(`/devices/${deviceId}/alarm-rules`),
+  putRuleOverride: (deviceId: string, ruleId: string, body: RuleOverrideBody) =>
+    request<{ ok: boolean }>(`/devices/${deviceId}/alarm-rules/${ruleId}`, {
+      method: 'PUT', body: JSON.stringify(body),
+    }),
+  removeRuleOverride: (deviceId: string, ruleId: string) =>
+    request<{ ok: boolean }>(`/devices/${deviceId}/alarm-rules/${ruleId}`, { method: 'DELETE' }),
 
   /** Edit the device record. Send only what changed; an empty string clears
    *  a field. Identity fields need an admin, and stay as set across a

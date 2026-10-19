@@ -33,6 +33,7 @@ from app.alarms.engine import (
     band_dwell_violations,
     evaluate,
 )
+from app.alarms.rule_edit import apply_override
 from app.core import alert_taxonomy
 from app.core.logging import get_logger
 from app.repositories import alarms as repo
@@ -48,6 +49,15 @@ _LOAD_CONDITIONS = frozenset({"pdu_load_high", "pdu_load_critical"})
 DWELL_HASH = "dcim:dwell"
 DWELL_TTL_S = 24 * 3600
 RULE_REFRESH_S = 60.0
+#: Bumped by the API whenever a rule or an override is edited. Workers compare
+#: it on every batch, so an edit lands on the next batch instead of waiting out
+#: the refresh interval - a threshold changed to quiet a noisy alarm should
+#: quiet it now, not in a minute.
+RULES_VERSION_KEY = "dcim:alarm-rules:version"
+
+
+async def bump_rules_version(redis: Redis) -> None:
+    await redis.incr(RULES_VERSION_KEY)
 
 
 @dataclass(slots=True)
@@ -61,14 +71,22 @@ class AlarmService:
         self._redis = redis
         self._rules: list[Rule] = []
         self._by_metric: dict[str, list[Rule]] = {}
+        #: (rule id, device id) -> that device's exception to the rule
+        self._overrides: dict[tuple[str, str], dict[str, Any]] = {}
+        self._version: bytes | None = None
         self._loaded_at = 0.0
 
     # ------------------------------------------------------------- rules
 
     async def ensure_rules(self, session: AsyncSession, force: bool = False) -> None:
-        if not force and (time.monotonic() - self._loaded_at) < RULE_REFRESH_S:
+        version = await self._redis.get(RULES_VERSION_KEY)
+        fresh = (time.monotonic() - self._loaded_at) < RULE_REFRESH_S
+        if not force and fresh and version == self._version:
             return
+        self._version = version
         rows = await repo.load_rules(session)
+        self._overrides = {(o["rule_id"], o["device_id"]): o
+                           for o in await repo.load_overrides(session)}
         rules = [
             Rule(
                 id=r["id"], name=r["name"], alarm_type=r["alarm_type"],
@@ -94,7 +112,8 @@ class AlarmService:
                 by_metric.setdefault(rule.metric_key, []).append(rule)
         self._rules, self._by_metric = rules, by_metric
         self._loaded_at = time.monotonic()
-        log.info("alarm rules loaded", rules=len(rules), metric_rules=len(by_metric))
+        log.info("alarm rules loaded", rules=len(rules), metric_rules=len(by_metric),
+                 overrides=len(self._overrides))
 
         # Loud, and only when it is wrong. A band pair whose dwells contradict
         # each other still WORKS - the collapse hides the mess - so nothing
@@ -168,6 +187,16 @@ class AlarmService:
                 # not the alarm it is filed under.
                 if not rule.applies_to_instance(raw_instance):
                     continue
+                # This device's exception to the rule, if it has one. A mute
+                # skips the rule for this device; otherwise the override's own
+                # values stand in for the rule's, on a copy. The dwell state
+                # stays keyed on the rule, so changing a threshold carries on
+                # counting rather than starting over.
+                ov = self._overrides.get((rule.id, s["device_id"]))
+                if ov is not None:
+                    if ov.get("enabled") is False:
+                        continue
+                    rule = apply_override(rule, ov)
                 key = AlarmKey(s["device_id"], rule.alarm_type, instance)
                 work.append((rule, key, s))
         if not work:

@@ -102,7 +102,8 @@ export function AlarmList() {
       <h2>Alarms</h2>
       <p className="subtitle">
         Root causes only by default — one failure with twenty downstream
-        symptoms should read as one incident, not twenty.
+        symptoms should read as one incident, not twenty.{' '}
+        <Link to="/alarms/rules">Alarm rules</Link>
       </p>
 
       {s && (
