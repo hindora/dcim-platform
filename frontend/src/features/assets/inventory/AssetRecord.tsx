@@ -60,6 +60,14 @@ function Fact({ k, v, mono }: { k: string; v?: ReactNode; mono?: boolean }) {
   );
 }
 
+/** The make once: many model strings already carry it. */
+function makeModel(d: DeviceDetail): string {
+  const v = d.vendor ?? 'unknown vendor';
+  const m = d.model ?? '';
+  if (m && d.vendor && m.toLowerCase().startsWith(d.vendor.toLowerCase())) return m;
+  return `${v} ${m}`.trim();
+}
+
 function coverDays(d: DeviceDetail): number | null {
   if (!d.warranty_expires) return null;
   return Math.round((new Date(d.warranty_expires).getTime() - Date.now()) / 86_400_000);
@@ -418,7 +426,7 @@ export function AssetRecord() {
             <LifecycleChip state={d.lifecycle} />
           </h2>
           <p className="subtitle">
-            {humanise(d.device_type)} · {d.vendor ?? 'unknown vendor'} {d.model ?? ''}
+            {humanise(d.device_type)} · {makeModel(d)}
             {d.asset_tag ? ` · ${d.asset_tag}` : ' · no asset tag'}
             {d.serial_number ? ` · ${d.serial_number}` : ''}
           </p>
