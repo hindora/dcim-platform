@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import {
@@ -67,6 +67,17 @@ export function DeviceDetail() {
   };
   const [editingDevice, setEditingDevice] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  // `?edit=1` opens the editor on arrival - the floor-plan panel's Edit
+  // button lands here - and the flag is dropped from the address so a reload
+  // or a shared link does not reopen it.
+  useEffect(() => {
+    if (params.get('edit') !== '1') return;
+    setEditingDevice(true);
+    const next = new URLSearchParams(params);
+    next.delete('edit');
+    setParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const device = useQuery<Detail>({
     queryKey: ['device', id],

@@ -126,6 +126,24 @@
 .vw-tile .vw-glyph { display: block; width: 18px; height: 18px; color: var(--text-muted); margin-bottom: 3px; }
 .vw-tile b { font-size: 0.95rem; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .vw-tile span { font-size: 0.64rem; letter-spacing: .08em; color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vw-tile .vw-spark { display: block; width: 100%; margin-top: 5px; }
+.spark .spark-line { fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; }
+.spark .spark-area { fill: var(--accent); opacity: .12; }
+.spark.is-empty { display: block; }
+
+/* The way out of the panel: four quiet buttons in a row, the alarm one
+   carrying its count in the severity's hue. Anchors dressed as .vw-icon so
+   a link and a button sit the same. */
+.vw-acts { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 10px; }
+.vw-acts a.vw-icon { text-decoration: none; display: inline-flex; align-items: center; gap: 6px;
+                     padding: 5px 9px; font-size: 11px; letter-spacing: .07em; text-transform: uppercase; }
+.vw-acts a.vw-icon:hover { text-decoration: none; }
+.vw-acts a.vw-icon:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.vw-acts .n { font-size: 10px; line-height: 15px; padding: 0 5px; border-radius: 8px;
+              border: 1px solid currentColor; font-variant-numeric: tabular-nums; letter-spacing: 0; }
+.vw-acts a.has-warning, .vw-acts a.has-minor { color: var(--warn); border-color: var(--warn); }
+.vw-acts a.has-major    { color: var(--major); border-color: var(--major); }
+.vw-acts a.has-critical { color: var(--critical); border-color: var(--critical); }
 .vw-bar { margin: 4px 0 8px; }
 .vw-bar-head { display: flex; justify-content: space-between; font-variant-numeric: tabular-nums; }
 .vw-bar-head span { color: var(--text-muted); }

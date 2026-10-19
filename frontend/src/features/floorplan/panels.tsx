@@ -2,10 +2,11 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useMemo, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  api, ApiError, type Alarm, type DeviceDetail, type DeviceState, type Impact, type MetricValue, type NetworkInterface,
+  api, atLeast, ApiError, type Alarm, type DeviceDetail, type DeviceState, type Impact, type MetricValue, type NetworkInterface,
   type PowerChain, type SiteKpi, type TwinRoom, type TwinSiteScene,
 } from '../../api/client';
 import type {
+  HistoryOut,
   FloorEquipment, FloorPlan, FloorRack, RoomKpi, ThermalField, ThermalRoom, ThermalUnit, TwinDevice, TwinRackIndex,
   TwinRoomIndices,
 } from '../../api/client';
@@ -20,6 +21,7 @@ import type { PathKind, PathOverlay } from './paths';
 import { fmtDT, fmtT, legendInUnit, numT, unitLabel } from './units';
 import { alarmColor } from './colors';
 import { glyphFor, TileGlyph, type GlyphName } from './glyphs';
+import { Sparkline } from '../../components/Sparkline';
 import { BUILDING_LAYERS, NO_READING, bandColor, roomLayerBands, roomLayerText, roomLayerValue, type BuildingLayer } from './layers';
 
 /** The viewer's side panel and legend. Facts only: every figure here is one
@@ -99,21 +101,47 @@ function Row({ k, v }: { k: ReactNode; v: ReactNode }) {
 /** The headline readings as tiles: a glyph for the kind of reading, the
  *  value, the label. The glyph comes from the label (glyphs.tsx), or is named
  *  outright for a tile whose label is not in that table. */
-function Tiles({ items }: { items: { label: string; value: string; icon?: GlyphName }[] }) {
+function Tiles({ items, spark }: {
+  items: { label: string; value: string; icon?: GlyphName; metric?: string }[];
+  /** The last hour of each tile's metric, by key; a tile without one draws
+   *  no line rather than a placeholder. */
+  spark?: Record<string, number[][]>;
+}) {
   return (
     <div className="vw-tiles">
       {items.map((t) => {
         const g = t.icon ?? glyphFor(t.label);
+        const pts = t.metric ? spark?.[t.metric] : undefined;
+        const unit = t.metric ? METRICS[t.metric as MetricKey]?.unit ?? '' : '';
         return (
           <div key={t.label} className="vw-tile">
             {g ? <TileGlyph name={g} /> : <span className="vw-glyph" aria-hidden />}
             <b>{t.value}</b><span>{t.label}</span>
+            {pts && pts.length > 1 && (
+              <Sparkline points={pts} unit={unit} floor={SPARK_FLOOR[unit] ?? 1} height={18} className="vw-spark" />
+            )}
           </div>
         );
       })}
     </div>
   );
 }
+
+/** The least a sparkline's axis may span, per unit, so a probe's normal
+ *  wobble reads as a flat line and not as weather. */
+const SPARK_FLOOR: Record<string, number> = {
+  C: 2, '\u00b0C': 2, pct: 5, '%': 5, W: 50, kW: 0.1, A: 0.5, V: 2, 'L/s': 0.2, 'l/s': 0.2,
+};
+
+/** What each class's tiles chart: the keys its Tiles name as `metric`. */
+const SPARK_METRICS: Record<DeviceClass, string[]> = {
+  server: ['power_draw', 'inlet_temperature', 'cpu_temperature', 'exhaust_temperature'],
+  network: ['cpu_utilization', 'memory_utilization', 'cpu_temperature'],
+  pdu: ['load_pct', 'current', 'power_draw'],
+  sensor: ['ambient_temperature', 'relative_humidity'],
+  cdu: ['water_supply_temp', 'water_return_temp', 'water_flow', 'power_draw'],
+  other: ['power_draw'],
+};
 
 function Bar({ value, max, label, warn = 80, crit = 90 }: { value: number | null; max: number | null; label: string; warn?: number; crit?: number }) {
   const pct = value != null && max ? Math.min(100, (100 * value) / max) : null;
@@ -619,7 +647,27 @@ export function DevicePanel({ device, rack }: { device: TwinDevice; rack?: Floor
   const status = state.data?.status ?? device.status;
   const sev = state.data?.max_severity ?? device.max_severity;
   const seen = state.data?.last_seen ?? d?.last_seen ?? null;
-  const ctx: ClassCtx = { device, rack, d, m, cls, stateLoading: state.isLoading, stateError: state.isError };
+  // The hour behind each headline tile. One request for the class's few
+  // keys, refreshed each minute: the tiles say what is, the lines say
+  // which way it has been going, and nobody has to leave the viewer to ask.
+  const sparkKeys = SPARK_METRICS[cls];
+  const spark = useQuery<HistoryOut>({
+    queryKey: ['spark', device.id, cls],
+    queryFn: () => {
+      const end = Date.now();
+      return api.history(device.id, sparkKeys, new Date(end - 3600_000).toISOString(), new Date(end).toISOString());
+    },
+    enabled: sparkKeys.length > 0,
+    refetchInterval: 60_000,
+    retry: false,
+  });
+  const sparkBy = useMemo(() => {
+    const out: Record<string, number[][]> = {};
+    for (const s of spark.data?.series ?? []) if (!out[s.metric] && s.points.length > 1) out[s.metric] = s.points;
+    return out;
+  }, [spark.data]);
+  const openAlarms = state.data?.active_alarms ?? 0;
+  const ctx: ClassCtx = { device, rack, d, m, cls, spark: sparkBy, stateLoading: state.isLoading, stateError: state.isError };
 
   return (
     <div className="vw-panel-body">
@@ -633,6 +681,18 @@ export function DevicePanel({ device, rack }: { device: TwinDevice; rack?: Floor
         {sev !== 'CLEAR' && <span className={`vw-sev sev-${sev.toLowerCase()}`}>{sev.toLowerCase()}</span>}
         <span className="muted">{seen ? `seen ${relativeTime(seen)}` : 'never seen'}</span>
       </div>
+      {/* The way out, up top where the hand already is: each goes to the
+          matching tab of the device page, so "Alarms" lands on the alarms
+          and "Edit" opens the editor rather than a page to find it on. */}
+      <div className="vw-acts" role="group" aria-label="Open this device">
+        <Link className="vw-icon" to={`/devices/${device.id}`}>Open</Link>
+        {atLeast('operator') && <Link className="vw-icon" to={`/devices/${device.id}?edit=1`}>Edit</Link>}
+        <Link className={`vw-icon${openAlarms ? ` has-${(sev || 'clear').toLowerCase()}` : ''}`}
+              to={`/devices/${device.id}?tab=alarms`}>
+          Alarms{openAlarms > 0 && <span className="n">{openAlarms}</span>}
+        </Link>
+        <Link className="vw-icon" to={`/devices/${device.id}?tab=operations`}>Operations</Link>
+      </div>
       {cls === 'server' && <ServerBody {...ctx} />}
       {cls === 'network' && <NetworkBody {...ctx} />}
       {cls === 'pdu' && <PduBody {...ctx} />}
@@ -640,14 +700,18 @@ export function DevicePanel({ device, rack }: { device: TwinDevice; rack?: Floor
       {cls === 'cdu' && <CduBody {...ctx} />}
       {cls === 'other' && <OtherBody {...ctx} />}
       <UnitAlarms deviceId={device.id} deviceName={device.name} />
-      <div className="vw-links"><Link to={`/devices/${device.id}`}>Device page</Link>
-        {rack && <Link to={`/racks/${rack.id}?from=floorplan`}>Rack elevation</Link>}</div>
+      <div className="vw-links">
+        <Link to={`/assets/inventory/${device.id}`}>Asset record</Link>
+        {rack && <Link to={`/racks/${rack.id}?from=floorplan`}>Rack elevation</Link>}
+      </div>
     </div>
   );
 }
 
 interface ClassCtx {
   device: TwinDevice; rack?: FloorRack; d?: DeviceDetail; m: Record<string, MetricValue>; cls: DeviceClass;
+  /** The last hour of each headline metric, by key. */
+  spark: Record<string, number[][]>;
   stateLoading: boolean; stateError: boolean;
 }
 
@@ -865,10 +929,11 @@ function ServerBody(c: ClassCtx) {
   const cpu = num(m.cpu_temperature);
   return (
     <>
-      <Tiles items={[
-        { label: 'POWER', value: fW(draw) },
-        { label: 'INLET', value: fmtT(inlet) },
-        { label: cpu != null ? 'CPU' : 'EXHAUST', value: cpu != null ? fmtT(cpu) : fmtT(exhaust) },
+      <Tiles spark={c.spark} items={[
+        { label: 'POWER', value: fW(draw), metric: 'power_draw' },
+        { label: 'INLET', value: fmtT(inlet), metric: 'inlet_temperature' },
+        { label: cpu != null ? 'CPU' : 'EXHAUST', value: cpu != null ? fmtT(cpu) : fmtT(exhaust),
+          metric: cpu != null ? 'cpu_temperature' : 'exhaust_temperature' },
       ]} />
       {exhaust != null && inlet != null && (
         <div className="vw-kv">
@@ -892,10 +957,10 @@ function NetworkBody(c: ClassCtx) {
   const cpu = num(m.cpu_utilization), mem = num(m.memory_utilization), t = num(m.cpu_temperature);
   return (
     <>
-      <Tiles items={[
-        { label: 'CPU', value: cpu != null ? `${Math.round(cpu)} %` : '–' },
-        { label: 'MEMORY', value: mem != null ? `${Math.round(mem)} %` : '–' },
-        { label: 'CPU TEMP', value: fmtT(t) },
+      <Tiles spark={c.spark} items={[
+        { label: 'CPU', value: cpu != null ? `${Math.round(cpu)} %` : '–', metric: 'cpu_utilization' },
+        { label: 'MEMORY', value: mem != null ? `${Math.round(mem)} %` : '–', metric: 'memory_utilization' },
+        { label: 'CPU TEMP', value: fmtT(t), metric: 'cpu_temperature' },
       ]} />
       <Ports deviceId={device.id} open />
       <Identity {...c} />
@@ -928,10 +993,10 @@ function PduBody(c: ClassCtx) {
   const side = chain.data?.paths[0]?.side ?? null;
   return (
     <>
-      <Tiles items={[
-        { label: 'LOAD', value: load != null ? `${load.toFixed(0)} %` : '–' },
-        { label: 'CURRENT', value: amps != null ? `${amps.toFixed(1)} A` : '–' },
-        { label: 'POWER', value: fW(draw) },
+      <Tiles spark={c.spark} items={[
+        { label: 'LOAD', value: load != null ? `${load.toFixed(0)} %` : '–', metric: 'load_pct' },
+        { label: 'CURRENT', value: amps != null ? `${amps.toFixed(1)} A` : '–', metric: 'current' },
+        { label: 'POWER', value: fW(draw), metric: 'power_draw' },
       ]} />
       <div className="vw-kv">
         {rated != null && <Row k="Rated" v={<span className={tone}>{fW(rated)}{draw != null ? ` · ${Math.round((100 * draw) / rated)} % used` : ''}</span>} />}
@@ -1008,9 +1073,9 @@ function SensorBody(c: ClassCtx) {
   const where = device.mount === 'rack_rear' ? 'exhaust side' : device.mount === 'rack_front' ? 'intake side' : null;
   return (
     <>
-      <Tiles items={[
-        { label: 'TEMP', value: fmtT(t) },
-        { label: 'RH', value: f1(rh, ' %') },
+      <Tiles spark={c.spark} items={[
+        { label: 'TEMP', value: fmtT(t), metric: 'ambient_temperature' },
+        { label: 'RH', value: f1(rh, ' %'), metric: 'relative_humidity' },
         { label: 'DEW POINT', value: fmtT(dp) },
       ]} />
       <div className="vw-kv">
@@ -1034,10 +1099,11 @@ function CduBody(c: ClassCtx) {
   const alarm = typeof m.alarm_state?.v === 'boolean' ? m.alarm_state.v : null;
   return (
     <>
-      <Tiles items={[
-        { label: 'SUPPLY', value: fmtT(supply) },
-        { label: flow != null && ret == null ? 'FLOW' : 'RETURN', value: ret != null ? fmtT(ret) : flow != null ? formatMetric('water_flow', flow) : '–' },
-        { label: 'POWER', value: fW(draw) },
+      <Tiles spark={c.spark} items={[
+        { label: 'SUPPLY', value: fmtT(supply), metric: 'water_supply_temp' },
+        { label: flow != null && ret == null ? 'FLOW' : 'RETURN', value: ret != null ? fmtT(ret) : flow != null ? formatMetric('water_flow', flow) : '–',
+          metric: flow != null && ret == null ? 'water_flow' : 'water_return_temp' },
+        { label: 'POWER', value: fW(draw), metric: 'power_draw' },
       ]} />
       <div className="vw-kv">
         {running != null && <Row k="Pumps" v={running ? 'running' : <span className="vw-bad">stopped</span>} />}
@@ -1057,10 +1123,10 @@ function OtherBody(c: ClassCtx) {
   const draw = num(m.power_draw) ?? device.power_w ?? null;
   return (
     <>
-      <Tiles items={[
+      <Tiles spark={c.spark} items={[
         { label: 'AIR', value: fmtT(device.temp_c) },
         { label: 'RH', value: f1(device.rh_pct, ' %') },
-        { label: 'POWER', value: fW(draw) },
+        { label: 'POWER', value: fW(draw), metric: 'power_draw' },
       ]} />
       <Identity {...c} />
       <Readings {...c} />
