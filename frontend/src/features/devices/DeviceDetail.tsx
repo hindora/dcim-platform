@@ -127,6 +127,9 @@ export function DeviceDetail() {
             Edit device
           </button>
         )}
+        <Link to={`/assets/inventory/${d.id}`} style={{ marginLeft: 12 }}>
+          Asset record →
+        </Link>
       </div>
       {editingDevice && (
         <DeviceEditor device={d} onClose={() => setEditingDevice(false)} />

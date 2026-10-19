@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
 import {
   api,
+  atLeast,
   type DeviceDetail,
   type NetworkInterface,
   type PowerChain,
@@ -14,6 +15,7 @@ import { LifecycleTab } from './LifecycleTab';
 import { MaintenanceTab } from './MaintenanceTab';
 import { SupportTab } from './SupportTab';
 import { TagAssignForm } from './RecordWorkForm';
+import { DeviceEditor } from '../../devices/DeviceEditor';
 
 /** One asset, as an asset.
  *
@@ -50,6 +52,7 @@ export function AssetRecord() {
   const { id = '' } = useParams();
   const [tab, setTab] = useState<Tab>('overview');
   const [editingTags, setEditingTags] = useState(false);
+  const [editingDevice, setEditingDevice] = useState(false);
 
   const { data, error, isLoading } = useQuery<DeviceDetail>({
     queryKey: ['device', id],
@@ -89,12 +92,18 @@ export function AssetRecord() {
           {data.asset_tag ?? <span className="asset-none">no asset tag</span>}
         </span>
         <LifecycleChip state={data.lifecycle} />
-        {/* Out to the operational view. The reciprocal link on /devices/:id is
-            deliberately NOT added - that page is out of scope. */}
-        <Link to={`/devices/${data.id}`} style={{ marginLeft: 'auto' }}>
-          Open in Devices →
-        </Link>
+        {/* Same editor as /devices/:id: one set of rules for who may change
+            identity, one lock list for the importer. */}
+        {atLeast('operator') && (
+          <button style={{ marginLeft: 'auto' }} onClick={() => setEditingDevice(true)}>
+            Edit device
+          </button>
+        )}
+        <Link to={`/devices/${data.id}`}>Open in Devices →</Link>
       </div>
+      {editingDevice && (
+        <DeviceEditor device={data} onClose={() => setEditingDevice(false)} />
+      )}
 
       <div className="asset-tabs" role="tablist">
         {TABS.map((t) => (
