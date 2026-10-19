@@ -66,6 +66,7 @@ export function DeviceDetail() {
     setParams(next, { replace: true });
   };
   const [editingDevice, setEditingDevice] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   const device = useQuery<Detail>({
     queryKey: ['device', id],
@@ -117,13 +118,23 @@ export function DeviceDetail() {
         <DeviceHistory deviceId={id} metrics={chartMetrics} groups={groups} />
       </>
     ),
+    // Open conditions first, then the thresholds an operator came to change,
+    // then the whole history folded away: it can run to a hundred rows and
+    // must never push the other two off the screen.
     alarms: (
       <>
         <section>
-          <h3>Conditions</h3>
-          <DeviceAlarms deviceId={id} deviceName={d.name} />
+          <h3>Open conditions</h3>
+          <DeviceAlarms deviceId={id} deviceName={d.name} view="open" />
         </section>
         <DeviceThresholds deviceId={id} />
+        <section>
+          <details className="dv-fold" open={historyOpen}
+                   onToggle={(e) => setHistoryOpen((e.target as HTMLDetailsElement).open)}>
+            <summary>History<span className="lead"> everything recorded on this device, cleared included</span></summary>
+            {historyOpen && <DeviceAlarms deviceId={id} deviceName={d.name} view="all" />}
+          </details>
+        </section>
       </>
     ),
     connections: <DeviceConnections device={d} ports={ports} />,

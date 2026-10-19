@@ -2,14 +2,17 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { ApiError, api, atLeast, type Alarm } from '../../api/client';
+import { usePaged } from '../../components/Pagination';
 import { humanise, relativeTime } from '../../lib/format';
 
 /** The conditions on one device, worst first.
  *
  *  Two shapes. Compact is the overview's "what is wrong right now": the few
  *  worst open conditions, no buttons, a way to the full list. Full is the
- *  Alarms tab: open or everything, with acknowledge and clear for an operator.
- *  Both read the same query, so acknowledging on the tab updates the overview.
+ *  Alarms tab, paged like every other list, with acknowledge and clear for
+ *  an operator; the caller says whether it is the open conditions or the
+ *  whole history. Both read the same query, so acknowledging on the tab
+ *  updates the overview.
  *
  *  Acknowledge and clear are the two things a person does from the device
  *  itself: "I have it" and "it is fixed". Clearing by hand asks first - it
@@ -43,10 +46,12 @@ function when(iso: string): string {
   return new Date(iso).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' });
 }
 
-export function DeviceAlarms({ deviceId, deviceName, compact = false, limit, onMore }: {
+export function DeviceAlarms({ deviceId, deviceName, compact = false, view = 'open', limit, onMore }: {
   deviceId: string;
   deviceName: string;
   compact?: boolean;
+  /** Open conditions, or everything ever recorded on the device. */
+  view?: View;
   /** Compact only: how many of the worst to show. */
   limit?: number;
   /** Compact only: where "and N more" goes. */
@@ -54,7 +59,6 @@ export function DeviceAlarms({ deviceId, deviceName, compact = false, limit, onM
 }) {
   const qc = useQueryClient();
   const canAct = atLeast('operator');
-  const [view, setView] = useState<View>('open');
   const [confirming, setConfirming] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const q = useDeviceAlarms(deviceId, compact ? 'open' : view);
@@ -81,26 +85,19 @@ export function DeviceAlarms({ deviceId, deviceName, compact = false, limit, onM
   });
 
   const all = sortAlarms(q.data?.items ?? []);
-  const items = compact && limit ? all.slice(0, limit) : all;
-  const hidden = all.length - items.length;
   const open = all.filter((a) => a.state !== 'CLEARED').length;
+  // One pager, learned once: the full list pages like every other table here,
+  // so the sections under it stay where they are however long the history.
+  const paged = usePaged(all, { noun: 'conditions' });
+  const items = compact ? (limit ? all.slice(0, limit) : all) : paged.rows;
+  const hidden = compact ? all.length - items.length : 0;
 
   return (
     <>
-      {!compact && (
-        <div className="dv-alarm-tools">
-          <div className="overlay-picker" role="group" aria-label="Which conditions">
-            <button type="button" className={view === 'open' ? 'active' : undefined}
-                    onClick={() => setView('open')}>Open</button>
-            <button type="button" className={view === 'all' ? 'active' : undefined}
-                    onClick={() => setView('all')}>Everything</button>
-          </div>
-          {!q.isLoading && items.length > 0 && (
-            <span className="muted small">
-              {view === 'open' ? `${open} open` : `${all.length} recorded, ${open} open`}
-            </span>
-          )}
-        </div>
+      {!compact && view === 'all' && !q.isLoading && all.length > 0 && (
+        <p className="dv-note" style={{ margin: '0 0 10px' }}>
+          {all.length} recorded, {open} open. Cleared conditions are dimmed.
+        </p>
       )}
 
       {q.isError && <p className="dv-empty">The alarm list could not be read.</p>}
@@ -161,6 +158,7 @@ export function DeviceAlarms({ deviceId, deviceName, compact = false, limit, onM
         </ul>
       )}
 
+      {!compact && paged.foot}
       {compact && hidden > 0 && (
         <p className="dv-note">
           <button type="button" className="linklike" onClick={onMore}>

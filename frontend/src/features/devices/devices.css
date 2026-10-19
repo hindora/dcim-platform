@@ -201,6 +201,19 @@
 .dv-alarm-tools { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
 .dv-alarm-tools .overlay-picker button { font-size: 12.5px; padding: 0.25rem 0.65rem; }
 
+/* A folded section: the summary wears the section heading's look, with a
+   caret that says it opens. */
+.dv-fold summary {
+  cursor: pointer; list-style: none; font-size: 13.5px; font-weight: 600;
+  display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+}
+.dv-fold summary::-webkit-details-marker { display: none; }
+.dv-fold summary::before { content: '›'; display: inline-block; color: var(--text-faint); transition: transform .12s ease; }
+.dv-fold[open] summary::before { transform: rotate(90deg); }
+.dv-fold summary .lead { font-weight: 400; color: var(--text-muted); font-size: 12px; }
+.dv-fold[open] summary { margin-bottom: 12px; }
+.dv-fold summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+
 /* --------------------------------------------------------------- readings */
 
 .dv-readings {
