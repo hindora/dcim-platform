@@ -648,7 +648,7 @@ export default function RoomScene(p: SceneProps) {
         {/* The glass shell answers no pointer: a click goes through it to the
             gear inside, and a click on nothing falls back to the rack itself
             (the selection derives from the focus). */}
-        <GradientBoxes boxes={focusBox} part="solid" opacity={0.32} />
+        <GradientBoxes boxes={focusBox} part="solid" opacity={0.14} />
         <RackFrames racks={[plan.racks[focusIdx]]} X={X} Z={Z} />
         <RackRails box={rackBoxes[focusIdx]} units={plan.racks[focusIdx].u_height ?? 42} />
         <Hardware racks={focusBox} units={NO_BOXES} unitTypes={[]} open />
