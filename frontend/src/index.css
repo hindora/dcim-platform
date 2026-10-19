@@ -845,6 +845,9 @@ button.linklike {
 }
 button.linklike:disabled { opacity: .5; cursor: default; }
 button.danger { color: var(--critical); border-color: var(--critical); }
+button.danger:disabled { color: inherit; border-color: var(--border); }
+.action-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.dev-bad { color: var(--critical); }
 .vw-warn { color: var(--warn); }
 /* A switch reads as a statement, so its label sits beside the box rather than
    above it like a field that takes a value. */

@@ -63,6 +63,9 @@ func (a *App) commandLoop(ctx context.Context) {
 			switch c.Kind {
 			case "upgrade":
 				a.handleUpgrade(ctx, base, c.ID, c.Payload)
+			case "device_action":
+				// Its own goroutine: a slow BMC must not hold up the next poll.
+				go a.handleDeviceAction(ctx, base, c.ID, c.Payload)
 			default:
 				a.reportCommand(ctx, base, c.ID, "failed",
 					fmt.Sprintf("unknown command kind %q", c.Kind), "")

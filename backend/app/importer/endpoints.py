@@ -217,6 +217,7 @@ def derive_endpoints(
     redfish_password: str = "password",
     redfish_scheme: str = "http",
     gnmi_port: int = 50051,
+    snmp_set_port: int | None = 1161,
 ) -> list[EndpointSpec]:
     """Return the protocol endpoints implied by one simulator device record.
 
@@ -254,6 +255,12 @@ def derive_endpoints(
                               network_profile(dev)
                               if dtype in NETWORK_PROFILE_TYPES else
                               SNMP_PROFILE_BY_TYPE.get(dtype, DEFAULT_SNMP_PROFILE)),
+                # The simulator reads on one UDP port and takes writes on its
+                # management agent's: real gear does both on 161, so the write
+                # port is declared as data where it differs. Only a rack PDU
+                # is ever written to (outlet control), so only its endpoint.
+                addressing=({"set_port": snmp_set_port}
+                            if dtype == "pdu" and snmp_set_port else {}),
                 **_snmp_credential(addr),
             ))
         # Only when it is genuinely a different agent from the OS one - the

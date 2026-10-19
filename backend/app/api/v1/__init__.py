@@ -14,6 +14,7 @@ from app.api.v1 import (
     contracts,
     cooling,
     credentials,
+    device_actions,
     devices,
     discovery,
     estate,
@@ -35,6 +36,7 @@ from app.api.v1 import (
 api_router = APIRouter()
 api_router.include_router(misc.router)
 api_router.include_router(devices.router)
+api_router.include_router(device_actions.router)
 api_router.include_router(assets.router)
 api_router.include_router(bulk.router)
 api_router.include_router(maintenance.router)

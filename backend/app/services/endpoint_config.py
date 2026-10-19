@@ -84,6 +84,13 @@ ADDRESSING_FIELDS: dict[str, dict[str, dict[str, Any]]] = {
         },
     },
     "snmp": {
+        "set_port": {
+            "label": "Write port",
+            "min": 1, "max": 65535,
+            "help": "UDP port SET requests go to when it is not the one polled. "
+                    "Empty means the polled port, which is what real gear does. "
+                    "The simulator serves writes on its management agent.",
+        },
         "context": {
             "label": "v3 context",
             "kind": "text",

@@ -1521,6 +1521,67 @@ export interface RuleOverrideBody {
   reason?: string | null;
 }
 
+/** One thing that can be done to a device from here. `allowed` is whether the
+ *  signed-in role may; a refused one is shown disabled, with the reason. */
+export interface DeviceActionDef {
+  id: string;
+  label: string;
+  kind: 'outlet' | 'power';
+  role: string;
+  /** The device's name must be typed to run it. */
+  confirm: boolean;
+  effect: string;
+  allowed: boolean;
+}
+
+export interface DeviceOutlet {
+  outlet: number;
+  connector: string | null;
+  branch: string | null;
+  load: {
+    id: string; name: string; type: string; psu: number | null;
+    /** dark: no other live feed. degraded: keeps running without redundancy. */
+    impact: 'dark' | 'degraded';
+  } | null;
+}
+
+export interface DeviceActionRecord {
+  id: string; state: string; by: string | null; at: string;
+  finished_at: string | null; label: string | null; detail: string | null;
+}
+
+export interface DeviceActions {
+  device: { id: string; name: string; device_type: string; vendor: string | null; model: string | null };
+  class: 'pdu' | 'server' | null;
+  available: boolean;
+  /** Why nothing is offered, when nothing is. */
+  reason: string | null;
+  endpoint: { id: string; protocol: string; role: string; owner: string | null } | null;
+  actions: DeviceActionDef[];
+  outlets: DeviceOutlet[];
+  recent: DeviceActionRecord[];
+}
+
+export interface ActionPreview {
+  action: string; label: string; effect: string; confirm: boolean; confirm_name: string;
+  allowed: boolean; needs_role: string; outlet?: number; note?: string;
+  dark: { id: string; name: string; why: string }[];
+  degraded: { id: string; name: string; why: string }[];
+}
+
+export interface ActionRequest {
+  action: string;
+  outlet?: number | null;
+  confirm?: string | null;
+  reason?: string | null;
+}
+
+export interface ActionStatus {
+  id: string; state: 'pending' | 'delivered' | 'succeeded' | 'failed' | 'expired' | 'cancelled';
+  by: string | null; label: string | null; detail: string | null;
+  created_at: string; finished_at: string | null;
+}
+
 /** An edit to the device record: only the keys that changed. */
 export interface DevicePatch {
   name?: string;
@@ -4459,6 +4520,15 @@ export const api = {
     }),
 
   deviceState: (id: string) => request<DeviceState>(`/devices/${id}/state`),
+
+  deviceActions: (id: string) => request<DeviceActions>(`/devices/${id}/actions`),
+  previewAction: (id: string, body: ActionRequest) =>
+    request<ActionPreview>(`/devices/${id}/actions/preview`, { method: 'POST', body: JSON.stringify(body) }),
+  runAction: (id: string, body: ActionRequest) =>
+    request<{ command_id: string; state: string; collector: string; label: string }>(
+      `/devices/${id}/actions`, { method: 'POST', body: JSON.stringify(body) }),
+  actionStatus: (id: string, commandId: string) =>
+    request<ActionStatus>(`/devices/${id}/actions/${commandId}`),
 
   alarmRules: () => request<{ items: AlarmRule[] }>('/alarm-rules'),
   /** Estate policy: moves the alarm for every device the rule applies to. Admin. */

@@ -15,6 +15,7 @@ import { DeviceHistory } from './DeviceHistory';
 import { chartGroupsFor } from './chartGroups';
 import { EndpointEditor } from './EndpointEditor';
 import { DeviceEditor } from './DeviceEditor';
+import { DeviceActions } from './DeviceActions';
 import { DeviceThresholds } from './DeviceThresholds';
 import {
   formatMetric, formatSpeed, humanise, metricLabel, relativeTime,
@@ -138,7 +139,6 @@ export function DeviceDetail() {
           <dt>Vendor</dt><dd>{d.vendor ?? '—'}</dd>
           <dt>Model</dt><dd>{d.model ?? '—'}</dd>
           <dt>Serial</dt><dd className="mono">{d.serial_number ?? '—'}</dd>
-          <dt>Asset tag</dt><dd className="mono">{d.asset_tag ?? '—'}</dd>
           <dt>Owner</dt><dd>{d.owner_group ?? '—'}{d.cost_centre ? <span className="muted"> · {d.cost_centre}</span> : null}</dd>
           <dt>Management IP</dt><dd className="mono">{d.mgmt_ip ?? '—'}</dd>
           <dt>Production IP</dt><dd className="mono">{d.primary_ip ?? '—'}</dd>
@@ -299,6 +299,8 @@ export function DeviceDetail() {
           </div>
         )}
       </section>
+
+      <DeviceActions deviceId={id} />
 
       <DeviceThresholds deviceId={id} />
 
