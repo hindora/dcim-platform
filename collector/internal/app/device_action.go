@@ -158,8 +158,8 @@ func (a *App) handleDeviceAction(parent context.Context, base, id string, raw js
 		}
 	}
 	if err != nil {
-		a.reportCommand(parent, base, id, "failed", fmt.Sprintf("%s on %s: %v", act.Label, act.DeviceName, err), "")
+		a.reportCommand(parent, base, id, "failed", fmt.Sprintf("%s (%s): %v", act.Label, act.DeviceName, err), "")
 		return
 	}
-	a.reportCommand(parent, base, id, "succeeded", fmt.Sprintf("%s on %s", act.Label, act.DeviceName), "")
+	a.reportCommand(parent, base, id, "succeeded", fmt.Sprintf("%s (%s)", act.Label, act.DeviceName), "")
 }
