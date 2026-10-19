@@ -74,13 +74,18 @@ class AlarmService:
         #: (rule id, device id) -> that device's exception to the rule
         self._overrides: dict[tuple[str, str], dict[str, Any]] = {}
         self._version: bytes | None = None
-        self._loaded_at = 0.0
+        #: None until the first load. Not 0.0: the comparison is against the
+        #: monotonic clock, which on a machine up for under RULE_REFRESH_S reads
+        #: as "loaded a moment ago", so a worker started just after boot - or
+        #: any test on a fresh CI runner - would serve with no rules at all.
+        self._loaded_at: float | None = None
 
     # ------------------------------------------------------------- rules
 
     async def ensure_rules(self, session: AsyncSession, force: bool = False) -> None:
         version = await self._redis.get(RULES_VERSION_KEY)
-        fresh = (time.monotonic() - self._loaded_at) < RULE_REFRESH_S
+        fresh = (self._loaded_at is not None
+                 and (time.monotonic() - self._loaded_at) < RULE_REFRESH_S)
         if not force and fresh and version == self._version:
             return
         self._version = version

@@ -166,6 +166,28 @@ def test_workers_pick_up_an_edit_on_the_next_batch_not_a_minute_later(monkeypatc
     asyncio.run(go())
 
 
+def test_rules_load_on_a_machine_that_booted_seconds_ago(monkeypatch):
+    """The refresh check compares with the monotonic clock, which on a machine up
+    for under a minute reads as 'loaded a moment ago': with the timestamp starting
+    at 0.0 the service served with no rules at all until the clock passed 60 s.
+    A fresh CI runner, or a worker started just after boot, hit it."""
+    loaded = []
+
+    async def load_rules(_s):
+        loaded.append(1)
+        return []
+
+    async def load_overrides(_s):
+        return []
+
+    monkeypatch.setattr(svc.repo, "load_rules", load_rules)
+    monkeypatch.setattr(svc.repo, "load_overrides", load_overrides)
+    monkeypatch.setattr(svc.time, "monotonic", lambda: 5.0)       # booted 5 s ago
+    service = svc.AlarmService(_FakeRedis())
+    asyncio.run(service.ensure_rules(_FakeSession()))
+    assert loaded == [1]
+
+
 def test_the_sample_loop_skips_a_muted_rule_and_applies_an_override():
     import inspect
     src = inspect.getsource(svc.AlarmService.evaluate_samples)
