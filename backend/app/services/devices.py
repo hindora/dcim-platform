@@ -326,6 +326,18 @@ async def room_scene(session: AsyncSession, room_id: str) -> TwinRoomScene | Non
         temp_c=_f(d.get("temp_c")), rh_pct=_f(d.get("rh_pct")),
         exhaust_c=_f(d.get("exhaust_c")),
     ) for d in rows]
+    # The alarm pin's icon and count, rolled up as the building view does:
+    # per device, and per rack over everything mounted in it.
+    marks = alarm_marks(await rack_repo.room_alarm_marks(session, room_id))
+    for r in plan.racks:
+        if m := marks.get(("rack", r.id)):
+            r.alarm_category, r.alarm_count = m["alarm_category"], m["alarm_count"]
+    for e in plan.equipment + plan.unpositioned_equipment:
+        if m := marks.get(("device", e.id)):
+            e.alarm_category, e.alarm_count = m["alarm_category"], m["alarm_count"]
+    for d in devices:
+        if m := marks.get(("device", d.id)):
+            d.alarm_category, d.alarm_count = m["alarm_category"], m["alarm_count"]
     return TwinRoomScene(plan=plan, devices=devices, indices=scene_indices(plan, devices))
 
 
@@ -494,6 +506,15 @@ async def room_frame(session: AsyncSession, room_id: str, t: datetime,
                                        t=t, table=src.table, lookback=src.lookback)
     sev = await tele_repo.severities_at(session, device_ids=ids, t=t)
     plan, devices = frame.apply(live.plan, live.devices, values, sev)
+    # The pin's category and count are today's; at `t` only the severity is
+    # known, so a past pin is drawn with the plain bell and no count.
+    blank = {"alarm_category": None, "alarm_count": None}
+    plan = plan.model_copy(update={
+        "racks": [r.model_copy(update=blank) for r in plan.racks],
+        "equipment": [e.model_copy(update=blank) for e in plan.equipment],
+        "unpositioned_equipment": [e.model_copy(update=blank)
+                                   for e in plan.unpositioned_equipment]})
+    devices = [d.model_copy(update=blank) for d in devices]
     note = ("Communication status is as known now; it has no history here. "
             "Severities are the alarms open at this moment.")
     if not values:

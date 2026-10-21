@@ -295,6 +295,10 @@ class FloorRack(BaseModel):
     load_kw: float | None = None
     max_inlet_c: float | None = None
     max_severity: str = "CLEAR"
+    # Category of the worst open alarm and how many are open - the 3D
+    # view's alarm pin. Live scenes only; a past frame leaves them None.
+    alarm_category: str | None = None
+    alarm_count: int | None = None
     free_u: int | None = None
     # Footprint in metres; None = the 600 x 1200 mm default on the plan.
     w_m: float | None = None
@@ -329,6 +333,10 @@ class FloorEquipment(BaseModel):
     device_type: str
     status: str = "UNKNOWN"
     max_severity: str = "CLEAR"
+    # Category of the worst open alarm and how many are open - the 3D
+    # view's alarm pin. Live scenes only; a past frame leaves them None.
+    alarm_category: str | None = None
+    alarm_count: int | None = None
     power_w: float | None = None
     inlet_c: float | None = None
     # Air handlers: discharge and return air; the gradient a unit is drawn with.
@@ -405,6 +413,10 @@ class TwinDevice(BaseModel):
     model: str | None = None
     status: str = "UNKNOWN"
     max_severity: str = "CLEAR"
+    # Category of the worst open alarm and how many are open - the 3D
+    # view's alarm pin. Live scenes only; a past frame leaves them None.
+    alarm_category: str | None = None
+    alarm_count: int | None = None
     power_w: float | None = None
     inlet_c: float | None = None
     # The air at the device from whichever sensor it has (inlet or ambient),

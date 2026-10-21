@@ -480,6 +480,24 @@ async def site_alarm_marks(session: AsyncSession, datacenter_id: str) -> list[di
     return [dict(r) for r in rows]
 
 
+async def room_alarm_marks(session: AsyncSession, room_id: str) -> list[dict[str, Any]]:
+    """`site_alarm_marks` for one room: the open, unshelved alarms on the
+    devices in it, so the room and rack views mark the same things the
+    building view does, with the same icons and counts."""
+    rows = (await session.execute(text("""
+        SELECT a.device_id::text AS device_id, d.rack_id::text AS rack_id,
+               COALESCE(rr.room_id, d.room_id)::text AS room_id,
+               a.category, a.severity::text AS severity, a.last_seen
+          FROM alarm a
+          JOIN device d        ON d.id = a.device_id
+          LEFT JOIN rack r     ON r.id = d.rack_id
+          LEFT JOIN rack_row rr ON rr.id = r.row_id
+         WHERE COALESCE(rr.room_id, d.room_id) = CAST(:room AS uuid)
+           AND a.state <> 'CLEARED' AND a.shelved_reason IS NULL
+    """), {"room": room_id})).mappings().all()
+    return [dict(r) for r in rows]
+
+
 async def site_doors(session: AsyncSession, datacenter_id: str) -> list[dict[str, Any]]:
     """Every door contact on the site with what it reads now (docs/27 §8b B6).
 
