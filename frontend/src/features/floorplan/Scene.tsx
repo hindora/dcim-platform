@@ -20,6 +20,7 @@ import { Hardware } from './Hardware';
 import { DeckEdge, Plenum, PLENUM_H } from './Underfloor';
 import { DeviceFaces, RackRails } from './DeviceFaces';
 import { GLASS, GlassBox, RackDoors, Studio, Tone } from './studio';
+import { AlarmPins, type Pin } from './pins';
 import type { PathOverlay, Role } from './paths';
 import { fmtT, numT, unitLabel } from './units';
 
@@ -614,6 +615,49 @@ export default function RoomScene(p: SceneProps) {
     return { x: b.x, z: b.z, h: b.h, d: b.d, front: b.front || 1 };
   }, [focusIdx, rackBoxes]);
 
+  // Alarm pins, as the compound and building rungs draw them: severity by
+  // colour, the worst alarm's kind by icon, how many are open in the bubble.
+  // The room marks each alarmed rack (everything mounted in it rolled up) and
+  // each alarmed plant unit and instrument; the rack on its own marks each
+  // alarmed device in it, at the top of its faceplate.
+  const sevTone = useCallback((sv: string) => resolveColor(alarmColor(sv, 0)), [themeTick]); // eslint-disable-line react-hooks/exhaustive-deps
+  const roomPins = useMemo<Pin[]>(() => {
+    const out: Pin[] = [];
+    plan.racks.forEach((r) => {
+      if (r.max_severity === 'CLEAR') return;
+      out.push({ x: X(r.x), y: rackH(r), z: Z(r.y), c: sevTone(r.max_severity),
+                 cat: r.alarm_category ?? null, n: r.alarm_count ?? 1 });
+    });
+    if (!vis.plant) return out;
+    placedUnits.forEach((e, k) => {
+      if (e.max_severity === 'CLEAR') return;
+      const b = unitBoxes[k];
+      out.push({ x: b.x, y: b.y + b.h / 2, z: b.z, c: sevTone(e.max_severity),
+                 cat: e.alarm_category ?? null, n: e.alarm_count ?? 1 });
+    });
+    instruments.forEach((e) => {
+      if (e.max_severity === 'CLEAR' || e.x == null || e.y == null) return;
+      out.push({ x: X(e.x), y: e.mount_height_m ?? 1.5, z: Z(e.y), c: sevTone(e.max_severity),
+                 cat: e.alarm_category ?? null, n: e.alarm_count ?? 1 });
+    });
+    return out;
+  }, [plan.racks, placedUnits, unitBoxes, instruments, vis.plant, X, Z, sevTone]);
+  const rackPins = useMemo<Pin[]>(() => {
+    if (focusIdx < 0) return [];
+    const r = plan.racks[focusIdx];
+    const front = r.facing === 'N' ? -1 : 1;
+    const out: Pin[] = [];
+    let zero = 0;
+    for (const d of focusDevices) {
+      const b = deviceBox(d, r, X, Z, zero);     // the same slot RackDevices draws it in
+      if (d.u_start == null) zero += 1;
+      if (!b || d.max_severity === 'CLEAR') continue;
+      out.push({ x: b[0], y: b[1] + b[4] / 2, z: b[2] + front * (b[5] / 2), c: sevTone(d.max_severity),
+                 cat: d.alarm_category ?? null, n: d.alarm_count ?? 1 });
+    }
+    return out;
+  }, [focusIdx, plan.racks, focusDevices, X, Z, sevTone]);
+
   // Plain plant in the studio is drawn the way the building rung draws it: a lit
   // surface under the tone curve, so a unit is the same dark box one rung down.
   // A unit a layer or an alarm colours keeps the exact-colour shader.
@@ -656,6 +700,7 @@ export default function RoomScene(p: SceneProps) {
                      onSelect={onSelect} onTip={onTip} />
         <Highlight sel={sel?.kind === 'device' ? sel : null} rackBoxes={rackBoxes} racks={plan.racks} unitBoxes={unitBoxes} units={placedUnits}
                    devices={devices} rackById={rackById} X={X} Z={Z} color={tones.accent} />
+        <AlarmPins pins={rackPins} size={0.042} />
         <Invalidator deps={[sel, focusId, themeTick]} invalidate={invalidate} />
       </>
     );
@@ -765,6 +810,7 @@ export default function RoomScene(p: SceneProps) {
                  unitBoxes={unitBoxes} units={placedUnits} unitRole={unitRole} devices={devices}
                  tones={tones} themeTick={themeTick} />
       )}
+      <AlarmPins pins={roomPins} />
       <Invalidator deps={[rackLayer, coolingLayer, vis, sel, mode, overlay, heat, field, indices, doors, fire]} invalidate={invalidate} />
     </>
   );

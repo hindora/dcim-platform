@@ -1888,6 +1888,8 @@ export interface FloorRack {
   load_kw?: number | null;
   max_inlet_c?: number | null;
   max_severity: string;
+  /** Category of the worst open alarm and how many are open: the 3D view's alarm pin. Live scenes only. */
+  alarm_category?: AlarmCategory | null; alarm_count?: number | null;
   free_u?: number | null;
   /** Footprint in metres; absent = the plan's default cabinet. */
   w_m?: number | null;
@@ -1919,6 +1921,8 @@ export interface TwinDevice {
   model?: string | null;
   status: string;
   max_severity: string;
+  /** Category of the worst open alarm and how many are open: the 3D view's alarm pin. Live scenes only. */
+  alarm_category?: AlarmCategory | null; alarm_count?: number | null;
   power_w?: number | null;
   inlet_c?: number | null;
   /** Air at the device from whichever sensor it has (inlet or ambient). */
@@ -2104,6 +2108,8 @@ export interface FloorEquipment {
   device_type: string;
   status: string;
   max_severity: string;
+  /** Category of the worst open alarm and how many are open: the 3D view's alarm pin. Live scenes only. */
+  alarm_category?: AlarmCategory | null; alarm_count?: number | null;
   power_w?: number | null;
   inlet_c?: number | null;
   /** Air handlers: discharge and return air. */
