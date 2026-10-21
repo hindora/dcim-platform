@@ -179,7 +179,7 @@ export function RoomDrawer({ roomId, roomName, onClose }: {
                         ? `/devices?room=${roomId}&status=OFFLINE`
                         : `/devices?room=${roomId}`} />
                 <Tile value={mon?.racks ?? 0} caption="Racks"
-                      to={`/floorplan?room=${roomId}`} />
+                      to={`/floorplan?room=${roomId}&view=3d`} />
                 <Tile value={`${mon?.cooling_online ?? 0}/${mon?.cooling_units ?? 0}`}
                       caption="Cooling units online"
                       bar={mon && mon.cooling_units && mon.cooling_online < mon.cooling_units
