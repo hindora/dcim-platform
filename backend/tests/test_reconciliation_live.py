@@ -384,3 +384,76 @@ async def test_the_room_limit_cannot_close_what_the_intake_limit_upholds(session
     assert not [r for r in await reconcile.measured_clear(s) if r["id"] == alarm]
     await _service().sweep_trap_reconciliation(s)
     assert await _is_open(s, alarm), "a rack still at 29 C had its alarm closed"
+
+
+# ── a lost clear must always have a way back ─────────────────────────────────
+#
+# Nine (alarm, device type) pairs had none: a state-backed alarm read at a
+# point name the machine does not use, or a rule-backed one whose rule watches
+# a metric the machine does not report. The timer skipped both, so a dropped
+# clear trap meant an alarm open forever.
+
+async def _device(s, device_type: str) -> dict:
+    """A device of this type that is delivering telemetry right now."""
+    row = (await s.execute(text("""
+        SELECT d.id::text AS id, d.name
+          FROM device d
+         WHERE d.device_type = :t
+           AND EXISTS (SELECT 1 FROM telemetry_sample t
+                        WHERE t.device_id = d.id AND t.ts > now() - interval '10 minutes')
+         LIMIT 1
+    """), {"t": device_type})).mappings().first()
+    assert row, f"no {device_type} is reporting"
+    return dict(row)
+
+
+async def _point(s, device_id: str, metric: str, instance: str, value: bool) -> None:
+    await s.execute(text("""
+        INSERT INTO telemetry_bool (device_id, metric_id, instance, ts, value)
+        SELECT CAST(:d AS uuid), m.id, :i, now(), :v FROM metric m WHERE m.key = :m
+    """), {"d": device_id, "m": metric, "i": instance, "v": value})
+
+
+async def test_a_pumps_fault_is_read_back_at_the_pumps_own_point(session):
+    s = session
+    pump = await _device(s, "pump")
+    await _point(s, pump["id"], "alarm_state", "Alarm_Fault", False)
+    alarm = await _raise(s, pump["id"], instance="Alarm_Fault", alarm_type="pump_fault")
+
+    await _service().sweep_trap_reconciliation(s)
+    assert not await _is_open(s, alarm), (
+        f"{pump['name']} reads Alarm_Fault false and its pump_fault stayed open")
+
+
+async def test_a_pump_still_faulted_keeps_its_alarm(session):
+    s = session
+    pump = await _device(s, "pump")
+    await _point(s, pump["id"], "alarm_state", "Alarm_Fault", True)
+    alarm = await _raise(s, pump["id"], instance="Alarm_Fault", alarm_type="pump_fault",
+                         ago_s=7200)
+
+    await _service().sweep_trap_reconciliation(s)
+    assert await _is_open(s, alarm), "the pump still says faulted and the alarm was closed"
+
+
+async def test_a_ups_frequency_alarm_with_no_point_ages_out(session):
+    """A UPS publishes no Alarm_UnderFrequency (an energy monitor does), so
+    nothing can read the condition back and the timer is the only way home."""
+    s = session
+    ups = await _device(s, "ups")
+    alarm = await _raise(s, ups["id"], instance="", alarm_type="frequency_out_of_range",
+                         ago_s=7200)
+
+    assert [r for r in await reconcile.aged_out(s) if r["id"] == alarm], (
+        "a UPS frequency alarm nothing can measure was not offered to the timer")
+
+
+async def test_a_pdu_temperature_alarm_with_no_temperature_ages_out(session):
+    """pdu_temp_high's rule watches ambient_temperature, which a rack PDU never
+    reports, so the rule cannot decide it and must not block the timer."""
+    s = session
+    pdu = await _device(s, "pdu")
+    alarm = await _raise(s, pdu["id"], instance="", alarm_type="pdu_temp_high", ago_s=7200)
+
+    assert [r for r in await reconcile.aged_out(s) if r["id"] == alarm], (
+        "a PDU temperature alarm nothing can measure was not offered to the timer")

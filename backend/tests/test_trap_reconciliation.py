@@ -353,18 +353,51 @@ def test_the_generic_equipment_alarm_reads_its_own_point():
         "alarm_state", reconcile.ANY_INSTANCE, True)
 
 
-def test_a_state_backed_alarm_is_never_aged_out_by_the_timer():
+def test_a_state_backed_alarm_is_never_aged_out_while_its_point_is_polled():
     """The timer is for what nothing can measure. A boolean IS a measurement,
-    and it can hold the alarm open as well as close it - so the type is out of
-    the timer's reach in both directions, and cannot be closed on a clock
-    while the platform is still being told the machine is off."""
-    assert "NOT (a.alarm_type = ANY(:state_types))" in sql("_AGED_OUT")
+    and it can hold the alarm open as well as close it - so while the device
+    publishes the point the type is out of the timer's reach in both
+    directions. Only a point this machine does not have at all (a pump has no
+    Alarm_PumpFault) leaves the alarm to the timer, or a lost clear is forever."""
+    s = sql("_AGED_OUT")
+    assert "JOIN telemetry_bool tb ON tb.device_id = a.device_id" in s
+    assert "tb.ts > now() - make_interval(secs => :known_s)" in s
+    assert "p.device_type = '' OR p.device_type = d.device_type" in s
 
 
-def test_the_timer_is_given_the_types_it_must_skip():
+def test_the_timer_is_given_the_points_it_must_respect():
     """A guard in the SQL that nothing binds is a guard that does nothing."""
     src = inspect.getsource(reconcile.aged_out)
-    assert '"state_types": list(STATE_BACKED)' in src
+    assert '"known_s": POINT_KNOWN_S' in src and "**state_points()" in src
+    assert "**state_points()" in inspect.getsource(reconcile.state_settled)
+
+
+def test_a_known_point_outlasts_any_heartbeat():
+    """A slow boolean must never read as one the machine does not have."""
+    assert reconcile.POINT_KNOWN_S >= 4 * reconcile.STATE_FRESH_S
+
+
+def test_a_rule_only_shields_from_the_timer_where_its_metric_is_reported():
+    """A rack PDU reports no temperature, so pdu_temp_high's rule cannot decide
+    a PDU's alarm and must not keep the timer off it."""
+    s = sql("_AGED_OUT")
+    assert "AND m.key = r.metric_key" in s
+    assert "coalesce(t.instance, '') = ANY(r.instances)" in s
+
+
+@pytest.mark.parametrize("alarm_type,device_type,point", [
+    ("pump_fault", "pump", "Alarm_Fault"),
+    ("chiller_flow_loss", "pump", "Alarm_LowFlow"),
+    ("crah_high_temp", "cdu", "Alarm_HighSupplyTemp"),
+])
+def test_a_machine_is_read_at_its_own_name_for_the_point(alarm_type, device_type, point):
+    pts = reconcile.state_points()
+    rows = list(zip(pts["types"], pts["device_types"], pts["instances"],
+                    pts["metrics"], pts["holds"], strict=True))
+    mine = [r for r in rows if r[0] == alarm_type and r[1] == device_type]
+    assert mine and mine[0][2] == point
+    general = reconcile.STATE_BACKED[alarm_type]
+    assert (mine[0][3], mine[0][4]) == (general[0], general[2]), "only the point name differs"
 
 
 def test_the_state_read_is_per_alarm_point_not_per_device():

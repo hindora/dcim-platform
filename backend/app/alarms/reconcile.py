@@ -140,6 +140,41 @@ STATE_BACKED: dict[str, tuple[str, str, bool]] = {
     "equipment_alarm":        ("alarm_state", ANY_INSTANCE, True),
 }
 
+#: The same condition under another point name on another kind of machine:
+#: {(alarm_type, device_type): point}. The metric and the polarity are the
+#: STATE_BACKED entry's; only the instance differs.
+#:
+#: Each of these left a trap alarm with no way to close: the poll was read at
+#: the name a different machine uses, found nothing, and a state-backed alarm
+#: is shielded from the timer, so a lost clear meant forever. A pump calls its
+#: fault Alarm_Fault and its flow loss Alarm_LowFlow (Alarm_PumpFault and
+#: Alarm_FlowLoss are a CDU's and a chiller's); a CDU's high temperature is
+#: its supply, Alarm_HighSupplyTemp, not a CRAH's Alarm_HighTemp.
+STATE_POINT_BY_TYPE: dict[tuple[str, str], str] = {
+    ("pump_fault", "pump"): "Alarm_Fault",
+    ("chiller_flow_loss", "pump"): "Alarm_LowFlow",
+    ("crah_high_temp", "cdu"): "Alarm_HighSupplyTemp",
+}
+
+
+def state_points() -> dict[str, list[Any]]:
+    """STATE_BACKED as parallel arrays for the SQL, with a device_type column:
+    '' for the general entry, a type for each STATE_POINT_BY_TYPE override."""
+    rows = [(t, "", m, i, h) for t, (m, i, h) in STATE_BACKED.items()]
+    for (t, dt), inst in STATE_POINT_BY_TYPE.items():
+        m, _i, h = STATE_BACKED[t]
+        rows.append((t, dt, m, inst, h))
+    return {"types": [r[0] for r in rows], "device_types": [r[1] for r in rows],
+            "metrics": [r[2] for r in rows], "instances": [r[3] for r in rows],
+            "holds": [r[4] for r in rows]}
+
+
+#: How far back a point or a rule's metric counts as something the device
+#: PUBLISHES. Longer than any heartbeat, so a slow boolean is never mistaken
+#: for one the machine does not have: only a point this device has not sent in
+#: six hours lets the timer take an alarm the point would otherwise decide.
+POINT_KNOWN_S = 21600
+
 #: How fresh a boolean must be to speak for the condition.
 #:
 #: Booleans are stored on CHANGE plus a heartbeat rather than on every poll
@@ -315,9 +350,9 @@ _MEASURED_CLEAR = text("""
 _STATE = text("""
     WITH point AS (
         SELECT * FROM unnest(
-            CAST(:types AS text[]), CAST(:metrics AS text[]),
+            CAST(:types AS text[]), CAST(:device_types AS text[]), CAST(:metrics AS text[]),
             CAST(:instances AS text[]), CAST(:holds AS boolean[])
-        ) AS t(alarm_type, metric_key, instance, holds)
+        ) AS t(alarm_type, device_type, metric_key, instance, holds)
     ),
     latest AS (
         SELECT DISTINCT ON (tb.device_id, m.key, tb.instance)
@@ -340,6 +375,8 @@ _STATE = text("""
       FROM alarm a
       JOIN device d ON d.id = a.device_id
       JOIN point p  ON p.alarm_type = a.alarm_type
+                   -- the general point, or this machine's own name for it
+                   AND (p.device_type = '' OR p.device_type = d.device_type)
       JOIN latest l ON l.device_id = a.device_id
                    AND l.metric_key = p.metric_key
                    -- A named point, or - for a condition published under a
@@ -355,7 +392,13 @@ _STATE = text("""
 
 
 _AGED_OUT = text("""
-    WITH candidate AS (
+    WITH point AS (
+        SELECT * FROM unnest(
+            CAST(:types AS text[]), CAST(:device_types AS text[]), CAST(:metrics AS text[]),
+            CAST(:instances AS text[]), CAST(:holds AS boolean[])
+        ) AS t(alarm_type, device_type, metric_key, instance, holds)
+    ),
+    candidate AS (
         SELECT a.id, a.device_id, a.alarm_type, a.instance,
                a.severity::text AS severity, d.name AS device_name,
                extract(epoch FROM (now() - a.last_seen)) AS quiet_s
@@ -386,7 +429,27 @@ _AGED_OUT = text("""
            -- whichever direction the boolean points. Three CRAHs aged out on
            -- this timer while the platform was still polling them "not
            -- running" every heartbeat.
-           AND NOT (a.alarm_type = ANY(:state_types))
+           --
+           -- ...but only where that boolean EXISTS on this machine. A pump has
+           -- no Alarm_PumpFault and a UPS no Alarm_UnderFrequency; shielding
+           -- those from the timer left a lost clear open forever, because no
+           -- poll could ever speak for them.
+           AND NOT EXISTS (
+               SELECT 1 FROM point p
+                 JOIN metric m ON m.key = p.metric_key
+                 JOIN telemetry_bool tb ON tb.device_id = a.device_id
+                                       AND tb.metric_id = m.id
+                WHERE p.alarm_type = a.alarm_type
+                  AND (p.device_type = '' OR p.device_type = d.device_type)
+                  AND (tb.instance = p.instance
+                    OR (p.instance = :any_instance
+                        AND (tb.instance = a.instance OR a.instance = '')))
+                  AND tb.ts > now() - make_interval(secs => :known_s)
+           )
+           -- A rule that can measure it decides it - where the device
+           -- actually reports the rule's metric. A rack PDU reports no
+           -- temperature, so a clear rule on ambient_temperature can never
+           -- speak for its pdu_temp_high and must not stand in the timer's way.
            AND NOT EXISTS (
                SELECT 1 FROM alarm_rule r
                 WHERE r.alarm_type = a.alarm_type
@@ -395,6 +458,15 @@ _AGED_OUT = text("""
                   AND r.clear_threshold IS NOT NULL
                   AND (cardinality(r.device_types) = 0
                     OR d.device_type = ANY(r.device_types))
+                  AND EXISTS (
+                      SELECT 1 FROM telemetry_sample t
+                        JOIN metric m ON m.id = t.metric_id
+                       WHERE t.device_id = a.device_id
+                         AND m.key = r.metric_key
+                         AND (cardinality(coalesce(r.instances, '{}')) = 0
+                           OR coalesce(t.instance, '') = ANY(r.instances))
+                         AND t.ts > now() - make_interval(secs => :known_s)
+                  )
            )
     )
     SELECT c.id::text AS id, c.device_id::text AS device_id, c.device_name,
@@ -512,8 +584,8 @@ async def aged_out(session: AsyncSession, *,
     rows = (await session.execute(_AGED_OUT, {
         "sources": list(RECONCILABLE_SOURCES),
         "grace_s": grace_s, "fresh_s": fresh_s,
-        "state_types": list(STATE_BACKED),
         "event_types": list(EVENT_TYPES), "event_grace_s": EVENT_GRACE_S,
+        "any_instance": ANY_INSTANCE, "known_s": POINT_KNOWN_S, **state_points(),
     })).mappings().all()
     return [dict(r) for r in rows]
 
@@ -530,11 +602,7 @@ async def state_settled(session: AsyncSession, *,
         return []
     rows = (await session.execute(_STATE, {
         "sources": list(RECONCILABLE_SOURCES), "fresh_s": fresh_s,
-        "any_instance": ANY_INSTANCE,
-        "types": list(STATE_BACKED),
-        "metrics": [v[0] for v in STATE_BACKED.values()],
-        "instances": [v[1] for v in STATE_BACKED.values()],
-        "holds": [v[2] for v in STATE_BACKED.values()],
+        "any_instance": ANY_INSTANCE, **state_points(),
     })).mappings().all()
     return [dict(r) for r in rows if r["ended"]]
 
