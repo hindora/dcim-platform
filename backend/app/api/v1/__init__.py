@@ -5,6 +5,7 @@ from fastapi import APIRouter
 from app.api.v1 import (
     alarms,
     analytics,
+    anomalies,
     assets,
     bulk,
     capacity,
@@ -54,6 +55,7 @@ api_router.include_router(estate.router)
 api_router.include_router(topology.router)
 api_router.include_router(discovery.router)
 api_router.include_router(alarms.router)
+api_router.include_router(anomalies.router)
 api_router.include_router(collector.router)
 # Before collectors: /collectors/releases must not read as a collector id.
 api_router.include_router(releases.router)

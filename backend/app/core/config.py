@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import base64
 from functools import lru_cache
+from typing import Literal
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -141,6 +142,41 @@ class Settings(BaseSettings):
     #: is what actually protects it; this only stops a mis-signed build from
     #: ever being offered. Empty: accept and leave verification to collectors.
     release_trusted_keys: dict[str, str] = Field(default_factory=dict)
+
+    # --- anomaly detection (docs/28, docs/29) --------------------------------
+    #: Master switch. Off by default: the sweep and the nightly fit return
+    #: immediately, and the API serves the catalogue read-only.
+    anomaly_enabled: bool = False
+    #: L2 cadence. L3/L4 run every Nth sweep per anomaly_detector.cadence_s.
+    #: The cadence-gate threshold (0.9x) and the heartbeat TTL (10x) derive
+    #: from it (docs/29 section 10.1).
+    anomaly_sweep_s: int = Field(60, ge=30, le=600)
+    #: UTC hour the nightly baseline fit and prune run (after the 1d rollup's
+    #: refresh; 0042 refreshes hourly with a 1-day end offset).
+    anomaly_baseline_hour_utc: int = Field(3, ge=0, le=23)
+    #: L6 explainer. 'none' leaves the system fully functional (doc 28).
+    anomaly_explainer: Literal["none", "cloud", "local"] = "none"
+    anomaly_explainer_model: str = ""
+    anomaly_explainer_url: str = ""
+    #: Contract deviation D2, per doc 30: a credential and a timeout for a
+    #: cloud explainer. The key is a SecretStr and is never logged.
+    anomaly_explainer_api_key: SecretStr | None = None
+    anomaly_explainer_timeout_s: int = Field(30, ge=5, le=120)
+
+    @model_validator(mode="after")
+    def _explainer_needs_its_endpoint(self) -> Settings:
+        """A cloud explainer without a key, or a local one without a URL,
+        would fail on the first explain call, long after the deploy that
+        broke it. Refuse at startup instead (docs/29 section 11)."""
+        if self.anomaly_explainer == "cloud" and (
+                self.anomaly_explainer_api_key is None
+                or not self.anomaly_explainer_api_key.get_secret_value()):
+            raise ValueError(
+                "DCIM_ANOMALY_EXPLAINER=cloud needs DCIM_ANOMALY_EXPLAINER_API_KEY")
+        if self.anomaly_explainer == "local" and not self.anomaly_explainer_url:
+            raise ValueError(
+                "DCIM_ANOMALY_EXPLAINER=local needs DCIM_ANOMALY_EXPLAINER_URL")
+        return self
 
     @field_validator("credential_key")
     @classmethod

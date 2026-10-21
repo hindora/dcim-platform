@@ -30,6 +30,7 @@ from sqlalchemy import text
 from app.alarms import collector_visibility, platform_monitor
 from app.alarms import platform as rules
 from app.alarms.service import AlarmService, event_row
+from app.analytics import sweep as anomaly_sweep
 from app.contracts.messages_gen import (
     CollectorHeartbeat,
     EndpointState,
@@ -45,7 +46,7 @@ from app.core import metrics
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
 from app.core.metrics_gen import METRICS
-from app.db.session import dispose_engine, unit_of_work
+from app.db.session import dispose_engine, get_engine, unit_of_work
 from app.ingest import changelog, rates, writer
 from app.ingest.enrich import InventoryCache
 from app.ingest.fanout import Fanout
@@ -93,6 +94,11 @@ LOAD_PCT_METRIC = "load_pct"
 MAINTENANCE_TICK_S = 30.0
 SNAPSHOT_CHECK_S = 3600.0
 STALENESS_SWEEP_S = 60.0
+
+# How often the nightly baseline step asks whether today's fit is due. The
+# fit itself is once per UTC day (Postgres guard, docs/29 section 10.1); this
+# is only how soon after DCIM_ANOMALY_BASELINE_HOUR_UTC it starts.
+ANOMALY_BASELINE_CHECK_S = 300.0
 
 # How often the platform evaluates its own health. Frequent enough that a dead
 # collector is noticed inside a minute, rare enough that it is not a load.
@@ -172,6 +178,11 @@ class IngestWorker:
         self._last_platform_check = float("-inf")
         self._last_consumer_reap = float("-inf")
         self._last_assigner_run = float("-inf")
+        # Anomaly sweep and nightly fit (docs/33 task 0.12). -inf like the
+        # others; with two replicas the cadence gate, not this timer, decides
+        # which of them sweeps.
+        self._last_anomaly_sweep = float("-inf")
+        self._last_baseline_check = float("-inf")
         # Pipeline latency measured on the last telemetry batch. None until a
         # batch has actually been seen - an idle worker has no lag to report,
         # and reporting zero would be a claim it cannot support.
@@ -252,6 +263,8 @@ class IngestWorker:
         await self._maybe_sweep_staleness()
         await self._maybe_advance_maintenance()
         await self._maybe_snapshot()
+        await self._maybe_detect_anomalies()
+        await self._maybe_fit_baselines()
         await self.integrations.maybe_run()
 
         # Before the early return below: the worker is alive whether or not
@@ -511,6 +524,84 @@ class IngestWorker:
             # Missing one check is a snapshot an hour late, which the day key
             # absorbs. Stopping ingest would not be.
             log.error("asset snapshot failed", error=str(exc), exc_info=True)
+
+    async def _maybe_detect_anomalies(self) -> None:
+        """Run the anomaly sweep (docs/29 section 10.1, docs/33 task 0.12).
+
+        The same shape as the staleness sweep: its own transaction, outbox
+        rows in that transaction, fanout after commit, and a catch-all so a
+        failed sweep never stops ingest. Inside the transaction the DCIMA
+        advisory lock picks one replica, and the cadence gate keeps the other
+        from sweeping half an interval later.
+
+        With DCIM_ANOMALY_ENABLED false this returns before any read or
+        write, which is what makes the Phase 0 deploy a no-op.
+        """
+        if not self.settings.anomaly_enabled:
+            return
+        sweep_s = self.settings.anomaly_sweep_s
+        now = time.monotonic()
+        if now - self._last_anomaly_sweep < sweep_s:
+            return
+        self._last_anomaly_sweep = now
+        started = datetime.now(UTC)
+        try:
+            async with unit_of_work() as session:
+                result = await anomaly_sweep.guarded_sweep(
+                    session, self.redis, consumer=self.consumer, sweep_s=sweep_s,
+                    now=started)
+                if result.actions:
+                    await integration_outbox.enqueue_actions(session, result.actions)
+            outcome = "ran" if result.ran else (result.skipped or "skipped")
+            metrics.anomaly_sweeps.labels(outcome=outcome).inc()
+            if result.ran:
+                metrics.anomaly_sweep_duration.observe(result.duration_ms / 1000.0)
+                metrics.anomaly_series_scored.set(result.series_scored)
+                for action in result.actions:
+                    await self.fanout.alarm(action.kind, action.alarm)
+            await anomaly_sweep.record_outcome(
+                self.redis, consumer=self.consumer, outcome=outcome, at=started,
+                duration_ms=result.duration_ms if result.ran else None)
+            log.info("anomaly sweep", outcome=outcome, duration_ms=result.duration_ms,
+                     series_scored=result.series_scored,
+                     findings_opened=result.findings_opened,
+                     findings_resolved=result.findings_resolved,
+                     alerts_raised=result.alerts_raised)
+        except Exception as exc:
+            metrics.anomaly_sweeps.labels(outcome="error").inc()
+            log.error("anomaly sweep failed", error=str(exc), exc_info=True)
+            with contextlib.suppress(Exception):
+                await anomaly_sweep.record_outcome(
+                    self.redis, consumer=self.consumer, outcome="error", at=started,
+                    error=str(exc))
+
+    async def _maybe_fit_baselines(self) -> None:
+        """The nightly baseline fit and prune, once per UTC day.
+
+        A session-level DCIMB lock on a dedicated connection rather than the
+        xact lock: the fit runs as many short per-batch transactions, and one
+        transaction held for minutes would pin the vacuum horizon. A worker
+        death closes the connection and releases the lock.
+        """
+        if not self.settings.anomaly_enabled:
+            return
+        now = time.monotonic()
+        if now - self._last_baseline_check < ANOMALY_BASELINE_CHECK_S:
+            return
+        self._last_baseline_check = now
+        try:
+            async with get_engine().connect() as conn:
+                result = await anomaly_sweep.guarded_fit(
+                    conn, self.redis, consumer=self.consumer,
+                    hour_utc=self.settings.anomaly_baseline_hour_utc)
+            outcome = "ran" if result.ran else (result.skipped or "skipped")
+            metrics.anomaly_baseline_runs.labels(outcome=outcome).inc()
+            if result.ran:
+                log.info("anomaly baselines fitted", series_fitted=result.series_fitted,
+                         rejected=result.rejected, pruned_rows=result.pruned_rows)
+        except Exception as exc:
+            metrics.anomaly_baseline_runs.labels(outcome="error").inc()
+            log.error("anomaly baseline fit failed", error=str(exc), exc_info=True)
 
     async def _maybe_advance_maintenance(self) -> None:
         """Open and close maintenance windows the clock has caught up with.

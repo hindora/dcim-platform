@@ -40,6 +40,15 @@ import math
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.analytics import stats as _stats
+from app.analytics.stats import (  # noqa: F401 - re-exported for callers
+    LinearModel,
+    fit_linear,
+    mean,
+    median,
+    t95,
+)
+
 # Below this there is no forecast of any kind. Two weeks is not enough to be
 # confident, it is the point below which the question cannot be asked.
 MIN_HISTORY_DAYS = 14
@@ -71,43 +80,7 @@ INSUFFICIENT = "insufficient_history"
 LINEAR = "linear"
 HOLT_WINTERS = "holt_winters"
 
-# Two-sided 95% Student-t quantiles. A small table beats a dependency on scipy
-# for the one number needed, and beats hardcoding 1.96 - at 12 degrees of
-# freedom that understates the interval by about 11%, which is the difference
-# between "we have a year" and "we have nine months".
-_T95 = {
-    1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 6: 2.447, 7: 2.365,
-    8: 2.306, 9: 2.262, 10: 2.228, 11: 2.201, 12: 2.179, 13: 2.160, 14: 2.145,
-    15: 2.131, 16: 2.120, 17: 2.110, 18: 2.101, 19: 2.093, 20: 2.086,
-    21: 2.080, 22: 2.074, 23: 2.069, 24: 2.064, 25: 2.060, 26: 2.056,
-    27: 2.052, 28: 2.048, 29: 2.045, 30: 2.042,
-}
-
-
-def t95(df: int) -> float:
-    """95% two-sided t quantile, exact to 30 df and approximated beyond."""
-    if df <= 0:
-        return float("inf")
-    if df in _T95:
-        return _T95[df]
-    # Decays towards the normal 1.96; within about 0.005 over 30 < df < 300.
-    return 1.96 + (2.042 - 1.96) * (30.0 / df)
-
-
-def median(xs: list[float]) -> float:
-    s = sorted(xs)
-    n = len(s)
-    if not n:
-        return 0.0
-    mid = n // 2
-    return s[mid] if n % 2 else (s[mid - 1] + s[mid]) / 2.0
-
-
 # --- level shifts -------------------------------------------------------------
-
-def mean(xs: list[float]) -> float:
-    return sum(xs) / len(xs) if xs else 0.0
-
 
 def detect_level_shift(values: list[float]) -> int | None:
     """Index of a step change, or None.
@@ -130,90 +103,15 @@ def detect_level_shift(values: list[float]) -> int | None:
     moves both the scale and the difference together, so it scores about 1 and
     stays quiet; a step moves only the difference.
     """
-    n = len(values)
-    m = SEASON_DAYS
-    if n < 2 * m:
-        return None
-
-    # Noise scale with the weekly pattern differenced out.
-    scale = median([abs(values[i] - values[i - m]) for i in range(m, n)])
-
-    best_i, best_z = 0, 0.0
-    for i in range(m, n - m + 1):
-        diff = abs(mean(values[i:i + m]) - mean(values[i - m:i]))
-        # A perfectly steady series has no scale to divide by; there any
-        # movement at all is a step rather than noise.
-        z = diff / scale if scale > 0 else (float("inf") if diff > 0 else 0.0)
-        if z > best_z:
-            best_i, best_z = i, z
-
-    if best_z < LEVEL_SHIFT_SIGMA:
-        return None
-    # A step in the last few days leaves nothing to refit on; better to report
-    # it and keep the whole series than to fit three points.
-    if best_i > n - MIN_HISTORY_DAYS:
-        return None
-    return best_i
+    return _stats.detect_level_shift(values, season=SEASON_DAYS,
+                                     sigma=LEVEL_SHIFT_SIGMA,
+                                     min_tail=MIN_HISTORY_DAYS)
 
 
 # --- straight line ------------------------------------------------------------
 
-@dataclass
-class LinearModel:
-    """Ordinary least squares on the day index, with a proper interval.
-
-    The interval is the textbook prediction interval, not a confidence interval
-    on the mean: it widens with distance from the centre of the data, which is
-    the behaviour that stops a 90-day extrapolation from looking as solid as a
-    5-day one.
-    """
-
-    slope: float
-    intercept: float
-    n: int
-    x_mean: float
-    sxx: float
-    resid_sd: float
-    r2: float
-
-    def predict(self, x: float) -> float:
-        return self.intercept + self.slope * x
-
-    def interval(self, x: float) -> tuple[float, float]:
-        df = self.n - 2
-        if df <= 0 or self.sxx <= 0:
-            p = self.predict(x)
-            return p, p
-        se = self.resid_sd * math.sqrt(
-            1.0 + 1.0 / self.n + (x - self.x_mean) ** 2 / self.sxx)
-        half = t95(df) * se
-        p = self.predict(x)
-        return p - half, p + half
-
-
-def fit_linear(values: list[float]) -> LinearModel | None:
-    n = len(values)
-    if n < 3:
-        return None
-    xs = [float(i) for i in range(n)]
-    x_mean = sum(xs) / n
-    y_mean = sum(values) / n
-    sxx = sum((x - x_mean) ** 2 for x in xs)
-    if sxx <= 0:
-        return None
-    sxy = sum((x - x_mean) * (y - y_mean) for x, y in zip(xs, values, strict=True))
-    slope = sxy / sxx
-    intercept = y_mean - slope * x_mean
-    resid = [y - (intercept + slope * x) for x, y in zip(xs, values, strict=True)]
-    sse = sum(r * r for r in resid)
-    sst = sum((y - y_mean) ** 2 for y in values)
-    df = n - 2
-    return LinearModel(
-        slope=slope, intercept=intercept, n=n, x_mean=x_mean, sxx=sxx,
-        resid_sd=math.sqrt(sse / df) if df > 0 else 0.0,
-        # A flat series has no variance to explain; calling that a perfect fit
-        # is arithmetically true and practically misleading, so it reads 0.
-        r2=(1.0 - sse / sst) if sst > 0 else 0.0)
+# LinearModel and fit_linear live in app/analytics/stats.py (docs/33 task
+# 0.10) and are re-exported here unchanged.
 
 
 # --- Holt-Winters -------------------------------------------------------------

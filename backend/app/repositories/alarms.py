@@ -222,7 +222,8 @@ async def raise_alarm(session: AsyncSession, *, device_id: str, alarm_type: str,
                       value: float | None = None,
                       threshold: float | None = None,
                       category: str | None = None,
-                      response_class: str | None = None) -> dict[str, Any] | None:
+                      response_class: str | None = None,
+                      attributes: dict[str, Any] | None = None) -> dict[str, Any] | None:
     """Insert or update the open alarm for this key.
 
     Returns the alarm plus a `change` describing what happened - created,
@@ -236,13 +237,23 @@ async def raise_alarm(session: AsyncSession, *, device_id: str, alarm_type: str,
     once at raise time also means an alarm keeps the category it was raised
     under when a device is later re-typed - history should say what was true
     then. A rule may override it; otherwise the three-layer classifier decides.
+
+    `attributes` is free-form detail written to the existing `alarm.attributes`
+    jsonb (migration 0005). The anomaly sweep uses it to link a derived alarm
+    to the finding behind it, as {"anomaly": {finding_id, detector_id, ...}}
+    (docs/29 D13, docs/30 section 1). It is a shallow merge, `alarm.attributes
+    || new`, on create and on conflict alike, so a second writer's top-level
+    key replaces only itself; omitted (None) leaves the column untouched, and
+    a new row then gets the column default `{}`. It is deliberately not in
+    RETURNING: the returned dict is what reaches the websocket, and no existing
+    shape changes.
     """
     row = (await session.execute(text(f"""
         INSERT INTO alarm (device_id, endpoint_id, alarm_type, instance, rule_id,
                            severity, state, message, metric_key, trigger_value,
                            threshold, source, first_seen, last_seen,
                            category, detection, response_class, shelved_by_window,
-                           shelved_reason)
+                           shelved_reason, attributes)
         SELECT CAST(:device_id AS uuid), CAST(:endpoint_id AS uuid), :alarm_type,
                :instance, CAST(:rule_id AS uuid), CAST(:severity AS severity_t),
                'ACTIVE', :message, :metric_key, :value, :threshold, :source,
@@ -297,7 +308,8 @@ async def raise_alarm(session: AsyncSession, *, device_id: str, alarm_type: str,
                                  AND w.status = 'active' AND w.suppress)
                       THEN 'maintenance_window'
                  WHEN d.lifecycle = 'installed' THEN 'not_commissioned'
-               END
+               END,
+               COALESCE(CAST(:attributes AS jsonb), '{{}}'::jsonb)
           -- One row ALWAYS, whatever the joins find. Selecting FROM device
           -- instead would insert nothing at all when an alarm has no device
           -- behind it - the alarm would vanish rather than be classified, and
@@ -349,7 +361,11 @@ async def raise_alarm(session: AsyncSession, *, device_id: str, alarm_type: str,
             -- answer. `category` deliberately does NOT follow - it records
             -- what kind of thing this was when it was raised - but urgency is
             -- a property of the condition now, not of its history.
-            response_class   = EXCLUDED.response_class
+            response_class   = EXCLUDED.response_class,
+            -- Merged, never replaced: a caller that passes no attributes
+            -- (every L1 detector) concatenates an empty object, which is a no-op.
+            attributes       = alarm.attributes
+                               || COALESCE(CAST(:attributes AS jsonb), '{{}}'::jsonb)
         RETURNING id::text, severity::text AS severity,
                   prev_severity::text AS prev_severity,
                   state::text AS state, occurrence_count, first_seen, last_seen,
@@ -361,6 +377,7 @@ async def raise_alarm(session: AsyncSession, *, device_id: str, alarm_type: str,
         "value": value, "threshold": threshold, "source": source,
         "observed_at": observed_at, "category": category,
         "response_class": response_class,
+        "attributes": json.dumps(attributes) if attributes is not None else None,
         "detection": alert_taxonomy.detection_for(source, metric_key=metric_key,
                                                   alarm_type=alarm_type),
     })).mappings().first()

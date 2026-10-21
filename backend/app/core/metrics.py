@@ -163,6 +163,30 @@ ingest_foreign = Counter(
     ["collector_id", "stream"], registry=REGISTRY)
 
 
+# --- anomaly detection (docs/29 section 10, docs/33 Phase 0) -------------------
+
+# One sample per worker tick that the sweep timer fires on. `outcome` is
+# ran | cadence | lock_held | error: on the two-replica deploy the sum of
+# `ran` across replicas is the sweep rate (one per DCIM_ANOMALY_SWEEP_S), and
+# the other replica's ticks show up as `cadence` (docs/30 gate_skips_1h).
+anomaly_sweeps = Counter(
+    "dcim_anomaly_sweeps_total", "Anomaly sweep timer firings by outcome",
+    ["outcome"], registry=REGISTRY)
+
+anomaly_sweep_duration = Histogram(
+    "dcim_anomaly_sweep_duration_seconds",
+    "Wall time of an anomaly sweep that ran, lock to heartbeat",
+    buckets=_API_BUCKETS, registry=REGISTRY)
+
+anomaly_series_scored = Gauge(
+    "dcim_anomaly_series_scored",
+    "Series the last anomaly sweep on this worker scored", registry=REGISTRY)
+
+# outcome: ran | lock_held | already_fitted | error
+anomaly_baseline_runs = Counter(
+    "dcim_anomaly_baseline_runs_total", "Nightly baseline fit attempts by outcome",
+    ["outcome"], registry=REGISTRY)
+
 @contextmanager
 def observe(histogram: Histogram, **labels: str) -> Iterator[None]:
     """Time a block into a histogram, including when it raises.
