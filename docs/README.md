@@ -73,3 +73,22 @@ thing §24 of the same proposal exists to prevent. `19` B1 is the argument; `20`
 §1 is the rule that replaces it.
 
 Start with `19` — `20`–`23` only make sense as its consequences.
+
+## Anomaly detection (`28`–`33`)
+
+A design for detecting faults in the cooling plant, terminal units and the
+devices they serve, researched against current industry practice and written
+against the running platform and simulator, with a full build plan. **Not built.**
+
+| Doc | Contents |
+|---|---|
+| `28-anomaly-detection-design.md` | Layered detection (data quality, hard thresholds, state-gated rules, residual + EWMA/CUSUM, peer comparison), per-device-class detector catalogue, cooling-chain incident correlation, advisory queue under ISA-18.2 budgets, the LLM verdict, codebase fit, simulator gaps, event-level evaluation and six phases |
+| `29-anomaly-data-model.md` | Seven raw-SQL tables (no hypertables), DDL, indexes, retention and sizing, jsonb shapes, detector seed rows, Redis keys and locks, settings, migrations `0111`–`0114` |
+| `30-anomaly-api-spec.md` | `/api/v1/anomalies` endpoints, role matrix, feedback state machine, expected-band rules, explainer guardrails, websocket events, alarm and Jira flow. Additive only |
+| `31-anomaly-frontend-spec.md` | Triage view at `/analytics?view=anomaly`, finding and incident detail, expected band on device telemetry, derived-alarm evidence panel, detector settings, copy deck |
+| `32-anomaly-simulator-changes.md` | Simulator ground truth: truth/wire split, sensor faults, degradation, ramps, weather and setpoint events, injection ledger, influence export, bug fixes, named campaign library |
+| `33-anomaly-implementation-plan.md` | Phases 0–5 with tasks, files, estimates, tests, campaigns and exit criteria; consolidated detector table; evaluation harness; rollout; risk register; open questions |
+
+The headline finding: **no LLM in the detection path.** Rules and classical
+statistics detect; an optional, evidence-bound LLM may explain an incident
+after the fact, and the system must work fully with it switched off.
