@@ -218,7 +218,7 @@ export function SiteDrawer({ site, onClose }: { site: SiteRow; onClose: () => vo
         {/* A <button> with no handler, which is what this was, looks exactly
             like a working one and silently does nothing. Same destination as
             the site row's ENTER. */}
-        <Link className="primary enter" to={`/devices?datacenter=${site.code}`}>
+        <Link className="primary enter" to={`/floorplan?site=${site.id}&view=3d`}>
           ENTER
         </Link>
 

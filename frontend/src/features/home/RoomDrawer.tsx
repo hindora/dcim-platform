@@ -145,7 +145,7 @@ export function RoomDrawer({ roomId, roomName, onClose }: {
             called ENTER too. One link with two names in the same table reads
             as two different places. What ENTER means is "go into this scope" -
             for a site that is its device list, for a room its floor plan. */}
-        <Link className="enter primary" to={`/floorplan?room=${roomId}`}>
+        <Link className="enter primary" to={`/floorplan?room=${roomId}&view=3d`}>
           ENTER
         </Link>
 
