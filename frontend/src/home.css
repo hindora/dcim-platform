@@ -671,6 +671,8 @@ button.ind:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px
   background-position: center; background-repeat: no-repeat;
 }
 :root[data-theme="light"] .rail-card .visual.shot { background-image: var(--shot-light); }
+/* The 3D scene renders dim at card size; a small lift keeps the building readable. */
+.rail-card .visual.shot.lift { filter: contrast(1.15) brightness(1.1); }
 .rail-card .body {
   padding: 16px 18px; display: flex; flex-direction: column; gap: 8px; flex: 1;
 }

@@ -31,7 +31,7 @@ const CARDS = [
     body: 'Every device and the links between them, room by room, with the power, cooling, network and management paths as layers.',
   },
   {
-    to: '/floorplan', title: 'Floor map', dark: floorDark, light: floorLight,
+    to: '/floorplan', title: 'Floor map', dark: floorDark, light: floorLight, lift: true,
     body: 'The site in 3D, from the compound through the building to a rack and the device in its U - live, or at any moment in the past.',
   },
   {
@@ -43,9 +43,9 @@ const CARDS = [
 export function RailCards() {
   return (
     <>
-      {CARDS.map(({ to, title, body, dark, light }) => (
+      {CARDS.map(({ to, title, body, dark, light, lift }) => (
         <Link key={title} className="rail-card" to={to}>
-          <div className="visual shot" aria-hidden
+          <div className={`visual shot${lift ? ' lift' : ''}`} aria-hidden
                style={{ '--shot-dark': `url(${dark})`, '--shot-light': `url(${light})` } as CSSProperties} />
           <div className="body">
             <h3>{title}</h3>
