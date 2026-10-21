@@ -466,7 +466,7 @@ export function Home() {
               )}
               <span className="spacer" />
               <button className="row-btn" onClick={() => setDrawerSite(roomsSite)}>KPIs</button>
-              <Link className="row-btn primary" to={`/devices?datacenter=${roomsSite.code}`}
+              <Link className="row-btn primary" to={`/floorplan?site=${roomsSite.id}&view=3d`}
                     style={{ display: 'inline-block', lineHeight: '26px',
                              textAlign: 'center' }}>
                 ENTER
@@ -536,7 +536,7 @@ export function Home() {
                     <button className="row-btn" onClick={() => setDrawerRoom(r)}>KPIs</button>
                   </td>
                   <td className="ind-cell">
-                    <Link className="row-btn primary" to={`/floorplan?room=${r.id}`}
+                    <Link className="row-btn primary" to={`/floorplan?room=${r.id}&view=3d`}
                           style={{ display: 'inline-block', lineHeight: '26px', textAlign: 'center' }}>
                       ENTER
                     </Link>
@@ -625,7 +625,7 @@ function SiteLine({ site, onKpis, onRooms, labels, onDrill }: {
           <button className="row-btn" onClick={onKpis}>KPIs</button>
         </td>
         <td className="ind-cell">
-          <Link className="row-btn primary" to={`/devices?datacenter=${site.code}`}
+          <Link className="row-btn primary" to={`/floorplan?site=${site.id}&view=3d`}
                 style={{ display: 'inline-block', lineHeight: '26px', textAlign: 'center' }}>
             ENTER
           </Link>
