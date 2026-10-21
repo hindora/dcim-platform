@@ -67,11 +67,26 @@ def test_every_one_of_the_newest_samples_must_be_in_the_clear_band():
     the condition ended.
     """
     s = sql("_MEASURED_CLEAR")
-    assert "row_number() OVER (PARTITION BY c.id ORDER BY t.ts DESC)" in s
+    # Per alarm AND per rule: two rules on one type each need their own samples.
+    assert "row_number() OVER (PARTITION BY c.id, c.rule_id ORDER BY t.ts DESC)" in s
     assert "WHERE rn <= need" in s
     assert "max(value)" in s and "min(value)" in s
-    assert "operator = '>' AND hi < clear_threshold" in s
-    assert "operator = '<' AND lo > clear_threshold" in s
+    assert "operator = '>' AND max(value) < clear_threshold" in s
+    assert "operator = '<' AND min(value) > clear_threshold" in s
+
+
+def test_each_rule_judges_only_the_readings_it_covers():
+    """The 35 C room rule (instance ROOM) must not read a rack intake (""), and
+    no rule with readings that still holds the alarm may be outvoted."""
+    s = sql("_MEASURED_CLEAR")
+    assert "coalesce(t.instance, '') = ANY(c.rule_instances)" in s
+    assert "NOT EXISTS (SELECT 1 FROM tail u WHERE u.id = t.id AND NOT u.clear)" in s
+
+
+def test_the_clear_names_the_instance_the_alarm_is_filed_under():
+    """A trap files under its own instance ("1"); clearing "" misses the row."""
+    s = sql("_MEASURED_CLEAR")
+    assert "t.alarm_type, t.instance, t.severity" in s
 
 
 def test_the_window_still_bounds_how_old_evidence_may_be():
@@ -83,7 +98,7 @@ def test_the_window_still_bounds_how_old_evidence_may_be():
 def test_a_clear_needs_enough_samples_to_be_evidence():
     """A single reading after a long silence is not a trend."""
     s = sql("_MEASURED_CLEAR")
-    assert "samples >= need" in s
+    assert "count(*) >= need" in s
     assert "clear_dwell_samples" in s
 
 

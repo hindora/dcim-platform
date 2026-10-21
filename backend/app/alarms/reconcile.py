@@ -215,7 +215,14 @@ _MEASURED_CLEAR = text("""
                         a.threshold * (1 - CAST(:margin AS numeric)))
                                                      AS clear_threshold,
                GREATEST(coalesce(r.clear_dwell_samples, 2), 2) AS need,
-               (r.id IS NOT NULL)                     AS from_rule
+               (r.id IS NOT NULL)                     AS from_rule,
+               -- One alarm type can have several rules, told apart by the
+               -- instances they cover: ambient_temp_high is the 27 C rack
+               -- intake on a sensor's own reading ("") and the 35 C room limit
+               -- on a plant-room transmitter (ROOM). Each rule is judged on
+               -- its own readings, below, so the rule and the id travel on.
+               r.id                                   AS rule_id,
+               r.instances                            AS rule_instances
           FROM alarm a
           JOIN device d ON d.id = a.device_id
           LEFT JOIN alarm_rule r ON r.alarm_type = a.alarm_type
@@ -232,10 +239,15 @@ _MEASURED_CLEAR = text("""
            AND coalesce(r.metric_key, a.metric_key) IS NOT NULL
            AND (r.clear_threshold IS NOT NULL OR a.threshold IS NOT NULL)
     ), ranked AS (
-        SELECT c.id, c.device_id, c.device_name, c.alarm_type, c.severity,
+        SELECT c.id, c.device_id, c.device_name, c.alarm_type, c.instance, c.severity,
                c.metric_key, c.operator, c.clear_threshold, c.need, c.from_rule,
-               t.value,
-               row_number() OVER (PARTITION BY c.id ORDER BY t.ts DESC) AS rn
+               c.rule_id, t.value,
+               -- Per alarm AND per rule. Partitioning by the alarm alone dealt
+               -- each rule's readings out between the rules: with two rules on
+               -- ambient_temp_high every rule saw one sample of the two it
+               -- needs, nothing ever cleared, and a sensor reading 23.8 C kept
+               -- a lost-clear trap alarm open for six days.
+               row_number() OVER (PARTITION BY c.id, c.rule_id ORDER BY t.ts DESC) AS rn
           FROM candidate c
           JOIN metric m ON m.key = c.metric_key
           JOIN telemetry_sample t ON t.device_id = c.device_id
@@ -255,25 +267,40 @@ _MEASURED_CLEAR = text("""
                                  -- ever climbed.
                                  AND t.ts > c.last_seen
                                  AND t.ts > now() - make_interval(secs => :window_s)
+                                 -- A rule speaks only for the readings it
+                                 -- covers: the room limit never judges a rack
+                                 -- intake. No rule, or a rule over every
+                                 -- instance, takes the metric as it comes.
+                                 AND (c.rule_instances IS NULL
+                                      OR cardinality(c.rule_instances) = 0
+                                      OR coalesce(t.instance, '') = ANY(c.rule_instances))
     ), tail AS (
-        SELECT id, device_id, device_name, alarm_type, severity, metric_key,
-               operator, clear_threshold, need, from_rule,
+        SELECT id, device_id, device_name, alarm_type, instance, severity, metric_key,
+               operator, clear_threshold, need, from_rule, rule_id,
                count(*)   AS samples,
                max(value) AS hi,
-               min(value) AS lo
+               min(value) AS lo,
+               (count(*) >= need
+                AND ((operator = '>' AND max(value) < clear_threshold)
+                  OR (operator = '<' AND min(value) > clear_threshold))) AS clear
           FROM ranked
          WHERE rn <= need
-         GROUP BY id, device_id, device_name, alarm_type, severity, metric_key,
-                  operator, clear_threshold, need, from_rule
+         GROUP BY id, device_id, device_name, alarm_type, instance, severity, metric_key,
+                  operator, clear_threshold, need, from_rule, rule_id
     )
-    SELECT id::text AS id, device_id::text AS device_id, device_name,
-           alarm_type, severity, metric_key, from_rule,
-           CASE WHEN operator = '>' THEN hi ELSE lo END AS worst,
-           clear_threshold
-      FROM tail
-     WHERE samples >= need
-       AND ((operator = '>' AND hi < clear_threshold)
-         OR (operator = '<' AND lo > clear_threshold))
+    -- One row per alarm, and only when no rule with readings still holds it:
+    -- the 35 C room limit being clear must never close an alarm the 27 C
+    -- intake limit still upholds. The instance is the one the alarm is FILED
+    -- under (a trap's own, here "1"), which is what the clear has to match.
+    SELECT DISTINCT ON (t.id)
+           t.id::text AS id, t.device_id::text AS device_id, t.device_name,
+           t.alarm_type, t.instance, t.severity, t.metric_key, t.from_rule,
+           CASE WHEN t.operator = '>' THEN t.hi ELSE t.lo END AS worst,
+           t.clear_threshold
+      FROM tail t
+     WHERE t.clear
+       AND NOT EXISTS (SELECT 1 FROM tail u WHERE u.id = t.id AND NOT u.clear)
+     ORDER BY t.id, t.clear_threshold
 """)
 
 

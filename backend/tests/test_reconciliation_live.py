@@ -315,3 +315,72 @@ async def test_a_restart_ages_out_before_a_condition_would(session):
     aged = {r["id"] for r in await reconcile.aged_out(s)}
     assert boot in aged, "a finished restart was held for the condition timer"
     assert held not in aged, "a condition aged out on the event timer"
+
+
+# ── one alarm type, several rules ────────────────────────────────────────────
+#
+# ambient_temp_high carries two rules on sensors, told apart by instance: the
+# 27 C rack intake on a sensor's own reading ("") and the 35 C room limit on a
+# plant-room transmitter (ROOM). Ranking readings per alarm dealt them out
+# between the rules, each saw one of the two samples it needs, and a trap
+# alarm whose clear was lost sat open for six days on a sensor reading 23.8 C.
+
+async def _rack_sensor(s) -> dict:
+    """A sensor publishing its own (instance "") ambient temperature now."""
+    row = (await s.execute(text("""
+        SELECT DISTINCT ON (d.id) d.id::text AS id, d.name
+          FROM device d
+          JOIN telemetry_sample t ON t.device_id = d.id
+          JOIN metric m ON m.id = t.metric_id
+         WHERE d.device_type = 'sensor' AND m.key = 'ambient_temperature'
+           AND coalesce(t.instance, '') = ''
+           AND t.ts > now() - interval '20 minutes'
+         ORDER BY d.id, t.ts DESC
+         LIMIT 1
+    """))).mappings().first()
+    assert row, "no rack sensor is publishing an ambient temperature"
+    return dict(row)
+
+
+async def _ambient(s, device_id: str, value: float, ahead_s: int) -> None:
+    """A reading AHEAD of now, so it is the newest the query can rank - the
+    live fleet keeps writing real ones into the same window."""
+    await s.execute(text("""
+        INSERT INTO telemetry_sample (ts, device_id, metric_id, instance, value, quality)
+        SELECT :t, CAST(:d AS uuid), m.id, '', :v, 'GOOD'
+          FROM metric m WHERE m.key = 'ambient_temperature'
+    """), {"d": device_id, "v": value,
+           "t": datetime.now(UTC) + timedelta(seconds=ahead_s)})
+
+
+async def test_a_lost_clear_closes_on_a_type_with_two_rules(session):
+    s = session
+    probe = await _rack_sensor(s)
+    alarm = await _raise(s, probe["id"], instance="1", alarm_type="ambient_temp_high",
+                         ago_s=120)
+    await _ambient(s, probe["id"], 23.5, ahead_s=5)
+    await _ambient(s, probe["id"], 23.6, ahead_s=6)
+
+    rows = [r for r in await reconcile.measured_clear(s) if r["id"] == alarm]
+    assert rows, "two rules on the type, two clear readings, and nothing was offered"
+    assert rows[0]["instance"] == "1", "the clear must name the trap's own instance"
+    assert rows[0]["clear_threshold"] == 25, "the intake rule judges the intake reading"
+
+    await _service().sweep_trap_reconciliation(s)
+    assert not await _is_open(s, alarm), (
+        f"{probe['name']} reads 23.6 C and its ambient_temp_high stayed open")
+
+
+async def test_the_room_limit_cannot_close_what_the_intake_limit_upholds(session):
+    """29 C is inside the 35 C room limit's clear band and outside the 27 C
+    intake limit's. A rack sensor is held to the intake limit, so it stays."""
+    s = session
+    probe = await _rack_sensor(s)
+    alarm = await _raise(s, probe["id"], instance="1", alarm_type="ambient_temp_high",
+                         ago_s=120)
+    await _ambient(s, probe["id"], 29.0, ahead_s=5)
+    await _ambient(s, probe["id"], 29.1, ahead_s=6)
+
+    assert not [r for r in await reconcile.measured_clear(s) if r["id"] == alarm]
+    await _service().sweep_trap_reconciliation(s)
+    assert await _is_open(s, alarm), "a rack still at 29 C had its alarm closed"
