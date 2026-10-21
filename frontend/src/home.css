@@ -664,6 +664,13 @@ button.ind:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px
 .rail-card:hover { border-color: var(--border-strong); text-decoration: none; }
 .rail-card .visual { height: 132px; background: var(--bg-inset); flex: none; }
 .rail-card .visual svg { display: block; width: 100%; height: 100%; }
+/* A crop of the real page, one per palette. The rule that does not apply is
+   never fetched, which is why these are backgrounds and not two <img>s. */
+.rail-card .visual.shot {
+  background-image: var(--shot-dark); background-size: cover;
+  background-position: center; background-repeat: no-repeat;
+}
+:root[data-theme="light"] .rail-card .visual.shot { background-image: var(--shot-light); }
 .rail-card .body {
   padding: 16px 18px; display: flex; flex-direction: column; gap: 8px; flex: 1;
 }
@@ -813,7 +820,7 @@ button.ind:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px
 @media (max-width: 1400px) {
   .home-body { grid-template-columns: minmax(0, 1fr); }
   /* Below the table rather than hidden: these cards are the only route into
-     the thermal, power and utilisation views from this page. */
+     the network, floor and world maps from this page. */
   .home-rail { flex-direction: row; flex-wrap: wrap; align-items: stretch; }
   .home-rail .rail-card { flex: 1 1 280px; min-width: 0; }
   /* Side by side the cards are a third as wide, so the schematic no longer
