@@ -9,7 +9,7 @@ import { api, ApiError, type HazardAlert, type HazardSeverity, type SiteKpi, typ
 import { useHoverTip } from '../../components/HoverTip';
 import { fmtT, useTempUnit } from '../floorplan/units';
 import {
-  ago, blueMarbleUrl, cloudFrame, CLOUDS_LATE_S, frameTimes, geoColorUrl, prefetch, radarUrl, tilesFor,
+  ago, blueMarbleUrl, cloudFrame, CLOUDS_LATE_S, frameTimes, newestFrame, geoColorUrl, prefetch, radarUrl, tilesFor,
   useGoesLatest, useImageryReachable, useRadarIndex, utcClock, Z_MAX, type View,
 } from './satellite';
 import './world.css';
@@ -274,7 +274,10 @@ export function WorldMap() {
   // shows its last image (and says so) rather than an empty layer of 404s.
   const goes = useGoesLatest(clouds);
   const cloudAt = (s: 'East' | 'West', t: number) => cloudFrame(t, goes.data?.[s]);
-  const goesNewest = goes.data ? Math.max(goes.data.East ?? 0, goes.data.West ?? 0) || null : null;
+  const goesNewest = goes.data
+    ? Math.max(newestFrame(goes.data.East) ?? 0, newestFrame(goes.data.West) ?? 0) || null : null;
+  // Tiles wait for the list: asking on the old clock first is a burst of 404s.
+  const cloudsReady = clouds && !goes.isPending;
   const cloudsLate = clouds && goes.isSuccess
     && (goesNewest == null || Date.now() / 1000 - goesNewest > CLOUDS_LATE_S);
 
@@ -304,13 +307,13 @@ export function WorldMap() {
     if (!animated) return;
     const urls: string[] = [];
     for (const t of frames) {
-      if (clouds) for (const tile of cloudTiles) urls.push(geoColorUrl('West', cloudAt('West', t), tile), geoColorUrl('East', cloudAt('East', t), tile));
+      if (cloudsReady) for (const tile of cloudTiles) urls.push(geoColorUrl('West', cloudAt('West', t), tile), geoColorUrl('East', cloudAt('East', t), tile));
       const p = radar.data && radarPath(t);
       if (p) for (const tile of radarTiles) urls.push(radarUrl(radar.data!.host, p, tile));
     }
     const id = window.setTimeout(() => prefetch(urls), 300);   // not while the wheel is still turning
     return () => window.clearTimeout(id);
-  }, [animated, clouds, frames, cloudTiles, radarTiles, radar.data, goes.data]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [animated, cloudsReady, frames, cloudTiles, radarTiles, radar.data, goes.data]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // --- zoom and pan ---------------------------------------------------------
   const zoomAt = useCallback((factor: number, px: number, py: number) => {
@@ -519,7 +522,7 @@ export function WorldMap() {
                       <image key={`m${t.z}/${t.x}/${t.y}`} href={blueMarbleUrl(t)} x={t.px} y={t.py}
                              width={t.size} height={t.size} preserveAspectRatio="none" />))}
                   </g>
-                  {clouds && (
+                  {cloudsReady && (
                     <g className="world-tiles">
                       {(['West', 'East'] as const).map((s) => cloudTiles.map((t) => (
                         <image key={`c${s}${t.z}/${t.x}/${t.y}`} href={geoColorUrl(s, cloudAt(s, at), t)} x={t.px} y={t.py}

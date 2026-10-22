@@ -95,22 +95,37 @@ export function frameTimes(nowMs = Date.now()): number[] {
  * So ask. WMTS DescribeDomains, windowed to the last two days, is a ~400-byte
  * answer naming the newest frame GIBS can serve for each satellite. */
 export type Sat = 'East' | 'West';
-export interface GoesLatest { East: number | null; West: number | null }
+/** The frames GIBS lists, as [first, last, step] runs in epoch seconds. The
+ *  list has holes - a missed scan, a late batch - so "the newest frame" is not
+ *  enough: a frame inside a hole is a 404 like any other. */
+export type Span = [number, number, number];
+export interface GoesLatest { East: Span[] | null; West: Span[] | null }
 
 const describeUrl = (sat: Sat, fromMs: number, toMs: number) =>
   `${GIBS}/1.0.0/GOES-${sat}_ABI_GeoColor/default/GoogleMapsCompatible_Level7/all/`
   + `${new Date(fromMs).toISOString().replace(/\.\d{3}Z$/, 'Z')}--`
   + `${new Date(toMs).toISOString().replace(/\.\d{3}Z$/, 'Z')}.xml`;
 
-/** The end of the last `start/end/PT10M` interval in a DescribeDomains time
- *  domain, in epoch seconds; null when the domain is empty or unreadable. */
-export function latestInDomain(xml: string): number | null {
+/** The runs in a DescribeDomains time domain (`a/b/PT10M,c/d/PT10M,...` or a
+ *  bare instant); null when it is empty or unreadable. A bare date for a start
+ *  (`2026-10-18/...`, the window's own edge) parses as that day's midnight. */
+export function spansInDomain(xml: string): Span[] | null {
   const m = xml.match(/<Domain>([^<]*)<\/Domain>/);
   if (!m || !m[1].trim()) return null;
-  const last = m[1].split(',').pop()!.split('/');
-  const end = Date.parse(last.length >= 2 ? last[1] : last[0]);
-  return Number.isNaN(end) ? null : Math.floor(end / 1000);
+  const out: Span[] = [];
+  for (const part of m[1].split(',')) {
+    const [a, b, p] = part.trim().split('/');
+    const s = Date.parse(a), e = Date.parse(b ?? a);
+    if (Number.isNaN(s) || Number.isNaN(e)) continue;
+    const mins = /^PT(\d+)M$/.exec(p ?? '');
+    out.push([Math.floor(s / 1000), Math.floor(e / 1000), mins ? Number(mins[1]) * 60 : 600]);
+  }
+  return out.length ? out.sort((x, y) => x[0] - y[0]) : null;
 }
+
+/** The newest frame in the list. */
+export const newestFrame = (spans: Span[] | null | undefined): number | null =>
+  spans?.length ? spans[spans.length - 1][1] : null;
 
 export function useGoesLatest(enabled: boolean) {
   return useQuery<GoesLatest>({
@@ -119,7 +134,7 @@ export function useGoesLatest(enabled: boolean) {
       const now = Date.now();
       const one = async (sat: Sat) => {
         const r = await fetch(describeUrl(sat, now - 2 * 86400_000, now), { cache: 'no-store' });
-        return r.ok ? latestInDomain(await r.text()) : null;
+        return r.ok ? spansInDomain(await r.text()) : null;
       };
       const [East, West] = await Promise.all([one('East'), one('West')]);
       return { East, West };
@@ -131,10 +146,20 @@ export function useGoesLatest(enabled: boolean) {
   });
 }
 
-/** The frame to draw for one satellite: the one asked for, or - when GIBS has
- *  nothing that recent - the newest it does have. Unknown means "ask as before". */
-export const cloudFrame = (at: number, latest: number | null | undefined) =>
-  latest == null ? at : Math.min(at, latest);
+/** The frame to draw for one satellite: the newest frame GIBS lists at or
+ *  before the one asked for - the asked-for frame itself when it exists, the
+ *  last good one when it falls in a hole or past the end. Unknown means "ask
+ *  as before"; a list with nothing that early means the oldest it has. */
+export function cloudFrame(at: number, spans: Span[] | null | undefined): number {
+  if (!spans?.length) return at;
+  for (let i = spans.length - 1; i >= 0; i--) {
+    const [s, e, step] = spans[i];
+    if (s > at) continue;
+    const t = Math.min(at, e);
+    return s + Math.floor((t - s) / step) * step;
+  }
+  return spans[0][0];
+}
 
 /** How far behind the wall clock GIBS's newest cloud frame is, beyond which
  *  the map says so: the normal lag plus a frame or two of slack. */
