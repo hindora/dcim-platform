@@ -1144,7 +1144,8 @@ const PLANT_SPARK: Record<string, string[]> = {
   // A tower's slow points (fan, weather, basin, vibration) are not carried in
   // the live state, so the panel reads their latest from this same hour.
   cooling_tower: ['water_supply_temp', 'water_return_temp', 'power_draw', 'fan_speed_pct',
-    'outdoor_wet_bulb_temp', 'vibration', 'basin_level_pct', 'makeup_water_flow'],
+    'outdoor_wet_bulb_temp', 'outdoor_dry_bulb_temp', 'vibration', 'basin_level_pct',
+    'makeup_water_flow', 'run_hours'],
   chiller: ['water_supply_temp', 'water_return_temp', 'compressor_load_pct', 'power_draw'],
   pump: ['water_flow', 'power_draw'],
 };
@@ -1187,6 +1188,8 @@ function PlantReadout({ unit, m, spark, last }: {
     const vib = last.vibration ?? null;
     const basin = last.basin_level_pct ?? null;
     const makeup = last.makeup_water_flow ?? null;
+    const db = last.outdoor_dry_bulb_temp ?? null;
+    const hours = last.run_hours ?? null;
     // Approach to wet bulb is the number a tower is judged by.
     const approach = supply != null && wb != null ? supply - wb : null;
     // Wide approach with the fans turned down is control, not a fault: the
@@ -1209,7 +1212,9 @@ function PlantReadout({ unit, m, spark, last }: {
           {alarmRow}
           {dt != null && <Row k="Range (return − supply)" v={fmtDT(dt)} />}
           {approach != null && <Row k="Approach to wet bulb" v={fmtDT(approach)} />}
-          {wb != null && <Row k="Outdoor wet bulb" v={fmtT(wb)} />}
+          {(wb != null || db != null) && (
+            <Row k="Outdoor wet / dry bulb" v={`${wb != null ? fmtT(wb) : '–'} / ${db != null ? fmtT(db) : '–'}`} />
+          )}
           {heatKw != null && <Row k="Heat rejected" v={`${Math.round(heatKw)} kW`} />}
           {vib != null && (
             <Row k="Fan vibration" v={<span className={vib >= VIB_BAD ? 'vw-bad' : vib >= VIB_WARN ? 'vw-warn' : undefined}>
@@ -1217,6 +1222,7 @@ function PlantReadout({ unit, m, spark, last }: {
           )}
           {basin != null && <Row k="Basin level" v={`${Math.round(basin)} %`} />}
           {makeup != null && <Row k="Makeup water" v={formatMetric('makeup_water_flow', makeup)} />}
+          {hours != null && <Row k="Run hours" v={`${Math.round(hours).toLocaleString()} h`} />}
         </div>
         <p className="muted vw-note">
           Condenser water: supply leaves the basin for the chillers, return comes back from them hot.
