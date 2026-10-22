@@ -132,6 +132,30 @@ def feeds_rules(quality: str) -> bool:
 _SEVERITY_NAMES = {int(s): s.name for s in Severity}
 _COMM_STATUS = {1: "ONLINE", 2: "DEGRADED", 3: "OFFLINE", 4: "UNKNOWN", 5: "DISABLED"}
 
+#: Which instance speaks for the device when one metric arrives on several
+#: and no whole-device total does. A chiller reports `water_supply_temp` for
+#: its chilled water (CHW) AND its condenser water (COND) in one poll; last-in
+#: won, so the chiller's live state - the 3D panel, the device page tiles -
+#: read 15.5 C condenser water as its chilled-water supply while the machine
+#: held 7 C. The process loop is what a chiller is for, so it outranks the
+#: heat-rejection side; a tower has only COND (and BASIN, the same water), so
+#: COND is its reading. A valve's measured position outranks its command.
+#: Anything else keeps the old rule among equals: the latest sample.
+_INSTANCE_RANK = {"": 0, "CHW": 1, "MEASURED": 1, "COND": 2}
+_OTHER_INSTANCE_RANK = 3
+
+
+def _instance_rank(instance: str) -> int:
+    return _INSTANCE_RANK.get(instance or "", _OTHER_INSTANCE_RANK)
+
+
+#: Binary metrics where any instance raised means the device is raised. A
+#: tower sends `alarm_state` once per alarm point (Alarm_HighVibration,
+#: Alarm_LowBasin); last-in won, so a raised vibration alarm read "no alarm"
+#: whenever the basin point landed after it - the unit summary of a BMS
+#: point list is the OR of its alarms, never the last one read.
+_ANY_INSTANCE = frozenset({"alarm_state"})
+
 # Hot metrics that have a dedicated column on device_state.
 _HOT_COLUMNS = {
     "power_draw": "power_w",
@@ -981,7 +1005,19 @@ class IngestWorker:
             entry = writer.HotUpdate(device_id=device_id, last_seen=observed, metrics={})
             hot[device_id] = entry
         total = not instance
-        if total or metric not in entry.from_total:
+        rank = _instance_rank(instance)
+        held = entry.ranks.get(metric)
+        if (metric in _ANY_INSTANCE and not total and isinstance(value, bool)
+                and metric not in entry.from_total and metric in entry.metrics):
+            # One raised point raises the unit; the alarm that is raised is the
+            # one whose time and quality the summary carries.
+            prev = entry.metrics[metric]
+            if prev["v"] is True and not value:
+                entry.last_seen = max(entry.last_seen, observed)
+                return
+            held = None
+        if held is None or rank <= held:
+            entry.ranks[metric] = rank
             entry.metrics[metric] = {"v": value, "t": observed.isoformat(), "q": quality}
             column = _HOT_COLUMNS.get(metric)
             if column and isinstance(value, (int, float)):

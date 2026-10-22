@@ -1141,15 +1141,31 @@ function OtherBody(c: ClassCtx) {
  *  load; a pump's with flow and its run state. Those are the tiles; anything
  *  else it reports follows under Readings. */
 const PLANT_SPARK: Record<string, string[]> = {
-  cooling_tower: ['water_supply_temp', 'water_return_temp', 'power_draw'],
+  // A tower's slow points (fan, weather, basin, vibration) are not carried in
+  // the live state, so the panel reads their latest from this same hour.
+  cooling_tower: ['water_supply_temp', 'water_return_temp', 'power_draw', 'fan_speed_pct',
+    'outdoor_wet_bulb_temp', 'vibration', 'basin_level_pct', 'makeup_water_flow'],
   chiller: ['water_supply_temp', 'water_return_temp', 'compressor_load_pct', 'power_draw'],
   pump: ['water_flow', 'power_draw'],
 };
 const PLANT_SHOWN = ['equipment_state', 'alarm_state', 'water_supply_temp', 'water_return_temp',
   'water_flow', 'power_draw', 'compressor_load_pct'];
 
-function PlantReadout({ unit, m, spark }: {
+/** Which instance speaks for the unit when a metric comes on several: a
+ *  chiller's chilled water over its condenser water, a tower's condenser
+ *  water over its basin probe, a valve's measured position over its command.
+ *  The same order the ingest worker keeps the live state by. */
+const INSTANCE_RANK: Record<string, number> = { '': 0, CHW: 1, MEASURED: 1, COND: 2 };
+const instRank = (i: string | null | undefined) => INSTANCE_RANK[i ?? ''] ?? 3;
+
+/** ISO 10816-3 velocity zones for a rigidly mounted machine: past B/C the
+ *  fan wants looking at, past C/D it is damaging itself. */
+const VIB_WARN = 4.5, VIB_BAD = 7.1;
+
+function PlantReadout({ unit, m, spark, last }: {
   unit: FloorEquipment; m: Record<string, MetricValue>; spark: Record<string, number[][]>;
+  /** The latest of each metric in the hour fetched for the tiles. */
+  last: Record<string, number>;
 }) {
   const supply = num(m.water_supply_temp), ret = num(m.water_return_temp), flow = num(m.water_flow);
   const draw = num(m.power_draw) ?? unit.power_w ?? null;
@@ -1166,6 +1182,17 @@ function PlantReadout({ unit, m, spark }: {
   const alarmRow = alarm != null && <Row k="Unit alarm" v={alarm ? <span className="vw-bad">raised</span> : 'none'} />;
 
   if (t === 'cooling_tower') {
+    const fan = last.fan_speed_pct ?? null;
+    const wb = last.outdoor_wet_bulb_temp ?? null;
+    const vib = last.vibration ?? null;
+    const basin = last.basin_level_pct ?? null;
+    const makeup = last.makeup_water_flow ?? null;
+    // Approach to wet bulb is the number a tower is judged by.
+    const approach = supply != null && wb != null ? supply - wb : null;
+    // Wide approach with the fans turned down is control, not a fault: the
+    // bank is holding the chillers' minimum entering water instead of chasing
+    // a cold wet bulb.
+    const heldUp = approach != null && approach > 7 && fan != null && fan < 50 && running !== false;
     return (
       <>
         <Tiles spark={spark} items={[
@@ -1174,12 +1201,27 @@ function PlantReadout({ unit, m, spark }: {
           { label: 'POWER', value: fW(draw), metric: 'power_draw' },
         ]} />
         <div className="vw-kv">
-          {stateRow('Fans')}
+          {running != null && (
+            <Row k="Fans" v={running
+              ? `running${fan != null ? ` · ${Math.round(fan)} %` : ''}`
+              : <span className="vw-bad">stopped</span>} />
+          )}
           {alarmRow}
           {dt != null && <Row k="Range (return − supply)" v={fmtDT(dt)} />}
+          {approach != null && <Row k="Approach to wet bulb" v={fmtDT(approach)} />}
+          {wb != null && <Row k="Outdoor wet bulb" v={fmtT(wb)} />}
           {heatKw != null && <Row k="Heat rejected" v={`${Math.round(heatKw)} kW`} />}
+          {vib != null && (
+            <Row k="Fan vibration" v={<span className={vib >= VIB_BAD ? 'vw-bad' : vib >= VIB_WARN ? 'vw-warn' : undefined}>
+              {vib.toFixed(1)} mm/s</span>} />
+          )}
+          {basin != null && <Row k="Basin level" v={`${Math.round(basin)} %`} />}
+          {makeup != null && <Row k="Makeup water" v={formatMetric('makeup_water_flow', makeup)} />}
         </div>
-        <p className="muted vw-note">Condenser water: supply leaves the basin for the chillers, return comes back from them hot.</p>
+        <p className="muted vw-note">
+          Condenser water: supply leaves the basin for the chillers, return comes back from them hot.
+          {heldUp && ' The fans are turned down and the approach is wide: the tower is holding the chillers\' minimum entering water, not chasing the wet bulb.'}
+        </p>
       </>
     );
   }
@@ -1253,10 +1295,22 @@ export function UnitPanel({ unit, thermal }: { unit: FloorEquipment; thermal?: T
     refetchInterval: 60_000,
     retry: false,
   });
-  const sparkBy = useMemo(() => {
-    const out: Record<string, number[][]> = {};
-    for (const s of spark.data?.series ?? []) if (!out[s.metric] && s.points.length > 1) out[s.metric] = s.points;
-    return out;
+  const { sparkBy, lastBy } = useMemo(() => {
+    // One series per metric: the instance that speaks for the unit.
+    const best = new Map<string, { rank: number; points: number[][] }>();
+    for (const s of spark.data?.series ?? []) {
+      if (s.points.length === 0) continue;
+      const rank = instRank(s.instance);
+      const held = best.get(s.metric);
+      if (!held || rank < held.rank) best.set(s.metric, { rank, points: s.points });
+    }
+    const lines: Record<string, number[][]> = {};
+    const lasts: Record<string, number> = {};
+    for (const [k, v] of best) {
+      if (v.points.length > 1) lines[k] = v.points;
+      lasts[k] = v.points[v.points.length - 1][1];
+    }
+    return { sparkBy: lines, lastBy: lasts };
   }, [spark.data]);
   const seen = state.data?.last_seen ?? null;
   return (
@@ -1275,7 +1329,7 @@ export function UnitPanel({ unit, thermal }: { unit: FloorEquipment; thermal?: T
           { label: 'SETPOINT', value: fmtT(thermal?.setpoint_c) },
         ]} />
       ) : (
-        <PlantReadout unit={unit} m={m} spark={sparkBy} />
+        <PlantReadout unit={unit} m={m} spark={sparkBy} last={lastBy} />
       )}
       {air && (
         <Section title="Cooling" open>

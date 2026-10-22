@@ -66,6 +66,10 @@ class HotUpdate:
     # remembers that the whole-device figure has already spoken, so a circuit
     # arriving later in the same poll cannot overwrite it. See `_note_hot`.
     from_total: set[str] = field(default_factory=set)
+    # The rank of the instance whose value each metric above holds (see
+    # `worker._instance_rank`): a lower rank is not overwritten by a higher one
+    # later in the same poll. Not written anywhere either.
+    ranks: dict[str, int] = field(default_factory=dict)
 
 
 async def _raw_asyncpg(session: AsyncSession):

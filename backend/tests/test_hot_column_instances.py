@@ -25,7 +25,8 @@ DEV = "11111111-1111-1111-1111-111111111111"
 
 
 class _Cache:
-    hot_metrics = frozenset({"power_draw", "inlet_temperature"})
+    hot_metrics = frozenset({"power_draw", "inlet_temperature",
+                             "water_supply_temp", "alarm_state", "valve_position_pct"})
 
 
 @pytest.fixture()
@@ -99,8 +100,68 @@ def test_the_live_frame_agrees_with_the_column(note):
 def test_a_metric_with_no_hot_column_is_left_alone(note):
     """Only hot metrics are carried; the rest live in the samples table."""
     call, hot, _ = note
-    call("water_supply_temp", 7.2, "")
+    call("fan_speed_pct", 40.0, "")
     assert hot == {}
+
+
+@pytest.mark.parametrize("order", [("CHW", "COND"), ("COND", "CHW")])
+def test_a_chiller_is_its_chilled_water(note, order):
+    """CHW outranks COND whichever lands last.
+
+    The bug: the chiller's live state read 15.5 C, its condenser water, as
+    its chilled-water supply while the machine held 7 C.
+    """
+    call, hot, frames = note
+    vals = {"CHW": 7.0, "COND": 15.5}
+    for inst in order:
+        call("water_supply_temp", vals[inst], inst)
+    assert hot[DEV].metrics["water_supply_temp"]["v"] == 7.0
+    assert frames[DEV]["water_supply_temp"]["v"] == 7.0
+
+
+def test_a_tower_is_its_condenser_water(note):
+    """A tower has no CHW: COND speaks for it over the basin probe."""
+    call, hot, _ = note
+    call("water_supply_temp", 29.8, "COND")
+    call("water_supply_temp", 29.5, "BASIN")
+    assert hot[DEV].metrics["water_supply_temp"]["v"] == 29.8
+
+
+def test_a_valve_is_where_it_is_not_where_it_was_told(note):
+    call, hot, _ = note
+    call("valve_position_pct", 40.0, "MEASURED")
+    call("valve_position_pct", 65.0, "COMMANDED")
+    assert hot[DEV].metrics["valve_position_pct"]["v"] == 40.0
+
+
+def test_one_raised_alarm_raises_the_unit(note):
+    """A clear point read after a raised one does not clear the unit."""
+    call, hot, _ = note
+    call("alarm_state", True, "Alarm_HighVibration")
+    call("alarm_state", False, "Alarm_LowBasin")
+    assert hot[DEV].metrics["alarm_state"]["v"] is True
+
+
+def test_a_unit_with_every_alarm_clear_is_clear(note):
+    call, hot, _ = note
+    call("alarm_state", False, "Alarm_HighVibration")
+    call("alarm_state", False, "Alarm_LowBasin")
+    assert hot[DEV].metrics["alarm_state"]["v"] is False
+
+
+def test_a_raised_alarm_read_last_still_raises(note):
+    call, hot, _ = note
+    call("alarm_state", False, "Alarm_LowBasin")
+    call("alarm_state", True, "Alarm_HighVibration")
+    assert hot[DEV].metrics["alarm_state"]["v"] is True
+
+
+def test_sub_instances_of_equal_rank_keep_the_latest(note):
+    """Unranked instances behave as before: the last sample wins."""
+    call, hot, _ = note
+    call("inlet_temperature", 22.0, "Inlet1")
+    call("inlet_temperature", 23.0, "Inlet2")
+    assert hot[DEV].inlet_temp_c == 23.0
 
 
 def test_one_metrics_total_does_not_lock_another(note):
