@@ -18,8 +18,7 @@
 import type { CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
 
-import networkDark from '../../assets/home/network-map-dark.jpg';
-import networkLight from '../../assets/home/network-map-light.jpg';
+import networkTree from '../../assets/home/network-map-tree.jpg';
 import floorDark from '../../assets/home/floor-map-dark.jpg';
 import floorLight from '../../assets/home/floor-map-light.jpg';
 import worldDark from '../../assets/home/world-map-dark.jpg';
@@ -27,7 +26,10 @@ import worldLight from '../../assets/home/world-map-light.jpg';
 
 const CARDS = [
   {
-    to: '/connectivity', title: 'Network map', dark: networkDark, light: networkLight,
+    // The power chain from the utility down to the RPPs, shown whole: the tree is
+    // the point, and cropping it to the card's band would cut off its top and its
+    // leaves. One image for both palettes - it is the canvas's own dark studio.
+    to: '/connectivity', title: 'Network map', dark: networkTree, light: networkTree, whole: true,
     body: 'Every device and the links between them, room by room, with the power, cooling, network and management paths as layers.',
   },
   {
@@ -43,9 +45,9 @@ const CARDS = [
 export function RailCards() {
   return (
     <>
-      {CARDS.map(({ to, title, body, dark, light, lift }) => (
+      {CARDS.map(({ to, title, body, dark, light, lift, whole }) => (
         <Link key={title} className="rail-card" to={to}>
-          <div className={`visual shot${lift ? ' lift' : ''}`} aria-hidden
+          <div className={`visual shot${lift ? ' lift' : ''}${whole ? ' whole' : ''}`} aria-hidden
                style={{ '--shot-dark': `url(${dark})`, '--shot-light': `url(${light})` } as CSSProperties} />
           <div className="body">
             <h3>{title}</h3>

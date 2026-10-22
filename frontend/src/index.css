@@ -4,6 +4,9 @@
    Dark is the default because control rooms are dark. */
 
 :root {
+  /* The connectivity canvas's backdrop as it appears in a screenshot of it: the
+     home rail letterboxes that screenshot on this, in either palette. */
+  --shot-canvas: #0d1117;
   --bg: #0e1116;
   --bg-raised: #161b22;
   --bg-inset: #0b0e13;
