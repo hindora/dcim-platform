@@ -85,6 +85,61 @@ export function frameTimes(nowMs = Date.now()): number[] {
   return Array.from({ length: FRAME_COUNT }, (_, i) => end - (FRAME_COUNT - 1 - i) * FRAME_STEP_S);
 }
 
+/* ------------------------------------------------------- what GIBS really has
+ * The ~35-minute lag above is GIBS on a good day. When NOAA's feed or GIBS's
+ * ingest stalls, every frame the clock asks for is a 404 (an HTML page, which
+ * the browser then blocks as not-an-image) and the cloud layer is simply
+ * empty - on 2026-10-21 the newest GeoColor frame was the previous day's
+ * 15:00Z, and the map showed no clouds at all with no word why.
+ *
+ * So ask. WMTS DescribeDomains, windowed to the last two days, is a ~400-byte
+ * answer naming the newest frame GIBS can serve for each satellite. */
+export type Sat = 'East' | 'West';
+export interface GoesLatest { East: number | null; West: number | null }
+
+const describeUrl = (sat: Sat, fromMs: number, toMs: number) =>
+  `${GIBS}/1.0.0/GOES-${sat}_ABI_GeoColor/default/GoogleMapsCompatible_Level7/all/`
+  + `${new Date(fromMs).toISOString().replace(/\.\d{3}Z$/, 'Z')}--`
+  + `${new Date(toMs).toISOString().replace(/\.\d{3}Z$/, 'Z')}.xml`;
+
+/** The end of the last `start/end/PT10M` interval in a DescribeDomains time
+ *  domain, in epoch seconds; null when the domain is empty or unreadable. */
+export function latestInDomain(xml: string): number | null {
+  const m = xml.match(/<Domain>([^<]*)<\/Domain>/);
+  if (!m || !m[1].trim()) return null;
+  const last = m[1].split(',').pop()!.split('/');
+  const end = Date.parse(last.length >= 2 ? last[1] : last[0]);
+  return Number.isNaN(end) ? null : Math.floor(end / 1000);
+}
+
+export function useGoesLatest(enabled: boolean) {
+  return useQuery<GoesLatest>({
+    queryKey: ['goes-latest'],
+    queryFn: async () => {
+      const now = Date.now();
+      const one = async (sat: Sat) => {
+        const r = await fetch(describeUrl(sat, now - 2 * 86400_000, now), { cache: 'no-store' });
+        return r.ok ? latestInDomain(await r.text()) : null;
+      };
+      const [East, West] = await Promise.all([one('East'), one('West')]);
+      return { East, West };
+    },
+    enabled,
+    staleTime: 5 * 60_000,
+    refetchInterval: 10 * 60_000,
+    retry: 1,
+  });
+}
+
+/** The frame to draw for one satellite: the one asked for, or - when GIBS has
+ *  nothing that recent - the newest it does have. Unknown means "ask as before". */
+export const cloudFrame = (at: number, latest: number | null | undefined) =>
+  latest == null ? at : Math.min(at, latest);
+
+/** How far behind the wall clock GIBS's newest cloud frame is, beyond which
+ *  the map says so: the normal lag plus a frame or two of slack. */
+export const CLOUDS_LATE_S = 2 * 3600;
+
 /* --------------------------------------------------------------- radar index
  * RainViewer publishes which frames exist and where; a tile path is opaque
  * and changes per frame, so the index is needed before any radar is drawn. */

@@ -9,8 +9,8 @@ import { api, ApiError, type HazardAlert, type HazardSeverity, type SiteKpi, typ
 import { useHoverTip } from '../../components/HoverTip';
 import { fmtT, useTempUnit } from '../floorplan/units';
 import {
-  ago, blueMarbleUrl, frameTimes, geoColorUrl, prefetch, radarUrl, tilesFor, useImageryReachable,
-  useRadarIndex, utcClock, Z_MAX, type View,
+  ago, blueMarbleUrl, cloudFrame, CLOUDS_LATE_S, frameTimes, geoColorUrl, prefetch, radarUrl, tilesFor,
+  useGoesLatest, useImageryReachable, useRadarIndex, utcClock, Z_MAX, type View,
 } from './satellite';
 import './world.css';
 import { toCss } from '../../lib/zoom';
@@ -124,6 +124,11 @@ function parseView(raw: string | null): View {
 }
 
 const reducedMotion = () => typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/** "20 Oct" for a frame from another day; the clock alone would read as today. */
+function cloudDay(t: number): string {
+  return new Date(t * 1000).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+}
 
 export function WorldMap() {
   const qc = useQueryClient();
@@ -265,6 +270,13 @@ export function WorldMap() {
   const clouds = sat && wx.has('clouds');
   const animated = wx.has('rain') || clouds;
   const radar = useRadarIndex(wx.has('rain'));
+  // The newest frame GIBS can actually serve per satellite, so a stalled feed
+  // shows its last image (and says so) rather than an empty layer of 404s.
+  const goes = useGoesLatest(clouds);
+  const cloudAt = (s: 'East' | 'West', t: number) => cloudFrame(t, goes.data?.[s]);
+  const goesNewest = goes.data ? Math.max(goes.data.East ?? 0, goes.data.West ?? 0) || null : null;
+  const cloudsLate = clouds && goes.isSuccess
+    && (goesNewest == null || Date.now() / 1000 - goesNewest > CLOUDS_LATE_S);
 
   // The frame clock: recomputed every ten minutes so a wall display creeps
   // forward with the imagery.
@@ -292,13 +304,13 @@ export function WorldMap() {
     if (!animated) return;
     const urls: string[] = [];
     for (const t of frames) {
-      if (clouds) for (const tile of cloudTiles) urls.push(geoColorUrl('West', t, tile), geoColorUrl('East', t, tile));
+      if (clouds) for (const tile of cloudTiles) urls.push(geoColorUrl('West', cloudAt('West', t), tile), geoColorUrl('East', cloudAt('East', t), tile));
       const p = radar.data && radarPath(t);
       if (p) for (const tile of radarTiles) urls.push(radarUrl(radar.data!.host, p, tile));
     }
     const id = window.setTimeout(() => prefetch(urls), 300);   // not while the wheel is still turning
     return () => window.clearTimeout(id);
-  }, [animated, clouds, frames, cloudTiles, radarTiles, radar.data]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [animated, clouds, frames, cloudTiles, radarTiles, radar.data, goes.data]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // --- zoom and pan ---------------------------------------------------------
   const zoomAt = useCallback((factor: number, px: number, py: number) => {
@@ -510,7 +522,7 @@ export function WorldMap() {
                   {clouds && (
                     <g className="world-tiles">
                       {(['West', 'East'] as const).map((s) => cloudTiles.map((t) => (
-                        <image key={`c${s}${t.z}/${t.x}/${t.y}`} href={geoColorUrl(s, at, t)} x={t.px} y={t.py}
+                        <image key={`c${s}${t.z}/${t.x}/${t.y}`} href={geoColorUrl(s, cloudAt(s, at), t)} x={t.px} y={t.py}
                                width={t.size} height={t.size} preserveAspectRatio="none" />)))}
                     </g>
                   )}
@@ -576,7 +588,11 @@ export function WorldMap() {
                      onChange={(e) => { setPlaying(false); setFi(Number(e.target.value)); }} />
               <span className="world-time-at"><b>{utcClock(at)}</b> <span className="muted">{ago(Date.now() / 1000 - at)}</span></span>
               <span className="muted world-time-note">
-                {clouds && 'Clouds cover the GOES-East and GOES-West discs. '}
+                {clouds && (cloudsLate
+                  ? (goesNewest == null
+                    ? 'NASA GIBS has no recent GOES cloud imagery to show. '
+                    : `Clouds: no new GOES image from NASA GIBS since ${cloudDay(goesNewest)} ${utcClock(goesNewest)} UTC (${ago(Date.now() / 1000 - goesNewest)}); showing the latest it has. `)
+                  : 'Clouds cover the GOES-East and GOES-West discs. ')}
                 {wx.has('rain') && (radar.isError ? 'Radar index unreachable. ' : 'Rain shows where ground radar reports. ')}
               </span>
             </div>
