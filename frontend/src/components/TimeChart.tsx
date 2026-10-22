@@ -202,7 +202,24 @@ export function TimeChart({ series, unit, bucketMs }: {
 
   // Flip the tooltip to the left of the crosshair when it would overflow the
   // right edge, so the last few samples are still readable.
-  const tipW = 138;
+  //
+  // Sized to what it holds. A fixed 138 fitted "Ckt01  4.2 W" and nothing
+  // longer: "Water Supply Temperature" ran under its own "15.5 °C". The text is
+  // 10 px, mono for the time and values (0.6 em a glyph) and sans for labels
+  // (taken at the same 6 px, which errs wide for lower case), so the box is
+  // swatch + longest label + gap + longest value. Never wider than the plot; a
+  // label that still does not fit is cut with an ellipsis and keeps its full
+  // name as the row's title.
+  const sym = unitSymbol(unit);
+  const valueText = (v: number) => `${fmt(v)}${sym ? ` ${sym}` : ''}`;
+  const CH = 6;
+  const timeText = hover ? stamp(hover.at, bucketMs, model.spansDays) : '';
+  const labelChars = Math.max(0, ...(hover?.rows ?? []).map((r) => r.label.length));
+  const valueChars = Math.max(0, ...(hover?.rows ?? []).map((r) => valueText(r.value).length));
+  const tipW = Math.min(W - PAD_L - PAD_R,
+    Math.max(138, 19 + labelChars * CH + 14 + valueChars * CH + 7, 14 + timeText.length * CH));
+  const fitChars = Math.max(4, Math.floor((tipW - 19 - 14 - valueChars * CH - 7) / CH));
+  const cut = (l: string) => (l.length > fitChars ? `${l.slice(0, fitChars - 1)}…` : l);
   const tipH = 16 + (hover?.rows.length ?? 0) * 14;
   const tipX = hover
     ? (model.sx(hover.at) + tipW + 8 > W - PAD_R
@@ -246,21 +263,22 @@ export function TimeChart({ series, unit, bucketMs }: {
             <rect className="chart-tip" x={tipX} y={PAD_T} width={tipW} height={tipH}
                   rx={3} />
             <text className="chart-tip-time" x={tipX + 7} y={PAD_T + 12}>
-              {stamp(hover.at, bucketMs, model.spansDays)}
+              {timeText}
             </text>
             {hover.rows.map((r, i) => (
               <g key={r.label}>
                 <rect x={tipX + 7} y={PAD_T + 20 + i * 14} width={7} height={7}
                       rx={1.5} fill={r.color} />
                 <text className="chart-tip-label" x={tipX + 19} y={PAD_T + 27 + i * 14}>
-                  {r.label}
+                  {cut(r.label)}
+                  {cut(r.label) !== r.label && <title>{r.label}</title>}
                 </text>
                 <text className="chart-tip-value" x={tipX + tipW - 7}
                       y={PAD_T + 27 + i * 14} textAnchor="end">
                   {/* The symbol, not the code, and not just for percentages -
                      a reading of "67.9" beside a line labelled C is a number
                      the reader has to carry the unit for. */}
-                  {fmt(r.value)}{unitSymbol(unit) ? ` ${unitSymbol(unit)}` : ''}
+                  {valueText(r.value)}
                 </text>
               </g>
             ))}
