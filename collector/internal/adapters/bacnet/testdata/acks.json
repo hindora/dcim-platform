@@ -165,6 +165,112 @@
       }
     },
     {
+      "name": "rpm_present_value_with_quality",
+      "frame": "810a0071010030120e0c000000021e2e09554e4441fc00004f2f2e096f4e8204404f2f2e09674e91014f2f1f0c000000011e2e09554e4441b000004f2f2e096f4e8204004f2f2e09674e91004f2f1f0c00c000011e2e09554e91014f2f2e096f4e8204104f2f2e09675e910291205f2f1f",
+      "want": {
+        "kind": "rpm",
+        "results": [
+          {
+            "object_type": 0,
+            "instance": 2,
+            "property": 85,
+            "values": [
+              {
+                "kind": "real",
+                "num": 31.5
+              }
+            ]
+          },
+          {
+            "object_type": 0,
+            "instance": 2,
+            "property": 111,
+            "values": [
+              {
+                "kind": "bitstring",
+                "bits": 4
+              }
+            ]
+          },
+          {
+            "object_type": 0,
+            "instance": 2,
+            "property": 103,
+            "values": [
+              {
+                "kind": "enumerated",
+                "num": 1.0
+              }
+            ]
+          },
+          {
+            "object_type": 0,
+            "instance": 1,
+            "property": 85,
+            "values": [
+              {
+                "kind": "real",
+                "num": 22.0
+              }
+            ]
+          },
+          {
+            "object_type": 0,
+            "instance": 1,
+            "property": 111,
+            "values": [
+              {
+                "kind": "bitstring",
+                "bits": 0
+              }
+            ]
+          },
+          {
+            "object_type": 0,
+            "instance": 1,
+            "property": 103,
+            "values": [
+              {
+                "kind": "enumerated",
+                "num": 0.0
+              }
+            ]
+          },
+          {
+            "object_type": 3,
+            "instance": 1,
+            "property": 85,
+            "values": [
+              {
+                "kind": "enumerated",
+                "num": 1.0
+              }
+            ]
+          },
+          {
+            "object_type": 3,
+            "instance": 1,
+            "property": 111,
+            "values": [
+              {
+                "kind": "bitstring",
+                "bits": 1
+              }
+            ]
+          },
+          {
+            "object_type": 3,
+            "instance": 1,
+            "property": 103,
+            "error": {
+              "class": 2,
+              "code": 32
+            }
+          }
+        ]
+      }
+    },
+    {
       "name": "error_unknown_object",
       "frame": "810a000d0100500e0c9101911f",
       "want": {

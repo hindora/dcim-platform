@@ -418,3 +418,29 @@ func TestUnsupportedSchemeIsConfig(t *testing.T) {
 		t.Fatalf("error class %q, want config", class)
 	}
 }
+
+// The simulator's sensor dropout (doc 32 section 4.5) serves the DMTF shape
+// Reading null with State UnavailableOffline. UnavailableOffline is an
+// ALLOWED state (a powered-off host's probes still read), so it is the null
+// that must stop the sample - never a zero, never a held value stamped GOOD.
+func TestUnavailableNullReadingIsNoSample(t *testing.T) {
+	a := newAdapter(t)
+	for name, raw := range map[string]string{
+		"thermal": `{"Name":"Inlet Temp","ReadingCelsius":null,"Status":{"State":"UnavailableOffline"}}`,
+		"sensor":  `{"Name":"Inlet Temp","Reading":null,"Status":{"State":"UnavailableOffline"}}`,
+	} {
+		var m map[string]any
+		if err := json.Unmarshal([]byte(raw), &m); err != nil {
+			t.Fatal(err)
+		}
+		if a.sensorUsable(m) {
+			t.Errorf("%s: a null reading was treated as usable", name)
+		}
+	}
+	// And a live reading in the same state still is.
+	var live map[string]any
+	_ = json.Unmarshal([]byte(`{"Name":"Inlet Temp","ReadingCelsius":21.5,"Status":{"State":"UnavailableOffline"}}`), &live)
+	if !a.sensorUsable(live) {
+		t.Error("a real reading in UnavailableOffline was dropped")
+	}
+}

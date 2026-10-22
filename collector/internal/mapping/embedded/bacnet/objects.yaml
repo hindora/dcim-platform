@@ -65,6 +65,16 @@ device_types:
       - { name: COP,              metric: cop }
       - { name: Evap_Pressure,    metric: water_pressure, instance: EVAP }
       - { name: Cond_Pressure,    metric: water_pressure, instance: COND }
+      # Approach = leaving water minus saturated refrigerant temperature, per
+      # heat exchanger, as the chiller controller computes it. A temperature
+      # DIFFERENCE, so degC on the wire is K in the registry with no offset.
+      # Condenser approach widening is tube fouling or non-condensables;
+      # evaporator approach widening is fouling or low charge - the instance
+      # names the side (doc 29 D10, CH-3). Vendor point names differ (Trane,
+      # York and Carrier all publish them under their own names); these are
+      # the simulator's (doc 32 D6).
+      - { name: Cond_Approach_Temp, metric: approach_temp, instance: COND }
+      - { name: Evap_Approach_Temp, metric: approach_temp, instance: EVAP }
       - { name: Run_Hours,        metric: run_hours, slow: true }
       - { name: Chiller_Running,  metric: equipment_state, instance: Chiller_Running }
       # Every alarm point lands on alarm_state with its own name as the
@@ -156,6 +166,12 @@ device_types:
       - { name: Supply_Humidity,  metric: relative_humidity }
       - { name: Airflow,          metric: airflow }
       - { name: Fan_Power,        metric: power_draw, scale: 1000 }
+      # Air-side filter differential pressure. An air filter drops tens to a
+      # few hundred PASCALS (clean ~60 Pa, change ~250 Pa: doc 32 S1-5), so
+      # the wire unit is Pa and the registry's kPa needs 0.001. The CDU's
+      # liquid filter above is already kPa on the wire; same key, two scales.
+      # Rising over weeks at constant fan speed is the loading signal (CR-4).
+      - { name: Filter_DP,        metric: filter_diff_pressure, scale: 0.001 }
       - { name: Run_Hours,        metric: run_hours, slow: true }
       - { name: Unit_Running,     metric: equipment_state, instance: Unit_Running }
       - { name: Filter_Dirty,     metric: alarm_state, instance: Filter_Dirty }

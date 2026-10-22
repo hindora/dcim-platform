@@ -169,6 +169,52 @@ def build_acks(m) -> list[dict]:
         ]},
     })
 
+    # --- RPM ack: present value WITH Status_Flags and Reliability ---------
+    # The collector's poll shape since doc 33 task 1.21. The first object is
+    # the simulator's sensor dropout (doc 32 section 4.5): the held value,
+    # FAULT set, Reliability NO_SENSOR. The second is clean, the third out of
+    # service. Bit strings decode right-aligned: FAULT (bit 1 of 4) is 0b0100.
+    body = b""
+    body += m.enc_ctx_oid(0, m.OBJ_ANALOG_INPUT, 2) + m.enc_ctx_open(1)
+    body += rpm_result(m.PROP_PRESENT_VALUE, m.enc_app_real(31.5))
+    body += rpm_result(m.PROP_STATUS_FLAGS, m.enc_app_bitstr(0b0100, 4))
+    body += rpm_result(m.PROP_RELIABILITY, m.enc_app_enum(1))
+    body += m.enc_ctx_close(1)
+    body += m.enc_ctx_oid(0, m.OBJ_ANALOG_INPUT, 1) + m.enc_ctx_open(1)
+    body += rpm_result(m.PROP_PRESENT_VALUE, m.enc_app_real(22.0))
+    body += rpm_result(m.PROP_STATUS_FLAGS, m.enc_app_bitstr(0, 4))
+    body += rpm_result(m.PROP_RELIABILITY, m.enc_app_enum(0))
+    body += m.enc_ctx_close(1)
+    body += m.enc_ctx_oid(0, m.OBJ_BINARY_INPUT, 1) + m.enc_ctx_open(1)
+    body += rpm_result(m.PROP_PRESENT_VALUE, m.enc_app_enum(1))
+    body += rpm_result(m.PROP_STATUS_FLAGS, m.enc_app_bitstr(0b0001, 4))
+    body += rpm_error(m.PROP_RELIABILITY, 2, 32)   # property / unknown-property
+    body += m.enc_ctx_close(1)
+    vectors.append({
+        "name": "rpm_present_value_with_quality",
+        "frame": hexed(complex_ack(18, 14, body)),
+        "want": {"kind": "rpm", "results": [
+            {"object_type": 0, "instance": 2, "property": 85,
+             "values": [{"kind": "real", "num": 31.5}]},
+            {"object_type": 0, "instance": 2, "property": 111,
+             "values": [{"kind": "bitstring", "bits": 4}]},
+            {"object_type": 0, "instance": 2, "property": 103,
+             "values": [{"kind": "enumerated", "num": 1.0}]},
+            {"object_type": 0, "instance": 1, "property": 85,
+             "values": [{"kind": "real", "num": 22.0}]},
+            {"object_type": 0, "instance": 1, "property": 111,
+             "values": [{"kind": "bitstring", "bits": 0}]},
+            {"object_type": 0, "instance": 1, "property": 103,
+             "values": [{"kind": "enumerated", "num": 0.0}]},
+            {"object_type": 3, "instance": 1, "property": 85,
+             "values": [{"kind": "enumerated", "num": 1.0}]},
+            {"object_type": 3, "instance": 1, "property": 111,
+             "values": [{"kind": "bitstring", "bits": 1}]},
+            {"object_type": 3, "instance": 1, "property": 103,
+             "error": {"class": 2, "code": 32}},
+        ]},
+    })
+
     # --- Error PDU ---------------------------------------------------------
     apdu = (bytes([(5 << 4), 14, 12]) + m.enc_app_enum(1) + m.enc_app_enum(31))
     vectors.append({

@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/hari/dcim-platform/collector/pkg/models"
 )
 
 // These tests run the codec against vectors produced by the SIMULATOR's own
@@ -525,6 +527,74 @@ func TestMinUintEncoding(t *testing.T) {
 	for v, want := range cases {
 		if got := len(minUint(v)); got != want {
 			t.Errorf("%d encoded in %d bytes, want %d", v, got, want)
+		}
+	}
+}
+
+// The simulator's own bytes for a dropout must map to BAD. Pinning quality on
+// the fake device alone would prove only that the fake and the decoder agree
+// on bit order; this vector comes from bacnet_object_model.enc_app_bitstr.
+func TestSimulatorQualityVectorMapsToQuality(t *testing.T) {
+	var vec *ackVector
+	for _, v := range loadAcks(t) {
+		if v.Name == "rpm_present_value_with_quality" {
+			v := v
+			vec = &v
+		}
+	}
+	if vec == nil {
+		t.Fatal("vector rpm_present_value_with_quality missing; run gen_bacnet_vectors.py")
+	}
+	raw, err := hex.DecodeString(vec.Frame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := unframe(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := parseAPDU(info.APDU)
+	if err != nil {
+		t.Fatal(err)
+	}
+	results, err := parseRPMAck(a.Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type pair struct{ flags, rel *Value }
+	byObj := map[ObjectID]*pair{}
+	for i := range results {
+		r := &results[i]
+		p := byObj[r.Object]
+		if p == nil {
+			p = &pair{}
+			byObj[r.Object] = p
+		}
+		switch r.Prop {
+		case PropStatusFlags:
+			p.flags = propValue(r)
+		case PropReliability:
+			p.rel = propValue(r)
+		}
+	}
+	want := map[ObjectID]struct {
+		q  models.Quality
+		bm bool
+	}{
+		{ObjAnalogInput, 2}: {models.QualityBad, true},      // FAULT + NO_SENSOR
+		{ObjAnalogInput, 1}: {models.QualityGood, false},    // clean
+		{ObjBinaryInput, 1}: {models.QualitySuspect, false}, // OOS, no Reliability
+	}
+	for obj, w := range want {
+		p := byObj[obj]
+		if p == nil {
+			t.Fatalf("%v: no results", obj)
+		}
+		if got := p.flags.Bit(statusFault); got != w.bm {
+			t.Errorf("%v: FAULT bit %v, want %v", obj, got, w.bm)
+		}
+		if q, _ := pointQuality(p.flags, p.rel); q != w.q {
+			t.Errorf("%v: quality %v, want %v", obj, q, w.q)
 		}
 	}
 }

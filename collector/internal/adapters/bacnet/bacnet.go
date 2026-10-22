@@ -54,6 +54,12 @@ type deviceProfile struct {
 	// at different times should not synchronise their slow reads into one
 	// spike every nth cycle.
 	cycle uint64
+	// noQuality is set when the device refused a poll that asked for
+	// Status_Flags and Reliability alongside the present value, but answered
+	// the same objects asked for present value alone. Its samples are then
+	// stamped GOOD as before: a device we cannot ask is not a faulty one.
+	// Cleared by rediscovery (Forget), so a firmware fix is picked up.
+	noQuality bool
 }
 
 type discoveredPoint struct {
@@ -178,6 +184,7 @@ func (a *Adapter) Poll(ctx context.Context, ep *models.Endpoint) (*models.PollOu
 	a.mu.Lock()
 	profile.cycle++
 	cycle := profile.cycle
+	withQuality := !profile.noQuality
 	a.mu.Unlock()
 	due := a.duePoints(profile.points, cycle)
 
@@ -188,13 +195,31 @@ func (a *Adapter) Poll(ctx context.Context, ep *models.Endpoint) (*models.PollOu
 		}
 		batch := due[start:end]
 
-		specs := make([]ReadSpec, 0, len(batch))
-		for _, p := range batch {
-			specs = append(specs, ReadSpec{Object: p.object,
-				Props: []uint32{PropPresentValue}})
+		results, err := a.client.ReadPropertyMultiple(ctx, addr,
+			readSpecs(batch, withQuality))
+		if err != nil && withQuality && qualityRefusal(err) {
+			// The device refused the request as a whole. Status_Flags is a
+			// required property of every analog and binary object, so a
+			// conforming device answers it per property; a refusal is either
+			// a non-conforming device or a reply that no longer fits its
+			// maximum APDU (a 480-byte MS/TP controller aborts rather than
+			// segment). Either way the present values must not be lost to
+			// the quality read, so the batch is asked again without it - one
+			// extra exchange, once - and the device is polled for present
+			// value alone from then on.
+			pvResults, pvErr := a.client.ReadPropertyMultiple(ctx, addr,
+				readSpecs(batch, false))
+			if pvErr == nil {
+				a.mu.Lock()
+				profile.noQuality = true
+				a.mu.Unlock()
+				withQuality = false
+				a.log.Warn("bacnet device refused status-flags/reliability "+
+					"reads; polling present value only, samples stamped GOOD",
+					"endpoint", ep.ID, "address", addr.IP, "error", err)
+			}
+			results, err = pvResults, pvErr
 		}
-
-		results, err := a.client.ReadPropertyMultiple(ctx, addr, specs)
 		if err != nil {
 			// One failed batch must not cost the others. A controller that
 			// rejects a large RPM still answers the next, smaller one.
@@ -242,21 +267,137 @@ func (a *Adapter) duePoints(points []discoveredPoint, cycle uint64) []discovered
 	return out
 }
 
+// readSpecs builds one RPM request body for a batch of points.
+//
+// With quality, each object is asked for Present_Value, Status_Flags and
+// Reliability in the SAME request - three properties per object, not three
+// requests - so the exchange count per poll is unchanged and only the reply
+// grows (about 20 bytes per object, roughly 600 bytes for a batch of 16,
+// inside a 1476-byte B/IP APDU).
+func readSpecs(batch []discoveredPoint, withQuality bool) []ReadSpec {
+	props := []uint32{PropPresentValue}
+	if withQuality {
+		props = []uint32{PropPresentValue, PropStatusFlags, PropReliability}
+	}
+	specs := make([]ReadSpec, 0, len(batch))
+	for _, p := range batch {
+		specs = append(specs, ReadSpec{Object: p.object, Props: props})
+	}
+	return specs
+}
+
+// qualityRefusal reports a failure the device ANSWERED - error, reject, abort
+// or an unreadable reply - as opposed to one where it did not answer at all.
+// Only the first kind can be caused by what was asked for; retrying a timeout
+// without the quality properties would just double the wait on a dead device.
+func qualityRefusal(err error) bool {
+	var ae *APDUError
+	return errors.As(err, &ae) || errors.Is(err, ErrUnexpected) ||
+		errors.Is(err, ErrShort)
+}
+
+// Status_Flags bits, numbered as ASHRAE 135 clause 12 numbers them.
+const (
+	statusInAlarm      = 0
+	statusFault        = 1
+	statusOverridden   = 2
+	statusOutOfService = 3
+)
+
+// reliabilityNoFault is Reliability NO_FAULT_DETECTED. Every other value -
+// NO_SENSOR (1), OPEN_LOOP (4), UNRELIABLE_OTHER (7), COMMUNICATION_FAILURE
+// (12) and the rest - says the present value is not a measurement.
+const reliabilityNoFault = 0
+
+// pointQuality maps a point's Status_Flags and Reliability onto sample quality.
+//
+// This is what a controller says about its own reading, and it is the only
+// way a BACnet dropout is visible: a controller that loses a sensor commonly
+// HOLDS the last present value and raises FAULT with a Reliability such as
+// NO_SENSOR, so the value alone reads as a perfect flatline.
+//
+//   - FAULT set, or Reliability anything but NO_FAULT_DETECTED -> BAD
+//   - OUT_OF_SERVICE or OVERRIDDEN -> SUSPECT (the value is real but not the
+//     sensor's: someone wrote it, or a hand/off/auto switch is holding it)
+//   - otherwise -> GOOD
+//
+// IN_ALARM does not lower quality: an alarm is a true reading of a bad
+// condition. A property the device did not return (nil, an error, or the
+// wrong type) is UNKNOWN and contributes nothing - a device that does not
+// support Reliability is not a faulty one.
+func pointQuality(flags, reliability *Value) (models.Quality, string) {
+	var fault, overridden, oos bool
+	if flags != nil && flags.Kind == tagBitString {
+		fault = flags.Bit(statusFault)
+		overridden = flags.Bit(statusOverridden)
+		oos = flags.Bit(statusOutOfService)
+	}
+	relBad := reliability != nil && reliability.Kind == tagEnumerated &&
+		reliability.Num != reliabilityNoFault
+	switch {
+	case relBad:
+		return models.QualityBad, fmt.Sprintf("reliability=%d", int(reliability.Num))
+	case fault:
+		return models.QualityBad, "fault"
+	case oos:
+		return models.QualitySuspect, "out_of_service"
+	case overridden:
+		return models.QualitySuspect, "overridden"
+	}
+	return models.QualityGood, ""
+}
+
+// propValue is the single decoded value of a per-property result, or nil when
+// the device returned an error or nothing for that property.
+func propValue(r *RPMResult) *Value {
+	if r == nil || r.Err != nil || len(r.Values) == 0 {
+		return nil
+	}
+	return &r.Values[0]
+}
+
 // collect turns RPM results into samples, matching each result back to the
 // point that asked for it.
+//
+// Results arrive one per PROPERTY, so each object's present value, flags and
+// reliability are gathered first and the sample built from all three.
 func (a *Adapter) collect(ep *models.Endpoint, batch []discoveredPoint,
 	results []RPMResult, outcome *models.PollOutcome, now int64) {
 
-	byObject := make(map[ObjectID]*discoveredPoint, len(batch))
-	for i := range batch {
-		byObject[batch[i].object] = &batch[i]
+	type objectRead struct {
+		pv, flags, reliability *RPMResult
 	}
-
-	for _, r := range results {
-		p, ok := byObject[r.Object]
+	reads := make(map[ObjectID]*objectRead, len(batch))
+	for i := range batch {
+		reads[batch[i].object] = &objectRead{}
+	}
+	for i := range results {
+		r := &results[i]
+		rd, ok := reads[r.Object]
 		if !ok {
 			// A result for something we did not ask about. Ignored rather
 			// than attributed to whatever point happens to be next.
+			continue
+		}
+		switch r.Prop {
+		case PropPresentValue:
+			rd.pv = r
+		case PropStatusFlags:
+			rd.flags = r
+		case PropReliability:
+			rd.reliability = r
+		}
+	}
+
+	for i := range batch {
+		p := &batch[i]
+		rd := reads[p.object]
+		r := rd.pv
+		if r == nil {
+			// Asked for and not answered: the reply was malformed or cut
+			// short. A gap, not a zero.
+			outcome.Misses = append(outcome.Misses,
+				models.Miss{Metric: p.metric, Reason: models.MissNoSuchObject})
 			continue
 		}
 		if r.Err != nil {
@@ -286,8 +427,15 @@ func (a *Adapter) collect(ep *models.Endpoint, batch []discoveredPoint,
 				models.Miss{Metric: p.metric, Reason: models.MissDecode})
 			continue
 		}
-		outcome.Samples = append(outcome.Samples,
-			a.sample(ep, *p, p.scaleValue(v.Num), now))
+		s := a.sample(ep, *p, p.scaleValue(v.Num), now)
+		q, why := pointQuality(propValue(rd.flags), propValue(rd.reliability))
+		s.Quality = q
+		if why != "" {
+			// Why the device distrusts its own reading, kept with the sample
+			// so the evidence does not need a second read of the controller.
+			s.Metadata["quality_reason"] = why
+		}
+		outcome.Samples = append(outcome.Samples, s)
 	}
 }
 
@@ -344,7 +492,8 @@ func (a *Adapter) sample(ep *models.Endpoint, p discoveredPoint, value float64,
 		ObservedAt:     now,
 		CollectedAt:    now,
 		SourceProtocol: models.ProtocolBacnet,
-		Quality:        models.QualityGood,
+		// Overwritten by collect from Status_Flags/Reliability.
+		Quality: models.QualityGood,
 		// The object name and identifier, so a value can be traced back to the
 		// exact point on the controller without re-reading the device.
 		Metadata: map[string]string{"point": p.name, "object": p.object.String()},

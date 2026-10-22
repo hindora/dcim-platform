@@ -719,12 +719,26 @@ func (d *decoder) skipToClose(num byte) error {
 // chart is the sort of thing that survives review and confuses an operator at
 // three in the morning.
 type Value struct {
-	Kind   byte
-	Num    float64
-	Text   string
-	Bits   uint32
+	Kind byte
+	Num  float64
+	Text string
+	Bits uint32
+	// BitLen is the number of significant bits in a bit string. Bits holds
+	// them right-aligned, so bit 0 of the BACnet bit string (the first one
+	// on the wire) is the MOST significant of the BitLen bits.
+	BitLen int
 	Object ObjectID
 	IsNull bool
+}
+
+// Bit reports bit i of a bit string, numbered as ASHRAE 135 numbers them:
+// bit 0 is the first bit on the wire. A bit beyond the string's length reads
+// as false, which is the standard's rule for a short bit string.
+func (v Value) Bit(i int) bool {
+	if v.Kind != tagBitString || i < 0 || i >= v.BitLen {
+		return false
+	}
+	return (v.Bits>>uint(v.BitLen-1-i))&1 == 1
 }
 
 // decodeValue reads one application-tagged value.
@@ -784,6 +798,7 @@ func (d *decoder) decodeValue() (Value, error) {
 				bits = bits<<8 | uint32(c)
 			}
 			v.Bits = bits >> uint(unused%8)
+			v.BitLen = len(data[1:])*8 - unused%8
 		}
 	case tagObjectID:
 		if len(data) != 4 {

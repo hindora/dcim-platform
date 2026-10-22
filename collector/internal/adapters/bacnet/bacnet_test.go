@@ -30,12 +30,16 @@ type fakeDevice struct {
 	instance uint32
 	mute     bool // answers everything except Who-Is
 
-	mu       sync.Mutex
-	reads    int  // ReadProperty requests served
-	rpms     int  // ReadPropertyMultiple requests served
-	silent   bool // drop everything, to exercise the timeout path
-	routedAs *routing
-	done     chan struct{}
+	mu     sync.Mutex
+	reads  int  // ReadProperty requests served
+	rpms   int  // ReadPropertyMultiple requests served
+	silent bool // drop everything, to exercise the timeout path
+	// abortQuality aborts any RPM that asks for Status_Flags or Reliability,
+	// as a 480-byte MS/TP controller does when the larger reply would need
+	// segmentation it does not support.
+	abortQuality bool
+	routedAs     *routing
+	done         chan struct{}
 }
 
 type routing struct {
@@ -50,6 +54,13 @@ type fakeObject struct {
 	binary  bool
 	absent  bool // answers unknown-object, like a point that was deleted
 	noValue bool // present but with a null present-value: out of service
+	// statusFlags is in_alarm|fault|overridden|out_of_service from bit 3
+	// down - the simulator's own representation (bacnet_object_model).
+	statusFlags byte
+	reliability byte
+	// noQualityProps answers unknown-property for Status_Flags and
+	// Reliability, like a device that does not implement them.
+	noQualityProps bool
 }
 
 func newFakeDevice(t *testing.T, objects []fakeObject) *fakeDevice {
@@ -141,7 +152,12 @@ func (d *fakeDevice) handle(raw []byte) []byte {
 	case svcReadPropertyMultiple:
 		d.mu.Lock()
 		d.rpms++
+		abortQuality := d.abortQuality
 		d.mu.Unlock()
+		if abortQuality && asksForQuality(a) {
+			// Abort, server-originated, reason segmentation-not-supported.
+			return d.wrap([]byte{pduAbort<<4 | 0x01, a.InvokeID, 4})
+		}
 		return d.wrap(d.readPropertyMultiple(a))
 	}
 	return nil
@@ -230,6 +246,29 @@ func oidWord(id ObjectID) []byte {
 	return b[:]
 }
 
+// asksForQuality reports whether an RPM request names Status_Flags or
+// Reliability for any object.
+func asksForQuality(a apdu) bool {
+	dec := &decoder{buf: a.Payload}
+	inList := false // inside an object's [1] property list
+	for !dec.eof() {
+		t, data, err := dec.nextTag()
+		if err != nil {
+			return false
+		}
+		if t.Context && t.Num == 1 && (t.Opening || t.Closing) {
+			inList = t.Opening
+			continue
+		}
+		if inList && t.Context && t.Num == 0 && !t.Opening && !t.Closing {
+			if p := beUint(data); p == PropStatusFlags || p == PropReliability {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (d *fakeDevice) readPropertyMultiple(a apdu) []byte {
 	dec := &decoder{buf: a.Payload}
 	e := &encoder{}
@@ -280,6 +319,22 @@ func (d *fakeDevice) readPropertyMultiple(a apdu) []byte {
 			case prop == PropPresentValue && o.binary:
 				e.open(4)
 				e.tagged(tagEnumerated, false, []byte{byte(int(o.value))})
+				e.close(4)
+			case (prop == PropStatusFlags || prop == PropReliability) &&
+				o.noQualityProps:
+				e.open(5)
+				e.tagged(tagEnumerated, false, []byte{2})  // property
+				e.tagged(tagEnumerated, false, []byte{32}) // unknown-property
+				e.close(5)
+			case prop == PropStatusFlags:
+				// Four bits, MSB first, four unused: the simulator's
+				// enc_app_bitstr(flags, 4).
+				e.open(4)
+				e.tagged(tagBitString, false, []byte{4, o.statusFlags << 4})
+				e.close(4)
+			case prop == PropReliability:
+				e.open(4)
+				e.tagged(tagEnumerated, false, []byte{o.reliability})
 				e.close(4)
 			case prop == PropPresentValue:
 				var b [4]byte
@@ -922,5 +977,305 @@ func TestIdentifyDoesNotBorrowANeighboursIAm(t *testing.T) {
 	}
 	if err := <-done; err == nil {
 		t.Fatal("the silent device was reported as answering")
+	}
+}
+
+// ------------------------------------------------------ point quality
+
+// Simulator Status_Flags values (in_alarm|fault|overridden|out_of_service from
+// bit 3 down) and Reliability enumerations.
+const (
+	fakeInAlarm      = 0b1000
+	fakeFault        = 0b0100
+	fakeOverridden   = 0b0010
+	fakeOutOfService = 0b0001
+
+	relNoSensor  = 1
+	relCommFault = 12
+)
+
+func withPoint(name string, edit func(*fakeObject)) []fakeObject {
+	objects := chillerObjects()
+	for i := range objects {
+		if objects[i].name == name {
+			edit(&objects[i])
+		}
+	}
+	return objects
+}
+
+func pollOnce(t *testing.T, objects []fakeObject) map[string]models.Telemetry {
+	t.Helper()
+	d := newFakeDevice(t, objects)
+	a := newAdapter(t, 8)
+	out, err := a.Poll(context.Background(), endpointFor(d, "chiller"))
+	if err != nil {
+		t.Fatalf("poll: %v", err)
+	}
+	return collect(out)
+}
+
+// A clean point is GOOD, and so is one IN ALARM: an alarm is a true reading of
+// a bad condition, not a reading the controller distrusts.
+func TestCleanPointIsGood(t *testing.T) {
+	got := pollOnce(t, withPoint("CHW_Return_Temp", func(o *fakeObject) {
+		o.statusFlags = fakeInAlarm
+	}))
+	for key, s := range got {
+		if s.Quality != models.QualityGood {
+			t.Errorf("%s: quality %v, want GOOD", key, s.Quality)
+		}
+		if _, ok := s.Metadata["quality_reason"]; ok {
+			t.Errorf("%s: a clean sample carries a quality reason", key)
+		}
+	}
+}
+
+// The simulator's dropout (doc 32 section 4.5): the controller HOLDS the last
+// value and raises FAULT. Without reading Status_Flags this is a flatline that
+// every detector reads as a perfectly steady sensor.
+func TestStatusFlagsFaultIsBad(t *testing.T) {
+	got := pollOnce(t, withPoint("CHW_Supply_Temp", func(o *fakeObject) {
+		o.statusFlags = fakeFault
+	}))
+	s, ok := got["water_supply_temp{CHW}"]
+	if !ok {
+		t.Fatal("a faulted point must still be sampled, with its held value")
+	}
+	if s.Quality != models.QualityBad {
+		t.Fatalf("quality %v, want BAD", s.Quality)
+	}
+	if math.Abs(s.DoubleValue-7.2) > 0.01 {
+		t.Errorf("held value %v, want 7.2", s.DoubleValue)
+	}
+	if s.Metadata["quality_reason"] != "fault" {
+		t.Errorf("reason %q, want fault", s.Metadata["quality_reason"])
+	}
+	// The neighbours on the same RPM are unaffected.
+	if got["water_supply_temp{COND}"].Quality != models.QualityGood {
+		t.Error("a fault on one point lowered another point's quality")
+	}
+}
+
+// Reliability NO_SENSOR is BAD whether or not the device also set FAULT -
+// and so is any other non-NO_FAULT_DETECTED value.
+func TestReliabilityNoSensorIsBad(t *testing.T) {
+	cases := []struct {
+		name   string
+		flags  byte
+		rel    byte
+		reason string
+	}{
+		{"no_sensor_with_fault", fakeFault, relNoSensor, "reliability=1"},
+		{"no_sensor_alone", 0, relNoSensor, "reliability=1"},
+		{"communication_failure", 0, relCommFault, "reliability=12"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := pollOnce(t, withPoint("Active_Power", func(o *fakeObject) {
+				o.statusFlags = c.flags
+				o.reliability = c.rel
+			}))
+			s := got["power_draw"]
+			if s.Quality != models.QualityBad {
+				t.Fatalf("quality %v, want BAD", s.Quality)
+			}
+			if s.Metadata["quality_reason"] != c.reason {
+				t.Errorf("reason %q, want %q", s.Metadata["quality_reason"], c.reason)
+			}
+		})
+	}
+}
+
+// OUT_OF_SERVICE and OVERRIDDEN are SUSPECT: the value is real, but someone
+// wrote it or a hand switch is holding it - it is not the sensor's.
+func TestOutOfServiceAndOverriddenAreSuspect(t *testing.T) {
+	for name, flags := range map[string]byte{
+		"out_of_service": fakeOutOfService,
+		"overridden":     fakeOverridden,
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := pollOnce(t, withPoint("Chiller_Running", func(o *fakeObject) {
+				o.statusFlags = flags
+			}))
+			s := got["equipment_state{Chiller_Running}"]
+			if s.Quality != models.QualitySuspect {
+				t.Fatalf("quality %v, want SUSPECT", s.Quality)
+			}
+			if s.Metadata["quality_reason"] != name {
+				t.Errorf("reason %q, want %q", s.Metadata["quality_reason"], name)
+			}
+		})
+	}
+	// FAULT outranks OUT_OF_SERVICE.
+	got := pollOnce(t, withPoint("Chiller_Running", func(o *fakeObject) {
+		o.statusFlags = fakeFault | fakeOutOfService
+	}))
+	if q := got["equipment_state{Chiller_Running}"].Quality; q != models.QualityBad {
+		t.Fatalf("fault + out-of-service: quality %v, want BAD", q)
+	}
+}
+
+// A device that does not implement the properties answers unknown-property
+// for them. That is UNKNOWN, which is GOOD - not a miss and not a fault.
+func TestUnsupportedQualityPropertiesAreGood(t *testing.T) {
+	objects := chillerObjects()
+	for i := range objects {
+		objects[i].noQualityProps = true
+	}
+	d := newFakeDevice(t, objects)
+	a := newAdapter(t, 8)
+	out, err := a.Poll(context.Background(), endpointFor(d, "chiller"))
+	if err != nil {
+		t.Fatalf("poll: %v", err)
+	}
+	if len(out.Misses) != 0 || out.Partial {
+		t.Fatalf("unsupported quality properties became misses: %v", out.Misses)
+	}
+	got := collect(out)
+	if len(got) == 0 {
+		t.Fatal("no samples")
+	}
+	for key, s := range got {
+		if s.Quality != models.QualityGood {
+			t.Errorf("%s: quality %v, want GOOD", key, s.Quality)
+		}
+	}
+}
+
+// A controller that aborts the larger request - a 480-byte MS/TP device that
+// will not segment - must not lose its present values to the quality read.
+// The batch is asked again for present value alone, once, and from then on
+// the device costs exactly what it did before.
+func TestDeviceRefusingQualityFallsBackToPresentValue(t *testing.T) {
+	d := newFakeDevice(t, chillerObjects())
+	d.abortQuality = true
+	a := newAdapter(t, 4)
+	ep := endpointFor(d, "chiller")
+
+	out, err := a.Poll(context.Background(), ep)
+	if err != nil {
+		t.Fatalf("first poll: %v", err)
+	}
+	got := collect(out)
+	if s, ok := got["water_supply_temp{CHW}"]; !ok || s.Quality != models.QualityGood {
+		t.Fatalf("present value lost or not GOOD after the fallback: %+v", s)
+	}
+	if out.Partial {
+		t.Errorf("fallback left misses: %v", out.Misses)
+	}
+
+	a.mu.Lock()
+	points := len(a.discovery[ep.ID].points)
+	a.mu.Unlock()
+	_, before := d.counts()
+	if _, err := a.Poll(context.Background(), ep); err != nil {
+		t.Fatalf("second poll: %v", err)
+	}
+	_, after := d.counts()
+	if want := (points + 3) / 4; after-before != want {
+		t.Fatalf("%d exchanges after the fallback, want %d (no repeated refusals)",
+			after-before, want)
+	}
+
+	// Rediscovery asks again, so a firmware fix is picked up.
+	a.Forget(ep.ID)
+	d.mu.Lock()
+	d.abortQuality = false
+	for i := range d.objects {
+		if d.objects[i].name == "CHW_Supply_Temp" {
+			d.objects[i].statusFlags = fakeFault
+		}
+	}
+	d.mu.Unlock()
+	out, err = a.Poll(context.Background(), ep)
+	if err != nil {
+		t.Fatalf("poll after forget: %v", err)
+	}
+	if q := collect(out)["water_supply_temp{CHW}"].Quality; q != models.QualityBad {
+		t.Fatalf("quality %v after rediscovery, want BAD", q)
+	}
+}
+
+// The quality read rides in the same request as the present value. If it
+// cost an exchange per point it would triple the load on a controller.
+func TestQualityReadAddsNoExchanges(t *testing.T) {
+	d := newFakeDevice(t, chillerObjects())
+	a := newAdapter(t, 16)
+	ep := endpointFor(d, "chiller")
+	if _, err := a.Poll(context.Background(), ep); err != nil {
+		t.Fatalf("discovery poll: %v", err)
+	}
+	_, before := d.counts()
+	if _, err := a.Poll(context.Background(), ep); err != nil {
+		t.Fatalf("poll: %v", err)
+	}
+	if _, after := d.counts(); after-before != 1 {
+		t.Fatalf("%d exchanges for one batch, want 1", after-before)
+	}
+}
+
+func TestPointQualityTable(t *testing.T) {
+	bits := func(f byte) *Value {
+		return &Value{Kind: tagBitString, Bits: uint32(f), BitLen: 4}
+	}
+	enum := func(n float64) *Value { return &Value{Kind: tagEnumerated, Num: n} }
+	cases := []struct {
+		name  string
+		flags *Value
+		rel   *Value
+		want  models.Quality
+	}{
+		{"nothing known", nil, nil, models.QualityGood},
+		{"clean", bits(0), enum(0), models.QualityGood},
+		{"in alarm", bits(fakeInAlarm), enum(0), models.QualityGood},
+		{"fault", bits(fakeFault), nil, models.QualityBad},
+		{"no sensor", nil, enum(relNoSensor), models.QualityBad},
+		{"out of service", bits(fakeOutOfService), enum(0), models.QualitySuspect},
+		{"overridden", bits(fakeOverridden), nil, models.QualitySuspect},
+		{"fault beats oos", bits(fakeFault | fakeOutOfService), nil, models.QualityBad},
+		// A wrong-typed answer is unknown, not a fault.
+		{"flags as enum", enum(4), nil, models.QualityGood},
+		{"reliability as real", nil, &Value{Kind: tagReal, Num: 1}, models.QualityGood},
+		// A short bit string: missing bits read false.
+		{"two-bit flags", &Value{Kind: tagBitString, Bits: 0b01, BitLen: 2},
+			nil, models.QualityBad},
+	}
+	for _, c := range cases {
+		if got, _ := pointQuality(c.flags, c.rel); got != c.want {
+			t.Errorf("%s: %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+// The doc 32 D6 points: chiller approach per heat exchanger on one key with
+// the side as instance, and CRAH air-filter dP converted from Pa to kPa.
+func TestApproachAndFilterPointsMap(t *testing.T) {
+	objects := append(chillerObjects(),
+		fakeObject{id: ObjectID{ObjAnalogInput, 14}, name: "Cond_Approach_Temp", value: 2.4},
+		fakeObject{id: ObjectID{ObjAnalogInput, 15}, name: "Evap_Approach_Temp", value: 1.1})
+	got := pollOnce(t, objects)
+	if s, ok := got["approach_temp{COND}"]; !ok || math.Abs(s.DoubleValue-2.4) > 0.01 {
+		t.Errorf("condenser approach: %v (present=%v)", s.DoubleValue, ok)
+	}
+	if s, ok := got["approach_temp{EVAP}"]; !ok || math.Abs(s.DoubleValue-1.1) > 0.01 {
+		t.Errorf("evaporator approach: %v (present=%v)", s.DoubleValue, ok)
+	}
+
+	crah := newFakeDevice(t, []fakeObject{
+		{id: ObjectID{ObjAnalogInput, 1}, name: "Supply_Air_Temp", value: 22},
+		{id: ObjectID{ObjAnalogInput, 11}, name: "Filter_DP", value: 60},
+	})
+	a := newAdapter(t, 8)
+	out, err := a.Poll(context.Background(), endpointFor(crah, "crah"))
+	if err != nil {
+		t.Fatalf("crah poll: %v", err)
+	}
+	s, ok := collect(out)["filter_diff_pressure"]
+	if !ok {
+		t.Fatal("CRAH Filter_DP not mapped")
+	}
+	if math.Abs(s.DoubleValue-0.06) > 1e-6 || s.Unit != "kPa" {
+		t.Fatalf("CRAH filter dP %v %s, want 0.06 kPa (60 Pa)", s.DoubleValue, s.Unit)
 	}
 }
