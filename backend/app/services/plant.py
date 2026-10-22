@@ -32,6 +32,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.analytics.catalogue import VALVE_DEVIATION_PCT as _VALVE_DEVIATION_PCT
 from app.repositories import plant as repo
 from app.services.cooling import LOW_DELTA_T_K, MIN_FLOW_L_S, delta_t, heat_kw
 from app.services.thermal import CrahThermal, classify_crah
@@ -50,8 +51,10 @@ APPROACH_LIMIT_K = 8.0
 #: Set well outside a positioner's normal deadband, which is a few percent on
 #: a modulating actuator and is not a fault - a valve that hunts inside its
 #: deadband is a valve working. This is the gap that means the stem is stuck,
-#: the linkage has slipped or the actuator has lost air or power.
-VALVE_DEVIATION_PCT = 10.0
+#: the linkage has slipped or the actuator has lost air or power. The value is
+#: shared with the VA-1 detector (analytics/catalogue.py), so the plant page
+#: and the derived alert read one number.
+VALVE_DEVIATION_PCT = _VALVE_DEVIATION_PCT
 
 #: Watts per kilowatt. Plant points are published in W, the page reads kW.
 W_PER_KW = 1000.0

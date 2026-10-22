@@ -33,6 +33,7 @@ class FakeRedis:
     def __init__(self):
         self.kv: dict[str, str] = {}
         self.lists: dict[str, list[str]] = {}
+        self.hashes: dict[str, dict[str, str]] = {}
 
     async def get(self, key):
         return self.kv.get(key)
@@ -51,6 +52,17 @@ class FakeRedis:
 
     async def lrange(self, key, a, b):
         return self.lists.get(key, [])[a:b + 1]
+
+    # The Phase 1 sweep keeps its windows and dwell state in two hashes.
+    async def hgetall(self, key):
+        return dict(self.hashes.get(key, {}))
+
+    async def hset(self, key, mapping=None):
+        self.hashes.setdefault(key, {}).update(mapping or {})
+
+    async def hdel(self, key, *fields):
+        for f in fields:
+            self.hashes.get(key, {}).pop(f, None)
 
 
 @pytest_asyncio.fixture

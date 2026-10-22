@@ -114,6 +114,21 @@ PLATFORM_CHECK_S = 30.0
 ASSIGNER_INTERVAL_S = 30.0
 
 _QUALITY_NAMES = {int(q): q.name.lower() for q in Quality}
+
+
+def feeds_rules(quality: str) -> bool:
+    """Whether a sample may be judged by the threshold rules.
+
+    A BAD sample is the instrument saying its own reading is not to be
+    trusted: a BACnet point with its FAULT flag up or a Reliability other
+    than NO_FAULT_DETECTED, still carrying the value it last held. Judging
+    that held value would raise - or clear - a process alarm on a number the
+    device has disowned; the sensor fault is a data-quality finding, not a
+    hot aisle. So it is stored and charted, and the rules never see it: no
+    raise, no clear, and it does not advance a dwell either way. SUSPECT
+    (out of range, out of service, overridden) still reaches the rules.
+    """
+    return quality != "bad"
 _SEVERITY_NAMES = {int(s): s.name for s in Severity}
 _COMM_STATUS = {1: "ONLINE", 2: "DEGRADED", 3: "OFFLINE", 4: "UNKNOWN", 5: "DISABLED"}
 
@@ -549,7 +564,7 @@ class IngestWorker:
             async with unit_of_work() as session:
                 result = await anomaly_sweep.guarded_sweep(
                     session, self.redis, consumer=self.consumer, sweep_s=sweep_s,
-                    now=started)
+                    now=started, lag_s=self._last_lag_s)
                 if result.actions:
                     await integration_outbox.enqueue_actions(session, result.actions)
             outcome = "ran" if result.ran else (result.skipped or "skipped")
@@ -559,6 +574,9 @@ class IngestWorker:
                 metrics.anomaly_series_scored.set(result.series_scored)
                 for action in result.actions:
                     await self.fanout.alarm(action.kind, action.alarm)
+                # Capped at 50 + 1 summary by the sweep: the hub drops a
+                # session whose 256-frame queue fills (websocket/hub.py).
+                await self.fanout.anomaly_frames(result.frames)
             await anomaly_sweep.record_outcome(
                 self.redis, consumer=self.consumer, outcome=outcome, at=started,
                 duration_ms=result.duration_ms if result.ran else None)
@@ -827,12 +845,13 @@ class IngestWorker:
                     # evaluated: 38 points streaming in from the plant that
                     # could not raise anything. Carried as 1.0/0.0 so one dwell
                     # and one clear path serve both kinds of rule.
-                    rule_inputs.append({
-                        "device_id": s.device_id, "device_type": ctx.device_type,
-                        "metric": s.metric, "instance": s.instance,
-                        "value": 1.0 if s.bool_value else 0.0,
-                        "observed_at": observed, "endpoint_id": s.endpoint_id,
-                    })
+                    if feeds_rules(quality):
+                        rule_inputs.append({
+                            "device_id": s.device_id, "device_type": ctx.device_type,
+                            "metric": s.metric, "instance": s.instance,
+                            "value": 1.0 if s.bool_value else 0.0,
+                            "observed_at": observed, "endpoint_id": s.endpoint_id,
+                        })
                     continue
 
                 if s.value_type == int(ValueType.COUNTER):
@@ -872,11 +891,12 @@ class IngestWorker:
                     instance=s.instance, value=value, quality=quality))
                 self._note_hot(hot, ws_frames, s.device_id, s.metric, value,
                                observed, quality, s.instance)
-                rule_inputs.append({
-                    "device_id": s.device_id, "device_type": ctx.device_type,
-                    "metric": s.metric, "instance": s.instance, "value": value,
-                    "observed_at": observed, "endpoint_id": s.endpoint_id,
-                })
+                if feeds_rules(quality):
+                    rule_inputs.append({
+                        "device_id": s.device_id, "device_type": ctx.device_type,
+                        "metric": s.metric, "instance": s.instance, "value": value,
+                        "observed_at": observed, "endpoint_id": s.endpoint_id,
+                    })
 
             self._derive_load_pct(sample_rows, rule_inputs, hot, ws_frames)
 
@@ -1337,11 +1357,12 @@ class IngestWorker:
                 instance=row.instance, value=pct, quality=row.quality))
             self._note_hot(hot, ws_frames, row.device_id, LOAD_PCT_METRIC,
                            pct, row.ts, row.quality, row.instance)
-            rule_inputs.append({
-                "device_id": row.device_id, "device_type": ctx.device_type,
-                "metric": LOAD_PCT_METRIC, "instance": row.instance,
-                "value": pct, "observed_at": row.ts, "endpoint_id": None,
-            })
+            if feeds_rules(row.quality):
+                rule_inputs.append({
+                    "device_id": row.device_id, "device_type": ctx.device_type,
+                    "metric": LOAD_PCT_METRIC, "instance": row.instance,
+                    "value": pct, "observed_at": row.ts, "endpoint_id": None,
+                })
 
     # ------------------------------------------------------------- baselines
 

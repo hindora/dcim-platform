@@ -8,7 +8,7 @@ figures under `detail` (docs/30 section 11).
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -70,3 +70,47 @@ class AnomalyHealth(BaseModel):
     severity_cap: str
     l5_major_enabled: bool = False
     detail: HealthDetail = Field(default_factory=HealthDetail)
+
+
+# --- Phase 1 request bodies (docs/30 sections 4.3, 6.2-6.4) -------------------
+
+class FeedbackRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    action: Literal["acknowledge", "dismiss", "confirm", "reopen"]
+    #: Required for dismiss, refused otherwise (docs/31 D5): dismissal is how
+    #: precision is measured, and free text cannot be counted.
+    reason: Literal["not_a_fault", "expected_operation", "sensor_fault", "duplicate"] | None = None
+    note: str | None = Field(None, max_length=1000)
+
+
+class DetectorPatch(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    enabled: bool | None = None
+    #: Partial; validated against the detector's param_schema.
+    params: dict[str, Any] | None = None
+
+
+class OverridePut(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    params: dict[str, Any] | None = None
+    enabled: bool | None = None
+    reason: str | None = Field(None, max_length=1000)
+    expires_at: datetime | None = None
+
+
+class ExclusionCreate(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    device_id: str | None = None
+    room_id: str | None = None
+    datacenter_id: str | None = None
+    detector_id: str | None = None
+    metric_key: str | None = None
+    starts_at: datetime
+    ends_at: datetime | None = None
+    source: str = "manual"
+    source_ref: str | None = Field(None, max_length=200)
+    reason: str = Field(..., min_length=1, max_length=1000)

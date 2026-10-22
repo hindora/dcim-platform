@@ -37,6 +37,11 @@ async def session():
     maker = async_sessionmaker(engine, expire_on_commit=False)
     async with maker() as s:
         trans = await s.begin()
+        # These are 0111's schema checks, written against empty tables; 0112
+        # seeds the catalogue (CR-1, L5, ...). Empty it inside the rolled-back
+        # transaction so the tests insert their own rows as before.
+        await s.execute(text("DELETE FROM anomaly_finding"))
+        await s.execute(text("DELETE FROM anomaly_detector"))
         try:
             yield s
         finally:

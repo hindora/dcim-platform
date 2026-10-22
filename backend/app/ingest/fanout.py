@@ -110,6 +110,27 @@ class Fanout:
         if alarm.get("device_id"):
             await self._publish(f"device:{alarm['device_id']}", frame)
 
+    async def anomaly_frames(self, frames: list[dict[str, Any]]) -> None:
+        """Anomaly finding frames, already capped by the sweep (docs/30 section 8).
+
+        Each goes to `anomalies` and, when it carries a finding, to that
+        device's topic so an open device page refreshes. The `bulk` summary
+        goes to `anomalies` only. One pipeline: a burst is one round trip.
+        """
+        if not frames:
+            return
+        pipe = self._redis.pipeline()
+        for frame in frames:
+            body = _dumps(frame)
+            pipe.publish(channel("anomalies"), body)
+            dev = (frame.get("finding") or {}).get("device_id")
+            if dev:
+                pipe.publish(channel(f"device:{dev}"), body)
+        try:
+            await pipe.execute()
+        except Exception as exc:
+            log.warning("ws fanout failed", topic="anomalies", error=str(exc))
+
     async def event(self, item: dict[str, Any]) -> None:
         await self._publish("events", {"event": "event_created", "item": item})
 

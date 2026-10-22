@@ -629,7 +629,7 @@ metrics:
     aggregation: avg
     stale_after_s: 300
     group: cooling
-    device_types: [cdu, cooling_tower]
+    device_types: [chiller, cdu, cooling_tower]
     description: A temperature DIFFERENCE in kelvin, not a temperature in celsius. A widening approach is the standard fouling signature.
 
   - key: supply_air_temp

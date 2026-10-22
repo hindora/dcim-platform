@@ -320,6 +320,15 @@ NON_TRAP_ALARM_TYPES = frozenset({
     "smoke_alert", "smoke_action", "smoke_fire", "fire_alarm_active",
     "fire_panel_trouble", "fire_panel_supervisory",
     "gas_release_imminent", "gas_agent_released", "gas_agent_pressure_low",
+    # Derived alerts raised by the anomaly sweep's L2 rules (migration 0112,
+    # docs/29 section 9.3), disabled detectors included.
+    "crah_supply_over_setpoint", "crah_low_delta_t", "crah_valve_hunting",
+    "chiller_chw_over_setpoint", "chiller_short_cycling", "chiller_condenser_rising",
+    "chiller_low_delta_t", "cdu_facility_starved", "cdu_condensation_risk",
+    "valve_position_mismatch", "valve_hunting", "pump_failed_to_prove",
+    "tower_fan_saturated", "tower_basin_imbalance",
+    "inlet_rate_of_change", "rack_hot_spot",
+    "generator_fuel_loss", "ats_transfer_rate",
 })
 
 
@@ -436,3 +445,27 @@ def test_a_probe_reading_is_a_threshold_crossing_not_a_state():
             f"{tax.detection_for('snmp_trap', alarm_type=alarm_type)}"
         )
 
+
+
+# The derived alert types of migration 0112 (docs/29 section 9.3) are in both
+# tables, so the two-way check above covers them; this pins their categories
+# and the derived detection they must carry.
+_DERIVED_93 = {
+    "crah_supply_over_setpoint": "cooling", "crah_low_delta_t": "cooling",
+    "crah_valve_hunting": "cooling", "chiller_chw_over_setpoint": "cooling",
+    "chiller_short_cycling": "cooling", "chiller_condenser_rising": "cooling",
+    "chiller_low_delta_t": "cooling", "cdu_facility_starved": "cooling",
+    "cdu_condensation_risk": "cooling", "valve_position_mismatch": "cooling",
+    "valve_hunting": "cooling", "pump_failed_to_prove": "cooling",
+    "tower_fan_saturated": "cooling", "tower_basin_imbalance": "cooling",
+    "inlet_rate_of_change": "environmental", "rack_hot_spot": "environmental",
+    "generator_fuel_loss": "power", "ats_transfer_rate": "power",
+}
+
+
+@pytest.mark.parametrize("alarm_type,category", sorted(_DERIVED_93.items()))
+def test_derived_types_classify_and_are_derived(alarm_type, category):
+    assert tax.BY_ALARM_TYPE[alarm_type] == category
+    assert tax.classify(alarm_type, role="cooling") == category
+    assert alarm_type in NON_TRAP_ALARM_TYPES
+    assert tax.detection_for("analytics", alarm_type=alarm_type) == tax.DERIVED

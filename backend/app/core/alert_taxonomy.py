@@ -533,6 +533,30 @@ BY_ALARM_TYPE: dict[str, str] = {
     "chiller_flow_loss": COOLING,
     "cooling_degraded": COOLING,
 
+    # --- derived: the anomaly sweep's L2 rules (docs/29 section 9.3). Raised
+    # with source="analytics", so detection is `derived`, and capped at MINOR
+    # (docs/33 section 1 item 2). Named for the CONDITION, never the detector
+    # id, which travels in alarm.attributes.anomaly.detector_id. Disabled
+    # detectors' types are listed too: a PATCH turns them on, not a migration.
+    "crah_supply_over_setpoint": COOLING,
+    "crah_low_delta_t": COOLING,
+    "crah_valve_hunting": COOLING,
+    "chiller_chw_over_setpoint": COOLING,
+    "chiller_short_cycling": COOLING,
+    "chiller_condenser_rising": COOLING,
+    "chiller_low_delta_t": COOLING,
+    "cdu_facility_starved": COOLING,
+    "cdu_condensation_risk": COOLING,
+    "valve_position_mismatch": COOLING,
+    "valve_hunting": COOLING,
+    "pump_failed_to_prove": COOLING,
+    "tower_fan_saturated": COOLING,
+    "tower_basin_imbalance": COOLING,
+    "inlet_rate_of_change": ENVIRONMENTAL,
+    "rack_hot_spot": ENVIRONMENTAL,
+    "generator_fuel_loss": POWER,
+    "ats_transfer_rate": POWER,
+
     # --- capacity: nothing raises these yet; the names are reserved so phase 6
     # does not have to migrate anything. Listed in RESERVED below, so the
     # legend can say "not built" rather than implying the estate is clean.

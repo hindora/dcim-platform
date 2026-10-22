@@ -31,6 +31,11 @@ from typing import Any
 
 from sqlalchemy import text
 
+from app.analytics.catalogue import (
+    CDU_SUPPLY_FAULT_MARGIN_K,
+    CRAH_SUPPLY_FAULT_MARGIN_K,
+    HOT_SPOT_MARGIN_K,
+)
 from app.core.alert_taxonomy import THERMAL_ALARM_CATEGORIES
 from app.repositories import estate as estate_repo
 
@@ -40,16 +45,17 @@ ASHRAE_ALLOWABLE_MAX = 32.0
 
 # A rack this far above the room's 90th percentile inlet is a hot spot, even
 # when it is still within the envelope. Relative, because a room running warm
-# everywhere is a different problem from one rack running warm.
-HOT_SPOT_MARGIN_K = 3.0
+# everywhere is a different problem from one rack running warm. The value
+# lives in analytics/catalogue.py, shared with the RM-3 detector, so the room
+# page and the derived alert cannot disagree (docs/33 task 1.4).
 
 # How long the condition must hold. A single hot sample is a fan ramp or a
 # sensor blip; fifteen minutes is a thermal event.
 SUSTAINED_MINUTES = 15
 
 # A CRAH that cannot hold its discharge this far above setpoint has stopped
-# cooling, whatever its return reads.
-SUPPLY_FAULT_MARGIN_K = 3.0
+# cooling, whatever its return reads. Shared with CR-1 (analytics/catalogue.py).
+SUPPLY_FAULT_MARGIN_K = CRAH_SUPPLY_FAULT_MARGIN_K
 
 # Return air this far above the room's own 90th percentile return marks the
 # unit taking the hottest air - a load or containment signal, not a fault.
@@ -173,8 +179,9 @@ def classify_crah(unit: CrahThermal, room_return_p90: float | None
 #: is failing to hold its loop. Tighter than the air-side margin because a
 #: liquid loop is a tighter control problem: the water has ~4x the heat
 #: capacity of the same mass of air and no mixing volume to smear a control
-#: error over, so a CDU that has lost its setpoint has lost it.
-CDU_SUPPLY_FAULT_MARGIN_K = 2.0
+#: error over, so a CDU that has lost its setpoint has lost it. The value is
+#: CDU_SUPPLY_FAULT_MARGIN_K in analytics/catalogue.py, shared with CD-1
+#: (docs/29 D18).
 
 #: Approach - secondary supply minus facility supply - above which the heat
 #: exchanger is not transferring the way it should. Design approach on a

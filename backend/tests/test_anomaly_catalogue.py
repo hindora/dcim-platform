@@ -169,3 +169,91 @@ def test_nothing_stored_starts_fresh():
 def test_the_fit_day_starts_at_the_configured_hour():
     assert repo.fit_day_start(NOW, 3) == datetime(2026, 10, 21, 3, tzinfo=UTC)
     assert repo.fit_day_start(NOW, 10) == datetime(2026, 10, 20, 10, tzinfo=UTC)
+
+
+# --- Phase 1: the 0112 catalogue against the taxonomy, the registry and the
+# --- param schema (docs/33 Phase 1 unit tests) --------------------------------
+
+from app.core import alert_taxonomy as tax  # noqa: E402
+from app.core.metrics_gen import METRICS  # noqa: E402
+from tests.anomaly_fakes import seed_rows  # noqa: E402
+from tests.test_alert_taxonomy import NON_TRAP_ALARM_TYPES  # noqa: E402
+
+#: docs/29 section 9.3, verbatim.
+CATEGORY_93 = {
+    "crah_supply_over_setpoint": tax.COOLING, "crah_low_delta_t": tax.COOLING,
+    "crah_valve_hunting": tax.COOLING, "chiller_chw_over_setpoint": tax.COOLING,
+    "chiller_short_cycling": tax.COOLING, "chiller_condenser_rising": tax.COOLING,
+    "chiller_low_delta_t": tax.COOLING, "cdu_facility_starved": tax.COOLING,
+    "cdu_condensation_risk": tax.COOLING, "valve_position_mismatch": tax.COOLING,
+    "valve_hunting": tax.COOLING, "pump_failed_to_prove": tax.COOLING,
+    "tower_fan_saturated": tax.COOLING, "tower_basin_imbalance": tax.COOLING,
+    "inlet_rate_of_change": tax.ENVIRONMENTAL, "rack_hot_spot": tax.ENVIRONMENTAL,
+    "generator_fuel_loss": tax.POWER, "ats_transfer_rate": tax.POWER,
+}
+ROWS = seed_rows()
+
+
+def test_0112_seeds_the_documented_rows():
+    ids = {r["id"] for r in ROWS}
+    assert {f"DQ-{n}" for n in range(1, 6)} <= ids and "L5" in ids
+    l2 = [r for r in ROWS if r["layer"] == 2]
+    assert len(l2) == 18
+    assert {r["id"] for r in l2 if not r["enabled"]} == {"CT-2", "CT-3", "AT-1", "PL-1"}
+    l5 = next(r for r in ROWS if r["id"] == "L5")
+    assert l5["params"]["major_enabled"] is False and l5["layer"] == 5
+
+
+def test_every_alarm_type_has_both_taxonomy_entries_and_its_93_category():
+    typed = {r["alarm_type"]: r["id"] for r in ROWS if r["alarm_type"]}
+    assert set(typed) == set(CATEGORY_93)
+    for t in typed:
+        assert tax.BY_ALARM_TYPE.get(t) == CATEGORY_93[t], t
+        assert t in NON_TRAP_ALARM_TYPES, t
+
+
+def test_alert_lane_rows_have_an_alarm_type_and_a_capped_severity():
+    for r in ROWS:
+        if r["default_lane"] == "alert":
+            assert r["alarm_type"] and r["severity"] in ("MINOR", "WARNING"), r["id"]
+    assert len({r["alarm_type"] for r in ROWS if r["alarm_type"]}) == \
+        sum(1 for r in ROWS if r["alarm_type"])
+
+
+def test_required_metrics_are_registry_keys():
+    for r in ROWS:
+        for spec in r["required_metrics"]:
+            key, _ = cat.parse_required(spec)
+            assert key in METRICS, (r["id"], spec)
+        if r["primary_metric"] != "*":
+            assert r["primary_metric"] in METRICS, r["id"]
+        for t in r["device_types"]:
+            assert t in cat.L0_METRICS or t == "ats", (r["id"], t)
+
+
+@pytest.mark.parametrize("row", ROWS, ids=[r["id"] for r in ROWS])
+def test_param_schema_defaults_are_the_seed_values(row):
+    specs = cat.PARAM_SCHEMAS[row["id"]]
+    assert specs, row["id"]
+    for spec in specs:
+        assert spec.key in row["params"], (row["id"], spec.key)
+        assert row["params"][spec.key] == spec.default, (row["id"], spec.key)
+        # and the seed is inside its own bounds
+        assert cat.validate_params(row["id"], {spec.key: spec.default})
+
+
+def test_validate_params_refuses_unknown_and_out_of_range():
+    with pytest.raises(cat.ParamError) as e:
+        cat.validate_params("CR-1", {"bogus": 1})
+    assert e.value.error == "unknown_param" and e.value.key == "bogus"
+    with pytest.raises(cat.ParamError) as e:
+        cat.validate_params("CR-1", {"margin_k": 50})
+    assert e.value.error == "param_out_of_range"
+    with pytest.raises(cat.ParamError):
+        cat.validate_params("CR-1", {"dwell_s": 90.5})
+    with pytest.raises(cat.ParamError):
+        cat.validate_params("CR-1", {"margin_k": True})
+    with pytest.raises(cat.ParamError):
+        cat.validate_params("L5", {"major_enabled": "yes"})
+    assert cat.validate_params("CR-1", {"dwell_s": 600.0}) == {"dwell_s": 600}
+    assert cat.validate_params("L5", {"major_enabled": True}) == {"major_enabled": True}

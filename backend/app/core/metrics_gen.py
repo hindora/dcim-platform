@@ -475,7 +475,7 @@ METRICS: dict[str, MetricDef] = {
         min_valid=None, max_valid=None,
         stale_after_s=300, hot=False,
         group="cooling", rate_of=None, rate_scale=1.0,
-        device_types=("cdu", "cooling_tower",),
+        device_types=("chiller", "cdu", "cooling_tower",),
         alarm_scope="instance",
     ),
     "supply_air_temp": MetricDef(

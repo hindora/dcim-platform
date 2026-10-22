@@ -45,6 +45,27 @@ DERIVED_SEVERITY_CAP = "MINOR"
 #: The correlator's switch row (docs/29 4.1). It scores nothing.
 L5_ID = "L5"
 
+# --- shared constants: the display verdict and the alert use ONE value --------
+#
+# Doc 28 section "code": a CRAH the room page calls `high_supply` and a CR-1
+# alert that disagrees about the same unit would be two answers to one
+# question. These live here and services/thermal.py and services/plant.py
+# import them back, so the display and the detector cannot drift
+# (tests/test_anomaly_rule_parity.py).
+
+#: CR-1 / classify_crah: a CRAH discharging this far over its setpoint has
+#: stopped cooling (services/thermal.py SUPPLY_FAULT_MARGIN_K).
+CRAH_SUPPLY_FAULT_MARGIN_K = 3.0
+#: RM-3 / hot_spots: a rack this far above the room's p90 inlet is a hot spot.
+HOT_SPOT_MARGIN_K = 3.0
+#: CD-1 / classify_cdu: secondary supply this far over setpoint (docs/29 D18).
+CDU_SUPPLY_FAULT_MARGIN_K = 2.0
+#: VA-1 / plant verdict: commanded vs measured gap that means the actuator is
+#: not obeying (services/plant.py VALVE_DEVIATION_PCT).
+VALVE_DEVIATION_PCT = 10.0
+#: RM-2: ASHRAE's 20 K/h maximum rate of change (core/ashrae.py Envelope).
+MAX_RATE_K_PER_H = 20.0
+
 _SEVERITY_RANK = {
     "CLEAR": 0, "INFO": 1, "WARNING": 2, "MINOR": 3, "MAJOR": 4, "CRITICAL": 5,
 }
@@ -236,3 +257,316 @@ class Catalogue:
         return effective(d, feature_enabled=feature_enabled, device_type=device_type,
                          override=self.overrides.get((detector_id, device_id)),
                          now=now, available=available)
+
+
+# --- param_schema: the only validation for PATCH and override params ----------
+#
+# docs/30 section 6.1 (doc 31 D9). One ParamSpec per tunable key; a key in a
+# row's params with no spec renders read-only and is refused by PATCH
+# (`unknown_param`). `default` is the 0112 seed value (docs/29 section 12.1, as
+# corrected by docs/33 section 3.7), checked against the migration by
+# tests/test_anomaly_catalogue.py.
+#
+# Params are FLAT (docs/29 section 7.1 nests the gate keys under `gate`). A
+# PATCH is a partial, shallow merge, and the override merge is Postgres `||`:
+# a nested `gate` would be replaced whole by a one-key edit, silently dropping
+# its siblings. Flat keys make "change one number" mean exactly that.
+
+
+@dataclass(frozen=True)
+class ParamSpec:
+    key: str
+    label: str
+    kind: str                     # 'number' | 'int' | 'bool' | 'enum'
+    default: Any
+    unit: str | None = None
+    min: float | None = None
+    max: float | None = None
+    step: float | None = None
+    options: tuple[str, ...] | None = None
+    help: str | None = None
+
+    def as_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {"key": self.key, "label": self.label, "kind": self.kind,
+                               "default": self.default}
+        for k in ("unit", "min", "max", "step", "help"):
+            v = getattr(self, k)
+            if v is not None:
+                out[k] = v
+        if self.options is not None:
+            out["options"] = list(self.options)
+        return out
+
+
+def _dwell(default: int) -> ParamSpec:
+    return ParamSpec("dwell_s", "Set dwell", "int", default, "s", 0, 86_400, 60,
+                     help="Condition must hold this long before a finding opens")
+
+
+def _clear(default: int) -> ParamSpec:
+    return ParamSpec("clear_dwell_s", "Clear dwell", "int", default, "s", 0, 86_400, 60,
+                     help="And be false this long before it resolves")
+
+
+def _samples(key: str, label: str, default: int, hi: int = 50) -> ParamSpec:
+    return ParamSpec(key, label, "int", default, "samples", 1, hi, 1)
+
+
+_REOPEN = ParamSpec("reopen_window_s", "Reopen window", "int", 1800, "s", 0, 604_800, 60,
+                    help="A re-raise inside this reopens the same finding")
+_RUN = ParamSpec("running_min_s", "Running at least", "int", 600, "s", 0, 7200, 60)
+_FIRE = ParamSpec("exclude_fire_predischarge", "Ignore during gas pre-discharge", "bool",
+                  True)
+_MAINT = ParamSpec("exclude_maintenance", "Ignore under a maintenance window", "bool", True)
+
+
+def _hunting() -> list[ParamSpec]:
+    return [
+        ParamSpec("min_reversals", "Reversals", "int", 6, None, 2, 50, 1,
+                  help="Direction changes inside the window that count as hunting"),
+        ParamSpec("min_step_pct", "Smallest move", "number", 5.0, "%", 0.5, 50, 0.5),
+        ParamSpec("window_s", "Window", "int", 1800, "s", 300, 7200, 60),
+        _dwell(0), _clear(1800), _REOPEN,
+    ]
+
+
+PARAM_SCHEMAS: dict[str, list[ParamSpec]] = {
+    "DQ-1": [
+        ParamSpec("grace_intervals", "Grace", "int", 3, "polls", 1, 20, 1,
+                  help="Polls of silence before a series counts as dropped"),
+        ParamSpec("min_grace_s", "Grace floor", "int", 300, "s", 60, 3600, 60),
+        ParamSpec("max_grace_s", "Grace ceiling", "int", 10_800, "s", 600, 86_400, 60),
+        _samples("clear_samples", "Good samples to clear", 2, 20), _REOPEN,
+    ],
+    "DQ-2": [
+        ParamSpec("window_s", "Window", "int", 1800, "s", 300, 7200, 60),
+        ParamSpec("min_bad_fraction", "Non-GOOD share", "number", 0.5, None, 0.05, 1.0, 0.05),
+        _samples("min_samples", "Samples at least", 5, 200),
+        _dwell(0), _clear(300), _REOPEN,
+    ],
+    "DQ-3": [
+        _samples("dwell_samples", "Samples to open", 3),
+        _samples("clear_samples", "Samples to clear", 3), _REOPEN,
+    ],
+    "DQ-4": [
+        _samples("window", "Hampel window", 11, 31),
+        ParamSpec("k_mad", "Robust sigmas", "number", 5.0, "sigma", 2.0, 20.0, 0.5),
+        ParamSpec("max_spikes_per_h", "Spikes per hour", "int", 6, None, 1, 120, 1,
+                  help="A single spike is masked; a finding opens above this rate"),
+        _dwell(0), _clear(3600), _REOPEN,
+    ],
+    "DQ-5": [
+        _samples("min_samples", "Flat samples", 20, 64),
+        _samples("clear_samples", "Moving samples to clear", 2, 20), _REOPEN,
+    ],
+    "CR-1": [
+        ParamSpec("margin_k", "Over setpoint", "number", CRAH_SUPPLY_FAULT_MARGIN_K, "K",
+                  0.5, 10, 0.1, help="Supply above setpoint before the rule counts"),
+        ParamSpec("clear_margin_k", "Clears below", "number", 2.0, "K", 0.0, 10, 0.1),
+        ParamSpec("valve_starved_pct", "CHW valve starved at", "number", 95.0, "%",
+                  50, 100, 1),
+        _RUN, _FIRE, _MAINT, _dwell(900), _clear(300), _REOPEN,
+    ],
+    "CR-2": [
+        ParamSpec("min_delta_k", "Delta-T below", "number", 4.0, "K", 0.5, 15, 0.1),
+        ParamSpec("clear_delta_k", "Clears above", "number", 5.0, "K", 0.5, 20, 0.1),
+        ParamSpec("min_fan_pct", "Fan at least", "number", 30.0, "%", 0, 100, 1),
+        _RUN, _FIRE, _MAINT, _dwell(900), _clear(600), _REOPEN,
+    ],
+    "CR-6": [*_hunting(), _RUN, _FIRE, _MAINT],
+    "CH-1": [
+        ParamSpec("margin_k", "Over setpoint", "number", 1.0, "K", 0.2, 10, 0.1),
+        ParamSpec("clear_margin_k", "Clears below", "number", 0.5, "K", 0.0, 10, 0.1),
+        ParamSpec("max_load_pct", "Below load", "number", 95.0, "%", 50, 100, 1,
+                  help="At full load a chiller short of setpoint is capacity, not a fault"),
+        ParamSpec("running_min_s", "Running at least", "int", 900, "s", 0, 7200, 60),
+        ParamSpec("restart_exclusion_s", "After a start, ignore", "int", 480, "s",
+                  0, 3600, 60),
+        _MAINT, _dwell(900), _clear(300), _REOPEN,
+    ],
+    "CH-4": [
+        ParamSpec("max_starts", "Starts allowed", "int", 3, None, 1, 20, 1),
+        ParamSpec("window_s", "Per", "int", 3600, "s", 900, 14_400, 300),
+        _dwell(0), _clear(3600), _REOPEN,
+    ],
+    "CH-5": [
+        ParamSpec("rise_k_per_min", "Rising faster than", "number", 0.3, "K/min",
+                  0.05, 5, 0.05),
+        ParamSpec("trip_c", "Condenser trip", "number", 42.0, "C", 25, 60, 0.5,
+                  help="Per site: the simulator's condenser trip point"),
+        ParamSpec("horizon_s", "Projected within", "int", 600, "s", 60, 3600, 60),
+        _MAINT, _samples("dwell_samples", "Samples to open", 2), _clear(600), _REOPEN,
+    ],
+    "PL-1": [
+        ParamSpec("design_delta_k", "Design delta-T", "number", 5.5, "K", 2, 12, 0.1),
+        ParamSpec("min_fraction", "Below fraction of design", "number", 0.6, None,
+                  0.1, 1, 0.05),
+        ParamSpec("flow_rising", "Only while flow rises", "bool", True),
+        _MAINT, _dwell(1800), _clear(900), _REOPEN,
+    ],
+    "CT-2": [
+        ParamSpec("fan_pct", "Fan at least", "number", 98.0, "%", 50, 100, 1),
+        ParamSpec("approach_rise_k_per_h", "Approach rising faster than", "number", 0.5,
+                  "K/h", 0.1, 10, 0.1),
+        _MAINT, _dwell(1200), _clear(600), _REOPEN,
+    ],
+    "CT-3": [
+        ParamSpec("fall_pct_per_h", "Basin falling faster than", "number", 2.0, "%/h",
+                  0.2, 50, 0.1),
+        _MAINT, _dwell(1800), _clear(1800), _REOPEN,
+    ],
+    "CD-1": [
+        ParamSpec("valve_pct", "Facility valve at least", "number", 95.0, "%", 50, 100, 1),
+        ParamSpec("over_setpoint_k", "Over setpoint", "number", CDU_SUPPLY_FAULT_MARGIN_K,
+                  "K", 0.5, 10, 0.1),
+        _MAINT, _dwell(300), _clear(300), _REOPEN,
+    ],
+    "CD-6": [
+        ParamSpec("min_margin_k", "Above dew point by less than", "number", 2.0, "K",
+                  0.5, 10, 0.1),
+        ParamSpec("clear_margin_k", "Clears above", "number", 3.0, "K", 0.5, 15, 0.1),
+        _MAINT, _dwell(600), _clear(600), _REOPEN,
+    ],
+    "VA-1": [
+        ParamSpec("deviation_pct", "Command gap", "number", VALVE_DEVIATION_PCT, "%",
+                  2, 50, 0.5),
+        ParamSpec("clear_pct", "Clears below", "number", 5.0, "%", 0.5, 50, 0.5),
+        ParamSpec("settle_s", "Command settled", "int", 120, "s", 0, 1800, 30),
+        _MAINT, _dwell(600), _clear(300), _REOPEN,
+    ],
+    "VA-2": [*_hunting(), _MAINT],
+    "PU-3": [
+        ParamSpec("min_speed_pct", "Speed above", "number", 10.0, "%", 0, 100, 1),
+        ParamSpec("min_flow_fraction", "Flow fraction", "number", 0.05, None,
+                  0.01, 0.5, 0.01),
+        ParamSpec("prove_s", "Prove within", "int", 60, "s", 0, 600, 10),
+        _MAINT, _samples("dwell_samples", "Samples to open", 2),
+        _samples("clear_samples", "Samples to clear", 3), _REOPEN,
+    ],
+    "RM-2": [
+        ParamSpec("max_rate_k_per_h", "Rate above", "number", MAX_RATE_K_PER_H, "K/h",
+                  1, 100, 0.5),
+        ParamSpec("window_s", "Window", "int", 900, "s", 300, 3600, 60),
+        _FIRE, _MAINT, _samples("dwell_samples", "Samples to open", 3), _clear(900),
+        _REOPEN,
+    ],
+    "RM-3": [
+        ParamSpec("margin_k", "Over room p90", "number", HOT_SPOT_MARGIN_K, "K",
+                  0.5, 10, 0.1),
+        ParamSpec("clear_margin_k", "Clears below", "number", 2.0, "K", 0.0, 10, 0.1),
+        ParamSpec("min_room_sensors", "Room sensors at least", "int", 5, None, 3, 200, 1),
+        _FIRE, _MAINT, _dwell(900), _clear(600), _REOPEN,
+    ],
+    "GN-1": [
+        ParamSpec("min_drop_pct", "Drop at least", "number", 1.0, "%", 0.1, 20, 0.1),
+        ParamSpec("window_s", "Per", "int", 3600, "s", 900, 86_400, 300),
+        ParamSpec("not_running_min_s", "Stopped at least", "int", 1800, "s", 0, 86_400, 60),
+        _dwell(1800), _clear(1800), _REOPEN,
+    ],
+    "AT-1": [
+        ParamSpec("max_transfers_24h", "Transfers per day", "int", 2, None, 1, 50, 1),
+        _dwell(0), _clear(86_400), _REOPEN,
+    ],
+    L5_ID: [
+        ParamSpec("major_enabled", "Escalate roots to MAJOR", "bool", False,
+                  help="Off until the Phase 2 gate passes (docs/33)"),
+        ParamSpec("use_influence", "Use fitted CRAH zones", "bool", False),
+        ParamSpec("window_s", "Correlation window", "int", 600, "s", 60, 3600, 60),
+        ParamSpec("hold_down_s", "Incident hold-down", "int", 900, "s", 0, 7200, 60),
+        ParamSpec("major_min_racks", "Racks for escalation", "int", 3, None, 1, 50, 1),
+    ],
+}
+
+
+class ParamError(ValueError):
+    """A PATCH or override params value the schema refuses (docs/30 section 12)."""
+
+    def __init__(self, error: str, key: str, message: str) -> None:
+        super().__init__(message)
+        self.error = error
+        self.key = key
+
+
+def param_schema(detector_id: str) -> list[dict[str, Any]]:
+    return [p.as_dict() for p in PARAM_SCHEMAS.get(detector_id, [])]
+
+
+def validate_params(detector_id: str, params: Mapping[str, Any]) -> dict[str, Any]:
+    """Check a partial params dict against the detector's schema.
+
+    Returns the coerced values (an int kind accepts 900.0 as 900). Raises
+    ParamError('unknown_param' | 'param_out_of_range', key, message).
+    """
+    specs = {p.key: p for p in PARAM_SCHEMAS.get(detector_id, [])}
+    out: dict[str, Any] = {}
+    for key, value in params.items():
+        spec = specs.get(key)
+        if spec is None:
+            raise ParamError("unknown_param", key,
+                             f"{key!r} is not a tunable parameter of {detector_id}")
+        out[key] = _coerce(spec, value)
+    return out
+
+
+def _coerce(spec: ParamSpec, value: Any) -> Any:
+    def bad(why: str) -> ParamError:
+        return ParamError("param_out_of_range", spec.key, f"{spec.key}: {why}")
+
+    if spec.kind == "bool":
+        if not isinstance(value, bool):
+            raise bad("must be true or false")
+        return value
+    if spec.kind == "enum":
+        if value not in (spec.options or ()):
+            raise bad(f"must be one of {', '.join(spec.options or ())}")
+        return value
+    # bool is an int subclass in Python; `true` is not a number here.
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise bad("must be a number")
+    if spec.kind == "int":
+        if float(value) != int(value):
+            raise bad("must be a whole number")
+        value = int(value)
+    else:
+        value = float(value)
+    if spec.min is not None and value < spec.min:
+        raise bad(f"must be at least {spec.min}")
+    if spec.max is not None and value > spec.max:
+        raise bad(f"must be at most {spec.max}")
+    return value
+
+
+# --- L0 scope ----------------------------------------------------------------
+#
+# The numeric series data quality scores, per device type (docs/29 section 6.1
+# counts). Every instance of a listed key is in scope. Booleans are not:
+# they are change-logged with a 900 s heartbeat (ingest/changelog.py), so a
+# silent boolean is normal and "no sample within grace" means nothing.
+L0_METRICS: dict[str, tuple[str, ...]] = {
+    "crah": ("supply_air_temp", "return_air_temp", "air_setpoint_temp", "fan_speed_pct",
+             "valve_position_pct", "cooling_output_pct", "relative_humidity", "airflow",
+             "power_draw"),
+    "chiller": ("water_supply_temp", "water_return_temp", "water_setpoint_temp",
+                "water_flow", "compressor_load_pct", "power_draw", "cooling_capacity",
+                "cop", "water_pressure"),
+    "cooling_tower": ("fan_speed_pct", "water_supply_temp", "water_return_temp",
+                      "power_draw", "basin_level_pct", "makeup_water_flow", "vibration",
+                      "outdoor_wet_bulb_temp"),
+    "pump": ("pump_speed_pct", "water_flow", "water_pressure", "water_diff_pressure",
+             "power_draw", "motor_temp", "vfd_frequency"),
+    "cdu": ("water_supply_temp", "water_return_temp", "water_setpoint_temp", "water_flow",
+            "valve_position_pct", "water_pressure", "thermal_load", "power_draw",
+            "pump_speed_pct", "approach_temp", "filter_diff_pressure"),
+    "valve": ("valve_position_pct", "motor_temp"),
+    "sensor": ("inlet_temperature", "ambient_temperature", "relative_humidity",
+               "dew_point"),
+    "pdu": ("inlet_temperature", "ambient_temperature"),
+    "ups": ("load_pct", "battery_temperature", "battery_runtime", "power_draw"),
+    "transformer": ("oil_temperature", "load_pct"),
+    "generator": ("fuel_level_pct", "coolant_temperature", "power_draw"),
+    "server": ("inlet_temperature", "cpu_temperature", "fan_speed", "power_draw"),
+}
+
+#: Unit family for DQ-4's absolute MAD floor and DQ-5's coupled range, by
+#: registry unit (contracts/metrics/registry.yaml).
+UNIT_FAMILY = {"C": "temperature", "K": "temperature", "pct": "pct"}
