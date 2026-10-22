@@ -3893,6 +3893,205 @@ export interface AlarmTicket {
   name?: string;
 }
 
+// ---- anomalies (docs 28-31) ------------------------------------------------
+//
+// Doc 31 section 16, reconciled against what the Phase 1 backend actually
+// serves (backend/app/api/v1/anomalies.py): params are FLAT, required_metrics
+// are stored "key{INSTANCE}" strings, the L5 correlator row carries nulls
+// where a per-device detector carries counts, and a finding's own evidence is
+// the jsonb the sweep wrote (signals are series summaries, not text lines).
+// Incidents, explanations and /expected arrive in later phases and are not
+// typed here until their endpoints exist.
+
+export type FindingState = 'open' | 'acknowledged' | 'dismissed' | 'confirmed' | 'resolved';
+export const FINDING_STATES: FindingState[] =
+  ['open', 'acknowledged', 'dismissed', 'confirmed', 'resolved'];
+export type FindingVerdict = 'confirmed' | 'dismissed';
+export type FindingResolution =
+  | 'cleared' | 'device_retired' | 'detector_disabled' | 'muted' | 'superseded' | 'manual';
+export type FindingKind = 'sensor' | 'process' | 'undetermined';
+export type FindingLane = 'advisory' | 'alert';
+export type FeedbackAction = 'acknowledge' | 'dismiss' | 'confirm' | 'reopen';
+/** Required with `dismiss`, refused with anything else (doc 30 section 4.3). */
+export type DismissReason = 'not_a_fault' | 'expected_operation' | 'sensor_fault' | 'duplicate';
+/** 'L5' is the correlator switch row in the catalogue (doc 33 D13). */
+export type DetectorLayer = 'L0' | 'L2' | 'L3' | 'L4' | 'L5';
+export type AnomalyParamValue = number | boolean | string;
+
+export interface AnomalyFinding {
+  id: string;
+  detector_id: string;               // 'CR-1'
+  detector_name?: string | null;
+  detector_version: number;
+  layer: DetectorLayer;
+  /** Deterministic template text, never generated. */
+  summary: string;
+  device_id: string; device_name: string; device_type: string;
+  metric_key?: string | null; instance: string; unit?: string | null;
+  kind: FindingKind; lane: FindingLane; state: FindingState;
+  /** Survives resolution (doc 29 D3). */
+  verdict: FindingVerdict | null;
+  /** Alert lane only: the alarm's severity. */
+  severity?: string | null;
+  first_seen: string; raised_at: string; last_seen: string;
+  occurrences: number; reopen_count: number;
+  score?: number | null;
+  /** 'sigma' | 'seconds' | 'ratio', or the rule's own unit for an L2 margin. */
+  score_unit?: string | null;
+  expected?: number | null; observed?: number | null;
+  impact_kw?: number | null;
+  stale: boolean;
+  incident_id?: string | null; alarm_id?: string | null;
+  datacenter_code?: string | null; room_id?: string | null;
+  room_name?: string | null; rack_name?: string | null;
+  resolved_at?: string | null; resolution?: FindingResolution | null;
+}
+
+export interface FindingFeedback {
+  at: string; by: string;
+  action: FeedbackAction; reason?: DismissReason | null; note?: string | null;
+  from_state: FindingState; to_state: FindingState;
+  detector_version?: number;
+  via: 'finding' | 'alarm';
+}
+
+/** One series the rule read, summarised over the evidence window
+ *  (analytics/evidence.py signal_summary). A state series carries `kind:
+ *  'state'` with `last`/`since`; a numeric one min/max/mean/slope/last/n. */
+export interface FindingSignal {
+  id: string;                        // 'S1'
+  device_id: string; metric: string; instance: string;
+  kind?: 'state';
+  n?: number;
+  min?: number | null; max?: number | null; mean?: number | null;
+  slope_per_h?: number | null; last?: number | null;
+  since?: string | null; since_is_transition?: boolean; starts?: string[];
+}
+
+export interface FindingEvidence {
+  v?: number;
+  window?: { from: string; to: string };
+  rule?: { detector_id?: string; expr?: string; dwell_s?: number | null;
+           dwell_samples?: number | null; clear_dwell_s?: number | null;
+           params_version?: number } | null;
+  diagnosis?: string | null;
+  expected?: number | null; observed?: number | null;
+  lower?: number | null; upper?: number | null;
+  signals?: FindingSignal[];
+  gates?: { maintenance_window?: boolean; fire_predischarge?: boolean; online?: boolean };
+  masks?: { series: string; masked: boolean }[];
+  baseline?: Record<string, unknown> | null;
+  alarm_history?: Record<string, unknown>[];
+}
+
+/** GET /anomalies/findings/{id}. */
+export interface AnomalyFindingDetail extends AnomalyFinding {
+  detector: { id: string; name: string; version: number; layer: DetectorLayer;
+              params: Record<string, AnomalyParamValue> };
+  evidence: FindingEvidence;
+  /** L2 only: the threshold the rule compared against when it opened. */
+  rule_limit?: { value: number; label: string } | null;
+  feedback: FindingFeedback[];
+}
+
+/** The `facets` object on GET /findings?with_facets=true. */
+export interface AnomalySummary {
+  open_incidents: number; open_findings: number; open_sensor: number; new_24h: number;
+  by_state: Record<FindingState, number>; by_lane: Record<FindingLane, number>;
+  by_kind: Record<FindingKind, number>;
+}
+
+export interface ParamSpec {
+  key: string; label: string; unit?: string | null;
+  kind: 'number' | 'int' | 'bool' | 'enum';
+  min?: number; max?: number; step?: number; options?: string[];
+  default: AnomalyParamValue; help?: string;
+}
+
+export interface AnomalyDetector {
+  id: string; name: string;
+  /** The diagnosis key the rule names, e.g. 'chw_starved'. */
+  diagnosis?: string | null;
+  version: number; layer: DetectorLayer; phase?: number | null;
+  /** doc 29 section 9.3 snake_case, e.g. 'crah_supply_over_setpoint'. */
+  alarm_type: string | null;
+  device_types: string[];
+  primary_metric?: string | null;
+  /** As stored: "key{INSTANCE}" strings. */
+  required_metrics: string[];
+  enabled: boolean;
+  /** Null on the L5 row. */
+  lane: FindingLane | null; kind: FindingKind | null;
+  severity?: string | null;
+  cadence_s?: number | null;
+  params: Record<string, AnomalyParamValue>;
+  param_schema: ParamSpec[];
+  /** Null on the L5 row: it has no devices of its own. */
+  devices_in_scope: number | null; inactive_devices: number | null;
+  open_findings: number; confirmed: number; dismissed: number;
+  precision: number | null;
+  baseline?: { fitted_at: string; days: number; n: number; refused: number } | null;
+  updated_at?: string | null; updated_by?: string | null;
+}
+
+export interface DetectorPatchResult {
+  ok: boolean; detector_id: string; version: number; changed: string[];
+  detector: AnomalyDetector;
+}
+
+export interface AnomalyOverride {
+  detector_id: string; device_id: string; device_name: string;
+  /** False is a mute; null leaves the detector's own switch in charge. */
+  enabled: boolean | null;
+  params: Record<string, AnomalyParamValue>;
+  reason?: string | null; expires_at?: string | null;
+  updated_by: string; updated_at: string;
+}
+
+export type ExclusionSource = 'maintenance' | 'injected_fault' | 'confirmed_finding' | 'manual';
+export interface AnomalyExclusion {
+  id: string;
+  device_id?: string | null; room_id?: string | null; datacenter_id?: string | null;
+  detector_id?: string | null; metric_key?: string | null;
+  starts_at: string; ends_at: string | null;
+  source: ExclusionSource; source_ref?: string | null;
+  reason: string; created_by: string; created_at?: string;
+}
+
+export interface AnomalyHealth {
+  enabled: boolean;
+  explainer: 'none' | 'cloud' | 'local';
+  sweep_s: number;
+  last_sweep_at: string | null; last_sweep_ms: number | null;
+  findings_per_hour: number; budget_per_hour: number | null;
+  lock_holder: string | null;        // 'ingest-1:31'
+  baseline_last_fit_at: string | null;
+  severity_cap: string;              // 'MINOR'
+  l5_major_enabled: boolean;
+  detail: {
+    sweep: { p95_ms_1h: number | null; runs_1h: number; gate_skips_1h: number;
+             errors_1h: number; last_error: string | null; series_scored: number };
+    baselines: { last_fit_duration_s: number | null; series_fitted: number; rejected: number };
+    findings: { open: number; opened_24h: number;
+                by_lane: Record<FindingLane, number>; by_kind: Record<FindingKind, number> };
+    incidents: { open: number };
+    explain: { runs_1h: number; fallbacks_1h: number };
+  };
+}
+
+/** Repeated-key query string, the shape `alarms()` builds: arrays repeat
+ *  the key, empty values are left out. */
+function anomalyQs(p: Record<string, string | string[] | undefined>): string {
+  const q = new URLSearchParams();
+  for (const [k, v] of Object.entries(p)) {
+    if (v === undefined || v === '') continue;
+    if (Array.isArray(v)) v.forEach((x) => q.append(k, x));
+    else q.set(k, v);
+  }
+  const s = q.toString();
+  return s ? `?${s}` : '';
+}
+
 export const api = {
   login: (username: string, password: string) =>
     request<{ token: string; expires_in: number; username: string; role: string }>(
@@ -4974,4 +5173,61 @@ export const api = {
               issue_key?: string; integration?: string }>(
       `/integrations/alarms/${alarmId}/ticket`,
       { method: 'POST', body: '{}' }),
+
+  // ---- anomalies (docs 28-31). Every GET is viewer; feedback, overrides and
+  // exclusions are operator; a detector PATCH is admin (doc 30 section 2).
+
+  anomalyFindings: (p: Record<string, string | string[] | undefined> = {}) =>
+    request<Page<AnomalyFinding> & { facets?: AnomalySummary }>(
+      `/anomalies/findings${anomalyQs(p)}`),
+
+  anomalyFinding: (id: string) =>
+    request<AnomalyFindingDetail>(`/anomalies/findings/${id}`),
+
+  /** `reason` only with dismiss; the server refuses it on anything else. */
+  findingFeedback: (id: string, body: { action: FeedbackAction; reason?: DismissReason; note?: string }) =>
+    request<AnomalyFinding>(`/anomalies/findings/${id}/feedback`, {
+      method: 'POST', body: JSON.stringify(body),
+    }),
+
+  anomalyDetectors: () => request<{ items: AnomalyDetector[] }>('/anomalies/detectors'),
+
+  /** Shallow merge of `params`. A param change bumps the version (not on L5). */
+  editAnomalyDetector: (id: string, patch: { enabled?: boolean; params?: Record<string, AnomalyParamValue> }) =>
+    request<DetectorPatchResult>(`/anomalies/detectors/${encodeURIComponent(id)}`, {
+      method: 'PATCH', body: JSON.stringify(patch),
+    }),
+
+  anomalyOverrides: (p: Record<string, string | undefined> = {}) =>
+    request<Page<AnomalyOverride>>(`/anomalies/overrides${anomalyQs(p)}`),
+
+  putAnomalyOverride: (detectorId: string, deviceId: string, body: {
+    enabled?: boolean; params?: Record<string, AnomalyParamValue>;
+    reason?: string; expires_at?: string | null;
+  }) => request<AnomalyOverride>(
+    `/anomalies/overrides/${encodeURIComponent(detectorId)}/${deviceId}`,
+    { method: 'PUT', body: JSON.stringify(body) }),
+
+  removeAnomalyOverride: (detectorId: string, deviceId: string) =>
+    request<{ ok: boolean }>(
+      `/anomalies/overrides/${encodeURIComponent(detectorId)}/${deviceId}`,
+      { method: 'DELETE' }),
+
+  anomalyExclusions: (p: Record<string, string | string[] | undefined> = {}) =>
+    request<Page<AnomalyExclusion>>(`/anomalies/exclusions${anomalyQs(p)}`),
+
+  /** 201 for a new row, 200 for a replay of one that already exists. */
+  createAnomalyExclusion: (body: {
+    device_id?: string; room_id?: string; datacenter_id?: string;
+    detector_id?: string; metric_key?: string;
+    starts_at: string; ends_at?: string | null; reason: string;
+  }) => request<AnomalyExclusion>('/anomalies/exclusions', {
+    method: 'POST', body: JSON.stringify({ ...body, source: 'manual' }),
+  }),
+
+  /** 409 exclusion_system_owned for maintenance and confirmed-fault rows. */
+  deleteAnomalyExclusion: (id: string) =>
+    request<{ ok: boolean }>(`/anomalies/exclusions/${id}`, { method: 'DELETE' }),
+
+  anomalyHealth: () => request<AnomalyHealth>('/anomalies/health'),
 };

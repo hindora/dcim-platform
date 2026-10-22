@@ -1,0 +1,221 @@
+/* Anomaly detection surfaces (docs 28-31). Additive and namespaced `.anom-`:
+   no existing selector is edited and no :root token is redefined. Colour comes
+   only from the existing tokens, so both palettes follow without a mirror.
+   Saturation is spent only on state that needs a response: advisories and
+   detector chrome stay in the muted inks. */
+
+/* --- shared atoms ---------------------------------------------------------- */
+
+/* A detector or layer id: what tickets and the design doc quote. */
+.anom-id {
+  font-family: var(--mono); font-size: 0.78rem; color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.anom-tag {
+  display: inline-block; font-family: var(--mono); font-size: 0.7rem;
+  line-height: 1.5; padding: 0 5px; border-radius: 3px;
+  border: 1px solid var(--border-strong); color: var(--text-muted);
+}
+/* An evidence id (S1, F2): a citable chip, not a decoration. */
+.anom-eid {
+  display: inline-block; min-width: 24px; text-align: center;
+  font-family: var(--mono); font-size: 0.7rem; line-height: 1.6;
+  padding: 0 4px; border-radius: 3px;
+  border: 1px solid var(--border-strong); color: var(--text-muted);
+  background: var(--bg-inset);
+}
+.anom-num { font-variant-numeric: tabular-nums; }
+.anom-note { color: var(--text-muted); font-size: 0.8rem; margin: 6px 0 0; }
+.anom-err { color: var(--critical); font-size: 0.78rem; margin: 4px 0 0; }
+.anom-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+
+/* --- the alarm evidence panel (doc 31 section 8) ---------------------------- */
+
+.anom-ev {
+  margin-top: 18px; padding-top: 14px;
+  border-top: 1px solid var(--border);
+  display: grid; gap: 12px; min-width: 0;
+}
+.anom-ev-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.anom-ev-head h4 {
+  margin: 0; font-size: 0.86rem; letter-spacing: 0.03em;
+  text-transform: uppercase; color: var(--text-muted); font-weight: 600;
+}
+.anom-ev-by { font-size: 0.8rem; color: var(--text-muted); }
+.anom-ev-by .anom-id { margin: 0 2px; }
+.anom-ev-cap { margin: 0; font-size: 0.8rem; color: var(--text-muted); }
+
+/* The readout: the rule's limit beside what the device actually read. The one
+   figure set large is the observed value, because that is the number the
+   operator compares against the plant in front of them. Hairline-divided
+   cells, the same vocabulary as the segmented control. */
+.anom-readout {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--bg-inset); overflow: hidden;
+}
+.anom-readout > div {
+  padding: 8px 10px; display: grid; gap: 2px; align-content: start;
+  border-left: 1px solid var(--border); min-width: 0;
+}
+.anom-readout > div:first-child { border-left: none; }
+.anom-readout .cap { font-size: 0.7rem; color: var(--text-muted); }
+.anom-readout .val {
+  font-variant-numeric: tabular-nums; font-size: 0.95rem; color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.anom-readout .is-observed .val { font-size: 1.3rem; font-weight: 600; line-height: 1.15; }
+.anom-readout .sub { font-size: 0.72rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+
+.anom-summary { margin: 0; font-size: 0.86rem; line-height: 1.5; color: var(--text); }
+
+/* The chart panel inside a 380 px pane: never wider than its pane. */
+.anom-ev .asset-panel { padding: 12px 12px 10px; min-width: 0; contain: inline-size; }
+.anom-ev .asset-panel h3 { margin-bottom: 8px; }
+.anom-chart-foot { margin: 6px 0 0; font-size: 0.76rem; color: var(--text-muted); }
+.anom-skel { display: grid; gap: 8px; }
+
+.anom-signals { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.anom-signals li {
+  display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px;
+  align-items: baseline; font-size: 0.82rem;
+}
+.anom-signals .what { color: var(--text); overflow-wrap: anywhere; }
+.anom-signals .fig { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.anom-linkbtn {
+  background: none; border: none; padding: 0; color: var(--accent);
+  font: inherit; font-size: 0.82rem; cursor: pointer; justify-self: start;
+}
+.anom-linkbtn:hover { text-decoration: underline; }
+
+.anom-state { font-size: 0.82rem; color: var(--text-muted); margin: 0; }
+.anom-state b { color: var(--text); font-weight: 600; }
+.anom-state .is-dismissed { text-decoration: line-through; color: var(--text-faint); }
+.anom-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+
+/* Dismiss reasons: a radio group, each choice with the line that explains it. */
+.anom-reasons { border: 0; margin: 0; padding: 0; display: grid; gap: 8px; }
+.anom-reasons legend { font-size: 0.82rem; color: var(--text); margin-bottom: 6px; padding: 0; }
+.anom-reasons label {
+  display: grid; grid-template-columns: 16px 1fr; gap: 2px 8px;
+  align-items: baseline; cursor: pointer;
+}
+.anom-reasons input { margin: 0; width: 14px; padding: 0; }
+.anom-reasons .hint { grid-column: 2; font-size: 0.76rem; color: var(--text-muted); }
+.anom-dialog-copy { margin: 0 0 12px; font-size: 0.86rem; line-height: 1.5; color: var(--text); }
+.anom-dialog-copy.muted { color: var(--text-muted); }
+.anom-textarea {
+  width: 100%; box-sizing: border-box; min-height: 56px; resize: vertical;
+  background: var(--bg-inset); color: var(--text); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 6px 9px; font: inherit;
+}
+.anom-field { display: grid; gap: 5px; margin-top: 12px; }
+.anom-field > span { font-size: 0.8rem; color: var(--text-muted); }
+
+/* --- settings: anomaly detectors (doc 31 section 9) ------------------------- */
+
+.anom-health { margin: 0 0 4px; font-size: 0.82rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.anom-health b { color: var(--text); font-weight: 600; }
+.anom-health .warn { color: var(--warn); }
+.anom-health + .anom-health { margin-top: 2px; }
+.anom-heads { margin-bottom: 16px; }
+
+.anom-tabs { margin: 0 0 14px; display: inline-flex; }
+.anom-tabs button b {
+  margin-left: 7px; font-weight: 600; color: var(--text-faint); letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+}
+.anom-tabs button[aria-selected="true"] {
+  background: var(--bg-raised); color: var(--text); box-shadow: inset 0 -2px 0 var(--accent);
+}
+.anom-tabs button[aria-selected="true"] b { color: var(--text); }
+.anom-tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+.anom-filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+.anom-filters select, .anom-filters input[type="search"] { height: 28px; padding: 0 8px; font-size: 0.8rem; }
+.anom-filters input[type="search"] { min-width: 200px; }
+.anom-filters .spacer { flex: 1; }
+
+.anom-table { width: 100%; }
+.anom-table td, .anom-table th { vertical-align: top; }
+.anom-table th button.anom-sort {
+  background: none; border: none; padding: 0; font: inherit; color: inherit;
+  cursor: pointer; text-transform: inherit; letter-spacing: inherit;
+}
+.anom-table th button.anom-sort:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.anom-table tr.is-off > td { color: var(--text-muted); }
+.anom-table tr.is-expired > td { color: var(--text-faint); }
+.anom-expander {
+  background: none; border: none; padding: 0; color: var(--text); font: inherit;
+  cursor: pointer; display: inline-flex; gap: 6px; align-items: baseline; text-align: left;
+}
+.anom-expander .chev { color: var(--text-faint); display: inline-block; width: 10px; transition: transform 120ms ease-out; }
+.anom-expander[aria-expanded="true"] .chev { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) { .anom-expander .chev { transition: none; } }
+.anom-table tr.anom-expansion > td { background: var(--bg-inset); padding: 14px 16px 16px; }
+.anom-group-head {
+  margin: 22px 0 8px; font-size: 0.86rem; letter-spacing: 0.03em;
+  text-transform: uppercase; color: var(--text-muted); font-weight: 600;
+}
+
+/* The parameter form: label | value + unit | bounds. A changed value says
+   "changed" in words beside a dot, never colour alone. */
+.anom-params { display: grid; gap: 10px; max-width: 760px; }
+.anom-param {
+  display: grid; grid-template-columns: minmax(160px, 220px) auto minmax(0, 1fr);
+  gap: 4px 12px; align-items: center;
+}
+.anom-param > label { font-size: 0.84rem; color: var(--text); }
+.anom-param .ctl { display: inline-flex; align-items: center; gap: 6px; }
+.anom-param .ctl input[type="number"] { width: 96px; height: 28px; padding: 0 8px; font-variant-numeric: tabular-nums; }
+.anom-param .ctl select { height: 28px; padding: 0 8px; }
+.anom-param .ctl input[type="checkbox"] { width: 15px; height: 15px; margin: 0; padding: 0; }
+.anom-param .u { font-size: 0.8rem; color: var(--text-muted); min-width: 24px; }
+.anom-param .meta { font-size: 0.76rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.anom-param .changed { color: var(--text); font-size: 0.76rem; margin-left: 8px; white-space: nowrap; }
+.anom-param .changed::before {
+  content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--accent); margin-right: 5px; vertical-align: 1px;
+}
+.anom-param .help, .anom-param .anom-err { grid-column: 2 / -1; margin: 0; }
+.anom-param .help { font-size: 0.76rem; color: var(--text-muted); }
+.anom-param input[aria-invalid="true"] { border-color: var(--critical); }
+.anom-param-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px; }
+.anom-param-foot .spacer { flex: 1; }
+.anom-requires { margin: 12px 0 0; font-size: 0.78rem; color: var(--text-muted); overflow-wrap: anywhere; }
+.anom-requires code { font-family: var(--mono); font-size: 0.74rem; color: var(--text); }
+.anom-changes { margin: 0 0 12px; padding-left: 18px; font-size: 0.86rem; }
+.anom-changes li { font-variant-numeric: tabular-nums; }
+
+/* Single-device search inside a dialog: one choice, so radios, not checks. */
+.anom-pick { display: grid; gap: 6px; }
+.anom-pick input[type="search"] { height: 30px; }
+.anom-pick-list {
+  max-height: 200px; overflow-y: auto; border: 1px solid var(--border);
+  border-radius: var(--radius); background: var(--bg-inset);
+}
+.anom-pick-list label {
+  display: grid; grid-template-columns: 16px 1fr auto; gap: 8px; align-items: center;
+  padding: 5px 10px; font-size: 0.84rem; cursor: pointer;
+  border-top: 1px solid var(--border);
+}
+.anom-pick-list label:first-child { border-top: none; }
+.anom-pick-list input { margin: 0; width: 14px; padding: 0; }
+.anom-pick-list .n { color: var(--text-muted); font-size: 0.76rem; }
+.anom-pick-list p { margin: 0; padding: 10px; }
+
+.anom-form { display: grid; gap: 12px; }
+.anom-form label > span, .anom-form .lbl { display: block; font-size: 0.8rem; color: var(--text-muted); margin-bottom: 4px; }
+.anom-form input:not([type="checkbox"]):not([type="radio"]), .anom-form select { width: 100%; box-sizing: border-box; }
+.anom-form .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.anom-form .radios { display: flex; flex-wrap: wrap; gap: 16px; }
+.anom-form .radios label { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+.anom-form .radios input { width: 14px; margin: 0; padding: 0; }
+.anom-form .radios label > span { display: inline; margin: 0; color: var(--text); font-size: 0.84rem; }
+
+@media (max-width: 860px) {
+  .anom-param { grid-template-columns: 1fr; }
+  .anom-param .help, .anom-param .anom-err { grid-column: 1; }
+  .anom-form .row2 { grid-template-columns: 1fr; }
+  .anom-hide-narrow { display: none; }
+}

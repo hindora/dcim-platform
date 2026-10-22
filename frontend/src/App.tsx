@@ -10,6 +10,7 @@ import { AlarmRules } from './features/alarms/AlarmRules';
 import { Analytics } from './features/analytics/Analytics';
 import { PlatformHealth } from './features/platform/PlatformHealth';
 import { Appearance } from './features/settings/Appearance';
+import { AnomalyDetectors } from './features/settings/AnomalyDetectors';
 import { Collectors } from './features/settings/Collectors';
 import { CollectorDetail } from './features/settings/CollectorDetail';
 import { Integrations } from './features/settings/Integrations';
@@ -371,6 +372,7 @@ export default function App() {
             <Route path="credentials" element={<Credentials />} />
             <Route path="releases" element={<Releases />} />
             <Route path="integrations" element={<Integrations />} />
+            <Route path="anomaly-detectors" element={<AnomalyDetectors />} />
             <Route path="appearance" element={<Appearance />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />

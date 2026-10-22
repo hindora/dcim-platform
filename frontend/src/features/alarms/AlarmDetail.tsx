@@ -5,6 +5,7 @@ import { api, type Alarm } from '../../api/client';
 import { StatusChip } from '../../components/StatusChip';
 import { humanise, relativeTime } from '../../lib/format';
 import { TicketChip } from './TicketChip';
+import { AnomalyEvidence, isDerivedAlarm } from './AnomalyEvidence';
 
 /** One condition, in full.
  *
@@ -15,6 +16,7 @@ import { TicketChip } from './TicketChip';
  */
 export function AlarmDetailBody({ alarm }: { alarm: Alarm }) {
   return (
+    <>
     <dl className="kv">
       <dt>Severity</dt><dd><StatusChip status={alarm.severity} /></dd>
       <dt>State</dt><dd>{alarm.state}</dd>
@@ -53,6 +55,9 @@ export function AlarmDetailBody({ alarm }: { alarm: Alarm }) {
       <dt>Occurrences</dt><dd>{alarm.occurrence_count}</dd>
       <dt>Ticket</dt><dd><TicketChip alarmId={alarm.id} /></dd>
     </dl>
+    {/* Only for what analysis raised; every other alarm renders as before. */}
+    {isDerivedAlarm(alarm) && <AnomalyEvidence alarm={alarm} />}
+    </>
   );
 }
 
@@ -73,7 +78,13 @@ export function AlarmDetailModal({ alarm, onClose }: {
   // the same reason.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { e.stopPropagation(); onClose(); }
+      if (e.key !== 'Escape') return;
+      // A dialog or a maximized chart opened from inside this modal (the
+      // evidence panel's) owns its own Escape: this listener runs first, at
+      // window capture, and would otherwise close everything at once.
+      const t = e.target as Element | null;
+      if (t?.closest?.('.asset-dialog') || document.querySelector('.max-modal')) return;
+      e.stopPropagation(); onClose();
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);

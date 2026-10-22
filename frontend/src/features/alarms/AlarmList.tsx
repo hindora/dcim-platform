@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { api, type Alarm } from '../../api/client';
+import { api, type Alarm, type AlarmDetection } from '../../api/client';
 import { StatusChip } from '../../components/StatusChip';
 import { humanise, relativeTime } from '../../lib/format';
 import { useInvalidateOn, useTopics } from '../../ws/useSocket';
@@ -18,6 +18,17 @@ const VIEWS: Record<string, string[] | undefined> = {
   all: ['ACTIVE', 'ACKNOWLEDGED', 'CLEARED'],
 };
 
+/** How a condition was found (doc 31 section 8.3). In the URL as
+ *  `?detection=`, so "all derived alerts" is a link the evidence panel and
+ *  triage can hand out. A select, to match its neighbours on this toolbar. */
+const DETECTIONS: { key: AlarmDetection; label: string }[] = [
+  { key: 'threshold', label: 'Threshold' },
+  { key: 'state', label: 'State' },
+  { key: 'absence', label: 'Absence' },
+  { key: 'derived', label: 'Derived (analysis)' },
+  { key: 'forecast', label: 'Forecast' },
+];
+
 export function AlarmList() {
   const [severity, setSeverity] = useState('');
   const [includeSymptoms, setIncludeSymptoms] = useState(false);
@@ -33,6 +44,8 @@ export function AlarmList() {
   const [params, setParams] = useSearchParams();
   const rawView = params.get('view') ?? 'open';
   const view = rawView in VIEWS ? rawView : 'open';
+  const rawDetection = params.get('detection') ?? '';
+  const detection = DETECTIONS.some((d) => d.key === rawDetection) ? rawDetection : '';
   const qc = useQueryClient();
 
   useTopics(['alarms']);
@@ -40,12 +53,13 @@ export function AlarmList() {
 
   const { data, error, isLoading } = useQuery({
     queryKey: ['alarms', severity, includeSymptoms, view,
-               params.get('room') ?? ''],
+               params.get('room') ?? '', detection],
     queryFn: () => api.alarms({
       severity: severity || undefined,
       include_symptoms: includeSymptoms ? 'true' : undefined,
       state: VIEWS[view],
       room: params.get('room') ?? undefined,
+      detection: detection || undefined,
       limit: '200',
     }),
   });
@@ -70,6 +84,13 @@ export function AlarmList() {
     const qs = params.toString();
     navigate(`/alarms${qs ? `?${qs}` : ''}`);
   };
+
+  function setDetection(next: string) {
+    const q = new URLSearchParams(params);
+    if (next) q.set('detection', next);
+    else q.delete('detection');
+    setParams(q, { replace: true });
+  }
 
   function setView(next: string) {
     const q = new URLSearchParams(params);
@@ -146,6 +167,11 @@ export function AlarmList() {
           <option value="MAJOR">Major</option>
           <option value="MINOR">Minor</option>
           <option value="WARNING">Warning</option>
+        </select>
+        <select value={detection} onChange={(e) => setDetection(e.target.value)}
+                aria-label="Detection">
+          <option value="">Any detection</option>
+          {DETECTIONS.map((d) => <option key={d.key} value={d.key}>{d.label}</option>)}
         </select>
         <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <input type="checkbox" checked={includeSymptoms}
