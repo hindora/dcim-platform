@@ -105,9 +105,15 @@ function stamp(ms: number, bucketMs: number, spansDays: boolean): string {
  *  The instance when there is one - a port name, an outlet - because that is
  *  what distinguishes two lines of the same metric. Otherwise the metric's
  *  display name, so a chart of three different metrics reads as words rather
- *  than as three shades. */
-function seriesLabel(s: Series): string {
-  return s.instance || metricLabel(s.metric);
+ *  than as three shades.
+ *
+ *  On a chart that mixes metrics the instance alone is not enough: a tower's
+ *  water chart carried supply AND return on COND, and the tooltip read "COND
+ *  15.5 °C, COND 20.5 °C". There both are said: "Water Supply Temperature ·
+ *  COND". */
+function seriesLabel(s: Series, mixed = false): string {
+  if (!s.instance) return metricLabel(s.metric);
+  return mixed ? `${metricLabel(s.metric)} · ${s.instance}` : s.instance;
 }
 
 export function TimeChart({ series, unit, bucketMs }: {
@@ -121,6 +127,7 @@ export function TimeChart({ series, unit, bucketMs }: {
   const chart = useChartColors();
   const colorOf = (i: number) => chart.series[i % chart.series.length];
   const dashOf = (i: number) => DASHES[i % DASHES.length];
+  const mixed = new Set(series.map((s) => s.metric)).size > 1;
 
   const model = useMemo(() => {
     const pts = series.flatMap((s) => s.points);
@@ -152,7 +159,7 @@ export function TimeChart({ series, unit, bucketMs }: {
         d += `${d === '' || broken ? 'M' : 'L'}${sx(t).toFixed(1)},${sy(v).toFixed(1)} `;
         prevX = t;
       }
-      return { key: `${s.metric}|${s.instance}`, label: seriesLabel(s), d };
+      return { key: `${s.metric}|${s.instance}`, label: seriesLabel(s, mixed), d };
     });
 
     // Every distinct timestamp, sorted, so the crosshair can snap to a real
@@ -175,7 +182,7 @@ export function TimeChart({ series, unit, bucketMs }: {
       // and showing its neighbour's would invent one.
       const hit = s.points.find((p) => p[0] === at && Number.isFinite(p[1]));
       return hit
-        ? { label: seriesLabel(s), value: hit[1], color: colorOf(i) }
+        ? { label: seriesLabel(s, mixed), value: hit[1], color: colorOf(i) }
         : null;
     }).filter((r): r is { label: string; value: number; color: string } => r !== null);
     return rows.length ? { at, rows } : null;
@@ -230,7 +237,7 @@ export function TimeChart({ series, unit, bucketMs }: {
   return (
     <div className="chart-wrap">
       <svg className="chart" viewBox={`0 0 ${W} ${H}`} role="img"
-           aria-label={`${series.map(seriesLabel).join(', ')} over time, in ${unitSymbol(unit) || unit}`}>
+           aria-label={`${series.map((s) => seriesLabel(s, mixed)).join(', ')} over time, in ${unitSymbol(unit) || unit}`}>
         {yTicks.map((t) => (
           <g key={t}>
             <line x1={PAD_L} x2={W - PAD_R} y1={model.sy(t)} y2={model.sy(t)}
