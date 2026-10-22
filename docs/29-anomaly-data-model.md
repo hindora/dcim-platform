@@ -1,6 +1,6 @@
 # 29 — Anomaly detection: data model
 
-Status: **specification. Not built.** Migrations `0111`–`0114` are reserved for
+Status: **specification. Not built.** Migrations `0111`–`0115` are reserved for
 it. The head today is `0110_an_endpoint_can_have_a_write_credential.py`.
 
 This document specifies the schema, indexes, retention, Redis keys and settings
@@ -644,16 +644,16 @@ ALTER TABLE anomaly_incident
 
 | # | Kind | What | Recommendation |
 |---|---|---|---|
-| D1 | Contract deviation | The contract names L0 as `analytics/detectors/quality.py` but doc 28 gives **no detector IDs for L0**. It lists six checks (doc 28 §"Sensor faults"). | Use `DQ-1`…`DQ-6` (data quality). `DQ-1`–`DQ-5` are seeded in 0112. `DQ-6` (bias/drift via a redundancy residual) needs baselines, so it ships in 0113. |
+| D1 | Contract deviation | The contract names L0 as `analytics/detectors/quality.py` but doc 28 gives **no detector IDs for L0**. It lists six checks (doc 28 §"Sensor faults"). | Use `DQ-1`…`DQ-6` (data quality). `DQ-1`–`DQ-5` are seeded in 0112. `DQ-6` (bias/drift via a redundancy residual) needs baselines, so it ships in 0114. |
 | D2 | Contract deviation | Settings list lacks a credential and a timeout for a cloud explainer. | Added per doc 30: `DCIM_ANOMALY_EXPLAINER_API_KEY` (SecretStr) and `DCIM_ANOMALY_EXPLAINER_TIMEOUT_S` (§11). |
 | D3 | Contract clarification | `Finding.state` has five values. If `resolved` overwrote `confirmed` or `dismissed`, the verdict needed for per-detector precision would be lost. | Keep the five states as named, and add a `verdict` column that survives resolution (§8.1). Nothing is renamed. |
 | D4 | Contract clarification | "Redis keys (… sweep lock/heartbeat)". The sweep **lock** is a Postgres advisory lock (contract, worker section). | Redis carries the heartbeat and lock holder (for `/health`) and the cadence gate, but never the lock (§10). |
 | D5 | Contract clarification | "0112 … any taxonomy rows if table-backed". The taxonomy is **code-backed**: `BY_ALARM_TYPE` is a Python dict (`P:backend/app/core/alert_taxonomy.py:328`), and its SQL CASE is generated from it at raise time (`alert_taxonomy.py:710`; used at `repositories/alarms.py:250-253`). | 0112 writes no taxonomy SQL. The Phase 1 code change adds `BY_ALARM_TYPE` entries and the matching `NON_TRAP_ALARM_TYPES` test entries (§9.3). |
-| D6 | Design deviation (doc 28) | Doc 28 says the next migration after "0108" applies (doc 28 §"The code already has the slots"). The head is **0110** (`0110_an_endpoint_can_have_a_write_credential.py:27-28`). | Use 0111–0114 per the contract. |
+| D6 | Design deviation (doc 28) | Doc 28 says the next migration after "0108" applies (doc 28 §"The code already has the slots"). The head is **0110** (`0110_an_endpoint_can_have_a_write_credential.py:27-28`). | Use 0111–0115 per the contract. |
 | D7 | Design deviation (doc 28) | **VA-1 on CRAH valves is not measurable.** A CRAH exposes one valve point, `CHW_Valve → valve_position_pct{CHW}` (`P:contracts/mappings/bacnet/objects.yaml:152`), with no commanded/feedback pair. Only `valve` devices carry `MEASURED`/`COMMANDED` (`objects.yaml:115-116`), which is what `plant.py` compares (`P:backend/app/services/plant.py:209-223,652-657`). | VA-1 `device_types = {valve}`. Hunting (VA-2 / CR-6) needs only one position, so CR-6 still applies to CRAHs. Real iCOM units usually publish the valve *command*. Feedback depends on firmware and actuator. |
 | D8 | Design deviation (doc 28) | **PU-3 "command vs proving" has no command point.** The pump mapping has `Run_Status` (proof) but no start command (`objects.yaml:76-88`). | Seed PU-3 in its measurable form: proof disagrees with process (`Run_Status = 0` while speed > 10% or flow > 5% of the running mean, or `Run_Status = 1` while flow < 5% after 60 s). Standby-fails-to-start needs lead/standby pairing from the cooling layer and is deferred. |
-| D9 | Design deviation (doc 28) | **CR-4 (CRAH filter ΔP) has no signal.** The CRAH mapping has only the `Filter_Dirty` boolean (`objects.yaml:161`) and no `filter_diff_pressure`. The CDU does have `Filter_DP` (`objects.yaml:137`). | **Resolved by doc 32/33.** The simulator publishes a new CRAH BACnet point `Filter_DP`, mapped to the existing key `filter_diff_pressure` (doc 32 D6). Simulator S1 moved to Phase 1, so the mapping row and the Phase 1 collector rebuild land there (doc 33 task 1.22), and no registry key or `metric` upsert is needed. 0113 seeds CR-4 **enabled**, conditional on 1.22 having shipped. If it has not, 0113 seeds it disabled. Its history is about 5 weeks old by the Phase 3 fit (doc 33). CD-3 is unaffected. |
-| D10 | Design deviation (doc 28) | **CH-3 (chiller approach drift) has no approach point.** The chiller mapping has no `approach_temp` and no refrigerant temperatures, only `water_pressure{EVAP,COND}` (`objects.yaml:53-73`). | **Resolved by doc 32/33.** The simulator publishes chiller `Cond_Approach_Temp` and `Evap_Approach_Temp`, mapped to the existing key as `approach_temp{COND}` and `approach_temp{EVAP}` (doc 32 D6; doc 33 task 1.22, Phase 1 collector rebuild). CH-3 scores both instances, so condenser fouling and evaporator fouling are distinguished by instance. 0113 seeds it **enabled** on the same 1.22 condition as CR-4. On a real Carrier 19DV the equivalent points are vendor-dependent and were not checked against a point list. CT-1 is fine: tower approach = `water_supply_temp{COND}` − `outdoor_wet_bulb_temp`, both mapped (`objects.yaml:96-97,107-108`). |
+| D9 | Design deviation (doc 28) | **CR-4 (CRAH filter ΔP) has no signal.** The CRAH mapping has only the `Filter_Dirty` boolean (`objects.yaml:161`) and no `filter_diff_pressure`. The CDU does have `Filter_DP` (`objects.yaml:137`). | **Resolved by doc 32/33.** The simulator publishes a new CRAH BACnet point `Filter_DP`, mapped to the existing key `filter_diff_pressure` (doc 32 D6). Simulator S1 moved to Phase 1, so the mapping row and the Phase 1 collector rebuild land there (doc 33 task 1.22), and no registry key or `metric` upsert is needed. 0114 seeds CR-4 **enabled**, conditional on 1.22 having shipped. If it has not, 0114 seeds it disabled. Its history is about 5 weeks old by the Phase 3 fit (doc 33). CD-3 is unaffected. |
+| D10 | Design deviation (doc 28) | **CH-3 (chiller approach drift) has no approach point.** The chiller mapping has no `approach_temp` and no refrigerant temperatures, only `water_pressure{EVAP,COND}` (`objects.yaml:53-73`). | **Resolved by doc 32/33.** The simulator publishes chiller `Cond_Approach_Temp` and `Evap_Approach_Temp`, mapped to the existing key as `approach_temp{COND}` and `approach_temp{EVAP}` (doc 32 D6; doc 33 task 1.22, Phase 1 collector rebuild). CH-3 scores both instances, so condenser fouling and evaporator fouling are distinguished by instance. 0114 seeds it **enabled** on the same 1.22 condition as CR-4. On a real Carrier 19DV the equivalent points are vendor-dependent and were not checked against a point list. CT-1 is fine: tower approach = `water_supply_temp{COND}` − `outdoor_wet_bulb_temp`, both mapped (`objects.yaml:96-97,107-108`). |
 | D11 | Design deviation (doc 28) | **PL-1/PL-2 have no anchor device.** Doc 28 itself notes the CHW loop has no entity. A finding needs `device_id NOT NULL`. | Seed PL-1 per chiller (evaporator ΔT vs flow), disabled. PL-2 (plant balance) waits for a loop entity, and is not seeded. |
 | D12 | Design deviation (doc 28) | Doc 28 says `raise_alarm` gives "device rollup … for free". It does not: callers run `refresh_device_alarm_state` themselves (`P:backend/app/alarms/service.py:254,305,409`). | The sweep calls it for touched devices, as `sweep_staleness` does (`service.py:826-917`). |
 | D13 | Design deviation (doc 28) | Doc 28 asks whether `raise_alarm` carries arbitrary detail. `alarm.attributes jsonb` exists (`0005:99`), but `raise_alarm`'s signature has no attributes argument (`P:backend/app/repositories/alarms.py:217-225`) and its INSERT does not write the column (`:241-245`). | Per doc 30: add an optional `attributes` argument to `raise_alarm`, merged as `alarm.attributes || EXCLUDED.attributes`. **No new column on `alarm`, and no migration.** |
@@ -661,7 +661,7 @@ ALTER TABLE anomaly_incident
 | D15 | Policy vs doc 28 | Doc 28 calls PU-3 a "MAJOR candidate". Policy says derived alerts are MINOR/WARNING. | `ck_anomaly_detector_severity` enforces MINOR/WARNING defaults. MAJOR is reached only when L5 escalates an incident root's existing alarm in place, with confirmed impact (doc 28 §"Promotion"; doc 33 task 2.4), and only while `L5.params.major_enabled` is true (default false, §12.1). |
 | D17 | Contract deviation (doc 33) | Doc 33 wants a catalogue row for the L5 correlator so every rollback is one PATCH. The contract lists L5 only as `analytics/correlator.py`. | Seed an `L5` switch row in 0112 (§4.1, §12.1). This required widening `ck_anomaly_detector_id`, `_layer` and `_device_types`, and adding `ck_anomaly_detector_l5`. |
 | D18 | Resolves doc 33 Q12 | 29 seeded CD-1 `over_setpoint_k 1.0`. The display verdict uses `CDU_SUPPLY_FAULT_MARGIN_K = 2.0` (`P:backend/app/services/thermal.py:177`). The display and the alert must share one value (`test_anomaly_rule_parity`, doc 33). | The CD-1 seed is now **2.0 K** (§12.1). The detector reads the `thermal.py` constant's value as its default, so the two cannot drift. |
-| D19 | Resolves doc 33 Q17 | 29 seeded CD-5, SV-1, UP-1 and TX-1 enabled with no simulator ground truth (doc 32 §13.6). | 0113 seeds all four **disabled** until simulator S4 provides `loop_leak`, `server_thermal`, `room_hvac_loss` and `xfmr_cooling` (§12.2). No pre-fit PATCH is needed. |
+| D19 | Resolves doc 33 Q17 | 29 seeded CD-5, SV-1, UP-1 and TX-1 enabled with no simulator ground truth (doc 32 §13.6). | 0114 seeds all four **disabled** until simulator S4 provides `loop_leak`, `server_thermal`, `room_hvac_loss` and `xfmr_cooling` (§12.2). No pre-fit PATCH is needed. |
 | D16 | Doc 28 naming | Doc 28 lists `anomaly_incident.members` and `opened/closed`. | Findings join through `anomaly_finding.incident_id` and alarms through `member_alarm_ids uuid[]`. The timestamps are `opened_at`/`resolved_at`, because the contract's incident state is open\|resolved. |
 
 ## 6. Retention, compression and sizing (~716 devices)
@@ -1126,7 +1126,7 @@ COOLING and ENVIRONMENTAL make up the home "Cooling & Environment" strip
 (`STRIP_GROUPS`, `alert_taxonomy.py:757`), so derived alerts appear there with
 no UI work.
 
-**L3 promotion types (Phase 3, 0113; taxonomy in doc 33 task 3.5).** These are
+**L3 promotion types (Phase 3, 0114; taxonomy in doc 33 task 3.5).** These are
 the `alarm_type` values advisory L3 detectors carry for promotion (§9.2). Each
 needs both entries listed above, in the same PR. These names are confirmed for
 docs 29 and 33, with one correction:
@@ -1144,7 +1144,7 @@ docs 29 and 33, with one correction:
 | `cdu_filter_loading` | CD-3 | COOLING | as doc 33 |
 
 The other L3 detectors (CT-4, PU-4, CD-4, CD-5, SV-1/2, PD-1/2, UP-1/2, TX-1,
-DQ-6) carry **no** promotion type in 0113. They stay advisory-only, because
+DQ-6) carry **no** promotion type in 0114. They stay advisory-only, because
 `test_no_unreachable_alarm_types` forbids taxonomy names that nothing raises.
 They gain a type only when a corroboration path is designed for them. The L5
 row raises no type of its own: it escalates the root's existing alarm. None of
@@ -1363,7 +1363,7 @@ Realism notes on the defaults [judgement unless cited]:
 - **GN-1.** Fuel-level readings move with temperature, and polishing systems
   shuttle fuel. That is why the dwell is long and rises are ignored.
 
-### 12.2 Migration 0113: Phase 3 (L3)
+### 12.2 Migration 0114: Phase 3 (L3)
 
 `layer = 3`, `phase = 3`, `cadence_s = 300`, `default_lane = advisory`,
 `default_kind = undetermined`. Params are doc 33's. The shape is §7.1 (L3).
@@ -1394,13 +1394,13 @@ Realism notes on the defaults [judgement unless cited]:
 
 Each detector that gets a promotion `alarm_type` needs the §9.3 taxonomy
 entries in the same PR. Those are CH-2, CH-3, CT-1, PU-1, PU-2, CR-3, CR-4,
-CD-2 and CD-3 (§9.3 L3 table). The CR-4/CH-3 condition is decided when 0113 is
+CD-2 and CD-3 (§9.3 L3 table). The CR-4/CH-3 condition is decided when 0114 is
 written: if the task 1.22 mapping rows are live and the points have history,
 seed `true`, otherwise `false` and enable them later by PATCH. Disabled rows
 here still get their `params` seeded, so turning one on is a PATCH, not a
 migration.
 
-### 12.3 Migration 0114: Phase 4 (L4)
+### 12.3 Migration 0115: Phase 4 (L4)
 
 `layer = 4`, `phase = 4`, `cadence_s = 300`, advisory.
 
@@ -1420,8 +1420,9 @@ deploy (policy; memory "batch deploys on the tight host").
 |---|---|---|---|
 | `0111` | `0111_an_anomaly_is_a_finding_not_an_alarm.py` | 0 | the seven tables, empty |
 | `0112` | `0112_the_rules_that_need_no_history.py` | 1 | DQ-1..5 + L2 rows + the `L5` switch row (§12.1) |
-| `0113` | `0113_a_residual_needs_a_baseline.py` | 3 | L3 rows + DQ-6 (§12.2) |
-| `0114` | `0114_a_unit_is_judged_against_its_siblings.py` | 4 | L4 rows (§12.3) |
+| `0113` | `0113_a_spike_is_judged_against_the_reading.py` | 1 | Live tuning after the first sweep: DQ-4 `min_dev_rel` 0.02 (spread floor as a share of the reading; power, flow and pressure unit families), VA-2 and CR-6 `min_step_pct` 5 → 10 |
+| `0114` | `0114_a_residual_needs_a_baseline.py` | 3 | L3 rows + DQ-6 (§12.2) |
+| `0115` | `0115_a_unit_is_judged_against_its_siblings.py` | 4 | L4 rows (§12.3) |
 
 Phase 2 (L5) and Phase 5 (L6) need no migration: the `L5` row is seeded by 0112, and `anomaly_incident`,
 `explanation` and `explanation_feedback` already exist from 0111.
@@ -1472,10 +1473,10 @@ Downgrade:
 3. Derived alarms for these types are not cleared by the migration. An operator
    clears them, or they remain as history.
 
-### 0113 / 0114
+### 0114 / 0115
 
-Same pattern as 0112, with the §12.2 / §12.3 IDs. The 0113 downgrade also
-deletes the baselines of its detectors (by cascade). 0114's `influence`
+Same pattern as 0112, with the §12.2 / §12.3 IDs. The 0114 downgrade also
+deletes the baselines of its detectors (by cascade). 0115's `influence`
 baseline rows go with RM-4.
 
 ## 14. Acceptance
@@ -1497,7 +1498,7 @@ The schema is accepted when all of these hold:
 - [ ] 0112 seeds DQ-1..DQ-5, the 18 L2 rows of §12.1 (CT-2, CT-3, AT-1 and PL-1 disabled) and the `L5` switch row with `major_enabled = false`. Re-running 0112 after an operator PATCH leaves the operator's params intact.
 - [ ] A row with `layer = 5` and an id other than `L5`, or `id = 'L5'` with another layer, is rejected by `ck_anomaly_detector_l5`.
 - [ ] CD-1's seeded `over_setpoint_k` equals `thermal.CDU_SUPPLY_FAULT_MARGIN_K` (2.0), checked by `test_anomaly_rule_parity`.
-- [ ] 0113 seeds CD-5, SV-1, UP-1 and TX-1 with `enabled = false`, and CR-4/CH-3 per the task 1.22 condition.
+- [ ] 0114 seeds CD-5, SV-1, UP-1 and TX-1 with `enabled = false`, and CR-4/CH-3 per the task 1.22 condition.
 - [ ] The nine L3 promotion types in §9.3 are in both taxonomy files after Phase 3, and no other L3 type is.
 - [ ] Every `alarm_type` in §9.3 is in `BY_ALARM_TYPE` and in `NON_TRAP_ALARM_TYPES`, and `pytest backend/tests/test_alert_taxonomy.py` passes.
 - [ ] A derived alarm raised by CH-4 or PU-3 has `detection = 'derived'`, not `state` (D14).

@@ -138,7 +138,7 @@ L6 (Phase 5) is off the critical path. Every Phase 1–4 criterion must pass wit
 | Frontend tests | `frontend/package.json` has no test runner | Q15 |
 | Backend tests | 148 files, ~2,100 tests; DB tests skip without `DCIM_TEST_DATABASE_URL` | `_live.py` tests run against a throwaway DB; only CI exercises downgrades |
 | Metric keys | `approach_temp` and `filter_diff_pressure` exist (`contracts/metrics/registry.yaml:625,673`) | CR-4/CH-3 need **mapping rows only**: `objects.yaml` + embedded copy (`scripts/sync_mapping_bundle.py`), collector rebuild, BACnet re-discovery (`32` D6). No new registry key |
-| Migrations | Head is `0110_an_endpoint_can_have_a_write_credential.py` | 0111–0114, named in `29` §13 |
+| Migrations | Head is `0110_an_endpoint_can_have_a_write_credential.py` | 0111–0115, named in `29` §13 |
 
 ---
 
@@ -472,7 +472,7 @@ their triage screen.
 | 3.1 | Nightly fit over `telemetry_1h`/`1d`. Refuse thin buckets (`sample_count` < 50 %). Subtract exclusions, maintenance windows and ledger windows. **Freeze the refit on an open process finding.** Limit coefficient change to ≤ 10 %/night. Per-batch transactions under DCIMB. Prune superseded fits after 30 d | P: `analytics/baselines.py` | L 20 | P0 |
 | 3.2 | Residual framework: residual/σ, EWMA, two-sided CUSUM reset on a setpoint event (now real, 1.25), checkpoint and restore per `29` §10.3-10.4 | P: `analytics/detectors/residual.py` | L 14 | 0.10 |
 | 3.3 | CH-2, CH-3, CT-1, CT-4, PU-1, PU-2, PU-4, CR-3, CR-4, CD-2, CD-3, CD-4, CD-5, SV-1, SV-2, PD-1, PD-2, UP-1, UP-2, TX-1, and DQ-6 (`29` D1) | P: `analytics/detectors/residual.py`, `detectors/quality.py` | L 30 | 3.1, 3.2 |
-| 3.4 | Migration **0113** `0113_a_residual_needs_a_baseline.py` (`29` §12.2) | P: `alembic/versions/` | S 3 | 0.8 |
+| 3.4 | Migration **0114** `0114_a_residual_needs_a_baseline.py` (`29` §12.2) | P: `alembic/versions/` | S 3 | 0.8 |
 | 3.5 | **Taxonomy entries for every L3 promotion `alarm_type`.** `chiller_efficiency_degraded` (CH-2, `29`), plus proposed names for `29` to confirm: `tower_approach_degraded` (CT-1), `pump_curve_degraded` (PU-1), `pump_efficiency_degraded` (PU-2), `crah_fan_creep` (CR-3), `crah_filter_loading` (CR-4), `chiller_approach_degraded` (CH-3), `cdu_approach_degraded` (CD-2), `cdu_filter_loading` (CD-3). All COOLING, in both files | P: `alert_taxonomy.py`, `tests/test_alert_taxonomy.py` | S 2 | 3.4 |
 | 3.6 | `GET /expected` with `interval`, multi-metric, no-baseline `reason` (`31` D7) | P: `api/v1/anomalies.py`, `repositories/anomalies.py` | M 6 | 3.1 |
 | 3.7 | `impact_kw` estimates | P: `analytics/evidence.py` | M 6 | 3.3 |
@@ -481,7 +481,7 @@ their triage screen.
 | 3.10 | Frontend: `DeviceHistory.tsx` findings line, band mode, **"Under watch" panels** for open-finding metrics missing from `chartGroups.ts` | P: `features/devices/DeviceHistory.tsx` | M 8 | 3.9 |
 | 3.11 | Frontend: triage tab (`AnomalyView` Incidents/Findings/Sensor health, `AnomalyDetail`, `anomaly/*`, `anomaly.css`, topic `anomalies`, `usePaged`) | P: `features/analytics/Analytics.tsx`, `AnomalyView.tsx`, `AnomalyDetail.tsx`, `anomaly/*`, `anomaly.css` | L 20 | 3.6 |
 | 3.12 | Offline replay with VUS-PR | P: `backend/scripts/anomaly_eval.py`, `analytics/evaluation.py` | M 10 | 3.3 |
-| 3.13 | Enable CR-4 and CH-3 by PATCH. They are seeded disabled in 0113 (`29` D9, D10), and their points have been live since P1 | operator | S 1 | 1.22 |
+| 3.13 | Enable CR-4 and CH-3 by PATCH. They are seeded disabled in 0114 (`29` D9, D10), and their points have been live since P1 | operator | S 1 | 1.22 |
 | 3.14 | *(Optional, not in total.)* `32` S4-x additive kinds, highest value first: `hunting`, `loop_leak`, `server_thermal`, `bypass`, `fuel_leak`, `battery_aging`, `xfmr_cooling`, `server_fan_wear`, and CRAH coil + valve-driven CHW flow | S: per `32` | L ~30 | 1.23 |
 | 3.15 | Gradual campaigns and soak | operator | M 12 | all |
 
@@ -531,7 +531,7 @@ Q5):
 - **Negative controls:** `heatwave`, `crah-setpoint-raise`, `chw-reset`
 - **Then:** `clean-soak-7d`
 
-**Deploy.** One platform deploy: 0113, detectors, `/expected`, frontend. No
+**Deploy.** One platform deploy: 0114, detectors, `/expected`, frontend. No
 simulator change, unless S4 is taken. L3 rows stay inert until the first nightly
 fit, and two nights of fits are inspected before relying on findings.
 
@@ -567,7 +567,7 @@ as natural experiments.
 | 4.2 | Influence matrix: per-room ridge regression of rack inlet on CRAH supply and state, using ledger stops as experiments, stored as RM-4's room-scoped `influence` baseline and labelled an estimate. Optional exp(−d/5 m) prior once the 0099 x/y import is verified | P: `analytics/baselines.py`, `detectors/peer.py` | L 20 | 3.1 |
 | 4.3 | `kind` discrimination from peer and DQ-6 balance residuals; optional per-class PCA SPE with a > 50 % single-variable rule | P: `detectors/peer.py`, `detectors/quality.py` | L 16 | 4.1 |
 | 4.4 | Zone roots in the correlator (`L5.use_influence`), falling back to room | P: `analytics/correlator.py` | M 8 | 4.2 |
-| 4.5 | Migration **0114** `0114_a_unit_is_judged_against_its_siblings.py` | P: `alembic/versions/` | S 2 | 0.8 |
+| 4.5 | Migration **0115** `0115_a_unit_is_judged_against_its_siblings.py` | P: `alembic/versions/` | S 2 | 0.8 |
 | 4.6 | Taxonomy: **none needed** (L4 is advisory; SV-3 feeds L5) | — | — | — |
 | 4.7 | Influence scoring against `GET /api/air/influence` (built in 0.7) | P: `analytics/evaluation.py`, `scripts/anomaly_eval.py` | M 6 | 4.2 |
 | 4.8 | Frontend: zone shown in `IncidentTree`/`AnomalyDetail`; sensor-health count | P: `features/analytics/anomaly/IncidentTree.tsx`, `AnomalyView.tsx` | M 8 | 4.4 |
@@ -659,12 +659,12 @@ scenario only. All analytics raises are MINOR while the P1–P2 cap is active.
 | DQ-3 | 1 | L0 | same | value | — | per-metric bounds; sentinels −40, −127, 85, ±327.67 | 3 samples | advisory | — | sensor | — | on |
 | DQ-4 | 1 | L0 | same | value | — | Hampel w = 11, 5 × MAD; single spikes masked; finding at > 6/h | 1 h | advisory | — | sensor | — | on |
 | DQ-5 | 1 | L0 | same | value + coupled variable (`29` §12.1) | coupled range ≥ 5 % / 0.5 K | zero variance over 20 samples | 20 samples | advisory | — | sensor | — | on |
-| DQ-6 | 3 | L0 | sensor, pdu (+ CDU/chiller balance) | peer + balance residuals | steady | \|residual\| > 15 %; CUSUM k = 0.5σ, h = 5σ | hours | advisory | — | sensor | — | on (0113) |
+| DQ-6 | 3 | L0 | sensor, pdu (+ CDU/chiller balance) | peer + balance residuals | steady | \|residual\| > 15 %; CUSUM k = 0.5σ, h = 5σ | hours | advisory | — | sensor | — | on (0114) |
 | CR-1 | 1 | L2 | crah | `supply_air_temp`, `air_setpoint_temp`, `valve_position_pct{CHW}`, `equipment_state{Unit_Running}` | running ≥ 600; no fire pre-discharge; not standby; not DQ-masked | > setpoint + 3.0 K (`thermal.py:52`), clear at 2.0 K; valve ≥ 95 % → CHW-starved, else control fault | 900 / 300 | alert | MINOR | process | `crah_supply_over_setpoint` | on |
 | CR-2 | 1 | L2 | crah | `return_air_temp`, `supply_air_temp`, `fan_speed_pct` | running ≥ 600; fan ≥ 30 % | return − supply < 4 K, clear at 5 K | 900 / 600 | alert | MINOR | process | `crah_low_delta_t` | on (no sim truth until S4 `bypass`) |
 | CR-3 | 3 | L3 | crah | `fan_speed_pct` ~ room IT kW | running; steady load | residual CUSUM k = 0.5σ, h = 5σ | hours | advisory | — | undetermined | `crah_fan_creep` (proposed) | on |
 | CR-4 | 3 | L3 | crah | `filter_diff_pressure` / (fan/100)² (new point, 1.22) | running | slope CUSUM; > 10 %/week | days | advisory | — | undetermined | `crah_filter_loading` (proposed) | off → PATCH on (3.13) |
-| CR-5 | 4 | L4 | crah (hall siblings) | `supply_air_temp` − `air_setpoint_temp` | ≥ 4 siblings running | robust z > 3.5 | 1800 | advisory | — | sensor/process | — | on (0114) |
+| CR-5 | 4 | L4 | crah (hall siblings) | `supply_air_temp` − `air_setpoint_temp` | ≥ 4 siblings running | robust z > 3.5 | 1800 | advisory | — | sensor/process | — | on (0115) |
 | CR-6 | 1 | L2 | crah | `valve_position_pct{CHW}` | running | ≥ 6 reversals of ≥ 5 pp in 1800 | 1800 / 1800 | alert | WARNING | process | `crah_valve_hunting` | on (truth: S4 `hunting`) |
 | CH-1 | 1 | L2 | chiller | `water_supply_temp{CHW}`, `water_setpoint_temp{CHW}`, `compressor_load_pct`, `equipment_state{Chiller_Running}` | running ≥ 900; restart exclusion 480 | > setpoint + 1.0 K, clear at 0.5 K, while load < 95 % | 900 / 300 | alert | MINOR | process | `chiller_chw_over_setpoint` | on |
 | CH-2 | 3 | L3 | chiller | `cop` ~ OLS(load, load², `water_supply_temp{COND}` or wet bulb) | running ≥ 900; steady | residual CUSUM k = 0.5σ, h = 5σ (vendor rule: investigate at kW/ton +10 %) | hours | advisory | — | undetermined | `chiller_efficiency_degraded` | on |
@@ -692,10 +692,10 @@ scenario only. All analytics raises are MINOR while the P1–P2 cap is active.
 | RM-1 | — | L1 | — | — | — | existing ASHRAE envelope rules | — | alarm | — | — | existing | exists |
 | RM-2 | 1 | L2 | sensor, pdu | `inlet_temperature`, `ambient_temperature` | ≥ 3 samples in 900 | \|rate\| > 20 K/h (`ashrae.py:68`) | 3 samples / 900 | alert | MINOR | process | `inlet_rate_of_change` | on |
 | RM-3 | 1 | L2 | sensor, pdu | `inlet_temperature` | ≥ 5 room sensors | > room p90 + 3 K (`thermal.py:44,48`), clear at 2 K | 900 / 600 | alert | MINOR | process | `rack_hot_spot` | on |
-| RM-4 | 4 | L4 | sensor, pdu | inlet vs aisle peers / influence-expected | spatial | robust z > 3.5 | 1800 | advisory | — | sensor/process | — | on (0114) |
+| RM-4 | 4 | L4 | sensor, pdu | inlet vs aisle peers / influence-expected | spatial | robust z > 3.5 | 1800 | advisory | — | sensor/process | — | on (0115) |
 | SV-1 | 3 | L3 | server | `cpu_temperature` ~ (`cpu_utilization`, `inlet_temperature`) per model | powered on | 30-min EWMA residual > 3σ | 1800 | advisory | — | undetermined | — | `29` on; **recommend off** until S4 `server_thermal` |
 | SV-2 | 3 | L3 | server | `fan_speed` ~ (inlet, cpu) | powered on | as SV-1 | 1800 | advisory | — | undetermined | — | on (truth: S4 `server_fan_wear`) |
-| SV-3 | 4 | L4 | cdu (anchor) | fraction of the loop's servers with SV-1/SV-2 > 2σ | — | ≥ 20 % and ≥ 5 servers | 600 | advisory (L5 evidence) | — | process | — | on (0114) |
+| SV-3 | 4 | L4 | cdu (anchor) | fraction of the loop's servers with SV-1/SV-2 > 2σ | — | ≥ 20 % and ≥ 5 servers | 600 | advisory (L5 evidence) | — | process | — | on (0115) |
 | PD-1 | 3 | L3 | pdu, rpp, energy_monitor | `power_draw` ~ Σ server `cpu_utilization` | — | residual > 5 % sustained | 1800 | advisory | — | undetermined | — | on |
 | PD-2 | 3 | L3 | pdu, rpp, energy_monitor | `phase_imbalance_pct` (hour-of-week profile) | — | EWMA > profile + 3σ | 1800 | advisory | — | undetermined | — | on |
 | UP-1 | 3 | L3 | ups | `battery_temperature` ~ room `ambient_temperature` | — | residual CUSUM | hours | advisory | — | undetermined | — | `29` on; **recommend off** until S4 `room_hvac_loss` |
@@ -871,7 +871,7 @@ collector work, those go in the same slot in the order shown.
 | 1 | Seeded families go live under the MINOR cap; watch for 30 min | Disable the family, or turn the flag off; `downgrade 0111`. The collector quality change is independent: revert and rebuild it on its own if it misbehaves |
 | 2 | `L5` on with `major_enabled=false` | `major_enabled=false` or disable `L5`; clear symptom marks with a one-off call |
 | 3 | Two nights of fits first; the daily cap auto-disables noisy detectors | Disable L3; `downgrade 0112` |
-| 4 | `use_influence=false` until scored | `use_influence=false`; `downgrade 0113` |
+| 4 | `use_influence=false` until scored | `use_influence=false`; `downgrade 0114` |
 | 5 | Ships with `none` | Set `none` and restart |
 
 **Observability**
@@ -995,7 +995,7 @@ collector work, those go in the same slot in the order shown.
 |---|---|---|---|
 | D1 | "alarms/alert_taxonomy.py" | It is `app/core/alert_taxonomy.py`, plus the test's `NON_TRAP_ALARM_TYPES` | Tasks 1.12 and 3.5 edit both |
 | D2 | 0112 seeds "taxonomy rows if table-backed" | The taxonomy is code (`29` D5) | No taxonomy SQL |
-| D3 | "Use exactly doc 28's IDs" | L0 has no IDs | DQ-1…DQ-6, with DQ-6 in 0113 (`29` D1) |
+| D3 | "Use exactly doc 28's IDs" | L0 has no IDs | DQ-1…DQ-6, with DQ-6 in 0114 (`29` D1) |
 | D4 | (`28`: alarm_type "CR-1") | Alarm types are snake_case condition names | Use the `29` §9.3 names |
 | D5 | Derived alerts MINOR/WARNING | `28`: PU-3 "MAJOR candidate"; `30`: MAJOR tickets after 300 s | Cap until the P2 gate; MAJOR only by L5 escalation (Q8, Q13) |
 | D6 | (`28`: evidence column?) | `alarm.attributes` exists (0005:99) | Optional kwarg; no migration |
@@ -1015,4 +1015,4 @@ collector work, those go in the same slot in the order shown.
 | D20 | `32` S1 "before platform L3" | P1 already rebuilds the collector; setpoint controls need S1-8 | S1 ships in the P1 slot |
 | D21 | `32` library | No CD-1 abrupt scenario, no VA-2 scenario, no RPP-trip root | Resolved: `32` §13.2 now defines `valve-hunting` and `rpp-trip-crah` (rooted at `MPPA-DC1-HA`, needs S1-11); CD-1 is scored in P3 via `cdu-hx-fouling` |
 | D22 | BACnet quality (`32` §4.5) | Collector stamps GOOD (`bacnet.go:347`) | Task 1.21 |
-| D23 | (`28`: "next migration after 0108") | Head is 0110 | 0111–0114 with the `29` §13 names |
+| D23 | (`28`: "next migration after 0108") | Head is 0110 | 0111–0115 with the `29` §13 names |

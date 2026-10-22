@@ -89,8 +89,16 @@ def is_impossible(metric_key: str, v: float, p: Mapping[str, Any]) -> bool:
     return bool(b) and not (float(b[0]) <= v <= float(b[1]))
 
 
-def spike_indices(values: list[float], *, window: int, k: float, floor: float) -> list[int]:
-    """Hampel with an absolute scale floor; only points with a later neighbour.
+def spike_indices(values: list[float], *, window: int, k: float, floor: float,
+                  rel_floor: float = 0.0) -> list[int]:
+    """Hampel with a scale floor; only points with a later neighbour.
+
+    The floor is the larger of an absolute one (by unit family) and
+    `rel_floor` x |window median|. A steady signal reported in coarse steps -
+    a CRAH's power draw in 10 W steps round 430 W - has a MAD of ~0, and
+    without a floor every ordinary 10 W step reads as a spike. One relative
+    floor serves every magnitude a family spans (a 50 W probe to a 200 kW
+    panel), which no single absolute number can.
 
     The newest point cannot be told from the first sample of a step yet, so
     it is masked (see `spikes_to_drop`) but not COUNTED toward a finding.
@@ -104,7 +112,8 @@ def spike_indices(values: list[float], *, window: int, k: float, floor: float) -
         if len(win) < 3:
             continue
         m = median(win)
-        scale = max(MAD_TO_SIGMA * median([abs(x - m) for x in win]), floor)
+        scale = max(MAD_TO_SIGMA * median([abs(x - m) for x in win]), floor,
+                    rel_floor * abs(m))
         if abs(values[i] - m) > k * scale:
             out.append(i)
     return out
@@ -195,7 +204,8 @@ def evaluate(dev: DeviceView, params: Mapping[str, Mapping[str, Any]], now: floa
             fam = _family(key[0])
             floor = float((p.get("min_mad_abs") or {}).get(fam or "", 0.0))
             idx = spike_indices([s.v for s in good], window=int(p.get("window", 11)),
-                                k=float(p.get("k_mad", 5.0)), floor=floor)
+                                k=float(p.get("k_mad", 5.0)), floor=floor,
+                                rel_floor=float(p.get("min_dev_rel", 0.02)))
             if idx:
                 dev.dropped.setdefault(key, set()).update(good[i].ts for i in idx)
             st = state("DQ-4", key)

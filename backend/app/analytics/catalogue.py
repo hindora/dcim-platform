@@ -324,7 +324,7 @@ def _hunting() -> list[ParamSpec]:
     return [
         ParamSpec("min_reversals", "Reversals", "int", 6, None, 2, 50, 1,
                   help="Direction changes inside the window that count as hunting"),
-        ParamSpec("min_step_pct", "Smallest move", "number", 5.0, "%", 0.5, 50, 0.5),
+        ParamSpec("min_step_pct", "Smallest move", "number", 10.0, "%", 0.5, 50, 0.5),
         ParamSpec("window_s", "Window", "int", 1800, "s", 300, 7200, 60),
         _dwell(0), _clear(1800), _REOPEN,
     ]
@@ -351,6 +351,10 @@ PARAM_SCHEMAS: dict[str, list[ParamSpec]] = {
     "DQ-4": [
         _samples("window", "Hampel window", 11, 31),
         ParamSpec("k_mad", "Robust sigmas", "number", 5.0, "sigma", 2.0, 20.0, 0.5),
+        ParamSpec("min_dev_rel", "Spread floor (share of reading)", "number", 0.02, "ratio",
+                  0.0, 0.2, 0.005,
+                  help="The spike test's spread is never taken below this share of the "
+                       "reading, so a steady signal in coarse steps is not spiky"),
         ParamSpec("max_spikes_per_h", "Spikes per hour", "int", 6, None, 1, 120, 1,
                   help="A single spike is masked; a finding opens above this rate"),
         _dwell(0), _clear(3600), _REOPEN,
@@ -569,4 +573,5 @@ L0_METRICS: dict[str, tuple[str, ...]] = {
 
 #: Unit family for DQ-4's absolute MAD floor and DQ-5's coupled range, by
 #: registry unit (contracts/metrics/registry.yaml).
-UNIT_FAMILY = {"C": "temperature", "K": "temperature", "pct": "pct"}
+UNIT_FAMILY = {"C": "temperature", "K": "temperature", "pct": "pct",
+               "W": "power", "kW": "power", "L/s": "flow", "kPa": "pressure", "Pa": "pressure"}

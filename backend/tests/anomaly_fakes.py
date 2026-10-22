@@ -26,15 +26,31 @@ _MIG = (Path(__file__).resolve().parents[1] / "alembic" / "versions"
         / "0112_the_rules_that_need_no_history.py")
 
 
-def _migration():
-    spec = importlib.util.spec_from_file_location("mig0112", _MIG)
+#: Later migrations that tune the seeded params; applied in order on top.
+_TUNING = ("0113_a_spike_is_judged_against_the_reading.py",)
+
+
+def _load(path: Path, name: str):
+    spec = importlib.util.spec_from_file_location(name, path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
 
 
+def _migration():
+    return _load(_MIG, "mig0112")
+
+
 def seed_rows() -> list[dict[str, Any]]:
-    return [dict(r) for r in _migration().ROWS]
+    """The catalogue as a fresh database holds it: 0112's rows with every
+    later tuning migration's PARAM_UPDATES merged in."""
+    rows = [dict(r) for r in _migration().ROWS]
+    for fname in _TUNING:
+        upd = _load(_MIG.parent / fname, fname[:4]).PARAM_UPDATES
+        for r in rows:
+            if r["id"] in upd:
+                r["params"] = {**r["params"], **upd[r["id"]]}
+    return rows
 
 
 def seed_params(detector_id: str) -> dict[str, Any]:

@@ -195,3 +195,21 @@ def test_a_disabled_check_does_not_run():
     out = run(dev, params={"DQ-1": ALL["DQ-1"]})
     assert {d for d, _ in out} == {"DQ-1"}
     assert ("supply_air_temp", "") not in dev.masked
+
+
+def test_a_steady_signal_in_coarse_steps_is_not_spiky():
+    """A CRAH's power draw, reported in 10 W steps round 430 W, has a MAD of
+    about zero; without a relative floor every ordinary step read as a spike
+    (46 false DQ-4 findings on the first live sweep)."""
+    from app.analytics.detectors.quality import spike_indices
+    steps = [430, 420, 430, 440, 430, 420, 430, 430, 440, 430, 420, 430, 430, 420, 430]
+    assert spike_indices(steps, window=11, k=5.0, floor=0.0, rel_floor=0.02) == []
+    # ...while a real outlier still stands out.
+    spiked = [*steps[:7], 1460, *steps[8:]]
+    assert spike_indices(spiked, window=11, k=5.0, floor=0.0, rel_floor=0.02) == [7]
+
+
+def test_power_flow_and_pressure_have_a_unit_family():
+    from app.analytics.catalogue import UNIT_FAMILY
+    assert UNIT_FAMILY["W"] == "power" and UNIT_FAMILY["L/s"] == "flow"
+    assert UNIT_FAMILY["kPa"] == "pressure"
