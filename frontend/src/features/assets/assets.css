@@ -1639,9 +1639,20 @@ tr.is-selected > td { background: var(--accent-dim); }
   font-variant-numeric: tabular-nums;
 }
 
-.asset-trend-line { fill: none; stroke: var(--accent); stroke-width: 2; }
-.asset-trend-area { fill: var(--accent); opacity: 0.12; }
-.asset-trend-dot { fill: var(--accent); }
+.asset-trend { position: relative; }
+.asset-trend-svg { display: block; overflow: visible; cursor: crosshair; }
+.asset-trend-svg:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 3px; }
+.asset-trend-line { fill: none; stroke: var(--accent); stroke-width: 2;
+  stroke-linejoin: round; stroke-linecap: round; }
+/* The fill fades down from the line, so the shape of the trend reads before
+   its figures do; the flat 12 % wash it replaces flattened the slope. */
+.asset-trend-grad-top { stop-color: var(--accent); stop-opacity: 0.28; }
+.asset-trend-grad-bottom { stop-color: var(--accent); stop-opacity: 0; }
+.asset-trend-grid { stroke: var(--border); stroke-width: 1; stroke-dasharray: 2 4; }
+.asset-trend-cross { stroke: var(--text-faint); stroke-width: 1; }
+.asset-trend-dot { fill: var(--accent); stroke: var(--bg-raised); stroke-width: 2; }
+.asset-trend-tip-k { display: block; margin-top: 2px; font-size: 0.68rem; color: var(--text-faint); }
+.asset-trend-delta { color: var(--text-muted); font-variant-numeric: tabular-nums; }
 
 .asset-trend-axis {
   display: flex;

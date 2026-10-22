@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useId, useLayoutEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useHoverTip } from '../../components/HoverTip';
 import { Seg } from '../../components/estate';
 import { MaxGlyph, MaxModal } from '../../components/MaxModal';
 import { api, type AssetTrends } from '../../api/client';
+import { toCss } from '../../lib/zoom';
 
 /** The windows a trend is read at. Days drive the snapshot series; the
  *  backend widens the activity chart's month window to match. */
@@ -128,13 +129,14 @@ export function Trends() {
                     }>
           <TrendLine
             points={lastDays(snaps, rItems).map((s) => ({ day: s.day, v: s[metric] }))}
+            label={METRICS.find(([k]) => k === metric)?.[1] ?? 'Item count'}
           />
         </TrendPanel>
 
         <TrendPanel title="Free rack units" range={rFree} onRange={setRFree}>
           <TrendLine
             points={lastDays(snaps, rFree).map((s) => ({ day: s.day, v: s.u_free }))}
-            unit="U"
+            unit="U" label="Free rack units"
           />
         </TrendPanel>
 
@@ -177,10 +179,45 @@ export function Trends() {
   );
 }
 
-function TrendLine({ points, unit = '' }: {
+/** A day as the tooltip and the axis print it: "21 Oct", not "10-21". */
+function dayLabel(day: string): string {
+  const d = new Date(`${day}T00:00:00Z`);
+  return Number.isNaN(d.getTime()) ? day
+    : d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+}
+
+/** A nightly series as a line you can read point by point.
+ *
+ *  Hover - or focus and use the arrow keys - and a crosshair snaps to the
+ *  nearest REAL snapshot, never an interpolated one, with the night, its value
+ *  and the change from the night before. The line auto-ranges, so the faint
+ *  grid carries the low, middle and high values and the axis prints the range.
+ *
+ *  Drawn at its real pixel width rather than a stretched viewBox: stretching
+ *  squashed the end dot into an ellipse and thickened the line unevenly. */
+function TrendLine({ points, unit = '', label }: {
   points: { day: string; v: number }[];
   unit?: string;
+  /** What the series is, for the tooltip and the accessible name. */
+  label: string;
 }) {
+  const wrap = useRef<HTMLDivElement>(null);
+  const svg = useRef<SVGSVGElement>(null);
+  const [w, setW] = useState(320);
+  const [at, setAt] = useState<number | null>(null);
+  const [tipAt, setTipAt] = useState<{ x: number; y: number } | null>(null);
+  const gid = useId();
+  const hasLine = points.length > 1;
+
+  useLayoutEffect(() => {
+    const el = wrap.current;
+    if (!el) return undefined;
+    const ro = new ResizeObserver(() => setW(Math.max(160, Math.round(el.clientWidth))));
+    ro.observe(el);
+    setW(Math.max(160, Math.round(el.clientWidth)));
+    return () => ro.disconnect();
+  }, [hasLine]);
+
   if (points.length === 0) {
     return <p className="muted">No snapshots yet.</p>;
   }
@@ -196,37 +233,100 @@ function TrendLine({ points, unit = '' }: {
     );
   }
 
-  const w = 260;
-  const h = 90;
-  const pad = 4;
+  const h = 120;
+  const padX = 6, padT = 10, padB = 8;
   const vs = points.map((p) => p.v);
   const lo = Math.min(...vs);
   const hi = Math.max(...vs);
   const span = Math.max(1, hi - lo);
-  const x = (i: number) => pad + (i / (points.length - 1)) * (w - 2 * pad);
-  const y = (v: number) => h - pad - ((v - lo) / span) * (h - 2 * pad);
-  const path = points.map((p, i) =>
+  const x = (i: number) => padX + (i / (points.length - 1)) * (w - 2 * padX);
+  const y = (v: number) => h - padB - ((v - lo) / span) * (h - padT - padB);
+  const line = points.map((p, i) =>
     `${i === 0 ? 'M' : 'L'} ${x(i).toFixed(1)} ${y(p.v).toFixed(1)}`).join(' ');
+  const area = `${line} L ${x(points.length - 1).toFixed(1)} ${h - padB} L ${x(0).toFixed(1)} ${h - padB} Z`;
+  const grid = hi === lo ? [lo] : [hi, (hi + lo) / 2, lo];
+
+  /** Show the sample at index i, with the tip pinned to where it is drawn. */
+  const show = (i: number) => {
+    const box = svg.current?.getBoundingClientRect();
+    setAt(i);
+    if (box) {
+      const sx = box.width / w, sy = box.height / h;
+      setTipAt({ x: toCss(box.left + x(i) * sx), y: toCss(box.top + y(points[i].v) * sy) });
+    }
+  };
+  const onMove = (e: React.MouseEvent<SVGRectElement>) => {
+    const box = e.currentTarget.getBoundingClientRect();
+    if (!box.width) return;
+    const frac = (e.clientX - box.left) / box.width;
+    show(Math.max(0, Math.min(points.length - 1, Math.round(frac * (points.length - 1)))));
+  };
+  const onKey = (e: React.KeyboardEvent<SVGSVGElement>) => {
+    const step: Record<string, number> = { ArrowLeft: -1, ArrowRight: 1, Home: -Infinity, End: Infinity };
+    if (!(e.key in step)) return;
+    e.preventDefault();
+    const cur = at ?? points.length - 1;
+    const next = step[e.key] === -Infinity ? 0 : step[e.key] === Infinity ? points.length - 1
+      : Math.max(0, Math.min(points.length - 1, cur + step[e.key]));
+    show(next);
+  };
+  const hide = () => { setAt(null); setTipAt(null); };
+
+  const p = at !== null ? points[at] : null;
+  const prev = at !== null && at > 0 ? points[at - 1] : null;
+  const delta = p && prev ? p.v - prev.v : null;
+  const fmt = (v: number) => `${v.toLocaleString()}${unit ? ` ${unit}` : ''}`;
 
   return (
-    <div className="asset-trend">
-      <svg width="100%" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none"
-           role="img"
-           aria-label={`${points.length} days, from ${points[0].v} to ${last.v}${unit}`}>
-        <path d={`${path} L ${x(points.length - 1)} ${h - pad} L ${x(0)} ${h - pad} Z`}
-              className="asset-trend-area" />
-        <path d={path} className="asset-trend-line" />
-        <circle cx={x(points.length - 1)} cy={y(last.v)} r="3"
-                className="asset-trend-dot" />
+    <div className="asset-trend" ref={wrap}>
+      <svg ref={svg} width={w} height={h} viewBox={`0 0 ${w} ${h}`} className="asset-trend-svg"
+           role="img" tabIndex={0}
+           aria-label={`${label}: ${points.length} nights, ${points[0].v.toLocaleString()} to ${fmt(last.v)}, ranging ${lo.toLocaleString()} to ${fmt(hi)}. Use the arrow keys to read each night.`}
+           onKeyDown={onKey} onBlur={hide}>
+        <defs>
+          <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" className="asset-trend-grad-top" />
+            <stop offset="100%" className="asset-trend-grad-bottom" />
+          </linearGradient>
+        </defs>
+        {grid.map((g) => (
+          <line key={g} x1={padX} x2={w - padX} y1={y(g)} y2={y(g)} className="asset-trend-grid" />
+        ))}
+        <path d={area} fill={`url(#${gid})`} className="asset-trend-area" />
+        <path d={line} className="asset-trend-line" />
+        {p === null && (
+          <circle cx={x(points.length - 1)} cy={y(last.v)} r="3.5" className="asset-trend-dot" />
+        )}
+        {p !== null && at !== null && (
+          <g pointerEvents="none">
+            <line className="asset-trend-cross" x1={x(at)} x2={x(at)} y1={padT - 4} y2={h - padB} />
+            <circle cx={x(at)} cy={y(p.v)} r="4.5" className="asset-trend-dot is-hover" />
+          </g>
+        )}
+        {/* Last, so it takes the pointer. */}
+        <rect x={0} y={0} width={w} height={h} fill="transparent"
+              onMouseMove={onMove} onMouseLeave={hide} />
       </svg>
+      {p && tipAt && (
+        <span className="hover-tip" role="tooltip"
+              style={{ top: tipAt.y + 14, left: Math.min(tipAt.x + 12, toCss(window.innerWidth) - 230) }}>
+          <b>{dayLabel(p.day)}</b> {fmt(p.v)}
+          {delta !== null && (
+            <span className="asset-trend-delta">
+              {' '}· {delta === 0 ? 'no change' : `${delta > 0 ? '+' : '−'}${Math.abs(delta).toLocaleString()}${unit ? ` ${unit}` : ''} on the night before`}
+            </span>
+          )}
+          <span className="asset-trend-tip-k">{label}</span>
+        </span>
+      )}
       <div className="asset-trend-axis">
         {/* The range is printed because the line auto-ranges: a zoomed axis
             with its bounds visible is honest, a secret one is not. */}
-        <span>{points[0].day.slice(5)}</span>
+        <span>{dayLabel(points[0].day)}</span>
         <span className="range">
           {lo.toLocaleString()}–{hi.toLocaleString()}{unit}
         </span>
-        <span>{last.day.slice(5)} · <strong>{last.v.toLocaleString()}{unit}</strong></span>
+        <span>{dayLabel(last.day)} · <strong>{last.v.toLocaleString()}{unit}</strong></span>
       </div>
     </div>
   );
