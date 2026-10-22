@@ -749,7 +749,11 @@ function Identity({ device, rack, d, full = true, open = true }: ClassCtx & { fu
 /** Every reading the collector last brought back, in the order the device's
  *  own page charts them, then the rest by the catalogue's group. Per-port
  *  counters are left to the device page: a switch has a hundred of them. */
-function Readings({ device, m, stateLoading, stateError, d, skip = [] }: ClassCtx & { skip?: string[] }) {
+function Readings({ device, m, stateLoading, stateError, d, skip = [] }: {
+  /** A rack device or a floor unit: only what it is and its last draw are read. */
+  device: { device_type: string; power_w?: number | null };
+  m: Record<string, MetricValue>; stateLoading: boolean; stateError: boolean; d?: DeviceDetail; skip?: string[];
+}) {
   const groups = useMemo(() => {
     const keys = Object.keys(m).filter((k) => !k.startsWith('if_') && !skip.includes(k));
     const used = new Set<string>();
@@ -1129,16 +1133,139 @@ function OtherBody(c: ClassCtx) {
   );
 }
 
+/** Plant that is not an air handler, by what its BMS point list leads with.
+ *
+ *  A tower's controller (BACnet/IP on most, Modbus on some packaged units)
+ *  leads with the condenser water it sends back to the chillers and the water
+ *  that comes to it hot; a chiller's with its chilled water and compressor
+ *  load; a pump's with flow and its run state. Those are the tiles; anything
+ *  else it reports follows under Readings. */
+const PLANT_SPARK: Record<string, string[]> = {
+  cooling_tower: ['water_supply_temp', 'water_return_temp', 'power_draw'],
+  chiller: ['water_supply_temp', 'water_return_temp', 'compressor_load_pct', 'power_draw'],
+  pump: ['water_flow', 'power_draw'],
+};
+const PLANT_SHOWN = ['equipment_state', 'alarm_state', 'water_supply_temp', 'water_return_temp',
+  'water_flow', 'power_draw', 'compressor_load_pct'];
+
+function PlantReadout({ unit, m, spark }: {
+  unit: FloorEquipment; m: Record<string, MetricValue>; spark: Record<string, number[][]>;
+}) {
+  const supply = num(m.water_supply_temp), ret = num(m.water_return_temp), flow = num(m.water_flow);
+  const draw = num(m.power_draw) ?? unit.power_w ?? null;
+  const load = num(m.compressor_load_pct);
+  const running = typeof m.equipment_state?.v === 'boolean' ? m.equipment_state.v : null;
+  const alarm = typeof m.alarm_state?.v === 'boolean' ? m.alarm_state.v : null;
+  const dt = supply != null && ret != null ? ret - supply : null;
+  // Heat the water carries: Q = flow x cp x dT (water: 4.186 kJ/kg K, 1 kg/L).
+  const heatKw = flow != null && dt != null ? flow * 4.186 * dt : null;
+  const t = unit.device_type;
+  const stateRow = (what: string) => running != null && (
+    <Row k={what} v={running ? 'running' : <span className="vw-bad">stopped</span>} />
+  );
+  const alarmRow = alarm != null && <Row k="Unit alarm" v={alarm ? <span className="vw-bad">raised</span> : 'none'} />;
+
+  if (t === 'cooling_tower') {
+    return (
+      <>
+        <Tiles spark={spark} items={[
+          { label: 'SUPPLY', value: fmtT(supply), metric: 'water_supply_temp' },
+          { label: 'RETURN', value: fmtT(ret), metric: 'water_return_temp' },
+          { label: 'POWER', value: fW(draw), metric: 'power_draw' },
+        ]} />
+        <div className="vw-kv">
+          {stateRow('Fans')}
+          {alarmRow}
+          {dt != null && <Row k="Range (return − supply)" v={fmtDT(dt)} />}
+          {heatKw != null && <Row k="Heat rejected" v={`${Math.round(heatKw)} kW`} />}
+        </div>
+        <p className="muted vw-note">Condenser water: supply leaves the basin for the chillers, return comes back from them hot.</p>
+      </>
+    );
+  }
+  if (t === 'chiller') {
+    const cop = heatKw != null && draw ? heatKw / (draw / 1000) : null;
+    return (
+      <>
+        <Tiles spark={spark} items={[
+          { label: 'SUPPLY', value: fmtT(supply), metric: 'water_supply_temp' },
+          { label: 'RETURN', value: fmtT(ret), metric: 'water_return_temp' },
+          { label: 'LOAD', value: load != null ? `${Math.round(load)} %` : '–', metric: 'compressor_load_pct' },
+        ]} />
+        <div className="vw-kv">
+          {stateRow('Compressor')}
+          {alarmRow}
+          {dt != null && <Row k="Chilled water ΔT" v={fmtDT(dt)} />}
+          {flow != null && <Row k="Flow" v={formatMetric('water_flow', flow)} />}
+          <Row k="Power" v={fW(draw)} />
+          {heatKw != null && <Row k="Cooling delivered" v={`${Math.round(heatKw)} kW`} />}
+          {cop != null && <Row k="COP" v={cop.toFixed(1)} />}
+        </div>
+      </>
+    );
+  }
+  if (t === 'pump') {
+    return (
+      <>
+        <Tiles spark={spark} items={[
+          { label: 'FLOW', value: flow != null ? formatMetric('water_flow', flow) : '–', metric: 'water_flow' },
+          { label: 'POWER', value: fW(draw), metric: 'power_draw' },
+        ]} />
+        <div className="vw-kv">
+          {stateRow('Pump')}
+          {alarmRow}
+        </div>
+      </>
+    );
+  }
+  return (
+    <>
+      <Tiles spark={spark} items={[
+        { label: 'AIR', value: fmtT(unit.temp_c) },
+        { label: 'RH', value: f1(unit.rh_pct, ' %') },
+        { label: 'POWER', value: fW(draw), metric: 'power_draw' },
+      ]} />
+      {(running != null || alarm != null) && <div className="vw-kv">{stateRow('State')}{alarmRow}</div>}
+    </>
+  );
+}
+
 export function UnitPanel({ unit, thermal }: { unit: FloorEquipment; thermal?: ThermalUnit }) {
   const r = unitReadings(unit, thermal);
   const air = unit.device_type === 'crah' || unit.device_type === 'crac';
+  // The floor snapshot carries a unit's air and draw; everything else its
+  // controller reports comes from its own state, as on a rack device.
+  const state = useQuery<DeviceState>({
+    queryKey: ['device-state', unit.id],
+    queryFn: () => api.deviceState(unit.id),
+    refetchInterval: 30_000,
+    retry: false,
+  });
+  const m = useMemo(() => state.data?.metrics ?? {}, [state.data]);
+  const sparkKeys = air ? [] : PLANT_SPARK[unit.device_type] ?? ['power_draw'];
+  const spark = useQuery<HistoryOut>({
+    queryKey: ['spark', unit.id, 'plant'],
+    queryFn: () => {
+      const end = Date.now();
+      return api.history(unit.id, sparkKeys, new Date(end - 3600_000).toISOString(), new Date(end).toISOString());
+    },
+    enabled: sparkKeys.length > 0,
+    refetchInterval: 60_000,
+    retry: false,
+  });
+  const sparkBy = useMemo(() => {
+    const out: Record<string, number[][]> = {};
+    for (const s of spark.data?.series ?? []) if (!out[s.metric] && s.points.length > 1) out[s.metric] = s.points;
+    return out;
+  }, [spark.data]);
+  const seen = state.data?.last_seen ?? null;
   return (
     <div className="vw-panel-body">
       <div className="vw-kv">
         <Row k="Type" v={humanise(unit.device_type)} />
         <Row k="Grid reference" v={unit.x != null && unit.y != null ? gridRef(unit.x, unit.y) : '–'} />
         {unit.w_m != null && <Row k="Footprint" v={`${unit.w_m} × ${unit.d_m} × ${unit.h_m} m${unit.basis === 'class' ? ' (estimate)' : ''}`} />}
-        <Row k="Status" v={`${unit.status.toLowerCase()}${unit.max_severity !== 'CLEAR' ? ` · ${unit.max_severity.toLowerCase()}` : ''}`} />
+        <Row k="Status" v={`${unit.status.toLowerCase()}${unit.max_severity !== 'CLEAR' ? ` · ${unit.max_severity.toLowerCase()}` : ''}${seen ? ` · seen ${relativeTime(seen)}` : ''}`} />
         {thermal?.state && thermal.state !== 'ok' && <Row k="Verdict" v={`${humanise(thermal.state)}${thermal.reason ? ` – ${thermal.reason}` : ''}`} />}
       </div>
       {air ? (
@@ -1148,11 +1275,7 @@ export function UnitPanel({ unit, thermal }: { unit: FloorEquipment; thermal?: T
           { label: 'SETPOINT', value: fmtT(thermal?.setpoint_c) },
         ]} />
       ) : (
-        <Tiles items={[
-          { label: 'AIR', value: fmtT(unit.temp_c) },
-          { label: 'RH', value: f1(unit.rh_pct, ' %') },
-          { label: 'POWER', value: unit.power_w != null ? `${(unit.power_w / 1000).toFixed(1)} kW` : '–' },
-        ]} />
+        <PlantReadout unit={unit} m={m} spark={sparkBy} />
       )}
       {air && (
         <Section title="Cooling" open>
@@ -1163,8 +1286,10 @@ export function UnitPanel({ unit, thermal }: { unit: FloorEquipment; thermal?: T
           <Row k="Power" v={unit.power_w != null ? `${(unit.power_w / 1000).toFixed(1)} kW` : '–'} />
         </Section>
       )}
+      <Readings device={unit} m={m} stateLoading={state.isLoading} stateError={state.isError}
+                skip={air ? [] : PLANT_SHOWN} />
       <UnitAlarms deviceId={unit.id} deviceName={unit.name} />
-      <div className="vw-links"><Link to={`/devices/${unit.id}`}>Device</Link></div>
+      <div className="vw-links"><Link to={`/devices/${unit.id}`}>Device page</Link></div>
     </div>
   );
 }
