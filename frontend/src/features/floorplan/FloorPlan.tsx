@@ -17,7 +17,7 @@ import {
 import { Dock, type DockItem, type DockTool } from './Dock';
 import { SearchPanel, typeWord, type SearchHit } from './Search';
 import { Navigator } from './Navigator';
-import { Crumbs, type Crumb } from './Crumbs';
+import { Crumbs, type Crumb, type CrumbItem } from './Crumbs';
 import { BuildingPanel, DevicePanel, FiltersPanel, Legend, PathsPanel, RackPanel, RoomPanel, UnitPanel } from './panels';
 import { fromImpact, fromTraces, type PathKind } from './paths';
 import { BuildingPlan2D } from './BuildingPlan2D';
@@ -616,31 +616,88 @@ export function FloorPlanView() {
       },
     });
   }
+  // A row is a line of floor positions, and not every position is a rack: a
+  // remote power panel or an in-row cooler is its own cabinet bolted into the
+  // line, and keeps that position's grid label (R1-04 is RPP-A, not a missing
+  // rack). The row lists them in floor order. A meter or sensor mounted on one
+  // has no footprint and is not a position of its own.
+  const rowNames = [...new Set(racks.map((r) => r.row_name ?? '').filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  const rowLine = (n: string) => {
+    const rs = racks.filter((r) => (r.row_name ?? '') === n);
+    if (!rs.length) return null;
+    const xs = rs.map((r) => r.x), ys = rs.map((r) => r.y);
+    const alongX = Math.max(...xs) - Math.min(...xs) >= Math.max(...ys) - Math.min(...ys);
+    const along = alongX ? xs : ys, across = alongX ? ys : xs;
+    return { alongX, at: across.reduce((a, v) => a + v, 0) / across.length, lo: Math.min(...along) - 0.65, hi: Math.max(...along) + 0.65 };
+  };
+  const unitsIn = (n: string) => {
+    const l = rowLine(n);
+    if (!l) return [];
+    return (data?.plan.equipment ?? []).filter((e) => {
+      if (e.x == null || e.y == null || e.w_m == null || e.device_type === 'energy_monitor' || e.device_type === 'sensor') return false;
+      const along = l.alongX ? e.x : e.y, across = l.alongX ? e.y : e.x;
+      return Math.abs(across - l.at) < 0.35 && along >= l.lo && along <= l.hi;
+    });
+  };
+  type Slot = { id: string; along: number; item: CrumbItem };
+  const UNIT = 'unit:';
+  const slotLabel = (name: string) => { const m = /-(R\d+-\d+)$/.exec(name); return m ? `${m[1]} · ${name.split('-')[0]}` : name; };
+  const slotsIn = (n: string, here: string | null): CrumbItem[] => {
+    const l = rowLine(n);
+    const pos = (x: number, y: number) => ((l?.alongX ?? true) ? x : y);
+    const out: Slot[] = racks.filter((r) => (r.row_name ?? '') === n).map((r) => ({
+      id: r.id, along: pos(r.x, r.y),
+      item: { id: r.id, label: r.name, severity: r.max_severity, current: r.id === here, meta: r.free_u != null ? `${r.free_u} U free` : undefined },
+    }));
+    for (const e of unitsIn(n)) out.push({
+      id: e.id, along: pos(e.x!, e.y!),
+      item: { id: UNIT + e.id, label: slotLabel(e.name), severity: e.max_severity, current: e.id === here,
+              meta: e.device_type === 'rpp' ? 'power panel' : typeWord(e.device_type).toLowerCase() },
+    });
+    return out.sort((a, b) => a.along - b.along).map((s) => s.item);
+  };
+  const pickUnit = (id: string) => { if (rackFocus) unfocusRack(); setSel({ kind: 'equipment', id }); setPanel('info'); };
+  const pickSlot = (id: string) => (id.startsWith(UNIT) ? pickUnit(id.slice(UNIT.length)) : focusRack(id));
+  const unitRow = selUnit ? rowNames.find((n) => unitsIn(n).some((e) => e.id === selUnit.id)) : undefined;
+  const ctxRow = rackCtx ? rackCtx.row_name ?? '' : unitRow ?? '';
+  if (rung === 'room' && ctxRow) {
+    const rowWord = (n: string) => {
+      const nr = racks.filter((r) => (r.row_name ?? '') === n).length;
+      const us = unitsIn(n);
+      const kinds = new Set(us.map((e) => e.device_type));
+      const unitWord = kinds.size === 1 && kinds.has('rpp') ? 'power panel' : 'unit';
+      return `${nr} racks${us.length ? ` + ${us.length} ${unitWord}${us.length === 1 ? '' : 's'}` : ''}`;
+    };
+    trail.push({
+      key: 'row', rung: 'Row', name: ctxRow,
+      menu: {
+        label: 'Switch row', onPick: (n) => { const first = slotsIn(n, null)[0]; if (first) pickSlot(first.id); },
+        items: rowNames.map((n) => ({ id: n, label: n, meta: rowWord(n), current: n === ctxRow })),
+      },
+    });
+  }
   if (rung === 'room' && rackCtx) {
     const row = rackCtx.row_name ?? '';
-    const inRow = (n: string) => racks.filter((r) => (r.row_name ?? '') === n).sort(byName);
-    if (row) {
-      const rows = [...new Set(racks.map((r) => r.row_name ?? '').filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-      trail.push({
-        key: 'row', rung: 'Row', name: row,
-        menu: {
-          label: 'Switch row', onPick: (n) => { const first = inRow(n)[0]; if (first) focusRack(first.id); },
-          items: rows.map((n) => ({ id: n, label: n, meta: `${inRow(n).length} racks`, current: n === row })),
-        },
-      });
-    }
     trail.push({
       key: 'rack', rung: 'Rack', name: rackCtx.name,
       onGo: () => { if (rackFocus === rackCtx.id) { setSel({ kind: 'rack', id: rackCtx.id }); setPanel('info'); } else focusRack(rackCtx.id); },
       menu: {
-        label: row ? `Racks in row ${row}` : 'Racks in this room', onPick: focusRack,
-        items: inRow(row).map((r) => ({ id: r.id, label: r.name, severity: r.max_severity, current: r.id === rackCtx.id,
-                                        meta: r.free_u != null ? `${r.free_u} U free` : undefined })),
+        label: row ? `Positions in row ${row}` : 'Racks in this room', onPick: pickSlot,
+        items: row ? slotsIn(row, rackCtx.id)
+          : racks.filter((r) => !r.row_name).sort(byName).map((r) => ({ id: r.id, label: r.name, severity: r.max_severity, current: r.id === rackCtx.id,
+                                                                        meta: r.free_u != null ? `${r.free_u} U free` : undefined })),
       },
     });
   }
   if (rung === 'room' && selDevice) trail.push({ key: 'device', rung: typeWord(selDevice.device_type), name: selDevice.name });
-  else if (rung === 'room' && selUnit) trail.push({ key: 'unit', rung: typeWord(selUnit.device_type), name: selUnit.name });
+  else if (rung === 'room' && selUnit) {
+    trail.push({
+      key: 'unit', rung: typeWord(selUnit.device_type), name: selUnit.name,
+      // A unit standing in a row moves along it like a rack does.
+      menu: unitRow ? { label: `Positions in row ${unitRow}`, onPick: pickSlot, items: slotsIn(unitRow, selUnit.id) } : undefined,
+    });
+  }
   const moment = t
     ? t.toLocaleString(undefined, { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
     : 'Live';
