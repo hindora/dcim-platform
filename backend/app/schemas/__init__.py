@@ -353,6 +353,60 @@ class FloorEquipment(BaseModel):
     h_m: float | None = None
     mount_height_m: float | None = None
     basis: str | None = None
+    # A unit with no metering of its own - a remote power panel - is read
+    # through the meter clamped on it. Kept apart from power_w: a borrowed
+    # figure that cannot be told from a measured one is worse than none.
+    metered_by_id: str | None = None
+    metered_by: str | None = None
+    metered_status: str | None = None
+    metered_power_w: float | None = None
+
+
+class MeteredCircuit(BaseModel):
+    """One CT channel of a panel meter, and the breaker load it is clamped on."""
+
+    instance: str
+    power_w: float | None = None
+    current_a: float | None = None
+    power_factor: float | None = None
+    energy_kwh: float | None = None
+    branch_id: str | None = None
+    branch_name: str | None = None
+    label: str | None = None
+
+
+class PanelMeter(BaseModel):
+    """What a meter says about the device it measures.
+
+    `stale` is true when the meter is not ONLINE or its newest sample is
+    older than the platform's 15-minute freshness window: the panel's
+    metering is then lost, whatever the last figures were.
+    """
+
+    meter_id: str
+    meter_name: str
+    status: str = "UNKNOWN"
+    last_seen: datetime | None = None
+    as_of: datetime | None = None
+    stale: bool = True
+    power_w: float | None = None
+    energy_kwh: float | None = None
+    power_factor: float | None = None
+    frequency_hz: float | None = None
+    voltage_thd_pct: float | None = None
+    current_thd_pct: float | None = None
+    current_a: dict[str, float] = Field(default_factory=dict)
+    voltage_ln: dict[str, float] = Field(default_factory=dict)
+    circuits: list[MeteredCircuit] = Field(default_factory=list)
+    spare_circuits: int = 0
+
+
+class DeviceMetering(BaseModel):
+    """The meters that measure this device from outside it. Empty for a
+    device that is not metered that way."""
+
+    device_id: str
+    meters: list[PanelMeter] = Field(default_factory=list)
 
 
 class FloorAisle(BaseModel):

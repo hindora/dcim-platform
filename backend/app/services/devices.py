@@ -12,6 +12,7 @@ from app.core import thermal_indices as ti
 from app.core import twin_frame as frame
 from app.core.ashrae import envelope_for
 from app.repositories import devices as repo
+from app.repositories import panel_metering as panel_repo
 from app.repositories import racks as rack_repo
 from app.repositories import tags as tag_repo
 from app.repositories import telemetry as tele_repo
@@ -235,6 +236,9 @@ async def room_floorplan(session: AsyncSession, room_id: str) -> FloorPlan | Non
         return None
     racks = await rack_repo.floorplan_racks(session, room_id)
     things = await rack_repo.floorplan_equipment(session, room_id)
+    # A unit that does not meter itself (a remote power panel) is read
+    # through the meter it feeds; the figures stay labelled as the meter's.
+    meters = await panel_repo.meters_fed_from(session, [e["id"] for e in things])
     stored_aisles = await rack_repo.room_aisles(session, room_id)
 
     # Placed only when imported WITH geometry (a mount). A row from before
@@ -276,8 +280,8 @@ async def room_floorplan(session: AsyncSession, room_id: str) -> FloorPlan | Non
             allocated_derated=int(budget.get(r["id"], {}).get("derated") or 0),
             allocated_unrated=int(budget.get(r["id"], {}).get("unrated") or 0),
         ) for r in racks],
-        equipment=[_floor_equipment(e) for e in placed],
-        unpositioned_equipment=[_floor_equipment(e) for e in loose],
+        equipment=[_floor_equipment(e, meters.get(e["id"])) for e in placed],
+        unpositioned_equipment=[_floor_equipment(e, meters.get(e["id"])) for e in loose],
         aisles=[FloorAisle(y_start=a.y_start, y_end=a.y_end, kind=a.kind,
                            label=a.label, rows=a.rows, contained=a.contained)
                 for a in aisles],
@@ -292,8 +296,28 @@ async def room_floorplan(session: AsyncSession, room_id: str) -> FloorPlan | Non
     )
 
 
-def _floor_equipment(e: dict[str, Any]) -> FloorEquipment:
+def _metered(links: list[dict[str, Any]] | None) -> dict[str, Any]:
+    """The meter fields of a floor unit: who measures it and what it reads.
+
+    Several meters (both boards of a transfer switch) are summed, as the
+    topology service does; the name then says how many."""
+    if not links:
+        return {}
+    online = [m for m in links if m.get("status") == "ONLINE" and m.get("power_w") is not None]
+    worst = "ONLINE" if len(online) == len(links) else next(
+        (m["status"] for m in links if m.get("status") != "ONLINE"), "UNKNOWN")
+    return {
+        "metered_by_id": links[0]["meter_id"],
+        "metered_by": links[0]["meter_name"] if len(links) == 1 else f"{len(links)} meters",
+        "metered_status": worst,
+        "metered_power_w": round(sum(float(m["power_w"]) for m in online), 2) if online else None,
+    }
+
+
+def _floor_equipment(e: dict[str, Any],
+                     meters: list[dict[str, Any]] | None = None) -> FloorEquipment:
     return FloorEquipment(
+        **_metered(meters),
         id=e["id"], name=e["name"], device_type=e["device_type"],
         status=e.get("status") or "UNKNOWN",
         max_severity=e.get("max_severity") or "CLEAR",
@@ -509,10 +533,12 @@ async def room_frame(session: AsyncSession, room_id: str, t: datetime,
     # The pin's category and count are today's; at `t` only the severity is
     # known, so a past pin is drawn with the plain bell and no count.
     blank = {"alarm_category": None, "alarm_count": None}
+    # A meter's reading borrowed for a panel is today's too.
+    unit_blank = {**blank, "metered_power_w": None, "metered_status": None}
     plan = plan.model_copy(update={
         "racks": [r.model_copy(update=blank) for r in plan.racks],
-        "equipment": [e.model_copy(update=blank) for e in plan.equipment],
-        "unpositioned_equipment": [e.model_copy(update=blank)
+        "equipment": [e.model_copy(update=unit_blank) for e in plan.equipment],
+        "unpositioned_equipment": [e.model_copy(update=unit_blank)
                                    for e in plan.unpositioned_equipment]})
     devices = [d.model_copy(update=blank) for d in devices]
     note = ("Communication status is as known now; it has no history here. "

@@ -20,6 +20,7 @@ from app.repositories import lifecycle as lifecycle_repo
 from app.repositories import maintenance as maintenance_repo
 from app.schemas import (
     DeviceDetail,
+    DeviceMetering,
     DeviceStateOut,
     DeviceSummary,
     EndpointSummary,
@@ -31,6 +32,7 @@ from app.services import dashboard as dashboard_service
 from app.services import device_edit, endpoint_config
 from app.services import devices as service
 from app.services import lifecycle as lifecycle_service
+from app.services import panel_metering as panel_metering_service
 
 router = APIRouter(prefix="/devices", tags=["devices"])
 log = get_logger("api.devices")
@@ -188,6 +190,16 @@ async def latest_metrics(
 ) -> dict:
     return {"device_id": device_id,
             "metrics": await dashboard_service.latest(session, device_id)}
+
+
+@router.get("/{device_id}/metering", response_model=DeviceMetering,
+            summary="The meters that measure this device from outside it")
+async def metering(
+    device_id: str,
+    session: AsyncSession = Depends(get_session),
+    _: Principal = Depends(current_principal),
+) -> DeviceMetering:
+    return await panel_metering_service.device_metering(session, device_id)
 
 
 @router.get("/{device_id}/history", response_model=HistoryOut,
