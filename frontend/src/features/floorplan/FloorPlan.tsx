@@ -3,7 +3,7 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
   api, type FloorPlan as Plan, type RoomKpi, type RoomSummary, type ThermalField, type ThermalRoom,
-  type ThermalUnit, type TwinHistoryRange, type TwinRoomScene, type SitesOverview, type TwinSiteScene,
+  type ThermalUnit, type TwinHistoryRange, type TwinRoom, type TwinRoomScene, type SitesOverview, type TwinSiteScene,
 } from '../../api/client';
 import { Seg } from '../../components/estate';
 import { ViewBar, type Spin } from './ViewBar';
@@ -17,6 +17,7 @@ import {
 import { Dock, type DockItem, type DockTool } from './Dock';
 import { SearchPanel, typeWord, type SearchHit } from './Search';
 import { Navigator } from './Navigator';
+import { Crumbs, type Crumb } from './Crumbs';
 import { BuildingPanel, DevicePanel, FiltersPanel, Legend, PathsPanel, RackPanel, RoomPanel, UnitPanel } from './panels';
 import { fromImpact, fromTraces, type PathKind } from './paths';
 import { BuildingPlan2D } from './BuildingPlan2D';
@@ -166,16 +167,28 @@ export function FloorPlanView() {
   const enterBuilding = () => { const next = new URLSearchParams(params); next.set('b', '1'); if (siteId) next.set('site', siteId); setParams(next); };
   const leaveBuilding = () => {
     const next = new URLSearchParams(params);
-    next.delete('b'); next.delete('level'); next.delete('room');
+    next.delete('b'); next.delete('level'); next.delete('room'); next.delete('rack'); next.delete('device');
     if (siteId) next.set('site', siteId);
     for (const k of TIME_KEYS) next.delete(k);
+    if (next.get('view') === 'fpv') next.delete('view');
     setParams(next);
   };
+  /** The building rung on one floor, or all of them. */
+  const goBuilding = (lv: string | null) => {
+    const next = new URLSearchParams(params);
+    next.delete('room'); next.delete('rack'); next.delete('device'); next.set('b', '1');
+    if (siteId) next.set('site', siteId);
+    if (lv) next.set('level', lv); else next.delete('level');
+    for (const k of TIME_KEYS) next.delete(k);
+    if (next.get('view') === 'fpv') next.delete('view');
+    setParams(next);
+  };
+  // Pushes, so Back returns to the site you came from.
   const pickSite = (id: string) => {
     const next = new URLSearchParams(params);
-    next.set('site', id); next.delete('room'); next.delete('level'); next.delete('b');
+    next.set('site', id); next.delete('room'); next.delete('level'); next.delete('b'); next.delete('rack'); next.delete('device');
     for (const k of TIME_KEYS) next.delete(k);
-    setParams(next, { replace: true });
+    setParams(next);
   };
 
   const rawView = params.get('view');
@@ -546,36 +559,94 @@ export function FloorPlanView() {
   const groundLevel = levelsSorted[0]?.name ?? null;
   const planLevel = mode === 'plan' ? (level ?? groundLevel) : level;
   const roomIsOutdoor = roomId ? (bs?.rooms.find((r) => r.id === roomId)?.level ?? '').toLowerCase() === 'site' : false;
-  // Where you are, read at the top left like a station board: the site, the
-  // place (its rung above it in small type) and the moment the picture shows.
-  // The place opens the navigator; the site is a picker because switching
-  // site is the one move the tree cannot make from inside one site's scene.
+  // Where you are, read at the top left: the trail Compound › Building ›
+  // Room › Row › Rack, then the moment the picture shows. Each step up is one
+  // click; each caret lists that step's siblings. Building and floor share a
+  // segment - one building per site, so the building's own name would only
+  // repeat the site's.
   const site = sites.find((x) => x.id === siteId);
   const siteCode = site?.code ?? bs?.code ?? 'Site';
   const siteName = site?.name && site.name !== siteCode ? site.name : (bs?.name && bs.name !== siteCode ? bs.name : '');
   const roomName = roomId ? bs?.rooms.find((r) => r.id === roomId)?.name ?? room?.name ?? 'Room' : '';
-  const here = rung === 'site' ? { rung: 'Compound', place: 'Whole site' }
-    : rung === 'building' ? { rung: 'Building', place: planLevel ? levelWord(planLevel) : 'All levels' }
-    : rackFocus && mode === '3d' ? { rung: `Rack · ${roomName}`, place: data?.plan.racks.find((r) => r.id === rackFocus)?.name ?? 'Rack' }
-    : { rung: roomIsOutdoor ? 'Compound · Outdoor' : roomLevel ? `Room · ${levelWord(roomLevel)}` : 'Room', place: roomName };
+  const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name, undefined, { numeric: true });
+  const isOut = (r: { level?: string | null }) => (r.level ?? '').toLowerCase() === 'site';
+  const allRooms = bs?.rooms ?? [];
+  const roomWord = (r: TwinRoom) => r.rack_count ? `${r.rack_count} racks`
+    : r.room_class === 'support' ? 'support' : isOut(r) ? 'outdoor' : 'plant';
+  const floor = rung === 'room' ? roomLevel : rung === 'building' ? planLevel : null;
+  const trail: Crumb[] = [{
+    key: 'site', rung: 'Compound', name: siteName ? `${siteCode} ${siteName}` : siteCode,
+    onGo: rung !== 'site' ? leaveBuilding : undefined,
+    menu: sites.length > 1 ? {
+      label: 'Switch site', onPick: pickSite,
+      items: sites.map((x) => ({ id: x.id, label: x.name && x.name !== x.code ? `${x.code} ${x.name}` : x.code, current: x.id === siteId })),
+    } : undefined,
+  }];
+  if (rung === 'building' || (rung === 'room' && !roomIsOutdoor)) {
+    const floors = levelsSorted.filter((l) => !isOut({ level: l.name }));
+    const roomsOn = (lv: string) => allRooms.filter((r) => r.level === lv).length;
+    trail.push({
+      key: 'building', rung: 'Building', name: floor ? levelWord(floor) : 'All floors',
+      onGo: rung === 'room' ? () => goBuilding(roomLevel) : undefined,
+      menu: {
+        label: 'Switch floor', onPick: (id) => goBuilding(id || null),
+        // A plan is one floor at a time, so "all floors" is a 3D view only.
+        items: [
+          ...(mode === 'plan' ? [] : [{ id: '', label: 'All floors', meta: `${floors.length} levels`, current: rung === 'building' && !floor }]),
+          ...floors.map((l) => ({ id: l.name, label: levelWord(l.name), meta: `${roomsOn(l.name)} rooms`, current: floor === l.name })),
+        ],
+      },
+    });
+  }
+  const racks = data?.plan.racks ?? [];
+  const selDevice = sel?.kind === 'device' ? data?.devices.find((d) => d.id === sel.id) : undefined;
+  const selUnit = sel?.kind === 'equipment' ? data?.plan.equipment.find((e) => e.id === sel.id) : undefined;
+  const rackCtxId = rackFocus ?? (sel?.kind === 'rack' ? sel.id : selDevice?.rack_id ?? null);
+  const rackCtx = racks.find((r) => r.id === rackCtxId);
+  if (rung === 'room') {
+    const peers = allRooms.filter((r) => (roomIsOutdoor ? isOut(r) : !isOut(r) && (r.level ?? null) === roomLevel)).sort(byName);
+    const inner = Boolean(rackCtx || selUnit);
+    trail.push({
+      key: 'room', rung: roomIsOutdoor ? 'Outdoor' : 'Room', name: roomName,
+      onGo: inner ? () => { if (rackFocus) unfocusRack(); setSel(null); } : undefined,
+      menu: {
+        label: roomIsOutdoor ? 'Other outdoor areas' : roomLevel ? `Rooms on ${levelWord(roomLevel).toLowerCase()}` : 'Other rooms',
+        onPick: enterRoom,
+        items: peers.map((r) => ({ id: r.id, label: r.name, meta: roomWord(r), severity: r.max_severity, current: r.id === roomId })),
+      },
+    });
+  }
+  if (rung === 'room' && rackCtx) {
+    const row = rackCtx.row_name ?? '';
+    const inRow = (n: string) => racks.filter((r) => (r.row_name ?? '') === n).sort(byName);
+    if (row) {
+      const rows = [...new Set(racks.map((r) => r.row_name ?? '').filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+      trail.push({
+        key: 'row', rung: 'Row', name: row,
+        menu: {
+          label: 'Switch row', onPick: (n) => { const first = inRow(n)[0]; if (first) focusRack(first.id); },
+          items: rows.map((n) => ({ id: n, label: n, meta: `${inRow(n).length} racks`, current: n === row })),
+        },
+      });
+    }
+    trail.push({
+      key: 'rack', rung: 'Rack', name: rackCtx.name,
+      onGo: () => { if (rackFocus === rackCtx.id) { setSel({ kind: 'rack', id: rackCtx.id }); setPanel('info'); } else focusRack(rackCtx.id); },
+      menu: {
+        label: row ? `Racks in row ${row}` : 'Racks in this room', onPick: focusRack,
+        items: inRow(row).map((r) => ({ id: r.id, label: r.name, severity: r.max_severity, current: r.id === rackCtx.id,
+                                        meta: r.free_u != null ? `${r.free_u} U free` : undefined })),
+      },
+    });
+  }
+  if (rung === 'room' && selDevice) trail.push({ key: 'device', rung: typeWord(selDevice.device_type), name: selDevice.name });
+  else if (rung === 'room' && selUnit) trail.push({ key: 'unit', rung: typeWord(selUnit.device_type), name: selUnit.name });
   const moment = t
     ? t.toLocaleString(undefined, { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
     : 'Live';
   const crumbs = (
     <div className="vw-where" role="group" aria-label="Where you are">
-      <div className="vw-where-cell vw-where-site">
-        <small>Site</small>
-        {sites.length > 1
-          ? <select value={siteId} onChange={(e) => pickSite(e.target.value)} aria-label="Site" title="Switch site">
-              {sites.map((x) => <option key={x.id} value={x.id}>{x.name && x.name !== x.code ? `${x.code} ${x.name}` : x.code}</option>)}
-            </select>
-          : <b>{siteName ? `${siteCode} ${siteName}` : siteCode}</b>}
-      </div>
-      <button type="button" className={`vw-where-cell vw-where-place${panel === 'navigate' ? ' is-on' : ''}`}
-              onClick={() => togglePanel('navigate')} aria-pressed={panel === 'navigate'} title="Where you are - click to navigate">
-        <small>{here.rung}</small>
-        <b>{here.place}</b>
-      </button>
+      <Crumbs crumbs={trail} />
       <div className={`vw-where-cell vw-where-moment${t ? '' : ' is-live'}`} title={t ? 'The moment shown' : 'Showing the live estate'}>
         <small>Moment</small>
         <b><span className="dot" aria-hidden />{moment}</b>
@@ -590,8 +661,7 @@ export function FloorPlanView() {
       </div>
       <Navigator scene={bs} sites={sites} siteId={siteId} rung={rung} level={rung === 'room' ? roomLevel : level} roomId={roomId}
                  onSite={pickSite} onCompound={() => { leaveBuilding(); }}
-                 onBuilding={(lv) => { const next = new URLSearchParams(params); next.delete('room'); next.set('b', '1'); if (siteId) next.set('site', siteId);
-                                       if (lv) next.set('level', lv); else next.delete('level'); for (const k of TIME_KEYS) next.delete(k); if (next.get('view') === 'fpv') next.delete('view'); setParams(next); }}
+                 onBuilding={goBuilding}
                  onRoom={(id) => enterRoom(id)} />
     </aside>
   );

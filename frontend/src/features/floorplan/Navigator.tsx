@@ -7,8 +7,8 @@ import { levelWord } from './layers';
  * The dock's navigator: the estate as a tree - site, then the compound
  * holding its outdoor rooms and the building, the building its levels, each
  * level its rooms - with the rung you are on lit and
- * every node a place to go. It shows the whole shape at once, which a
- * breadcrumb never did, and sits beside Search so the two ways of getting
+ * every node a place to go. It shows the whole shape at once, where the
+ * trail at the top left shows only the one path through it, and sits beside Search so the two ways of getting
  * somewhere are in one spot.
  *
  * Rooms carry their worst open condition as a swatch and their rack count,

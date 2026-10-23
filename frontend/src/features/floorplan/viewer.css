@@ -421,24 +421,54 @@
                        color: rgba(255,255,255,0.72); white-space: nowrap; }
 .vw-where-cell b { font-size: 0.9rem; font-weight: 600; line-height: 1.25; white-space: nowrap; max-width: 300px;
                    overflow: hidden; text-overflow: ellipsis; }
-.vw-where-site select { background: none; color: inherit; border: none; border-radius: 3px; padding: 0 18px 0 0; margin: 0 -4px;
-                        font: inherit; font-size: 0.9rem; font-weight: 600; line-height: 1.25; max-width: 240px; cursor: pointer;
-                        appearance: none; -webkit-appearance: none;
-                        background-image: linear-gradient(45deg, transparent 50%, var(--text-muted) 50%),
-                                          linear-gradient(135deg, var(--text-muted) 50%, transparent 50%);
-                        background-position: calc(100% - 9px) 55%, calc(100% - 5px) 55%; background-size: 4px 4px; background-repeat: no-repeat; }
-.vw-where-site select:hover { color: var(--accent); }
-.vw-where-site select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.vw-where-place { cursor: pointer; }
-.vw-where-place:hover { background: rgba(255,255,255,0.12); }
-.vw-where-place:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* The trail: Compound › Building › Room › Row › Rack. Each step is the same
+   two-line stack as the moment beside it - what kind of place, then its name.
+   The steps above you are a touch quieter than where you are. */
+.vw-crumbs ol { display: flex; align-items: stretch; list-style: none; margin: 0 0 0 -6px; padding: 0; }
+.vw-crumb, .vw-crumb-gap { display: flex; align-items: center; }
+.vw-crumb-gap { display: none; color: rgba(255,255,255,0.72); font-weight: 600; }
+.vw-crumb-sep { flex: none; margin: 0 2px; color: rgba(255,255,255,0.55); }
+.vw-crumb-seg { position: relative; display: flex; align-items: stretch; }
+.vw-crumb-name { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 1px;
+                 min-height: 40px; padding: 2px 6px; border: none; border-radius: 6px; color: inherit;
+                 background: none; font: inherit; text-align: left; cursor: pointer; }
+.vw-crumb-name.is-static { cursor: default; }
+.vw-crumb-name small { font-size: 0.64rem; line-height: 1.2; letter-spacing: .08em; text-transform: uppercase;
+                       color: rgba(255,255,255,0.72); white-space: nowrap; }
+.vw-crumb-name b { display: flex; align-items: center; gap: 4px; min-width: 0; max-width: 220px;
+                   font-size: 0.9rem; font-weight: 600; line-height: 1.25; white-space: nowrap; }
+.vw-crumb-name b .t { overflow: hidden; text-overflow: ellipsis; }
+.vw-crumb:not(.is-here) .vw-crumb-name b { color: rgba(255,255,255,0.86); }
+.vw-crumb-caret { display: grid; place-items: center; width: 24px; min-height: 40px; margin-left: 0; padding: 0;
+                  border: none; border-radius: 6px; background: none; color: rgba(255,255,255,0.72); cursor: pointer; }
+button.vw-crumb-name:hover, .vw-crumb-caret:hover, .vw-crumb-caret[aria-expanded="true"],
+button.vw-crumb-name[aria-expanded="true"] { background: rgba(255,255,255,0.12); color: #ffffff; }
+button.vw-crumb-name:hover b { color: #ffffff; }
+.vw-crumb-name:focus-visible, .vw-crumb-caret:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* A step's siblings: the panel glass, theme ink, no halo. */
+.vw-crumb-menu { position: absolute; top: calc(100% + 6px); left: 0; z-index: 6; min-width: 220px; max-width: 320px;
+                 max-height: 360px; overflow-y: auto; padding: 4px; color: var(--text); text-shadow: none;
+                 background: var(--vw-glass); backdrop-filter: var(--vw-blur); -webkit-backdrop-filter: var(--vw-blur);
+                 border: 1px solid color-mix(in srgb, var(--border-strong) 85%, transparent); border-radius: var(--vw-radius);
+                 box-shadow: var(--vw-shadow-lg); }
+.vw-crumb-menu button { width: 100%; display: grid; grid-template-columns: 9px minmax(0, 1fr) auto; gap: 8px; align-items: center;
+                        padding: 6px 8px; min-height: 32px; border: none; border-radius: 6px; background: none; color: var(--text);
+                        font: inherit; font-size: 0.84rem; text-align: left; cursor: pointer; }
+.vw-crumb-menu button:hover { background: var(--bg-inset); }
+.vw-crumb-menu button.is-current { background: color-mix(in srgb, var(--accent) 14%, transparent); font-weight: 600; }
+.vw-crumb-menu button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.vw-crumb-menu .swatch { width: 9px; height: 9px; border-radius: 2px; }
+.vw-crumb-menu .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vw-crumb-menu .meta { color: var(--text-muted); font-size: 0.74rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .vw-where-moment b { display: inline-flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
 .vw-where-moment .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-faint); }
 .vw-where-moment.is-live .dot { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 25%, transparent); }
 @media (max-width: 720px) {
   .vw-where { gap: 12px; }
-  .vw-where-site, .vw-where-moment { display: none; }
-  .vw-where-cell b { max-width: 180px; }
+  .vw-where-moment { display: none; }
+  .vw-crumb.is-mid { display: none; }
+  .vw-crumb-gap { display: flex; }
+  .vw-crumb-name b { max-width: 130px; }
 }
 /* the navigator's tree */
 .vw-tree-site { display: flex; align-items: center; gap: 8px; margin: 4px 0 10px; }
@@ -467,12 +497,6 @@
 .vw-tree .vw-tree-fold:hover { color: var(--text); background: none; }
 .vw-tree .vw-tree-fold svg { transition: transform 120ms ease-out; }
 @media (prefers-reduced-motion: reduce) { .vw-tree .vw-tree-fold svg { transition: none; } }
-.vw-crumb { font: inherit; font-size: 0.8rem; font-weight: 600; color: var(--text); background: none; border: 1px solid transparent;
-  border-radius: 6px; padding: 3px 7px; cursor: pointer; }
-.vw-crumb:hover { background: var(--bg-inset); border-color: var(--border); }
-.vw-crumb:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.vw-crumb.is-text { cursor: default; font-weight: 600; }
-.vw-crumb-sep { color: var(--text-faint); padding: 0 2px; }
 .vw-link { font: inherit; color: var(--accent); background: none; border: none; padding: 0; cursor: pointer; }
 .vw-link:hover { text-decoration: underline; }
 .bld-rooms h4 { margin: 10px 0 4px; font-size: 0.7rem; letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted); }
@@ -505,7 +529,7 @@
 
 /* one rhythm for the chrome's state changes */
 @media (prefers-reduced-motion: no-preference) {
-  .vw-round, .vw-pill button, .vw-where-place, .vw-legend-chip { transition: color 140ms ease-out, background-color 140ms ease-out,
+  .vw-round, .vw-pill button, .vw-crumb-name, .vw-crumb-caret, .vw-legend-chip { transition: color 140ms ease-out, background-color 140ms ease-out,
                                                                             box-shadow 140ms ease-out, transform 80ms ease-out; }
   .vw-time { transition: opacity 400ms ease-out; }
 }
