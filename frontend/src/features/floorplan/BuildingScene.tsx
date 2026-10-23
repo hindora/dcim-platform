@@ -39,7 +39,9 @@ export type Rung = 'site' | 'building';
 export interface BuildingSceneProps {
   scene: TwinSiteScene;
   rung: Rung;
-  /** Focus one level (building rung): the others fade and stop answering the pointer. */
+  /** Focus one level (building rung): the others fade. A faded room still answers the
+   *  pointer - it is still a room you can open - but never in front of a room on the
+   *  focused level: where both lie under the pointer, the focused one gets it. */
   level: string | null;
   /** What colours a room: its worst open condition, or a figure of its racks. */
   layer: BuildingLayer;
@@ -557,12 +559,19 @@ function RoomVolume({ room: r, e, h, X, Z, tones, paint, dim, hot, quiet, flat, 
   const x = X(r.origin_x_m + r.width_m / 2), z = Z(r.origin_y_m + r.depth_m / 2);
   const geo = useMemo(() => new THREE.BoxGeometry(r.width_m, h, r.depth_m), [r.width_m, h, r.depth_m]);
   useEffect(() => () => geo.dispose(), [geo]);
-  const inert = dim;
+  // A faded room (another level while one is focused) used to be inert: no hover, no
+  // click, though its outline was still on screen. After picking a floor in Navigate,
+  // clicking any room not on it silently did nothing - "sometimes it opens, sometimes
+  // not". It answers again, but yields to a focused-level room behind it on the same ray:
+  // it returns WITHOUT stopping propagation, so the event carries on to that room. The
+  // floors above the focused one therefore never steal a click meant for it.
+  const yields = (ev: ThreeEvent<PointerEvent | MouseEvent>) =>
+    dim && ev.intersections.some((i) => i.object !== ev.object && i.object.userData.room && !i.object.userData.dim);
   return (
     <group position={[x, e + h / 2, z]}>
-      <mesh geometry={geo} onPointerOver={inert ? undefined : (ev) => { ev.stopPropagation(); onOver(ev); }}
-            onPointerOut={inert ? undefined : onOut} onClick={inert ? undefined : (ev) => { ev.stopPropagation(); onClick(ev); }}
-            raycast={inert ? () => null : undefined}>
+      <mesh geometry={geo} userData={{ room: r.id, dim }}
+            onPointerOver={(ev) => { if (yields(ev)) return; ev.stopPropagation(); onOver(ev); }}
+            onPointerOut={onOut} onClick={(ev) => { if (yields(ev)) return; ev.stopPropagation(); onClick(ev); }}>
         <meshStandardMaterial color={colour} emissive={paint.band ? colour : '#000000'} emissiveIntensity={paint.band ? 0.7 : 0}
                               transparent depthWrite={false}
                               opacity={dim ? 0.03 : paint.band ? (hot ? 0.62 : quiet ? 0.34 : 0.48)
