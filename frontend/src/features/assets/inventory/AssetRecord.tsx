@@ -13,6 +13,7 @@ import {
   type SupportContract,
 } from '../../../api/client';
 import { humanise, relativeTime } from '../../../lib/format';
+import { bodySize } from '../../devices/bodySize';
 import { LifecycleChip } from '../components/LifecycleChip';
 import { LifecycleTab } from './LifecycleTab';
 import { MaintenanceTab } from './MaintenanceTab';
@@ -182,7 +183,7 @@ export function AssetRecord() {
                 <Fact k="Vendor" v={d.vendor} />
                 <Fact k="Model" v={d.model} />
                 <Fact k="Rated power" v={d.rated_power_w ? `${d.rated_power_w} W` : null} />
-                <Fact k="Height" v={`${d.u_height}U`} />
+                <Fact k={bodySize(d).label} v={bodySize(d).long} />
                 <Fact k="Admin state" v={humanise(d.admin_state)} />
                 <Fact k="Management IP" v={d.mgmt_ip} mono />
                 <Fact k="Primary IP" v={d.primary_ip} mono />

@@ -16,6 +16,7 @@ import { ActionGlyph } from '../../components/ActionGlyph';
 import { TileGlyph, type GlyphName } from '../floorplan/glyphs';
 import { DeviceHistory } from './DeviceHistory';
 import { chartGroupsFor } from './chartGroups';
+import { bodySize } from './bodySize';
 import { DeviceEditor } from './DeviceEditor';
 import { DeviceActions } from './DeviceActions';
 import { DeviceThresholds } from './DeviceThresholds';
@@ -252,7 +253,7 @@ export function DeviceDetail() {
             {humanise(d.device_type)} · {makeModel(d)}
             {loc.rack_name ? ` · ${loc.rack_name}` : ''}
             {loc.u_start ? ` U${loc.u_start}` : ''}
-            {d.u_height ? `, ${d.u_height}U` : ''}
+            {bodySize(d).short ? `, ${bodySize(d).short}` : ''}
             {passive && meters[0] && (
               <> · metered by <Link to={`/devices/${meters[0].meter_id}`}>{meters[0].meter_name}</Link></>
             )}
@@ -489,7 +490,7 @@ function Overview({ d, ports, metrics, state, lead, onAlarms, onMonitoring }: {
               : null} />
             <Fact k="Network ports" v={summary
               ? <>{summary}<span className="muted"> · {cabled} of {fitted} patched</span></> : null} />
-            <Fact k="Height" v={`${d.u_height}U`} />
+            <Fact k={bodySize(d).label} v={bodySize(d).long} />
           </div>
           {rated != null && (
             <div className="dv-meter" aria-label="Draw against the nameplate rating">

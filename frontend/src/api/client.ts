@@ -1707,6 +1707,10 @@ export interface DeviceDetail extends DeviceSummary {
   u_height: number;
   /** Which way the chassis faces in the rack. */
   facing?: string | null;
+  /** rack | zero_u | floor | rack_front | rack_rear | wall | pipe ... u_height only means something for rack. */
+  mount?: string | null;
+  /** Physical size (m) of floor-standing gear; basis 'datasheet' or 'class' (an estimate). */
+  footprint_w_m?: number | null; footprint_d_m?: number | null; height_m?: number | null; footprint_basis?: string | null;
   /** How much the device matters when something is wrong with it. */
   priority?: 'high' | 'normal' | 'low';
   /** Identity fields set by hand; a re-import leaves them alone. */
