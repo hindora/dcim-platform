@@ -39,9 +39,7 @@ export type Rung = 'site' | 'building';
 export interface BuildingSceneProps {
   scene: TwinSiteScene;
   rung: Rung;
-  /** Focus one level (building rung): the others fade. A faded room still answers the
-   *  pointer - it is still a room you can open - but never in front of a room on the
-   *  focused level: where both lie under the pointer, the focused one gets it. */
+  /** Focus one level (building rung): the others fade and do not answer the pointer. */
   level: string | null;
   /** What colours a room: its worst open condition, or a figure of its racks. */
   layer: BuildingLayer;
@@ -559,19 +557,22 @@ function RoomVolume({ room: r, e, h, X, Z, tones, paint, dim, hot, quiet, flat, 
   const x = X(r.origin_x_m + r.width_m / 2), z = Z(r.origin_y_m + r.depth_m / 2);
   const geo = useMemo(() => new THREE.BoxGeometry(r.width_m, h, r.depth_m), [r.width_m, h, r.depth_m]);
   useEffect(() => () => geo.dispose(), [geo]);
-  // A faded room (another level while one is focused) used to be inert: no hover, no
-  // click, though its outline was still on screen. After picking a floor in Navigate,
-  // clicking any room not on it silently did nothing - "sometimes it opens, sometimes
-  // not". It answers again, but yields to a focused-level room behind it on the same ray:
-  // it returns WITHOUT stopping propagation, so the event carries on to that room. The
-  // floors above the focused one therefore never steal a click meant for it.
-  const yields = (ev: ThreeEvent<PointerEvent | MouseEvent>) =>
-    dim && ev.intersections.some((i) => i.object !== ev.object && i.object.userData.room && !i.object.userData.dim);
+  // A faded room (another level while one is focused) ignores the pointer, and lets
+  // it through to whatever lies behind - the focused floor's rooms.
+  //
+  // The handlers and the raycast stay attached the whole time; only what they DO
+  // changes. Making a faded room inert by swapping its props (handlers to undefined,
+  // raycast to a no-op) and back did not survive the round trip in react-three-fiber:
+  // after picking a floor in Navigate and returning to the whole building, every room
+  // except the picked floor's stayed dead to hover and click. Nothing is swapped now,
+  // so there is nothing to fail to restore.
   return (
     <group position={[x, e + h / 2, z]}>
-      <mesh geometry={geo} userData={{ room: r.id, dim }}
-            onPointerOver={(ev) => { if (yields(ev)) return; ev.stopPropagation(); onOver(ev); }}
-            onPointerOut={onOut} onClick={(ev) => { if (yields(ev)) return; ev.stopPropagation(); onClick(ev); }}>
+      <mesh geometry={geo}
+            onPointerOver={(ev) => { if (dim) return; ev.stopPropagation(); onOver(ev); }}
+            // A room hovered as its floor fades still has to let go of the highlight.
+            onPointerOut={() => { if (!dim || hot) onOut(); }}
+            onClick={(ev) => { if (dim) return; ev.stopPropagation(); onClick(ev); }}>
         <meshStandardMaterial color={colour} emissive={paint.band ? colour : '#000000'} emissiveIntensity={paint.band ? 0.7 : 0}
                               transparent depthWrite={false}
                               opacity={dim ? 0.03 : paint.band ? (hot ? 0.62 : quiet ? 0.34 : 0.48)
