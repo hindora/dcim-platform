@@ -22,6 +22,7 @@ import { fmtDT, fmtT, legendInUnit, numT, unitLabel } from './units';
 import { alarmColor } from './colors';
 import { glyphFor, TileGlyph, type GlyphName } from './glyphs';
 import { Sparkline } from '../../components/Sparkline';
+import { PanelMetering, meteringWords } from '../../components/PanelMetering';
 import { BUILDING_LAYERS, NO_READING, bandColor, roomLayerBands, roomLayerText, roomLayerValue, type BuildingLayer } from './layers';
 
 /** The viewer's side panel and legend. Facts only: every figure here is one
@@ -1319,13 +1320,34 @@ export function UnitPanel({ unit, thermal }: { unit: FloorEquipment; thermal?: T
     return { sparkBy: lines, lastBy: lasts };
   }, [spark.data]);
   const seen = state.data?.last_seen ?? null;
+  // A panel with no metering of its own is read through the meter clamped
+  // on it; its status says so rather than "unknown".
+  const metering = useQuery({
+    queryKey: ['device-metering', unit.id],
+    queryFn: () => api.deviceMetering(unit.id),
+    // Only a unit that does not meter itself borrows; switchgear and MCCs
+    // feed sub-meters too and keep their own readings.
+    enabled: Boolean(unit.metered_by_id) && unit.status === 'UNKNOWN',
+    refetchInterval: 30_000,
+    retry: false,
+  });
+  const meters = metering.data?.meters ?? [];
+  const passive = unit.status === 'UNKNOWN' && Boolean(unit.metered_by_id);
+  const words = meteringWords(meters) ?? (unit.metered_by
+    ? { text: unit.metered_status === 'ONLINE' ? `Not monitored · metered by ${unit.metered_by}`
+        : `Not monitored · metering lost: ${unit.metered_by} is ${(unit.metered_status ?? 'unknown').toLowerCase()}`,
+        lost: unit.metered_status !== 'ONLINE' }
+    : null);
+  const ownReadings = Object.keys(m).length > 0;
   return (
     <div className="vw-panel-body">
       <div className="vw-kv">
         <Row k="Type" v={humanise(unit.device_type)} />
         <Row k="Grid reference" v={unit.x != null && unit.y != null ? gridRef(unit.x, unit.y) : '–'} />
         {unit.w_m != null && <Row k="Footprint" v={`${unit.w_m} × ${unit.d_m} × ${unit.h_m} m${unit.basis === 'class' ? ' (estimate)' : ''}`} />}
-        <Row k="Status" v={`${unit.status.toLowerCase()}${unit.max_severity !== 'CLEAR' ? ` · ${unit.max_severity.toLowerCase()}` : ''}${seen ? ` · seen ${relativeTime(seen)}` : ''}`} />
+        {passive && words
+          ? <Row k="Status" v={<span className={words.lost ? 'vw-bad' : undefined}>{words.text}{unit.max_severity !== 'CLEAR' ? ` · ${unit.max_severity.toLowerCase()}` : ''}</span>} />
+          : <Row k="Status" v={`${unit.status.toLowerCase()}${unit.max_severity !== 'CLEAR' ? ` · ${unit.max_severity.toLowerCase()}` : ''}${seen ? ` · seen ${relativeTime(seen)}` : ''}`} />}
         {thermal?.state && thermal.state !== 'ok' && <Row k="Verdict" v={`${humanise(thermal.state)}${thermal.reason ? ` – ${thermal.reason}` : ''}`} />}
       </div>
       {air ? (
@@ -1334,7 +1356,7 @@ export function UnitPanel({ unit, thermal }: { unit: FloorEquipment; thermal?: T
           { label: 'SUPPLY', value: fmtT(r.supply_c) },
           { label: 'SETPOINT', value: fmtT(thermal?.setpoint_c) },
         ]} />
-      ) : (
+      ) : passive && !ownReadings ? null : (
         <PlantReadout unit={unit} m={m} spark={sparkBy} last={lastBy} />
       )}
       {air && (
@@ -1346,8 +1368,15 @@ export function UnitPanel({ unit, thermal }: { unit: FloorEquipment; thermal?: T
           <Row k="Power" v={unit.power_w != null ? `${(unit.power_w / 1000).toFixed(1)} kW` : '–'} />
         </Section>
       )}
-      <Readings device={unit} m={m} stateLoading={state.isLoading} stateError={state.isError}
-                skip={air ? [] : PLANT_SHOWN} />
+      {passive && meters.length > 0 && (
+        <Section title="Metering" open>
+          <PanelMetering meters={meters} variant="panel" />
+        </Section>
+      )}
+      {!(passive && !ownReadings) && (
+        <Readings device={unit} m={m} stateLoading={state.isLoading} stateError={state.isError}
+                  skip={air ? [] : PLANT_SHOWN} />
+      )}
       <UnitAlarms deviceId={unit.id} deviceName={unit.name} />
       <div className="vw-links"><Link to={`/devices/${unit.id}`}>Device page</Link></div>
     </div>

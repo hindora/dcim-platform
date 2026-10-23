@@ -1,0 +1,24 @@
+/* A passive panel read through its meter. Theme tokens only. */
+.pm { display: flex; flex-direction: column; gap: 14px; font-size: 13px; color: var(--text); }
+.pm-meter { display: flex; flex-direction: column; gap: 8px; }
+.pm-src { margin: 0; color: var(--text-muted); font-size: 12px; }
+.pm-lost { margin: 0; padding: 6px 9px; border-radius: 6px; font-size: 12px;
+           color: var(--text); background: color-mix(in srgb, var(--warn) 16%, transparent);
+           box-shadow: inset 2px 0 0 var(--warn); }
+.pm-meter.is-lost .pm-supply dd, .pm-meter.is-lost .pm-circuits td { color: var(--text-muted); }
+.pm-supply { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px 18px; margin: 0; }
+.pm-supply dt { font-size: 11px; letter-spacing: .05em; text-transform: uppercase; color: var(--text-faint); }
+.pm-supply dd { margin: 2px 0 0; font-variant-numeric: tabular-nums; }
+.pm-panel .pm-supply { grid-template-columns: 1fr 1fr; gap: 6px 12px; }
+.pm-warn { color: var(--warn); font-weight: 600; }
+.pm-bad { color: var(--critical); font-weight: 600; }
+.pm-sub { margin: 4px 0 0; font-size: 12px; color: var(--text-muted); }
+.pm-circuits { width: 100%; border-collapse: collapse; font-size: 12px; }
+.pm-circuits th { text-align: left; font-weight: 500; color: var(--text-faint); padding: 4px 6px;
+                  border-bottom: 1px solid var(--border); }
+.pm-circuits td { padding: 4px 6px; border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+                  font-variant-numeric: tabular-nums; }
+.pm-circuits .num { text-align: right; white-space: nowrap; }
+.pm-circuits .mono { font-family: var(--font-mono, ui-monospace, monospace); }
+.pm-circuits .feeds { overflow-wrap: anywhere; }
+.pm-panel .pm-circuits th, .pm-panel .pm-circuits td { padding: 3px 4px; }

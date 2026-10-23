@@ -2129,6 +2129,12 @@ export interface FloorEquipment {
   mount_height_m?: number | null;
   /** 'datasheet' or 'class' (a class estimate for that kind of equipment). */
   basis?: string | null;
+  /** A unit that does not meter itself (a remote power panel), read through
+   *  the meter clamped on it. Never folded into power_w. Live scenes only. */
+  metered_by_id?: string | null;
+  metered_by?: string | null;
+  metered_status?: string | null;
+  metered_power_w?: number | null;
 }
 
 export interface FloorAisle {
@@ -2164,6 +2170,26 @@ export interface FloorPlan {
   origin_x_m?: number | null;
   origin_y_m?: number | null;
 }
+
+/** One CT channel of a panel meter and the breaker load it is clamped on. */
+export interface MeteredCircuit {
+  instance: string;
+  power_w: number | null; current_a: number | null; power_factor: number | null; energy_kwh: number | null;
+  branch_id: string | null; branch_name: string | null; label: string | null;
+}
+
+/** What a meter says about the device it measures. `stale`: the meter is not
+ *  ONLINE or its newest sample is over 15 minutes old - metering lost. */
+export interface PanelMeter {
+  meter_id: string; meter_name: string; status: string;
+  last_seen: string | null; as_of: string | null; stale: boolean;
+  power_w: number | null; energy_kwh: number | null; power_factor: number | null;
+  frequency_hz: number | null; voltage_thd_pct: number | null; current_thd_pct: number | null;
+  current_a: Record<string, number>; voltage_ln: Record<string, number>;
+  circuits: MeteredCircuit[]; spare_circuits: number;
+}
+
+export interface DeviceMetering { device_id: string; meters: PanelMeter[] }
 
 export interface RoomSummary {
   id: string;
@@ -4730,6 +4756,7 @@ export const api = {
     }),
 
   deviceState: (id: string) => request<DeviceState>(`/devices/${id}/state`),
+  deviceMetering: (id: string) => request<DeviceMetering>(`/devices/${id}/metering`),
 
   deviceActions: (id: string) => request<DeviceActions>(`/devices/${id}/actions`),
   previewAction: (id: string, body: ActionRequest) =>

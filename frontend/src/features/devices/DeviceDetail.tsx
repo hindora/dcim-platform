@@ -10,6 +10,7 @@ import {
   type NetworkInterface,
 } from '../../api/client';
 import { StatusChip } from '../../components/StatusChip';
+import { PanelMetering, meteringWords } from '../../components/PanelMetering';
 import { CategoryGlyph } from '../../components/CategoryGlyph';
 import { ActionGlyph } from '../../components/ActionGlyph';
 import { TileGlyph, type GlyphName } from '../floorplan/glyphs';
@@ -107,12 +108,33 @@ export function DeviceDetail() {
     retry: false,
   });
 
+  // A device with no metering of its own (a remote power panel) is read
+  // through the meter clamped on it. Empty for everything else.
+  const metering = useQuery({
+    queryKey: ['device-metering', id],
+    queryFn: () => api.deviceMetering(id),
+    enabled: Boolean(id),
+    refetchInterval: 30_000,
+    retry: false,
+  });
+
   if (device.isLoading) return <p className="muted">Loading…</p>;
   if (device.error) return <div className="banner">Failed to load: {String(device.error)}</div>;
   if (!device.data) return null;
 
   const d = device.data;
   const metrics = state.data?.metrics ?? {};
+  const meters = metering.data?.meters ?? [];
+  const passive = meters.length > 0 && d.status === 'UNKNOWN' && Object.keys(metrics).length === 0;
+  const words = passive ? meteringWords(meters) : null;
+  // Only a device that does not meter itself borrows: switchgear and MCCs
+  // feed sub-meters too, and their own readings are what their pages show.
+  const meteringCard = passive && (
+    <section className="dv-card">
+      <h3>Metering<span className="lead"> read by the meter on this panel, not by the panel</span></h3>
+      <PanelMetering meters={meters} variant="summary" />
+    </section>
+  );
   const openAlarms = state.data?.active_alarms ?? 0;
   const sev = (state.data?.max_severity ?? d.max_severity ?? '').toLowerCase();
   const loc = d.location;
@@ -122,12 +144,23 @@ export function DeviceDetail() {
     : Object.keys(metrics);
 
   const bodies: Record<Tab, ReactNode> = {
-    overview: <Overview d={d} ports={ports.data} metrics={metrics} state={state.data}
+    overview: <Overview d={d} ports={ports.data} metrics={metrics} state={state.data} lead={meteringCard}
                         onAlarms={() => goTab('alarms')} onMonitoring={() => goTab('monitoring')} />,
     telemetry: (
       <>
-        <Readings d={d} metrics={metrics} loading={state.isLoading} />
-        <DeviceHistory deviceId={id} metrics={chartMetrics} groups={groups} />
+        {passive && (
+          <section>
+            <h3>Metering</h3>
+            <PanelMetering meters={meters} variant="page" />
+          </section>
+        )}
+        {!passive && <Readings d={d} metrics={metrics} loading={state.isLoading} />}
+        {passive
+          ? <p className="dv-note">
+              History is kept on the meter, not the panel: see{' '}
+              <Link to={`/devices/${meters[0].meter_id}?tab=telemetry`}>{meters[0].meter_name}</Link> for the charts.
+            </p>
+          : <DeviceHistory deviceId={id} metrics={chartMetrics} groups={groups} />}
       </>
     ),
     // Open conditions first, then the thresholds an operator came to change,
@@ -203,7 +236,11 @@ export function DeviceDetail() {
         <div className="dv-title">
           <h2>
             {d.name}
-            <StatusChip status={d.status} />
+            {words
+              ? <span className={`chip${words.lost ? ' warn' : ''}`} title={words.text}>
+                  {words.lost ? 'Metering lost' : 'Not monitored'}
+                </span>
+              : <StatusChip status={d.status} />}
             {d.priority && d.priority !== 'normal' && (
               <span className={`chip prio-${d.priority}`}>{d.priority} priority</span>
             )}
@@ -216,6 +253,9 @@ export function DeviceDetail() {
             {loc.rack_name ? ` · ${loc.rack_name}` : ''}
             {loc.u_start ? ` U${loc.u_start}` : ''}
             {d.u_height ? `, ${d.u_height}U` : ''}
+            {passive && meters[0] && (
+              <> · metered by <Link to={`/devices/${meters[0].meter_id}`}>{meters[0].meter_name}</Link></>
+            )}
           </p>
           <div className="dv-tools">
             {atLeast('operator') && (
@@ -385,8 +425,10 @@ function Fact({ k, v, mono }: { k: string; v: ReactNode; mono?: boolean }) {
   );
 }
 
-function Overview({ d, ports, metrics, state, onAlarms, onMonitoring }: {
+function Overview({ d, ports, metrics, state, lead, onAlarms, onMonitoring }: {
   d: Detail;
+  /** A card that leads the first column: a passive panel's metering. */
+  lead?: ReactNode;
   ports?: NetworkInterface[];
   metrics: Record<string, MetricValue>;
   state?: DeviceState;
@@ -405,6 +447,7 @@ function Overview({ d, ports, metrics, state, onAlarms, onMonitoring }: {
   return (
     <div className="dv-grid">
       <div className="dv-col">
+        {lead}
         <section className="dv-card">
           <h3>Record <Link className="more" to={`/assets/inventory/${d.id}`}>Asset record →</Link></h3>
           <div className="dv-facts">
