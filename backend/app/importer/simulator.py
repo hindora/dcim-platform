@@ -59,6 +59,7 @@ class ImportReport:
     devices: int = 0
     interfaces: int = 0
     outlets: int = 0
+    outlets_retired: int = 0
     psus: int = 0
     connections: int = 0
     endpoints: int = 0
@@ -1170,6 +1171,38 @@ class TopologyImporter:
                         else outlet.get("branch")))
             self._outlet[(device_id, int(number))] = oid
             self.report.outlets += 1
+
+        # A strip swapped for another SKU keeps its name and changes its
+        # receptacles: a 30-outlet PX2 replaced by a 24-outlet PX3 must lose
+        # outlets 25-30, or the rack view offers six sockets that are not there.
+        # Only when the export lists outlets at all (an empty list says nothing),
+        # and never an outlet a cord still ends on - a connection's termination
+        # is polymorphic, with no foreign key to stop the delete.
+        exported = sorted({int(o.get("number", o.get("index")))
+                           for o in dev.get("outlets") or []
+                           if o.get("number", o.get("index")) is not None})
+        if exported:
+            gone = await self.s.execute(text("""
+                DELETE FROM outlet o
+                 WHERE o.device_id = CAST(:dev AS uuid)
+                   AND NOT (o.number = ANY(:keep))
+                   AND NOT EXISTS (
+                       SELECT 1 FROM connection c
+                        WHERE (c.a_termination_type::text = 'outlet' AND c.a_termination_id = o.id)
+                           OR (c.b_termination_type::text = 'outlet' AND c.b_termination_id = o.id))
+            """), {"dev": device_id, "keep": exported})
+            self.report.outlets_retired += gone.rowcount or 0
+            await self.s.execute(text("""
+                UPDATE outlet o SET rated_amps = v.amps
+                  FROM (SELECT unnest(CAST(:nums AS int[])) AS num,
+                               unnest(CAST(:amps AS numeric[])) AS amps) v
+                 WHERE o.device_id = CAST(:dev AS uuid) AND o.number = v.num
+                   AND o.rated_amps IS DISTINCT FROM v.amps
+            """), {"dev": device_id,
+                   "nums": [int(o.get("number", o.get("index"))) for o in dev.get("outlets") or []
+                            if o.get("number", o.get("index")) is not None],
+                   "amps": [o.get("rated_amps", o.get("rated_a")) for o in dev.get("outlets") or []
+                            if o.get("number", o.get("index")) is not None]})
 
         for psu in dev.get("psus") or []:
             number = psu.get("number", psu.get("index"))
