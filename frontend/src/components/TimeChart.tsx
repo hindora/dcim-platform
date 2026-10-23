@@ -47,6 +47,23 @@ const PAD_B = 24;
  *  chart can do. Anything longer than a few buckets is treated as absence. */
 const GAP_FACTOR = 3;
 
+/** Base SI units a chart may carry in a bigger prefix. */
+const PREFIXABLE: Record<string, true> = { W: true, Wh: true, VA: true, var: true };
+
+/** The prefix a chart is drawn in: the one that keeps its biggest reading
+ *  under five digits. A chiller's 800 kW cooling capacity read "800000 W" on
+ *  the axis and in the tooltip - six digits to count before the number meant
+ *  anything. The whole chart moves together, axis, tooltip and unit label, so
+ *  two lines on one frame are never in different prefixes. */
+function scaleFor(unit: string, series: Series[]): { unit: string; div: number } {
+  if (!PREFIXABLE[unit]) return { unit, div: 1 };
+  let peak = 0;
+  for (const s of series) for (const p of s.points) if (Number.isFinite(p[1])) peak = Math.max(peak, Math.abs(p[1]));
+  if (peak >= 1e7) return { unit: `M${unit}`, div: 1e6 };
+  if (peak >= 1e4) return { unit: `k${unit}`, div: 1e3 };
+  return { unit, div: 1 };
+}
+
 function niceTicks(lo: number, hi: number, count = 4): number[] {
   if (!Number.isFinite(lo) || !Number.isFinite(hi)) return [];
   if (lo === hi) return [lo];
@@ -116,12 +133,20 @@ function seriesLabel(s: Series, mixed = false): string {
   return mixed ? `${metricLabel(s.metric)} · ${s.instance}` : s.instance;
 }
 
-export function TimeChart({ series, unit, bucketMs }: {
+export function TimeChart({ series: raw, unit: rawUnit, bucketMs }: {
   series: Series[];
   unit: string;
   /** Width of one aggregate bucket, used to decide what counts as a gap. */
   bucketMs: number;
 }) {
+  const { series, unit } = useMemo(() => {
+    const sc = scaleFor(rawUnit, raw);
+    if (sc.div === 1) return { series: raw, unit: rawUnit };
+    return {
+      unit: sc.unit,
+      series: raw.map((s) => ({ ...s, points: s.points.map(([t, v]) => [t, Number.isFinite(v) ? v / sc.div : v]) })),
+    };
+  }, [raw, rawUnit]);
   /** The time the pointer is nearest, in epoch ms. Null when not hovering. */
   const [at, setAt] = useState<number | null>(null);
   const chart = useChartColors();
