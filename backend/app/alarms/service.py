@@ -207,10 +207,18 @@ class AlarmService:
         if not work:
             return []
 
-        # In sample order, not arrival order. Dwell counts CONSECUTIVE samples,
-        # so evaluating them out of order would count a recovery before the
-        # breach it followed.
-        work.sort(key=lambda item: item[2]["observed_at"])
+        # In sample order within each alarm key, not arrival order. Dwell counts
+        # CONSECUTIVE samples, so evaluating them out of order would count a
+        # recovery before the breach it followed.
+        #
+        # ACROSS keys, in key order. Dwell is per key, so nothing needs one
+        # key's samples interleaved with another's in time - and time order
+        # across devices is what had two workers raising alarms on overlapping
+        # devices in opposite orders, each waiting on the other's insert into
+        # the alarm table's unique index. Python's sort is stable, so equal
+        # keys keep their time order.
+        work.sort(key=lambda item: (str(item[1].device_id), item[1].alarm_type,
+                                    item[1].instance or "", item[2]["observed_at"]))
 
         fields = [f"{r.id}|{k.redis_field()}" for r, k, _ in work]
         states = await self._load_dwell(fields)
@@ -251,7 +259,7 @@ class AlarmService:
         updates = {f: st for f, st in progress.items() if st != DwellState()}
         drop = [f for f, st in progress.items() if st == DwellState()]
         await self._save_dwell(updates, drop)
-        await repo.refresh_device_alarm_state(session, list(touched_devices))
+        await repo.refresh_device_alarm_state(session, sorted(touched_devices))
         return actions
 
     # ------------------------------------------------------------ events

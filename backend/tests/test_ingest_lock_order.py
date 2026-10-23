@@ -125,16 +125,86 @@ def test_endpoint_state_finishes_one_table_before_starting_the_other():
 def test_the_device_pass_is_ordered_by_device_not_endpoint():
     """A device has several endpoints - a server has a BMC and an OS agent -
     so endpoint order says nothing about the order of the device_state rows
-    those endpoints resolve to, and device_state is the row being locked."""
-    import inspect
+    those endpoints resolve to, and device_state is the row being locked.
 
+    The key is the device the INVENTORY maps the endpoint to: the row is
+    reached through the endpoint in SQL, so a message carrying no device id,
+    or a stale one, must not move the row out of device order."""
+    import inspect
+    from types import SimpleNamespace
+
+    from app.ingest.enrich import EndpointContext
     from app.ingest.worker import IngestWorker
 
     body = inspect.getsource(IngestWorker._handle_endpoint_state)
-    tail = body[body.index("apply_device_status(session") - 400:
-                body.index("apply_device_status(session")]
-    assert "device_id" in tail, (
-        "the device_state pass is not ordered by device id")
+    assert body.count("key=self._device_order") == 2, (
+        "the device_state and alarm passes are not ordered by device")
+
+    cache = SimpleNamespace(endpoints={
+        "e1": EndpointContext("e1", "d2", "snmp", "os_agent"),
+        "e2": EndpointContext("e2", "d1", "redfish", "bmc"),
+        "e3": EndpointContext("e3", "d2", "redfish", "bmc"),
+    })
+    me = SimpleNamespace(cache=cache)
+
+    def row(ep, msg_dev):
+        return (SimpleNamespace(device_id=msg_dev), "ONLINE", {"endpoint_id": ep})
+
+    rows = [row("e1", ""), row("e3", "zz-stale"), row("e2", "d1"), row("e9", "d0")]
+    got = [r[2]["endpoint_id"] for r in sorted(
+        rows, key=lambda r: IngestWorker._device_order(me, r))]
+    # d0 (unknown endpoint, message device), d1, then d2's two endpoints together.
+    assert got == ["e9", "e2", "e1", "e3"]
+
+
+def test_the_sweep_locks_every_stale_endpoint_in_one_global_order():
+    """Two stale collectors whose endpoint ids interleave were locked one
+    collector at a time - sorted within each, not across them - against an
+    ingest batch that takes the same rows in one sorted pass."""
+    import inspect
+
+    from app.alarms import collector_visibility
+
+    body = inspect.getsource(collector_visibility.sweep)
+    lock = body.index("FOR UPDATE")
+    assert body.index("every = sorted(") < lock < body.index("for owner, endpoint_ids in sorted")
+
+
+def test_the_alarm_rollup_inserts_in_device_order():
+    """The device_state roll-up comes out of a GROUP BY's hash; without an
+    ORDER BY its row locks are taken in no order however :ids is sorted."""
+    import inspect
+
+    from app.repositories import alarms
+
+    sql = inspect.getsource(alarms.refresh_device_alarm_state)
+    assert sql.index("ORDER BY device_id") < sql.index("ON CONFLICT (device_id)")
+
+
+def test_alarm_work_runs_in_key_order_and_time_order_within_a_key():
+    """Dwell needs each key's samples in time order and nothing more; locks
+    need one order across keys. Time order across devices gave two workers
+    opposite orders over the alarm table's unique index."""
+    from datetime import UTC, datetime, timedelta
+
+    from app.alarms.engine import AlarmKey
+
+    t0 = datetime(2026, 10, 23, tzinfo=UTC)
+    work = [
+        (None, AlarmKey("d2", "temp_high", ""), {"observed_at": t0}),
+        (None, AlarmKey("d1", "temp_high", ""), {"observed_at": t0 + timedelta(seconds=30)}),
+        (None, AlarmKey("d2", "temp_high", ""), {"observed_at": t0 - timedelta(seconds=30)}),
+        (None, AlarmKey("d1", "temp_high", ""), {"observed_at": t0 - timedelta(seconds=60)}),
+    ]
+    import inspect
+
+    from app.alarms import service
+    src = inspect.getsource(service.AlarmService.evaluate_samples)
+    assert "work.sort(key=lambda item: (str(item[1].device_id)" in src
+    work.sort(key=lambda item: (str(item[1].device_id), item[1].alarm_type,
+                                item[1].instance or "", item[2]["observed_at"]))
+    order = [(k.device_id, s["observed_at"]) for _, k, s in work]
+    assert order == sorted(order)
 
 
 def test_the_endpoint_parameters_carry_only_what_the_statement_binds():

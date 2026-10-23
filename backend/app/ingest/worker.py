@@ -1050,7 +1050,10 @@ class IngestWorker:
         rows, actions = [], []
         async with unit_of_work() as session:
             await self.alarms.ensure_rules(session)
-            for e in fresh:
+            # Grouped by device, the order every other path locks alarm and
+            # device_state rows in. Stable, so one device's raise still lands
+            # before the clear that followed it.
+            for e in sorted(fresh, key=lambda e: e.device_id or ""):
                 observed = ts_to_dt(e.observed_at) or datetime.now(UTC)
                 clears = [c for c in (e.varbinds.get("_clears") or "").split(",") if c]
                 payload = {
@@ -1117,6 +1120,20 @@ class IngestWorker:
         return bool(await self.redis.set(f"dcim:ev:{dedup_key}", "1",
                                          nx=True, ex=86400))
 
+    def _device_order(self, row: tuple) -> tuple[str, str]:
+        """Sort key for a state row: the device whose device_state row it
+        locks, then the endpoint.
+
+        From the inventory cache first. The row locked is reached THROUGH the
+        endpoint in SQL, so the key must be the device the database will find,
+        not whatever device id the message happened to carry - an empty one
+        sorted every such row to the front, out of step with every other path.
+        """
+        st, _status, s = row
+        ep = self.cache.endpoints.get(s["endpoint_id"])
+        return (ep.device_id if ep is not None else str(st.device_id or ""),
+                s["endpoint_id"])
+
     async def _handle_endpoint_state(self, payloads: list[dict]) -> None:
         comm_actions = []
         # Built first, written in three passes below. Two workers share these
@@ -1174,9 +1191,7 @@ class IngestWorker:
             # device_state lock, which is the order _handle_telemetry uses.
             # Interleaving them per endpoint is what no amount of sorting
             # could have fixed.
-            for _st, _status, s in sorted(
-                    rows, key=lambda r: (str(r[0].device_id or ""),
-                                         r[2]["endpoint_id"])):
+            for _st, _status, s in sorted(rows, key=self._device_order):
                 await writer.apply_device_status(session, s)
 
             # Pass 3: alarms, once both state tables are settled.
@@ -1186,9 +1201,7 @@ class IngestWorker:
             # connected browser, and re-running the alarm engine on an
             # unchanged status is at best wasted work and at worst a
             # re-notification of an alarm the operator already saw.
-            for st, status, _s in sorted(
-                    rows, key=lambda r: (str(r[0].device_id or ""),
-                                         r[2]["endpoint_id"])):
+            for st, status, _s in sorted(rows, key=self._device_order):
                 if st.is_refresh:
                     continue
 

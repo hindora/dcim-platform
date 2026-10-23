@@ -115,15 +115,23 @@ async def sweep(session: AsyncSession, stale_after_s: float) -> list[dict[str, A
     # them in: an UPDATE over an array locks in whatever order the planner
     # likes, and that is how a sweep and a state batch end up waiting on each
     # other.
+    #
+    # ONE pass over every stale collector's endpoints, not one per collector.
+    # Sorted within each collector but not across them, two stale collectors
+    # whose endpoint ids interleave were locked e5, e9 then e1, e3 while an
+    # ingest batch took e1, e3, e5, e9 - each holding what the other wanted.
+    every = sorted({e for ids in by_owner.values() for e in ids})
+    lockable = set((await session.execute(text("""
+        SELECT endpoint_id::text FROM endpoint_state
+         WHERE endpoint_id = ANY(CAST(:ids AS uuid[]))
+           AND NOT (status = 'UNKNOWN' AND last_error_class = :cls)
+         ORDER BY endpoint_id
+           FOR UPDATE
+    """), {"ids": every, "cls": STALE_CLASS})).scalars().all())
+
     marked: list[str] = []
     for owner, endpoint_ids in sorted(by_owner.items()):
-        locked = (await session.execute(text("""
-            SELECT endpoint_id::text FROM endpoint_state
-             WHERE endpoint_id = ANY(CAST(:ids AS uuid[]))
-               AND NOT (status = 'UNKNOWN' AND last_error_class = :cls)
-             ORDER BY endpoint_id
-               FOR UPDATE
-        """), {"ids": sorted(endpoint_ids), "cls": STALE_CLASS})).scalars().all()
+        locked = sorted(e for e in endpoint_ids if e in lockable)
         if not locked:
             continue
         await session.execute(text("""

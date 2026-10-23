@@ -748,6 +748,11 @@ async def refresh_device_alarm_state(session: AsyncSession,
                     ELSE 'OK' END::health_t,
                now()
         FROM agg
+        -- Rows are inserted, and their device_state locks taken, in this
+        -- order. Without it they come out of the GROUP BY's hash in no order
+        -- at all, so a sorted :ids bought nothing and two workers rolling up
+        -- overlapping devices could each lock what the other was waiting on.
+        ORDER BY device_id
         ON CONFLICT (device_id) DO UPDATE SET
             max_severity  = EXCLUDED.max_severity,
             active_alarms = EXCLUDED.active_alarms,
