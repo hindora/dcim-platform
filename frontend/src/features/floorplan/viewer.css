@@ -409,20 +409,13 @@
 
 /* --- the building rung (docs/27 §8b) -------------------------------------- */
 .vw-crumbs { display: flex; align-items: center; gap: 4px; }
-/* where you are: the strip at the top left - site, place, moment */
+/* where you are: the trail at the top left */
 /* The canvas behind this text is the room's grey backdrop in either theme,
    so the words are white with a dark halo rather than theme ink. */
 .vw-where { display: flex; align-items: stretch; gap: 20px; color: #ffffff;
             text-shadow: 0 0 2px rgba(0,0,0,0.45), 0 1px 4px rgba(0,0,0,0.4); }
-.vw-where-cell { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 1px;
-                 min-height: 40px; padding: 2px 6px; margin: 0 -6px; border: none; border-radius: 6px; color: inherit;
-                 background: none; font: inherit; text-align: left; }
-.vw-where-cell small { font-size: 0.64rem; line-height: 1.2; letter-spacing: .08em; text-transform: uppercase;
-                       color: rgba(255,255,255,0.72); white-space: nowrap; }
-.vw-where-cell b { font-size: 0.9rem; font-weight: 600; line-height: 1.25; white-space: nowrap; max-width: 300px;
-                   overflow: hidden; text-overflow: ellipsis; }
 /* The trail: Compound › Building › Room › Row › Rack. Each step is the same
-   two-line stack as the moment beside it - what kind of place, then its name.
+   two-line stack - what kind of place, then its name.
    The steps above you are a touch quieter than where you are. */
 .vw-crumbs ol { display: flex; align-items: stretch; list-style: none; margin: 0 0 0 -6px; padding: 0; }
 .vw-crumb, .vw-crumb-gap { display: flex; align-items: center; }
@@ -460,12 +453,8 @@ button.vw-crumb-name:hover b { color: #ffffff; }
 .vw-crumb-menu .swatch { width: 9px; height: 9px; border-radius: 2px; }
 .vw-crumb-menu .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vw-crumb-menu .meta { color: var(--text-muted); font-size: 0.74rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.vw-where-moment b { display: inline-flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
-.vw-where-moment .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-faint); }
-.vw-where-moment.is-live .dot { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 25%, transparent); }
 @media (max-width: 720px) {
   .vw-where { gap: 12px; }
-  .vw-where-moment { display: none; }
   .vw-crumb.is-mid { display: none; }
   .vw-crumb-gap { display: flex; }
   .vw-crumb-name b { max-width: 130px; }

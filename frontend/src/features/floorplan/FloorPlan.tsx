@@ -560,7 +560,7 @@ export function FloorPlanView() {
   const planLevel = mode === 'plan' ? (level ?? groundLevel) : level;
   const roomIsOutdoor = roomId ? (bs?.rooms.find((r) => r.id === roomId)?.level ?? '').toLowerCase() === 'site' : false;
   // Where you are, read at the top left: the trail Compound › Building ›
-  // Room › Row › Rack, then the moment the picture shows. Each step up is one
+  // Room › Row › Rack. Each step up is one
   // click; each caret lists that step's siblings. Building and floor share a
   // segment - one building per site, so the building's own name would only
   // repeat the site's.
@@ -698,16 +698,11 @@ export function FloorPlanView() {
       menu: unitRow ? { label: `Positions in row ${unitRow}`, onPick: pickSlot, items: slotsIn(unitRow, selUnit.id) } : undefined,
     });
   }
-  const moment = t
-    ? t.toLocaleString(undefined, { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
-    : 'Live';
+  // The moment shown is not repeated here: the status bar and the timeline
+  // already say live or replay, and which time.
   const crumbs = (
     <div className="vw-where" role="group" aria-label="Where you are">
       <Crumbs crumbs={trail} />
-      <div className={`vw-where-cell vw-where-moment${t ? '' : ' is-live'}`} title={t ? 'The moment shown' : 'Showing the live estate'}>
-        <small>Moment</small>
-        <b><span className="dot" aria-hidden />{moment}</b>
-      </div>
     </div>
   );
   const navigator = panel === 'navigate' && (
