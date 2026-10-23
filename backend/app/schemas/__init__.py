@@ -154,6 +154,17 @@ class DeviceDetail(DeviceSummary):
     psus: list[PowerSupplyOut] = Field(default_factory=list)
     u_height: int = 1
     facing: str | None = None
+    #: How the body is installed: rack, zero_u (a vertical strip), floor,
+    #: rack_front/rack_rear (a probe on a door), wall, pipe... u_height only
+    #: means something for `rack`: the column is NOT NULL and reads 1 for a
+    #: chiller, which is not a measurement of anything.
+    mount: str | None = None
+    #: Physical size in metres for floor-standing gear (width, depth, height),
+    #: and whether it is the datasheet's or a class estimate.
+    footprint_w_m: float | None = None
+    footprint_d_m: float | None = None
+    height_m: float | None = None
+    footprint_basis: str | None = None
     admin_state: str = "enabled"
     attributes: dict[str, Any] = Field(default_factory=dict)
     endpoints: list[EndpointSummary] = Field(default_factory=list)

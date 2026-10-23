@@ -128,6 +128,9 @@ async def get_device(session: AsyncSession, device_id: str) -> DeviceDetail | No
     return DeviceDetail(
         **base,
         u_height=row.get("u_height") or 1, facing=row.get("facing"),
+        mount=row.get("mount"),
+        footprint_w_m=_f(row.get("footprint_w_m")), footprint_d_m=_f(row.get("footprint_d_m")),
+        height_m=_f(row.get("height_m")), footprint_basis=row.get("footprint_basis"),
         admin_state=row.get("admin_state") or "enabled",
         attributes=row.get("attributes") or {},
         rated_power_w=row.get("rated_power_w"),

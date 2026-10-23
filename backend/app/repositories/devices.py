@@ -336,6 +336,8 @@ async def get_device(session: AsyncSession, device_id: str) -> dict[str, Any] | 
     sql = _LIST_BASE.replace(
         "           dt.category\n",
         "           dt.category, d.u_height, d.facing,\n"
+        "           d.mount, d.footprint_w_m, d.footprint_d_m, d.height_m,\n"
+        "           d.footprint_basis,\n"
         "           d.admin_state::text AS admin_state,\n"
         "           d.attributes,\n"
         # The nameplate. rated_power_w is the MODEL's, not the device's:
