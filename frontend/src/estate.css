@@ -749,3 +749,10 @@ button.facet.on {
 .pw-panel h4 a:hover { text-decoration: underline; }
 @media (max-width: 900px) { .pw-panels-grid { grid-template-columns: 1fr; } }
 
+
+/* On failover: the survivor's share, and the level that binds - strip, leg
+   or bank - small beside it, because the fix differs with the level. */
+.pw-failover { display: inline-flex; align-items: baseline; gap: 6px; font-variant-numeric: tabular-nums; }
+.pw-failover .lv { font-size: 11px; color: var(--text-muted); }
+.pw-failover.warn .v { color: var(--warn); }
+.pw-failover.critical .v { color: var(--critical); font-weight: 600; }

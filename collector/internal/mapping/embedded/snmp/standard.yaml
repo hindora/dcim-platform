@@ -312,6 +312,22 @@ profiles:
           - oid: 1.3.6.1.4.1.318.1.1.26.6.3.1.6     # rPDU2PhaseStatusVoltage, V
             metric: voltage_ln
             value_type: gauge
+      # The bank tables, walked: one row per outlet bank, the index is the
+      # bank (rPDU2BankStatusNumber). A bank breaker trips long before the
+      # strip's inlet does, so the strip's total and its legs are not enough
+      # to say whether the next server fits. The breaker rating is published
+      # only where breakers are fitted - a 16 A strip returns no rows.
+      - name: rpdu2_bank
+        columns:
+          - oid: 1.3.6.1.4.1.318.1.1.26.8.3.1.5     # rPDU2BankStatusCurrent, 0.1 A
+            metric: bank_current
+            value_type: gauge
+            transform: {scale: 0.1}
+      - name: rpdu2_bank_properties
+        columns:
+          - oid: 1.3.6.1.4.1.318.1.1.26.8.2.1.5     # rPDU2BankPropertiesBreakerRating, A
+            metric: bank_breaker_rating
+            value_type: gauge
     # The strip publishes no environment of its own. An AP8000 has no
     # onboard sensor - it has two RJ-45 sensor ports - so a temperature read
     # here belongs to the PROBE fitted to a port, not to the strip, and it is

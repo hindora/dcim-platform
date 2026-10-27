@@ -1818,6 +1818,7 @@ def _no_power_extras(monkeypatch):
     monkeypatch.setattr(estate, "_attach_shared_upstream", _returns(None))
     monkeypatch.setattr(estate.repo, "power_rack_legs", _returns({}))
     monkeypatch.setattr(estate.repo, "power_rack_psu_failed", _returns({}))
+    monkeypatch.setattr(estate.repo, "power_rack_strip_state", _returns({}))
 
 
 def _rack_row(rack_id: str, room_id: str, dc: str, code: str, *, avg_it=None,
@@ -2120,3 +2121,77 @@ async def test_legs_and_failed_supplies_ride_the_rack_and_count_up_the_tiers(mon
     assert racks["r2"]["imbalance_pct"] is None and racks["r2"]["psu_failed"] == []
     assert out["rooms"][0]["racks_imbalanced"] == 1 and out["rooms"][0]["psu_failed"] == 2
     assert out["sites"][0]["psu_failed"] == 2 and out["totals"]["racks_imbalanced"] == 1
+
+
+# ------------------------------------------------- failover and bank breakers
+
+def _strip(name, side, kw, rated_kw=22.0, legs=(10.0, 10.0, 10.0), v_ln=230.0,
+           bank_a=None, breaker_a=None):
+    return {"strip_id": name, "strip": name, "side": side, "kw": kw,
+            "rated_kw": rated_kw, "legs": list(legs), "v_ln": v_ln,
+            "bank_a": bank_a or {}, "breaker_a": breaker_a or {}}
+
+
+def test_failover_puts_the_whole_rack_on_the_survivor():
+    """A 1-phase pair at 54 % each looks fine; lose one and the survivor
+    carries 108 % of its rating."""
+    a = _strip("PDUA", "A", 2.0, rated_kw=3.7, legs=(9.1,), bank_a={}, breaker_a={})
+    b = _strip("PDUB", "B", 2.0, rated_kw=3.7, legs=(9.1,))
+    f = estate.rack_failover([a, b])
+    assert f["basis"] in ("strip", "leg") and f["pct"] >= 100.0
+    assert f["band"] == "critical" and f["total_kw"] == 4.0
+
+
+def test_failover_names_the_bank_that_binds_before_the_strip():
+    """22 kW strips at 4 kW each: the strip and the legs are nowhere near, but
+    bank 1 carries 9 A on each side and 18 A on one 16 A breaker after a loss."""
+    a = _strip("PDUA", "A", 4.0, legs=(9.0, 4.0, 4.0),
+               bank_a={1: 9.0, 2: 4.0, 3: 4.0}, breaker_a={1: 16, 2: 16, 3: 16})
+    b = _strip("PDUB", "B", 4.0, legs=(9.0, 4.0, 4.0),
+               bank_a={1: 9.0, 2: 4.0, 3: 4.0}, breaker_a={1: 16, 2: 16, 3: 16})
+    f = estate.rack_failover([a, b])
+    assert f["basis"] == "bank" and f["pct"] == 112.5 and f["mirrored"] is True
+    assert "bank 1" in f["detail"]
+
+
+def test_failover_is_none_without_two_sides_or_a_draw():
+    assert estate.rack_failover([_strip("PDUA", "A", 2.0)]) is None
+    assert estate.rack_failover([_strip("PDUA", "A", 2.0), _strip("PDUB", "B", None)]) is None
+
+
+def test_two_strips_a_side_are_judged_at_strip_level_only():
+    strips = [_strip("A1", "A", 3.0), _strip("A2", "A", 3.0),
+              _strip("B1", "B", 3.0), _strip("B2", "B", 3.0)]
+    f = estate.rack_failover(strips)
+    assert f["basis"] == "strip" and f["pct"] == round(100 * 12 / 44, 1)
+
+
+def test_bank_load_judges_only_banks_with_a_breaker():
+    s = _strip("PDUA", "A", 2.0, bank_a={1: 13.0, 2: 2.0, 3: 5.0}, breaker_a={1: 16, 3: 16})
+    banks = estate.rack_bank_load([s])
+    assert [b["bank"] for b in banks] == [1, 3]
+    assert banks[0]["pct"] == 81.2
+
+
+@pytest.mark.asyncio
+async def test_failover_and_banks_ride_the_rack_and_count_up(monkeypatch):
+    monkeypatch.setattr(estate.repo, "power_live", _returns([
+        _power_row("h", "dc1", "DC1", avg_it=24.0, avg_cooling=6.0),
+    ]))
+    monkeypatch.setattr(estate.repo, "power_racks_live", _returns([
+        _rack_row("r1", "h", "dc1", "DC1", avg_it=9.5, rated=22.0),
+        _rack_row("r2", "h", "dc1", "DC1", avg_it=4.0, rated=22.0),
+    ]))
+    monkeypatch.setattr(estate.repo, "power_rack_strip_state", _returns({
+        "r1": [_strip("PDUA", "A", 2.0, rated_kw=3.7, legs=(9.1,),
+                      bank_a={1: 13.5}, breaker_a={1: 16}),
+               _strip("PDUB", "B", 2.0, rated_kw=3.7, legs=(9.1,))],
+        "r2": [_strip("PDUC", "A", 1.0, rated_kw=3.7, legs=(4.5,))],
+    }))
+    out = await estate.power(_FakeSession(), live=True)
+    racks = {r["id"]: r for r in out["racks"]}
+    assert racks["r1"]["failover"]["pct"] >= 100 and racks["r1"]["bank_worst_pct"] == 84.4
+    assert racks["r2"]["failover"] is None and racks["r2"]["banks"] == []
+    room = out["rooms"][0]
+    assert room["racks_failover_over"] == 1 and room["racks_bank_hot"] == 1
+    assert out["totals"]["racks_failover_over"] == 1 and out["totals"]["bank_warn_pct"] == 80.0

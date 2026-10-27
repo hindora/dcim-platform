@@ -1132,6 +1132,7 @@ async def power(session: AsyncSession, *, start: datetime | None = None,
     await _attach_energy_pue(session, sites, totals, start=pue_start, end=pue_end)
     await _attach_shared_upstream(session, racks)
     await _attach_legs_and_supplies(session, racks, rooms, sites, totals)
+    await _attach_failover_and_banks(session, racks, rooms, sites, totals)
 
     # When the newest figure on the page was written. In the windowed modes
     # the window end is the answer; in NOW it is the newest hot-mirror write.
@@ -2504,6 +2505,130 @@ async def _attach_legs_and_supplies(session: AsyncSession, racks: list[dict[str,
     totals["racks_imbalanced"] = sum(r.get("racks_imbalanced", 0) for r in rooms)
     totals["psu_failed"] = sum(r.get("psu_failed", 0) for r in rooms)
     totals["leg_imbalance_warn_pct"] = LEG_IMBALANCE_WARN_PCT
+
+
+#: A bank, a leg or a strip past this share of its rating is the one the next
+#: server trips. 80 % is the continuous-load line both the NEC (210.20) and the
+#: strip makers' own near-overload default draw.
+BANK_WARN_PCT = 80.0
+
+
+def rack_bank_load(strips: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Every bank with a breaker, as a share of that breaker, busiest first.
+    A bank the strip reports no breaker for is not judged: a 16 A strip has
+    none, and its inlet breaker upstream is the protection."""
+    out = []
+    for s in strips:
+        for bank, amps in (s.get("bank_a") or {}).items():
+            brk = (s.get("breaker_a") or {}).get(bank)
+            if not brk:
+                continue
+            out.append({"strip": s["strip"], "bank": bank, "amps": round(amps, 1),
+                        "breaker_a": brk, "pct": round(100.0 * amps / brk, 1)})
+    return sorted(out, key=lambda b: -b["pct"])
+
+
+def rack_failover(strips: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """What the surviving side carries when one side of a 2N rack is lost.
+
+    Each side is judged as the survivor of the other's loss. Three levels, and
+    the worst one is the answer, because each trips on its own:
+
+      strip  everything the rack draws on both sides, on the survivor's
+             summed rating. Assumes every load is dual-corded: a load on
+             the lost side alone goes dark rather than moving, so this
+             overstates a rack with single-corded loads - which the Feeds
+             column already flags.
+      leg    the two strips' same-numbered legs added, on the survivor's
+             per-leg rating (its rating over phases x V L-N).
+      bank   the two strips' same-numbered banks added, on the survivor's
+             bank breaker.
+
+    Leg and bank assume mirrored cording - a load's two cords in the same
+    outlet position on each strip - which is how racks are cabled and how
+    this estate is, but is not something the platform can see. They are only
+    computed for one strip per side; two strips a side are judged at strip
+    level only. None where a rack is not fed from both sides, or a side has
+    no draw.
+    """
+    sides = {k: [s for s in strips if s.get("side") == k] for k in ("A", "B")}
+    if not sides["A"] or not sides["B"]:
+        return None
+    fed = sides["A"] + sides["B"]
+    if any(s.get("kw") is None for s in fed):
+        return None
+    total_kw = sum(s["kw"] for s in fed)
+    cases: list[dict[str, Any]] = []
+    for lost, keep in (("A", "B"), ("B", "A")):
+        surv = sides[keep]
+        names = ", ".join(s["strip"] for s in surv)
+        if all(s.get("rated_kw") for s in surv):
+            rated = sum(s["rated_kw"] for s in surv)
+            cases.append({
+                "pct": round(100.0 * total_kw / rated, 1), "basis": "strip",
+                "lost_side": lost, "survivor": names,
+                "detail": f"{total_kw:.1f} kW on {rated:.1f} kW rated"})
+        if len(sides["A"]) != 1 or len(sides["B"]) != 1:
+            continue
+        a, b = sides["A"][0], sides["B"][0]
+        s_ = b if lost == "A" else a
+        legs_a, legs_b = a.get("legs") or [], b.get("legs") or []
+        if (legs_a and len(legs_a) == len(legs_b) and s_.get("rated_kw")
+                and s_.get("v_ln")):
+            leg_rating = s_["rated_kw"] * 1000.0 / (len(legs_a) * s_["v_ln"])
+            for i, (x, y) in enumerate(zip(legs_a, legs_b, strict=True), 1):
+                cases.append({
+                    "pct": round(100.0 * (x + y) / leg_rating, 1), "basis": "leg",
+                    "lost_side": lost, "survivor": s_["strip"],
+                    "detail": f"leg {i}: {x + y:.1f} A on {leg_rating:.0f} A"})
+        banks_a, banks_b = a.get("bank_a") or {}, b.get("bank_a") or {}
+        for bank in sorted(set(banks_a) & set(banks_b)):
+            brk = (s_.get("breaker_a") or {}).get(bank)
+            if not brk:
+                continue
+            amps = banks_a[bank] + banks_b[bank]
+            cases.append({
+                "pct": round(100.0 * amps / brk, 1), "basis": "bank",
+                "lost_side": lost, "survivor": s_["strip"],
+                "detail": f"bank {bank}: {amps:.1f} A on a {brk:.0f} A breaker"})
+    if not cases:
+        return None
+    worst = max(cases, key=lambda c: c["pct"])
+    return {**worst, "total_kw": round(total_kw, 2),
+            "mirrored": worst["basis"] in ("leg", "bank"),
+            "band": _band(worst["pct"])}
+
+
+async def _attach_failover_and_banks(session: AsyncSession, racks: list[dict[str, Any]],
+                                     rooms: list[dict[str, Any]],
+                                     sites: list[dict[str, Any]],
+                                     totals: dict[str, Any]) -> None:
+    """Per rack: the worst bank against its breaker now, and what the survivor
+    carries if a side is lost. Counted up the tiers as racks to visit."""
+    state = await repo.power_rack_strip_state(session)
+    warn = POWER_BANDS["warn_pct"]
+    for rk in racks:
+        strips = state.get(rk["id"], [])
+        banks = rack_bank_load(strips)
+        rk["banks"] = banks[:6]
+        rk["bank_worst_pct"] = banks[0]["pct"] if banks else None
+        rk["failover"] = rack_failover(strips)
+    by_room: dict[str, list[dict[str, Any]]] = {}
+    for rk in racks:
+        by_room.setdefault(rk["room_id"], []).append(rk)
+    for room in rooms:
+        rks = by_room.get(room["id"], [])
+        room["racks_failover_over"] = sum(
+            1 for rk in rks if rk.get("failover") and rk["failover"]["pct"] >= warn)
+        room["racks_bank_hot"] = sum(
+            1 for rk in rks if (rk.get("bank_worst_pct") or 0) >= BANK_WARN_PCT)
+    for site in sites:
+        mine = [r for r in rooms if r["site_id"] == site["id"]]
+        site["racks_failover_over"] = sum(r.get("racks_failover_over", 0) for r in mine)
+        site["racks_bank_hot"] = sum(r.get("racks_bank_hot", 0) for r in mine)
+    totals["racks_failover_over"] = sum(r.get("racks_failover_over", 0) for r in rooms)
+    totals["racks_bank_hot"] = sum(r.get("racks_bank_hot", 0) for r in rooms)
+    totals["bank_warn_pct"] = BANK_WARN_PCT
 
 
 #: NEMA MG-1 derates a motor above 1 % voltage imbalance; on a rack strip the

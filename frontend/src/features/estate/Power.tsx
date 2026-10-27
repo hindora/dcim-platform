@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
-  api, type AlarmCategory, type PowerFeeds, type PowerRow, type PowerSpread,
+  api, type AlarmCategory, type PowerBank, type PowerFailover, type PowerFeeds, type PowerRow, type PowerSpread,
 } from '../../api/client';
 import { AlarmPanel } from '../home/AlarmPanel';
 import { RoomDrawer } from '../home/RoomDrawer';
@@ -139,6 +139,60 @@ function Feeds({ f, r, warnPct }: { f: PowerFeeds | null | undefined; r: PowerRo
   );
 }
 
+/** What the surviving side carries if the other is lost. The level that
+ *  binds is named, because the fix differs: a strip over its rating needs a
+ *  bigger strip, a leg or a bank over its breaker needs cords moved. */
+function Failover({ f }: { f: PowerFailover | null | undefined }) {
+  if (!f) {
+    return <Tip className="dash" tip="Not fed from both sides, or a side is not reporting a draw: there is no survivor to judge.">—</Tip>;
+  }
+  const tone = f.pct >= 100 ? 'critical' : f.band === 'warn' || f.band === 'critical' ? 'warn' : undefined;
+  const level = f.basis === 'strip' ? 'strip' : f.basis === 'leg' ? 'leg' : 'bank';
+  return (
+    <Tip tip={<>Lose side {f.lost_side}: {f.survivor} carries {f.detail} - {f.pct.toFixed(0)} % of what it is rated for.
+      {f.pct >= 100 ? ' It trips, and the rack goes dark with it.' : ''}
+      <br />The rack draws {f.total_kw.toFixed(1)} kW across both sides. Strip, legs and banks are each judged; this is the one that binds first.
+      {f.mirrored ? <><br />Assumes each load's two cords sit in the same outlet position on each strip, as racks are cabled.</> : null}
+      {f.basis === 'strip' ? <><br />Assumes every load is dual-corded; a load on the lost side alone goes dark instead of moving.</> : null}</>}>
+      <span className={`pw-failover ${tone ?? ''}`}>
+        <span className="v">{f.pct.toFixed(0)} %</span>
+        <span className="lv">{level}</span>
+      </span>
+    </Tip>
+  );
+}
+
+/** The busiest bank against its breaker, now. */
+function WorstBank({ banks, warnPct }: { banks: PowerBank[] | undefined; warnPct: number }) {
+  if (!banks || !banks.length) {
+    return <Tip className="dash" tip="No bank on this rack's strips reports a breaker - a 16 A strip has none - or the strips do not report their banks.">—</Tip>;
+  }
+  const w = banks[0];
+  const tone = w.pct >= 100 ? 'critical' : w.pct >= warnPct ? 'warn' : undefined;
+  return (
+    <Tip tip={<>{banks.map((b) => (
+      <span key={`${b.strip}:${b.bank}`} className="spread-line">
+        {b.strip} bank {b.bank}: {b.amps.toFixed(1)} A of {b.breaker_a.toFixed(0)} A ({b.pct.toFixed(0)} %)</span>
+    ))}Amber from {warnPct.toFixed(0)} % of the breaker, the continuous-load line; the bank breaker trips long before the strip's inlet does.</>}>
+      <span className={tone}><Num value={w.pct} /> %</span>
+    </Tip>
+  );
+}
+
+/** Rooms and sites: how many racks fail either check. */
+function FeedRisk({ r }: { r: PowerRow }) {
+  const fo = r.racks_failover_over ?? 0;
+  const bk = r.racks_bank_hot ?? 0;
+  if (!fo && !bk) return <Tip className="dash" tip="Every dual-fed rack here survives losing a side, and no bank is past 80 % of its breaker.">—</Tip>;
+  const parts = [fo ? `${fo} failover` : null, bk ? `${bk} bank` : null].filter(Boolean).join(' · ');
+  return (
+    <Tip tip={<>{fo ? <>{fo} rack{fo === 1 ? '' : 's'} where the surviving side would carry past the warn line if the other were lost.<br /></> : null}
+      {bk ? <>{bk} rack{bk === 1 ? '' : 's'} with a bank past 80 % of its breaker now.</> : null}</>}>
+      <span className="warn">{parts}</span>
+    </Tip>
+  );
+}
+
 function basisWords(basis: string | null | undefined, racks?: number): string {
   switch (basis) {
     case 'rack': return 'the rack\'s own rating';
@@ -212,9 +266,14 @@ export function Power() {
   function severity(r: PowerRow): 'ok' | 'warn' | 'critical' | 'none' {
     if (r.total_kw === null || r.total_kw === undefined) return 'none';
     const psuFailed = Array.isArray(r.psu_failed) ? r.psu_failed.length : 0;
-    if (r.band === 'critical' || (r.feeds?.unfed ?? 0) > 0 || psuFailed > 0) return 'critical';
+    const fo = r.failover?.pct ?? 0;
+    const bank = r.bank_worst_pct ?? 0;
+    if (r.band === 'critical' || (r.feeds?.unfed ?? 0) > 0 || psuFailed > 0
+        || bank >= 100 || fo >= 100) return 'critical';
     if (r.band === 'warn' || (r.feeds?.single_cord ?? 0) > 0
-        || (r.imbalance_pct ?? 0) >= (data?.totals.leg_imbalance_warn_pct ?? 10)) return 'warn';
+        || (r.imbalance_pct ?? 0) >= (data?.totals.leg_imbalance_warn_pct ?? 10)
+        || fo >= bands.warn_pct || bank >= (data?.totals.bank_warn_pct ?? 80)
+        || (r.racks_failover_over ?? 0) > 0 || (r.racks_bank_hot ?? 0) > 0) return 'warn';
     return r.band ? 'ok' : 'none';
   }
 
@@ -323,7 +382,22 @@ export function Power() {
       help: 'The strips feeding this rack\'s loads, by side, and whether every load has a cord on each. One cord is one maintenance window away from dark; a load on one supply is the same with the cord still plugged in. The tip carries each strip\'s leg currents and their imbalance.',
       sort: (r: PowerRow) => (r.feeds ? r.feeds.unfed * 1000 + r.feeds.single_cord : null),
       render: (r: PowerRow) => <Feeds f={r.feeds} r={r} warnPct={data?.totals.leg_imbalance_warn_pct ?? 10} />,
+    }, {
+      key: 'failover', label: 'On failover', align: 'num' as const, width: 112,
+      help: 'If one side is lost, what the other carries: the whole rack on the surviving strip, its legs and its banks, each against its own rating. The worst of the three, and which one it is. Past 100 % the survivor trips and the rack goes dark - the failure 2N cabling was meant to survive.',
+      sort: (r: PowerRow) => r.failover?.pct ?? null,
+      render: (r: PowerRow) => <Failover f={r.failover} />,
+    }, {
+      key: 'bank', label: 'Worst bank', align: 'num' as const, width: 104,
+      help: 'The busiest outlet bank against its breaker, now. A strip\'s outlets are wired in banks, each behind its own breaker; a 32 A strip is several 16 A banks, and one bank trips while the strip reads half loaded.',
+      sort: (r: PowerRow) => r.bank_worst_pct ?? null,
+      render: (r: PowerRow) => <WorstBank banks={r.banks} warnPct={data?.totals.bank_warn_pct ?? 80} />,
     }] : [{
+      key: 'risk', label: 'Feed risk', align: 'mid' as const, width: 120,
+      help: 'Racks here whose surviving side would run past the warn line if the other were lost, and racks with a bank past 80 % of its breaker now. Drill in to see which.',
+      sort: (r: PowerRow) => (r.racks_failover_over ?? 0) * 1000 + (r.racks_bank_hot ?? 0),
+      render: (r: PowerRow) => <FeedRisk r={r} />,
+    }, {
       key: 'it', label: `IT ${u}`, align: 'num' as const, width: 96,
       help: 'Servers, storage and network gear.',
       sort: (r: PowerRow) => r.it_ac_kw,

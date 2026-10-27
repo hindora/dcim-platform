@@ -2563,3 +2563,85 @@ async def power_rack_psu_failed(session: AsyncSession) -> dict[str, list[str]]:
 #: change-logged plus a heartbeat (app/ingest/changelog.py), so the newest row
 #: inside this window is the state; the same figure the plant readers use.
 _PSU_WINDOW_S = 900
+
+
+async def power_rack_strip_state(session: AsyncSession) -> dict[str, list[dict[str, Any]]]:
+    """Per rack, each strip with what a failover and a bank check need: its
+    side, its draw, its rating, its leg currents and voltage, and each bank's
+    current against its breaker.
+
+    The side is the one its cords are tagged with (`connection.redundancy_side`
+    on the strip's outgoing power links). Draws, legs and banks are the newest
+    sample inside ten minutes; a breaker rating is a property of the unit and
+    is read from the last two hours, so a slow poll does not blank it.
+    """
+    rows = (await session.execute(text("""
+        WITH strips AS (
+            SELECT d.id, d.name, d.rack_id, m.rated_power_w,
+                   (SELECT max(c.redundancy_side::text)
+                      FROM connection c
+                     WHERE c.a_device_id = d.id
+                       AND c.layer = CAST('power' AS layer_t)
+                       AND c.admin_state = 'enabled') AS side
+              FROM device d
+              LEFT JOIN model m ON m.id = d.model_id
+             WHERE d.device_type::text = 'pdu'
+               AND d.rack_id IS NOT NULL
+               AND d.lifecycle <> 'decommissioned'
+        ),
+        live AS (
+            SELECT DISTINCT ON (t.device_id, t.metric_id, t.instance)
+                   t.device_id, m.key, t.instance, t.value
+              FROM telemetry_sample t
+              JOIN metric m ON m.id = t.metric_id
+             WHERE t.device_id IN (SELECT id FROM strips)
+               AND m.key IN ('power_draw', 'current', 'voltage_ln', 'bank_current')
+               AND t.ts > now() - interval '10 minutes'
+             ORDER BY t.device_id, t.metric_id, t.instance, t.ts DESC
+        ),
+        rating AS (
+            SELECT DISTINCT ON (t.device_id, t.instance)
+                   t.device_id, 'bank_breaker_rating'::text AS key, t.instance, t.value
+              FROM telemetry_sample t
+              JOIN metric m ON m.id = t.metric_id
+             WHERE t.device_id IN (SELECT id FROM strips)
+               AND m.key = 'bank_breaker_rating'
+               AND t.ts > now() - interval '2 hours'
+             ORDER BY t.device_id, t.instance, t.ts DESC
+        )
+        SELECT s.rack_id::text AS rack_id, s.id::text AS strip_id, s.name AS strip,
+               s.side, s.rated_power_w, v.key, v.instance, v.value
+          FROM strips s
+          LEFT JOIN (SELECT * FROM live UNION ALL SELECT * FROM rating) v
+                 ON v.device_id = s.id
+         ORDER BY s.rack_id, s.name
+    """))).mappings().all()
+    strips: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        s = strips.setdefault(r["strip_id"], {
+            "rack_id": r["rack_id"], "strip_id": r["strip_id"], "strip": r["strip"],
+            "side": r["side"],
+            "rated_kw": (float(r["rated_power_w"]) / 1000.0
+                         if r["rated_power_w"] and float(r["rated_power_w"]) > 0 else None),
+            "kw": None, "legs": {}, "v_ln": [], "bank_a": {}, "breaker_a": {},
+        })
+        key, inst, val = r["key"], (r["instance"] or ""), r["value"]
+        if key is None or val is None:
+            continue
+        val = float(val)
+        if key == "power_draw" and inst == "":
+            s["kw"] = val / 1000.0
+        elif key == "current" and inst.isdigit():
+            s["legs"][int(inst)] = val
+        elif key == "voltage_ln" and val > 0:
+            s["v_ln"].append(val)
+        elif key == "bank_current" and inst.isdigit():
+            s["bank_a"][int(inst)] = val
+        elif key == "bank_breaker_rating" and inst.isdigit() and val > 0:
+            s["breaker_a"][int(inst)] = val
+    out: dict[str, list[dict[str, Any]]] = {}
+    for s in strips.values():
+        s["legs"] = [s["legs"][k] for k in sorted(s["legs"])]
+        s["v_ln"] = sum(s["v_ln"]) / len(s["v_ln"]) if s["v_ln"] else None
+        out.setdefault(s.pop("rack_id"), []).append(s)
+    return out

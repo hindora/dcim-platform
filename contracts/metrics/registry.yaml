@@ -844,6 +844,33 @@ metrics:
     group: power
     device_types: [energy_monitor, pdu, rpp, ups, transformer]
     description: RMS current. instance is the phase or the branch circuit.
+  - key: bank_current
+    display_name: Bank current
+    unit: A
+    value_type: gauge
+    aggregation: avg
+    min_valid: 0
+    stale_after_s: 300
+    hot: false
+    group: power
+    device_types: [pdu]
+    description: >-
+      RMS current through one outlet bank of a rack strip; instance is the bank
+      number. A bank is the run of outlets behind one breaker, so this is what
+      trips first - a leg at 60 % can be one bank at 95 % and the other empty.
+  - key: bank_breaker_rating
+    display_name: Bank breaker rating
+    unit: A
+    value_type: gauge
+    aggregation: last
+    min_valid: 0
+    stale_after_s: 3600
+    hot: false
+    group: power
+    device_types: [pdu]
+    description: >-
+      The rating of the breaker on one outlet bank, as the strip reports it;
+      instance is the bank number. Absent on a strip with no bank breakers.
 
   - key: line_frequency
     display_name: Line Frequency

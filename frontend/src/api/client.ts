@@ -3636,6 +3636,32 @@ export interface PowerRow extends EstateRowBase {
    *  Rooms and sites: how many. */
   psu_failed?: string[] | number;
   racks_imbalanced?: number;
+  /** Rack rows: what the surviving side carries if the other is lost, at the
+   *  level that binds first (strip, leg or bank). Null where the rack is not
+   *  fed from both sides or a side is not reporting. */
+  failover?: PowerFailover | null;
+  /** Rack rows: banks with a breaker, as a share of it, busiest first. */
+  banks?: PowerBank[];
+  bank_worst_pct?: number | null;
+  /** Rooms and sites: racks past the warn line on failover / with a bank
+   *  past 80 % of its breaker. */
+  racks_failover_over?: number;
+  racks_bank_hot?: number;
+}
+
+export interface PowerFailover {
+  pct: number;
+  basis: 'strip' | 'leg' | 'bank';
+  lost_side: 'A' | 'B';
+  survivor: string;
+  detail: string;
+  total_kw: number;
+  mirrored: boolean;
+  band: 'ok' | 'warn' | 'critical' | null;
+}
+
+export interface PowerBank {
+  strip: string; bank: number; amps: number; breaker_a: number; pct: number;
 }
 
 export interface EnergyPue {
@@ -3677,6 +3703,7 @@ export interface PowerPage {
     stranded_kw?: number | null;
     energy_pue?: EnergyPue | null;
     racks_imbalanced?: number; psu_failed?: number; leg_imbalance_warn_pct?: number;
+    racks_failover_over?: number; racks_bank_hot?: number; bank_warn_pct?: number;
     /** What the hidden facility rows contribute, so the header reconciles. */
     facility: { rooms: number; total_kw: number | null; cooling_kw: number | null };
   };

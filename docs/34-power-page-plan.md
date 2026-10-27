@@ -100,6 +100,21 @@ what exists:
   the trap path. The failed-supply label is one-based (`_psu_label`): the
   Redfish MemberId is a 0-based index, the faceplate says PSU1. The alarm's
   `{point}` still carries the raw MemberId.
+- Phase 6 (2026-10-27, user asked for "items 1 and 2"): **On failover** and
+  **Worst bank** on rack rows, **Feed risk** counts on rooms and sites.
+  Failover (`services/estate.rack_failover`) judges each side as the survivor
+  of the other's loss at three levels and reports the one that binds: the
+  whole rack on the survivor's summed rating (assumes every load is
+  dual-corded), the two strips' same-numbered legs on the survivor's per-leg
+  rating, and their same-numbered banks on its bank breaker (both assume
+  mirrored cording; one strip a side only). Banks come from two new keys,
+  `bank_current` and `bank_breaker_rating` (migration 0116), walked from
+  rPDU2BankStatusTable and rPDU2BankPropertiesTable (.26.8.2.1.5, verified
+  against PowerNet-MIB); amber from 80 % of the breaker. The simulator side
+  (bank currents summed from the outlets, breaker rule: 16 A banks on IEC
+  strips over 16 A, 20 A on 208 V strips over 20 A) needs a commit and an
+  SNMP regeneration before banks show. First live read: 11 racks would
+  overload the survivor, all on a leg - the bank-order cord fill below.
 - Observed, not changed: 18 racks sit over 10 % leg imbalance at about
   64 % load, because the simulator's `next_free_outlet` fills banks in
   order. Real installers rotate cords across banks; re-seating them is a
