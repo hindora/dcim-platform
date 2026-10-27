@@ -15,6 +15,7 @@ import { downloadCsv, stampedName } from '../../lib/csv';
 import { useEstateTable } from './useEstateTable';
 import { useTrendRange } from './ThermalTrend';
 import { PowerDraw, PowerLoad, PowerPue } from './PowerTrend';
+import { PowerSupply, useSupply } from './PowerSupply';
 
 /** Power: where the estate's kilowatts go, how close each rack and hall is
  *  to what it was built for, and what that does to PUE.
@@ -139,8 +140,14 @@ export function Power() {
   const [drawerRoom, setDrawerRoom] = useState<{ id: string; name: string } | null>(null);
   const [drill, setDrill] = useState<{ kind: 'site' | 'room'; id: string; label: string } | null>(null);
   const navigate = useNavigate();
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
   const trendRange = useTrendRange();
+  // SUPPLY is a different population, not a coarser view of the same rows,
+  // so it is a tab beside the tiers rather than a tier (as Thermal's PLANT).
+  const supplyTab = params.get('scope') === 'supply';
+  const supplySite = params.get('site');
+  const supply = useSupply(supplySite, supplyTab);
+  const sh = supply.data?.headline;
 
   useEffect(() => { try { localStorage.setItem(UNIT_KEY, unit); } catch { /* per-viewer convenience only */ } }, [unit]);
 
@@ -408,8 +415,27 @@ export function Power() {
         sub={<>Metered draw against what each rack and hall was built for. Amber from {bands.warn_pct} % of
           rating, red from {bands.critical_pct} %; rack PDUs are excluded from every total so the servers behind
           them are not counted twice.{' '}
-          <Link to="/analytics?view=power">Redundancy census and supplies →</Link></>}
-        kpis={[
+          <Link to="/power?scope=supply">The feed: supplies and redundancy →</Link></>}
+        kpis={supplyTab ? [
+          { caption: 'Utility', value: sh ? `${sh.utility.healthy}/${sh.utility.total}` : null,
+            tone: sh && sh.utility.healthy < sh.utility.total ? 'critical' : 'ok',
+            why: 'no incoming feed in this scope' },
+          { caption: 'On generator', value: sh ? `${sh.generators.running}/${sh.generators.total}` : null,
+            tone: sh && (sh.generators.running > 0 || sh.ats_on_emergency > 0) ? 'warn' : 'ok',
+            why: 'no generator in this scope' },
+          { caption: 'UPS load', value: sh?.ups.load_max_pct ?? null, unit: '%',
+            tone: (sh?.ups.load_max_pct ?? 0) >= 90 ? 'critical' : (sh?.ups.load_max_pct ?? 0) >= 80 ? 'warn' : 'ok',
+            why: 'no UPS in this scope reports a load' },
+          { caption: 'UPS runtime', value: sh?.ups.runtime_min_minutes ?? null, unit: 'min', digits: 0,
+            tone: sh && (sh.ups.on_battery > 0 || (sh.ups.runtime_min_minutes ?? 999) < 10) ? 'critical' : 'ok',
+            why: 'no UPS in this scope reports a runtime' },
+          { caption: 'On one leg', value: sh?.on_one_leg ?? null, digits: 0,
+            tone: (sh?.on_one_leg ?? 0) > 0 ? 'warn' : 'ok',
+            why: 'no IT load is fed in this scope' },
+          { caption: 'Imbalance', value: sh?.imbalance_worst?.pct ?? null, unit: '%',
+            tone: (sh?.imbalance_worst?.pct ?? 0) > 3 ? 'warn' : 'ok',
+            why: 'nothing in this scope reports phase figures' },
+        ] : [
           { caption: 'Total', value: conv(totals?.total_kw ?? null), unit: u,
             why: 'nothing in the estate reports power' },
           { caption: 'IT', value: conv(totals?.it_ac_kw ?? null), unit: u,
@@ -429,11 +455,20 @@ export function Power() {
       />
 
       <div className="estate-tools">
-        <ScopeTabs scope={t.scope} onChange={t.setScope} />
-        {(t.scope === 'rooms' || t.selected) && !t.selectedRoom && (
+        <ScopeTabs<'sites' | 'rooms' | 'supply'>
+          scope={supplyTab ? 'supply' : t.scope}
+          tabs={[{ key: 'sites', label: 'SITES' },
+                 { key: 'rooms', label: 'ROOMS' },
+                 { key: 'supply', label: 'SUPPLY' }]}
+          onChange={(k) => {
+            if (k === 'supply') { setParams({ scope: 'supply' }); return; }
+            t.setScope(k);
+          }} />
+        {!supplyTab && (t.scope === 'rooms' || t.selected) && !t.selectedRoom && (
           <FacilityToggle on={t.includeFacility} count={t.facilityCount}
                           onChange={t.setIncludeFacility} />
         )}
+        {!supplyTab && (<>
         <input className="grow" type="search" placeholder="Search sites, rooms and racks"
                aria-label="Search" value={t.search}
                onChange={(e) => t.setSearch(e.target.value)} />
@@ -443,12 +478,13 @@ export function Power() {
              options={[{ key: 'now', label: 'NOW' },
                        { key: 'hour', label: 'LAST HOUR' },
                        { key: 'day', label: 'BY DAY' }]} />
-        {win !== 'now' && (
+        </>)}
+        {!supplyTab && win !== 'now' && (
           <Seg label="Statistic" value={stat} onChange={setStat}
                options={[{ key: 'average', label: 'AVERAGE' },
                          { key: 'peak', label: 'PEAK' }]} />
         )}
-        {win === 'day' && (
+        {!supplyTab && win === 'day' && (
           <>
             <label className="field">
               <span>From</span>
@@ -464,6 +500,11 @@ export function Power() {
         )}
       </div>
 
+      {supplyTab ? (
+        <PowerSupply siteId={supplySite}
+                     sites={supply.data?.sites ?? (data?.sites ?? []).map((s) => ({ id: s.id, code: s.site_code }))}
+                     onSite={(id) => setParams(id ? { scope: 'supply', site: id } : { scope: 'supply' })} />
+      ) : (<>
       <Crumbs onBack={() => t.clearDrill()} items={crumbs} />
 
       <div className="estate-panel">
@@ -563,6 +604,7 @@ export function Power() {
           : '',
         windowNote,
       ].filter(Boolean)} />
+      </>)}
 
       {drawerRoom && (
         <RoomDrawer roomId={drawerRoom.id} roomName={drawerRoom.name}

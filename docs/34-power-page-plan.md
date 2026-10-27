@@ -1,6 +1,6 @@
 # 34 — Power page: build plan
 
-Status: **Phases 0, 1 and 2 built 2026-10-27; 3–4 not started.** Written
+Status: **Phases 0–3 built 2026-10-27; 4 not started.** Written
 2026-10-27 from a read of the tree (`P:` means `dcim-platform/`, `S:` means
 `Datacenter_Network_Simulator/`; lines checked against platform `f24b438` and
 simulator `1c273ac`).
@@ -33,6 +33,19 @@ what exists:
   rule (`services/estate._scope_rating`). Thirty days of daily points read
   the hourly rollup in about 7 s warm on this host, the same as the thermal
   trend; a week of hourly points is under a second warm.
+- Phase 3 reuses the plant service rather than a second set of readers:
+  `services/plant.supply()` reads the electrical spine wherever it stands
+  (new `repositories/plant.supply_machines/supply_latest`, `SUPPLY_TYPES`)
+  with the same readers, state labels and verdicts the facility rooms use;
+  `services/power.scope_summary` lays the chain's load on top, reads RPPs
+  through their EV2 (`metered_by`, stale after 15 min), adds `load_high`
+  and treats a transformer's natural cooling as normal
+  (`supply_verdict`). The census is `redundancy_census` (IT loads by cords)
+  plus `plant_groups` (room × type, judged on members fed: ok / tight /
+  short). `GET /power` takes `datacenter_id` and `room_id`. The SUPPLY tab
+  is `/power?scope=supply` with a site Seg; the analytics Power view is
+  gone. The planned verdict table (3.4) lives in the plant service's
+  `_electrical_verdict` plus the two chain findings, not a new table.
 
 The brief: bring `/power` up to the standard of `/thermal`, in features and in
 UX, using the data the platform already holds before asking the simulator for
@@ -52,7 +65,7 @@ tight (see `feedback_batch_deploys_tight_host`). Frontend work ships on commit
 | 0 ✓ Fix what is wrong | Same-day window 400, non-coincident site peak, Δ blank in NOW, PUE threshold disagreement | The numbers the page already shows stop lying | ~6 h |
 | 1 ✓ Thermal parity | Rack level, breadcrumb, header help + cell tooltips, severity lead, load-vs-rating columns and spread bar, alarms column + slide-over, coverage KPI, kW/kVA switch, NOW / LAST HOUR / BY DAY windows, freshness note | A page that reads like Thermal and drills to the rack | ~40 h |
 | 2 ✓ Trends | Three panels on the shared range control: draw stacked (IT / cooling / other), PUE line, demand with the coincident peak marked; maximize, crosshair, scope-following | Where the load has been going | ~22 h |
-| 3 Supply chain tab | PLANT-style tab: utility → genset → switchgear → ATS → UPS → MCC/MPP → RPP rows with state, load %, measured/derived, verdict; redundancy census reframed; scope honoured; RPP read through its EV2 | Is the feed healthy, and what is on one leg | ~36 h |
+| 3 ✓ Supply chain tab | PLANT-style tab: utility → genset → switchgear → ATS → UPS → MCC/MPP → RPP rows with state, load %, measured/derived, verdict; redundancy census reframed; scope honoured; RPP read through its EV2 | Is the feed healthy, and what is on one leg | ~36 h |
 | 4 Headroom and panels | Energy-based PUE headline with method badge, headroom and runway per room, stranded kW per rack, A/B same-upstream check, EV2 panel circuits per room | Capacity questions answered on the page | ~34 h |
 | 5 Simulator-gated | Per-leg PDU currents, live per-outlet current, PSU failure, UPS runtime vs genset window | Only after `S:` grows the model | later |
 

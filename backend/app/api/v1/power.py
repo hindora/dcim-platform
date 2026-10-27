@@ -6,7 +6,7 @@ import uuid
 from dataclasses import asdict
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import Principal, current_principal
@@ -16,16 +16,28 @@ from app.services import power as service
 router = APIRouter(prefix="/power", tags=["power"])
 
 
-@router.get("", summary="Fleet power: redundancy census, supply load, imbalance")
+@router.get("", summary="Fleet power: redundancy census, plant groups, supplies, imbalance")
 async def power_overview(
+    datacenter_id: str | None = Query(None, description="Only this site."),
+    room_id: str | None = Query(None, description="Only this room."),
     session: AsyncSession = Depends(get_session),
     _: Principal = Depends(current_principal),
 ) -> dict[str, Any]:
-    r = await service.scope_summary(session)
-    return {
-        **r,
-        "supplies": [asdict(h) for h in r["supplies"]],
-    }
+    """The census is two numbers: IT loads by cords (2N, one feed, none), and
+    plant groups by members fed - a chiller on one cord is the design, a
+    server on one cord is the finding. Supplies carry the plant service's
+    verdicts with the chain's load laid on; a power panel is read through
+    the meter clamped on it."""
+    for name, value in (("datacenter_id", datacenter_id), ("room_id", room_id)):
+        if value is None:
+            continue
+        try:
+            uuid.UUID(value)
+        except ValueError:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                                f"{name} {value!r} is not a UUID") from None
+    return await service.scope_summary(session, datacenter_id=datacenter_id,
+                                       room_id=room_id)
 
 
 @router.get("/chain/{device_id}",

@@ -122,7 +122,7 @@ _FACILITY_KEYS = (
 #: LEFT JOINs the whole way down because a plant machine is floor-standing -
 #: it has a room and no rack - and an inner join on rack would silently drop
 #: the entire chiller plant.
-_MACHINES = text("""
+_MACHINES_SELECT = """
     SELECT d.id::text        AS device_id,
            d.name            AS name,
            d.device_type::text AS device_type,
@@ -152,8 +152,35 @@ _MACHINES = text("""
       LEFT JOIN room rm     ON rm.id = COALESCE(rr.room_id, d.room_id)
       LEFT JOIN datacenter dc ON dc.id = rm.datacenter_id
      WHERE d.lifecycle <> 'decommissioned'
+"""
+
+_MACHINES = text(_MACHINES_SELECT + """
        AND """ + _FACILITY_IN_FACILITY_ROOMS + """
      ORDER BY dc.code, d.name
+""")
+
+#: The electrical spine wherever it stands - the Power page's SUPPLY tab.
+#: A mechanical panel hangs in a hall and a power panel stands in every row,
+#: so the facility-room filter above would hide most of what that tab is for.
+SUPPLY_TYPES = ["utility_feed", "transformer", "generator", "switchgear", "ats",
+                "ups", "mcc", "mpp", "rpp"]
+
+_SUPPLY_MACHINES = text(_MACHINES_SELECT + """
+       AND d.device_type = ANY(:types)
+     ORDER BY dc.code, d.name
+""")
+
+_SUPPLY_LATEST = text("""
+    SELECT DISTINCT ON (t.device_id, m.key, t.instance)
+           t.device_id::text AS device_id, m.key, t.instance, t.value
+      FROM telemetry_sample t
+      JOIN metric m ON m.id = t.metric_id
+      JOIN device d ON d.id = t.device_id
+     WHERE t.ts > now() - interval '10 minutes'
+       AND d.lifecycle <> 'decommissioned'
+       AND d.device_type = ANY(:types)
+       AND m.key = ANY(:keys)
+     ORDER BY t.device_id, m.key, t.instance, t.ts DESC
 """)
 
 #: The newest sample per (device, key, instance) inside a short window.
@@ -278,6 +305,25 @@ async def latest(session: AsyncSession, facility_only: bool = False,
     rows = (await session.execute(_LATEST, {
         **_scope(facility_only), "cool_keys": list(_KEYS),
         "fac_keys": list(_FACILITY_KEYS),
+    })).mappings().all()
+    out: dict[str, dict[tuple[str, str], float]] = {}
+    for r in rows:
+        out.setdefault(r["device_id"], {})[
+            (r["key"], r["instance"] or "")] = float(r["value"])
+    return out
+
+
+async def supply_machines(session: AsyncSession) -> list[dict[str, Any]]:
+    """Every electrical supply device in the estate, wherever it stands."""
+    rows = (await session.execute(
+        _SUPPLY_MACHINES, {"types": SUPPLY_TYPES})).mappings().all()
+    return [dict(r) for r in rows]
+
+
+async def supply_latest(session: AsyncSession) -> dict[str, dict[tuple[str, str], float]]:
+    """The newest electrical points for those devices, same shape as `latest`."""
+    rows = (await session.execute(_SUPPLY_LATEST, {
+        "types": SUPPLY_TYPES, "keys": list(_FACILITY_KEYS),
     })).mappings().all()
     out: dict[str, dict[tuple[str, str], float]] = {}
     for r in rows:

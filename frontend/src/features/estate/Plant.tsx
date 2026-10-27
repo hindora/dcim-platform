@@ -63,6 +63,22 @@ const VERDICT_LABEL: Record<string, string> = {
   low_basin: 'Basin low',
   actuator: 'Actuator',
   unknown: 'Unknown',
+  // The electrical spine's own findings (services/plant._electrical_verdict)
+  // and the chain's two (services/power.supply_verdict).
+  on_battery: 'On battery',
+  on_bypass: 'On bypass',
+  on_emergency: 'On generator',
+  utility_lost: 'Utility lost',
+  engine_running: 'Running',
+  low_fuel: 'Low fuel',
+  de_energised: 'Dead bus',
+  breaker_open: 'Breaker open',
+  battery_hot: 'Battery hot',
+  battery_ageing: 'Battery ageing',
+  distortion: 'THD high',
+  imbalance: 'Imbalance',
+  load_high: 'Load high',
+  unmonitored: 'Unmonitored',
 };
 
 /** Tone is state, not severity theatre. Standby is deliberately neutral: a
@@ -86,6 +102,20 @@ const VERDICT_TONE: Record<string, 'ok' | 'warn' | 'critical' | 'none'> = {
   tripped: 'critical',
   no_capacity: 'critical',
   high_supply: 'critical',
+  on_battery: 'critical',
+  on_emergency: 'critical',
+  utility_lost: 'critical',
+  de_energised: 'critical',
+  battery_hot: 'critical',
+  on_bypass: 'warn',
+  engine_running: 'warn',
+  low_fuel: 'warn',
+  breaker_open: 'warn',
+  battery_ageing: 'warn',
+  distortion: 'warn',
+  imbalance: 'warn',
+  load_high: 'warn',
+  unmonitored: 'none',
 };
 
 function verdictTone(v: string) {

@@ -2600,16 +2600,64 @@ export interface CoolingPlant {
            note?: string }[];
 }
 
+/** One electrical supply device, read by the plant service's readers and
+ *  judged by its verdicts, with the chain's load laid on top. */
+export interface SupplyRow {
+  id: string;
+  device_id: string; name: string; device_type: string;
+  status: string; max_severity: string | null;
+  room_id: string | null; room_name: string | null;
+  site_id: string; site_code: string; site_name: string;
+  model: string | null;
+  /** What its state is CALLED: "On battery", "Energised", "On generator". */
+  state_label: string | null;
+  states: Record<string, boolean>;
+  rated_kw: number | null;
+  load_kw: number | null; load_pct: number | null;
+  /** measured (its own meter), derived (the sum of what it feeds), or
+   *  metered_by (a power panel read through the meter clamped on it). */
+  load_source: 'measured' | 'derived' | 'metered_by' | null;
+  metered_by: string | null; metered_stale: boolean;
+  carried_kw: number | null; voltage_v: number | null; power_factor: number | null;
+  imbalance_pct: number | null; thd_pct: number | null;
+  battery_minutes: number | null; battery_health_pct: number | null; battery_c: number | null;
+  fuel_pct: number | null; run_minutes: number | null; coolant_c: number | null;
+  transfers: number | null; oil_c: number | null; winding_c: number | null;
+  alarms_open: number; monitored: boolean;
+  verdict: string; why: string | null;
+}
+
+/** A plant group: the chillers of a site, the CRAHs of a hall, judged on
+ *  how many members still have a live feed. */
+export interface PlantGroup {
+  room_id: string | null; room_name: string | null; site_code: string | null;
+  device_type: string; n: number; fed: number; unfed: string[];
+  verdict: 'ok' | 'tight' | 'short'; why: string;
+}
+
 export interface PowerFleet {
+  scope: { datacenter_id: string | null; room_id: string | null };
+  sites: { id: string; code: string }[];
+  /** IT loads by cords: 2N, single_feed, no_feed. */
   redundancy_census: Record<string, number>;
+  plant_groups: PlantGroup[];
+  plant_groups_short: number;
   at_risk: { device_id: string; name: string; device_type: string;
+             room_name: string | null; site_code: string | null;
              redundancy: string; reason: string }[];
   at_risk_total: number;
-  supplies: { device_id: string; name: string; device_type: string;
-              status: string; max_severity: string | null;
-              load_pct: number | null; load_w: number | null;
-              load_source: string; alternate_feeders: unknown[] }[];
-  phase_imbalance: { device_id: string; name: string; imbalance_pct: number }[];
+  headline: {
+    utility: { healthy: number; total: number };
+    generators: { running: number; total: number; fuel_min_pct: number | null };
+    ats_on_emergency: number;
+    ups: { total: number; on_battery: number; on_bypass: number;
+           load_max_pct: number | null; runtime_min_minutes: number | null };
+    on_one_leg: number;
+    imbalance_worst: { name: string; pct: number } | null;
+  };
+  supplies: SupplyRow[];
+  phase_imbalance: { device_id: string; name: string; device_type: string;
+                     imbalance_pct: number }[];
 }
 
 export interface ForecastPoint { day: number; value: number; lower: number; upper: number }
@@ -5031,9 +5079,10 @@ export const api = {
     return request<CoolingPlant>(`/cooling${qs ? `?${qs}` : ''}`);
   },
 
-  powerFleet: (datacenterId?: string) => {
+  powerFleet: (datacenterId?: string, roomId?: string) => {
     const q = new URLSearchParams();
     if (datacenterId) q.set('datacenter_id', datacenterId);
+    if (roomId) q.set('room_id', roomId);
     const qs = q.toString();
     return request<PowerFleet>(`/power${qs ? `?${qs}` : ''}`);
   },

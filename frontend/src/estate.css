@@ -714,3 +714,30 @@ button.facet.on {
 .pw-load .col .bar.peak { outline: 1px solid var(--text); outline-offset: -1px; }
 .alarm-trend.dense.pw-load .col .v.keep { visibility: visible; }
 
+/* --- power: the supply tab's censuses ------------------------------------- */
+.pw-census-panel { padding: 14px 16px; }
+.pw-census-cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: 24px; }
+.pw-census-cols h3 { margin: 0 0 8px; }
+.pw-census-cols h3 .count { font-weight: 400; color: var(--critical); font-size: 12px; }
+.pw-census .stack-bar { height: 14px; }
+.pw-census .legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 8px; font-size: 12px; }
+.pw-census .legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 6px; vertical-align: 0; }
+.pw-census .legend i.ok { background: var(--ok); }
+.pw-census .legend i.warn { background: var(--warn); }
+.pw-census .legend i.critical { background: var(--critical); }
+.pw-at-risk { margin: 8px 0 0; font-size: 12px; color: var(--text-muted); }
+.pw-groups { display: flex; flex-wrap: wrap; gap: 6px; }
+.pw-group {
+  display: inline-grid; grid-template-columns: auto; gap: 1px; padding: 5px 9px; font-size: 11px;
+  border: 1px solid var(--border); border-left: 3px solid var(--ok); border-radius: var(--radius);
+  background: var(--bg-inset);
+}
+.pw-group.warn { border-left-color: var(--warn); }
+.pw-group.critical { border-left-color: var(--critical); }
+.pw-group .where { color: var(--text-faint); }
+.pw-group .what { color: var(--text); font-weight: 600; }
+.pw-group .fed { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.pw-group.warn .fed { color: var(--warn); }
+.pw-group.critical .fed { color: var(--critical); }
+@media (max-width: 900px) { .pw-census-cols { grid-template-columns: 1fr; } }
+

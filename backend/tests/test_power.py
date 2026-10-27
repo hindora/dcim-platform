@@ -108,3 +108,72 @@ def test_shared_upstream_names_the_common_mode_points():
 
 def test_a_single_path_has_nothing_shared():
     assert p.shared_hops([path("A", "PDUA")]) == []
+
+
+# --- the census, split ---------------------------------------------------------
+
+def _load(t, name, room="h", site="DC1"):
+    return {"device_type": t, "name": name, "room_id": room, "room_name": f"room-{room}",
+            "site_code": site}
+
+
+def test_the_census_counts_it_by_cords_and_plant_by_members_fed():
+    """Fifty chillers and CRAHs on one cord each are the design, not fifty
+    findings. They become groups judged on how many members still have a feed."""
+    loads = {
+        "s1": _load("server", "SRV1"), "s2": _load("server", "SRV2"),
+        "s3": _load("server", "SRV3"),
+        "c1": _load("chiller", "CHL1", room="cp"), "c2": _load("chiller", "CHL2", room="cp"),
+        "c3": _load("chiller", "CHL3", room="cp"),
+        "a1": _load("crah", "CRAH1"), "a2": _load("crah", "CRAH2"),
+    }
+    verdicts = {
+        "s1": (p.TWO_N, ""), "s2": (p.SINGLE_FEED, ""), "s3": (p.NO_FEED, ""),
+        "c1": (p.SINGLE_FEED, ""), "c2": (p.SINGLE_FEED, ""), "c3": (p.NO_FEED, ""),
+        "a1": (p.SINGLE_FEED, ""), "a2": (p.SINGLE_FEED, ""),
+    }
+    out = p.census(loads, verdicts)
+    assert out["it_loads"] == {p.TWO_N: 1, p.SINGLE_FEED: 1, p.NO_FEED: 1}
+    groups = {(g["room_id"], g["device_type"]): g for g in out["plant_groups"]}
+    chillers = groups[("cp", "chiller")]
+    assert chillers["n"] == 3 and chillers["fed"] == 2
+    assert chillers["verdict"] == p.GROUP_TIGHT and chillers["unfed"] == ["CHL3"]
+    assert groups[("h", "crah")]["verdict"] == p.GROUP_OK
+    assert out["plant_groups_short"] == 1
+    # Worst first.
+    assert out["plant_groups"][0]["device_type"] == "chiller"
+
+
+def test_a_plant_group_two_down_is_short():
+    assert p.plant_group_verdict(4, 4) == (p.GROUP_OK, "all 4 fed")
+    assert p.plant_group_verdict(4, 3)[0] == p.GROUP_TIGHT
+    assert p.plant_group_verdict(4, 2)[0] == p.GROUP_SHORT
+
+
+def test_a_panel_read_through_its_meter_is_fine_until_the_meter_goes_stale():
+    row = {"verdict": "unmonitored", "why": None, "load_source": "metered_by",
+           "metered_by": "EV21-DC1-HA", "metered_stale": False, "load_pct": 40.0}
+    assert p.supply_verdict(row) == ("ok", "read through EV21-DC1-HA")
+    row["metered_stale"] = True
+    v, why = p.supply_verdict(row)
+    assert v == "silent" and "older than 15 minutes" in why
+
+
+def test_a_board_near_its_rating_is_a_finding_the_plant_readers_cannot_make():
+    v, why = p.supply_verdict({"verdict": "ok", "why": None, "load_pct": 92.0})
+    assert v == "load_high" and "breaker" in why
+    v, why = p.supply_verdict({"verdict": "ok", "why": None, "load_pct": 85.0})
+    assert v == "load_high" and "failover" in why
+    # The plant's own finding wins over a load figure.
+    assert p.supply_verdict({"verdict": "on_battery", "why": "x", "load_pct": 95.0}) \
+        == ("on_battery", "x")
+    assert p.supply_verdict({"verdict": "ok", "why": None, "load_pct": 40.0}) == ("ok", None)
+
+
+def test_a_transformer_on_natural_cooling_is_not_standby():
+    v, why = p.supply_verdict({"device_type": "transformer", "verdict": "standby",
+                               "why": "healthy and not running", "load_pct": 9.0})
+    assert v == "ok" and "natural cooling" in why
+    # A generator on standby is on standby.
+    assert p.supply_verdict({"device_type": "generator", "verdict": "standby",
+                             "why": "x", "load_pct": 0.0})[0] == "standby"

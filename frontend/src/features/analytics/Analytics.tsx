@@ -5,7 +5,6 @@ import { api, type RoomSummary } from '../../api/client';
 import { CapacityView } from './CapacityView';
 import { CoolingView } from './CoolingView';
 import { ForecastView } from './ForecastView';
-import { PowerView } from './PowerView';
 import { PueView } from './PueView';
 import { ThermalView } from './ThermalView';
 
@@ -21,7 +20,7 @@ import { ThermalView } from './ThermalView';
  *  a deliberate silence back into an implied zero.
  */
 
-export type Tab = 'pue' | 'capacity' | 'thermal' | 'cooling' | 'power' | 'forecast';
+export type Tab = 'pue' | 'capacity' | 'thermal' | 'cooling' | 'forecast';
 
 const TABS: { key: Tab; label: string; blurb: string }[] = [
   { key: 'capacity', label: 'Capacity', blurb: 'Power, cooling, space and ports — and which runs out first' },
@@ -29,7 +28,6 @@ const TABS: { key: Tab; label: string; blurb: string }[] = [
   { key: 'pue', label: 'PUE', blurb: 'Facility energy over IT energy, with the measurement level attached' },
   { key: 'thermal', label: 'Thermal', blurb: 'Rack ΔT, hot spots, and whether a CRAH is failing or just fed hot air' },
   { key: 'cooling', label: 'Cooling plant', blurb: 'Chiller staging, loop ΔT, and whether the readings agree' },
-  { key: 'power', label: 'Power', blurb: 'Redundancy census and the loads with one feed' },
 ];
 
 /** `initialTab` lets the top-level nav land straight on Thermal or Power
@@ -104,7 +102,6 @@ export function Analytics({ initialTab = 'capacity' }: { initialTab?: Tab }) {
           {tab === 'pue' && <PueView room={room} />}
           {tab === 'thermal' && <ThermalView room={room} />}
           {tab === 'cooling' && <CoolingView room={room} />}
-          {tab === 'power' && <PowerView room={room} />}
         </div>
       )}
     </>

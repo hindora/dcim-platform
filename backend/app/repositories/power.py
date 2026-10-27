@@ -21,9 +21,20 @@ _HOPS = text("""
            ds.power_w,
            -- The hot set stores {v, q, t} per metric, not a bare number,
            -- so this reaches through to the value.
-           (ds.metrics -> 'load_pct' ->> 'v')::float AS load_pct
+           (ds.metrics -> 'load_pct' ->> 'v')::float AS load_pct,
+           -- Where it stands, so a census can be asked for one site or one
+           -- room. Racked gear through its rack; floor-standing gear through
+           -- its own room.
+           rm.id::text                               AS room_id,
+           rm.name                                   AS room_name,
+           rm.datacenter_id::text                    AS datacenter_id,
+           dc.code                                   AS site_code
       FROM device d
       LEFT JOIN device_state ds ON ds.device_id = d.id
+      LEFT JOIN rack r          ON r.id = d.rack_id
+      LEFT JOIN rack_row rr     ON rr.id = r.row_id
+      LEFT JOIN room rm         ON rm.id = COALESCE(rr.room_id, d.room_id)
+      LEFT JOIN datacenter dc   ON dc.id = rm.datacenter_id
      WHERE d.lifecycle <> 'decommissioned'
 """)
 

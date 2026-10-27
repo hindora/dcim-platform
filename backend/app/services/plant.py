@@ -1203,6 +1203,34 @@ async def plant(session: AsyncSession, view: str = "all") -> dict[str, Any]:
     }
 
 
+async def supply(session: AsyncSession) -> list[dict[str, Any]]:
+    """The electrical spine, wherever it stands, read by the same readers and
+    judged by the same verdicts as the facility rooms' equipment.
+
+    For the Power page's SUPPLY tab, which wants every feed, transformer,
+    generator, switchboard, transfer switch, UPS, motor control centre,
+    mechanical panel and power panel in the estate - most of the last three
+    stand in the halls, which the facility view never reads. Rated kW here is
+    the model's electrical rating, not an observed cooling capacity.
+    """
+    inventory = await repo.supply_machines(session)
+    values = await repo.supply_latest(session)
+    flags = await repo.flags(session)
+    alarms = await repo.alarms(session)
+    rows = []
+    for m in inventory:
+        if not m.get("site_id"):
+            continue
+        row = _machine_row(m, values.get(m["device_id"], {}),
+                           flags.get(m["device_id"], {}),
+                           alarms.get(m["device_id"], {}), {})
+        rated_w = m.get("rated_power_w")
+        row["rated_kw"] = _r(float(rated_w) / W_PER_KW) if rated_w else None
+        row["floor"] = m.get("floor")
+        rows.append(row)
+    return rows
+
+
 #: The state words that mean "this machine is doing its job right now".
 #: Deliberately per-kind words rather than one boolean: a board is energised, a
 #: transfer switch is on its normal source, a UPS is on mains, and none of those
