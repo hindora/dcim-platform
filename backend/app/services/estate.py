@@ -1123,6 +1123,15 @@ async def power(session: AsyncSession, *, start: datetime | None = None,
         site["alarms_in_racks"] = by_site.get(site["id"], 0)
     totals["alarms_in_racks"] = sum(r["alarms_in_racks"] for r in rooms)
 
+    # Planning figures: headroom against rating and stranded allocation from
+    # the seven-day p95, the energy PUE beside the ratio, and whether a
+    # rack's two sides share a panel, a UPS or a transfer switch.
+    await _attach_headroom(session, rooms, racks, sites, totals)
+    pue_end = now if live else end
+    pue_start = pue_end - timedelta(hours=24) if live else start
+    await _attach_energy_pue(session, sites, totals, start=pue_start, end=pue_end)
+    await _attach_shared_upstream(session, racks)
+
     # When the newest figure on the page was written. In the windowed modes
     # the window end is the answer; in NOW it is the newest hot-mirror write.
     as_of = max((r.get("as_of") for r in raw if r.get("as_of")), default=None) \
@@ -1344,7 +1353,10 @@ def _fold_power_sites(rooms: list[dict[str, Any]], site_design_kw: dict[str, flo
         s["rack_count"] += r.get("rack_count", 0)
         s["racks_rated"] += r.get("racks_rated", 0)
         s["racks_reporting"] += r.get("racks_reporting", 0)
-        s["_rack_rated"] += r.get("_rack_rated", 0.0)
+        # A site without a design figure is rated as the sum of its rooms'
+        # ratings, each by its own rule, so a room with a design figure keeps
+        # it in the site's total instead of being replaced by its racks'.
+        s["_rack_rated"] += r.get("rated_kw") or 0.0
         s["single_cord"] += r.get("single_cord", 0)
         s["unfed"] += r.get("unfed", 0)
         if r.get("spread"):
@@ -2334,3 +2346,153 @@ async def power_trend(session: AsyncSession, *, days: int = 7,
         "buckets_with_data": len(with_data),
         "devices": max((p["devices"] for p in points), default=0),
     }
+
+
+#: What two strips may share above them without it being a finding. A site
+#: with one utility feed shares the utility and the switchgear by design, and
+#: flagging every rack for that would teach the reader to ignore the flag.
+#: An RPP, a UPS or a transfer switch in common is the real thing: the two
+#: cords survive nothing above that point.
+_SHARED_CONCERN = frozenset({"rpp", "ups", "ats"})
+
+
+def rack_shared_upstream(strips: list[dict[str, Any]], edges: list[dict[str, Any]],
+                         types: dict[str, str]) -> dict[str, list[str]]:
+    """Per rack, the RPP / UPS / ATS devices both its sides hang off.
+
+    `strips` is one row per (rack, feeder strip, side); `edges` is every
+    power feeder -> load pair; `types` maps device id to type. Each side's
+    strips are walked upstream to their closure, and the devices common to
+    the A closure and the B closure that are of a concerning type are named.
+    A rack with one side only has nothing to share and gets no entry.
+    """
+    feeders: dict[str, list[str]] = {}
+    for e in edges:
+        feeders.setdefault(e["load_dev"], []).append(e["feeder"])
+    names: dict[str, str] = {}
+
+    def closure(start: str) -> set[str]:
+        seen: set[str] = set()
+        stack = [start]
+        while stack:
+            node = stack.pop()
+            if node in seen:
+                continue
+            seen.add(node)
+            stack.extend(feeders.get(node, []))
+        return seen
+
+    by_rack: dict[str, dict[str, set[str]]] = {}
+    for s in strips:
+        side = (s.get("side") or "").upper()
+        if side not in ("A", "B"):
+            continue
+        by_rack.setdefault(s["rack_id"], {"A": set(), "B": set()})[side].add(s["feeder_id"])
+        names[s["feeder_id"]] = s["feeder"]
+    out: dict[str, list[str]] = {}
+    for rack_id, sides in by_rack.items():
+        if not sides["A"] or not sides["B"]:
+            continue
+        a = set().union(*(closure(f) for f in sides["A"]))
+        b = set().union(*(closure(f) for f in sides["B"]))
+        shared = [d for d in a & b if types.get(d) in _SHARED_CONCERN]
+        if shared:
+            out[rack_id] = sorted(shared)
+    return out
+
+
+def _stranded(allocated: float | None, p95: float | None) -> float | None:
+    if allocated is None or p95 is None:
+        return None
+    return round(max(allocated - p95, 0.0), 2)
+
+
+async def _attach_headroom(session: AsyncSession, rooms: list[dict[str, Any]],
+                           racks: list[dict[str, Any]], sites: list[dict[str, Any]],
+                           totals: dict[str, Any]) -> None:
+    """Seven-day p95 against rating, and allocated against p95, at every tier.
+
+    Headroom is rating minus the p95 of the coincident hourly IT draw: the
+    margin a planner has, not the margin this minute has. Stranded is what
+    was budgeted for a rack and is not being drawn - allocated minus p95 -
+    summed per room and site, with the racks that hold most of it named, so
+    "where can the next rack go" has an answer that is not "nowhere".
+    """
+    p = await repo.power_p95(session)
+    totals["p95_days"] = p["days"]
+    for rk in racks:
+        p95 = p["racks"].get(rk["id"])
+        rk["p95_kw"] = p95
+        rk["headroom_kw"] = (None if p95 is None or not rk.get("rated_kw")
+                             else round(rk["rated_kw"] - p95, 2))
+        rk["stranded_kw"] = _stranded(rk.get("allocated_kw"), p95)
+    by_room: dict[str, list[dict[str, Any]]] = {}
+    for rk in racks:
+        by_room.setdefault(rk["room_id"], []).append(rk)
+    for room in rooms:
+        p95 = p["rooms"].get(room["id"])
+        room["p95_kw"] = p95
+        room["headroom_kw"] = (None if p95 is None or not room.get("rated_kw")
+                               else round(room["rated_kw"] - p95, 1))
+        rks = [rk for rk in by_room.get(room["id"], []) if rk["stranded_kw"] is not None]
+        room["stranded_kw"] = round(sum(rk["stranded_kw"] for rk in rks), 1) if rks else None
+        room["stranded_top"] = [{"name": rk["name"], "kw": rk["stranded_kw"]}
+                                for rk in sorted(rks, key=lambda r: -r["stranded_kw"])[:5]]
+    for site in sites:
+        p95 = p["sites"].get(site["id"])
+        site["p95_kw"] = p95
+        site["headroom_kw"] = (None if p95 is None or not site.get("rated_kw")
+                               else round(site["rated_kw"] - p95, 1))
+        vals = [r["stranded_kw"] for r in rooms
+                if r["site_id"] == site["id"] and r.get("stranded_kw") is not None]
+        site["stranded_kw"] = round(sum(vals), 1) if vals else None
+    totals["p95_kw"] = p["total"]
+    totals["headroom_kw"] = (None if p["total"] is None or not totals.get("rated_kw")
+                             else round(totals["rated_kw"] - p["total"], 1))
+    vals = [r["stranded_kw"] for r in rooms if r.get("stranded_kw") is not None]
+    totals["stranded_kw"] = round(sum(vals), 1) if vals else None
+
+
+async def _attach_energy_pue(session: AsyncSession, sites: list[dict[str, Any]],
+                             totals: dict[str, Any], *, start: datetime,
+                             end: datetime) -> None:
+    """The Green Grid figure beside the ratio: kWh over kWh, with its
+    category and whether it is plausible, for the estate and each site."""
+    from app.services import pue as pue_service
+
+    def shape(r: dict[str, Any]) -> dict[str, Any]:
+        return {"pue": r.get("pue"), "method": r.get("method"),
+                "category": r.get("category"), "plausible": r.get("plausible"),
+                "note": r.get("note"), "it_kwh": r.get("it_kwh"),
+                "total_facility_kwh": r.get("total_facility_kwh"),
+                "hours": round((end - start).total_seconds() / 3600.0, 1)}
+    totals["energy_pue"] = shape(await pue_service.compute(session, start=start, end=end))
+    for site in sites:
+        site["energy_pue"] = shape(await pue_service.compute(
+            session, start=start, end=end, datacenter_id=site["id"]))
+
+
+async def _attach_shared_upstream(session: AsyncSession, racks: list[dict[str, Any]]) -> None:
+    from app.repositories import power as power_repo
+    strips = await repo.power_strip_edges(session)
+    edges = await power_repo.power_edges(session)
+    hops = await power_repo.hop_states(session)
+    types = {k: v["device_type"] for k, v in hops.items()}
+    names = {k: v["name"] for k, v in hops.items()}
+    shared = rack_shared_upstream(strips, edges, types)
+    for rk in racks:
+        if rk.get("feeds") is not None:
+            rk["feeds"] = {**rk["feeds"],
+                           "shared_upstream": [names.get(d, d) for d in shared.get(rk["id"], [])]}
+
+
+async def room_panels(session: AsyncSession, room_id: str) -> dict[str, Any]:
+    """Every power panel in a room, each read through the meter clamped on it."""
+    from app.services import panel_metering
+    panels = []
+    for p in await repo.room_panels(session, room_id):
+        m = await panel_metering.device_metering(session, p["device_id"])
+        panels.append({"device_id": p["device_id"], "name": p["name"],
+                       "meters": [mm.model_dump() if hasattr(mm, "model_dump") else mm
+                                  for mm in m.meters]})
+    return {"room_id": room_id, "panels": panels}

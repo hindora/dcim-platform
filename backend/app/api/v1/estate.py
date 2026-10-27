@@ -423,6 +423,24 @@ async def room_kpi(
     return result
 
 
+@router.get("/rooms/{room_id}/panels",
+            summary="The power panels in a room, read through their meters")
+async def room_panels(
+    room_id: str,
+    session: AsyncSession = Depends(get_session),
+    _: Principal = Depends(current_principal),
+) -> dict:
+    """A power panel has no protocol of its own. Each one here is the
+    Verdigris meter clamped on it: the panel's supply, its phase currents,
+    and every branch circuit with what it feeds."""
+    try:
+        UUID(room_id)
+    except ValueError:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            f"room is not a uuid: {room_id}") from None
+    return await service.room_panels(session, room_id)
+
+
 @router.get("/plant", summary="The cooling chain: stages, machines, redundancy")
 async def plant(
     view: str = Query("all", pattern="^(all|facility)$",

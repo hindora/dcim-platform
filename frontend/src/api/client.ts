@@ -3575,6 +3575,9 @@ export interface PowerSpread {
 export interface PowerFeeds {
   a: string[]; b: string[]; other: string[];
   loads: number; dual_cord: number; single_cord: number; unfed: number;
+  /** Panels, UPSs or transfer switches both sides hang off: the point above
+   *  which the two cords survive nothing. Sharing the utility is not listed. */
+  shared_upstream?: string[];
 }
 
 export interface PowerRow extends EstateRowBase {
@@ -3614,6 +3617,27 @@ export interface PowerRow extends EstateRowBase {
   single_cord?: number;
   unfed?: number;
   note?: string | null;
+  /** Seven-day p95 of the coincident hourly IT draw, and the rating minus it:
+   *  the margin a planner has, not the margin this minute has. */
+  p95_kw?: number | null;
+  headroom_kw?: number | null;
+  /** Allocated minus p95: budgeted and not drawn. Summed for rooms and sites,
+   *  with the racks holding most of it named. */
+  stranded_kw?: number | null;
+  stranded_top?: { name: string; kw: number }[];
+  /** Sites: the Green Grid figure, kWh over kWh, beside the ratio. */
+  energy_pue?: EnergyPue | null;
+}
+
+export interface EnergyPue {
+  pue: number | null;
+  method: 'energy' | 'power' | null;
+  category: number | null;
+  plausible: boolean | null;
+  note: string | null;
+  it_kwh?: number | null;
+  total_facility_kwh?: number | null;
+  hours: number;
 }
 
 export interface PowerPage {
@@ -3640,6 +3664,9 @@ export interface PowerPage {
     single_cord: number; unfed: number;
     alarms_open: number; alarms_in_racks: number;
     as_of: string | null;
+    p95_days?: number; p95_kw?: number | null; headroom_kw?: number | null;
+    stranded_kw?: number | null;
+    energy_pue?: EnergyPue | null;
     /** What the hidden facility rows contribute, so the header reconciles. */
     facility: { rooms: number; total_kw: number | null; cooling_kw: number | null };
   };
@@ -5133,6 +5160,11 @@ export const api = {
   },
 
   estateUtilization: () => request<UtilPage>('/estate/utilization'),
+
+  /** The power panels in a room, each read through the meter clamped on it. */
+  roomPanels: (roomId: string) =>
+    request<{ room_id: string; panels: { device_id: string; name: string; meters: PanelMeter[] }[] }>(
+      `/estate/rooms/${roomId}/panels`),
 
   /** One or more categories in one request: a grouped counter is one question,
    *  and one room must come back as one row. */

@@ -741,3 +741,11 @@ button.facet.on {
 .pw-group.critical .fed { color: var(--critical); }
 @media (max-width: 900px) { .pw-census-cols { grid-template-columns: 1fr; } }
 
+/* --- power: the room's panels --------------------------------------------- */
+.pw-panels .estate-selected { margin-bottom: 10px; }
+.pw-panels-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 18px; padding: 0 16px 14px; }
+.pw-panel h4 { margin: 0 0 6px; font-size: 13px; }
+.pw-panel h4 a { color: var(--text); text-decoration: none; }
+.pw-panel h4 a:hover { text-decoration: underline; }
+@media (max-width: 900px) { .pw-panels-grid { grid-template-columns: 1fr; } }
+

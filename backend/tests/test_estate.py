@@ -1811,6 +1811,11 @@ def _no_power_extras(monkeypatch):
                         _returns({"sites": {}, "total": {}}))
     monkeypatch.setattr(estate.repo, "power_inventory", _returns(
         {"racks": {}, "feeds": {}, "room_design_kw": {}, "site_design_kw": {}}))
+    monkeypatch.setattr(estate.repo, "power_p95", _returns(
+        {"racks": {}, "rooms": {}, "sites": {}, "total": None, "days": 7}))
+    monkeypatch.setattr(estate.repo, "power_strip_edges", _returns([]))
+    monkeypatch.setattr(estate, "_attach_energy_pue", _returns(None))
+    monkeypatch.setattr(estate, "_attach_shared_upstream", _returns(None))
 
 
 def _rack_row(rack_id: str, room_id: str, dc: str, code: str, *, avg_it=None,
@@ -2030,3 +2035,59 @@ def test_the_scope_rating_follows_the_table_rule():
     assert f(ratings, rack_id=None, room_id=None, datacenter_id="dc") == (240.0, "racks")
     # The estate: every room by its own rule, added.
     assert f(ratings, rack_id=None, room_id=None, datacenter_id=None) == (420.0, "rooms")
+
+
+# ---------------------------------------------------------------- phase 4
+
+
+@pytest.mark.asyncio
+async def test_headroom_and_stranded_come_from_the_seven_day_p95(monkeypatch):
+    monkeypatch.setattr(estate.repo, "power_live", _returns([
+        _power_row("h", "dc1", "DC1", avg_it=24.0, avg_cooling=6.0),
+    ]))
+    monkeypatch.setattr(estate.repo, "power_racks_live", _returns([
+        _rack_row("r1", "h", "dc1", "DC1", avg_it=9.5, rated=10.0),
+        _rack_row("r2", "h", "dc1", "DC1", avg_it=4.0, rated=10.0),
+    ]))
+    monkeypatch.setattr(estate.repo, "power_inventory", _returns(
+        {"racks": {"r1": {"allocated_kw": 9.0, "unrated": 0, "reserved_kw": None},
+                   "r2": {"allocated_kw": 8.0, "unrated": 0, "reserved_kw": None}},
+         "feeds": {}, "room_design_kw": {"h": 30.0}, "site_design_kw": {}}))
+    monkeypatch.setattr(estate.repo, "power_p95", _returns(
+        {"racks": {"r1": 9.8, "r2": 3.5}, "rooms": {"h": 13.0}, "sites": {"dc1": 13.0},
+         "total": 13.0, "days": 7}))
+    out = await estate.power(_FakeSession(), live=True)
+    racks = {r["id"]: r for r in out["racks"]}
+    assert racks["r1"]["headroom_kw"] == 0.2 and racks["r1"]["stranded_kw"] == 0.0
+    assert racks["r2"]["headroom_kw"] == 6.5 and racks["r2"]["stranded_kw"] == 4.5
+    room = out["rooms"][0]
+    assert room["p95_kw"] == 13.0 and room["headroom_kw"] == 17.0
+    assert room["stranded_kw"] == 4.5 and room["stranded_top"][0]["name"] == "R-r2"
+    # The site has no design figure: it is rated as the sum of its rooms',
+    # each by its own rule - the room's 30 kW design, not its racks' 20.
+    assert out["sites"][0]["headroom_kw"] == 17.0 and out["sites"][0]["stranded_kw"] == 4.5
+    assert out["totals"]["headroom_kw"] == 17.0 and out["totals"]["p95_days"] == 7
+
+
+def test_two_sides_sharing_a_panel_are_named_and_sharing_the_utility_is_not():
+    strips = [
+        {"rack_id": "r", "feeder_id": "pdua", "feeder": "PDUA", "side": "A"},
+        {"rack_id": "r", "feeder_id": "pdub", "feeder": "PDUB", "side": "B"},
+        {"rack_id": "q", "feeder_id": "pduc", "feeder": "PDUC", "side": "A"},
+        {"rack_id": "q", "feeder_id": "pdud", "feeder": "PDUD", "side": "B"},
+        {"rack_id": "one", "feeder_id": "pdue", "feeder": "PDUE", "side": "A"},
+    ]
+    edges = [
+        # rack r: both strips off ONE panel, which hangs off UPS A.
+        {"feeder": "rppa", "load_dev": "pdua"}, {"feeder": "rppa", "load_dev": "pdub"},
+        {"feeder": "upsa", "load_dev": "rppa"}, {"feeder": "swgr", "load_dev": "upsa"},
+        # rack q: a proper A and B, sharing only the switchgear and utility.
+        {"feeder": "rppa2", "load_dev": "pduc"}, {"feeder": "rppb", "load_dev": "pdud"},
+        {"feeder": "upsa", "load_dev": "rppa2"}, {"feeder": "upsb", "load_dev": "rppb"},
+        {"feeder": "swgr", "load_dev": "upsb"}, {"feeder": "util", "load_dev": "swgr"},
+        {"feeder": "rppa", "load_dev": "pdue"},
+    ]
+    types = {"rppa": "rpp", "rppa2": "rpp", "rppb": "rpp", "upsa": "ups", "upsb": "ups",
+             "swgr": "switchgear", "util": "utility_feed"}
+    out = estate.rack_shared_upstream(strips, edges, types)
+    assert out == {"r": ["rppa", "upsa"]}

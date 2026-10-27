@@ -16,6 +16,7 @@ import { useEstateTable } from './useEstateTable';
 import { useTrendRange } from './ThermalTrend';
 import { PowerDraw, PowerLoad, PowerPue } from './PowerTrend';
 import { PowerSupply, useSupply } from './PowerSupply';
+import { RoomPanels } from './RoomPanels';
 
 /** Power: where the estate's kilowatts go, how close each rack and hall is
  *  to what it was built for, and what that does to PUE.
@@ -109,13 +110,15 @@ function Feeds({ f }: { f: PowerFeeds | null | undefined }) {
     : f.single_cord
       ? `${f.single_cord} of ${f.loads} loads on one cord`
       : `all ${f.loads} loads on both sides`;
-  const tone = f.unfed ? 'critical' : f.single_cord ? 'warn' : undefined;
+  const shared = f.shared_upstream ?? [];
+  const tone = f.unfed ? 'critical' : f.single_cord || shared.length ? 'warn' : undefined;
   return (
-    <Tip tip={<>{sides}<br />{cording}. Dual means two different sides; two cords into one strip is one feed.</>}>
+    <Tip tip={<>{sides}<br />{cording}. Dual means two different sides; two cords into one strip is one feed.
+      {shared.length ? <><br />Both sides hang off {shared.join(', ')}: above that point the two cords survive nothing.</> : null}</>}>
       <span className={`pw-feeds ${tone ?? ''}`}>
         <span className="side">{f.a.length ? 'A' : '·'}</span>
         <span className="side">{f.b.length ? 'B' : '·'}</span>
-        <span className="n">{f.unfed ? `${f.unfed} unfed` : f.single_cord ? `${f.single_cord} single` : `${f.dual_cord} dual`}</span>
+        <span className="n">{f.unfed ? `${f.unfed} unfed` : f.single_cord ? `${f.single_cord} single` : shared.length ? `${f.dual_cord} dual · shared` : `${f.dual_cord} dual`}</span>
       </span>
     </Tip>
   );
@@ -168,6 +171,18 @@ export function Power() {
   });
 
   const t = useEstateTable<PowerRow>(data?.sites ?? [], data?.rooms ?? [], data?.racks ?? []);
+  // The runway for the scope the reader is in, from the forecast service:
+  // the daily p95 projected against the scope's rating. One scope at a
+  // time, because a projection per row is ninety days of history per row.
+  const scoped = t.selectedRoom ?? t.selected ?? null;
+  const runway = useQuery({
+    queryKey: ['power-runway', scoped?.kind ?? '', scoped?.id ?? '', scoped?.rated_kw ?? 0],
+    queryFn: () => api.forecast(scoped!.kind === 'site' ? 'datacenter' : 'room', scoped!.id,
+                                { metric: 'it_power', capacity: scoped!.rated_kw ?? undefined }),
+    enabled: Boolean(scoped && scoped.rated_kw),
+    staleTime: 300_000,
+    placeholderData: (prev) => prev,
+  });
   const bands = data?.bands ?? { warn_pct: 80, critical_pct: 90, pue_warn: 1.6 };
   const rackTier = t.tier === 'racks';
   const u = unit === 'kw' ? 'kW' : 'kVA';
@@ -232,6 +247,32 @@ export function Power() {
         </Tip>
       ),
     },
+    ...(rackTier ? [{
+      key: 'stranded', label: `Stranded ${u}`, align: 'num' as const, width: 104,
+      help: `Allocated minus the ${data?.totals.p95_days ?? 7}-day p95 of the draw: budgeted for this rack and not being drawn. Where the next server fits without a new feed.`,
+      sort: (r: PowerRow) => r.stranded_kw ?? null,
+      render: (r: PowerRow) => (
+        <Tip tip={r.stranded_kw == null
+          ? (r.allocated_kw == null ? 'nothing in this rack carries a budget' : 'no draw in the last week to measure against')
+          : <>{r.allocated_kw?.toFixed(1)} kW allocated, p95 {r.p95_kw?.toFixed(1)} kW over {data?.totals.p95_days ?? 7} days{unitTip}</>}>
+          <Num value={conv(r.stranded_kw)} />
+        </Tip>
+      ),
+    }] : [{
+      key: 'headroom', label: `Headroom ${u}`, align: 'num' as const, width: 108,
+      help: `Rating minus the ${data?.totals.p95_days ?? 7}-day p95 of the coincident IT draw: the margin a planner has, not the margin this minute has. Negative is a scope already over its rating at the 95th percentile.`,
+      sort: (r: PowerRow) => r.headroom_kw ?? null,
+      render: (r: PowerRow) => (
+        <Tip tip={r.headroom_kw == null
+          ? (r.rated_kw ? 'no draw in the last week to measure against' : 'no rating recorded for this row')
+          : <>{r.rated_kw?.toFixed(1)} kW rated, p95 {r.p95_kw?.toFixed(1)} kW over {data?.totals.p95_days ?? 7} days
+              {r.stranded_kw != null ? <> · {r.stranded_kw.toFixed(1)} kW stranded in its racks</> : null}{unitTip}</>}>
+          <span className={(r.headroom_kw ?? 0) < 0 ? 'critical' : undefined}>
+            <Num value={conv(r.headroom_kw)} />
+          </span>
+        </Tip>
+      ),
+    }]),
     {
       key: 'delta', label: 'Δ vs prior', align: 'num', width: 104,
       help: win === 'now' ? 'Against the same reading fifteen minutes ago.'
@@ -442,9 +483,24 @@ export function Power() {
             why: 'no server, storage or network device reports power' },
           { caption: 'Cooling', value: conv(totals?.cooling_kw ?? null), unit: u,
             why: 'no cooling unit reports power' },
-          { caption: 'PUE', value: totals?.pue ?? null, digits: 3,
-            tone: (totals?.pue ?? 0) > bands.pue_warn ? 'warn' : 'ok',
-            why: 'no IT load reported, so there is nothing to divide by' },
+          // The Green Grid figure where the meters allow it - kWh over kWh,
+          // with its category - and the draw ratio only where they do not.
+          // The two disagreed on one screen for a month; now the ratio is the
+          // tooltip under the energy figure, never a second headline.
+          ...(totals?.energy_pue?.pue != null && totals.energy_pue.method === 'energy' ? [{
+            caption: 'PUE', value: totals.energy_pue.pue, digits: 3,
+            unit: `L${totals.energy_pue.category ?? 1}`,
+            tone: (!totals.energy_pue.plausible ? 'warn'
+              : totals.energy_pue.pue > bands.pue_warn ? 'warn' : 'ok') as 'ok' | 'warn' | 'critical',
+            tip: <>Energy-based, Green Grid category {totals.energy_pue.category ?? 1}: {totals.energy_pue.total_facility_kwh?.toFixed(0)} kWh facility over {totals.energy_pue.it_kwh?.toFixed(0)} kWh at the UPS output, last {totals.energy_pue.hours.toFixed(0)} h.
+              {totals.pue != null ? <> Draw ratio {statWord}: {totals.pue.toFixed(3)}.</> : null}
+              {totals.energy_pue.note ? <> {totals.energy_pue.note}.</> : null}</>,
+          }] : [{
+            caption: 'PUE', value: totals?.pue ?? null, digits: 3, unit: 'ratio',
+            tone: ((totals?.pue ?? 0) > bands.pue_warn ? 'warn' : 'ok') as 'ok' | 'warn' | 'critical',
+            tip: <>A ratio of draw, total over IT, {statWord}. {totals?.energy_pue?.note ? `No energy figure: ${totals.energy_pue.note}.` : 'No energy counters answered for this window.'}</>,
+            why: 'no IT load reported, so there is nothing to divide by',
+          }]),
           { caption: 'Of rating', value: totals?.load_pct ?? null, unit: '%',
             tone: totals?.band === 'critical' ? 'critical' : totals?.band === 'warn' ? 'warn' : 'ok',
             why: 'no room or rack carries a rating' },
@@ -537,6 +593,34 @@ export function Power() {
                   </span></span>
                 <span className="pair"><span className="cap">Racks</span>
                   <span className="v">{head.racks_reporting ?? 0}<span className="muted">/{head.rack_count ?? 0}</span></span></span>
+                <span className="pair"><span className="cap">Headroom</span>
+                  <span className="v">
+                    <Tip tip={head.headroom_kw == null ? 'needs a rating and a week of draw'
+                      : `${head.rated_kw?.toFixed(1)} kW rated minus p95 ${head.p95_kw?.toFixed(1)} kW over ${data?.totals.p95_days ?? 7} days`}>
+                      <span className={(head.headroom_kw ?? 0) < 0 ? 'critical' : undefined}><Num value={conv(head.headroom_kw)} /></span>
+                    </Tip> {u}</span></span>
+                <span className="pair"><span className="cap">Stranded</span>
+                  <span className="v">
+                    <Tip tip={head.stranded_kw == null ? 'no rack here carries a budget and a week of draw'
+                      : head.stranded_top?.length
+                        ? <>{head.stranded_top.map((x) => <span key={x.name} className="spread-line"><b>{x.kw.toFixed(1)} kW</b> {x.name}</span>)}</>
+                        : 'allocated minus p95, summed over the rooms'}>
+                      <Num value={conv(head.stranded_kw)} />
+                    </Tip> {u}</span></span>
+                <span className="pair"><span className="cap">Runway</span>
+                  <span className="v">
+                    {!head.rated_kw ? <Tip className="dash" tip="no rating to run out of">—</Tip>
+                      : runway.isLoading ? <span className="muted">…</span>
+                      : runway.error || !runway.data ? <Tip className="dash" tip="the forecast did not answer">—</Tip>
+                      : runway.data.method === 'insufficient_history'
+                        ? <Tip className="dash" tip={runway.data.method_reason}>—</Tip>
+                        : runway.data.runway.days == null
+                          ? <Tip tip={runway.data.runway.reason}><span className="muted">none in {runway.data.points.length} d</span></Tip>
+                          : <Tip tip={<>{runway.data.runway.reason}. {runway.data.method} fit over {runway.data.history_days} days{runway.data.trend_per_day != null ? <>, {(runway.data.trend_per_day * 7).toFixed(2)} kW/week</> : null}
+                              {runway.data.runway.earliest_days != null ? <>; between {runway.data.runway.earliest_days} and {runway.data.runway.latest_days} days</> : null}</>}>
+                              <span className={runway.data.runway.days < 90 ? 'warn' : undefined}>{runway.data.runway.days} d</span>
+                            </Tip>}
+                  </span></span>
               </div>
             )}
           </div>
@@ -565,6 +649,13 @@ export function Power() {
                    noun={isFetching && data ? `${t.tier} · updating` : t.tier}
                    onPage={t.setPage} onPageSize={t.setPageSize} onCsv={exportCsv} />
       </div>
+
+      {/* Drilled into a room, its power panels: the two RPPs, each read through
+          the meter clamped on it - the branch circuits and the phase balance
+          that the rack table above cannot show. */}
+      {t.selectedRoom && (
+        <RoomPanels roomId={t.selectedRoom.id} roomName={t.selectedRoom.name} />
+      )}
 
       {/* The charts follow the drill: the estate, then the site, then the
           room the table is showing. */}

@@ -19,6 +19,10 @@ export interface Kpi {
   tone?: 'ok' | 'warn' | 'critical';
   /** Why the value is absent. Shown in the tooltip, never as a fake zero. */
   why?: string | null;
+  /** What the value rests on, when it is present: the window, the method,
+   *  the figure it replaced. A headline that cannot say what it is made of
+   *  is a headline nobody can argue with. */
+  tip?: React.ReactNode;
 }
 
 export function KpiBand({ items }: { items: Kpi[] }) {
@@ -35,7 +39,8 @@ export function KpiBand({ items }: { items: Kpi[] }) {
                className={`kpi ${absent ? 'absent' : k.tone ?? ''}`}>
             <span className="cap">{k.caption}</span>
             <span className="val">
-              {absent ? <Tip tip={k.why ?? 'not measured'}>{shown}</Tip> : shown}
+              {absent ? <Tip tip={k.why ?? 'not measured'}>{shown}</Tip>
+                : k.tip ? <Tip tip={k.tip}>{shown}</Tip> : shown}
               {!absent && k.unit && <span className="u">{k.unit}</span>}
             </span>
             <span className="rule" />

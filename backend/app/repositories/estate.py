@@ -2366,3 +2366,100 @@ async def power_ratings(session: AsyncSession) -> dict[str, Any]:
             "rack_sum_kw": None if r["rack_sum_kw"] is None else float(r["rack_sum_kw"]),
         }
     return out
+
+
+async def power_p95(session: AsyncSession, *, days: int = 7) -> dict[str, Any]:
+    """The 95th percentile of the coincident hourly IT draw over the last
+    `days`, per rack, per room, per site and for the estate.
+
+    p95 of the sum, not the sum of p95s: devices do not peak together, and
+    adding each one's own 95th percentile sizes a feed for a moment that
+    never happened. So the hourly rollup is summed per bucket at each tier
+    first (one pass, GROUPING SETS) and the percentile taken over those
+    sums. Hourly, because headroom is a planning figure read against a
+    rating, and a five-minute spike is what the rating's margin is for.
+
+    Returns {"racks": {id: kw}, "rooms": {id: kw}, "sites": {id: kw},
+    "total": kw | None, "days": days}.
+    """
+    rows = (await session.execute(text(f"""
+        WITH {_DEV_CTE},
+        rooms AS ({_ROOMS}),
+        b AS (
+            SELECT t.bucket AS bkt, d.rack_id, dev.room_id, rooms.datacenter_id,
+                   t.avg_value AS w
+              FROM telemetry_1h t
+              JOIN metric m       ON m.id = t.metric_id
+              JOIN dev            ON dev.device_id = t.device_id
+              JOIN device d       ON d.id = t.device_id
+              JOIN device_type dt ON dt.code = d.device_type
+              JOIN rooms          ON rooms.room_id = dev.room_id
+             WHERE m.key = 'power_draw'
+               AND t.instance = ''
+               AND t.bucket >= now() - make_interval(days => :days)
+               AND dt.category IN ('it', 'network')
+        ),
+        per AS (
+            SELECT bkt, rack_id, room_id, datacenter_id,
+                   GROUPING(rack_id, room_id, datacenter_id) AS g,
+                   sum(w) / 1000.0 AS kw
+              FROM b
+             GROUP BY GROUPING SETS ((bkt, rack_id), (bkt, room_id),
+                                     (bkt, datacenter_id), (bkt))
+        )
+        SELECT g, rack_id::text AS rack_id, room_id::text AS room_id,
+               datacenter_id::text AS datacenter_id,
+               percentile_cont(0.95) WITHIN GROUP (ORDER BY kw) AS p95_kw,
+               count(*) AS buckets
+          FROM per
+         GROUP BY g, rack_id, room_id, datacenter_id
+    """), {"days": days})).mappings().all()
+    out: dict[str, Any] = {"racks": {}, "rooms": {}, "sites": {}, "total": None,
+                           "days": days}
+    for r in rows:
+        v = None if r["p95_kw"] is None else round(float(r["p95_kw"]), 2)
+        g = int(r["g"])
+        # GROUPING() bits: rack_id=4, room_id=2, datacenter_id=1; a bit set
+        # means that column is aggregated away in this row.
+        if g == 3 and r["rack_id"] is not None:
+            out["racks"][r["rack_id"]] = v
+        elif g == 5 and r["room_id"] is not None:
+            out["rooms"][r["room_id"]] = v
+        elif g == 6 and r["datacenter_id"] is not None:
+            out["sites"][r["datacenter_id"]] = v
+        elif g == 7:
+            out["total"] = v
+    return out
+
+
+async def power_strip_edges(session: AsyncSession) -> list[dict[str, Any]]:
+    """Each rack's strips with their ids, by side: what the A/B shared
+    upstream check walks from."""
+    rows = (await session.execute(text("""
+        SELECT DISTINCT d.rack_id::text AS rack_id, f.id::text AS feeder_id,
+               f.name AS feeder, c.redundancy_side AS side
+          FROM device d
+          JOIN device_type dt ON dt.code = d.device_type
+          JOIN connection c ON c.b_device_id = d.id
+                           AND c.layer = CAST('power' AS layer_t)
+                           AND c.admin_state = 'enabled'
+          JOIN device f ON f.id = c.a_device_id
+         WHERE d.rack_id IS NOT NULL AND d.lifecycle <> 'decommissioned'
+           AND dt.category IN ('it', 'network')
+    """))).mappings().all()
+    return [dict(r) for r in rows]
+
+
+async def room_panels(session: AsyncSession, room_id: str) -> list[dict[str, Any]]:
+    """The power panels standing in a room, for the room's panel view."""
+    rows = (await session.execute(text("""
+        SELECT d.id::text AS device_id, d.name
+          FROM device d
+          LEFT JOIN rack r      ON r.id = d.rack_id
+          LEFT JOIN rack_row rr ON rr.id = r.row_id
+         WHERE d.device_type::text = 'rpp'
+           AND d.lifecycle <> 'decommissioned'
+           AND COALESCE(rr.room_id, d.room_id) = CAST(:room AS uuid)
+         ORDER BY d.name
+    """), {"room": room_id})).mappings().all()
+    return [dict(r) for r in rows]

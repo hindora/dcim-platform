@@ -1,6 +1,6 @@
 # 34 — Power page: build plan
 
-Status: **Phases 0–3 built 2026-10-27; 4 not started.** Written
+Status: **Phases 0–4 built 2026-10-27. Phase 5 is simulator-gated and not started.** Written
 2026-10-27 from a read of the tree (`P:` means `dcim-platform/`, `S:` means
 `Datacenter_Network_Simulator/`; lines checked against platform `f24b438` and
 simulator `1c273ac`).
@@ -46,6 +46,23 @@ what exists:
   is `/power?scope=supply` with a site Seg; the analytics Power view is
   gone. The planned verdict table (3.4) lives in the plant service's
   `_electrical_verdict` plus the two chain findings, not a new table.
+- Phase 4 rides on the existing power payload rather than new endpoints,
+  except one: `GET /estate/rooms/{id}/panels` (RPPs read through their EV2,
+  the `PanelMetering` component). Headroom and stranded kW come from ONE
+  query, `repositories/estate.power_p95` (7-day p95 of the coincident hourly
+  IT draw from `telemetry_1h`, GROUPING SETS at rack / room / site / estate),
+  so no per-row capacity call. Energy PUE is `services/pue.compute` over the
+  last 24 h in NOW and over the window otherwise, for the estate and each
+  site; the header shows it with its category (`L1`) and keeps the draw
+  ratio in the tooltip, falling back to the ratio only when no counter
+  answered. Runway is NOT in the payload: the page asks the existing
+  forecast endpoint for the drilled scope only (`metric=it_power`,
+  `capacity=rated_kw`), because a projection per row is ninety days of
+  history per row; on this estate it refuses (insufficient history) and
+  the cell says so. The A/B check (`services/estate.rack_shared_upstream`)
+  names RPP / UPS / ATS devices common to both sides' closures and ignores
+  the switchgear and utility a single-feed site shares by design. No
+  migration (4.6).
 
 The brief: bring `/power` up to the standard of `/thermal`, in features and in
 UX, using the data the platform already holds before asking the simulator for
@@ -66,7 +83,7 @@ tight (see `feedback_batch_deploys_tight_host`). Frontend work ships on commit
 | 1 ✓ Thermal parity | Rack level, breadcrumb, header help + cell tooltips, severity lead, load-vs-rating columns and spread bar, alarms column + slide-over, coverage KPI, kW/kVA switch, NOW / LAST HOUR / BY DAY windows, freshness note | A page that reads like Thermal and drills to the rack | ~40 h |
 | 2 ✓ Trends | Three panels on the shared range control: draw stacked (IT / cooling / other), PUE line, demand with the coincident peak marked; maximize, crosshair, scope-following | Where the load has been going | ~22 h |
 | 3 ✓ Supply chain tab | PLANT-style tab: utility → genset → switchgear → ATS → UPS → MCC/MPP → RPP rows with state, load %, measured/derived, verdict; redundancy census reframed; scope honoured; RPP read through its EV2 | Is the feed healthy, and what is on one leg | ~36 h |
-| 4 Headroom and panels | Energy-based PUE headline with method badge, headroom and runway per room, stranded kW per rack, A/B same-upstream check, EV2 panel circuits per room | Capacity questions answered on the page | ~34 h |
+| 4 ✓ Headroom and panels | Energy-based PUE headline with method badge, headroom and runway per room, stranded kW per rack, A/B same-upstream check, EV2 panel circuits per room | Capacity questions answered on the page | ~34 h |
 | 5 Simulator-gated | Per-leg PDU currents, live per-outlet current, PSU failure, UPS runtime vs genset window | Only after `S:` grows the model | later |
 
 **Total through Phase 4: ~138 h.** Phase 5 is not estimated; it depends on
