@@ -98,8 +98,11 @@ function Spread({ d, warn, critical }: { d: PowerSpread | null | undefined; warn
 /** A rack's feeds in one cell: the A strip, the B strip, and how the loads
  *  are corded. Amber where a load has one cord, red where one has none -
  *  the two facts a maintenance window turns on. */
-function Feeds({ f }: { f: PowerFeeds | null | undefined }) {
+function Feeds({ f, r, warnPct }: { f: PowerFeeds | null | undefined; r: PowerRow; warnPct: number }) {
   if (!f || !f.loads) return <Tip className="dash" tip="no IT or network load in this rack">—</Tip>;
+  const legs = r.legs ?? [];
+  const psuFailed = Array.isArray(r.psu_failed) ? r.psu_failed : [];
+  const imb = r.imbalance_pct ?? null;
   const sides = [
     f.a.length ? `A ${f.a.join(', ')}` : 'A —',
     f.b.length ? `B ${f.b.join(', ')}` : 'B —',
@@ -111,14 +114,26 @@ function Feeds({ f }: { f: PowerFeeds | null | undefined }) {
       ? `${f.single_cord} of ${f.loads} loads on one cord`
       : `all ${f.loads} loads on both sides`;
   const shared = f.shared_upstream ?? [];
-  const tone = f.unfed ? 'critical' : f.single_cord || shared.length ? 'warn' : undefined;
+  const tone = f.unfed || psuFailed.length ? 'critical'
+    : f.single_cord || shared.length || (imb !== null && imb >= warnPct) ? 'warn' : undefined;
+  const word = f.unfed ? `${f.unfed} unfed`
+    : psuFailed.length ? `${psuFailed.length} on one PSU`
+      : f.single_cord ? `${f.single_cord} single`
+        : shared.length ? `${f.dual_cord} dual · shared`
+          : imb !== null && imb >= warnPct ? `${f.dual_cord} dual · ${imb.toFixed(0)} %`
+            : `${f.dual_cord} dual`;
   return (
     <Tip tip={<>{sides}<br />{cording}. Dual means two different sides; two cords into one strip is one feed.
-      {shared.length ? <><br />Both sides hang off {shared.join(', ')}: above that point the two cords survive nothing.</> : null}</>}>
+      {shared.length ? <><br />Both sides hang off {shared.join(', ')}: above that point the two cords survive nothing.</> : null}
+      {psuFailed.length ? <><br />Running on one supply: {psuFailed.join(', ')} - the other cord carries nothing until the part is swapped.</> : null}
+      {legs.length ? legs.map((l) => (
+        <span key={l.strip_id} className="spread-line">{l.strip}: {l.legs.map((a) => `${a.toFixed(1)} A`).join(' / ')}
+          {l.imbalance_pct !== null ? ` · ${l.imbalance_pct.toFixed(0)} % imbalance` : ''}</span>
+      )) : null}</>}>
       <span className={`pw-feeds ${tone ?? ''}`}>
         <span className="side">{f.a.length ? 'A' : '·'}</span>
         <span className="side">{f.b.length ? 'B' : '·'}</span>
-        <span className="n">{f.unfed ? `${f.unfed} unfed` : f.single_cord ? `${f.single_cord} single` : shared.length ? `${f.dual_cord} dual · shared` : `${f.dual_cord} dual`}</span>
+        <span className="n">{word}</span>
       </span>
     </Tip>
   );
@@ -196,8 +211,10 @@ export function Power() {
    *  a strip is already counted where it stands. */
   function severity(r: PowerRow): 'ok' | 'warn' | 'critical' | 'none' {
     if (r.total_kw === null || r.total_kw === undefined) return 'none';
-    if (r.band === 'critical' || (r.feeds?.unfed ?? 0) > 0) return 'critical';
-    if (r.band === 'warn' || (r.feeds?.single_cord ?? 0) > 0) return 'warn';
+    const psuFailed = Array.isArray(r.psu_failed) ? r.psu_failed.length : 0;
+    if (r.band === 'critical' || (r.feeds?.unfed ?? 0) > 0 || psuFailed > 0) return 'critical';
+    if (r.band === 'warn' || (r.feeds?.single_cord ?? 0) > 0
+        || (r.imbalance_pct ?? 0) >= (data?.totals.leg_imbalance_warn_pct ?? 10)) return 'warn';
     return r.band ? 'ok' : 'none';
   }
 
@@ -303,9 +320,9 @@ export function Power() {
       ),
     }, {
       key: 'feeds', label: 'Feeds', align: 'mid' as const, width: 120,
-      help: 'The strips feeding this rack\'s loads, by side, and whether every load has a cord on each. One cord is one maintenance window away from dark.',
+      help: 'The strips feeding this rack\'s loads, by side, and whether every load has a cord on each. One cord is one maintenance window away from dark; a load on one supply is the same with the cord still plugged in. The tip carries each strip\'s leg currents and their imbalance.',
       sort: (r: PowerRow) => (r.feeds ? r.feeds.unfed * 1000 + r.feeds.single_cord : null),
-      render: (r: PowerRow) => <Feeds f={r.feeds} />,
+      render: (r: PowerRow) => <Feeds f={r.feeds} r={r} warnPct={data?.totals.leg_imbalance_warn_pct ?? 10} />,
     }] : [{
       key: 'it', label: `IT ${u}`, align: 'num' as const, width: 96,
       help: 'Servers, storage and network gear.',
@@ -468,7 +485,11 @@ export function Power() {
             tone: (sh?.ups.load_max_pct ?? 0) >= 90 ? 'critical' : (sh?.ups.load_max_pct ?? 0) >= 80 ? 'warn' : 'ok',
             why: 'no UPS in this scope reports a load' },
           { caption: 'UPS runtime', value: sh?.ups.runtime_min_minutes ?? null, unit: 'min', digits: 0,
-            tone: sh && (sh.ups.on_battery > 0 || (sh.ups.runtime_min_minutes ?? 999) < 10) ? 'critical' : 'ok',
+            tone: sh && (sh.ups.on_battery > 0 || (sh.ups.runtime_min_minutes ?? 999) < (sh.ups_runtime_floor_min ?? 5)) ? 'critical' : 'ok',
+            tip: <>The shortest runtime any UPS here reports at its present load, against the{' '}
+              {sh?.genset_window_s ?? 15} s it takes the generator to carry the load (NFPA 110 Type 10 start,
+              transfer, and the UPS re-qualifying the source). {sh?.ups_runtime_floor_min ?? 5} min is the floor:
+              a failed crank or a retried transfer eats minutes, not seconds.</>,
             why: 'no UPS in this scope reports a runtime' },
           { caption: 'On one leg', value: sh?.on_one_leg ?? null, digits: 0,
             tone: (sh?.on_one_leg ?? 0) > 0 ? 'warn' : 'ok',

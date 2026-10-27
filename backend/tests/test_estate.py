@@ -1816,6 +1816,8 @@ def _no_power_extras(monkeypatch):
     monkeypatch.setattr(estate.repo, "power_strip_edges", _returns([]))
     monkeypatch.setattr(estate, "_attach_energy_pue", _returns(None))
     monkeypatch.setattr(estate, "_attach_shared_upstream", _returns(None))
+    monkeypatch.setattr(estate.repo, "power_rack_legs", _returns({}))
+    monkeypatch.setattr(estate.repo, "power_rack_psu_failed", _returns({}))
 
 
 def _rack_row(rack_id: str, room_id: str, dc: str, code: str, *, avg_it=None,
@@ -2091,3 +2093,30 @@ def test_two_sides_sharing_a_panel_are_named_and_sharing_the_utility_is_not():
              "swgr": "switchgear", "util": "utility_feed"}
     out = estate.rack_shared_upstream(strips, edges, types)
     assert out == {"r": ["rppa", "upsa"]}
+
+
+@pytest.mark.asyncio
+async def test_legs_and_failed_supplies_ride_the_rack_and_count_up_the_tiers(monkeypatch):
+    monkeypatch.setattr(estate.repo, "power_live", _returns([
+        _power_row("h", "dc1", "DC1", avg_it=24.0, avg_cooling=6.0),
+    ]))
+    monkeypatch.setattr(estate.repo, "power_racks_live", _returns([
+        _rack_row("r1", "h", "dc1", "DC1", avg_it=9.5, rated=22.0),
+        _rack_row("r2", "h", "dc1", "DC1", avg_it=4.0, rated=22.0),
+    ]))
+    monkeypatch.setattr(estate.repo, "power_rack_legs", _returns({
+        "r1": [{"strip_id": "a", "strip": "PDUA", "legs": [12.0, 14.0, 9.0],
+                "imbalance_pct": 23.1},
+               {"strip_id": "b", "strip": "PDUB", "legs": [11.0, 11.5, 11.0],
+                "imbalance_pct": 3.0}],
+        "r2": [{"strip_id": "c", "strip": "PDUC", "legs": [4.0], "imbalance_pct": None}],
+    }))
+    monkeypatch.setattr(estate.repo, "power_rack_psu_failed", _returns(
+        {"r1": ["SRV03 PSU1", "SRV07 PSU2"]}))
+    out = await estate.power(_FakeSession(), live=True)
+    racks = {r["id"]: r for r in out["racks"]}
+    assert racks["r1"]["imbalance_pct"] == 23.1 and len(racks["r1"]["legs"]) == 2
+    assert racks["r1"]["psu_failed"] == ["SRV03 PSU1", "SRV07 PSU2"]
+    assert racks["r2"]["imbalance_pct"] is None and racks["r2"]["psu_failed"] == []
+    assert out["rooms"][0]["racks_imbalanced"] == 1 and out["rooms"][0]["psu_failed"] == 2
+    assert out["sites"][0]["psu_failed"] == 2 and out["totals"]["racks_imbalanced"] == 1

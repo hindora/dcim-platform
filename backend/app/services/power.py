@@ -309,6 +309,19 @@ METERED_FRESH = timedelta(minutes=15)
 SUPPLY_LOAD_WARN_PCT = 80.0
 SUPPLY_LOAD_CRITICAL_PCT = 90.0
 
+#: How long the batteries must carry the load before the generator takes it.
+#:
+#: NFPA 110 Level 1 Type 10 puts the emergency source on the bus within 10 s
+#: of the outage; the simulated sequence is 3 s TDNE, 7 s crank, 2 s transfer
+#: and 3 s for the UPS rectifier to qualify the genset - 15 s. The battery is
+#: sized well past that because the sequence is the HAPPY path: a failed
+#: start, a transfer that has to be retried or an operator walking to the
+#: switchboard all eat minutes, and five minutes at the measured load is the
+#: floor most designs are written to. Under that, the site is one missed crank
+#: from a dropped load.
+GENSET_WINDOW_S = 15.0
+UPS_RUNTIME_FLOOR_MIN = 5.0
+
 
 def plant_group_verdict(n: int, fed: int) -> tuple[str, str]:
     """How a plant group stands on feeds: every member fed is OK (the N+1
@@ -373,6 +386,14 @@ def supply_verdict(row: dict[str, Any]) -> tuple[str, str | None]:
     92 % of rating is one server from a breaker. Both are decided here.
     """
     v, why = row.get("verdict") or "unknown", row.get("why")
+    if row.get("device_type") == "ups":
+        mins = row.get("battery_minutes")
+        if (mins is not None and mins < UPS_RUNTIME_FLOOR_MIN
+                and v in ("ok", "standby", "unmonitored", "unknown", "silent")):
+            return "runtime_short", (
+                f"{mins:.0f} min of battery at this load against a "
+                f"{GENSET_WINDOW_S:.0f} s generator window - one missed crank "
+                f"from a dropped load; {UPS_RUNTIME_FLOOR_MIN:.0f} min is the floor")
     if row.get("device_type") == "transformer" and v == "standby":
         # Its only binary is the cooling fans, and ONAN - fans off, oil
         # convecting - is how a transformer spends most of its life while
@@ -568,6 +589,8 @@ async def scope_summary(session, *, datacenter_id: str | None = None,
                 "load_max_pct": max(ups_loads, default=None),
                 "runtime_min_minutes": min(runtimes, default=None)},
         "on_one_leg": cen["it_loads"][SINGLE_FEED] + cen["it_loads"][NO_FEED],
+        "genset_window_s": GENSET_WINDOW_S,
+        "ups_runtime_floor_min": UPS_RUNTIME_FLOOR_MIN,
         "imbalance_worst": (None if worst_imb is None else
                             {"name": worst_imb["name"], "pct": worst_imb["imbalance_pct"]}),
     }

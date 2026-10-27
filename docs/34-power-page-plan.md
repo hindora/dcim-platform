@@ -1,6 +1,6 @@
 # 34 — Power page: build plan
 
-Status: **Phases 0–4 built 2026-10-27. Phase 5 is simulator-gated and not started.** Written
+Status: **Phases 0–4 built 2026-10-27; Phase 5 built the same day on both repos, platform shipped, simulator side awaiting commit + dataset regeneration.** Written
 2026-10-27 from a read of the tree (`P:` means `dcim-platform/`, `S:` means
 `Datacenter_Network_Simulator/`; lines checked against platform `f24b438` and
 simulator `1c273ac`).
@@ -63,6 +63,33 @@ what exists:
   names RPP / UPS / ATS devices common to both sides' closures and ignores
   the switchgear and utility a single-feed site shares by design. No
   migration (4.6).
+- Phase 5, platform side: `alarm_rule` `psu-failure` (migration 0115:
+  boolean on `psu_state`, raise on False, MAJOR, dwell 2 - the BMC's
+  Status.State/Health has been stored per supply since the Redfish adapter
+  was written and never evaluated); `repositories/estate.power_rack_legs`
+  (latest `current` per leg per strip, NEMA imbalance derived) and
+  `power_rack_psu_failed` (latest `psu_state` False per supply) folded onto
+  rack rows and counted up the tiers; the Feeds cell says "on one PSU" /
+  "dual · 23 %" and carries the legs in its tip; the APC mapping walks
+  rPDU2PhaseStatusTable as a table (instance = leg) instead of GETting row 1
+  (`contracts/mappings/snmp/standard.yaml`, bundle synced, collector
+  rebuilt); `services/power.supply_verdict` adds `runtime_short` for a UPS
+  under 5 min against the 15 s generator window the simulator's NFPA 110
+  sequence takes (`GENSET_WINDOW_S`, `UPS_RUNTIME_FLOOR_MIN`).
+- Phase 5, simulator side (built, tested, NOT committed - the simulator is
+  the user's to commit): `set_psu_condition` + `psu_fail` in FAULT_MAP (a
+  failed supply joins the dead-cord set, so the survivor carries the whole
+  chassis and the strip on that side sees nothing; Redfish reports the
+  supply UnavailableOffline/Critical with 0 W); `_pdu_leg_currents` sums
+  each outlet's live share onto the leg its bank sits on (230/400 V Wye:
+  one leg per bank, V(L-N) x PF) and the strip's imbalance is now NEMA's
+  from the legs, the random walk surviving only on strips nothing is
+  plugged into; `_pdu_entries` seeds one rPDU2PhaseStatus row per leg and
+  one bank row per bank, `patch_metrics` writes them live. The new rows
+  change the SNMP dataset fingerprint: deploy = commit, Stop → Regenerate →
+  Start SNMP (894/894), sim restart with the usual env. Raritan
+  inletPoleSensor rows are NOT added: every Raritan strip here is 1-phase
+  and the pole-table OIDs were not verified against PDU2-MIB.
 
 The brief: bring `/power` up to the standard of `/thermal`, in features and in
 UX, using the data the platform already holds before asking the simulator for
@@ -84,7 +111,7 @@ tight (see `feedback_batch_deploys_tight_host`). Frontend work ships on commit
 | 2 ✓ Trends | Three panels on the shared range control: draw stacked (IT / cooling / other), PUE line, demand with the coincident peak marked; maximize, crosshair, scope-following | Where the load has been going | ~22 h |
 | 3 ✓ Supply chain tab | PLANT-style tab: utility → genset → switchgear → ATS → UPS → MCC/MPP → RPP rows with state, load %, measured/derived, verdict; redundancy census reframed; scope honoured; RPP read through its EV2 | Is the feed healthy, and what is on one leg | ~36 h |
 | 4 ✓ Headroom and panels | Energy-based PUE headline with method badge, headroom and runway per room, stranded kW per rack, A/B same-upstream check, EV2 panel circuits per room | Capacity questions answered on the page | ~34 h |
-| 5 Simulator-gated | Per-leg PDU currents, live per-outlet current, PSU failure, UPS runtime vs genset window | Only after `S:` grows the model | later |
+| 5 ✓ Simulator-gated | Per-leg PDU currents, live per-outlet current, PSU failure, UPS runtime vs genset window | Only after `S:` grows the model | later |
 
 **Total through Phase 4: ~138 h.** Phase 5 is not estimated; it depends on
 simulator decisions in §7.

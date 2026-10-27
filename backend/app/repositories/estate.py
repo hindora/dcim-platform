@@ -2463,3 +2463,91 @@ async def room_panels(session: AsyncSession, room_id: str) -> list[dict[str, Any
          ORDER BY d.name
     """), {"room": room_id})).mappings().all()
     return [dict(r) for r in rows]
+
+
+async def power_rack_legs(session: AsyncSession) -> dict[str, list[dict[str, Any]]]:
+    """Each rack's strips with their per-leg currents, from the newest
+    `current` sample per leg inside the last ten minutes.
+
+    A 3-phase strip publishes one row per leg (rPDU2PhaseStatusTable; the
+    instance is the leg number); a 1-phase strip one row. The NEMA imbalance
+    is derived here - the largest deviation from the mean over the mean -
+    because PowerNet has no object for it and the estate page judges a rack
+    on it. Returns {rack_id: [{strip, strip_id, legs: [A...], imbalance_pct}]}.
+    """
+    rows = (await session.execute(text("""
+        WITH latest AS (
+            SELECT DISTINCT ON (t.device_id, t.instance)
+                   t.device_id, t.instance, t.value
+              FROM telemetry_sample t
+              JOIN metric m ON m.id = t.metric_id
+              JOIN device d ON d.id = t.device_id
+             WHERE m.key = 'current'
+               AND d.device_type::text = 'pdu'
+               AND d.rack_id IS NOT NULL
+               AND d.lifecycle <> 'decommissioned'
+               AND t.ts > now() - interval '10 minutes'
+             ORDER BY t.device_id, t.instance, t.ts DESC
+        )
+        SELECT d.rack_id::text AS rack_id, d.id::text AS strip_id, d.name AS strip,
+               l.instance, l.value
+          FROM latest l
+          JOIN device d ON d.id = l.device_id
+         ORDER BY d.rack_id, d.name, l.instance
+    """))).mappings().all()
+    by_strip: dict[tuple[str, str, str], dict[str, float]] = {}
+    for r in rows:
+        by_strip.setdefault((r["rack_id"], r["strip_id"], r["strip"]), {})[
+            r["instance"] or "1"] = float(r["value"])
+    out: dict[str, list[dict[str, Any]]] = {}
+    for (rack_id, strip_id, strip), legs in by_strip.items():
+        # Legs are numbered on the strip; keep that order, and only count a
+        # leg as a leg when the instance is one (the device-level scalar on a
+        # placeholder tree arrives on the empty instance).
+        ordered = [legs[k] for k in sorted(legs) if k.isdigit()] or list(legs.values())
+        imb = None
+        if len(ordered) >= 2:
+            mean = sum(ordered) / len(ordered)
+            if mean > 0:
+                imb = round(100.0 * max(abs(a - mean) for a in ordered) / mean, 1)
+        out.setdefault(rack_id, []).append({
+            "strip_id": strip_id, "strip": strip,
+            "legs": [round(a, 1) for a in ordered],
+            "imbalance_pct": imb,
+        })
+    return out
+
+
+async def power_rack_psu_failed(session: AsyncSession) -> dict[str, list[str]]:
+    """Per rack, the loads whose BMC reports a power supply as not healthy:
+    the newest `psu_state` per supply inside the last-known window, False.
+    Returns {rack_id: ["SRV03 PSU1", ...]}."""
+    rows = (await session.execute(text("""
+        WITH latest AS (
+            SELECT DISTINCT ON (t.device_id, t.instance)
+                   t.device_id, t.instance, t.value
+              FROM telemetry_bool t
+              JOIN metric m ON m.id = t.metric_id
+              JOIN device d ON d.id = t.device_id
+             WHERE m.key = 'psu_state'
+               AND d.rack_id IS NOT NULL
+               AND d.lifecycle <> 'decommissioned'
+               AND t.ts > now() - make_interval(secs => :window_s)
+             ORDER BY t.device_id, t.instance, t.ts DESC
+        )
+        SELECT d.rack_id::text AS rack_id, d.name, l.instance
+          FROM latest l
+          JOIN device d ON d.id = l.device_id
+         WHERE l.value = false
+         ORDER BY d.rack_id, d.name, l.instance
+    """), {"window_s": _PSU_WINDOW_S})).mappings().all()
+    out: dict[str, list[str]] = {}
+    for r in rows:
+        out.setdefault(r["rack_id"], []).append(f"{r['name']} PSU{r['instance'] or '?'}")
+    return out
+
+
+#: How long a supply's last reported state is believed. Booleans are
+#: change-logged plus a heartbeat (app/ingest/changelog.py), so the newest row
+#: inside this window is the state; the same figure the plant readers use.
+_PSU_WINDOW_S = 900

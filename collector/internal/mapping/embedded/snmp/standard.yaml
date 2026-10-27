@@ -296,13 +296,22 @@ profiles:
         # charts as a ramp that never falls and no threshold on it means
         # anything; as a counter the pipeline derives the rate, which is the
         # number an operator actually wants from a meter.
-      - oid: 1.3.6.1.4.1.318.1.1.26.6.3.1.5.1     # rPDU2PhaseStatusCurrent, 0.1 A
-        metric: current
-        value_type: gauge
-        transform: {scale: 0.1}
-      - oid: 1.3.6.1.4.1.318.1.1.26.6.3.1.6.1     # rPDU2PhaseStatusVoltage, V
-        metric: voltage_ln
-        value_type: gauge
+    # The phase table, walked. A single-inlet 1-phase strip has one row at
+    # index 1; a 3-phase AP8886 has three, one per leg, and the index is the
+    # leg (rPDU2PhaseStatusNumber). Walking rather than GETting .1/.2/.3 means
+    # a 1-phase strip does not miss two instances every poll, and the platform
+    # derives the NEMA imbalance from the three currents it gets - PowerNet has
+    # no imbalance object, so there is nothing to read for it.
+    tables:
+      - name: rpdu2_phase
+        columns:
+          - oid: 1.3.6.1.4.1.318.1.1.26.6.3.1.5     # rPDU2PhaseStatusCurrent, 0.1 A
+            metric: current
+            value_type: gauge
+            transform: {scale: 0.1}
+          - oid: 1.3.6.1.4.1.318.1.1.26.6.3.1.6     # rPDU2PhaseStatusVoltage, V
+            metric: voltage_ln
+            value_type: gauge
     # The strip publishes no environment of its own. An AP8000 has no
     # onboard sensor - it has two RJ-45 sensor ports - so a temperature read
     # here belongs to the PROBE fitted to a port, not to the strip, and it is

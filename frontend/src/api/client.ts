@@ -2654,6 +2654,7 @@ export interface PowerFleet {
            load_max_pct: number | null; runtime_min_minutes: number | null };
     on_one_leg: number;
     imbalance_worst: { name: string; pct: number } | null;
+    genset_window_s?: number; ups_runtime_floor_min?: number;
   };
   supplies: SupplyRow[];
   phase_imbalance: { device_id: string; name: string; device_type: string;
@@ -3627,6 +3628,14 @@ export interface PowerRow extends EstateRowBase {
   stranded_top?: { name: string; kw: number }[];
   /** Sites: the Green Grid figure, kWh over kWh, beside the ratio. */
   energy_pue?: EnergyPue | null;
+  /** Rack rows: each strip's leg currents (one per leg; three on a 3-phase
+   *  strip) and the NEMA imbalance derived from them. */
+  legs?: { strip_id: string; strip: string; legs: number[]; imbalance_pct: number | null }[];
+  imbalance_pct?: number | null;
+  /** Rack rows: loads whose BMC reports a supply as failed, "SRV03 PSU1".
+   *  Rooms and sites: how many. */
+  psu_failed?: string[] | number;
+  racks_imbalanced?: number;
 }
 
 export interface EnergyPue {
@@ -3667,6 +3676,7 @@ export interface PowerPage {
     p95_days?: number; p95_kw?: number | null; headroom_kw?: number | null;
     stranded_kw?: number | null;
     energy_pue?: EnergyPue | null;
+    racks_imbalanced?: number; psu_failed?: number; leg_imbalance_warn_pct?: number;
     /** What the hidden facility rows contribute, so the header reconciles. */
     facility: { rooms: number; total_kw: number | null; cooling_kw: number | null };
   };

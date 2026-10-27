@@ -1131,6 +1131,7 @@ async def power(session: AsyncSession, *, start: datetime | None = None,
     pue_start = pue_end - timedelta(hours=24) if live else start
     await _attach_energy_pue(session, sites, totals, start=pue_start, end=pue_end)
     await _attach_shared_upstream(session, racks)
+    await _attach_legs_and_supplies(session, racks, rooms, sites, totals)
 
     # When the newest figure on the page was written. In the windowed modes
     # the window end is the answer; in NOW it is the newest hot-mirror write.
@@ -2470,6 +2471,46 @@ async def _attach_energy_pue(session: AsyncSession, sites: list[dict[str, Any]],
     for site in sites:
         site["energy_pue"] = shape(await pue_service.compute(
             session, start=start, end=end, datacenter_id=site["id"]))
+
+
+async def _attach_legs_and_supplies(session: AsyncSession, racks: list[dict[str, Any]],
+                                    rooms: list[dict[str, Any]],
+                                    sites: list[dict[str, Any]],
+                                    totals: dict[str, Any]) -> None:
+    """Per rack: each strip's leg currents with the NEMA imbalance, and the
+    loads running on one supply. Both fold upward as counts, because a hall
+    with one rack 25 % out of balance and three servers on one PSU is a hall
+    with four things to visit, and the room row should say so.
+    """
+    legs = await repo.power_rack_legs(session)
+    psu = await repo.power_rack_psu_failed(session)
+    for rk in racks:
+        rk["legs"] = legs.get(rk["id"], [])
+        worst = [s["imbalance_pct"] for s in rk["legs"] if s.get("imbalance_pct") is not None]
+        rk["imbalance_pct"] = max(worst) if worst else None
+        rk["psu_failed"] = psu.get(rk["id"], [])
+    by_room: dict[str, list[dict[str, Any]]] = {}
+    for rk in racks:
+        by_room.setdefault(rk["room_id"], []).append(rk)
+    for room in rooms:
+        rks = by_room.get(room["id"], [])
+        room["racks_imbalanced"] = sum(1 for rk in rks
+                                       if (rk.get("imbalance_pct") or 0) >= LEG_IMBALANCE_WARN_PCT)
+        room["psu_failed"] = sum(len(rk["psu_failed"]) for rk in rks)
+    for site in sites:
+        mine = [r for r in rooms if r["site_id"] == site["id"]]
+        site["racks_imbalanced"] = sum(r.get("racks_imbalanced", 0) for r in mine)
+        site["psu_failed"] = sum(r.get("psu_failed", 0) for r in mine)
+    totals["racks_imbalanced"] = sum(r.get("racks_imbalanced", 0) for r in rooms)
+    totals["psu_failed"] = sum(r.get("psu_failed", 0) for r in rooms)
+    totals["leg_imbalance_warn_pct"] = LEG_IMBALANCE_WARN_PCT
+
+
+#: NEMA MG-1 derates a motor above 1 % voltage imbalance; on a rack strip the
+#: figure is CURRENT imbalance, which is a loading question rather than a
+#: motor one: a leg carrying 10 % more than its siblings reaches its breaker
+#: 10 % sooner, and past 20 % one leg is doing the work of two.
+LEG_IMBALANCE_WARN_PCT = 10.0
 
 
 async def _attach_shared_upstream(session: AsyncSession, racks: list[dict[str, Any]]) -> None:

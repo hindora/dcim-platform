@@ -177,3 +177,15 @@ def test_a_transformer_on_natural_cooling_is_not_standby():
     # A generator on standby is on standby.
     assert p.supply_verdict({"device_type": "generator", "verdict": "standby",
                              "why": "x", "load_pct": 0.0})[0] == "standby"
+
+
+def test_a_ups_with_minutes_of_battery_against_a_seconds_generator_is_short():
+    v, why = p.supply_verdict({"device_type": "ups", "verdict": "ok", "why": None,
+                               "battery_minutes": 3.2, "load_pct": 40.0})
+    assert v == "runtime_short" and "15 s generator window" in why
+    # Plenty of runtime: the plant's own verdict stands.
+    assert p.supply_verdict({"device_type": "ups", "verdict": "ok", "why": None,
+                             "battery_minutes": 113.0, "load_pct": 40.0}) == ("ok", None)
+    # On battery outranks a short runtime: it is the finding that explains it.
+    assert p.supply_verdict({"device_type": "ups", "verdict": "on_battery", "why": "x",
+                             "battery_minutes": 3.0})[0] == "on_battery"
