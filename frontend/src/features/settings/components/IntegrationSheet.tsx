@@ -11,6 +11,7 @@ import { PolicyEditor } from './PolicyEditor';
 import { InboxTable, LinksTable, OutboxTable } from './DeliveryTables';
 import { WebhookPanel } from './WebhookPanel';
 import { AssetsPanel } from './AssetsPanel';
+import { Notice } from '../../../components/Notice';
 
 const TICKET_TABS = ['Connection', 'Policy', 'Mapping', 'Webhook', 'Assets',
   'Delivery'] as const;
@@ -85,11 +86,11 @@ export function IntegrationSheet({ row, onClose }: {
 
         <div className="sheet-body">
           {save.error && (
-            <div className="banner">
+            <Notice tone="error">
               {save.error instanceof ApiError && save.error.status === 403
                 ? 'Changing a ticketing integration needs an admin account.'
                 : String((save.error as Error).message)}
-            </div>
+            </Notice>
           )}
 
           {tab === 'Connection' && (
@@ -247,7 +248,7 @@ function Connection({ row, value, set }: {
       </div>
 
       {run.error && (
-        <div className="banner">{String((run.error as Error).message)}</div>
+        <Notice tone="error">{String((run.error as Error).message)}</Notice>
       )}
 
       {test && (
@@ -335,12 +336,12 @@ function OpsConnection({ row, value, set }: {
         </label>
       </div>
 
-      <div className="banner soft">
+      <Notice tone="info">
         <b>Alerts are outbound only.</b> Acknowledging or closing an alert
         inside JSM does not reach this platform — the alarm stays on the
         console until the poll clears it. Use the alarm's own Acknowledge, or
         the DCIM, to stop a page from this side.
-      </div>
+      </Notice>
     </div>
   );
 }
@@ -449,9 +450,9 @@ function Mapping({ row, value, set }: {
       </div>
 
       {row.effective.allow_clear_on_transition && (
-        <div className="banner">
+        <Notice tone="warn">
           This integration currently trusts Jira over the plane.
-        </div>
+        </Notice>
       )}
     </div>
   );

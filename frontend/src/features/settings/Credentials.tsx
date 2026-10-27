@@ -4,6 +4,7 @@ import { ApiError, api, type Credential, type CredentialSecret } from '../../api
 import { usePaged } from '../../components/Pagination';
 import { oneLine, relativeTime } from '../../lib/format';
 import { Tip } from '../../components/HoverTip';
+import { Notice } from '../../components/Notice';
 
 /** Device credentials (docs/26 Phase 4): what devices are polled with.
  *
@@ -169,7 +170,7 @@ export function Credentials() {
 
       <fieldset className="proto">
         <legend>Add a credential</legend>
-        {create.error && <div className="banner">{errorText(create.error)}</div>}
+        {create.error && <Notice tone="error">{errorText(create.error)}</Notice>}
         <div className="form-grid">
           <label><span>Name</span>
             <input value={name} onChange={(e) => setName(e.target.value)}
@@ -203,7 +204,7 @@ export function Credentials() {
             Every endpoint and pool using it gets the new secret on its collector's next
             assignment fetch. Change it on the devices first, or polls fail until you do.
           </p>
-          {rotate.error && <div className="banner">{errorText(rotate.error)}</div>}
+          {rotate.error && <Notice tone="error">{errorText(rotate.error)}</Notice>}
           <div className="form-grid">
             <SecretFields kind={rotating.kind} d={rotDraft}
                           set={(k, v) => setRotDraft((d) => ({ ...d, [k]: v }))} />
@@ -229,7 +230,7 @@ export function Credentials() {
             <option value="http_basic">HTTP basic</option>
           </select>
         </div>
-        {list.error && <div className="banner">{errorText(list.error)}</div>}
+        {list.error && <Notice tone="error">{errorText(list.error)}</Notice>}
         <div className="table-frame">
           <table>
             <thead>

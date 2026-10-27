@@ -14,6 +14,7 @@ import { ExclusionsTab, useAnomalyExclusions } from './anomaly/ExclusionsTab';
 import { OverridesTab, useAnomalyOverrides } from './anomaly/OverridesTab';
 import { ParamForm } from './anomaly/ParamForm';
 import '../analytics/anomaly.css';
+import { Notice } from '../../components/Notice';
 
 /** Which checks run, how sensitive they are, and what they ignore
  *  (doc 31 section 9).
@@ -90,7 +91,7 @@ export function AnomalyDetectors() {
 
       <div role="tabpanel" id={`anom-panel-${tab}`} aria-labelledby={`anom-tab-${tab}`}>
         {det.isError && (
-          <div className="banner" role="alert">Could not load the detectors: {(det.error as Error).message}</div>
+          <Notice tone="error">Could not load the detectors: {(det.error as Error).message}</Notice>
         )}
         {tab === 'detectors' && (det.isLoading
           ? <p className="muted">Loading…</p>
@@ -394,7 +395,7 @@ function DetectorsTab({ detectors }: { detectors: AnomalyDetector[] }) {
             as detector disabled, and their derived alerts clear. Nothing new is raised until you
             turn it back on.
           </p>
-          {enable.error && <p className="anom-err" role="alert">{(enable.error as Error).message}</p>}
+          {enable.error && <Notice tone="error">{(enable.error as Error).message}</Notice>}
           <DialogActions>
             <span style={{ flex: 1 }} />
             <button type="button" onClick={() => setDisabling(null)}>Cancel</button>

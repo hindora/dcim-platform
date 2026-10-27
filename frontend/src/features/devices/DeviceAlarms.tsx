@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import { ApiError, api, atLeast, type Alarm } from '../../api/client';
 import { usePaged } from '../../components/Pagination';
 import { humanise, relativeTime } from '../../lib/format';
+import { Notice } from '../../components/Notice';
 
 /** The conditions on one device, worst first.
  *
@@ -107,7 +108,7 @@ export function DeviceAlarms({ deviceId, deviceName, compact = false, view = 'op
           {compact || view === 'open' ? `Nothing open on ${deviceName}.` : 'No conditions recorded.'}
         </p>
       )}
-      {error && <p className="banner" role="alert">{error}</p>}
+      {error && <Notice tone="error">{error}</Notice>}
 
       {items.length > 0 && (
         <ul className={`dv-alarms${compact ? ' is-compact' : ''}`}>

@@ -5,6 +5,7 @@ import { ApiError, api, type Part, type Store } from '../../../api/client';
 import { usePaged } from '../../../components/Pagination';
 import { humanise } from '../../../lib/format';
 import { Dialog, DialogActions } from '../components/Dialog';
+import { Notice } from '../../../components/Notice';
 
 /** Consumable stock.
  *
@@ -39,7 +40,7 @@ export function PartList() {
   // Before the early return: a hook's order cannot depend on the fetch.
   const paged = usePaged(data?.items ?? [], { noun: 'parts', always: true });
 
-  if (error) return <div className="banner">Failed to load: {String(error)}</div>;
+  if (error) return <Notice tone="error">Failed to load: {String(error)}</Notice>;
 
   const items = data?.items ?? [];
   const low = items.filter((p) => p.below_reorder);
@@ -206,7 +207,7 @@ function PartForm({ stores, onClose }: { stores: Store[]; onClose: () => void })
       {stores.length === 0 && (
         <p className="asset-form-note">No stores yet — add one to receive stock.</p>
       )}
-      {error && <div className="banner">{error}</div>}
+      {error && <Notice tone="error">{error}</Notice>}
       <DialogActions>
         <span style={{ flex: 1 }} />
         <button type="button" onClick={onClose}>Cancel</button>
@@ -273,7 +274,7 @@ function StoreForm({ onClose }: { onClose: () => void }) {
                  onChange={(e) => setNote(e.target.value)} />
         </label>
       </div>
-      {error && <div className="banner">{error}</div>}
+      {error && <Notice tone="error">{error}</Notice>}
       <DialogActions>
         <span style={{ flex: 1 }} />
         <button type="button" onClick={onClose}>Cancel</button>

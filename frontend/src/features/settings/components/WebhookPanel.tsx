@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, type Integration, type WebhookProvision } from '../../../api/client';
 import { Tip } from '../../../components/HoverTip';
 import { oneLine, untilTime } from '../../../lib/format';
+import { Notice } from '../../../components/Notice';
 
 /** The inbound half: how a closed ticket reaches the alarm it was about.
  *
@@ -67,10 +68,10 @@ export function WebhookPanel({ row }: { row: Integration }) {
           </dd>
         </dl>
       ) : (
-        <div className="banner soft">
+        <Notice tone="info">
           No webhook. This integration is outbound only: it will open and
           update tickets, and it will never hear back.
-        </div>
+        </Notice>
       )}
 
       <div className="toolbar">
@@ -86,7 +87,7 @@ export function WebhookPanel({ row }: { row: Integration }) {
       </div>
 
       {provision.error && (
-        <div className="banner">{String((provision.error as Error).message)}</div>
+        <Notice tone="error">{String((provision.error as Error).message)}</Notice>
       )}
 
       {result && (
@@ -121,12 +122,12 @@ export function WebhookPanel({ row }: { row: Integration }) {
             </dd>
           </dl>
 
-          <div className="banner soft">
+          <Notice tone="info">
             <b>The secret is shown once.</b> It is stored encrypted and cannot
             be read back — the same contract as an Atlassian API token. If this
             page is closed before it is pasted into Jira, rotate and start
             again.
-          </div>
+          </Notice>
         </section>
       )}
     </div>

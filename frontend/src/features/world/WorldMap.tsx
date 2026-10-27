@@ -14,6 +14,7 @@ import {
 } from './satellite';
 import './world.css';
 import { toCss } from '../../lib/zoom';
+import { Notice } from '../../components/Notice';
 
 /**
  * Every site on the globe, coloured by the worst open alarm it holds, with
@@ -500,10 +501,10 @@ export function WorldMap() {
           )}
 
           {offline && (
-            <p className="world-offline-note" role="status">
+            <Notice tone="warn" role="status" className="notice-compact">
               Satellite imagery needs internet access from this browser, and the NASA tile service did not answer.
               The sites are still drawn; switch to Map for the basemap.
-            </p>
+            </Notice>
           )}
 
           <svg ref={svgRef} width={size.w} height={size.h}

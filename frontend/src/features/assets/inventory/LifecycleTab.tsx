@@ -5,6 +5,7 @@ import { usePaged } from '../../../components/Pagination';
 import { humanise, relativeTime } from '../../../lib/format';
 import { Tip } from '../../../components/HoverTip';
 import { LifecycleChip } from '../components/LifecycleChip';
+import { Notice } from '../../../components/Notice';
 
 /** An asset's lifecycle: where it is, where it may go, and how it got here.
  *
@@ -88,7 +89,7 @@ export function LifecycleTab({ deviceId }: { deviceId: string }) {
             estate and cannot move again.
           </p>
         )}
-        {error && <div className="banner" style={{ marginTop: 10 }}>{error}</div>}
+        {error && <Notice tone="error" style={{ marginTop: 10 }}>{error}</Notice>}
       </div>
 
       <h3>History</h3>

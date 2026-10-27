@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { api, type CapacityReport, type RoomSummary } from '../../api/client';
 import { Meter } from '../../components/Meter';
+import { Notice } from '../../components/Notice';
 
 /** Four constraints at once, because the useful answer is not "this room is at
  *  40% power" - it is "this room runs out of SPACE first, and no amount of
@@ -27,7 +28,7 @@ export function CapacityView({ room }: { room: RoomSummary }) {
   });
 
   if (isLoading) return <p className="muted">Loading…</p>;
-  if (error) return <div className="banner">Failed to load: {String(error)}</div>;
+  if (error) return <Notice tone="error">Failed to load: {String(error)}</Notice>;
   if (!data) return null;
 
   const unmeasured = data.constraints.filter((c) => !c.capacity);
@@ -63,11 +64,11 @@ export function CapacityView({ room }: { room: RoomSummary }) {
       </div>
 
       {unmeasured.length > 0 && (
-        <div className="banner soft">
+        <Notice tone="warn">
           {unmeasured.map((c) => c.name).join(', ')} could not be judged: no
           rating is recorded, so something else may run out first. That is an
           inventory gap, not a clean bill of health.
-        </div>
+        </Notice>
       )}
 
       {data.notes.map((n) => (

@@ -10,6 +10,7 @@ import { humanise, oneLine, relativeTime } from '../../lib/format';
 import { Tip } from '../../components/HoverTip';
 import { Pagination } from '../../components/Pagination';
 import { KpiBand, type Kpi } from '../../components/estate';
+import { Notice } from '../../components/Notice';
 
 /** The shard map (docs/26 Phase 5): which collector polls every endpoint,
  *  and every move it made.
@@ -58,7 +59,7 @@ export function ShardMap() {
   });
 
   if (q.isLoading) return <p className="muted">Loading…</p>;
-  if (q.error || !q.data) return <div className="banner">Could not load the shard map.</div>;
+  if (q.error || !q.data) return <Notice tone="error">Could not load the shard map.</Notice>;
   const { summary, items, total } = q.data;
   const moves = Object.values(summary.moves_24h).reduce((a, b) => a + b, 0);
 
@@ -261,7 +262,7 @@ function HistorySheet({ row, endpointId, onClose }: {
         </header>
         <div className="sheet-body">
           {h.isLoading && <p className="muted">Loading…</p>}
-          {h.error && <div className="banner">Could not load its history.</div>}
+          {h.error && <Notice tone="error">Could not load its history.</Notice>}
           {h.data && moves.length === 0 && (
             <p className="muted">
               No move recorded. Either no assigner has run since this endpoint was

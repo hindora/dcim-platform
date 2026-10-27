@@ -5,6 +5,7 @@ import { Pagination } from '../../../components/Pagination';
 import { Seg } from '../../../components/estate';
 import { Tip } from '../../../components/HoverTip';
 import { oneLine, relativeTime } from '../../../lib/format';
+import { Notice } from '../../../components/Notice';
 
 const STATES = ['dead', 'pending', 'done'] as const;
 
@@ -49,7 +50,7 @@ export function OutboxTable({ integrationId }: { integrationId: string }) {
       </div>
 
       {retry.error && (
-        <div className="banner">{String((retry.error as Error).message)}</div>
+        <Notice tone="error">{String((retry.error as Error).message)}</Notice>
       )}
 
       {shown.length === 0 ? (

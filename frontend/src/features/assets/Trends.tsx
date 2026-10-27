@@ -5,6 +5,7 @@ import { Seg } from '../../components/estate';
 import { MaxGlyph, MaxModal } from '../../components/MaxModal';
 import { api, type AssetTrends } from '../../api/client';
 import { toCss } from '../../lib/zoom';
+import { Notice } from '../../components/Notice';
 
 /** The windows a trend is read at. Days drive the snapshot series; the
  *  backend widens the activity chart's month window to match. */
@@ -92,7 +93,7 @@ export function Trends() {
     refetchInterval: 5 * 60_000,
   });
 
-  if (error) return <div className="banner">Failed to load: {String(error)}</div>;
+  if (error) return <Notice tone="error">Failed to load: {String(error)}</Notice>;
   if (isLoading || !data) return null;
 
   const snaps = data.snapshots;

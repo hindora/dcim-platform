@@ -10,6 +10,7 @@ import {
 } from '../../api/client';
 import { oneLine, relativeTime } from '../../lib/format';
 import { Tip } from '../../components/HoverTip';
+import { Notice } from '../../components/Notice';
 
 /** Collector releases and rollouts (docs/26 Phase 7).
  *
@@ -107,9 +108,9 @@ export function Releases() {
         <fieldset className="proto">
           <legend>Start a rollout</legend>
           {start.error && (
-            <div className="banner">
+            <Notice tone="error">
               {start.error instanceof ApiError ? start.error.message : String(start.error)}
-            </div>
+            </Notice>
           )}
           <div className="form-grid">
             <label>
@@ -134,11 +135,11 @@ export function Releases() {
             </div>
           </div>
           {single.length > 0 && (
-            <div className="banner soft">
+            <Notice tone="warn">
               {single.map((p) => p.name).join(', ')} {single.length === 1 ? 'has' : 'have'} one
               member: nothing covers it while it restarts, so its network goes unpolled for the
               upgrade's duration.
-            </div>
+            </Notice>
           )}
           <div style={{ marginTop: 10 }}>
             <button className="primary" disabled={!version || chosen.length === 0 || start.isPending}

@@ -5,6 +5,7 @@ import { ApiError, api, type MaintenanceWindow } from '../../../api/client';
 import { usePaged } from '../../../components/Pagination';
 import { humanise, oneLine, relativeTime, untilTime } from '../../../lib/format';
 import { Tip } from '../../../components/HoverTip';
+import { Notice } from '../../../components/Notice';
 
 /** One window: what it covers, and what it is holding back.
  *
@@ -50,7 +51,7 @@ export function WindowDetail() {
   const pagedTargets = usePaged(data?.targets ?? [], { noun: 'devices' });
   const pagedShelved = usePaged(data?.shelved ?? [], { noun: 'alarms' });
 
-  if (error) return <div className="banner">Failed to load: {String(error)}</div>;
+  if (error) return <Notice tone="error">Failed to load: {String(error)}</Notice>;
   if (isLoading || !data) return <p className="muted">Loading…</p>;
 
   return (
@@ -65,10 +66,10 @@ export function WindowDetail() {
       </div>
 
       {data.blocked_reason && (
-        <div className="banner">
+        <Notice tone="warn">
           <b>This window has not opened:</b> {data.blocked_reason}. Its start
           time has passed; nothing is shelved and nothing is being worked on.
-        </div>
+        </Notice>
       )}
 
       <p className="asset-table-note">
@@ -115,15 +116,15 @@ export function WindowDetail() {
         )}
       </p>
 
-      {actionError && <div className="banner">{actionError}</div>}
+      {actionError && <Notice tone="error">{actionError}</Notice>}
 
       {data.change_ref && data.jira_issue_key
         && data.change_ref !== data.jira_issue_key && (
-        <div className="banner soft">
+        <Notice tone="warn">
           Two change references disagree: somebody typed{' '}
           <b>{data.change_ref}</b>, and this platform opened{' '}
           <b>{data.jira_issue_key}</b>. The approval gate follows the second.
-        </div>
+        </Notice>
       )}
 
       <div className="asset-facts" style={{ marginBottom: 20 }}>

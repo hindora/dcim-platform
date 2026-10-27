@@ -13,6 +13,7 @@ import {
   EXCLUSION_SOURCE_WORD, duration, fromLocalInput, stamp, toLocalInput,
 } from '../../analytics/anomaly/format';
 import { DeviceSearch, type PickedDevice } from './DeviceSearch';
+import { Notice } from '../../../components/Notice';
 
 /** Spans the nightly baseline fit must not learn as normal (doc 31 section
  *  9.6). An exclusion does NOT silence anything: it keeps a maintenance
@@ -132,7 +133,7 @@ export function ExclusionsTab({ detectors }: { detectors: AnomalyDetector[] }) {
       </div>
 
       {q.isLoading && <p className="muted">Loading…</p>}
-      {q.isError && <div className="banner" role="alert">Could not load exclusions: {(q.error as Error).message}</div>}
+      {q.isError && <Notice tone="error">Could not load exclusions: {(q.error as Error).message}</Notice>}
 
       {q.data && (
         <div className="asset-scroll">
@@ -207,11 +208,11 @@ function DeleteExclusion({ x, onClose }: { x: AnomalyExclusion; onClose: () => v
         the next nightly fit again. Baselines already fitted do not change.
       </p>
       {del.error && (
-        <p className="anom-err" role="alert">
+        <Notice tone="error">
           {owned
             ? `It is managed by its source: ${(del.error as Error).message}. Change the maintenance window or the finding instead.`
             : (del.error as Error).message}
-        </p>
+        </Notice>
       )}
       <DialogActions>
         <span style={{ flex: 1 }} />
@@ -365,7 +366,7 @@ function AddExclusion({ detectors, onClose }: { detectors: AnomalyDetector[]; on
           findings and does not change baselines already fitted.
         </p>
       </div>
-      {general && <p className="anom-err" role="alert">{general}</p>}
+      {general && <Notice tone="error">{general}</Notice>}
       <DialogActions>
         <span className="muted small" aria-live="polite">{blocked ?? ''}</span>
         <span style={{ flex: 1 }} />

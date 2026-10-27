@@ -22,6 +22,7 @@ import { TagAssignForm } from './RecordWorkForm';
 import { DeviceEditor } from '../../devices/DeviceEditor';
 import { ActionGlyph } from '../../../components/ActionGlyph';
 import '../../devices/devices.css';
+import { Notice } from '../../../components/Notice';
 
 /** One asset, as an asset.
  *
@@ -127,7 +128,7 @@ export function AssetRecord() {
     enabled: Boolean(id) && tab === 'connections', retry: false,
   });
 
-  if (error) return <div className="banner">Failed to load: {String(error)}</div>;
+  if (error) return <Notice tone="error">Failed to load: {String(error)}</Notice>;
   if (isLoading || !data) return <p className="muted">Loading…</p>;
 
   const d = data;

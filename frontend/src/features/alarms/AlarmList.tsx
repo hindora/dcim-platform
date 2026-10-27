@@ -6,6 +6,7 @@ import { StatusChip } from '../../components/StatusChip';
 import { humanise, relativeTime } from '../../lib/format';
 import { useInvalidateOn, useTopics } from '../../ws/useSocket';
 import { AlarmDetailBody } from './AlarmDetail';
+import { Notice } from '../../components/Notice';
 
 const ALARM_EVENTS = ['alarm_created', 'alarm_updated', 'alarm_cleared'];
 
@@ -181,7 +182,7 @@ export function AlarmList() {
       </div>
 
       {isLoading && <p className="muted">Loading…</p>}
-      {error && <div className="banner">Failed to load: {String(error)}</div>}
+      {error && <Notice tone="error">Failed to load: {String(error)}</Notice>}
 
       <div className={`alarm-split${selectedId ? ' with-detail' : ''}`}>
       <div className="alarm-master">
@@ -243,10 +244,10 @@ export function AlarmList() {
 
       {selectedId && !selected && !fetched.isLoading && (
         <aside className="alarm-detail">
-          <div className="banner">
+          <Notice tone="warn">
             No alarm with that id. It may have been purged by retention, or
             the link may be truncated.
-          </div>
+          </Notice>
           <div className="toolbar">
             <button onClick={closeAlarm}>Back to the list</button>
           </div>

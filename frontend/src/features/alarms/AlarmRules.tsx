@@ -8,6 +8,7 @@ import {
 import { usePaged } from '../../components/Pagination';
 import { humanise, metricLabel, relativeTime } from '../../lib/format';
 import { METRICS, type MetricKey } from '../../lib/metrics.gen';
+import { Notice } from '../../components/Notice';
 
 /** The estate's alarm policy: every rule, what it watches, when it raises and
  *  when it lets go.
@@ -77,7 +78,7 @@ export function AlarmRules() {
         gets an override on its own page.
       </p>
 
-      {error && <div className="banner" role="alert">{error}</div>}
+      {error && <Notice tone="error">{error}</Notice>}
 
       <div className="toolbar" style={{ display: 'flex', gap: 10, margin: '12px 0', flexWrap: 'wrap' }}>
         <input value={text} onChange={(e) => setText(e.target.value)} aria-label="Search rules"
@@ -95,7 +96,7 @@ export function AlarmRules() {
       </div>
 
       {q.isLoading && <p className="muted">Loading…</p>}
-      {q.isError && <div className="banner">The rules could not be read.</div>}
+      {q.isError && <Notice tone="error">The rules could not be read.</Notice>}
 
       <div className="asset-scroll">
         <table>
@@ -229,8 +230,8 @@ function RuleSheet({ rule, onClose }: { rule: AlarmRule; onClose: () => void }) 
           <button className="close" onClick={onClose} aria-label="Close">✕</button>
         </header>
         <div className="sheet-body">
-          {err && <div className="banner" role="alert">
-            {err instanceof ApiError ? err.message : String((err as Error).message)}</div>}
+          {err && <Notice tone="error">
+            {err instanceof ApiError ? err.message : String((err as Error).message)}</Notice>}
           <div className="form-grid">
             {numeric ? (
               <>
@@ -344,7 +345,7 @@ function NewRuleSheet({ rules, onClose }: { rules: AlarmRule[]; onClose: () => v
           <button className="close" onClick={onClose} aria-label="Close">✕</button>
         </header>
         <div className="sheet-body">
-          {create.error && <div className="banner" role="alert">{String((create.error as Error).message)}</div>}
+          {create.error && <Notice tone="error">{String((create.error as Error).message)}</Notice>}
           <div className="form-grid">
             <label><span>Name</span>
               <input value={f.name} placeholder="e.g. Hot GPU server CPU" onChange={(e) => set('name', e.target.value)} />

@@ -10,6 +10,7 @@ import { usePaged } from '../../../components/Pagination';
 import { Seg } from '../../../components/estate';
 import { humanise, relativeTime } from '../../../lib/format';
 import { LifecycleChip } from '../components/LifecycleChip';
+import { Notice } from '../../../components/Notice';
 
 /** Commissioning: devices whose hardware has moved ahead of their record.
  *
@@ -54,7 +55,7 @@ export function ReadyQueue() {
     refetchInterval: 60_000,
   });
 
-  if (error) return <div className="banner">Failed to load: {String(error)}</div>;
+  if (error) return <Notice tone="error">Failed to load: {String(error)}</Notice>;
 
   const items = data?.items ?? [];
   const groups = ['discrepancy', 'racked', 'ready']
@@ -189,7 +190,7 @@ function Row({ row }: { row: CommissioningRow }) {
                 ? 'Recording…'
                 : `Mark ${humanise(row.proposed_state)}`}
             </button>
-            {error && <div className="banner">{error}</div>}
+            {error && <Notice tone="error">{error}</Notice>}
           </>
         ) : (
           // A discrepancy has no safe button. The honest action is to open the

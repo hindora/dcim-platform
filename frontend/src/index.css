@@ -456,10 +456,39 @@ button.primary { background: var(--accent-dim); border-color: var(--accent); }
  * than as a decision somebody had not made yet. One rule, globally. */
 button:disabled { opacity: 0.45; cursor: not-allowed; }
 
-.banner {
-  background: var(--bg-raised); border: 1px solid var(--critical);
-  border-left-width: 3px; border-radius: var(--radius);
-  padding: 10px 14px; margin-bottom: 16px; color: var(--text);
+/* An in-page message (components/Notice.tsx). The tone is a token, and the
+   glyph, the leading edge, the border and the wash all derive from it, so a
+   new tone is one line. The wash is faint on purpose: the text is read at
+   full contrast on what is still, nearly, the panel colour. */
+.notice {
+  --notice: var(--critical);
+  display: grid; grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: start; gap: 10px;
+  padding: 10px 14px; margin-bottom: 16px;
+  font-size: 13px; line-height: 1.5; color: var(--text);
+  background: color-mix(in srgb, var(--notice) 7%, var(--bg-raised));
+  border: 1px solid color-mix(in srgb, var(--notice) 40%, var(--border));
+  border-left: 3px solid var(--notice);
+  border-radius: var(--radius);
+}
+.notice-warn { --notice: var(--warn); }
+.notice-info { --notice: var(--accent); }
+.notice-ok { --notice: var(--ok); }
+.notice-icon { color: var(--notice); margin-top: 2px; }
+.notice-body { min-width: 0; overflow-wrap: anywhere; }
+.notice-body > :first-child { margin-top: 0; }
+.notice-body > :last-child { margin-bottom: 0; }
+.notice-body ul { margin: 4px 0; padding-left: 18px; }
+.notice-heading { display: block; margin-bottom: 2px; }
+.notice-action { display: flex; align-items: center; gap: 8px; align-self: center; }
+
+/* Narrow panels: the floor-plan side panel, the map overlay. */
+.notice-compact { padding: 7px 10px; margin: 6px 0 8px; font-size: 12px; gap: 8px; }
+
+/* Read by assistive tech, not drawn. */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
 }
 .muted { color: var(--text-muted); }
 /* Standalone warning text. .chip.warn colours a chip; this colours a run of
@@ -747,7 +776,6 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 /* .warn already exists as standalone warning text; these are its siblings. */
 .ok { color: var(--ok); }
 .critical { color: var(--critical); }
-.banner.soft { border-color: var(--warn); }
 
 /* The self-monitoring verdict. Red-edged when the platform cannot vouch for
    its own numbers, because a quiet screen is the failure mode. */

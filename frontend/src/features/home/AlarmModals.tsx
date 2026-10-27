@@ -25,6 +25,7 @@ import { api, type AlarmTaxonomy } from '../../api/client';
 import { Modal } from '../../components/estate';
 import { CategoryGlyph } from '../../components/CategoryGlyph';
 import { metaFor } from '../../components/alertMeta';
+import { Notice } from '../../components/Notice';
 
 function useTaxonomy() {
   return useQuery<AlarmTaxonomy>({
@@ -142,7 +143,7 @@ export function AlarmLegend({ onClose }: { onClose: () => void }) {
              + 'who owns the first five minutes. Categories are mutually exclusive, '
              + 'so the counters sum to the total. Counts are ROOTS only: one failed '
              + 'uplink is one alarm, not one per device behind it.'}>
-      {error && <div className="banner">Could not load the alarm taxonomy.</div>}
+      {error && <Notice tone="error">Could not load the alarm taxonomy.</Notice>}
       {isLoading && <p className="muted">Loading…</p>}
 
       {data && (

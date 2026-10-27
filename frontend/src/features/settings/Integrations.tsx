@@ -5,6 +5,7 @@ import { oneLine, relativeTime, untilTime } from '../../lib/format';
 import { Tip } from '../../components/HoverTip';
 import { IntegrationSheet } from './components/IntegrationSheet';
 import { NewIntegration } from './components/NewIntegration';
+import { Notice } from '../../components/Notice';
 
 /** Where alarms become tickets, and what happened to the ones that did.
  *
@@ -31,7 +32,7 @@ export function Integrations() {
   });
 
   if (page.isLoading) return <p className="muted">Loading…</p>;
-  if (page.error) return <div className="banner">Could not load integrations.</div>;
+  if (page.error) return <Notice tone="error">Could not load integrations.</Notice>;
 
   const rows = page.data?.items ?? [];
   const publicUrl = page.data?.public_base_url ?? '';
@@ -50,20 +51,20 @@ export function Integrations() {
       </div>
 
       {!publicUrl && rows.length > 0 && (
-        <div className="banner soft">
+        <Notice tone="warn">
           <b>DCIM_PUBLIC_BASE_URL is not set.</b> Tickets will be created
           without a link back to the condition that raised them, and no inbound
           webhook can be registered — Jira has no address to call. Set it on
           the backend and restart.
-        </div>
+        </Notice>
       )}
 
       {toggle.error && (
-        <div className="banner">
+        <Notice tone="error">
           {toggle.error instanceof ApiError
             ? toggle.error.message
             : String((toggle.error as Error).message)}
-        </div>
+        </Notice>
       )}
 
       {rows.length === 0 ? (

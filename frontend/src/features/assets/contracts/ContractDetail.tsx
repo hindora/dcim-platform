@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { api, type SupportContract } from '../../../api/client';
 import { usePaged } from '../../../components/Pagination';
 import { humanise } from '../../../lib/format';
+import { Notice } from '../../../components/Notice';
 
 /** One contract and everything it covers. */
 export function ContractDetail() {
@@ -15,7 +16,7 @@ export function ContractDetail() {
   });
   const paged = usePaged(data?.devices ?? [], { noun: 'assets' });
 
-  if (error) return <div className="banner">Failed to load: {String(error)}</div>;
+  if (error) return <Notice tone="error">Failed to load: {String(error)}</Notice>;
   if (isLoading || !data) return <p className="muted">Loading…</p>;
 
   return (

@@ -55,6 +55,7 @@ import { AlarmPanel } from './AlarmPanel';
 import { Pagination } from '../../components/Pagination';
 import { RailCards } from './RailCards';
 import { toCss } from '../../lib/zoom';
+import { Notice } from '../../components/Notice';
 
 const ALARM_EVENTS = ['alarm_created', 'alarm_updated', 'alarm_cleared'];
 
@@ -436,7 +437,7 @@ export function Home() {
             )}
           </div>
 
-          {error && <div className="banner">Failed to load sites: {String(error)}</div>}
+          {error && <Notice tone="error">Failed to load sites: {String(error)}</Notice>}
 
           {/* The site these rooms belong to: a line, not a second table.
               Stacking two tables with their own headers and their own

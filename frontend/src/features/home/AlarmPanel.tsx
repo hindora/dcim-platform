@@ -37,6 +37,7 @@ import { AlarmDetailModal } from '../alarms/AlarmDetail';
 import { Pagination } from '../../components/Pagination';
 import { metaFor } from '../../components/alertMeta';
 import { humanise, relativeTime } from '../../lib/format';
+import { Notice } from '../../components/Notice';
 
 const SEVERITIES = ['critical', 'major', 'minor', 'warning'] as const;
 
@@ -724,7 +725,7 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
         </header>
 
         <div className="sheet-body">
-          {error && <div className="banner">Could not load the rooms behind this counter.</div>}
+          {error && <Notice tone="error">Could not load the rooms behind this counter.</Notice>}
           {isLoading && <p className="muted">Loading…</p>}
 
           {/* Two populations of the same rooms: what is open now, and

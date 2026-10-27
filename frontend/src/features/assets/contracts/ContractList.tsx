@@ -5,6 +5,7 @@ import { api, type Supplier, type SupportContract } from '../../../api/client';
 import { usePaged } from '../../../components/Pagination';
 import { humanise } from '../../../lib/format';
 import { ContractForm, SupplierForm } from './ContractForm';
+import { Notice } from '../../../components/Notice';
 
 /** Support contracts, soonest expiry first.
  *
@@ -25,7 +26,7 @@ export function ContractList() {
     queryFn: api.suppliers,
   });
 
-  if (error) return <div className="banner">Failed to load: {String(error)}</div>;
+  if (error) return <Notice tone="error">Failed to load: {String(error)}</Notice>;
 
   const items = data?.items ?? [];
   const days = data?.expiring_days ?? 90;

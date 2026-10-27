@@ -7,6 +7,7 @@ import {
 import { usePaged } from '../../components/Pagination';
 import { metricLabel } from '../../lib/format';
 import { METRICS, type MetricKey } from '../../lib/metrics.gen';
+import { Notice } from '../../components/Notice';
 
 /** The alarm thresholds that apply to THIS device.
  *
@@ -145,8 +146,8 @@ function OverrideSheet({ deviceId, rule, onClose }: {
           <button className="close" onClick={onClose} aria-label="Close">✕</button>
         </header>
         <div className="sheet-body">
-          {err && <div className="banner" role="alert">
-            {err instanceof ApiError ? err.message : String((err as Error).message)}</div>}
+          {err && <Notice tone="error">
+            {err instanceof ApiError ? err.message : String((err as Error).message)}</Notice>}
           <div className="form-grid">
             <label>
               <span>Raises when {rule.operator}{u ? ` (${u})` : ''}</span>

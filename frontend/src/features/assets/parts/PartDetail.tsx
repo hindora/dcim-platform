@@ -11,6 +11,7 @@ import {
 import { usePaged } from '../../../components/Pagination';
 import { humanise, relativeTime } from '../../../lib/format';
 import { Dialog, DialogActions } from '../components/Dialog';
+import { Notice } from '../../../components/Notice';
 
 /** One part: where it is, and every movement that got it there.
  *
@@ -41,7 +42,7 @@ export function PartDetail() {
   });
   const pagedLedger = usePaged(ledger?.items ?? [], { noun: 'movements' });
 
-  if (error) return <div className="banner">Failed to load: {String(error)}</div>;
+  if (error) return <Notice tone="error">Failed to load: {String(error)}</Notice>;
   if (isLoading || !data) return <p className="muted">Loading…</p>;
 
   return (
@@ -228,7 +229,7 @@ function MovementForm({ partId, stores, onClose }: {
           + 'count, so it has to say why.'}
       </p>
 
-      {error && <div className="banner">{error}</div>}
+      {error && <Notice tone="error">{error}</Notice>}
 
       <DialogActions>
         <span style={{ flex: 1 }} />

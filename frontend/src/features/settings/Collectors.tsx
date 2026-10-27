@@ -14,6 +14,7 @@ import {
 } from '../../api/client';
 import { oneLine, relativeTime, untilTime } from '../../lib/format';
 import { Tip } from '../../components/HoverTip';
+import { Notice } from '../../components/Notice';
 
 /** What each collector is running, and what it has been told to run.
  *
@@ -47,7 +48,7 @@ export function Collectors() {
     { id: string; enrollment: EnrollmentToken; fallbackToken: string } | null>(null);
 
   if (page.isLoading) return <p className="muted">Loading…</p>;
-  if (page.error) return <div className="banner">Could not load collectors.</div>;
+  if (page.error) return <Notice tone="error">Could not load collectors.</Notice>;
 
   const rows = page.data?.collectors ?? [];
   const sections = page.data?.schema.sections ?? [];
@@ -74,7 +75,7 @@ export function Collectors() {
       </div>
 
       {unassigned > 0 && (
-        <div className="banner soft">
+        <Notice tone="warn">
           <Tip tip={oneLine(`These endpoints hashed to no collector at all — either
                   their site has nobody placed in it, or every collector placed
                   there is draining or decommissioned. Nothing is polling them.`)}>
@@ -82,7 +83,7 @@ export function Collectors() {
             {unassigned === 1 ? 'is' : 'are'} unassigned — no collector serves
             their site.
           </Tip>
-        </div>
+        </Notice>
       )}
 
       <table>
@@ -334,13 +335,13 @@ function CreateDialog({ existing, sites, pools, onClose, onCreated }: {
         </header>
         <div className="sheet-body">
           {create.error && (
-            <div className="banner">
+            <Notice tone="error">
               {create.error instanceof ApiError && create.error.status === 409
                 ? 'A collector with this id already exists.'
                 : create.error instanceof ApiError && create.error.status === 403
                   ? 'Creating a collector needs an admin account.'
                   : String((create.error as Error).message)}
-            </div>
+            </Notice>
           )}
           <div className="form-grid">
             <label>
@@ -441,7 +442,7 @@ function DrainPanel({ row, locked, onDone }: {
                 {p.pinned ? `, ${p.pinned} of them pinned to it` : ''}.
                 {p.owned - p.pinned > 0 && ' The rest leave on its next assignment fetch.'}</>}
         </p>
-        {err && <div className="banner">{(err as Error).message}</div>}
+        {err && <Notice tone="error">{(err as Error).message}</Notice>}
         <button disabled={locked || undrain.isPending} onClick={() => undrain.mutate()}>
           {undrain.isPending ? 'Returning…' : 'Return to service'}
         </button>
@@ -475,7 +476,7 @@ function DrainPanel({ row, locked, onDone }: {
               <span className="critical">{p.stranded} would be polled by nothing. </span>
             )}
           </p>
-          {p.blockers.map((b) => <div key={b} className="banner">{b}</div>)}
+          {p.blockers.map((b) => <Notice tone="warn" key={b}>{b}</Notice>)}
           {p.pinned > 0 && (
             <label className="check" style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
               <input type="checkbox" checked={releasePins}
@@ -495,7 +496,7 @@ function DrainPanel({ row, locked, onDone }: {
           </p>
         </>
       )}
-      {err && <div className="banner">{(err as Error).message}</div>}
+      {err && <Notice tone="error">{(err as Error).message}</Notice>}
       <div style={{ display: 'flex', gap: 8 }}>
         <button onClick={() => setOpen(false)}>Cancel</button>
         <button className="primary"
@@ -532,11 +533,11 @@ function TokenDialog({ id, token, title, lede, onClose }: {
           <button className="close" onClick={onClose} aria-label="Close">✕</button>
         </header>
         <div className="sheet-body">
-          <div className="banner soft">
+          <Notice tone="info">
             This token is shown once. Copy it into the collector's environment
             (<code>DCIM_COLLECTOR_TOKEN</code>) or config now — the platform
             keeps no copy to show again.
-          </div>
+          </Notice>
           <div className="form-grid">
             <label>
               <span>Collector id</span>
@@ -603,13 +604,13 @@ function EnrollmentDialog({ id, enrollment, fallbackToken, title, lede, onClose 
           <button className="close" onClick={onClose} aria-label="Close">✕</button>
         </header>
         <div className="sheet-body">
-          <div className="banner soft">
+          <Notice tone="info">
             This token is shown once and expires{' '}
             {untilTime(enrollment.expires_at)}. Run the command below on
             the collector's own host — it generates a key pair locally,
             exchanges the token for a certificate, and never sends its
             private key anywhere.
-          </div>
+          </Notice>
           <div className="form-grid">
             <label>
               <span>Install command</span>
@@ -756,11 +757,11 @@ function ManageSheet({ row, sections, sites, pools, onClose }: {
 
           <div className="sheet-body">
             {locked && (
-              <div className="banner soft">
+              <Notice tone="info">
                 Decommissioned {relativeTime(row.state_changed_at)}
                 {row.state_changed_by ? ` by ${row.state_changed_by}` : ''}. Its
                 token no longer works and it cannot be changed further.
-              </div>
+              </Notice>
             )}
 
             <fieldset className="proto">
@@ -868,27 +869,27 @@ function ManageSheet({ row, sections, sites, pools, onClose }: {
             </fieldset>
 
             {saveConfig.error && (
-              <div className="banner">
+              <Notice tone="error">
                 {saveConfig.error instanceof ApiError && saveConfig.error.status === 403
                   ? 'Changing what a collector runs needs an admin account.'
                   : String((saveConfig.error as Error).message)}
-              </div>
+              </Notice>
             )}
             {!row.effective || Object.keys(row.effective).length === 0 ? (
-              <div className="banner soft">
+              <Notice tone="info">
                 This collector has not reported its own settings yet, so the
                 fields below show only what is overridden here. They fill in on
                 its next heartbeat.
-              </div>
+              </Notice>
             ) : null}
             {row.config_error && (
-              <div className="banner">
+              <Notice tone="error">
                 The collector could not apply its last configuration:{' '}
                 <span className="mono">{row.config_error}</span>
-              </div>
+              </Notice>
             )}
             {moved.length > 0 && (
-              <div className="banner soft">
+              <Notice tone="warn">
                 <p style={{ margin: '0 0 8px' }}>
                   This moves {moved.length === 1 ? 'a listener' : 'listeners'}:{' '}
                   {moved.map((m) => `${m.label} ${m.from || 'unset'} → ${m.to}`)
@@ -902,7 +903,7 @@ function ManageSheet({ row, sections, sites, pools, onClose }: {
                          onChange={(e) => setConfirmed(e.target.checked)} />
                   <span>I will reconfigure the devices to send to the new address</span>
                 </label>
-              </div>
+              </Notice>
             )}
 
             {sections.map((section) => (

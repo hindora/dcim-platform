@@ -7,6 +7,7 @@ import {
 import { NumberInput } from '../../../components/NumberInput';
 import { Dialog, DialogActions } from '../../assets/components/Dialog';
 import { boundsText, paramText, rangeError, unitText } from '../../analytics/anomaly/format';
+import { Notice } from '../../../components/Notice';
 
 /** The fields `param_schema` describes (doc 31 section 9.4, D9).
  *
@@ -202,7 +203,7 @@ export function ParamForm({ detector, canEdit }: { detector: AnomalyDetector; ca
           </button>
         </div>
       )}
-      {problem && <div className="banner" role="alert" style={{ marginTop: 10 }}>{problem}</div>}
+      {problem && <Notice tone="error" style={{ marginTop: 10 }}>{problem}</Notice>}
 
       {confirming && (
         <Dialog title={isL5 ? `Turn on MAJOR escalation?` : `Save ${detector.id} as v${next}?`}
@@ -237,7 +238,7 @@ export function ParamForm({ detector, canEdit }: { detector: AnomalyDetector; ca
             </>
           )}
           {save.isError && !Object.keys(serverErr).length && (
-            <p className="anom-err" role="alert">{(save.error as Error).message}</p>
+            <Notice tone="error">{(save.error as Error).message}</Notice>
           )}
           <DialogActions>
             <span style={{ flex: 1 }} />

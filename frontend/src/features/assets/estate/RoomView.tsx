@@ -5,6 +5,7 @@ import {
 } from '../../../api/client';
 import { humanise } from '../../../lib/format';
 import { rackLabel, rowLabel } from './labels';
+import { Notice } from '../../../components/Notice';
 
 /** The racks in one room, walked the way the floor is: row by row.
  *
@@ -35,7 +36,7 @@ export function RoomView() {
     enabled: Boolean(id),
   });
 
-  if (error) return <div className="banner">Failed to load: {String(error)}</div>;
+  if (error) return <Notice tone="error">Failed to load: {String(error)}</Notice>;
   if (isLoading) return <p className="muted">Loading…</p>;
 
   const racks = data?.items ?? [];

@@ -24,6 +24,7 @@ import { glyphFor, TileGlyph, type GlyphName } from './glyphs';
 import { Sparkline } from '../../components/Sparkline';
 import { PanelMetering, meteringWords } from '../../components/PanelMetering';
 import { BUILDING_LAYERS, NO_READING, bandColor, roomLayerBands, roomLayerText, roomLayerValue, type BuildingLayer } from './layers';
+import { Notice } from '../../components/Notice';
 
 /** The viewer's side panel and legend. Facts only: every figure here is one
  *  the estate pages also show, read from the same endpoints. */
@@ -427,7 +428,7 @@ export function UnitAlarms({ deviceId, deviceName }: { deviceId: string; deviceN
       {!q.isLoading && !q.isError && items.length === 0 && (
         <p className="muted vw-note">Nothing open on {deviceName}.</p>
       )}
-      {error && <p className="vw-note vw-bad" role="alert">{error}</p>}
+      {error && <Notice tone="error" className="notice-compact">{error}</Notice>}
       <ul className="vw-alarms">
         {items.map((a) => (
           <li key={a.id} className={`vw-alarm sev-${a.severity.toLowerCase()}${a.is_symptom ? ' is-symptom' : ''}`}>

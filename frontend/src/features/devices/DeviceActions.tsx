@@ -8,6 +8,7 @@ import {
 } from '../../api/client';
 import { usePaged } from '../../components/Pagination';
 import { relativeTime } from '../../lib/format';
+import { Notice } from '../../components/Notice';
 
 /** Do something to the device: switch a PDU outlet, restart a server.
  *
@@ -194,27 +195,27 @@ function ActionSheet({ deviceId, def, outlet, onClose }: {
                   disabled={cmd !== null && !finished}>✕</button>
         </header>
         <div className="sheet-body">
-          {err && <div className="banner" role="alert">
-            {err instanceof ApiError ? err.message : String((err as Error).message)}</div>}
+          {err && <Notice tone="error">
+            {err instanceof ApiError ? err.message : String((err as Error).message)}</Notice>}
           {preview.isLoading && <p className="muted">Working out what this affects…</p>}
 
           {p && !cmd && (
             <>
               {p.dark.length > 0 && (
-                <div className="banner" role="alert">
+                <Notice tone="error">
                   <b>Goes dark:</b>
                   <ul className="vw-list">
                     {p.dark.map((d) => <li key={d.id}>{d.name} <span className="muted">· {d.why}</span></li>)}
                   </ul>
-                </div>
+                </Notice>
               )}
               {p.degraded.length > 0 && (
-                <div className="banner soft">
+                <Notice tone="warn">
                   <b>Loses redundancy:</b>
                   <ul className="vw-list">
                     {p.degraded.map((d) => <li key={d.id}>{d.name} <span className="muted">· {d.why}</span></li>)}
                   </ul>
-                </div>
+                </Notice>
               )}
               {p.note && <p className="muted">{p.note}</p>}
               <div className="form-grid">

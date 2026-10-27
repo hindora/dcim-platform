@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { api, type CoolingPlant, type RoomSummary } from '../../api/client';
 import { Meter } from '../../components/Meter';
+import { Notice } from '../../components/Notice';
 
 /** Chiller staging, loop ΔT, and whether the instruments agree with each other.
  *
@@ -34,7 +35,7 @@ export function CoolingView({ room }: { room: RoomSummary }) {
   });
 
   if (isLoading) return <p className="muted">Loading…</p>;
-  if (error) return <div className="banner">Failed to load: {String(error)}</div>;
+  if (error) return <Notice tone="error">Failed to load: {String(error)}</Notice>;
   if (!data) return null;
 
   return (

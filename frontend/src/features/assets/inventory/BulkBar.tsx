@@ -8,6 +8,7 @@ import {
 } from '../../../api/client';
 import { humanise } from '../../../lib/format';
 import { Dialog, DialogActions } from '../components/Dialog';
+import { Notice } from '../../../components/Notice';
 
 /** The table's toolbar, which becomes contextual when rows are selected.
  *
@@ -225,7 +226,7 @@ function LifecycleAction({ selected, allowed, onClose, onDone }: {
           same state.
         </p>
       )}
-      {error && <div className="banner">{error}</div>}
+      {error && <Notice tone="error">{error}</Notice>}
 
       <DialogActions>
         <span style={{ flex: 1 }} />
@@ -316,7 +317,7 @@ function TagsAction({ selected, onClose, onDone }: {
                remove.length && `detach ${remove.length}`]
               .filter(Boolean).join(', ') + '.'}
       </p>
-      {error && <div className="banner">{error}</div>}
+      {error && <Notice tone="error">{error}</Notice>}
 
       <DialogActions>
         <span style={{ flex: 1 }} />
@@ -371,7 +372,7 @@ function FieldsAction({ selected, onClose, onDone }: {
       <p className="asset-form-note">
         Empty fields are left unchanged.
       </p>
-      {error && <div className="banner">{error}</div>}
+      {error && <Notice tone="error">{error}</Notice>}
       <DialogActions>
         <span style={{ flex: 1 }} />
         <button type="button" onClick={onClose}>Cancel</button>

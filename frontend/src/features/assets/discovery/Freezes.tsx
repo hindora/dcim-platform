@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, type DiscoveryBlackout, type RangeOptions } from '../../../api/client';
 import { Dialog, DialogActions } from '../components/Dialog';
+import { Notice } from '../../../components/Notice';
 
 /** "5 Jan 14:00", in this browser's time. */
 export function when(iso: string): string {
@@ -86,7 +87,7 @@ function FreezeItem({ b }: { b: DiscoveryBlackout }) {
           </button>
         )}
       </div>
-      {error && <div className="banner">{error}</div>}
+      {error && <Notice tone="error">{error}</Notice>}
     </li>
   );
 }
@@ -159,7 +160,7 @@ function FreezeDialog({ onClose }: { onClose: () => void }) {
                  placeholder="Change record, e.g. CHG0012345" />
         </label>
         {backwards && <p className="disc-bad asset-form-wide">Until must be after From.</p>}
-        {error && <div className="banner asset-form-wide">{error}</div>}
+        {error && <Notice tone="error" className="asset-form-wide">{error}</Notice>}
       </div>
       <DialogActions>
         <button type="button" onClick={onClose}>Cancel</button>

@@ -7,6 +7,7 @@ import { useHoverTip } from '../../components/HoverTip';
 import { MaxGlyph, MaxModal } from '../../components/MaxModal';
 import { Donut, Gauge, VColumns } from './components/Shapes';
 import { Trends } from './Trends';
+import { Notice } from '../../components/Notice';
 
 /** Composition and capacity of the estate.
  *
@@ -43,7 +44,7 @@ export function Charts() {
     refetchInterval: 60_000,
   });
 
-  if (error) return <div className="banner">Failed to load: {String(error)}</div>;
+  if (error) return <Notice tone="error">Failed to load: {String(error)}</Notice>;
   if (isLoading || !data) {
     return (
       <div className="asset-cols" style={{ marginTop: 20 }}>

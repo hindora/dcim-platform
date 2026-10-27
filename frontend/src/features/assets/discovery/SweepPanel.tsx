@@ -14,6 +14,7 @@ import {
   collectorTrouble, lastSwept, MAX_ADDRESSES, parseCidr, probeCount, PURPOSE_LABEL,
   PURPOSE_TAG, SECONDS_PER_ADDRESS,
 } from './ranges';
+import { Notice } from '../../../components/Notice';
 
 /** How many runs to read. Enough to say when each range was last audited, which
  *  is the question the range list exists to answer. */
@@ -318,7 +319,7 @@ export function SweepPanel({ activeRun, onPickRun }: {
 
         {report && <p className="muted disc-estimate">{report}</p>}
         {error && (
-          <div className="banner">
+          <Notice tone="error">
             {error}
             {/* Refused for a freeze: the override is one deliberate click, and
                 the API audits it. */}
@@ -331,7 +332,7 @@ export function SweepPanel({ activeRun, onPickRun }: {
                 </button>
               </div>
             )}
-          </div>
+          </Notice>
         )}
       </section>
 
@@ -887,7 +888,7 @@ function ScheduleItem({ s, onChanged, onEdit, onPickRun, lastRun }: {
         )}
       </div>
       {history && <ScheduleHistory scheduleId={s.id} onPickRun={onPickRun} />}
-      {error && <div className="banner">{error}</div>}
+      {error && <Notice tone="error">{error}</Notice>}
     </li>
   );
 }

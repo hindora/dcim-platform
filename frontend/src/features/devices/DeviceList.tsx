@@ -3,6 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { api, type DeviceSummary, type Page } from '../../api/client';
 import { StatusChip } from '../../components/StatusChip';
 import { humanise, relativeTime } from '../../lib/format';
+import { Notice } from '../../components/Notice';
 
 /** The filters this page understands, and the query-string key each one uses.
  *
@@ -106,7 +107,7 @@ export function DeviceList() {
       </div>
 
       {isLoading && <p className="muted">Loading…</p>}
-      {error && <div className="banner">Failed to load: {String(error)}</div>}
+      {error && <Notice tone="error">Failed to load: {String(error)}</Notice>}
 
       {data && (
         <>

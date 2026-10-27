@@ -7,6 +7,7 @@ import { Seg } from '../../../components/estate';
 import { VColumns } from '../../assets/components/Shapes';
 import { Tip } from '../../../components/HoverTip';
 import { oneLine } from '../../../lib/format';
+import { Notice } from '../../../components/Notice';
 
 const SEVERITIES = ['CRITICAL', 'MAJOR', 'MINOR', 'WARNING', 'INFO'] as const;
 const CATEGORIES = ['power', 'cooling', 'environmental', 'it_equipment',
@@ -202,9 +203,9 @@ export function PolicyEditor({ integrationId, effective, onChange }: {
         </div>
 
         {preview.error && (
-          <div className="banner">
+          <Notice tone="error">
             {String((preview.error as Error).message)}
-          </div>
+          </Notice>
         )}
 
         {!result && !preview.isPending && (

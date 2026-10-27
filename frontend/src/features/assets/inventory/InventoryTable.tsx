@@ -14,6 +14,7 @@ import { BulkBar } from './BulkBar';
 import { ImportDialog } from './ImportDialog';
 import { Pagination } from '../../../components/Pagination';
 import { toCss } from '../../../lib/zoom';
+import { Notice } from '../../../components/Notice';
 
 /** The asset table.
  *
@@ -377,7 +378,7 @@ export function InventoryTable() {
         </aside>
 
         <div>
-          {error && <div className="banner">Failed to load: {String(error)}</div>}
+          {error && <Notice tone="error">Failed to load: {String(error)}</Notice>}
 
           <BulkBar selected={selected} allowed={allowed}
                    onClear={() => setSelected([])}>

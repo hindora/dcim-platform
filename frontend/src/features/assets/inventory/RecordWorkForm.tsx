@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ApiError, api, type MaintenanceWindow, type Tag } from '../../../api/client';
 import { Dialog, DialogActions } from '../components/Dialog';
+import { Notice } from '../../../components/Notice';
 
 /** Record work done on one asset.
  *
@@ -72,7 +73,7 @@ export function RecordWorkForm({ deviceId, onClose }: {
                     onChange={(e) => setDetail(e.target.value)} />
         </label>
       </div>
-      {error && <div className="banner">{error}</div>}
+      {error && <Notice tone="error">{error}</Notice>}
       <DialogActions>
         <span style={{ flex: 1 }} />
         <button type="button" onClick={onClose}>Cancel</button>
@@ -147,7 +148,7 @@ export function TagAssignForm({ objectType, objectId, onClose }: {
           ))}
         </div>
       )}
-      {error && <div className="banner">{error}</div>}
+      {error && <Notice tone="error">{error}</Notice>}
       <DialogActions>
         <span style={{ flex: 1 }} />
         <button type="button" onClick={onClose}>Done</button>

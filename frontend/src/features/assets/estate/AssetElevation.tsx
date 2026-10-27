@@ -6,6 +6,7 @@ import {
 import { humanise } from '../../../lib/format';
 import { useHoverTip } from '../../../components/HoverTip';
 import { rackLabel, rowLabel } from './labels';
+import { Notice } from '../../../components/Notice';
 
 /** What kind of thing occupies a slot, as a colour stripe. The hues are the
  *  console's own category tokens - power amber, cooling teal, network
@@ -66,7 +67,7 @@ export function AssetElevation() {
   });
   const { bind, tipEl } = useHoverTip();
 
-  if (error) return <div className="banner">Failed to load: {String(error)}</div>;
+  if (error) return <Notice tone="error">Failed to load: {String(error)}</Notice>;
   if (isLoading || !data) return <p className="muted">Loading…</p>;
 
   const { rack, positions, free_blocks: freeBlocks, zero_u_devices: zeroU } = data;

@@ -5,6 +5,7 @@ import { api, type MaintenanceWindow } from '../../../api/client';
 import { usePaged } from '../../../components/Pagination';
 import { humanise, untilTime } from '../../../lib/format';
 import { WindowForm } from './WindowForm';
+import { Notice } from '../../../components/Notice';
 
 /** Maintenance windows, and what each is holding out of the alarm console.
  *
@@ -27,7 +28,7 @@ export function WindowList() {
     refetchInterval: 30_000,
   });
 
-  if (error) return <div className="banner">Failed to load: {String(error)}</div>;
+  if (error) return <Notice tone="error">Failed to load: {String(error)}</Notice>;
 
   const items = data?.items ?? [];
   const active = items.filter((w) => w.status === 'active');

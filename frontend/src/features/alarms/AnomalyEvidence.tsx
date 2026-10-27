@@ -16,6 +16,7 @@ import {
   duration, num, signed, stamp,
 } from '../analytics/anomaly/format';
 import '../analytics/anomaly.css';
+import { Notice } from '../../components/Notice';
 
 /** The evidence behind an alarm that analysis raised (doc 31 section 8).
  *
@@ -88,9 +89,9 @@ export function AnomalyEvidence({ alarm }: { alarm: Alarm }) {
       )}
 
       {!loading && error && (
-        <div className="banner" role="alert">
+        <Notice tone="error">
           Could not load the evidence: {(error as Error).message}
-        </div>
+        </Notice>
       )}
 
       {!loading && !error && lookup.data && !findingId && !health.isLoading && (
@@ -438,7 +439,7 @@ function Verdict({ f, alarm }: { f: AnomalyFindingDetail; alarm: Alarm }) {
 
       <span className="anom-live" aria-live="polite">{message ?? ''}</span>
       {message && !problem && <p className="anom-note" style={{ margin: 0 }}>{message}</p>}
-      {problem && <div className="banner" role="alert">{problem}</div>}
+      {problem && <Notice tone="error">{problem}</Notice>}
 
       {dialog === 'confirm' && (
         <ConfirmDialog f={f} pending={send.isPending}
@@ -478,7 +479,7 @@ function ConfirmDialog({ f, pending, error, onClose, onSend }: {
         {f.kind === 'process' ? ' Its window is also kept out of the next baseline fit.' : ''}
       </p>
       <NoteField id={`confirm-note-${f.id}`} value={note} onChange={setNote} />
-      {error && <p className="anom-err" role="alert">{error}</p>}
+      {error && <Notice tone="error">{error}</Notice>}
       <DialogActions>
         <span style={{ flex: 1 }} />
         <button type="button" onClick={onClose}>Cancel</button>
@@ -519,7 +520,7 @@ function DismissDialog({ f, pending, error, onClose, onSend }: {
       </fieldset>
       {!reason && <p id={`dismiss-req-${f.id}`} className="anom-note">Choose a reason.</p>}
       <NoteField id={`dismiss-note-${f.id}`} value={note} onChange={setNote} />
-      {error && <p className="anom-err" role="alert">{error}</p>}
+      {error && <Notice tone="error">{error}</Notice>}
       <DialogActions>
         <span style={{ flex: 1 }} />
         <button type="button" onClick={onClose}>Cancel</button>

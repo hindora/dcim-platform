@@ -28,6 +28,7 @@ import {
   formatMetric, humanise, metricLabel, relativeTime, statusClass,
 } from '../../lib/format';
 import './devices.css';
+import { Notice } from '../../components/Notice';
 
 /** One device, the way an operator reads it.
  *
@@ -120,7 +121,7 @@ export function DeviceDetail() {
   });
 
   if (device.isLoading) return <p className="muted">Loading…</p>;
-  if (device.error) return <div className="banner">Failed to load: {String(device.error)}</div>;
+  if (device.error) return <Notice tone="error">Failed to load: {String(device.error)}</Notice>;
   if (!device.data) return null;
 
   const d = device.data;

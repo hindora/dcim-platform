@@ -5,6 +5,7 @@ import {
   type DeviceDetail, type DevicePatch,
 } from '../../api/client';
 import { humanise } from '../../lib/format';
+import { Notice } from '../../components/Notice';
 
 /** Editing what a device IS on record.
  *
@@ -120,10 +121,10 @@ export function DeviceEditor({ device, onClose }: { device: DeviceDetail; onClos
 
         <div className="sheet-body">
           {err && (
-            <div className="banner" role="alert">
+            <Notice tone="error">
               {err instanceof ApiError && err.status === 403 && !isAdmin
                 ? 'That needs an admin account.' : String((err as Error).message)}
-            </div>
+            </Notice>
           )}
 
           <h3 className="sheet-sub">Identity</h3>

@@ -29,6 +29,7 @@ import { api, type PlantMachine, type PlantPage, type PlantStage } from '../../a
 import { Column, DataTable, Notes, Num, TableFoot } from '../../components/estate';
 import { Tip } from '../../components/HoverTip';
 import { downloadCsv, stampedName } from '../../lib/csv';
+import { Notice } from '../../components/Notice';
 
 type Unit = 'c' | 'f';
 
@@ -584,7 +585,7 @@ export function Plant({ unit }: { unit: Unit }) {
   }
 
   if (isLoading) return <p className="muted">Loading…</p>;
-  if (error) return <div className="banner">Failed to load: {String(error)}</div>;
+  if (error) return <Notice tone="error">Failed to load: {String(error)}</Notice>;
   if (!data) return null;
 
   return (

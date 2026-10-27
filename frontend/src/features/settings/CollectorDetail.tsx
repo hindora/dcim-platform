@@ -14,6 +14,7 @@ import { StatusChip } from '../../components/StatusChip';
 import { usePaged } from '../../components/Pagination';
 import { KpiBand, type Kpi } from '../../components/estate';
 import { StateBadge } from './Collectors';
+import { Notice } from '../../components/Notice';
 
 /** One collector (docs/26 Phase 8): who it is, whether it is well, and what
  *  it is responsible for.
@@ -36,11 +37,11 @@ export function CollectorDetail() {
     return (
       <div className="stack">
         <p><Link to="/settings/collectors">← Collectors</Link></p>
-        <div className="banner">
+        <Notice tone="error">
           {page.error instanceof ApiError && page.error.status === 404
             ? <>No collector called <span className="mono">{id}</span>.</>
             : 'Could not load this collector.'}
-        </div>
+        </Notice>
       </div>
     );
   }
@@ -67,14 +68,14 @@ export function CollectorDetail() {
       <KpiBand items={kpis(d)} />
 
       {d.reported_elsewhere > 0 && (
-        <div className="banner soft">
+        <Notice tone="warn">
           <Tip tip={oneLine(`The current plan gives these endpoints to this collector,
                   but another collector sent their last report. Normal for a
                   minute or two during a move, drain or failover. If it does not
                   fall to zero, the move never happened.`)}>
             {d.reported_elsewhere} of its endpoints were last reported by another collector.
           </Tip>
-        </div>
+        </Notice>
       )}
 
       <div style={{ display: 'grid', gap: 16,

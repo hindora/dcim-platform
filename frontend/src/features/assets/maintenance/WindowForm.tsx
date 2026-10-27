@@ -4,6 +4,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { ApiError, api, type MaintenancePreview } from '../../../api/client';
 import { Dialog, DialogActions } from '../components/Dialog';
 import { DevicePicker } from '../components/DevicePicker';
+import { Notice } from '../../../components/Notice';
 
 /** Scheduling a window, in three steps, because step two is the point.
  *
@@ -172,11 +173,9 @@ export function WindowForm({ onClose, initialDeviceIds = [] }: {
                   <Stat n={preview.alarms_currently_active} label="alarms standing" />
                 </div>
                 {preview.redundancy_warnings.length > 0 && (
-                  <div className="asset-preview-warn">
-                    <strong>
-                      {preview.redundancy_warnings.length} of these are not
-                      redundantly fed
-                    </strong>
+                  <Notice tone="warn" className="asset-preview-notice"
+                          heading={<>{preview.redundancy_warnings.length} of these are not
+                            redundantly fed</>}>
                     <ul>
                       {preview.redundancy_warnings.slice(0, 6).map((w) => (
                         <li key={w.device_id}>
@@ -191,7 +190,7 @@ export function WindowForm({ onClose, initialDeviceIds = [] }: {
                     </ul>
                     Taking a feeder into a window costs these their power, not
                     just their alarms.
-                  </div>
+                  </Notice>
                 )}
               </>
             )}
@@ -219,7 +218,7 @@ export function WindowForm({ onClose, initialDeviceIds = [] }: {
               {preview.cut_off} devices downstream would lose power entirely.
             </p>
           )}
-          {error && <div className="banner">{error}</div>}
+          {error && <Notice tone="error">{error}</Notice>}
         </div>
       )}
 

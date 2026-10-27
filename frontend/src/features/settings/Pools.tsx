@@ -13,6 +13,7 @@ import {
 } from '../../api/client';
 import { oneLine, relativeTime } from '../../lib/format';
 import { Tip } from '../../components/HoverTip';
+import { Notice } from '../../components/Notice';
 
 /** Collector pools: site x plane placement (docs/26 Phase 5).
  *
@@ -33,7 +34,7 @@ export function Pools() {
   const [creating, setCreating] = useState(false);
 
   if (page.isLoading) return <p className="muted">Loading…</p>;
-  if (page.error) return <div className="banner">Could not load pools.</div>;
+  if (page.error) return <Notice tone="error">Could not load pools.</Notice>;
 
   const pools = page.data?.pools ?? [];
   const unpooled = page.data?.unpooled;
@@ -63,7 +64,7 @@ export function Pools() {
       </div>
 
       {unpooled && unpooled.endpoints > 0 && (
-        <div className="banner soft">
+        <Notice tone="warn">
           {unpooled.endpoints} endpoint{unpooled.endpoints === 1 ? '' : 's'} resolve
           to no pool
           {unpooled.unassigned > 0 && (
@@ -72,7 +73,7 @@ export function Pools() {
           They are served by collectors with no pool placement, exactly as
           before pools existed. Add a pool for their site and plane to bring
           them under one.
-        </div>
+        </Notice>
       )}
 
       <table>
@@ -235,7 +236,7 @@ function CreateDialog({ sites, planes, taken, onClose, onCreated }: {
         </header>
         <div className="sheet-body">
           {create.error && (
-            <div className="banner">{errorText(create.error, 'Creating a pool')}</div>
+            <Notice tone="error">{errorText(create.error, 'Creating a pool')}</Notice>
           )}
           <div className="form-grid">
             <label>
@@ -412,10 +413,10 @@ function ManageSheet({ row, onClose }: { row: PoolRow; onClose: () => void }) {
         </header>
         <div className="sheet-body">
           {row.below_min_members && (
-            <div className="banner">
+            <Notice tone="warn">
               Below its minimum: {row.accepting_members} of the required {row.min_members} members
               are healthy and accepting work. This is what raises the pool_below_min_members alarm.
-            </div>
+            </Notice>
           )}
 
           <fieldset className="proto">
@@ -480,7 +481,7 @@ function ManageSheet({ row, onClose }: { row: PoolRow; onClose: () => void }) {
           <fieldset className="proto">
             <legend>Settings</legend>
             {save.error && (
-              <div className="banner">{errorText(save.error, 'Changing a pool')}</div>
+              <Notice tone="error">{errorText(save.error, 'Changing a pool')}</Notice>
             )}
             <div className="form-grid">
               <label>
@@ -608,7 +609,7 @@ function ManageSheet({ row, onClose }: { row: PoolRow; onClose: () => void }) {
               change request.
             </p>
             {matrix.error && (
-              <div className="banner">{errorText(matrix.error, 'Building the matrix')}</div>
+              <Notice tone="error">{errorText(matrix.error, 'Building the matrix')}</Notice>
             )}
             <div style={{ display: 'flex', gap: 8 }}>
               <button disabled={matrix.isPending} onClick={() => matrix.mutate()}>
@@ -634,7 +635,7 @@ function ManageSheet({ row, onClose }: { row: PoolRow; onClose: () => void }) {
           <fieldset className="proto">
             <legend>Delete</legend>
             {remove.error && (
-              <div className="banner">{errorText(remove.error, 'Deleting a pool')}</div>
+              <Notice tone="error">{errorText(remove.error, 'Deleting a pool')}</Notice>
             )}
             {placed > 0 ? (
               <p className="muted">
@@ -740,9 +741,9 @@ function PoolCredentialsPanel({ row }: { row: PoolRow }) {
         the default takes over.
       </p>
       {(save.error || adopt.error || saveScope.error) && (
-        <div className="banner">
+        <Notice tone="error">
           {errorText(save.error ?? adopt.error ?? saveScope.error, 'Saving credentials')}
-        </div>
+        </Notice>
       )}
       {adopt.data && (
         <p className="muted">
@@ -859,7 +860,7 @@ function RebalancePanel({ row, onDone }: { row: PoolRow; onDone: () => void }) {
         pool is uneven by 10 endpoints and 2x. Preview what an even split would move now.
       </p>
       {(preview.error || apply.error) && (
-        <div className="banner">{errorText(preview.error ?? apply.error, 'Rebalancing')}</div>
+        <Notice tone="error">{errorText(preview.error ?? apply.error, 'Rebalancing')}</Notice>
       )}
       {apply.data && (
         <p className="ok">
@@ -870,9 +871,9 @@ function RebalancePanel({ row, onDone }: { row: PoolRow; onDone: () => void }) {
       {p && (
         <>
           {p.frozen && (
-            <div className="banner">
+            <Notice tone="warn">
               A change freeze covers this pool's site. Nothing moves until it ends.
-            </div>
+            </Notice>
           )}
           {p.balanced ? (
             <p className="muted">Already as even as the plan makes it — nothing would move.</p>

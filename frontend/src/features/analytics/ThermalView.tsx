@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { api, type RoomSummary, type ThermalRoom } from '../../api/client';
+import { Notice } from '../../components/Notice';
 
 /** Rack ΔT, hot spots, and the distinction that decides where an engineer goes.
  *
@@ -52,7 +53,7 @@ export function ThermalView({ room }: { room: RoomSummary }) {
   });
 
   if (isLoading) return <p className="muted">Loading…</p>;
-  if (error) return <div className="banner">Failed to load: {String(error)}</div>;
+  if (error) return <Notice tone="error">Failed to load: {String(error)}</Notice>;
   if (!data) return null;
 
   // A unit that reported nothing is not a unit in good order. Counting only
@@ -67,11 +68,11 @@ export function ThermalView({ room }: { room: RoomSummary }) {
   return (
     <>
       {data.thermal_event && (
-        <div className="banner">
+        <Notice tone="error">
           <strong>{data.thermal_event.type.replace(/_/g, ' ')}</strong> —{' '}
           {data.thermal_event.summary}
           {data.thermal_event.hottest && ` (hottest: ${data.thermal_event.hottest})`}
-        </div>
+        </Notice>
       )}
 
       <div className="tiles">
@@ -112,16 +113,16 @@ export function ThermalView({ room }: { room: RoomSummary }) {
       </div>
 
       {noData ? (
-        <div className="banner soft">
+        <Notice tone="warn">
           No rack or CRAH readings in the last 30 minutes. The room is not cool,
           it is unmeasured — the zeroes above are an absence of data, not a
           healthy room. Check the collector and the BACnet endpoints.
-        </div>
+        </Notice>
       ) : silentUnits > 0 && (
-        <div className="banner soft">
+        <Notice tone="warn">
           {silentUnits} of {data.crah_units.length} CRAH units reported no air
           temperatures. Whatever those units are doing is not visible here.
-        </div>
+        </Notice>
       )}
 
       {data.crah_units.length > 0 && (

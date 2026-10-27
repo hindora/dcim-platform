@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../../api/client';
 import { Tip } from '../../../components/HoverTip';
 import { oneLine } from '../../../lib/format';
+import { Notice } from '../../../components/Notice';
 
 const KINDS = [
   { key: 'jira_cloud', label: 'Jira Cloud — tickets',
@@ -67,7 +68,7 @@ export function NewIntegration({ onClose }: { onClose: () => void }) {
         <div className="sheet-body">
           <div className="form-grid">
           {create.error && (
-            <div className="banner">{String((create.error as Error).message)}</div>
+            <Notice tone="error">{String((create.error as Error).message)}</Notice>
           )}
 
           <label>

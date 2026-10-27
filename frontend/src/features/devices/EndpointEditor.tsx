@@ -14,6 +14,7 @@ import {
   type TargetLimit,
 } from '../../api/client';
 import { Tip } from '../../components/HoverTip';
+import { Notice } from '../../components/Notice';
 
 /** Editing how a device is reached.
  *
@@ -142,19 +143,19 @@ export function EndpointEditor({
         <div className="sheet-body">
           {options.isLoading && <p className="muted">Loading…</p>}
           {save.error && (
-            <div className="banner">
+            <Notice tone="error">
               {save.error instanceof ApiError && save.error.status === 403
                 ? 'Changing connection settings needs an operator account.'
                 : String((save.error as Error).message)}
-            </div>
+            </Notice>
           )}
 
           {behindGateway && (
-            <div className="banner soft">
+            <Notice tone="info">
               Reached through <strong>{endpoint.via_name ?? 'a gateway'}</strong>.
               The address on the wire is the gateway's, so it is set there —
               here you choose which device behind it answers.
-            </div>
+            </Notice>
           )}
 
           <div className="form-grid">

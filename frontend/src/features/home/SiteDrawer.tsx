@@ -32,6 +32,7 @@ import { CategoryGlyph, type GlyphKind } from '../../components/CategoryGlyph';
 import { Tip } from '../../components/HoverTip';
 import { ALL_CATEGORIES, AlarmTrend, maxOpen } from './AlarmTrend';
 import { relativeTime } from '../../lib/format';
+import { Notice } from '../../components/Notice';
 
 function Tile({ value, unit, caption, note, absent, bar, against, detail }: {
   value: string; unit?: string; caption: string; note?: string | null;
@@ -229,9 +230,9 @@ export function SiteDrawer({ site, onClose }: { site: SiteRow; onClose: () => vo
           </span>
         </div>
 
-        {error && <div className="banner" style={{ margin: '0 26px 16px' }}>
+        {error && <Notice tone="error" style={{ margin: '0 26px 16px' }}>
           Failed to load KPIs: {String(error)}
-        </div>}
+        </Notice>}
         {isLoading && <p className="muted" style={{ padding: '0 26px 20px' }}>Loading…</p>}
 
         {data && (

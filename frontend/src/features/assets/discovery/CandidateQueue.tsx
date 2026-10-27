@@ -22,6 +22,7 @@ import {
 } from './PromoteMonitoring';
 import { SweepPanel, useDiscoveryRuns } from './SweepPanel';
 import './discovery.css';
+import { Notice } from '../../../components/Notice';
 
 /** The API's own ceiling for one listing. Asked for in full so the page's totals are
  *  the estate's, and SAID when it is hit rather than quietly undercounting. */
@@ -183,7 +184,7 @@ export function CandidateQueue() {
       || ipKey(addressOf(a)) - ipKey(addressOf(b))),
   [classified, facet, activeRun, needle]);
 
-  if (error) return <div className="banner">Failed to load: {String(error)}</div>;
+  if (error) return <Notice tone="error">Failed to load: {String(error)}</Notice>;
 
   // The machines that answered - what the serial coverage and the header count are
   // about. Gone, dismissed and promoted rows are history, not this sweep's result.
@@ -256,9 +257,9 @@ export function CandidateQueue() {
           </div>
 
           {missingError && (
-            <div className="banner">
+            <Notice tone="error">
               Missing devices unavailable: {String(missingError)}
-            </div>
+            </Notice>
           )}
 
           {run && (
@@ -273,9 +274,9 @@ export function CandidateQueue() {
           )}
 
           {truncated && (
-            <div className="banner">
+            <Notice tone="warn">
               Showing the first {FETCH_LIMIT.toLocaleString()} probes; totals undercount.
-            </div>
+            </Notice>
           )}
 
           {loading ? (
@@ -611,7 +612,7 @@ function BulkBar({ keys, rows, onDone }: {
           promoted individually.
         </span>
       )}
-      {error && <div className="banner">{error}</div>}
+      {error && <Notice tone="error">{error}</Notice>}
       {report && <span className="muted">{report}</span>}
     </div>
   );
@@ -869,7 +870,7 @@ function CandidateActions({ r }: { r: Responder }) {
                 onClick={() => { setError(null); restore.mutate(); }}>
           {restore.isPending ? 'Restoring…' : 'Un-ignore'}
         </button>
-        {error && <div className="banner">{error}</div>}
+        {error && <Notice tone="error">{error}</Notice>}
       </>
     );
   }
@@ -886,7 +887,7 @@ function CandidateActions({ r }: { r: Responder }) {
               onClick={() => { setError(null); dismiss.mutate(); }}>
         Ignore
       </button>
-      {error && <div className="banner">{error}</div>}
+      {error && <Notice tone="error">{error}</Notice>}
       {naming && (
         <PromoteDialog c={c} onClose={() => setNaming(false)} onDone={refresh} />
       )}
@@ -1024,7 +1025,7 @@ function PromoteDialog({ c, onClose, onDone }: {
             <p className="muted">Choose the device type first: it decides which
               agent each probe is and the profile that polls it.</p>
           )}
-          {plan.error && <div className="banner">{String(plan.error)}</div>}
+          {plan.error && <Notice tone="error">{String(plan.error)}</Notice>}
         </fieldset>
 
         <p className="muted asset-form-wide">
@@ -1044,7 +1045,7 @@ function PromoteDialog({ c, onClose, onDone }: {
           )}
           {' '}Accept it from the Commissioning page once you are satisfied.
         </p>
-        {error && <div className="banner">{error}</div>}
+        {error && <Notice tone="error">{error}</Notice>}
       </div>
       <DialogActions>
         <button type="button" onClick={onClose}>Cancel</button>
@@ -1111,7 +1112,7 @@ function ChangeSummary({ r, changes }: { r: Responder; changes: MachineChange[] 
               onClick={() => { setError(null); ack.mutate(); }}>
         {ack.isPending ? 'Acknowledging…' : 'Acknowledge'}
       </button>
-      {error && <div className="banner">{error}</div>}
+      {error && <Notice tone="error">{error}</Notice>}
     </div>
   );
 }

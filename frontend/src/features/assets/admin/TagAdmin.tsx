@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ApiError, api, type Tag } from '../../../api/client';
 import { Dialog, DialogActions } from '../components/Dialog';
+import { Notice } from '../../../components/Notice';
 
 /** The controlled vocabulary.
  *
@@ -174,7 +175,7 @@ function TagForm({ tag, onClose }: { tag: Tag | null; onClose: () => void }) {
           is the point of a vocabulary, and worth knowing before you do it.
         </p>
       )}
-      {error && <div className="banner">{error}</div>}
+      {error && <Notice tone="error">{error}</Notice>}
       <DialogActions>
         <span style={{ flex: 1 }} />
         <button type="button" onClick={onClose}>Cancel</button>

@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { api, type AssetSummary } from '../../api/client';
 import { Charts } from './Charts';
+import { Notice } from '../../components/Notice';
 
 /** The asset landing page: a stock-take, not a trend.
  *
@@ -17,7 +18,7 @@ export function AssetOverview() {
     refetchInterval: 60_000,
   });
 
-  if (error) return <div className="banner">Failed to load: {String(error)}</div>;
+  if (error) return <Notice tone="error">Failed to load: {String(error)}</Notice>;
 
   if (isLoading || !data) {
     return (

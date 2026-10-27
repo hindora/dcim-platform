@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api, type PueResult, type PueSeries, type RoomSummary } from '../../api/client';
 import { Plot } from '../../components/Plot';
 import { useChartColors } from '../../components/seriesColors';
+import { Notice } from '../../components/Notice';
 
 /** PUE, never as a bare number.
  *
@@ -32,7 +33,7 @@ export function PueView({ room }: { room: RoomSummary }) {
   });
 
   if (isLoading) return <p className="muted">Loading…</p>;
-  if (error) return <div className="banner">Failed to load: {String(error)}</div>;
+  if (error) return <Notice tone="error">Failed to load: {String(error)}</Notice>;
   if (!data) return null;
 
   const pts: [number, number][] = (series?.points ?? [])
@@ -95,9 +96,9 @@ export function PueView({ room }: { room: RoomSummary }) {
       </div>
 
       {!data.plausible && (
-        <div className="banner">
+        <Notice tone="warn">
           {data.note ?? 'This PUE is not plausible.'}
-        </div>
+        </Notice>
       )}
       {data.plausible && data.note && <p className="muted small">{data.note}</p>}
       {(data.counter_resets ?? 0) > 0 && (

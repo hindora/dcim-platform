@@ -7,6 +7,7 @@ import {
   type RangeOptions,
 } from '../../../api/client';
 import { Dialog, DialogActions } from '../components/Dialog';
+import { Notice } from '../../../components/Notice';
 
 export const INTERVAL_LABEL: Record<number, string> = {
   6: 'every 6 hours', 12: 'every 12 hours', 24: 'every 24 hours', 48: 'every 2 days',
@@ -220,7 +221,7 @@ export function ScheduleDialog({ schedule, initialRangeIds, ranges, intervals, o
           <p className="disc-bad asset-form-wide">Choose at least one range.</p>
         )}
         {badTime && <p className="disc-bad asset-form-wide">Enter a time, e.g. 02:00.</p>}
-        {error && <div className="banner asset-form-wide">{error}</div>}
+        {error && <Notice tone="error" className="asset-form-wide">{error}</Notice>}
       </div>
       <DialogActions>
         <button type="button" onClick={onClose}>Cancel</button>

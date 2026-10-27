@@ -986,17 +986,7 @@ ol.asset-steps li.active { border-top-color: var(--accent); color: var(--text); 
 .asset-stat.is-warn .v { color: var(--warn); }
 .asset-stat.is-bad .v { color: var(--critical); }
 
-.asset-preview-warn {
-  margin-top: 14px;
-  padding: 10px 12px;
-  border: 1px solid var(--warn);
-  border-radius: var(--radius);
-  font-size: 0.85rem;
-  color: var(--text-muted);
-}
-
-.asset-preview-warn strong { color: var(--warn); display: block; margin-bottom: 4px; }
-.asset-preview-warn ul { margin: 4px 0 8px; padding-left: 18px; }
+.asset-preview-notice { margin: 14px 0 0; }
 
 .asset-confirm p { margin: 0 0 10px; }
 

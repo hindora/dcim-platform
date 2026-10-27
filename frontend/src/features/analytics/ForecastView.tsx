@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api, type ForecastResult, type RoomSummary } from '../../api/client';
 import { Plot, type PlotSeries } from '../../components/Plot';
 import { useChartColors } from '../../components/seriesColors';
+import { Notice } from '../../components/Notice';
 
 /** The forecast, and - far more often - the refusal to make one.
  *
@@ -62,7 +63,7 @@ export function ForecastView({ room }: { room: RoomSummary }) {
   });
 
   if (isLoading) return <p className="muted">Loading…</p>;
-  if (error) return <div className="banner">Failed to load: {String(error)}</div>;
+  if (error) return <Notice tone="error">Failed to load: {String(error)}</Notice>;
   if (!data) return null;
 
   const historyPts: [number, number][] = data.history.map((h, i) => [

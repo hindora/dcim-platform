@@ -17,6 +17,7 @@ import { humanise, oneLine, relativeTime, untilTime } from '../../lib/format';
 import { Tip } from '../../components/HoverTip';
 import { StateBadge } from './Collectors';
 import { Preflight } from './CollectorDetail';
+import { Notice } from '../../components/Notice';
 
 /** Site onboarding (docs/26 Phase 8): bring one network at one site under
  *  collection without SQL, a shell on the core, or a runbook.
@@ -68,7 +69,7 @@ export function Onboarding() {
   const [firewallBuilt, setFirewallBuilt] = useState(false);
 
   if (pools.isLoading) return <p className="muted">Loading…</p>;
-  if (pools.error) return <div className="banner">Could not load pools.</div>;
+  if (pools.error) return <Notice tone="error">Could not load pools.</Notice>;
 
   const marks = markSteps({
     pool, collector: collector.data ?? null, readiness: readiness.data ?? null,
@@ -287,7 +288,7 @@ function PoolStep({ page, chosen, onChoose }: {
 
       <fieldset className="proto">
         <legend>New pool</legend>
-        {create.error && <div className="banner">{errorText(create.error, 'Creating a pool')}</div>}
+        {create.error && <Notice tone="error">{errorText(create.error, 'Creating a pool')}</Notice>}
         <div className="form-grid">
           <label>
             <span>Site</span>
@@ -345,14 +346,14 @@ function FirewallStep({ pool, onBuilt }: { pool: PoolRow; onBuilt: () => void })
         </p>
       </div>
       {pool.endpoints === 0 && (
-        <div className="banner soft">
+        <Notice tone="info">
           No device resolves into this pool yet, so the matrix only has the
           collector-to-core rules. Come back after the discovery-ranges step and
           rebuild it - the device-side rows are derived from those ranges.
-        </div>
+        </Notice>
       )}
       {matrix.isLoading && <p className="muted">Building…</p>}
-      {matrix.error && <div className="banner">{errorText(matrix.error, 'Building the matrix')}</div>}
+      {matrix.error && <Notice tone="error">{errorText(matrix.error, 'Building the matrix')}</Notice>}
       {m && (
         <>
           <div style={{ display: 'flex', gap: 8 }}>
@@ -448,7 +449,7 @@ function CollectorStep({ pool, chosen, onChoose }: {
       </div>
 
       {enrollment && (
-        <div className="banner soft">
+        <Notice tone="info">
           <p style={{ margin: '0 0 8px' }}>
             Install command for <span className="mono">{enrollment.id}</span> - shown
             once, expires {untilTime(enrollment.e.expires_at)}. Send it to the
@@ -461,7 +462,7 @@ function CollectorStep({ pool, chosen, onChoose }: {
               {copied ? 'Copied' : 'Copy'}
             </button>
           </div>
-        </div>
+        </Notice>
       )}
 
       {members.length > 0 && (
@@ -489,11 +490,11 @@ function CollectorStep({ pool, chosen, onChoose }: {
           </button>
         </p>
       )}
-      {reissue.error && <div className="banner">{errorText(reissue.error, 'Issuing a token')}</div>}
+      {reissue.error && <Notice tone="error">{errorText(reissue.error, 'Issuing a token')}</Notice>}
 
       <fieldset className="proto">
         <legend>{members.length ? 'Add another collector' : 'New collector'}</legend>
-        {create.error && <div className="banner">{errorText(create.error, 'Creating a collector')}</div>}
+        {create.error && <Notice tone="error">{errorText(create.error, 'Creating a collector')}</Notice>}
         <div className="form-grid">
           <label>
             <span>Collector id</span>
@@ -517,7 +518,7 @@ function CollectorStep({ pool, chosen, onChoose }: {
       {unplaced.length > 0 && (
         <fieldset className="proto">
           <legend>Or place a collector that already runs</legend>
-          {place.error && <div className="banner">{errorText(place.error, 'Placing a collector')}</div>}
+          {place.error && <Notice tone="error">{errorText(place.error, 'Placing a collector')}</Notice>}
           <p className="muted" style={{ marginTop: 0 }}>
             These have no pool, so today they serve every plane at their site.
             Placing one here narrows it to this network only.
@@ -553,7 +554,7 @@ function EnrollStep({ id, q }: { id: string; q: UseQueryResult<CollectorDetail> 
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['collector', id] }),
   });
   if (q.isLoading) return <p className="muted">Loading…</p>;
-  if (q.error || !q.data) return <div className="banner">Could not load {id}.</div>;
+  if (q.error || !q.data) return <Notice tone="error">Could not load {id}.</Notice>;
   const d = q.data;
 
   const items = [
@@ -585,11 +586,11 @@ function EnrollStep({ id, q }: { id: string; q: UseQueryResult<CollectorDetail> 
         </p>
       </div>
       {d.state === 'pending' && (
-        <div className="banner soft">
+        <Notice tone="info">
           <StateBadge row={d} /> It will not be given work until approved.{' '}
           <button disabled={approve.isPending} onClick={() => approve.mutate()}>Approve</button>
           {approve.error && <> {errorText(approve.error, 'Approving')}</>}
-        </div>
+        </Notice>
       )}
       <ul className="checks">
         {items.map((c) => (
@@ -670,7 +671,7 @@ function RangesStep({ pool, collectorId, readiness }: {
 
       <fieldset className="proto">
         <legend>Add range</legend>
-        {add.error && <div className="banner">{errorText(add.error, 'Adding a range')}</div>}
+        {add.error && <Notice tone="error">{errorText(add.error, 'Adding a range')}</Notice>}
         <div className="form-grid">
           <label>
             <span>CIDR</span>
@@ -754,11 +755,11 @@ function CredentialsStep({ readiness }: { readiness: PoolReadiness | undefined }
         </table>
       )}
       {missing > 0 && (
-        <div className="banner soft">
+        <Notice tone="warn">
           {missing} endpoint{missing === 1 ? '' : 's'} will be polled with nothing to
           authenticate with. A wrong or absent SNMP community is not refused - the
           agent drops the request, so the device looks dead rather than misconfigured.
-        </div>
+        </Notice>
       )}
       <p className="muted">
         Credentials are attached per endpoint today: at promote time in Discovery,
@@ -882,9 +883,9 @@ function VerifyStep({ readiness, collector }: {
         </p>
       </div>
       {readiness.ready && (
-        <div className="banner" style={{ borderColor: 'var(--ok)' }}>
+        <Notice tone="ok">
           This pool is collecting: every endpoint owned, authenticated and online.
-        </div>
+        </Notice>
       )}
       <ul className="checks">
         {readiness.checks.map((c) => (

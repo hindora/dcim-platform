@@ -8,6 +8,7 @@ import { StatusChip } from '../../components/StatusChip';
 import { humanise, relativeTime } from '../../lib/format';
 import { useSocketStatus } from '../../ws/useSocket';
 import './platform.css';
+import { Notice } from '../../components/Notice';
 
 /** Is the monitoring working?
  *
@@ -284,10 +285,10 @@ export function PlatformHealth() {
   if (health.error || !data) {
     // Failing to load THIS page is itself the finding worth stating plainly.
     return (
-      <div className="banner">
+      <Notice tone="error">
         Could not read the platform's own health: {String(health.error ?? 'no answer')}. Nothing on
         any other page can be trusted to be current until this loads.
-      </div>
+      </Notice>
     );
   }
 
@@ -369,7 +370,7 @@ export function PlatformHealth() {
         <h3>Open conditions{conds.length > 0 && <span className="count"> {conds.length}</span>}</h3>
         <Conditions conds={conds} recent={data.recent ?? []} acking={ack.isPending ? (ack.variables ?? null) : null}
                     onAck={(id) => ack.mutate(id)} />
-        {ack.isError && <p className="ph-note warn">Could not acknowledge: {String(ack.error)}</p>}
+        {ack.isError && <Notice tone="error">Could not acknowledge: {String(ack.error)}</Notice>}
       </section>
 
       <section className="ph-section">
@@ -384,7 +385,7 @@ export function PlatformHealth() {
           </p>
         )}
         {data.collectors.length === 0 ? (
-          <div className="banner">No collector has ever checked in. Nothing is polling the fleet.</div>
+          <Notice tone="error">No collector has ever checked in. Nothing is polling the fleet.</Notice>
         ) : (
           <table className="ph-table">
             <thead>

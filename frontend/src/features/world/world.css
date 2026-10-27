@@ -61,8 +61,6 @@
 .world-confirm button.primary { border-color: var(--accent); background: var(--accent); color: var(--bg); }
 .world-confirm button:disabled { opacity: 0.45; cursor: not-allowed; }
 .world-error { margin: 6px 0 0; color: var(--critical); }
-.world-offline-note { margin: 0 0 8px; padding: 8px 10px; font-size: 0.82rem; border-radius: 6px;
-  border: 1px solid var(--border); border-left: 3px solid var(--warn); background: var(--bg-inset); }
 .world-pin circle { fill: none; stroke: var(--accent); stroke-width: 2; }
 .world-pin path { stroke: var(--accent); stroke-width: 1.5; }
 

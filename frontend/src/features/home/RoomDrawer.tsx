@@ -18,6 +18,7 @@ import { Tip } from '../../components/HoverTip';
 import { api, type RoomKpi } from '../../api/client';
 import { RoomFacility } from './RoomFacility';
 import { ALL_CATEGORIES, AlarmTrend, maxOpen } from './AlarmTrend';
+import { Notice } from '../../components/Notice';
 
 function Tile({ value, unit, caption, note, absent, bar, detail, to }: {
   value: React.ReactNode; unit?: string; caption: string;
@@ -149,9 +150,9 @@ export function RoomDrawer({ roomId, roomName, onClose }: {
           ENTER
         </Link>
 
-        {error && <div className="banner" style={{ margin: '0 26px 16px' }}>
+        {error && <Notice tone="error" style={{ margin: '0 26px 16px' }}>
           Could not load this room.
-        </div>}
+        </Notice>}
         {isLoading && <p className="muted" style={{ padding: '0 26px' }}>Loading…</p>}
 
         {data && (

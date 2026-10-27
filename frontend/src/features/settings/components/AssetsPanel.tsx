@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ApiError, api, type AssetsState, type Integration } from '../../../api/client';
 import { Tip } from '../../../components/HoverTip';
 import { oneLine, relativeTime } from '../../../lib/format';
+import { Notice } from '../../../components/Notice';
 
 /** Pushing inventory into JSM Assets.
  *
@@ -45,7 +46,7 @@ export function AssetsPanel({ row }: { row: Integration }) {
 
   if (state.isLoading) return <p className="muted">Loading…</p>;
   const s = state.data;
-  if (!s) return <div className="banner">Could not read the export's state.</div>;
+  if (!s) return <Notice tone="error">Could not read the export's state.</Notice>;
 
   const ready = Boolean((schemaId ?? s.schema_id) && (s.import_token_set || token));
 
@@ -60,13 +61,13 @@ export function AssetsPanel({ row }: { row: Integration }) {
         </Tip>
       </p>
 
-      <div className="banner soft">
+      <Notice tone="info">
         <b>Three things an administrator does in Jira first.</b> Assets needs
         JSM Premium or Enterprise; the object schema is created there, not
         here; and the import token below is generated against one import
         source inside that schema — it is a different credential from the one
         this integration already holds.
-      </div>
+      </Notice>
 
       {s.last_run_status && (
         <dl className="kv">
@@ -133,11 +134,11 @@ export function AssetsPanel({ row }: { row: Integration }) {
       </div>
 
       {save.error && (
-        <div className="banner">
+        <Notice tone="error">
           {save.error instanceof ApiError && save.error.status === 403
             ? 'Configuring the CMDB export needs an admin account.'
             : String((save.error as Error).message)}
-        </div>
+        </Notice>
       )}
 
       <div className="toolbar">
@@ -161,11 +162,11 @@ export function AssetsPanel({ row }: { row: Integration }) {
       </div>
 
       {sync.error && (
-        <div className="banner">
+        <Notice tone="error">
           {sync.error instanceof ApiError && sync.error.status === 501
             ? String(sync.error.message)
             : String((sync.error as Error).message)}
-        </div>
+        </Notice>
       )}
       {sync.isSuccess && (
         <p className="muted">

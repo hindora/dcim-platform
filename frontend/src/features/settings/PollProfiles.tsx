@@ -10,6 +10,7 @@ import {
 } from '../../api/client';
 import { oneLine } from '../../lib/format';
 import { Tip } from '../../components/HoverTip';
+import { Notice } from '../../components/Notice';
 
 /** Poll profiles: how often each endpoint is asked, and for what.
  *
@@ -30,7 +31,7 @@ export function PollProfiles() {
 
   if (page.isLoading) return <p className="muted">Loading…</p>;
   if (page.error) {
-    return <div className="banner">Could not load poll profiles.</div>;
+    return <Notice tone="error">Could not load poll profiles.</Notice>;
   }
   const profiles = page.data?.profiles ?? [];
 
@@ -202,23 +203,23 @@ function ProfileSheet({
 
         <div className="sheet-body">
           {save.error && (
-            <div className="banner">
+            <Notice tone="error">
               {save.error instanceof ApiError && save.error.status === 403
                 ? 'Creating and editing poll profiles needs an admin account. '
                   + 'Moving one endpoint between existing profiles does not.'
                 : String((save.error as Error).message)}
-            </div>
+            </Notice>
           )}
 
           {!isNew && moved > 0 && (
-            <div className="banner soft">
+            <Notice tone="warn">
               <strong>{moved.toLocaleString()} endpoints</strong> across{' '}
               {(usage.data?.devices ?? 0).toLocaleString()} devices follow this
               profile and will all change:{' '}
               {(usage.data?.breakdown ?? [])
                 .map((b) => `${b.endpoints} ${b.protocol} on ${b.device_type}`)
                 .join(', ')}.
-            </div>
+            </Notice>
           )}
 
           <fieldset className="proto">

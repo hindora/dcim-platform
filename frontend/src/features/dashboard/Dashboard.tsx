@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api, type DashboardSummary } from '../../api/client';
 import { StatusChip } from '../../components/StatusChip';
 import { formatValue, relativeTime } from '../../lib/format';
+import { Notice } from '../../components/Notice';
 
 function Tile({ label, value, detail }: {
   label: string; value: string; detail?: string;
@@ -28,7 +29,7 @@ export function Dashboard() {
   });
 
   if (isLoading) return <p className="muted">Loading…</p>;
-  if (error) return <div className="banner">Failed to load: {String(error)}</div>;
+  if (error) return <Notice tone="error">Failed to load: {String(error)}</Notice>;
   if (!data) return null;
 
   const lag = data.ingest?.lag_seconds;

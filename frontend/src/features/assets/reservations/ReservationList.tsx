@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import { ApiError, api, type Reservation } from '../../../api/client';
 import { usePaged } from '../../../components/Pagination';
 import { Dialog, DialogActions } from '../components/Dialog';
+import { Notice } from '../../../components/Notice';
 
 /** Held capacity: rack units and power that nothing occupies yet.
  *
@@ -37,7 +38,7 @@ export function ReservationList() {
   // Before the early return: a hook's order cannot depend on the fetch.
   const paged = usePaged(data?.items ?? [], { noun: 'reservations', always: true });
 
-  if (error) return <div className="banner">Failed to load: {String(error)}</div>;
+  if (error) return <Notice tone="error">Failed to load: {String(error)}</Notice>;
 
   const items = data?.items ?? [];
   const s = data?.summary;
@@ -243,7 +244,7 @@ function ReservationForm({ onClose }: { onClose: () => void }) {
           : 'No unit range: this holds power and cooling only.'}
       </p>
 
-      {error && <div className="banner">{error}</div>}
+      {error && <Notice tone="error">{error}</Notice>}
 
       <DialogActions>
         <span style={{ flex: 1 }} />

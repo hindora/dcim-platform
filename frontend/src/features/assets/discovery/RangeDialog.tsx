@@ -10,6 +10,7 @@ import { Dialog, DialogActions } from '../components/Dialog';
 import {
   parseCidr, parseExclusions, probeCount, PURPOSE_LABEL,
 } from './ranges';
+import { Notice } from '../../../components/Notice';
 
 /** Add or edit a discovery range.
  *
@@ -166,7 +167,7 @@ export function RangeDialog({ range, initialCidr, options, onClose }: {
             swept twice.
           </p>
         )}
-        {error && <div className="banner asset-form-wide">{error}</div>}
+        {error && <Notice tone="error" className="asset-form-wide">{error}</Notice>}
       </div>
       <DialogActions>
         {range && (

@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ApiError, api, type Supplier } from '../../../api/client';
 import { Dialog, DialogActions } from '../components/Dialog';
 import { DevicePicker } from '../components/DevicePicker';
+import { Notice } from '../../../components/Notice';
 
 /** Record a contract, and optionally what it covers.
  *
@@ -150,7 +151,7 @@ export function ContractForm({ onClose }: { onClose: () => void }) {
         <DevicePicker selected={deviceIds} onChange={setDeviceIds} />
       )}
 
-      {error && <div className="banner">{error}</div>}
+      {error && <Notice tone="error">{error}</Notice>}
 
       <DialogActions>
         <span style={{ flex: 1 }} />
@@ -220,7 +221,7 @@ export function SupplierForm({ onClose }: { onClose: () => void }) {
                  onChange={(e) => setContactPhone(e.target.value)} />
         </label>
       </div>
-      {error && <div className="banner">{error}</div>}
+      {error && <Notice tone="error">{error}</Notice>}
       <DialogActions>
         <span style={{ flex: 1 }} />
         <button type="button" onClick={onClose}>Cancel</button>

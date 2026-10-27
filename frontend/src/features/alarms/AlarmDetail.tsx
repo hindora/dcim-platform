@@ -6,6 +6,7 @@ import { StatusChip } from '../../components/StatusChip';
 import { humanise, relativeTime } from '../../lib/format';
 import { TicketChip } from './TicketChip';
 import { AnomalyEvidence, isDerivedAlarm } from './AnomalyEvidence';
+import { Notice } from '../../components/Notice';
 
 /** One condition, in full.
  *
@@ -138,9 +139,9 @@ export function AlarmDetailModal({ alarm, onClose }: {
             <button onClick={onClose}>Close</button>
           </div>
           {(ack.error || clear.error) && (
-            <div className="banner">
+            <Notice tone="error">
               {String(((ack.error ?? clear.error) as Error).message)}
-            </div>
+            </Notice>
           )}
         </div>
       </div>

@@ -11,6 +11,7 @@ import { Dialog, DialogActions } from '../../assets/components/Dialog';
 import { fromLocalInput, paramText, stamp } from '../../analytics/anomaly/format';
 import { DeviceSearch, type PickedDevice } from './DeviceSearch';
 import { ParamFields, anyInvalid, effectiveValues, fieldError } from './ParamForm';
+import { Notice } from '../../../components/Notice';
 
 /** Per-device sensitivity or mute (doc 31 section 9.5). An operator's
  *  action, like an alarm-rule override: one device that needs its own value
@@ -62,7 +63,7 @@ export function OverridesTab({ detectors }: { detectors: AnomalyDetector[] }) {
       </div>
 
       {q.isLoading && <p className="muted">Loading…</p>}
-      {q.isError && <div className="banner" role="alert">Could not load overrides: {(q.error as Error).message}</div>}
+      {q.isError && <Notice tone="error">Could not load overrides: {(q.error as Error).message}</Notice>}
 
       {q.data && (
         <div className="asset-scroll">
@@ -126,7 +127,7 @@ function RemoveOverride({ o, detector, onClose }: {
         {o.detector_id} {detector ? `(${detector.name}) ` : ''}on {o.device_name} goes back to
         the detector’s own settings at the next sweep.
       </p>
-      {del.error && <p className="anom-err" role="alert">{(del.error as Error).message}</p>}
+      {del.error && <Notice tone="error">{(del.error as Error).message}</Notice>}
       <DialogActions>
         <span style={{ flex: 1 }} />
         <button type="button" onClick={onClose}>Cancel</button>
@@ -265,7 +266,7 @@ function AddOverride({ detectors, existing, onClose }: {
           are resolved as muted. Prefer an exclusion window for planned work.
         </p>
       </div>
-      {general && <p className="anom-err" role="alert">{general}</p>}
+      {general && <Notice tone="error">{general}</Notice>}
       <DialogActions>
         <span className="muted small" aria-live="polite">{blocked ?? ''}</span>
         <span style={{ flex: 1 }} />

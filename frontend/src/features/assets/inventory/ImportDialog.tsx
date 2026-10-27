@@ -8,6 +8,7 @@ import {
 } from '../../../api/client';
 import { Dialog, DialogActions } from '../components/Dialog';
 import { humanise } from '../../../lib/format';
+import { Notice } from '../../../components/Notice';
 
 /** CSV import, in two phases because one phase cannot be undone.
  *
@@ -161,7 +162,7 @@ export function ImportDialog({ onClose }: { onClose: () => void }) {
         </>
       )}
 
-      {error && <div className="banner">{error}</div>}
+      {error && <Notice tone="error">{error}</Notice>}
 
       <DialogActions>
         <span style={{ flex: 1 }} />
