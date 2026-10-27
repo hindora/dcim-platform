@@ -175,3 +175,39 @@ async def test_a_heartbeat_from_an_older_process_marks_a_duplicate(session):
     assert seen is not None
     cols = {c.collector_id: c for c in await mon._collectors(session)}
     assert cols[cid].duplicate_age_s is not None and cols[cid].duplicate_age_s < 60
+
+
+async def test_a_dead_process_heartbeat_replayed_late_is_not_a_duplicate(session):
+    """After a stack restart the stream still holds heartbeats the dead
+    processes sent, and a backlog delivers them after the new processes'
+    first ones. Sent before the current process started: a replay, not a
+    second process. Sent after it: two processes really are alive."""
+    import json
+    from datetime import datetime, timedelta
+
+    cid = f"col-{uuid.uuid4().hex[:8]}"
+    await fleet_repo.create_collector(session, cid, None, "test")
+    now = datetime.now(UTC)
+    old_start = now - timedelta(hours=5)
+    new_start = now - timedelta(minutes=3)
+    hb = {"id": cid, "version": "t", "hostname": "h", "endpoints_owned": 0,
+          "endpoints_online": 0, "stats": json.dumps({})}
+
+    async def seen():
+        return await session.scalar(text(
+            "SELECT stats->>'duplicate_seen_at' FROM collector_instance WHERE id = :id"),
+            {"id": cid})
+
+    await fleet_repo.upsert_heartbeat(
+        session, {**hb, "started_at": new_start, "sent_at": now - timedelta(minutes=2)})
+    # The dead process's last heartbeat, sent ten minutes before the restart.
+    await fleet_repo.upsert_heartbeat(
+        session, {**hb, "started_at": old_start, "sent_at": new_start - timedelta(minutes=10)})
+    assert await seen() is None, "a replay from a process that died is not a duplicate"
+
+    await fleet_repo.upsert_heartbeat(
+        session, {**hb, "started_at": new_start, "sent_at": now - timedelta(seconds=30)})
+    # The older process is still talking after the new one started.
+    await fleet_repo.upsert_heartbeat(
+        session, {**hb, "started_at": old_start, "sent_at": now})
+    assert await seen() is not None, "two live processes are a duplicate"

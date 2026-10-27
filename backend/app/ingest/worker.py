@@ -1292,6 +1292,10 @@ class IngestWorker:
                     "id": hb.collector_id, "version": hb.version or None,
                     "hostname": hb.hostname or None,
                     "started_at": ts_to_dt(hb.started_at),
+                    # When this heartbeat left the collector: what tells a
+                    # live second process from a dead one's backlog
+                    # (collector_repo.DUPLICATE_SEEN_ON_HEARTBEAT).
+                    "sent_at": ts_to_dt(hb.sent_at) if hb.sent_at else None,
                     "owned": hb.endpoints_owned, "online": hb.endpoints_online,
                     "stats": json.dumps({
                         "polls_total": hb.polls_total, "polls_failed": hb.polls_failed,

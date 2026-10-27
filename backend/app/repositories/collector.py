@@ -543,14 +543,27 @@ HEALTHY_SINCE_ON_HEARTBEAT = """CASE
 #: When a heartbeat proves a SECOND live process under this collector's
 #: identity. One process's started_at only ever moves forward - a restart,
 #: an upgrade's re-exec - so a heartbeat whose started_at is OLDER than the
-#: stored one came from another process that is still running. Found live: a
-#: hand-started test collector outlived a stack restart, two processes ran as
-#: col-dc1-bms for a quarter of an hour, double-polled 95 endpoints, fought
-#: over its trap and health ports, and nothing anywhere said so.
+#: stored one came from another process. Found live: a hand-started test
+#: collector outlived a stack restart, two processes ran as col-dc1-bms for a
+#: quarter of an hour, double-polled 95 endpoints, fought over its trap and
+#: health ports, and nothing anywhere said so.
+#:
+#: An older start time alone is not proof the other process is RUNNING. After
+#: a stack restart the ingest stream still holds heartbeats from the processes
+#: that died with it, and a backlog delivers them after the new processes'
+#: first ones - every collector "duplicated" at once, for the five minutes the
+#: sighting lasts, twice on 2026-10-27. What separates the two is when the
+#: older process SENT it: a second live process sends after the current one
+#: started; a dead one's last words were sent before. Both times come from the
+#: collector's own clock, so platform clock skew does not enter. A heartbeat
+#: without sent_at (an older collector) is judged by start time alone.
 DUPLICATE_SEEN_ON_HEARTBEAT = """CASE
                 WHEN collector_instance.started_at IS NOT NULL
                      AND EXCLUDED.started_at IS NOT NULL
                      AND EXCLUDED.started_at < collector_instance.started_at - interval '1 second'
+                     AND (CAST(:sent_at AS timestamptz) IS NULL
+                          OR CAST(:sent_at AS timestamptz)
+                             > collector_instance.started_at + interval '1 second')
                   THEN to_jsonb(clock_timestamp())
                 ELSE COALESCE(collector_instance.stats->'duplicate_seen_at', 'null'::jsonb)
             END"""
@@ -585,4 +598,4 @@ async def upsert_heartbeat(session: AsyncSession, hb: dict[str, Any]) -> None:
             stats = EXCLUDED.stats || jsonb_build_object(
                 'duplicate_seen_at', __DUPLICATE_SEEN__)
     """.replace("__HEALTHY_SINCE__", HEALTHY_SINCE_ON_HEARTBEAT)
-       .replace("__DUPLICATE_SEEN__", DUPLICATE_SEEN_ON_HEARTBEAT)), hb)
+       .replace("__DUPLICATE_SEEN__", DUPLICATE_SEEN_ON_HEARTBEAT)), {"sent_at": None, **hb})

@@ -373,6 +373,8 @@ async def heartbeat(
         # the column is a timestamp, and a raw int would fail the INSERT.
         "started_at": (ts_to_dt(int(payload["started_at"]))
                        if payload.get("started_at") else None),
+        "sent_at": (ts_to_dt(int(payload["sent_at"]))
+                    if payload.get("sent_at") else None),
         "endpoints_owned": int(payload.get("endpoints_owned") or 0),
         "endpoints_online": int(payload.get("endpoints_online") or 0),
         "stats": json.dumps(stats),
