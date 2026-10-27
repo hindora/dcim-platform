@@ -55,31 +55,134 @@
  * a line of screen that is right every day and useful on none of them.
  */
 .trust-banner {
-  position: sticky; top: 0; z-index: 40;
-  display: flex; align-items: center; flex-wrap: wrap; gap: 8px 18px;
-  padding: 10px 28px; flex: none;
-  font-size: 12px; color: var(--text);
-  border-bottom: 1px solid var(--warn);
-  background: color-mix(in srgb, var(--warn) 12%, var(--bg));
+  --tb-tone: var(--warn);
+  position: sticky; top: 0; z-index: 40; flex: none;
+  font-size: 12.5px; color: var(--text);
+  background: color-mix(in srgb, var(--tb-tone) 9%, var(--bg));
+  border-bottom: 1px solid color-mix(in srgb, var(--tb-tone) 55%, var(--border));
+  /* The tone as a bar on the leading edge as well as a wash: a wash alone is
+     too faint to tell amber from red at a glance on a dim wall screen. */
+  box-shadow: inset 3px 0 0 var(--tb-tone);
 }
-.trust-banner.blind, .trust-banner.impaired {
-  border-bottom-color: var(--critical);
-  background: color-mix(in srgb, var(--critical) 12%, var(--bg));
+.trust-banner.tone-critical { --tb-tone: var(--critical); }
+.trust-banner.tone-major { --tb-tone: var(--major); }
+
+/* One line, always. What gives when the screen narrows is the chips, then the
+   headline's tail - never the state word or the way to the detail. */
+.tb-line {
+  display: flex; align-items: center; gap: 14px;
+  min-height: 40px; padding: 0 28px; min-width: 0;
 }
-/* The consequence first and in the reader's own language; the fault after it,
-   for whoever is going to fix the pipeline rather than read past it. */
-.trust-banner .head { font-weight: 600; }
-.trust-banner .cond { color: var(--text-muted); }
-.trust-banner .cond b { font-family: var(--mono, monospace); font-weight: 600; }
-.trust-banner .cond i { font-style: normal; color: var(--text-faint); }
-.trust-banner .acts {
-  margin-left: auto; flex: none; display: flex; align-items: center; gap: 14px;
+.tb-state {
+  display: inline-flex; align-items: center; gap: 7px; flex: none;
+  font-weight: 650; color: var(--tb-tone); white-space: nowrap;
 }
-.trust-banner .link {
-  background: none; border: none; padding: 0; cursor: pointer;
-  color: var(--text-muted); font: inherit; text-decoration: underline;
+.tb-state svg { flex: none; }
+.tb-head {
+  min-width: 0; flex: 0 1 auto;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--text);
 }
-.trust-banner .link:hover { color: var(--text); }
+.tb-chips {
+  display: flex; align-items: center; gap: 6px; min-width: 0; flex: 0 1 auto;
+  overflow: hidden;
+}
+.tb-chip {
+  --chip: var(--text-muted);
+  display: inline-flex; align-items: center; gap: 6px; flex: none;
+  height: 22px; padding: 0 8px; border-radius: 11px; white-space: nowrap;
+  font-size: 11.5px; color: var(--text);
+  background: color-mix(in srgb, var(--chip) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--chip) 40%, transparent);
+}
+.tb-chip.tone-critical { --chip: var(--critical); }
+.tb-chip.tone-major { --chip: var(--major); }
+.tb-chip.tone-warn { --chip: var(--warn); }
+.tb-chip.more { color: var(--text-muted); }
+.tb-chip b {
+  font-weight: 650; font-variant-numeric: tabular-nums;
+  min-width: 16px; padding: 0 4px; border-radius: 8px; text-align: center;
+  background: color-mix(in srgb, var(--chip) 30%, transparent);
+}
+.tb-acts {
+  margin-left: auto; flex: none; display: flex; align-items: center; gap: 8px;
+}
+.tb-since {
+  color: var(--text-muted); white-space: nowrap; margin-right: 6px;
+  font-variant-numeric: tabular-nums;
+}
+.tb-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 28px; padding: 0 11px; border-radius: 4px;
+  font: inherit; font-size: 12px; font-weight: 550; white-space: nowrap;
+  color: var(--text); text-decoration: none; cursor: pointer;
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
+  border: 1px solid var(--border-strong);
+}
+.tb-btn:hover { border-color: var(--tb-tone); }
+.tb-btn:focus-visible, .tb-rest:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+.tb-caret { transition: transform .15s ease-out; }
+.trust-banner.open .tb-caret { transform: rotate(180deg); }
+
+/* The detail: every condition, grouped as the chips are, each group capped and
+   handing over to the platform page rather than scrolling inside a sticky
+   strip. It drops OVER the page: opening it must not shove the navigation
+   and the page a third of a screen down under the reader's pointer. */
+.tb-details {
+  position: absolute; left: 0; right: 0; top: 100%;
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+  gap: 6px 36px; padding: 6px 28px 14px 28px;
+  background: color-mix(in srgb, var(--tb-tone) 7%, var(--bg-raised));
+  border-bottom: 1px solid color-mix(in srgb, var(--tb-tone) 55%, var(--border));
+  box-shadow: inset 3px 0 0 var(--tb-tone), 0 10px 24px rgba(0, 0, 0, .28);
+}
+.tb-group h4 {
+  --chip: var(--warn);
+  display: flex; align-items: center; gap: 8px; margin: 8px 0 4px;
+  font-size: 12px; font-weight: 650; color: var(--text);
+}
+.tb-group h4.tone-critical { --chip: var(--critical); }
+.tb-group h4.tone-major { --chip: var(--major); }
+.tb-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--chip);
+}
+.tb-n {
+  color: var(--text-muted); font-weight: 500; font-variant-numeric: tabular-nums;
+}
+.tb-gsince { margin-left: auto; color: var(--text-faint); font-weight: 500; }
+.tb-group ul { list-style: none; margin: 0; padding: 0; }
+.tb-group li {
+  display: grid; grid-template-columns: minmax(110px, max-content) 1fr; gap: 12px;
+  padding: 4px 0 4px 16px; line-height: 1.45;
+  border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  color: var(--text-muted);
+}
+.tb-group li code {
+  font-family: var(--mono); font-size: 11.5px; color: var(--text); white-space: nowrap;
+}
+.tb-rest {
+  display: inline-block; margin: 4px 0 0 16px; font-size: 12px;
+  color: var(--accent); text-decoration: none;
+}
+.tb-rest:hover { text-decoration: underline; }
+
+@media (max-width: 1100px) {
+  .tb-since { display: none; }
+}
+@media (max-width: 860px) {
+  .tb-chips { display: none; }
+  .tb-line { padding: 0 16px; gap: 10px; }
+  .tb-details { padding: 6px 16px 12px; grid-template-columns: 1fr; }
+}
+@media (max-width: 560px) {
+  .tb-head { display: none; }
+  .tb-group li { grid-template-columns: 1fr; gap: 2px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tb-caret { transition: none; }
+}
 
 /* --- top bar -------------------------------------------------------------- */
 
