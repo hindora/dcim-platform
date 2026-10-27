@@ -74,16 +74,25 @@ async def power(
     end: datetime | None = Query(None),
     mode: str = Query("average", pattern="^(average|peak)$"),
     live: bool = Query(False, description="Instantaneous draw instead of a window"),
+    hour: bool = Query(False, description="The last sixty minutes, against the hour before"),
     session: AsyncSession = Depends(get_session),
     _: Principal = Depends(current_principal),
 ) -> dict:
+    """Three windows and two statistics.
+
+    `live` is the hot mirror against fifteen minutes ago; `hour` is sixty
+    minutes of five-minute buckets against the hour before; otherwise the
+    date range given, against the equally long range before it. `mode` picks
+    the statistic for the windowed views: the mean, or the coincident peak.
+    """
     if start and end and start >= end:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "start must precede end")
     if start and start.tzinfo is None:
         start = start.replace(tzinfo=UTC)
     if end and end.tzinfo is None:
         end = end.replace(tzinfo=UTC)
-    return await service.power(session, start=start, end=end, mode=mode, live=live)
+    return await service.power(session, start=start, end=end, mode=mode, live=live,
+                               hour=hour)
 
 
 @router.get("/utilization", summary="Space, power and cooling used against installed")

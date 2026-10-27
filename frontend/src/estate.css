@@ -690,3 +690,18 @@ button.facet.on {
 .sub-table tr.row-open:focus-visible > td:first-child {
   box-shadow: inset 2px 0 0 0 var(--accent);
 }
+
+/* --- power: the feeds cell ------------------------------------------------
+   Two side letters and a cording count. The letters say which sides exist;
+   the count carries the tone, because "19 dual" and "3 single" are the
+   facts a maintenance window turns on. */
+.pw-feeds { display: inline-flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
+.pw-feeds .side {
+  display: inline-block; width: 16px; height: 16px; line-height: 16px; text-align: center;
+  font-size: 10px; font-weight: 600; border-radius: 3px;
+  color: var(--text-muted); background: var(--bg-inset); border: 1px solid var(--border);
+}
+.pw-feeds .n { font-size: 12px; color: var(--text-muted); }
+.pw-feeds.warn .n { color: var(--warn); }
+.pw-feeds.critical .n { color: var(--critical); }
+

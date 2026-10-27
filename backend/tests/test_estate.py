@@ -1795,3 +1795,160 @@ async def test_the_room_drawer_carries_the_same_envelope_as_the_page(monkeypatch
     assert env["envelope"]["moisture_probes"] == 2
     # Dry bulb survives beside it, because the band note is written in it.
     assert env["envelope"]["temp_pct"] == 100.0
+
+
+# ------------------------------------------------------------------- power
+# Rack rows, ratings and the coincident peak. The rack tier, the inventory and
+# the peak query are their own reads; a test about rooms should not have to
+# stub them, so the default is an estate with no racks and no ratings.
+
+
+@pytest.fixture(autouse=True)
+def _no_power_extras(monkeypatch):
+    monkeypatch.setattr(estate.repo, "power_racks_live", _returns([]))
+    monkeypatch.setattr(estate.repo, "power_racks_window", _returns([]))
+    monkeypatch.setattr(estate.repo, "power_window_peaks",
+                        _returns({"sites": {}, "total": {}}))
+    monkeypatch.setattr(estate.repo, "power_inventory", _returns(
+        {"racks": {}, "feeds": {}, "room_design_kw": {}, "site_design_kw": {}}))
+
+
+def _rack_row(rack_id: str, room_id: str, dc: str, code: str, *, avg_it=None,
+              peak_it=None, prev_it=None, rated=None, loads=4, reporting=None):
+    return {
+        "rack_id": rack_id, "rack_name": f"R-{rack_id}", "rated_power_kw": rated,
+        "room_id": room_id, "room_name": f"room-{room_id}", "floor": None,
+        "room_class": "white_space", "datacenter_id": dc, "site_code": code,
+        "site_name": code, "avg_it": avg_it, "peak_it": peak_it,
+        "prev_it": prev_it, "loads": loads, "reporting": reporting,
+    }
+
+
+@pytest.mark.asyncio
+async def test_site_peak_is_coincident_not_a_sum_of_room_peaks(monkeypatch):
+    """Two halls that peak an hour apart never drew their peaks together.
+
+    The room rows carry their own peaks (180 and 120); the site's peak comes
+    from the per-bucket query one tier up, which saw at most 250 in any one
+    bucket. The old fold reported 300, a moment that never happened.
+    """
+    monkeypatch.setattr(estate.repo, "power_window", _returns([
+        _power_row("a", "dc1", "DC1", avg_it=150.0, peak_it=180.0, avg_total=150.0,
+                   peak_total=180.0),
+        _power_row("b", "dc1", "DC1", avg_it=100.0, peak_it=120.0, avg_total=100.0,
+                   peak_total=120.0),
+    ]))
+    monkeypatch.setattr(estate.repo, "power_window_peaks", _returns({
+        "sites": {"dc1": {"datacenter_id": "dc1", "peak_total": 250.0, "peak_it": 250.0,
+                          "peak_cooling": 0.0, "peak_other": 0.0,
+                          "prev_peak_total": 240.0}},
+        "total": {"datacenter_id": None, "peak_total": 250.0, "peak_it": 250.0,
+                  "peak_cooling": 0.0, "peak_other": 0.0, "prev_peak_total": 240.0},
+    }))
+    out = await estate.power(_FakeSession(), mode="peak")
+    assert out["rooms"][0]["total_kw"] == 180.0
+    assert out["sites"][0]["total_kw"] == 250.0
+    assert out["totals"]["total_kw"] == 250.0
+    assert out["sites"][0]["delta_total"] == 10.0
+    # And AVERAGE still folds by addition, because a mean of sums is the sum
+    # of the means over the same buckets.
+    avg = await estate.power(_FakeSession(), mode="average")
+    assert avg["sites"][0]["total_kw"] == 250.0
+
+
+@pytest.mark.asyncio
+async def test_now_compares_with_fifteen_minutes_ago(monkeypatch):
+    """The NOW view had a delta column that was always a dot."""
+    monkeypatch.setattr(estate.repo, "power_live", _returns([
+        _power_row("a", "dc1", "DC1", avg_it=100.0, avg_cooling=20.0, prev_total=110.0),
+    ]))
+    out = await estate.power(_FakeSession(), live=True)
+    assert out["rooms"][0]["total_kw"] == 120.0
+    assert out["rooms"][0]["delta_total"] == 10.0
+    assert out["window"]["compare_label"] == "15 minutes ago"
+
+
+@pytest.mark.asyncio
+async def test_racks_fold_into_their_room_and_are_judged_against_their_rating(monkeypatch):
+    """A rack's load is the loads in it; its band is load over its own rating.
+
+    The room's rating is the sum of its racks' where no design figure exists,
+    and the row says so; with a design figure that wins and the row says that.
+    """
+    monkeypatch.setattr(estate.repo, "power_live", _returns([
+        _power_row("h", "dc1", "DC1", avg_it=24.0, avg_cooling=6.0),
+    ]))
+    monkeypatch.setattr(estate.repo, "power_racks_live", _returns([
+        _rack_row("r1", "h", "dc1", "DC1", avg_it=9.5, rated=10.0, reporting=4),
+        _rack_row("r2", "h", "dc1", "DC1", avg_it=8.0, rated=10.0, reporting=4),
+        _rack_row("r3", "h", "dc1", "DC1", avg_it=6.5, rated=10.0, reporting=3),
+        _rack_row("r4", "h", "dc1", "DC1", avg_it=None, rated=None, loads=0),
+    ]))
+    out = await estate.power(_FakeSession(), live=True)
+    racks = {r["id"]: r for r in out["racks"]}
+    assert racks["r1"]["load_pct"] == 95.0 and racks["r1"]["band"] == "critical"
+    assert racks["r2"]["load_pct"] == 80.0 and racks["r2"]["band"] == "warn"
+    assert racks["r3"]["load_pct"] == 65.0 and racks["r3"]["band"] == "ok"
+    assert racks["r4"]["load_pct"] is None and racks["r4"]["band"] is None
+    assert racks["r4"]["note"] == "no IT or network device in this rack"
+    room = out["rooms"][0]
+    assert room["rated_kw"] == 30.0 and room["rating_basis"] == "racks"
+    assert room["load_pct"] == 80.0 and room["band"] == "warn"
+    assert room["spread"] == {"under_60": 0, "b60_80": 1, "b80_90": 1,
+                              "over_90": 1, "unrated": 1}
+    assert room["racks_reporting"] == 3 and room["rack_count"] == 4
+    assert out["bands"] == {"warn_pct": 80.0, "critical_pct": 90.0, "pue_warn": 1.6}
+
+    # A design figure on the room wins over the sum of its racks.
+    monkeypatch.setattr(estate.repo, "power_inventory", _returns(
+        {"racks": {}, "feeds": {}, "room_design_kw": {"h": 40.0},
+         "site_design_kw": {"dc1": 100.0}}))
+    out = await estate.power(_FakeSession(), live=True)
+    assert out["rooms"][0]["rated_kw"] == 40.0
+    assert out["rooms"][0]["rating_basis"] == "design"
+    assert out["rooms"][0]["load_pct"] == 60.0
+    assert out["sites"][0]["rated_kw"] == 100.0
+    assert out["sites"][0]["rating_basis"] == "design"
+    assert out["sites"][0]["load_pct"] == 24.0
+
+
+@pytest.mark.asyncio
+async def test_power_alarms_split_racks_from_floor_standing_plant(monkeypatch):
+    monkeypatch.setattr(estate.repo, "power_live", _returns([
+        _power_row("h", "dc1", "DC1", avg_it=24.0, avg_cooling=6.0),
+    ]))
+    monkeypatch.setattr(estate.repo, "power_racks_live", _returns([
+        _rack_row("r1", "h", "dc1", "DC1", avg_it=9.5, rated=10.0),
+    ]))
+    monkeypatch.setattr(estate.repo, "thermal_alarms", _returns(
+        {"racks": {"r1": 1}, "rooms": {"h": 3}, "sites": {"dc1": 3}, "total": 3}))
+    out = await estate.power(_FakeSession(), live=True)
+    assert out["alarm_categories"] == ["power"]
+    assert out["racks"][0]["alarms_open"] == 1
+    assert out["rooms"][0]["alarms_open"] == 3
+    assert out["rooms"][0]["alarms_in_racks"] == 1
+    assert out["sites"][0]["alarms_in_racks"] == 1
+    assert out["totals"]["alarms_open"] == 3
+
+
+def test_feeds_fold_by_side_not_by_cord_count():
+    """Two cords into strips on one side is one feed with extra copper."""
+    from app.repositories.estate import fold_feeds
+    feeds = fold_feeds([
+        {"rack_id": "r", "load_id": "s1", "feeder": "PDUA-1", "side": "A"},
+        {"rack_id": "r", "load_id": "s1", "feeder": "PDUB-1", "side": "B"},
+        {"rack_id": "r", "load_id": "s2", "feeder": "PDUA-1", "side": "A"},
+        {"rack_id": "r", "load_id": "s3", "feeder": "PDUA-1", "side": "A"},
+        {"rack_id": "r", "load_id": "s3", "feeder": "PDUA-2", "side": "a"},
+        {"rack_id": "r", "load_id": "s4", "feeder": None, "side": None},
+    ])
+    f = feeds["r"]
+    assert f["a"] == ["PDUA-1", "PDUA-2"] and f["b"] == ["PDUB-1"]
+    assert f["loads"] == 4
+    assert f["dual_cord"] == 1 and f["single_cord"] == 2 and f["unfed"] == 1
+
+
+def test_a_window_label_names_the_last_day_not_the_midnight_after_it():
+    start = datetime(2026, 10, 21, tzinfo=UTC)
+    end = datetime(2026, 10, 22, tzinfo=UTC)
+    assert estate._span_label(start, end) == "2026-10-21 to 2026-10-21"

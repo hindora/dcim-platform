@@ -3489,6 +3489,20 @@ export interface ThermalDeltaTrend {
   delta_k: number | null;
 }
 
+/** How a row's racks sit against their ratings: rack counts per band.
+ *  `unrated` is a rack with no rating or no reading - not a band. */
+export interface PowerSpread {
+  under_60: number; b60_80: number; b80_90: number; over_90: number; unrated: number;
+}
+
+/** The strips feeding a rack's loads, by side, and how the loads are corded.
+ *  Dual means fed from two DIFFERENT sides; two cords into one strip is one
+ *  feed with extra copper. */
+export interface PowerFeeds {
+  a: string[]; b: string[]; other: string[];
+  loads: number; dual_cord: number; single_cord: number; unfed: number;
+}
+
 export interface PowerRow extends EstateRowBase {
   total_kw: number | null;
   it_ac_kw: number | null;
@@ -3498,22 +3512,66 @@ export interface PowerRow extends EstateRowBase {
   other_kw: number | null;
   pue: number | null;
   delta_total: number | null;
+  /** What the IT load is judged against, and where the figure came from:
+   *  the rack's own rating, the room or site's design IT kW, or the sum of
+   *  the racks' ratings under it. Null where nothing is rated. */
+  rated_kw?: number | null;
+  rating_basis?: 'rack' | 'design' | 'racks' | 'rooms' | null;
+  load_pct?: number | null;
+  band?: 'ok' | 'warn' | 'critical' | null;
+  spread?: PowerSpread | null;
+  alarms_open?: number;
+  alarms_in_racks?: number;
+  /** Rooms and sites: devices with a reading over devices that could have
+   *  one. Racks: the number of loads reporting. */
+  reporting?: { devices: number; reporting: number } | number | null;
+  rack_count?: number;
+  racks_reporting?: number;
+  racks_rated?: number;
+  /** Rack rows. */
+  room_id?: string;
+  room_name?: string;
+  allocated_kw?: number | null;
+  reserved_kw?: number | null;
+  unrated_devices?: number;
+  feeds?: PowerFeeds | null;
+  loads?: number;
+  /** Rooms and sites: loads under them on one cord, or on none. */
+  single_cord?: number;
+  unfed?: number;
+  note?: string | null;
 }
 
 export interface PowerPage {
   window: {
     mode: string; label?: string; start?: string; end?: string;
-    bucket_seconds?: number;
+    bucket_seconds?: number; compare_label?: string;
+    /** Which table the window was read from: raw samples, or a rollup that
+     *  trails the readings by its refresh lag. */
+    source?: string;
   };
+  /** The lines the page judges against, held by the server so the header
+   *  and the rows cannot disagree. */
+  bands: { warn_pct: number; critical_pct: number; pue_warn: number };
+  alarm_categories: string[];
   totals: {
     total_kw: number | null; it_ac_kw: number | null; it_dc_kw: number | null;
     cooling_kw: number | null; other_kw: number | null; pue: number | null;
     rooms_reporting: number; rooms: number;
+    halls: number; halls_reporting: number;
+    racks: number; racks_reporting: number;
+    rated_kw: number | null; rating_basis: string | null;
+    load_pct: number | null; band: 'ok' | 'warn' | 'critical' | null;
+    spread: PowerSpread | null;
+    single_cord: number; unfed: number;
+    alarms_open: number; alarms_in_racks: number;
+    as_of: string | null;
     /** What the hidden facility rows contribute, so the header reconciles. */
     facility: { rooms: number; total_kw: number | null; cooling_kw: number | null };
   };
   sites: PowerRow[];
   rooms: PowerRow[];
+  racks: PowerRow[];
   notes: string[];
 }
 
@@ -4987,13 +5045,14 @@ export const api = {
     request<PlantPage>(`/estate/plant${view === 'all' ? '' : `?view=${view}`}`),
 
   estatePower: (params: {
-    start?: string; end?: string; mode?: string; live?: boolean;
+    start?: string; end?: string; mode?: string; live?: boolean; hour?: boolean;
   } = {}) => {
     const q = new URLSearchParams();
     if (params.start) q.set('start', params.start);
     if (params.end) q.set('end', params.end);
     if (params.mode) q.set('mode', params.mode);
     if (params.live) q.set('live', 'true');
+    if (params.hour) q.set('hour', 'true');
     const qs = q.toString();
     return request<PowerPage>(`/estate/power${qs ? `?${qs}` : ''}`);
   },

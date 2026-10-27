@@ -26,7 +26,12 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.alert_taxonomy import DETECTIONS, THERMAL_ALARM_CATEGORIES
+from app.core.alert_taxonomy import (
+    DETECTIONS,
+    POWER_ALARM_CATEGORIES,
+    POWER_BANDS,
+    THERMAL_ALARM_CATEGORIES,
+)
 from app.core.ashrae import DEFAULT_CLASS, envelope_for
 from app.repositories import estate as repo
 from app.repositories import thermal as thermal_repo
@@ -1035,38 +1040,210 @@ def _strip(row: dict[str, Any]) -> dict[str, Any]:
 
 async def power(session: AsyncSession, *, start: datetime | None = None,
                 end: datetime | None = None, mode: str = "average",
-                live: bool = False) -> dict[str, Any]:
-    """Room and site power, split IT / cooling / other, with PUE per row."""
+                live: bool = False, hour: bool = False) -> dict[str, Any]:
+    """Rack, room and site power, split IT / cooling / other, judged against
+    rating, with PUE per row.
+
+    Three windows, because they answer different questions. NOW (`live`) is
+    the hot mirror - what the estate is drawing this minute, compared with
+    fifteen minutes ago. LAST HOUR (`hour`) is sixty minutes of five-minute
+    buckets against the hour before. BY DAY is the date range given, against
+    the equally long range before it. In the windowed modes `mode` picks the
+    statistic: AVERAGE is the mean over the window, PEAK is the COINCIDENT
+    maximum - loads summed per bucket first, then the largest bucket taken,
+    at every tier, so the figure is one that actually happened rather than a
+    sum of each room's private worst moment.
+
+    Everything below a room is the rack: its IT draw is the sum of the loads
+    in it, the same population the room's IT column sums, so racks add up to
+    their room. The rating a load is judged against is the rack's own
+    (`rack.rated_power_kw`), the room's design IT kW where the inventory
+    carries one and otherwise the sum of its racks' ratings, and the site's
+    the same way - and every row says which it used.
+    """
+    now = datetime.now(UTC)
     if live:
         raw = await repo.power_live(session)
-        window = {"mode": "live", "label": "now"}
+        raw_racks = await repo.power_racks_live(session)
+        window = {"mode": "live", "label": "now",
+                  "compare_label": f"{int(repo.POWER_PREV_AT.total_seconds() // 60)} minutes ago"}
+        peak = False
+        peaks: dict[str, Any] = {"sites": {}, "total": {}}
     else:
-        end = end or datetime.now(UTC)
-        start = start or (end - timedelta(days=1))
+        if hour:
+            end, start = now, now - timedelta(hours=1)
+        else:
+            end = end or now
+            start = start or (end - timedelta(days=1))
         span = end - start
-        raw = await repo.power_window(session, start=start, end=end,
-                                      compare_start=start - span,
-                                      compare_end=start,
-                                      bucket=_bucket_for(start, end))
-        window = {"mode": mode, "start": start, "end": end,
-                  "bucket_seconds": int(_bucket_for(start, end).total_seconds()),
+        bucket = _bucket_for(start, end)
+        kw = {"start": start, "end": end, "compare_start": start - span,
+              "compare_end": start, "bucket": bucket}
+        raw = await repo.power_window(session, **kw)
+        raw_racks = await repo.power_racks_window(session, **kw)
+        peak = mode == "peak"
+        # A site's peak cannot be folded from its rooms', so it is read from
+        # the same buckets one tier up - only when it is wanted.
+        peaks = await repo.power_window_peaks(session, **kw) if peak \
+            else {"sites": {}, "total": {}}
+        window = {"mode": "hour" if hour else mode, "start": start, "end": end,
+                  "bucket_seconds": int(bucket.total_seconds()),
+                  "source": repo.power_source(bucket),
                   "compare_start": start - span, "compare_end": start,
-                  "label": f"{start.date().isoformat()} to {end.date().isoformat()}"}
+                  "label": "last hour" if hour else _span_label(start, end),
+                  "compare_label": "the hour before" if hour
+                  else "the equally long window before it"}
 
-    peak = mode == "peak" and not live
-    rows = [_power_row(r, peak=peak) for r in raw]
-    sites = _fold_power_sites(rows)
+    inv = await repo.power_inventory(session)
+    alarms = await repo.thermal_alarms(session, categories=list(POWER_ALARM_CATEGORIES))
+
+    racks = [_power_rack_row(r, inv, peak=peak) for r in raw_racks]
+    rooms = [_power_row(r, peak=peak) for r in raw]
+    _attach_racks(rooms, racks, inv["room_design_kw"])
+    sites = _fold_power_sites(rooms, inv["site_design_kw"], peaks["sites"])
+    totals = _fold_power_total(rooms, racks, peaks["total"])
+
+    _attach_count(racks, alarms["racks"])
+    _attach_count(rooms, alarms["rooms"])
+    _attach_count(sites, alarms["sites"])
+    totals["alarms_open"] = alarms["total"]
+    # How many of a row's conditions are on something IN a rack. A UPS or an
+    # RPP stands on the floor, so a hall can show open power conditions
+    # while every rack under it shows none - correct, and unreadable
+    # without saying which.
+    in_racks: dict[str, int] = {}
+    for rack in racks:
+        in_racks[rack["room_id"]] = in_racks.get(rack["room_id"], 0) + rack["alarms_open"]
+    for room in rooms:
+        room["alarms_in_racks"] = in_racks.get(room["id"], 0)
+    by_site: dict[str, int] = {}
+    for room in rooms:
+        by_site[room["site_id"]] = by_site.get(room["site_id"], 0) + room["alarms_in_racks"]
+    for site in sites:
+        site["alarms_in_racks"] = by_site.get(site["id"], 0)
+    totals["alarms_in_racks"] = sum(r["alarms_in_racks"] for r in rooms)
+
+    # When the newest figure on the page was written. In the windowed modes
+    # the window end is the answer; in NOW it is the newest hot-mirror write.
+    as_of = max((r.get("as_of") for r in raw if r.get("as_of")), default=None) \
+        if live else end
+    totals["as_of"] = as_of
+
+    notes = [
+        "IT(DC) is blank throughout: nothing meters a DC bus in this estate, "
+        "so the column exists for parity with sites that do.",
+        "A rack's load is the draw its servers and switches report, the same "
+        "population the room's IT column sums, so a room's racks add up to "
+        "the room. The strip's own meter, read on the rack page, sits a few "
+        "percent above it (PSU losses).",
+    ]
+    src = window.get("source")
+    if src == "telemetry_5m":
+        notes.append("This window reads the five-minute rollup, which trails the "
+                     "readings by about five minutes.")
+    elif src == "telemetry_1h":
+        notes.append("This window reads the hourly rollup, which trails the "
+                     "readings by up to an hour.")
+    if peak:
+        notes.append("Peak is coincident at every tier - loads are summed per "
+                     "bucket before the maximum is taken, so a site's peak is "
+                     "a moment that happened, not its rooms' peaks added up.")
     return {
         "window": window,
-        "totals": _fold_power_total(rows),
+        "bands": dict(POWER_BANDS),
+        "alarm_categories": list(POWER_ALARM_CATEGORIES),
+        "totals": totals,
         "sites": sites,
-        "rooms": [_strip(r) for r in rows],
-        "notes": [
-            "IT(DC) is blank throughout: nothing meters a DC bus in this "
-            "estate, so the column exists for parity with sites that do.",
-            "Peak is coincident - loads are summed per bucket before the "
-            "maximum is taken, so the figure is one that actually occurred.",
-        ],
+        "rooms": [_strip(r) for r in rooms],
+        "racks": [_strip(r) for r in racks],
+        "notes": notes,
+    }
+
+
+def _r1(v: Any) -> float | None:
+    f = _f(v)
+    return None if f is None else round(f, 1)
+
+
+def _span_label(start: datetime, end: datetime) -> str:
+    """"2026-10-20 to 2026-10-26" for a range whose end is the midnight after
+    the last day, which is what the page sends for an inclusive pick."""
+    last = (end - timedelta(seconds=1)).date()
+    return f"{start.date().isoformat()} to {last.isoformat()}"
+
+
+def _band(load_pct: float | None) -> str | None:
+    """ok / warn / critical against POWER_BANDS, None where there is no ratio."""
+    if load_pct is None:
+        return None
+    if load_pct >= POWER_BANDS["critical_pct"]:
+        return "critical"
+    if load_pct >= POWER_BANDS["warn_pct"]:
+        return "warn"
+    return "ok"
+
+
+def _load_pct(load: float | None, rated: float | None) -> float | None:
+    if load is None or not rated:
+        return None
+    return round(100.0 * load / rated, 1)
+
+
+_SPREAD_KEYS = ("under_60", "b60_80", "b80_90", "over_90", "unrated")
+
+
+def _spread_bucket(load_pct: float | None) -> str:
+    if load_pct is None:
+        return "unrated"
+    if load_pct >= 90:
+        return "over_90"
+    if load_pct >= 80:
+        return "b80_90"
+    if load_pct >= 60:
+        return "b60_80"
+    return "under_60"
+
+
+def _power_rack_row(r: dict[str, Any], inv: dict[str, Any], *, peak: bool) -> dict[str, Any]:
+    it = _f(r.get("peak_it" if peak else "avg_it"))
+    it = None if it is None else round(it, 2)
+    prev = _f(r.get("prev_peak_it" if peak else "prev_it"))
+    rated = _f(r.get("rated_power_kw"))
+    rated = rated if rated and rated > 0 else None
+    plan = inv["racks"].get(r["rack_id"], {})
+    feeds = inv["feeds"].get(r["rack_id"])
+    loads = int(r.get("loads") or 0)
+    reporting = int(r.get("reporting") or 0) if "reporting" in r else None
+    pct = _load_pct(it, rated)
+    if it is None:
+        note = ("nothing in this rack reports power" if loads
+                else "no IT or network device in this rack")
+    else:
+        note = None
+    allocated = _f(plan.get("allocated_kw"))
+    return {
+        "id": r["rack_id"], "kind": "rack", "name": r["rack_name"],
+        "room_id": r["room_id"], "room_name": r["room_name"],
+        "floor": r["floor"], "room_class": r["room_class"],
+        "site_id": r["datacenter_id"], "site_code": r["site_code"],
+        "site_name": r["site_name"],
+        "total_kw": it, "it_ac_kw": it, "it_dc_kw": None,
+        "cooling_kw": None, "other_kw": None, "pue": None,
+        "delta_total": _delta(it, None if prev is None else round(prev, 2)),
+        "rated_kw": rated,
+        "rating_basis": "rack" if rated else None,
+        "load_pct": pct,
+        "band": _band(pct),
+        "allocated_kw": None if allocated is None else round(allocated, 2),
+        "reserved_kw": (None if plan.get("reserved_kw") is None
+                        else round(float(plan["reserved_kw"]), 2)),
+        "unrated_devices": int(plan.get("unrated") or 0),
+        "feeds": feeds,
+        "loads": loads,
+        "reporting": reporting,
+        "note": note,
+        "_it": it, "_cooling": None, "_other": None, "_total": it,
+        "_prev": None if prev is None else round(prev, 2),
     }
 
 
@@ -1082,7 +1259,7 @@ def _power_row(r: dict[str, Any], *, peak: bool) -> dict[str, Any]:
     if total is None and it is not None:
         total = round(it + (cooling or 0) + (other or 0), 1)
 
-    prev = _f(r.get("prev_total"))
+    prev = _f(r.get("prev_peak_total" if peak else "prev_total"))
     return {
         "id": r["room_id"],
         "kind": "room",
@@ -1101,62 +1278,154 @@ def _power_row(r: dict[str, Any], *, peak: bool) -> dict[str, Any]:
         "other_kw": other,
         "pue": round(total / it, 3) if total and it else None,
         "delta_total": _delta(total, None if prev is None else round(prev, 1)),
+        "reporting": (None if r.get("reporting") is None
+                      else {"devices": int(r.get("devices") or 0),
+                            "reporting": int(r.get("reporting") or 0)}),
         "note": None if total is not None else "no power meter reported here",
         "_it": it, "_cooling": cooling, "_other": other, "_total": total,
         "_prev": None if prev is None else round(prev, 1),
     }
 
 
-def _fold_power_sites(rooms: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _attach_racks(rooms: list[dict[str, Any]], racks: list[dict[str, Any]],
+                  room_design_kw: dict[str, float]) -> None:
+    """Rating, load against it and the spread of its racks, per room.
+
+    The room's rating is its design IT kW when the inventory carries one,
+    else the sum of its racks' ratings - and the row says which. The load
+    judged against it is the IT draw, because both ratings are IT ratings;
+    cooling is on another feed and another budget.
+    """
+    by_room: dict[str, list[dict[str, Any]]] = {}
+    for rk in racks:
+        by_room.setdefault(rk["room_id"], []).append(rk)
+    for room in rooms:
+        rks = by_room.get(room["id"], [])
+        rack_rated = sum(rk["rated_kw"] for rk in rks if rk["rated_kw"])
+        design = room_design_kw.get(room["id"])
+        rated = design if design else (round(rack_rated, 1) if rack_rated else None)
+        basis = "design" if design else ("racks" if rack_rated else None)
+        spread = dict.fromkeys(_SPREAD_KEYS, 0)
+        for rk in rks:
+            spread[_spread_bucket(rk["load_pct"])] += 1
+        pct = _load_pct(room["_it"], rated)
+        room.update({
+            "rated_kw": rated, "rating_basis": basis,
+            "load_pct": pct, "band": _band(pct),
+            "rack_count": len(rks),
+            "racks_rated": sum(1 for rk in rks if rk["rated_kw"]),
+            "racks_reporting": sum(1 for rk in rks if rk["_it"] is not None),
+            "spread": spread if rks else None,
+            "allocated_kw": (round(sum(rk["allocated_kw"] for rk in rks
+                                       if rk["allocated_kw"] is not None), 1)
+                             if any(rk["allocated_kw"] is not None for rk in rks) else None),
+            "single_cord": sum((rk["feeds"] or {}).get("single_cord", 0) for rk in rks),
+            "unfed": sum((rk["feeds"] or {}).get("unfed", 0) for rk in rks),
+            "_rack_rated": rack_rated,
+        })
+
+
+def _fold_power_sites(rooms: list[dict[str, Any]], site_design_kw: dict[str, float],
+                      peaks: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
     by_site: dict[str, dict[str, Any]] = {}
     for r in rooms:
         s = by_site.setdefault(r["site_id"], {
             "id": r["site_id"], "kind": "site", "name": r["site_name"],
             "site_id": r["site_id"], "site_code": r["site_code"],
-            "site_name": r["site_name"], "room_count": 0,
+            "site_name": r["site_name"], "room_count": 0, "rack_count": 0,
+            "racks_rated": 0, "racks_reporting": 0,
             "_it": None, "_cooling": None, "_other": None, "_total": None,
-            "_prev": None,
+            "_prev": None, "_rack_rated": 0.0,
+            "spread": dict.fromkeys(_SPREAD_KEYS, 0),
+            "allocated_kw": None, "single_cord": 0, "unfed": 0,
+            "alarms_open": 0,
         })
         s["room_count"] += 1
+        s["rack_count"] += r.get("rack_count", 0)
+        s["racks_rated"] += r.get("racks_rated", 0)
+        s["racks_reporting"] += r.get("racks_reporting", 0)
+        s["_rack_rated"] += r.get("_rack_rated", 0.0)
+        s["single_cord"] += r.get("single_cord", 0)
+        s["unfed"] += r.get("unfed", 0)
+        if r.get("spread"):
+            for k in _SPREAD_KEYS:
+                s["spread"][k] += r["spread"][k]
+        if r.get("allocated_kw") is not None:
+            s["allocated_kw"] = round((s["allocated_kw"] or 0) + r["allocated_kw"], 1)
         for key in ("_it", "_cooling", "_other", "_total", "_prev"):
             if r[key] is not None:
                 s[key] = r[key] if s[key] is None else round(s[key] + r[key], 1)
 
     out = []
     for s in by_site.values():
+        # In PEAK mode the sum of room peaks is a moment that never happened;
+        # the coincident figure comes from the bucket query one tier up.
+        pk = peaks.get(s["id"])
+        if pk:
+            for key, col in (("_it", "peak_it"), ("_cooling", "peak_cooling"),
+                             ("_other", "peak_other"), ("_total", "peak_total")):
+                v = _f(pk.get(col))
+                s[key] = None if v is None else round(v, 1)
+            pv = _f(pk.get("prev_peak_total"))
+            s["_prev"] = None if pv is None else round(pv, 1)
         total, it = s["_total"], s["_it"]
+        design = site_design_kw.get(s["id"])
+        rated = design if design else (round(s["_rack_rated"], 1) if s["_rack_rated"] else None)
+        pct = _load_pct(it, rated)
         out.append(_strip({**s,
                            "total_kw": total, "it_ac_kw": it, "it_dc_kw": None,
                            "cooling_kw": s["_cooling"], "other_kw": s["_other"],
                            "pue": round(total / it, 3) if total and it else None,
                            "delta_total": _delta(total, s["_prev"]),
+                           "rated_kw": rated,
+                           "rating_basis": "design" if design else ("racks" if rated else None),
+                           "load_pct": pct, "band": _band(pct),
+                           "spread": s["spread"] if s["rack_count"] else None,
                            "note": None if total is not None else "no power meter reported"}))
     return sorted(out, key=lambda r: r["site_code"])
 
 
-def _fold_power_total(rooms: list[dict[str, Any]]) -> dict[str, Any]:
+def _fold_power_total(rooms: list[dict[str, Any]], racks: list[dict[str, Any]],
+                      peak: dict[str, Any]) -> dict[str, Any]:
     def total(key: str, subset: list[dict[str, Any]] | None = None) -> float | None:
         vals = [r[key] for r in (subset or rooms) if r[key] is not None]
         return round(sum(vals), 1) if vals else None
 
     it, all_kw = total("_it"), total("_total")
+    cooling, other = total("_cooling"), total("_other")
+    if peak:
+        it, all_kw, cooling, other = (_r1(peak.get(k)) for k in
+                                      ("peak_it", "peak_total", "peak_cooling", "peak_other"))
     facility = [r for r in rooms if r["room_class"] != "white_space"]
+    rated = sum(r["rated_kw"] for r in rooms if r.get("rated_kw"))
+    rated = round(rated, 1) if rated else None
+    spread = dict.fromkeys(_SPREAD_KEYS, 0)
+    for rk in racks:
+        spread[_spread_bucket(rk["load_pct"])] += 1
+    pct = _load_pct(it, rated)
     return {"total_kw": all_kw, "it_ac_kw": it, "it_dc_kw": None,
-            "cooling_kw": total("_cooling"), "other_kw": total("_other"),
+            "cooling_kw": cooling, "other_kw": other,
             "pue": round(all_kw / it, 3) if all_kw and it else None,
             "rooms_reporting": sum(1 for r in rooms if r["_total"] is not None),
             "rooms": len(rooms),
+            "halls": sum(1 for r in rooms if r["room_class"] == "white_space"),
+            "halls_reporting": sum(1 for r in rooms
+                                   if r["room_class"] == "white_space"
+                                   and r["_total"] is not None),
+            "racks": len(racks),
+            "racks_reporting": sum(1 for rk in racks if rk["_it"] is not None),
+            "rated_kw": rated,
+            "rating_basis": "rooms" if rated else None,
+            "load_pct": pct, "band": _band(pct),
+            "spread": spread if racks else None,
+            "single_cord": sum(r.get("single_cord", 0) for r in rooms),
+            "unfed": sum(r.get("unfed", 0) for r in rooms),
             # What the facility rooms contribute. The UI hides those rows by
             # default, and a header that does not match the visible rows has to
-            # explain the difference rather than let a reader find it.
-            "facility": {
-                "rooms": len(facility),
-                "total_kw": total("_total", facility),
-                "cooling_kw": total("_cooling", facility),
-            }}
-
-
-# ----------------------------------------------------------------- utilisation
+            # say why.
+            "facility": {"rooms": len(facility),
+                         "total_kw": total("_total", facility) if facility else None,
+                         "cooling_kw": total("_cooling", facility) if facility else None}}
 
 
 async def utilisation(session: AsyncSession) -> dict[str, Any]:

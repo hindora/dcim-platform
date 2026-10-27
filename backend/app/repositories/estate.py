@@ -14,7 +14,7 @@ four sensors ends up outvoting one with four hundred.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import text
@@ -1368,6 +1368,124 @@ async def thermal_alarms(session: AsyncSession, *,
     return out
 
 
+# Where a windowed power query reads from, by bucket width.
+#
+# Five-minute buckets come from the raw samples; anything coarser reads the
+# rollup one step finer than the bucket, the way the thermal trend does. A
+# week of raw power_draw is three scans of four seconds each on this host;
+# the same week from `telemetry_5m` is a fraction of that, and a mean of
+# five-minute means over a thirty-minute bucket is the same number. The cost
+# is the rollup's refresh lag - five minutes on `telemetry_5m`, an hour on
+# `telemetry_1h` - which the response names so the page can say it.
+def power_source(bucket: timedelta) -> str:
+    if bucket <= timedelta(minutes=5):
+        return "telemetry_sample"
+    if bucket < timedelta(hours=1):
+        return "telemetry_5m"
+    return "telemetry_1h"
+
+
+# One CTE for every windowed power query: each device's mean draw per bucket,
+# tagged with its room, category and whether the bucket is in the focus or the
+# comparison window. The room table, the site peaks and the rack table all
+# start here, so a bucket is the same bucket in all three.
+def _power_buckets(source: str) -> str:
+    tcol = "ts" if source == "telemetry_sample" else "bucket"
+    vcol = "value" if source == "telemetry_sample" else "avg_value"
+    return f"""
+    WITH {_DEV_CTE},
+    rooms AS ({_ROOMS}),
+    b AS (
+        SELECT time_bucket(:bucket, t.{tcol}) AS bkt,
+               dev.room_id                                  AS room_id,
+               dt.category                                  AS cat,
+               t.device_id                                  AS device_id,
+               d.rack_id                                    AS rack_id,
+               (t.{tcol} >= :s AND t.{tcol} < :e)           AS is_focus,
+               avg(t.{vcol})                                AS w
+        FROM {source} t
+        JOIN metric m       ON m.id = t.metric_id
+        JOIN dev            ON dev.device_id = t.device_id
+        JOIN device d       ON d.id = t.device_id
+        JOIN device_type dt ON dt.code = d.device_type
+        WHERE m.key = 'power_draw'
+          AND t.instance = ''
+          AND ((t.{tcol} >= :s AND t.{tcol} < :e)
+               OR (t.{tcol} >= :c0 AND t.{tcol} < :c1))
+        GROUP BY 1, 2, 3, 4, 5, 6
+    ),
+    per_bucket AS (
+        SELECT bkt, room_id, is_focus,
+               COALESCE(sum(w) FILTER (WHERE cat IN ('it', 'network')), 0)/1000.0
+                   AS it_kw,
+               COALESCE(sum(w) FILTER (WHERE cat = 'cooling'), 0)/1000.0
+                   AS cooling_kw,
+               COALESCE(sum(w) FILTER (
+                   WHERE cat NOT IN ('it', 'network', 'cooling', 'power')), 0)/1000.0
+                   AS other_kw
+        FROM b GROUP BY 1, 2, 3
+    )
+"""
+
+
+# The draw each device was at fifteen minutes ago, for the NOW view's delta.
+#
+# Not the rollup: the five-minute aggregate is only as current as its refresh,
+# and a bucket that has not materialised yet reads as "no prior", which is a
+# fact about the refresh policy and not about the estate. Ten minutes of raw
+# samples centred fifteen minutes back is cheap - power_draw is one metric -
+# and every row on the page measures its change over the same interval.
+_POWER_PREV = """
+    prev AS (
+        SELECT t.device_id, avg(t.value) AS w
+          FROM telemetry_sample t
+          JOIN metric m ON m.id = t.metric_id
+         WHERE m.key = 'power_draw'
+           AND t.instance = ''
+           AND t.ts >= :p0 AND t.ts < :p1
+         GROUP BY t.device_id
+    )
+"""
+
+#: The NOW delta is measured against fifteen minutes ago - the interval the
+#: thermal page's rate uses too, so both pages say "since when" with one
+#: number - over ten minutes of samples centred there.
+POWER_PREV_AT = timedelta(minutes=15)
+POWER_PREV_WIDTH = timedelta(minutes=10)
+
+# Every rack in inventory with where it stands. A rack with nothing reporting
+# is still a row: on a power page an empty rack is the capacity, not noise.
+_RACKS = """
+    SELECT r.id             AS rack_id,
+           r.name           AS rack_name,
+           r.rated_power_kw AS rated_power_kw,
+           rr.room_id       AS room_id,
+           rm.name          AS room_name,
+           rm.floor         AS floor,
+           rm.room_class    AS room_class,
+           rm.datacenter_id AS datacenter_id,
+           dc.code          AS site_code,
+           dc.name          AS site_name
+      FROM rack r
+      JOIN rack_row rr   ON rr.id = r.row_id
+      JOIN room rm       ON rm.id = rr.room_id
+      JOIN datacenter dc ON dc.id = rm.datacenter_id
+"""
+
+_RACK_COLS = """
+        SELECT racks.rack_id::text       AS rack_id,
+               racks.rack_name           AS rack_name,
+               racks.rated_power_kw      AS rated_power_kw,
+               racks.room_id::text       AS room_id,
+               racks.room_name           AS room_name,
+               racks.floor               AS floor,
+               racks.room_class          AS room_class,
+               racks.datacenter_id::text AS datacenter_id,
+               racks.site_code           AS site_code,
+               racks.site_name           AS site_name,
+"""
+
+
 async def power_window(session: AsyncSession, *, start: datetime, end: datetime,
                        compare_start: datetime, compare_end: datetime,
                        bucket: timedelta) -> list[dict[str, Any]]:
@@ -1383,36 +1501,7 @@ async def power_window(session: AsyncSession, *, start: datetime, end: datetime,
     the site KPI drawer follows.
     """
     rows = (await session.execute(text(f"""
-        WITH {_DEV_CTE},
-        rooms AS ({_ROOMS}),
-        b AS (
-            SELECT time_bucket(:bucket, t.ts) AS bkt,
-                   dev.room_id                                  AS room_id,
-                   dt.category                                  AS cat,
-                   t.device_id                                  AS device_id,
-                   (t.ts >= :s AND t.ts < :e)                   AS is_focus,
-                   avg(t.value)                                 AS w
-            FROM telemetry_sample t
-            JOIN metric m       ON m.id = t.metric_id
-            JOIN dev            ON dev.device_id = t.device_id
-            JOIN device d       ON d.id = t.device_id
-            JOIN device_type dt ON dt.code = d.device_type
-            WHERE m.key = 'power_draw'
-              AND t.instance = ''
-              AND ((t.ts >= :s AND t.ts < :e) OR (t.ts >= :c0 AND t.ts < :c1))
-            GROUP BY 1, 2, 3, 4, 5
-        ),
-        per_bucket AS (
-            SELECT bkt, room_id, is_focus,
-                   COALESCE(sum(w) FILTER (WHERE cat IN ('it', 'network')), 0)/1000.0
-                       AS it_kw,
-                   COALESCE(sum(w) FILTER (WHERE cat = 'cooling'), 0)/1000.0
-                       AS cooling_kw,
-                   COALESCE(sum(w) FILTER (
-                       WHERE cat NOT IN ('it', 'network', 'cooling', 'power')), 0)/1000.0
-                       AS other_kw
-            FROM b GROUP BY 1, 2, 3
-        ),
+        {_power_buckets(power_source(bucket))},
         agg AS (
             SELECT room_id,
                    avg(it_kw)      FILTER (WHERE is_focus) AS avg_it,
@@ -1428,6 +1517,8 @@ async def power_window(session: AsyncSession, *, start: datetime, end: datetime,
                    count(*) FILTER (WHERE is_focus)       AS buckets,
                    avg(it_kw + cooling_kw + other_kw) FILTER (WHERE NOT is_focus)
                        AS prev_total,
+                   max(it_kw + cooling_kw + other_kw) FILTER (WHERE NOT is_focus)
+                       AS prev_peak_total,
                    count(*) FILTER (WHERE NOT is_focus)   AS prev_buckets
             FROM per_bucket GROUP BY room_id
         )
@@ -1440,7 +1531,7 @@ async def power_window(session: AsyncSession, *, start: datetime, end: datetime,
                rooms.site_name           AS site_name,
                agg.avg_it, agg.peak_it, agg.avg_cooling, agg.peak_cooling,
                agg.avg_other, agg.peak_other, agg.avg_total, agg.peak_total,
-               agg.buckets, agg.prev_total, agg.prev_buckets
+               agg.buckets, agg.prev_total, agg.prev_peak_total, agg.prev_buckets
         FROM rooms
         LEFT JOIN agg ON agg.room_id = rooms.room_id
         ORDER BY rooms.site_code, rooms.room_name
@@ -1449,15 +1540,82 @@ async def power_window(session: AsyncSession, *, start: datetime, end: datetime,
     return [dict(r) for r in rows]
 
 
-async def power_live(session: AsyncSession) -> list[dict[str, Any]]:
+async def power_window_peaks(session: AsyncSession, *, start: datetime,
+                             end: datetime, compare_start: datetime,
+                             compare_end: datetime,
+                             bucket: timedelta) -> dict[str, Any]:
+    """The coincident peak per SITE and for the estate, from the same buckets.
+
+    A site's peak is not its rooms' peaks added up: two halls that peak an
+    hour apart never drew that sum together. So the rooms are summed inside
+    each bucket first, per site and then across sites, and the maximum is
+    taken afterwards - the arithmetic `power_window` does inside a room, one
+    level up and then another.
+
+    Returns {"sites": {datacenter_id: row}, "total": row}; each row carries
+    peak_total / peak_it / peak_cooling / peak_other for the focus window and
+    prev_peak_total for the comparison window.
+    """
+    rows = (await session.execute(text(f"""
+        {_power_buckets(power_source(bucket))},
+        site_bucket AS (
+            SELECT pb.bkt, rooms.datacenter_id, pb.is_focus,
+                   sum(pb.it_kw)      AS it_kw,
+                   sum(pb.cooling_kw) AS cooling_kw,
+                   sum(pb.other_kw)   AS other_kw
+              FROM per_bucket pb
+              JOIN rooms ON rooms.room_id = pb.room_id
+             GROUP BY 1, 2, 3
+        ),
+        estate_bucket AS (
+            SELECT bkt, is_focus,
+                   sum(it_kw) AS it_kw, sum(cooling_kw) AS cooling_kw,
+                   sum(other_kw) AS other_kw
+              FROM site_bucket GROUP BY 1, 2
+        )
+        SELECT datacenter_id::text AS datacenter_id,
+               max(it_kw + cooling_kw + other_kw) FILTER (WHERE is_focus)     AS peak_total,
+               max(it_kw)      FILTER (WHERE is_focus)                        AS peak_it,
+               max(cooling_kw) FILTER (WHERE is_focus)                        AS peak_cooling,
+               max(other_kw)   FILTER (WHERE is_focus)                        AS peak_other,
+               max(it_kw + cooling_kw + other_kw) FILTER (WHERE NOT is_focus) AS prev_peak_total
+          FROM site_bucket GROUP BY datacenter_id
+        UNION ALL
+        SELECT NULL,
+               max(it_kw + cooling_kw + other_kw) FILTER (WHERE is_focus),
+               max(it_kw)      FILTER (WHERE is_focus),
+               max(cooling_kw) FILTER (WHERE is_focus),
+               max(other_kw)   FILTER (WHERE is_focus),
+               max(it_kw + cooling_kw + other_kw) FILTER (WHERE NOT is_focus)
+          FROM estate_bucket
+    """), {"s": start, "e": end, "c0": compare_start, "c1": compare_end,
+           "bucket": bucket})).mappings().all()
+    out: dict[str, Any] = {"sites": {}, "total": {}}
+    for r in rows:
+        row = dict(r)
+        if row["datacenter_id"] is None:
+            out["total"] = row
+        else:
+            out["sites"][row["datacenter_id"]] = row
+    return out
+
+
+async def power_live(session: AsyncSession, *, prev_at: datetime | None = None,
+                     prev_width: timedelta = POWER_PREV_WIDTH) -> list[dict[str, Any]]:
     """Instantaneous room power from the hot mirror.
 
     `device_state.power_w` is the newest reading the ingest worker wrote, so
-    this answers "right now" without touching the hypertable at all.
+    this answers "right now" without touching the hypertable at all - except
+    for the comparison: each device's draw as of `prev_at`, from raw samples,
+    so the page can say which way a room is moving. Without it the NOW view
+    had a delta column that was always a dot.
     """
+    prev_at = prev_at or (datetime.now(UTC) - POWER_PREV_AT)
+    p0, p1 = prev_at - prev_width / 2, prev_at + prev_width / 2
     rows = (await session.execute(text(f"""
         WITH {_DEV_CTE},
         rooms AS ({_ROOMS}),
+        {_POWER_PREV},
         agg AS (
             SELECT dev.room_id,
                    COALESCE(sum(ds.power_w) FILTER (
@@ -1468,11 +1626,17 @@ async def power_live(session: AsyncSession) -> list[dict[str, Any]]:
                        WHERE dt.category NOT IN
                              ('it', 'network', 'cooling', 'power')), 0)/1000.0
                                                                           AS avg_other,
-                   count(*) FILTER (WHERE ds.power_w IS NOT NULL)         AS reporting
+                   count(*) FILTER (WHERE ds.power_w IS NOT NULL
+                                      AND dt.category <> 'power')         AS reporting,
+                   count(*) FILTER (WHERE dt.category <> 'power')         AS devices,
+                   sum(prev.w) FILTER (WHERE dt.category <> 'power')/1000.0
+                                                                          AS prev_total,
+                   max(ds.updated_at)                                     AS as_of
             FROM dev
             JOIN device_state ds ON ds.device_id = dev.device_id
             JOIN device d        ON d.id = dev.device_id
             JOIN device_type dt  ON dt.code = d.device_type
+            LEFT JOIN prev       ON prev.device_id = dev.device_id
             GROUP BY dev.room_id
         )
         SELECT rooms.room_id::text       AS room_id,
@@ -1482,12 +1646,216 @@ async def power_live(session: AsyncSession) -> list[dict[str, Any]]:
                rooms.datacenter_id::text AS datacenter_id,
                rooms.site_code           AS site_code,
                rooms.site_name           AS site_name,
-               agg.avg_it, agg.avg_cooling, agg.avg_other, agg.reporting
+               agg.avg_it, agg.avg_cooling, agg.avg_other, agg.reporting,
+               agg.devices, agg.prev_total, agg.as_of
         FROM rooms
         LEFT JOIN agg ON agg.room_id = rooms.room_id
         ORDER BY rooms.site_code, rooms.room_name
-    """))).mappings().all()
+    """), {"p0": p0, "p1": p1})).mappings().all()
     return [dict(r) for r in rows]
+
+
+async def power_racks_live(session: AsyncSession, *, prev_at: datetime | None = None,
+                           prev_width: timedelta = POWER_PREV_WIDTH) -> list[dict[str, Any]]:
+    """Every rack's IT draw right now, from the hot mirror.
+
+    The rack's load is what its servers and switches report - the population
+    the room's IT column sums - so a room's racks add up to the room. The
+    strip's own meter would be the better instrument where one exists, but it
+    reads a few percent above the loads it feeds (PSU losses) and the racks
+    would then not fold into the room beside them. The elevation page reads
+    the strip; this page reads the loads, and says so.
+    """
+    prev_at = prev_at or (datetime.now(UTC) - POWER_PREV_AT)
+    p0, p1 = prev_at - prev_width / 2, prev_at + prev_width / 2
+    rows = (await session.execute(text(f"""
+        WITH racks AS ({_RACKS}),
+        {_POWER_PREV},
+        agg AS (
+            SELECT d.rack_id,
+                   sum(ds.power_w) FILTER (
+                       WHERE dt.category IN ('it', 'network'))/1000.0      AS it_kw,
+                   count(*) FILTER (WHERE dt.category IN ('it', 'network')) AS loads,
+                   count(ds.power_w) FILTER (
+                       WHERE dt.category IN ('it', 'network'))             AS reporting,
+                   sum(prev.w) FILTER (
+                       WHERE dt.category IN ('it', 'network'))/1000.0      AS prev_it,
+                   max(ds.updated_at)                                      AS as_of
+              FROM device d
+              JOIN device_type dt       ON dt.code = d.device_type
+              LEFT JOIN device_state ds ON ds.device_id = d.id
+              LEFT JOIN prev            ON prev.device_id = d.id
+             WHERE d.rack_id IS NOT NULL AND d.lifecycle <> 'decommissioned'
+             GROUP BY d.rack_id
+        )
+        {_RACK_COLS}
+               agg.it_kw AS avg_it, agg.loads, agg.reporting, agg.prev_it, agg.as_of
+          FROM racks
+          LEFT JOIN agg ON agg.rack_id = racks.rack_id
+         ORDER BY racks.site_code, racks.room_name, racks.rack_name
+    """), {"p0": p0, "p1": p1})).mappings().all()
+    return [dict(r) for r in rows]
+
+
+async def power_racks_window(session: AsyncSession, *, start: datetime, end: datetime,
+                             compare_start: datetime, compare_end: datetime,
+                             bucket: timedelta) -> list[dict[str, Any]]:
+    """Every rack's IT draw over a window: mean and coincident peak per rack.
+
+    Same buckets as the room query, so a rack's peak is read off the same
+    clock as its room's, and the same population (IT and network loads).
+    """
+    rows = (await session.execute(text(f"""
+        {_power_buckets(power_source(bucket))},
+        racks AS ({_RACKS}),
+        rb AS (
+            SELECT bkt, rack_id, is_focus,
+                   COALESCE(sum(w) FILTER (WHERE cat IN ('it', 'network')), 0)/1000.0 AS it_kw
+              FROM b
+             WHERE rack_id IS NOT NULL
+             GROUP BY 1, 2, 3
+        ),
+        agg AS (
+            SELECT rack_id,
+                   avg(it_kw) FILTER (WHERE is_focus)     AS avg_it,
+                   max(it_kw) FILTER (WHERE is_focus)     AS peak_it,
+                   count(*)   FILTER (WHERE is_focus)     AS buckets,
+                   avg(it_kw) FILTER (WHERE NOT is_focus) AS prev_it,
+                   max(it_kw) FILTER (WHERE NOT is_focus) AS prev_peak_it
+              FROM rb GROUP BY rack_id
+        ),
+        loads AS (
+            SELECT d.rack_id, count(*) AS loads
+              FROM device d JOIN device_type dt ON dt.code = d.device_type
+             WHERE d.rack_id IS NOT NULL AND d.lifecycle <> 'decommissioned'
+               AND dt.category IN ('it', 'network')
+             GROUP BY d.rack_id
+        )
+        {_RACK_COLS}
+               agg.avg_it, agg.peak_it, agg.buckets, agg.prev_it, agg.prev_peak_it,
+               loads.loads
+          FROM racks
+          LEFT JOIN agg   ON agg.rack_id = racks.rack_id
+          LEFT JOIN loads ON loads.rack_id = racks.rack_id
+         ORDER BY racks.site_code, racks.room_name, racks.rack_name
+    """), {"s": start, "e": end, "c0": compare_start, "c1": compare_end,
+           "bucket": bucket})).mappings().all()
+    return [dict(r) for r in rows]
+
+
+async def power_inventory(session: AsyncSession) -> dict[str, Any]:
+    """What every rack could carry and how it is fed, and each room's design.
+
+    Three reads, none of them telemetry:
+
+    * allocated and reserved per rack - the rack page's own rule
+      (`repositories/racks.room_rack_power_plan`), fleet-wide: each device's
+      `budget_w` when the model has one, else nameplate derated; strips and
+      sensors distribute or measure power and are not loads; `held`
+      reservations on top;
+    * the feeds: every IT or network load in a rack with the strip(s) that
+      feed it and which side each strip is on, from the power connections.
+      Folded in Python into A-side names, B-side names, and how many loads
+      are dual-corded across sides, single-corded, or fed by nothing;
+    * design IT kW per room and per site, where the inventory records one.
+
+    Returns {"racks": {rack_id: {...}}, "feeds": {rack_id: {...}},
+    "room_design_kw": {room_id: kw}, "site_design_kw": {datacenter_id: kw}}.
+    """
+    from app.repositories.racks import BUDGET_DERATE
+
+    alloc = (await session.execute(text("""
+        WITH alloc AS (
+            SELECT d.rack_id,
+                   sum(COALESCE(NULLIF(m.attributes->>'budget_w','')::float,
+                                m.rated_power_w * CAST(:derate AS float8))) / 1000.0
+                       AS allocated_kw,
+                   count(*) FILTER (WHERE m.rated_power_w IS NULL
+                                      AND NULLIF(m.attributes->>'budget_w','') IS NULL)
+                       AS unrated
+              FROM device d
+              LEFT JOIN model m ON m.id = d.model_id
+             WHERE d.rack_id IS NOT NULL
+               AND d.lifecycle IN ('installed', 'in_service', 'maintenance')
+               AND d.device_type::text NOT IN ('pdu', 'sensor')
+             GROUP BY d.rack_id
+        ), held AS (
+            SELECT rack_id, sum(power_kw) AS reserved_kw
+              FROM capacity_reservation
+             WHERE status = 'held' AND rack_id IS NOT NULL
+             GROUP BY rack_id
+        )
+        SELECT COALESCE(a.rack_id, h.rack_id)::text AS rack_id,
+               a.allocated_kw, COALESCE(a.unrated, 0) AS unrated, h.reserved_kw
+          FROM alloc a FULL JOIN held h ON h.rack_id = a.rack_id
+    """), {"derate": BUDGET_DERATE})).mappings().all()
+
+    edges = (await session.execute(text("""
+        SELECT d.rack_id::text AS rack_id, d.id::text AS load_id,
+               f.name AS feeder, c.redundancy_side AS side
+          FROM device d
+          JOIN device_type dt ON dt.code = d.device_type
+          LEFT JOIN (SELECT DISTINCT a_device_id, b_device_id, redundancy_side
+                       FROM connection
+                      WHERE layer = CAST('power' AS layer_t)
+                        AND admin_state = 'enabled') c ON c.b_device_id = d.id
+          LEFT JOIN device f ON f.id = c.a_device_id
+         WHERE d.rack_id IS NOT NULL AND d.lifecycle <> 'decommissioned'
+           AND dt.category IN ('it', 'network')
+    """))).mappings().all()
+    feeds = fold_feeds([dict(e) for e in edges])
+
+    design = (await session.execute(text("""
+        SELECT 'room' AS kind, id::text AS id, design_it_kw FROM room
+        UNION ALL
+        SELECT 'site', id::text, design_it_kw FROM datacenter
+    """))).mappings().all()
+    room_design = {r["id"]: float(r["design_it_kw"]) for r in design
+                   if r["kind"] == "room" and r["design_it_kw"] is not None}
+    site_design = {r["id"]: float(r["design_it_kw"]) for r in design
+                   if r["kind"] == "site" and r["design_it_kw"] is not None}
+    return {"racks": {r["rack_id"]: dict(r) for r in alloc},
+            "feeds": feeds,
+            "room_design_kw": room_design,
+            "site_design_kw": site_design}
+
+
+def fold_feeds(edges: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Per rack: which strips feed its loads, by side, and how the loads are
+    corded. One row per (load, feeder); a load with no feeder arrives once
+    with feeder None.
+
+    Dual-corded means fed from two DIFFERENT sides. Two cords into one strip,
+    or two strips both on the A side, is one feed with extra copper - the
+    same rule the chain verdict applies (services/power.py).
+    """
+    feeds: dict[str, dict[str, Any]] = {}
+    per_load: dict[tuple[str, str], set[tuple[str, str | None]]] = {}
+    for e in edges:
+        f = feeds.setdefault(e["rack_id"], {"a": set(), "b": set(), "other": set(),
+                                            "loads": 0, "dual_cord": 0,
+                                            "single_cord": 0, "unfed": 0})
+        key = (e["rack_id"], e["load_id"])
+        if key not in per_load:
+            per_load[key] = set()
+            f["loads"] += 1
+        if e.get("feeder") is not None:
+            side = (e.get("side") or "").upper() or None
+            per_load[key].add((e["feeder"], side))
+            f["a" if side == "A" else "b" if side == "B" else "other"].add(e["feeder"])
+    for (rack_id, _load), fs in per_load.items():
+        f = feeds[rack_id]
+        sides = {s for _, s in fs if s}
+        if not fs:
+            f["unfed"] += 1
+        elif len(sides) >= 2:
+            f["dual_cord"] += 1
+        else:
+            f["single_cord"] += 1
+    for f in feeds.values():
+        for k in ("a", "b", "other"):
+            f[k] = sorted(f[k])
+    return feeds
 
 
 async def utilisation(session: AsyncSession) -> list[dict[str, Any]]:

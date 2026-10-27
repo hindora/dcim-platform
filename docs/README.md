@@ -89,6 +89,12 @@ against the running platform and simulator, with a full build plan. **Not built.
 | `32-anomaly-simulator-changes.md` | Simulator ground truth: truth/wire split, sensor faults, degradation, ramps, weather and setpoint events, injection ledger, influence export, bug fixes, named campaign library |
 | `33-anomaly-implementation-plan.md` | Phases 0–5 with tasks, files, estimates, tests, campaigns and exit criteria; consolidated detector table; evaluation harness; rollout; risk register; open questions |
 
+## Power page (`34`)
+
+| Doc | Contents |
+|---|---|
+| `34-power-page-plan.md` | Bringing `/power` to Thermal's standard: Phase 0 fixes (same-day window, coincident site peak, NOW delta, PUE thresholds), Thermal-parity rack level + alarms + bands, trend panels, supply-chain tab with a reframed redundancy census, energy PUE / headroom / stranded kW / EV2 circuits, simulator-gated items, deploy order, UX checklist, risks, open questions |
+
 The headline finding: **no LLM in the detection path.** Rules and classical
 statistics detect; an optional, evidence-bound LLM may explain an incident
 after the fact, and the system must work fully with it switched off.

@@ -596,6 +596,22 @@ RESERVED: frozenset[str] = frozenset({
 #: beside the rest of its kit, not here.
 THERMAL_ALARM_CATEGORIES: tuple[str, ...] = ("cooling", "environmental")
 
+#: What the Power page counts and opens: the chain and everything with a
+#: countdown on it. One category, held here for the same reason the thermal
+#: pair is - the row's count and the drill-down behind it read one list.
+POWER_ALARM_CATEGORIES: tuple[str, ...] = ("power",)
+
+#: Load against rating, and the PUE line, judged in ONE place.
+#:
+#: 80 % amber and 90 % red are the bands the twin's power layer already draws
+#: (docs/27 section 7.2) and the ones an operator expects on a rack: past 80 %
+#: of a strip's rating there is no room for a failover from the other side,
+#: and past 90 % the next server lands on a breaker. The PUE line is the
+#: estate page's own, so its header and its rows cannot disagree - they did,
+#: at 1.6 and 1.5. Returned by /estate/power so the page never types them.
+POWER_BANDS: dict[str, float] = {"warn_pct": 80.0, "critical_pct": 90.0,
+                                 "pue_warn": 1.6}
+
 
 #: Keys are (device_type.category, metric_key). The device-type categories in
 #: use are: it, network, cooling, power, environment, facility.
