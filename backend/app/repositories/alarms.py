@@ -920,6 +920,7 @@ async def raise_platform_alarm(session: AsyncSession, *, alarm_type: str,
 async def open_platform_alarms(session: AsyncSession) -> list[dict[str, Any]]:
     rows = (await session.execute(text("""
         SELECT id::text, alarm_type, instance, severity::text AS severity,
+               response_class::text AS response_class,
                message, first_seen, last_seen, occurrence_count,
                acknowledged_at
           FROM alarm
@@ -930,6 +931,29 @@ async def open_platform_alarms(session: AsyncSession) -> list[dict[str, Any]]:
            AND source = 'platform'
          ORDER BY last_seen DESC
     """))).mappings().all()
+    return [dict(r) for r in rows]
+
+
+async def recent_platform_alarms(session: AsyncSession, *, hours: int = 24,
+                                 limit: int = 200) -> list[dict[str, Any]]:
+    """Platform conditions that CLOSED in the last *hours*, newest first.
+
+    What happened while nobody was looking. An operator arriving in the
+    morning wants to know the monitoring lost every collector for 71 s at
+    13:16, even though nothing is open now - the open list cannot say that,
+    and the alarm list buries it among device faults.
+    """
+    rows = (await session.execute(text("""
+        SELECT id::text, alarm_type, instance, severity::text AS severity,
+               response_class::text AS response_class,
+               message, first_seen, cleared_at, occurrence_count
+          FROM alarm
+         WHERE device_id IS NULL AND source = 'platform'
+           AND state = 'CLEARED'
+           AND cleared_at > now() - make_interval(hours => :hours)
+         ORDER BY cleared_at DESC
+         LIMIT :limit
+    """), {"hours": hours, "limit": limit})).mappings().all()
     return [dict(r) for r in rows]
 
 

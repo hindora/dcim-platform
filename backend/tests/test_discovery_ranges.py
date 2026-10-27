@@ -401,7 +401,9 @@ def test_the_platform_monitor_no_longer_clears_what_it_did_not_raise():
     """It cleared every open alarm with no device that was not in its findings -
     which included every discovery alarm about an unrecorded box."""
     alarms = (APP / "repositories" / "alarms.py").read_text(encoding="utf-8")
-    assert alarms.count("AND source = 'platform'") == 2
+    # The open read and the clear both filter on it (a third, read-only query
+    # of recent platform conditions does too, and may come and go).
+    assert alarms.count("AND source = 'platform'") >= 2
 
 
 def test_alarms_reach_the_ticketing_outbox():

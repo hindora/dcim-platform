@@ -614,6 +614,9 @@ async def collector_health(
             for f in findings
         ],
         "open_alarms": open_alarms,
+        # What closed in the last day, so a quiet open list is not mistaken
+        # for a quiet day.
+        "recent": await alarm_repo.recent_platform_alarms(session),
         "pipeline": {
             # Two numbers, never one. Freshness is bounded by the poll interval
             # even when everything is perfect; lag is publish-to-commit and is

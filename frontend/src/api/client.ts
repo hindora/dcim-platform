@@ -2655,14 +2655,26 @@ export interface PlatformFinding {
   threshold: number | null;
 }
 
+export interface PlatformAlarmRow {
+  id: string; alarm_type: string; instance: string; severity: string;
+  response_class?: string | null;
+  message: string; first_seen: string; last_seen?: string; cleared_at?: string | null;
+  occurrence_count: number; acknowledged_at?: string | null;
+}
+
 export interface CollectorHealth {
   verdict: { healthy: boolean; severity: string | null; summary: string; count?: number };
   findings: PlatformFinding[];
-  open_alarms: {
-    id: string; alarm_type: string; instance: string; severity: string;
-    message: string; first_seen: string; last_seen: string;
-    occurrence_count: number; acknowledged_at: string | null;
-  }[];
+  open_alarms: PlatformAlarmRow[];
+  /** Platform conditions that CLOSED in the last 24 h, newest first: what
+   *  happened while nobody was looking. */
+  recent?: PlatformAlarmRow[];
+  /** Who owns what. `owned_by_unhealthy` is the incident number: endpoints
+   *  whose collector is not answering, which nobody else will poll. */
+  shards?: {
+    collectors: number; owned: Record<string, number>;
+    unassigned: number | null; owned_by_unhealthy?: number; note?: string;
+  };
   pipeline: {
     // Two numbers, never one. Freshness is bounded by the poll interval even
     // in perfect health; lag is publish-to-commit and lives under a second.

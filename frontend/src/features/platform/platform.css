@@ -1,0 +1,113 @@
+/* Platform health: the pipeline the readings travel, then what is wrong
+   with it. Theme tokens only; the tone classes carry the one colour that
+   matters on each element. */
+.ph { max-width: 1180px; }
+.ph-head { margin-bottom: 18px; }
+.ph-head h2 { margin-bottom: 6px; }
+.ph-verdict { display: flex; align-items: baseline; gap: 10px; margin: 0; font-size: 15px; color: var(--text); max-width: 78ch; }
+.ph-verdict .ph-dot { position: relative; top: -1px; flex: none; }
+.ph-verdict.state-ok .ph-dot { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 22%, transparent); }
+.ph-verdict.state-degraded .ph-dot { background: var(--warn); }
+.ph-verdict.state-impaired .ph-dot { background: var(--major); }
+.ph-verdict.state-blind .ph-dot { background: var(--critical); box-shadow: 0 0 0 3px color-mix(in srgb, var(--critical) 25%, transparent); }
+
+.ph-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--unknown); }
+.tone-ok .ph-dot { background: var(--ok); }
+.tone-warn .ph-dot { background: var(--warn); }
+.tone-critical .ph-dot { background: var(--critical); }
+
+/* --- the pipeline ---------------------------------------------------------
+   Five stages in the order the data flows, joined by a line. The line takes
+   the colour of the stage it leaves, so a broken stage breaks the picture
+   where the reader expects it to. */
+.ph-pipe { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); list-style: none; margin: 0 0 28px; padding: 0;
+           background: var(--bg-raised); border: 1px solid var(--border); border-radius: var(--radius); }
+.ph-stage { position: relative; padding: 16px 18px 16px 18px; min-width: 0; }
+.ph-stage + .ph-stage { border-left: 1px solid var(--border); padding-left: 36px; }
+/* The arrow sits in the gutter the padding leaves, level with the stage's
+   value, and stops short of the text. */
+.ph-link { position: absolute; left: -1px; top: 50%; width: 20px; height: 2px; margin-top: -1px; background: var(--border-strong); }
+.ph-link::after { content: ''; position: absolute; right: -1px; top: -4px; border: 5px solid transparent; border-left: 6px solid var(--border-strong); border-right: 0; }
+.ph-link.tone-ok { background: var(--ok); } .ph-link.tone-ok::after { border-left-color: var(--ok); }
+.ph-link.tone-warn { background: var(--warn); } .ph-link.tone-warn::after { border-left-color: var(--warn); }
+.ph-link.tone-critical { background: var(--critical); background-image: repeating-linear-gradient(90deg, var(--critical) 0 4px, transparent 4px 8px); }
+.ph-link.tone-critical::after { border-left-color: var(--critical); }
+.ph-stage-body { display: flex; flex-direction: column; gap: 3px; }
+.ph-stage-name { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--text-muted); }
+.ph-stage-name a { color: inherit; text-decoration: none; border-bottom: 1px dotted var(--border-strong); }
+.ph-stage-name a:hover { color: var(--text); }
+.ph-stage-value { font-size: 18px; font-weight: 600; line-height: 1.25; font-variant-numeric: tabular-nums; color: var(--text); overflow-wrap: anywhere; }
+.tone-critical > .ph-stage-body .ph-stage-value { color: var(--critical); }
+.tone-warn > .ph-stage-body .ph-stage-value { color: var(--warn); }
+.tone-unknown > .ph-stage-body .ph-stage-value { color: var(--text-muted); }
+.ph-stage-detail { font-size: 12px; color: var(--text-faint); line-height: 1.4; }
+
+/* --- sections ------------------------------------------------------------- */
+.ph-section { margin-bottom: 28px; }
+.ph-section h3 { margin: 0 0 10px; }
+.ph-note { margin: 0; font-size: 13px; color: var(--text-muted); }
+
+/* --- open conditions --------------------------------------------------------
+   One row per condition, in severity order: what it is, since when, what to
+   do. The left rule carries the severity so a scan down the edge reads it. */
+.ph-quiet { display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px; font-size: 13px;
+            background: var(--bg-raised); border: 1px solid var(--border); border-left: 3px solid var(--ok); border-radius: var(--radius); }
+.ph-quiet .ph-dot { margin-top: 5px; }
+.ph-conds { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.ph-cond { padding: 10px 14px 12px; background: var(--bg-raised); border: 1px solid var(--border); border-left: 3px solid var(--border-strong); border-radius: var(--radius); }
+.ph-cond.tone-warn { border-left-color: var(--warn); }
+.ph-cond.tone-critical { border-left-color: var(--critical); }
+.ph-cond-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px; }
+.ph-cond-name { font-weight: 600; }
+.ph-cond-on { color: var(--text-muted); font-family: var(--font-mono, ui-monospace, monospace); font-size: 12px; }
+.ph-cond-life { color: var(--text-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.ph-ack { margin-left: auto; padding: 3px 10px; font-size: 12px; }
+.ph-ack-done { margin-left: auto; font-size: 12px; color: var(--text-muted); }
+.ph-cond-msg { margin: 8px 0 0; font-size: 13px; line-height: 1.5; max-width: 90ch; }
+.ph-cond-hint { margin: 6px 0 0; font-size: 12.5px; line-height: 1.5; color: var(--text-muted); max-width: 90ch; }
+.ph-cond-hint span { color: var(--text-faint); margin-right: 8px; }
+.ph-cond-hint span::after { content: '·'; margin-left: 8px; }
+
+/* --- collectors ------------------------------------------------------------- */
+.ph-shards { margin: 0 0 10px; font-size: 13px; color: var(--text-muted); }
+.ph-shards b { font-weight: 600; color: var(--text); }
+.ph-shards.is-bad b { color: var(--critical); }
+.ph-table td { vertical-align: middle; }
+.ph-table .critical { color: var(--critical); }
+.ph-table tr.is-stale td:first-child a { color: var(--critical); }
+.ph-eps { white-space: nowrap; }
+.ph-bar { display: inline-block; vertical-align: middle; width: 64px; height: 4px; margin-left: 10px; border-radius: 2px; background: var(--bg-inset); overflow: hidden; }
+.ph-bar span { display: block; height: 100%; background: var(--ok); }
+tr.is-stale .ph-bar span { background: var(--critical); }
+
+/* --- last 24 hours -----------------------------------------------------------
+   Episodes, not rows: what opened together closed together. */
+.ph-episodes { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--border); }
+.ph-episode { border-bottom: 1px solid var(--border); }
+.ph-episode summary { display: grid; grid-template-columns: 56px 72px minmax(0, 1fr) auto; gap: 14px; align-items: center;
+                      padding: 9px 6px 9px 14px; cursor: pointer; font-size: 13px; list-style: none; border-left: 3px solid var(--border-strong); }
+.ph-episode.tone-warn summary { border-left-color: var(--warn); }
+.ph-episode.tone-critical summary { border-left-color: var(--critical); }
+.ph-episode summary::-webkit-details-marker { display: none; }
+.ph-episode summary:hover { background: var(--bg-raised); }
+.ph-episode summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.ph-ep-when, .ph-ep-span { font-variant-numeric: tabular-nums; color: var(--text-muted); }
+.ph-ep-what { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ph-episode ul { list-style: none; margin: 0; padding: 4px 14px 12px 32px; display: grid; gap: 8px; font-size: 13px; }
+
+@media (max-width: 880px) {
+  .ph-pipe { grid-template-columns: 1fr; }
+  .ph-stage + .ph-stage { border-left: none; border-top: 1px solid var(--border); }
+  .ph-link { left: 24px; top: -1px; width: 2px; height: 22px; margin: 0; }
+  .ph-link::after { right: auto; left: -4px; top: auto; bottom: -1px; border: 5px solid transparent; border-top: 6px solid var(--border-strong); border-bottom: 0; }
+  .ph-link.tone-ok::after { border-top-color: var(--ok); border-left-color: transparent; }
+  .ph-link.tone-warn::after { border-top-color: var(--warn); border-left-color: transparent; }
+  .ph-link.tone-critical { background-image: repeating-linear-gradient(180deg, var(--critical) 0 4px, transparent 4px 8px); }
+  .ph-link.tone-critical::after { border-top-color: var(--critical); border-left-color: transparent; }
+  .ph-stage { padding-top: 22px; }
+  .ph-episode summary { grid-template-columns: 56px 1fr auto; }
+  .ph-ep-span { display: none; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .ph-ack { transition: border-color 140ms ease-out; }
+}
