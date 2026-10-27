@@ -1,6 +1,6 @@
 # 34 — Power page: build plan
 
-Status: **Phases 0–4 built 2026-10-27; Phase 5 built the same day on both repos, platform shipped, simulator side awaiting commit + dataset regeneration.** Written
+Status: **Phases 0–5 built and deployed 2026-10-27 (platform abcc784, simulator 6e78aff, SNMP regenerated 894/894); Phase 5 proven live by injection the same day.** Written
 2026-10-27 from a read of the tree (`P:` means `dcim-platform/`, `S:` means
 `Datacenter_Network_Simulator/`; lines checked against platform `f24b438` and
 simulator `1c273ac`).
@@ -76,8 +76,8 @@ what exists:
   rebuilt); `services/power.supply_verdict` adds `runtime_short` for a UPS
   under 5 min against the 15 s generator window the simulator's NFPA 110
   sequence takes (`GENSET_WINDOW_S`, `UPS_RUNTIME_FLOOR_MIN`).
-- Phase 5, simulator side (built, tested, NOT committed - the simulator is
-  the user's to commit): `set_psu_condition` + `psu_fail` in FAULT_MAP (a
+- Phase 5, simulator side (committed 6e78aff, deployed with the SNMP
+  regeneration): `set_psu_condition` + `psu_fail` in FAULT_MAP (a
   failed supply joins the dead-cord set, so the survivor carries the whole
   chassis and the strip on that side sees nothing; Redfish reports the
   supply UnavailableOffline/Critical with 0 W); `_pdu_leg_currents` sums
@@ -90,6 +90,20 @@ what exists:
   Start SNMP (894/894), sim restart with the usual env. Raritan
   inletPoleSensor rows are NOT added: every Raritan strip here is 1-phase
   and the pole-table OIDs were not verified against PDU2-MIB.
+- Phase 5, live proof 2026-10-27 (both injections cleared after):
+  `psu_fail` on SRV01-DC1-HA-R2-01 raised `psu_failure` MAJOR on point 0
+  after the second Redfish poll (the server polls about every 4.5 min, so
+  dwell 2 is roughly 9 min from the fault, and the same to clear); rack
+  R2-01 showed the failed supply in Feeds; PDUB-DC1-HA-R2-01 leg 1 carried
+  15.4 A against PDUA's 12.2 A, the B strip 8510 W against A's 7640 W.
+  `pdu_imbalance` on PDUA-DC1-HA-R2-02 raised `phase_imbalance` MAJOR via
+  the trap path. The failed-supply label is one-based (`_psu_label`): the
+  Redfish MemberId is a 0-based index, the faceplate says PSU1. The alarm's
+  `{point}` still carries the raw MemberId.
+- Observed, not changed: 18 racks sit over 10 % leg imbalance at about
+  64 % load, because the simulator's `next_free_outlet` fills banks in
+  order. Real installers rotate cords across banks; re-seating them is a
+  topology decision, not a platform one.
 
 The brief: bring `/power` up to the standard of `/thermal`, in features and in
 UX, using the data the platform already holds before asking the simulator for

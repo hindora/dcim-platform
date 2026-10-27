@@ -2518,6 +2518,18 @@ async def power_rack_legs(session: AsyncSession) -> dict[str, list[dict[str, Any
     return out
 
 
+def _psu_label(instance: str | None) -> str:
+    """A supply as the faceplate names it. Redfish MemberIds on this fleet are
+    0-based array indices ("0", "1") while the chassis silk-screen, the BMC's
+    own Name and the technician all say PSU1 / PSU2, so a numeric id is shown
+    one up. A vendor id that is already a name ("PSU.Slot.1") is kept."""
+    if instance is None or instance == "":
+        return "PSU?"
+    if instance.isdigit():
+        return f"PSU{int(instance) + 1}"
+    return instance
+
+
 async def power_rack_psu_failed(session: AsyncSession) -> dict[str, list[str]]:
     """Per rack, the loads whose BMC reports a power supply as not healthy:
     the newest `psu_state` per supply inside the last-known window, False.
@@ -2543,7 +2555,7 @@ async def power_rack_psu_failed(session: AsyncSession) -> dict[str, list[str]]:
     """), {"window_s": _PSU_WINDOW_S})).mappings().all()
     out: dict[str, list[str]] = {}
     for r in rows:
-        out.setdefault(r["rack_id"], []).append(f"{r['name']} PSU{r['instance'] or '?'}")
+        out.setdefault(r["rack_id"], []).append(f"{r['name']} {_psu_label(r['instance'])}")
     return out
 
 
