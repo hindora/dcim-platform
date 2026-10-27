@@ -518,6 +518,15 @@ ORPHAN_SILENT_S = 7200
 #: the DEVICE must still be delivering telemetry. "This key stopped" and "this
 #: machine went dark" look identical from the alarm table, and only the first
 #: means the alarm is stranded rather than true.
+#:
+#: Both tests are LATERAL ... LIMIT 1 on purpose: one index probe per open
+#: alarm. Written as NOT EXISTS / EXISTS with the metric id looked up in a
+#: correlated subquery, the planner chose a hash anti-join that read every
+#: sample of the last two hours - 3.3 million rows - to answer for ONE open
+#: alarm: 26-42 s a run, run by both ingest workers at once, on a host short of
+#: memory. The workers process the collectors' heartbeats too, so every run
+#: also made all eight collectors look stale (2026-10-27). As lookups it is
+#: 3 ms.
 _ORPHANED_KEY = text("""
     SELECT a.id::text AS id, a.device_id::text AS device_id,
            d.name AS device_name, a.alarm_type, a.instance,
@@ -525,6 +534,24 @@ _ORPHANED_KEY = text("""
            extract(epoch FROM (now() - a.last_seen)) AS quiet_s
       FROM alarm a
       JOIN device d ON d.id = a.device_id
+      JOIN metric m ON m.key = a.metric_key
+      -- Anything on this key, recently enough that slow polling would explain
+      -- a gap.
+      LEFT JOIN LATERAL (
+          SELECT 1 AS hit FROM telemetry_sample t
+           WHERE t.device_id = a.device_id
+             AND t.metric_id = m.id
+             AND coalesce(t.instance, '') = coalesce(a.instance, '')
+             AND t.ts > now() - make_interval(secs => :silent_s)
+           LIMIT 1
+      ) keyed ON true
+      -- Anything at all from the device.
+      LEFT JOIN LATERAL (
+          SELECT 1 AS hit FROM telemetry_sample t
+           WHERE t.device_id = a.device_id
+             AND t.ts > now() - make_interval(secs => :fresh_s)
+           LIMIT 1
+      ) fresh ON true
      WHERE a.state <> 'CLEARED'
        AND a.metric_key IS NOT NULL
        -- A state-backed condition is decided by its boolean wherever that
@@ -533,21 +560,10 @@ _ORPHANED_KEY = text("""
        -- what it means for a numeric key.
        AND NOT (a.alarm_type = ANY(:state_types))
        -- Nothing on this key, for long enough that slow polling is not the
-       -- explanation.
-       AND NOT EXISTS (
-           SELECT 1 FROM telemetry_sample t
-            WHERE t.device_id = a.device_id
-              AND t.metric_id = (SELECT m.id FROM metric m
-                                  WHERE m.key = a.metric_key)
-              AND coalesce(t.instance, '') = coalesce(a.instance, '')
-              AND t.ts > now() - make_interval(secs => :silent_s)
-       )
+       -- explanation...
+       AND keyed.hit IS NULL
        -- ...while the device itself is plainly still there.
-       AND EXISTS (
-           SELECT 1 FROM telemetry_sample t
-            WHERE t.device_id = a.device_id
-              AND t.ts > now() - make_interval(secs => :fresh_s)
-       )
+       AND fresh.hit IS NOT NULL
 """)
 
 

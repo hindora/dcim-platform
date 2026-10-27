@@ -70,6 +70,64 @@ async def blind_devices(session: AsyncSession) -> set[str]:
     return set(rows)
 
 
+def newest_on_bus(entries: list[tuple[Any, dict]]) -> dict[str, float]:
+    """collector id -> epoch seconds of its newest heartbeat on the stream.
+
+    The time is the stream entry id's, which Redis stamps on arrival: when the
+    platform RECEIVED the heartbeat, on the platform's clock, whether or not a
+    worker has processed it yet.
+    """
+    import msgpack
+
+    out: dict[str, float] = {}
+    for entry_id, fields in entries:
+        raw = fields.get(b"p") if isinstance(fields, dict) else None
+        if raw is None:
+            continue
+        try:
+            cid = msgpack.unpackb(raw, raw=False).get("collector_id")
+        except Exception:
+            continue
+        if not cid:
+            continue
+        eid = entry_id.decode() if isinstance(entry_id, bytes) else str(entry_id)
+        try:
+            at = int(eid.split("-", 1)[0]) / 1000.0
+        except ValueError:
+            continue
+        if at > out.get(cid, 0.0):
+            out[cid] = at
+    return out
+
+
+async def seen_on_bus(session: AsyncSession, redis: Any, stream: str,
+                      *, scan: int = 400) -> int:
+    """Move each collector's last_heartbeat up to its newest heartbeat on the
+    stream, before anything judges whether it is stale.
+
+    last_heartbeat was written only when a worker PROCESSED a heartbeat, and
+    the workers process heartbeats in the same loop as telemetry. So a worker
+    stall - a slow sweep, a swap storm - left every collector's heartbeat
+    unprocessed for a minute and marked all eight stale at once, which also
+    turned every endpoint they own UNKNOWN: 117 such episodes in one day
+    (2026-10-27) with all eight collectors polling throughout. A heartbeat
+    that has reached the stream is the collector alive; the processing is
+    the platform's own problem, and ingest lag already reports that.
+
+    Only ever moves the time forward, and only for collectors that have a
+    row: registration and approval stay with the processed heartbeat.
+    """
+    entries = await redis.xrevrange(stream, count=scan)
+    newest = newest_on_bus(entries or [])
+    for cid, at in newest.items():
+        await session.execute(text("""
+            UPDATE collector_instance SET last_heartbeat = to_timestamp(:at)
+             WHERE id = :id AND state <> 'decommissioned'
+               AND (last_heartbeat IS NULL OR last_heartbeat < to_timestamp(:at))
+        """), {"id": cid, "at": at})
+    return len(newest)
+
+
 async def mark_collector_status(session: AsyncSession, stale_after_s: float) -> None:
     """`status` says STALE once the heartbeat is, instead of HEALTHY forever.
 

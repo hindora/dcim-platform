@@ -460,6 +460,13 @@ class IngestWorker:
         if now - self._last_platform_check < PLATFORM_CHECK_S:
             return
         self._last_platform_check = now
+        # Before anything judges a collector: its newest heartbeat on the
+        # stream, processed or not, is what says it is alive.
+        try:
+            async with unit_of_work() as session:
+                await collector_visibility.seen_on_bus(session, self.redis, Stream.HEARTBEAT)
+        except Exception as exc:
+            log.error("collector bus check failed", error=str(exc))
         try:
             async with unit_of_work() as session:
                 await platform_monitor.run_once(

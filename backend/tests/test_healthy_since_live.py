@@ -211,3 +211,37 @@ async def test_a_dead_process_heartbeat_replayed_late_is_not_a_duplicate(session
     await fleet_repo.upsert_heartbeat(
         session, {**hb, "started_at": old_start, "sent_at": now})
     assert await seen() is not None, "two live processes are a duplicate"
+
+
+async def test_a_heartbeat_on_the_bus_keeps_a_collector_alive_before_it_is_processed(session):
+    """The worker stalled; the collector did not. Its newest heartbeat on the
+    stream moves last_heartbeat forward, never back."""
+    import msgpack
+
+    from app.alarms import collector_visibility as cv
+
+    cid = f"col-{uuid.uuid4().hex[:8]}"
+    await fleet_repo.create_collector(session, cid, None, "test")
+    await session.execute(text(
+        "UPDATE collector_instance SET last_heartbeat = now() - interval '5 minutes'"
+        " WHERE id = :id"),
+        {"id": cid})
+
+    class _Bus:
+        def __init__(self, ms):
+            self.ms = ms
+
+        async def xrevrange(self, stream, count):
+            return [(f"{self.ms}-0".encode(), {b"p": msgpack.packb({"collector_id": cid})})]
+
+    async def age():
+        return await session.scalar(text(
+            "SELECT extract(epoch FROM now() - last_heartbeat)"
+            " FROM collector_instance WHERE id = :id"),
+            {"id": cid})
+
+    now_ms = int(await session.scalar(text("SELECT extract(epoch FROM now()) * 1000")))
+    await cv.seen_on_bus(session, _Bus(now_ms - 5_000), "collectorhb.v1")
+    assert await age() < 30, "a heartbeat 5 s ago on the bus is a live collector"
+    await cv.seen_on_bus(session, _Bus(now_ms - 600_000), "collectorhb.v1")
+    assert await age() < 30, "an older bus entry never moves it back"

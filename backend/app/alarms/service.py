@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from redis.asyncio import Redis
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.alarms import (
@@ -39,6 +40,10 @@ from app.core.logging import get_logger
 from app.repositories import alarms as repo
 
 log = get_logger("alarms")
+
+#: pg_advisory key for the trap-reconciliation sweep: "rcnl". Two workers run
+#: the same sweep on the same timer; only the one holding this does the work.
+RECONCILE_LOCK_KEY = 0x72636E6C
 
 #: Conditions named for a percentage of nameplate that the DEVICE reports as
 #: amps. Only the two PDU load bands: outlet_current_high and breaker_tripped
@@ -772,6 +777,14 @@ class AlarmService:
         holds the evidence, which is exactly what it did to three stopped
         CRAHs whose boolean never stopped saying "not running".
         """
+        # Both ingest workers reach this on the same timer, and the answer is
+        # the same estate-wide question: one asks, the other moves on. A
+        # transaction-scoped lock, released when the sweep's transaction ends.
+        got = (await session.execute(text("SELECT pg_try_advisory_xact_lock(:k)"),
+                                     {"k": RECONCILE_LOCK_KEY})).scalar()
+        if not got:
+            return []
+
         now = datetime.now(UTC)
         actions: list[AlarmAction] = []
         touched: set[str] = set()
