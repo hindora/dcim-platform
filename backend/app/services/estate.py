@@ -2211,3 +2211,126 @@ async def room_kpi(session: AsyncSession, room_id: str) -> dict[str, Any] | None
         "last_sample": updated,
         "as_of": datetime.now(UTC),
     }
+
+
+def _scope_rating(ratings: dict[str, Any], *, rack_id: str | None,
+                  room_id: str | None, datacenter_id: str | None,
+                  ) -> tuple[float | None, str | None]:
+    """The rating a trend's load is drawn against, by the table's rule.
+
+    A rack: its own. A room or a site: the design IT figure where the
+    inventory has one, else the sum of the rack ratings under it. The
+    estate: the sum of every room's rating by that same rule, which is what
+    the table's header divides by.
+    """
+    if rack_id is not None:
+        r = ratings["racks"].get(rack_id, {})
+        v = r.get("design_kw")
+        return (v, "rack") if v else (None, None)
+    if room_id is not None:
+        r = ratings["rooms"].get(room_id, {})
+        if r.get("design_kw"):
+            return r["design_kw"], "design"
+        return (r.get("rack_sum_kw"), "racks") if r.get("rack_sum_kw") else (None, None)
+    if datacenter_id is not None:
+        r = ratings["sites"].get(datacenter_id, {})
+        if r.get("design_kw"):
+            return r["design_kw"], "design"
+        return (r.get("rack_sum_kw"), "racks") if r.get("rack_sum_kw") else (None, None)
+    total = 0.0
+    for r in ratings["rooms"].values():
+        total += r.get("design_kw") or r.get("rack_sum_kw") or 0.0
+    return (round(total, 1), "rooms") if total else (None, None)
+
+
+async def power_trend(session: AsyncSession, *, days: int = 7,
+                      bucket: str = "hour", since: date | None = None,
+                      until: date | None = None, room_id: str | None = None,
+                      datacenter_id: str | None = None,
+                      rack_id: str | None = None) -> dict[str, Any]:
+    """IT, cooling, other and total draw per hour or per day, with PUE and
+    the load against rating, in one scope.
+
+    The table's Δ column compares two windows and nothing more; this is the
+    run-up. Same readings, same category rule (rack PDUs excluded), summed
+    per bucket so every total is coincident - which is what makes the
+    window's `peak` a moment that happened rather than a sum of private
+    maxima.
+
+    Same grid as the thermal trends (`_trend_window`): hourly points for up
+    to a week, daily beyond, or exactly `since`..`until`. Hourly points read
+    the five-minute rollup for two days and the hourly one beyond, with the
+    newest two hours redrawn from the hypertable, because a rollup is never
+    more current than its refresh and the bucket in progress is the one
+    somebody is watching. Every bucket in the window is present, oldest
+    first; one nothing reported in carries nulls so the line breaks there.
+    """
+    start, end, width, days = _trend_window(days=days, bucket=bucket,
+                                            since=since, until=until)
+    src = "5m" if bucket == "hour" and end - start <= _FINE_SOURCE_UP_TO else "1h"
+    kw = {"bucket": bucket, "room_id": room_id, "datacenter_id": datacenter_id,
+          "rack_id": rack_id}
+    rows = await repo.power_trend(session, start=start, end=end, source=src, **kw)
+    by = {r["b"]: r for r in rows}
+    if src == "1h" and bucket == "hour":
+        tail = await repo.power_trend(session, start=max(start, end - _TAIL_FROM_FINE),
+                                      end=end, source="5m", **kw)
+        for r in tail:
+            by.setdefault(r["b"], r)
+    if bucket == "hour":
+        fresh = await repo.power_trend(session, start=max(start, end - _RAW_TAIL),
+                                       end=end, source="raw", **kw)
+        for r in fresh:
+            by[r["b"]] = r
+
+    ratings = await repo.power_ratings(session)
+    rated, basis = _scope_rating(ratings, rack_id=rack_id, room_id=room_id,
+                                 datacenter_id=datacenter_id)
+
+    points: list[dict[str, Any]] = []
+    t = start
+    while t < end:
+        r = by.get(t)
+        if r is None or not r.get("devices"):
+            points.append({"t": t, "it_kw": None, "cooling_kw": None, "other_kw": None,
+                           "total_kw": None, "pue": None, "load_pct": None,
+                           "devices": 0})
+        else:
+            it = round(float(r["it_kw"]), 2)
+            cooling = round(float(r["cooling_kw"]), 2)
+            other = round(float(r["other_kw"]), 2)
+            total = round(it + cooling + other, 2)
+            points.append({
+                "t": t, "it_kw": it, "cooling_kw": cooling, "other_kw": other,
+                "total_kw": total,
+                "pue": round(total / it, 3) if it > 0 and total > 0 else None,
+                "load_pct": _load_pct(it, rated),
+                "devices": int(r["devices"]),
+            })
+        t += width
+
+    with_data = [p for p in points if p["total_kw"] is not None]
+    peak = max(with_data, key=lambda p: p["total_kw"]) if with_data else None
+    return {
+        "days": days,
+        "bucket": bucket,
+        "source": src,
+        "since": start,
+        "until": end,
+        "room_id": room_id,
+        "datacenter_id": datacenter_id,
+        "rack_id": rack_id,
+        "rated_kw": rated,
+        "rating_basis": basis,
+        "bands": dict(POWER_BANDS),
+        "points": points,
+        # The window's coincident maximum: the bucket whose summed draw was
+        # highest, named so the chart can mark it and the caption can say
+        # when. It is the same number the table's PEAK column shows for the
+        # same window, by construction.
+        "peak": None if peak is None else {
+            "t": peak["t"], "total_kw": peak["total_kw"], "it_kw": peak["it_kw"],
+            "load_pct": peak["load_pct"]},
+        "buckets_with_data": len(with_data),
+        "devices": max((p["devices"] for p in points), default=0),
+    }

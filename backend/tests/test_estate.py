@@ -1952,3 +1952,81 @@ def test_a_window_label_names_the_last_day_not_the_midnight_after_it():
     start = datetime(2026, 10, 21, tzinfo=UTC)
     end = datetime(2026, 10, 22, tzinfo=UTC)
     assert estate._span_label(start, end) == "2026-10-21 to 2026-10-21"
+
+
+# ------------------------------------------------------------- power trend
+
+
+def _ratings(**over):
+    base = {"racks": {}, "rooms": {}, "sites": {}}
+    base.update(over)
+    return base
+
+
+@pytest.mark.asyncio
+async def test_power_trend_fills_every_bucket_and_names_the_coincident_peak(monkeypatch):
+    """Gaps carry nulls so the line breaks; the peak is the bucket whose
+    summed draw was highest, which the table's PEAK column would also show."""
+    calls = []
+
+    async def _trend(session, *, start, end, bucket, source, **kw):
+        calls.append(source)
+        # The rollup knows two buckets; the raw tail redraws the newest one
+        # with a higher figure, and the gap between stays empty.
+        t0 = start.replace(minute=0, second=0, microsecond=0)
+        if source == "raw":
+            return [{"b": end - timedelta(hours=1), "it_kw": 50.0, "cooling_kw": 10.0,
+                     "other_kw": 0.0, "devices": 9}]
+        return [{"b": t0, "it_kw": 40.0, "cooling_kw": 8.0, "other_kw": 0.0, "devices": 9},
+                {"b": end - timedelta(hours=1), "it_kw": 20.0, "cooling_kw": 4.0,
+                 "other_kw": 0.0, "devices": 9}]
+    monkeypatch.setattr(estate.repo, "power_trend", _trend)
+    monkeypatch.setattr(estate.repo, "power_ratings", _returns(_ratings(
+        rooms={"h": {"design_kw": 100.0, "rack_sum_kw": 60.0}})))
+
+    out = await estate.power_trend(_FakeSession(), days=1, bucket="hour", room_id="h")
+    assert out["source"] == "5m" and calls == ["5m", "raw"]
+    assert len(out["points"]) == 24
+    assert out["points"][0]["total_kw"] == 48.0 and out["points"][0]["pue"] == 1.2
+    assert out["points"][0]["load_pct"] == 40.0
+    assert out["points"][1]["total_kw"] is None and out["points"][1]["devices"] == 0
+    # The newest bucket is the raw tail's version, not the rollup's.
+    assert out["points"][-1]["total_kw"] == 60.0
+    assert out["peak"]["total_kw"] == 60.0 and out["peak"]["t"] == out["points"][-1]["t"]
+    assert out["buckets_with_data"] == 2
+    assert out["rated_kw"] == 100.0 and out["rating_basis"] == "design"
+
+
+@pytest.mark.asyncio
+async def test_power_trend_reads_the_hourly_rollup_for_a_week(monkeypatch):
+    calls = []
+
+    async def _trend(session, *, source, **kw):
+        calls.append(source)
+        return []
+    monkeypatch.setattr(estate.repo, "power_trend", _trend)
+    monkeypatch.setattr(estate.repo, "power_ratings", _returns(_ratings()))
+    out = await estate.power_trend(_FakeSession(), days=7, bucket="hour")
+    assert out["source"] == "1h"
+    # Hourly rollup, its five-minute tail, then the raw newest hours.
+    assert calls == ["1h", "5m", "raw"]
+    assert out["peak"] is None and out["buckets_with_data"] == 0
+    assert out["rated_kw"] is None and out["rating_basis"] is None
+
+
+def test_the_scope_rating_follows_the_table_rule():
+    ratings = _ratings(
+        racks={"r": {"design_kw": 10.0, "rack_sum_kw": None},
+               "u": {"design_kw": None, "rack_sum_kw": None}},
+        rooms={"d": {"design_kw": 300.0, "rack_sum_kw": 120.0},
+               "s": {"design_kw": None, "rack_sum_kw": 120.0}},
+        sites={"dc": {"design_kw": None, "rack_sum_kw": 240.0}},
+    )
+    f = estate._scope_rating
+    assert f(ratings, rack_id="r", room_id=None, datacenter_id=None) == (10.0, "rack")
+    assert f(ratings, rack_id="u", room_id=None, datacenter_id=None) == (None, None)
+    assert f(ratings, rack_id=None, room_id="d", datacenter_id=None) == (300.0, "design")
+    assert f(ratings, rack_id=None, room_id="s", datacenter_id=None) == (120.0, "racks")
+    assert f(ratings, rack_id=None, room_id=None, datacenter_id="dc") == (240.0, "racks")
+    # The estate: every room by its own rule, added.
+    assert f(ratings, rack_id=None, room_id=None, datacenter_id=None) == (420.0, "rooms")

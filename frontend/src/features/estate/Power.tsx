@@ -13,6 +13,8 @@ import {
 import { Tip } from '../../components/HoverTip';
 import { downloadCsv, stampedName } from '../../lib/csv';
 import { useEstateTable } from './useEstateTable';
+import { useTrendRange } from './ThermalTrend';
+import { PowerDraw, PowerLoad, PowerPue } from './PowerTrend';
 
 /** Power: where the estate's kilowatts go, how close each rack and hall is
  *  to what it was built for, and what that does to PUE.
@@ -138,6 +140,7 @@ export function Power() {
   const [drill, setDrill] = useState<{ kind: 'site' | 'room'; id: string; label: string } | null>(null);
   const navigate = useNavigate();
   const [params] = useSearchParams();
+  const trendRange = useTrendRange();
 
   useEffect(() => { try { localStorage.setItem(UNIT_KEY, unit); } catch { /* per-viewer convenience only */ } }, [unit]);
 
@@ -387,6 +390,11 @@ export function Power() {
   // claiming a room it cannot find.
   const wantsRoom = params.get('room');
   const stale = Boolean(wantsRoom) && data && !t.selectedRoom;
+  // The charts' scope comes from the row the reader drilled into, and a row
+  // only exists once the payload has arrived. Drawn before then, the panels
+  // ask for the whole estate's trend and throw it away a moment later.
+  const wantsSite = params.get('site');
+  const scopeKnown = (!wantsSite || Boolean(t.selected)) && (!wantsRoom || Boolean(t.selectedRoom));
 
   const windowNote = !data ? ''
     : win === 'now'
@@ -517,8 +525,28 @@ export function Power() {
                    onPage={t.setPage} onPageSize={t.setPageSize} onCsv={exportCsv} />
       </div>
 
+      {/* The charts follow the drill: the estate, then the site, then the
+          room the table is showing. */}
+      {scopeKnown && (() => {
+        const chartScope = t.selectedRoom
+          ? { kind: 'room' as const, id: t.selectedRoom.id, label: t.selectedRoom.name }
+          : t.selected
+            ? { kind: 'site' as const, id: t.selected.id, label: t.selected.name }
+            : undefined;
+        return (
+          <>
+            <PowerDraw scope={chartScope} range={trendRange} />
+            <PowerPue scope={chartScope} range={trendRange} />
+            <PowerLoad scope={chartScope} range={trendRange} />
+          </>
+        );
+      })()}
+
       <Notes items={[
         ...(data?.notes ?? []),
+        'The trends read the five-minute rollup for up to two days of hourly points and '
+        + 'the hourly rollup beyond, with the newest two hours redrawn from the readings; '
+        + 'a gap in a line is a period nothing reported.',
         // The one number that would otherwise look like an error: the header
         // totals the whole estate, the rows show white space.
         !t.includeFacility && !t.selectedRoom && data?.totals.facility?.rooms

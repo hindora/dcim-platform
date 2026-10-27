@@ -3435,6 +3435,32 @@ export interface ThermalTrend {
   sensors: number;
 }
 
+/** IT, cooling and total draw over time in one scope, with the PUE that
+ *  gives and IT as a share of the scope's rating. Every bucket of the
+ *  window is present; one nothing reported in carries nulls. */
+export interface PowerTrend {
+  days: number;
+  bucket: 'hour' | 'day';
+  source: '5m' | '1h';
+  since: string;
+  until: string;
+  room_id: string | null;
+  datacenter_id: string | null;
+  rack_id: string | null;
+  rated_kw: number | null;
+  rating_basis: 'rack' | 'design' | 'racks' | 'rooms' | null;
+  bands: { warn_pct: number; critical_pct: number; pue_warn: number };
+  points: { t: string; it_kw: number | null; cooling_kw: number | null;
+            other_kw: number | null; total_kw: number | null; pue: number | null;
+            load_pct: number | null; devices: number }[];
+  /** The bucket whose coincident total was highest - the table's PEAK for
+   *  the same window. */
+  peak: { t: string; total_kw: number; it_kw: number; load_pct: number | null } | null;
+  buckets_with_data: number;
+  /** The most devices any one bucket heard from. */
+  devices: number;
+}
+
 /** The four-way ASHRAE split over time in one scope:
  *  /estate/thermal-compliance-trend. The same window and sensors as
  *  `ThermalTrend`; the two are the two cells of the chart's view control. */
@@ -5088,6 +5114,17 @@ export const api = {
       + (scope.rack ? `&rack=${encodeURIComponent(scope.rack)}` : '')
       + (window ? `&since=${window.since}&until=${window.until}` : '')
       + (source && source !== 'auto' ? `&source=${source}` : '')),
+
+  /** The power table's figures over time, same scope and window grammar as
+   *  `thermalTrend`. */
+  powerTrend: (scope: { site?: string; room?: string; rack?: string },
+               days = 7, bucket: 'hour' | 'day' = 'hour',
+               window?: { since: string; until: string }) =>
+    request<PowerTrend>(`/estate/power-trend?days=${days}&bucket=${bucket}`
+      + (scope.site ? `&site=${encodeURIComponent(scope.site)}` : '')
+      + (scope.room ? `&room=${encodeURIComponent(scope.room)}` : '')
+      + (scope.rack ? `&rack=${encodeURIComponent(scope.rack)}` : '')
+      + (window ? `&since=${window.since}&until=${window.until}` : '')),
 
   /** The same scope and window as `thermalTrend`, read as time in band
    *  rather than as temperature. */

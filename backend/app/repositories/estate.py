@@ -2258,3 +2258,111 @@ async def room_updated(session: AsyncSession, room_id: str) -> datetime | None:
           JOIN endpoint_state es ON es.endpoint_id = de.id
          WHERE dev.room_id = CAST(:id AS uuid)
     """), {"id": room_id})).scalar()
+
+
+async def power_trend(session: AsyncSession, *, start: datetime, end: datetime,
+                      bucket: str, source: str,
+                      room_id: str | None = None,
+                      datacenter_id: str | None = None,
+                      rack_id: str | None = None) -> list[dict[str, Any]]:
+    """IT, cooling and other draw per bucket over a window, in one scope.
+
+    The same arithmetic as the power table over time: each device's mean
+    draw per bucket, summed by category, with rack PDUs left out so the
+    servers behind them are not counted twice. A bucket's total is therefore
+    COINCIDENT by construction - every device's mean over the same hour,
+    added - which is what lets the service name the window's peak as a
+    moment that happened.
+
+    `source` is which table to read ("5m", "1h" or "raw"); the service picks
+    it by window, the way the thermal trend does, and redraws the newest
+    buckets from the hypertable because a rollup is never more current than
+    its refresh. Buckets with nothing in them are absent; the service fills
+    them so the line breaks where nothing was measured.
+    """
+    table = _TREND_SOURCE[source]
+    width = _TREND_WIDTH[bucket]
+    stamp, mean = ("t.ts", "t.value") if source == "raw" else ("t.bucket", "t.avg_value")
+    scope = ""
+    params: dict[str, Any] = {"t0": start, "t1": end, "width": width}
+    if rack_id is not None:
+        scope = "AND d.rack_id = CAST(:rack AS uuid)"
+        params["rack"] = rack_id
+    elif room_id is not None:
+        scope = "AND COALESCE(rr.room_id, d.room_id) = CAST(:room AS uuid)"
+        params["room"] = room_id
+    elif datacenter_id is not None:
+        scope = "AND rm.datacenter_id = CAST(:site AS uuid)"
+        params["site"] = datacenter_id
+    rows = (await session.execute(text(f"""
+        WITH s AS (
+            SELECT time_bucket(:width, {stamp}) AS b,
+                   t.device_id,
+                   dt.category AS cat,
+                   avg({mean}) AS w
+            FROM {table} t
+            JOIN metric m       ON m.id = t.metric_id
+            JOIN device d       ON d.id = t.device_id
+                               AND d.lifecycle <> 'decommissioned'
+            JOIN device_type dt ON dt.code = d.device_type
+            LEFT JOIN rack r      ON r.id  = d.rack_id
+            LEFT JOIN rack_row rr ON rr.id = r.row_id
+            LEFT JOIN room rm     ON rm.id = COALESCE(rr.room_id, d.room_id)
+            WHERE m.key = 'power_draw'
+              AND t.instance = ''
+              AND {stamp} >= :t0 AND {stamp} < :t1
+              {scope}
+            GROUP BY 1, 2, 3
+        )
+        SELECT b,
+               COALESCE(sum(w) FILTER (WHERE cat IN ('it', 'network')), 0)/1000.0 AS it_kw,
+               COALESCE(sum(w) FILTER (WHERE cat = 'cooling'), 0)/1000.0          AS cooling_kw,
+               COALESCE(sum(w) FILTER (
+                   WHERE cat NOT IN ('it', 'network', 'cooling', 'power')), 0)/1000.0
+                                                                                  AS other_kw,
+               count(DISTINCT device_id) FILTER (WHERE cat <> 'power')             AS devices
+        FROM s
+        GROUP BY b
+        ORDER BY b
+    """), params)).mappings().all()
+    return [dict(r) for r in rows]
+
+
+async def power_ratings(session: AsyncSession) -> dict[str, Any]:
+    """What each rack, room and site is rated for, so a trend can draw its
+    load as a share of it.
+
+    Three maps. `racks` is the rack's own rating; `rooms` and `sites` carry
+    the design IT figure where the inventory has one AND the sum of the rack
+    ratings under them, so the caller applies the table's rule - design
+    first, else the racks - and names which it used.
+    """
+    rows = (await session.execute(text("""
+        WITH rk AS (
+            SELECT r.id AS rack_id, r.rated_power_kw, rr.room_id, rm.datacenter_id
+              FROM rack r
+              JOIN rack_row rr ON rr.id = r.row_id
+              JOIN room rm     ON rm.id = rr.room_id
+        )
+        SELECT 'rack' AS kind, rack_id::text AS id, rated_power_kw AS design_kw,
+               NULL::numeric AS rack_sum_kw
+          FROM rk
+        UNION ALL
+        SELECT 'room', rm.id::text, rm.design_it_kw,
+               (SELECT sum(rated_power_kw) FROM rk WHERE rk.room_id = rm.id
+                   AND rated_power_kw > 0)
+          FROM room rm
+        UNION ALL
+        SELECT 'site', dc.id::text, dc.design_it_kw,
+               (SELECT sum(rated_power_kw) FROM rk WHERE rk.datacenter_id = dc.id
+                   AND rated_power_kw > 0)
+          FROM datacenter dc
+    """))).mappings().all()
+    out: dict[str, dict[str, dict[str, float | None]]] = {"racks": {}, "rooms": {}, "sites": {}}
+    for r in rows:
+        key = {"rack": "racks", "room": "rooms", "site": "sites"}[r["kind"]]
+        out[key][r["id"]] = {
+            "design_kw": None if r["design_kw"] is None else float(r["design_kw"]),
+            "rack_sum_kw": None if r["rack_sum_kw"] is None else float(r["rack_sum_kw"]),
+        }
+    return out

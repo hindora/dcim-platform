@@ -705,3 +705,12 @@ button.facet.on {
 .pw-feeds.warn .n { color: var(--warn); }
 .pw-feeds.critical .n { color: var(--critical); }
 
+/* --- power: load against rating columns ------------------------------------
+   The alarm trend's column, coloured by the band the table's rows use. The
+   peak keeps its figure when the rest are hidden for density. */
+.pw-load .col .bar.ok { background: var(--ok); }
+.pw-load .col .bar.warn { background: var(--warn); }
+.pw-load .col .bar.critical { background: var(--critical); }
+.pw-load .col .bar.peak { outline: 1px solid var(--text); outline-offset: -1px; }
+.alarm-trend.dense.pw-load .col .v.keep { visibility: visible; }
+

@@ -289,6 +289,45 @@ async def thermal_trend(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)) from None
 
 
+@router.get("/power-trend", summary="IT, cooling and total draw per hour or day in a scope, "
+                                    "with PUE and load against rating")
+async def power_trend(
+    days: int = Query(7, ge=1, le=366),
+    bucket: str = Query("hour", pattern="^(hour|day)$", description=(
+        "Point width. Hourly points come from the five-minute rollup for two "
+        "days and the hourly one beyond, with the newest two hours redrawn "
+        "from the readings; daily points from the hourly rollup.")),
+    since: date | None = Query(None, description=(
+        "First day of a picked window (inclusive, UTC). With `until`, "
+        "replaces `days`; at most 366 days apart.")),
+    until: date | None = Query(None, description="Last day of a picked window (inclusive)."),
+    room: str | None = Query(None, description="Only this room."),
+    site: str | None = Query(None, description="Only this site (datacenter id)."),
+    rack: str | None = Query(None, description="Only this rack."),
+    session: AsyncSession = Depends(get_session),
+    _: Principal = Depends(current_principal),
+) -> dict:
+    """The power table's figures over time: what a scope drew per bucket,
+    split IT / cooling / other, the PUE that gives, and IT as a share of the
+    scope's rating. Every bucket in the window is present; one with nothing
+    measured carries nulls. `peak` names the bucket whose coincident total
+    was highest - the same number the table's PEAK shows for the window."""
+    for name, value in (("room", room), ("site", site), ("rack", rack)):
+        if value is None:
+            continue
+        try:
+            UUID(value)
+        except ValueError:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                                f"{name} is not a uuid: {value}") from None
+    try:
+        return await service.power_trend(
+            session, days=days, bucket=bucket, since=since, until=until,
+            room_id=room, datacenter_id=site, rack_id=rack)
+    except ValueError as e:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)) from None
+
+
 @router.get("/thermal-compliance-trend",
             summary="Time in band, split four ways, per hour or day in a scope")
 async def thermal_compliance_trend(

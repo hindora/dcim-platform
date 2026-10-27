@@ -85,7 +85,7 @@ const shortDay = (iso: string) => iso.slice(5);
 const pad2 = (n: number) => String(n).padStart(2, '0');
 /** Axis labels: the day, and for hourly points the hour too. UTC, as the
  *  page's days are. */
-function label(ms: number, bucket: 'hour' | 'day'): string {
+export function label(ms: number, bucket: 'hour' | 'day'): string {
   const d = new Date(ms);
   const day = `${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
   return bucket === 'hour' ? `${day} ${pad2(d.getUTCHours())}:00` : day;
@@ -319,7 +319,7 @@ export type TrendRange = ReturnType<typeof useTrendRange>;
  *  range Seg on the intake one, nothing on the other), the maximize glyph,
  *  and the same children drawn twice - inline and in the modal - so a
  *  maximized chart is never a stale copy. */
-function TrendPanel({ title, caption, controls, dates, children }: {
+export function TrendPanel({ title, caption, controls, dates, children }: {
   title: string;
   caption: React.ReactNode;
   controls?: React.ReactNode;
