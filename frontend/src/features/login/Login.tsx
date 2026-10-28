@@ -7,9 +7,10 @@
  *  photograph stays as it is: a datacenter floor is dark whichever theme the
  *  operator picked.
  *
- *  Photograph: Taylor Vick on Unsplash (Unsplash licence, no attribution
- *  required). Kept in the repo rather than hot-linked, so the login page does
- *  not depend on a third party being up.
+ *  Photograph: a datacenter aisle, Pexels photo 4508751 (Pexels licence, free
+ *  to use, no attribution required), graded cool in login.css to sit with the
+ *  product's blue-grey. Kept in the repo rather than hot-linked, so the login
+ *  page does not depend on a third party being up.
  */
 
 import { useId, useState } from 'react';
