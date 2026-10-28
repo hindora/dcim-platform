@@ -1,0 +1,231 @@
+/* The sign-in page: a photograph, a headline over it, a frosted panel.
+ *
+ * Colour comes from the product's tokens except where text sits ON the
+ * photograph: that text is light on both themes, because the photograph is
+ * dark on both themes. Those two colours are named here and nowhere else. */
+
+.login-page {
+  --login-on-photo: #eef2f6;
+  --login-on-photo-muted: rgba(238, 242, 246, 0.74);
+  /* The frost. Dark glass over a dark floor; the light theme gets light
+     glass, which is what a frosted pane looks like with the lights on. */
+  --login-glass: rgba(14, 17, 22, 0.58);
+  --login-glass-edge: rgba(255, 255, 255, 0.09);
+  --login-rule: rgba(230, 237, 243, 0.26);
+
+  position: relative;
+  min-height: calc(100vh / var(--dz));
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) clamp(360px, 38vw, 480px);
+  overflow: hidden;
+  background: #090b0e;
+  color: var(--text);
+  isolation: isolate;
+}
+:root[data-theme="light"] .login-page {
+  --login-glass: rgba(246, 248, 250, 0.76);
+  --login-glass-edge: rgba(31, 35, 40, 0.08);
+  --login-rule: rgba(31, 35, 40, 0.28);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) .login-page {
+    --login-glass: rgba(246, 248, 250, 0.76);
+    --login-glass-edge: rgba(31, 35, 40, 0.08);
+    --login-rule: rgba(31, 35, 40, 0.28);
+  }
+}
+
+/* --- the photograph ------------------------------------------------------ */
+
+.login-photo {
+  position: absolute; inset: 0; z-index: -2;
+  width: 100%; height: 100%; object-fit: cover; object-position: 42% 50%;
+  /* Cooled a little towards the product's blue, and dimmed so the headline
+     reads over the cabling. */
+  filter: saturate(0.78) brightness(0.86);
+}
+/* Darker at the left edge, where the headline sits, and along the foot. */
+.login-scrim {
+  position: absolute; inset: 0; z-index: -1;
+  background:
+    linear-gradient(90deg, rgba(9, 11, 14, 0.72) 0%, rgba(9, 11, 14, 0.28) 46%, rgba(9, 11, 14, 0) 70%),
+    linear-gradient(180deg, rgba(9, 11, 14, 0.1) 0%, rgba(9, 11, 14, 0) 40%, rgba(9, 11, 14, 0.55) 100%);
+}
+
+/* --- the headline ---------------------------------------------------------- */
+
+.login-lead {
+  align-self: center;
+  padding: 64px clamp(32px, 7vw, 112px);
+  color: var(--login-on-photo);
+  max-width: 640px;
+}
+.login-lead h1 {
+  margin: 0 0 14px;
+  font-size: clamp(34px, 4.2vw, 56px);
+  line-height: 1.04;
+  font-weight: 600;
+  letter-spacing: -0.022em;
+  overflow-wrap: anywhere;
+}
+.login-lead p {
+  margin: 0;
+  font-size: 17px;
+  line-height: 1.5;
+  max-width: 34ch;
+  color: var(--login-on-photo-muted);
+}
+.login-lead .login-env {
+  margin-top: 14px;
+  font-size: 14px;
+  color: var(--login-on-photo);
+}
+
+/* --- the panel ------------------------------------------------------------- */
+
+.login-panel {
+  display: flex; flex-direction: column; justify-content: center;
+  padding: 56px clamp(32px, 4vw, 56px);
+  background: var(--login-glass);
+  -webkit-backdrop-filter: blur(18px) saturate(1.1);
+  backdrop-filter: blur(18px) saturate(1.1);
+  border-left: 1px solid var(--login-glass-edge);
+  animation: login-panel-in 420ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+@keyframes login-panel-in {
+  from { opacity: 0; transform: translateX(14px); }
+  to   { opacity: 1; transform: none; }
+}
+.login-panel h2 {
+  margin: 0 0 6px;
+  font-size: 30px;
+  line-height: 1.15;
+  font-weight: 500;
+  letter-spacing: -0.012em;
+}
+.login-sub {
+  margin: 0 0 36px;
+  font-size: 14px;
+  color: var(--text-muted);
+}
+
+/* An underlined field: the label sits above as text, the rule beneath is
+   the only chrome, and a glyph at the right end names the kind of thing
+   the field holds. The focus ring is the rule thickening, drawn with a
+   shadow so nothing below it moves. */
+.login-field {
+  position: relative;
+  margin-bottom: 26px;
+}
+.login-field label {
+  display: block;
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 2px;
+}
+.login-field input {
+  display: block; width: 100%;
+  padding: 8px 40px 10px 0;
+  background: transparent;
+  border: 0; border-radius: 0;
+  border-bottom: 1px solid var(--login-rule);
+  color: var(--text);
+  font-size: 16px;
+  line-height: 1.4;
+  box-shadow: 0 1px 0 0 transparent;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+.login-field input:focus {
+  outline: none;
+  border-bottom-color: var(--accent);
+  box-shadow: 0 1px 0 0 var(--accent);
+}
+.login-field input:focus-visible { outline: none; }
+.login-field input:-webkit-autofill,
+.login-field input:-webkit-autofill:focus {
+  -webkit-text-fill-color: var(--text);
+  -webkit-box-shadow: 0 0 0 1000px transparent inset;
+  transition: background-color 9999s ease-out;
+}
+.login-field-glyph,
+.login-field-toggle {
+  position: absolute; right: 0; bottom: 4px;
+  width: 36px; height: 36px;
+  display: grid; place-items: center;
+  color: var(--text-muted);
+}
+.login-field-toggle {
+  background: transparent; border: 0; border-radius: 999px;
+  padding: 0; cursor: pointer;
+  transition: color 120ms ease, background-color 120ms ease;
+}
+.login-field-toggle:hover { color: var(--text); background: var(--login-glass-edge); }
+.login-field-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.login-actions {
+  display: flex; align-items: center; gap: 20px; flex-wrap: wrap;
+  margin-top: 10px;
+}
+/* The one solid thing on the pane: the panel's text colour as a pill, the
+   panel's background as its label, so it is the strongest contrast on the
+   page on either theme without a colour of its own. */
+.login-submit {
+  display: inline-flex; align-items: center; gap: 10px;
+  min-height: 44px; padding: 0 20px 0 24px;
+  border: 0; border-radius: 999px;
+  background: var(--text); color: var(--bg);
+  font-size: 15px; font-weight: 500;
+  cursor: pointer;
+  transition: transform 120ms ease, opacity 120ms ease;
+}
+.login-submit:hover { border: 0; opacity: 0.92; }
+.login-submit:active { transform: scale(0.985); }
+.login-submit:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.login-submit:disabled { opacity: 0.55; cursor: progress; transform: none; }
+.login-submit svg { margin-right: -2px; }
+
+.login-aside {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.login-error { margin: 22px 0 0; }
+
+/* --- narrow -------------------------------------------------------------- */
+
+@media (max-width: 860px) {
+  .login-page {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto 1fr;
+  }
+  .login-photo { object-position: 50% 30%; }
+  .login-scrim {
+    background:
+      linear-gradient(180deg, rgba(9, 11, 14, 0.2) 0%, rgba(9, 11, 14, 0.62) 100%);
+  }
+  .login-lead {
+    align-self: end;
+    padding: 56px 20px 24px;
+    max-width: none;
+  }
+  .login-lead h1 { font-size: 32px; }
+  .login-lead p { font-size: 15px; }
+  .login-panel {
+    padding: 28px 20px 32px;
+    border-left: 0;
+    border-top: 1px solid var(--login-glass-edge);
+    border-radius: 18px 18px 0 0;
+    animation-name: login-panel-up;
+  }
+  @keyframes login-panel-up {
+    from { opacity: 0; transform: translateY(14px); }
+    to   { opacity: 1; transform: none; }
+  }
+  .login-panel h2 { font-size: 24px; }
+  .login-sub { margin-bottom: 26px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login-panel { animation: none; }
+  .login-field input, .login-submit, .login-field-toggle { transition: none; }
+}

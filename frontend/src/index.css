@@ -499,14 +499,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .kv dt { color: var(--text-muted); }
 .kv dd { margin: 0; }
 
-.login {
-  max-width: 320px; margin: calc(12vh / var(--dz)) auto; background: var(--bg-raised);
-  border: 1px solid var(--border); border-radius: var(--radius); padding: 22px;
-}
-.login h1 { margin: 0 0 4px; font-size: 18px; }
-.login label { display: block; margin: 12px 0 4px; color: var(--text-muted); font-size: 12px; }
-.login input { width: 100%; }
-.login button { width: 100%; margin-top: 16px; }
+/* The sign-in page lives in features/login/login.css. */
 .error { color: var(--critical); font-size: 13px; margin-top: 10px; }
 
 /* --- rack elevation ------------------------------------------------------ */

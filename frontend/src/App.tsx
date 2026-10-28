@@ -3,8 +3,8 @@ import { useQueryClient } from '@tanstack/react-query';
 import {
   NavLink, Navigate, Route, Routes, useLocation, useNavigate, useParams,
 } from 'react-router-dom';
-import { api, getToken, onAuthLost, setToken } from './api/client';
-import { useOrg } from './lib/useOrg';
+import { getToken, onAuthLost, setToken } from './api/client';
+import { Login } from './features/login/Login';
 import { AlarmList } from './features/alarms/AlarmList';
 import { AlarmRules } from './features/alarms/AlarmRules';
 import { Analytics } from './features/analytics/Analytics';
@@ -69,49 +69,6 @@ const Connectivity = lazy(() => import('./features/connectivity/Connectivity')
 /** Same reasoning: the world map carries d3-geo and a Natural Earth basemap
  *  that no other page needs. */
 const WorldMap = lazy(() => import('./features/world/WorldMap'));
-
-function Login({ onDone, returnTo }: { onDone: () => void; returnTo?: string }) {
-  const [username, setUsername] = useState('admin');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    setBusy(true);
-    setError(null);
-    try {
-      const res = await api.login(username, password);
-      setToken(res.token);
-      onDone();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'login failed');
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  const org = useOrg();
-
-  return (
-    <form className="login" onSubmit={submit}>
-      <h1>{org}</h1>
-      <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-        {returnTo ? 'Session expired — sign in to continue where you were'
-                  : 'Sign in to continue'}
-      </p>
-      <label htmlFor="u">Username</label>
-      <input id="u" value={username} onChange={(e) => setUsername(e.target.value)} />
-      <label htmlFor="p">Password</label>
-      <input id="p" type="password" value={password}
-             onChange={(e) => setPassword(e.target.value)} />
-      <button className="primary" disabled={busy}>
-        {busy ? 'Signing in…' : 'Sign in'}
-      </button>
-      {error && <div className="error">{error}</div>}
-    </form>
-  );
-}
 
 /**
  * Primary navigation.
