@@ -39,13 +39,18 @@
 
 .login-photo {
   position: absolute; inset: 0; z-index: -2;
-  width: 100%; height: 100%; object-fit: cover; object-position: 50% 56%;
-  /* The aisle is lit neutral grey. Desaturated and dimmed so the headline
-     reads over the bright cage at its far end, and the tint below pulls it
-     to the product's blue-grey; the cabling behind the mesh doors on the
-     right is what the frosted panel blurs. */
-  filter: saturate(0.5) brightness(0.62) contrast(1.06);
+  width: 100%; height: 100%; object-fit: cover; object-position: 50% 50%;
+  /* Three photographs stacked; the shown one is opaque and the swap is a
+     slow crossfade. Each is desaturated and dimmed so the headline reads,
+     and the tint below pulls all three to the product's blue-grey. */
+  filter: saturate(0.6) brightness(0.62) contrast(1.06);
+  opacity: 0;
+  transition: opacity 1600ms ease;
 }
+.login-photo.is-shown { opacity: 1; }
+/* The rack wall (photo 1) is shot near-black; the common grade buries it,
+   so it is lifted instead and the scrim does the dimming. */
+.login-photo[data-photo="1"] { filter: saturate(0.75) brightness(1.25) contrast(1.08); }
 /* The grade: a wash of the accent blue over the whole frame, darker at the
    left edge where the headline sits, and along the foot. */
 .login-scrim {
@@ -204,7 +209,7 @@
        fields rather than floating them in a tall pane of frost. */
     grid-template-rows: minmax(200px, 1fr) auto;
   }
-  .login-photo { object-position: 62% 50%; }
+  .login-photo { object-position: 50% 40%; }
   .login-scrim {
     background:
       linear-gradient(180deg, rgba(9, 11, 14, 0.2) 0%, rgba(9, 11, 14, 0.62) 100%);
@@ -234,5 +239,5 @@
 
 @media (prefers-reduced-motion: reduce) {
   .login-panel { animation: none; }
-  .login-field input, .login-submit, .login-field-toggle { transition: none; }
+  .login-photo, .login-field input, .login-submit, .login-field-toggle { transition: none; }
 }

@@ -7,19 +7,63 @@
  *  photograph stays as it is: a datacenter floor is dark whichever theme the
  *  operator picked.
  *
- *  Photograph: a datacenter aisle, Pexels photo 4508751 (Pexels licence, free
- *  to use, no attribution required), graded cool in login.css to sit with the
- *  product's blue-grey. Kept in the repo rather than hot-linked, so the login
- *  page does not depend on a third party being up.
+ *  Photographs: three from Unsplash (Unsplash licence, free to use), chosen
+ *  by the user - a hall of equipment (iYnpYeyu57k), a loom of blue cabling
+ *  (PSpf_XgOM5w) and blue and yellow connectors (H7eYwYUFU5c) - in rotation:
+ *  a different one leads each visit, and the page crossfades through them
+ *  slowly while it is open. Graded cool in login.css so all three sit with
+ *  the product's blue-grey. Kept in the repo rather than hot-linked, so the
+ *  login page does not depend on a third party being up.
  */
 
-import { useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api, setToken, type Instance } from '../../api/client';
 import { Notice } from '../../components/Notice';
 import { useOrg } from '../../lib/useOrg';
-import racks from '../../assets/login/racks.jpg';
+import aisle from '../../assets/login/racks.jpg';
+import photo1 from '../../assets/login/login-1.jpg';
+import photo2 from '../../assets/login/login-2.jpg';
+import photo3 from '../../assets/login/login-3.jpg';
 import './login.css';
+
+/** The aisle (Pexels 4508751) and the user's three from Unsplash. */
+const PHOTOS = [aisle, photo1, photo2, photo3];
+/** How long each photograph holds before the next fades in. */
+const PHOTO_HOLD_MS = 14_000;
+const PHOTO_KEY = 'dcim.login.photo';
+
+/** Which photograph leads this visit: the one after last visit's, so the
+ *  page is not the same picture every morning. Browser storage is a
+ *  convenience here, never a dependency - with it blocked, every visit
+ *  starts on the first. A pure read: the write is in an effect below, so
+ *  React's development double-render cannot advance it twice. */
+function firstPhoto(): number {
+  try {
+    const last = Number(localStorage.getItem(PHOTO_KEY));
+    return Number.isFinite(last) ? (last + 1) % PHOTOS.length : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function usePhotoRotation(): number {
+  const [index, setIndex] = useState(firstPhoto);
+  const led = useRef(index);
+  useEffect(() => {
+    // Remember which one led, for next time. Idempotent, so running twice
+    // in development changes nothing.
+    try { localStorage.setItem(PHOTO_KEY, String(led.current)); } catch { /* storage blocked */ }
+  }, []);
+  useEffect(() => {
+    // One slow crossfade is the page's only motion; under reduced motion
+    // the first photograph simply stays.
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+    const t = window.setInterval(() => setIndex((i) => (i + 1) % PHOTOS.length), PHOTO_HOLD_MS);
+    return () => window.clearInterval(t);
+  }, []);
+  return index;
+}
 
 type Glyph = 'user' | 'lock' | 'eye' | 'eye-off' | 'chevron';
 
@@ -86,6 +130,7 @@ export function Login({ onDone, returnTo }: { onDone: () => void; returnTo?: str
     queryKey: ['instance'], queryFn: api.instance, staleTime: Infinity, retry: false,
   });
   const environment = (instance?.environment || '').trim();
+  const photo = usePhotoRotation();
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -104,10 +149,14 @@ export function Login({ onDone, returnTo }: { onDone: () => void; returnTo?: str
 
   return (
     <div className="login-page">
-      {/* React 18 passes the lowercase spelling through; the camel-cased one
-          it does not know and warns about. */}
-      <img className="login-photo" src={racks} alt="" width={1600} height={900}
-           decoding="async" {...{ fetchpriority: 'high' }} />
+      {/* All three are in the document so the next one is decoded before it
+          fades in. React 18 passes the lowercase fetchpriority through; the
+          camel-cased one it does not know and warns about. */}
+      {PHOTOS.map((src, i) => (
+        <img key={src} className={`login-photo${i === photo ? ' is-shown' : ''}`}
+             data-photo={i} src={src} alt="" width={1800} height={1200} decoding="async"
+             {...(i === photo ? { fetchpriority: 'high' } : {})} />
+      ))}
       <div className="login-scrim" aria-hidden="true" />
 
       <section className="login-lead">
