@@ -1,6 +1,6 @@
 # 34 — Power page: build plan
 
-Status: **Phases 0–5 built and deployed 2026-10-27 (platform abcc784, simulator 6e78aff, SNMP regenerated 894/894); Phase 5 proven live by injection the same day.** Written
+Status: **Phases 0–6 built and deployed 2026-10-27 (platform through 5a6c3ce, simulator through e63b484, SNMP regenerated 894/894 each time); Phase 5 proven live by injection the same day. §7's questions are answered.** Written
 2026-10-27 from a read of the tree (`P:` means `dcim-platform/`, `S:` means
 `Datacenter_Network_Simulator/`; lines checked against platform `f24b438` and
 simulator `1c273ac`).
@@ -98,8 +98,10 @@ what exists:
   15.4 A against PDUA's 12.2 A, the B strip 8510 W against A's 7640 W.
   `pdu_imbalance` on PDUA-DC1-HA-R2-02 raised `phase_imbalance` MAJOR via
   the trap path. The failed-supply label is one-based (`_psu_label`): the
-  Redfish MemberId is a 0-based index, the faceplate says PSU1. The alarm's
-  `{point}` still carries the raw MemberId.
+  Redfish MemberId is a 0-based index, the faceplate says PSU1. The alarm
+  said "Power supply 0" until 2026-10-28: the label moved to `core/psu.py`
+  and `alarms/engine._render_state` uses it for `psu_state`, so the alarm and
+  the Feeds cell name the same supply (`tests/test_psu_alarm_label.py`).
 - Phase 6 (2026-10-27, user asked for "items 1 and 2"): **On failover** and
   **Worst bank** on rack rows, **Feed risk** counts on rooms and sites.
   Failover (`services/estate.rack_failover`) judges each side as the survivor
@@ -112,13 +114,23 @@ what exists:
   rPDU2BankStatusTable and rPDU2BankPropertiesTable (.26.8.2.1.5, verified
   against PowerNet-MIB); amber from 80 % of the breaker. The simulator side
   (bank currents summed from the outlets, breaker rule: 16 A banks on IEC
-  strips over 16 A, 20 A on 208 V strips over 20 A) needs a commit and an
-  SNMP regeneration before banks show. First live read: 11 racks would
-  overload the survivor, all on a leg - the bank-order cord fill below.
-- Observed, not changed: 18 racks sit over 10 % leg imbalance at about
-  64 % load, because the simulator's `next_free_outlet` fills banks in
-  order. Real installers rotate cords across banks; re-seating them is a
-  topology decision, not a platform one.
+  strips over 16 A, 20 A on 208 V strips over 20 A) shipped in simulator
+  b4b1dfd: 56 APC strips publish bank breakers. First live read: 11 racks
+  would overload the survivor, all on a leg - the bank-order cord fill below.
+- Cord spread (simulator e63b484, platform 5a6c3ce, 2026-10-27): the
+  simulator's `next_free_outlet` filled banks in order (18 racks over 10 %
+  leg imbalance at ~64 % load). Cords are now spread heaviest-first across
+  legs then banks, as installers do, and the platform re-seated its cords
+  with `python -m app.importer.resync_outlets --apply` (752 outlet rows, 780
+  cords; never the full importer). Live after: worst bank 109 % -> 51 %,
+  racks with a bank >= 80 % 12 -> 0, racks >= 100 % on failover 11 -> 3
+  (worst 218 % -> 101 %, bank-bound on dense R2 compute racks - a real
+  finding, kept), racks over 10 % leg imbalance 18 -> 5 (worst 16 %, live
+  draw variance).
+- Not covered: Raritan PX3 strips publish no bank rows, so Worst bank and
+  the bank level of On failover cannot see their racks. Their overcurrent
+  protectors live in PDU2-MIB; the OIDs need verifying before the simulator
+  models them.
 
 The brief: bring `/power` up to the standard of `/thermal`, in features and in
 UX, using the data the platform already holds before asking the simulator for
@@ -384,11 +396,30 @@ Rollback is `git revert` + the same steps; no phase before 4 changes schema.
 
 ---
 
-## 7. Open questions for the user
+## 7. Decisions taken (were open questions)
 
-1. **Bands.** 80 / 90 % of rack rating as the amber / red lines, matching the twin? Or the room's design kW as the only line, with racks unbanded?
-2. **Rating basis.** Where a room has `design_it_kw` and rack ratings both, which is "rating"? Plan says design kW for the room, rack rating for the rack.
-3. **Census.** Agree that plant loads leave the single-feed count and become N+1 group verdicts?
-4. **kVA.** Worth the switch now, given only switchgear, UPS, MCC/MPP and EV2 expose apparent power and racks would be kW ÷ nominal PF?
-5. **Phase 5.** Which simulator model first: per-leg PDU currents, or PSU failure? Each is a dataset regeneration.
-6. **Analytics Power view.** Remove it in Phase 3, or keep it as a fleet-wide print view?
+Answered by building; each line names where the answer lives, checked
+against the tree on 2026-10-28.
+
+1. **Bands: 80 % amber, 90 % red, on every tier.** Racks are banded against
+   their own rating, rooms and sites against theirs - the plan's §1.2, one
+   source for page and twin: `POWER_BANDS` in `core/alert_taxonomy.py`
+   (`warn_pct` 80, `critical_pct` 90, `pue_warn` 1.6), returned by the
+   endpoint, never typed into the frontend.
+2. **Rating basis: the room's (or site's) design IT kW where the inventory has
+   one, else the sum of its rack ratings; a rack is its own rating.** Every
+   row says which with `rating_basis` (`rack` / `design` / `racks` /
+   `rooms`), and trends divide by the same rule
+   (`services/estate._scope_rating`).
+3. **Census: split.** IT loads are counted by cords (`redundancy_census`);
+   plant loads leave that count and are judged as N+1 groups, room x type,
+   on members fed - ok / tight / short (`plant_groups`, Phase 3).
+4. **kVA: shipped the cheap version.** The switch divides kW by a nominal
+   0.95 power factor and says so in its tooltip; no rack row meters apparent
+   power. Revisit only if strips that report VA are modelled.
+5. **Phase 5: both models, in one regeneration.** Per-leg PDU currents and
+   PSU failure shipped together (simulator 6e78aff), then banks (b4b1dfd)
+   and the cord spread (e63b484).
+6. **Analytics Power view: removed in Phase 3.** The SUPPLY tab
+   (`/power?scope=supply`) replaced it; `features/analytics/PowerView.tsx`
+   is gone.

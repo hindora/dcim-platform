@@ -24,6 +24,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from app.core.psu import psu_label
+
 SEVERITY_RANK = {
     "CLEAR": 0, "INFO": 1, "WARNING": 2, "MINOR": 3, "MAJOR": 4, "CRITICAL": 5,
 }
@@ -322,7 +324,12 @@ def _render_state(rule: Rule, key: AlarmKey) -> str:
     names it rather than reporting that something equals 1.0, which is what the
     numeric renderer would produce.
     """
-    point = (key.instance or rule.metric_key or "point").replace("_", " ")
+    if rule.metric_key == "psu_state":
+        # Redfish MemberId "0" is the supply the faceplate calls PSU1; the
+        # alarm must name the one the Power page and the technician name.
+        point = psu_label(key.instance)
+    else:
+        point = (key.instance or rule.metric_key or "point").replace("_", " ")
     try:
         return rule.message_tpl.format(
             point=point, instance=key.instance, metric=rule.metric_key,
