@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
@@ -191,6 +191,29 @@ export function InventoryTable() {
   const VIEW_KEYS = new Set(['page_size', 'page', 'sort', 'dir']);
   const activeCount = [...params.keys()].filter((k) => !VIEW_KEYS.has(k)).length;
 
+  // The same scope on the Devices page, which holds the live state these
+  // rows do not. Its keys differ (it predates this table and is linked to
+  // from the home page by site CODE), so each one is translated; a filter
+  // it cannot express - lifecycle, cover, owner - is left behind rather than
+  // sent as something it would ignore.
+  const devicesHref = useMemo(() => {
+    const q = new URLSearchParams();
+    const search = params.get('search');
+    if (search) q.set('q', search);
+    const site = (options?.sites ?? []).find((x) => x.id === params.get('datacenter_id'));
+    if (site) q.set('datacenter', site.code);
+    const room = params.get('room_id');
+    if (room) q.set('room', room);
+    const types = params.getAll('device_type');
+    if (types.length === 1) q.set('type', types[0]);
+    const cats = params.getAll('category');
+    if (cats.length === 1) q.set('category', cats[0]);
+    const vendor = params.get('vendor_id');
+    if (vendor) q.set('vendor', vendor);
+    const qs = q.toString();
+    return `/devices${qs ? `?${qs}` : ''}`;
+  }, [params, options]);
+
   function goToPage(next: number) {
     const q = new URLSearchParams(params);
     if (next <= 1) q.delete('page');
@@ -229,6 +252,11 @@ export function InventoryTable() {
   return (
     <>
       <h2>Inventory</h2>
+      <p className="subtitle">
+        Lifecycle, cover and serials for every asset. Its live state is on the{' '}
+        <Link to={devicesHref}>Devices page</Link>
+        {activeCount > 0 ? ', with the same scope' : ''}.
+      </p>
       <div className="asset-work">
         <aside className="asset-filters" aria-label="Inventory filters">
           <div className="asset-filter-group">
