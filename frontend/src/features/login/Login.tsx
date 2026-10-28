@@ -103,8 +103,10 @@ export function Login({ onDone, returnTo }: { onDone: () => void; returnTo?: str
 
   return (
     <div className="login-page">
+      {/* React 18 passes the lowercase spelling through; the camel-cased one
+          it does not know and warns about. */}
       <img className="login-photo" src={racks} alt="" width={1600} height={900}
-           decoding="async" fetchPriority="high" />
+           decoding="async" {...{ fetchpriority: 'high' }} />
       <div className="login-scrim" aria-hidden="true" />
 
       <section className="login-lead">

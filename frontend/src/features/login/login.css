@@ -9,7 +9,7 @@
   --login-on-photo-muted: rgba(238, 242, 246, 0.74);
   /* The frost. Dark glass over a dark floor; the light theme gets light
      glass, which is what a frosted pane looks like with the lights on. */
-  --login-glass: rgba(14, 17, 22, 0.58);
+  --login-glass: rgba(14, 17, 22, 0.5);
   --login-glass-edge: rgba(255, 255, 255, 0.09);
   --login-rule: rgba(230, 237, 243, 0.26);
 
@@ -39,17 +39,24 @@
 
 .login-photo {
   position: absolute; inset: 0; z-index: -2;
-  width: 100%; height: 100%; object-fit: cover; object-position: 42% 50%;
-  /* Cooled a little towards the product's blue, and dimmed so the headline
-     reads over the cabling. */
-  filter: saturate(0.78) brightness(0.86);
+  width: 100%; height: 100%; object-fit: cover; object-position: 50% 50%;
+  /* Mirrored: the photograph's racks and cabling are on its left and its
+     right fades to nothing. Flipped, the empty side is under the headline,
+     where quiet is wanted, and the lit racks are under the frosted panel,
+     where there has to be something to see through it. Scaled a touch so
+     the flip never shows an edge. Cooled towards the product's blue, and
+     dimmed so the headline reads. */
+  transform: scaleX(-1) scale(1.06);
+  transform-origin: 50% 50%;
+  filter: saturate(0.78) brightness(0.84);
 }
-/* Darker at the left edge, where the headline sits, and along the foot. */
+/* A little darker at the left edge, where the headline sits, and along the
+   foot. The left of the mirrored photograph is already dark. */
 .login-scrim {
   position: absolute; inset: 0; z-index: -1;
   background:
-    linear-gradient(90deg, rgba(9, 11, 14, 0.72) 0%, rgba(9, 11, 14, 0.28) 46%, rgba(9, 11, 14, 0) 70%),
-    linear-gradient(180deg, rgba(9, 11, 14, 0.1) 0%, rgba(9, 11, 14, 0) 40%, rgba(9, 11, 14, 0.55) 100%);
+    linear-gradient(90deg, rgba(9, 11, 14, 0.5) 0%, rgba(9, 11, 14, 0.16) 40%, rgba(9, 11, 14, 0) 62%),
+    linear-gradient(180deg, rgba(9, 11, 14, 0.08) 0%, rgba(9, 11, 14, 0) 40%, rgba(9, 11, 14, 0.5) 100%);
 }
 
 /* --- the headline ---------------------------------------------------------- */
@@ -196,9 +203,11 @@
 @media (max-width: 860px) {
   .login-page {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto 1fr;
+    /* The photograph takes what the sheet leaves; the sheet hugs its
+       fields rather than floating them in a tall pane of frost. */
+    grid-template-rows: minmax(200px, 1fr) auto;
   }
-  .login-photo { object-position: 50% 30%; }
+  .login-photo { object-position: 50% 50%; transform: scaleX(-1) scale(1.12); }
   .login-scrim {
     background:
       linear-gradient(180deg, rgba(9, 11, 14, 0.2) 0%, rgba(9, 11, 14, 0.62) 100%);
@@ -211,7 +220,8 @@
   .login-lead h1 { font-size: 32px; }
   .login-lead p { font-size: 15px; }
   .login-panel {
-    padding: 28px 20px 32px;
+    justify-content: flex-start;
+    padding: 28px 20px 36px;
     border-left: 0;
     border-top: 1px solid var(--login-glass-edge);
     border-radius: 18px 18px 0 0;
