@@ -32,10 +32,11 @@ const PHOTOS = [aisle, photo1, photo2, photo3];
 /** How long each photograph holds before the next fades in. */
 const PHOTO_HOLD_MS = 14_000;
 const PHOTO_KEY = 'dcim.login.photo';
-/** How long the page's exit plays before the shell is shown. The panel and
- *  headline are gone by 240 ms; the cover (login.css) is most of the way up
- *  and the shell arrives on the same colour, so nothing waits in the dark. */
-const LEAVE_MS = 280;
+/** How long the page's exit plays before the shell is shown: the panel and
+ *  headline are gone by 240 ms and the cover (login.css) is up. The shell
+ *  then mounts under a veil of its own (App.tsx), so however long its first
+ *  paint takes, nothing shows until it is ready. */
+const LEAVE_MS = 240;
 
 /** Which photograph leads this visit: the one after last visit's, so the
  *  page is not the same picture every morning. Browser storage is a

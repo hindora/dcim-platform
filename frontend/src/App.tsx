@@ -202,7 +202,18 @@ export default function App() {
   // True for the shell mounted straight after a sign-in, so it can come in
   // rather than appear. A reload of an already signed-in session mounts the
   // shell too, and that one should not animate: nothing was left behind.
+  //
+  // The veil is painted in the same commit as the shell, in the login page's
+  // closing colour, and fades once the shell is there - so however long the
+  // first paint of the home page takes, the reader never sees it assemble.
+  // It is cleared by a timer, not by animationend: it cannot take input
+  // either way, and a dropped event must not leave it in the tree.
   const [arriving, setArriving] = useState(false);
+  useEffect(() => {
+    if (!arriving) return;
+    const t = window.setTimeout(() => setArriving(false), 700);
+    return () => window.clearTimeout(t);
+  }, [arriving]);
   const location = useLocation();
   const navigate = useNavigate();
   // A 401 anywhere ends the session for everything, so the shell has to hear
@@ -235,6 +246,7 @@ export default function App() {
 
   return (
     <div className={arriving ? 'shell shell-arrive' : 'shell'}>
+      {arriving && <div className="arrive-veil" aria-hidden="true" />}
       <TrustBanner />
       <TopBar onSignOut={() => { setToken(null); setAuthed(false); }} />
       <main>

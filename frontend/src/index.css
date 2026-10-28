@@ -331,13 +331,27 @@ a:hover { text-decoration: underline; }
 .app { display: grid; grid-template-columns: 220px 1fr; min-height: calc(100vh / var(--dz)); }
 
 /* The shell's arrival after a sign-in: the login page ended on a sheet of
-   --bg, and the shell rises out of it. Once, on that mount only. */
+   --bg; the veil is that same sheet, painted with the shell and lifted once
+   the shell is there, while the shell rises into place beneath it. Once, on
+   that mount only. */
 .shell-arrive { animation: shell-arrive 420ms cubic-bezier(0.2, 0.7, 0.2, 1) both; }
-@keyframes shell-arrive {
-  from { opacity: 0; transform: translateY(10px); }
-  to   { opacity: 1; transform: none; }
+.arrive-veil {
+  position: fixed; inset: 0; z-index: 1000; pointer-events: none;
+  background: var(--bg);
+  animation: arrive-veil 360ms ease-out 60ms both;
 }
-@media (prefers-reduced-motion: reduce) { .shell-arrive { animation: none; } }
+@keyframes shell-arrive {
+  from { transform: translateY(10px); }
+  to   { transform: none; }
+}
+@keyframes arrive-veil {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .shell-arrive { animation: none; }
+  .arrive-veil { display: none; }
+}
 
 .sidebar {
   background: var(--bg-raised);

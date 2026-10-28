@@ -260,10 +260,10 @@
   content: ""; position: absolute; inset: 0; z-index: 2;
   background: var(--bg); opacity: 0; pointer-events: none;
 }
-/* The shell mounts while this is still rising (LEAVE_MS < 40 + 260): both
-   are --bg, so the hand-off is continuous and there is no dead dark. */
+/* Up by the time LEAVE_MS unmounts the page; the shell's veil (index.css)
+   is the same colour, so the hand-off is one continuous surface. */
 .login-page.is-leaving::after {
-  animation: login-cover 260ms ease-in 40ms both;
+  animation: login-cover 200ms ease-in 40ms both;
 }
 @keyframes login-panel-out {
   to { opacity: 0; transform: translateX(28px); }
