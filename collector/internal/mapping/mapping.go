@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"io/fs"
 	stdpath "path"
+	"regexp"
+	"strconv"
 
 	"gopkg.in/yaml.v3"
 
@@ -21,6 +23,26 @@ type Transform struct {
 	Offset   *float64          `yaml:"offset"`
 	EnumTrue []int64           `yaml:"enum_true"`
 	ValueMap map[string]string `yaml:"map"`
+	// NumberInText reads a gauge out of a DisplayString that carries its unit:
+	// PDU2-MIB's overCurrentProtectorRatedCurrent is "16A", not 16. Opt-in per
+	// column, so a text OID elsewhere never turns into a number by accident.
+	NumberInText bool `yaml:"number_in_text"`
+}
+
+var numberInText = regexp.MustCompile(`^\s*([-+]?\d+(?:\.\d+)?)\s*[A-Za-z%]*\s*$`)
+
+// TextNumber parses "16A", "16 A" or "16" to 16. False for anything else -
+// "C1", "16-20A", an empty string - rather than guessing.
+func (t *Transform) TextNumber(s string) (float64, bool) {
+	if t == nil || !t.NumberInText {
+		return 0, false
+	}
+	m := numberInText.FindStringSubmatch(s)
+	if m == nil {
+		return 0, false
+	}
+	f, err := strconv.ParseFloat(m[1], 64)
+	return f, err == nil
 }
 
 type Column struct {

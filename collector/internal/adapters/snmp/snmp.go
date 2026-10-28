@@ -915,6 +915,9 @@ func (a *Adapter) sample(ep *models.Endpoint, metric, valueType string, bits int
 	default:
 		v, ok := toFloat(raw)
 		if !ok {
+			v, ok = tr.TextNumber(toString(raw))
+		}
+		if !ok {
 			return t, false
 		}
 		value := tr.Apply(v)
