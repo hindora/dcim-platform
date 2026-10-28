@@ -386,15 +386,16 @@ async def facets(session: AsyncSession, *, stale_s: int = 600,
     where, params = _filters(**filters)
     clause = (" WHERE " + " AND ".join(where)) if where else ""
     params["stale_s"] = stale_s
+    st = "COALESCE(ds.status::text, 'UNKNOWN')"
     tally = (await session.execute(text(f"""
         SELECT count(*) AS total,
-               count(*) FILTER (WHERE COALESCE(ds.status::text, 'UNKNOWN') = 'ONLINE')   AS online,
-               count(*) FILTER (WHERE COALESCE(ds.status::text, 'UNKNOWN') = 'DEGRADED') AS degraded,
-               count(*) FILTER (WHERE COALESCE(ds.status::text, 'UNKNOWN') = 'OFFLINE')  AS offline,
-               count(*) FILTER (WHERE COALESCE(ds.status::text, 'UNKNOWN') = 'UNKNOWN')  AS unknown,
-               count(*) FILTER (WHERE COALESCE(ds.active_alarms, 0) > 0)                 AS alarming,
-               count(*) FILTER (WHERE ds.last_seen IS NOT NULL
-                                  AND ds.last_seen < now() - make_interval(secs => :stale_s)) AS stale
+               count(*) FILTER (WHERE {st} = 'ONLINE')   AS online,
+               count(*) FILTER (WHERE {st} = 'DEGRADED') AS degraded,
+               count(*) FILTER (WHERE {st} = 'OFFLINE')  AS offline,
+               count(*) FILTER (WHERE {st} = 'UNKNOWN')  AS unknown,
+               count(*) FILTER (WHERE COALESCE(ds.active_alarms, 0) > 0) AS alarming,
+               count(*) FILTER (WHERE ds.last_seen IS NOT NULL AND ds.last_seen
+                                      < now() - make_interval(secs => :stale_s)) AS stale
         {_JOINS}{clause}
     """), params)).mappings().one()
     by_type = (await session.execute(text(f"""

@@ -63,7 +63,8 @@ async def test_status_sorts_worst_first_when_ascending():
     await device_repo.list_devices(session, order_by="status")
     sql = session.sql[0]
     assert ("CASE COALESCE(ds.status::text,'UNKNOWN') WHEN 'OFFLINE' THEN 0 WHEN 'DEGRADED' "
-            "THEN 1 WHEN 'UNKNOWN' THEN 2 ELSE 3 END ASC NULLS LAST, d.id::text LIMIT :limit") in sql, "the rank must survive _order_clause whole"
+            "THEN 1 WHEN 'UNKNOWN' THEN 2 ELSE 3 END ASC NULLS LAST, d.id::text "
+            "LIMIT :limit") in sql, "the rank must survive _order_clause whole"
 
 
 @pytest.mark.asyncio
