@@ -1054,6 +1054,29 @@ class IngestWorker:
             log.debug("all events in batch were duplicates", count=len(events))
             return
 
+        try:
+            rows, actions = await self._store_events(fresh)
+        except BaseException:
+            # The claims were taken before the transaction. Left in place, the
+            # redelivered batch reads as already seen and every trap in it is
+            # dropped - a CRITICAL among them, the day one binary varbind
+            # failed the insert.
+            await self._release_events(fresh)
+            raise
+
+        for action in actions:
+            await self.fanout.alarm(action.kind, action.alarm)
+        for row in rows:
+            await self.fanout.event({
+                "event_type": row["event_type"], "severity": row["severity"],
+                "message": row["message"], "device_id": row["device_id"],
+                "source_ip": row["source_ip"],
+                "ts": row["ts"].isoformat() if row["ts"] else None,
+            })
+        log.info("events ingested", received=len(events), fresh=len(fresh),
+                 alarms=len(actions))
+
+    async def _store_events(self, fresh: list) -> tuple[list, list]:
         rows, actions = [], []
         async with unit_of_work() as session:
             await self.alarms.ensure_rules(session)
@@ -1072,7 +1095,8 @@ class IngestWorker:
                     "severity": _SEVERITY_NAMES.get(e.severity, "INFO"),
                     "is_clear": bool(e.is_clear),
                     "clears": clears,
-                    "message": e.message,
+                    # text columns refuse NUL (see event_row)
+                    "message": e.message.replace("\x00", "") if e.message else e.message,
                     "observed_at": observed,
                     "source": "snmp_trap",
                     "varbinds": dict(e.varbinds),
@@ -1101,18 +1125,17 @@ class IngestWorker:
                     actions.append(action)
             await repo_alarms.insert_events(session, rows)
             await integration_outbox.enqueue_actions(session, actions)
+        return rows, actions
 
-        for action in actions:
-            await self.fanout.alarm(action.kind, action.alarm)
-        for row in rows:
-            await self.fanout.event({
-                "event_type": row["event_type"], "severity": row["severity"],
-                "message": row["message"], "device_id": row["device_id"],
-                "source_ip": row["source_ip"],
-                "ts": row["ts"].isoformat() if row["ts"] else None,
-            })
-        log.info("events ingested", received=len(events), fresh=len(fresh),
-                 alarms=len(actions))
+    async def _release_events(self, events: list) -> None:
+        """Undo _claim_event for a batch that never reached the database."""
+        keys = [f"dcim:ev:{e.dedup_key}" for e in events if e.dedup_key]
+        if not keys:
+            return
+        try:
+            await self.redis.delete(*keys)
+        except Exception:
+            log.exception("could not release event claims", count=len(keys))
 
     async def _claim_event(self, dedup_key: str) -> bool:
         """True the first time a dedup key is seen.

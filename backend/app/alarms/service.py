@@ -939,8 +939,26 @@ class AlarmService:
 
 
 
+def _printable(value: Any) -> Any:
+    """A varbind as text Postgres will store.
+
+    An OctetString is bytes, not text. Most are printable (sysName, a model
+    string), but some are binary records: the IPMI Platform Event Trap
+    (PEN 3183) carries its 47-byte event record as one OctetString, and real
+    BMCs - iDRAC, iLO, XCC, Supermicro - send exactly that. JSONB refuses
+    \\u0000, so one such trap failed the whole insert. Render binary the way
+    net-snmp does (hex), keep printable text as it came.
+    """
+    if not isinstance(value, str):
+        return value
+    if all(c.isprintable() or c in "\t\r\n" for c in value):
+        return value
+    return "0x" + value.encode("utf-8", "surrogateescape").hex()
+
+
 def event_row(ev: dict[str, Any]) -> dict[str, Any]:
     """Shape a canonical event for the `event` table."""
+    varbinds = {k: _printable(v) for k, v in (ev.get("varbinds") or {}).items()}
     return {
         "ts": ev["observed_at"],
         "device_id": ev.get("device_id") or None,
@@ -949,7 +967,9 @@ def event_row(ev: dict[str, Any]) -> dict[str, Any]:
         "event_type": ev["event_type"],
         "source": ev.get("source") or "snmp_trap",
         "severity": ev.get("severity") or "INFO",
-        "message": ev.get("message") or ev["event_type"],
-        "raw": json.dumps(ev.get("varbinds") or {}),
+        # text columns refuse NUL too; a message templated from a binary
+        # varbind would carry one.
+        "message": (ev.get("message") or ev["event_type"]).replace("\x00", ""),
+        "raw": json.dumps(varbinds),
         "dedup_key": ev.get("dedup_key") or None,
     }

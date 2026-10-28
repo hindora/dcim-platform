@@ -800,15 +800,17 @@ async def missing_devices(session: AsyncSession) -> list[dict[str, Any]]:
           LEFT JOIN rack_row rr ON rr.id = rk.row_id
           LEFT JOIN room rm ON rm.id = COALESCE(rr.room_id, d.room_id)
          WHERE d.lifecycle::text = ANY(:lifecycles)
+           -- Answered that run, or a later one, on ANY of its addresses - or was
+           -- matched by serial somewhere else, which is "moved", not "missing".
+           -- Two anti-joins, not one with an OR: the OR form re-scanned addr for
+           -- every device x candidate pair (163 M rows, 18 s on 1,236 addresses).
            AND NOT EXISTS (
-                 -- Answered that run, or a later one, on ANY of its addresses -
-                 -- or was matched by serial somewhere else, which is "moved",
-                 -- not "missing".
                  SELECT 1 FROM discovery_candidate c
-                  WHERE c.last_seen >= cv.began
-                    AND (c.matched_device_id = d.id
-                         OR c.address IN (SELECT a2.address FROM addr a2
-                                           WHERE a2.device_id = d.id)))
+                  WHERE c.matched_device_id = d.id AND c.last_seen >= cv.began)
+           AND NOT EXISTS (
+                 SELECT 1 FROM addr a2
+                   JOIN discovery_candidate c ON c.address = a2.address
+                  WHERE a2.device_id = d.id AND c.last_seen >= cv.began)
          ORDER BY d.name
     """), {"protocols": list(SWEPT_PROTOCOLS),
            "lifecycles": list(EXPECTED_ON_WIRE)})).mappings().all()

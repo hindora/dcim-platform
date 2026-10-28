@@ -206,6 +206,15 @@ def test_answering_anywhere_is_not_missing():
     assert "c.last_seen >= cv.began" in body
 
 
+def test_answering_anywhere_is_two_anti_joins_not_an_or():
+    """The OR form re-scanned every sweepable address for each device x
+    candidate pair: 163 M rows and 18 s live, run by the nav badge and the
+    discovery alarm sweep. Split, it is 0.3 s on the same data."""
+    body = _body(REPO, "missing_devices")
+    assert "OR c.address IN" not in body
+    assert "JOIN discovery_candidate c ON c.address = a2.address" in body
+
+
 def test_missing_carries_the_polling_state():
     """Silent to the sweep but ONLINE to the poller is a credentials or ACL
     problem - the disagreement is the diagnosis."""
