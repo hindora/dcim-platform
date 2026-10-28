@@ -1,0 +1,83 @@
+/* The device list. Table chrome comes from the asset table (.asset-table-cols,
+   .asset-sort, .col-grip, .asset-scroll, .asset-empty, .asset-skeleton) and
+   the header band from estate.css; only what is particular to this page is
+   here, under a dl- prefix. */
+
+.dl { min-width: 0; }
+
+/* --- tools ----------------------------------------------------------------- */
+
+.dl-tools {
+  display: flex; flex-wrap: wrap; align-items: end; gap: 10px 14px;
+  margin: 14px 0 12px;
+}
+.dl-search { flex: 1 1 260px; max-width: 420px; display: block; }
+.dl-search input { width: 100%; height: 34px; }
+.dl-pick { display: flex; flex-direction: column; gap: 4px; min-width: 120px; }
+.dl-pick > span {
+  font-size: 10px; font-weight: 600; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--text-faint);
+}
+.dl-pick select { height: 34px; }
+.dl-tools .seg { align-self: end; }
+
+.dl-scope { margin: -2px 0 12px; }
+.dl-chip { gap: 6px; padding-right: 4px; }
+.dl-chip-x {
+  background: none; border: 0; padding: 0 4px; margin: 0;
+  font: inherit; line-height: 1; color: var(--text-muted); cursor: pointer;
+  border-radius: 3px;
+}
+.dl-chip-x:hover { color: var(--text); background: var(--bg-inset); }
+
+/* --- table ----------------------------------------------------------------- */
+
+.dl-table th, .dl-table td { padding: 6px 10px; }
+.dl-table td.num, .dl-table th.num { text-align: right; }
+.dl-row { cursor: pointer; }
+.dl-row:hover td { background: var(--bg-raised); }
+.dl-name a { font-weight: 500; }
+
+/* The expected state is quiet; anything else carries its colour and a dot.
+   Lowercase, because a column of ONLINE in capitals is a column shouting. */
+.dl-state { display: inline-flex; align-items: center; gap: 6px; color: var(--text-muted); }
+.dl-state .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; opacity: .55; }
+.dl-state.ok .dot { background: var(--ok); opacity: .7; }
+.dl-state.warn { color: var(--warn); }
+.dl-state.major { color: var(--major); }
+.dl-state.critical { color: var(--critical); font-weight: 600; }
+.dl-state.unknown { color: var(--unknown); }
+.dl-state.warn .dot, .dl-state.major .dot, .dl-state.critical .dot, .dl-state.unknown .dot { opacity: 1; }
+
+.dl-alarms {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-variant-numeric: tabular-nums; font-weight: 600;
+}
+.dl-alarms .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.dl-alarms.warn { color: var(--warn); }
+.dl-alarms.major { color: var(--major); }
+.dl-alarms.critical { color: var(--critical); }
+.dl-alarms.ok, .dl-alarms.unknown { color: var(--text-muted); }
+.dl-none { color: var(--text-faint); }
+
+.dl-trail { display: inline-flex; align-items: baseline; gap: 0; color: var(--text-muted); min-width: 0; }
+.dl-step { display: inline-flex; align-items: baseline; }
+.dl-sep { margin: 0 5px; color: var(--text-faint); }
+.dl-trail a { color: var(--text-muted); }
+.dl-trail a:hover { color: var(--accent); }
+.dl-u { font-family: var(--mono); font-size: 12px; }
+
+.dl-stale { color: var(--warn); }
+
+.dl-skel td { padding: 9px 10px; }
+.dl-skel .asset-skeleton { display: block; width: 70%; }
+
+/* --- narrow ---------------------------------------------------------------- */
+
+@media (max-width: 1100px) {
+  .dl-table .col-model { display: none; }
+}
+@media (max-width: 900px) {
+  .dl-table .col-ip { display: none; }
+  .dl-search { max-width: none; }
+}

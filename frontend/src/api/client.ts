@@ -137,6 +137,9 @@ export interface DeviceSummary {
   status: string;
   health: string;
   max_severity: string;
+  /** Open alarms on the device now. Optional only until every caller is on
+   *  an API that sends it. */
+  active_alarms?: number;
   mgmt_ip?: string | null;
   primary_ip?: string | null;
   last_seen?: string | null;
@@ -1818,6 +1821,18 @@ export interface Page<T> {
   items: T[];
   next_cursor?: string | null;
   total?: number | null;
+}
+
+/** GET /devices/facets: the device list's header figures and the type menu's
+ *  counts, under the list's own filters. */
+export interface DeviceFacets {
+  total: number;
+  status: { online: number; degraded: number; offline: number; unknown: number };
+  alarming: number;
+  stale: number;
+  stale_s: number;
+  types: { code: string; display_name: string; category: string; count: number }[];
+  categories: { code: string; count: number }[];
 }
 
 // ------------------------------------------------------------- endpoints
@@ -4358,6 +4373,14 @@ export const api = {
     for (const [k, v] of Object.entries(params)) if (v) q.set(k, v);
     const qs = q.toString();
     return request<Page<DeviceSummary>>(`/devices${qs ? `?${qs}` : ''}`);
+  },
+  /** The counts behind the device list's header and type menu, under the
+   *  same filters as the rows. */
+  deviceFacets: (params: Record<string, string | undefined> = {}) => {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) if (v) q.set(k, v);
+    const qs = q.toString();
+    return request<DeviceFacets>(`/devices/facets${qs ? `?${qs}` : ''}`);
   },
 
   // ---- asset workspace (docs/21). Additive; nothing above changes. ----

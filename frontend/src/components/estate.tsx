@@ -23,6 +23,10 @@ export interface Kpi {
    *  the figure it replaced. A headline that cannot say what it is made of
    *  is a headline nobody can argue with. */
   tip?: React.ReactNode;
+  /** A tile that narrows the page to what it counts. The band's look, as a
+   *  button; `active` marks the one the page is currently narrowed to. */
+  onClick?: () => void;
+  active?: boolean;
 }
 
 export function KpiBand({ items }: { items: Kpi[] }) {
@@ -34,9 +38,9 @@ export function KpiBand({ items }: { items: Kpi[] }) {
           : typeof k.value === 'number'
             ? k.value.toFixed(k.digits ?? 1)
             : k.value;
-        return (
-          <div key={k.caption}
-               className={`kpi ${absent ? 'absent' : k.tone ?? ''}`}>
+        const cls = `kpi ${absent ? 'absent' : k.tone ?? ''}${k.active ? ' active' : ''}`;
+        const body = (
+          <>
             <span className="cap">{k.caption}</span>
             <span className="val">
               {absent ? <Tip tip={k.why ?? 'not measured'}>{shown}</Tip>
@@ -44,7 +48,15 @@ export function KpiBand({ items }: { items: Kpi[] }) {
               {!absent && k.unit && <span className="u">{k.unit}</span>}
             </span>
             <span className="rule" />
-          </div>
+          </>
+        );
+        return k.onClick ? (
+          <button key={k.caption} type="button" className={cls}
+                  aria-pressed={Boolean(k.active)} onClick={k.onClick}>
+            {body}
+          </button>
+        ) : (
+          <div key={k.caption} className={cls}>{body}</div>
         );
       })}
     </div>
