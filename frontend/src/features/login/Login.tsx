@@ -32,6 +32,10 @@ const PHOTOS = [aisle, photo1, photo2, photo3];
 /** How long each photograph holds before the next fades in. */
 const PHOTO_HOLD_MS = 14_000;
 const PHOTO_KEY = 'dcim.login.photo';
+/** How long the page's exit plays before the shell is shown. The panel and
+ *  headline are gone by 240 ms; the cover (login.css) is most of the way up
+ *  and the shell arrives on the same colour, so nothing waits in the dark. */
+const LEAVE_MS = 280;
 
 /** Which photograph leads this visit: the one after last visit's, so the
  *  page is not the same picture every morning. Browser storage is a
@@ -122,6 +126,9 @@ export function Login({ onDone, returnTo }: { onDone: () => void; returnTo?: str
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Signed in, and on the way out: the page plays its exit before the shell
+  // takes over, so the swap is a hand-off rather than a cut.
+  const [leaving, setLeaving] = useState(false);
   const ids = { user: useId(), pass: useId() };
 
   const org = useOrg();
@@ -139,16 +146,20 @@ export function Login({ onDone, returnTo }: { onDone: () => void; returnTo?: str
     try {
       const res = await api.login(username, password);
       setToken(res.token);
+      setLeaving(true);
+      // Long enough for the exit to finish (login.css, LEAVE_MS); nothing
+      // at all under reduced motion, where the exit does not play.
+      const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+      await new Promise((r) => setTimeout(r, reduced ? 0 : LEAVE_MS));
       onDone();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'login failed');
-    } finally {
       setBusy(false);
     }
   }
 
   return (
-    <div className="login-page">
+    <div className={`login-page${leaving ? ' is-leaving' : ''}`} aria-busy={leaving}>
       {/* All three are in the document so the next one is decoded before it
           fades in. React 18 passes the lowercase fetchpriority through; the
           camel-cased one it does not know and warns about. */}
@@ -199,7 +210,7 @@ export function Login({ onDone, returnTo }: { onDone: () => void; returnTo?: str
 
         <div className="login-actions">
           <button type="submit" className="login-submit" disabled={busy}>
-            {busy ? 'Signing in…' : 'Sign in'}
+            {leaving ? 'Signed in' : busy ? 'Signing in…' : 'Sign in'}
             {!busy && <LoginGlyph kind="chevron" />}
           </button>
           <span className="login-aside">No account? Ask your administrator.</span>

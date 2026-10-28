@@ -237,7 +237,52 @@
   .login-sub { margin-bottom: 26px; }
 }
 
+/* --- the way out ------------------------------------------------------------ */
+/* Signed in: the panel slides off the way it came, the headline lifts away,
+   the photograph eases in a touch, and a sheet of the app's own background
+   rises over everything - so the shell that follows starts on the colour the
+   page ended on. The panel leaves first and fastest; the cover is last, and
+   LEAVE_MS in Login.tsx waits for it. */
+/* Leaving accelerates (ease-in curves); the shell's arrival in index.css
+   decelerates and runs longer, so the exit reads as quick and the arrival
+   as settled - an exit about three-quarters the length of its entrance. */
+.login-page.is-leaving .login-panel {
+  animation: login-panel-out 240ms cubic-bezier(0.4, 0, 1, 1) both;
+}
+.login-page.is-leaving .login-lead {
+  animation: login-lead-out 200ms cubic-bezier(0.4, 0, 1, 1) both;
+}
+.login-page.is-leaving .login-photo.is-shown {
+  transform: scale(1.04);
+  transition: opacity 1600ms ease, transform 480ms cubic-bezier(0.4, 0, 1, 1);
+}
+.login-page::after {
+  content: ""; position: absolute; inset: 0; z-index: 2;
+  background: var(--bg); opacity: 0; pointer-events: none;
+}
+/* The shell mounts while this is still rising (LEAVE_MS < 40 + 260): both
+   are --bg, so the hand-off is continuous and there is no dead dark. */
+.login-page.is-leaving::after {
+  animation: login-cover 260ms ease-in 40ms both;
+}
+@keyframes login-panel-out {
+  to { opacity: 0; transform: translateX(28px); }
+}
+@keyframes login-lead-out {
+  to { opacity: 0; transform: translateY(-10px); }
+}
+@keyframes login-cover {
+  to { opacity: 1; }
+}
+@media (max-width: 860px) {
+  @keyframes login-panel-out {
+    to { opacity: 0; transform: translateY(24px); }
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .login-panel { animation: none; }
+  .login-panel, .login-page.is-leaving .login-panel, .login-page.is-leaving .login-lead,
+  .login-page.is-leaving::after { animation: none; }
   .login-photo, .login-field input, .login-submit, .login-field-toggle { transition: none; }
+  .login-page.is-leaving .login-photo.is-shown { transform: none; }
 }

@@ -199,6 +199,10 @@ function Page({ children }: { children: React.ReactNode }) {
 export default function App() {
   const [authed, setAuthed] = useState(Boolean(getToken()));
   const [returnTo, setReturnTo] = useState<string | null>(null);
+  // True for the shell mounted straight after a sign-in, so it can come in
+  // rather than appear. A reload of an already signed-in session mounts the
+  // shell too, and that one should not animate: nothing was left behind.
+  const [arriving, setArriving] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
   // A 401 anywhere ends the session for everything, so the shell has to hear
@@ -220,6 +224,7 @@ export default function App() {
       <Login
         returnTo={returnTo ?? undefined}
         onDone={() => {
+          setArriving(true);
           setAuthed(true);
           if (returnTo) navigate(returnTo, { replace: true });
           setReturnTo(null);
@@ -229,7 +234,7 @@ export default function App() {
   }
 
   return (
-    <div className="shell">
+    <div className={arriving ? 'shell shell-arrive' : 'shell'}>
       <TrustBanner />
       <TopBar onSignOut={() => { setToken(null); setAuthed(false); }} />
       <main>
