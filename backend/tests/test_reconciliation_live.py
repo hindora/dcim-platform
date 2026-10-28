@@ -457,3 +457,25 @@ async def test_a_pdu_temperature_alarm_with_no_temperature_ages_out(session):
 
     assert [r for r in await reconcile.aged_out(s) if r["id"] == alarm], (
         "a PDU temperature alarm nothing can measure was not offered to the timer")
+
+
+@pytest.mark.asyncio
+async def test_an_alarm_on_a_boolean_is_not_an_orphan(session):
+    """A boolean lives in telemetry_bool, change-logged. Read from
+    telemetry_sample alone, psu_state and bank_breaker_closed were never
+    published, and every psu_failure and breaker_tripped was closed as
+    orphaned within a minute of being raised (2026-10-28, live)."""
+    row = (await session.execute(text("""
+        SELECT DISTINCT ON (tb.device_id) tb.device_id::text AS id, tb.instance
+          FROM telemetry_bool tb JOIN metric m ON m.id = tb.metric_id
+         WHERE m.key = 'psu_state' AND tb.ts > now() - interval '1 hour'
+         ORDER BY tb.device_id, tb.ts DESC LIMIT 1
+    """))).mappings().first()
+    assert row, "no server is publishing psu_state"
+    alarm_id = await _raise(session, row["id"], instance=row["instance"],
+                            source="state", alarm_type="psu_failure")
+    await session.execute(text(
+        "UPDATE alarm SET metric_key = 'psu_state' WHERE id = CAST(:a AS uuid)"),
+        {"a": alarm_id})
+    found = {r["id"] for r in await reconcile.orphaned_key(session)}
+    assert alarm_id not in found

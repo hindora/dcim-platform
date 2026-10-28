@@ -545,6 +545,20 @@ _ORPHANED_KEY = text("""
              AND t.ts > now() - make_interval(secs => :silent_s)
            LIMIT 1
       ) keyed ON true
+      -- A boolean lives in telemetry_bool, change-logged with a heartbeat
+      -- well inside silent_s. Reading only telemetry_sample found nothing for
+      -- psu_state or bank_breaker_closed EVER, so every rule alarm on a
+      -- boolean was closed as "orphaned" within a minute of being raised and
+      -- re-raised on the next poll (2026-10-28, psu_failure and
+      -- breaker_tripped, live).
+      LEFT JOIN LATERAL (
+          SELECT 1 AS hit FROM telemetry_bool t
+           WHERE t.device_id = a.device_id
+             AND t.metric_id = m.id
+             AND coalesce(t.instance, '') = coalesce(a.instance, '')
+             AND t.ts > now() - make_interval(secs => :silent_s)
+           LIMIT 1
+      ) keyed_bool ON true
       -- Anything at all from the device.
       LEFT JOIN LATERAL (
           SELECT 1 AS hit FROM telemetry_sample t
@@ -562,6 +576,7 @@ _ORPHANED_KEY = text("""
        -- Nothing on this key, for long enough that slow polling is not the
        -- explanation...
        AND keyed.hit IS NULL
+       AND keyed_bool.hit IS NULL
        -- ...while the device itself is plainly still there.
        AND fresh.hit IS NOT NULL
 """)
