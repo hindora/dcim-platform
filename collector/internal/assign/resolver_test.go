@@ -119,3 +119,38 @@ func TestAPasswordRotationRestartsTheJob(t *testing.T) {
 		t.Fatal("the same credential compared different")
 	}
 }
+
+// A probe on a strip's sensor port is reached THROUGH the strip and carries
+// its address and community. Every trap from that address is the strip's:
+// owned or borrowed, the probe must never be the one a trap is filed against,
+// and must not make the strip's address ambiguous.
+func TestAFieldDeviceNeverClaimsItsGatewaysTraps(t *testing.T) {
+	probe := &models.Endpoint{ID: "ep-probe", DeviceID: "sen-1", DeviceType: "sensor",
+		Protocol: "snmp", Role: "field_device", Address: "10.52.11.27"}
+	strip := &models.Endpoint{ID: "ep-strip", DeviceID: "pdu-1", DeviceType: "pdu",
+		Protocol: "snmp", Role: "native_card", Address: "10.52.11.27"}
+
+	// Owned, probe listed first: first-writer-wins used to give it the address.
+	r := NewResolver()
+	r.Replace([]*models.Endpoint{probe, strip}, nil, "DC1")
+	if ep, ok := r.Resolve("10.52.11.27", ""); !ok || ep.DeviceID != "pdu-1" {
+		t.Fatalf("owned: trap filed against %+v, want the strip", ep)
+	}
+	if ep, ok := r.ResolveID("ep-probe"); !ok || ep.DeviceID != "sen-1" {
+		t.Fatal("a field device must still resolve by its id")
+	}
+
+	// Borrowed: the pair used to read as two devices on one address and the
+	// trap was refused as ambiguous.
+	p := other("ep-probe", "sen-1", "10.52.11.27", "DC1", "10.52.11.27")
+	p.Role, p.DeviceType = "field_device", "sensor"
+	s := other("ep-strip", "pdu-1", "10.52.11.27", "DC1", "10.52.11.27")
+	r = NewResolver()
+	r.Replace(nil, []ResolveEntry{p, s}, "DC1")
+	if ep, ok := r.Resolve("10.52.11.27", ""); !ok || ep.DeviceID != "pdu-1" {
+		t.Fatalf("borrowed: trap filed against %+v, want the strip", ep)
+	}
+	if r.Ambiguous() != 0 {
+		t.Fatalf("a strip and its own probe are not two claimants: %d ambiguous", r.Ambiguous())
+	}
+}

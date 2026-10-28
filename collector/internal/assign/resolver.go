@@ -102,6 +102,18 @@ func (t tier) commit(seen map[string]*models.Endpoint) {
 	}
 }
 
+// sendsTraps reports whether an endpoint can be the source of a trap.
+//
+// A field device - a DPX2 probe on a strip's sensor port, a meter behind a
+// Modbus gateway - has no agent of its own: it is reached THROUGH another
+// endpoint and carries that endpoint's address and community. Every
+// notification from that address is the gateway's. Letting the probe claim
+// the address filed PDU breaker and load traps against the temperature
+// probe (19 pdu_load_high on SEN1-DC1-HA-R1-01, 2026-10), and in a borrowed
+// tier the strip and its probe read as two devices on one address, so the
+// trap was refused as ambiguous and attributed to nothing.
+func sendsTraps(role string) bool { return role != "field_device" }
+
 // Replace swaps in a fresh view. Called on every assignment refresh.
 func (r *Resolver) Replace(owned []*models.Endpoint, others []ResolveEntry, site string) {
 	byAddr := make(map[string]*models.Endpoint, len(owned)+len(others))
@@ -111,6 +123,9 @@ func (r *Resolver) Replace(owned []*models.Endpoint, others []ResolveEntry, site
 
 	for _, ep := range owned {
 		byID[ep.ID] = ep
+		if !sendsTraps(ep.Role) {
+			continue
+		}
 		if ep.Address != "" {
 			// First writer wins: a device with several endpoints on one
 			// address (an OS agent and a BMC never share one) should resolve
@@ -146,6 +161,9 @@ func (r *Resolver) Replace(owned []*models.Endpoint, others []ResolveEntry, site
 			ep := e.endpoint()
 			if _, owned := byID[ep.ID]; !owned {
 				byID[ep.ID] = ep
+			}
+			if !sendsTraps(e.Role) {
+				continue
 			}
 			if addr.offer(e.Address, ep, seenAddr) {
 				ambiguous++
