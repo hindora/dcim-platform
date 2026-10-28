@@ -19,6 +19,7 @@ _LIST_BASE = """
            COALESCE(ds.status::text, 'UNKNOWN')       AS status,
            COALESCE(ds.health::text, 'UNKNOWN')       AS health,
            COALESCE(ds.max_severity::text, 'CLEAR')   AS max_severity,
+           COALESCE(ds.active_alarms, 0)              AS active_alarms,
            ds.last_seen,
            dc.id::text AS datacenter_id, dc.code AS datacenter_code,
            rm.id::text AS room_id, rm.name AS room_name,
@@ -50,6 +51,15 @@ _LIST_BASE = """
 """
 
 
+# No ", " inside these: _order_clause splits a multi-column ordering on
+# exactly that, so a comma-space in an expression would cut it in two.
+_STATUS_RANK = ("CASE COALESCE(ds.status::text,'UNKNOWN') "
+                "WHEN 'OFFLINE' THEN 0 WHEN 'DEGRADED' THEN 1 "
+                "WHEN 'UNKNOWN' THEN 2 ELSE 3 END")
+_SEVERITY_RANK = ("CASE COALESCE(ds.max_severity::text,'CLEAR') "
+                  "WHEN 'CRITICAL' THEN 0 WHEN 'MAJOR' THEN 1 "
+                  "WHEN 'MINOR' THEN 2 WHEN 'WARNING' THEN 3 ELSE 4 END")
+
 #: The columns the list may be ordered by - each key is API surface, each
 #: value a SQL expression the base query's joins already provide. A lookup,
 #: never interpolation of caller input.
@@ -62,6 +72,13 @@ ORDERINGS: dict[str, str] = {
     "lifecycle": "d.lifecycle::text",
     "cover": "d.warranty_expires",
     "serial": "d.serial_number",
+    # The operational columns. Status and severity order WORST FIRST when
+    # ascending - an operator sorting on state wants the offline rows at the
+    # top, not the alphabet - so each is a rank, not the enum's text.
+    "status": _STATUS_RANK,
+    "severity": _SEVERITY_RANK,
+    "alarms": "COALESCE(ds.active_alarms,0)",
+    "last_seen": "ds.last_seen",
 }
 
 
@@ -112,6 +129,8 @@ def _filters(
     owner_group: str | None = None,
     cost_centre: str | None = None,
     tags: list[str] | None = None,
+    alarming: bool | None = None,
+    stale_s: int | None = None,
 ) -> tuple[list[str], dict[str, Any]]:
     """Every predicate the list understands, shared with the count.
 
@@ -207,6 +226,17 @@ def _filters(
                 f"AND tg.value = :tag_v{i})")
             params[f"tag_k{i}"] = key
             params[f"tag_v{i}"] = value
+    if alarming is not None:
+        # The rows with something open on them, or the rows with nothing.
+        where.append("COALESCE(ds.active_alarms, 0) > 0" if alarming
+                     else "COALESCE(ds.active_alarms, 0) = 0")
+    if stale_s:
+        # Seen once and silent since: a device that was answering and has
+        # stopped. A device NEVER seen is not stale, it is UNKNOWN, and the
+        # status filter is how that is asked for.
+        where.append("ds.last_seen IS NOT NULL AND ds.last_seen < "
+                     "now() - make_interval(secs => :stale_s)")
+        params["stale_s"] = stale_s
     if search:
         # Trigram index on name; the IP casts are cheap because the result set
         # is already narrowed by the other predicates in practice.
@@ -241,6 +271,8 @@ async def list_devices(
     owner_group: str | None = None,
     cost_centre: str | None = None,
     tags: list[str] | None = None,
+    alarming: bool | None = None,
+    stale_s: int | None = None,
     limit: int = 50,
     cursor: str | None = None,
     offset: int | None = None,
@@ -256,7 +288,8 @@ async def list_devices(
         serial_number=serial_number, has_serial=has_serial,
         warranty_state=warranty_state, warranty_before=warranty_before,
         supplier_id=supplier_id, owner_group=owner_group,
-        cost_centre=cost_centre, tags=tags)
+        cost_centre=cost_centre, tags=tags, alarming=alarming,
+        stale_s=stale_s)
     params["limit"] = limit + 1
 
     if cursor:
@@ -322,6 +355,69 @@ async def count_matching(session: AsyncSession, **filters: Any) -> int:
     if where:
         sql += " WHERE " + " AND ".join(where)
     return (await session.execute(text(sql), params)).scalar_one()
+
+
+#: The joins every predicate may reach into, without the SELECT list: the
+#: count and the facets both need exactly these and nothing from the rows.
+_JOINS = """
+        FROM device d
+        LEFT JOIN vendor v        ON v.id = d.vendor_id
+        LEFT JOIN model m         ON m.id = d.model_id
+        LEFT JOIN device_type dt  ON dt.code = d.device_type
+        LEFT JOIN device_state ds ON ds.device_id = d.id
+        LEFT JOIN rack r          ON r.id = d.rack_id
+        LEFT JOIN rack_row rr     ON rr.id = r.row_id
+        LEFT JOIN room rm         ON rm.id = COALESCE(rr.room_id, d.room_id)
+        LEFT JOIN datacenter dc   ON dc.id = rm.datacenter_id
+"""
+
+
+async def facets(session: AsyncSession, *, stale_s: int = 600,
+                 **filters: Any) -> dict[str, Any]:
+    """The counts behind the device list's header and its type menu, under
+    the SAME filters as the rows.
+
+    A band that shows the estate's figures over a list scoped to one room
+    reads as "716 devices" above eleven rows. Two statements: the status and
+    condition tallies as FILTER aggregates in one pass, and the per-type
+    counts grouped, from which the per-category counts are summed here
+    rather than asked for a third time.
+    """
+    where, params = _filters(**filters)
+    clause = (" WHERE " + " AND ".join(where)) if where else ""
+    params["stale_s"] = stale_s
+    tally = (await session.execute(text(f"""
+        SELECT count(*) AS total,
+               count(*) FILTER (WHERE COALESCE(ds.status::text, 'UNKNOWN') = 'ONLINE')   AS online,
+               count(*) FILTER (WHERE COALESCE(ds.status::text, 'UNKNOWN') = 'DEGRADED') AS degraded,
+               count(*) FILTER (WHERE COALESCE(ds.status::text, 'UNKNOWN') = 'OFFLINE')  AS offline,
+               count(*) FILTER (WHERE COALESCE(ds.status::text, 'UNKNOWN') = 'UNKNOWN')  AS unknown,
+               count(*) FILTER (WHERE COALESCE(ds.active_alarms, 0) > 0)                 AS alarming,
+               count(*) FILTER (WHERE ds.last_seen IS NOT NULL
+                                  AND ds.last_seen < now() - make_interval(secs => :stale_s)) AS stale
+        {_JOINS}{clause}
+    """), params)).mappings().one()
+    by_type = (await session.execute(text(f"""
+        SELECT d.device_type AS code, dt.display_name, dt.category, count(*) AS n
+        {_JOINS}{clause}
+        GROUP BY d.device_type, dt.display_name, dt.category
+        ORDER BY dt.category, dt.display_name
+    """), params)).mappings().all()
+    categories: dict[str, int] = {}
+    for row in by_type:
+        cat = row["category"] or "other"
+        categories[cat] = categories.get(cat, 0) + int(row["n"])
+    return {
+        "total": int(tally["total"]),
+        "status": {k: int(tally[k]) for k in ("online", "degraded", "offline", "unknown")},
+        "alarming": int(tally["alarming"]),
+        "stale": int(tally["stale"]),
+        "stale_s": stale_s,
+        "types": [{"code": r["code"], "display_name": r["display_name"] or r["code"],
+                   "category": r["category"] or "other", "count": int(r["n"])}
+                  for r in by_type],
+        "categories": [{"code": k, "count": v} for k, v in categories.items()],
+    }
 
 
 async def count_devices(session: AsyncSession) -> int:

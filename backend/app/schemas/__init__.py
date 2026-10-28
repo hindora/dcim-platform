@@ -56,6 +56,9 @@ class DeviceSummary(BaseModel):
     status: str = "UNKNOWN"
     health: str = "UNKNOWN"
     max_severity: str = "CLEAR"
+    #: Open alarms on the device right now, from device_state. The list
+    #: shows it as a column; a row with none shows nothing.
+    active_alarms: int = 0
     mgmt_ip: str | None = None
     primary_ip: str | None = None
     last_seen: datetime | None = None

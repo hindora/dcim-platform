@@ -71,6 +71,11 @@ async def list_devices(
     cost_centre: str | None = None,
     tag: list[str] | None = Query(
         None, description="repeatable key:value; AND-combined"),
+    alarming: bool | None = Query(
+        None, description="true: only devices with an open alarm; false: only without"),
+    stale_s: int | None = Query(
+        None, ge=60, le=86400,
+        description="only devices seen before, and not for this many seconds"),
     limit: int = Query(50, ge=1, le=500),
     cursor: str | None = None,
     offset: int | None = Query(
@@ -83,8 +88,10 @@ async def list_devices(
                            "UI needs it, a plain next-page fetch does not"),
     order_by: str | None = Query(
         None,
-        pattern="^(name|asset_tag|device_type|model|location|lifecycle|cover|serial)$",
-        description="column to order by; default is name"),
+        pattern="^(name|asset_tag|device_type|model|location|lifecycle|cover|serial"
+                "|status|severity|alarms|last_seen)$",
+        description="column to order by; default is name. status and severity "
+                    "order worst first when ascending"),
     desc: bool = Query(False, description="reverse the order"),
     session: AsyncSession = Depends(get_session),
     _: Principal = Depends(current_principal),
@@ -110,10 +117,36 @@ async def list_devices(
         serial_number=serial_number, has_serial=has_serial,
         warranty_state=warranty_state, warranty_before=warranty_before,
         supplier_id=supplier_id, owner_group=owner_group,
-        cost_centre=cost_centre, tags=tag,
+        cost_centre=cost_centre, tags=tag, alarming=alarming, stale_s=stale_s,
         limit=limit, cursor=cursor, offset=offset,
         order_by=order_by, descending=desc)
     return Page[DeviceSummary](items=items, next_cursor=next_cursor, total=total)
+
+
+@router.get("/facets", summary="Counts behind the device list's header, under its filters")
+async def device_facets(
+    device_type: list[str] | None = Query(None),
+    status_filter: list[str] | None = Query(None, alias="status"),
+    room_id: str | None = None,
+    rack_id: str | None = None,
+    datacenter_id: str | None = None,
+    datacenter_code: str | None = Query(None, alias="datacenter"),
+    search: str | None = Query(None, max_length=128),
+    category: list[str] | None = Query(None),
+    vendor_id: str | None = None,
+    alarming: bool | None = None,
+    stale_s: int = Query(600, ge=60, le=86400,
+                         description="what counts as stale, in seconds"),
+    session: AsyncSession = Depends(get_session),
+    _: Principal = Depends(current_principal),
+) -> dict[str, Any]:
+    """Declared before /{device_id}, like endpoint-options: a static path after
+    the parameterised one would be looked up as a device id."""
+    return await service.facets(
+        session, device_types=device_type, status=status_filter, room_id=room_id,
+        rack_id=rack_id, datacenter_id=datacenter_id,
+        datacenter_code=datacenter_code, search=search, category=category,
+        vendor_id=vendor_id, alarming=alarming, stale_s=stale_s)
 
 
 @router.get("/endpoint-options",

@@ -80,6 +80,7 @@ def _summary(row: dict[str, Any]) -> DeviceSummary:
         status=row.get("status") or "UNKNOWN",
         health=row.get("health") or "UNKNOWN",
         max_severity=row.get("max_severity") or "CLEAR",
+        active_alarms=int(row.get("active_alarms") or 0),
         mgmt_ip=row.get("mgmt_ip"), primary_ip=row.get("primary_ip"),
         last_seen=row.get("last_seen"), location=_location(row),
         asset_tag=row.get("asset_tag"), serial_number=row.get("serial_number"),
@@ -113,6 +114,13 @@ async def list_devices(session: AsyncSession, *, with_total: bool = False,
         total = await repo.count_matching(
             session, **{k: v for k, v in kwargs.items() if k not in paging})
     return items, cursor, total
+
+
+async def facets(session: AsyncSession, **filters: Any) -> dict[str, Any]:
+    """Header and menu counts for the list, under the list's own filters."""
+    paging = {"limit", "cursor", "offset", "order_by", "descending", "with_total"}
+    return await repo.facets(
+        session, **{k: v for k, v in filters.items() if k not in paging})
 
 
 async def get_device(session: AsyncSession, device_id: str) -> DeviceDetail | None:
