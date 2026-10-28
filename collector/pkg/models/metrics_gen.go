@@ -92,6 +92,7 @@ const (
 	MetricCurrent               = "current"
 	MetricBankCurrent           = "bank_current"
 	MetricBankBreakerRating     = "bank_breaker_rating"
+	MetricBankBreakerClosed     = "bank_breaker_closed"
 	MetricLineFrequency         = "line_frequency"
 	MetricPowerFactor           = "power_factor"
 	MetricVoltageThdPct         = "voltage_thd_pct"
@@ -688,6 +689,14 @@ var MetricDefs = map[string]MetricDef{
 		StaleAfterS: 3600, Hot: false,
 		Group: "power", RateOf: "", RateScale: 1,
 	},
+	"bank_breaker_closed": {
+		Key: "bank_breaker_closed", DisplayName: "Bank breaker closed", Unit: "bool",
+		ValueType: "bool", Aggregation: "last",
+		MinValid: 0, HasMin: false,
+		MaxValid: 0, HasMax: false,
+		StaleAfterS: 600, Hot: false,
+		Group: "power", RateOf: "", RateScale: 1,
+	},
 	"line_frequency": {
 		Key: "line_frequency", DisplayName: "Line Frequency", Unit: "Hz",
 		ValueType: "gauge", Aggregation: "avg",
@@ -1025,7 +1034,7 @@ var MetricGroups = map[string][]string{
 	"environment": {"ambient_temperature", "relative_humidity", "dew_point", "airflow", "outdoor_dry_bulb_temp", "outdoor_wet_bulb_temp", "hydrogen_lel_pct"},
 	"fire":        {"fire_alarm", "fire_trouble", "fire_supervisory", "fire_zone_count", "fire_zone_mask", "smoke_obscuration", "smoke_stage", "gas_release_state", "gas_discharge_countdown", "agent_pressure", "agent_released"},
 	"interfaces":  {"if_admin_state", "if_oper_state", "if_speed", "if_in_octets", "if_out_octets", "if_in_bps", "if_out_bps", "if_in_errors", "if_out_errors", "if_in_discards", "if_out_discards", "if_in_error_rate"},
-	"power":       {"power_draw", "psu_input_voltage", "psu_output_power", "psu_state", "energy_consumed", "voltage_ln", "current", "bank_current", "bank_breaker_rating", "line_frequency", "power_factor", "voltage_thd_pct", "current_thd_pct", "harmonic_current_pct", "voltage_ll", "reactive_power", "apparent_power", "load_pct", "phase_imbalance_pct", "demand_peak_power", "battery_runtime", "battery_health_pct", "oil_temperature", "winding_temperature", "tap_position", "battery_temperature", "coolant_temperature", "fuel_level_pct", "fuel_volume", "current_run_time", "start_attempts", "transfer_count", "time_on_emergency", "operating_mode"},
+	"power":       {"power_draw", "psu_input_voltage", "psu_output_power", "psu_state", "energy_consumed", "voltage_ln", "current", "bank_current", "bank_breaker_rating", "bank_breaker_closed", "line_frequency", "power_factor", "voltage_thd_pct", "current_thd_pct", "harmonic_current_pct", "voltage_ll", "reactive_power", "apparent_power", "load_pct", "phase_imbalance_pct", "demand_peak_power", "battery_runtime", "battery_health_pct", "oil_temperature", "winding_temperature", "tap_position", "battery_temperature", "coolant_temperature", "fuel_level_pct", "fuel_volume", "current_run_time", "start_attempts", "transfer_count", "time_on_emergency", "operating_mode"},
 	"security":    {"door_open"},
 	"system":      {"sys_uptime", "reachable", "poll_latency"},
 	"thermal":     {"cpu_temperature", "inlet_temperature", "exhaust_temperature", "fan_speed", "fan_speed_pct", "component_temperature"},

@@ -127,10 +127,35 @@ what exists:
   (worst 218 % -> 101 %, bank-bound on dense R2 compute racks - a real
   finding, kept), racks over 10 % leg imbalance 18 -> 5 (worst 16 %, live
   draw variance).
-- Not covered: Raritan PX3 strips publish no bank rows, so Worst bank and
-  the bank level of On failover cannot see their racks. Their overcurrent
-  protectors live in PDU2-MIB; the OIDs need verifying before the simulator
-  models them.
+- Raritan branch breakers (2026-10-28, simulator adf55ab, platform
+  d2426d7): the 24 PX3-5503U strips publish their two 16 A overcurrent
+  protectors (C1, C2) in PDU2-MIB - measurementsOverCurrentProtectorSensor-
+  Value [pdu][ocp][1] and overCurrentProtectorRatedCurrent [pdu][ocp], a
+  DisplayString ("16A") read by the collector's opt-in `number_in_text`
+  transform - into the same `bank_current` / `bank_breaker_rating` keys as
+  APC, so Worst bank and On failover cover their racks. OIDs verified
+  against PDU2-MIB on mibs.observium.org; the exact rating string a real
+  unit returns was not confirmed by a walk.
+- Branch breakers trip (2026-10-28, UNCOMMITTED at writing). Simulator:
+  per-bank breaker state (`set_pdu_bank_trip`, latching, reset by hand) -
+  only the outlets on that bank go dead, so a dual-corded load rides it on
+  the other strip, which takes the whole draw and can trip in turn. Trips
+  also come from sustained overload: a thermal element after IEC 60898-1
+  (C curve) - never at 1.13 In, ~6 min at 1.45 In, ~60 s at 2.55 In - so a
+  bank at 100 % of its rating carries it indefinitely (today's worst
+  failover, 101 %, does not trip). Fault `pdu_bank_trip` (instance = bank).
+  The BMC reports a supply whose cord is dead as lost input (Enabled /
+  Critical, 0 V), as iDRAC and iLO do, so Feeds shows "on one PSU" for the
+  servers a bank trip leaves on one cord. Traps: Raritan
+  overCurrentProtectorSensorStateChange on the protector table with its
+  label (instance "C1"); APC 318.0.226 naming the bank; resets on Raritan's
+  OCP trap or, for APC (PowerNet has no breaker object), the plane's
+  99999.6.21 with a 99999.5.21 bank varbind. Platform: `traps.yaml`
+  regenerated (generator keys entries by matcher too, so the strip-wide and
+  per-breaker Raritan trips coexist on one OID); polled backstop
+  `bank_breaker_closed` (Raritan trip sensor, instance "C1") with rule
+  `bank-breaker-tripped` (migration 0117) on the same alarm key as the trap.
+  APC has only the trap and its reset.
 
 The brief: bring `/power` up to the standard of `/thermal`, in features and in
 UX, using the data the platform already holds before asking the simulator for

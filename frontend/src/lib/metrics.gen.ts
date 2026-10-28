@@ -70,6 +70,7 @@ export type MetricKey =
   | 'current'
   | 'bank_current'
   | 'bank_breaker_rating'
+  | 'bank_breaker_closed'
   | 'line_frequency'
   | 'power_factor'
   | 'voltage_thd_pct'
@@ -746,6 +747,15 @@ export const METRICS: Record<MetricKey, MetricDef> = {
     minValid: 0,
     maxValid: null,
     staleAfterS: 3600, hot: false,
+    group: 'power',
+  },
+  'bank_breaker_closed': {
+    key: 'bank_breaker_closed', displayName: 'Bank breaker closed'.replace(/^'|'$/g, ''),
+    unit: 'bool', valueType: 'bool',
+    aggregation: 'last',
+    minValid: null,
+    maxValid: null,
+    staleAfterS: 600, hot: false,
     group: 'power',
   },
   'line_frequency': {

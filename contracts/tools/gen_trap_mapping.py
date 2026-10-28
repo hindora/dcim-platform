@@ -67,6 +67,8 @@ CLEAR_PAIRS: dict[str, tuple[str, ...]] = {
     "inputVoltageNormal": ("inputVoltageHigh", "voltageHigh"),
     "inputVoltageLowCleared": ("inputVoltageLow", "voltageLow"),
     "pduLoadNormal": ("loadHigh", "loadCritical"),
+    # A branch breaker reset by hand at the strip ends its trip.
+    "breakerReset": ("breakerTripped",),
     "pduTempNormal": ("pduTempHigh",),
     "pduHumidityNormal": ("pduHumidityHigh",),
     "pduFrequencyNormal": ("pduFrequencyFault", "frequencyOutOfRange"),
@@ -265,6 +267,7 @@ def main() -> int:
     from core.trap_definitions import TRAP_DEFINITIONS, TrapType  # noqa: E402
     from core.trap_rules import DEFAULT_RULES  # noqa: E402
     from core.vendor_oids import (  # noqa: E402
+        SYNTH_PDU_BANK,
         APC,
         CISCO,
         CISCO_ENV_STATE,
@@ -471,6 +474,7 @@ def main() -> int:
         TrapType.PDU_OUTLET_CURRENT_HIGH: ("current", "aboveUpperCritical"),
         TrapType.PDU_LOAD_NORMAL: ("current", "normal"),
         TrapType.PDU_BREAKER_TRIPPED: ("trip", "open"),
+        TrapType.PDU_BREAKER_RESET: ("trip", "closed"),
         TrapType.PDU_VOLTAGE_HIGH: ("voltage", "aboveUpperCritical"),
         TrapType.PDU_VOLTAGE_LOW: ("voltage", "belowLowerCritical"),
         TrapType.PDU_FREQUENCY_FAULT: ("frequency", "aboveUpperWarning"),
@@ -540,6 +544,7 @@ def main() -> int:
             # matcher has to name the same one.
             table = ("external" if trap in _RARITAN_EXTERNAL_TRAPS else
                      "outlet" if trap in _RARITAN_OUTLET_TRAPS else
+                     "ocp" if trap == TrapType.PDU_BREAKER_RESET else
                      "unit" if trap == TrapType.PDU_BREAKER_TRIPPED else "inlet")
             return [
                 {"oid": RARITAN["typeOfSensor"], "equals_int": _ST[sensor]},
@@ -551,6 +556,10 @@ def main() -> int:
         if defn.oid:
             e = entry_for(trap.value, defn.severity)
             e["vendor"] = "synthetic"
+            if trap == TrapType.PDU_BREAKER_RESET:
+                # PowerNet has no breaker object, so an APC strip's reset rides
+                # the plane's own tree - naming its bank on that tree too.
+                e["instance_varbind"] = SYNTH_PDU_BANK
             by_oid[defn.oid].append(e)
 
     for vendor, table in VENDOR_TRAPS.items():
@@ -567,7 +576,26 @@ def main() -> int:
                 # slot is the only thing that separates them, and without it
                 # they collapse onto a single alarm key.
                 e["instance_varbind"] = RARITAN["externalNumber"]
+            # WHICH branch breaker. A Raritan protector reports on its own
+            # table with its label ("C1"); APC names the bank number. Without
+            # it two banks of one strip collapse onto one alarm key, and the
+            # reset of one closes the other's trip.
+            if vendor == "raritan" and trap == TrapType.PDU_BREAKER_RESET:
+                e["instance_varbind"] = RARITAN["ocpLabel"]
+            if vendor == "apc" and trap == TrapType.PDU_BREAKER_TRIPPED:
+                e["instance_varbind"] = APC["bankNumber"]
             by_oid[oid].append(e)
+            if vendor == "raritan" and trap == TrapType.PDU_BREAKER_TRIPPED:
+                # A strip-wide trip arrives on the unit table (matched above);
+                # a branch trip on the overcurrent-protector table. Same
+                # condition, two shapes on one OID.
+                b = dict(e)
+                b["match_varbind"] = [
+                    {"oid": RARITAN["typeOfSensor"], "equals_int": _ST["trip"]},
+                    {"oid": RARITAN["ocpState"], "equals_int": _SS["open"]},
+                ]
+                b["instance_varbind"] = RARITAN["ocpLabel"]
+                by_oid[oid].append(b)
 
     # ---- the transmit path -------------------------------------------------
     #
@@ -708,7 +736,13 @@ def main() -> int:
     ambiguous = clears = 0
     for oid in sorted(by_oid, key=lambda o: [int(p) for p in o.split(".") if p.isdigit()]):
         entries = by_oid[oid]
-        uniq = {(e["event_type"], e["severity"], e["is_clear"]): e for e in entries}
+        # The matcher is part of the meaning: one condition can arrive in two
+        # shapes on one OID (a Raritan strip-wide trip on the unit table, a
+        # branch trip on the protector table), and keying without it kept only
+        # the last.
+        uniq = {(e["event_type"], e["severity"], e["is_clear"],
+                 tuple((m["oid"], m.get("equals_int"), m.get("contains"))
+                       for m in (e.get("match_varbind") or ()))): e for e in entries}
         for e in uniq.values():
             e.setdefault("match_varbind", None)
         vendors = sorted({e["vendor"] for e in entries})

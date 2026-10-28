@@ -649,6 +649,15 @@ METRICS: dict[str, MetricDef] = {
         device_types=("pdu",),
         alarm_scope="instance",
     ),
+    "bank_breaker_closed": MetricDef(
+        key="bank_breaker_closed", display_name="Bank breaker closed", unit="bool",
+        value_type="bool", aggregation="last",
+        min_valid=None, max_valid=None,
+        stale_after_s=600, hot=False,
+        group="power", rate_of=None, rate_scale=1.0,
+        device_types=("pdu",),
+        alarm_scope="instance",
+    ),
     "line_frequency": MetricDef(
         key="line_frequency", display_name="Line Frequency", unit="Hz",
         value_type="gauge", aggregation="avg",
