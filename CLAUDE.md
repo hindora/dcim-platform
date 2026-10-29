@@ -33,10 +33,16 @@ otherwise copy its CSS values verbatim. Never invent a new chart style.
   months while the file did not exist, and the ramp it claimed to guarantee
   shipped `#3b82f6` against `#a855f7` - 0.6 CIEDE2000 apart to a
   deuteranope, i.e. one colour - in the two busiest slots.
-- Hue is never the only channel. From the third series on, a line is also
-  dashed (`DASHES`), and its legend swatch wears the pattern: charts get
+- Hue is never the only channel. NO STROKE PATTERNS (operator's rule,
+  2026-10-29): every series line is solid, `DASHES` is all `undefined`.
+  The second channel is the line's NAME printed just past its end
+  (`TimeChart` reserves a right gutter for the longest name; swatch +
+  text with a surface-colour halo; names pushed apart when lines end at
+  one value; none on a one-line chart, the caption names it): charts get
   read on dim wall panels, in greyscale runbooks and in photographs of
-  screens pasted into tickets. FOUR series is the ramp's limit, and the
+  screens pasted into tickets. A setpoint or a limit is a REFERENCE
+  (`ChartGroup.reference`): thin, muted, solid, named, no colour slot.
+  A plain dash stays the forecast's alone. FOUR series is the ramp's limit, and the
   rules already say to facet past three - no six-hue ramp survives all
   three dichromacies at a useful distance.
 - One colour per chart unless the hue carries meaning. Never a hue per bar.
@@ -136,8 +142,12 @@ expansion it is a shade smaller (`.sub-wrap .asset-pager`).
    single point renders as a large value and a "Recording since" sentence.
 6. **Time series** (`TimeChart`): telemetry. 720×180, left pad 52. One
    chart per unit and never a second y-axis. The ramp in fixed order
-   (`--series-1..4`: blue, vermillion, bluish green, reddish purple), dashed
-   from the third; facet rather than exceed three series. Lines break across gaps longer than three buckets. Ticks
+   (`--series-1..4`: blue, vermillion, bluish green, reddish purple), all
+   solid, each named at its end in a right gutter, no legend; facet rather
+   than exceed three series. Rollup history carries a min-max envelope
+   drawn as a band in the line's colour at 0.16, and the device's alarm
+   episodes are bars under the axis; the frame reaches the window's
+   latest episode even past the last bucket. Lines break across gaps longer than three buckets. Ticks
    10px mono, unit top-left, tooltip an SVG rect that flips left near the
    edge, time printed at the data's precision with no fake seconds.
 7. **Analytics plot** (`Plot`): projections and PUE. Uncertainty band
