@@ -647,10 +647,9 @@ export default function RoomScene(p: SceneProps) {
     const r = plan.racks[focusIdx];
     const front = r.facing === 'N' ? -1 : 1;
     const out: Pin[] = [];
-    let zero = 0;
+    const slots = zeroSlots(focusDevices);
     for (const d of focusDevices) {
-      const b = deviceBox(d, r, X, Z, zero);     // the same slot RackDevices draws it in
-      if (d.u_start == null) zero += 1;
+      const b = deviceBox(d, r, X, Z, slots.get(d.id) ?? 0);     // the same slot RackDevices draws it in
       if (!b || d.max_severity === 'CLEAR') continue;
       out.push({ x: b[0], y: b[1] + b[4] / 2, z: b[2] + front * (b[5] / 2), c: sevTone(d.max_severity),
                  cat: d.alarm_category ?? null, n: d.alarm_count ?? 1 });
@@ -1621,6 +1620,33 @@ export function deviceBox(d: TwinDevice, r: FloorRack, X: (x: number) => number,
 /** A probe hung on a rack's front or rear door (inlet / exhaust). */
 const onRackDoor = (d: TwinDevice) => d.mount === 'rack_front' || d.mount === 'rack_rear';
 
+/** Which slot each un-racked device takes in its cabinet, by id.
+ *
+ *  Zero-U strips count among themselves and door probes among themselves,
+ *  each in name order, so the A strip is always the left one and the B strip
+ *  the right whatever order the payload lists them in. One counter over both
+ *  put a strip on the side its neighbour's position happened to leave, and
+ *  two strips could land in one slot, the second unreachable inside the
+ *  first. Every drawer of these - the boxes, the pins, the selection glow -
+ *  reads the same map, so what is clicked is what is lit. */
+export function zeroSlots(devices: TwinDevice[]): Map<string, number> {
+  const out = new Map<string, number>();
+  const byRack = new Map<string, TwinDevice[]>();
+  for (const d of devices) {
+    if (d.u_start != null && d.u_start > 0) continue;
+    const list = byRack.get(d.rack_id) ?? [];
+    list.push(d);
+    byRack.set(d.rack_id, list);
+  }
+  for (const list of byRack.values()) {
+    const strips = list.filter((d) => d.mount === 'zero_u').sort((a, b) => a.name.localeCompare(b.name));
+    const probes = list.filter((d) => d.mount !== 'zero_u').sort((a, b) => a.name.localeCompare(b.name));
+    strips.forEach((d, i) => out.set(d.id, i));
+    probes.forEach((d, i) => out.set(d.id, i));
+  }
+  return out;
+}
+
 function RackDevices({ devices, show, rackById, X, Z, themeTick, labels, onSelect, onTip }: {
   devices: TwinDevice[]; rackById: Map<string, FloorRack>;
   /** Draw only these; the rest keep their slots (so door probes sit where
@@ -1635,13 +1661,11 @@ function RackDevices({ devices, show, rackById, X, Z, themeTick, labels, onSelec
   const clean = useClickGuard();
   const { invalidate } = useThree();
   const boxes = useMemo(() => {
-    const perRack = new Map<string, number>();
+    const slots = zeroSlots(devices);
     return devices.map((d) => {
       const r = rackById.get(d.rack_id);
       if (!r) return null;
-      const n = perRack.get(d.rack_id) ?? 0;
-      if (d.u_start == null) perRack.set(d.rack_id, n + 1);
-      return deviceBox(d, r, X, Z, n);
+      return deviceBox(d, r, X, Z, slots.get(d.id) ?? 0);
     });
   }, [devices, rackById, X, Z]);
   // The meaning colour (category, or alarm) goes on the rack ears; the body is
@@ -1713,7 +1737,7 @@ function Highlight({ sel, rackBoxes, racks, unitBoxes, units, devices, rackById,
   } else if (sel?.kind === 'device') {
     const d = devices.find((x) => x.id === sel.id);
     const r = d && rackById.get(d.rack_id);
-    const b = d && r ? deviceBox(d, r, X, Z, 0) : null;
+    const b = d && r ? deviceBox(d, r, X, Z, zeroSlots(devices).get(d.id) ?? 0) : null;
     if (b) box = { x: b[0], y: b[1], z: b[2], w: b[3], h: b[4], d: b[5], rot: 0, front: 0,
                    paint: { bot: '', mid: '', top: '', fill: 1 } };
     if (d) name = d.name;
