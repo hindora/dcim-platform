@@ -264,6 +264,21 @@ Simulator facts that bound the plan (`S:`):
   (Switched) have no current transformer behind their outlets and publish
   none, as the real units do not. Verified 2026-10-29 against APC/Raritan
   product listings; AP8886 is "Metered", not "Metered-by-Outlet".
+- Network gear publishes its own draw (2026-10-29): every switch, router,
+  firewall, load balancer and console switch carries one ENTITY-SENSOR
+  watts(6) row per power supply after its two temperatures
+  (`S:core/snmprec_generator._network_psu_entries`, live every tick), and
+  the gNMI document the same supplies as POWER_SUPPLY components with
+  openconfig-platform-psu state (`S:core/gnmi_data_generator._build_platform`,
+  rewritten live by `S:simulator/gnmi_server._walk_apply`). The platform's
+  `network_sensors` profile walks the watt rows and sums them to one
+  device-scoped `power_draw`; gNMI carries each supply as `psu_input_power`.
+- A load that publishes no draw of its own is read at the strip
+  (`repositories/estate._STRIP_W`, the `b_strip` branch of `_power_buckets`,
+  `prev_strip`): the outlet its cord lands on, from `outlet_active_power`
+  on a metered-by-outlet unit, summed over its cords, used only where the
+  load is silent. The rack row carries `measured_at_strip` and the Load and
+  Reporting tips say so. Phase 5's "live per-outlet current" is DONE.
 - RPP has no protocol; it is read through the Verdigris EV2 clamped on it
   (`S:core/bacnet_ev2_generator.py`, platform `/devices/{id}/metering`).
 - UPS runtime, on-battery seconds and the NFPA 110 transfer sequence are
