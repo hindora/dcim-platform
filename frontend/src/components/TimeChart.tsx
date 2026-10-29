@@ -147,17 +147,15 @@ function seriesLabel(s: Series, mixed = false): string {
   return mixed ? `${metricLabel(s.metric)} · ${s.instance}` : s.instance;
 }
 
-/** Where a line's name goes: at the line's end, beside the last reading.
- *
- *  To the right of the end when the frame leaves room there (the line stopped
- *  before an alarm the frame reached for), otherwise just above the last
- *  stretch of the line, ending where the line ends. Each carries a swatch in
- *  the line's colour; the text itself wears the text token, with a halo in
- *  the surface colour so it reads over the line and the band. Labels that
- *  would overprint - two lines ending at the same value - are pushed apart
- *  down the frame, nearest-to-its-line first. */
-type EndLabel = { key: string; label: string; ref: boolean; i: number;
-                  x: number; y: number; anchor: 'start' | 'end'; chars: number };
+/** Where a line's name goes: just past the line's end, beside the last
+ *  reading, in a gutter the frame reserves on the right for the longest
+ *  name. Each carries a swatch in the line's colour; the text itself wears
+ *  the text token, with a halo in the surface colour so it reads over the
+ *  band and the grid. Labels that would overprint - two lines ending at the
+ *  same value - are pushed apart down the frame, and the swatch keeps each
+ *  tied to its line. A chart with one line has no label: the caption above
+ *  already names it. */
+type EndLabel = { key: string; label: string; ref: boolean; i: number; x: number; y: number };
 
 const LABEL_CH = 6;      // sans at 10 px, taken wide for lower case
 const LABEL_GAP = 11;    // one label's height plus a hair
@@ -248,8 +246,13 @@ export function TimeChart({ series: raw, unit: rawUnit, bucketMs, marks: rawMark
     const padY = (y1 - y0) * 0.08;
     y0 -= padY; y1 += padY;
 
+    // The right gutter: room for the longest name, when names are drawn.
+    const named = series.length + refs.length > 1 ? [...series, ...refs] : [];
+    const maxChars = Math.max(0, ...named.map((s) => seriesLabel(s, mixed).length));
+    const padR = maxChars ? Math.max(PAD_R, 17 + maxChars * LABEL_CH + 4) : PAD_R;
+
     const sx = (v: number) =>
-      PAD_L + ((v - x0) / Math.max(1, x1 - x0)) * (W - PAD_L - PAD_R);
+      PAD_L + ((v - x0) / Math.max(1, x1 - x0)) * (W - PAD_L - padR);
     const sy = (v: number) =>
       H - PAD_B - ((v - y0) / (y1 - y0)) * (H - PAD_T - PAD_B);
 
@@ -267,22 +270,13 @@ export function TimeChart({ series: raw, unit: rawUnit, bucketMs, marks: rawMark
     const paths = series.map(pathOf);
     const refPaths = refs.map(pathOf);
 
-    // Each line's name at its end. Right of the end where the frame has
-    // room for the whole label, else above the line's last stretch.
+    // Each line's name just past its end, on the line's level.
     const endOf = (s: Series, i: number, ref: boolean): EndLabel | null => {
+      if (!named.length) return null;
       const last = [...s.points].reverse().find((p) => Number.isFinite(p[1]));
       if (!last) return null;
-      const label = seriesLabel(s, mixed);
-      const chars = label.length;
-      const ex = sx(last[0]);
-      const roomRight = W - PAD_R - ex;
-      const fits = roomRight >= 14 + chars * LABEL_CH;
-      return {
-        key: `${s.metric}|${s.instance}`, label, ref, i, chars,
-        x: fits ? ex + 6 : ex - 3,
-        y: fits ? sy(last[1]) + 3.5 : sy(last[1]) - 5,
-        anchor: fits ? 'start' : 'end',
-      };
+      return { key: `${s.metric}|${s.instance}`, label: seriesLabel(s, mixed), ref, i,
+               x: sx(last[0]) + 6, y: sy(last[1]) + 3.5 };
     };
     const ends = placeEnds([
       ...series.map((s, i) => endOf(s, i, false)),
@@ -335,7 +329,7 @@ export function TimeChart({ series: raw, unit: rawUnit, bucketMs, marks: rawMark
     const spansDays =
       new Date(x0).toDateString() !== new Date(x1).toDateString();
 
-    return { paths, refPaths, ends, bands, marks, x0, x1, y0, y1, sx, sy, span: x1 - x0, times, spansDays };
+    return { paths, refPaths, ends, bands, marks, padR, x0, x1, y0, y1, sx, sy, span: x1 - x0, times, spansDays };
   }, [series, refs, bucketMs, rawMarks, window]);
 
   /** The readings at the hovered time, one per series that has one there. */
@@ -369,8 +363,8 @@ export function TimeChart({ series: raw, unit: rawUnit, bucketMs, marks: rawMark
     if (!box.width || !model) return;
     // Pointer -> user units. The viewBox maps the full 720 across the rendered
     // width, so the chart stays hoverable at any size without a resize hook.
-    const ux = ((e.clientX - box.left) / box.width) * (W - PAD_L - PAD_R) + PAD_L;
-    const t = model.x0 + ((ux - PAD_L) / (W - PAD_L - PAD_R)) * (model.x1 - model.x0);
+    const ux = ((e.clientX - box.left) / box.width) * (W - PAD_L - model.padR) + PAD_L;
+    const t = model.x0 + ((ux - PAD_L) / (W - PAD_L - model.padR)) * (model.x1 - model.x0);
     let best = model.times[0];
     for (const c of model.times) {
       if (Math.abs(c - t) < Math.abs(best - t)) best = c;
@@ -398,13 +392,13 @@ export function TimeChart({ series: raw, unit: rawUnit, bucketMs, marks: rawMark
   const timeText = hover ? stamp(hover.at, bucketMs, model.spansDays) : '';
   const labelChars = Math.max(0, ...(hover?.rows ?? []).map((r) => r.label.length));
   const valueChars = Math.max(0, ...(hover?.rows ?? []).map((r) => valueText(r).length));
-  const tipW = Math.min(W - PAD_L - PAD_R,
+  const tipW = Math.min(W - PAD_L - model.padR,
     Math.max(138, 19 + labelChars * CH + 14 + valueChars * CH + 7, 14 + timeText.length * CH));
   const fitChars = Math.max(4, Math.floor((tipW - 19 - 14 - valueChars * CH - 7) / CH));
   const cut = (l: string) => (l.length > fitChars ? `${l.slice(0, fitChars - 1)}…` : l);
   const tipH = 16 + (hover?.rows.length ?? 0) * 14;
   const tipX = hover
-    ? (model.sx(hover.at) + tipW + 8 > W - PAD_R
+    ? (model.sx(hover.at) + tipW + 8 > W - model.padR
         ? model.sx(hover.at) - tipW - 8
         : model.sx(hover.at) + 8)
     : 0;
@@ -425,7 +419,7 @@ export function TimeChart({ series: raw, unit: rawUnit, bucketMs, marks: rawMark
              + (model.marks.length ? `; ${model.marks.length} alarm episode${model.marks.length === 1 ? '' : 's'} marked under the axis` : '')}>
         {yTicks.map((t) => (
           <g key={t}>
-            <line x1={PAD_L} x2={W - PAD_R} y1={model.sy(t)} y2={model.sy(t)}
+            <line x1={PAD_L} x2={W - model.padR} y1={model.sy(t)} y2={model.sy(t)}
                   className="chart-grid" />
             <text x={PAD_L - 6} y={model.sy(t)} className="chart-tick-y">{fmt(t)}</text>
           </g>
@@ -455,12 +449,10 @@ export function TimeChart({ series: raw, unit: rawUnit, bucketMs, marks: rawMark
             does not - print, a dim panel, a photo of the screen. */}
         {model.ends.map((e) => {
           const color = e.ref ? chart.muted : colorOf(e.i);
-          const tx = e.anchor === 'start' ? e.x + 11 : e.x;
-          const swx = e.anchor === 'start' ? e.x : e.x - e.chars * LABEL_CH - 11;
           return (
             <g key={e.key} className="chart-end" pointerEvents="none">
-              <rect x={swx} y={e.y - 6.5} width={7} height={7} rx={1.5} fill={color} />
-              <text className="chart-end-label" x={tx} y={e.y} textAnchor={e.anchor}>{e.label}</text>
+              <rect x={e.x} y={e.y - 6.5} width={7} height={7} rx={1.5} fill={color} />
+              <text className="chart-end-label" x={e.x + 11} y={e.y}>{e.label}</text>
             </g>
           );
         })}
@@ -513,7 +505,7 @@ export function TimeChart({ series: raw, unit: rawUnit, bucketMs, marks: rawMark
 
         {/* Last, so it takes the pointer. Covers the plot area only - the axes
             are not hoverable and should not move the crosshair. */}
-        <rect x={PAD_L} y={PAD_T} width={W - PAD_L - PAD_R} height={H - PAD_T - PAD_B}
+        <rect x={PAD_L} y={PAD_T} width={W - PAD_L - model.padR} height={H - PAD_T - PAD_B}
               fill="transparent" onMouseMove={onMove} onMouseLeave={() => setAt(null)} />
         <text x={4} y={PAD_T + 2} className="chart-unit">{unitSymbol(unit)}</text>
       </svg>
