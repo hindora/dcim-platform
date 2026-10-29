@@ -1230,10 +1230,14 @@ def _power_rack_row(r: dict[str, Any], inv: dict[str, Any], *, peak: bool) -> di
     feeds = inv["feeds"].get(r["rack_id"])
     loads = int(r.get("loads") or 0)
     reporting = int(r.get("reporting") or 0) if "reporting" in r else None
+    # Loads read at the strip's outlets because they publish no draw of their
+    # own. The figure is as good as the strip's meter; the page says which
+    # instrument it came from.
+    at_strip = int(r.get("at_strip") or 0)
     pct = _load_pct(it, rated)
     if it is None:
-        note = ("nothing in this rack reports power" if loads
-                else "no IT or network device in this rack")
+        note = ("nothing in this rack reports power, and no strip meters its outlets"
+                if loads else "no IT or network device in this rack")
     else:
         note = None
     allocated = _f(plan.get("allocated_kw"))
@@ -1259,6 +1263,7 @@ def _power_rack_row(r: dict[str, Any], inv: dict[str, Any], *, peak: bool) -> di
         "devices": int(r.get("devices") or 0),
         "empty": int(r.get("devices") or 0) == 0,
         "reporting": reporting,
+        "measured_at_strip": at_strip,
         "note": note,
         "_it": it, "_cooling": None, "_other": None, "_total": it,
         "_prev": None if prev is None else round(prev, 2),

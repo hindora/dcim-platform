@@ -875,6 +875,37 @@ metrics:
       publishes it (APC AP84xx/AP86xx, Raritan PX3-4xxx/5xxx): a Metered strip
       has no current transformer behind its outlets, so an outlet with no
       sample is unmetered, not idle - an idle one reads 0.
+  - key: outlet_active_power
+    display_name: Outlet active power
+    unit: W
+    value_type: gauge
+    aggregation: avg
+    min_valid: 0
+    max_valid: 5000
+    stale_after_s: 300
+    hot: false
+    group: power
+    device_types: [pdu]
+    description: >-
+      Active power through one receptacle of a rack strip; instance is the
+      outlet number. The strip's own meter on the cord, so a load that
+      publishes no draw of its own (a switch read over interfaces only) can be
+      measured at the strip. Only a metered-by-outlet SKU publishes it.
+  - key: psu_input_power
+    display_name: PSU input power
+    unit: W
+    value_type: gauge
+    aggregation: avg
+    min_valid: 0
+    max_valid: 10000
+    stale_after_s: 300
+    hot: false
+    group: power
+    device_types: [switch, router, firewall, load_balancer, oob_switch, server]
+    description: >-
+      Input power into one power supply; instance is the supply (PSU1). From
+      openconfig-platform-psu over gNMI or the BMC. The supplies' inputs sum
+      to the chassis draw, which is published as power_draw.
   - key: bank_breaker_rating
     display_name: Bank breaker rating
     unit: A

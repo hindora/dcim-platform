@@ -70,6 +70,8 @@ export type MetricKey =
   | 'current'
   | 'bank_current'
   | 'outlet_current'
+  | 'outlet_active_power'
+  | 'psu_input_power'
   | 'bank_breaker_rating'
   | 'bank_breaker_closed'
   | 'line_frequency'
@@ -747,6 +749,24 @@ export const METRICS: Record<MetricKey, MetricDef> = {
     aggregation: 'max',
     minValid: 0,
     maxValid: 40,
+    staleAfterS: 300, hot: false,
+    group: 'power',
+  },
+  'outlet_active_power': {
+    key: 'outlet_active_power', displayName: 'Outlet active power'.replace(/^'|'$/g, ''),
+    unit: 'W', valueType: 'gauge',
+    aggregation: 'avg',
+    minValid: 0,
+    maxValid: 5000,
+    staleAfterS: 300, hot: false,
+    group: 'power',
+  },
+  'psu_input_power': {
+    key: 'psu_input_power', displayName: 'PSU input power'.replace(/^'|'$/g, ''),
+    unit: 'W', valueType: 'gauge',
+    aggregation: 'avg',
+    minValid: 0,
+    maxValid: 10000,
     staleAfterS: 300, hot: false,
     group: 'power',
   },

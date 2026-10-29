@@ -272,6 +272,23 @@ profiles:
         instance: CPU
         value_type: gauge
         transform: {scale: 0.1}
+    # What the box draws, from its supplies. A switch lists each PSU input in
+    # entPhySensorTable as a watts(6) sensor (NX-OS, EOS, Junos, IOS-XE all
+    # do; Cisco adds CISCO-ENTITY-FRU-CONTROL beside it), and the chassis
+    # draw is the sum of the inputs - one device-scoped power_draw, the key
+    # the Power page sums for a rack, so a network rack's load is what its
+    # switches report rather than a dash. Walked and filtered on the type
+    # column, which is why these rows carry one and the temperatures above,
+    # read at fixed indices, never needed to.
+    tables:
+      - name: ent_sensor_power
+        row_filter: {oid: 1.3.6.1.2.1.99.1.1.1.1, equals_int: 6}    # watts
+        aggregate: sum
+        columns:
+          - oid: 1.3.6.1.2.1.99.1.1.1.4         # entPhySensorValue
+            metric: power_draw
+            value_type: gauge
+            precision_from: 1.3.6.1.2.1.99.1.1.1.3
 
   - name: pdu_apc
     scalars:
@@ -457,6 +474,15 @@ profiles:
             metric: outlet_current
             value_type: gauge
             transform: {scale: 0.001}
+      # The same table's activePower rows (sensor type 5, whole watts). The
+      # strip's own meter on each cord: what a load draws as the strip sees
+      # it, for loads that publish no draw of their own.
+      - name: raritan_outlet_power
+        index: {instance_part: 2, where: {part: 3, equals: "5"}}
+        columns:
+          - oid: 1.3.6.1.4.1.13742.6.5.4.3.1.4   # measurementsOutletSensorValue, W
+            metric: outlet_active_power
+            value_type: gauge
 
   # ------------------------------------------------- a probe on a PX2 sensor port
   #

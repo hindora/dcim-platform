@@ -91,6 +91,11 @@ subscriptions:
       key: name
       leaves:
         - { at: state/temperature/instant, metric: component_temperature }
+        # openconfig-platform-psu: a POWER_SUPPLY component's input power,
+        # instance = the supply's name. Only PSU components carry the
+        # subtree; CHASSIS and CPU skip it. The chassis draw itself comes
+        # from the SNMP ENTITY-SENSOR walk, which sums the inputs.
+        - { at: power-supply/state/input-power, metric: psu_input_power }
     # Per-component overrides. A CPU component's temperature is the same
     # physical quantity a server publishes over Redfish, so it lands on the
     # same key; anything else keeps its component name as the instance.

@@ -1823,7 +1823,7 @@ def _no_power_extras(monkeypatch):
 
 def _rack_row(rack_id: str, room_id: str, dc: str, code: str, *, avg_it=None,
               peak_it=None, prev_it=None, rated=None, loads=4, reporting=None,
-              devices=None):
+              devices=None, at_strip=0):
     return {
         "rack_id": rack_id, "rack_name": f"R-{rack_id}", "rated_power_kw": rated,
         "room_id": room_id, "room_name": f"room-{room_id}", "floor": None,
@@ -1831,7 +1831,30 @@ def _rack_row(rack_id: str, room_id: str, dc: str, code: str, *, avg_it=None,
         "site_name": code, "avg_it": avg_it, "peak_it": peak_it,
         "prev_it": prev_it, "loads": loads, "reporting": reporting,
         "devices": loads + 2 if devices is None else devices,
+        "at_strip": at_strip,
     }
+
+
+@pytest.mark.asyncio
+async def test_a_silent_load_is_read_at_the_strip_and_the_row_says_so(monkeypatch):
+    """A network rack whose switches publish no draw of their own carries the
+    figure the strip's outlet meters give, counted as reporting, with the
+    instrument named; a rack with neither is a dash with the reason."""
+    monkeypatch.setattr(estate.repo, "power_live", _returns([
+        _power_row("h", "dc1", "DC1", avg_it=24.0, avg_cooling=6.0),
+    ]))
+    monkeypatch.setattr(estate.repo, "power_racks_live", _returns([
+        _rack_row("net", "h", "dc1", "DC1", avg_it=0.31, rated=7.36, loads=2,
+                  reporting=2, at_strip=2),
+        _rack_row("dark", "h", "dc1", "DC1", avg_it=None, rated=7.36, loads=2,
+                  reporting=0),
+    ]))
+    out = await estate.power(_FakeSession(), live=True)
+    racks = {r["id"]: r for r in out["racks"]}
+    assert racks["net"]["total_kw"] == 0.31 and racks["net"]["reporting"] == 2
+    assert racks["net"]["measured_at_strip"] == 2
+    assert racks["dark"]["total_kw"] is None and racks["dark"]["measured_at_strip"] == 0
+    assert "no strip meters its outlets" in racks["dark"]["note"]
 
 
 @pytest.mark.asyncio

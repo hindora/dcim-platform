@@ -3622,6 +3622,9 @@ export interface PowerRow extends EstateRowBase {
   /** Rooms and sites: devices with a reading over devices that could have
    *  one. Racks: the number of loads reporting. */
   reporting?: { devices: number; reporting: number } | number | null;
+  /** Rack rows: loads that publish no draw of their own and were read at
+   *  the outlet their cord lands on, where the strip meters per outlet. */
+  measured_at_strip?: number;
   rack_count?: number;
   racks_reporting?: number;
   racks_rated?: number;

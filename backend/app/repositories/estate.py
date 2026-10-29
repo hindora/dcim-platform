@@ -1400,7 +1400,7 @@ def _power_buckets(source: str) -> str:
     return f"""
     WITH {_DEV_CTE},
     rooms AS ({_ROOMS}),
-    b AS (
+    b_self AS (
         SELECT time_bucket(:bucket, t.{tcol}) AS bkt,
                dev.room_id                                  AS room_id,
                dt.category                                  AS cat,
@@ -1419,6 +1419,42 @@ def _power_buckets(source: str) -> str:
                OR (t.{tcol} >= :c0 AND t.{tcol} < :c1))
         GROUP BY 1, 2, 3, 4, 5, 6
     ),
+    -- Loads with no reading of their own anywhere in the window, read at
+    -- the strip: each cord's outlet averaged per bucket, the cords summed.
+    b_strip AS (
+        SELECT x.bkt, dev.room_id AS room_id, dt.category AS cat,
+               c.b_device_id AS device_id, d.rack_id AS rack_id, x.is_focus,
+               sum(x.w) AS w
+          FROM (
+            SELECT time_bucket(:bucket, t.{tcol}) AS bkt,
+                   t.device_id, t.instance,
+                   (t.{tcol} >= :s AND t.{tcol} < :e) AS is_focus,
+                   avg(t.{vcol}) AS w
+              FROM {source} t
+              JOIN metric m ON m.id = t.metric_id
+             WHERE m.key = 'outlet_active_power'
+               AND ((t.{tcol} >= :s AND t.{tcol} < :e)
+                    OR (t.{tcol} >= :c0 AND t.{tcol} < :c1))
+             GROUP BY 1, 2, 3, 4
+          ) x
+          JOIN outlet o ON o.device_id = x.device_id
+                       AND x.instance ~ '^[0-9]+$' AND o.number = x.instance::int
+          JOIN connection c ON c.a_termination_type::text = 'outlet'
+                           AND c.a_termination_id = o.id
+                           AND c.layer = CAST('power' AS layer_t)
+                           AND c.admin_state = 'enabled'
+          JOIN dev            ON dev.device_id = c.b_device_id
+          JOIN device d       ON d.id = c.b_device_id
+          JOIN device_type dt ON dt.code = d.device_type
+         WHERE dt.category IN ('it', 'network')
+           AND NOT EXISTS (SELECT 1 FROM b_self s WHERE s.device_id = c.b_device_id)
+         GROUP BY 1, 2, 3, 4, 5, 6
+    ),
+    b AS (
+        SELECT * FROM b_self
+        UNION ALL
+        SELECT * FROM b_strip
+    ),
     per_bucket AS (
         SELECT bkt, room_id, is_focus,
                COALESCE(sum(w) FILTER (WHERE cat IN ('it', 'network')), 0)/1000.0
@@ -1433,6 +1469,42 @@ def _power_buckets(source: str) -> str:
 """
 
 
+# What the strip's outlet meters say a load draws, for loads that say nothing
+# themselves.
+#
+# A server reports its draw over Redfish and a switch, now, over its PSU
+# sensors; but a box read over interfaces only, or one whose BMC is down,
+# publishes no `power_draw`, and the rack it stands in read as a dash. The
+# cord it hangs on is metered where the strip is a metered-by-outlet unit,
+# and that is the instrument a DCIM reaches for second: the load as the strip
+# sees it. Summed over the load's cords - a 1+1 pair shares the draw - and
+# used ONLY where the load itself is silent, so a device never counts twice
+# and a room's racks still add up to the room. The service counts how many
+# loads were read this way and the page says so.
+#
+# Newest outlet reading inside ten minutes per cord, like the hot mirror.
+_STRIP_W = """
+    strip AS (
+        SELECT c.b_device_id AS device_id, sum(x.w) AS w
+          FROM (
+            SELECT DISTINCT ON (t.device_id, t.instance)
+                   t.device_id, t.instance, t.value AS w
+              FROM telemetry_sample t
+              JOIN metric m ON m.id = t.metric_id
+             WHERE m.key = 'outlet_active_power'
+               AND t.ts > now() - interval '10 minutes'
+             ORDER BY t.device_id, t.instance, t.ts DESC
+          ) x
+          JOIN outlet o ON o.device_id = x.device_id
+                       AND x.instance ~ '^[0-9]+$' AND o.number = x.instance::int
+          JOIN connection c ON c.a_termination_type::text = 'outlet'
+                           AND c.a_termination_id = o.id
+                           AND c.layer = CAST('power' AS layer_t)
+                           AND c.admin_state = 'enabled'
+         GROUP BY c.b_device_id
+    )
+"""
+
 # The draw each device was at fifteen minutes ago, for the NOW view's delta.
 #
 # Not the rollup: the five-minute aggregate is only as current as its refresh,
@@ -1441,7 +1513,7 @@ def _power_buckets(source: str) -> str:
 # samples centred fifteen minutes back is cheap - power_draw is one metric -
 # and every row on the page measures its change over the same interval.
 _POWER_PREV = """
-    prev AS (
+    prev_self AS (
         SELECT t.device_id, avg(t.value) AS w
           FROM telemetry_sample t
           JOIN metric m ON m.id = t.metric_id
@@ -1449,6 +1521,32 @@ _POWER_PREV = """
            AND t.instance = ''
            AND t.ts >= :p0 AND t.ts < :p1
          GROUP BY t.device_id
+    ),
+    -- The same instant read at the strip, for loads with no reading of their
+    -- own then: per cord an average over the window, summed over the cords.
+    prev_strip AS (
+        SELECT c.b_device_id AS device_id, sum(x.w) AS w
+          FROM (
+            SELECT t.device_id, t.instance, avg(t.value) AS w
+              FROM telemetry_sample t
+              JOIN metric m ON m.id = t.metric_id
+             WHERE m.key = 'outlet_active_power'
+               AND t.ts >= :p0 AND t.ts < :p1
+             GROUP BY t.device_id, t.instance
+          ) x
+          JOIN outlet o ON o.device_id = x.device_id
+                       AND x.instance ~ '^[0-9]+$' AND o.number = x.instance::int
+          JOIN connection c ON c.a_termination_type::text = 'outlet'
+                           AND c.a_termination_id = o.id
+                           AND c.layer = CAST('power' AS layer_t)
+                           AND c.admin_state = 'enabled'
+         WHERE NOT EXISTS (SELECT 1 FROM prev_self p WHERE p.device_id = c.b_device_id)
+         GROUP BY c.b_device_id
+    ),
+    prev AS (
+        SELECT device_id, w FROM prev_self
+        UNION ALL
+        SELECT device_id, w FROM prev_strip
     )
 """
 
@@ -1628,9 +1726,11 @@ async def power_live(session: AsyncSession, *, prev_at: datetime | None = None,
         WITH {_DEV_CTE},
         rooms AS ({_ROOMS}),
         {_POWER_PREV},
+        {_STRIP_W},
         agg AS (
             SELECT dev.room_id,
-                   COALESCE(sum(ds.power_w) FILTER (
+                   -- IT and network loads: their own reading, else the strip's.
+                   COALESCE(sum(COALESCE(ds.power_w, strip.w)) FILTER (
                        WHERE dt.category IN ('it', 'network')), 0)/1000.0 AS avg_it,
                    COALESCE(sum(ds.power_w) FILTER (
                        WHERE dt.category = 'cooling'), 0)/1000.0          AS avg_cooling,
@@ -1638,8 +1738,13 @@ async def power_live(session: AsyncSession, *, prev_at: datetime | None = None,
                        WHERE dt.category NOT IN
                              ('it', 'network', 'cooling', 'power')), 0)/1000.0
                                                                           AS avg_other,
-                   count(*) FILTER (WHERE ds.power_w IS NOT NULL
+                   count(*) FILTER (WHERE (ds.power_w IS NOT NULL
+                                           OR (strip.w IS NOT NULL
+                                               AND dt.category IN ('it', 'network')))
                                       AND dt.category <> 'power')         AS reporting,
+                   count(*) FILTER (WHERE ds.power_w IS NULL AND strip.w IS NOT NULL
+                                      AND dt.category IN ('it', 'network'))
+                                                                          AS at_strip,
                    count(*) FILTER (WHERE dt.category <> 'power')         AS devices,
                    sum(prev.w) FILTER (WHERE dt.category <> 'power')/1000.0
                                                                           AS prev_total,
@@ -1649,6 +1754,7 @@ async def power_live(session: AsyncSession, *, prev_at: datetime | None = None,
             JOIN device d        ON d.id = dev.device_id
             JOIN device_type dt  ON dt.code = d.device_type
             LEFT JOIN prev       ON prev.device_id = dev.device_id
+            LEFT JOIN strip      ON strip.device_id = dev.device_id
             GROUP BY dev.room_id
         )
         SELECT rooms.room_id::text       AS room_id,
@@ -1659,7 +1765,7 @@ async def power_live(session: AsyncSession, *, prev_at: datetime | None = None,
                rooms.site_code           AS site_code,
                rooms.site_name           AS site_name,
                agg.avg_it, agg.avg_cooling, agg.avg_other, agg.reporting,
-               agg.devices, agg.prev_total, agg.as_of
+               agg.at_strip, agg.devices, agg.prev_total, agg.as_of
         FROM rooms
         LEFT JOIN agg ON agg.room_id = rooms.room_id
         ORDER BY rooms.site_code, rooms.room_name
@@ -1673,23 +1779,27 @@ async def power_racks_live(session: AsyncSession, *, prev_at: datetime | None = 
 
     The rack's load is what its servers and switches report - the population
     the room's IT column sums - so a room's racks add up to the room. The
-    strip's own meter would be the better instrument where one exists, but it
-    reads a few percent above the loads it feeds (PSU losses) and the racks
-    would then not fold into the room beside them. The elevation page reads
-    the strip; this page reads the loads, and says so.
+    strip's own meter reads a few percent above the loads it feeds (PSU
+    losses), so it is not preferred where the load speaks; but a load that
+    publishes no draw of its own is read at the outlet its cord lands on,
+    where the strip meters per outlet, and the row says how many were. The
+    elevation page reads the strip; this page reads the loads, and says so.
     """
     prev_at = prev_at or (datetime.now(UTC) - POWER_PREV_AT)
     p0, p1 = prev_at - prev_width / 2, prev_at + prev_width / 2
     rows = (await session.execute(text(f"""
         WITH racks AS ({_RACKS}),
         {_POWER_PREV},
+        {_STRIP_W},
         agg AS (
             SELECT d.rack_id,
-                   sum(ds.power_w) FILTER (
+                   sum(COALESCE(ds.power_w, strip.w)) FILTER (
                        WHERE dt.category IN ('it', 'network'))/1000.0      AS it_kw,
                    count(*) FILTER (WHERE dt.category IN ('it', 'network')) AS loads,
-                   count(ds.power_w) FILTER (
+                   count(COALESCE(ds.power_w, strip.w)) FILTER (
                        WHERE dt.category IN ('it', 'network'))             AS reporting,
+                   count(*) FILTER (WHERE ds.power_w IS NULL AND strip.w IS NOT NULL
+                                      AND dt.category IN ('it', 'network')) AS at_strip,
                    sum(prev.w) FILTER (
                        WHERE dt.category IN ('it', 'network'))/1000.0      AS prev_it,
                    max(ds.updated_at)                                      AS as_of
@@ -1697,11 +1807,13 @@ async def power_racks_live(session: AsyncSession, *, prev_at: datetime | None = 
               JOIN device_type dt       ON dt.code = d.device_type
               LEFT JOIN device_state ds ON ds.device_id = d.id
               LEFT JOIN prev            ON prev.device_id = d.id
+              LEFT JOIN strip           ON strip.device_id = d.id
              WHERE d.rack_id IS NOT NULL AND d.lifecycle <> 'decommissioned'
              GROUP BY d.rack_id
         )
         {_RACK_COLS}
-               agg.it_kw AS avg_it, agg.loads, agg.reporting, agg.prev_it, agg.as_of
+               agg.it_kw AS avg_it, agg.loads, agg.reporting, agg.at_strip,
+               agg.prev_it, agg.as_of
           FROM racks
           LEFT JOIN agg ON agg.rack_id = racks.rack_id
          ORDER BY racks.site_code, racks.room_name, racks.rack_name

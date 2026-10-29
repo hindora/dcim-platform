@@ -320,13 +320,15 @@ export function Power() {
     {
       key: 'total', label: `Load ${u}`, align: 'num', width: 110,
       help: rackTier
-        ? `The draw the rack's servers and switches report, ${statWord}. The strip's own meter, on the rack page, reads a few percent above it.`
+        ? `The draw the rack's servers and switches report, ${statWord}. A load that publishes no draw of its own is read at the outlet its cord lands on, where the strip meters per outlet, and the tip says how many were. The strip's own meter, on the rack page, reads a few percent above it.`
         : `Everything metered in this scope, ${statWord}: IT, cooling and the rest. Rack PDUs are excluded so the servers behind them are not counted twice.`,
       sort: (r) => r.total_kw,
       render: (r) => (
         <Tip tip={r.total_kw === null ? (r.note ?? 'nothing here reports power')
-          : `${r.total_kw.toFixed(1)} kW ${statWord}${unitTip}`}>
+          : <>{r.total_kw.toFixed(1)} kW {statWord}{unitTip}
+              {r.measured_at_strip ? <><br />{r.measured_at_strip} of {r.loads} load{r.loads === 1 ? '' : 's'} measured at the strip's outlets - the load publishes no draw of its own.</> : null}</>}>
           <Num value={conv(r.total_kw)} why={r.note} />
+          {r.measured_at_strip ? <span className="muted"> ·strip</span> : null}
         </Tip>
       ),
     },
@@ -491,7 +493,7 @@ export function Power() {
         if (r.kind === 'rack') {
           if (!r.loads) return <Tip className="dash" tip="no IT or network device in this rack">—</Tip>;
           return typeof r.reporting === 'number'
-            ? <Tip tip={`${r.reporting} of ${r.loads} loads reporting`}>{r.reporting}<span className="muted">/{r.loads}</span></Tip>
+            ? <Tip tip={`${r.reporting} of ${r.loads} loads reporting${r.measured_at_strip ? `, ${r.measured_at_strip} of them at the strip's outlets` : ''}`}>{r.reporting}<span className="muted">/{r.loads}</span></Tip>
             : <Tip tip={`${r.loads} loads in the rack`}>{r.loads}</Tip>;
         }
         const racks = r.rack_count ?? 0;
