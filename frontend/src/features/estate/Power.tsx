@@ -8,7 +8,7 @@ import {
 import { AlarmPanel } from '../home/AlarmPanel';
 import { RoomDrawer } from '../home/RoomDrawer';
 import {
-  Column, Crumb, Crumbs, DataTable, Delta, FacilityToggle, Notes, Num, PageHead,
+  Column, Crumb, Crumbs, DataTable, Delta, EmptyRacksToggle, FacilityToggle, Notes, Num, PageHead,
   ScopeTabs, Seg, TableFoot,
 } from '../../components/estate';
 import { Tip } from '../../components/HoverTip';
@@ -645,6 +645,10 @@ export function Power() {
         {!supplyTab && (t.scope === 'rooms' || t.selected) && !t.selectedRoom && (
           <FacilityToggle on={t.includeFacility} count={t.facilityCount}
                           onChange={t.setIncludeFacility} />
+        )}
+        {!supplyTab && t.selectedRoom && (
+          <EmptyRacksToggle on={t.includeEmpty} count={t.emptyCount}
+                            onChange={t.setIncludeEmpty} />
         )}
         {!supplyTab && (<>
         <input className="grow" type="search" placeholder="Search sites, rooms and racks"

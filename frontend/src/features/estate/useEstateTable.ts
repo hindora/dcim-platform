@@ -25,6 +25,8 @@ export interface EstateRowLike {
   site_name: string;
   floor?: string | null;
   room_class?: string | null;
+  /** Rack rows: nothing stands in the cabinet. */
+  empty?: boolean;
 }
 
 /** Whether a room is somewhere a rack position is a unit of capacity.
@@ -60,6 +62,14 @@ export function useEstateTable<Row extends EstateRowLike>(
   // that pushes the halls off the first screen. It is a toggle rather than a
   // deletion because those rooms are real and their load is in every total.
   const [includeFacility, setIncludeFacility] = useState(false);
+  // Empty cabinets are hidden by default on the rack tier for the same
+  // reason. A hall completing its rows with nineteen blanked positions puts
+  // nineteen rows of dashes between the reader and the five racks carrying
+  // load. The room's own figures still count them - "5/24 racks" is the
+  // honest capacity story - and the toggle brings them back. Silent racks
+  // are not empty racks: a populated cabinet whose loads stopped reporting
+  // is a finding, and it stays on the page.
+  const [includeEmpty, setIncludeEmpty] = useState(false);
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
@@ -83,11 +93,17 @@ export function useEstateTable<Row extends EstateRowLike>(
 
   const facilityCount = rooms.filter((r) => !isWhiteSpace(r.room_class)).length;
 
+  const roomRacks = useMemo(
+    () => (selectedRoom && racks ? racks.filter((r) => r.room_id === selectedRoom.id) : []),
+    [selectedRoom, racks],
+  );
+  const emptyCount = roomRacks.filter((r) => r.empty).length;
+
   const base = useMemo(() => {
-    if (selectedRoom && racks) return racks.filter((r) => r.room_id === selectedRoom.id);
+    if (selectedRoom && racks) return includeEmpty ? roomRacks : roomRacks.filter((r) => !r.empty);
     if (selected) return visibleRooms.filter((r) => r.site_id === selected.site_id);
     return scope === 'sites' ? sites : visibleRooms;
-  }, [scope, selected, selectedRoom, sites, visibleRooms, racks]);
+  }, [scope, selected, selectedRoom, sites, visibleRooms, racks, roomRacks, includeEmpty]);
 
   const tier: 'sites' | 'rooms' | 'racks' = selectedRoom && racks
     ? 'racks' : (selected || scope === 'rooms') ? 'rooms' : 'sites';
@@ -131,6 +147,10 @@ export function useEstateTable<Row extends EstateRowLike>(
     includeFacility,
     setIncludeFacility: (v: boolean) => { setIncludeFacility(v); setPage(0); },
     facilityCount,
+    includeEmpty,
+    setIncludeEmpty: (v: boolean) => { setIncludeEmpty(v); setPage(0); },
+    /** Empty cabinets in the drilled-in room, shown or not. */
+    emptyCount,
     setScope: (s: 'sites' | 'rooms') => update((q) => {
       if (s === 'rooms') q.set('scope', 'rooms'); else q.delete('scope');
       q.delete('site'); q.delete('room');

@@ -189,6 +189,24 @@ export function FacilityToggle({ on, count, onChange }: {
   );
 }
 
+/** The rack tier's twin of FacilityToggle: the cabinets with nothing in them.
+ *  Rendered only when the room has some, and off by default. */
+export function EmptyRacksToggle({ on, count, onChange }: {
+  on: boolean; count: number; onChange: (v: boolean) => void;
+}) {
+  if (!count) return null;
+  return (
+    <button type="button" className={`facility-toggle ${on ? 'on' : ''}`}
+            aria-pressed={on} onClick={() => onChange(!on)}
+            title={on
+              ? 'Hide the cabinets with nothing in them'
+              : `Show the ${count} empty cabinet${count === 1 ? '' : 's'} - `
+                + 'positions with no device standing in them; the room figures already count them'}>
+      {on ? '−' : '+'} EMPTY RACKS <span className="n">{count}</span>
+    </button>
+  );
+}
+
 /** A change against the comparison window.
  *
  *  Three states, not two: up, down, and "there was nothing to compare with".

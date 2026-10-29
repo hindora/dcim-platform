@@ -292,7 +292,9 @@ async def thermal_racks(session: AsyncSession, *, focus_start: datetime,
                agg.nc_sum, agg.nc_n, agg.nc_max, agg.nc_sensors,
                agg.e_sum, agg.e_n, agg.e_sensors,
                agg.c_sum, agg.c_n, agg.c_max, agg.c_sensors,
-               agg.rh_sum, agg.rh_n, agg.rh_max, agg.rh_probes
+               agg.rh_sum, agg.rh_n, agg.rh_max, agg.rh_probes,
+               (SELECT count(*) FROM device d
+                 WHERE d.rack_id = r.id AND d.lifecycle <> 'decommissioned') AS devices
         FROM rack r
         JOIN rack_row rr   ON rr.id = r.row_id
         JOIN room rm       ON rm.id = rr.room_id
@@ -1191,7 +1193,9 @@ async def thermal_racks_now(session: AsyncSession, *, since: datetime,
                agg.e_sum, agg.e_n, agg.e_sensors,
                was.c_sum, COALESCE(was.c_n, 0) AS c_n,
                COALESCE(was.c_sensors, 0) AS c_sensors, was.c_max,
-               agg.rh_sum, agg.rh_n, agg.rh_max, agg.rh_probes
+               agg.rh_sum, agg.rh_n, agg.rh_max, agg.rh_probes,
+               (SELECT count(*) FROM device d
+                 WHERE d.rack_id = r.id AND d.lifecycle <> 'decommissioned') AS devices
         FROM rack r
         JOIN rack_row rr   ON rr.id = r.row_id
         JOIN room rm       ON rm.id = rr.room_id
@@ -1466,7 +1470,13 @@ _RACKS = """
            rm.room_class    AS room_class,
            rm.datacenter_id AS datacenter_id,
            dc.code          AS site_code,
-           dc.name          AS site_name
+           dc.name          AS site_name,
+           -- Anything standing in the rack, strips included. An empty cabinet
+           -- is a position with nothing in it, which is a different fact from
+           -- a rack whose loads are not reporting, and the rack tables hide
+           -- the first by default and never the second.
+           (SELECT count(*) FROM device d
+             WHERE d.rack_id = r.id AND d.lifecycle <> 'decommissioned') AS devices
       FROM rack r
       JOIN rack_row rr   ON rr.id = r.row_id
       JOIN room rm       ON rm.id = rr.room_id
@@ -1484,6 +1494,7 @@ _RACK_COLS = """
                racks.datacenter_id::text AS datacenter_id,
                racks.site_code           AS site_code,
                racks.site_name           AS site_name,
+               racks.devices             AS devices,
 """
 
 

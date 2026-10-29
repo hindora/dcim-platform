@@ -3060,6 +3060,10 @@ export interface EstateRowBase {
   room_class?: string | null;
   room_count?: number;
   rack_count?: number;
+  /** Rack rows: what stands in the cabinet, and whether that is nothing.
+   *  Empty cabinets are hidden by default on the rack tier. */
+  devices?: number;
+  empty?: boolean;
   note?: string | null;
 }
 

@@ -1822,14 +1822,36 @@ def _no_power_extras(monkeypatch):
 
 
 def _rack_row(rack_id: str, room_id: str, dc: str, code: str, *, avg_it=None,
-              peak_it=None, prev_it=None, rated=None, loads=4, reporting=None):
+              peak_it=None, prev_it=None, rated=None, loads=4, reporting=None,
+              devices=None):
     return {
         "rack_id": rack_id, "rack_name": f"R-{rack_id}", "rated_power_kw": rated,
         "room_id": room_id, "room_name": f"room-{room_id}", "floor": None,
         "room_class": "white_space", "datacenter_id": dc, "site_code": code,
         "site_name": code, "avg_it": avg_it, "peak_it": peak_it,
         "prev_it": prev_it, "loads": loads, "reporting": reporting,
+        "devices": loads + 2 if devices is None else devices,
     }
+
+
+@pytest.mark.asyncio
+async def test_an_empty_cabinet_is_marked_and_a_silent_rack_is_not(monkeypatch):
+    """A position with nothing in it is a different fact from a populated rack
+    whose loads stopped reporting: the first is hidden by default on the rack
+    tier, the second is a finding and stays."""
+    monkeypatch.setattr(estate.repo, "power_live", _returns([
+        _power_row("h", "dc1", "DC1", avg_it=24.0, avg_cooling=6.0),
+    ]))
+    monkeypatch.setattr(estate.repo, "power_racks_live", _returns([
+        _rack_row("full", "h", "dc1", "DC1", avg_it=9.5, rated=22.0),
+        _rack_row("silent", "h", "dc1", "DC1", avg_it=None, rated=22.0, loads=4, reporting=0),
+        _rack_row("blank", "h", "dc1", "DC1", avg_it=None, rated=None, loads=0, devices=0),
+    ]))
+    out = await estate.power(_FakeSession(), live=True)
+    racks = {r["id"]: r for r in out["racks"]}
+    assert racks["full"]["empty"] is False and racks["full"]["devices"] == 6
+    assert racks["silent"]["empty"] is False, "four loads stand in it; they are just quiet"
+    assert racks["blank"]["empty"] is True and racks["blank"]["devices"] == 0
 
 
 @pytest.mark.asyncio

@@ -669,6 +669,11 @@ def _rack_row(r: dict[str, Any], absent_now: str, absent_prev: str,
         "site_name": r["site_name"],
         "source": source,
         "sensors": sensors,
+        # An empty cabinet, as distinct from a silent one. Rows that carry
+        # nothing are hidden by default on the rack tier and counted in the
+        # toggle that shows them; a populated rack with no sensor stays.
+        "devices": int(r.get("devices") or 0),
+        "empty": int(r.get("devices") or 0) == 0,
         # `e_sum` is the sum of each exhaust sensor's own mean, so the
         # divisor is how many spoke - not how many times they did.
         "exhaust_c": (round(float(r["e_sum"]) / e_sensors, 1)
@@ -1251,6 +1256,8 @@ def _power_rack_row(r: dict[str, Any], inv: dict[str, Any], *, peak: bool) -> di
         "unrated_devices": int(plan.get("unrated") or 0),
         "feeds": feeds,
         "loads": loads,
+        "devices": int(r.get("devices") or 0),
+        "empty": int(r.get("devices") or 0) == 0,
         "reporting": reporting,
         "note": note,
         "_it": it, "_cooling": None, "_other": None, "_total": it,

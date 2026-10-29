@@ -4,7 +4,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api, type AlarmCategory, type ThermalRow, type ThermalSpread } from '../../api/client';
 import { AlarmPanel } from '../home/AlarmPanel';
 import {
-  Column, type Crumb, Crumbs, DataTable, Delta, Notes, Num, PageHead, ScopeTabs,
+  Column, type Crumb, Crumbs, DataTable, Delta, EmptyRacksToggle, Notes, Num, PageHead, ScopeTabs,
   Seg, TableFoot, tone,
 } from '../../components/estate';
 import { Tip } from '../../components/HoverTip';
@@ -780,6 +780,10 @@ export function Thermal() {
             }
           }} />
 
+        {!plantTab && rackTier && (
+          <EmptyRacksToggle on={t.includeEmpty} count={t.emptyCount}
+                            onChange={t.setIncludeEmpty} />
+        )}
         {!plantTab && (
           <input className="grow" type="search"
                  placeholder={rackTier ? 'Search racks' : 'Search sites and rooms'}
