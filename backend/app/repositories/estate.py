@@ -2509,9 +2509,13 @@ async def power_p95(session: AsyncSession, *, days: int = 7) -> dict[str, Any]:
     rows = (await session.execute(text(f"""
         WITH {_DEV_CTE},
         rooms AS ({_ROOMS}),
-        b AS (
+        -- MATERIALIZED: inside the UNION below the planner otherwise drives
+        -- this from the device list and probes the rollup once per device,
+        -- which read a week of hourly points three times slower than the
+        -- single-branch query it replaced.
+        b_self AS MATERIALIZED (
             SELECT t.bucket AS bkt, d.rack_id, dev.room_id, rooms.datacenter_id,
-                   t.avg_value AS w
+                   t.device_id, t.avg_value AS w
               FROM telemetry_1h t
               JOIN metric m       ON m.id = t.metric_id
               JOIN dev            ON dev.device_id = t.device_id
@@ -2522,6 +2526,54 @@ async def power_p95(session: AsyncSession, *, days: int = 7) -> dict[str, Any]:
                AND t.instance = ''
                AND t.bucket >= now() - make_interval(days => :days)
                AND dt.category IN ('it', 'network')
+        ),
+        -- Loads with no hourly reading of their own in the window, read at
+        -- the strip: the same second instrument the NOW and windowed views
+        -- use (see _STRIP_W), so a load counted in Load and in the room's
+        -- total is counted in its rack's p95, headroom and stranded too.
+        -- Each cord's outlet per bucket, the cords summed.
+        -- Read from the rollup directly rather than from b_self: a CTE
+        -- referenced twice is materialised, and that costs a second over a
+        -- week of hourly points for nothing.
+        self_devs AS (
+            SELECT DISTINCT t.device_id
+              FROM telemetry_1h t
+              JOIN metric m ON m.id = t.metric_id
+             WHERE m.key = 'power_draw' AND t.instance = ''
+               AND t.bucket >= now() - make_interval(days => :days)
+        ),
+        -- MATERIALIZED for the same reason: scanned once, then joined to the
+        -- cords; driven the other way the planner probed the rollup once per
+        -- cord to discover there was nothing there.
+        ol AS MATERIALIZED (
+            SELECT t.bucket AS bkt, t.device_id, t.instance, t.avg_value AS w
+              FROM telemetry_1h t
+              JOIN metric m ON m.id = t.metric_id
+             WHERE m.key = 'outlet_active_power'
+               AND t.bucket >= now() - make_interval(days => :days)
+        ),
+        b_strip AS (
+            SELECT x.bkt, d.rack_id, dev.room_id, rooms.datacenter_id,
+                   c.b_device_id AS device_id, sum(x.w) AS w
+              FROM ol x
+              JOIN outlet o ON o.device_id = x.device_id
+                           AND x.instance ~ '^[0-9]+$' AND o.number = x.instance::int
+              JOIN connection c ON c.a_termination_type::text = 'outlet'
+                               AND c.a_termination_id = o.id
+                               AND c.layer = CAST('power' AS layer_t)
+                               AND c.admin_state = 'enabled'
+              JOIN dev            ON dev.device_id = c.b_device_id
+              JOIN device d       ON d.id = c.b_device_id
+              JOIN device_type dt ON dt.code = d.device_type
+              JOIN rooms          ON rooms.room_id = dev.room_id
+             WHERE dt.category IN ('it', 'network')
+               AND NOT EXISTS (SELECT 1 FROM self_devs s WHERE s.device_id = c.b_device_id)
+             GROUP BY 1, 2, 3, 4, 5
+        ),
+        b AS (
+            SELECT bkt, rack_id, room_id, datacenter_id, w FROM b_self
+            UNION ALL
+            SELECT bkt, rack_id, room_id, datacenter_id, w FROM b_strip
         ),
         per AS (
             SELECT bkt, rack_id, room_id, datacenter_id,
