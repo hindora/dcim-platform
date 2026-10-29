@@ -2126,10 +2126,42 @@ async def test_legs_and_failed_supplies_ride_the_rack_and_count_up_the_tiers(mon
 # ------------------------------------------------- failover and bank breakers
 
 def _strip(name, side, kw, rated_kw=22.0, legs=(10.0, 10.0, 10.0), v_ln=230.0,
-           bank_a=None, breaker_a=None):
+           bank_a=None, breaker_a=None, outlet_a=None):
     return {"strip_id": name, "strip": name, "side": side, "kw": kw,
             "rated_kw": rated_kw, "legs": list(legs), "v_ln": v_ln,
-            "bank_a": bank_a or {}, "breaker_a": breaker_a or {}}
+            "bank_a": bank_a or {}, "breaker_a": breaker_a or {},
+            "outlet_a": outlet_a or {}}
+
+
+def test_outlet_metering_is_absent_where_no_strip_has_a_ct():
+    """A Metered AP8886 pair reports banks and no receptacles: the rack row
+    says so with a dash, not with 0 A - unmetered is not idle."""
+    a = _strip("PDUA", "A", 2.0, bank_a={1: 3.0}, breaker_a={1: 16})
+    b = _strip("PDUB", "B", 2.0, bank_a={1: 3.0}, breaker_a={1: 16})
+    assert estate.rack_outlet_metering([a, b]) is None
+
+
+def test_outlet_metering_names_the_busiest_receptacle_and_its_cord():
+    a = _strip("PDUA", "A", 2.0, outlet_a={1: 2.1, 2: 0.0, 3: 8.4, 7: 0.0})
+    b = _strip("PDUB", "B", 2.0)  # a Switched strip beside it: no CT
+    loads = {"PDUA": {1: "SW01", 3: "SRV09", 7: "SRV10"}}
+    o = estate.rack_outlet_metering([a, b], loads)
+    assert o["strips_metered"] == 1 and o["strips"] == 2
+    # Busiest first, judged against a C13's 10 A: 8.4 A is past the 80 % line.
+    assert [r["outlet"] for r in o["rows"]] == [3, 1, 7]
+    assert o["rows"][0] == {"strip": "PDUA", "outlet": 3, "amps": 8.4, "load": "SRV09", "pct": 84.0}
+    assert o["max_a"] == 8.4 and o["hot"] == 1
+    # Outlet 7 reads 0 A with SRV10 corded: a row (the server may be off), not
+    # an idle receptacle. Outlet 2 reads 0 A with nothing corded: idle.
+    assert o["rows"][2]["load"] == "SRV10" and o["idle"] == 1
+    assert o["more"] == 0
+
+
+def test_outlet_metering_keeps_the_top_rows_and_counts_the_rest():
+    a = _strip("PDUA", "A", 2.0, outlet_a={n: float(n) / 10 for n in range(1, 13)})
+    o = estate.rack_outlet_metering([a])
+    assert len(o["rows"]) == estate.OUTLET_ROWS and o["more"] == 12 - estate.OUTLET_ROWS
+    assert o["rows"][0]["outlet"] == 12
 
 
 def test_failover_puts_the_whole_rack_on_the_survivor():
@@ -2186,12 +2218,19 @@ async def test_failover_and_banks_ride_the_rack_and_count_up(monkeypatch):
         "r1": [_strip("PDUA", "A", 2.0, rated_kw=3.7, legs=(9.1,),
                       bank_a={1: 13.5}, breaker_a={1: 16}),
                _strip("PDUB", "B", 2.0, rated_kw=3.7, legs=(9.1,))],
-        "r2": [_strip("PDUC", "A", 1.0, rated_kw=3.7, legs=(4.5,))],
+        "r2": [_strip("PDUC", "A", 1.0, rated_kw=3.7, legs=(4.5,),
+                      outlet_a={1: 1.2, 2: 0.0})],
     }))
+    monkeypatch.setattr(estate.repo, "power_rack_outlet_loads",
+                        _returns({"PDUC": {1: "SW01"}}))
     out = await estate.power(_FakeSession(), live=True)
     racks = {r["id"]: r for r in out["racks"]}
     assert racks["r1"]["failover"]["pct"] >= 100 and racks["r1"]["bank_worst_pct"] == 84.4
     assert racks["r2"]["failover"] is None and racks["r2"]["banks"] == []
+    # r1's AP8886 pair has no outlet CTs; r2's PX3 does, and names the cord.
+    assert racks["r1"]["outlets"] is None
+    assert racks["r2"]["outlets"]["rows"][0]["load"] == "SW01"
+    assert out["totals"]["racks_outlet_metered"] == 1 and out["totals"]["outlet_warn_pct"] == 80.0
     room = out["rooms"][0]
     assert room["racks_failover_over"] == 1 and room["racks_bank_hot"] == 1
     assert out["totals"]["racks_failover_over"] == 1 and out["totals"]["bank_warn_pct"] == 80.0

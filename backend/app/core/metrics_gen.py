@@ -640,6 +640,15 @@ METRICS: dict[str, MetricDef] = {
         device_types=("pdu",),
         alarm_scope="instance",
     ),
+    "outlet_current": MetricDef(
+        key="outlet_current", display_name="Outlet current", unit="A",
+        value_type="gauge", aggregation="max",
+        min_valid=0, max_valid=40,
+        stale_after_s=300, hot=False,
+        group="power", rate_of=None, rate_scale=1.0,
+        device_types=("pdu",),
+        alarm_scope="instance",
+    ),
     "bank_breaker_rating": MetricDef(
         key="bank_breaker_rating", display_name="Bank breaker rating", unit="A",
         value_type="gauge", aggregation="last",

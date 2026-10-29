@@ -57,6 +57,47 @@ profiles:
 	}
 }
 
+func TestLoadParsesAnIndexRuleAndRejectsABrokenOne(t *testing.T) {
+	dir := writeMapping(t, `
+version: 1
+profiles:
+  - name: raritan
+    tables:
+      - name: outlets
+        index: {instance_part: 2, where: {part: 3, equals: "1"}}
+        columns:
+          - oid: 1.3.6.1.4.1.13742.6.5.4.3.1.4
+            metric: outlet_current
+            value_type: gauge
+            transform: {scale: 0.001}
+`)
+	reg, err := Load(os.DirFS(dir))
+	if err != nil {
+		t.Fatalf("Load failed on a valid index rule: %v", err)
+	}
+	p, _ := reg.Profile("raritan")
+	idx := p.Tables[0].Index
+	if idx == nil || idx.InstancePart != 2 || idx.Where == nil || idx.Where.Part != 3 || idx.Where.Equals != "1" {
+		t.Fatalf("index rule not parsed: %+v", idx)
+	}
+
+	dir = writeMapping(t, `
+version: 1
+profiles:
+  - name: broken
+    tables:
+      - name: outlets
+        index: {where: {part: 0, equals: "1"}}
+        columns:
+          - oid: 1.3.6.1.4.1.13742.6.5.4.3.1.4
+            metric: outlet_current
+            value_type: gauge
+`)
+	if _, err := Load(os.DirFS(dir)); err == nil {
+		t.Fatal("Load accepted a where clause on index part 0, which matches nothing")
+	}
+}
+
 func TestLoadAcceptsAValidProfile(t *testing.T) {
 	dir := writeMapping(t, `
 version: 1

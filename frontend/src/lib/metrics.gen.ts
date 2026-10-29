@@ -69,6 +69,7 @@ export type MetricKey =
   | 'voltage_ln'
   | 'current'
   | 'bank_current'
+  | 'outlet_current'
   | 'bank_breaker_rating'
   | 'bank_breaker_closed'
   | 'line_frequency'
@@ -737,6 +738,15 @@ export const METRICS: Record<MetricKey, MetricDef> = {
     aggregation: 'avg',
     minValid: 0,
     maxValid: null,
+    staleAfterS: 300, hot: false,
+    group: 'power',
+  },
+  'outlet_current': {
+    key: 'outlet_current', displayName: 'Outlet current'.replace(/^'|'$/g, ''),
+    unit: 'A', valueType: 'gauge',
+    aggregation: 'max',
+    minValid: 0,
+    maxValid: 40,
     staleAfterS: 300, hot: false,
     group: 'power',
   },

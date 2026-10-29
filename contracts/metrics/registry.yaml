@@ -858,6 +858,23 @@ metrics:
       RMS current through one outlet bank of a rack strip; instance is the bank
       number. A bank is the run of outlets behind one breaker, so this is what
       trips first - a leg at 60 % can be one bank at 95 % and the other empty.
+  - key: outlet_current
+    display_name: Outlet current
+    unit: A
+    value_type: gauge
+    aggregation: max
+    min_valid: 0
+    max_valid: 40
+    stale_after_s: 300
+    hot: false
+    group: power
+    device_types: [pdu]
+    description: >-
+      RMS current through one receptacle of a rack strip; instance is the
+      outlet number silk-screened on the unit. Only a metered-by-outlet SKU
+      publishes it (APC AP84xx/AP86xx, Raritan PX3-4xxx/5xxx): a Metered strip
+      has no current transformer behind its outlets, so an outlet with no
+      sample is unmetered, not idle - an idle one reads 0.
   - key: bank_breaker_rating
     display_name: Bank breaker rating
     unit: A

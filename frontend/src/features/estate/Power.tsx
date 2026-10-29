@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
-  api, type AlarmCategory, type PowerBank, type PowerFailover, type PowerFeeds, type PowerRow, type PowerSpread,
+  api, type AlarmCategory, type PowerBank, type PowerFailover, type PowerFeeds, type PowerOutlets, type PowerRow,
+  type PowerSpread,
 } from '../../api/client';
 import { AlarmPanel } from '../home/AlarmPanel';
 import { RoomDrawer } from '../home/RoomDrawer';
@@ -175,6 +176,27 @@ function WorstBank({ banks, warnPct }: { banks: PowerBank[] | undefined; warnPct
         {b.strip} bank {b.bank}: {b.amps.toFixed(1)} A of {b.breaker_a.toFixed(0)} A ({b.pct.toFixed(0)} %)</span>
     ))}Amber from {warnPct.toFixed(0)} % of the breaker, the continuous-load line; the bank breaker trips long before the strip's inlet does.</>}>
       <span className={tone}><Num value={w.pct} /> %</span>
+    </Tip>
+  );
+}
+
+/** The busiest metered receptacles, where a strip has a CT behind them. */
+function Outlets({ o, warnPct }: { o: PowerOutlets | null | undefined; warnPct: number }) {
+  if (!o) {
+    return <Tip className="dash" tip="No strip on this rack meters its outlets. A Metered strip (AP8886) reads its inlet, legs and banks; a Switched one (AP8953) has a relay per outlet and no current transformer. Per-outlet current needs a metered-by-outlet unit.">—</Tip>;
+  }
+  const top = o.rows[0];
+  const cls = top && top.pct >= 100 ? 'critical' : top && top.pct >= warnPct ? 'warn' : undefined;
+  return (
+    <Tip tip={<>{o.rows.map((r) => (
+      <span key={`${r.strip}:${r.outlet}`} className="spread-line">
+        {r.strip} outlet {r.outlet}: {r.amps.toFixed(2)} A{r.load ? ` · ${r.load}` : ' · nothing corded'}</span>
+    ))}{o.more ? <span className="spread-line">and {o.more} more</span> : null}
+      {o.idle ? <span className="spread-line">{o.idle} idle receptacle{o.idle === 1 ? '' : 's'} at 0 A</span> : null}
+      {o.strips_metered < o.strips ? <span className="spread-line">{o.strips - o.strips_metered} of {o.strips} strips here cannot meter per outlet</span> : null}
+      Live current per receptacle, from the strip's own outlet meters. Amber from {warnPct.toFixed(0)} % of a C13's 10 A, the continuous-load line.</>}>
+      <span className={cls}>{top ? `${top.amps.toFixed(1)} A` : '0 A'}</span>
+      <span className="muted"> · {o.rows.length + o.more}{o.hot ? ` · ${o.hot} hot` : ''}</span>
     </Tip>
   );
 }
@@ -392,6 +414,11 @@ export function Power() {
       help: 'The busiest outlet bank against its breaker, now. A strip\'s outlets are wired in banks, each behind its own breaker; a 32 A strip is several 16 A banks, and one bank trips while the strip reads half loaded.',
       sort: (r: PowerRow) => r.bank_worst_pct ?? null,
       render: (r: PowerRow) => <WorstBank banks={r.banks} warnPct={data?.totals.bank_warn_pct ?? 80} />,
+    }, {
+      key: 'outlets', label: 'Outlets', align: 'num' as const, width: 108,
+      help: 'The busiest receptacle on this rack\'s strips and how many carry a load, where a strip meters per outlet. Only a metered-by-outlet unit has a current transformer behind each receptacle; a Metered or Switched strip reports banks at best, and shows a dash here. The tip names what is corded to each.',
+      sort: (r: PowerRow) => r.outlets?.max_a ?? null,
+      render: (r: PowerRow) => <Outlets o={r.outlets} warnPct={data?.totals.outlet_warn_pct ?? 80} />,
     }] : [{
       key: 'risk', label: 'Feed risk', align: 'mid' as const, width: 120,
       help: 'Racks here whose surviving side would run past the warn line if the other were lost, and racks with a bank past 80 % of its breaker now. Drill in to see which.',

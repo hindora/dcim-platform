@@ -683,7 +683,10 @@ func (a *Adapter) collectTables(client *g.GoSNMP, profile *mapping.Profile,
 			if !rowMatches(table.RowFilter, row) {
 				continue
 			}
-			instance := index
+			instance, ok := indexInstance(table.Index, index)
+			if !ok {
+				continue
+			}
 			if table.InstanceFrom != "" {
 				if v, ok := row[table.InstanceFrom]; ok {
 					instance = toString(v)
@@ -939,6 +942,28 @@ func quality(def models.MetricDef, v float64) models.Quality {
 		return models.QualitySuspect
 	}
 	return models.QualityGood
+}
+
+// indexInstance applies a table's index rule to one row's index: whether the
+// row is wanted at all, and which part of its index names the instance.
+// Without a rule the whole index is the instance, as it always was.
+func indexInstance(rule *mapping.IndexRule, index string) (string, bool) {
+	if rule == nil {
+		return index, true
+	}
+	parts := strings.Split(index, ".")
+	if w := rule.Where; w != nil {
+		if w.Part > len(parts) || parts[w.Part-1] != w.Equals {
+			return "", false
+		}
+	}
+	if rule.InstancePart > 0 {
+		if rule.InstancePart > len(parts) {
+			return "", false
+		}
+		return parts[rule.InstancePart-1], true
+	}
+	return index, true
 }
 
 func rowMatches(f *mapping.RowFilter, row map[string]any) bool {

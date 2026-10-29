@@ -69,6 +69,28 @@ type RowFilter struct {
 	EqualsInt *int64 `yaml:"equals_int"`
 }
 
+// IndexRule reads a table whose row index is a PATH rather than a number.
+//
+// PDU2-MIB measures sensors at [pduId].[outletId].[sensorType]: one walk of
+// measurementsOutletSensorValue returns rows indexed 1.7.1 (outlet 7, rms
+// current), 1.7.5 (outlet 7, active power), 1.7.14 (outlet 7, on/off) and so
+// on for every receptacle. The sensor TYPE is in the index, not in a column,
+// so a row_filter cannot see it, and the instance the platform wants is one
+// part of the index, not all of it.
+//
+// `where` keeps only rows whose index part (1-based) equals the value;
+// `instance_part` names the part that becomes the sample's instance. Both
+// optional: without them a table behaves as before (whole index = instance).
+type IndexRule struct {
+	InstancePart int         `yaml:"instance_part"`
+	Where        *IndexWhere `yaml:"where"`
+}
+
+type IndexWhere struct {
+	Part   int    `yaml:"part"`
+	Equals string `yaml:"equals"`
+}
+
 type Table struct {
 	Name         string     `yaml:"name"`
 	IndexOID     string     `yaml:"index_oid"`
@@ -76,6 +98,7 @@ type Table struct {
 	Derived      []Derived  `yaml:"derived"`
 	RowFilter    *RowFilter `yaml:"row_filter"`
 	InstanceFrom string     `yaml:"instance_from"`
+	Index        *IndexRule `yaml:"index"`
 	// Kind marks a table whose instance is a kind of identity the platform
 	// knows how to normalise. "interface" is the only one so far: a port has
 	// several names depending on who is asked, and every plane has to settle
@@ -201,6 +224,17 @@ func validate(p *Profile) error {
 		}
 	}
 	for _, t := range p.Tables {
+		if t.Index != nil {
+			// A part number is 1-based; zero means "the whole index", and
+			// a `where` with no part or no value matches nothing, which is
+			// a mapping that silently records no samples.
+			if t.Index.InstancePart < 0 {
+				return fmt.Errorf("table %q: index.instance_part must be >= 1", t.Name)
+			}
+			if w := t.Index.Where; w != nil && (w.Part < 1 || w.Equals == "") {
+				return fmt.Errorf("table %q: index.where needs part >= 1 and equals", t.Name)
+			}
+		}
 		for _, c := range t.Columns {
 			if err := check(c.Metric, c.ValueType); err != nil {
 				return err

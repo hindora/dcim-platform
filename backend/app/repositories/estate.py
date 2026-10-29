@@ -2556,8 +2556,9 @@ _PSU_WINDOW_S = 900
 
 async def power_rack_strip_state(session: AsyncSession) -> dict[str, list[dict[str, Any]]]:
     """Per rack, each strip with what a failover and a bank check need: its
-    side, its draw, its rating, its leg currents and voltage, and each bank's
-    current against its breaker.
+    side, its draw, its rating, its leg currents and voltage, each bank's
+    current against its breaker, and - on a metered-by-outlet unit - each
+    receptacle's current.
 
     The side is the one its cords are tagged with (`connection.redundancy_side`
     on the strip's outgoing power links). Draws, legs and banks are the newest
@@ -2584,7 +2585,8 @@ async def power_rack_strip_state(session: AsyncSession) -> dict[str, list[dict[s
               FROM telemetry_sample t
               JOIN metric m ON m.id = t.metric_id
              WHERE t.device_id IN (SELECT id FROM strips)
-               AND m.key IN ('power_draw', 'current', 'voltage_ln', 'bank_current')
+               AND m.key IN ('power_draw', 'current', 'voltage_ln', 'bank_current',
+                             'outlet_current')
                AND t.ts > now() - interval '10 minutes'
              ORDER BY t.device_id, t.metric_id, t.instance, t.ts DESC
         ),
@@ -2613,6 +2615,7 @@ async def power_rack_strip_state(session: AsyncSession) -> dict[str, list[dict[s
             "rated_kw": (float(r["rated_power_w"]) / 1000.0
                          if r["rated_power_w"] and float(r["rated_power_w"]) > 0 else None),
             "kw": None, "legs": {}, "v_ln": [], "bank_a": {}, "breaker_a": {},
+            "outlet_a": {},
         })
         key, inst, val = r["key"], (r["instance"] or ""), r["value"]
         if key is None or val is None:
@@ -2628,9 +2631,40 @@ async def power_rack_strip_state(session: AsyncSession) -> dict[str, list[dict[s
             s["bank_a"][int(inst)] = val
         elif key == "bank_breaker_rating" and inst.isdigit() and val > 0:
             s["breaker_a"][int(inst)] = val
+        elif key == "outlet_current" and inst.isdigit():
+            s["outlet_a"][int(inst)] = val
     out: dict[str, list[dict[str, Any]]] = {}
     for s in strips.values():
         s["legs"] = [s["legs"][k] for k in sorted(s["legs"])]
         s["v_ln"] = sum(s["v_ln"]) / len(s["v_ln"]) if s["v_ln"] else None
         out.setdefault(s.pop("rack_id"), []).append(s)
+    return out
+
+
+async def power_rack_outlet_loads(session: AsyncSession) -> dict[str, dict[int, str]]:
+    """{strip_id: {outlet number: load name}} - what is corded to each
+    receptacle of every rack strip, from the power connections.
+
+    The cabling record, read the way an rPDU's outlet table is keyed: by the
+    number printed on the strip. A per-outlet reading means nothing on its
+    own; "outlet 7 draws 2.1 A" is a fact about SRV03 only once the cord on
+    outlet 7 is known to be SRV03's. Outlets with nothing corded are absent
+    here and read as idle on the page.
+    """
+    rows = (await session.execute(text("""
+        SELECT c.a_device_id::text AS strip_id, o.number AS outlet, ld.name AS load
+          FROM connection c
+          JOIN outlet o  ON o.id = c.a_termination_id
+          JOIN device d  ON d.id = c.a_device_id AND d.device_type::text = 'pdu'
+                        AND d.rack_id IS NOT NULL AND d.lifecycle <> 'decommissioned'
+          JOIN device ld ON ld.id = c.b_device_id
+         WHERE c.layer = CAST('power' AS layer_t)
+           AND c.admin_state = 'enabled'
+           AND c.a_termination_type = 'outlet'
+    """))).mappings().all()
+    out: dict[str, dict[int, str]] = {}
+    for r in rows:
+        if r["outlet"] is None:
+            continue
+        out.setdefault(r["strip_id"], {})[int(r["outlet"])] = r["load"]
     return out

@@ -177,7 +177,7 @@ tight (see `feedback_batch_deploys_tight_host`). Frontend work ships on commit
 | 2 ✓ Trends | Three panels on the shared range control: draw stacked (IT / cooling / other), PUE line, demand with the coincident peak marked; maximize, crosshair, scope-following | Where the load has been going | ~22 h |
 | 3 ✓ Supply chain tab | PLANT-style tab: utility → genset → switchgear → ATS → UPS → MCC/MPP → RPP rows with state, load %, measured/derived, verdict; redundancy census reframed; scope honoured; RPP read through its EV2 | Is the feed healthy, and what is on one leg | ~36 h |
 | 4 ✓ Headroom and panels | Energy-based PUE headline with method badge, headroom and runway per room, stranded kW per rack, A/B same-upstream check, EV2 panel circuits per room | Capacity questions answered on the page | ~34 h |
-| 5 ✓ Simulator-gated | Per-leg PDU currents, live per-outlet current, PSU failure, UPS runtime vs genset window | Only after `S:` grows the model | later |
+| 5 ✓ Simulator-gated | Per-leg PDU currents ✓, per-bank breakers ✓, live per-outlet current ✓ (2026-10-29, where the strip has a CT), PSU failure, UPS runtime vs genset window | Only after `S:` grows the model | later |
 
 **Total through Phase 4: ~138 h.** Phase 5 is not estimated; it depends on
 simulator decisions in §7.
@@ -255,9 +255,15 @@ Backend (`P:backend/app/`):
 
 Simulator facts that bound the plan (`S:`):
 
-- Rack PDU exposes one per-phase current and an imbalance %, not L1/L2/L3
-  (`S:core/snmprec_generator.py:1157-1278`). Per-outlet current is the value
-  from dataset generation, zeroed when off; it does not follow load.
+- Rack PDU publishes per-leg currents, bank currents and bank breakers from
+  the cords (`S:core/device_state_store._pdu_leg_currents`, `_pdu_bank_currents`).
+  Per-outlet current follows the outlet's load (`_pdu_outlet_amps`) but is
+  PUBLISHED only by a metered-by-outlet SKU (`S:core/device_manager.pdu_outlet_metering`):
+  the 24 Raritan PX3-5503U strips (PDU2-MIB outletSensorMeasurementsTable,
+  one row per receptacle). The 36 APC AP8886 (Metered) and 20 AP8953
+  (Switched) have no current transformer behind their outlets and publish
+  none, as the real units do not. Verified 2026-10-29 against APC/Raritan
+  product listings; AP8886 is "Metered", not "Metered-by-Outlet".
 - RPP has no protocol; it is read through the Verdigris EV2 clamped on it
   (`S:core/bacnet_ev2_generator.py`, platform `/devices/{id}/metering`).
 - UPS runtime, on-battery seconds and the NFPA 110 transfer sequence are
@@ -371,6 +377,15 @@ Stop → Regenerate → Start, SNMP 894/894):
 - Per-leg L1/L2/L3 currents on 3-phase strips (`rPDU2PhaseStatusTable` on
   APC, `inletPoleSensor` on Raritan), per-bank breakers, live per-outlet
   current following the outlet's load. Then the rack row shows leg balance.
+  DONE through 2026-10-29. Per-outlet current is coverage-honest: the rack
+  row's Outlets column lists the busiest receptacles with what is corded to
+  each (`services/estate.rack_outlet_metering`, key `outlet_current`,
+  instance = outlet number, collector table `raritan_outlet` with an index
+  rule that reads [pdu].[outlet].[sensorType]) and shows a dash where no
+  strip on the rack meters per outlet. In this estate that is every compute
+  rack: an AP8886 is a Metered unit. Making the column useful there is a
+  hardware decision (re-SKU to a metered-by-outlet 3-phase strip), not a
+  software one, and was declined 2026-10-29 in favour of realism.
 - Server PSU failure (Redfish `PowerSupplies[].Status.Health`), so the Feeds
   column can show "running on one PSU".
 - UPS runtime against the genset start window: the sim has both; the platform

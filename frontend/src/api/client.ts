@@ -3658,10 +3658,23 @@ export interface PowerRow extends EstateRowBase {
   /** Rack rows: banks with a breaker, as a share of it, busiest first. */
   banks?: PowerBank[];
   bank_worst_pct?: number | null;
+  /** Rack rows: per-receptacle current where a strip meters it. Null where
+   *  no strip on the rack can - a Metered or Switched strip has no current
+   *  transformer behind its outlets. */
+  outlets?: PowerOutlets | null;
   /** Rooms and sites: racks past the warn line on failover / with a bank
    *  past 80 % of its breaker. */
   racks_failover_over?: number;
   racks_bank_hot?: number;
+}
+
+export interface PowerOutlet {
+  strip: string; outlet: number; amps: number; load: string | null; pct: number;
+}
+
+export interface PowerOutlets {
+  strips_metered: number; strips: number; max_a: number; hot: number; idle: number;
+  rows: PowerOutlet[]; more: number;
 }
 
 export interface PowerFailover {
@@ -3719,6 +3732,8 @@ export interface PowerPage {
     energy_pue?: EnergyPue | null;
     racks_imbalanced?: number; psu_failed?: number; leg_imbalance_warn_pct?: number;
     racks_failover_over?: number; racks_bank_hot?: number; bank_warn_pct?: number;
+    /** Racks where any strip meters per outlet, and the warn line on a C13. */
+    racks_outlet_metered?: number; outlet_warn_pct?: number;
     /** What the hidden facility rows contribute, so the header reconciles. */
     facility: { rooms: number; total_kw: number | null; cooling_kw: number | null };
   };

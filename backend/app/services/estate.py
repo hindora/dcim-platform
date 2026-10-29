@@ -2528,6 +2528,55 @@ def rack_bank_load(strips: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(out, key=lambda b: -b["pct"])
 
 
+#: A receptacle past this share of its own rating is the one to look at: a
+#: C13 is a 10 A device, and IEC 60320 gives it no margin above that.
+OUTLET_WARN_PCT = 80.0
+#: How many receptacles the rack row carries, busiest first. The rest is a
+#: count; the page is a drill, not an inventory.
+OUTLET_ROWS = 8
+
+
+def rack_outlet_metering(strips: list[dict[str, Any]],
+                         loads: dict[str, dict[int, str]] | None = None
+                         ) -> dict[str, Any] | None:
+    """Per-receptacle current on this rack's strips, where a strip reports it.
+
+    Returns None when NO strip on the rack publishes an outlet current -
+    which is the ordinary case: a Metered AP8886 meters its inlet, legs and
+    banks and has no CT behind its receptacles, and a Switched AP8953 has a
+    relay per outlet and no CT. Only a metered-by-outlet unit (Raritan
+    PX3-4xxx/5xxx, APC AP84xx/AP86xx) can say what one receptacle draws, so
+    an outlet with no sample is unmetered, not idle. Where any strip does
+    report, the row says how many of the rack's strips do and lists the
+    busiest receptacles with what is corded to each, judged against the
+    receptacle's own rating (C13 = 10 A, C19 = 16 A; the connector is not
+    on the sample, so the C13 figure is used - the conservative one).
+    """
+    loads = loads or {}
+    metered = [s for s in strips if s.get("outlet_a")]
+    if not metered:
+        return None
+    rows: list[dict[str, Any]] = []
+    idle = 0
+    for s in metered:
+        corded = loads.get(s.get("strip_id") or "", {})
+        for outlet, amps in s["outlet_a"].items():
+            load = corded.get(outlet)
+            if amps <= 0.05 and not load:
+                idle += 1
+                continue
+            rows.append({"strip": s["strip"], "outlet": outlet, "amps": round(amps, 2),
+                         "load": load, "pct": round(100.0 * amps / 10.0, 1)})
+    rows.sort(key=lambda r: -r["amps"])
+    return {
+        "strips_metered": len(metered), "strips": len(strips),
+        "max_a": rows[0]["amps"] if rows else 0.0,
+        "hot": sum(1 for r in rows if r["pct"] >= OUTLET_WARN_PCT),
+        "idle": idle,
+        "rows": rows[:OUTLET_ROWS], "more": max(0, len(rows) - OUTLET_ROWS),
+    }
+
+
 def rack_failover(strips: list[dict[str, Any]]) -> dict[str, Any] | None:
     """What the surviving side carries when one side of a 2N rack is lost.
 
@@ -2606,6 +2655,11 @@ async def _attach_failover_and_banks(session: AsyncSession, racks: list[dict[str
     """Per rack: the worst bank against its breaker now, and what the survivor
     carries if a side is lost. Counted up the tiers as racks to visit."""
     state = await repo.power_rack_strip_state(session)
+    # The cabling record is read only where a strip meters its receptacles;
+    # most do not, and the join is not worth running for a page of dashes.
+    outlet_loads: dict[str, dict[int, str]] = {}
+    if any(s.get("outlet_a") for strips in state.values() for s in strips):
+        outlet_loads = await repo.power_rack_outlet_loads(session)
     warn = POWER_BANDS["warn_pct"]
     for rk in racks:
         strips = state.get(rk["id"], [])
@@ -2613,6 +2667,7 @@ async def _attach_failover_and_banks(session: AsyncSession, racks: list[dict[str
         rk["banks"] = banks[:6]
         rk["bank_worst_pct"] = banks[0]["pct"] if banks else None
         rk["failover"] = rack_failover(strips)
+        rk["outlets"] = rack_outlet_metering(strips, outlet_loads)
     by_room: dict[str, list[dict[str, Any]]] = {}
     for rk in racks:
         by_room.setdefault(rk["room_id"], []).append(rk)
@@ -2629,6 +2684,8 @@ async def _attach_failover_and_banks(session: AsyncSession, racks: list[dict[str
     totals["racks_failover_over"] = sum(r.get("racks_failover_over", 0) for r in rooms)
     totals["racks_bank_hot"] = sum(r.get("racks_bank_hot", 0) for r in rooms)
     totals["bank_warn_pct"] = BANK_WARN_PCT
+    totals["outlet_warn_pct"] = OUTLET_WARN_PCT
+    totals["racks_outlet_metered"] = sum(1 for rk in racks if rk.get("outlets"))
 
 
 #: NEMA MG-1 derates a motor above 1 % voltage imbalance; on a rack strip the

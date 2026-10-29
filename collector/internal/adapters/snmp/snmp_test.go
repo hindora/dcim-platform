@@ -68,6 +68,29 @@ func TestReduceModes(t *testing.T) {
 	}
 }
 
+func TestIndexInstanceReadsOnePartOfAPathIndex(t *testing.T) {
+	// PDU2-MIB: [pdu].[outlet].[sensorType]. Keep the rms-current rows
+	// (type 1) and name the sample after the outlet.
+	rule := &mapping.IndexRule{InstancePart: 2, Where: &mapping.IndexWhere{Part: 3, Equals: "1"}}
+	if inst, ok := indexInstance(rule, "1.7.1"); !ok || inst != "7" {
+		t.Fatalf("outlet 7 current: got %q %v, want \"7\" true", inst, ok)
+	}
+	if _, ok := indexInstance(rule, "1.7.5"); ok {
+		t.Fatal("the active-power row of outlet 7 passed a current-only rule")
+	}
+	if _, ok := indexInstance(rule, "1.7"); ok {
+		t.Fatal("an index too short for the rule passed")
+	}
+	// No rule: the whole index is the instance, as every other table expects.
+	if inst, ok := indexInstance(nil, "3"); !ok || inst != "3" {
+		t.Fatalf("nil rule: got %q %v", inst, ok)
+	}
+	// A where without an instance part filters and keeps the whole index.
+	if inst, ok := indexInstance(&mapping.IndexRule{Where: &mapping.IndexWhere{Part: 1, Equals: "1"}}, "1.7.1"); !ok || inst != "1.7.1" {
+		t.Fatalf("filter-only rule: got %q %v", inst, ok)
+	}
+}
+
 func TestRowMatchesFilters(t *testing.T) {
 	row := map[string]any{
 		"1.3.6.1.2.1.25.2.3.1.2": ".1.3.6.1.2.1.25.2.1.2", // hrStorageRam
