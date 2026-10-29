@@ -279,6 +279,13 @@ Simulator facts that bound the plan (`S:`):
   on a metered-by-outlet unit, summed over its cords, used only where the
   load is silent. The rack row carries `measured_at_strip` and the Load and
   Reporting tips say so. Phase 5's "live per-outlet current" is DONE.
+- Network gear is rated per SKU (2026-10-29): `S:core/device_manager._MODEL_NAMEPLATE_W`
+  carries the vendors' typical figures for the twelve network models (Nexus
+  9364C 429 W, Z9264F 900 W, PA-5220 870 W, ...), `S:tools/restamp_nameplates.py`
+  re-stamps a topology's loads off the per-type default. The importer records
+  a simulator-sourced load model's figure as its `budget_w` (source
+  "simulator nameplate", overwritten only by itself), so Allocated budgets a
+  draw at face value and the 0.6 derate applies only to a rating.
 - RPP has no protocol; it is read through the Verdigris EV2 clamped on it
   (`S:core/bacnet_ev2_generator.py`, platform `/devices/{id}/metering`).
 - UPS runtime, on-battery seconds and the NFPA 110 transfer sequence are
