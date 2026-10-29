@@ -193,7 +193,7 @@ export function DeviceHistory({ deviceId, metrics, groups }: {
                 <>
                   <TimeChart series={p.series} unit={p.series[0].unit}
                              bucketMs={BUCKET_MS[q.data.interval] ?? 60_000}
-                             marks={marks} />
+                             marks={marks} window={[endsAt - span, endsAt]} />
                   {/* Say what is absent rather than drawing a panel that looks
                       complete. A missing line and a flat one look identical. */}
                   {p.missing.length > 0 && (
@@ -219,7 +219,7 @@ export function DeviceHistory({ deviceId, metrics, groups }: {
               </figcaption>
               <TimeChart series={series} unit={unit}
                          bucketMs={BUCKET_MS[q.data.interval] ?? 60_000}
-                         marks={marks} />
+                         marks={marks} window={[endsAt - span, endsAt]} />
             </figure>
           ))}
         </>

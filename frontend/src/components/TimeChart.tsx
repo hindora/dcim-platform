@@ -147,7 +147,7 @@ function seriesLabel(s: Series, mixed = false): string {
   return mixed ? `${metricLabel(s.metric)} · ${s.instance}` : s.instance;
 }
 
-export function TimeChart({ series: raw, unit: rawUnit, bucketMs, marks: rawMarks }: {
+export function TimeChart({ series: raw, unit: rawUnit, bucketMs, marks: rawMarks, window }: {
   series: Series[];
   unit: string;
   /** Width of one aggregate bucket, used to decide what counts as a gap. */
@@ -157,6 +157,12 @@ export function TimeChart({ series: raw, unit: rawUnit, bucketMs, marks: rawMark
    *  says "something happened here that the average hid", and the band
    *  above it usually shows what. */
   marks?: ChartMark[];
+  /** The window asked for, [start, end] in epoch ms. The frame reaches to
+   *  whichever episode in it is latest, even past the last bucket: a rollup
+   *  lags the clock by up to an hour, and an alarm raised since the last
+   *  bucket landed is exactly the one the reader came for. The line stops
+   *  where the data stops, and the gap after it is the lag, shown. */
+  window?: [number, number];
 }) {
   const { series, unit } = useMemo(() => {
     const sc = scaleFor(rawUnit, raw);
@@ -192,8 +198,17 @@ export function TimeChart({ series: raw, unit: rawUnit, bucketMs, marks: rawMark
       }
     }
 
-    const x0 = Math.min(...xs);
-    const x1 = Math.max(...xs);
+    // Episodes clamped to the window, so one that opened two days ago and
+    // cleared this morning does not drag a six-hour frame back two days.
+    const w0 = window?.[0] ?? -Infinity;
+    const w1 = window?.[1] ?? Infinity;
+    const markXs = (rawMarks ?? []).flatMap((m) => {
+      const a = Math.max(m.start, w0);
+      const b = Math.min(m.end ?? m.start, w1);
+      return b < a ? [] : [a, b];
+    });
+    const x0 = Math.min(...xs, ...markXs);
+    const x1 = Math.max(...xs, ...markXs);
     let y0 = Math.min(...ys);
     let y1 = Math.max(...ys);
     if (y0 === y1) { y0 -= 1; y1 += 1; }          // a flat line still needs a band
@@ -265,7 +280,7 @@ export function TimeChart({ series: raw, unit: rawUnit, bucketMs, marks: rawMark
       new Date(x0).toDateString() !== new Date(x1).toDateString();
 
     return { paths, bands, marks, x0, x1, y0, y1, sx, sy, span: x1 - x0, times, spansDays };
-  }, [series, bucketMs, rawMarks]);
+  }, [series, bucketMs, rawMarks, window]);
 
   /** The readings at the hovered time, one per series that has one there. */
   const hover = useMemo(() => {
