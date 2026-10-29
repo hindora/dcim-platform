@@ -183,7 +183,7 @@ function WorstBank({ banks, warnPct }: { banks: PowerBank[] | undefined; warnPct
 /** The busiest metered receptacles, where a strip has a CT behind them. */
 function Outlets({ o, warnPct }: { o: PowerOutlets | null | undefined; warnPct: number }) {
   if (!o) {
-    return <Tip className="dash" tip="No strip on this rack meters its outlets. A Metered strip (AP8886) reads its inlet, legs and banks; a Switched one (AP8953) has a relay per outlet and no current transformer. Per-outlet current needs a metered-by-outlet unit.">—</Tip>;
+    return <Tip className="dash" tip="No strip on this rack meters its outlets. A Metered strip reads its inlet, legs and banks; a Switched one (an AP8953) has a relay per outlet and no current transformer. Per-outlet current needs a metered-by-outlet unit.">—</Tip>;
   }
   const top = o.rows[0];
   const cls = top && top.pct >= 100 ? 'critical' : top && top.pct >= warnPct ? 'warn' : undefined;
