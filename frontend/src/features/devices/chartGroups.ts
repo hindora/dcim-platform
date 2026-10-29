@@ -63,7 +63,8 @@ const UPS: ChartGroup[] = [
  *  is keeping up. */
 const CRAH: ChartGroup[] = [
   { title: 'Air temperatures',
-    metrics: ['supply_air_temp', 'return_air_temp', 'air_setpoint_temp'] },
+    metrics: ['supply_air_temp', 'return_air_temp', 'air_setpoint_temp'],
+    reference: ['air_setpoint_temp'] },
   { title: 'Output and airflow',
     metrics: ['cooling_output_pct', 'fan_speed_pct', 'valve_position_pct'] },
   { title: 'Return humidity', metrics: ['relative_humidity'] },
@@ -72,7 +73,8 @@ const CRAH: ChartGroup[] = [
 
 const CDU: ChartGroup[] = [
   { title: 'Water temperatures',
-    metrics: ['water_supply_temp', 'water_return_temp', 'water_setpoint_temp'] },
+    metrics: ['water_supply_temp', 'water_return_temp', 'water_setpoint_temp'],
+    reference: ['water_setpoint_temp'] },
   { title: 'Pump and valve',
     metrics: ['pump_speed_pct', 'valve_position_pct'] },
   { title: 'Water flow', metrics: ['water_flow'] },
@@ -85,7 +87,8 @@ const CDU: ChartGroup[] = [
 
 const CHILLER: ChartGroup[] = [
   { title: 'Water temperatures',
-    metrics: ['water_supply_temp', 'water_return_temp', 'water_setpoint_temp'] },
+    metrics: ['water_supply_temp', 'water_return_temp', 'water_setpoint_temp'],
+    reference: ['water_setpoint_temp'] },
   { title: 'Compressor load', metrics: ['compressor_load_pct'] },
   { title: 'Capacity and power', metrics: ['cooling_capacity', 'power_draw'] },
   { title: 'Water flow', metrics: ['water_flow'] },

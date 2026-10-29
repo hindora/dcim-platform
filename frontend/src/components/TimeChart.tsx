@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { DASHES, useChartColors } from './seriesColors';
+import { useChartColors } from './seriesColors';
 import type { Series } from '../api/client';
 import { metricLabel, unitSymbol } from '../lib/format';
 
@@ -147,9 +147,44 @@ function seriesLabel(s: Series, mixed = false): string {
   return mixed ? `${metricLabel(s.metric)} · ${s.instance}` : s.instance;
 }
 
-export function TimeChart({ series: raw, unit: rawUnit, bucketMs, marks: rawMarks, window }: {
+/** Where a line's name goes: at the line's end, beside the last reading.
+ *
+ *  To the right of the end when the frame leaves room there (the line stopped
+ *  before an alarm the frame reached for), otherwise just above the last
+ *  stretch of the line, ending where the line ends. Each carries a swatch in
+ *  the line's colour; the text itself wears the text token, with a halo in
+ *  the surface colour so it reads over the line and the band. Labels that
+ *  would overprint - two lines ending at the same value - are pushed apart
+ *  down the frame, nearest-to-its-line first. */
+type EndLabel = { key: string; label: string; ref: boolean; i: number;
+                  x: number; y: number; anchor: 'start' | 'end'; chars: number };
+
+const LABEL_CH = 6;      // sans at 10 px, taken wide for lower case
+const LABEL_GAP = 11;    // one label's height plus a hair
+
+function placeEnds(ends: EndLabel[]): EndLabel[] {
+  const out = [...ends].sort((a, b) => a.y - b.y);
+  const top = PAD_T + 9;
+  const bottom = H - PAD_B - 3;
+  for (let k = 0; k < out.length; k++) {
+    const floor = k === 0 ? top : out[k - 1].y + LABEL_GAP;
+    if (out[k].y < floor) out[k].y = floor;
+  }
+  for (let k = out.length - 1; k >= 0; k--) {
+    const cap = k === out.length - 1 ? bottom : out[k + 1].y - LABEL_GAP;
+    if (out[k].y > cap) out[k].y = cap;
+  }
+  return out;
+}
+
+export function TimeChart({ series: raw, unit: rawUnit, bucketMs, marks: rawMarks, window, reference: rawRef }: {
   series: Series[];
   unit: string;
+  /** Reference series: a setpoint, a limit. Drawn thin and muted, named at
+   *  the end like the rest, in the frame and under the hover, but taking no
+   *  colour slot - a setpoint is what the lines are measured against, not a
+   *  fourth thing being measured. */
+  reference?: Series[];
   /** Width of one aggregate bucket, used to decide what counts as a gap. */
   bucketMs: number;
   /** Alarm episodes on the device, drawn as bars under the time axis. The
@@ -164,27 +199,24 @@ export function TimeChart({ series: raw, unit: rawUnit, bucketMs, marks: rawMark
    *  where the data stops, and the gap after it is the lag, shown. */
   window?: [number, number];
 }) {
-  const { series, unit } = useMemo(() => {
-    const sc = scaleFor(rawUnit, raw);
-    if (sc.div === 1) return { series: raw, unit: rawUnit };
-    return {
-      unit: sc.unit,
-      series: raw.map((s) => ({
-        ...s,
-        points: s.points.map(([t, v]) => [t, Number.isFinite(v) ? v / sc.div : v]),
-        envelope: s.envelope?.map(([t, lo, hi]) => [t, lo / sc.div, hi / sc.div]),
-      })),
-    };
-  }, [raw, rawUnit]);
+  const { series, refs, unit } = useMemo(() => {
+    const all = [...raw, ...(rawRef ?? [])];
+    const sc = scaleFor(rawUnit, all);
+    const scale = (s: Series): Series => sc.div === 1 ? s : ({
+      ...s,
+      points: s.points.map(([t, v]) => [t, Number.isFinite(v) ? v / sc.div : v]),
+      envelope: s.envelope?.map(([t, lo, hi]) => [t, lo / sc.div, hi / sc.div]),
+    });
+    return { unit: sc.unit, series: raw.map(scale), refs: (rawRef ?? []).map(scale) };
+  }, [raw, rawUnit, rawRef]);
   /** The time the pointer is nearest, in epoch ms. Null when not hovering. */
   const [at, setAt] = useState<number | null>(null);
   const chart = useChartColors();
   const colorOf = (i: number) => chart.series[i % chart.series.length];
-  const dashOf = (i: number) => DASHES[i % DASHES.length];
-  const mixed = new Set(series.map((s) => s.metric)).size > 1;
+  const mixed = new Set([...series, ...refs].map((s) => s.metric)).size > 1;
 
   const model = useMemo(() => {
-    const pts = series.flatMap((s) => s.points);
+    const pts = [...series, ...refs].flatMap((s) => s.points);
     if (!pts.length) return null;
     const xs = pts.map((p) => p[0]);
     const ys = pts.map((p) => p[1]).filter((v) => Number.isFinite(v));
@@ -221,7 +253,7 @@ export function TimeChart({ series: raw, unit: rawUnit, bucketMs, marks: rawMark
     const sy = (v: number) =>
       H - PAD_B - ((v - y0) / (y1 - y0)) * (H - PAD_T - PAD_B);
 
-    const paths = series.map((s) => {
+    const pathOf = (s: Series) => {
       let d = '';
       let prevX: number | null = null;
       for (const [t, v] of s.points) {
@@ -231,7 +263,31 @@ export function TimeChart({ series: raw, unit: rawUnit, bucketMs, marks: rawMark
         prevX = t;
       }
       return { key: `${s.metric}|${s.instance}`, label: seriesLabel(s, mixed), d };
-    });
+    };
+    const paths = series.map(pathOf);
+    const refPaths = refs.map(pathOf);
+
+    // Each line's name at its end. Right of the end where the frame has
+    // room for the whole label, else above the line's last stretch.
+    const endOf = (s: Series, i: number, ref: boolean): EndLabel | null => {
+      const last = [...s.points].reverse().find((p) => Number.isFinite(p[1]));
+      if (!last) return null;
+      const label = seriesLabel(s, mixed);
+      const chars = label.length;
+      const ex = sx(last[0]);
+      const roomRight = W - PAD_R - ex;
+      const fits = roomRight >= 14 + chars * LABEL_CH;
+      return {
+        key: `${s.metric}|${s.instance}`, label, ref, i, chars,
+        x: fits ? ex + 6 : ex - 3,
+        y: fits ? sy(last[1]) + 3.5 : sy(last[1]) - 5,
+        anchor: fits ? 'start' : 'end',
+      };
+    };
+    const ends = placeEnds([
+      ...series.map((s, i) => endOf(s, i, false)),
+      ...refs.map((s, i) => endOf(s, i, true)),
+    ].filter((e): e is EndLabel => e !== null));
 
     // The min-max band behind an averaged line: one closed shape per unbroken
     // run of buckets, the highs drawn forward and the lows drawn back. Broken
@@ -279,13 +335,16 @@ export function TimeChart({ series: raw, unit: rawUnit, bucketMs, marks: rawMark
     const spansDays =
       new Date(x0).toDateString() !== new Date(x1).toDateString();
 
-    return { paths, bands, marks, x0, x1, y0, y1, sx, sy, span: x1 - x0, times, spansDays };
-  }, [series, bucketMs, rawMarks, window]);
+    return { paths, refPaths, ends, bands, marks, x0, x1, y0, y1, sx, sy, span: x1 - x0, times, spansDays };
+  }, [series, refs, bucketMs, rawMarks, window]);
 
   /** The readings at the hovered time, one per series that has one there. */
   const hover = useMemo(() => {
     if (at === null || !model) return null;
-    const rows = series.map((s, i): HoverRow | null => {
+    const rows = [
+      ...series.map((s, i) => ({ s, color: colorOf(i) })),
+      ...refs.map((s) => ({ s, color: chart.muted })),
+    ].map(({ s, color }): HoverRow | null => {
       // Exact match only. A series with a gap here genuinely has no reading,
       // and showing its neighbour's would invent one.
       const hit = s.points.find((p) => p[0] === at && Number.isFinite(p[1]));
@@ -293,12 +352,12 @@ export function TimeChart({ series: raw, unit: rawUnit, bucketMs, marks: rawMark
       // The bucket's extremes beside its average, where there are any: the
       // number the alarm fired on is the max, not the mean.
       const env = s.envelope?.find((e) => e[0] === at);
-      const row: HoverRow = { label: seriesLabel(s, mixed), value: hit[1], color: colorOf(i) };
+      const row: HoverRow = { label: seriesLabel(s, mixed), value: hit[1], color };
       if (env) { row.lo = env[1]; row.hi = env[2]; }
       return row;
     }).filter((r): r is HoverRow => r !== null);
     return rows.length ? { at, rows } : null;
-  }, [at, model, series, chart]);
+  }, [at, model, series, refs, chart]);
 
   if (!model) return <p className="muted">No data in this window.</p>;
 
@@ -361,7 +420,7 @@ export function TimeChart({ series: raw, unit: rawUnit, bucketMs, marks: rawMark
   return (
     <div className="chart-wrap">
       <svg className="chart" viewBox={`0 0 ${W} ${H}`} role="img"
-           aria-label={`${series.map((s) => seriesLabel(s, mixed)).join(', ')} over time, in ${unitSymbol(unit) || unit}`
+           aria-label={`${[...series, ...refs].map((s) => seriesLabel(s, mixed)).join(', ')} over time, in ${unitSymbol(unit) || unit}`
              + (hasBand ? '; the band is each bucket\'s lowest to highest reading' : '')
              + (model.marks.length ? `; ${model.marks.length} alarm episode${model.marks.length === 1 ? '' : 's'} marked under the axis` : '')}>
         {yTicks.map((t) => (
@@ -383,10 +442,28 @@ export function TimeChart({ series: raw, unit: rawUnit, bucketMs, marks: rawMark
         {model.bands.map((d, i) => d && (
           <path key={model.paths[i].key} d={d} className="chart-band" fill={colorOf(i)} />
         ))}
-        {model.paths.map((p, i) => (
-          <path key={p.key} d={p.d} className="chart-line"
-                stroke={colorOf(i)} strokeDasharray={dashOf(i)} />
+        {/* A reference - a setpoint - is thin and muted, under the lines:
+            what they are measured against, not one of them. */}
+        {model.refPaths.map((p) => (
+          <path key={p.key} d={p.d} className="chart-ref" stroke={chart.muted} />
         ))}
+        {model.paths.map((p, i) => (
+          <path key={p.key} d={p.d} className="chart-line" stroke={colorOf(i)} />
+        ))}
+        {/* Every line named where it ends. The reader never carries a colour
+            across to a legend, and the name survives whatever the colour
+            does not - print, a dim panel, a photo of the screen. */}
+        {model.ends.map((e) => {
+          const color = e.ref ? chart.muted : colorOf(e.i);
+          const tx = e.anchor === 'start' ? e.x + 11 : e.x;
+          const swx = e.anchor === 'start' ? e.x : e.x - e.chars * LABEL_CH - 11;
+          return (
+            <g key={e.key} className="chart-end" pointerEvents="none">
+              <rect x={swx} y={e.y - 6.5} width={7} height={7} rx={1.5} fill={color} />
+              <text className="chart-end-label" x={tx} y={e.y} textAnchor={e.anchor}>{e.label}</text>
+            </g>
+          );
+        })}
         {/* Alarm episodes, as bars in the gutter between the plot and the
             tick labels, in the severity's colour. Hoverable on a taller
             invisible strip than the bar itself. */}
@@ -440,28 +517,7 @@ export function TimeChart({ series: raw, unit: rawUnit, bucketMs, marks: rawMark
               fill="transparent" onMouseMove={onMove} onMouseLeave={() => setAt(null)} />
         <text x={4} y={PAD_T + 2} className="chart-unit">{unitSymbol(unit)}</text>
       </svg>
-
-      {/* Two or more lines are never told apart by colour alone. One line needs
-          no legend - the caption above already names it. */}
-      {series.length > 1 && (
-        <ul className="chart-legend">
-          {model.paths.map((p, i) => (
-            <li key={p.key}>
-              {/* The swatch wears the line's pattern as well as its colour:
-                  a legend that shows only hue cannot be read in the one
-                  situation the pattern exists for. */}
-              {/* Wide enough for a full cycle where there is a pattern to
-                  show: dash-dot runs 20 units, and a clipped cycle reads as a
-                  different pattern. */}
-              <svg className="swatch-line" width={dashOf(i) ? 22 : 14} height={8} aria-hidden>
-                <line x1={0} y1={4} x2={dashOf(i) ? 22 : 14} y2={4} stroke={colorOf(i)}
-                      strokeWidth={2} strokeDasharray={dashOf(i)} />
-              </svg>
-              {p.label}
-            </li>
-          ))}
-        </ul>
-      )}
+      {/* No legend: every line is named at its end, inside the frame. */}
     </div>
   );
 }

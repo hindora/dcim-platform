@@ -19,8 +19,8 @@
  *   - every colour keeps 3:1 against the panel it is drawn on, the WCAG
  *     non-text contrast minimum.
  *
- * Colour alone is never the whole answer, which is why the charts also dash
- * the third series onward - see DASHES in components/seriesColors.ts. A ramp
+ * Colour alone is never the whole answer, which is why the charts also name
+ * every line at its end - see components/TimeChart.tsx and seriesColors.ts. A ramp
  * that passes this file is a ramp whose hues are a real second channel, not
  * the only one.
  *

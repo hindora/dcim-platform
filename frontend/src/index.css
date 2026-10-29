@@ -654,6 +654,16 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
    what is read, the band is what the line is not saying. */
 .chart-band { fill-opacity: 0.16; stroke: none; }
 .chart-mark { cursor: default; }
+/* A reference line: a setpoint, a limit. Thin and muted, solid - a plain
+   dash is the forecast's and means "not yet". */
+.chart-ref { fill: none; stroke-width: 1.25; stroke-linejoin: round; }
+/* The line's name at its end. Text token with a halo in the surface colour,
+   so it reads over the line, the band and the grid; the swatch beside it
+   carries the colour. */
+.chart-end-label { font-size: 10px; fill: var(--text); font-family: var(--sans);
+                   paint-order: stroke; stroke: var(--bg-inset); stroke-width: 3px;
+                   stroke-linejoin: round; }
+.chart-end rect { stroke: var(--bg-inset); stroke-width: 1.5; }
 .chart-tick-y { font-size: 10px; fill: var(--text-muted); text-anchor: end;
                 dominant-baseline: middle; font-family: var(--mono); }
 .chart-tick-x { font-size: 10px; fill: var(--text-muted);
@@ -679,17 +689,10 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
                    font-family: var(--mono); }
 
 .chart-wrap { max-width: 45rem; }
-.chart-legend { list-style: none; display: flex; flex-wrap: wrap; gap: 0.15rem 1rem;
-                margin: 0.35rem 0 0; padding: 0;
-                font-size: 0.8rem; color: var(--text-muted); }
-.chart-legend li { display: inline-flex; align-items: center; gap: 0.35rem; }
-/* A legend entry for a line that is dashed shows the dash. The block swatch
-   says only "this hue"; on a greyscale printout or a dim wall panel that is
-   the one thing the reader cannot use. */
-.chart-legend .swatch-line,
+/* A legend entry for a forecast's dashed half shows the dash. The block
+   swatch says only "this hue"; on a greyscale printout or a dim wall panel
+   that is the one thing the reader cannot use. */
 .legend .swatch-line { flex: none; overflow: visible; }
-.chart-legend .swatch { width: 9px; height: 9px; border-radius: 2px;
-                        display: inline-block; flex: none; }
 
 /* ---------------------------------------------------------------- analytics */
 

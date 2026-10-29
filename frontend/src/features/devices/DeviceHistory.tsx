@@ -52,7 +52,14 @@ function groupByUnit(series: Series[]): Map<string, Series[]> {
  *  above the chart, and what it produced was prose explaining how to read two
  *  labelled lines. A panel that needs a sentence to be legible is a panel that
  *  needs different metrics or a better title. */
-export type ChartGroup = { title: string; metrics: string[] };
+export type ChartGroup = {
+  title: string;
+  metrics: string[];
+  /** Metrics among `metrics` drawn as reference lines - a setpoint, a limit -
+   *  thin and muted, taking no colour slot. What the others are measured
+   *  against rather than a further thing being measured. */
+  reference?: string[];
+};
 
 export function DeviceHistory({ deviceId, metrics, groups }: {
   deviceId: string;
@@ -120,11 +127,15 @@ export function DeviceHistory({ deviceId, metrics, groups }: {
   // rather than whatever order the series came back in, so the legend reads the
   // same on every device and after every reload. Colour follows that order, so
   // a metric that stops reporting must not repaint the ones that remain.
-  const panels = groups?.map((g) => ({
-    ...g,
-    series: g.metrics.flatMap((k) => withData.filter((s) => s.metric === k)),
-    missing: g.metrics.filter((k) => !withData.some((s) => s.metric === k)),
-  }));
+  const panels = groups?.map((g) => {
+    const refKeys = new Set(g.reference ?? []);
+    return {
+      ...g,
+      series: g.metrics.filter((k) => !refKeys.has(k)).flatMap((k) => withData.filter((s) => s.metric === k)),
+      refs: g.metrics.filter((k) => refKeys.has(k)).flatMap((k) => withData.filter((s) => s.metric === k)),
+      missing: g.metrics.filter((k) => !withData.some((s) => s.metric === k)),
+    };
+  });
 
   return (
     <section>
@@ -191,7 +202,7 @@ export function DeviceHistory({ deviceId, metrics, groups }: {
                 </p>
               ) : (
                 <>
-                  <TimeChart series={p.series} unit={p.series[0].unit}
+                  <TimeChart series={p.series} unit={p.series[0].unit} reference={p.refs}
                              bucketMs={BUCKET_MS[q.data.interval] ?? 60_000}
                              marks={marks} window={[endsAt - span, endsAt]} />
                   {/* Say what is absent rather than drawing a panel that looks
