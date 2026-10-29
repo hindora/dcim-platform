@@ -24,6 +24,7 @@ from app.api.v1 import (
     inventory,
     maintenance,
     misc,
+    models,
     pools,
     power,
     profiles,
@@ -32,7 +33,6 @@ from app.api.v1 import (
     topology,
     webhooks,
     ws,
-    models,
 )
 
 api_router = APIRouter()
