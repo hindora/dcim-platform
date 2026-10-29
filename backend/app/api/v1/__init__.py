@@ -32,6 +32,7 @@ from app.api.v1 import (
     topology,
     webhooks,
     ws,
+    models,
 )
 
 api_router = APIRouter()
@@ -59,6 +60,7 @@ api_router.include_router(anomalies.router)
 api_router.include_router(collector.router)
 # Before collectors: /collectors/releases must not read as a collector id.
 api_router.include_router(releases.router)
+api_router.include_router(models.router)
 api_router.include_router(collectors.router)
 api_router.include_router(pools.router)
 api_router.include_router(credentials.router)

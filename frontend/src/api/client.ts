@@ -1700,7 +1700,19 @@ export interface PowerSupply {
   feed_outlet?: number | null;
 }
 
+export interface ModelBudget {
+  model_id: string; model: string; rated_power_w: number | null;
+  budget_w: number | null; budget_source: string | null;
+}
+
 export interface DeviceDetail extends DeviceSummary {
+  /** The model's power budget and its basis, what Allocated on the Power
+   *  page is built from; and the derate the rule applies where none is
+   *  recorded. */
+  model_id?: string | null;
+  budget_w?: number | null;
+  budget_source?: string | null;
+  budget_derate?: number | null;
   // serial_number, asset_tag, lifecycle and category are inherited: they were
   // promoted onto DeviceSummary so the asset list can render them per row.
   /** The MODEL's datasheet rating, not a reading - what the chassis is built
@@ -4522,6 +4534,10 @@ export const api = {
   createContract: (body: Record<string, unknown>) =>
     request<SupportContract>('/contracts', {
       method: 'POST', body: JSON.stringify(body),
+    }),
+  setModelBudget: (modelId: string, body: { budget_w: number | null; note?: string }) =>
+    request<ModelBudget>(`/models/${modelId}/budget`, {
+      method: 'PATCH', body: JSON.stringify(body),
     }),
   patchContract: (id: string, body: Record<string, unknown>) =>
     request<SupportContract>(`/contracts/${id}`, {

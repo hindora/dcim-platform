@@ -441,6 +441,12 @@ async def get_device(session: AsyncSession, device_id: str) -> dict[str, Any] | 
         # every R640 draws from the same datasheet, and a per-device override
         # would be a measurement pretending to be a rating.
         "           m.rated_power_w, m.u_height AS model_u_height,\n"
+        # The budget is the MODEL's too, with its basis: what every unit of
+        # this SKU is planned at, which is what the Power page's Allocated
+        # column sums. See api/v1/models.py.
+        "           m.id::text AS model_id,\n"
+        "           NULLIF(m.attributes->>'budget_w', '')::int AS budget_w,\n"
+        "           m.attributes->>'budget_source' AS budget_source,\n"
         "           d.priority, d.locked_fields, d.notes\n",
     ) + " WHERE d.id = CAST(:id AS uuid)"
     row = (await session.execute(text(sql), {"id": device_id})).mappings().first()

@@ -18,6 +18,7 @@ import { DeviceHistory } from './DeviceHistory';
 import { chartGroupsFor } from './chartGroups';
 import { bodySize } from './bodySize';
 import { DeviceEditor } from './DeviceEditor';
+import { ModelBudget } from './ModelBudget';
 import { DeviceActions } from './DeviceActions';
 import { DeviceThresholds } from './DeviceThresholds';
 import { DeviceAlarms } from './DeviceAlarms';
@@ -486,6 +487,7 @@ function Overview({ d, ports, metrics, state, lead, onAlarms, onMonitoring }: {
           <h3>Nameplate</h3>
           <div className="dv-facts">
             <Fact k="Rated power" v={rated != null ? `${rated} W` : null} />
+            <ModelBudget d={d} />
             <Fact k="Power supplies" v={d.psus.length
               ? `${d.psus.length} × ${d.psus[0].rated_watts ?? '?'} W (${[...new Set(d.psus.map((p) => p.connector ?? '?'))].join(', ')})`
               : null} />

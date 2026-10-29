@@ -158,6 +158,22 @@
 .dv-fact .v.mono { font-size: 12px; }
 .dv-none { color: var(--text-faint); }
 
+/* The model's budget beside its rating, and the admin's means to set it. */
+.dv-budget .dv-link {
+  margin-left: 8px; padding: 0; border: 0; background: none; font: inherit;
+  font-size: 12px; color: var(--accent); cursor: pointer;
+}
+.dv-budget .dv-link:hover { text-decoration: underline; }
+.dv-budget-form { margin-top: 8px; display: grid; gap: 8px; max-width: 420px; }
+.dv-budget-form label { display: grid; gap: 4px; font-size: 12px; color: var(--text-muted); }
+.dv-budget-form input[type="text"] {
+  font: inherit; font-size: 13px; padding: 5px 8px; border: 1px solid var(--border);
+  border-radius: 4px; background: var(--bg-inset); color: var(--text);
+}
+.dv-budget-actions { display: flex; gap: 8px; }
+.dv-budget-form .muted { margin: 0; font-size: 12px; }
+.dv-err { margin: 0; font-size: 12px; color: var(--critical); }
+
 /* Nameplate meter: the draw against the rating, as a bar. */
 .dv-meter { margin-top: 6px; max-width: 420px; }
 .dv-meter-track { height: 6px; background: var(--bg-inset); border-radius: 3px; overflow: hidden; }

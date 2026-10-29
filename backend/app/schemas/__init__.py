@@ -154,6 +154,14 @@ class DeviceDetail(DeviceSummary):
     #: to draw at most, which is the number a rack or a feed is sized against -
     #: and the one an operator wants beside a live draw to know the headroom.
     rated_power_w: int | None = None
+    #: The model's power budget, what every unit of this SKU is planned at,
+    #: with its basis; and the derate the planning rule applies to the
+    #: rating where no budget is recorded. Allocated on the Power page is the
+    #: sum of these per rack. Editable per model by an admin.
+    model_id: str | None = None
+    budget_w: int | None = None
+    budget_source: str | None = None
+    budget_derate: float | None = None
     psus: list[PowerSupplyOut] = Field(default_factory=list)
     u_height: int = 1
     facing: str | None = None
