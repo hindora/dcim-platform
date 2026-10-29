@@ -48,6 +48,16 @@ LAYER_TERMINATIONS = {
 }
 
 
+
+#: Device types whose simulator figure is a DRAW rather than a throughput
+#: rating, and so is budgeted at face value (see _upsert_device). Strips,
+#: panels and UPS carry power and are rated by what they can pass.
+LOAD_TYPES = frozenset({"server", "switch", "router", "firewall", "load_balancer",
+                        "oob_switch", "cdu"})
+#: The budget_source this importer writes, and the only one it overwrites.
+BUDGET_SOURCE = "simulator nameplate: representative full-load draw"
+
+
 @dataclass
 class ImportReport:
     datacenters: int = 0
@@ -799,10 +809,26 @@ class TopologyImporter:
         # which is the actual nameplate. The fallback is kept because the catalog
         # only rates distribution and backup gear - it returns 0 for a server -
         # and dropping to NULL there would lose ratings the platform already has.
+        # A load's figure is a DRAW, and a draw is budgeted at face value.
+        #
+        # The simulator rates a server or a switch at its representative
+        # full-load draw - the number the box runs between 55 % and 100 % of
+        # - not at its supply's nameplate. The planning derate in
+        # repositories/racks (0.6 of rated) exists for a PSU rating, where
+        # real draw is a third to a half of the figure; applied to a draw it
+        # budgets a spine below its own full load and the rack reads over
+        # budget at 70 % CPU. So a simulator-sourced load model gets a budget
+        # equal to its figure, marked as such, and the rule leaves alone any
+        # budget an operator or a measurement set (the servers carry a
+        # "measured: 7-day peak" source already).
+        rated = dev.get("rated_power_w")
+        draw = dev.get("power_draw_w")
+        budget = (int(draw) if dtype in LOAD_TYPES and not rated
+                  and isinstance(draw, (int, float)) and draw > 0 else None)
         model_id = await self._model_id(vendor_id, dev.get("model_name"), dtype,
-                                        dev.get("rated_power_w")
-                                        or dev.get("power_draw_w"),
-                                        dev.get("rated_cooling_w"))
+                                        rated or draw,
+                                        dev.get("rated_cooling_w"),
+                                        budget_w=budget)
 
         room_id, rack_id, u_start = self._placement_of(dev)
 
@@ -1495,7 +1521,7 @@ class TopologyImporter:
 
     async def _model_id(self, vendor_id: str | None, name: str | None,
                         dtype: str, power_w: Any,
-                        cooling_w: Any = None) -> str | None:
+                        cooling_w: Any = None, budget_w: int | None = None) -> str | None:
         if not vendor_id or not name:
             return None
         key = (vendor_id, name)
@@ -1508,20 +1534,36 @@ class TopologyImporter:
         #
         # COALESCE on both, so an export that has since lost a rating cannot
         # blank one the platform already learned.
+        # The budget rides in `attributes` beside whatever else is there, and
+        # is written only where no budget exists or where this importer wrote
+        # the last one: a budget with any other source - an operator's, a
+        # measured one - is a site decision and survives every re-import.
         mid = await self._scalar("""
             INSERT INTO model (vendor_id, device_type, name, rated_power_w,
-                               rated_cooling_w)
-            VALUES (CAST(:vendor AS uuid), :dtype, :name, :power, :cooling)
+                               rated_cooling_w, attributes)
+            VALUES (CAST(:vendor AS uuid), :dtype, :name, :power, :cooling,
+                    CASE WHEN CAST(:budget AS int) IS NULL THEN '{}'::jsonb
+                         ELSE jsonb_build_object('budget_w', CAST(:budget AS int),
+                                                 'budget_source', :budget_source) END)
             ON CONFLICT (vendor_id, name) DO UPDATE SET
                 device_type = EXCLUDED.device_type,
                 rated_power_w = COALESCE(EXCLUDED.rated_power_w, model.rated_power_w),
                 rated_cooling_w = COALESCE(EXCLUDED.rated_cooling_w,
-                                           model.rated_cooling_w)
+                                           model.rated_cooling_w),
+                attributes = CASE
+                    WHEN CAST(:budget AS int) IS NOT NULL
+                     AND (NULLIF(model.attributes->>'budget_w', '') IS NULL
+                          OR model.attributes->>'budget_source' = :budget_source)
+                    THEN COALESCE(model.attributes, '{}'::jsonb)
+                         || jsonb_build_object('budget_w', CAST(:budget AS int),
+                                               'budget_source', :budget_source)
+                    ELSE model.attributes END
             RETURNING id::text
         """, vendor=vendor_id, dtype=dtype, name=name,
             power=int(power_w) if isinstance(power_w, (int, float)) and power_w else None,
             cooling=(int(cooling_w)
-                     if isinstance(cooling_w, (int, float)) and cooling_w else None))
+                     if isinstance(cooling_w, (int, float)) and cooling_w else None),
+            budget=budget_w, budget_source=BUDGET_SOURCE)
         self._model[key] = mid
         self.report.models += 1
         return mid

@@ -226,6 +226,13 @@ async def floorplan_equipment(session: AsyncSession,
 #: real draw is commonly a third to a half of it - so planning tools budget a
 #: derated figure. 0.6 is a common planning default, not a standard; a site
 #: sets its own per model with `model.attributes.budget_w`.
+#:
+#: It applies to a RATING. A figure that is already a draw - the simulator's
+#: representative full-load number for a server or a switch - is budgeted at
+#: face value: the importer records it as the model's budget (source
+#: "simulator nameplate"), and this derate never sees it. Derating a draw
+#: budgets a box below its own full load, which is how a spine at 70 % CPU
+#: read as over budget.
 BUDGET_DERATE = 0.6
 
 
