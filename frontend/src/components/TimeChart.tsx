@@ -47,6 +47,15 @@ const PAD_B = 24;
  *  chart can do. Anything longer than a few buckets is treated as absence. */
 const GAP_FACTOR = 3;
 
+/** An alarm episode drawn under the time axis: when it opened, when it
+ *  cleared (null while still open), and what it was. */
+export type ChartMark = { start: number; end: number | null; severity: string; label: string };
+
+/** How an episode reads in a word. */
+function severityWord(s: string): string {
+  return s.charAt(0) + s.slice(1).toLowerCase();
+}
+
 /** Base SI units a chart may carry in a bigger prefix. */
 const PREFIXABLE: Record<string, true> = { W: true, Wh: true, VA: true, var: true };
 
@@ -58,7 +67,10 @@ const PREFIXABLE: Record<string, true> = { W: true, Wh: true, VA: true, var: tru
 function scaleFor(unit: string, series: Series[]): { unit: string; div: number } {
   if (!PREFIXABLE[unit]) return { unit, div: 1 };
   let peak = 0;
-  for (const s of series) for (const p of s.points) if (Number.isFinite(p[1])) peak = Math.max(peak, Math.abs(p[1]));
+  for (const s of series) {
+    for (const p of s.points) if (Number.isFinite(p[1])) peak = Math.max(peak, Math.abs(p[1]));
+    for (const e of s.envelope ?? []) if (Number.isFinite(e[2])) peak = Math.max(peak, Math.abs(e[2]));
+  }
   if (peak >= 1e7) return { unit: `M${unit}`, div: 1e6 };
   if (peak >= 1e4) return { unit: `k${unit}`, div: 1e3 };
   return { unit, div: 1 };
@@ -128,23 +140,34 @@ function stamp(ms: number, bucketMs: number, spansDays: boolean): string {
  *  water chart carried supply AND return on COND, and the tooltip read "COND
  *  15.5 °C, COND 20.5 °C". There both are said: "Water Supply Temperature ·
  *  COND". */
+type HoverRow = { label: string; value: number; color: string; lo?: number; hi?: number };
+
 function seriesLabel(s: Series, mixed = false): string {
   if (!s.instance) return metricLabel(s.metric);
   return mixed ? `${metricLabel(s.metric)} · ${s.instance}` : s.instance;
 }
 
-export function TimeChart({ series: raw, unit: rawUnit, bucketMs }: {
+export function TimeChart({ series: raw, unit: rawUnit, bucketMs, marks: rawMarks }: {
   series: Series[];
   unit: string;
   /** Width of one aggregate bucket, used to decide what counts as a gap. */
   bucketMs: number;
+  /** Alarm episodes on the device, drawn as bars under the time axis. The
+   *  chart and the alarm panel then tell one story: a bar under a flat line
+   *  says "something happened here that the average hid", and the band
+   *  above it usually shows what. */
+  marks?: ChartMark[];
 }) {
   const { series, unit } = useMemo(() => {
     const sc = scaleFor(rawUnit, raw);
     if (sc.div === 1) return { series: raw, unit: rawUnit };
     return {
       unit: sc.unit,
-      series: raw.map((s) => ({ ...s, points: s.points.map(([t, v]) => [t, Number.isFinite(v) ? v / sc.div : v]) })),
+      series: raw.map((s) => ({
+        ...s,
+        points: s.points.map(([t, v]) => [t, Number.isFinite(v) ? v / sc.div : v]),
+        envelope: s.envelope?.map(([t, lo, hi]) => [t, lo / sc.div, hi / sc.div]),
+      })),
     };
   }, [raw, rawUnit]);
   /** The time the pointer is nearest, in epoch ms. Null when not hovering. */
@@ -160,6 +183,14 @@ export function TimeChart({ series: raw, unit: rawUnit, bucketMs }: {
     const xs = pts.map((p) => p[0]);
     const ys = pts.map((p) => p[1]).filter((v) => Number.isFinite(v));
     if (!ys.length) return null;
+    // The band's extremes set the frame too, or the spike the band exists to
+    // show would be clipped at the top of it.
+    for (const s of series) {
+      for (const e of s.envelope ?? []) {
+        if (Number.isFinite(e[1])) ys.push(e[1]);
+        if (Number.isFinite(e[2])) ys.push(e[2]);
+      }
+    }
 
     const x0 = Math.min(...xs);
     const x1 = Math.max(...xs);
@@ -187,6 +218,43 @@ export function TimeChart({ series: raw, unit: rawUnit, bucketMs }: {
       return { key: `${s.metric}|${s.instance}`, label: seriesLabel(s, mixed), d };
     });
 
+    // The min-max band behind an averaged line: one closed shape per unbroken
+    // run of buckets, the highs drawn forward and the lows drawn back. Broken
+    // where the line is, for the same reason.
+    const bands = series.map((s) => {
+      const env = s.envelope;
+      if (!env?.length) return null;
+      let d = '';
+      let run: number[][] = [];
+      const flush = () => {
+        if (run.length >= 2) {
+          const up = run.map((e) => `${sx(e[0]).toFixed(1)},${sy(e[2]).toFixed(1)}`);
+          const down = [...run].reverse().map((e) => `${sx(e[0]).toFixed(1)},${sy(e[1]).toFixed(1)}`);
+          d += `M${up.join(' L')} L${down.join(' L')} Z `;
+        }
+        run = [];
+      };
+      let prevX: number | null = null;
+      for (const e of env) {
+        if (!Number.isFinite(e[1]) || !Number.isFinite(e[2])) { flush(); prevX = null; continue; }
+        if (prevX !== null && e[0] - prevX > bucketMs * GAP_FACTOR) flush();
+        run.push(e);
+        prevX = e[0];
+      }
+      flush();
+      return d || null;
+    });
+
+    // Alarm episodes clipped to the window. An episode still open runs to
+    // the right edge; one shorter than a pixel still gets two, so a
+    // forty-second excursion is a mark and not a rounding error.
+    const marks = (rawMarks ?? []).flatMap((m) => {
+      const a = Math.max(m.start, x0);
+      const b = Math.min(m.end ?? x1, x1);
+      if (b < a) return [];
+      return [{ ...m, x: sx(a), w: Math.max(2, sx(b) - sx(a)) }];
+    });
+
     // Every distinct timestamp, sorted, so the crosshair can snap to a real
     // sample rather than interpolating a reading nobody took.
     const times = [...new Set(xs)].sort((a, b) => a - b);
@@ -196,20 +264,24 @@ export function TimeChart({ series: raw, unit: rawUnit, bucketMs }: {
     const spansDays =
       new Date(x0).toDateString() !== new Date(x1).toDateString();
 
-    return { paths, x0, x1, y0, y1, sx, sy, span: x1 - x0, times, spansDays };
-  }, [series, bucketMs]);
+    return { paths, bands, marks, x0, x1, y0, y1, sx, sy, span: x1 - x0, times, spansDays };
+  }, [series, bucketMs, rawMarks]);
 
   /** The readings at the hovered time, one per series that has one there. */
   const hover = useMemo(() => {
     if (at === null || !model) return null;
-    const rows = series.map((s, i) => {
+    const rows = series.map((s, i): HoverRow | null => {
       // Exact match only. A series with a gap here genuinely has no reading,
       // and showing its neighbour's would invent one.
       const hit = s.points.find((p) => p[0] === at && Number.isFinite(p[1]));
-      return hit
-        ? { label: seriesLabel(s, mixed), value: hit[1], color: colorOf(i) }
-        : null;
-    }).filter((r): r is { label: string; value: number; color: string } => r !== null);
+      if (!hit) return null;
+      // The bucket's extremes beside its average, where there are any: the
+      // number the alarm fired on is the max, not the mean.
+      const env = s.envelope?.find((e) => e[0] === at);
+      const row: HoverRow = { label: seriesLabel(s, mixed), value: hit[1], color: colorOf(i) };
+      if (env) { row.lo = env[1]; row.hi = env[2]; }
+      return row;
+    }).filter((r): r is HoverRow => r !== null);
     return rows.length ? { at, rows } : null;
   }, [at, model, series, chart]);
 
@@ -243,11 +315,15 @@ export function TimeChart({ series: raw, unit: rawUnit, bucketMs }: {
   // label that still does not fit is cut with an ellipsis and keeps its full
   // name as the row's title.
   const sym = unitSymbol(unit);
-  const valueText = (v: number) => `${fmt(v)}${sym ? ` ${sym}` : ''}`;
+  // "22.3 (21.9–25.8) °C": the average, then the bucket's floor and ceiling
+  // where the series has them. The ceiling is the reading the reader came
+  // to find.
+  const valueText = (r: HoverRow) =>
+    `${fmt(r.value)}${r.lo != null && r.hi != null ? ` (${fmt(r.lo)}–${fmt(r.hi)})` : ''}${sym ? ` ${sym}` : ''}`;
   const CH = 6;
   const timeText = hover ? stamp(hover.at, bucketMs, model.spansDays) : '';
   const labelChars = Math.max(0, ...(hover?.rows ?? []).map((r) => r.label.length));
-  const valueChars = Math.max(0, ...(hover?.rows ?? []).map((r) => valueText(r.value).length));
+  const valueChars = Math.max(0, ...(hover?.rows ?? []).map((r) => valueText(r).length));
   const tipW = Math.min(W - PAD_L - PAD_R,
     Math.max(138, 19 + labelChars * CH + 14 + valueChars * CH + 7, 14 + timeText.length * CH));
   const fitChars = Math.max(4, Math.floor((tipW - 19 - 14 - valueChars * CH - 7) / CH));
@@ -259,10 +335,20 @@ export function TimeChart({ series: raw, unit: rawUnit, bucketMs }: {
         : model.sx(hover.at) + 8)
     : 0;
 
+  const hasBand = model.bands.some(Boolean);
+  const markColor = (sev: string) =>
+    sev === 'CRITICAL' || sev === 'MAJOR' ? chart.critical
+      : sev === 'WARNING' || sev === 'MINOR' ? chart.warn : chart.muted;
+  const markTitle = (m: ChartMark) =>
+    `${severityWord(m.severity)}: ${m.label}\n${stamp(m.start, 60_000, model.spansDays)} – ${
+      m.end == null ? 'still open' : stamp(m.end, 60_000, model.spansDays)}`;
+
   return (
     <div className="chart-wrap">
       <svg className="chart" viewBox={`0 0 ${W} ${H}`} role="img"
-           aria-label={`${series.map((s) => seriesLabel(s, mixed)).join(', ')} over time, in ${unitSymbol(unit) || unit}`}>
+           aria-label={`${series.map((s) => seriesLabel(s, mixed)).join(', ')} over time, in ${unitSymbol(unit) || unit}`
+             + (hasBand ? '; the band is each bucket\'s lowest to highest reading' : '')
+             + (model.marks.length ? `; ${model.marks.length} alarm episode${model.marks.length === 1 ? '' : 's'} marked under the axis` : '')}>
         {yTicks.map((t) => (
           <g key={t}>
             <line x1={PAD_L} x2={W - PAD_R} y1={model.sy(t)} y2={model.sy(t)}
@@ -277,9 +363,25 @@ export function TimeChart({ series: raw, unit: rawUnit, bucketMs }: {
             {timeLabel(t, model.span)}
           </text>
         ))}
+        {/* Under the lines, in the line's own colour at low opacity: the
+            band belongs to its line and must never read as a fifth series. */}
+        {model.bands.map((d, i) => d && (
+          <path key={model.paths[i].key} d={d} className="chart-band" fill={colorOf(i)} />
+        ))}
         {model.paths.map((p, i) => (
           <path key={p.key} d={p.d} className="chart-line"
                 stroke={colorOf(i)} strokeDasharray={dashOf(i)} />
+        ))}
+        {/* Alarm episodes, as bars in the gutter between the plot and the
+            tick labels, in the severity's colour. Hoverable on a taller
+            invisible strip than the bar itself. */}
+        {model.marks.map((m, i) => (
+          <g key={`${m.start}-${i}`} className="chart-mark">
+            <title>{markTitle(m)}</title>
+            <rect x={m.x} y={H - PAD_B + 1.5} width={m.w} height={4} rx={1}
+                  fill={markColor(m.severity)} />
+            <rect x={m.x} y={H - PAD_B} width={m.w} height={11} fill="transparent" />
+          </g>
         ))}
 
         {hover && (
@@ -310,7 +412,7 @@ export function TimeChart({ series: raw, unit: rawUnit, bucketMs }: {
                   {/* The symbol, not the code, and not just for percentages -
                      a reading of "67.9" beside a line labelled C is a number
                      the reader has to carry the unit for. */}
-                  {valueText(r.value)}
+                  {valueText(r)}
                 </text>
               </g>
             ))}

@@ -2437,6 +2437,9 @@ export interface Series {
   unit: string;
   /** [epoch_ms, value] pairs. */
   points: number[][];
+  /** [epoch_ms, min, max] per bucket when the series is a rollup: the
+   *  extremes the averaged line hides. Absent for raw samples. */
+  envelope?: number[][] | null;
 }
 
 export interface HistoryOut {

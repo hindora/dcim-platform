@@ -1034,6 +1034,10 @@ class Series(BaseModel):
     # [epoch_ms, value] pairs: ~4x smaller than objects and the shape every
     # charting library wants.
     points: list[list[float]]
+    #: [epoch_ms, min, max] per bucket where the series comes from a rollup:
+    #: the extremes the average hides. Absent for raw samples, which ARE the
+    #: extremes.
+    envelope: list[list[float]] | None = None
 
 
 class HistoryOut(BaseModel):

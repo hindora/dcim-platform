@@ -93,6 +93,13 @@ async def history(
 ) -> tuple[list[dict[str, Any]], str, str, bool]:
     table, bucket_col, label = choose_source(start, end, interval)
     value_expr = "value" if table == "telemetry_sample" else _AGG_COLUMN.get(agg, "avg_value")
+    # A rollup carries each bucket's extremes beside its average, and the
+    # chart wants them: a 44-second excursion to 25.8 C averages to 22.3 in a
+    # five-minute bucket, and a line of averages flattens it to nothing while
+    # the alarm it raised sits in the panel beside the chart. The envelope is
+    # what lets the line and the alarm agree. Raw samples have no envelope.
+    band_expr = ("NULL::float AS lo, NULL::float AS hi" if table == "telemetry_sample"
+                 else "t.min_value AS lo, t.max_value AS hi")
 
     # Scale the cap with the number of series requested, then bound it, so a
     # normal multi-metric chart is never truncated but a pathological request
@@ -110,7 +117,7 @@ async def history(
     rows = (await session.execute(text(f"""
         SELECT m.key AS metric, m.unit, t.instance,
                extract(epoch FROM t.{bucket_col}) * 1000 AS ts_ms,
-               t.{value_expr} AS value
+               t.{value_expr} AS value, {band_expr}
         FROM {table} t
         JOIN metric m ON m.id = t.metric_id
         WHERE t.device_id = CAST(:device_id AS uuid)
@@ -135,6 +142,9 @@ async def history(
         s = series.setdefault(key, {"metric": r["metric"], "instance": r["instance"],
                                     "unit": r["unit"], "points": []})
         s["points"].append([float(r["ts_ms"]), float(r["value"])])
+        if r["lo"] is not None and r["hi"] is not None:
+            s.setdefault("envelope", []).append(
+                [float(r["ts_ms"]), float(r["lo"]), float(r["hi"])])
 
     return list(series.values()), table, label, truncated
 

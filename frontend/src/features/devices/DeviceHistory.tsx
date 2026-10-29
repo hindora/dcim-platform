@@ -2,8 +2,9 @@ import { useQuery } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { api, type HistoryOut, type Series } from '../../api/client';
 import { metricLabel, unitSymbol } from '../../lib/format';
-import { TimeChart } from '../../components/TimeChart';
+import { TimeChart, type ChartMark } from '../../components/TimeChart';
 import { Tip } from '../../components/HoverTip';
+import { useDeviceAlarms } from './DeviceAlarms';
 
 const RANGES = [
   { key: '1h', label: '1 h', ms: 3600_000 },
@@ -88,6 +89,22 @@ export function DeviceHistory({ deviceId, metrics, groups }: {
     retry: false,
   });
 
+  /** The device's alarm episodes that overlap the window, for the marks
+   *  under every chart's axis. The same query the Alarms tab runs, so the
+   *  two never disagree about what happened. An episode is its first sight
+   *  to its clearing; one still open has no end. */
+  const alarms = useDeviceAlarms(deviceId, 'all');
+  const marks = useMemo<ChartMark[]>(() => {
+    const start = endsAt - span;
+    return (alarms.data?.items ?? []).flatMap((a) => {
+      const s = Date.parse(a.first_seen);
+      const e = a.cleared_at ? Date.parse(a.cleared_at)
+        : a.state === 'CLEARED' ? Date.parse(a.last_seen) : null;
+      if (!Number.isFinite(s) || s > endsAt || (e !== null && e < start)) return [];
+      return [{ start: s, end: e, severity: a.severity, label: a.message || a.alarm_type }];
+    });
+  }, [alarms.data, endsAt, span]);
+
   if (!metrics.length) {
     return <p className="muted">This device is not reporting any metrics yet.</p>;
   }
@@ -140,9 +157,11 @@ export function DeviceHistory({ deviceId, metrics, groups }: {
         {lastPointAt != null && (
           <Tip className="as-of"
                tip={q.data && q.data.interval !== 'raw'
-                 ? <>Averaged into <b>{q.data.interval}</b> buckets, so a short
-                     spike may be flattened.</>
-                 : 'Raw samples as polled.'}>
+                 ? <>Averaged into <b>{q.data.interval}</b> buckets. The shaded
+                     band is each bucket's lowest and highest reading, so a
+                     short spike the average flattens still shows there.
+                     Alarms are marked under the axis.</>
+                 : 'Raw samples as polled. Alarms are marked under the axis.'}>
             to{' '}
             <time dateTime={new Date(lastPointAt).toISOString()}>
               {stampFor(lastPointAt, q.data?.interval)}
@@ -173,7 +192,8 @@ export function DeviceHistory({ deviceId, metrics, groups }: {
               ) : (
                 <>
                   <TimeChart series={p.series} unit={p.series[0].unit}
-                             bucketMs={BUCKET_MS[q.data.interval] ?? 60_000} />
+                             bucketMs={BUCKET_MS[q.data.interval] ?? 60_000}
+                             marks={marks} />
                   {/* Say what is absent rather than drawing a panel that looks
                       complete. A missing line and a flat one look identical. */}
                   {p.missing.length > 0 && (
@@ -198,7 +218,8 @@ export function DeviceHistory({ deviceId, metrics, groups }: {
                 )}
               </figcaption>
               <TimeChart series={series} unit={unit}
-                         bucketMs={BUCKET_MS[q.data.interval] ?? 60_000} />
+                         bucketMs={BUCKET_MS[q.data.interval] ?? 60_000}
+                         marks={marks} />
             </figure>
           ))}
         </>

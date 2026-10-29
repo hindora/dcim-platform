@@ -649,6 +649,11 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .chart-grid { stroke: var(--border); stroke-width: 1; }
 .chart-line { fill: none; stroke-width: 2; stroke-linejoin: round;
               stroke-linecap: round; }
+/* The min-max band behind an averaged line, in the line's colour. Faint
+   enough that two bands crossing still show both lines; the line on top is
+   what is read, the band is what the line is not saying. */
+.chart-band { fill-opacity: 0.16; stroke: none; }
+.chart-mark { cursor: default; }
 .chart-tick-y { font-size: 10px; fill: var(--text-muted); text-anchor: end;
                 dominant-baseline: middle; font-family: var(--mono); }
 .chart-tick-x { font-size: 10px; fill: var(--text-muted);
