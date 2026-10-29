@@ -1544,7 +1544,7 @@ class TopologyImporter:
             VALUES (CAST(:vendor AS uuid), :dtype, :name, :power, :cooling,
                     CASE WHEN CAST(:budget AS int) IS NULL THEN '{}'::jsonb
                          ELSE jsonb_build_object('budget_w', CAST(:budget AS int),
-                                                 'budget_source', :budget_source) END)
+                                                 'budget_source', CAST(:budget_source AS text)) END)
             ON CONFLICT (vendor_id, name) DO UPDATE SET
                 device_type = EXCLUDED.device_type,
                 rated_power_w = COALESCE(EXCLUDED.rated_power_w, model.rated_power_w),
@@ -1553,10 +1553,10 @@ class TopologyImporter:
                 attributes = CASE
                     WHEN CAST(:budget AS int) IS NOT NULL
                      AND (NULLIF(model.attributes->>'budget_w', '') IS NULL
-                          OR model.attributes->>'budget_source' = :budget_source)
+                          OR model.attributes->>'budget_source' = CAST(:budget_source AS text))
                     THEN COALESCE(model.attributes, '{}'::jsonb)
                          || jsonb_build_object('budget_w', CAST(:budget AS int),
-                                               'budget_source', :budget_source)
+                                               'budget_source', CAST(:budget_source AS text))
                     ELSE model.attributes END
             RETURNING id::text
         """, vendor=vendor_id, dtype=dtype, name=name,
