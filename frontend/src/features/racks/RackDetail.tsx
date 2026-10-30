@@ -159,7 +159,7 @@ export function RackDetail() {
           </p>
           <div className="dv-tools">
             {rack.room_id && (
-              <Link className="dv-act" to={`/floorplan?room=${rack.room_id}&rack=${rack.id}`}>Open in the room</Link>
+              <Link className="dv-act" to={`/floorplan?room=${rack.room_id}&rack=${rack.id}`}>View in 3D</Link>
             )}
             <Link className="dv-act" to={`/devices?q=${encodeURIComponent(rack.name)}`}>Its devices in the list</Link>
           </div>
