@@ -8,6 +8,7 @@ import {
   type RackElevation,
 } from '../../api/client';
 import { CategoryGlyph } from '../../components/CategoryGlyph';
+import { ActionGlyph } from '../../components/ActionGlyph';
 import { Notice } from '../../components/Notice';
 import { DeviceAlarms } from '../devices/DeviceAlarms';
 import { humanise, relativeTime, statusClass } from '../../lib/format';
@@ -159,9 +160,13 @@ export function RackDetail() {
           </p>
           <div className="dv-tools">
             {rack.room_id && (
-              <Link className="dv-act" to={`/floorplan?room=${rack.room_id}&rack=${rack.id}`}>View in 3D</Link>
+              <Link className="dv-act" to={`/floorplan?room=${rack.room_id}&rack=${rack.id}`}>
+                <ActionGlyph kind="cube" />View in 3D
+              </Link>
             )}
-            <Link className="dv-act" to={`/devices?q=${encodeURIComponent(rack.name)}`}>Its devices in the list</Link>
+            <Link className="dv-act" to={`/devices?q=${encodeURIComponent(rack.name)}`}>
+              <ActionGlyph kind="open" />Its devices in the list
+            </Link>
           </div>
         </div>
 
