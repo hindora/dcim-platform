@@ -48,7 +48,7 @@ const COLUMNS: { key: SortKey | 'ip'; label: string; w: number; sort?: SortKey;
                  first?: 'asc' | 'desc'; cls?: string }[] = [
   { key: 'name', label: 'Name', w: 0, sort: 'name' },
   { key: 'device_type', label: 'Type', w: 176, sort: 'device_type' },
-  { key: 'status', label: 'State', w: 104, sort: 'status' },
+  { key: 'status', label: 'State', w: 150, sort: 'status' },
   { key: 'alarms', label: 'Alarms', w: 78, sort: 'alarms', first: 'desc', cls: 'num' },
   { key: 'ip', label: 'Management IP', w: 132, cls: 'col-ip' },
   { key: 'location', label: 'Location', w: 236, sort: 'location' },
@@ -121,8 +121,8 @@ function StateCell({ d }: { d: DeviceSummary }) {
     <span className="dl-state-wrap">
       {word}
       <span className={`dl-meter${lost ? ' lost' : ''}`}
-            title={lost ? `Its meter is ${(d.metered_status ?? 'unknown').toLowerCase()}: nothing is reading this panel`
-                        : 'Read through the meter on it'}>
+            title={lost ? `${d.metered_by} is ${(d.metered_status ?? 'unknown').toLowerCase()}: nothing is reading this panel`
+                        : `Read through ${d.metered_by}, the meter on it`}>
         {lost ? <>metering lost · {meter}</> : <>via {meter}</>}
       </span>
     </span>
