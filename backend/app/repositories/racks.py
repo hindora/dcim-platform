@@ -84,8 +84,11 @@ async def rack_devices(session: AsyncSession, rack_id: str) -> list[dict[str, An
                device_comm_status(d.id, ds.status::text)      AS status,
                COALESCE(ds.health::text, 'UNKNOWN')      AS health,
                COALESCE(ds.max_severity::text, 'CLEAR')  AS max_severity,
-               ds.power_w, ds.inlet_temp_c, ds.cpu_util_pct
+               COALESCE(ds.active_alarms, 0)             AS active_alarms,
+               ds.power_w, ds.inlet_temp_c, ds.cpu_util_pct, ds.last_seen,
+               dt.category
         FROM device d
+        LEFT JOIN device_type dt  ON dt.code = d.device_type
         LEFT JOIN device_state ds ON ds.device_id = d.id
         WHERE d.rack_id = CAST(:id AS uuid) AND d.lifecycle <> 'decommissioned'
         ORDER BY d.u_start DESC NULLS LAST, d.name

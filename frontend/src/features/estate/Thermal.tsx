@@ -893,7 +893,7 @@ export function Thermal() {
           // drilled-in header, so it is one click away rather than the click.
           onRowClick={(r) => {
             if (r.kind === 'rack') {
-              navigate(`/racks/${r.id}?overlay=thermal&from=thermal`);
+              navigate(`/racks/${r.id}?tab=thermal&from=thermal`);
               return;
             }
             // Leaving any facility room behind: two drills open at once would

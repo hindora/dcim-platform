@@ -761,11 +761,11 @@ export function Power() {
           rows={t.visible}
           columns={columns}
           lead={severity}
-          // Site -> its rooms, room -> its racks, rack -> its elevation with
-          // the power overlay on.
+          // Site -> its rooms, room -> its racks, rack -> its page, open on
+          // the power question this table was asking.
           onRowClick={(r) => {
             if (r.kind === 'rack') {
-              navigate(`/racks/${r.id}?overlay=power&from=power`);
+              navigate(`/racks/${r.id}?tab=power&from=power`);
               return;
             }
             t.drillInto(r);

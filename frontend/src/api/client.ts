@@ -1900,6 +1900,71 @@ export interface ElevationSlot {
   device?: ElevationDevice | null;
 }
 
+/** GET /racks/{id}/detail: one rack the way an operator reads it. The
+ *  power and thermal blocks are the Power and Thermal pages' rack rows, read
+ *  for this rack alone (backend services/racks.py). */
+export interface RackThermalPoint {
+  id: string; name: string; device_type: string;
+  /** device = a load on the rails; probe = a cold-aisle sensor; strip = a
+   *  rack PDU's built-in head. */
+  kind: 'device' | 'probe' | 'strip';
+  u_start: number | null; u_height: number | null;
+  intake_c: number | null; exhaust_c: number | null; cpu_c: number | null; rh_pct: number | null;
+  /** in_band | allowable_high | allowable_low | out, against the room's class. */
+  grade: string | null;
+  read_at: string | null;
+}
+export interface RackThermalBlock {
+  ashrae: { class: string; rec_low_c: number; rec_high_c: number; allow_low_c: number; allow_high_c: number };
+  intake_mean_c: number | null; intake_max_c: number | null; intake_min_c: number | null;
+  exhaust_mean_c: number | null; exhaust_max_c: number | null;
+  delta_t_k: number | null; rh_mean_pct: number | null;
+  sensors: number; in_band: number;
+  hot: 'allowable' | 'out' | null;
+  points: RackThermalPoint[];
+}
+export interface RackPowerBlock {
+  it_ac_kw: number | null; rated_kw?: number | null; load_pct?: number | null;
+  band?: 'ok' | 'warn' | 'critical' | null;
+  allocated_kw?: number | null; reserved_kw?: number | null;
+  p95_kw: number | null; p95_days: number; headroom_kw: number | null; stranded_kw: number | null;
+  loads: number; reporting: number | null; measured_at_strip: number;
+  feeds: { a: string[]; b: string[]; other: string[]; loads: number; dual_cord: number;
+           single_cord: number; unfed: number; shared_upstream?: string[] } | null;
+  legs: { strip_id: string; strip: string; legs: number[]; imbalance_pct: number | null }[];
+  imbalance_pct: number | null;
+  psu_failed: string[];
+  banks: { strip: string; bank: number; amps: number; breaker_a: number; pct: number }[];
+  bank_worst_pct: number | null;
+  failover: { pct: number; basis: string; lost_side: string; survivor: string; detail: string;
+              total_kw: number; mirrored: boolean; band: 'ok' | 'warn' | 'critical' } | null;
+  outlets: { strips_metered: number; strips: number; max_a: number | null; hot: number; idle: number;
+             rows: { strip: string; outlet: number; amps: number; load: string | null; pct: number | null }[] } | null;
+  strips: { id: string; name: string; side: string | null; rated_kw: number | null; kw: number | null;
+            legs: number[]; v_ln: number | null; status: string; max_severity: string }[];
+  thresholds: { warn_pct: number; critical_pct: number; bank_warn_pct: number;
+                leg_imbalance_warn_pct: number; outlet_warn_pct: number };
+  note?: string | null;
+}
+export interface RackDeviceRow {
+  id: string; name: string; device_type: string; category: string | null;
+  u_start: number | null; u_height: number | null;
+  status: string; health: string; max_severity: string; active_alarms: number;
+  power_w: number | null; inlet_temp_c: number | null; cpu_util_pct: number | null;
+  last_seen: string | null;
+}
+export interface RackDetail {
+  rack: RackSummary;
+  space: { u_total: number; u_used: number; u_free: number;
+           largest_free: { u_start: number; u_height: number } | null;
+           free_blocks: { u_start: number; u_height: number }[];
+           racked: number; zero_u: number; by_category: Record<string, number> };
+  alarms: { open: number; worst: string; devices: number; offline: number };
+  power: RackPowerBlock | null;
+  thermal: RackThermalBlock;
+  devices: RackDeviceRow[];
+}
+
 export interface RackElevation {
   rack: RackSummary;
   positions: ElevationSlot[];
@@ -5134,6 +5199,8 @@ export const api = {
 
   rackElevation: (id: string) =>
     request<RackElevation>(`/racks/${id}/elevation`),
+  rackDetail: (id: string) =>
+    request<RackDetail>(`/racks/${id}/detail`),
 
   racks: (params: Record<string, string | undefined> = {}) => {
     const q = new URLSearchParams();

@@ -532,6 +532,7 @@ async def list_alarms(session: AsyncSession, *, states: list[str] | None = None,
                       detections: list[str] | None = None,
                       response_classes: list[str] | None = None,
                       room_id: str | None = None,
+                      rack_id: str | None = None,
                       include_symptoms: bool = False,
                       include_shelved: bool = False,
                       limit: int = 100,
@@ -574,6 +575,12 @@ async def list_alarms(session: AsyncSession, *, states: list[str] | None = None,
         where.append("rm.id = CAST(:room_id AS uuid)")
         where.append("d.lifecycle <> 'decommissioned'")
         params["room_id"] = room_id
+    # The rack page's list: everything open on anything standing in it,
+    # strips and probes included, by the same rule.
+    if rack_id:
+        where.append("r.id = CAST(:rack_id AS uuid)")
+        where.append("d.lifecycle <> 'decommissioned'")
+        params["rack_id"] = rack_id
     if not include_symptoms:
         # Roots only by default. An alarm list showing 21 rows for one OOB
         # switch failure is the reason operators stop looking at alarm lists.

@@ -1,0 +1,90 @@
+/* The rack page: the device page's bones (dv-*), with the parts a rack has
+   and a device does not - a strip of rack units, two feeds, air by height. */
+
+/* ---------------------------------------------------------------- U map
+   Forty-two cells, bottom of the rack at the left as the U numbers run, each
+   filled cell wearing its device's category colour. Free runs read as gaps:
+   the question this answers is "where does the next thing go". */
+.rk-umap { display: flex; gap: 2px; margin: 4px 0 8px; }
+.rk-umap .u {
+  flex: 1 1 0; height: 22px; min-width: 4px; border-radius: 2px;
+  background: var(--bg-inset); border: 1px solid transparent;
+}
+.rk-umap .u.it   { background: var(--cat-it); }
+.rk-umap .u.network { background: var(--cat-cap); }
+.rk-umap .u.power { background: var(--cat-pwr); }
+.rk-umap .u.cooling { background: var(--cat-cool); }
+.rk-umap .u.environment, .rk-umap .u.facility, .rk-umap .u.other { background: var(--cat-vis); }
+.rk-umap .u.free { background: var(--bg-inset); border-color: var(--border); }
+.rk-umap .u.alarmed { box-shadow: inset 0 0 0 2px var(--critical); }
+.rk-umap-scale { display: flex; justify-content: space-between; font-size: 10.5px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.rk-umap-key { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 8px; font-size: 11.5px; color: var(--text-muted); }
+.rk-umap-key i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+
+/* ----------------------------------------------------------------- feeds */
+.rk-feeds { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.rk-feed { padding: 10px 12px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-inset); min-width: 0; }
+.rk-feed.is-dark { border-color: var(--critical); }
+.rk-feed-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.rk-feed-head a { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.rk-feed-head .chip { margin-left: auto; font-size: 11px; }
+.rk-side {
+  flex: none; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center;
+  font-size: 11px; font-weight: 700; color: var(--text); background: var(--bg-raised); border: 1px solid var(--border-strong);
+}
+.rk-feed-load { margin-top: 8px; font-size: 13px; }
+.rk-feed-load b { font-size: 17px; font-variant-numeric: tabular-nums; }
+.rk-feed-load b.warn { color: var(--warn); }
+.rk-feed-load b.critical { color: var(--critical); }
+.rk-feed .dv-meter { margin-top: 6px; max-width: none; }
+.rk-legs { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 8px; font-size: 12px; font-variant-numeric: tabular-nums; }
+.rk-legs .k { color: var(--text-faint); font-size: 10.5px; letter-spacing: .05em; }
+
+/* -------------------------------------------------------------- failover */
+.rk-failover { display: flex; gap: 16px; align-items: flex-start; }
+.rk-failover-pct { flex: none; font-size: 30px; font-weight: 600; line-height: 1; font-variant-numeric: tabular-nums; padding-top: 2px; }
+.rk-failover-pct.ok { color: var(--ok); }
+.rk-failover-pct.warn { color: var(--warn); }
+.rk-failover-pct.critical { color: var(--critical); }
+.rk-failover-words { margin: 0 0 6px; font-size: 13.5px; }
+
+.rk-sub { margin: 0 0 8px; font-size: 12.5px; font-weight: 600; color: var(--text-muted); }
+
+/* ----------------------------------------------------------------- table */
+.rk-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.rk-table th { text-align: left; font-size: 11px; letter-spacing: .05em; text-transform: uppercase; color: var(--text-faint); font-weight: 500; padding: 4px 8px 6px 0; border-bottom: 1px solid var(--border); }
+.rk-table td { padding: 6px 8px 6px 0; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.rk-table tr:last-child td { border-bottom: none; }
+.rk-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.rk-table th:last-child, .rk-table td:last-child { padding-left: 14px; }
+.rk-table td.warn, .rk-table td.critical, .dv-fact .v.warn, .dv-fact .v.critical, .dv-row .v.warn, .dv-row .v.critical { font-weight: 600; }
+.rk-table td.warn, .dv-fact .v.warn, .dv-row .v.warn { color: var(--warn); }
+.rk-table td.critical, .dv-fact .v.critical, .dv-row .v.critical { color: var(--critical); }
+.rk-table .dl-state { font-size: 12.5px; }
+.rk-table tbody tr.is-link { cursor: pointer; }
+.rk-table tbody tr.is-link:hover td { background: var(--bg-inset); }
+.dv-note.warn { color: var(--warn); }
+
+/* -------------------------------------------------------------- profile
+   One axis, two fixed series, the band as a quiet wash. Ink is text ink;
+   the series colour sits only on the marks. */
+.rk-profile svg { display: block; width: 100%; max-width: 760px; height: auto; font-family: inherit; }
+.rk-band { fill: var(--ok); fill-opacity: .09; }
+.rk-limit { stroke: var(--border-strong); stroke-width: 1; stroke-dasharray: none; }
+.rk-grid { stroke: var(--border); stroke-width: 1; }
+.rk-tick { font-size: 10px; fill: var(--text-faint); font-variant-numeric: tabular-nums; }
+.rk-bandlabel { font-size: 10px; fill: var(--text-faint); }
+.rk-u { font-size: 10px; fill: var(--text-faint); font-variant-numeric: tabular-nums; }
+.rk-name { font-size: 11px; fill: var(--text-muted); }
+.rk-rise { stroke: var(--border-strong); stroke-width: 2; stroke-linecap: round; }
+.rk-dot { stroke: var(--bg-raised); stroke-width: 2; }
+.rk-flag { font-size: 10.5px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.rk-val { font-size: 10px; fill: var(--text-muted); font-variant-numeric: tabular-nums; }
+.rk-row:hover rect { fill: var(--bg-inset); }
+.rk-legend text { font-size: 11px; fill: var(--text-muted); }
+
+/* --------------------------------------------------------------- phones */
+@media (max-width: 720px) {
+  .rk-failover { flex-direction: column; gap: 6px; }
+  .rk-feeds { grid-template-columns: 1fr; }
+}

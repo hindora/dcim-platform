@@ -28,7 +28,7 @@ import { Thermal } from './features/estate/Thermal';
 import { Power } from './features/estate/Power';
 import { Utilization } from './features/estate/Utilization';
 import { DeviceDetail } from './features/devices/DeviceDetail';
-import { RackElevationView } from './features/racks/RackElevation';
+import { RackDetail } from './features/racks/RackDetail';
 import { RackList } from './features/racks/RackList';
 import { FloorPlanView } from './features/floorplan/FloorPlan';
 import { NavMenu, type NavMenuItem } from './components/NavMenu';
@@ -307,7 +307,7 @@ export default function App() {
           <Route path="/devices" element={<Page><DeviceList /></Page>} />
           <Route path="/devices/:id" element={<Page><DeviceDetail /></Page>} />
           <Route path="/racks" element={<Page><RackList /></Page>} />
-          <Route path="/racks/:id" element={<Page><RackElevationView /></Page>} />
+          <Route path="/racks/:id" element={<Page><RackDetail /></Page>} />
           {/* Full-bleed like the network map: the room fills the window and
               carries its own chrome. */}
           <Route path="/floorplan" element={<FloorPlanView />} />

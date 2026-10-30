@@ -1032,6 +1032,20 @@ class RackElevation(BaseModel):
     zero_u_devices: list[ElevationDevice] = Field(default_factory=list)
 
 
+class RackDetail(BaseModel):
+    """One rack the way an operator reads it: what stands in it, what it
+    draws against its feeds and rating, the air it breathes, and what is
+    open on it. The blocks are the Power and Thermal pages' own rack rows,
+    read for this rack alone (services/racks.py)."""
+
+    rack: RackSummary
+    space: dict[str, Any]
+    alarms: dict[str, Any]
+    power: dict[str, Any] | None = None
+    thermal: dict[str, Any]
+    devices: list[dict[str, Any]] = Field(default_factory=list)
+
+
 # --------------------------------------------------------------- telemetry
 
 class Series(BaseModel):

@@ -1,20 +1,18 @@
-import { useQuery } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
 import { humanise } from '../../lib/format';
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { useState } from 'react';
-import { api, type ElevationDevice, type RackElevation as Elevation } from '../../api/client';
+import type { ElevationDevice, RackElevation } from '../../api/client';
 import { StatusChip } from '../../components/StatusChip';
 import { useHoverTip } from '../../components/HoverTip';
 
-/** Which measurement is painted onto the occupied slots.
+/** The 42 U, front on, the way a rack is read standing before it.
  *
  *  A rack elevation with no overlay is a picture of some metal. The overlay is
  *  what makes it operational: the same 42 U answers "what is broken", "where is
  *  the heat" and "where is the power" depending on which question is being
  *  asked. */
-type Overlay = 'status' | 'power' | 'thermal';
+export type Overlay = 'status' | 'power' | 'thermal';
 
-const OVERLAYS: { key: Overlay; label: string; hint: string }[] = [
+export const OVERLAYS: { key: Overlay; label: string; hint: string }[] = [
   { key: 'status', label: 'Status', hint: 'communication state and alarm severity' },
   { key: 'power', label: 'Power', hint: 'draw per device, shaded against the busiest in this rack' },
   { key: 'thermal', label: 'Inlet temp', hint: 'intake air per device, shaded against ASHRAE A1 allowable' },
@@ -62,104 +60,36 @@ function overlayValue(device: ElevationDevice, overlay: Overlay): string {
   return device.status;
 }
 
-/** Where the reader came from, for the back link. The estate pages and the
- *  floor plan say so in ?from=; anything else is treated as the rack list. */
-const FROM: Record<string, { label: string; path: string }> = {
-  thermal: { label: 'Thermal', path: '/thermal' },
-  floorplan: { label: 'Floor plan', path: '/floorplan' },
-  racks: { label: 'All racks', path: '/racks' },
-};
-
-export function RackElevationView() {
-  const { id = '' } = useParams();
-  const navigate = useNavigate();
-  // ?overlay=thermal lets the thermal estate page land here with the
-  // intake tint already on; an unknown value falls back to status.
-  const [params] = useSearchParams();
-  const wanted = params.get('overlay');
-  const from = FROM[params.get('from') ?? ''] ?? FROM.racks;
-  // Back is a real history step when there is one (the drilled-in thermal
-  // table, the floor plan with its overlay), so the reader lands where they
-  // were, not on a fresh copy of the page. A deep link with no history goes
-  // to the named page instead.
-  const goBack = () => (
-    (window.history.state?.idx ?? 0) > 0 ? navigate(-1) : navigate(from.path));
-  const [overlay, setOverlay] = useState<Overlay>(
-    OVERLAYS.some((o) => o.key === wanted) ? (wanted as Overlay) : 'status');
+export function Elevation({ data, overlay, onOverlay }: {
+  data: RackElevation;
+  overlay: Overlay;
+  /** Given, the picker is drawn; absent, the caller fixed the overlay. */
+  onOverlay?: (o: Overlay) => void;
+}) {
   const { bind, tipEl } = useHoverTip();
-
-  const q = useQuery<Elevation>({
-    queryKey: ['rack-elevation', id],
-    queryFn: () => api.rackElevation(id),
-    enabled: Boolean(id),
-    refetchInterval: 15_000,
-  });
-
-  if (q.isLoading) return <p className="muted">Loading…</p>;
-  if (q.isError || !q.data) return <p className="warn">Rack not found.</p>;
-
-  const { rack, positions, free_blocks: freeBlocks, zero_u_devices: zeroU } = q.data;
+  const { positions, zero_u_devices: zeroU } = data;
   const occupied = positions.filter((p) => p.device);
-  const peakPower = Math.max(
-    0, ...occupied.map((p) => p.device?.power_w ?? 0));
-  const largestFree = freeBlocks.reduce(
-    (best, b) => (b.u_height > (best?.u_height ?? 0) ? b : best),
-    undefined as { u_start: number; u_height: number } | undefined);
-
+  const peakPower = Math.max(0, ...occupied.map((p) => p.device?.power_w ?? 0));
   // Top of rack first, which is how a rack is read standing in front of it.
   const ordered = [...positions].sort((a, b) => b.u_start - a.u_start);
-
   return (
     <div className="stack">
-      <header className="rack-head">
-        <div>
-          <p>
-            <button type="button" className="link-button" onClick={goBack}>← {from.label}</button>
-            {rack.room_id && (
-              <Link to={`/floorplan?room=${rack.room_id}&rack=${rack.id}`} style={{ marginLeft: 14 }}>
-                View in 3D →
-              </Link>
-            )}
-          </p>
-          <h2>{rack.name}</h2>
-          <p className="muted">
-            {[rack.datacenter_code, rack.room_name,
-              rack.row_name ? `Row ${rack.row_name}` : null,
-              rack.position != null ? `Rack ${rack.position} in the row` : null]
-              .filter(Boolean).join(' · ')}
-          </p>
+      {onOverlay && (
+        <div className="overlay-picker" role="group" aria-label="Overlay">
+          {OVERLAYS.map((o) => (
+            <button key={o.key} type="button" title={o.hint}
+                    className={overlay === o.key ? 'active' : undefined}
+                    onClick={() => onOverlay(o.key)}>
+              {o.label}
+            </button>
+          ))}
         </div>
-        <dl className="rack-stats">
-          <div><dt>Load</dt><dd>{rack.load_kw != null ? `${rack.load_kw.toFixed(1)} kW` : '—'}
-            {rack.rated_power_kw ? <span className="muted"> / {rack.rated_power_kw} kW</span> : null}</dd></div>
-          <div><dt>Devices</dt><dd>{rack.device_count}
-            {rack.offline_count ? <span className="warn"> · {rack.offline_count} offline</span> : null}</dd></div>
-          <div><dt>Max inlet</dt><dd>{rack.max_inlet_c != null ? `${rack.max_inlet_c.toFixed(1)} °C` : '—'}</dd></div>
-          <div><dt>Free</dt><dd>{rack.free_u ?? 0} U
-            {largestFree ? <span className="muted"> · largest {largestFree.u_height} U at U{largestFree.u_start}</span> : null}</dd></div>
-        </dl>
-      </header>
-
-      <div className="overlay-picker" role="group" aria-label="Overlay">
-        {OVERLAYS.map((o) => (
-          <button
-            key={o.key}
-            type="button"
-            title={o.hint}
-            className={overlay === o.key ? 'active' : undefined}
-            onClick={() => setOverlay(o.key)}
-          >
-            {o.label}
-          </button>
-        ))}
-      </div>
-
+      )}
       <div className="rack">
         {ordered.map((slot) => {
           const label = slot.u_height > 1
             ? `U${slot.u_start}–${slot.u_start + slot.u_height - 1}`
             : `U${slot.u_start}`;
-
           if (!slot.device) {
             return (
               <div key={`free-${slot.u_start}`} className="rack-slot free"
@@ -169,7 +99,6 @@ export function RackElevationView() {
               </div>
             );
           }
-
           const d = slot.device;
           const frac = overlayFraction(d, overlay, peakPower);
           const cls = overlay === 'status' ? severityClass(d) : 'sev-none';

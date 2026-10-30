@@ -30,11 +30,12 @@ export function sortAlarms(items: Alarm[]): Alarm[] {
 
 type View = 'open' | 'all';
 
-export function useDeviceAlarms(deviceId: string, view: View = 'open') {
+export function useDeviceAlarms(deviceId: string, view: View = 'open', rackId?: string) {
   return useQuery<{ items: Alarm[] }>({
-    queryKey: ['alarms', 'device', deviceId, view],
+    queryKey: ['alarms', rackId ? 'rack' : 'device', rackId ?? deviceId, view],
     queryFn: () => api.alarms({
-      device_id: deviceId,
+      // A rack's list is everything open on anything standing in it.
+      ...(rackId ? { rack: rackId } : { device_id: deviceId }),
       include_symptoms: 'true',
       state: view === 'all' ? ['ACTIVE', 'ACKNOWLEDGED', 'CLEARED'] : undefined,
       limit: '100',
@@ -47,9 +48,11 @@ function when(iso: string): string {
   return new Date(iso).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' });
 }
 
-export function DeviceAlarms({ deviceId, deviceName, compact = false, view = 'open', limit, onMore }: {
+export function DeviceAlarms({ deviceId, deviceName, compact = false, view = 'open', limit, onMore, rackId }: {
   deviceId: string;
   deviceName: string;
+  /** Given, the list is the rack's - every device in it - and deviceId is unused. */
+  rackId?: string;
   compact?: boolean;
   /** Open conditions, or everything ever recorded on the device. */
   view?: View;
@@ -62,7 +65,7 @@ export function DeviceAlarms({ deviceId, deviceName, compact = false, view = 'op
   const canAct = atLeast('operator');
   const [confirming, setConfirming] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const q = useDeviceAlarms(deviceId, compact ? 'open' : view);
+  const q = useDeviceAlarms(deviceId, compact ? 'open' : view, rackId);
 
   const refresh = () => {
     for (const key of [['alarms'], ['alarm'], ['alarm-summary'], ['device-state', deviceId],
@@ -120,6 +123,7 @@ export function DeviceAlarms({ deviceId, deviceName, compact = false, view = 'op
                 <span className="sev">{a.severity.toLowerCase()}</span>
                 <div className="body">
                   <Link to={`/alarms/${a.id}`} className="type">{humanise(a.alarm_type)}</Link>
+                  {rackId && <>{' · '}<Link to={`/devices/${a.device_id}`} className="muted">{a.device_name}</Link></>}
                   {a.instance && <span className="muted"> · {a.instance}</span>}
                   <p className="msg">{a.message}</p>
                   <div className="meta">

@@ -1581,6 +1581,16 @@ _RACKS = """
       JOIN datacenter dc ON dc.id = rm.datacenter_id
 """
 
+#: Scope one of the rack-level reads below to a single rack. The rack page
+#: asks for one rack and must not pay for the estate; every read that groups
+#: by rack takes `rack_id=` and adds this to the predicate on `device d`.
+_RACK_AND = "AND d.rack_id = CAST(:rack AS uuid)"
+
+
+def _rack_scope(rack_id: str | None) -> tuple[str, dict[str, Any]]:
+    return (_RACK_AND, {"rack": rack_id}) if rack_id else ("", {})
+
+
 _RACK_COLS = """
         SELECT racks.rack_id::text       AS rack_id,
                racks.rack_name           AS rack_name,
@@ -1786,7 +1796,8 @@ async def power_live(session: AsyncSession, *, prev_at: datetime | None = None,
 
 
 async def power_racks_live(session: AsyncSession, *, prev_at: datetime | None = None,
-                           prev_width: timedelta = POWER_PREV_WIDTH) -> list[dict[str, Any]]:
+                           prev_width: timedelta = POWER_PREV_WIDTH,
+                           rack_id: str | None = None) -> list[dict[str, Any]]:
     """Every rack's IT draw right now, from the hot mirror.
 
     The rack's load is what its servers and switches report - the population
@@ -1799,6 +1810,7 @@ async def power_racks_live(session: AsyncSession, *, prev_at: datetime | None = 
     """
     prev_at = prev_at or (datetime.now(UTC) - POWER_PREV_AT)
     p0, p1 = prev_at - prev_width / 2, prev_at + prev_width / 2
+    rack_and, rp = _rack_scope(rack_id)
     rows = (await session.execute(text(f"""
         WITH racks AS ({_RACKS}),
         {_POWER_PREV},
@@ -1820,7 +1832,7 @@ async def power_racks_live(session: AsyncSession, *, prev_at: datetime | None = 
               LEFT JOIN device_state ds ON ds.device_id = d.id
               LEFT JOIN prev            ON prev.device_id = d.id
               LEFT JOIN strip           ON strip.device_id = d.id
-             WHERE d.rack_id IS NOT NULL AND d.lifecycle <> 'decommissioned'
+             WHERE d.rack_id IS NOT NULL AND d.lifecycle <> 'decommissioned' {rack_and}
              GROUP BY d.rack_id
         )
         {_RACK_COLS}
@@ -1828,8 +1840,9 @@ async def power_racks_live(session: AsyncSession, *, prev_at: datetime | None = 
                agg.prev_it, agg.as_of
           FROM racks
           LEFT JOIN agg ON agg.rack_id = racks.rack_id
+         {"WHERE racks.rack_id = CAST(:rack AS uuid)" if rack_id else ""}
          ORDER BY racks.site_code, racks.room_name, racks.rack_name
-    """), {"p0": p0, "p1": p1})).mappings().all()
+    """), {"p0": p0, "p1": p1, **rp})).mappings().all()
     return [dict(r) for r in rows]
 
 
@@ -1879,7 +1892,8 @@ async def power_racks_window(session: AsyncSession, *, start: datetime, end: dat
     return [dict(r) for r in rows]
 
 
-async def power_inventory(session: AsyncSession) -> dict[str, Any]:
+async def power_inventory(session: AsyncSession,
+                          rack_id: str | None = None) -> dict[str, Any]:
     """What every rack could carry and how it is fed, and each room's design.
 
     Three reads, none of them telemetry:
@@ -1900,7 +1914,8 @@ async def power_inventory(session: AsyncSession) -> dict[str, Any]:
     """
     from app.repositories.racks import BUDGET_DERATE
 
-    alloc = (await session.execute(text("""
+    rack_and, rp = _rack_scope(rack_id)
+    alloc = (await session.execute(text(f"""
         WITH alloc AS (
             SELECT d.rack_id,
                    sum(COALESCE(NULLIF(m.attributes->>'budget_w','')::float,
@@ -1911,7 +1926,7 @@ async def power_inventory(session: AsyncSession) -> dict[str, Any]:
                        AS unrated
               FROM device d
               LEFT JOIN model m ON m.id = d.model_id
-             WHERE d.rack_id IS NOT NULL
+             WHERE d.rack_id IS NOT NULL {rack_and}
                AND d.lifecycle IN ('installed', 'in_service', 'maintenance')
                AND d.device_type::text NOT IN ('pdu', 'sensor')
              GROUP BY d.rack_id
@@ -1924,9 +1939,9 @@ async def power_inventory(session: AsyncSession) -> dict[str, Any]:
         SELECT COALESCE(a.rack_id, h.rack_id)::text AS rack_id,
                a.allocated_kw, COALESCE(a.unrated, 0) AS unrated, h.reserved_kw
           FROM alloc a FULL JOIN held h ON h.rack_id = a.rack_id
-    """), {"derate": BUDGET_DERATE})).mappings().all()
+    """), {"derate": BUDGET_DERATE, **rp})).mappings().all()
 
-    edges = (await session.execute(text("""
+    edges = (await session.execute(text(f"""
         SELECT d.rack_id::text AS rack_id, d.id::text AS load_id,
                f.name AS feeder, c.redundancy_side AS side
           FROM device d
@@ -1936,9 +1951,9 @@ async def power_inventory(session: AsyncSession) -> dict[str, Any]:
                       WHERE layer = CAST('power' AS layer_t)
                         AND admin_state = 'enabled') c ON c.b_device_id = d.id
           LEFT JOIN device f ON f.id = c.a_device_id
-         WHERE d.rack_id IS NOT NULL AND d.lifecycle <> 'decommissioned'
+         WHERE d.rack_id IS NOT NULL AND d.lifecycle <> 'decommissioned' {rack_and}
            AND dt.category IN ('it', 'network')
-    """))).mappings().all()
+    """), rp)).mappings().all()
     feeds = fold_feeds([dict(e) for e in edges])
 
     design = (await session.execute(text("""
@@ -2504,7 +2519,8 @@ async def power_ratings(session: AsyncSession) -> dict[str, Any]:
     return out
 
 
-async def power_p95(session: AsyncSession, *, days: int = 7) -> dict[str, Any]:
+async def power_p95(session: AsyncSession, *, days: int = 7,
+                    rack_id: str | None = None) -> dict[str, Any]:
     """The 95th percentile of the coincident hourly IT draw over the last
     `days`, per rack, per room, per site and for the estate.
 
@@ -2518,6 +2534,7 @@ async def power_p95(session: AsyncSession, *, days: int = 7) -> dict[str, Any]:
     Returns {"racks": {id: kw}, "rooms": {id: kw}, "sites": {id: kw},
     "total": kw | None, "days": days}.
     """
+    rack_and, rp = _rack_scope(rack_id)
     rows = (await session.execute(text(f"""
         WITH {_DEV_CTE},
         rooms AS ({_ROOMS}),
@@ -2537,7 +2554,7 @@ async def power_p95(session: AsyncSession, *, days: int = 7) -> dict[str, Any]:
              WHERE m.key = 'power_draw'
                AND t.instance = ''
                AND t.bucket >= now() - make_interval(days => :days)
-               AND dt.category IN ('it', 'network')
+               AND dt.category IN ('it', 'network') {rack_and}
         ),
         -- Loads with no hourly reading of their own in the window, read at
         -- the strip: the same second instrument the NOW and windowed views
@@ -2580,6 +2597,7 @@ async def power_p95(session: AsyncSession, *, days: int = 7) -> dict[str, Any]:
               JOIN rooms          ON rooms.room_id = dev.room_id
              WHERE dt.category IN ('it', 'network')
                AND NOT EXISTS (SELECT 1 FROM self_devs s WHERE s.device_id = c.b_device_id)
+               {rack_and}
              GROUP BY 1, 2, 3, 4, 5
         ),
         b AS (
@@ -2601,7 +2619,7 @@ async def power_p95(session: AsyncSession, *, days: int = 7) -> dict[str, Any]:
                count(*) AS buckets
           FROM per
          GROUP BY g, rack_id, room_id, datacenter_id
-    """), {"days": days})).mappings().all()
+    """), {"days": days, **rp})).mappings().all()
     out: dict[str, Any] = {"racks": {}, "rooms": {}, "sites": {}, "total": None,
                            "days": days}
     for r in rows:
@@ -2653,7 +2671,8 @@ async def room_panels(session: AsyncSession, room_id: str) -> list[dict[str, Any
     return [dict(r) for r in rows]
 
 
-async def power_rack_legs(session: AsyncSession) -> dict[str, list[dict[str, Any]]]:
+async def power_rack_legs(session: AsyncSession,
+                          rack_id: str | None = None) -> dict[str, list[dict[str, Any]]]:
     """Each rack's strips with their per-leg currents, from the newest
     `current` sample per leg inside the last ten minutes.
 
@@ -2663,7 +2682,8 @@ async def power_rack_legs(session: AsyncSession) -> dict[str, list[dict[str, Any
     because PowerNet has no object for it and the estate page judges a rack
     on it. Returns {rack_id: [{strip, strip_id, legs: [A...], imbalance_pct}]}.
     """
-    rows = (await session.execute(text("""
+    rack_and, rp = _rack_scope(rack_id)
+    rows = (await session.execute(text(f"""
         WITH latest AS (
             SELECT DISTINCT ON (t.device_id, t.instance)
                    t.device_id, t.instance, t.value
@@ -2672,7 +2692,7 @@ async def power_rack_legs(session: AsyncSession) -> dict[str, list[dict[str, Any
               JOIN device d ON d.id = t.device_id
              WHERE m.key = 'current'
                AND d.device_type::text = 'pdu'
-               AND d.rack_id IS NOT NULL
+               AND d.rack_id IS NOT NULL {rack_and}
                AND d.lifecycle <> 'decommissioned'
                AND t.ts > now() - interval '10 minutes'
              ORDER BY t.device_id, t.instance, t.ts DESC
@@ -2682,7 +2702,7 @@ async def power_rack_legs(session: AsyncSession) -> dict[str, list[dict[str, Any
           FROM latest l
           JOIN device d ON d.id = l.device_id
          ORDER BY d.rack_id, d.name, l.instance
-    """))).mappings().all()
+    """), rp)).mappings().all()
     by_strip: dict[tuple[str, str, str], dict[str, float]] = {}
     for r in rows:
         by_strip.setdefault((r["rack_id"], r["strip_id"], r["strip"]), {})[
@@ -2706,11 +2726,13 @@ async def power_rack_legs(session: AsyncSession) -> dict[str, list[dict[str, Any
     return out
 
 
-async def power_rack_psu_failed(session: AsyncSession) -> dict[str, list[str]]:
+async def power_rack_psu_failed(session: AsyncSession,
+                                rack_id: str | None = None) -> dict[str, list[str]]:
     """Per rack, the loads whose BMC reports a power supply as not healthy:
     the newest `psu_state` per supply inside the last-known window, False.
     Returns {rack_id: ["SRV03 PSU1", ...]}."""
-    rows = (await session.execute(text("""
+    rack_and, rp = _rack_scope(rack_id)
+    rows = (await session.execute(text(f"""
         WITH latest AS (
             SELECT DISTINCT ON (t.device_id, t.instance)
                    t.device_id, t.instance, t.value
@@ -2718,7 +2740,7 @@ async def power_rack_psu_failed(session: AsyncSession) -> dict[str, list[str]]:
               JOIN metric m ON m.id = t.metric_id
               JOIN device d ON d.id = t.device_id
              WHERE m.key = 'psu_state'
-               AND d.rack_id IS NOT NULL
+               AND d.rack_id IS NOT NULL {rack_and}
                AND d.lifecycle <> 'decommissioned'
                AND t.ts > now() - make_interval(secs => :window_s)
              ORDER BY t.device_id, t.instance, t.ts DESC
@@ -2728,7 +2750,7 @@ async def power_rack_psu_failed(session: AsyncSession) -> dict[str, list[str]]:
           JOIN device d ON d.id = l.device_id
          WHERE l.value = false
          ORDER BY d.rack_id, d.name, l.instance
-    """), {"window_s": _PSU_WINDOW_S})).mappings().all()
+    """), {"window_s": _PSU_WINDOW_S, **rp})).mappings().all()
     out: dict[str, list[str]] = {}
     for r in rows:
         out.setdefault(r["rack_id"], []).append(f"{r['name']} {psu_label(r['instance'])}")
@@ -2741,7 +2763,9 @@ async def power_rack_psu_failed(session: AsyncSession) -> dict[str, list[str]]:
 _PSU_WINDOW_S = 900
 
 
-async def power_rack_strip_state(session: AsyncSession) -> dict[str, list[dict[str, Any]]]:
+async def power_rack_strip_state(session: AsyncSession,
+                                 rack_id: str | None = None
+                                 ) -> dict[str, list[dict[str, Any]]]:
     """Per rack, each strip with what a failover and a bank check need: its
     side, its draw, its rating, its leg currents and voltage, each bank's
     current against its breaker, and - on a metered-by-outlet unit - each
@@ -2752,7 +2776,8 @@ async def power_rack_strip_state(session: AsyncSession) -> dict[str, list[dict[s
     sample inside ten minutes; a breaker rating is a property of the unit and
     is read from the last two hours, so a slow poll does not blank it.
     """
-    rows = (await session.execute(text("""
+    rack_and, rp = _rack_scope(rack_id)
+    rows = (await session.execute(text(f"""
         WITH strips AS (
             SELECT d.id, d.name, d.rack_id, m.rated_power_w,
                    (SELECT max(c.redundancy_side::text)
@@ -2763,7 +2788,7 @@ async def power_rack_strip_state(session: AsyncSession) -> dict[str, list[dict[s
               FROM device d
               LEFT JOIN model m ON m.id = d.model_id
              WHERE d.device_type::text = 'pdu'
-               AND d.rack_id IS NOT NULL
+               AND d.rack_id IS NOT NULL {rack_and}
                AND d.lifecycle <> 'decommissioned'
         ),
         live AS (
@@ -2793,7 +2818,7 @@ async def power_rack_strip_state(session: AsyncSession) -> dict[str, list[dict[s
           LEFT JOIN (SELECT * FROM live UNION ALL SELECT * FROM rating) v
                  ON v.device_id = s.id
          ORDER BY s.rack_id, s.name
-    """))).mappings().all()
+    """), rp)).mappings().all()
     strips: dict[str, dict[str, Any]] = {}
     for r in rows:
         s = strips.setdefault(r["strip_id"], {
@@ -2828,7 +2853,8 @@ async def power_rack_strip_state(session: AsyncSession) -> dict[str, list[dict[s
     return out
 
 
-async def power_rack_outlet_loads(session: AsyncSession) -> dict[str, dict[int, str]]:
+async def power_rack_outlet_loads(session: AsyncSession,
+                                  rack_id: str | None = None) -> dict[str, dict[int, str]]:
     """{strip_id: {outlet number: load name}} - what is corded to each
     receptacle of every rack strip, from the power connections.
 
@@ -2838,17 +2864,19 @@ async def power_rack_outlet_loads(session: AsyncSession) -> dict[str, dict[int, 
     outlet 7 is known to be SRV03's. Outlets with nothing corded are absent
     here and read as idle on the page.
     """
-    rows = (await session.execute(text("""
+    rack_and, rp = _rack_scope(rack_id)
+    rows = (await session.execute(text(f"""
         SELECT c.a_device_id::text AS strip_id, o.number AS outlet, ld.name AS load
           FROM connection c
           JOIN outlet o  ON o.id = c.a_termination_id
           JOIN device d  ON d.id = c.a_device_id AND d.device_type::text = 'pdu'
                         AND d.rack_id IS NOT NULL AND d.lifecycle <> 'decommissioned'
+                        {rack_and}
           JOIN device ld ON ld.id = c.b_device_id
          WHERE c.layer = CAST('power' AS layer_t)
            AND c.admin_state = 'enabled'
            AND c.a_termination_type = 'outlet'
-    """))).mappings().all()
+    """), rp)).mappings().all()
     out: dict[str, dict[int, str]] = {}
     for r in rows:
         if r["outlet"] is None:

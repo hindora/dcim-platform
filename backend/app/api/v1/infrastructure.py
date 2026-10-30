@@ -15,6 +15,7 @@ from app.db.session import get_session
 from app.repositories import racks as repo
 from app.schemas import (
     FloorPlan,
+    RackDetail,
     RackElevation,
     RackSummary,
     ThermalField,
@@ -24,6 +25,7 @@ from app.schemas import (
 )
 from app.services import devices as service
 from app.services import placement
+from app.services import racks as rack_service
 
 router = APIRouter(tags=["infrastructure"])
 
@@ -87,6 +89,19 @@ async def rack_elevation(
     if elevation is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "rack not found")
     return elevation
+
+
+@router.get("/racks/{rack_id}/detail", response_model=RackDetail,
+            summary="One rack: space, power, cooling, devices and alarms")
+async def rack_detail(
+    rack_id: str,
+    session: AsyncSession = Depends(get_session),
+    _: Principal = Depends(current_principal),
+) -> RackDetail:
+    out = await rack_service.rack_detail(session, rack_id)
+    if out is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "rack not found")
+    return out
 
 
 @router.get("/rooms/{room_id}/floorplan", response_model=FloorPlan,
