@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -544,6 +544,11 @@ async def room_history_range(session: AsyncSession, room_id: str,
         five_min_days=frame.FIVE_MIN_HORIZON.total_seconds() / 86400.0)
 
 
+def _frame_ids(live: TwinRoomScene) -> list[str]:
+    return ([d.id for d in live.devices] + [e.id for e in live.plan.equipment]
+            + [e.id for e in live.plan.unpositioned_equipment])
+
+
 async def room_frame(session: AsyncSession, room_id: str, t: datetime,
                      now: datetime | None = None) -> TwinRoomScene | None:
     """The room as it was at `t` (docs/27 D8, Phase 4): today's geometry,
@@ -555,11 +560,47 @@ async def room_frame(session: AsyncSession, room_id: str, t: datetime,
         return None
     now = now or datetime.now(UTC)
     src = frame.choose_source(t, now)
-    ids = ([d.id for d in live.devices] + [e.id for e in live.plan.equipment]
-           + [e.id for e in live.plan.unpositioned_equipment])
+    ids = _frame_ids(live)
     values = await tele_repo.values_at(session, device_ids=ids, keys=list(frame.DEVICE_KEYS),
                                        t=t, table=src.table, lookback=src.lookback)
     sev = await tele_repo.severities_at(session, device_ids=ids, t=t)
+    return _frame_scene(live, t, src, values, sev)
+
+
+#: The most moments one replay request may ask for: a few seconds of play
+#: at the fastest rate, and a bound on what one request can cost.
+MAX_FRAMES = 12
+
+
+async def room_frames(session: AsyncSession, room_id: str, t: datetime, step_min: int,
+                      n: int, now: datetime | None = None) -> list[TwinRoomScene] | None:
+    """`n` consecutive frames from `t`, `step_min` apart, for the replay
+    buffer. The room's geometry - most of a frame's cost and the same for
+    every moment - is built once; each moment then costs one read of its
+    readings, and the alarms for the whole run are one read. Moments past
+    now are dropped. Each frame is exactly what `room_frame` returns."""
+    live = await room_scene(session, room_id)
+    if live is None:
+        return None
+    now = now or datetime.now(UTC)
+    moments = [t + timedelta(minutes=step_min * k) for k in range(max(1, min(n, MAX_FRAMES)))]
+    moments = [m for m in moments if m <= now]
+    if not moments:
+        return []
+    ids = _frame_ids(live)
+    alarms = await tele_repo.alarms_spanning(session, device_ids=ids,
+                                             t0=moments[0], t1=moments[-1])
+    out: list[TwinRoomScene] = []
+    for m in moments:
+        src = frame.choose_source(m, now)
+        values = await tele_repo.values_at(session, device_ids=ids, keys=list(frame.DEVICE_KEYS),
+                                           t=m, table=src.table, lookback=src.lookback)
+        out.append(_frame_scene(live, m, src, values, frame.severities_from(alarms, m)))
+    return out
+
+
+def _frame_scene(live: TwinRoomScene, t: datetime, src: Any,
+                 values: dict[str, dict[str, float]], sev: dict[str, str]) -> TwinRoomScene:
     plan, devices = frame.apply(live.plan, live.devices, values, sev)
     # The pin's category and count are today's; at `t` only the severity is
     # known, so a past pin is drawn with the plain bell and no count.

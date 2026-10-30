@@ -61,6 +61,22 @@ def choose_source(t: datetime, now: datetime) -> FrameSource:
 SEVERITY_RANK = {"CLEAR": 0, "INFO": 1, "WARNING": 2, "MINOR": 3, "MAJOR": 4, "CRITICAL": 5}
 
 
+def severities_from(rows: list[dict], t) -> dict[str, str]:
+    """The worst severity open on each device at `t`, from `alarms_spanning`
+    rows: raised at or before t and not yet cleared - the same rule as the
+    single-moment read."""
+    out: dict[str, str] = {}
+    for r in rows:
+        if r["first_seen"] > t or (r["cleared_at"] is not None and r["cleared_at"] <= t):
+            continue
+        sev = r["severity"]
+        if not sev:
+            continue
+        cur = out.get(r["device_id"])
+        out[r["device_id"]] = sev if cur is None else _worst(cur, sev)
+    return out
+
+
 def _worst(a: str, b: str) -> str:
     return a if SEVERITY_RANK.get(a, 0) >= SEVERITY_RANK.get(b, 0) else b
 

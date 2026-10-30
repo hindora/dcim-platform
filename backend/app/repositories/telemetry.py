@@ -205,6 +205,23 @@ async def severities_at(session: AsyncSession, *, device_ids: list[str],
     return {r["device_id"]: r["severity"] for r in rows if r["severity"]}
 
 
+async def alarms_spanning(session: AsyncSession, *, device_ids: list[str],
+                          t0: datetime, t1: datetime) -> list[dict[str, Any]]:
+    """Every alarm on *device_ids* that was open at some moment in [t0, t1]:
+    raised by t1 and not cleared before t0. One read for a run of replay
+    frames; `severities_from` then answers each moment from these rows
+    exactly as `severities_at` would have."""
+    rows = (await session.execute(text("""
+        SELECT device_id::text AS device_id, severity::text AS severity,
+               first_seen, cleared_at
+          FROM alarm
+         WHERE device_id = ANY(CAST(:ids AS uuid[]))
+           AND first_seen <= :t1
+           AND (cleared_at IS NULL OR cleared_at > :t0)
+    """), {"ids": device_ids, "t0": t0, "t1": t1})).mappings().all()
+    return [dict(r) for r in rows]
+
+
 async def latest_values(session: AsyncSession, device_id: str) -> list[dict[str, Any]]:
     """Every metric the device currently reports, from device_state's hot set
     plus the newest raw sample for the rest."""

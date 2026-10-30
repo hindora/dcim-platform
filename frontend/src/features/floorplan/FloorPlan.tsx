@@ -23,6 +23,7 @@ import { fromImpact, fromTraces, type PathKind } from './paths';
 import { BuildingPlan2D } from './BuildingPlan2D';
 import { Plan2D } from './Plan2D';
 import { FRAME_MS, paneCaption, snap, sourceLabel, SPEED_OPTIONS, STEP_OPTIONS, Timeline, type CompareMode } from './Timeline';
+import { useFrameBuffer, useMoveKind, useTweenedField, useTweenedScene } from './replay';
 import { numT, setTempUnit, unitLabel, useTempUnit, type TempUnit } from './units';
 import { useFrames, useTopics } from '../../ws/useSocket';
 import type { HoverTip } from './Scene';
@@ -328,19 +329,20 @@ export function FloorPlanView() {
     enabled: Boolean(roomId) && webgl && cmp != null, refetchInterval: cmpIso ? false : 60_000,
     staleTime: cmpIso ? 10 * 60_000 : 0, retry: false, placeholderData: (prev) => prev,
   });
-  // Playback: one step forward every 1.5 s at 1×, the next frame fetched ahead
-  // so the picture never waits. Stops at now, on going live, or on a new room.
+  // Playback: one step forward every 1.5 s at 1×, but only once the next
+  // frame is in hand - the timeline never runs ahead of the picture. The
+  // buffer below keeps the frames ahead fetched. Stops at now, on going
+  // live, or on a new room.
   useEffect(() => { setPlaying(false); }, [roomId, live]);
+  const [due, setDue] = useState(false);
   useEffect(() => {
+    setDue(false);
     if (!playing || !t) return;
     const next = new Date(t.getTime() + step * 60_000);
     if (next > new Date()) { setPlaying(false); return; }
-    const iso = next.toISOString();
-    qc.prefetchQuery({ queryKey: ['twin-scene', roomId, iso], queryFn: () => api.roomFrame(roomId, iso),
-                       staleTime: 10 * 60_000 });
-    const id = window.setTimeout(() => setTime(next), FRAME_MS / speed);
+    const id = window.setTimeout(() => setDue(true), FRAME_MS / speed);
     return () => window.clearTimeout(id);
-  }, [playing, t, roomId, step, speed]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [playing, t, step, speed]); // eslint-disable-line react-hooks/exhaustive-deps
   // How far back the room goes: bounds the date picker and greys the scrubber.
   const history = useQuery<TwinHistoryRange>({
     queryKey: ['twin-history', roomId], queryFn: () => api.roomHistory(roomId),
@@ -360,6 +362,20 @@ export function FloorPlanView() {
     enabled: Boolean(roomId) && webgl && heat !== 'off', refetchInterval: live ? 60_000 : false,
     staleTime: live ? 0 : 10 * 60_000, retry: false, placeholderData: (prev) => prev,
   });
+  // The frames around the moment shown: ahead while playing, either side
+  // after a jump or a pause, so a step back or forward is already here.
+  const has = useFrameBuffer(roomId, t, step, playing, heat !== 'off', Boolean(roomId) && webgl && !live);
+  const nextIso = playing && t ? new Date(t.getTime() + step * 60_000).toISOString() : null;
+  const nextReady = nextIso ? has(nextIso) : false;
+  useEffect(() => {
+    if (due && nextReady && nextIso) { setDue(false); setTime(new Date(nextIso)); }
+  }, [due, nextReady, nextIso]); // eslint-disable-line react-hooks/exhaustive-deps
+  const buffering = playing && due && !nextReady;
+  // A step or a play tick eases every reading over the frame's time on
+  // screen; a jump cuts (replay.ts).
+  const moveTween = useMoveKind(tIso, step, playing);
+  const tweenMs = playing ? (FRAME_MS / speed) * 0.85 : 700;
+  const shownField = useTweenedField(field.data, moveTween, tweenMs);
   const plan2d = useQuery<Plan>({
     queryKey: ['floorplan', roomId], queryFn: () => api.floorplan(roomId),
     enabled: Boolean(roomId) && !webgl, refetchInterval: 20_000, retry: false,
@@ -402,7 +418,8 @@ export function FloorPlanView() {
       devices: [],
     };
   }, [live, scene.isError, building.data, roomId]);
-  const data = scene.data ?? emptyRoom ?? undefined;
+  const shownScene = useTweenedScene(scene.data, moveTween, tweenMs);
+  const data = shownScene ?? emptyRoom ?? undefined;
   const plan = data?.plan;
 
   // --- paths ------------------------------------------------------------
@@ -532,7 +549,7 @@ export function FloorPlanView() {
     }
   } else if (data) {
     panelBody = <RoomPanel plan={data.plan} devices={data.devices} kpi={kpi.data} thermal={thermal.data} vents={vents}
-                           indices={data.indices} field={heat !== 'off' ? field.data : null} />;
+                           indices={data.indices} field={heat !== 'off' ? shownField : null} />;
   }
   const paths = sel && data && panel === 'info' ? (
     <PathsPanel kind={pathKind} overlay={overlay} loading={Boolean(pathKind) && pathQ.isLoading} error={pathQ.isError}
@@ -829,7 +846,7 @@ export function FloorPlanView() {
   const stage = (d: TwinRoomScene, withField: boolean) => (
     <Suspense fallback={<p className="vw-loading" role="status">Loading the room…</p>}>
       <Stage data={d} units={units} rackLayer={rackLayer} coolingLayer={coolingLayer} vis={vis} mode={mode}
-             sel={sel} overlay={overlay} indices={d.indices} field={withField && heat !== 'off' ? field.data : null} heat={heat}
+             sel={sel} overlay={overlay} indices={d.indices} field={withField && heat !== 'off' ? shownField : null} heat={heat}
              doors={roomDoors} fire={live ? roomFire : null} resetTick={resetTick} spin={spin} themeTick={themeTick}
              focusRack={rackFocus} onFocusRack={focusRack}
              onSelect={(s) => { setSel(s); if (s) setPanel('info'); }} onTip={setTip} onFocus={setFocus}
@@ -858,6 +875,7 @@ export function FloorPlanView() {
           ? 'Nothing in this room is positioned, so it cannot be drawn.'
           : 'No frame for this moment. Try a later time or go back to live.'}</p>}
         {scene.isLoading && <p className="vw-loading" role="status">Loading the room…</p>}
+        {buffering && <p className="vw-loading" role="status">Buffering the next frame…</p>}
       </div>
 
       <div className="vw-float vw-topleft">{crumbs}</div>

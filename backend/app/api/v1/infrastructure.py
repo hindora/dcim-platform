@@ -303,6 +303,28 @@ async def room_frame(
     return scene
 
 
+@router.get("/twin/rooms/{room_id}/frames", response_model=list[TwinRoomScene],
+            summary="A run of consecutive moments, for the replay buffer")
+async def room_frames(
+    room_id: str,
+    t: datetime = Query(..., description="The first moment, ISO 8601 with offset"),
+    step: int = Query(5, ge=1, le=1440, description="Minutes between moments"),
+    n: int = Query(6, ge=1, le=service.MAX_FRAMES, description="How many moments"),
+    session: AsyncSession = Depends(get_session),
+    _: Principal = Depends(current_principal),
+) -> list[TwinRoomScene]:
+    """`n` frames from `t`, `step` minutes apart, each the same as
+    `/frame?t=` returns, the room's geometry built once for all of them.
+    Moments past now are left out, so the list may be shorter than `n`."""
+    if t.tzinfo is None:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "t needs a UTC offset")
+    frames = await service.room_frames(session, room_id, t, step, n)
+    if frames is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND,
+                            "room not found, or nothing in it is positioned")
+    return frames
+
+
 @router.get("/twin/rooms/{room_id}/field", response_model=ThermalField,
             summary="The room's air on three planes, interpolated per aisle")
 async def room_field(

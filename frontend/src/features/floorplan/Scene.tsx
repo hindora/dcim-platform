@@ -1018,6 +1018,13 @@ function Cameras({ mode, W, D, resetTick, spin, aisles, X, Z, focus }: {
   const map = useRef<ElementRef<typeof MapControls>>(null);
   const { camera, size, invalidate } = useThree();
   const span = Math.max(W, D);
+  // The aisles arrive inside every scene payload as a new array, even when
+  // nothing about them changed. Depending on the array re-framed the camera
+  // on every replay frame and every live refresh - the blip. What the
+  // framing needs is where the aisles are, so that is what it depends on.
+  const aisleKey = aisles.map((a) => `${a.kind}:${a.y_start}:${a.y_end}`).join('|');
+  const aislesRef = useRef(aisles);
+  aislesRef.current = aisles;
   useQuarterTurn(spin, orbit, camera, invalidate);
   const dolly = useDolly(orbit, camera, invalidate);
   const frameRoom = useCallback(() => {
@@ -1065,14 +1072,14 @@ function Cameras({ mode, W, D, resetTick, spin, aisles, X, Z, focus }: {
       map.current?.target.set(0, 0, 0);
       map.current?.update();
     } else {
-      const cold = aisles.find((a) => a.kind === 'cold');
+      const cold = aislesRef.current.find((a) => a.kind === 'cold');
       const z = cold ? Z((cold.y_start + cold.y_end) / 2) : 0;
       camera.up.set(0, 1, 0);
       camera.position.set(X(0.6), EYE, z);
       camera.lookAt(X(W), EYE, z);
     }
     invalidate();
-  }, [mode, resetTick, camera, span, W, D, size.width, size.height, aisles, X, Z, invalidate, dolly]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [mode, resetTick, camera, span, W, D, size.width, size.height, aisleKey, X, Z, invalidate, dolly]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (mode === 'plan') {
     return (

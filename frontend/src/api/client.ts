@@ -5195,6 +5195,10 @@ export const api = {
   roomHistory: (roomId: string) => request<TwinHistoryRange>(`/twin/rooms/${roomId}/history`),
   roomFrame: (roomId: string, t: string) =>
     request<TwinRoomScene>(`/twin/rooms/${roomId}/frame?t=${encodeURIComponent(t)}`),
+  /** `n` consecutive frames from `t`, `step` minutes apart, the room built
+   *  once for all of them: the replay buffer's read. */
+  roomFrames: (roomId: string, t: string, step: number, n: number) =>
+    request<TwinRoomScene[]>(`/twin/rooms/${roomId}/frames?t=${encodeURIComponent(t)}&step=${step}&n=${n}`),
   siteScene: (datacenterId: string) => request<TwinSiteScene>(`/twin/sites/${datacenterId}/scene`),
 
   rackElevation: (id: string) =>
