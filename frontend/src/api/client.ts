@@ -3647,6 +3647,8 @@ export interface PowerRow extends EstateRowBase {
   measured_at_strip?: number;
   rack_count?: number;
   racks_reporting?: number;
+  /** Racks with at least one IT or network load: an empty cabinet is not dark. */
+  racks_with_loads?: number;
   racks_rated?: number;
   /** Rack rows. */
   room_id?: string;

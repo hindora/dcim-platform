@@ -2279,3 +2279,47 @@ async def test_failover_and_banks_ride_the_rack_and_count_up(monkeypatch):
     room = out["rooms"][0]
     assert room["racks_failover_over"] == 1 and room["racks_bank_hot"] == 1
     assert out["totals"]["racks_failover_over"] == 1 and out["totals"]["bank_warn_pct"] == 80.0
+
+
+# ------------------------------------------- power coverage counts metered loads
+
+def test_room_coverage_counts_only_loads_a_site_meters():
+    """Sensors, valve actuators, gateways and power gear never publish a draw;
+    counting them made every room read partly dark (halls 115/126, the UPS
+    room 0/4) when nothing was missing."""
+    from app.repositories import estate as estate_repo
+    sql = estate_repo.EXPECTED_LOAD_SQL
+    assert "dt.category IN ('it', 'network')" in sql
+    for unit in ("crah", "cdu", "chiller", "cooling_tower", "pump"):
+        assert f"'{unit}'" in sql
+    assert "valve" not in sql and "sensor" not in sql
+
+
+def _power_room(**kw):
+    base = {"room_id": "r1", "room_name": "Hall", "floor": None, "room_class": "white_space",
+            "datacenter_id": "s1", "site_code": "DC1", "site_name": "Site 1",
+            "avg_it": 10.0, "avg_cooling": 0.0, "avg_other": 0.0, "prev_total": None}
+    base.update(kw)
+    return base
+
+
+def test_a_room_with_no_metered_load_has_no_coverage_fraction():
+    row = estate._power_row(_power_room(room_name="UPS Room", reporting=0, devices=0), peak=False)
+    assert row["reporting"] is None, "0 of 0 is not a reading"
+    row = estate._power_row(_power_room(reporting=115, devices=115), peak=False)
+    assert row["reporting"] == {"devices": 115, "reporting": 115}
+
+
+def test_a_site_sums_its_rooms_metered_loads_and_skips_empty_cabinets():
+    hall = estate._power_row(_power_room(reporting=114, devices=115), peak=False)
+    ups = estate._power_row(_power_room(room_id="r2", room_name="UPS Room", reporting=0, devices=0),
+                            peak=False)
+    hall.update({"rack_count": 24, "racks_reporting": 18, "racks_with_loads": 18,
+                 "racks_rated": 0, "rated_kw": None, "single_cord": 0, "unfed": 0,
+                 "spread": None, "allocated_kw": None})
+    ups.update({"rack_count": 0, "racks_reporting": 0, "racks_with_loads": 0,
+                "racks_rated": 0, "rated_kw": None, "single_cord": 0, "unfed": 0,
+                "spread": None, "allocated_kw": None})
+    (site,) = estate._fold_power_sites([hall, ups], {}, {})
+    assert site["reporting"] == {"devices": 115, "reporting": 114}
+    assert site["racks_with_loads"] == 18 and site["rack_count"] == 24

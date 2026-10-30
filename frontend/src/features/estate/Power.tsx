@@ -486,8 +486,8 @@ export function Power() {
       help: rackTier
         ? 'Loads in the rack with a reading, over loads in it.'
         : win === 'now'
-          ? 'Devices with a reading in the hot mirror, over devices that could have one. Below, racks with a reading over racks.'
-          : 'Racks with a reading in this window, over racks in the row.',
+          ? 'Loads with a reading now, over the loads a site meters one by one: IT and network gear, and the cooling units with a motor. Sensors, valves, gateways and power gear draw from a panel metered upstream and are not counted.'
+          : 'Racks with a reading in this window, over racks with something in them.',
       sort: (r) => (typeof r.reporting === 'number' ? r.reporting : r.racks_reporting ?? null),
       render: (r) => {
         if (r.kind === 'rack') {
@@ -496,12 +496,15 @@ export function Power() {
             ? <Tip tip={`${r.reporting} of ${r.loads} loads reporting${r.measured_at_strip ? `, ${r.measured_at_strip} of them at the strip's outlets` : ''}`}>{r.reporting}<span className="muted">/{r.loads}</span></Tip>
             : <Tip tip={`${r.loads} loads in the rack`}>{r.loads}</Tip>;
         }
-        const racks = r.rack_count ?? 0;
+        // Empty cabinets have nothing to report, so they are not in the count.
+        const racks = r.racks_with_loads ?? r.rack_count ?? 0;
         const dev = typeof r.reporting === 'object' && r.reporting ? r.reporting : null;
-        if (!racks && !dev) return <Tip className="dash" tip="no racks and nothing reporting here">—</Tip>;
+        if (!racks && !dev) {
+          return <Tip className="dash" tip="Nothing here is metered on its own: its gear draws from a panel that is metered upstream">—</Tip>;
+        }
         return (
-          <Tip tip={<>{dev ? <>{dev.reporting} of {dev.devices} devices reporting<br /></> : null}
-                       {racks ? `${r.racks_reporting ?? 0} of ${racks} racks with a reading` : 'no racks here'}</>}>
+          <Tip tip={<>{dev ? <>{dev.reporting} of {dev.devices} metered loads reporting<br /></> : null}
+                       {racks ? `${r.racks_reporting ?? 0} of ${racks} racks with a reading` : 'no racks with loads here'}</>}>
             {dev ? <>{dev.reporting}<span className="muted">/{dev.devices}</span></>
               : <>{r.racks_reporting ?? 0}<span className="muted">/{racks}</span></>}
           </Tip>

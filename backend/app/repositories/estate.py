@@ -1710,6 +1710,18 @@ async def power_window_peaks(session: AsyncSession, *, start: datetime,
     return out
 
 
+#: The loads a room's power coverage is counted against: what a site meters
+#: one by one. IT and network gear report through their supplies or the strip
+#: outlet; the cooling units with a motor carry a drive or a power meter.
+#: Left out on purpose - a sensor, a valve actuator, a fieldbus gateway draws
+#: a few watts from a loop, PoE or DIN-rail supply that is inside the branch
+#: circuit feeding it, and no site meters them; power gear (UPS, switchgear,
+#: panels) is throughput, not load. Counting either made every room read
+#: partly dark (2026-10-30: halls 115/126, the UPS room 0/4) when nothing was.
+EXPECTED_LOAD_SQL = ("(dt.category IN ('it', 'network') OR d.device_type::text IN "
+                     "('crah', 'cdu', 'chiller', 'cooling_tower', 'pump'))")
+
+
 async def power_live(session: AsyncSession, *, prev_at: datetime | None = None,
                      prev_width: timedelta = POWER_PREV_WIDTH) -> list[dict[str, Any]]:
     """Instantaneous room power from the hot mirror.
@@ -1741,11 +1753,11 @@ async def power_live(session: AsyncSession, *, prev_at: datetime | None = None,
                    count(*) FILTER (WHERE (ds.power_w IS NOT NULL
                                            OR (strip.w IS NOT NULL
                                                AND dt.category IN ('it', 'network')))
-                                      AND dt.category <> 'power')         AS reporting,
+                                      AND {EXPECTED_LOAD_SQL})            AS reporting,
                    count(*) FILTER (WHERE ds.power_w IS NULL AND strip.w IS NOT NULL
                                       AND dt.category IN ('it', 'network'))
                                                                           AS at_strip,
-                   count(*) FILTER (WHERE dt.category <> 'power')         AS devices,
+                   count(*) FILTER (WHERE {EXPECTED_LOAD_SQL})            AS devices,
                    sum(prev.w) FILTER (WHERE dt.category <> 'power')/1000.0
                                                                           AS prev_total,
                    max(ds.updated_at)                                     AS as_of

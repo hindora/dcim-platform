@@ -1301,7 +1301,9 @@ def _power_row(r: dict[str, Any], *, peak: bool) -> dict[str, Any]:
         "other_kw": other,
         "pue": round(total / it, 3) if total and it else None,
         "delta_total": _delta(total, None if prev is None else round(prev, 1)),
-        "reporting": (None if r.get("reporting") is None
+        # Null where the room has no load a site meters one by one (a UPS
+        # room, a generator yard): a fraction of nothing is not a reading.
+        "reporting": (None if r.get("reporting") is None or not int(r.get("devices") or 0)
                       else {"devices": int(r.get("devices") or 0),
                             "reporting": int(r.get("reporting") or 0)}),
         "note": None if total is not None else "no power meter reported here",
@@ -1338,6 +1340,8 @@ def _attach_racks(rooms: list[dict[str, Any]], racks: list[dict[str, Any]],
             "rack_count": len(rks),
             "racks_rated": sum(1 for rk in rks if rk["rated_kw"]),
             "racks_reporting": sum(1 for rk in rks if rk["_it"] is not None),
+            # An empty cabinet has nothing to report; it is not a dark rack.
+            "racks_with_loads": sum(1 for rk in rks if rk.get("loads")),
             "spread": spread if rks else None,
             "allocated_kw": (round(sum(rk["allocated_kw"] for rk in rks
                                        if rk["allocated_kw"] is not None), 1)
@@ -1356,7 +1360,8 @@ def _fold_power_sites(rooms: list[dict[str, Any]], site_design_kw: dict[str, flo
             "id": r["site_id"], "kind": "site", "name": r["site_name"],
             "site_id": r["site_id"], "site_code": r["site_code"],
             "site_name": r["site_name"], "room_count": 0, "rack_count": 0,
-            "racks_rated": 0, "racks_reporting": 0,
+            "racks_rated": 0, "racks_reporting": 0, "racks_with_loads": 0,
+            "_loads": 0, "_loads_reporting": 0, "_loads_known": False,
             "_it": None, "_cooling": None, "_other": None, "_total": None,
             "_prev": None, "_rack_rated": 0.0,
             "spread": dict.fromkeys(_SPREAD_KEYS, 0),
@@ -1367,6 +1372,12 @@ def _fold_power_sites(rooms: list[dict[str, Any]], site_design_kw: dict[str, flo
         s["rack_count"] += r.get("rack_count", 0)
         s["racks_rated"] += r.get("racks_rated", 0)
         s["racks_reporting"] += r.get("racks_reporting", 0)
+        s["racks_with_loads"] += r.get("racks_with_loads", 0)
+        rep = r.get("reporting")
+        if isinstance(rep, dict):
+            s["_loads"] += rep["devices"]
+            s["_loads_reporting"] += rep["reporting"]
+            s["_loads_known"] = True
         # A site without a design figure is rated as the sum of its rooms'
         # ratings, each by its own rule, so a room with a design figure keeps
         # it in the site's total instead of being replaced by its racks'.
@@ -1407,6 +1418,10 @@ def _fold_power_sites(rooms: list[dict[str, Any]], site_design_kw: dict[str, flo
                            "rating_basis": "design" if design else ("racks" if rated else None),
                            "load_pct": pct, "band": _band(pct),
                            "spread": s["spread"] if s["rack_count"] else None,
+                           # The site's loads, the same count its rooms show.
+                           "reporting": ({"devices": s["_loads"],
+                                          "reporting": s["_loads_reporting"]}
+                                         if s["_loads_known"] else None),
                            "note": None if total is not None else "no power meter reported"}))
     return sorted(out, key=lambda r: r["site_code"])
 
