@@ -48,7 +48,7 @@ export function Dashboard() {
         <Tile label="Devices" value={String(data.devices.total)}
               detail={`${data.devices.online} online · ${data.devices.offline} offline`} />
         <Tile label="Degraded" value={String(data.devices.degraded)}
-              detail={`${data.devices.unknown} unknown`} />
+              detail={`${data.devices.unknown} unknown · ${data.devices.not_monitored ?? 0} not monitored`} />
         <Tile label="IT Load" value={num(data.power?.it_load_kw, 'kW')}
               detail={`${data.power?.reporting_devices ?? 0} devices reporting`} />
         <Tile label="Cooling Load" value={num(data.power?.cooling_load_kw, 'kW')} />

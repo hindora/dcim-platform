@@ -115,6 +115,9 @@ export function statusClass(status: string): string {
     case 'OFFLINE':
     case 'CRITICAL':
       return 'critical';
+    // Nothing polls it: a panel read through the meter on it. Not a gap.
+    case 'NOT_MONITORED':
+      return 'passive';
     default:
       return 'unknown';
   }

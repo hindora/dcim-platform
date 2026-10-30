@@ -48,6 +48,13 @@
 .dl-state.critical { color: var(--critical); font-weight: 600; }
 .dl-state.unknown { color: var(--unknown); }
 .dl-state.warn .dot, .dl-state.major .dot, .dl-state.critical .dot, .dl-state.unknown .dot { opacity: 1; }
+/* Not monitored: the hollow dot is the difference from a polled device. */
+.dl-state.passive .dot { background: transparent; box-shadow: inset 0 0 0 1.5px currentColor; opacity: .8; }
+.dl-state-wrap { display: flex; flex-direction: column; gap: 1px; }
+.dl-meter { font-size: 11px; color: var(--text-faint); white-space: nowrap; }
+.dl-meter a { color: inherit; }
+.dl-meter a:hover { color: var(--text); }
+.dl-meter.lost { color: var(--warn); }
 
 .dl-alarms {
   display: inline-flex; align-items: center; gap: 5px;

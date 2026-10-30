@@ -105,7 +105,7 @@ def _nodes_sql(scope_type: str) -> str:
                g.depth,
                g.degree,
                count(*) OVER ()                          AS total_reached,
-               COALESCE(ds.status::text, 'UNKNOWN')      AS status,
+               device_comm_status(d.id, ds.status::text)      AS status,
                COALESCE(ds.max_severity::text, 'CLEAR')  AS max_severity,
                -- The typed hot columns only. A power graph wants load and a
                -- cooling graph wants inlet temperature; neither wants every
@@ -361,7 +361,7 @@ async def devices_brief(session: AsyncSession,
         return {}
     rows = (await session.execute(text("""
         SELECT d.id::text AS id, d.name, d.device_type::text AS device_type,
-               COALESCE(ds.status::text, 'UNKNOWN') AS status,
+               device_comm_status(d.id, ds.status::text) AS status,
                rm.name AS room_name, r.name AS rack_name
           FROM device d
           LEFT JOIN device_state ds ON ds.device_id = d.id

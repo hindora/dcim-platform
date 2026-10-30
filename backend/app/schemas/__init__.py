@@ -76,6 +76,13 @@ class DeviceSummary(BaseModel):
     owner_group: str | None = None
     cost_centre: str | None = None
     tags: list[dict[str, Any]] = Field(default_factory=list)
+    #: A NOT_MONITORED device that a meter is clamped on (a remote power
+    #: panel and its branch meter): which meter, and whether IT answers.
+    #: The panel has no state of its own; the meter's is the one that says
+    #: whether anybody is watching it.
+    metered_by_id: str | None = None
+    metered_by: str | None = None
+    metered_status: str | None = None
 
 
 class EndpointSummary(BaseModel):
@@ -1056,6 +1063,8 @@ class DashboardCounts(BaseModel):
     offline: int = 0
     degraded: int = 0
     unknown: int = 0
+    #: No endpoint at all - not a polling gap, so not counted as unknown.
+    not_monitored: int = 0
 
 
 class CollectorStatusOut(BaseModel):

@@ -114,6 +114,7 @@ function TypeGlyph({ type }: { type: string }) {
 function statusColor(status: string, severity: string): string {
   if (status === 'OFFLINE') return 'var(--critical)';
   if (status === 'UNKNOWN') return 'var(--unknown)';
+  if (status === 'NOT_MONITORED') return 'var(--text-faint)';
   switch (severity) {
     case 'CRITICAL': return 'var(--critical)';
     case 'MAJOR': return 'var(--major)';
@@ -132,7 +133,7 @@ function StatusPip({ status, severity }: { status: string; severity: string }) {
   const warn = severity === 'MINOR' || severity === 'WARNING';
   return (
     <svg width="9" height="9" viewBox="-5 -5 10 10" aria-hidden className="cn-pip">
-      {status === 'UNKNOWN'
+      {status === 'UNKNOWN' || status === 'NOT_MONITORED'
         ? <circle r="3.3" fill="none" stroke={fill} strokeWidth="1.6" />
         : bad ? <path d="M0,-4.2 L4.2,3.2 L-4.2,3.2 Z" fill={fill} />
         : warn ? <path d="M0,-4.2 L4.2,0 L0,4.2 L-4.2,0 Z" fill={fill} />

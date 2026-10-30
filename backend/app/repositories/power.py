@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 _HOPS = text("""
     SELECT d.id::text                                AS device_id,
            d.name, d.device_type::text               AS device_type,
-           COALESCE(ds.status::text, 'UNKNOWN')      AS status,
+           device_comm_status(d.id, ds.status::text)      AS status,
            COALESCE(ds.max_severity::text, 'CLEAR')  AS max_severity,
            ds.power_w,
            -- The hot set stores {v, q, t} per metric, not a bare number,

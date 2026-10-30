@@ -1328,12 +1328,12 @@ export function UnitPanel({ unit, thermal }: { unit: FloorEquipment; thermal?: T
     queryFn: () => api.deviceMetering(unit.id),
     // Only a unit that does not meter itself borrows; switchgear and MCCs
     // feed sub-meters too and keep their own readings.
-    enabled: Boolean(unit.metered_by_id) && unit.status === 'UNKNOWN',
+    enabled: Boolean(unit.metered_by_id) && unit.status === 'NOT_MONITORED',
     refetchInterval: 30_000,
     retry: false,
   });
   const meters = metering.data?.meters ?? [];
-  const passive = unit.status === 'UNKNOWN' && Boolean(unit.metered_by_id);
+  const passive = unit.status === 'NOT_MONITORED' && Boolean(unit.metered_by_id);
   const words = meteringWords(meters) ?? (unit.metered_by
     ? { text: unit.metered_status === 'ONLINE' ? `Not monitored · metered by ${unit.metered_by}`
         : `Not monitored · metering lost: ${unit.metered_by} is ${(unit.metered_status ?? 'unknown').toLowerCase()}`,

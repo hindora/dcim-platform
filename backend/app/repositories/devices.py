@@ -16,7 +16,7 @@ _LIST_BASE = """
            v.name AS vendor, m.name AS model,
            host(d.mgmt_ip)    AS mgmt_ip,
            host(d.primary_ip) AS primary_ip,
-           COALESCE(ds.status::text, 'UNKNOWN')       AS status,
+           device_comm_status(d.id, ds.status::text)  AS status,
            COALESCE(ds.health::text, 'UNKNOWN')       AS health,
            COALESCE(ds.max_severity::text, 'CLEAR')   AS max_severity,
            COALESCE(ds.active_alarms, 0)              AS active_alarms,
@@ -53,7 +53,7 @@ _LIST_BASE = """
 
 # No ", " inside these: _order_clause splits a multi-column ordering on
 # exactly that, so a comma-space in an expression would cut it in two.
-_STATUS_RANK = ("CASE COALESCE(ds.status::text,'UNKNOWN') "
+_STATUS_RANK = ("CASE device_comm_status(d.id,ds.status::text) "
                 "WHEN 'OFFLINE' THEN 0 WHEN 'DEGRADED' THEN 1 "
                 "WHEN 'UNKNOWN' THEN 2 ELSE 3 END")
 _SEVERITY_RANK = ("CASE COALESCE(ds.max_severity::text,'CLEAR') "
@@ -157,7 +157,7 @@ def _filters(
         where.append("d.device_type = ANY(:device_types)")
         params["device_types"] = device_types
     if status:
-        where.append("COALESCE(ds.status::text, 'UNKNOWN') = ANY(:status)")
+        where.append("device_comm_status(d.id, ds.status::text) = ANY(:status)")
         params["status"] = status
     if room_id:
         where.append("rm.id = CAST(:room_id AS uuid)")
@@ -386,13 +386,14 @@ async def facets(session: AsyncSession, *, stale_s: int = 600,
     where, params = _filters(**filters)
     clause = (" WHERE " + " AND ".join(where)) if where else ""
     params["stale_s"] = stale_s
-    st = "COALESCE(ds.status::text, 'UNKNOWN')"
+    st = "device_comm_status(d.id, ds.status::text)"
     tally = (await session.execute(text(f"""
         SELECT count(*) AS total,
                count(*) FILTER (WHERE {st} = 'ONLINE')   AS online,
                count(*) FILTER (WHERE {st} = 'DEGRADED') AS degraded,
                count(*) FILTER (WHERE {st} = 'OFFLINE')  AS offline,
                count(*) FILTER (WHERE {st} = 'UNKNOWN')  AS unknown,
+               count(*) FILTER (WHERE {st} = 'NOT_MONITORED') AS not_monitored,
                count(*) FILTER (WHERE COALESCE(ds.active_alarms, 0) > 0) AS alarming,
                count(*) FILTER (WHERE ds.last_seen IS NOT NULL AND ds.last_seen
                                       < now() - make_interval(secs => :stale_s)) AS stale
@@ -410,7 +411,8 @@ async def facets(session: AsyncSession, *, stale_s: int = 600,
         categories[cat] = categories.get(cat, 0) + int(row["n"])
     return {
         "total": int(tally["total"]),
-        "status": {k: int(tally[k]) for k in ("online", "degraded", "offline", "unknown")},
+        "status": {k: int(tally[k]) for k in ("online", "degraded", "offline", "unknown",
+                                               "not_monitored")},
         "alarming": int(tally["alarming"]),
         "stale": int(tally["stale"]),
         "stale_s": stale_s,

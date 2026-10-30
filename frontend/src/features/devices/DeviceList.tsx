@@ -102,12 +102,29 @@ function SortTh({ col, label, w, cls, sortable, cols, sort, desc, onSort }: {
 /** The state word, quiet when it is the expected one. Seven hundred green
  *  ONLINE chips told the reader nothing; the sixteen that are not online are
  *  what the column is for. */
-function StateCell({ status }: { status: string }) {
-  const cls = statusClass(status);
-  return (
+function StateCell({ d }: { d: DeviceSummary }) {
+  const cls = statusClass(d.status);
+  const word = (
     <span className={`dl-state ${cls}`}>
       <span className="dot" aria-hidden="true" />
-      {status.toLowerCase()}
+      {d.status.toLowerCase().replace(/_/g, ' ')}
+    </span>
+  );
+  if (d.status !== 'NOT_MONITORED' || !d.metered_by) return word;
+  // A panel has no state of its own; whether anybody is watching it is its
+  // meter's state, so the meter is named here and says when it has gone quiet.
+  const lost = d.metered_status !== 'ONLINE';
+  const meter = d.metered_by_id
+    ? <Link to={`/devices/${d.metered_by_id}`}>{d.metered_by}</Link>
+    : d.metered_by;
+  return (
+    <span className="dl-state-wrap">
+      {word}
+      <span className={`dl-meter${lost ? ' lost' : ''}`}
+            title={lost ? `Its meter is ${(d.metered_status ?? 'unknown').toLowerCase()}: nothing is reading this panel`
+                        : 'Read through the meter on it'}>
+        {lost ? <>metering lost · {meter}</> : <>via {meter}</>}
+      </span>
     </span>
   );
 }
@@ -327,8 +344,12 @@ export function DeviceList() {
       onClick: () => set('status', status === 'OFFLINE' ? '' : 'OFFLINE'), active: status === 'OFFLINE' },
     { caption: 'Unknown', value: f?.status.unknown ?? null, digits: 0,
       tone: f && f.status.unknown > 0 ? 'warn' : undefined, why: 'counting',
-      tip: 'never answered a poll, or not polled by anything',
+      tip: 'set up for polling and never answered',
       onClick: () => set('status', status === 'UNKNOWN' ? '' : 'UNKNOWN'), active: status === 'UNKNOWN' },
+    { caption: 'Not monitored', value: f?.status.not_monitored ?? null, digits: 0, why: 'counting',
+      tip: 'nothing to poll: a panel read through the meter on it',
+      onClick: () => set('status', status === 'NOT_MONITORED' ? '' : 'NOT_MONITORED'),
+      active: status === 'NOT_MONITORED' },
     { caption: 'Alarming', value: f?.alarming ?? null, digits: 0,
       tone: f && f.alarming > 0 ? 'critical' : undefined, why: 'counting',
       tip: 'with at least one open alarm',
@@ -404,7 +425,8 @@ export function DeviceList() {
         <Seg label="State" value={status || 'ALL'}
              options={[{ key: 'ALL', label: 'ALL' }, { key: 'ONLINE', label: 'ONLINE' },
                        { key: 'DEGRADED', label: 'DEGRADED' }, { key: 'OFFLINE', label: 'OFFLINE' },
-                       { key: 'UNKNOWN', label: 'UNKNOWN' }]}
+                       { key: 'UNKNOWN', label: 'UNKNOWN' },
+                       { key: 'NOT_MONITORED', label: 'NOT MONITORED' }]}
              onChange={(v) => set('status', v === 'ALL' ? '' : v)} />
         <div className="seg" role="group" aria-label="Conditions">
           <button type="button" className={alarming ? 'active' : ''} aria-pressed={alarming}
@@ -425,7 +447,7 @@ export function DeviceList() {
             {CATEGORY_LABEL[category] ?? humanise(category)} equipment</Chip>}
           {vendor && <Chip onClear={() => set('vendor', '')}>
             {(options?.vendors ?? []).find((v) => v.id === vendor)?.name ?? 'one vendor'}</Chip>}
-          {status && <Chip onClear={() => set('status', '')}>{status.toLowerCase()}</Chip>}
+          {status && <Chip onClear={() => set('status', '')}>{status.toLowerCase().replace(/_/g, ' ')}</Chip>}
           {alarming && <Chip onClear={() => toggle('alarming')}>with open alarms</Chip>}
           {stale && <Chip onClear={() => toggle('stale')}>stale</Chip>}
           {search && <Chip onClear={() => set('q', '')}>“{search}”</Chip>}
@@ -457,7 +479,7 @@ export function DeviceList() {
                   <Link to={`/devices/${d.id}`}>{d.name}</Link>
                 </td>
                 <td data-col="device_type" className="muted">{typeName[d.device_type] ?? humanise(d.device_type)}</td>
-                <td data-col="status"><StateCell status={d.status} /></td>
+                <td data-col="status"><StateCell d={d} /></td>
                 <td data-col="alarms" className="num">
                   <AlarmsCell count={d.active_alarms ?? 0} severity={d.max_severity} />
                 </td>

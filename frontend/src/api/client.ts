@@ -156,6 +156,10 @@ export interface DeviceSummary {
   owner_group?: string | null;
   cost_centre?: string | null;
   tags?: { id: string; key: string; value: string; colour?: string | null }[];
+  /** NOT_MONITORED devices only: the meter clamped on it, and its state. */
+  metered_by_id?: string | null;
+  metered_by?: string | null;
+  metered_status?: string | null;
 }
 
 /** Estate-wide counts behind the /assets landing page.
@@ -1756,7 +1760,7 @@ export interface DeviceState {
 export interface DashboardSummary {
   devices: {
     total: number; online: number; offline: number;
-    degraded: number; unknown: number;
+    degraded: number; unknown: number; not_monitored?: number;
   };
   power: Record<string, number | null>;
   environment: Record<string, number | null>;
@@ -1839,7 +1843,8 @@ export interface Page<T> {
  *  counts, under the list's own filters. */
 export interface DeviceFacets {
   total: number;
-  status: { online: number; degraded: number; offline: number; unknown: number };
+  status: { online: number; degraded: number; offline: number; unknown: number;
+            not_monitored?: number };
   alarming: number;
   stale: number;
   stale_s: number;

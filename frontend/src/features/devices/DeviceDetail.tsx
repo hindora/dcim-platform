@@ -128,7 +128,7 @@ export function DeviceDetail() {
   const d = device.data;
   const metrics = state.data?.metrics ?? {};
   const meters = metering.data?.meters ?? [];
-  const passive = meters.length > 0 && d.status === 'UNKNOWN' && Object.keys(metrics).length === 0;
+  const passive = meters.length > 0 && d.status === 'NOT_MONITORED' && Object.keys(metrics).length === 0;
   const words = passive ? meteringWords(meters) : null;
   // Only a device that does not meter itself borrows: switchgear and MCCs
   // feed sub-meters too, and their own readings are what their pages show.

@@ -104,6 +104,22 @@ async def list_devices(session: AsyncSession, *, with_total: bool = False,
         by_device = await tag_repo.tags_for_devices(session, [d.id for d in items])
         for device in items:
             device.tags = by_device.get(device.id, [])
+        # The meter behind each device nothing polls, in one query for the page.
+        passive = [d.id for d in items if d.status == "NOT_MONITORED"]
+        if passive:
+            from app.repositories import panel_metering as meter_repo
+            links = await meter_repo.meters_fed_from(session, passive)
+            for device in items:
+                found = links.get(device.id)
+                if not found:
+                    continue
+                device.metered_by_id = found[0]["meter_id"]
+                device.metered_by = (found[0]["meter_name"] if len(found) == 1
+                                     else f"{len(found)} meters")
+                # Worst of the meters: one silent meter is a panel half-watched.
+                rank = {"OFFLINE": 0, "UNKNOWN": 1, "DEGRADED": 2, "ONLINE": 3}
+                device.metered_status = min((m["status"] for m in found),
+                                            key=lambda s: rank.get(s, 1))
 
     total = None
     if with_total:

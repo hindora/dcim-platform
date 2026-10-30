@@ -81,7 +81,7 @@ async def get_rack(session: AsyncSession, rack_id: str) -> dict[str, Any] | None
 async def rack_devices(session: AsyncSession, rack_id: str) -> list[dict[str, Any]]:
     rows = (await session.execute(text("""
         SELECT d.id::text, d.name, d.device_type, d.u_start, d.u_height, d.facing,
-               COALESCE(ds.status::text, 'UNKNOWN')      AS status,
+               device_comm_status(d.id, ds.status::text)      AS status,
                COALESCE(ds.health::text, 'UNKNOWN')      AS health,
                COALESCE(ds.max_severity::text, 'CLEAR')  AS max_severity,
                ds.power_w, ds.inlet_temp_c, ds.cpu_util_pct
@@ -200,7 +200,7 @@ async def floorplan_equipment(session: AsyncSession,
     """
     rows = (await session.execute(text("""
         SELECT d.id::text, d.name, d.device_type::text AS device_type,
-               COALESCE(ds.status::text, 'UNKNOWN')     AS status,
+               device_comm_status(d.id, ds.status::text)     AS status,
                COALESCE(ds.max_severity::text, 'CLEAR') AS max_severity,
                ds.power_w, ds.inlet_temp_c,
                (ds.metrics->'supply_air_temp'->>'v')::float AS supply_c,
@@ -566,7 +566,7 @@ async def room_rack_devices(session: AsyncSession, room_id: str) -> list[dict[st
                -- Make and model: what the 3D rack draws the faceplate from
                -- (a PowerEdge and a ProLiant do not look alike across an aisle).
                v.name AS vendor, m.name AS model,
-               COALESCE(ds.status::text, 'UNKNOWN')     AS status,
+               device_comm_status(d.id, ds.status::text)     AS status,
                COALESCE(ds.max_severity::text, 'CLEAR') AS max_severity,
                ds.power_w, ds.inlet_temp_c,
                -- The air at the device, whatever it calls it: a server reports

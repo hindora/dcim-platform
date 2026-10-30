@@ -27,7 +27,7 @@ _KEYS = (
 _LATEST = text("""
     SELECT DISTINCT ON (t.device_id, m.key, t.instance)
            t.device_id::text AS device_id, d.name, d.device_type::text AS device_type,
-           COALESCE(ds.status::text, 'UNKNOWN') AS status,
+           device_comm_status(d.id, ds.status::text) AS status,
            rm.id::text AS room_id, rm.name AS room_name,
            rm.datacenter_id::text AS datacenter_id,
            m.key, t.instance, t.value, t.ts

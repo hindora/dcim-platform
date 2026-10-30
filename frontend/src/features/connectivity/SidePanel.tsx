@@ -66,6 +66,7 @@ function where(n: TopologyNode): string {
 function statusColor(status: string, severity: string): string {
   if (status === 'OFFLINE') return 'var(--critical)';
   if (status === 'UNKNOWN') return 'var(--unknown)';
+  if (status === 'NOT_MONITORED') return 'var(--text-faint)';
   switch (severity) {
     case 'CRITICAL': return 'var(--critical)';
     case 'MAJOR': return 'var(--major)';

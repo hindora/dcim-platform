@@ -27,8 +27,11 @@ async def device_counts(session: AsyncSession,
                count(*) FILTER (WHERE ds.status = 'ONLINE')   AS online,
                count(*) FILTER (WHERE ds.status = 'OFFLINE')  AS offline,
                count(*) FILTER (WHERE ds.status = 'DEGRADED') AS degraded,
-               count(*) FILTER (WHERE ds.status IS NULL
-                                   OR ds.status = 'UNKNOWN')  AS unknown
+               count(*) FILTER (WHERE device_comm_status(d.id, ds.status::text)
+                                   = 'UNKNOWN')                AS unknown,
+               -- A device nothing polls: a panel read through its meter.
+               count(*) FILTER (WHERE device_comm_status(d.id, ds.status::text)
+                                   = 'NOT_MONITORED')          AS not_monitored
         FROM device d
         LEFT JOIN device_state ds ON ds.device_id = d.id
         LEFT JOIN rack r      ON r.id = d.rack_id

@@ -126,7 +126,7 @@ _MACHINES_SELECT = """
     SELECT d.id::text        AS device_id,
            d.name            AS name,
            d.device_type::text AS device_type,
-           COALESCE(ds.status::text, 'UNKNOWN') AS status,
+           device_comm_status(d.id, ds.status::text) AS status,
            rm.id::text       AS room_id,
            rm.name           AS room_name,
            rm.room_type::text  AS room_type,

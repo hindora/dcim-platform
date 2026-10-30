@@ -66,7 +66,7 @@ async def outlet_loads(session: AsyncSession, pdu_id: str) -> list[dict[str, Any
         feeds = (await session.execute(text("""
             SELECT ps.device_id::text AS load_id, ps.number AS psu,
                    fd.id::text AS feed_id, fd.name AS feed_name,
-                   COALESCE(ds.status::text, 'UNKNOWN') AS feed_status
+                   device_comm_status(fd.id, ds.status::text) AS feed_status
               FROM power_supply ps
               JOIN connection c ON c.b_termination_type = 'psu'
                                AND c.b_termination_id = ps.id
