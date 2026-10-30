@@ -167,7 +167,12 @@ async def test_power_block_is_the_estate_row_plus_the_week(monkeypatch):
 
     monkeypatch.setattr(estate_repo, "power_racks_live", await fake(live))
     monkeypatch.setattr(estate_repo, "power_inventory", await fake(inv))
-    monkeypatch.setattr(estate_repo, "power_p95", await fake({"racks": {RACK: 4.5}, "days": 7}))
+    from app.repositories import rack_detail
+
+    async def fake_p95(session, rack_id, *, days=7):
+        assert rack_id == RACK and days == 7
+        return 4.5
+    monkeypatch.setattr(rack_detail, "rack_p95", fake_p95)
     monkeypatch.setattr(estate_repo, "power_rack_legs",
                         await fake({RACK: [{"strip_id": "pdua", "strip": "PDUA",
                                             "legs": [7.0, 5.0, 6.0], "imbalance_pct": 16.7}]}))
@@ -200,3 +205,22 @@ def test_device_rows_carry_numbers_not_decimals():
                           "cpu_util_pct": Decimal("64.00"), "name": "SRV"})
     assert row["power_w"] == 200.0 and isinstance(row["power_w"], float)
     assert row["inlet_temp_c"] is None and row["cpu_util_pct"] == 64.0 and row["name"] == "SRV"
+
+
+@pytest.mark.asyncio
+async def test_scoped_telemetry_reads_name_the_racks_devices():
+    """The week of hourly points and the ten minutes of raw samples are read
+    for the rack's devices only; unscoped, they are read for the estate."""
+    session = _FakeSession()
+    await estate_repo.power_racks_live(session, rack_id=RACK)
+    sql = session.sql[0]
+    assert "WHERE m.key = 'power_draw' AND t.device_id IN (SELECT id FROM device" in sql
+    assert "WHERE m.key = 'outlet_active_power' AND t.device_id IN" in sql
+    session = _FakeSession()
+    await estate_repo.power_racks_live(session)
+    assert "t.device_id IN (SELECT id FROM device" not in session.sql[0]
+    # The week's p95 has a read of its own for one rack, same arithmetic.
+    from app.repositories import rack_detail
+    session = _FakeSession(rows=[{"p95_kw": 4.456}])
+    assert await rack_detail.rack_p95(session, RACK) == 4.46
+    assert "percentile_cont(0.95)" in session.sql[0] and session.params[0]["days"] == 7

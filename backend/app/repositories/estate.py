@@ -14,6 +14,7 @@ four sensors ends up outvoting one with four hundred.
 from __future__ import annotations
 
 import json
+import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -1591,6 +1592,23 @@ def _rack_scope(rack_id: str | None) -> tuple[str, dict[str, Any]]:
     return (_RACK_AND, {"rack": rack_id}) if rack_id else ("", {})
 
 
+#: The telemetry CTEs (`_STRIP_W`, `_POWER_PREV`, the p95's week of hourly
+#: points) read every device's samples and only then meet the rack filter;
+#: for one rack that is the whole estate's week for nothing. Scoped, each
+#: metric predicate also names the rack's devices, so the index on
+#: (device_id, metric, time) does the narrowing.
+_RACK_SAMPLES = ("AND t.device_id IN (SELECT id FROM device "
+                 "WHERE rack_id = CAST(:rack AS uuid))")
+_METRIC_PREDICATE = re.compile(r"(WHERE m\.key (?:= '[a-z_]+'|IN \([^)]*\)))")
+
+
+def _scope_samples(sql: str, rack_id: str | None) -> str:
+    """Narrow every `WHERE m.key ...` telemetry read in *sql* to one rack."""
+    if not rack_id:
+        return sql
+    return _METRIC_PREDICATE.sub(lambda m: f"{m.group(1)} {_RACK_SAMPLES}", sql)
+
+
 _RACK_COLS = """
         SELECT racks.rack_id::text       AS rack_id,
                racks.rack_name           AS rack_name,
@@ -1813,8 +1831,8 @@ async def power_racks_live(session: AsyncSession, *, prev_at: datetime | None = 
     rack_and, rp = _rack_scope(rack_id)
     rows = (await session.execute(text(f"""
         WITH racks AS ({_RACKS}),
-        {_POWER_PREV},
-        {_STRIP_W},
+        {_scope_samples(_POWER_PREV, rack_id)},
+        {_scope_samples(_STRIP_W, rack_id)},
         agg AS (
             SELECT d.rack_id,
                    sum(COALESCE(ds.power_w, strip.w)) FILTER (

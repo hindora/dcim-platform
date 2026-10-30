@@ -23,6 +23,9 @@ from app.repositories import racks as rack_repo
 from app.schemas import RackSummary
 from app.services import estate as estate_service
 
+#: The Power page's window for its p95; the rack page quotes the same one.
+P95_DAYS = 7
+
 #: Worst-first, for the alarm roll-up over the rack's devices.
 _SEV_RANK = {"CRITICAL": 0, "MAJOR": 1, "MINOR": 2, "WARNING": 3}
 
@@ -115,8 +118,7 @@ async def power_block(session: AsyncSession, rack_id: str,
     inv = await estate_repo.power_inventory(session, rack_id=rack_id)
     row = estate_service._power_rack_row(rows[0], inv, peak=False)
 
-    p = await estate_repo.power_p95(session, rack_id=rack_id)
-    p95 = p["racks"].get(rack_id)
+    p95 = await repo.rack_p95(session, rack_id, days=P95_DAYS)
     legs = (await estate_repo.power_rack_legs(session, rack_id=rack_id)).get(rack_id, [])
     psu = (await estate_repo.power_rack_psu_failed(session, rack_id=rack_id)).get(rack_id, [])
     strips = (await estate_repo.power_rack_strip_state(session, rack_id=rack_id)).get(rack_id, [])
@@ -130,7 +132,7 @@ async def power_block(session: AsyncSession, rack_id: str,
     by_id = {d["id"]: d for d in devices}
     row.update({
         "p95_kw": p95,
-        "p95_days": p["days"],
+        "p95_days": P95_DAYS,
         "headroom_kw": (None if p95 is None or not row.get("rated_kw")
                         else round(row["rated_kw"] - p95, 2)),
         "stranded_kw": estate_service._stranded(row.get("allocated_kw"), p95),
