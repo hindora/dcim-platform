@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import contextlib
 import hmac
 import os
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from pydantic import BaseModel
 from redis.asyncio import Redis
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,13 +17,16 @@ from app.alarms import platform as platform_rules
 from app.alarms import platform_monitor
 from app.core import audit
 from app.core.config import Settings, get_settings
+from app.core.logging import get_logger
 from app.core.metrics_gen import METRICS
-from app.core.security import Principal, current_principal, issue_token
+from app.core.security import Principal, current_principal, issue_token, require_role
 from app.db.session import get_session
 from app.schemas import DashboardSummary, LoginRequest, TokenResponse
 from app.services import dashboard as service
+from app.services import instance_settings as org_settings
 
 router = APIRouter(tags=["platform"])
+log = get_logger("api.platform")
 
 # Phase 1 has no user table. Credentials come from the environment so that no
 # password is ever committed, and the login path is a single place to replace
@@ -79,8 +84,25 @@ async def metric_registry(_: Principal = Depends(current_principal)) -> dict:
     ]}
 
 
+async def _stored_org(session: AsyncSession) -> org_settings.StoredOrg:
+    """The saved name, or nothing if the database cannot say.
+
+    The login card reads the name before anyone has signed in. A database that
+    is down, or not migrated yet, must cost the heading its saved name - it
+    falls back to DCIM_ORG_NAME - and never the login page itself.
+    """
+    try:
+        return await org_settings.load(session)
+    except Exception as exc:
+        log.warning("instance settings unreadable; using the environment", error=str(exc))
+        with contextlib.suppress(Exception):
+            await session.rollback()
+        return org_settings.StoredOrg(None, None, None)
+
+
 @router.get("/instance", summary="Who this instance belongs to")
-async def instance(settings: Settings = Depends(get_settings)) -> dict:
+async def instance(session: AsyncSession = Depends(get_session),
+                   settings: Settings = Depends(get_settings)) -> dict:
     """Identity for the shell: the organisation, and which environment it is.
 
     Deliberately unauthenticated and deliberately thin. It is read before a
@@ -88,10 +110,56 @@ async def instance(settings: Settings = Depends(get_settings)) -> dict:
     anything an unauthenticated caller should not see - no site names, no
     counts, nothing about the estate itself.
     """
+    stored = await _stored_org(session)
+    name, _ = org_settings.resolve(stored.org_name, settings.org_name)
+    return {"org_name": name, "environment": settings.environment}
+
+
+class OrganisationUpdate(BaseModel):
+    #: Blank or null clears the saved name, handing it back to DCIM_ORG_NAME.
+    org_name: str | None = None
+
+
+def _organisation_view(stored: org_settings.StoredOrg, settings: Settings) -> dict:
+    name, source = org_settings.resolve(stored.org_name, settings.org_name)
     return {
-        "org_name": settings.org_name or "DCIM Platform",
-        "environment": settings.environment,
+        "org_name": name,
+        "source": source,
+        "saved_name": stored.org_name,
+        "environment_name": (settings.org_name or "").strip() or None,
+        "default_name": org_settings.PRODUCT_NAME,
+        "max_length": org_settings.MAX_ORG_NAME,
+        "updated_at": stored.updated_at,
+        "updated_by": stored.updated_by,
     }
+
+
+@router.get("/settings/organisation", summary="The organisation name and where it comes from")
+async def get_organisation(session: AsyncSession = Depends(get_session),
+                           settings: Settings = Depends(get_settings),
+                           _: Principal = Depends(current_principal)) -> dict:
+    return _organisation_view(await org_settings.load(session), settings)
+
+
+@router.put("/settings/organisation", summary="Rename the organisation (admin)")
+async def put_organisation(body: OrganisationUpdate, request: Request,
+                           session: AsyncSession = Depends(get_session),
+                           settings: Settings = Depends(get_settings),
+                           p: Principal = Depends(require_role("admin"))) -> dict:
+    try:
+        name = org_settings.clean_org_name(body.org_name)
+    except org_settings.OrgNameError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            {"message": str(exc), "field": "org_name"}) from exc
+    before = await org_settings.load(session)
+    await org_settings.save(session, name, p.username)
+    ip, agent = audit.client_of(request)
+    await audit.record(session, actor=p.username, action="settings.organisation.update",
+                       target_type="instance_setting", target_id="org_name",
+                       before={"org_name": before.org_name}, after={"org_name": name},
+                       ip=ip, user_agent=agent)
+    await session.commit()
+    return _organisation_view(await org_settings.load(session), settings)
 
 
 @router.get("/health", summary="Liveness")

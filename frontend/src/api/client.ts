@@ -2986,6 +2986,20 @@ export interface Instance {
   environment: string;
 }
 
+/** Settings > Organisation: the name the shell shows, and where it comes from.
+ *  `settings` = saved by an admin here; `environment` = DCIM_ORG_NAME on the
+ *  server; `default` = the product name. */
+export interface OrganisationSetting {
+  org_name: string;
+  source: 'settings' | 'environment' | 'default';
+  saved_name: string | null;
+  environment_name: string | null;
+  default_name: string;
+  max_length: number;
+  updated_at: string | null;
+  updated_by: string | null;
+}
+
 /** The state of the monitoring itself - deliberately NOT part of the estate's
  *  counters.
  *
@@ -5463,6 +5477,15 @@ export const api = {
   /** Who this instance belongs to. Unauthenticated on purpose: the shell needs
    *  a name before anybody has signed in. */
   instance: () => request<Instance>('/instance'),
+
+  organisation: () => request<OrganisationSetting>('/settings/organisation'),
+
+  /** Admin only. null (or blank) clears the saved name, so the server's
+   *  DCIM_ORG_NAME - or the product name - shows again. */
+  saveOrganisation: (org_name: string | null) =>
+    request<OrganisationSetting>('/settings/organisation', {
+      method: 'PUT', body: JSON.stringify({ org_name }),
+    }),
 
   roomKpi: (roomId: string) => request<RoomKpi>(`/estate/rooms/${roomId}/kpi`),
 

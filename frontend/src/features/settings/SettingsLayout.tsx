@@ -53,6 +53,11 @@ export const SETTINGS_NAV = [
     blurb: 'Which checks run, how sensitive they are, and what they ignore',
   },
   {
+    to: 'organisation',
+    label: 'Organisation',
+    blurb: 'The name on the Home page, the login card and the browser tab',
+  },
+  {
     to: 'appearance',
     label: 'Appearance',
     blurb: 'Light or dark, for this browser',
