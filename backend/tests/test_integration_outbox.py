@@ -60,6 +60,8 @@ def fake(monkeypatch):
             self.integrations = [INTEGRATION]
             self.rows_by_id: dict[str, dict] = {}
             self.open: set[str] = set()
+            self.ops_open: set[str] = set()
+            self.ops_notes: list[dict] = []
             self.written: list[dict] = []
             self.export_calls = 0
 
@@ -72,6 +74,13 @@ def fake(monkeypatch):
 
         async def open_fingerprints(self, session, integration_id, prints):
             return {p for p in prints if p in self.open}
+
+        async def open_ops_alerts(self, session, integration_id, prints):
+            return {p for p in prints if p in self.ops_open}
+
+        async def note_ops_alerts(self, session, integration_id, *, opened, closed):
+            self.ops_notes.append({"opened": [o["fingerprint"] for o in opened],
+                                   "closed": list(closed)})
 
         async def enqueue(self, session, rows):
             self.written.extend(rows)
@@ -231,3 +240,56 @@ async def test_the_widening_query_runs_once_for_a_whole_batch(fake):
     await run(fake, actions, rows)
     assert fake.export_calls == 1
     assert len(fake.written) == 5
+
+
+# ------------------------------------------------------ JSM Operations alerts
+#
+# An Operations alert keeps no jira_link - the alias is its key - so "open" is
+# recorded by the outbox itself (ops_alert_open). Before that, every clear for
+# an Operations integration was dropped here and every alert stayed open.
+
+OPS = {"id": "o1", "name": "JSM on-call", "kind": "jsm_ops", "config": {}}
+
+
+async def test_an_ops_raise_is_remembered_so_its_clear_can_follow(fake):
+    fake.integrations = [OPS]
+    await run(fake, [Action("alarm_created", thin())], [wide()])
+    assert [r["kind"] for r in fake.written] == ["alarm_raised"]
+    assert fake.ops_notes == [{"opened": [fp.of_alarm(wide())], "closed": []}]
+
+
+async def test_an_ops_clear_closes_the_alert_it_opened(fake):
+    fake.integrations = [OPS]
+    fake.ops_open.add(fp.of_alarm(wide()))
+    await run(fake, [Action("alarm_cleared", thin())], [wide()])
+    assert [r["kind"] for r in fake.written] == ["alarm_cleared"]
+    assert fake.ops_notes == [{"opened": [], "closed": [fp.of_alarm(wide())]}]
+
+
+async def test_an_ops_clear_does_not_depend_on_a_jira_link(fake):
+    """The bug: the open check read jira_link, which this target never writes."""
+    fake.integrations = [OPS]
+    fake.open.add(fp.of_alarm(wide()))          # a jira_link that should be ignored
+    await run(fake, [Action("alarm_cleared", thin())], [wide()])
+    assert fake.written == []
+
+
+async def test_an_ops_raise_and_its_clear_in_one_batch_both_go(fake):
+    fake.integrations = [OPS]
+    await run(fake, [Action("alarm_created", thin()), Action("alarm_cleared", thin())],
+              [wide()])
+    assert [r["kind"] for r in fake.written] == ["alarm_raised", "alarm_cleared"]
+    # Opened and closed inside the batch: nothing left marked open.
+    assert fake.ops_notes == [{"opened": [], "closed": [fp.of_alarm(wide())]}]
+
+
+async def test_an_ops_clear_of_a_condition_never_alerted_goes_nowhere(fake):
+    fake.integrations = [OPS]
+    await run(fake, [Action("alarm_cleared", thin())], [wide()])
+    assert fake.written == [] and fake.ops_notes == []
+
+
+async def test_a_jira_integration_writes_no_ops_memory(fake):
+    await run(fake, [Action("alarm_created", thin())], [wide()])
+    assert [r["kind"] for r in fake.written] == ["alarm_raised"]
+    assert fake.ops_notes == []

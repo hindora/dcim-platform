@@ -437,6 +437,44 @@ async def open_fingerprints(session: AsyncSession, integration_id: str,
     return {r["fingerprint"] for r in rows}
 
 
+async def open_ops_alerts(session: AsyncSession, integration_id: str,
+                          fingerprints: list[str]) -> set[str]:
+    """Which of these an Operations alert was queued for and not yet cleared.
+
+    The JSM Operations counterpart of `open_fingerprints`: that target keeps no
+    `jira_link`, so this table is the only record that a clear has an alert to
+    close.
+    """
+    if not fingerprints:
+        return set()
+    rows = (await session.execute(text("""
+        SELECT fingerprint FROM ops_alert_open
+         WHERE integration_id = CAST(:id AS uuid) AND fingerprint = ANY(:fps)
+    """), {"id": integration_id, "fps": fingerprints})).mappings().all()
+    return {r["fingerprint"] for r in rows}
+
+
+async def note_ops_alerts(session: AsyncSession, integration_id: str, *,
+                          opened: list[dict[str, Any]], closed: list[str]) -> None:
+    """Record raises and clears queued for an Operations integration.
+
+    Participates in the caller's transaction, like `enqueue`: the intent and
+    the memory of it commit together.
+    """
+    if closed:
+        await session.execute(text("""
+            DELETE FROM ops_alert_open
+             WHERE integration_id = CAST(:id AS uuid) AND fingerprint = ANY(:fps)
+        """), {"id": integration_id, "fps": closed})
+    if opened:
+        await session.execute(text("""
+            INSERT INTO ops_alert_open (integration_id, fingerprint, alarm_id)
+            VALUES (CAST(:id AS uuid), :fp, CAST(:alarm AS uuid))
+            ON CONFLICT (integration_id, fingerprint) DO NOTHING
+        """), [{"id": integration_id, "fp": o["fingerprint"], "alarm": o.get("alarm_id")}
+               for o in opened])
+
+
 async def upsert_link(session: AsyncSession, *, integration_id: str,
                       fingerprint: str, issue_key: str,
                       issue_id: str | None = None,

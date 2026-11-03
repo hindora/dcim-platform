@@ -107,11 +107,23 @@ async def _rows_for(session: AsyncSession, integration: dict[str, Any],
     if not prints:
         return []
 
-    already_open = await repo.open_fingerprints(
-        session, integration["id"], sorted(set(prints.values())))
+    # What counts as "already open" depends on the target. An issue is open
+    # while its jira_link is; an Operations alert keeps no link, so the
+    # outbox records its own (ops_alert_open). Reading jira_link for an
+    # Operations integration found nothing, ever, and dropped every clear -
+    # each alert stayed open until somebody closed it by hand.
+    ops = integration.get("kind") == "jsm_ops"
+    lookup = repo.open_ops_alerts if ops else repo.open_fingerprints
+    already_open = await lookup(session, integration["id"], sorted(set(prints.values())))
 
     rows: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
+    # Operations only: what this batch opens and closes. Kept up to date as the
+    # loop runs, so a raise and its clear in ONE batch see each other - the
+    # clear is a follow-up of the raise queued a few rows earlier.
+    already_open = set(already_open)
+    opened: list[dict[str, Any]] = []
+    closed: set[str] = set()
     for kind, alarm in candidates:
         row = wide.get(alarm["id"])
         if row is None:
@@ -142,6 +154,15 @@ async def _rows_for(session: AsyncSession, integration: dict[str, Any],
             continue
         seen.add(key)
 
+        if ops:
+            if kind == "alarm_cleared":
+                already_open.discard(print_)
+                closed.add(print_)
+                opened = [o for o in opened if o["fingerprint"] != print_]
+            elif print_ not in already_open:
+                already_open.add(print_)
+                closed.discard(print_)
+                opened.append({"fingerprint": print_, "alarm_id": row["id"]})
         rows.append({
             "integration_id": integration["id"],
             "kind": kind,
@@ -153,6 +174,10 @@ async def _rows_for(session: AsyncSession, integration: dict[str, Any],
             # 09:14" must still say that when it is delivered an hour later.
             "payload": row,
         })
+
+    if ops and (opened or closed):
+        await repo.note_ops_alerts(session, integration["id"], opened=opened,
+                                   closed=sorted(closed))
     return rows
 
 
