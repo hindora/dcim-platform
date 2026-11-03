@@ -492,6 +492,10 @@ PARAM_SCHEMAS: dict[str, list[ParamSpec]] = {
     "SV-3": _l3(2.0, "%"),
     "UP-3": _l3(1.0, "%"),
     "PD-2": _l3(0.5, "%"),
+    "SV-4": [*_l3(5.0, "W"),
+             ParamSpec("min_r2", "Link at least", "number", 0.3, None, 0.0, 0.95, 0.05,
+                       help="How closely power must follow CPU before a server is judged")],
+    "TH-1": _l3(0.3, "K"),
     L5_ID: [
         ParamSpec("major_enabled", "Escalate roots to MAJOR", "bool", False,
                   help="Off until the Phase 2 gate passes (docs/33)"),

@@ -2533,6 +2533,12 @@ export interface ExpectedSeries {
   days: number; min_days: number;
   fitted_at?: string | null;
   z_open: number;
+  /** profile: the reading itself, per hour. regression: the reading given its
+   *  driver (no band). inlet_gap: intake minus the room's supply air. */
+  kind: 'profile' | 'regression' | 'inlet_gap';
+  /** Why a series is not judged even with enough history, e.g. 'weak_link'. */
+  reason?: string | null;
+  link?: { a: number; b: number; r2: number; x_lo: number; x_hi: number; sigma: number } | null;
   now: { hour: number; expected: number; lo: number; hi: number } | null;
   band: number[][];
 }

@@ -503,11 +503,23 @@ export function UnitFindings({ deviceId }: { deviceId: string }) {
 /** One learned series, in words: how far the learning is, or what is usual now. */
 function expectedText(e: ExpectedSeries): string {
   const unit = e.unit === 'pct' ? ' %' : e.unit ? ` ${e.unit}` : '';
+  if (e.reason === 'weak_link' && e.hours >= e.min_hours) {
+    return 'not judged: it does not follow its driver closely enough on this unit';
+  }
+  if (e.reason === 'driver_does_not_vary') return 'not judged yet: its driver has not varied';
   if (e.learning) {
     if (e.hours < e.min_hours) return `learning, ${e.hours} of ${e.min_hours} hours`;
     return `learning, ${e.days} of ${e.min_days} days`;
   }
+  if (e.kind === 'regression' && e.link) {
+    return `follows CPU load: about ${numText(e.link.b)}${unit} per % CPU `
+      + `(learned between ${numText(e.link.x_lo)} and ${numText(e.link.x_hi)} %)`;
+  }
   if (!e.now) return 'this hour of the day is not learned yet';
+  if (e.kind === 'inlet_gap') {
+    return `usually ${numText(e.now.lo)}–${numText(e.now.hi)} K above the room's supply air `
+      + `at ${String(e.now.hour).padStart(2, '0')}:00 UTC`;
+  }
   return `usually ${numText(e.now.lo)}–${numText(e.now.hi)}${unit} at ${String(e.now.hour).padStart(2, '0')}:00 UTC`;
 }
 

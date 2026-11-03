@@ -393,6 +393,14 @@ class _Engine:
                 if dp is not None:
                     dew.setdefault(v.room_id, []).append(dp)
         ctx.room_dew_max = {r: max(vs) for r, vs in dew.items()}
+        supply: dict[str, list[float]] = {}
+        for v in views.values():
+            if v.room_id and v.device_type in ("crah", "crac"):
+                k = v.pick("supply_air_temp")
+                x = None if k in v.masked else v.last(k, self.ts)
+                if x is not None:
+                    supply.setdefault(v.room_id, []).append(x)
+        ctx.room_supply = {r: sum(vs) / len(vs) for r, vs in supply.items()}
         return ctx
 
     # --- state ------------------------------------------------------------------

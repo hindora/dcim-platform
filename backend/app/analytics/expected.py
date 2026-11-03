@@ -46,13 +46,26 @@ def view(row: dict[str, Any], params: dict[str, Any], now: datetime, *,
         "now": None,
         "band": [],
     }
+    # What the baseline is OF decides what can be drawn. A plain profile is
+    # the reading itself, so it has a "now" and a band on the reading's chart.
+    # A regression depends on its driver, and the inlet gap is a difference
+    # from the room's supply: neither is a band on the raw line, so the panel
+    # describes them in words and the chart draws nothing.
+    kind = "regression" if row.get("model_kind") == "ols" else (
+        "inlet_gap" if model.get("of") == "inlet_minus_room_supply" else "profile")
+    out["kind"] = kind
+    if model.get("reason"):
+        out["reason"] = model["reason"]
+    if kind == "regression":
+        out["link"] = {k: model.get(k) for k in ("a", "b", "r2", "x_lo", "x_hi", "sigma")}
+        return out
     hour = now.astimezone(UTC).hour
     got = _entry(model, hour, min_samples, floor)
     if got is not None:
         mid, sigma = got
         out["now"] = {"hour": hour, "expected": round(mid, 3),
                       "lo": round(mid - z * sigma, 3), "hi": round(mid + z * sigma, 3)}
-    if window is not None:
+    if window is not None and kind == "profile":
         out["band"] = band(model, window, z=z, floor=floor, min_samples=min_samples)
     return out
 

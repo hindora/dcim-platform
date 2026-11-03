@@ -111,23 +111,10 @@ def fit_profile(rows: list[HourRow], params: dict[str, Any], *,
     otherwise 'thin' - still written, so the panel can say how far along the
     learning is.
     """
-    rows = sorted(rows, key=lambda r: r.bucket)
     floor_sigma = float(params.get("sigma_floor", 0.0))
     if not rows:
         return ProfileFit("thin", {"hod": {}, "hours": 0, "days": 0}, 0, 0, 0, None)
-    typical = _stats.median(r.samples for r in rows)
-    keep: list[HourRow] = []
-    dropped = 0
-    prev_bucket: datetime | None = None
-    for r in rows:
-        cold = prev_bucket is None or r.bucket - prev_bucket > _timedelta(hours=1)
-        prev_bucket = r.bucket
-        thin = r.samples < 0.5 * typical
-        inside = any(a <= r.bucket < b for a, b in excluded_spans)
-        if thin or inside or (cold and keep_cold_start(params)) or not _math.isfinite(r.value):
-            dropped += 1
-            continue
-        keep.append(r)
+    keep, dropped = _clean_rows(rows, params, list(excluded_spans))
 
     by_hour: dict[int, list[float]] = {}
     for r in keep:
@@ -155,9 +142,102 @@ def fit_profile(rows: list[HourRow], params: dict[str, Any], *,
                       round(_stats.median(spreads), 4) if spreads else None)
 
 
+@_dataclass(frozen=True)
+class PairRow:
+    bucket: datetime
+    y: float
+    x: float
+    samples: int
+
+
+def _clean_rows(rows: list, params: dict[str, Any],
+                excluded_spans: list[tuple[datetime, datetime]]) -> tuple[list, int]:
+    """The guards shared by every fit: thin hours, cold starts, exclusions."""
+    rows = sorted(rows, key=lambda r: r.bucket)
+    if not rows:
+        return [], 0
+    typical = _stats.median(r.samples for r in rows)
+    keep, dropped, prev = [], 0, None
+    for r in rows:
+        cold = prev is None or r.bucket - prev > _timedelta(hours=1)
+        prev = r.bucket
+        vals = (r.y, r.x) if isinstance(r, PairRow) else (r.value,)
+        bad = (r.samples < 0.5 * typical
+               or any(a <= r.bucket < b for a, b in excluded_spans)
+               or (cold and keep_cold_start(params))
+               or not all(_math.isfinite(v) for v in vals))
+        if bad:
+            dropped += 1
+        else:
+            keep.append(r)
+    return keep, dropped
+
+
+def fit_ols(rows: list[PairRow], params: dict[str, Any], *,
+            excluded_spans: list[tuple[datetime, datetime]] = (),
+            previous: dict[str, Any] | None = None) -> ProfileFit:
+    """y = a + b*x on the hourly means, with the shared guards (docs/35 section 4).
+
+    The residual spread is robust (1.4826 * MAD of the residuals) and floored.
+    The learned range of x (5th to 95th percentile) is kept, so scoring never
+    extrapolates. A link weaker than `min_r2` is not a baseline: the status
+    stays 'thin' with the reason in the model, and nothing is judged on it.
+    As with the profile, one night can move the prediction at the middle of
+    the range by at most `max_change_pct` (or one previous sigma).
+    """
+    keep, dropped = _clean_rows(rows, params, excluded_spans)
+    days = len({r.bucket.astimezone(_UTC).date() for r in keep})
+    base = {"hours": len(keep), "days": days, "min_hours": int(params.get("min_hours", 120))}
+    if len(keep) < 3:
+        return ProfileFit("thin", {**base, "reason": "too_little_data"}, len(keep), days,
+                          dropped, None)
+    xs = [r.x for r in keep]
+    ys = [r.y for r in keep]
+    xbar, ybar = _stats.fmean(xs), _stats.fmean(ys)
+    sxx = sum((x - xbar) ** 2 for x in xs)
+    if sxx <= 1e-12:
+        return ProfileFit("thin", {**base, "reason": "driver_does_not_vary"}, len(keep), days,
+                          dropped, None)
+    b = sum((x - xbar) * (y - ybar) for x, y in zip(xs, ys, strict=True)) / sxx
+    a = ybar - b * xbar
+    resid = [y - (a + b * x) for x, y in zip(xs, ys, strict=True)]
+    ss_res = sum(e * e for e in resid)
+    ss_tot = sum((y - ybar) ** 2 for y in ys)
+    r2 = 1.0 - ss_res / ss_tot if ss_tot > 1e-12 else 0.0
+    med = _stats.median(resid)
+    sigma = max(MAD_TO_SIGMA * _stats.median(abs(e - med) for e in resid),
+                float(params.get("sigma_floor", 0.0)))
+    q = sorted(xs)
+    x_lo, x_hi = q[int(0.05 * (len(q) - 1))], q[int(0.95 * (len(q) - 1))]
+    if previous and previous.get("a") is not None:
+        cap = float(params.get("max_change_pct", 10.0)) / 100.0
+        old_mid = float(previous["a"]) + float(previous["b"]) * xbar
+        new_mid = a + b * xbar
+        step = max(abs(old_mid) * cap, float(previous.get("sigma") or 0.0))
+        if abs(new_mid - old_mid) > step:
+            a += (old_mid + step * (1 if new_mid > old_mid else -1)) - new_mid
+    model = {**base, "a": round(a, 6), "b": round(b, 6), "sigma": round(sigma, 4),
+             "r2": round(r2, 4), "x_lo": round(x_lo, 4), "x_hi": round(x_hi, 4),
+             "xbar": round(xbar, 4)}
+    enough = (len(keep) >= int(params.get("min_hours", 120))
+              and days >= int(params.get("min_days", 10)))
+    weak = r2 < float(params.get("min_r2", 0.3))
+    if weak:
+        model["reason"] = "weak_link"
+    status = "ok" if enough and not weak else "thin"
+    return ProfileFit(status, model, len(keep), days, dropped, round(sigma, 4))
+
+
 def keep_cold_start(params: dict[str, Any]) -> bool:
     """Whether the first hour after a gap is excluded (docs/35 section 3)."""
     return bool(params.get("exclude_cold_start", True))
+
+
+#: How each L3 detector is fitted. Absent means an hour-of-day profile of its
+#: primary metric.
+FIT_KIND: dict[str, str] = {"SV-4": "ols", "TH-1": "inlet_gap"}
+#: (y, x) for the regression detectors: y is judged, x is what drives it.
+OLS_PAIRS: dict[str, tuple[str, str]] = {"SV-4": ("power_draw", "cpu_utilization")}
 
 
 async def enabled_profile_detectors(conn: Any) -> list[dict[str, Any]]:
@@ -182,9 +262,19 @@ async def fit_profiles(conn: Any, now: datetime, detectors: list[dict[str, Any]]
     since = now - _timedelta(days=FIT_LOOKBACK_DAYS)
     for det in detectors:
         params = dict(det["params"] or {})
-        series = await repo.fit_series(conn, metric_key=det["primary_metric"],
-                                       device_types=list(det["device_types"]),
-                                       since=since, until=now)
+        kind = FIT_KIND.get(det["id"], "profile")
+        if kind == "ols":
+            y_key, x_key = OLS_PAIRS[det["id"]]
+            series = await repo.fit_pairs(conn, y_key=y_key, x_key=x_key,
+                                          device_types=list(det["device_types"]),
+                                          since=since, until=now)
+        elif kind == "inlet_gap":
+            series = await repo.fit_inlet_gap(conn, device_types=list(det["device_types"]),
+                                              since=since, until=now)
+        else:
+            series = await repo.fit_series(conn, metric_key=det["primary_metric"],
+                                           device_types=list(det["device_types"]),
+                                           since=since, until=now)
         frozen = await repo.series_with_open_findings(conn, det["id"])
         current = await repo.current_baseline_models(conn, det["id"])
         spans = await repo.excluded_spans(conn, det["id"], since, now)
@@ -193,13 +283,20 @@ async def fit_profiles(conn: Any, now: datetime, detectors: list[dict[str, Any]]
         for (device_id, metric_id, instance), raw in series.items():
             if (device_id, metric_id, instance) in frozen:
                 continue
-            rows = [HourRow(*t) for t in raw]
-            fit = fit_profile(rows, params,
-                              excluded_spans=spans.get(device_id, []) + spans.get("*", []),
-                              previous=current.get((device_id, metric_id, instance)))
+            excl = spans.get(device_id, []) + spans.get("*", [])
+            prev = current.get((device_id, metric_id, instance))
+            if kind == "ols":
+                rows = [PairRow(*t) for t in raw]
+                fit = fit_ols(rows, params, excluded_spans=excl, previous=prev)
+            else:
+                rows = [HourRow(*t) for t in raw]
+                fit = fit_profile(rows, params, excluded_spans=excl, previous=prev)
+                if kind == "inlet_gap":
+                    fit.model["of"] = "inlet_minus_room_supply"
             batch.append({
                 "detector_id": det["id"], "detector_version": det["version"],
                 "device_id": device_id, "metric_id": metric_id, "instance": instance,
+                "model_kind": "ols" if kind == "ols" else "profile_hod",
                 "model": fit.model, "fit_from": rows[0].bucket if rows else since,
                 "fit_to": (rows[-1].bucket + _timedelta(hours=1)) if rows else now,
                 "n": fit.n, "excluded_s": fit.excluded * 3600, "r2": None,

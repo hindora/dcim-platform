@@ -29,7 +29,8 @@ _MIG = (Path(__file__).resolve().parents[1] / "alembic" / "versions"
 #: Later migrations that tune the seeded params; applied in order on top.
 _TUNING = ("0113_a_spike_is_judged_against_the_reading.py",)
 #: Later migrations that seed detector rows of their own.
-_LATER_ROWS = ("0125_a_device_is_judged_against_itself.py",)
+_LATER_ROWS = ("0125_a_device_is_judged_against_itself.py",
+               "0126_a_load_is_judged_by_its_cause.py")
 
 
 def _load(path: Path, name: str):

@@ -173,3 +173,131 @@ def test_phase_imbalance_only_counts_upwards():
                    baseline=lambda k: _baseline(med=8.0, sigma=0.5))
     (v,) = residual.run_rule(ri)
     assert v.cond is False                      # far BELOW usual is not a fault here
+
+
+# --- SV-4: power given CPU ---------------------------------------------------
+
+from app.analytics.baselines import PairRow, fit_ols  # noqa: E402
+from app.analytics.detectors.rules import Context  # noqa: E402
+
+P4 = seed_params("SV-4")
+
+
+def _pairs(days=25, a=150.0, b=3.0, noise=2.0):
+    out = []
+    for d in range(days):
+        for h in range(7, 14):
+            cpu = 20 + ((d * 7 + h) * 13) % 60          # 20..79 %, varied
+            jitter = noise * ((((d * 7 + h) % 5) - 2) / 2)
+            out.append(PairRow(DAY0 + timedelta(days=d, hours=h), a + b * cpu + jitter, cpu, 60))
+    return out
+
+
+def test_the_regression_recovers_the_link():
+    fit = fit_ols(_pairs(), P4)
+    assert fit.status == "ok"
+    assert abs(fit.model["b"] - 3.0) < 0.1 and abs(fit.model["a"] - 150.0) < 5.0
+    assert fit.model["r2"] > 0.9 and fit.model["x_lo"] < 30 < 70 < fit.model["x_hi"]
+
+
+def test_a_weak_link_is_not_a_baseline():
+    rows = [PairRow(r.bucket, 300.0 + ((i * 37) % 50), r.x, 60) for i, r in enumerate(_pairs())]
+    fit = fit_ols(rows, P4)
+    assert fit.status == "thin" and fit.model["reason"] == "weak_link"
+
+
+def test_a_driver_that_never_moves_teaches_nothing():
+    rows = [PairRow(r.bucket, r.y, 40.0, 60) for r in _pairs()]
+    fit = fit_ols(rows, P4)
+    assert fit.status == "thin" and fit.model["reason"] == "driver_does_not_vary"
+
+
+def _ols_base(a=150.0, b=3.0, sigma=4.0, lo=20.0, hi=80.0):
+    return {"status": "ok", "model": {"a": a, "b": b, "sigma": sigma, "x_lo": lo, "x_hi": hi}}
+
+
+def _server(power, cpu, now):
+    dev = DeviceView(device_id="d1", name="SRV07", device_type="server", online=True)
+    for key, v in (("power_draw", power), ("cpu_utilization", cpu)):
+        dev.num[(key, "")] = [Sample(now - 60 * i, v) for i in range(40)][::-1]
+        dev.fresh.add((key, ""))
+    return dev
+
+
+def _sv4(power, cpu, base, st=None, now=None):
+    now = now or datetime(2026, 11, 3, 10, 0, tzinfo=UTC).timestamp()
+    st = st or DwellState()
+    ri = RuleInput("SV-4", P4, _server(power, cpu, now), None, now,
+                   active=lambda k: st.active, x=lambda k: st.x, baseline=lambda k: base)
+    (v,) = residual.run_rule(ri)
+    return v
+
+
+def test_power_that_follows_its_cpu_is_quiet():
+    v = _sv4(150 + 3 * 50, 50, _ols_base())
+    assert v.cond is False and abs(v.expected - 300.0) < 1e-6
+
+
+def test_power_far_above_what_its_cpu_explains_counts():
+    v = _sv4(420, 50, _ols_base())                  # 300 W expected
+    assert v.cond is True and "more than the 300 W" in v.summary
+
+
+def test_a_load_outside_what_was_learned_is_not_judged():
+    v = _sv4(500, 99, _ols_base(hi=80.0))
+    assert v.cond is None and v.diagnosis == "outside_learned_range"
+
+
+# --- TH-1: intake above the room's supply ------------------------------------
+
+P1 = seed_params("TH-1")
+
+
+def _th1(inlet, supply, usual_gap=3.0, sigma=0.3):
+    now = datetime(2026, 11, 3, 10, 0, tzinfo=UTC).timestamp()
+    dev = DeviceView(device_id="d1", name="SRV09", device_type="server", room_id="r1",
+                     online=True)
+    dev.num[("inlet_temperature", "")] = [Sample(now - 60 * i, inlet) for i in range(40)][::-1]
+    dev.fresh.add(("inlet_temperature", ""))
+    st = DwellState()
+    base = {"status": "ok", "model": {"of": "inlet_minus_room_supply",
+                                      "hod": {"10": [usual_gap, sigma, 20]}}}
+    ri = RuleInput("TH-1", P1, dev, Context(room_supply={"r1": supply}), now,
+                   active=lambda k: st.active, x=lambda k: st.x, baseline=lambda k: base)
+    (v,) = residual.run_rule(ri)
+    return v
+
+
+def test_a_raised_setpoint_moves_both_and_is_not_an_anomaly():
+    assert _th1(inlet=25.0, supply=22.0).cond is False      # usual 3 K gap
+    assert _th1(inlet=27.0, supply=24.0).cond is False      # setpoint +2 K: still 3 K
+
+
+def test_hot_air_reaching_one_rack_widens_its_gap():
+    v = _th1(inlet=29.0, supply=22.0)
+    assert v.cond is True and "7.0 K above the room's supply air" in v.summary
+
+
+def test_no_room_supply_is_held():
+    now = datetime(2026, 11, 3, 10, 0, tzinfo=UTC).timestamp()
+    dev = DeviceView(device_id="d1", name="SRV09", device_type="server", room_id="r9",
+                     online=True)
+    dev.num[("inlet_temperature", "")] = [Sample(now - 60 * i, 25.0) for i in range(40)][::-1]
+    base = {"status": "ok", "model": {"hod": {"10": [3.0, 0.3, 20]}}}
+    ri = RuleInput("TH-1", P1, dev, Context(), now, active=lambda k: False,
+                   x=lambda k: {}, baseline=lambda k: base)
+    (v,) = residual.run_rule(ri)
+    assert v.cond is None and v.diagnosis == "no_room_supply"
+
+
+def test_a_fast_polled_series_with_a_full_buffer_is_not_a_cold_start():
+    from app.analytics.window import KEEP_MAX
+    now = datetime(2026, 11, 3, 10, 0, tzinfo=UTC).timestamp()
+    samples = [Sample(now - 20 * i, 30.0) for i in range(KEEP_MAX)][::-1]   # 21 min at 20 s
+    assert residual._resumed_at(samples, now) is None
+
+
+def test_a_series_that_only_just_began_is_a_cold_start():
+    now = datetime(2026, 11, 3, 10, 0, tzinfo=UTC).timestamp()
+    samples = [Sample(now - 60 * i, 30.0) for i in range(10)][::-1]
+    assert residual._resumed_at(samples, now) == samples[0].ts

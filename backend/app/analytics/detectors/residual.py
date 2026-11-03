@@ -35,6 +35,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.analytics.detectors.rules import Key, RuleInput, Verdict, context_gate
+from app.analytics.window import KEEP_MAX
 
 #: A gap this long before the window means the series has just come back.
 GAP_S = 3600.0
@@ -77,66 +78,169 @@ def score_profile(ri: RuleInput, metric: str, *, unit: str, what: str,
     dev = ri.dev
     keys = [dev.pick(metric, instance)] if instance is not None else (
         dev.instances(metric) or [dev.pick(metric)])
-    return [_score_one(ri, key, unit=unit, what=what, direction=direction) for key in keys]
+    return [_profile_one(ri, key, unit=unit, what=what, direction=direction) for key in keys]
 
 
-def _score_one(ri: RuleInput, key: Key, *, unit: str, what: str, direction: str) -> Verdict:
+def _pre(ri: RuleInput, key: Key, extra: tuple[Key, ...] = ()
+         ) -> tuple[Verdict | None, dict[str, Any] | None, list, dict[str, Any]]:
+    """The checks every L3 detector makes before it can judge: gates, masks,
+    a usable baseline, enough recent samples, not in a cold start.
+    Returns (verdict-if-it-cannot-judge, baseline, recent samples, kw)."""
     p, dev, now = ri.params, ri.dev, ri.now
-    kw = {"signals": (key,), "fresh": key in dev.fresh}
+    kw: dict[str, Any] = {"signals": (key, *extra), "fresh": key in dev.fresh}
     gate = context_gate(p, dev)
     if gate:
-        return Verdict(key[0], key[1], False, gate=gate, **kw)
+        return Verdict(key[0], key[1], False, gate=gate, **kw), None, [], kw
     if not dev.online:
-        return Verdict(key[0], key[1], False, gate="offline", **kw)
-    if key in dev.masked:
-        return _held(key, "masked", **kw)
+        return Verdict(key[0], key[1], False, gate="offline", **kw), None, [], kw
+    if key in dev.masked or any(k in dev.masked for k in extra):
+        return _held(key, "masked", **kw), None, [], kw
     base = ri.baseline(key)
     if base is None:
-        return _held(key, "no_baseline", **kw)
+        return _held(key, "no_baseline", **kw), None, [], kw
     if base.get("status") != "ok":
-        return _held(key, "learning", **kw)
-
+        return _held(key, "learning", **kw), None, [], kw
     window = float(p.get("score_window_s", 1800))
     all_clean = dev.clean(key)
     recent = [s for s in all_clean if s.ts >= now - window]
     if len(recent) < int(p.get("min_samples", 3)):
-        return _held(key, "too_few_samples", **kw)
+        return _held(key, "too_few_samples", **kw), None, [], kw
     # Back from a gap: the first stretch after the series resumes is a cold
     # start (collectors reconnecting, walks resuming), not behaviour.
-    start = _resumed_at(all_clean, now)
-    if start is not None and now - start < float(p.get("coldstart_s", 1800)):
-        return _held(key, "cold_start", **kw)
+    started = _resumed_at(all_clean, now)
+    if started is not None and now - started < float(p.get("coldstart_s", 1800)):
+        return _held(key, "cold_start", **kw), None, [], kw
+    return None, base, recent, kw
 
-    hour = datetime.fromtimestamp(now, UTC).hour
-    entry = hour_entry(base.get("model") or {}, hour, int(p.get("min_hour_samples", 8)))
-    if entry is None:
-        return _held(key, "hour_not_learned", **kw)
-    expected, sigma, n = entry
+
+def _mean(samples: list) -> float:
+    return sum(s.v for s in samples) / len(samples)
+
+
+def _band(ri: RuleInput, sigma: float) -> float:
+    return float(ri.params.get("z_open", 4.0)) * max(sigma, float(ri.params.get("sigma_floor", 0)))
+
+
+def _judge(ri: RuleInput, key: Key, *, observed: float, expected: float, sigma: float,
+           direction: str, diagnosis: str, expr: str, summary: str,
+           kw: dict[str, Any], extra_x: dict[str, Any] | None = None) -> Verdict:
+    """The shared core: z, EWMA and CUSUM through DwellState.x, and the verdict."""
+    p, dev = ri.params, ri.dev
     sigma = max(sigma, float(p.get("sigma_floor", 0.0)), 1e-9)
-    x = sum(s.v for s in recent) / len(recent)
-    z = (x - expected) / sigma
-
-    prev = ri.x(key) if callable(ri.x) else {}
-    st = step_stats(prev if key in dev.fresh or prev else None, z,
-                    alpha=float(p.get("ewma_alpha", 0.3)), k=float(p.get("cusum_k", 0.5))) \
-        if key in dev.fresh or not prev else {k_: prev[k_] for k_ in ("e", "sp", "sn")}
+    z = (observed - expected) / sigma
+    prev = dict(ri.x(key) or {})
+    if key in dev.fresh or "e" not in prev:
+        # A new sample moves the statistics; a sweep with nothing new repeats
+        # them, so polling faster than the sweep cannot inflate the CUSUM.
+        st = step_stats(prev, z, alpha=float(p.get("ewma_alpha", 0.3)),
+                        k=float(p.get("cusum_k", 0.5)))
+    else:
+        st = {k_: float(prev[k_]) for k_ in ("e", "sp", "sn")}
     z_open = float(p.get("z_open", 4.0))
     cond = tripped(st, z_open=z_open, h=float(p.get("cusum_h", 5.0)), direction=direction)
     band = z_open * sigma
-    word = "above" if x > expected else "below"
     return Verdict(
-        key[0], key[1], cond, observed=x, expected=expected,
-        threshold=expected + band if x >= expected else expected - band,
-        score=st["e"], diagnosis="unlike_its_usual",
-        expr=(f"ewma(z) beyond +/-{z_open} or cusum > {p.get('cusum_h', 5.0)}, "
-              f"z = ({key[0]} - expected[hour]) / sigma[hour]"),
-        summary=(f"{dev.name} {what} at {_fmt(x)}{unit}, {word} its usual "
-                 f"{_fmt(expected)}{unit} (±{_fmt(band)}) for {hour:02d}:00 UTC"),
-        x={**st, "n_hour": n}, **kw)
+        key[0], key[1], cond, observed=observed, expected=expected,
+        threshold=expected + band if observed >= expected else expected - band,
+        score=st["e"], diagnosis=diagnosis, expr=expr, summary=summary,
+        x={**st, **(extra_x or {})}, **kw)
+
+
+def _profile_one(ri: RuleInput, key: Key, *, unit: str, what: str, direction: str) -> Verdict:
+    held, base, recent, kw = _pre(ri, key)
+    if held is not None:
+        return held
+    hour = datetime.fromtimestamp(ri.now, UTC).hour
+    entry = hour_entry(base.get("model") or {}, hour, int(ri.params.get("min_hour_samples", 8)))
+    if entry is None:
+        return _held(key, "hour_not_learned", **kw)
+    expected, sigma, n = entry
+    x = _mean(recent)
+    word = "above" if x > expected else "below"
+    return _judge(
+        ri, key, observed=x, expected=expected, sigma=sigma, direction=direction,
+        diagnosis="unlike_its_usual",
+        expr=(f"ewma(z) beyond +/-{ri.params.get('z_open', 4.0)} or cusum > "
+              f"{ri.params.get('cusum_h', 5.0)}, z = ({key[0]} - expected[hour]) / sigma[hour]"),
+        summary=(f"{ri.dev.name} {what} at {_fmt(x)}{unit}, {word} its usual "
+                 f"{_fmt(expected)}{unit} (±{_fmt(_band(ri, sigma))}) for {hour:02d}:00 UTC"),
+        kw=kw, extra_x={"n_hour": n})
+
+
+def score_ols(ri: RuleInput, y_metric: str, x_metric: str, *, unit: str, what: str,
+              driver: str, direction: str = "both") -> list[Verdict]:
+    """y against what a regression on its driver x says it should be."""
+    dev, p = ri.dev, ri.params
+    key, xkey = dev.pick(y_metric), dev.pick(x_metric)
+    held, base, recent, kw = _pre(ri, key, (xkey,))
+    if held is not None:
+        return [held]
+    window = float(p.get("score_window_s", 1800))
+    xs = [s for s in dev.clean(xkey) if s.ts >= ri.now - window]
+    if len(xs) < int(p.get("min_samples", 3)):
+        return [_held(key, "driver_missing", **kw)]
+    m = base.get("model") or {}
+    a, b = float(m.get("a", 0.0)), float(m.get("b", 0.0))
+    x_lo, x_hi = float(m.get("x_lo", -math.inf)), float(m.get("x_hi", math.inf))
+    x = _mean(xs)
+    # Never extrapolate: a load the fit never saw says nothing about the link.
+    margin = float(p.get("x_margin", 0.1)) * max(x_hi - x_lo, 1e-9)
+    if not (x_lo - margin <= x <= x_hi + margin):
+        return [_held(key, "outside_learned_range", **kw)]
+    expected = a + b * x
+    y = _mean(recent)
+    sigma = float(m.get("sigma", base.get("resid_sigma") or 0.0))
+    word = "more" if y > expected else "less"
+    return [_judge(
+        ri, key, observed=y, expected=expected, sigma=sigma, direction=direction,
+        diagnosis="unlike_its_driver",
+        expr=f"{y_metric} vs {a:.3g} + {b:.3g} * {x_metric}, residual ewma/cusum",
+        summary=(f"{dev.name} {what} {_fmt(y)}{unit}, {word} than the {_fmt(expected)}{unit} "
+                 f"(±{_fmt(_band(ri, sigma))}) expected at {_fmt(x)} {driver}"),
+        kw=kw, extra_x={"x": round(x, 3)})]
+
+
+def score_inlet_gap(ri: RuleInput, *, direction: str = "high") -> list[Verdict]:
+    """Rack inlet above the room's supply air, against that gap's usual for the hour.
+
+    The gap, not the inlet: a CRAH setpoint raised by 2 K moves both and the
+    gap stays, so a planned change is not an anomaly; hot air recirculating
+    into one rack widens only that rack's gap.
+    """
+    dev = ri.dev
+    key = dev.pick("inlet_temperature")
+    held, base, recent, kw = _pre(ri, key)
+    if held is not None:
+        return [held]
+    supply = ri.ctx.room_supply.get(dev.room_id or "") if ri.ctx is not None else None
+    if supply is None:
+        return [_held(key, "no_room_supply", **kw)]
+    hour = datetime.fromtimestamp(ri.now, UTC).hour
+    entry = hour_entry(base.get("model") or {}, hour, int(ri.params.get("min_hour_samples", 8)))
+    if entry is None:
+        return [_held(key, "hour_not_learned", **kw)]
+    expected, sigma, n = entry
+    gap = _mean(recent) - supply
+    return [_judge(
+        ri, key, observed=gap, expected=expected, sigma=sigma, direction=direction,
+        diagnosis="recirculation",
+        expr="(inlet_temperature - mean(room supply_air_temp)) vs expected[hour]",
+        summary=(f"{dev.name} intake {_fmt(gap)} K above the room's supply air, against "
+                 f"a usual {_fmt(expected)} K (±{_fmt(_band(ri, sigma))}) for {hour:02d}:00 UTC: "
+                 f"hot air reaching this rack's intake"),
+        kw=kw, extra_x={"n_hour": n, "supply": round(supply, 2)})]
 
 
 def _resumed_at(samples: list, now: float) -> float | None:
-    """When the current unbroken run of samples began, if it followed a gap."""
+    """When the current unbroken run of samples began, if there is evidence it
+    follows a gap; None when the history is continuous as far as we can see.
+
+    Evidence is either a gap of more than an hour inside the buffer, or a
+    buffer that is short because the series only just began (fewer samples
+    than the window keeps). A FULL buffer is continuous history, however
+    little time it spans: a series polled every 20 s fills it in about 21
+    minutes, and treating that as "just resumed" would hold it forever.
+    """
     if not samples:
         return None
     t = samples[-1].ts
@@ -144,9 +248,9 @@ def _resumed_at(samples: list, now: float) -> float | None:
         if t - s.ts > GAP_S:
             return t
         t = s.ts
-    # The window only holds the last half hour; a run that fills it began
-    # at least that long ago, which is past any cold start.
-    return None if now - samples[0].ts >= GAP_S else samples[0].ts
+    if len(samples) >= KEEP_MAX:
+        return None
+    return samples[0].ts
 
 
 def _fmt(v: float) -> str:
@@ -170,8 +274,17 @@ def pd2(ri: RuleInput) -> list[Verdict]:
                          direction="high")
 
 
+def sv4(ri: RuleInput) -> list[Verdict]:
+    return score_ols(ri, "power_draw", "cpu_utilization", unit=" W", what="drawing",
+                     driver="% CPU")
+
+
+def th1(ri: RuleInput) -> list[Verdict]:
+    return score_inlet_gap(ri)
+
+
 RULES: dict[str, Callable[[RuleInput], list[Verdict]]] = {
-    "SV-3": sv3, "UP-3": up3, "PD-2": pd2,
+    "SV-3": sv3, "UP-3": up3, "PD-2": pd2, "SV-4": sv4, "TH-1": th1,
 }
 
 
