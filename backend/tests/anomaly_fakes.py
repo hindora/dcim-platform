@@ -28,6 +28,8 @@ _MIG = (Path(__file__).resolve().parents[1] / "alembic" / "versions"
 
 #: Later migrations that tune the seeded params; applied in order on top.
 _TUNING = ("0113_a_spike_is_judged_against_the_reading.py",)
+#: Later migrations that seed detector rows of their own.
+_LATER_ROWS = ("0125_a_device_is_judged_against_itself.py",)
 
 
 def _load(path: Path, name: str):
@@ -45,6 +47,8 @@ def seed_rows() -> list[dict[str, Any]]:
     """The catalogue as a fresh database holds it: 0112's rows with every
     later tuning migration's PARAM_UPDATES merged in."""
     rows = [dict(r) for r in _migration().ROWS]
+    for fname in _LATER_ROWS:
+        rows += [dict(r) for r in _load(_MIG.parent / fname, fname[:4]).ROWS]
     for fname in _TUNING:
         upd = _load(_MIG.parent / fname, fname[:4]).PARAM_UPDATES
         for r in rows:
@@ -201,7 +205,8 @@ class FakeDB:
         r, a = anomaly_sweep.repo, anomaly_sweep.alarm_repo
         for name in ("load_catalogue", "sweep_devices", "open_findings", "metric_ids",
                      "read_numeric", "read_bools", "open_finding", "touch_findings",
-                     "resolve_finding", "link_alarm", "sync_alarm_acks", "findings_by_ids"):
+                     "resolve_finding", "link_alarm", "sync_alarm_acks", "findings_by_ids",
+                     "current_baselines", "set_finding_lane"):
             monkeypatch.setattr(r, name, getattr(self, name))
         for name in ("raise_alarm", "clear_alarms", "record_history",
                      "refresh_device_alarm_state"):
@@ -217,6 +222,14 @@ class FakeDB:
 
     async def metric_ids(self, session):
         return dict(self.mids)
+
+    async def current_baselines(self, session, detector_ids):
+        return {k: v for k, v in getattr(self, "baselines", {}).items() if k[0] in detector_ids}
+
+    async def set_finding_lane(self, session, finding_id, lane):
+        for f in getattr(self, "findings", []):
+            if f.get("id") == finding_id:
+                f["lane"] = lane
 
     async def open_findings(self, session):
         return [{"id": f["id"], "detector_id": f["detector_id"], "device_id": f["device_id"],

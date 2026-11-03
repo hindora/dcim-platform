@@ -55,7 +55,7 @@ from app.analytics.catalogue import (
     Detector,
     cap_severity,
 )
-from app.analytics.detectors import quality
+from app.analytics.detectors import quality, residual
 from app.analytics.detectors import rules as rl
 from app.analytics.evidence import rule_evidence
 from app.core import alert_taxonomy
@@ -191,6 +191,7 @@ class _Engine:
         self.win = win_store.HashStore(redis, win_store.WIN_KEY)
         self.acc = win_store.HashStore(redis, win_store.ACC_KEY)
         self.states: dict[str, rl.DwellState] = {}
+        self.baselines: dict[tuple[str, str, int, str], dict[str, Any]] = {}
         self.touched: set[str] = set()
         self.touches: list[dict[str, Any]] = []
         #: finding id -> (event, change, via); last write wins per finding.
@@ -199,7 +200,7 @@ class _Engine:
     # --- setup --------------------------------------------------------------
 
     async def run(self) -> None:
-        scorers = [d for d in self.cat.scorers() if d.layer in (0, 2)]
+        scorers = [d for d in self.cat.scorers() if d.layer in (0, 2, 3)]
         types = sorted({t for d in scorers for t in d.device_types})
         devices = await repo.sweep_devices(self.s, types)
         self.open_rows = await repo.open_findings(self.s)
@@ -207,6 +208,9 @@ class _Engine:
             return
         self.mids = await repo.metric_ids(self.s)
         self.mkey = {v: k for k, v in self.mids.items()}
+        # L3 (docs/35): the fitted baselines the residual rules score against.
+        self.baselines = await repo.current_baselines(
+            self.s, [d.id for d in scorers if d.layer == 3 and d.enabled])
         self.open_by_key = {(r["detector_id"], r["device_id"], r["metric_id"], r["instance"]): r
                             for r in self.open_rows}
         await self.win.load()
@@ -237,7 +241,9 @@ class _Engine:
         ctx = self._context(views)
         for view in views.values():
             for d in scorers:
-                if d.layer != 2 or d.id not in rl.RULES:
+                l2 = d.layer == 2 and d.id in rl.RULES
+                l3 = d.layer == 3 and d.id in residual.RULES
+                if not (l2 or l3):
                     continue
                 eff = self._effective(d, view)
                 if eff is None:
@@ -246,8 +252,10 @@ class _Engine:
                 ri = rl.RuleInput(
                     d.id, params, view, ctx, self.ts,
                     active=lambda k, _d=d.id, _v=view: self._state(_d, _v, k).active,
-                    x=lambda k, _d=d.id, _v=view: self._state(_d, _v, k).x)
-                for v in rl.run_rule(ri):
+                    x=lambda k, _d=d.id, _v=view: self._state(_d, _v, k).x,
+                    baseline=lambda k, _d=d.id, _v=view: self.baselines.get(
+                        (_d, _v.device_id, self.mids.get(k[0], -1), k[1])))
+                for v in (rl.run_rule(ri) if l2 else residual.run_rule(ri)):
                     verdicts.append((d, view, params, v))
 
         self.result.series_scored = len(verdicts)
@@ -765,12 +773,17 @@ async def guarded_sweep(session: AsyncSession, redis: Any, *, consumer: str,
 async def run_baseline_fit(conn: AsyncConnection, now: datetime) -> FitResult:
     """Fit every L3/L4 series, then prune.
 
-    Phase 1: nothing to fit yet (Phase 3 fills that in with per-batch
-    transactions on `conn`); the nightly batched prune of docs/29 section 6.3
-    runs here, under the DCIMB session lock (docs/33 task 1.15).
+    Phase 3a fits the hour-of-day profiles (analytics/baselines.fit_profiles,
+    per-batch transactions on `conn`); then the nightly batched prune of
+    docs/29 section 6.3, under the DCIMB session lock (docs/33 task 1.15).
+    `rejected` counts series still learning ('thin').
     """
+    # Phase 3a (docs/35): the hour-of-day profiles of the enabled L3 detectors.
+    fitted, thin = await baselines.fit_profiles(
+        conn, now, await baselines.enabled_profile_detectors(conn))
     pruned = await baselines.prune(conn, now)
-    return FitResult(ran=True, pruned_rows=sum(pruned.values()))
+    return FitResult(ran=True, series_fitted=fitted, rejected=thin,
+                     pruned_rows=sum(pruned.values()))
 
 
 FitFn = Callable[[AsyncConnection, datetime], Awaitable[FitResult]]

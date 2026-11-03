@@ -361,6 +361,9 @@ class RuleInput:
     active: Callable[[Key], bool] = lambda k: False
     #: Detector-private persisted state for this (metric, instance).
     x: Callable[[Key], dict[str, Any]] = lambda k: {}
+    #: L3 only: the current fitted baseline row for this (metric, instance),
+    #: as analytics/baselines.py writes it, or None.
+    baseline: Callable[[Key], Mapping[str, Any] | None] = lambda k: None
 
 
 def _f(v: float | None, nd: int = 1) -> str:

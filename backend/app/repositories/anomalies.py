@@ -1115,3 +1115,113 @@ async def prune_batch(conn: Any, table: str, key: str, predicate: str, *, now: d
             SELECT {key} FROM {table} WHERE {predicate} LIMIT :batch)
     """), {"now": now, "batch": batch})
     return res.rowcount or 0
+
+
+# =============================================================================
+# Phase 3a: the profile fit's reads and writes (docs/35)
+# =============================================================================
+
+async def fit_series(conn: Any, *, metric_key: str, device_types: list[str],
+                     since: datetime, until: datetime
+                     ) -> dict[tuple[str, int, str], list[tuple[datetime, float, int]]]:
+    """Hourly means of one metric on every in-service device of these types.
+
+    From telemetry_1h, kept forever, so the read is cheap and the fit does not
+    depend on the 30-day raw retention. Keyed (device_id, metric_id, instance).
+    """
+    rows = (await conn.execute(text("""
+        SELECT h.device_id::text, h.metric_id, h.instance, h.bucket,
+               h.avg_value::float8, h.sample_count::int
+          FROM telemetry_1h h
+          JOIN metric m ON m.id = h.metric_id
+          JOIN device d ON d.id = h.device_id
+         WHERE m.key = :key AND d.device_type = ANY(:types)
+           AND d.lifecycle::text <> ALL(:retired)
+           AND h.bucket >= :since AND h.bucket < :until
+           AND h.avg_value IS NOT NULL
+         ORDER BY 1, 2, 3, 4
+    """), {"key": metric_key, "types": device_types, "retired": list(RETIRED_LIFECYCLES),
+           "since": since, "until": until})).all()
+    out: dict[tuple[str, int, str], list[tuple[datetime, float, int]]] = {}
+    for dev, mid, inst, bucket, value, n in rows:
+        out.setdefault((dev, int(mid), inst), []).append((bucket, float(value), int(n or 0)))
+    return out
+
+
+async def series_with_open_findings(conn: Any, detector_id: str) -> set[tuple[str, int, str]]:
+    rows = (await conn.execute(text("""
+        SELECT device_id::text, metric_id, instance FROM anomaly_finding
+         WHERE detector_id = :d AND state <> 'resolved'
+    """), {"d": detector_id})).all()
+    return {(r[0], int(r[1]), r[2]) for r in rows}
+
+
+async def current_baseline_models(conn: Any, detector_id: str
+                                  ) -> dict[tuple[str, int, str], dict[str, Any]]:
+    rows = (await conn.execute(text("""
+        SELECT device_id::text, metric_id, instance, model FROM anomaly_baseline
+         WHERE detector_id = :d AND is_current AND device_id IS NOT NULL
+    """), {"d": detector_id})).all()
+    return {(r[0], int(r[1]), r[2]): dict(r[3] or {}) for r in rows}
+
+
+async def excluded_spans(conn: Any, detector_id: str, since: datetime, until: datetime
+                         ) -> dict[str, list[tuple[datetime, datetime]]]:
+    """What a fit must not learn: maintenance on the device, and baseline
+    exclusions (a regime change, a confirmed fault). Keyed by device id, with
+    "*" for estate-wide exclusions."""
+    out: dict[str, list[tuple[datetime, datetime]]] = {}
+    maint = (await conn.execute(text("""
+        SELECT t.device_id::text, w.starts_at, COALESCE(w.ends_at, :until)
+          FROM maintenance_target t
+          JOIN maintenance_window w ON w.id = t.window_id
+         WHERE w.status <> 'cancelled' AND w.starts_at < :until
+           AND COALESCE(w.ends_at, :until) > :since
+    """), {"since": since, "until": until})).all()
+    for dev, a, b in maint:
+        out.setdefault(dev, []).append((a, b))
+    excl = (await conn.execute(text("""
+        SELECT COALESCE(device_id::text, '*'), starts_at, COALESCE(ends_at, :until)
+          FROM anomaly_baseline_exclusion
+         WHERE (detector_id IS NULL OR detector_id = :d)
+           AND room_id IS NULL AND datacenter_id IS NULL
+           AND starts_at < :until AND COALESCE(ends_at, :until) > :since
+    """), {"d": detector_id, "since": since, "until": until})).all()
+    for dev, a, b in excl:
+        out.setdefault(dev, []).append((a, b))
+    return out
+
+
+async def write_baselines(conn: Any, rows: list[dict[str, Any]]) -> None:
+    """Supersede each series' current baseline and insert the new one."""
+    if not rows:
+        return
+    await conn.execute(text("""
+        UPDATE anomaly_baseline SET is_current = false, superseded_at = :fitted_at
+         WHERE detector_id = :detector_id AND device_id = CAST(:device_id AS uuid)
+           AND metric_id = :metric_id AND instance = :instance AND is_current
+    """), rows)
+    await conn.execute(text("""
+        INSERT INTO anomaly_baseline
+               (detector_id, detector_version, device_id, metric_id, instance, model_kind,
+                model, source_rollup, fit_from, fit_to, n, excluded_s, r2, resid_sigma,
+                status, is_current, fitted_at)
+        VALUES (:detector_id, :detector_version, CAST(:device_id AS uuid), :metric_id,
+                :instance, 'profile_hod', CAST(:model AS jsonb), 'telemetry_1h', :fit_from,
+                :fit_to, :n, :excluded_s, :r2, :resid_sigma, :status, true, :fitted_at)
+    """), [{**r, "model": json.dumps(r["model"])} for r in rows])
+
+
+async def current_baselines(session: AsyncSession, detector_ids: list[str]
+                            ) -> dict[tuple[str, str, int, str], dict[str, Any]]:
+    """The sweep's view: every current baseline of these detectors."""
+    if not detector_ids:
+        return {}
+    rows = (await session.execute(text("""
+        SELECT detector_id, device_id::text, metric_id, instance, status, model, n,
+               fitted_at
+          FROM anomaly_baseline
+         WHERE detector_id = ANY(:ids) AND is_current AND device_id IS NOT NULL
+    """), {"ids": detector_ids})).mappings().all()
+    return {(r["detector_id"], r["device_id"], int(r["metric_id"]), r["instance"]): dict(r)
+            for r in rows}

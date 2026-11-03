@@ -330,6 +330,23 @@ def _hunting() -> list[ParamSpec]:
     ]
 
 
+def _l3(sigma_floor: float, unit: str) -> list[ParamSpec]:
+    """The tunables every Phase 3a profile detector shares (docs/35 sections 4, 6)."""
+    return [
+        ParamSpec("z_open", "Sensitivity", "number", 4.0, "sigma", 2.0, 10.0, 0.5,
+                  help="How many usual spreads from normal before it counts. Higher is quieter"),
+        ParamSpec("cusum_h", "Drift sensitivity", "number", 5.0, "sigma", 2.0, 20.0, 0.5,
+                  help="How much slow drift accumulates before it counts"),
+        ParamSpec("sigma_floor", "Smallest spread", "number", sigma_floor, unit, 0.0,
+                  max(10.0, sigma_floor * 10), 0.1,
+                  help="A series that barely varies is judged against at least this"),
+        ParamSpec("min_hours", "Learn for at least", "int", 120, "h", 24, 2000, 12,
+                  help="Hours of clean history before the device is judged"),
+        ParamSpec("min_days", "Over at least", "int", 10, "days", 2, 60, 1),
+        _MAINT, _dwell(900), _clear(1800), _REOPEN,
+    ]
+
+
 PARAM_SCHEMAS: dict[str, list[ParamSpec]] = {
     "DQ-1": [
         ParamSpec("grace_intervals", "Grace", "int", 3, "polls", 1, 20, 1,
@@ -471,6 +488,10 @@ PARAM_SCHEMAS: dict[str, list[ParamSpec]] = {
         ParamSpec("max_transfers_24h", "Transfers per day", "int", 2, None, 1, 50, 1),
         _dwell(0), _clear(86_400), _REOPEN,
     ],
+    # --- L3 profiles (docs/35, migration 0125) ---
+    "SV-3": _l3(2.0, "%"),
+    "UP-3": _l3(1.0, "%"),
+    "PD-2": _l3(0.5, "%"),
     L5_ID: [
         ParamSpec("major_enabled", "Escalate roots to MAJOR", "bool", False,
                   help="Off until the Phase 2 gate passes (docs/33)"),
