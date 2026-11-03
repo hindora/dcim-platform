@@ -96,8 +96,16 @@ def impossible_test(metric_key: str, p: Mapping[str, Any]) -> Callable[[float], 
     b = (p.get("bounds") or {}).get(metric_key)
     lo, hi = (float(b[0]), float(b[1])) if b else (-math.inf, math.inf)
 
+    if not sentinels:
+        return lambda v: not (lo <= v <= hi)
+
     def test(v: float) -> bool:
-        return not (lo <= v <= hi) or any(abs(v - s) < 1e-6 for s in sentinels)
+        if not (lo <= v <= hi):
+            return True
+        for s in sentinels:  # noqa: SIM110 - any() builds a generator per sample: 1 s a sweep
+            if -1e-6 < v - s < 1e-6:
+                return True
+        return False
     return test
 
 
@@ -235,8 +243,8 @@ def evaluate(dev: DeviceView, params: Mapping[str, Mapping[str, Any]], now: floa
                                 k=float(p.get("k_mad", 5.0)), floor=floor,
                                 rel_floor=float(p.get("min_dev_rel", 0.02)), start=start)
             seen = [t for t in (st.x.get("sp") or []) if now - t <= 3600]
-            kept = {round(g.ts, 3) for g in good}
-            remembered = [g.ts for g in good if round(g.ts, 3) in set(seen) & kept]
+            seen_set = set(seen)
+            remembered = [g.ts for g in good if round(g.ts, 3) in seen_set] if seen_set else []
             if idx or remembered:
                 dev.dropped.setdefault(key, set()).update(
                     [good[i].ts for i in idx] + remembered)
