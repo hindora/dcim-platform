@@ -2518,6 +2518,25 @@ export interface Series {
   envelope?: number[][] | null;
 }
 
+/** GET /anomalies/expected: a learned baseline, as the panel and charts read it
+ *  (docs/35 section 7). `band` is [t_ms, lo, expected, hi] at the start and
+ *  end of every learned hour in the window asked for. */
+export interface ExpectedSeries {
+  detector_id: string;
+  detector_name: string;
+  metric: string;
+  instance: string;
+  unit?: string | null;
+  status: 'ok' | 'thin' | 'rejected';
+  learning: boolean;
+  hours: number; min_hours: number;
+  days: number; min_days: number;
+  fitted_at?: string | null;
+  z_open: number;
+  now: { hour: number; expected: number; lo: number; hi: number } | null;
+  band: number[][];
+}
+
 export interface HistoryOut {
   device_id: string;
   /** The bucket actually used - 1m, 5m, 1h or raw. Shown to the reader,
@@ -5719,6 +5738,12 @@ export const api = {
     }),
 
   anomalyDetectors: () => request<{ items: AnomalyDetector[] }>('/anomalies/detectors'),
+  anomalyExpected: (deviceId: string, window?: { from: string; to: string }) => {
+    const q = new URLSearchParams({ device_id: deviceId });
+    if (window) { q.set('from', window.from); q.set('to', window.to); }
+    return request<{ device_id: string; items: ExpectedSeries[]; reason?: string }>(
+      `/anomalies/expected?${q}`);
+  },
 
   /** Shallow merge of `params`. A param change bumps the version (not on L5). */
   editAnomalyDetector: (id: string, patch: { enabled?: boolean; lane?: FindingLane; params?: Record<string, AnomalyParamValue> }) =>

@@ -175,7 +175,7 @@ function placeEnds(ends: EndLabel[]): EndLabel[] {
   return out;
 }
 
-export function TimeChart({ series: raw, unit: rawUnit, bucketMs, marks: rawMarks, window, reference: rawRef }: {
+export function TimeChart({ series: raw, unit: rawUnit, bucketMs, marks: rawMarks, window, reference: rawRef, expected: rawExp }: {
   series: Series[];
   unit: string;
   /** Reference series: a setpoint, a limit. Drawn thin and muted, named at
@@ -196,8 +196,13 @@ export function TimeChart({ series: raw, unit: rawUnit, bucketMs, marks: rawMark
    *  bucket landed is exactly the one the reader came for. The line stops
    *  where the data stops, and the gap after it is the lag, shown. */
   window?: [number, number];
+  /** What anomaly detection expects, per series: [t_ms, lo, expected, hi]
+   *  hour by hour (GET /anomalies/expected). Drawn as dashed edges with a
+   *  faint fill, so it never reads as the min-max band of the reading itself.
+   *  Absent: nothing is drawn and the chart is exactly as before. */
+  expected?: { metric: string; instance: string; band: number[][] }[];
 }) {
-  const { series, refs, unit } = useMemo(() => {
+  const { series, refs, unit, exp } = useMemo(() => {
     const all = [...raw, ...(rawRef ?? [])];
     const sc = scaleFor(rawUnit, all);
     const scale = (s: Series): Series => sc.div === 1 ? s : ({
@@ -205,8 +210,12 @@ export function TimeChart({ series: raw, unit: rawUnit, bucketMs, marks: rawMark
       points: s.points.map(([t, v]) => [t, Number.isFinite(v) ? v / sc.div : v]),
       envelope: s.envelope?.map(([t, lo, hi]) => [t, lo / sc.div, hi / sc.div]),
     });
-    return { unit: sc.unit, series: raw.map(scale), refs: (rawRef ?? []).map(scale) };
-  }, [raw, rawUnit, rawRef]);
+    const exp = (rawExp ?? []).map((e) => ({
+      ...e,
+      band: sc.div === 1 ? e.band : e.band.map(([t, lo, mid, hi]) => [t, lo / sc.div, mid / sc.div, hi / sc.div]),
+    }));
+    return { unit: sc.unit, series: raw.map(scale), refs: (rawRef ?? []).map(scale), exp };
+  }, [raw, rawUnit, rawRef, rawExp]);
   /** The time the pointer is nearest, in epoch ms. Null when not hovering. */
   const [at, setAt] = useState<number | null>(null);
   const chart = useChartColors();
@@ -225,6 +234,18 @@ export function TimeChart({ series: raw, unit: rawUnit, bucketMs, marks: rawMark
       for (const e of s.envelope ?? []) {
         if (Number.isFinite(e[1])) ys.push(e[1]);
         if (Number.isFinite(e[2])) ys.push(e[2]);
+      }
+    }
+
+    // The expected band sets the frame too: a line leaving it must be seen
+    // leaving it, not clipped at the edge. Only inside the data's own span,
+    // so a band never stretches the time axis past the readings.
+    const xMin = Math.min(...xs), xMax = Math.max(...xs);
+    for (const e of exp) {
+      for (const b of e.band) {
+        if (b[0] < xMin || b[0] > xMax) continue;
+        if (Number.isFinite(b[1])) ys.push(b[1]);
+        if (Number.isFinite(b[3])) ys.push(b[3]);
       }
     }
 
@@ -310,6 +331,32 @@ export function TimeChart({ series: raw, unit: rawUnit, bucketMs, marks: rawMark
       return d || null;
     });
 
+    // The expected band: one closed shape per run of learned hours, highs
+    // forward and lows back, broken where an hour is not learned.
+    const expBands = exp.map((e) => {
+      let d = '';
+      let edges = '';
+      let run: number[][] = [];
+      const flush = () => {
+        if (run.length >= 2) {
+          const up = run.map((b) => `${sx(b[0]).toFixed(1)},${sy(b[3]).toFixed(1)}`);
+          const lows = run.map((b) => `${sx(b[0]).toFixed(1)},${sy(b[1]).toFixed(1)}`);
+          d += `M${up.join(' L')} L${[...lows].reverse().join(' L')} Z `;
+          edges += `M${up.join(' L')} M${lows.join(' L')} `;
+        }
+        run = [];
+      };
+      let prev: number | null = null;
+      for (const b of e.band) {
+        if (b[0] < x0 || b[0] > x1) continue;
+        if (prev !== null && b[0] - prev > 2 * 3_600_000) flush();
+        run.push(b);
+        prev = b[0];
+      }
+      flush();
+      return d ? { key: `${e.metric}|${e.instance}`, d, edges } : null;
+    }).filter((b): b is { key: string; d: string; edges: string } => b !== null);
+
     // Alarm episodes clipped to the window. An episode still open runs to
     // the right edge; one shorter than a pixel still gets two, so a
     // forty-second excursion is a mark and not a rounding error.
@@ -329,8 +376,8 @@ export function TimeChart({ series: raw, unit: rawUnit, bucketMs, marks: rawMark
     const spansDays =
       new Date(x0).toDateString() !== new Date(x1).toDateString();
 
-    return { paths, refPaths, ends, bands, marks, padR, x0, x1, y0, y1, sx, sy, span: x1 - x0, times, spansDays };
-  }, [series, refs, bucketMs, rawMarks, window]);
+    return { paths, refPaths, ends, bands, expBands, marks, padR, x0, x1, y0, y1, sx, sy, span: x1 - x0, times, spansDays };
+  }, [series, refs, exp, bucketMs, rawMarks, window]);
 
   /** The readings at the hovered time, one per series that has one there. */
   const hover = useMemo(() => {
@@ -416,6 +463,7 @@ export function TimeChart({ series: raw, unit: rawUnit, bucketMs, marks: rawMark
       <svg className="chart" viewBox={`0 0 ${W} ${H}`} role="img"
            aria-label={`${[...series, ...refs].map((s) => seriesLabel(s, mixed)).join(', ')} over time, in ${unitSymbol(unit) || unit}`
              + (hasBand ? '; the band is each bucket\'s lowest to highest reading' : '')
+             + (model.expBands.length ? '; the dashed band is the range anomaly detection expects' : '')
              + (model.marks.length ? `; ${model.marks.length} alarm episode${model.marks.length === 1 ? '' : 's'} marked under the axis` : '')}>
         {yTicks.map((t) => (
           <g key={t}>
@@ -430,6 +478,14 @@ export function TimeChart({ series: raw, unit: rawUnit, bucketMs, marks: rawMark
                 textAnchor={i === 0 ? 'start' : i === xTicks.length - 1 ? 'end' : 'middle'}>
             {timeLabel(t, model.span)}
           </text>
+        ))}
+        {/* What anomaly detection expects: under everything, neutral, with
+            dashed edges - a promise about normal, not a reading. */}
+        {model.expBands.map((b) => (
+          <g key={`exp-${b.key}`} className="chart-expected">
+            <path d={b.d} className="chart-expected-fill" />
+            <path d={b.edges} className="chart-expected-edge" />
+          </g>
         ))}
         {/* Under the lines, in the line's own colour at low opacity: the
             band belongs to its line and must never read as a fifth series. */}

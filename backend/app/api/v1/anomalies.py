@@ -21,7 +21,7 @@ from __future__ import annotations
 import math
 import uuid
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -32,6 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.alarms.service import AlarmAction
 from app.analytics import catalogue as cat
+from app.analytics import expected as expected_mod
 from app.analytics import sweep as anomaly_sweep
 from app.analytics.catalogue import DERIVED_SEVERITY_CAP
 from app.core import audit
@@ -315,6 +316,52 @@ async def _detector_items(session: AsyncSession, only: str | None = None) -> lis
     points = await repo.device_points(session, types)
     stats = await repo.detector_stats(session)
     return [_detector_item(r, stats, points) for r in rows]
+
+
+@router.get("/expected", summary="What a device is expected to read, from its learned "
+                                 "baselines")
+async def expected(
+    device_id: str,
+    metric: str | None = Query(None, description="one metric key; default every learned one"),
+    start: datetime | None = Query(None, alias="from", description="band window start"),
+    end: datetime | None = Query(None, alias="to", description="band window end"),
+    session: AsyncSession = Depends(get_session),
+    _: Principal = Depends(require_role("viewer")),
+) -> dict[str, Any]:
+    """Per learned series: whether it is still learning (and how far along),
+    the expected range now, and - given `from` and `to` - the expected band
+    hour by hour, for the panel and the device charts (docs/35 section 7).
+
+    An empty `items` with a `reason` is a normal answer, not an error: most
+    devices have nothing learned yet, and the panel says so.
+    """
+    _check_uuid(device_id, "device_id")
+    now = datetime.now(UTC)
+    window = None
+    if start is not None or end is not None:
+        end_ = end or now
+        start_ = start or end_ - timedelta(hours=24)
+        if start_.tzinfo is None:
+            start_ = start_.replace(tzinfo=UTC)
+        if end_.tzinfo is None:
+            end_ = end_.replace(tzinfo=UTC)
+        if end_ <= start_ or end_ - start_ > timedelta(days=31):
+            raise _fail(422, "bad_window", "the band window is 1 s to 31 days, from before to")
+        window = (start_, end_)
+    rows = await repo.device_baselines(session, device_id)
+    if metric:
+        rows = [r for r in rows if r["metric"] == metric]
+    items = []
+    for r in rows:
+        if not r["enabled"]:
+            continue
+        v = expected_mod.view(r, dict(r["params"] or {}), now, window=window)
+        items.append({"detector_id": r["detector_id"], "detector_name": r["detector_name"],
+                      "metric": r["metric"], "instance": r["instance"], "unit": r["unit"], **v})
+    out: dict[str, Any] = {"device_id": device_id, "items": items}
+    if not items:
+        out["reason"] = "no_baseline"
+    return out
 
 
 @router.get("/detectors", summary="The detector catalogue, with parameter bounds")

@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useMemo, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  api, atLeast, ApiError, type Alarm, type AnomalyFinding, type DeviceDetail, type DeviceState, type Impact, type MetricValue, type NetworkInterface,
+  api, atLeast, ApiError, type Alarm, type AnomalyFinding, type DeviceDetail, type ExpectedSeries, type DeviceState, type Impact, type MetricValue, type NetworkInterface,
   type PowerChain, type SiteKpi, type TwinRoom, type TwinSiteScene,
 } from '../../api/client';
 import type {
@@ -415,16 +415,27 @@ export function UnitFindings({ deviceId }: { deviceId: string }) {
       qc.invalidateQueries({ queryKey: ['twin-scene'] });
     },
   });
+  // What this unit is judged against: its learned baselines (docs/35), or how
+  // far along the learning is. Slow-moving, so read every five minutes.
+  const exp = useQuery({
+    queryKey: ['anomaly-expected', 'panel', deviceId],
+    queryFn: () => api.anomalyExpected(deviceId),
+    refetchInterval: 300_000,
+    retry: false,
+  });
   const items = q.data?.items ?? [];
   const plant = items.filter((f) => f.layer !== 'L0');
   const sensor = items.filter((f) => f.layer === 'L0');
+  const watched = exp.data?.items ?? [];
+  const allLearning = watched.length > 0 && watched.every((e) => e.learning);
   const status = q.isLoading ? 'checking' : q.isError ? 'unavailable'
-    : plant.length ? `${plant.length} ${plant.length === 1 ? 'issue' : 'issues'}` : 'OK';
+    : plant.length ? `${plant.length} ${plant.length === 1 ? 'issue' : 'issues'}`
+    : allLearning ? 'learning' : 'OK';
 
   return (
     <Section title={`Anomaly detection: ${status}`} open={plant.length > 0}>
       {q.isError && <p className="muted vw-note">Findings could not be read.</p>}
-      {!q.isLoading && !q.isError && items.length === 0 && (
+      {!q.isLoading && !q.isError && items.length === 0 && !allLearning && (
         <p className="muted vw-note">Nothing unusual in how this unit is running.</p>
       )}
       {ack.isError && (
@@ -462,6 +473,19 @@ export function UnitFindings({ deviceId }: { deviceId: string }) {
           ))}
         </ul>
       )}
+      {watched.length > 0 && (
+        <>
+          <p className="vw-note muted">Judged against its own usual</p>
+          <ul className="vw-findings-quiet">
+            {watched.map((e) => (
+              <li key={`${e.detector_id}|${e.metric}|${e.instance}`}>
+                <b>{metricLabel(e.metric)}{e.instance ? ` ${e.instance}` : ''}</b>{': '}
+                {expectedText(e)}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
       {sensor.length > 0 && (
         <>
           <p className="vw-note muted">Data quality</p>
@@ -474,6 +498,17 @@ export function UnitFindings({ deviceId }: { deviceId: string }) {
       )}
     </Section>
   );
+}
+
+/** One learned series, in words: how far the learning is, or what is usual now. */
+function expectedText(e: ExpectedSeries): string {
+  const unit = e.unit === 'pct' ? ' %' : e.unit ? ` ${e.unit}` : '';
+  if (e.learning) {
+    if (e.hours < e.min_hours) return `learning, ${e.hours} of ${e.min_hours} hours`;
+    return `learning, ${e.days} of ${e.min_days} days`;
+  }
+  if (!e.now) return 'this hour of the day is not learned yet';
+  return `usually ${numText(e.now.lo)}–${numText(e.now.hi)}${unit} at ${String(e.now.hour).padStart(2, '0')}:00 UTC`;
 }
 
 function numText(v: number): string {

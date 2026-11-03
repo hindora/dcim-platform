@@ -1225,3 +1225,17 @@ async def current_baselines(session: AsyncSession, detector_ids: list[str]
     """), {"ids": detector_ids})).mappings().all()
     return {(r["detector_id"], r["device_id"], int(r["metric_id"]), r["instance"]): dict(r)
             for r in rows}
+
+
+async def device_baselines(session: AsyncSession, device_id: str) -> list[dict[str, Any]]:
+    """Every current baseline on one device, with its detector's name and params."""
+    rows = (await session.execute(text("""
+        SELECT b.detector_id, d.name AS detector_name, d.params, d.enabled,
+               m.key AS metric, m.unit, b.instance, b.status, b.model, b.fitted_at
+          FROM anomaly_baseline b
+          JOIN anomaly_detector d ON d.id = b.detector_id
+          JOIN metric m           ON m.id = b.metric_id
+         WHERE b.device_id = CAST(:dev AS uuid) AND b.is_current
+         ORDER BY b.detector_id, m.key, b.instance
+    """), {"dev": device_id})).mappings().all()
+    return [dict(r) for r in rows]

@@ -656,6 +656,11 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
    enough that two bands crossing still show both lines; the line on top is
    what is read, the band is what the line is not saying. */
 .chart-band { fill-opacity: 0.16; stroke: none; }
+/* The expected band (anomaly baselines): neutral ink, dashed edges, so it reads
+   as "normal would be here", never as a series or as the min-max band. */
+.chart-expected-fill { fill: var(--text-muted); fill-opacity: 0.07; stroke: none; }
+.chart-expected-edge { fill: none; stroke: var(--text-muted); stroke-width: 1; stroke-dasharray: 4 3;
+                       stroke-opacity: 0.7; }
 .chart-mark { cursor: default; }
 /* A reference line: a setpoint, a limit. Thin and muted, solid - a plain
    dash is the forecast's and means "not yet". */

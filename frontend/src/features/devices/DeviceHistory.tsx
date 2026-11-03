@@ -96,6 +96,23 @@ export function DeviceHistory({ deviceId, metrics, groups }: {
     retry: false,
   });
 
+  /** What anomaly detection expects over the same window, for the dashed
+   *  band behind any line it has learned. Most devices have none yet; the
+   *  answer is then an empty list and nothing is drawn. */
+  const expectedQ = useQuery({
+    queryKey: ['anomaly-expected', deviceId, range, endsAt],
+    queryFn: () => api.anomalyExpected(deviceId, {
+      from: new Date(endsAt - span).toISOString(), to: new Date(endsAt).toISOString() }),
+    enabled: Boolean(deviceId),
+    retry: false,
+    staleTime: 300_000,
+  });
+  const expectedFor = (series: Series[]) => {
+    const items = (expectedQ.data?.items ?? []).filter((e) => !e.learning && e.band.length);
+    const out = items.filter((e) => series.some((s) => s.metric === e.metric && s.instance === e.instance));
+    return out.length ? out : undefined;
+  };
+
   /** The device's alarm episodes that overlap the window, for the marks
    *  under every chart's axis. The same query the Alarms tab runs, so the
    *  two never disagree about what happened. An episode is its first sight
@@ -204,7 +221,8 @@ export function DeviceHistory({ deviceId, metrics, groups }: {
                 <>
                   <TimeChart series={p.series} unit={p.series[0].unit} reference={p.refs}
                              bucketMs={BUCKET_MS[q.data.interval] ?? 60_000}
-                             marks={marks} window={[endsAt - span, endsAt]} />
+                             marks={marks} window={[endsAt - span, endsAt]}
+                             expected={expectedFor(p.series)} />
                   {/* Say what is absent rather than drawing a panel that looks
                       complete. A missing line and a flat one look identical. */}
                   {p.missing.length > 0 && (
@@ -230,7 +248,8 @@ export function DeviceHistory({ deviceId, metrics, groups }: {
               </figcaption>
               <TimeChart series={series} unit={unit}
                          bucketMs={BUCKET_MS[q.data.interval] ?? 60_000}
-                         marks={marks} window={[endsAt - span, endsAt]} />
+                         marks={marks} window={[endsAt - span, endsAt]}
+                         expected={expectedFor(series)} />
             </figure>
           ))}
         </>
