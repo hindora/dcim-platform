@@ -6,6 +6,7 @@ import { StatusChip } from '../../components/StatusChip';
 import { humanise, relativeTime } from '../../lib/format';
 import { useInvalidateOn, useTopics } from '../../ws/useSocket';
 import { AlarmDetailBody } from './AlarmDetail';
+import { IncidentStrip } from './IncidentStrip';
 import { Notice } from '../../components/Notice';
 
 const ALARM_EVENTS = ['alarm_created', 'alarm_updated', 'alarm_cleared'];
@@ -154,6 +155,10 @@ export function AlarmList() {
           </div>
         </div>
       )}
+
+      <IncidentStrip onOpenAlarm={openAlarm}
+                     onRoom={(room) => setParams((q) => { q.set('room', room); return q; },
+                                                 { replace: true })} />
 
       <div className="toolbar">
         <select value={view} onChange={(e) => setView(e.target.value)}

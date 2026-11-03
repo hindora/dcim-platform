@@ -399,6 +399,39 @@ PATCH if a budget breaks.
 **Goal.** One cascade produces one incident with the correct root. After the
 gate, MAJOR is allowed for the incident root only.
 
+> **Status (2026-11-03): built, campaigns not yet run.** What shipped and how
+> it differs from the table below:
+>
+> - **Where.** The chain logic is `app/alarms/cooling_correlation.py` (graph,
+>   root choice, marks), called on the alarm raise path next to the existing
+>   dependency check, so a folded symptom never reaches the email or ticket
+>   outbox. A once-a-minute pass in `sweep_late_roots` adopts symptoms whose
+>   root arrived late and ends the hold. `app/analytics/correlator.py` turns
+>   the marks into `anomaly_incident` rows. Findings are linked
+>   (`incident_id`), never folded: they are not alarms (0124).
+> - **Graph.** Plant to unit is the site's one CHW header (no loop entity in
+>   the `cooling` layer); air side is room-level (every CRAH in a hall serves
+>   every rack in it) until the Phase 4 influence fit; CDU to server and
+>   feeder to machine are drawn edges. CDUs never reach room air.
+> - **Window.** A root may start up to 10 min after its symptom and up to
+>   60 min before it, not a symmetric ±10 min: the cascade itself runs for
+>   15+ min (docs/28).
+> - **Severity guard (new).** A symptom is folded only if no more severe than
+>   its root. A worse consequence (CPU critical under a MAJOR CRAH) stays
+>   visible as an incident member, because it asks for a different action.
+> - **Hold (new).** A cleared cooling root keeps its symptoms for 10 min while
+>   the air recovers, then releases what is still open.
+> - **Context.** Maintenance-shelved alarms are never roots; a cooling machine
+>   in a room with an open fire alarm is never a root; filter, delta-T,
+>   hunting-valve and condensation alarms explain nothing.
+> - **Room incidents.** Three or more hot devices in one room within 30 min
+>   with no cooling alarm behind them open a `room` incident (nothing folded).
+> - **Not built:** 2.4 escalation (`major_enabled`), 2.6 websocket frames (the
+>   UI polls), 2.8/2.9 campaigns. History has nothing to replay: in the 30
+>   days to 2026-11-03 no single-CRAH fault produced a heat alarm (seven
+>   CRAHs a hall, N+1), so the exit criteria need the campaigns, each run
+>   with the operator's approval.
+
 | # | Task | Files | Effort | Dep |
 |---|---|---|---|---|
 | 2.1 | Cooling dependency graph: train → CHW loop (from `connection` layer `cooling`, a = plant, `core/layers.py:20-26`) → CRAH/CDU → zone (room, `repositories/thermal.py:54-56`, until P4) → server. Power hop via `services/power.py:236` and `services/impact.py:27-38` | P: `analytics/correlator.py` | L 14 | P1 |

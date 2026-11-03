@@ -4381,8 +4381,46 @@ export interface AlarmTicket {
 // are stored "key{INSTANCE}" strings, the L5 correlator row carries nulls
 // where a per-device detector carries counts, and a finding's own evidence is
 // the jsonb the sweep wrote (signals are series summaries, not text lines).
-// Incidents, explanations and /expected arrive in later phases and are not
-// typed here until their endpoints exist.
+// Explanations arrive in a later phase and are not typed here until their
+// endpoint exists.
+
+/** GET /anomalies/incidents: one cooling cascade, one row (docs/29 4.6). A
+ *  `room` incident has no root alarm: heat on several devices with no cooling
+ *  alarm behind it. */
+export type IncidentTier = 'power' | 'plant' | 'loop' | 'unit' | 'zone' | 'server' | 'room';
+export interface AnomalyIncident {
+  id: string;
+  state: 'open' | 'resolved';
+  root_key: string;
+  tier: IncidentTier;
+  root_device_id: string | null;
+  root_device_name: string | null;
+  root_alarm_id: string | null;
+  datacenter_id: string | null;
+  room_id: string | null;
+  room_name: string | null;
+  title: string;
+  summary: string | null;
+  member_count: number;
+  alarm_count: number;
+  evidence: { kind?: 'device' | 'room'; worst?: string; folded?: number;
+              air_side?: 'room' | null; [k: string]: unknown };
+  opened_at: string;
+  last_activity_at: string;
+  resolved_at: string | null;
+}
+export interface AnomalyIncidentAlarm {
+  id: string; device_id: string; device_name: string; device_type: string;
+  alarm_type: string; instance: string; severity: string; state: string;
+  message: string | null; first_seen: string; cleared_at: string | null;
+  is_symptom: boolean; root_cause_alarm_id: string | null;
+  role: 'root' | 'folded' | 'member'; tier: string | null;
+}
+export interface AnomalyIncidentDetail extends AnomalyIncident {
+  alarms: AnomalyIncidentAlarm[];
+  findings: { id: string; detector_id: string; device_id: string; device_name: string;
+              state: string; summary: string; first_seen: string; last_seen: string }[];
+}
 
 export type FindingState = 'open' | 'acknowledged' | 'dismissed' | 'confirmed' | 'resolved';
 export const FINDING_STATES: FindingState[] =
@@ -5751,6 +5789,12 @@ export const api = {
     request<AnomalyFinding>(`/anomalies/findings/${id}/feedback`, {
       method: 'POST', body: JSON.stringify(body),
     }),
+
+  anomalyIncidents: (p: { state?: 'open' | 'resolved'; device_id?: string; limit?: string } = {}) =>
+    request<{ items: AnomalyIncident[] }>(`/anomalies/incidents${anomalyQs(p)}`),
+
+  anomalyIncident: (id: string) =>
+    request<AnomalyIncidentDetail>(`/anomalies/incidents/${id}`),
 
   anomalyDetectors: () => request<{ items: AnomalyDetector[] }>('/anomalies/detectors'),
   anomalyExpected: (deviceId: string, window?: { from: string; to: string }) => {

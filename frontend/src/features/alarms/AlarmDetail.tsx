@@ -6,6 +6,7 @@ import { StatusChip } from '../../components/StatusChip';
 import { humanise, relativeTime } from '../../lib/format';
 import { TicketChip } from './TicketChip';
 import { AnomalyEvidence, isDerivedAlarm } from './AnomalyEvidence';
+import { IncidentTree } from './IncidentTree';
 import { Notice } from '../../components/Notice';
 
 /** One condition, in full.
@@ -58,6 +59,7 @@ export function AlarmDetailBody({ alarm }: { alarm: Alarm }) {
     </dl>
     {/* Only for what analysis raised; every other alarm renders as before. */}
     {isDerivedAlarm(alarm) && <AnomalyEvidence alarm={alarm} />}
+    <IncidentTree deviceId={alarm.device_id} alarmId={alarm.id} />
     </>
   );
 }

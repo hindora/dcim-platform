@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.alarms import (
     collector_visibility,
+    cooling_correlation,
     correlation,
     link_correlation,
     reconcile,
@@ -403,6 +404,8 @@ class AlarmService:
                 detail={"root": root["id"], "layer": root["layer"],
                         "root_device": root["device_name"]})
 
+        await self._cooling_root(session, alarm, device_id=device_id,
+                                 alarm_type=alarm_type, category=None, actor="device")
         await self._adopt_orphans(session, alarm, device_id=device_id,
                                   alarm_type=alarm_type, instance=instance,
                                   actor="device")
@@ -542,6 +545,31 @@ class AlarmService:
             action="suppressed", severity=alarm["severity"], actor=actor,
             detail={"root": root["id"], "reason": reason})
 
+    async def _cooling_root(self, session, alarm: dict, *, device_id: str,
+                            alarm_type: str, category: str | None, actor: str) -> None:
+        """Tie a heat alarm to the cooling machine that stopped cooling it.
+
+        After the dependency check: an alarm already explained by a dead
+        switch or feeder is not offered a second explanation. Before the
+        alarm leaves for the outbox, so a folded symptom never emails.
+        """
+        if alarm.get("is_symptom"):
+            return
+        root = await cooling_correlation.correlate(
+            session, alarm={**alarm, "category": category or alarm.get("category")},
+            device_id=device_id, alarm_type=alarm_type)
+        if not root:
+            return
+        if root["suppress"]:
+            alarm["is_symptom"] = True
+            alarm["root_cause_alarm_id"] = root["id"]
+        await repo.record_history(
+            session, alarm_id=alarm["id"], device_id=device_id,
+            action="suppressed" if root["suppress"] else "correlated",
+            severity=alarm["severity"], actor=actor,
+            detail={"root": root["id"], "layer": "cooling", "tier": root["tier"],
+                    "root_device": root["device_name"]})
+
     async def _adopt_orphans(self, session, alarm: dict, *, device_id: str,
                              alarm_type: str, instance: str, actor: str) -> None:
         """A power root raised after the alarms it explains takes them in.
@@ -634,6 +662,9 @@ class AlarmService:
                 detail={"root": root["id"], "layer": root["layer"],
                         "root_device": root["device_name"]})
 
+        await self._cooling_root(session, alarm, device_id=c.key.device_id,
+                                 alarm_type=c.key.alarm_type, category=c.category,
+                                 actor="system")
         await self._adopt_orphans(session, alarm, device_id=c.key.device_id,
                                   alarm_type=c.key.alarm_type,
                                   instance=c.key.instance, actor="system")
@@ -714,6 +745,22 @@ class AlarmService:
                 action="released", severity=sym["severity"], actor="system",
                 detail={"root": sym["root"],
                         "reason": "still open after the restoration hold"})
+        # The cooling chain: a CRAH alarm that finished its dwell after the
+        # rack probe it explains, and the end of the air-recovery hold. One
+        # worker at a time; the other finds the lock taken and skips.
+        if (await session.execute(text(
+                "SELECT pg_try_advisory_xact_lock(hashtext('dcim.cooling_correlation'))"))
+                ).scalar():
+            # A savepoint: a fault here must not undo the staleness work above.
+            try:
+                async with session.begin_nested():
+                    await cooling_correlation.sweep(session)
+                    # The incident rows follow the marks just made. Imported
+                    # here: the analytics package sits above the alarm layer.
+                    from app.analytics import correlator
+                    await correlator.refresh_incidents(session)
+            except Exception as exc:
+                log.error("cooling correlation sweep failed", error=str(exc), exc_info=True)
         if touched:
             await repo.refresh_device_alarm_state(session, sorted(touched))
             log.info("late-root sweep adopted alarms", count=adopted_total)

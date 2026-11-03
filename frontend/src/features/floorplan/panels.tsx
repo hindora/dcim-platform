@@ -25,6 +25,7 @@ import { Sparkline } from '../../components/Sparkline';
 import { PanelMetering, meteringWords } from '../../components/PanelMetering';
 import { BUILDING_LAYERS, NO_READING, bandColor, roomLayerBands, roomLayerText, roomLayerValue, type BuildingLayer } from './layers';
 import { Notice } from '../../components/Notice';
+import { IncidentTree, useDeviceIncident } from '../alarms/IncidentTree';
 
 /** The viewer's side panel and legend. Facts only: every figure here is one
  *  the estate pages also show, read from the same endpoints. */
@@ -400,6 +401,19 @@ function IndicesSection({ ix, field }: { ix: TwinRoomIndices; field?: ThermalFie
  *  against what was expected; data-quality findings (a stuck or spiky sensor)
  *  follow in a quieter list, because they question the reading, not the plant.
  *  The few detectors set to raise alarms still show here too, marked as such. */
+/** The cooling incident this unit roots or sits in. Nothing when there is
+ *  none: the panel is read every click, and an empty section is noise. */
+function UnitIncident({ deviceId }: { deviceId: string }) {
+  const { incident } = useDeviceIncident(deviceId);
+  if (!incident) return null;
+  return (
+    <Section title={incident.root_device_id === deviceId
+      ? 'Cooling incident: this unit is the cause' : 'Cooling incident'} open>
+      <IncidentTree deviceId={deviceId} heading={false} />
+    </Section>
+  );
+}
+
 export function UnitFindings({ deviceId }: { deviceId: string }) {
   const qc = useQueryClient();
   const q = useQuery<{ items: AnomalyFinding[] }>({
@@ -845,6 +859,7 @@ export function DevicePanel({ device, rack }: { device: TwinDevice; rack?: Floor
       {cls === 'sensor' && <SensorBody {...ctx} />}
       {cls === 'cdu' && <CduBody {...ctx} />}
       {cls === 'other' && <OtherBody {...ctx} />}
+      <UnitIncident deviceId={device.id} />
       <UnitFindings deviceId={device.id} />
       <UnitAlarms deviceId={device.id} deviceName={device.name} />
       {/* The ways out, together at the foot where links live. One to the
@@ -1536,6 +1551,7 @@ export function UnitPanel({ unit, thermal }: { unit: FloorEquipment; thermal?: T
         <Readings device={unit} m={m} stateLoading={state.isLoading} stateError={state.isError}
                   skip={air ? [] : PLANT_SHOWN} />
       )}
+      <UnitIncident deviceId={unit.id} />
       <UnitFindings deviceId={unit.id} />
       <UnitAlarms deviceId={unit.id} deviceName={unit.name} />
       <div className="vw-links"><Link to={`/devices/${unit.id}`}>Device page</Link></div>

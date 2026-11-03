@@ -772,6 +772,9 @@ async def release_symptoms(session: AsyncSession,
            SET is_symptom = false, root_cause_alarm_id = NULL
          WHERE root_cause_alarm_id = CAST(:root AS uuid)
            AND state <> 'CLEARED'
+           -- A cooling symptom is held while the air recovers; the cooling
+           -- sweep releases it (app.alarms.cooling_correlation).
+           AND NOT (coalesce(attributes, '{}'::jsonb) ? 'l5')
         RETURNING id::text AS id, device_id::text AS device_id, alarm_type,
                   severity::text AS severity
     """), {"root": root_alarm_id})).mappings().all()

@@ -1,5 +1,5 @@
 """Anomaly detection API (docs/30): findings, feedback, detectors, overrides,
-exclusions and health. Incidents are Phase 2.
+exclusions, health and cooling incidents.
 
 Roles (docs/30 section 2): every GET is viewer; finding feedback, overrides
 and exclusions are operator; a detector PATCH - which changes estate policy,
@@ -33,6 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.alarms.service import AlarmAction
 from app.analytics import budget as budget_mod
 from app.analytics import catalogue as cat
+from app.analytics import correlator
 from app.analytics import expected as expected_mod
 from app.analytics import sweep as anomaly_sweep
 from app.analytics.catalogue import DERIVED_SEVERITY_CAP
@@ -203,6 +204,33 @@ async def get_finding(finding_id: str, session: AsyncSession = Depends(get_sessi
     if row is None:
         raise _fail(404, "not_found", "no such finding")
     return await _finding_detail(session, row)
+
+
+@router.get("/incidents", summary="Cooling incidents: one cascade, one row")
+async def list_incidents(
+    state: list[str] | None = Query(None, description="open (default), resolved"),
+    device_id: str | None = Query(None, description="incidents this device roots or is in"),
+    limit: int = Query(50, ge=1, le=200),
+    session: AsyncSession = Depends(get_session),
+    _: Principal = Depends(require_role("viewer")),
+) -> dict[str, Any]:
+    # Not behind the anomaly flag: incidents are built from equipment alarms by
+    # the alarm layer, and exist whether or not the analytics sweep runs.
+    _check_enum(state, ("open", "resolved"), "state")
+    _check_uuid(device_id, "device_id")
+    items = await correlator.list_incidents(session, states=state or ["open"],
+                                            device_id=device_id, limit=limit)
+    return {"items": jsonable_encoder(items)}
+
+
+@router.get("/incidents/{incident_id}", summary="One incident, with its alarms and findings")
+async def get_incident(incident_id: str, session: AsyncSession = Depends(get_session),
+                       _: Principal = Depends(require_role("viewer"))) -> dict[str, Any]:
+    _check_uuid(incident_id, "incident_id")
+    row = await correlator.get_incident(session, incident_id)
+    if row is None:
+        raise _fail(404, "not_found", "no such incident")
+    return jsonable_encoder(row)
 
 
 _CHANGE = {"acknowledge": "acknowledged", "dismiss": "dismissed", "confirm": "confirmed",

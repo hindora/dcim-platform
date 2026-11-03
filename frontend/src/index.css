@@ -1313,6 +1313,42 @@ button.danger:disabled { color: inherit; border-color: var(--border); }
    navigation per row turns that into back-forward-back. Below the breakpoint
    there is no room for both, so the detail takes the column and the list
    waits behind the browser's own back button. */
+/* Open cooling incidents above the alarm list. The left rule carries the
+   worst severity in the cascade; the title says it in words. */
+.incident-strip { margin-bottom: 16px; }
+.incident-strip h3 { margin: 0 0 8px; font-size: 14px; }
+.incident-strip ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.incident {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 16px;
+  width: 100%; text-align: left; cursor: pointer; font: inherit; color: var(--text);
+  padding: 10px 12px; border: 1px solid var(--border); border-left: 3px solid var(--unknown);
+  border-radius: 6px; background: var(--bg-raised);
+}
+.incident:hover { background: var(--bg-inset); }
+.incident:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.incident.sev-critical { border-left-color: var(--critical); }
+.incident.sev-major { border-left-color: var(--major); }
+.incident.sev-minor, .incident.sev-warning { border-left-color: var(--warn); }
+.incident-title { font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.incident-meta { color: var(--text-muted); font-size: 12px; white-space: nowrap; }
+.incident-summary { grid-column: 1 / -1; color: var(--text-muted); font-size: 13px; }
+@media (max-width: 640px) {
+  .incident { grid-template-columns: minmax(0, 1fr); }
+  .incident-meta { white-space: normal; }
+}
+
+/* The incident a device roots or sits in: alarm detail pane and 3D panel. */
+.incident-tree { margin-top: 16px; }
+.incident-tree h4 { margin: 0 0 6px; font-size: 13px; }
+.incident-tree-title { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+.incident-tree-summary { margin: 4px 0 8px; font-size: 13px; }
+.incident-tree-label { margin: 10px 0 4px; font-size: 12px; color: var(--text-muted); }
+.incident-tree-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.incident-tree-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px;
+                         font-size: 13px; min-width: 0; }
+.incident-tree-list li > a { overflow-wrap: anywhere; }
+.incident-tree-more { margin: 4px 0 0; font-size: 12px; }
+
 .alarm-split { display: grid; gap: 20px; align-items: start; }
 .alarm-split.with-detail { grid-template-columns: minmax(0, 1fr) 380px; }
 .alarm-master { min-width: 0; overflow-x: auto; }
