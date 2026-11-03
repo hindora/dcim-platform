@@ -1991,6 +1991,8 @@ export interface FloorRack {
   max_severity: string;
   /** Category of the worst open alarm and how many are open: the 3D view's alarm pin. Live scenes only. */
   alarm_category?: AlarmCategory | null; alarm_count?: number | null;
+  /** Open anomaly findings (process and baseline): the 3D view's trend marker. Live scenes only. */
+  anomaly_count?: number | null;
   free_u?: number | null;
   /** Footprint in metres; absent = the plan's default cabinet. */
   w_m?: number | null;
@@ -2024,6 +2026,8 @@ export interface TwinDevice {
   max_severity: string;
   /** Category of the worst open alarm and how many are open: the 3D view's alarm pin. Live scenes only. */
   alarm_category?: AlarmCategory | null; alarm_count?: number | null;
+  /** Open anomaly findings (process and baseline): the 3D view's trend marker. Live scenes only. */
+  anomaly_count?: number | null;
   power_w?: number | null;
   inlet_c?: number | null;
   /** Air at the device from whichever sensor it has (inlet or ambient). */
@@ -2211,6 +2215,8 @@ export interface FloorEquipment {
   max_severity: string;
   /** Category of the worst open alarm and how many are open: the 3D view's alarm pin. Live scenes only. */
   alarm_category?: AlarmCategory | null; alarm_count?: number | null;
+  /** Open anomaly findings (process and baseline): the 3D view's trend marker. Live scenes only. */
+  anomaly_count?: number | null;
   power_w?: number | null;
   inlet_c?: number | null;
   /** Air handlers: discharge and return air. */
@@ -5715,7 +5721,7 @@ export const api = {
   anomalyDetectors: () => request<{ items: AnomalyDetector[] }>('/anomalies/detectors'),
 
   /** Shallow merge of `params`. A param change bumps the version (not on L5). */
-  editAnomalyDetector: (id: string, patch: { enabled?: boolean; params?: Record<string, AnomalyParamValue> }) =>
+  editAnomalyDetector: (id: string, patch: { enabled?: boolean; lane?: FindingLane; params?: Record<string, AnomalyParamValue> }) =>
     request<DetectorPatchResult>(`/anomalies/detectors/${encodeURIComponent(id)}`, {
       method: 'PATCH', body: JSON.stringify(patch),
     }),

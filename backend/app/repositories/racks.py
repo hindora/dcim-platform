@@ -508,6 +508,27 @@ async def room_alarm_marks(session: AsyncSession, room_id: str) -> list[dict[str
     return [dict(r) for r in rows]
 
 
+async def room_anomaly_counts(session: AsyncSession, room_id: str) -> list[dict[str, Any]]:
+    """Open anomaly findings per device in one room, for the 3D view's marker.
+
+    Process and baseline findings only (layer 1 and 2). Data-quality findings
+    (layer 0: a stuck sensor, a spiky series) are about the reading, not the
+    plant, and marking them would put a badge on half the room.
+    """
+    rows = (await session.execute(text("""
+        SELECT f.device_id::text AS device_id, d.rack_id::text AS rack_id,
+               count(*) AS n
+          FROM anomaly_finding f
+          JOIN device d        ON d.id = f.device_id
+          LEFT JOIN rack r     ON r.id = d.rack_id
+          LEFT JOIN rack_row rr ON rr.id = r.row_id
+         WHERE COALESCE(rr.room_id, d.room_id) = CAST(:room AS uuid)
+           AND f.state <> 'resolved' AND f.layer IN (1, 2)
+         GROUP BY f.device_id, d.rack_id
+    """), {"room": room_id})).mappings().all()
+    return [dict(r) for r in rows]
+
+
 async def site_doors(session: AsyncSession, datacenter_id: str) -> list[dict[str, Any]]:
     """Every door contact on the site with what it reads now (docs/27 §8b B6).
 

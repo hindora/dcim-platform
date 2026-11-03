@@ -106,3 +106,65 @@ export function AlarmPins({ pins, size = 0.054 }: { pins: Pin[]; /** Height as a
     </group>
   );
 }
+
+/** One anomaly marker: findings shown on a unit instead of raised as alarms.
+ *  `beside` puts it to the right of an alarm pin on the same unit, so the two
+ *  never cover each other. */
+export interface AnomalyMark { x: number; y: number; z: number; n: number; beside: boolean }
+
+const MARK = 96;
+function markTexture(colour: string, n: number): THREE.CanvasTexture {
+  const cv = document.createElement('canvas');
+  cv.width = MARK; cv.height = MARK;
+  const c = cv.getContext('2d') as CanvasRenderingContext2D;
+  const cx = MARK / 2, cy = MARK / 2;
+  // A disc, not the alarm's teardrop: a different shape says "different kind
+  // of thing" without relying on colour.
+  c.beginPath(); c.arc(cx, cy, 40, 0, Math.PI * 2);
+  c.fillStyle = '#ffffff'; c.fill();
+  c.lineWidth = 7; c.strokeStyle = colour; c.stroke();
+  c.lineWidth = 3; c.strokeStyle = 'rgba(10,12,16,0.85)';
+  c.beginPath(); c.arc(cx, cy, 44, 0, Math.PI * 2); c.stroke();
+  // The trend line: up, dip, up - "running out of pattern".
+  c.strokeStyle = colour; c.lineWidth = 7; c.lineCap = 'round'; c.lineJoin = 'round';
+  c.beginPath();
+  c.moveTo(cx - 22, cy + 12); c.lineTo(cx - 6, cy - 6); c.lineTo(cx + 4, cy + 4); c.lineTo(cx + 20, cy - 14);
+  c.stroke();
+  c.beginPath(); c.moveTo(cx + 8, cy - 15); c.lineTo(cx + 21, cy - 15); c.lineTo(cx + 21, cy - 3); c.stroke();
+  if (n > 1) {
+    const t = n > 9 ? '9+' : String(n);
+    c.fillStyle = '#0d1117'; c.beginPath(); c.arc(MARK - 17, 17, 16, 0, Math.PI * 2); c.fill();
+    c.strokeStyle = '#ffffff'; c.lineWidth = 3; c.stroke();
+    c.fillStyle = '#ffffff'; c.font = 'bold 18px system-ui, sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.fillText(t, MARK - 17, 18);
+  }
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+const MARK_ON = new THREE.Vector2(0.5, 0);
+const MARK_BESIDE = new THREE.Vector2(-0.45, -0.15);
+
+/** Anomaly markers: steady, never pulsing - a finding asks for a look, not a
+ *  response - and smaller than an alarm pin, which outranks it. */
+export function AnomalyMarks({ marks, colour, size = 0.036 }: { marks: AnomalyMark[]; colour: string; size?: number }) {
+  const textures = useMemo(() => new Map<string, THREE.CanvasTexture>(), []);
+  useEffect(() => () => { textures.forEach((t) => t.dispose()); textures.clear(); }, [textures]);
+  const texFor = (n: number) => {
+    const key = `${colour}|${Math.min(n, 10)}`;
+    let t = textures.get(key);
+    if (!t) { t = markTexture(colour, n); textures.set(key, t); }
+    return t;
+  };
+  return (
+    <group>
+      {marks.map((m, i) => (
+        <sprite key={i} position={[m.x, m.y, m.z]} center={m.beside ? MARK_BESIDE : MARK_ON} renderOrder={19}
+                scale={[size, size, 1]} raycast={() => null}>
+          <spriteMaterial map={texFor(m.n)} sizeAttenuation={false} depthTest={false} transparent />
+        </sprite>
+      ))}
+    </group>
+  );
+}

@@ -105,6 +105,9 @@ class _Repo:
     async def open_findings_for(self, session, did, dev=None):
         return []
 
+    async def update_detector_lane(self, session, did, lane, actor):
+        self.updated.append({"id": did, "lane": lane})
+
     async def device_exists(self, session, did):
         return did == DEV
 
@@ -127,6 +130,7 @@ def client(monkeypatch):
     for name in ("get_finding", "finding_state", "apply_feedback", "findings_by_ids",
                  "detector_rows", "detector_row", "device_points", "detector_stats",
                  "update_detector", "open_findings_for", "device_exists", "get_override",
+                 "update_detector_lane",
                  "upsert_override", "delete_override", "get_exclusion"):
         monkeypatch.setattr(api.repo, name, getattr(fake, name))
 
@@ -408,3 +412,26 @@ def test_a_viewer_reads_everything(client, monkeypatch, url):
     assert r.status_code == 200, r.text
     if url.endswith("/health"):
         assert r.json()["severity_cap"] == "MINOR" and r.json()["l5_major_enabled"] is False
+
+
+
+# --- lane: alarm or device panel only -------------------------------------------
+
+def test_an_admin_moves_a_rule_detector_to_the_panel(client):
+    r = client.patch(f"{P}/detectors/CR-2", json={"lane": "advisory"}, headers=_tok("admin"))
+    assert r.status_code == 200, r.text
+    assert "lane" in r.json()["changed"]
+    assert {"id": "CR-2", "lane": "advisory"} in client.fake.updated
+    edit = next(a for a in client.fake.audit if a["action"] == "anomaly.detector.edit")
+    assert edit["before"]["lane"] == "alert" and edit["after"]["lane"] == "advisory"
+
+
+def test_a_data_quality_check_cannot_raise_alarms(client):
+    r = client.patch(f"{P}/detectors/DQ-1", json={"lane": "alert"}, headers=_tok("admin"))
+    assert r.status_code == 422
+    assert client.fake.updated == []
+
+
+def test_only_an_admin_changes_a_lane(client):
+    r = client.patch(f"{P}/detectors/CR-2", json={"lane": "advisory"}, headers=_tok("operator"))
+    assert r.status_code == 403

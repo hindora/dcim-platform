@@ -65,6 +65,12 @@ def _stub(monkeypatch) -> None:
     monkeypatch.setattr(svc.rack_repo, "room_rack_devices", rack_devices)
     monkeypatch.setattr(svc.rack_repo, "room_alarm_marks", marks)
 
+    async def anomalies(_s, room):
+        return [{"device_id": "srv-1", "rack_id": "rack-1", "n": 2},
+                {"device_id": "crah-1", "rack_id": None, "n": 1}]
+
+    monkeypatch.setattr(svc.rack_repo, "room_anomaly_counts", anomalies)
+
 
 def test_a_rack_carries_the_worst_category_and_the_count_of_everything_in_it(monkeypatch):
     _stub(monkeypatch)
@@ -111,3 +117,28 @@ def test_a_past_frame_keeps_the_severity_but_drops_category_and_count(monkeypatc
     for d in scene.devices:
         assert d.alarm_category is None and d.alarm_count is None
     assert next(d for d in scene.devices if d.id == "srv-1").max_severity == "MAJOR"
+
+
+def test_anomaly_findings_mark_the_unit_and_roll_up_to_the_rack(monkeypatch):
+    _stub(monkeypatch)
+    scene = asyncio.run(svc.room_scene(None, "room-1"))
+    by_id = {d.id: d for d in scene.devices}
+    assert by_id["srv-1"].anomaly_count == 2 and by_id["pdu-1"].anomaly_count is None
+    assert next(r for r in scene.plan.racks if r.id == "rack-1").anomaly_count == 2
+    assert scene.plan.equipment[0].anomaly_count == 1
+
+
+def test_a_past_frame_drops_the_anomaly_marker(monkeypatch):
+    _stub(monkeypatch)
+
+    async def values_at(_s, **_kw):
+        return {}
+
+    async def severities_at(_s, **_kw):
+        return {}
+
+    monkeypatch.setattr(svc.tele_repo, "values_at", values_at)
+    monkeypatch.setattr(svc.tele_repo, "severities_at", severities_at)
+    scene = asyncio.run(svc.room_frame(None, "room-1", _NOW - timedelta(hours=3), now=_NOW))
+    assert all(d.anomaly_count is None for d in scene.devices)
+    assert all(e.anomaly_count is None for e in scene.plan.equipment)

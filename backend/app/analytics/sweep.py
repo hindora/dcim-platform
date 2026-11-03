@@ -211,6 +211,7 @@ class _Engine:
                             for r in self.open_rows}
         await self.win.load()
         await self.acc.load()
+        await self._sync_lanes()
 
         live = [d for d in devices if d["lifecycle"] not in repo.RETIRED_LIFECYCLES]
         views = await self._read(live, scorers)
@@ -442,6 +443,36 @@ class _Engine:
                 self.open_by_key.pop((row["detector_id"], row["device_id"], row["metric_id"],
                                       row["instance"]), None)
 
+    async def _sync_lanes(self) -> None:
+        """Keep each open finding in its detector's lane as it is NOW.
+
+        A detector moved to panel-only (advisory) has its open findings'
+        derived alarms cleared - the finding stays open and stays on the
+        device panel. One moved to the alert lane raises its alarm on the
+        next sweep that still sees the condition (see _apply).
+        """
+        for row in self.open_rows:
+            det = self.cat.get(row["detector_id"])
+            if det is None or det.layer != 2 or row["lane"] == det.default_lane:
+                continue
+            await repo.set_finding_lane(self.s, row["id"], det.default_lane)
+            row["lane"] = det.default_lane
+            if det.default_lane == "alert":
+                row["promote"] = True
+                continue
+            if row.get("alarm_id") and det.alarm_type:
+                for c in await alarm_repo.clear_alarms(
+                        self.s, device_id=row["device_id"], alarm_types=[det.alarm_type],
+                        instance=row["instance"], at=self.now, by="analytics"):
+                    self.touched.add(row["device_id"])
+                    await alarm_repo.record_history(
+                        self.s, alarm_id=c["id"], device_id=row["device_id"],
+                        action="cleared", severity=c["severity"], actor="analytics",
+                        detail={"finding_id": row["id"], "resolution": "advisory_only",
+                                "note": "detector set to show on the device panel only"})
+                    self.result.actions.append(AlarmAction("alarm_cleared", c))
+            self.frames[row["id"]] = ("anomaly.finding.updated", "lane", None)
+
     async def _resolve(self, det: Detector | None, row: dict, resolution: str) -> None:
         done = await repo.resolve_finding(self.s, row["id"], resolution=resolution,
                                           at=self.now)
@@ -472,6 +503,10 @@ class _Engine:
         if event == rl.TOUCH and row is not None:
             self.touches.append({"id": row["id"], "score": rl.finite(v.score),
                                  "observed": rl.finite(v.observed)})
+            if row.get("promote") and det.alarm_type:
+                # Moved to the alert lane while open: the alarm it never had.
+                row["promote"] = False
+                await self._raise(det, view, v, row["id"], inst)
         elif event == rl.RESOLVE and row is not None:
             await self._resolve(det, row, "cleared")
             self.open_by_key.pop((det.id, view.device_id, mid, inst), None)

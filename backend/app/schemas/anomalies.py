@@ -90,6 +90,9 @@ class DetectorPatch(BaseModel):
     enabled: bool | None = None
     #: Partial; validated against the detector's param_schema.
     params: dict[str, Any] | None = None
+    #: 'alert' raises a derived alarm; 'advisory' shows the finding on the
+    #: device panel only. Rule detectors (L2) only.
+    lane: Literal["alert", "advisory"] | None = None
 
 
 class OverridePut(BaseModel):

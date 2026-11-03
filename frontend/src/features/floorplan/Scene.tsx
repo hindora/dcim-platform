@@ -20,7 +20,7 @@ import { Hardware } from './Hardware';
 import { DeckEdge, Plenum, PLENUM_H } from './Underfloor';
 import { DeviceFaces, RackRails } from './DeviceFaces';
 import { GLASS, GlassBox, RackDoors, Studio, Tone } from './studio';
-import { AlarmPins, type Pin } from './pins';
+import { AlarmPins, AnomalyMarks, type AnomalyMark, type Pin } from './pins';
 import type { PathOverlay, Role } from './paths';
 import { fmtT, numT, unitLabel } from './units';
 
@@ -657,6 +657,43 @@ export default function RoomScene(p: SceneProps) {
     return out;
   }, [focusIdx, plan.racks, focusDevices, X, Z, sevTone]);
 
+  // Anomaly markers: findings shown on a unit rather than raised as alarms.
+  // Same places as the pins, beside one where both apply.
+  const markTone = useMemo(() => resolveColor('var(--accent)'), [themeTick]); // eslint-disable-line react-hooks/exhaustive-deps
+  const roomMarks = useMemo<AnomalyMark[]>(() => {
+    const out: AnomalyMark[] = [];
+    plan.racks.forEach((r) => {
+      if (!r.anomaly_count) return;
+      out.push({ x: X(r.x), y: rackH(r), z: Z(r.y), n: r.anomaly_count, beside: r.max_severity !== 'CLEAR' });
+    });
+    if (!vis.plant) return out;
+    placedUnits.forEach((e, k) => {
+      if (!e.anomaly_count) return;
+      const b = unitBoxes[k];
+      out.push({ x: b.x, y: b.y + b.h / 2, z: b.z, n: e.anomaly_count, beside: e.max_severity !== 'CLEAR' });
+    });
+    instruments.forEach((e) => {
+      if (!e.anomaly_count || e.x == null || e.y == null) return;
+      out.push({ x: X(e.x), y: e.mount_height_m ?? 1.5, z: Z(e.y), n: e.anomaly_count,
+                 beside: e.max_severity !== 'CLEAR' });
+    });
+    return out;
+  }, [plan.racks, placedUnits, unitBoxes, instruments, vis.plant, X, Z]);
+  const rackMarks = useMemo<AnomalyMark[]>(() => {
+    if (focusIdx < 0) return [];
+    const r = plan.racks[focusIdx];
+    const front = r.facing === 'N' ? -1 : 1;
+    const out: AnomalyMark[] = [];
+    const slots = zeroSlots(focusDevices);
+    for (const d of focusDevices) {
+      const b = deviceBox(d, r, X, Z, slots.get(d.id) ?? 0);
+      if (!b || !d.anomaly_count) continue;
+      out.push({ x: b[0], y: b[1] + b[4] / 2, z: b[2] + front * (b[5] / 2), n: d.anomaly_count,
+                 beside: d.max_severity !== 'CLEAR' });
+    }
+    return out;
+  }, [focusIdx, plan.racks, focusDevices, X, Z]);
+
   // Plain plant in the studio is drawn the way the building rung draws it: a lit
   // surface under the tone curve, so a unit is the same dark box one rung down.
   // A unit a layer or an alarm colours keeps the exact-colour shader.
@@ -700,6 +737,7 @@ export default function RoomScene(p: SceneProps) {
         <Highlight sel={sel?.kind === 'device' ? sel : null} rackBoxes={rackBoxes} racks={plan.racks} unitBoxes={unitBoxes} units={placedUnits}
                    devices={devices} rackById={rackById} X={X} Z={Z} color={tones.accent} />
         <AlarmPins pins={rackPins} size={0.042} />
+        <AnomalyMarks marks={rackMarks} colour={markTone} size={0.03} />
         <Invalidator deps={[sel, focusId, themeTick]} invalidate={invalidate} />
       </>
     );
@@ -810,6 +848,7 @@ export default function RoomScene(p: SceneProps) {
                  tones={tones} themeTick={themeTick} />
       )}
       <AlarmPins pins={roomPins} />
+      <AnomalyMarks marks={roomMarks} colour={markTone} />
       <Invalidator deps={[rackLayer, coolingLayer, vis, sel, mode, overlay, heat, field, indices, doors, fire]} invalidate={invalidate} />
     </>
   );

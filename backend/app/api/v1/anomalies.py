@@ -339,6 +339,14 @@ async def patch_detector(
     changed = [f"params.{k}" for k, v in params.items() if row["params"].get(k) != v]
     if body.enabled is not None and body.enabled != row["enabled"]:
         changed.insert(0, "enabled")
+    if body.lane is not None and body.lane != row["default_lane"]:
+        if row["layer"] != 2:
+            raise _fail(422, "lane_not_supported",
+                        "only rule detectors can raise alarms; data-quality checks "
+                        "and the baseline layer stay on the panel")
+        if body.lane == "alert" and not row["alarm_type"]:
+            raise _fail(422, "no_alarm_type", f"{detector_id} has no alarm type to raise")
+        changed.append("lane")
     if not changed:
         return {"ok": True, "detector_id": detector_id, "version": row["version"],
                 "changed": [], "detector": (await _detector_items(session, detector_id))[0]}
@@ -350,6 +358,10 @@ async def patch_detector(
     updated = await repo.update_detector(
         session, detector_id, enabled=body.enabled if "enabled" in changed else None,
         params=new_params or None, bump=bump, actor=actor)
+    if "lane" in changed:
+        # Takes effect on the next sweep (a minute at most): it clears the
+        # derived alarms of open findings, or raises them, as the lane now says.
+        await repo.update_detector_lane(session, detector_id, body.lane, actor)
     actions: list = []
     changes: dict = {}
     if "enabled" in changed and body.enabled is False:
@@ -363,9 +375,11 @@ async def patch_detector(
                        target_type="anomaly_detector", target_id=detector_id, ip=ip,
                        user_agent=agent,
                        before={"enabled": row["enabled"], "version": row["version"],
+                               "lane": row["default_lane"],
                                "params": {k: row["params"].get(k) for k in new_params}},
                        after={"enabled": body.enabled if body.enabled is not None
                               else row["enabled"], "version": updated["version"],
+                              "lane": body.lane or row["default_lane"],
                               "params": new_params})
     frames = await anomaly_sweep.build_finding_frames(session, changes)
     item = (await _detector_items(session, detector_id))[0]

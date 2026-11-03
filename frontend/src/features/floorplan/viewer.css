@@ -278,6 +278,17 @@
 .vw-alarm-acts .vw-icon:disabled { opacity: 0.45; cursor: not-allowed; }
 .vw-icon.is-danger { color: var(--critical); border-color: var(--critical); }
 
+/* unit anomalies -------------------------------------------------------- */
+/* A finding is advice, not an alarm: the accent rule, never a severity colour,
+   and the tag says which it is in words. */
+.vw-finding { padding: 7px 8px 8px 10px; border-left: 3px solid var(--accent); background: var(--bg-inset);
+              border-radius: 0 4px 4px 0; }
+.vw-finding.is-acked { border-left-color: var(--border-strong); }
+.vw-finding-tag { font-size: 0.7rem; font-weight: 700; color: var(--accent); }
+.vw-finding.is-acked .vw-finding-tag { color: var(--text-muted); }
+.vw-findings-quiet { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px;
+                     font-size: 0.74rem; line-height: 1.4; overflow-wrap: anywhere; }
+
 /* power bullet (rack panel) ---------------------------------------------- */
 /* Track = the rack's rating; body = allocated + reserved (hatched, so the
    difference does not rest on colour); thin bar = the meter. */

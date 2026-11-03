@@ -2,7 +2,7 @@ import { Fragment, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import {
-  api, atLeast, type AnomalyDetector, type AnomalyHealth, type DetectorLayer,
+  api, atLeast, type AnomalyDetector, type AnomalyHealth, type DetectorLayer, type FindingLane,
 } from '../../api/client';
 import { usePaged } from '../../components/Pagination';
 import { StatusChip } from '../../components/StatusChip';
@@ -221,6 +221,13 @@ function DetectorsTab({ detectors }: { detectors: AnomalyDetector[] }) {
     },
     onSuccess: () => setDisabling(null),
   });
+  const setLane = useMutation({
+    mutationFn: ({ id, lane }: { id: string; lane: FindingLane }) => api.editAnomalyDetector(id, { lane }),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ['anomaly-detectors'] });
+      qc.invalidateQueries({ queryKey: ['anomaly-health'] });
+    },
+  });
   const onToggle = (d: AnomalyDetector) => {
     if (d.enabled) setDisabling(d);
     else enable.mutate({ id: d.id, on: true });
@@ -260,11 +267,21 @@ function DetectorsTab({ detectors }: { detectors: AnomalyDetector[] }) {
                 {d.devices_in_scope != null && <span className="muted"> ({d.devices_in_scope})</span>}
               </td>
               <td>
-                {d.lane === 'alert' ? (
+                {admin && d.layer === 'L2' && d.alarm_type ? (
+                  // The whole choice an operator makes about a rule: does what it
+                  // finds page somebody, or wait on the unit for whoever looks.
+                  <select value={d.lane ?? 'advisory'} disabled={setLane.isPending}
+                          aria-label={`${d.id} raises`}
+                          title={d.lane === 'alert' ? `Raises ${d.alarm_type}` : 'Shown on the device panel and as a marker in the 3D view'}
+                          onChange={(e) => setLane.mutate({ id: d.id, lane: e.target.value as FindingLane })}>
+                    <option value="alert">Raises an alarm{d.severity ? ` (${d.severity.toLowerCase()})` : ''}</option>
+                    <option value="advisory">Device panel only</option>
+                  </select>
+                ) : d.lane === 'alert' ? (
                   <span title={d.alarm_type ?? undefined}>
-                    Alert {d.severity ? <StatusChip status={d.severity} /> : null}
+                    Alarm {d.severity ? <StatusChip status={d.severity} /> : null}
                   </span>
-                ) : <span className="chip">Advisory</span>}
+                ) : <span className="chip">Device panel only</span>}
               </td>
             </>
           )}
@@ -352,7 +369,7 @@ function DetectorsTab({ detectors }: { detectors: AnomalyDetector[] }) {
           <thead>
             <tr>
               <th>ID</th><th>Name</th><th>Layer</th><th className="anom-hide-narrow">Applies to</th>
-              <th>Lane</th><th className="num">Ver</th>
+              <th>Raises</th><th className="num">Ver</th>
               {sortHead('open', 'Open')}
               {sortHead('judged', 'Judged')}
               <th>Enabled</th>

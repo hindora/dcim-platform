@@ -454,6 +454,9 @@ async def open_finding(session: AsyncSession, *, detector_id: str, detector_vers
                evidence = CAST(:ev AS jsonb)
                           || jsonb_build_object('alarm_history',
                                  COALESCE(f.evidence -> 'alarm_history', '[]'::jsonb)),
+               -- The detector's lane NOW: a detector moved to panel-only since
+               -- the finding last resolved must not raise an alarm on reopen.
+               lane = :lane,
                detector_version = :ver, updated_at = now()
          WHERE f.id = (SELECT r.id FROM anomaly_finding r
                         WHERE r.detector_id = :det AND r.device_id = CAST(:dev AS uuid)
@@ -885,6 +888,24 @@ async def update_detector(session: AsyncSession, detector_id: str, *,
            "params": json.dumps(params) if params else None, "bump": bump,
            "actor": actor})).mappings().first()
     return dict(row) if row else None
+
+
+async def set_finding_lane(session: AsyncSession, finding_id: str, lane: str) -> None:
+    """Move an open finding between lanes. The link to a derived alarm the
+    caller has just cleared is kept: it is how that alarm's page finds the
+    finding behind it."""
+    await session.execute(text("""
+        UPDATE anomaly_finding SET lane = :lane, updated_at = now()
+         WHERE id = CAST(:id AS uuid)
+    """), {"id": finding_id, "lane": lane})
+
+
+async def update_detector_lane(session: AsyncSession, detector_id: str, lane: str,
+                               actor: str) -> None:
+    await session.execute(text("""
+        UPDATE anomaly_detector SET default_lane = :lane, updated_at = now(), updated_by = :actor
+         WHERE id = :id
+    """), {"id": detector_id, "lane": lane, "actor": actor})
 
 
 async def open_findings_for(session: AsyncSession, detector_id: str,

@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useMemo, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  api, atLeast, ApiError, type Alarm, type DeviceDetail, type DeviceState, type Impact, type MetricValue, type NetworkInterface,
+  api, atLeast, ApiError, type Alarm, type AnomalyFinding, type DeviceDetail, type DeviceState, type Impact, type MetricValue, type NetworkInterface,
   type PowerChain, type SiteKpi, type TwinRoom, type TwinSiteScene,
 } from '../../api/client';
 import type {
@@ -180,11 +180,18 @@ export function RoomPanel({ plan, devices, kpi, thermal, vents, indices, field }
   const dutyKw = crahs.reduce((a, u) => a + (u.duty_kw ?? 0), 0);
   const pdus = devices.filter((d) => d.device_type === 'pdu').length;
   const freeU = plan.racks.reduce((a, r) => a + (r.free_u ?? 0), 0);
+  // Findings shown on units rather than raised as alarms: how many, on how many units.
+  const flagged = [...plan.equipment, ...plan.unpositioned_equipment, ...devices]
+    .filter((u) => (u.anomaly_count ?? 0) > 0);
+  const findings = flagged.reduce((a, u) => a + (u.anomaly_count ?? 0), 0);
 
   return (
     <div className="vw-panel-body">
       <div className="vw-kv"><Row k="Room" v={plan.room_name} /><Row k="Site" v={plan.datacenter_code ?? '–'} />
-        <Row k="Level" v={plan.level ?? '–'} /></div>
+        <Row k="Level" v={plan.level ?? '–'} />
+        <Row k="Anomaly detection" v={findings
+          ? `${findings} ${findings === 1 ? 'finding' : 'findings'} on ${flagged.length} ${flagged.length === 1 ? 'unit' : 'units'}`
+          : 'OK'} /></div>
       <Section title="Information" open>
         <Row k="Room size" v={`${plan.extent.width_m} × ${plan.extent.depth_m} m`} />
         <Row k="Racks" v={plan.racks.length} />
@@ -382,6 +389,95 @@ function IndicesSection({ ix, field }: { ix: TwinRoomIndices; field?: ThermalFie
       )}
     </Section>
   );
+}
+
+// ---------------------------------------------------------------- anomalies
+
+/** What anomaly detection has noticed on this unit - shown here, on the unit,
+ *  rather than raised as alarms. A finding is a diagnosis ("this looks wrong,
+ *  and here is probably why"), not a demand for action within a set time; the
+ *  alarm list below is for those. Process findings lead, with the reading
+ *  against what was expected; data-quality findings (a stuck or spiky sensor)
+ *  follow in a quieter list, because they question the reading, not the plant.
+ *  The few detectors set to raise alarms still show here too, marked as such. */
+export function UnitFindings({ deviceId }: { deviceId: string }) {
+  const qc = useQueryClient();
+  const q = useQuery<{ items: AnomalyFinding[] }>({
+    queryKey: ['anomaly-findings', 'device', deviceId],
+    queryFn: () => api.anomalyFindings({ device_id: deviceId, limit: '50' }),
+    refetchInterval: 60_000,
+    retry: false,
+  });
+  const ack = useMutation({
+    mutationFn: (id: string) => api.findingFeedback(id, { action: 'acknowledge' }),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ['anomaly-findings', 'device', deviceId] });
+      qc.invalidateQueries({ queryKey: ['twin-scene'] });
+    },
+  });
+  const items = q.data?.items ?? [];
+  const plant = items.filter((f) => f.layer !== 'L0');
+  const sensor = items.filter((f) => f.layer === 'L0');
+  const status = q.isLoading ? 'checking' : q.isError ? 'unavailable'
+    : plant.length ? `${plant.length} ${plant.length === 1 ? 'issue' : 'issues'}` : 'OK';
+
+  return (
+    <Section title={`Anomaly detection: ${status}`} open={plant.length > 0}>
+      {q.isError && <p className="muted vw-note">Findings could not be read.</p>}
+      {!q.isLoading && !q.isError && items.length === 0 && (
+        <p className="muted vw-note">Nothing unusual in how this unit is running.</p>
+      )}
+      {ack.isError && (
+        <Notice tone="error" className="notice-compact">
+          {ack.error instanceof ApiError && ack.error.status === 403
+            ? 'Acknowledging needs the operator role.' : 'That did not go through.'}
+        </Notice>
+      )}
+      {plant.length > 0 && (
+        <ul className="vw-alarms">
+          {plant.map((f) => (
+            <li key={f.id} className={`vw-finding${f.state === 'acknowledged' ? ' is-acked' : ''}`}>
+              <div className="vw-alarm-head">
+                <span className="vw-finding-tag">{f.lane === 'alert' ? 'Also an alarm' : 'Finding'}</span>
+                <span className="vw-alarm-type">{f.detector_name ?? f.detector_id}</span>
+              </div>
+              <p className="vw-alarm-msg">{f.summary}</p>
+              <div className="vw-alarm-meta muted">
+                {f.observed != null && f.expected != null && (
+                  <>{`${numText(f.observed)} against ${numText(f.expected)}${f.unit ? ` ${f.unit}` : ''}`} · </>
+                )}
+                {f.state === 'acknowledged' ? 'Acknowledged · ' : ''}
+                {`since ${relativeTime(f.first_seen)}`}
+                {f.reopen_count > 0 ? ` · back ${f.reopen_count}×` : ''}
+              </div>
+              {f.state === 'open' && atLeast('operator') && (
+                <div className="vw-alarm-acts">
+                  <button type="button" className="vw-icon" disabled={ack.isPending && ack.variables === f.id}
+                          onClick={() => ack.mutate(f.id)}>
+                    {ack.isPending && ack.variables === f.id ? 'Acknowledging…' : 'Acknowledge'}
+                  </button>
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {sensor.length > 0 && (
+        <>
+          <p className="vw-note muted">Data quality</p>
+          <ul className="vw-findings-quiet">
+            {sensor.map((f) => (
+              <li key={f.id}>{f.summary} <span className="muted">· {relativeTime(f.first_seen)}</span></li>
+            ))}
+          </ul>
+        </>
+      )}
+    </Section>
+  );
+}
+
+function numText(v: number): string {
+  return Math.abs(v) >= 100 ? v.toFixed(0) : v.toFixed(1);
 }
 
 // ---------------------------------------------------------------- conditions
@@ -688,6 +784,7 @@ export function DevicePanel({ device, rack }: { device: TwinDevice; rack?: Floor
       {cls === 'sensor' && <SensorBody {...ctx} />}
       {cls === 'cdu' && <CduBody {...ctx} />}
       {cls === 'other' && <OtherBody {...ctx} />}
+      <UnitFindings deviceId={device.id} />
       <UnitAlarms deviceId={device.id} deviceName={device.name} />
       {/* The ways out, together at the foot where links live. One to the
           device page - alarms and operations are a tab away on it - and Edit
@@ -1378,6 +1475,7 @@ export function UnitPanel({ unit, thermal }: { unit: FloorEquipment; thermal?: T
         <Readings device={unit} m={m} stateLoading={state.isLoading} stateError={state.isError}
                   skip={air ? [] : PLANT_SHOWN} />
       )}
+      <UnitFindings deviceId={unit.id} />
       <UnitAlarms deviceId={unit.id} deviceName={unit.name} />
       <div className="vw-links"><Link to={`/devices/${unit.id}`}>Device page</Link></div>
     </div>

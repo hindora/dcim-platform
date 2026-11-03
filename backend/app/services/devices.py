@@ -393,6 +393,19 @@ async def room_scene(session: AsyncSession, room_id: str) -> TwinRoomScene | Non
     for d in devices:
         if m := marks.get(("device", d.id)):
             d.alarm_category, d.alarm_count = m["alarm_category"], m["alarm_count"]
+    # The anomaly marker: findings shown on the unit rather than raised as alarms.
+    by_dev: dict[str, int] = {}
+    by_rack: dict[str, int] = {}
+    for row in await rack_repo.room_anomaly_counts(session, room_id):
+        by_dev[row["device_id"]] = int(row["n"])
+        if row["rack_id"]:
+            by_rack[row["rack_id"]] = by_rack.get(row["rack_id"], 0) + int(row["n"])
+    for r in plan.racks:
+        r.anomaly_count = by_rack.get(r.id)
+    for e in plan.equipment + plan.unpositioned_equipment:
+        e.anomaly_count = by_dev.get(e.id)
+    for d in devices:
+        d.anomaly_count = by_dev.get(d.id)
     return TwinRoomScene(plan=plan, devices=devices, indices=scene_indices(plan, devices))
 
 
@@ -604,7 +617,7 @@ def _frame_scene(live: TwinRoomScene, t: datetime, src: Any,
     plan, devices = frame.apply(live.plan, live.devices, values, sev)
     # The pin's category and count are today's; at `t` only the severity is
     # known, so a past pin is drawn with the plain bell and no count.
-    blank = {"alarm_category": None, "alarm_count": None}
+    blank = {"alarm_category": None, "alarm_count": None, "anomaly_count": None}
     # A meter's reading borrowed for a panel is today's too.
     unit_blank = {**blank, "metered_power_w": None, "metered_status": None}
     plan = plan.model_copy(update={
