@@ -257,3 +257,28 @@ def test_notification_endpoints_need_the_right_role():
         )
         assert r.status_code == 403
         assert client.put("/api/v1/settings/smtp", headers=operator, json={}).status_code == 403
+
+
+def test_a_clear_with_no_recorded_time_does_not_say_unknown():
+    a = {**ALARM, "cleared_at": None}
+    text = msg.body(
+        "alarm_cleared", a, rule_name="NOC", rule_summary="x", org_name="Acme", link_base_url=""
+    )
+    assert text.startswith("Alarm cleared\n")
+    assert "unknown" not in text.splitlines()[0]
+
+
+def test_a_host_address_loses_its_prefix_length():
+    a = {**ALARM, "mgmt_ip": "10.52.11.32/32"}
+    text = msg.body(
+        "alarm_raised", a, rule_name="NOC", rule_summary="x", org_name="Acme", link_base_url=""
+    )
+    assert "(pdu, 10.52.11.32)" in text
+
+
+def test_an_ordinary_subject_stays_on_one_header_line(relay):
+    cfg = _cfg(relay.server_address[1])
+    subject = "[MAJOR] PDUA-DC1-HA-R2-03: PDU at 84.91% of its nameplate, above 80.0%"
+    m = smtp.base_message(cfg, "Acme", ["noc@x.com"], subject, "b")
+    assert smtp.send_batch(cfg, [m]) == [None]
+    assert f"Subject: {subject}\r\n" in relay.received[0]

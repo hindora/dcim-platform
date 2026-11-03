@@ -66,10 +66,15 @@ def body(
         if kind == "alarm_cleared"
         else (a.get("last_seen") if kind == "alarm_escalated" else a.get("first_seen"))
     )
-    lines = [f"{sev} {verb} at {_when(at)}", ""]
+    # A clear with no recorded time (a manual clear racing the sweep) still says
+    # what happened; "cleared at unknown" reads like a fault in the email itself.
+    lines = [f"{sev} {verb} at {_when(at)}" if at else f"{sev} {verb}", ""]
 
     device = a.get("device_name") or "unknown device"
-    extra = ", ".join(x for x in (a.get("device_type"), a.get("mgmt_ip")) if x)
+    ip = str(a.get("mgmt_ip") or "")
+    # inet text carries the prefix length; a host address reads better without it.
+    ip = ip.removesuffix("/32").removesuffix("/128")
+    extra = ", ".join(x for x in (a.get("device_type"), ip) if x)
     rows = [
         ("Device", f"{device} ({extra})" if extra else device),
         ("Location", location(a)),

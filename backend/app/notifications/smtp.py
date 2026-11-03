@@ -19,6 +19,7 @@ import smtplib
 import ssl
 from dataclasses import dataclass, field
 from datetime import datetime
+from email import policy as email_policy
 from email.message import EmailMessage
 from email.utils import formataddr, formatdate
 from typing import Any
@@ -251,7 +252,10 @@ def from_header(cfg: SmtpConfig, org_name: str) -> str:
 def base_message(
     cfg: SmtpConfig, org_name: str, to: list[str], subject: str, body: str
 ) -> EmailMessage:
-    msg = EmailMessage()
+    # 998 is the RFC 5322 hard limit. At the default 78 a subject of ordinary
+    # length folds straight after "Subject:", which some clients show as a
+    # blank first line in the notification preview.
+    msg = EmailMessage(policy=email_policy.SMTP.clone(max_line_length=998))
     msg["From"] = from_header(cfg, org_name)
     msg["To"] = ", ".join(to)
     msg["Subject"] = subject
