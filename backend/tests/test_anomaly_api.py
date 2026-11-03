@@ -105,6 +105,9 @@ class _Repo:
     async def open_findings_for(self, session, did, dev=None):
         return []
 
+    async def budget_rows(self, session, since):
+        return {}
+
     async def update_detector_lane(self, session, did, lane, actor):
         self.updated.append({"id": did, "lane": lane})
 
@@ -130,7 +133,7 @@ def client(monkeypatch):
     for name in ("get_finding", "finding_state", "apply_feedback", "findings_by_ids",
                  "detector_rows", "detector_row", "device_points", "detector_stats",
                  "update_detector", "open_findings_for", "device_exists", "get_override",
-                 "update_detector_lane",
+                 "update_detector_lane", "budget_rows",
                  "upsert_override", "delete_override", "get_exclusion"):
         monkeypatch.setattr(api.repo, name, getattr(fake, name))
 

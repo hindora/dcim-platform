@@ -198,7 +198,8 @@ def evaluate(dev: DeviceView, params: Mapping[str, Mapping[str, Any]], now: floa
                                  f"physically impossible or a failure sentinel"))
 
         # --- DQ-4 spikes ------------------------------------------------------------
-        if (p := params.get("DQ-4")) is not None:
+        if (p := params.get("DQ-4")) is not None and key[0] not in (p.get("exclude_metrics")
+                                                                  or ()):
             good = [s for s in series if s.q == "good"
                     and s.ts not in dev.dropped.get(key, ())]
             fam = _family(key[0])

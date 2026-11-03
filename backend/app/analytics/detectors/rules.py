@@ -185,6 +185,9 @@ class DwellState:
     first_seen: float | None = None
     reopens: int = 0
     x: dict[str, Any] = field(default_factory=dict)
+    #: The UTC day (ISO) this series was last held back by the daily budget
+    #: (analytics/budget.py), so it is counted once a day, not once a sweep.
+    held_day: str | None = None
 
     def to_wire(self) -> dict[str, Any]:
         out: dict[str, Any] = {"a": int(self.active)}
@@ -200,6 +203,8 @@ class DwellState:
             out["r"] = self.reopens
         if self.x:
             out["x"] = self.x
+        if self.held_day:
+            out["bh"] = self.held_day
         return out
 
     @classmethod
@@ -209,7 +214,8 @@ class DwellState:
         return cls(active=bool(d.get("a")), pending_since=d.get("p"),
                    clear_since=d.get("c"), n_true=int(d.get("nt", 0)),
                    n_false=int(d.get("nf", 0)), first_seen=d.get("o"),
-                   reopens=int(d.get("r", 0)), x=dict(d.get("x") or {}))
+                   reopens=int(d.get("r", 0)), x=dict(d.get("x") or {}),
+                   held_day=d.get("bh"))
 
 
 OPEN, TOUCH, RESOLVE = "open", "touch", "resolve"

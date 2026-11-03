@@ -31,6 +31,7 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.alarms.service import AlarmAction
+from app.analytics import budget as budget_mod
 from app.analytics import catalogue as cat
 from app.analytics import expected as expected_mod
 from app.analytics import sweep as anomaly_sweep
@@ -275,7 +276,8 @@ async def finding_feedback(
 # =============================================================================
 
 def _detector_item(r: dict[str, Any], stats: dict[str, Any],
-                   points: dict[str, tuple[str, list]]) -> dict[str, Any]:
+                   points: dict[str, tuple[str, list]],
+                   budgets: dict | None = None) -> dict[str, Any]:
     is_l5 = r["id"] == cat.L5_ID
     in_scope = inactive = 0
     if not is_l5:
@@ -305,6 +307,10 @@ def _detector_item(r: dict[str, Any], stats: dict[str, Any],
         "precision": (confirmed / (confirmed + dismissed)) if confirmed + dismissed else None,
         "baseline": None,
         "updated_at": r["updated_at"], "updated_by": r["updated_by"],
+        "notes": r.get("notes"),
+        "budget": None if is_l5 else budget_mod.view(
+            budgets or {}, r["id"], get_settings().anomaly_daily_cap_per_detector,
+            datetime.now(UTC).date()),
     }
 
 
@@ -315,7 +321,8 @@ async def _detector_items(session: AsyncSession, only: str | None = None) -> lis
     types = sorted({t for r in rows for t in r["device_types"]})
     points = await repo.device_points(session, types)
     stats = await repo.detector_stats(session)
-    return [_detector_item(r, stats, points) for r in rows]
+    budgets = await repo.budget_rows(session, datetime.now(UTC).date() - timedelta(days=1))
+    return [_detector_item(r, stats, points, budgets) for r in rows]
 
 
 @router.get("/expected", summary="What a device is expected to read, from its learned "

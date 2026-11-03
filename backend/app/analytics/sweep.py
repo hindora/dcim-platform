@@ -46,6 +46,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
 
 from app.alarms.service import AlarmAction
 from app.analytics import baselines
+from app.analytics import budget as budget_mod
 from app.analytics import window as win_store
 from app.analytics.catalogue import (
     _SEVERITY_RANK,
@@ -58,8 +59,9 @@ from app.analytics.catalogue import (
 from app.analytics.detectors import quality, residual
 from app.analytics.detectors import rules as rl
 from app.analytics.evidence import rule_evidence
-from app.core import alert_taxonomy
+from app.core import alert_taxonomy, audit
 from app.core.ashrae import dew_point_c
+from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.repositories import alarms as alarm_repo
 from app.repositories import anomalies as repo
@@ -192,6 +194,11 @@ class _Engine:
         self.acc = win_store.HashStore(redis, win_store.ACC_KEY)
         self.states: dict[str, rl.DwellState] = {}
         self.baselines: dict[tuple[str, str, int, str], dict[str, Any]] = {}
+        settings = get_settings()
+        self.budget = budget_mod.Budget(settings.anomaly_daily_cap_per_detector,
+                                        settings.anomaly_daily_cap_process,
+                                        now.astimezone(UTC).date())
+        self.switched_off: set[str] = set()
         self.touched: set[str] = set()
         self.touches: list[dict[str, Any]] = []
         #: finding id -> (event, change, via); last write wins per finding.
@@ -200,10 +207,12 @@ class _Engine:
     # --- setup --------------------------------------------------------------
 
     async def run(self) -> None:
+        await self._load_budget()
         # Enabled only: a disabled detector scores nothing, so reading its
         # series and devices every sweep is pure cost - and the L3 rows seeded
         # off (fans, interface errors) would add thousands of series to it.
-        scorers = [d for d in self.cat.scorers() if d.layer in (0, 2, 3) and d.enabled]
+        scorers = [d for d in self.cat.scorers() if d.layer in (0, 2, 3) and d.enabled
+                   and d.id not in self.switched_off]
         types = sorted({t for d in scorers for t in d.device_types})
         devices = await repo.sweep_devices(self.s, types)
         self.open_rows = await repo.open_findings(self.s)
@@ -265,6 +274,7 @@ class _Engine:
         for det, view, params, v in verdicts:
             await self._apply(det, view, params, v)
 
+        await repo.add_budget(self.s, self.budget.day, self.budget.delta)
         await repo.touch_findings(self.s, self.touches, self.now)
         for fid in await repo.sync_alarm_acks(self.s, self.now):
             self.frames[fid] = ("anomaly.finding.updated", "acknowledged", "alarm")
@@ -540,8 +550,42 @@ class _Engine:
         elif event == rl.OPEN or (event == rl.TOUCH and row is None):
             await self._open(det, view, params, v, st, mid, inst)
 
+    async def _load_budget(self) -> None:
+        """Today's counts, and the process detectors over budget two days running."""
+        today = self.budget.day
+        rows = await repo.budget_rows(self.s, today - timedelta(days=1))
+        self.budget.today = {did: v for (did, day), v in rows.items() if day == today}
+        for det in self.cat.scorers():
+            if not det.enabled or not budget_mod.to_switch_off(
+                    rows, det.id, det.layer, det.default_lane, today):
+                continue
+            note = budget_mod.switch_off_note(det.id, self.budget.per_detector, today)
+            await repo.switch_off_detector(self.s, det.id, note)
+            actions, changes = await resolve_findings(
+                self.s, await repo.open_findings_for(self.s, det.id),
+                alarm_type=det.alarm_type, resolution="detector_disabled", at=self.now,
+                by="budget")
+            self.result.actions.extend(actions)
+            self.frames.update(changes)
+            await audit.record(self.s, actor="budget", action="anomaly.detector.budget_off",
+                               target_type="anomaly_detector", target_id=det.id,
+                               before={"enabled": True}, after={"enabled": False,
+                                                                 "note": note})
+            self.switched_off.add(det.id)
+            log.warning("detector switched off by the daily budget", detector=det.id)
+
     async def _open(self, det: Detector, view: rl.DeviceView, params: dict, v: rl.Verdict,
                     st: rl.DwellState, mid: int, inst: str) -> None:
+        held = self.budget.allow(det.id, det.layer, det.default_lane)
+        if held is not None:
+            # Over budget: counted, not opened - once a day per series, however
+            # many sweeps it keeps asking. It goes back to waiting out its dwell.
+            day = self.budget.day.isoformat()
+            if st.held_day != day:
+                self.budget.held(det.id, det.layer)
+                st.held_day = day
+            st.active, st.pending_since, st.n_true = False, None, 0
+            return
         first = st.first_seen or self.ts
         evidence = rule_evidence(detector_id=det.id, detector_version=det.version,
                                  params=params, verdict=v, dev=view, now=self.ts,
@@ -562,6 +606,8 @@ class _Engine:
         self.open_by_key[(det.id, view.device_id, mid, inst)] = {
             "id": out["id"], "alarm_id": out["alarm_id"], "reopen_count": out["reopen_count"],
             "first_seen": datetime.fromtimestamp(first, UTC)}
+        if out["outcome"] == "opened":
+            self.budget.opened(det.id, det.layer)
         if out["outcome"] != "existing":
             self.result.findings_opened += 1
             self.frames[out["id"]] = ("anomaly.finding.opened", None, None)

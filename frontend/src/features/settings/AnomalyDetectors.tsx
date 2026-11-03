@@ -304,7 +304,15 @@ function DetectorsTab({ detectors }: { detectors: AnomalyDetector[] }) {
         {expanded && (
           <tr className="anom-expansion">
             <td colSpan={cols === 'full' ? 9 : 4} id={panelId}>
+              {!d.enabled && d.updated_by === 'budget' && d.notes && (
+                <Notice tone="warn">{d.notes}</Notice>
+              )}
               <ParamForm key={`${d.id}-${d.version}-${d.updated_at ?? ''}`} detector={d} canEdit={admin} />
+              {d.budget && (
+                <p className="anom-requires">
+                  {budgetText(d.budget, d.lane === 'alert', d.layer === 'L0')}
+                </p>
+              )}
               {cols === 'full' && d.required_metrics.length > 0 && (
                 <p className="anom-requires">
                   Requires {d.required_metrics.map((m, i) => (
@@ -425,4 +433,19 @@ function DetectorsTab({ detectors }: { detectors: AnomalyDetector[] }) {
       )}
     </>
   );
+}
+
+/** Today's use of the daily budget, in words (analytics/budget.py). */
+function budgetText(b: NonNullable<AnomalyDetector['budget']>, alarm: boolean,
+                    dataQuality: boolean): string {
+  if (alarm) return `Raises alarms, so it is never held back by the daily budget (${b.today_opened} today).`;
+  const base = `Today: ${b.today_opened} of ${b.cap} new findings`;
+  if (b.today_held) {
+    return `${base}, ${b.today_held} more held back over the budget`
+      + (!b.yesterday_held ? ''
+        : dataQuality ? ' - held back yesterday too; data-quality checks keep hiding bad readings and are never switched off'
+        : ' - held back yesterday too, so it will be switched off at the next check')
+      + '.';
+  }
+  return `${base}.`;
 }

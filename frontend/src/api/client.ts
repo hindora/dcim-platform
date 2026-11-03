@@ -4513,6 +4513,12 @@ export interface AnomalyDetector {
   precision: number | null;
   baseline?: { fitted_at: string; days: number; n: number; refused: number } | null;
   updated_at?: string | null; updated_by?: string | null;
+  /** Why it was last changed by the platform itself, e.g. the daily budget. */
+  notes?: string | null;
+  /** The daily advisory budget (analytics/budget.py): new findings opened and
+   *  held back today, and held back yesterday. Null for the L5 switch row. */
+  budget?: { cap: number; today_opened: number; today_held: number;
+             yesterday_held: number } | null;
 }
 
 export interface DetectorPatchResult {

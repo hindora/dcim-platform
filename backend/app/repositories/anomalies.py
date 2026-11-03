@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -815,7 +815,8 @@ async def detector_rows(session: AsyncSession) -> list[dict[str, Any]]:
     rows = (await session.execute(text("""
         SELECT id, version, layer, phase, name, diagnosis, device_types, primary_metric,
                required_metrics, default_lane, default_kind, alarm_type,
-               severity::text AS severity, cadence_s, params, enabled, updated_at, updated_by
+               severity::text AS severity, cadence_s, params, enabled, updated_at, updated_by,
+               notes
           FROM anomaly_detector ORDER BY id
     """))).mappings().all()
     return [dict(r) for r in rows]
@@ -1278,3 +1279,39 @@ async def fit_room_gap(conn: Any, *, y_key: str, ref_key: str, ref_types: list[s
     for dev, mid, inst, bucket, v, n in rows:
         out.setdefault((dev, int(mid), inst), []).append((bucket, float(v), int(n or 0)))
     return out
+
+
+# =============================================================================
+# The advisory budget (analytics/budget.py)
+# =============================================================================
+
+async def budget_rows(session: AsyncSession, since: date
+                      ) -> dict[tuple[str, date], dict[str, int]]:
+    rows = (await session.execute(text("""
+        SELECT detector_id, day, opened, held FROM anomaly_budget_day WHERE day >= :since
+    """), {"since": since})).all()
+    return {(r[0], r[1]): {"opened": int(r[2]), "held": int(r[3])} for r in rows}
+
+
+async def add_budget(session: AsyncSession, day: date,
+                     delta: dict[str, dict[str, int]]) -> None:
+    """Add this sweep's counts to the day's rows (upsert, additive)."""
+    rows = [{"d": did, "day": day, "o": v.get("opened", 0), "h": v.get("held", 0)}
+            for did, v in delta.items() if v.get("opened") or v.get("held")]
+    if not rows:
+        return
+    await session.execute(text("""
+        INSERT INTO anomaly_budget_day (detector_id, day, opened, held)
+        VALUES (:d, :day, :o, :h)
+        ON CONFLICT (detector_id, day) DO UPDATE
+           SET opened = anomaly_budget_day.opened + EXCLUDED.opened,
+               held = anomaly_budget_day.held + EXCLUDED.held
+    """), rows)
+
+
+async def switch_off_detector(session: AsyncSession, detector_id: str, note: str) -> None:
+    await session.execute(text("""
+        UPDATE anomaly_detector
+           SET enabled = false, notes = :note, updated_at = now(), updated_by = 'budget'
+         WHERE id = :id AND enabled
+    """), {"id": detector_id, "note": note})

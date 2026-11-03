@@ -27,7 +27,8 @@ _MIG = (Path(__file__).resolve().parents[1] / "alembic" / "versions"
 
 
 #: Later migrations that tune the seeded params; applied in order on top.
-_TUNING = ("0113_a_spike_is_judged_against_the_reading.py",)
+_TUNING = ("0113_a_spike_is_judged_against_the_reading.py",
+           "0129_a_queue_has_a_budget.py")
 #: Later migrations that seed detector rows of their own.
 _LATER_ROWS = ("0125_a_device_is_judged_against_itself.py",
                "0126_a_load_is_judged_by_its_cause.py",
@@ -208,7 +209,8 @@ class FakeDB:
         for name in ("load_catalogue", "sweep_devices", "open_findings", "metric_ids",
                      "read_numeric", "read_bools", "open_finding", "touch_findings",
                      "resolve_finding", "link_alarm", "sync_alarm_acks", "findings_by_ids",
-                     "current_baselines", "set_finding_lane"):
+                     "current_baselines", "set_finding_lane", "budget_rows", "add_budget",
+                     "switch_off_detector", "open_findings_for"):
             monkeypatch.setattr(r, name, getattr(self, name))
         for name in ("raise_alarm", "clear_alarms", "record_history",
                      "refresh_device_alarm_state"):
@@ -224,6 +226,22 @@ class FakeDB:
 
     async def metric_ids(self, session):
         return dict(self.mids)
+
+    async def budget_rows(self, session, since):
+        return dict(getattr(self, "budget", {}))
+
+    async def add_budget(self, session, day, delta):
+        store = self.__dict__.setdefault("budget", {})
+        for did, v in delta.items():
+            row = store.setdefault((did, day), {"opened": 0, "held": 0})
+            row["opened"] += v.get("opened", 0)
+            row["held"] += v.get("held", 0)
+
+    async def switch_off_detector(self, session, detector_id, note):
+        self.__dict__.setdefault("switched_off", []).append((detector_id, note))
+
+    async def open_findings_for(self, session, detector_id, device_id=None):
+        return []
 
     async def current_baselines(self, session, detector_ids):
         return {k: v for k, v in getattr(self, "baselines", {}).items() if k[0] in detector_ids}

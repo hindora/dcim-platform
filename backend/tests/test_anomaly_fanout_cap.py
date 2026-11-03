@@ -43,6 +43,12 @@ async def test_one_frame_per_finding_and_openings_first(monkeypatch):
 
 
 async def test_a_storm_through_the_sweep_and_the_fanout(monkeypatch):
+    # This test is about the WEBSOCKET cap, so the daily budget - which would
+    # hold all but 10 of a storm like this back - is opened wide for it. The
+    # budget's own behaviour is tested in test_anomaly_budget.py.
+    from app.core.config import get_settings
+    wide = get_settings().model_copy(update={"anomaly_daily_cap_per_detector": 1000})
+    monkeypatch.setattr(anomaly_sweep, "get_settings", lambda: wide)
     db = FakeDB()
     db.patch(monkeypatch)
     for n in range(120):

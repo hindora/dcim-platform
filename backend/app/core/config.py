@@ -151,6 +151,10 @@ class Settings(BaseSettings):
     #: The cadence-gate threshold (0.9x) and the heartbeat TTL (10x) derive
     #: from it (docs/29 section 10.1).
     anomaly_sweep_s: int = Field(60, ge=30, le=600)
+    # The advisory budget (analytics/budget.py): new advisory findings a day,
+    # per detector and - for process findings - across the estate.
+    anomaly_daily_cap_per_detector: int = Field(10, ge=1, le=1000)
+    anomaly_daily_cap_process: int = Field(30, ge=1, le=10000)
     #: UTC hour the nightly baseline fit and prune run (after the 1d rollup's
     #: refresh; 0042 refreshes hourly with a 1-day end offset).
     anomaly_baseline_hour_utc: int = Field(3, ge=0, le=23)
