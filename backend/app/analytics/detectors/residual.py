@@ -35,6 +35,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.analytics.detectors.rules import Key, RuleInput, Verdict, context_gate
+from app.analytics.l3_specs import DRIVER_WORDS, SPECS, Spec, transform
 from app.analytics.window import KEEP_MAX
 
 #: A gap this long before the window means the series has just come back.
@@ -167,68 +168,108 @@ def _profile_one(ri: RuleInput, key: Key, *, unit: str, what: str, direction: st
         kw=kw, extra_x={"n_hour": n})
 
 
-def score_ols(ri: RuleInput, y_metric: str, x_metric: str, *, unit: str, what: str,
-              driver: str, direction: str = "both") -> list[Verdict]:
-    """y against what a regression on its driver x says it should be."""
-    dev, p = ri.dev, ri.params
-    key, xkey = dev.pick(y_metric), dev.pick(x_metric)
-    held, base, recent, kw = _pre(ri, key, (xkey,))
+def _driver_now(ri: RuleInput, key: str) -> float | None:
+    """A driver's mean over the scoring window, across its instances."""
+    dev = ri.dev
+    since = ri.now - float(ri.params.get("score_window_s", 1800))
+    keys = [k for k in dev.instances(key) if k not in dev.masked] or [dev.pick(key)]
+    vals = [s.v for k in keys for s in dev.clean(k) if s.ts >= since]
+    if len(vals) < int(ri.params.get("min_samples", 3)):
+        return None
+    return sum(vals) / len(vals)
+
+
+def score_ols(ri: RuleInput, spec: Spec) -> list[Verdict]:
+    """Every instance of y against what a regression on its drivers says it should be."""
+    dev = ri.dev
+    keys = dev.instances(spec.y) or [dev.pick(spec.y)]
+    return [_ols_one(ri, spec, key) for key in keys]
+
+
+def _ols_one(ri: RuleInput, spec: Spec, key: Key) -> Verdict:
+    p = ri.params
+    held, base, recent, kw = _pre(ri, key)
     if held is not None:
-        return [held]
-    window = float(p.get("score_window_s", 1800))
-    xs = [s for s in dev.clean(xkey) if s.ts >= ri.now - window]
-    if len(xs) < int(p.get("min_samples", 3)):
-        return [_held(key, "driver_missing", **kw)]
+        return held
     m = base.get("model") or {}
-    a, b = float(m.get("a", 0.0)), float(m.get("b", 0.0))
-    x_lo, x_hi = float(m.get("x_lo", -math.inf)), float(m.get("x_hi", math.inf))
-    x = _mean(xs)
-    # Never extrapolate: a load the fit never saw says nothing about the link.
-    margin = float(p.get("x_margin", 0.1)) * max(x_hi - x_lo, 1e-9)
-    if not (x_lo - margin <= x <= x_hi + margin):
-        return [_held(key, "outside_learned_range", **kw)]
-    expected = a + b * x
+    bs = m.get("b", 0.0)
+    bs = bs if isinstance(bs, list) else [bs]
+    lo = m.get("x_lo", [])
+    hi = m.get("x_hi", [])
+    lo = lo if isinstance(lo, list) else [lo]
+    hi = hi if isinstance(hi, list) else [hi]
+    if len(bs) != len(spec.drivers):
+        return _held(key, "model_mismatch", **kw)
+    xs: list[float] = []
+    for i, d in enumerate(spec.drivers):
+        raw = _driver_now(ri, d.key)
+        if raw is None:
+            return _held(key, "driver_missing", **kw)
+        x = transform(raw, d.transform)
+        # Never extrapolate: a load the fit never saw says nothing about the link.
+        if i < len(lo) and i < len(hi):
+            margin = float(p.get("x_margin", 0.1)) * max(float(hi[i]) - float(lo[i]), 1e-9)
+            if not (float(lo[i]) - margin <= x <= float(hi[i]) + margin):
+                return _held(key, "outside_learned_range", **kw)
+        xs.append(x)
+    expected = float(m.get("a", 0.0)) + sum(float(b) * x for b, x in zip(bs, xs, strict=True))
     y = _mean(recent)
     sigma = float(m.get("sigma", base.get("resid_sigma") or 0.0))
     word = "more" if y > expected else "less"
-    return [_judge(
-        ri, key, observed=y, expected=expected, sigma=sigma, direction=direction,
+    at = ", ".join(f"{_fmt(_driver_now(ri, d.key) or 0.0)} {DRIVER_WORDS.get(d.key, d.key)}"
+                   for d in spec.drivers)
+    inst = f" {key[1]}" if key[1] else ""
+    return _judge(
+        ri, key, observed=y, expected=expected, sigma=sigma, direction=spec.direction,
         diagnosis="unlike_its_driver",
-        expr=f"{y_metric} vs {a:.3g} + {b:.3g} * {x_metric}, residual ewma/cusum",
-        summary=(f"{dev.name} {what} {_fmt(y)}{unit}, {word} than the {_fmt(expected)}{unit} "
-                 f"(±{_fmt(_band(ri, sigma))}) expected at {_fmt(x)} {driver}"),
-        kw=kw, extra_x={"x": round(x, 3)})]
+        expr=(f"{spec.y} vs {float(m.get('a', 0)):.3g} + "
+              + " + ".join(f"{float(b):.3g}*{d.key}" for b, d in zip(bs, spec.drivers,
+                                                                     strict=True))
+              + ", residual ewma/cusum"),
+        summary=(f"{ri.dev.name}{inst} {spec.what} {_fmt(y)}{spec.unit}, {word} than the "
+                 f"{_fmt(expected)}{spec.unit} (±{_fmt(_band(ri, sigma))}) expected at {at}"),
+        kw=kw, extra_x={"x": [round(v, 3) for v in xs]})
 
 
-def score_inlet_gap(ri: RuleInput, *, direction: str = "high") -> list[Verdict]:
-    """Rack inlet above the room's supply air, against that gap's usual for the hour.
+_GAP_WORDS = {
+    "inlet_minus_room_supply": ("intake", "the room's supply air",
+                                "hot air reaching this rack's intake"),
+    "battery_minus_room_ambient": ("battery", "the room's air",
+                                   "the battery heating beyond what its room explains"),
+}
 
-    The gap, not the inlet: a CRAH setpoint raised by 2 K moves both and the
-    gap stays, so a planned change is not an anomaly; hot air recirculating
-    into one rack widens only that rack's gap.
+
+def score_gap(ri: RuleInput, spec: Spec) -> list[Verdict]:
+    """y minus a room-wide reference, against that gap's usual for the hour.
+
+    The gap, not the reading: whatever moves the whole room (a setpoint change,
+    the weather) moves the reference too and the gap stays; only something at
+    this device widens it.
     """
     dev = ri.dev
-    key = dev.pick("inlet_temperature")
+    key = dev.pick(spec.y)
     held, base, recent, kw = _pre(ri, key)
     if held is not None:
         return [held]
-    supply = ri.ctx.room_supply.get(dev.room_id or "") if ri.ctx is not None else None
-    if supply is None:
-        return [_held(key, "no_room_supply", **kw)]
+    refs = getattr(ri.ctx, spec.ref_ctx or "", None) if ri.ctx is not None else None
+    ref = (refs or {}).get(dev.room_id or "")
+    if ref is None:
+        return [_held(key, "no_room_reference", **kw)]
     hour = datetime.fromtimestamp(ri.now, UTC).hour
     entry = hour_entry(base.get("model") or {}, hour, int(ri.params.get("min_hour_samples", 8)))
     if entry is None:
         return [_held(key, "hour_not_learned", **kw)]
     expected, sigma, n = entry
-    gap = _mean(recent) - supply
+    gap = _mean(recent) - ref
+    what, against, means = _GAP_WORDS.get(spec.of or "", ("reading", "the room", ""))
     return [_judge(
-        ri, key, observed=gap, expected=expected, sigma=sigma, direction=direction,
-        diagnosis="recirculation",
-        expr="(inlet_temperature - mean(room supply_air_temp)) vs expected[hour]",
-        summary=(f"{dev.name} intake {_fmt(gap)} K above the room's supply air, against "
-                 f"a usual {_fmt(expected)} K (±{_fmt(_band(ri, sigma))}) for {hour:02d}:00 UTC: "
-                 f"hot air reaching this rack's intake"),
-        kw=kw, extra_x={"n_hour": n, "supply": round(supply, 2)})]
+        ri, key, observed=gap, expected=expected, sigma=sigma, direction=spec.direction,
+        diagnosis="unlike_its_room",
+        expr=f"({spec.y} - mean(room {spec.ref})) vs expected[hour]",
+        summary=(f"{dev.name} {what} {_fmt(gap)} K above {against}, against a usual "
+                 f"{_fmt(expected)} K (±{_fmt(_band(ri, sigma))}) for {hour:02d}:00 UTC"
+                 + (f": {means}" if means else "")),
+        kw=kw, extra_x={"n_hour": n, "ref": round(ref, 2)})]
 
 
 def _resumed_at(samples: list, now: float) -> float | None:
@@ -259,32 +300,21 @@ def _fmt(v: float) -> str:
     return f"{v:.0f}" if abs(v) >= 100 else f"{v:.1f}"
 
 
-# --- the Phase 3a profile detectors (docs/35 §5) --------------------------------
+# --- dispatch -------------------------------------------------------------------
+#
+# Every L3 detector is a row in analytics/l3_specs.SPECS; the shape decides how
+# it is scored. RULES is kept as the registry the sweep checks membership in.
 
-def sv3(ri: RuleInput) -> list[Verdict]:
-    return score_profile(ri, "cpu_utilization", unit=" %", what="CPU")
-
-
-def up3(ri: RuleInput) -> list[Verdict]:
-    return score_profile(ri, "load_pct", unit=" %", what="load")
-
-
-def pd2(ri: RuleInput) -> list[Verdict]:
-    return score_profile(ri, "phase_imbalance_pct", unit=" %", what="phase imbalance",
-                         direction="high")
-
-
-def sv4(ri: RuleInput) -> list[Verdict]:
-    return score_ols(ri, "power_draw", "cpu_utilization", unit=" W", what="drawing",
-                     driver="% CPU")
-
-
-def th1(ri: RuleInput) -> list[Verdict]:
-    return score_inlet_gap(ri)
+def _run(ri: RuleInput, spec: Spec) -> list[Verdict]:
+    if spec.kind == "ols":
+        return score_ols(ri, spec)
+    if spec.kind == "gap":
+        return score_gap(ri, spec)
+    return score_profile(ri, spec.y, unit=spec.unit, what=spec.what, direction=spec.direction)
 
 
 RULES: dict[str, Callable[[RuleInput], list[Verdict]]] = {
-    "SV-3": sv3, "UP-3": up3, "PD-2": pd2, "SV-4": sv4, "TH-1": th1,
+    did: (lambda ri, _s=spec: _run(ri, _s)) for did, spec in SPECS.items()
 }
 
 

@@ -52,12 +52,15 @@ def view(row: dict[str, Any], params: dict[str, Any], now: datetime, *,
     # from the room's supply: neither is a band on the raw line, so the panel
     # describes them in words and the chart draws nothing.
     kind = "regression" if row.get("model_kind") == "ols" else (
-        "inlet_gap" if model.get("of") == "inlet_minus_room_supply" else "profile")
+        "gap" if model.get("of") else "profile")
     out["kind"] = kind
+    if kind == "gap":
+        out["of"] = model.get("of")
     if model.get("reason"):
         out["reason"] = model["reason"]
     if kind == "regression":
-        out["link"] = {k: model.get(k) for k in ("a", "b", "r2", "x_lo", "x_hi", "sigma")}
+        out["link"] = {k: model.get(k) for k in ("a", "b", "r2", "x_lo", "x_hi", "sigma",
+                                                 "drivers")}
         return out
     hour = now.astimezone(UTC).hour
     got = _entry(model, hour, min_samples, floor)

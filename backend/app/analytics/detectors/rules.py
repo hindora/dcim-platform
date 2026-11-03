@@ -142,6 +142,8 @@ class Context:
     room_dew_max: dict[str, float] = field(default_factory=dict)
     #: room id -> mean supply air of the room's air handlers (TH-1, docs/35).
     room_supply: dict[str, float] = field(default_factory=dict)
+    #: room id -> mean ambient of the room's sensors (UP-1, docs/35).
+    room_ambient: dict[str, float] = field(default_factory=dict)
 
 
 # --- verdicts and the dwell state machine -----------------------------------

@@ -4,10 +4,12 @@
         server's own cpu_utilization. "8 kW to 12 kW with no more work" at a
         rack is the sum of these; judged per server it also names the one that
         changed (a failing supply, a lifted power cap, added hardware).
-        Per server, not per PDU, because on this estate PDU power follows its
-        servers' summed power only loosely (r about 0.5 against 0.85 for a
-        server against its own CPU) - the simulator's PDU meter is not the sum
-        of its outlets, which on a real site it is.
+        Per server, not per PDU: judged where the cause is, it names the box
+        that changed. (A PDU's total also barely varies - a few percent over a
+        day - so a PDU-level regression has little signal to learn from. It
+        does meter the sum of what is plugged into it, within its noise and the
+        poll timing of its loads; an early check that compared it with its
+        SERVERS alone, leaving out its switches and CDUs, suggested otherwise.)
   TH-1  rack intake unusually far above its room's supply air: an hour-of-day
         profile of (inlet - mean room CRAH supply). The gap, not the inlet: a
         setpoint raised by 2 K moves both and the gap stays; hot air

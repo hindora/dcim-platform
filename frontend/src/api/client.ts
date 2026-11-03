@@ -2535,10 +2535,13 @@ export interface ExpectedSeries {
   z_open: number;
   /** profile: the reading itself, per hour. regression: the reading given its
    *  driver (no band). inlet_gap: intake minus the room's supply air. */
-  kind: 'profile' | 'regression' | 'inlet_gap';
+  kind: 'profile' | 'regression' | 'gap';
+  /** gap only: what the reading is measured from, e.g. 'inlet_minus_room_supply'. */
+  of?: string | null;
   /** Why a series is not judged even with enough history, e.g. 'weak_link'. */
   reason?: string | null;
-  link?: { a: number; b: number; r2: number; x_lo: number; x_hi: number; sigma: number } | null;
+  link?: { a: number; b: number | number[]; r2: number; x_lo: number | number[];
+           x_hi: number | number[]; sigma: number; drivers?: string[] } | null;
   now: { hour: number; expected: number; lo: number; hi: number } | null;
   band: number[][];
 }

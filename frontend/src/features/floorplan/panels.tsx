@@ -500,6 +500,13 @@ export function UnitFindings({ deviceId }: { deviceId: string }) {
   );
 }
 
+const DRIVER_WORDS: Record<string, string> = {
+  cpu_utilization: 'CPU load', inlet_temperature: 'intake temperature', load_pct: 'UPS load',
+};
+const DRIVER_UNIT: Record<string, string> = {
+  cpu_utilization: '% CPU', inlet_temperature: '°C of intake', load_pct: '% load',
+};
+
 /** One learned series, in words: how far the learning is, or what is usual now. */
 function expectedText(e: ExpectedSeries): string {
   const unit = e.unit === 'pct' ? ' %' : e.unit ? ` ${e.unit}` : '';
@@ -512,12 +519,18 @@ function expectedText(e: ExpectedSeries): string {
     return `learning, ${e.days} of ${e.min_days} days`;
   }
   if (e.kind === 'regression' && e.link) {
-    return `follows CPU load: about ${numText(e.link.b)}${unit} per % CPU `
-      + `(learned between ${numText(e.link.x_lo)} and ${numText(e.link.x_hi)} %)`;
+    const drivers = (e.link.drivers ?? ['cpu_utilization']).map((d) => DRIVER_WORDS[d] ?? metricLabel(d));
+    const bs = Array.isArray(e.link.b) ? e.link.b : [e.link.b];
+    if (drivers.length === 1 && bs.length === 1) {
+      const per = DRIVER_UNIT[(e.link.drivers ?? ['cpu_utilization'])[0]] ?? 'unit';
+      return `follows ${drivers[0]}: about ${numText(bs[0])}${unit} per ${per}`;
+    }
+    return `follows ${drivers.join(' and ')} (fit ${numText((e.link.r2 ?? 0) * 100)} %)`;
   }
   if (!e.now) return 'this hour of the day is not learned yet';
-  if (e.kind === 'inlet_gap') {
-    return `usually ${numText(e.now.lo)}–${numText(e.now.hi)} K above the room's supply air `
+  if (e.kind === 'gap') {
+    const against = e.of === 'battery_minus_room_ambient' ? "the room's air" : "the room's supply air";
+    return `usually ${numText(e.now.lo)}–${numText(e.now.hi)} K above ${against} `
       + `at ${String(e.now.hour).padStart(2, '0')}:00 UTC`;
   }
   return `usually ${numText(e.now.lo)}–${numText(e.now.hi)}${unit} at ${String(e.now.hour).padStart(2, '0')}:00 UTC`;

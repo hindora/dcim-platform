@@ -146,8 +146,13 @@ def fit_profile(rows: list[HourRow], params: dict[str, Any], *,
 class PairRow:
     bucket: datetime
     y: float
-    x: float
+    #: One value per driver, already transformed. A bare float is one driver.
+    x: Any
     samples: int
+
+    @property
+    def xs(self) -> tuple[float, ...]:
+        return tuple(self.x) if isinstance(self.x, (tuple, list)) else (float(self.x),)
 
 
 def _clean_rows(rows: list, params: dict[str, Any],
@@ -161,7 +166,7 @@ def _clean_rows(rows: list, params: dict[str, Any],
     for r in rows:
         cold = prev is None or r.bucket - prev > _timedelta(hours=1)
         prev = r.bucket
-        vals = (r.y, r.x) if isinstance(r, PairRow) else (r.value,)
+        vals = (r.y, *r.xs) if isinstance(r, PairRow) else (r.value,)
         bad = (r.samples < 0.5 * typical
                or any(a <= r.bucket < b for a, b in excluded_spans)
                or (cold and keep_cold_start(params))
@@ -173,59 +178,95 @@ def _clean_rows(rows: list, params: dict[str, Any],
     return keep, dropped
 
 
+def _solve(m: list[list[float]], v: list[float]) -> list[float] | None:
+    """Gaussian elimination with partial pivoting; None if singular."""
+    n = len(v)
+    a = [[*row, v[k]] for k, row in enumerate(m)]
+    for c in range(n):
+        piv = max(range(c, n), key=lambda r: abs(a[r][c]))
+        if abs(a[piv][c]) < 1e-12:
+            return None
+        a[c], a[piv] = a[piv], a[c]
+        for r in range(n):
+            if r != c:
+                f = a[r][c] / a[c][c]
+                for k in range(c, n + 1):
+                    a[r][k] -= f * a[c][k]
+    return [a[k][n] / a[k][k] for k in range(n)]
+
+
 def fit_ols(rows: list[PairRow], params: dict[str, Any], *,
             excluded_spans: list[tuple[datetime, datetime]] = (),
-            previous: dict[str, Any] | None = None) -> ProfileFit:
-    """y = a + b*x on the hourly means, with the shared guards (docs/35 section 4).
+            previous: dict[str, Any] | None = None,
+            drivers: tuple[str, ...] = ()) -> ProfileFit:
+    """y = a + sum(b_i * x_i) on the hourly means, with the shared guards.
 
-    The residual spread is robust (1.4826 * MAD of the residuals) and floored.
-    The learned range of x (5th to 95th percentile) is kept, so scoring never
-    extrapolates. A link weaker than `min_r2` is not a baseline: the status
-    stays 'thin' with the reason in the model, and nothing is judged on it.
-    As with the profile, one night can move the prediction at the middle of
-    the range by at most `max_change_pct` (or one previous sigma).
+    Least squares on one or more drivers (docs/35 section 4). The residual
+    spread is robust (1.4826 * MAD) and floored. Each driver's learned range
+    (5th to 95th percentile) is kept, so scoring never extrapolates. A link
+    weaker than `min_r2` is not a baseline: the status stays 'thin' with the
+    reason in the model. One night can move the prediction at the middle of
+    the data by at most `max_change_pct` (or one previous sigma).
     """
-    keep, dropped = _clean_rows(rows, params, excluded_spans)
+    keep, dropped = _clean_rows(rows, params, list(excluded_spans))
     days = len({r.bucket.astimezone(_UTC).date() for r in keep})
-    base = {"hours": len(keep), "days": days, "min_hours": int(params.get("min_hours", 120))}
-    if len(keep) < 3:
+    base = {"hours": len(keep), "days": days, "min_hours": int(params.get("min_hours", 120)),
+            "drivers": list(drivers)}
+    k = len(keep[0].xs) if keep else max(1, len(drivers))
+    if len(keep) < k + 2:
         return ProfileFit("thin", {**base, "reason": "too_little_data"}, len(keep), days,
                           dropped, None)
-    xs = [r.x for r in keep]
+    cols = [[r.xs[i] for r in keep] for i in range(k)]
     ys = [r.y for r in keep]
-    xbar, ybar = _stats.fmean(xs), _stats.fmean(ys)
-    sxx = sum((x - xbar) ** 2 for x in xs)
-    if sxx <= 1e-12:
+    if any(max(c) - min(c) <= 1e-9 for c in cols):
         return ProfileFit("thin", {**base, "reason": "driver_does_not_vary"}, len(keep), days,
                           dropped, None)
-    b = sum((x - xbar) * (y - ybar) for x, y in zip(xs, ys, strict=True)) / sxx
-    a = ybar - b * xbar
-    resid = [y - (a + b * x) for x, y in zip(xs, ys, strict=True)]
+    # Normal equations on [1, x_1 .. x_k].
+    design = [[1.0, *r.xs] for r in keep]
+    xtx = [[sum(row[a] * row[b] for row in design) for b in range(k + 1)] for a in range(k + 1)]
+    xty = [sum(row[a] * y for row, y in zip(design, ys, strict=True)) for a in range(k + 1)]
+    beta = _solve(xtx, xty)
+    if beta is None:
+        return ProfileFit("thin", {**base, "reason": "drivers_collinear"}, len(keep), days,
+                          dropped, None)
+    a, bs = beta[0], beta[1:]
+    pred = [a + sum(b * x for b, x in zip(bs, r.xs, strict=True)) for r in keep]
+    resid = [y - f for y, f in zip(ys, pred, strict=True)]
+    ybar = _stats.fmean(ys)
     ss_res = sum(e * e for e in resid)
     ss_tot = sum((y - ybar) ** 2 for y in ys)
     r2 = 1.0 - ss_res / ss_tot if ss_tot > 1e-12 else 0.0
     med = _stats.median(resid)
     sigma = max(MAD_TO_SIGMA * _stats.median(abs(e - med) for e in resid),
                 float(params.get("sigma_floor", 0.0)))
-    q = sorted(xs)
-    x_lo, x_hi = q[int(0.05 * (len(q) - 1))], q[int(0.95 * (len(q) - 1))]
+    xbar = [_stats.fmean(c) for c in cols]
+    lo, hi = [], []
+    for c in cols:
+        q = sorted(c)
+        lo.append(q[int(0.05 * (len(q) - 1))])
+        hi.append(q[int(0.95 * (len(q) - 1))])
     if previous and previous.get("a") is not None:
-        cap = float(params.get("max_change_pct", 10.0)) / 100.0
-        old_mid = float(previous["a"]) + float(previous["b"]) * xbar
-        new_mid = a + b * xbar
-        step = max(abs(old_mid) * cap, float(previous.get("sigma") or 0.0))
-        if abs(new_mid - old_mid) > step:
-            a += (old_mid + step * (1 if new_mid > old_mid else -1)) - new_mid
-    model = {**base, "a": round(a, 6), "b": round(b, 6), "sigma": round(sigma, 4),
-             "r2": round(r2, 4), "x_lo": round(x_lo, 4), "x_hi": round(x_hi, 4),
-             "xbar": round(xbar, 4)}
+        pb = previous.get("b")
+        pb = pb if isinstance(pb, list) else [pb]
+        if len(pb) == k:
+            cap = float(params.get("max_change_pct", 10.0)) / 100.0
+            old_mid = float(previous["a"]) + sum(float(b) * x for b, x in zip(pb, xbar,
+                                                                            strict=True))
+            new_mid = a + sum(b * x for b, x in zip(bs, xbar, strict=True))
+            step = max(abs(old_mid) * cap, float(previous.get("sigma") or 0.0))
+            if abs(new_mid - old_mid) > step:
+                a += (old_mid + step * (1 if new_mid > old_mid else -1)) - new_mid
+    model = {**base, "a": round(a, 6), "b": [round(b, 6) for b in bs],
+             "sigma": round(sigma, 4), "r2": round(r2, 4),
+             "x_lo": [round(v, 4) for v in lo], "x_hi": [round(v, 4) for v in hi],
+             "xbar": [round(v, 4) for v in xbar]}
     enough = (len(keep) >= int(params.get("min_hours", 120))
               and days >= int(params.get("min_days", 10)))
     weak = r2 < float(params.get("min_r2", 0.3))
     if weak:
         model["reason"] = "weak_link"
-    status = "ok" if enough and not weak else "thin"
-    return ProfileFit(status, model, len(keep), days, dropped, round(sigma, 4))
+    return ProfileFit("ok" if enough and not weak else "thin", model, len(keep), days,
+                      dropped, round(sigma, 4))
 
 
 def keep_cold_start(params: dict[str, Any]) -> bool:
@@ -233,15 +274,40 @@ def keep_cold_start(params: dict[str, Any]) -> bool:
     return bool(params.get("exclude_cold_start", True))
 
 
-#: How each L3 detector is fitted. Absent means an hour-of-day profile of its
-#: primary metric.
-FIT_KIND: dict[str, str] = {"SV-4": "ols", "TH-1": "inlet_gap"}
-#: (y, x) for the regression detectors: y is judged, x is what drives it.
-OLS_PAIRS: dict[str, tuple[str, str]] = {"SV-4": ("power_draw", "cpu_utilization")}
+async def _ols_series(conn: Any, spec: Any, device_types: list[str], since: datetime,
+                      until: datetime) -> dict[tuple[str, int, str], list[tuple]]:
+    """y joined with each driver on the same device and hour, transformed.
+
+    Joined here rather than in SQL: each series is one indexed read, and a
+    driver with several instances (four fans, two PSUs) is averaged per hour.
+    """
+    from app.analytics.l3_specs import transform
+    ys = await repo.fit_series(conn, metric_key=spec.y, device_types=device_types,
+                               since=since, until=until)
+    drv: list[dict[tuple[str, datetime], float]] = []
+    for d in spec.drivers:
+        raw = await repo.fit_series(conn, metric_key=d.key, device_types=device_types,
+                                    since=since, until=until)
+        acc: dict[tuple[str, datetime], list[float]] = {}
+        for (dev, _mid, _inst), rows in raw.items():
+            for bucket, value, _n in rows:
+                acc.setdefault((dev, bucket), []).append(value)
+        drv.append({k: transform(sum(v) / len(v), d.transform) for k, v in acc.items()})
+    out: dict[tuple[str, int, str], list[tuple]] = {}
+    for key, rows in ys.items():
+        dev = key[0]
+        joined = []
+        for bucket, value, n in rows:
+            xs = [m.get((dev, bucket)) for m in drv]
+            if all(x is not None for x in xs):
+                joined.append((bucket, value, tuple(xs), n))
+        if joined:
+            out[key] = joined
+    return out
 
 
 async def enabled_profile_detectors(conn: Any) -> list[dict[str, Any]]:
-    from app.analytics.detectors.residual import RULES
+    from app.analytics.l3_specs import SPECS as RULES
     rows = (await conn.execute(text("""
         SELECT id, version, primary_metric, device_types, params FROM anomaly_detector
          WHERE layer = 3 AND enabled ORDER BY id
@@ -262,18 +328,19 @@ async def fit_profiles(conn: Any, now: datetime, detectors: list[dict[str, Any]]
     since = now - _timedelta(days=FIT_LOOKBACK_DAYS)
     for det in detectors:
         params = dict(det["params"] or {})
-        kind = FIT_KIND.get(det["id"], "profile")
+        from app.analytics.l3_specs import SPECS
+        spec = SPECS.get(det["id"])
+        kind = spec.kind if spec else "profile"
+        types = list(det["device_types"])
         if kind == "ols":
-            y_key, x_key = OLS_PAIRS[det["id"]]
-            series = await repo.fit_pairs(conn, y_key=y_key, x_key=x_key,
-                                          device_types=list(det["device_types"]),
-                                          since=since, until=now)
-        elif kind == "inlet_gap":
-            series = await repo.fit_inlet_gap(conn, device_types=list(det["device_types"]),
-                                              since=since, until=now)
+            series = await _ols_series(conn, spec, types, since, now)
+        elif kind == "gap":
+            series = await repo.fit_room_gap(conn, y_key=spec.y, ref_key=spec.ref,
+                                             ref_types=list(spec.ref_types),
+                                             device_types=types, since=since, until=now)
         else:
-            series = await repo.fit_series(conn, metric_key=det["primary_metric"],
-                                           device_types=list(det["device_types"]),
+            series = await repo.fit_series(conn, metric_key=spec.y if spec else
+                                           det["primary_metric"], device_types=types,
                                            since=since, until=now)
         frozen = await repo.series_with_open_findings(conn, det["id"])
         current = await repo.current_baseline_models(conn, det["id"])
@@ -287,12 +354,13 @@ async def fit_profiles(conn: Any, now: datetime, detectors: list[dict[str, Any]]
             prev = current.get((device_id, metric_id, instance))
             if kind == "ols":
                 rows = [PairRow(*t) for t in raw]
-                fit = fit_ols(rows, params, excluded_spans=excl, previous=prev)
+                fit = fit_ols(rows, params, excluded_spans=excl, previous=prev,
+                              drivers=tuple(d.key for d in spec.drivers))
             else:
                 rows = [HourRow(*t) for t in raw]
                 fit = fit_profile(rows, params, excluded_spans=excl, previous=prev)
-                if kind == "inlet_gap":
-                    fit.model["of"] = "inlet_minus_room_supply"
+                if kind == "gap":
+                    fit.model["of"] = spec.of
             batch.append({
                 "detector_id": det["id"], "detector_version": det["version"],
                 "device_id": device_id, "metric_id": metric_id, "instance": instance,

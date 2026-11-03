@@ -1241,39 +1241,14 @@ async def device_baselines(session: AsyncSession, device_id: str) -> list[dict[s
     return [dict(r) for r in rows]
 
 
-async def fit_pairs(conn: Any, *, y_key: str, x_key: str, device_types: list[str],
-                    since: datetime, until: datetime
-                    ) -> dict[tuple[str, int, str], list[tuple[datetime, float, float, int]]]:
-    """Hourly means of y and of its driver x on the same device, hour by hour.
+async def fit_room_gap(conn: Any, *, y_key: str, ref_key: str, ref_types: list[str],
+                       device_types: list[str], since: datetime, until: datetime
+                       ) -> dict[tuple[str, int, str], list[tuple[datetime, float, int]]]:
+    """Each device's y minus its room's mean `ref_key` on `ref_types`, hour by hour.
 
-    Keyed by y's (device_id, metric_id, instance); an hour counts only when
-    both have a value. `samples` is y's.
+    TH-1: inlet minus the room's air-handler supply. UP-1: battery temperature
+    minus the room's ambient sensors.
     """
-    rows = (await conn.execute(text("""
-        SELECT y.device_id::text, y.metric_id, y.instance, y.bucket,
-               y.avg_value::float8, avg(x.avg_value)::float8, y.sample_count::int
-          FROM telemetry_1h y
-          JOIN metric my ON my.id = y.metric_id AND my.key = :y
-          JOIN device d  ON d.id = y.device_id
-          JOIN telemetry_1h x ON x.device_id = y.device_id AND x.bucket = y.bucket
-          JOIN metric mx ON mx.id = x.metric_id AND mx.key = :x
-         WHERE d.device_type = ANY(:types) AND d.lifecycle::text <> ALL(:retired)
-           AND y.bucket >= :since AND y.bucket < :until
-           AND y.avg_value IS NOT NULL AND x.avg_value IS NOT NULL
-         GROUP BY 1, 2, 3, 4, 5, 7
-         ORDER BY 1, 2, 3, 4
-    """), {"y": y_key, "x": x_key, "types": device_types,
-           "retired": list(RETIRED_LIFECYCLES), "since": since, "until": until})).all()
-    out: dict[tuple[str, int, str], list[tuple[datetime, float, float, int]]] = {}
-    for dev, mid, inst, bucket, y, x, n in rows:
-        out.setdefault((dev, int(mid), inst), []).append((bucket, float(y), float(x), int(n or 0)))
-    return out
-
-
-async def fit_inlet_gap(conn: Any, *, device_types: list[str], since: datetime,
-                        until: datetime
-                        ) -> dict[tuple[str, int, str], list[tuple[datetime, float, int]]]:
-    """Each device's inlet minus its room's mean air-handler supply, hour by hour (TH-1)."""
     rows = (await conn.execute(text("""
         WITH room_of AS (
             SELECT d.id, d.device_type, d.lifecycle, COALESCE(rr.room_id, d.room_id) AS room_id
@@ -1283,22 +1258,22 @@ async def fit_inlet_gap(conn: Any, *, device_types: list[str], since: datetime,
         ), supply AS (
             SELECT ro.room_id, h.bucket, avg(h.avg_value) AS s
               FROM telemetry_1h h
-              JOIN metric m ON m.id = h.metric_id AND m.key = 'supply_air_temp'
-              JOIN room_of ro ON ro.id = h.device_id AND ro.device_type IN ('crah', 'crac')
+              JOIN metric m ON m.id = h.metric_id AND m.key = :ref
+              JOIN room_of ro ON ro.id = h.device_id AND ro.device_type = ANY(:ref_types)
              WHERE h.bucket >= :since AND h.bucket < :until AND h.avg_value IS NOT NULL
              GROUP BY 1, 2
         )
         SELECT h.device_id::text, h.metric_id, h.instance, h.bucket,
                (h.avg_value - s.s)::float8, h.sample_count::int
           FROM telemetry_1h h
-          JOIN metric m ON m.id = h.metric_id AND m.key = 'inlet_temperature'
+          JOIN metric m ON m.id = h.metric_id AND m.key = :y
           JOIN room_of ro ON ro.id = h.device_id
           JOIN supply s ON s.room_id = ro.room_id AND s.bucket = h.bucket
          WHERE ro.device_type = ANY(:types) AND ro.lifecycle::text <> ALL(:retired)
            AND h.bucket >= :since AND h.bucket < :until AND h.avg_value IS NOT NULL
          ORDER BY 1, 2, 3, 4
-    """), {"types": device_types, "retired": list(RETIRED_LIFECYCLES),
-           "since": since, "until": until})).all()
+    """), {"types": device_types, "retired": list(RETIRED_LIFECYCLES), "y": y_key,
+           "ref": ref_key, "ref_types": ref_types, "since": since, "until": until})).all()
     out: dict[tuple[str, int, str], list[tuple[datetime, float, int]]] = {}
     for dev, mid, inst, bucket, v, n in rows:
         out.setdefault((dev, int(mid), inst), []).append((bucket, float(v), int(n or 0)))

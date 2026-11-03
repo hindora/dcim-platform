@@ -200,7 +200,10 @@ class _Engine:
     # --- setup --------------------------------------------------------------
 
     async def run(self) -> None:
-        scorers = [d for d in self.cat.scorers() if d.layer in (0, 2, 3)]
+        # Enabled only: a disabled detector scores nothing, so reading its
+        # series and devices every sweep is pure cost - and the L3 rows seeded
+        # off (fans, interface errors) would add thousands of series to it.
+        scorers = [d for d in self.cat.scorers() if d.layer in (0, 2, 3) and d.enabled]
         types = sorted({t for d in scorers for t in d.device_types})
         devices = await repo.sweep_devices(self.s, types)
         self.open_rows = await repo.open_findings(self.s)
@@ -401,6 +404,14 @@ class _Engine:
                 if x is not None:
                     supply.setdefault(v.room_id, []).append(x)
         ctx.room_supply = {r: sum(vs) / len(vs) for r, vs in supply.items()}
+        ambient: dict[str, list[float]] = {}
+        for v in views.values():
+            if v.room_id and v.device_type == "sensor":
+                for k in v.instances("ambient_temperature"):
+                    x = None if k in v.masked else v.last(k, self.ts)
+                    if x is not None:
+                        ambient.setdefault(v.room_id, []).append(x)
+        ctx.room_ambient = {r: sum(vs) / len(vs) for r, vs in ambient.items()}
         return ctx
 
     # --- state ------------------------------------------------------------------

@@ -230,7 +230,8 @@ def test_required_metrics_are_registry_keys():
         for t in r["device_types"]:
             # L3 profiles also score the electrical gear L0 does not read.
             assert t in cat.L0_METRICS or t == "ats" or (
-                r["layer"] == 3 and t in {"mpp", "mcc", "switchgear", "utility_feed"}), (r["id"], t)
+                r["layer"] == 3 and t in {"mpp", "mcc", "switchgear", "utility_feed",
+                                       "switch", "router"}), (r["id"], t)
 
 
 @pytest.mark.parametrize("row", ROWS, ids=[r["id"] for r in ROWS])

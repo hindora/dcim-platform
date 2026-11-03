@@ -196,8 +196,8 @@ def _pairs(days=25, a=150.0, b=3.0, noise=2.0):
 def test_the_regression_recovers_the_link():
     fit = fit_ols(_pairs(), P4)
     assert fit.status == "ok"
-    assert abs(fit.model["b"] - 3.0) < 0.1 and abs(fit.model["a"] - 150.0) < 5.0
-    assert fit.model["r2"] > 0.9 and fit.model["x_lo"] < 30 < 70 < fit.model["x_hi"]
+    assert abs(fit.model["b"][0] - 3.0) < 0.1 and abs(fit.model["a"] - 150.0) < 5.0
+    assert fit.model["r2"] > 0.9 and fit.model["x_lo"][0] < 30 < 70 < fit.model["x_hi"][0]
 
 
 def test_a_weak_link_is_not_a_baseline():
@@ -213,7 +213,8 @@ def test_a_driver_that_never_moves_teaches_nothing():
 
 
 def _ols_base(a=150.0, b=3.0, sigma=4.0, lo=20.0, hi=80.0):
-    return {"status": "ok", "model": {"a": a, "b": b, "sigma": sigma, "x_lo": lo, "x_hi": hi}}
+    return {"status": "ok", "model": {"a": a, "b": [b], "sigma": sigma, "x_lo": [lo],
+                                      "x_hi": [hi]}}
 
 
 def _server(power, cpu, now):
@@ -287,7 +288,7 @@ def test_no_room_supply_is_held():
     ri = RuleInput("TH-1", P1, dev, Context(), now, active=lambda k: False,
                    x=lambda k: {}, baseline=lambda k: base)
     (v,) = residual.run_rule(ri)
-    assert v.cond is None and v.diagnosis == "no_room_supply"
+    assert v.cond is None and v.diagnosis == "no_room_reference"
 
 
 def test_a_fast_polled_series_with_a_full_buffer_is_not_a_cold_start():
@@ -301,3 +302,80 @@ def test_a_series_that_only_just_began_is_a_cold_start():
     now = datetime(2026, 11, 3, 10, 0, tzinfo=UTC).timestamp()
     samples = [Sample(now - 60 * i, 30.0) for i in range(10)][::-1]
     assert residual._resumed_at(samples, now) == samples[0].ts
+
+
+# --- step 3: several drivers, a transform, the battery gap --------------------
+
+from app.analytics.l3_specs import SPECS, transform  # noqa: E402
+
+
+def test_two_drivers_are_fitted_together():
+    rows = []
+    for d in range(25):
+        for h in range(7, 14):
+            cpu = 20 + ((d * 7 + h) * 13) % 60
+            inlet = 20 + ((d * 5 + h) * 7) % 8
+            y = 30 + 0.4 * cpu + 1.5 * inlet + 0.3 * (((d + h) % 5) - 2)
+            rows.append(PairRow(DAY0 + timedelta(days=d, hours=h), y, (cpu, inlet), 60))
+    fit = fit_ols(rows, seed_params("SV-1"), drivers=("cpu_utilization", "inlet_temperature"))
+    assert fit.status == "ok" and fit.model["drivers"] == ["cpu_utilization", "inlet_temperature"]
+    b_cpu, b_inlet = fit.model["b"]
+    assert abs(b_cpu - 0.4) < 0.05 and abs(b_inlet - 1.5) < 0.1
+
+
+def test_runtime_is_a_straight_line_on_the_inverse_of_load():
+    assert transform(50.0, "inverse") == 2.0
+    assert transform(0.0, "inverse") == 100.0          # floored, never a division by zero
+    assert SPECS["UP-2"].drivers[0].transform == "inverse"
+
+
+def _ups(runtime, load, now):
+    dev = DeviceView(device_id="u1", name="UPSA", device_type="ups", online=True)
+    for key, v in (("battery_runtime", runtime), ("load_pct", load)):
+        dev.num[(key, "")] = [Sample(now - 60 * i, v) for i in range(40)][::-1]
+        dev.fresh.add((key, ""))
+    return dev
+
+
+def _up2(runtime, load):
+    now = datetime(2026, 11, 3, 10, 0, tzinfo=UTC).timestamp()
+    # runtime = 4 * (100 / load): 8 min at 50 %, learned between 25 % and 80 %
+    base = {"status": "ok", "model": {"a": 0.0, "b": [4.0], "sigma": 0.3,
+                                      "x_lo": [1.25], "x_hi": [4.0]}}
+    st = DwellState()
+    ri = RuleInput("UP-2", seed_params("UP-2"), _ups(runtime, load, now), None, now,
+                   active=lambda k: False, x=lambda k: st.x, baseline=lambda k: base)
+    (v,) = residual.run_rule(ri)
+    return v
+
+
+def test_a_battery_giving_its_usual_runtime_is_quiet():
+    v = _up2(8.0, 50.0)
+    assert v.cond is False and abs(v.expected - 8.0) < 1e-6
+
+
+def test_a_fading_battery_counts_and_more_runtime_does_not():
+    assert _up2(5.5, 50.0).cond is True                 # 2.5 min short at the same load
+    assert _up2(10.5, 50.0).cond is False               # longer than usual: not a fault
+
+
+def test_the_battery_is_judged_against_its_rooms_air():
+    now = datetime(2026, 11, 3, 10, 0, tzinfo=UTC).timestamp()
+    dev = DeviceView(device_id="u1", name="UPSA", device_type="ups", room_id="ur",
+                     online=True)
+    dev.num[("battery_temperature", "")] = [Sample(now - 60 * i, 31.0) for i in range(40)][::-1]
+    dev.fresh.add(("battery_temperature", ""))
+    base = {"status": "ok", "model": {"of": "battery_minus_room_ambient",
+                                      "hod": {"10": [3.0, 0.3, 20]}}}
+    ri = RuleInput("UP-1", seed_params("UP-1"), dev, Context(room_ambient={"ur": 24.0}), now,
+                   active=lambda k: False, x=lambda k: {}, baseline=lambda k: base)
+    (v,) = residual.run_rule(ri)
+    assert v.cond is True and "7.0 K above the room's air" in v.summary
+
+
+def test_every_seeded_l3_row_has_a_spec_and_step_3_ships_off():
+    from tests.anomaly_fakes import seed_rows
+    l3 = {r["id"]: r for r in seed_rows() if r["layer"] == 3}
+    assert set(l3) == set(SPECS)
+    assert {i for i, r in l3.items() if not r["enabled"]} == {"UP-1", "UP-2", "SV-1", "SV-2",
+                                                              "NW-1"}
