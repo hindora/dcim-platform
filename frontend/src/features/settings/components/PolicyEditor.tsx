@@ -264,7 +264,7 @@ export function PolicyEditor({ integrationId, effective, onChange }: {
  *  wrong here, where a domain with no alarms this week must still be
  *  switchable off for next week.
  */
-function Facets({ values, on, counts, label, onToggle, onAll }: {
+export function Facets({ values, on, counts, label, onToggle, onAll }: {
   values: readonly string[];
   on: string[];
   counts?: Record<string, number>;

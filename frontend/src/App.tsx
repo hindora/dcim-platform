@@ -11,6 +11,7 @@ import { Analytics } from './features/analytics/Analytics';
 import { PlatformHealth } from './features/platform/PlatformHealth';
 import { Appearance } from './features/settings/Appearance';
 import { Organisation } from './features/settings/Organisation';
+import { Notifications } from './features/settings/Notifications';
 import { AnomalyDetectors } from './features/settings/AnomalyDetectors';
 import { Collectors } from './features/settings/Collectors';
 import { CollectorDetail } from './features/settings/CollectorDetail';
@@ -348,6 +349,7 @@ export default function App() {
             <Route path="releases" element={<Releases />} />
             <Route path="integrations" element={<Integrations />} />
             <Route path="anomaly-detectors" element={<AnomalyDetectors />} />
+            <Route path="notifications" element={<Notifications />} />
             <Route path="organisation" element={<Organisation />} />
             <Route path="appearance" element={<Appearance />} />
           </Route>

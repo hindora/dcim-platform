@@ -53,6 +53,8 @@ from app.ingest.fanout import Fanout
 from app.ingest.ownership import OwnershipGuard
 from app.integrations import outbox as integration_outbox
 from app.integrations.dispatcher import Dispatcher
+from app.notifications import outbox as notification_outbox
+from app.notifications.dispatcher import Notifier
 from app.repositories import alarms as repo_alarms
 from app.repositories import collector as collector_repo
 from app.repositories import snapshots as snapshot_repo
@@ -201,6 +203,17 @@ def group_by_room(device_ids, room_of: dict[str, str]) -> dict[str, list[str]]:
     return out
 
 
+async def _enqueue_outboxes(session, actions: list) -> None:
+    """Every place alarm actions are produced calls this, inside its transaction.
+
+    One helper for both outboxes - tickets and emails - so a new call site
+    cannot remember one and forget the other. Each returns at once when it has
+    nothing configured.
+    """
+    await integration_outbox.enqueue_actions(session, actions)
+    await notification_outbox.enqueue_actions(session, actions)
+
+
 class IngestWorker:
     def __init__(self, consumer_name: str | None = None) -> None:
         self.settings = get_settings()
@@ -245,6 +258,7 @@ class IngestWorker:
         # Outbound ticketing. Cheap when nothing is configured: its first
         # question each pass is whether any integration is enabled.
         self.integrations = Dispatcher(self.consumer)
+        self.notifier = Notifier(self.consumer)
         self._stop = asyncio.Event()
 
     # ------------------------------------------------------------- lifecycle
@@ -305,6 +319,7 @@ class IngestWorker:
         await self._maybe_detect_anomalies()
         await self._maybe_fit_baselines()
         await self.integrations.maybe_run()
+        await self.notifier.maybe_run()
 
         # Before the early return below: the worker is alive whether or not
         # anything arrived, and an idle pipeline must not look like a dead one.
@@ -541,7 +556,7 @@ class IngestWorker:
                 actions += await self.alarms.sweep_late_roots(session)
                 # Inside the transaction, deliberately: the alarm and the
                 # intent to ticket it commit together or not at all.
-                await integration_outbox.enqueue_actions(session, actions)
+                await _enqueue_outboxes(session, actions)
             for action in actions:
                 await self.fanout.alarm(action.kind, action.alarm)
         except Exception as exc:
@@ -597,7 +612,7 @@ class IngestWorker:
                     session, self.redis, consumer=self.consumer, sweep_s=sweep_s,
                     now=started, lag_s=self._last_lag_s)
                 if result.actions:
-                    await integration_outbox.enqueue_actions(session, result.actions)
+                    await _enqueue_outboxes(session, result.actions)
             outcome = "ran" if result.ran else (result.skipped or "skipped")
             metrics.anomaly_sweeps.labels(outcome=outcome).inc()
             if result.ran:
@@ -954,7 +969,7 @@ class IngestWorker:
             await writer.upsert_device_state(session, list(hot.values()))
             by_room = await self._rooms_of(session, ws_frames.keys())
             alarm_actions = await self.alarms.evaluate_samples(session, rule_inputs)
-            await integration_outbox.enqueue_actions(session, alarm_actions)
+            await _enqueue_outboxes(session, alarm_actions)
 
         # after commit
         await self.fanout.telemetry(ws_frames)
@@ -1124,7 +1139,7 @@ class IngestWorker:
                 if action:
                     actions.append(action)
             await repo_alarms.insert_events(session, rows)
-            await integration_outbox.enqueue_actions(session, actions)
+            await _enqueue_outboxes(session, actions)
         return rows, actions
 
     async def _release_events(self, events: list) -> None:

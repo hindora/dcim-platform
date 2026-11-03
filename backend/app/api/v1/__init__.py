@@ -25,6 +25,7 @@ from app.api.v1 import (
     maintenance,
     misc,
     models,
+    notifications,
     pools,
     power,
     profiles,
@@ -37,6 +38,7 @@ from app.api.v1 import (
 
 api_router = APIRouter()
 api_router.include_router(misc.router)
+api_router.include_router(notifications.router)
 api_router.include_router(devices.router)
 api_router.include_router(device_actions.router)
 api_router.include_router(assets.router)

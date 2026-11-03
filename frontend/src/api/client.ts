@@ -2986,6 +2986,77 @@ export interface Instance {
   environment: string;
 }
 
+/** Settings > Notifications: the mail relay. The password never comes back -
+ *  only whether one is saved. */
+export interface SmtpSettings {
+  enabled: boolean;
+  host: string;
+  port: number;
+  security: 'starttls' | 'tls' | 'none';
+  username: string;
+  password_set: boolean;
+  password_hint: string | null;
+  from_address: string;
+  from_name: string;
+  reply_to: string;
+  link_base_url: string;
+  updated_at: string | null;
+  updated_by: string | null;
+}
+
+/** What a PUT may carry. `password`: absent keeps it, '' removes it. */
+export type SmtpUpdate = Partial<Omit<SmtpSettings,
+  'password_set' | 'password_hint' | 'updated_at' | 'updated_by'>> & { password?: string };
+
+export interface NotificationRule {
+  id: string;
+  name: string;
+  enabled: boolean;
+  recipients: string[];
+  policy: IntegrationPolicy;
+  notify_on_clear: boolean;
+  notify_on_escalation: boolean;
+  max_per_hour: number;
+  summary: string;
+  last_sent_at: string | null;
+  sent_24h: number;
+  updated_at: string;
+  updated_by: string | null;
+}
+
+export type NotificationRuleInput = Partial<Pick<NotificationRule,
+  'name' | 'enabled' | 'notify_on_clear' | 'notify_on_escalation' | 'max_per_hour'>> & {
+  recipients?: string[] | string;
+  policy?: Partial<IntegrationPolicy>;
+};
+
+export interface NotificationPreview {
+  days: number;
+  conditions: number;
+  per_day: number;
+  by_severity: Record<string, number>;
+  sampled_alarms: number;
+  examples: { device_name: string | null; severity: string; message: string | null;
+              first_seen: string }[];
+}
+
+export interface NotificationDelivery {
+  id: number;
+  rule_id: string;
+  rule_name: string;
+  kind: 'alarm_raised' | 'alarm_escalated' | 'alarm_cleared';
+  status: 'pending' | 'sending' | 'sent' | 'skipped' | 'suppressed' | 'failed';
+  attempts: number;
+  subject: string | null;
+  note: string | null;
+  created_at: string;
+  sent_at: string | null;
+  next_attempt_at: string;
+  alarm_id: string | null;
+  severity: string | null;
+  device_name: string | null;
+}
+
 /** Settings > Organisation: the name the shell shows, and where it comes from.
  *  `settings` = saved by an admin here; `environment` = DCIM_ORG_NAME on the
  *  server; `default` = the product name. */
@@ -5479,6 +5550,35 @@ export const api = {
   instance: () => request<Instance>('/instance'),
 
   organisation: () => request<OrganisationSetting>('/settings/organisation'),
+
+  smtp: () => request<SmtpSettings>('/settings/smtp'),
+  saveSmtp: (body: SmtpUpdate) =>
+    request<SmtpSettings>('/settings/smtp', { method: 'PUT', body: JSON.stringify(body) }),
+  testSmtp: (to: string) =>
+    request<{ ok: boolean; to: string }>('/settings/smtp/test', {
+      method: 'POST', body: JSON.stringify({ to }),
+    }),
+  notificationRules: () => request<{ items: NotificationRule[] }>('/notifications/rules'),
+  createNotificationRule: (body: NotificationRuleInput) =>
+    request<NotificationRule>('/notifications/rules', {
+      method: 'POST', body: JSON.stringify(body),
+    }),
+  updateNotificationRule: (id: string, body: NotificationRuleInput) =>
+    request<NotificationRule>(`/notifications/rules/${id}`, {
+      method: 'PATCH', body: JSON.stringify(body),
+    }),
+  deleteNotificationRule: (id: string) =>
+    request<void>(`/notifications/rules/${id}`, { method: 'DELETE' }),
+  previewNotificationRule: (policy: Partial<IntegrationPolicy>, days = 7) =>
+    request<NotificationPreview>('/notifications/rules/preview', {
+      method: 'POST', body: JSON.stringify({ policy, days }),
+    }),
+  notificationDeliveries: (params: { limit: number; offset: number; status?: string }) => {
+    const q = new URLSearchParams({ limit: String(params.limit), offset: String(params.offset) });
+    if (params.status) q.set('status', params.status);
+    return request<{ items: NotificationDelivery[]; total: number }>(
+      `/notifications/deliveries?${q}`);
+  },
 
   /** Admin only. null (or blank) clears the saved name, so the server's
    *  DCIM_ORG_NAME - or the product name - shows again. */

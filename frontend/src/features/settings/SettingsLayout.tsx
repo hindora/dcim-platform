@@ -48,6 +48,11 @@ export const SETTINGS_NAV = [
     blurb: 'Which conditions reach a service desk, and what happened to them',
   },
   {
+    to: 'notifications',
+    label: 'Notifications',
+    blurb: 'Who is emailed about which alarms, and the mail server it goes through',
+  },
+  {
     to: 'anomaly-detectors',
     label: 'Anomaly detectors',
     blurb: 'Which checks run, how sensitive they are, and what they ignore',
