@@ -43,6 +43,7 @@ than judge it. BAD and SUSPECT samples never reach a rule (DeviceView.clean).
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Mapping
 from itertools import pairwise
 from typing import Any
@@ -82,15 +83,26 @@ def observed_interval(samples: list[Sample]) -> float | None:
 
 
 def is_impossible(metric_key: str, v: float, p: Mapping[str, Any]) -> bool:
-    for s in p.get("sentinels", ()):
-        if abs(v - float(s)) < 1e-6:
-            return True
+    return impossible_test(metric_key, p)(v)
+
+
+def impossible_test(metric_key: str, p: Mapping[str, Any]) -> Callable[[float], bool]:
+    """DQ-3's test for one series, with its sentinels and bounds looked up once.
+
+    Called per sample on every sweep, so the per-sample work is a few float
+    comparisons rather than two dictionary walks.
+    """
+    sentinels = tuple(float(s) for s in p.get("sentinels", ()))
     b = (p.get("bounds") or {}).get(metric_key)
-    return bool(b) and not (float(b[0]) <= v <= float(b[1]))
+    lo, hi = (float(b[0]), float(b[1])) if b else (-math.inf, math.inf)
+
+    def test(v: float) -> bool:
+        return not (lo <= v <= hi) or any(abs(v - s) < 1e-6 for s in sentinels)
+    return test
 
 
 def spike_indices(values: list[float], *, window: int, k: float, floor: float,
-                  rel_floor: float = 0.0) -> list[int]:
+                  rel_floor: float = 0.0, start: int = 0) -> list[int]:
     """Hampel with a scale floor; only points with a later neighbour.
 
     The floor is the larger of an absolute one (by unit family) and
@@ -106,7 +118,7 @@ def spike_indices(values: list[float], *, window: int, k: float, floor: float,
     half = max(1, window // 2)
     out = []
     n = len(values)
-    for i in range(n):
+    for i in range(max(0, start), n):
         lo, hi = max(0, i - half), min(n, i + half + 1)
         win = values[lo:hi]
         if len(win) < 3:
@@ -185,7 +197,8 @@ def evaluate(dev: DeviceView, params: Mapping[str, Mapping[str, Any]], now: floa
 
         # --- DQ-3 impossible values and sentinels --------------------------------
         if (p := params.get("DQ-3")) is not None:
-            bad_ts = {s.ts for s in series if s.q == "good" and is_impossible(key[0], s.v, p)}
+            bad = impossible_test(key[0], p)
+            bad_ts = {s.ts for s in series if s.q == "good" and bad(s.v)}
             if bad_ts:
                 dev.dropped.setdefault(key, set()).update(bad_ts)
             good = [s for s in series if s.q == "good"]
@@ -204,22 +217,39 @@ def evaluate(dev: DeviceView, params: Mapping[str, Mapping[str, Any]], now: floa
                     and s.ts not in dev.dropped.get(key, ())]
             fam = _family(key[0])
             floor = float((p.get("min_mad_abs") or {}).get(fam or "", 0.0))
-            idx = spike_indices([s.v for s in good], window=int(p.get("window", 11)),
-                                k=float(p.get("k_mad", 5.0)), floor=floor,
-                                rel_floor=float(p.get("min_dev_rel", 0.02)))
-            if idx:
-                dev.dropped.setdefault(key, set()).update(good[i].ts for i in idx)
             st = state("DQ-4", key)
+            # Only the tail is re-judged: the samples since the last sweep, plus
+            # the half-window before them whose verdicts could not be final
+            # (a centred window needs points AFTER the one it judges). Earlier
+            # spikes are remembered in `sp`, so they stay masked. 327k medians
+            # a sweep, recomputed over samples already judged, was 2.6 s of a
+            # 13.6 s sweep. No checkpoint (a first sweep, a Redis loss): judge all.
+            win_n = int(p.get("window", 11))
+            ck = st.x.get("ck")
+            start = 0
+            if ck is not None:
+                first_new = next((i for i, s in enumerate(good) if s.ts > float(ck)),
+                                 len(good))
+                start = max(0, first_new - max(1, win_n // 2))
+            idx = spike_indices([s.v for s in good], window=win_n,
+                                k=float(p.get("k_mad", 5.0)), floor=floor,
+                                rel_floor=float(p.get("min_dev_rel", 0.02)), start=start)
             seen = [t for t in (st.x.get("sp") or []) if now - t <= 3600]
+            kept = {round(g.ts, 3) for g in good}
+            remembered = [g.ts for g in good if round(g.ts, 3) in set(seen) & kept]
+            if idx or remembered:
+                dev.dropped.setdefault(key, set()).update(
+                    [good[i].ts for i in idx] + remembered)
             confirmed = {round(good[i].ts, 3) for i in idx if i < len(good) - 1}
             seen = sorted(set(seen) | confirmed)
             lim = int(p.get("max_spikes_per_h", 6))
+            ck_now = good[-1].ts if good else ck
             if len(good) < 5:
-                verdict("DQ-4", None, x={"sp": seen})
+                verdict("DQ-4", None, x={"sp": seen, "ck": ck_now})
             else:
                 verdict("DQ-4", len(seen) > lim, observed=float(len(seen)),
                         threshold=float(lim), score=len(seen) / lim, diagnosis="spiky",
-                        expr=f"hampel_spikes(1 h) > {lim}", x={"sp": seen},
+                        expr=f"hampel_spikes(1 h) > {lim}", x={"sp": seen, "ck": ck_now},
                         summary=(f"{dev.name} {key[0]}{_inst(key)} spiked {len(seen)} times "
                                  f"in the last hour"))
 

@@ -335,7 +335,8 @@ class _Engine:
                 lifecycle=d["lifecycle"], online=bool(d["online"]),
                 poll_interval_s=d["poll_interval_s"], maintenance=bool(d["maintenance"]),
                 fire_predischarge=bool(d["fire_predischarge"]))
-            ws = {rest: win_store.parse(raw) for rest, raw in stored.get(did, {}).items()}
+            ws = {rest: win_store.parse_cached(f"{did}|{rest}", raw)
+                  for rest, raw in stored.get(did, {}).items()}
             windows[did] = ws
             nums = [w.cursor for w in ws.values() if isinstance(w, win_store.NumWindow)]
             bools = [w.cursor for w in ws.values() if isinstance(w, win_store.BoolWindow)]
@@ -368,21 +369,31 @@ class _Engine:
                     bw, got = win_store.merge_bool(bw, new_bool.get((did, rest), []), self.ts)
                     if bw.series.last_ts and self.ts - bw.series.last_ts > win_store.TTL_S:
                         self.win.delete(field_)
+                        win_store.forget(field_)
                         continue
                     view.bools[(key_name, inst)] = bw.series
-                    if got:
-                        view.fresh.add((key_name, inst))
-                    self.win.put(field_, bw.to_wire())
+                    if got or w is None:
+                        # Written only when it changed: re-encoding and writing
+                        # back every unchanged window was most of the Redis work.
+                        if got:
+                            view.fresh.add((key_name, inst))
+                        raw = bw.to_wire()
+                        self.win.put(field_, raw)
+                        win_store.remember(field_, raw, bw)
                 else:
                     nw = w if isinstance(w, win_store.NumWindow) else win_store.NumWindow()
                     nw, got = win_store.merge_numeric(nw, new_num.get((did, rest), []), self.ts)
                     if not nw.samples or self.ts - nw.samples[-1].ts > win_store.TTL_S:
                         self.win.delete(field_)
+                        win_store.forget(field_)
                         continue
                     view.num[(key_name, inst)] = nw.samples
-                    if got:
-                        view.fresh.add((key_name, inst))
-                    self.win.put(field_, nw.to_wire())
+                    if got or w is None:
+                        if got:
+                            view.fresh.add((key_name, inst))
+                        raw = nw.to_wire()
+                        self.win.put(field_, raw)
+                        win_store.remember(field_, raw, nw)
         return views
 
     def _context(self, views: dict[str, rl.DeviceView]) -> rl.Context:

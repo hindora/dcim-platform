@@ -99,6 +99,32 @@ def parse(raw: str | bytes | None) -> NumWindow | BoolWindow | None:
                                   for t, v, q in d.get("s") or []])
 
 
+#: field -> (raw, decoded window), kept between sweeps in this process. A
+#: window whose Redis value is unchanged since it was decoded is reused rather
+#: than parsed again - with 5,400 windows, parsing all of them every sweep was
+#: a second of every sweep. Another worker that updated a field changes its raw
+#: value, so the cache misses and the field is re-read; it is a pure cache.
+_DECODED: dict[str, tuple[str, Any]] = {}
+
+
+def parse_cached(field: str, raw: str) -> Any:
+    hit = _DECODED.get(field)
+    if hit is not None and hit[0] == raw:
+        return hit[1]
+    obj = parse(raw)
+    _DECODED[field] = (raw, obj)
+    return obj
+
+
+def remember(field: str, raw: str, obj: Any) -> None:
+    """Record what this process just wrote, so the next sweep reuses it."""
+    _DECODED[field] = (raw, obj)
+
+
+def forget(field: str) -> None:
+    _DECODED.pop(field, None)
+
+
 def merge_numeric(win: NumWindow, rows: Iterable[tuple[float, float, str]],
                   now: float) -> tuple[NumWindow, bool]:
     """Append rows newer than the cursor; trim. Returns (window, got_new)."""
@@ -213,4 +239,5 @@ _MEMORY: dict[str, dict[str, str]] = {}
 
 
 def reset_memory() -> None:
+    _DECODED.clear()
     _MEMORY.clear()
