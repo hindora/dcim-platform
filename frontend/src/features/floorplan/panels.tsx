@@ -502,6 +502,7 @@ export function UnitFindings({ deviceId }: { deviceId: string }) {
 
 const DRIVER_WORDS: Record<string, string> = {
   cpu_utilization: 'CPU load', inlet_temperature: 'intake temperature', load_pct: 'UPS load',
+  cpu_temperature: 'CPU temperature',
 };
 const DRIVER_UNIT: Record<string, string> = {
   cpu_utilization: '% CPU', inlet_temperature: '°C of intake', load_pct: '% load',

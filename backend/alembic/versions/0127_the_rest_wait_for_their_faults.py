@@ -65,7 +65,7 @@ ROWS: list[dict] = [
          "heatsink or thermal paste problem, or airflow blocked inside the chassis",
          {**_OLS, "sigma_floor": 1.0}),
     _row("SV-2", ["server"], "fan_speed",
-         ["fan_speed", "inlet_temperature", "cpu_utilization"],
+         ["fan_speed", "cpu_temperature", "inlet_temperature"],
          "Server fan faster than its conditions explain",
          "A fan spinning faster than this server's intake and load call for: a worn "
          "bearing, a blocked intake, or a neighbouring fan failing",

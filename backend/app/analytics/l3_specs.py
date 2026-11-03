@@ -51,8 +51,12 @@ SPECS: dict[str, Spec] = {
     "SV-1": Spec("ols", "cpu_temperature",
                  (Driver("cpu_utilization"), Driver("inlet_temperature")),
                  unit=" C", what="CPU at", direction="high"),
+    # Fans answer HEAT, so they are judged against what they are responding
+    # to - the die and the intake - not against CPU load. A dried-out thermal
+    # interface (SV-1's fault) then explains its own fan ramp instead of
+    # raising four fan findings beside it; a worn fan is faster than both.
     "SV-2": Spec("ols", "fan_speed",
-                 (Driver("inlet_temperature"), Driver("cpu_utilization")),
+                 (Driver("cpu_temperature"), Driver("inlet_temperature")),
                  unit=" rpm", what="fan at", direction="high"),
     "UP-2": Spec("ols", "battery_runtime", (Driver("load_pct", "inverse"),),
                  unit=" min", what="battery runtime", direction="low"),
@@ -66,7 +70,7 @@ SPECS: dict[str, Spec] = {
 
 #: How a driver is named in a sentence.
 DRIVER_WORDS = {"cpu_utilization": "% CPU", "inlet_temperature": "C intake",
-                "load_pct": "% load"}
+                "load_pct": "% load", "cpu_temperature": "C CPU"}
 
 
 def transform(x: float, how: str) -> float:
