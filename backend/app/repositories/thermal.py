@@ -126,21 +126,24 @@ _CDU = text("""
       LEFT JOIN rack r      ON r.id = d.rack_id
       LEFT JOIN rack_row rr ON rr.id = r.row_id
       LEFT JOIN room rm     ON rm.id = COALESCE(rr.room_id, d.room_id)
+      -- The TCS loop is the unit's own loop, so its points arrive with no
+      -- instance (contracts/mappings/bacnet/objects.yaml, f247751); 'TCS' is
+      -- what the same points carried before 2026-10-19.
       JOIN LATERAL (
           SELECT
             (SELECT t.value FROM telemetry_sample t JOIN metric m ON m.id = t.metric_id
               WHERE t.device_id = d.id AND m.key = 'water_supply_temp'
-                AND t.instance = 'TCS'
+                AND t.instance IN ('', 'TCS')
                 AND t.ts > now() - interval '30 minutes'
               ORDER BY t.ts DESC LIMIT 1) AS supply,
             (SELECT t.value FROM telemetry_sample t JOIN metric m ON m.id = t.metric_id
               WHERE t.device_id = d.id AND m.key = 'water_return_temp'
-                AND t.instance = 'TCS'
+                AND t.instance IN ('', 'TCS')
                 AND t.ts > now() - interval '30 minutes'
               ORDER BY t.ts DESC LIMIT 1) AS ret,
             (SELECT t.value FROM telemetry_sample t JOIN metric m ON m.id = t.metric_id
               WHERE t.device_id = d.id AND m.key = 'water_setpoint_temp'
-                AND t.instance = 'TCS'
+                AND t.instance IN ('', 'TCS')
                 AND t.ts > now() - interval '30 minutes'
               ORDER BY t.ts DESC LIMIT 1) AS setpoint,
             -- Secondary flow. With the range beside it this is the check on
@@ -148,7 +151,7 @@ _CDU = text("""
             -- whose own three numbers do not multiply out is not to be read.
             (SELECT t.value FROM telemetry_sample t JOIN metric m ON m.id = t.metric_id
               WHERE t.device_id = d.id AND m.key = 'water_flow'
-                AND t.instance = 'TCS'
+                AND t.instance IN ('', 'TCS')
                 AND t.ts > now() - interval '30 minutes'
               ORDER BY t.ts DESC LIMIT 1) AS flow,
             -- FACILITY side: the valve the unit modulates to hold its

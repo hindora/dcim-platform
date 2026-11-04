@@ -169,9 +169,15 @@ def _read_crah(v: dict, rated: float | None) -> dict[str, Any]:
     }
 
 
+def _tcs(v: dict, key: str) -> float | None:
+    """A CDU's own loop reading: no instance since f247751, 'TCS' before it."""
+    own = _val(v, key)
+    return own if own is not None else _val(v, key, "TCS")
+
+
 def _read_cdu(v: dict, rated: float | None) -> dict[str, Any]:
-    sup, ret = _val(v, "water_supply_temp", "TCS"), _val(v, "water_return_temp", "TCS")
-    flow = _val(v, "water_flow", "TCS")
+    sup, ret = _tcs(v, "water_supply_temp"), _tcs(v, "water_return_temp")
+    flow = _tcs(v, "water_flow")
     # The machine publishes the heat it is moving; flow x delta-T is the
     # check on it, not a substitute for it.
     heat = _kw(_val(v, "thermal_load"))
@@ -179,7 +185,7 @@ def _read_cdu(v: dict, rated: float | None) -> dict[str, Any]:
         heat = heat_kw(flow, delta_t(sup, ret))
     return {
         "supply_c": sup, "return_c": ret,
-        "setpoint_c": _val(v, "water_setpoint_temp", "TCS"),
+        "setpoint_c": _tcs(v, "water_setpoint_temp"),
         "flow_l_s": flow,
         "heat_kw": heat,
         "duty_pct": None if heat is None or not rated else heat / rated * 100.0,

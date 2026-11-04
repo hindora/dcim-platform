@@ -106,8 +106,10 @@ async def test_independent_loops_are_ranged_never_averaged(monkeypatch):
     _patch(monkeypatch,
            [_machine("d1", "CDU1", "cdu", room="Server Hall A", cooling_w=80_000),
             _machine("d2", "CDU2", "cdu", room="Server Hall B", cooling_w=80_000)],
-           values={"d1": {("water_supply_temp", "TCS"): 32.0,
-                          ("water_return_temp", "TCS"): 45.0,
+           # d1 as the collector sends it since f247751 (the loop is the unit's
+           # own, no instance); d2 as history before it carried it ('TCS').
+           values={"d1": {("water_supply_temp", ""): 32.0,
+                          ("water_return_temp", ""): 45.0,
                           ("thermal_load", ""): 40_000.0},
                    "d2": {("water_supply_temp", "TCS"): 32.0,
                           ("water_return_temp", "TCS"): 38.0,
