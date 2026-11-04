@@ -78,3 +78,12 @@ def test_an_unchanged_window_is_decoded_once():
     assert a is b                                    # the second read reused the first
     c = win_store.parse_cached("d|1|", raw.replace("22.1", "23.0"))
     assert c is not a                                # another writer changed it: re-read
+
+
+def test_a_stopped_crah_discharging_warm_is_not_impossible():
+    """hall-crahs 2026-11-04: 40.8 C off a stopped CRAH was masked as impossible."""
+    p = seed_params("DQ-3")
+    assert not q.is_impossible("supply_air_temp", 40.8, p)
+    assert not q.is_impossible("inlet_temperature", 55.0, p)
+    assert q.is_impossible("supply_air_temp", -127.0, p)        # a sentinel still is
+    assert q.is_impossible("supply_air_temp", 90.0, p)          # and so is no air path

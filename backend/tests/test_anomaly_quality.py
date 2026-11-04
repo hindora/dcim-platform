@@ -108,7 +108,9 @@ def test_dq2_needs_five_samples():
 # --- DQ-3 -----------------------------------------------------------------------
 
 def test_dq3_sentinels_and_bounds():
-    for bad in (-40.0, 85.0, -127.0, 327.67, 45.0):
+    # 90 C off a CRAH has no air path behind it; 45 C does - a stopped unit
+    # discharges toward its return air (0130).
+    for bad in (-40.0, 85.0, -127.0, 327.67, 90.0):
         dev = crah()
         dev.num[("supply_air_temp", "")] = series([18.0] * 30 + [bad], T)
         v = by(run(dev), "DQ-3")
@@ -117,6 +119,9 @@ def test_dq3_sentinels_and_bounds():
         # Dropped from what the rules may read.
         assert dev.clean(("supply_air_temp", ""))[-1].v == 18.0
     dev = crah()
+    assert by(run(dev), "DQ-3").cond is False
+    dev = crah()
+    dev.num[("supply_air_temp", "")] = series([18.0] * 30 + [45.0], T)
     assert by(run(dev), "DQ-3").cond is False
 
 
