@@ -426,7 +426,8 @@ async def _upsert(session: AsyncSession, *, key: str, tier: str, root_device: st
 _INCIDENT_COLS = """
     i.id::text AS id, i.state, i.root_key, i.tier, i.root_device_id::text AS root_device_id,
     d.name AS root_device_name, i.root_alarm_id::text AS root_alarm_id,
-    i.datacenter_id::text AS datacenter_id, i.room_id::text AS room_id, r.name AS room_name,
+    i.datacenter_id::text AS datacenter_id, dc.code AS site_code, dc.name AS site_name,
+    i.room_id::text AS room_id, r.name AS room_name,
     i.title, i.summary, i.member_count, i.evidence, i.opened_at, i.last_activity_at,
     i.resolved_at, cardinality(i.member_alarm_ids) AS alarm_count
 """
@@ -447,6 +448,7 @@ async def list_incidents(session: AsyncSession, *, states: list[str], device_id:
           FROM anomaly_incident i
           LEFT JOIN device d ON d.id = i.root_device_id
           LEFT JOIN room r ON r.id = i.room_id
+          LEFT JOIN datacenter dc ON dc.id = i.datacenter_id
          WHERE {' AND '.join(where)}
          ORDER BY (i.state = 'open') DESC, i.last_activity_at DESC
          LIMIT :limit
@@ -460,6 +462,7 @@ async def get_incident(session: AsyncSession, incident_id: str) -> dict[str, Any
           FROM anomaly_incident i
           LEFT JOIN device d ON d.id = i.root_device_id
           LEFT JOIN room r ON r.id = i.room_id
+          LEFT JOIN datacenter dc ON dc.id = i.datacenter_id
          WHERE i.id = CAST(:id AS uuid)
     """), {"id": incident_id})).mappings().first()
     if row is None:

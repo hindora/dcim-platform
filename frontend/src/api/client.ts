@@ -4433,6 +4433,9 @@ export interface AnomalyIncident {
   root_device_name: string | null;
   root_alarm_id: string | null;
   datacenter_id: string | null;
+  /** The site, as the home page keys its rows: the code first. */
+  site_code?: string | null;
+  site_name?: string | null;
   room_id: string | null;
   room_name: string | null;
   title: string;
