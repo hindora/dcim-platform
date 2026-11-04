@@ -616,7 +616,8 @@ export function Home() {
                     onClose={() => setDrill(null)} />
       )}
       {linkedAlarmId && linkedAlarm.data && (
-        <AlarmDetailModal alarm={linkedAlarm.data} onClose={() => dropParams('alarm')} />
+        <AlarmDetailModal alarm={linkedAlarm.data} onClose={() => dropParams('alarm')}
+                          onOpenAlarm={(id) => setParams((q) => { q.set('alarm', id); return q; }, { replace: true })} />
       )}
       {linkedAlarmId && linkedAlarm.isError && (
         <Notice tone="warn">That alarm could not be found; the link may be old.</Notice>

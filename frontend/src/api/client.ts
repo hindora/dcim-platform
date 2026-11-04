@@ -1814,6 +1814,44 @@ export interface Alarm {
   category?: AlarmCategory | null;
   detection?: AlarmDetection | null;
   response_class?: ResponseClass | null;
+  /** The detail's own fields: the rule that raised it, the acknowledgement
+   *  and its note, who cleared it, the planned work that shelved it. */
+  rule_id?: string | null;
+  rule_name?: string | null;
+  acknowledged_at?: string | null;
+  acknowledged_by?: string | null;
+  ack_note?: string | null;
+  cleared_by?: string | null;
+  shelved_by_window?: string | null;
+  shelved_window_title?: string | null;
+  shelved_reason?: string | null;
+}
+
+/** One line of an alarm's record (alarm_history). */
+export interface AlarmHistoryEntry {
+  ts: string;
+  action: string;
+  severity: string | null;
+  actor: string | null;
+  detail: Record<string, unknown> | null;
+}
+
+/** An alarm this one is folded under, or one folded under it. */
+export interface AlarmRelated {
+  id: string; device_id: string | null; device_name: string | null;
+  alarm_type: string; instance: string; severity: string; state: string;
+  first_seen: string; cleared_at: string | null; room_name: string | null;
+}
+
+/** GET /alarms/{id}/context. */
+export interface AlarmContext {
+  history: AlarmHistoryEntry[];
+  emails: { id: number; kind: string; status: string; subject: string | null; note: string | null;
+            created_at: string; sent_at: string | null; rule_name: string;
+            recipients: unknown }[];
+  root: AlarmRelated | null;
+  symptoms: AlarmRelated[];
+  symptom_count: number;
 }
 
 export interface AlarmSummary {
@@ -5470,10 +5508,14 @@ export const api = {
 
   alarmSummary: () => request<AlarmSummary>('/alarms/summary'),
 
-  acknowledgeAlarm: (id: string) =>
+  acknowledgeAlarm: (id: string, note?: string) =>
     request<{ ok: boolean }>(`/alarms/${id}/acknowledge`, {
-      method: 'POST', body: JSON.stringify({}),
+      method: 'POST', body: JSON.stringify(note ? { note } : {}),
     }),
+
+  /** Everything around one alarm: its record, its emails, what it is folded
+   *  under and what it explains. */
+  alarmContext: (id: string) => request<AlarmContext>(`/alarms/${id}/context`),
 
   clearAlarm: (id: string) =>
     request<{ ok: boolean }>(`/alarms/${id}/clear`, { method: 'POST', body: '{}' }),

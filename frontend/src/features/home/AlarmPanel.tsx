@@ -965,7 +965,8 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, showFolded, o
       </section>
       {openAlarm && (
         <AlarmDetailModal alarm={openAlarm}
-                          onClose={() => setOpenAlarm(null)} />
+                          onClose={() => setOpenAlarm(null)}
+                          onOpenAlarm={(id) => { api.alarm(id).then(setOpenAlarm).catch(() => undefined); }} />
       )}
     </div>
   );

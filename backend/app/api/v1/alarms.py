@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel, Field
 from redis.asyncio import Redis
 from sqlalchemy import text
@@ -95,6 +97,28 @@ async def get_alarm(
     if alarm is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "alarm not found")
     return alarm
+
+
+@router.get("/alarms/{alarm_id}/context",
+            summary="Everything around one alarm: its history, its emails, what it is "
+                    "folded under and what it explains")
+async def alarm_context(
+    alarm_id: str,
+    session: AsyncSession = Depends(get_session),
+    _: Principal = Depends(current_principal),
+) -> dict[str, Any]:
+    try:
+        uuid.UUID(alarm_id)
+    except ValueError:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "alarm not found") from None
+    symptoms, symptom_count = await repo.symptoms_of(session, alarm_id)
+    return jsonable_encoder({
+        "history": await repo.alarm_history(session, alarm_id),
+        "emails": await repo.alarm_emails(session, alarm_id),
+        "root": await repo.root_of(session, alarm_id),
+        "symptoms": symptoms,
+        "symptom_count": symptom_count,
+    })
 
 
 @router.post("/alarms/{alarm_id}/acknowledge", summary="Acknowledge an alarm")

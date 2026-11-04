@@ -473,6 +473,12 @@ _ALARM_SELECT = """
            -- owner and a cooling one by cause, and the row should say both.
            a.attributes->'l5'->>'tier' AS cause_tier,
            a.attributes->'l5'->>'root' AS cause_alarm_id,
+           -- What the detail shows and the list never needed: the rule that
+           -- raised it, who acknowledged it and what they wrote, who cleared
+           -- it, and the planned work that shelved it.
+           a.rule_id::text AS rule_id, ar.name AS rule_name,
+           a.ack_note, a.cleared_by,
+           a.shelved_by_window::text AS shelved_by_window, mw.title AS shelved_window_title,
            -- Why this alarm is not on the console, for the one view that shows
            -- shelved rows. NULL on everything an operator sees by default.
            a.shelved_reason,
@@ -502,6 +508,8 @@ _ALARM_SELECT = """
     LEFT JOIN rack_row rr  ON rr.id = r.row_id
     LEFT JOIN room rm      ON rm.id = COALESCE(rr.room_id, d.room_id)
     LEFT JOIN datacenter dc ON dc.id = rm.datacenter_id
+    LEFT JOIN alarm_rule ar ON ar.id = a.rule_id
+    LEFT JOIN maintenance_window mw ON mw.id = a.shelved_by_window
     -- What is plugged into the receptacle this alarm names.
     --
     -- "Outlet 31" tells an operator where to put their hand and nothing about
@@ -617,6 +625,73 @@ async def get_alarm(session: AsyncSession, alarm_id: str) -> dict[str, Any] | No
         text(_ALARM_SELECT + " WHERE a.id = CAST(:id AS uuid)"),
         {"id": alarm_id})).mappings().first()
     return dict(row) if row else None
+
+
+async def alarm_history(session: AsyncSession, alarm_id: str) -> list[dict[str, Any]]:
+    """Everything that happened to one alarm, oldest first: raised, escalated,
+    suppressed under a root, acknowledged (and the note), cleared, released."""
+    rows = (await session.execute(text("""
+        SELECT ts, action, severity::text AS severity, actor, detail
+          FROM alarm_history
+         WHERE alarm_id = CAST(:id AS uuid)
+         ORDER BY ts
+    """), {"id": alarm_id})).mappings().all()
+    return [dict(r) for r in rows]
+
+
+async def alarm_emails(session: AsyncSession, alarm_id: str) -> list[dict[str, Any]]:
+    """The emails queued about one alarm, and what happened to each."""
+    rows = (await session.execute(text("""
+        SELECT o.id, o.kind, o.status, o.subject, o.note, o.created_at, o.sent_at,
+               r.name AS rule_name, o.payload->'recipients' AS recipients
+          FROM notification_outbox o
+          JOIN notification_rule r ON r.id = o.rule_id
+         WHERE o.alarm_id = CAST(:id AS uuid)
+         ORDER BY o.id
+    """), {"id": alarm_id})).mappings().all()
+    return [dict(r) for r in rows]
+
+
+_RELATED = """
+    SELECT a.id::text AS id, a.device_id::text AS device_id, d.name AS device_name,
+           a.alarm_type, a.instance, a.severity::text AS severity, a.state::text AS state,
+           a.first_seen, a.cleared_at, rm.name AS room_name
+      FROM alarm a
+      LEFT JOIN device d ON d.id = a.device_id
+      LEFT JOIN rack r ON r.id = d.rack_id
+      LEFT JOIN rack_row rr ON rr.id = r.row_id
+      LEFT JOIN room rm ON rm.id = COALESCE(rr.room_id, d.room_id)
+"""
+
+
+async def root_of(session: AsyncSession, alarm_id: str) -> dict[str, Any] | None:
+    """The alarm this one is folded under, by either fold: the dependency
+    walk's root_cause_alarm_id, or the cooling chain's l5 root."""
+    row = (await session.execute(text(_RELATED + """
+     WHERE a.id = (SELECT COALESCE(s.root_cause_alarm_id,
+                                   CAST(s.attributes->'l5'->>'root' AS uuid))
+                     FROM alarm s WHERE s.id = CAST(:id AS uuid))
+    """), {"id": alarm_id})).mappings().first()
+    return dict(row) if row else None
+
+
+async def symptoms_of(session: AsyncSession, alarm_id: str,
+                      limit: int = 12) -> tuple[list[dict[str, Any]], int]:
+    """What this alarm explains: the open alarms folded under it, worst first."""
+    total = int(await session.scalar(text("""
+        SELECT count(*) FROM alarm
+         WHERE state <> 'CLEARED' AND shelved_reason IS NULL
+           AND (root_cause_alarm_id = CAST(:id AS uuid)
+                OR attributes->'l5'->>'root' = CAST(:id AS text))
+    """), {"id": alarm_id}) or 0)
+    rows = (await session.execute(text(_RELATED + f"""
+     WHERE a.state <> 'CLEARED' AND a.shelved_reason IS NULL
+       AND (a.root_cause_alarm_id = CAST(:id AS uuid)
+            OR a.attributes->'l5'->>'root' = CAST(:id AS text))
+     ORDER BY {_SEV_RANK.format(col='a.severity')}, a.first_seen
+     LIMIT :limit
+    """), {"id": alarm_id, "limit": limit})).mappings().all()
+    return [dict(r) for r in rows], total
 
 
 async def open_alarm_for(session: AsyncSession, *, device_id: str,
