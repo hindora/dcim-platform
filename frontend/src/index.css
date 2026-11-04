@@ -1354,6 +1354,8 @@ button.danger:disabled { color: inherit; border-color: var(--border); }
 .home-incidents { margin: 12px 0 0; }
 /* An alarm that belongs to an incident, said beside its name: an IT alarm by
    owner, a cooling one by cause. */
+/* The folded part of a room's count, beside the number it is part of. */
+.qty + .folded, td .folded { display: inline-block; margin-left: 8px; font-size: 11px; color: var(--text-muted); white-space: nowrap; }
 .alarm-cause { margin-left: 8px; font-size: 11px; padding: 0 6px; border-radius: 3px;
                border: 1px solid var(--cat-cool); color: var(--text); white-space: nowrap; }
 @media (max-width: 640px) {

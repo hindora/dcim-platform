@@ -88,7 +88,10 @@ def test_the_badge_takes_exactly_what_the_strip_dropped():
 
     src = inspect.getsource(sites_repo.platform_conditions)
     assert "dev.datacenter_id IS NULL" in src
-    assert "a.state <> 'CLEARED' AND a.is_symptom = false" in src
+    # Every open condition, folded or not - the predicate the strip moved to
+    # when its counters stopped hiding the size of an event behind its roots.
+    assert "a.state <> 'CLEARED'" in src
+    assert "a.is_symptom = false" not in src
 
 
 # --------------------------------------------------------------- the verdict

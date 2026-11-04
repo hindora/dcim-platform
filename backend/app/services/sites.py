@@ -83,6 +83,11 @@ def _alarms(row: dict[str, Any]) -> dict[str, Any]:
             c: int(row.get(f"alarms_{c}") or 0) for c in CATEGORIES
         },
         "open_total": int(row.get("open_total") or 0),
+        # Of `by_category` / `open_total`, what is folded under a cause.
+        "by_category_folded": {
+            c: int(row.get(f"folded_{c}") or 0) for c in CATEGORIES
+        },
+        "folded": int(row.get("folded_total") or 0),
     }
 
 

@@ -622,14 +622,14 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
   const where = scope ? `in ${scope.label}` : 'on the estate';
   const blurb = history
     ? `Everything ${where} that has been raised in this domain, open and `
-      + 'cleared alike, grouped by the room it is in. Roots only. Open a room '
+      + 'cleared alike, grouped by the room it is in. Open a room '
       + 'for its conditions; the trend button shows what it raised over '
       + 'time.'
     : everything
       ? `Every open alarm ${where}, `
         + 'grouped by the room it is in and the kind of thing that is wrong. '
-        + 'Roots only: one failed uplink is one alarm, not one per device '
-        + 'behind it.'
+        + 'Folded ones included: a consequence listed under its cause still '
+        + 'counts here, and the folded column says how many.'
       : definitions.map((c) => c.description).join(' ');
 
   function toggle(roomId: string) {
@@ -716,6 +716,8 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
                     : alarms > 0
                       ? `${alarms} needing a response`
                       : 'none needing a response'}
+                  {!history && (data.folded ?? 0) > 0
+                    ? `, ${data.folded} folded under a cause` : ''}
                 </span>
               )}
             </h2>
@@ -850,7 +852,15 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
                       </td>
                       <td className="muted">{r.site_code}</td>
                       <td className="mid muted">{r.floor ?? '—'}</td>
-                      <td className="num"><span className="qty">{r.qty}</span></td>
+                      <td className="num">
+                        <span className="qty">{r.qty}</span>
+                        {(r.folded ?? 0) > 0 && (
+                          <Tip tip={<><b>{r.folded}</b> of this room's conditions {r.folded === 1 ? 'is' : 'are'} folded
+                            under a cause elsewhere — answered by answering that</>}>
+                            <span className="folded">{r.folded} folded</span>
+                          </Tip>
+                        )}
+                      </td>
                       {/* Muted on purpose. It is here to say what else is
                           going on in this room, not to compete with the
                           number somebody is acting on. */}

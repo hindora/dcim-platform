@@ -19,8 +19,13 @@ must not fan out. One query per tab, both driven by the same device-to-location
 CTE the dashboard uses, so a device that hangs off a room directly rather than
 off a rack still lands in the right site.
 
-Counts are ROOTS ONLY (`is_symptom = false`). An OOB switch failure that lights
-up twenty-one downstream devices is one alert on this page, not twenty-two.
+Counts are EVERY open condition, folded or not. They used to be roots only -
+an OOB switch failure that lights up twenty-one devices counted as one - and
+a strip that read "6" during a stopped chiller plant with 659 alarms open
+hid the size of the event. ISA-18.2 and EEMUA judge alarm load by everything
+annunciated; the fold belongs to the list, not to the number. `folded_*`
+carries how much of each count is a consequence of a cause, so a counter can
+say "659 open, 6 to answer" rather than either number alone.
 """
 
 from __future__ import annotations
@@ -64,10 +69,11 @@ _ALARM_CTE = """
                a.severity::text AS severity,
                a.category       AS category,
                a.detection      AS detection,
-               a.response_class AS response_class
+               a.response_class AS response_class,
+               a.is_symptom     AS is_symptom
         FROM alarm a
         JOIN dev ON dev.device_id = a.device_id
-        WHERE a.state <> 'CLEARED' AND a.is_symptom = false
+        WHERE a.state <> 'CLEARED'
               AND a.shelved_reason IS NULL
     )
 """
@@ -101,8 +107,18 @@ _DETECTION_COLUMNS = ",\n".join(
     for d in DETECTIONS
 )
 
+# The part of each domain folded under a cause: a consequence the console
+# lists under its root rather than on its own line. Counted so the number on
+# the counter can be the whole load and still say how much of it is answered
+# by answering something else.
+_CATEGORY_FOLDED_COLUMNS = ",\n".join(
+    f"count(*) FILTER (WHERE category = '{c}' AND is_symptom) AS folded_{c}"
+    for c in CATEGORIES
+)
+
 _ALL_CATEGORY_COLUMNS = ",\n".join(
-    (_CATEGORY_COLUMNS, _CATEGORY_ALARM_COLUMNS, _DETECTION_COLUMNS))
+    (_CATEGORY_COLUMNS, _CATEGORY_ALARM_COLUMNS, _CATEGORY_FOLDED_COLUMNS,
+     _DETECTION_COLUMNS))
 
 # `alerts_total` is the ALARM count, whatever its name says - it drives the
 # ALARMS counter and the ALM column, and the severities beside it describe the
@@ -111,6 +127,7 @@ _ALL_CATEGORY_COLUMNS = ",\n".join(
 _SEVERITY_COLUMNS = f"""
     count(*) FILTER (WHERE response_class = '{ALARM}')          AS alerts_total,
     count(*)                                                    AS open_total,
+    count(*) FILTER (WHERE is_symptom)                          AS folded_total,
     count(*) FILTER (WHERE response_class = '{ALARM}'
                      AND severity = 'CRITICAL')                 AS crit,
     count(*) FILTER (WHERE response_class = '{ALARM}'
@@ -127,6 +144,7 @@ _AGG_COALESCE = ",\n               ".join(
     f"COALESCE(agg.{name}, 0) AS {name}"
     for name in ([f"alerts_{c}" for c in CATEGORIES]
                  + [f"alarms_{c}" for c in CATEGORIES]
+                 + [f"folded_{c}" for c in CATEGORIES]
                  + [f"detected_{d}" for d in DETECTIONS])
 )
 
@@ -179,6 +197,7 @@ async def site_rollups(session: AsyncSession) -> list[dict[str, Any]]:
                COALESCE(devices.passive_count, 0) AS passive_count,
                COALESCE(agg.alerts_total, 0)      AS alerts_total,
                COALESCE(agg.open_total, 0)        AS open_total,
+               COALESCE(agg.folded_total, 0)      AS folded_total,
                COALESCE(agg.crit, 0)              AS crit,
                COALESCE(agg.major, 0)             AS major,
                COALESCE(agg.minor, 0)             AS minor,
@@ -236,6 +255,7 @@ async def room_rollups(session: AsyncSession,
                COALESCE(devices.offline_count, 0) AS offline_count,
                COALESCE(agg.alerts_total, 0)      AS alerts_total,
                COALESCE(agg.open_total, 0)        AS open_total,
+               COALESCE(agg.folded_total, 0)      AS folded_total,
                COALESCE(agg.crit, 0)              AS crit,
                COALESCE(agg.major, 0)             AS major,
                COALESCE(agg.minor, 0)             AS minor,
@@ -276,10 +296,11 @@ async def fleet_alert_totals(session: AsyncSession) -> dict[str, Any]:
             SELECT a.severity::text AS severity,
                    a.category       AS category,
                    a.detection      AS detection,
-                   a.response_class AS response_class
+                   a.response_class AS response_class,
+                   a.is_symptom     AS is_symptom
             FROM alarm a
             JOIN dev ON dev.device_id = a.device_id
-            WHERE a.state <> 'CLEARED' AND a.is_symptom = false
+            WHERE a.state <> 'CLEARED'
               AND a.shelved_reason IS NULL
               AND dev.datacenter_id IS NOT NULL
         )
@@ -313,7 +334,7 @@ async def platform_conditions(session: AsyncSession) -> list[dict[str, Any]]:
                a.state::text         AS state
         FROM alarm a
         LEFT JOIN dev ON dev.device_id = a.device_id
-        WHERE a.state <> 'CLEARED' AND a.is_symptom = false
+        WHERE a.state <> 'CLEARED'
               AND a.shelved_reason IS NULL
           AND dev.datacenter_id IS NULL
         ORDER BY CASE a.severity

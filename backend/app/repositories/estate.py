@@ -2232,11 +2232,16 @@ async def alarms_by_room(session: AsyncSession, *,
         cat AS (
             SELECT dev.datacenter_id, dev.room_id, a.severity::text AS severity,
                    a.device_id, a.detection AS detection,
-                   a.category AS category, a.response_class AS response_class
+                   a.category AS category, a.response_class AS response_class,
+                   a.is_symptom AS is_symptom
             FROM alarm a
             JOIN dev ON dev.device_id = a.device_id
-            WHERE {_state_clause(lifecycle)}a.is_symptom = false
-              AND a.shelved_reason IS NULL{_facet_clauses(severities, detections, params)}
+            -- Folded conditions included: the counter that opens this panel
+            -- counts the whole load, so the rows must add up to it. `folded`
+            -- says how much of each room's figure is answered by answering
+            -- a cause elsewhere.
+            WHERE {_state_clause(lifecycle)}a.shelved_reason IS NULL
+              {_facet_clauses(severities, detections, params)}
         )
         SELECT rm.id::text            AS room_id,
                rm.name                AS room_name,
@@ -2254,6 +2259,7 @@ async def alarms_by_room(session: AsyncSession, *,
                -- than a deliberate one. The caller picks the figure that
                -- matches the columns it is showing.
                count(DISTINCT cat.device_id)                       AS devices_all,
+               count(*) FILTER (WHERE is_symptom)                  AS folded,
                {sev_cols},
                {facet_cols}
         FROM cat
@@ -2351,8 +2357,8 @@ async def unlocated_alarms_by_category(session: AsyncSession, *,
                    a.response_class AS response_class
             FROM alarm a
             LEFT JOIN dev ON dev.device_id = a.device_id
-            WHERE {_state_clause(lifecycle)}a.is_symptom = false
-              AND a.shelved_reason IS NULL{_facet_clauses(severities, detections, params)}
+            WHERE {_state_clause(lifecycle)}a.shelved_reason IS NULL
+              {_facet_clauses(severities, detections, params)}
         )
         SELECT count(*)                                       AS n,
                count(*) FILTER (WHERE response_class = '{ALARM}') AS alarms

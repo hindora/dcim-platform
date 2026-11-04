@@ -30,7 +30,7 @@
 
 import { useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import {
   api,
   type AlarmCategory,
@@ -52,9 +52,8 @@ import { SiteDrawer } from './SiteDrawer';
 import { RoomDrawer } from './RoomDrawer';
 import { AlarmLegend } from './AlarmModals';
 import { AlarmPanel } from './AlarmPanel';
-import { IncidentStrip } from '../alarms/IncidentStrip';
 import { Pagination } from '../../components/Pagination';
-import { RailCards } from './RailCards';
+import { IncidentRail } from './IncidentRail';
 import { toCss } from '../../lib/zoom';
 import { Notice } from '../../components/Notice';
 
@@ -237,7 +236,6 @@ function IndicatorCells({ alarms, labels, scope, onOpen }: {
 }
 
 export function Home() {
-  const navigate = useNavigate();
   const [tab, setTab] = useState<Tab>('sites');
   const [search, setSearch] = useState('');
   const [drawerSite, setDrawerSite] = useState<SiteRow | null>(null);
@@ -359,6 +357,10 @@ export function Home() {
           const answerable = !data || total ? 0
             : c.categories.reduce(
                 (t, k) => t + (data.totals.by_category_alarms?.[k] ?? 0), 0);
+          const folded = !data ? 0
+            : total ? (data.totals.folded ?? 0)
+              : c.categories.reduce(
+                  (t, k) => t + (data.totals.by_category_folded?.[k] ?? 0), 0);
           const empty = n === 0;
           return (
             <div key={total ? '__total' : c.key}
@@ -367,10 +369,12 @@ export function Home() {
                    ? <>Nothing open in {(total ? 'any category' : c.label.toLowerCase())}
                        {' '}— open for the history</>
                    : total
-                     ? 'Every open alarm, all categories — by room'
+                     ? <>Every open alarm, all categories — by room
+                         {folded > 0 && <>; <b>{folded}</b> folded under a cause</>}</>
                      : <>Everything open in {c.categories
                          .map((k) => (labels[k] ?? k).toLowerCase())
-                         .join(' and ')}, <b>{answerable}</b> needing a response</>)}>
+                         .join(' and ')}, <b>{answerable}</b> needing a response
+                         {folded > 0 && <>, <b>{folded}</b> folded under a cause</>}</>)}>
               {/* Clickable at zero on purpose: the panel carries the CLEARED
                   history, and a quiet counter is exactly when somebody asks
                   what happened overnight. */}
@@ -406,11 +410,6 @@ export function Home() {
         })}
         {strip.tipEl}
       </section>
-
-      <div className="home-incidents">
-        <IncidentStrip onOpenAlarm={(id) => navigate(`/alarms/${id}`)}
-                       onRoom={(room) => navigate(`/alarms?room=${room}&symptoms=1`)} />
-      </div>
 
       <div className="home-body">
         <section className="sites-panel">
@@ -566,7 +565,7 @@ export function Home() {
           </div>
         </section>
 
-        <aside className="home-rail"><RailCards /></aside>
+        <aside className="home-rail"><IncidentRail /></aside>
       </div>
 
       {drawerSite && (

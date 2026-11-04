@@ -758,7 +758,33 @@ button.ind:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px
 
 /* --- right rail ----------------------------------------------------------- */
 
-.home-rail { display: flex; flex-direction: column; gap: 16px; }
+.home-rail { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+
+/* --- incidents in the rail --------------------------------------------------
+   One cascade, one card; the rooms it reaches as lines inside it, each the way
+   into that room's alarms. The rail is state, not navigation: the three
+   visualisations it used to advertise are in the menu. */
+.rail-incidents { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.rail-incidents > h3 { margin: 0; font-size: 13px; color: var(--text-muted); font-weight: 600; }
+.rail-incidents .incident-strip { margin: 0; }
+.rail-incidents .incident-strip h3 { display: none; }
+.rail-incidents .incident { grid-template-columns: minmax(0, 1fr); }
+.rail-incidents .incident-meta { white-space: normal; }
+.rail-incident-quiet {
+  padding: 14px 16px; border: 1px dashed var(--border); border-radius: 6px;
+  font-size: 12.5px; color: var(--text-muted); line-height: 1.5;
+}
+.rail-incident-quiet b { color: var(--text); font-weight: 600; }
+.rail-resolved { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.rail-resolved li {
+  display: grid; gap: 2px; padding: 8px 10px; border: 1px solid var(--border);
+  border-left: 3px solid var(--border-strong); border-radius: 4px; background: var(--bg-raised);
+  font-size: 12.5px; min-width: 0;
+}
+.rail-resolved .t { font-weight: 600; overflow-wrap: anywhere; }
+.rail-resolved .m { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.rail-links { margin: 4px 0 0; font-size: 12px; color: var(--text-muted); }
+.rail-links a { margin-right: 12px; }
 .rail-card {
   flex: 1; display: flex; flex-direction: column; text-decoration: none;
   background: var(--bg-raised); border: 1px solid var(--border);

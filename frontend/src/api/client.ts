@@ -2953,6 +2953,11 @@ export interface AlarmCounts {
   /** The actionable subset of each domain, so a tile can be coloured by
    *  whether anything in it must be answered. */
   by_category_alarms: Record<AlarmCategory, number>;
+  /** Of `by_category`, what is folded under a cause (a consequence listed
+   *  under its root). The counter shows the whole load; this says how much
+   *  of it is answered by answering something else. */
+  by_category_folded?: Record<AlarmCategory, number>;
+  folded?: number;
   by_detection: Record<AlarmDetection, number>;
 }
 
@@ -4029,6 +4034,8 @@ export interface AlarmDrillRow {
    *  alarms and forty cooling alerts is a different room from one with two
    *  and none. */
   alerts: number;
+  /** Of qty + alerts, what is folded under a cause. */
+  folded?: number;
   /** Distinct devices behind `qty` - the alarms only. */
   devices: number;
   /** The same count over both classes, for a panel that lists both. One
@@ -4068,6 +4075,8 @@ export interface AlarmDrill {
   total: number;
   /** The actionable part of `total`. */
   alarms: number;
+  /** Of `total`, what is folded under a cause. */
+  folded?: number;
   /** Platform conditions in this category, which belong to no room and are in
    *  NEITHER number above. Reported so the panel can name what it is not
    *  counting and point at the monitoring badge that is. */

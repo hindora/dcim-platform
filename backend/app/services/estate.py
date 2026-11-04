@@ -1683,6 +1683,8 @@ async def alarms(session: AsyncSession, *,
         "devices_all": int(r.get("devices_all") or 0),
         # The two classes, side by side and never summed into one number here.
         "alerts": int(r.get("alerts") or 0),
+        # Of qty + alerts, what is folded under a cause.
+        "folded": int(r.get("folded") or 0),
         "critical": int(r["critical"]), "major": int(r["major"]),
         "by_severity": _sev(r),
         "by_detection": _detect(r),
@@ -1707,6 +1709,7 @@ async def alarms(session: AsyncSession, *,
         # The part of it that needs answering, so the panel can say both
         # without the reader adding a column by eye.
         "alarms": located_alarms,
+        "folded": sum(int(r.get("folded") or 0) for r in rows),
         # Reported so the panel can name what it is NOT counting and point at
         # the badge that is. Split by class for the same reason the rows are.
         "unlocated": unlocated["total"],
