@@ -164,6 +164,11 @@ async def test_heat_with_no_cooling_alarm_is_a_room_incident(session):
     h = await _hall(s)
     for i, probe in enumerate(h["probes"][:3]):
         await _raise(s, probe, "ambient_temp_high", ago_s=100 + i, category="environmental")
+    # Too soon: a cooling root may still be finishing its dwell.
+    await correlator.refresh_incidents(s)
+    assert await correlator.list_incidents(s, states=["open"], device_id=None, limit=10) == []
+    await s.execute(text("UPDATE alarm SET first_seen = first_seen - interval '15 minutes' "
+                         "WHERE state <> 'CLEARED' AND alarm_type = 'ambient_temp_high'"))
     await correlator.refresh_incidents(s)
     inc = await correlator.list_incidents(s, states=["open"], device_id=None, limit=10)
     assert len(inc) == 1 and inc[0]["tier"] == "room"

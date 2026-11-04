@@ -215,6 +215,12 @@ async def refresh_incidents(session: AsyncSession, graph: cc.CoolingGraph | None
         devs = {a["device_id"] for a in recent}
         if len(devs) < ROOM_MIN_DEVICES:
             continue
+        # Not before a cooling root has had its chance. A rack probe trips
+        # before the CRAH's own alarm finishes its dwell; calling that minute
+        # "no cooling alarm" pointed the second hall-crahs run at airflow
+        # while seven CRAHs were stopped.
+        if now.timestamp() - recent[0]["first_seen"].timestamp() < cc.LEAD_S:
+            continue
         room_name = await session.scalar(text(
             "SELECT name FROM room WHERE id = CAST(:r AS uuid)"), {"r": room_id}) or "room"
         any_node = graph.nodes[recent[0]["device_id"]]
