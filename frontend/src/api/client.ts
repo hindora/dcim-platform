@@ -4462,8 +4462,31 @@ export interface AnomalyFinding {
   stale: boolean;
   incident_id?: string | null; alarm_id?: string | null;
   datacenter_code?: string | null; room_id?: string | null;
-  room_name?: string | null; rack_name?: string | null;
+  room_name?: string | null; rack_name?: string | null; rack_id?: string | null;
   resolved_at?: string | null; resolution?: FindingResolution | null;
+  /** What it is about, in the alarm taxonomy's words (analytics/finding_meta.py):
+   *  environmental = the air at the rack, cooling = the plant that conditions it. */
+  category: string;
+  /** What probably caused it, from the cooling incident it was tied to. */
+  cause: FindingCause;
+}
+
+/** The likely cause of a finding (analytics/finding_meta.py cause_of). */
+export interface FindingCause {
+  kind: 'incident' | 'room' | 'none';
+  category?: string;
+  incident_id?: string;
+  state?: 'open' | 'resolved' | null;
+  tier?: string;
+  root_device_id?: string | null;
+  root_device_name?: string | null;
+  root_alarm_type?: string | null;
+  peers?: number;
+  /** The unit is tied to the rack by room, not by a measured zone. */
+  by_room?: boolean;
+  room_name?: string | null;
+  opened_at?: string | null;
+  resolved_at?: string | null;
 }
 
 export interface FindingFeedback {

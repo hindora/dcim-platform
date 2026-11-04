@@ -26,6 +26,7 @@ import { PanelMetering, meteringWords } from '../../components/PanelMetering';
 import { BUILDING_LAYERS, NO_READING, bandColor, roomLayerBands, roomLayerText, roomLayerValue, type BuildingLayer } from './layers';
 import { Notice } from '../../components/Notice';
 import { IncidentTree, useDeviceIncident } from '../alarms/IncidentTree';
+import { CategoryTag, RackFindings, causeText, useRackFindings } from '../analytics/anomaly/FindingList';
 
 /** The viewer's side panel and legend. Facts only: every figure here is one
  *  the estate pages also show, read from the same endpoints. */
@@ -401,6 +402,19 @@ function IndicesSection({ ix, field }: { ix: TwinRoomIndices; field?: ThermalFie
  *  against what was expected; data-quality findings (a stuck or spiky sensor)
  *  follow in a quieter list, because they question the reading, not the plant.
  *  The few detectors set to raise alarms still show here too, marked as such. */
+/** Findings on anything in this rack, with what each is about and its likely
+ *  cause. Open when there is something to read. */
+function RackAnomalies({ rackId }: { rackId: string }) {
+  const { q, plant, devices } = useRackFindings(rackId);
+  const status = q.isLoading ? 'checking' : q.isError ? 'unavailable'
+    : plant.length ? `${plant.length} on ${devices} ${devices === 1 ? 'device' : 'devices'}` : 'OK';
+  return (
+    <Section title={`Anomaly detection: ${status}`} open={plant.length > 0}>
+      <RackFindings rackId={rackId} />
+    </Section>
+  );
+}
+
 /** The cooling incident this unit roots or sits in. Nothing when there is
  *  none: the panel is read every click, and an empty section is noise. */
 function UnitIncident({ deviceId }: { deviceId: string }) {
@@ -463,10 +477,12 @@ export function UnitFindings({ deviceId }: { deviceId: string }) {
           {plant.map((f) => (
             <li key={f.id} className={`vw-finding${f.state === 'acknowledged' ? ' is-acked' : ''}`}>
               <div className="vw-alarm-head">
-                <span className="vw-finding-tag">{f.lane === 'alert' ? 'Also an alarm' : 'Finding'}</span>
+                <CategoryTag category={f.category} />
                 <span className="vw-alarm-type">{f.detector_name ?? f.detector_id}</span>
+                {f.lane === 'alert' && <span className="vw-finding-tag">Also an alarm</span>}
               </div>
               <p className="vw-alarm-msg">{f.summary}</p>
+              <p className="vw-alarm-msg fnd-cause">{causeText(f)}</p>
               <div className="vw-alarm-meta muted">
                 {f.observed != null && f.expected != null && (
                   <>{`${numText(f.observed)} against ${numText(f.expected)}${f.unit ? ` ${f.unit}` : ''}`} · </>
@@ -757,6 +773,7 @@ export function RackPanel({ rack, devices, index }: { rack: FloorRack; devices: 
         <Row k="Devices" v={`${rack.device_count}${rack.offline_count ? ` · ${rack.offline_count} offline` : ''}`} />
         <Row k="Free" v={rack.free_u != null ? `${rack.free_u} of ${rack.u_height ?? 42} U` : '–'} />
       </Section>
+      <RackAnomalies rackId={rack.id} />
       {faults.length > 0 && (
         <Section title={`Conditions (${faults.length})`} open>
           <ul className="vw-list">

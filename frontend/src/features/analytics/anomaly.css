@@ -219,3 +219,40 @@
   .anom-form .row2 { grid-template-columns: 1fr; }
   .anom-hide-narrow { display: none; }
 }
+
+/* --- findings with what they are about and why (rack page, 3D panels) ------- */
+
+/* The category: glyph and word in the owner's colour, as on the alarm strip.
+   The word is always present, so the colour is never the only signal. */
+.fnd-cat {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 0.75rem; font-weight: 600; color: var(--text);
+}
+.fnd-cat svg { color: var(--cat-tone, var(--text-muted)); flex: none; }
+.t-pwr  { --cat-tone: var(--cat-pwr); }
+.t-cool { --cat-tone: var(--cat-cool); }
+.t-it   { --cat-tone: var(--cat-it); }
+.t-vis  { --cat-tone: var(--cat-vis); }
+.t-cap  { --cat-tone: var(--cat-cap); }
+.t-sec  { --cat-tone: var(--cat-sec); }
+.t-fire { --cat-tone: var(--cat-fire); }
+.t-unc  { --cat-tone: var(--cat-unc); }
+
+.fnd { display: grid; gap: 8px; min-width: 0; }
+.fnd-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.fnd-item {
+  padding: 8px 10px 9px 11px; min-width: 0;
+  border-left: 3px solid var(--cat-tone, var(--border-strong));
+  background: var(--bg-inset); border-radius: 0 4px 4px 0;
+}
+.fnd-item.is-acked { border-left-color: var(--border-strong); }
+.fnd-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; min-width: 0; }
+.fnd-name { font-weight: 600; font-size: 0.85rem; min-width: 0; overflow-wrap: anywhere; }
+.fnd-dev { margin-left: auto; font-size: 0.8rem; overflow-wrap: anywhere; }
+.fnd-summary { margin: 4px 0 0; font-size: 0.85rem; }
+/* The likely cause is the line an operator acts on: full ink, not muted. */
+.fnd-cause { margin: 4px 0 0; font-size: 0.85rem; color: var(--text); line-height: 1.45; }
+.fnd-meta { margin: 4px 0 0; font-size: 0.75rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.fnd-note { margin: 0; font-size: 0.78rem; color: var(--text-muted); line-height: 1.45; }
+.fnd-empty { margin: 0; font-size: 0.85rem; color: var(--text-muted); }
+.fnd-more { justify-self: start; font-size: 0.8rem; }

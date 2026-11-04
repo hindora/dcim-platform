@@ -17,6 +17,7 @@ import { Feeds, Failover, RackPowerTab } from './RackPower';
 import { Fact, RackThermalTab } from './RackThermal';
 import '../devices/devices.css';
 import '../devices/device-list.css';
+import { RackFindings, useRackFindings } from '../analytics/anomaly/FindingList';
 import './rack-detail.css';
 
 /** One rack, the way an operator reads it.
@@ -35,6 +36,7 @@ const TABS = [
   { id: 'thermal', label: 'Thermal' },
   { id: 'devices', label: 'Devices' },
   { id: 'alarms', label: 'Alarms' },
+  { id: 'anomalies', label: 'Anomalies' },
 ] as const;
 type Tab = typeof TABS[number]['id'];
 const isTab = (s: string | null): s is Tab => TABS.some((t) => t.id === s);
@@ -109,7 +111,7 @@ export function RackDetail() {
 
   const bodies: Record<Tab, ReactNode> = {
     overview: <Overview d={d} onAlarms={() => goTab('alarms')} onThermal={() => goTab('thermal')}
-                        onPower={() => goTab('power')} />,
+                        onPower={() => goTab('power')} onAnomalies={() => goTab('anomalies')} />,
     elevation: (
       <section>
         <h3>Elevation
@@ -133,6 +135,14 @@ export function RackDetail() {
       <section>
         <h3>Conditions <span className="lead">on everything standing in this rack</span></h3>
         <DeviceAlarms deviceId="" rackId={id} deviceName={rack.name} view="all" />
+      </section>
+    ),
+    anomalies: (
+      <section>
+        <h3>Unusual behaviour
+          <span className="lead">readings out of their normal pattern, on everything in this rack</span>
+        </h3>
+        <RackFindings rackId={rack.id} />
       </section>
     ),
   };
@@ -223,8 +233,9 @@ export function RackDetail() {
 
 // -------------------------------------------------------------- overview
 
-function Overview({ d, onAlarms, onThermal, onPower }: {
+function Overview({ d, onAlarms, onThermal, onPower, onAnomalies }: {
   d: Detail; onAlarms: () => void; onThermal: () => void; onPower: () => void;
+  onAnomalies: () => void;
 }) {
   const { rack, space, alarms, power, thermal } = d;
   const cats = Object.entries(space.by_category).sort((a, b) => b[1] - a[1]);
@@ -278,8 +289,24 @@ function Overview({ d, onAlarms, onThermal, onPower }: {
           </h3>
           <DeviceAlarms deviceId="" rackId={rack.id} deviceName={rack.name} compact limit={5} onMore={onAlarms} />
         </section>
+        <AnomalyCard rackId={rack.id} onMore={onAnomalies} />
       </div>
     </div>
+  );
+}
+
+/** The rack's open findings, three at most; the tab holds the rest. */
+function AnomalyCard({ rackId, onMore }: { rackId: string; onMore: () => void }) {
+  const { plant, devices } = useRackFindings(rackId);
+  return (
+    <section className="dv-card">
+      <h3>Unusual behaviour
+        <span className="lead">
+          {plant.length ? `${plant.length} on ${devices} device${devices === 1 ? '' : 's'}` : 'nothing unusual'}
+        </span>
+      </h3>
+      <RackFindings rackId={rackId} limit={3} onMore={onMore} />
+    </section>
   );
 }
 

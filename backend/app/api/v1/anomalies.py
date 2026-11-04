@@ -144,6 +144,7 @@ async def list_findings(
     since: datetime | None = Query(None, description="last_seen >= since"),
     alarm_id: str | None = Query(None, description="the finding behind a derived alarm"),
     incident_id: str | None = None,
+    rack_id: str | None = Query(None, description="findings on anything in this rack"),
     stale: bool | None = None,
     with_facets: bool = False,
     limit: int = Query(50, ge=1, le=500),
@@ -157,7 +158,7 @@ async def list_findings(
     _check_enum(lane, repo.LANES, "lane")
     _check_enum(kind, repo.KINDS, "kind")
     for v, what in ((device_id, "device_id"), (room, "room"), (alarm_id, "alarm_id"),
-                    (incident_id, "incident_id")):
+                    (incident_id, "incident_id"), (rack_id, "rack_id")):
         _check_uuid(v, what)
     if not settings.anomaly_enabled:
         out: dict[str, Any] = {"items": [], "next_cursor": None,
@@ -168,7 +169,8 @@ async def list_findings(
     return await repo.list_findings(
         session, states=state or repo.DEFAULT_STATES, lanes=lane, kinds=kind,
         detectors=detector, device_id=device_id, datacenter=datacenter, room=room,
-        since=since, alarm_id=alarm_id, incident_id=incident_id, stale=stale, limit=limit,
+        since=since, alarm_id=alarm_id, incident_id=incident_id, stale=stale,
+        rack_id=rack_id, limit=limit,
         offset=offset, with_total=with_total, with_facets=with_facets)
 
 

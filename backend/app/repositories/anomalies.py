@@ -24,6 +24,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.analytics import finding_meta
 from app.analytics.catalogue import Catalogue, Detector, Override
 
 #: Every CHECKPOINT_EVERY_SWEEPS sweeps the dirty L3/L4 series are upserted
@@ -602,6 +603,11 @@ _FINDING_SELECT = """
            (f.state = 'open' AND f.first_seen < now() - interval '24 hours'
             AND f.feedback = '[]'::jsonb) AS stale,
            f.incident_id::text AS incident_id, f.alarm_id::text AS alarm_id,
+           dv.rack_id::text AS rack_id,
+           inc.id::text AS inc_id, inc.state AS inc_state, inc.tier AS inc_tier,
+           inc.evidence AS inc_evidence, inc.opened_at AS inc_opened_at,
+           inc.resolved_at AS inc_resolved_at, inc.root_device_id::text AS inc_root_device_id,
+           incd.name AS inc_root_device_name, incr.name AS inc_room_name,
            dc.code AS datacenter_code, f.room_id::text AS room_id, rm.name AS room_name,
            rk.name AS rack_name, f.resolved_at, f.resolution
       FROM anomaly_finding f
@@ -612,18 +618,28 @@ _FINDING_SELECT = """
       LEFT JOIN datacenter dc ON dc.id = f.datacenter_id
       LEFT JOIN room rm       ON rm.id = f.room_id
       LEFT JOIN rack rk       ON rk.id = dv.rack_id
+      LEFT JOIN anomaly_incident inc ON inc.id = f.incident_id
+      LEFT JOIN device incd   ON incd.id = inc.root_device_id
+      LEFT JOIN room incr     ON incr.id = inc.room_id
 """
 
 
 def _finding_out(r: Mapping[str, Any]) -> dict[str, Any]:
     out = dict(r)
+    # What it is about, and what probably caused it (app.analytics.finding_meta).
+    out["category"] = finding_meta.category_of(out["detector_id"], out.get("layer"),
+                                               out.get("device_type"))
+    out["cause"] = finding_meta.cause_of(out)
+    for k in [k for k in out if k.startswith("inc_")]:
+        del out[k]
     out["score_unit"] = SCORE_UNIT.get(out["detector_id"]) or (
         "sigma" if out["layer"] in ("L3", "L4") else (out.get("unit") or "ratio"))
     return out
 
 
 def _finding_where(*, states, lanes, kinds, detectors, device_id, datacenter, room,
-                   since, alarm_id, incident_id, stale) -> tuple[list[str], dict[str, Any]]:
+                   since, alarm_id, incident_id, stale, rack_id=None
+                   ) -> tuple[list[str], dict[str, Any]]:
     w: list[str] = []
     p: dict[str, Any] = {}
     if states:
@@ -648,6 +664,10 @@ def _finding_where(*, states, lanes, kinds, detectors, device_id, datacenter, ro
     if room:
         w.append("f.room_id = CAST(:room AS uuid)")
         p["room"] = room
+    if rack_id:
+        # Everything standing in the rack: its probes, its PDUs, its servers.
+        w.append("f.device_id IN (SELECT id FROM device WHERE rack_id = CAST(:rack_id AS uuid))")
+        p["rack_id"] = rack_id
     if since:
         w.append("f.last_seen >= :since")
         p["since"] = since
@@ -667,13 +687,13 @@ def _finding_where(*, states, lanes, kinds, detectors, device_id, datacenter, ro
 async def list_findings(session: AsyncSession, *, states=DEFAULT_STATES, lanes=None,
                         kinds=None, detectors=None, device_id=None, datacenter=None,
                         room=None, since=None, alarm_id=None, incident_id=None,
-                        stale=None, limit: int = 50, offset: int = 0,
+                        stale=None, rack_id=None, limit: int = 50, offset: int = 0,
                         with_total: bool = False, with_facets: bool = False
                         ) -> dict[str, Any]:
     filters = {"lanes": lanes, "kinds": kinds, "detectors": detectors,
                "device_id": device_id, "datacenter": datacenter, "room": room,
                "since": since, "alarm_id": alarm_id, "incident_id": incident_id,
-               "stale": stale}
+               "stale": stale, "rack_id": rack_id}
     w, p = _finding_where(states=states, **filters)
     where = (" WHERE " + " AND ".join(w)) if w else ""
     rows = (await session.execute(text(
