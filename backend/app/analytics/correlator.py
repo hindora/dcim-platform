@@ -112,6 +112,9 @@ async def refresh_incidents(session: AsyncSession, graph: cc.CoolingGraph | None
         m["tier_of_member"] = (node.tier if node else None) or "server"
         g["members"].append(m)
 
+    groups = _merge_by_scope(graph, groups, set((await session.execute(text(
+        "SELECT root_key FROM anomaly_incident WHERE state = 'open'"))).scalars().all()))
+
     # Open, visible cooling alarms on units: candidate peers of a unit root.
     unit_alarms = [dict(r) for r in (await session.execute(text(cc._OPEN_VISIBLE)))
                    .mappings().all()
@@ -128,7 +131,9 @@ async def refresh_incidents(session: AsyncSession, graph: cc.CoolingGraph | None
     seen_keys: set[str] = set()
     opened = updated = 0
     for rdev, g in groups.items():
-        root = min(g["roots"].values(), key=lambda r: (r["first_seen"], r["id"]))
+        own = ([r for r in g["roots"].values() if r["device_id"] == rdev]
+               or list(g["roots"].values()))
+        root = min(own, key=lambda r: (r["first_seen"], r["id"]))
         rnode = graph.nodes.get(rdev)
         anc_tier = None
         for m in g["members"]:
@@ -155,7 +160,16 @@ async def refresh_incidents(session: AsyncSession, graph: cc.CoolingGraph | None
                  and graph.nodes[p["device_id"]].tier == "unit"
                  and abs(p["first_seen"].timestamp() - root["first_seen"].timestamp())
                  <= cc.LEAD_S]
-        if peers:
+        merged = [r for r in g["roots"].values() if r["device_id"] != rdev]
+        if merged and tier in ("plant", "power"):
+            n = len({r["device_id"] for r in merged}) + 1
+            title += f" and {n - 1} more plant machine{'s' if n > 2 else ''}"
+            summary = (f"{n} plant machines at the site stopped or faulted in sequence: the "
+                       "standby units were called and did not hold. Look at what they share "
+                       "(chilled-water flow, condenser water, power, controls) first. " + summary)
+        peers += [{"id": r["id"], "device_id": r["device_id"]} for r in merged
+                  if r["id"] not in {p["id"] for p in peers}]
+        if peers and tier == "unit":
             n_units = len({p["device_id"] for p in peers}) + 1
             title += f" and {n_units - 1} more cooling unit{'s' if n_units > 2 else ''}"
             summary = (f"{n_units} cooling units in the room stopped or faulted within "
@@ -177,7 +191,8 @@ async def refresh_incidents(session: AsyncSession, graph: cc.CoolingGraph | None
         }
         key = f"device:{rdev}"
         seen_keys.add(key)
-        alarm_ids = list(g["roots"]) + [p["id"] for p in peers] + [m["id"] for m in g["members"]]
+        alarm_ids = list(dict.fromkeys(
+            list(g["roots"]) + [p["id"] for p in peers] + [m["id"] for m in g["members"]]))
         inc_id, created = await _upsert(
             session, key=key, tier=tier, root_device=rdev, root_alarm=root["id"],
             dc=rnode.datacenter_id if rnode else None, room=rnode.room_id if rnode else None,
@@ -251,6 +266,51 @@ async def refresh_incidents(session: AsyncSession, graph: cc.CoolingGraph | None
     if opened or resolved:
         log.info("incidents refreshed", opened=opened, updated=updated, resolved=len(resolved))
     return {"opened": opened, "updated": updated, "resolved": len(resolved)}
+
+
+def _scope(graph: cc.CoolingGraph, rdev: str, g: dict[str, Any]) -> tuple[str, str] | None:
+    """What a root's incident is ABOUT, beyond the one machine: the site's
+    plant for a chiller, tower, pump or feeder; the room for a CRAH or CDU."""
+    node = graph.nodes.get(rdev)
+    tier = None
+    for m in g["members"]:
+        tier = graph.ancestors(m["device_id"]).get(rdev) or tier
+    if node is None or tier is None:
+        return None
+    if tier in ("plant", "power") and node.datacenter_id:
+        return ("site", node.datacenter_id)
+    if tier == "unit" and node.room_id:
+        return ("room", node.room_id)
+    return None
+
+
+def _merge_by_scope(graph: cc.CoolingGraph, groups: dict[str, dict[str, Any]],
+                    open_keys: set[str]) -> dict[str, dict[str, Any]]:
+    """One incident per plant, not per chiller.
+
+    all-chillers (2026-11-04): the lead chiller stopped, the sequencer called
+    the next, which was held off, then the next - each "unit stopped" alarm
+    raised, then cleared as the unit fell back to standby. Rooted per device,
+    one plant failure read as three incidents. Roots of the same tier and
+    scope are one event; the incident already open keeps its key, so the
+    console does not see it renamed every minute.
+    """
+    buckets: dict[Any, list[str]] = {}
+    for rdev, g in groups.items():
+        buckets.setdefault(_scope(graph, rdev, g) or ("device", rdev), []).append(rdev)
+    out: dict[str, dict[str, Any]] = {}
+    for devs in buckets.values():
+        if len(devs) == 1:
+            out[devs[0]] = groups[devs[0]]
+            continue
+        anchor = next((d for d in devs if f"device:{d}" in open_keys), None) or min(
+            devs, key=lambda d: min(r["first_seen"] for r in groups[d]["roots"].values()))
+        merged = {"roots": {}, "members": []}
+        for d in devs:
+            merged["roots"].update(groups[d]["roots"])
+            merged["members"] += groups[d]["members"]
+        out[anchor] = merged
+    return out
 
 
 async def _upsert(session: AsyncSession, *, key: str, tier: str, root_device: str | None,

@@ -344,7 +344,8 @@ def pick_root(graph: CoolingGraph, symptom: dict[str, Any],
         t_root = _ts(a["first_seen"])
         if not (t_sym - LAG_S <= t_root <= t_sym + LEAD_S):
             continue
-        key = (-TIER_RANK[at], t_root, a["id"])
+        # An open root before a recently cleared one of the same tier.
+        key = (-TIER_RANK[at], 1 if a.get("cleared") else 0, t_root, a["id"])
         if best is None or key < best[0]:
             best = (key, a, at)
     if best is None:
@@ -411,6 +412,35 @@ _OPEN_VISIBLE = """
      WHERE a.state <> 'CLEARED' AND NOT a.is_symptom
        AND a.shelved_by_window IS NULL
 """
+
+#: Roots that cleared inside the hold: still the cause of new heat.
+#:
+#: all-chillers, 2026-11-04: each chiller's "stopped" alarm cleared about two
+#: minutes after it was raised, as the sequencer called the next machine, and
+#: its chilled-water-high alarm moved with the lead. A rack probe that tripped
+#: in one of those gaps found no open plant root and opened a "no cooling
+#: alarm" room incident while the chilled water stood at 19 C. The water and
+#: air take minutes to recover after a cause clears - the same physics as the
+#: release hold - so a cause cleared less than the hold ago still explains
+#: what is heating now. It ranks below an open root of the same tier.
+_RECENT_ROOTS = """
+    SELECT a.id::text AS id, a.device_id::text AS device_id, a.alarm_type,
+           a.instance, a.category, a.metric_key, a.severity::text AS severity, a.first_seen,
+           true AS cleared
+      FROM alarm a
+     WHERE a.state = 'CLEARED' AND NOT a.is_symptom AND a.shelved_by_window IS NULL
+       AND a.cleared_at > now() - make_interval(secs => :hold)
+"""
+
+
+async def recent_roots(session: AsyncSession, devices: list[str] | None = None
+                       ) -> list[dict[str, Any]]:
+    q = _RECENT_ROOTS + (" AND a.device_id = ANY(CAST(:devs AS uuid[]))" if devices else "")
+    p: dict[str, Any] = {"hold": RESTORE_HOLD_S}
+    if devices:
+        p["devs"] = devices
+    return [dict(r) for r in (await session.execute(text(q), p)).mappings().all()]
+
 
 #: The visible alarm already speaking for each kind of consequence of a root.
 _REPRESENTATIVES = """
@@ -487,10 +517,11 @@ async def correlate(session: AsyncSession, *, alarm: dict[str, Any], device_id: 
     rows = (await session.execute(text(_OPEN_VISIBLE + """
        AND a.device_id = ANY(CAST(:devs AS uuid[]))
     """), {"devs": list(anc)})).mappings().all()
+    rows = [dict(r) for r in rows] + await recent_roots(session, list(anc))
     sym = {"id": alarm["id"], "device_id": device_id, "alarm_type": alarm_type,
            "category": category, "metric_key": metric_key, "severity": alarm["severity"],
            "first_seen": alarm.get("first_seen") or datetime.now(UTC)}
-    root = pick_root(graph, sym, [dict(r) for r in rows], await fire_rooms(session),
+    root = pick_root(graph, sym, rows, await fire_rooms(session),
                      await representatives(session))
     if root is None:
         return None
@@ -509,9 +540,34 @@ async def sweep(session: AsyncSession) -> dict[str, int]:
     graph = await load_graph(session)
     now = datetime.now(UTC)
     visible = [dict(r) for r in (await session.execute(text(_OPEN_VISIBLE))).mappings().all()]
+    # Candidates for a root: what is open, and what cleared inside the hold.
+    candidates = visible + await recent_roots(session)
     fires = await fire_rooms(session)
     reps = await representatives(session)
     tied = set(reps.values())
+    # Held symptoms whose root has cleared, offered the open roots first: when
+    # the lead chiller's alarm clears because the sequencer moved on to the
+    # next machine, the heat it explained is now the next machine's, not a
+    # fresh root on the console for the minute before re-adoption.
+    orphaned = [dict(r) for r in (await session.execute(text("""
+        SELECT s.id::text AS id, s.device_id::text AS device_id, s.alarm_type, s.instance,
+               s.category, s.metric_key, s.severity::text AS severity, s.first_seen,
+               s.attributes->'l5'->>'root' AS old_root
+          FROM alarm s JOIN alarm r ON r.id = CAST(s.attributes->'l5'->>'root' AS uuid)
+         WHERE s.state <> 'CLEARED' AND s.attributes ? 'l5' AND r.state = 'CLEARED'
+    """))).mappings().all()]
+    moved = 0
+    for a in orphaned:
+        root = pick_root(graph, a, candidates, fires, reps)
+        if root is None or root["id"] == a["old_root"]:
+            continue
+        if root["representative"]:
+            reps.setdefault((root["id"], a["alarm_type"]), a["id"])
+        await session.execute(text("""
+            UPDATE alarm SET is_symptom = false, root_cause_alarm_id = NULL
+             WHERE id = CAST(:id AS uuid)"""), {"id": a["id"]})
+        await mark(session, alarm_id=a["id"], root=root, now=now)
+        moved += 1
     recent = now.timestamp() - 2 * LAG_S
     adopted = 0
     # Oldest first, so the first of a kind is the one that stays visible.
@@ -522,7 +578,7 @@ async def sweep(session: AsyncSession) -> dict[str, int]:
         if node is None or not symptom_eligible(a["alarm_type"], a.get("category"), node.tier,
                                                 a.get("metric_key")):
             continue
-        root = pick_root(graph, a, visible, fires, reps)
+        root = pick_root(graph, a, candidates, fires, reps)
         if root is None:
             continue
         if root["representative"]:
@@ -548,8 +604,8 @@ async def sweep(session: AsyncSession) -> dict[str, int]:
         RETURNING s.id::text AS id, s.device_id::text AS device_id,
                   s.severity::text AS severity, s.state::text AS state, r.id::text AS root
     """), {"hold": RESTORE_HOLD_S})).mappings().all()
-    if adopted or released:
-        log.info("cooling correlation sweep", adopted=adopted,
+    if adopted or released or moved:
+        log.info("cooling correlation sweep", adopted=adopted, moved=moved,
                  released=sum(1 for r in released if r["state"] != "CLEARED"))
-    return {"adopted": adopted, "released": len(released),
+    return {"adopted": adopted, "moved": moved, "released": len(released),
             "released_open": sum(1 for r in released if r["state"] != "CLEARED")}

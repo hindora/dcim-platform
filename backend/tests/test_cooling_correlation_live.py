@@ -34,8 +34,12 @@ async def session():
     async with maker() as s:
         trans = await s.begin()
         try:
-            await s.execute(text("UPDATE alarm SET state = 'CLEARED', cleared_at = now() "
-                                 "WHERE state <> 'CLEARED'"))
+            # Cleared a day ago, not now: a cause cleared inside the hold still
+            # explains new heat, and the live board's real alarms must not.
+            await s.execute(text("UPDATE alarm SET state = 'CLEARED', "
+                                 "cleared_at = now() - interval '1 day' "
+                                 "WHERE state <> 'CLEARED' "
+                                 "OR cleared_at > now() - interval '1 hour'"))
             await s.execute(text("UPDATE anomaly_incident SET state = 'resolved', "
                                  "resolved_at = now() WHERE state = 'open'"))
             cc.reset_graph()
@@ -219,3 +223,37 @@ async def test_a_hall_losing_its_crahs_reads_as_one_incident(session):
     assert len(inc) == 1 and "1 more cooling unit" in inc[0]["title"]
     roles = sorted(a["role"] for a in (await correlator.get_incident(s, inc[0]["id"]))["alarms"])
     assert roles == ["folded", "folded", "member", "peer", "root"]
+
+
+async def test_a_plant_failing_in_sequence_is_one_incident(session):
+    """all-chillers, 2026-11-04: CHL1 stopped and its alarm cleared as the
+    sequencer called CHL2, which was held off, then CHL3. Rooted per chiller,
+    that was three incidents, and CHL1's symptoms would have been released
+    onto the console when its alarm cleared."""
+    s = session
+    h = await _hall(s)
+    chillers = (await s.execute(text("""
+        SELECT d.id::text FROM device d JOIN room r ON r.id = d.room_id
+         WHERE d.device_type = 'chiller'
+           AND r.datacenter_id = (SELECT datacenter_id FROM room WHERE id = CAST(:r AS uuid))
+         ORDER BY d.name LIMIT 2"""), {"r": h["room"]})).scalars().all()
+    first = await _raise(s, chillers[0], "plant_unit_stopped", ago_s=400)
+    a = await _raise(s, h["probes"][0], "ambient_temp_high", ago_s=300, category="environmental")
+    got = await cc.correlate(s, alarm=a, device_id=h["probes"][0], alarm_type="ambient_temp_high")
+    assert got and got["id"] == first["id"]
+    # The sequencer moves on: CHL1's alarm clears, CHL2's opens.
+    await s.execute(text("UPDATE alarm SET state = 'CLEARED', cleared_at = now() "
+                         "WHERE id = CAST(:id AS uuid)"), {"id": first["id"]})
+    second = await _raise(s, chillers[1], "plant_unit_stopped", ago_s=200)
+    b = await _raise(s, h["probes"][1], "ambient_temp_high", ago_s=150, category="environmental")
+    assert (await cc.correlate(s, alarm=b, device_id=h["probes"][1],
+                               alarm_type="ambient_temp_high"))["id"] == second["id"]
+
+    out = await cc.sweep(s)
+    assert out["moved"] == 1                         # a's heat is CHL2's now, not released
+    r = await _row(s, a["id"])
+    assert r["is_symptom"] and r["root"] == second["id"]
+
+    await correlator.refresh_incidents(s)
+    inc = await correlator.list_incidents(s, states=["open"], device_id=None, limit=10)
+    assert len(inc) == 1 and inc[0]["tier"] == "plant"

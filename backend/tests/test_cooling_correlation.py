@@ -203,3 +203,15 @@ def test_the_summary_says_what_was_folded_and_what_was_kept():
     assert "1 more severe than the cause kept visible, one of each kind" in summary
     assert "1 anomaly finding on the same chain" in summary
     assert "tied to the unit by room" in summary
+
+
+def test_a_cause_cleared_inside_the_hold_still_explains_new_heat():
+    """all-chillers 2026-11-04: each chiller's alarm cleared as the sequencer
+    moved on, while the chilled water stood at 19 C."""
+    g = graph()
+    sym = alarm("s", "probe", "ambient_temp_high", t=T0 + 300)
+    gone = {**alarm("c", "chiller", "plant_unit_stopped", t=T0), "cleared": True}
+    assert cc.pick_root(g, sym, [gone])["id"] == "c"
+    live = alarm("o", "chiller", "plant_unit_stopped", t=T0 + 120)
+    # An open cause of the same tier wins over a cleared one, though later.
+    assert cc.pick_root(g, sym, [gone, live])["id"] == "o"
