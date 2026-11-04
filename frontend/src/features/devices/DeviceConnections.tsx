@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom';
 import type { UseQueryResult } from '@tanstack/react-query';
 import { type DeviceDetail as Detail, type NetworkInterface } from '../../api/client';
 import { formatSpeed, humanise } from '../../lib/format';
+import { CoolingTrace } from './CoolingTrace';
 
 /** Whether the supplies actually buy anything.
  *
@@ -94,6 +95,13 @@ export function DeviceConnections({ device, ports }: {
           </div>
         )}
       </section>
+
+      {['server', 'storage'].includes(d.device_type) && (
+        <section>
+          <h3>Cooling</h3>
+          <CoolingTrace deviceId={d.id} />
+        </section>
+      )}
 
       <section>
         <h3>

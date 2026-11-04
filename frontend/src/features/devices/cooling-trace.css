@@ -1,0 +1,33 @@
+/* The cooling trace (server page Connections tab, 3D server panel). Tokens
+   only. The path is a real sequence - heat leaves the chip for the coolant,
+   the coolant for chilled water - so it is drawn as one: a rule down the left
+   with a node at each machine. */
+
+.ct { display: grid; gap: 8px; min-width: 0; }
+.ct-method { margin: 0; font-size: 0.85rem; line-height: 1.45; color: var(--text); }
+.ct-path-head { margin: 6px 0 0; font-size: 0.78rem; font-weight: 600; color: var(--text-muted); }
+.ct-path { list-style: none; margin: 0; padding: 0 0 0 14px; position: relative; display: grid; gap: 8px; }
+.ct-path::before {
+  content: ''; position: absolute; left: 4px; top: 6px; bottom: 6px;
+  width: 2px; background: var(--cat-cool); opacity: 0.55; border-radius: 1px;
+}
+.ct-hop { position: relative; min-width: 0; }
+.ct-hop::before {
+  content: ''; position: absolute; left: -14px; top: 4px; width: 10px; height: 10px;
+  border-radius: 50%; background: var(--bg-raised); border: 2px solid var(--cat-cool);
+}
+.ct-hop-title { margin: 0; font-size: 0.75rem; color: var(--text-muted); }
+.ct-hop-what { display: grid; gap: 2px; }
+.ct-unit {
+  margin: 2px 0 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px;
+  font-size: 0.85rem; min-width: 0;
+}
+.ct-unit > a { overflow-wrap: anywhere; }
+.ct-num { color: var(--text-muted); font-variant-numeric: tabular-nums; font-size: 0.8rem; }
+.ct-state { display: inline-flex; align-items: center; gap: 5px; font-size: 0.78rem; }
+.ct-state::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: none; }
+.ct-state.ok   { color: var(--ok); }
+.ct-state.warn { color: var(--warn); }
+.ct-state.crit { color: var(--critical); }
+.ct-state.none { color: var(--text-muted); }
+.ct-note, .ct-empty { margin: 0; font-size: 0.78rem; color: var(--text-muted); line-height: 1.45; }

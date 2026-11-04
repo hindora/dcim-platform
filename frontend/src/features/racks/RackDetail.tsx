@@ -250,6 +250,9 @@ function Overview({ d, onAlarms, onThermal, onPower, onAnomalies }: {
             <Fact k="Largest free run" v={space.largest_free ? `${space.largest_free.u_height} U, from U${space.largest_free.u_start}` : 'none'} />
             <Fact k="On the rails" v={`${space.racked} device${space.racked === 1 ? '' : 's'}`} />
             <Fact k="In the side channels" v={String(space.zero_u)} />
+            {space.cooling && space.cooling.liquid > 0 && (
+              <Fact k="Servers cooled by" v={`liquid ${space.cooling.liquid}, air ${space.cooling.air}`} />
+            )}
             {cats.map(([c, n]) => <Fact key={c} k={CAT_WORD[c] ?? humanise(c)} v={String(n)} />)}
           </div>
         </section>

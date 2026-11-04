@@ -27,6 +27,7 @@ import { BUILDING_LAYERS, NO_READING, bandColor, roomLayerBands, roomLayerText, 
 import { Notice } from '../../components/Notice';
 import { IncidentTree, useDeviceIncident } from '../alarms/IncidentTree';
 import { CategoryTag, RackFindings, causeText, useRackFindings } from '../analytics/anomaly/FindingList';
+import { CoolingTrace, useDeviceCooling } from '../devices/CoolingTrace';
 
 /** The viewer's side panel and legend. Facts only: every figure here is one
  *  the estate pages also show, read from the same endpoints. */
@@ -1031,6 +1032,19 @@ function Supplies({ d, open = false }: { d?: DeviceDetail; open?: boolean }) {
   );
 }
 
+/** Where the server's heat goes: its coolant loop (cold-plate servers) and
+ *  the room's air units, each with its state now. Beside the supplies, since
+ *  "what feeds it" and "what cools it" are the two chains it depends on. */
+function CoolingSection({ deviceId }: { deviceId: string }) {
+  const q = useDeviceCooling(deviceId);
+  const m = q.data?.method;
+  return (
+    <Section title={m === 'liquid' ? 'Cooling: direct liquid' : m ? 'Cooling: air' : 'Cooling'} open>
+      <CoolingTrace deviceId={deviceId} />
+    </Section>
+  );
+}
+
 /** Two supplies are redundancy only when something separate feeds each. */
 function PsuVerdict({ psus }: { psus: DeviceDetail['psus'] }) {
   const feeds = new Set(psus.map((p) => p.feed_device_id).filter((x): x is string => Boolean(x)));
@@ -1133,6 +1147,7 @@ function ServerBody(c: ClassCtx) {
       <Identity {...c} />
       <Readings {...c} />
       <Supplies d={c.d} open />
+      <CoolingSection deviceId={device.id} />
       <Ports deviceId={device.id} open={false} max={6} />
       <Endpoints d={c.d} />
     </>

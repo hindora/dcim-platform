@@ -21,6 +21,7 @@ from app.repositories import estate as estate_repo
 from app.repositories import rack_detail as repo
 from app.repositories import racks as rack_repo
 from app.schemas import RackSummary
+from app.services import cooling_trace
 from app.services import estate as estate_service
 
 #: The Power page's window for its p95; the rack page quotes the same one.
@@ -47,9 +48,18 @@ async def rack_detail(session: AsyncSession, rack_id: str) -> dict[str, Any] | N
     if rack is None:
         return None
     devices = [_plain(d) for d in await rack_repo.rack_devices(session, rack_id)]
+    space = space_block(rack, devices)
+    # How the rack's servers are cooled: in a mixed rack the air budget only
+    # carries ~30 % of a cold-plate server's heat (services/cooling_trace.py).
+    servers = [d["id"] for d in devices if d.get("device_type") == "server"]
+    liquid = await cooling_trace.liquid_cooled(session, servers)
+    space["cooling"] = {"liquid": len(liquid), "air": len(servers) - len(liquid)}
+    for d in devices:
+        if d.get("device_type") == "server":
+            d["cooling_method"] = "liquid" if d["id"] in liquid else "air"
     return {
         "rack": RackSummary(**{k: v for k, v in rack.items() if k in RackSummary.model_fields}),
-        "space": space_block(rack, devices),
+        "space": space,
         "alarms": alarm_block(devices),
         "power": await power_block(session, rack_id, devices),
         "thermal": thermal_block(await repo.thermal_points(session, rack_id)),

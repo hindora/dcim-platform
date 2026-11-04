@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+import uuid
 from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,8 +30,8 @@ from app.schemas import (
     InterfaceOut,
     Page,
 )
+from app.services import cooling_trace, device_edit, endpoint_config
 from app.services import dashboard as dashboard_service
-from app.services import device_edit, endpoint_config
 from app.services import devices as service
 from app.services import lifecycle as lifecycle_service
 from app.services import panel_metering as panel_metering_service
@@ -223,6 +225,23 @@ async def latest_metrics(
 ) -> dict:
     return {"device_id": device_id,
             "metrics": await dashboard_service.latest(session, device_id)}
+
+
+@router.get("/{device_id}/cooling",
+            summary="How the device is cooled, and the state of each machine on the way")
+async def device_cooling(
+    device_id: str,
+    session: AsyncSession = Depends(get_session),
+    _: Principal = Depends(current_principal),
+) -> dict:
+    try:
+        uuid.UUID(device_id)
+    except ValueError:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "device_id must be a uuid") from None
+    out = await cooling_trace.device_cooling(session, device_id)
+    if out is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "no such device")
+    return jsonable_encoder(out)
 
 
 @router.get("/{device_id}/metering", response_model=DeviceMetering,

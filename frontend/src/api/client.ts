@@ -1953,12 +1953,35 @@ export interface RackDeviceRow {
   power_w: number | null; inlet_temp_c: number | null; cpu_util_pct: number | null;
   last_seen: string | null;
 }
+/** GET /devices/{id}/cooling (services/cooling_trace.py). */
+export interface CoolingHop {
+  device_id: string; name: string; state?: string | null; reason?: string | null;
+  supply_c?: number | null; return_c?: number | null; setpoint_c?: number | null;
+  running?: boolean | null; flow_l_s?: number | null; pump_pct?: number | null;
+  fan_pct?: number | null; heat_kw?: number | null; alarms_open?: number;
+}
+export interface DeviceCooling {
+  device_id: string; name: string; device_type: string;
+  method: 'air' | 'liquid' | 'immersion' | 'rdhx';
+  /** drawn = from a CDU connection; declared = the asset record; default = nothing says otherwise. */
+  method_basis: 'drawn' | 'declared' | 'default';
+  liquid: { share: number; cdus: CoolingHop[] } | null;
+  air: { basis: 'room'; room_name: string | null; units: CoolingHop[]; running: number;
+         supply_c: number | null; share: number };
+  plant: { machines: { device_id: string; name: string; device_type: string;
+                       running: boolean | null; verdict?: string | null;
+                       supply_c?: number | null; alarms_open: number }[];
+           chw_supply_c: number | null };
+}
+
 export interface RackDetail {
   rack: RackSummary;
   space: { u_total: number; u_used: number; u_free: number;
            largest_free: { u_start: number; u_height: number } | null;
            free_blocks: { u_start: number; u_height: number }[];
-           racked: number; zero_u: number; by_category: Record<string, number> };
+           racked: number; zero_u: number; by_category: Record<string, number>;
+           /** Servers by cooling method: drawn CDU loop or asset record. */
+           cooling?: { liquid: number; air: number } };
   alarms: { open: number; worst: string; devices: number; offline: number };
   power: RackPowerBlock | null;
   thermal: RackThermalBlock;
@@ -4860,6 +4883,10 @@ export const api = {
     }),
   maintenanceRecords: (deviceId: string) =>
     request<{ items: MaintenanceRecord[] }>(`/devices/${deviceId}/maintenance`),
+  /** How a device is cooled and the state of each machine on the way. */
+  deviceCooling: (deviceId: string) =>
+    request<DeviceCooling>(`/devices/${deviceId}/cooling`),
+
   powerChain: (deviceId: string) =>
     request<PowerChain>(`/power/chain/${deviceId}`),
   assetFilterOptions: () => request<AssetFilterOptions>('/assets/filter-options'),
