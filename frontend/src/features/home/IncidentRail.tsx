@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { api, type AnomalyIncident } from '../../api/client';
 import { relativeTime } from '../../lib/format';
 import { IncidentStrip } from '../alarms/IncidentStrip';
@@ -64,11 +64,6 @@ export function IncidentRail() {
           </ul>
         </>
       )}
-      <p className="rail-links">
-        <Link to="/connectivity">Network map</Link>
-        <Link to="/floorplan">Floor map</Link>
-        <Link to="/world">World map</Link>
-      </p>
     </div>
   );
 }
