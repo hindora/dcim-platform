@@ -180,3 +180,37 @@ async def test_a_fire_in_the_hall_stops_the_crah_without_making_it_a_root(sessio
                      category="environmental")
     assert await cc.correlate(s, alarm=a, device_id=h["probes"][0],
                               alarm_type="ambient_temp_high") is None
+
+
+async def test_a_hall_losing_its_crahs_reads_as_one_incident(session):
+    """hall-crahs, 2026-11-04: seven CRAHs down, 90 servers at critical inlet.
+
+    Before the fix that was 7 + 90 lines. Now: one incident, the other units
+    as peers, ONE visible critical per kind, the rest folded.
+    """
+    s = session
+    h = await _hall(s)
+    crahs = (await s.execute(text("""
+        SELECT id::text FROM device WHERE room_id = CAST(:r AS uuid) AND device_type = 'crah'
+         ORDER BY name LIMIT 2"""), {"r": h["room"]})).scalars().all()
+    servers = (await s.execute(text("""
+        SELECT id::text FROM device WHERE room_id = CAST(:r AS uuid) AND device_type = 'server'
+         ORDER BY name LIMIT 3"""), {"r": h["room"]})).scalars().all()
+    first = await _raise(s, crahs[0], "plant_unit_stopped", ago_s=300)
+    await _raise(s, crahs[1], "plant_unit_stopped", ago_s=290)
+    hot = []
+    for i, srv in enumerate(servers):
+        a = await _raise(s, srv, "inlet_temp_critical", "CRITICAL", ago_s=200 - i,
+                         category="environmental")
+        got = await cc.correlate(s, alarm={**a, "metric_key": "inlet_temperature"},
+                                 device_id=srv, alarm_type="inlet_temp_critical")
+        assert got and got["id"] == first["id"]
+        hot.append(a["id"])
+    assert not (await _row(s, hot[0]))["is_symptom"]          # the one that speaks
+    assert (await _row(s, hot[1]))["is_symptom"] and (await _row(s, hot[2]))["is_symptom"]
+
+    await correlator.refresh_incidents(s)
+    inc = await correlator.list_incidents(s, states=["open"], device_id=None, limit=10)
+    assert len(inc) == 1 and "1 more cooling unit" in inc[0]["title"]
+    roles = sorted(a["role"] for a in (await correlator.get_incident(s, inc[0]["id"]))["alarms"])
+    assert roles == ["folded", "folded", "member", "peer", "root"]

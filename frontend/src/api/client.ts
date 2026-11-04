@@ -4414,7 +4414,7 @@ export interface AnomalyIncidentAlarm {
   alarm_type: string; instance: string; severity: string; state: string;
   message: string | null; first_seen: string; cleared_at: string | null;
   is_symptom: boolean; root_cause_alarm_id: string | null;
-  role: 'root' | 'folded' | 'member'; tier: string | null;
+  role: 'root' | 'peer' | 'folded' | 'member'; tier: string | null;
 }
 export interface AnomalyIncidentDetail extends AnomalyIncident {
   alarms: AnomalyIncidentAlarm[];

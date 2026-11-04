@@ -123,7 +123,18 @@ THERMAL_SYMPTOMS = frozenset({
     "sensor_ambient_temp_high", "sensor_ambient_temp_critical",
     "sensor_mid_temp_high", "sensor_outlet_temp_high", "pdu_temp_high",
     "inlet_rate_of_change", "cpu_temp_high", "cpu_temp_critical",
+    # a server's own inlet sensor (Redfish/IPMI), the densest signal there is
+    "inlet_temp_high", "inlet_temp_critical",
 })
+
+#: The same, by what was measured: an operator's own rule on these metrics
+#: is a heat alarm whatever it was named.
+THERMAL_METRICS = frozenset({"inlet_temperature", "ambient_temperature",
+                             "cpu_temperature", "exhaust_temperature"})
+
+
+def is_thermal(alarm_type: str, metric_key: str | None = None) -> bool:
+    return alarm_type in THERMAL_SYMPTOMS or (metric_key or "") in THERMAL_METRICS
 
 
 _COOLING_PREFIXES = ("crah_", "crac_", "chiller_", "cdu_", "cooling_", "tower_",
@@ -147,10 +158,11 @@ def root_eligible(alarm_type: str, category: str | None, tier: str,
     return False
 
 
-def symptom_eligible(alarm_type: str, category: str | None, tier: str | None) -> bool:
+def symptom_eligible(alarm_type: str, category: str | None, tier: str | None,
+                     metric_key: str | None = None) -> bool:
     """Can this alarm be the consequence of something upstream?"""
     if tier in ("server", "zone"):
-        return alarm_type in THERMAL_SYMPTOMS
+        return is_thermal(alarm_type, metric_key)
     if tier in ("unit", "plant"):
         # A CRAH discharging warm because the chiller tripped; a chiller
         # stopped because its MCC tripped.
@@ -158,13 +170,14 @@ def symptom_eligible(alarm_type: str, category: str | None, tier: str | None) ->
     return False
 
 
-def might_take_part(alarm_type: str, category: str | None) -> bool:
+def might_take_part(alarm_type: str, category: str | None,
+                    metric_key: str | None = None) -> bool:
     """A check on the name alone, so the raise path pays nothing for the rest.
 
     A trap-raised alarm arrives without its category (the device's role
     decides it later), hence the name prefixes.
     """
-    return alarm_type in THERMAL_SYMPTOMS or _is_cooling_condition(alarm_type, category)
+    return is_thermal(alarm_type, metric_key) or _is_cooling_condition(alarm_type, category)
 
 
 LEAD_S = 600          # a root may start this long after its symptom
@@ -292,18 +305,22 @@ def _ts(v: Any) -> float:
 
 def pick_root(graph: CoolingGraph, symptom: dict[str, Any],
               open_alarms: list[dict[str, Any]],
-              fire_rooms: frozenset[str] = frozenset()) -> dict[str, Any] | None:
+              fire_rooms: frozenset[str] = frozenset(),
+              representatives: dict[tuple[str, str], str] | None = None,
+              ) -> dict[str, Any] | None:
     """The alarm upstream of `symptom` that best explains it, or None.
 
     `open_alarms` are visible open alarms (not symptoms, not shelved). The
     highest tier wins - a chiller trip explains a CRAH's warm discharge, which
     explains the rack - then the earliest onset, then the id for a stable tie.
-    The returned dict gains `tier` and `suppress`.
+    `representatives` maps (root id, alarm type) to the one visible alarm
+    already speaking for that kind of consequence. The returned dict gains
+    `tier`, `suppress` and `representative`.
     """
     sym_dev = symptom["device_id"]
     node = graph.nodes.get(sym_dev)
     if node is None or not symptom_eligible(symptom["alarm_type"], symptom.get("category"),
-                                            node.tier):
+                                            node.tier, symptom.get("metric_key")):
         return None
     anc = graph.ancestors(sym_dev)
     if not anc:
@@ -333,9 +350,17 @@ def pick_root(graph: CoolingGraph, symptom: dict[str, Any],
     if best is None:
         return None
     _, root, at = best
-    suppress = (SEVERITY_RANK.get(symptom["severity"], 9)
-                >= SEVERITY_RANK.get(root["severity"], 9))
+    worse = (SEVERITY_RANK.get(symptom["severity"], 9)
+             < SEVERITY_RANK.get(root["severity"], 9))
+    # A consequence worse than its cause stays visible - ONE of each kind.
+    # Ninety servers at critical inlet under one stopped hall are one
+    # condition asking for one action (restore the cooling, shed the hall's
+    # load): the first says it and the rest fold under the cause. hall-crahs
+    # left 90 critical lines on the console before this.
+    rep = (representatives or {}).get((root["id"], symptom["alarm_type"]))
+    suppress = not worse or (rep is not None and rep != symptom["id"])
     return {**root, "tier": at, "suppress": suppress,
+            "representative": worse and not suppress,
             "device_name": graph.nodes[root["device_id"]].name}
 
 
@@ -381,11 +406,27 @@ async def load_graph(session: AsyncSession) -> CoolingGraph:
 
 _OPEN_VISIBLE = """
     SELECT a.id::text AS id, a.device_id::text AS device_id, a.alarm_type,
-           a.instance, a.category, a.severity::text AS severity, a.first_seen
+           a.instance, a.category, a.metric_key, a.severity::text AS severity, a.first_seen
       FROM alarm a
      WHERE a.state <> 'CLEARED' AND NOT a.is_symptom
        AND a.shelved_by_window IS NULL
 """
+
+#: The visible alarm already speaking for each kind of consequence of a root.
+_REPRESENTATIVES = """
+    SELECT attributes->'l5'->>'root' AS root, alarm_type, id::text AS id, first_seen
+      FROM alarm
+     WHERE state <> 'CLEARED' AND NOT is_symptom AND attributes ? 'l5'
+     ORDER BY first_seen
+"""
+
+
+async def representatives(session: AsyncSession) -> dict[tuple[str, str], str]:
+    rows = (await session.execute(text(_REPRESENTATIVES))).mappings().all()
+    out: dict[tuple[str, str], str] = {}
+    for r in rows:
+        out.setdefault((r["root"], r["alarm_type"]), r["id"])
+    return out
 
 
 async def fire_rooms(session: AsyncSession) -> frozenset[str]:
@@ -425,19 +466,20 @@ async def correlate(session: AsyncSession, *, alarm: dict[str, Any], device_id: 
     checked against two small sets before anything touches the database.
     Returns the root (with `layer`, `device_name`, `suppress`) or None.
     """
-    if not might_take_part(alarm_type, alarm.get("category")):
+    metric_key = alarm.get("metric_key")
+    if not might_take_part(alarm_type, alarm.get("category"), metric_key):
         return None
     graph = await load_graph(session)
     node = graph.nodes.get(device_id)
     if node is None or node.tier is None:
         return None
-    if node.tier in ("server", "zone") and alarm_type not in THERMAL_SYMPTOMS:
+    if node.tier in ("server", "zone") and not is_thermal(alarm_type, metric_key):
         return None
     category = alarm.get("category")
     if category is None and node.tier in ("unit", "plant"):
         category = await session.scalar(text(
             "SELECT category FROM alarm WHERE id = CAST(:id AS uuid)"), {"id": alarm["id"]})
-    if not symptom_eligible(alarm_type, category, node.tier):
+    if not symptom_eligible(alarm_type, category, node.tier, metric_key):
         return None
     anc = graph.ancestors(device_id)
     if not anc:
@@ -446,9 +488,10 @@ async def correlate(session: AsyncSession, *, alarm: dict[str, Any], device_id: 
        AND a.device_id = ANY(CAST(:devs AS uuid[]))
     """), {"devs": list(anc)})).mappings().all()
     sym = {"id": alarm["id"], "device_id": device_id, "alarm_type": alarm_type,
-           "category": category, "severity": alarm["severity"],
+           "category": category, "metric_key": metric_key, "severity": alarm["severity"],
            "first_seen": alarm.get("first_seen") or datetime.now(UTC)}
-    root = pick_root(graph, sym, [dict(r) for r in rows], await fire_rooms(session))
+    root = pick_root(graph, sym, [dict(r) for r in rows], await fire_rooms(session),
+                     await representatives(session))
     if root is None:
         return None
     await mark(session, alarm_id=alarm["id"], root=root)
@@ -467,23 +510,27 @@ async def sweep(session: AsyncSession) -> dict[str, int]:
     now = datetime.now(UTC)
     visible = [dict(r) for r in (await session.execute(text(_OPEN_VISIBLE))).mappings().all()]
     fires = await fire_rooms(session)
+    reps = await representatives(session)
+    tied = set(reps.values())
     recent = now.timestamp() - 2 * LAG_S
     adopted = 0
-    for a in visible:
+    # Oldest first, so the first of a kind is the one that stays visible.
+    for a in sorted(visible, key=lambda r: (_ts(r["first_seen"]), r["id"])):
         if _ts(a["first_seen"]) < recent:
             continue
         node = graph.nodes.get(a["device_id"])
-        if node is None or not symptom_eligible(a["alarm_type"], a.get("category"), node.tier):
+        if node is None or not symptom_eligible(a["alarm_type"], a.get("category"), node.tier,
+                                                a.get("metric_key")):
             continue
-        root = pick_root(graph, a, visible, fires)
+        root = pick_root(graph, a, visible, fires, reps)
         if root is None:
             continue
-        already = (await session.execute(text(
-            "SELECT attributes->'l5'->>'root' FROM alarm WHERE id = CAST(:id AS uuid)"),
-            {"id": a["id"]})).scalar()
-        if already == root["id"] and not root["suppress"]:
-            continue
+        if root["representative"]:
+            reps.setdefault((root["id"], a["alarm_type"]), a["id"])
+            if a["id"] in tied:
+                continue                       # already tied, and still the visible one
         await mark(session, alarm_id=a["id"], root=root, now=now)
+        tied.add(a["id"])
         adopted += 1
 
     released = (await session.execute(text("""

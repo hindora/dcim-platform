@@ -74,7 +74,9 @@ export function IncidentTree({ deviceId, alarmId, heading = true }: {
       ) : (
         <>
           <Lines label="Cause" rows={alarms.filter((a) => a.role === 'root')} />
-          <Lines label="Kept visible: worse than the cause"
+          <Lines label="Other cooling units down with it"
+                 rows={alarms.filter((a) => a.role === 'peer')} />
+          <Lines label="Kept visible: worse than the cause, one of each kind"
                  rows={alarms.filter((a) => a.role === 'member')} />
           <Lines label="Folded under it" rows={alarms.filter((a) => a.role === 'folded')} />
         </>

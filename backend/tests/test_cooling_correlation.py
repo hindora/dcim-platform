@@ -86,6 +86,30 @@ def test_a_consequence_worse_than_its_cause_stays_visible():
     assert root["id"] == "r" and not root["suppress"]
 
 
+def test_only_the_first_worse_consequence_of_a_kind_stays_visible():
+    g = graph()
+    root = alarm("r", "crah1", "crah_high_temp", "MAJOR")
+    first = alarm("s1", "srv_air", "inlet_temp_critical", "CRITICAL", T0 + 60)
+    again = alarm("s2", "srv_liq", "inlet_temp_critical", "CRITICAL", T0 + 90)
+    reps = {("r", "inlet_temp_critical"): "s1"}
+    assert cc.pick_root(g, first, [root], representatives=reps)["suppress"] is False
+    got = cc.pick_root(g, again, [root], representatives=reps)
+    assert got["suppress"] and not got["representative"]
+    # A different kind of consequence gets its own visible line.
+    cpu = alarm("s3", "srv_air", "cpu_temp_critical", "CRITICAL", T0 + 120)
+    assert cc.pick_root(g, cpu, [root], representatives=reps)["representative"]
+
+
+def test_a_server_inlet_alarm_is_heat_by_name_or_by_metric():
+    g = graph()
+    root = [alarm("r", "crah1", "plant_unit_stopped")]
+    assert cc.pick_root(g, alarm("s", "srv_air", "inlet_temp_high", "WARNING", T0 + 60), root)
+    custom = {**alarm("s", "srv_air", "hall_b_custom_rule", "WARNING", T0 + 60),
+              "metric_key": "inlet_temperature"}
+    assert cc.pick_root(g, custom, root)
+    assert cc.might_take_part("hall_b_custom_rule", None, "inlet_temperature")
+
+
 def test_the_highest_tier_wins_then_the_earliest():
     g = graph()
     sym = alarm("s", "probe", "ambient_temp_high", t=T0 + 600)
@@ -176,6 +200,6 @@ def test_the_summary_says_what_was_folded_and_what_was_kept():
     assert title == "CRAH1: plant unit stopped"
     assert "3 downstream alarms (2 rack and room sensors, 1 IT equipment)" in summary
     assert "2 folded under it" in summary
-    assert "1 more severe than the cause and kept visible" in summary
+    assert "1 more severe than the cause kept visible, one of each kind" in summary
     assert "1 anomaly finding on the same chain" in summary
     assert "tied to the unit by room" in summary

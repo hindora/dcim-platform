@@ -405,7 +405,8 @@ class AlarmService:
                         "root_device": root["device_name"]})
 
         await self._cooling_root(session, alarm, device_id=device_id,
-                                 alarm_type=alarm_type, category=None, actor="device")
+                                 alarm_type=alarm_type, category=None,
+                                 metric_key=metric_key, actor="device")
         await self._adopt_orphans(session, alarm, device_id=device_id,
                                   alarm_type=alarm_type, instance=instance,
                                   actor="device")
@@ -546,7 +547,8 @@ class AlarmService:
             detail={"root": root["id"], "reason": reason})
 
     async def _cooling_root(self, session, alarm: dict, *, device_id: str,
-                            alarm_type: str, category: str | None, actor: str) -> None:
+                            alarm_type: str, category: str | None,
+                            metric_key: str | None, actor: str) -> None:
         """Tie a heat alarm to the cooling machine that stopped cooling it.
 
         After the dependency check: an alarm already explained by a dead
@@ -556,7 +558,8 @@ class AlarmService:
         if alarm.get("is_symptom"):
             return
         root = await cooling_correlation.correlate(
-            session, alarm={**alarm, "category": category or alarm.get("category")},
+            session, alarm={**alarm, "category": category or alarm.get("category"),
+                            "metric_key": metric_key or alarm.get("metric_key")},
             device_id=device_id, alarm_type=alarm_type)
         if not root:
             return
@@ -664,7 +667,7 @@ class AlarmService:
 
         await self._cooling_root(session, alarm, device_id=c.key.device_id,
                                  alarm_type=c.key.alarm_type, category=c.category,
-                                 actor="system")
+                                 metric_key=c.metric_key, actor="system")
         await self._adopt_orphans(session, alarm, device_id=c.key.device_id,
                                   alarm_type=c.key.alarm_type,
                                   instance=c.key.instance, actor="system")

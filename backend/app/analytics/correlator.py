@@ -69,8 +69,8 @@ def device_summary(root_name: str, root_type: str, members: list[dict[str, Any]]
     if folded:
         summary += f" {folded} folded under it."
     if shown:
-        summary += (f" {shown} more severe than the cause and kept visible, "
-                    f"since {'it asks' if shown == 1 else 'they ask'} for a different action.")
+        summary += (f" {shown} more severe than the cause kept visible, one of each kind; "
+                    "the rest of the same kind are folded with it.")
     if findings:
         summary += f" {findings} anomaly finding{'s' if findings != 1 else ''} on the same chain."
     if air_by_room:
@@ -112,6 +112,13 @@ async def refresh_incidents(session: AsyncSession, graph: cc.CoolingGraph | None
         m["tier_of_member"] = (node.tier if node else None) or "server"
         g["members"].append(m)
 
+    # Open, visible cooling alarms on units: candidate peers of a unit root.
+    unit_alarms = [dict(r) for r in (await session.execute(text(cc._OPEN_VISIBLE)))
+                   .mappings().all()
+                   if (graph.nodes.get(r["device_id"]) is not None
+                       and graph.nodes[r["device_id"]].tier == "unit"
+                       and cc.root_eligible(r["alarm_type"], r["category"], "unit"))]
+
     findings = [dict(r) for r in (await session.execute(text("""
         SELECT id::text AS id, device_id::text AS device_id, first_seen
           FROM anomaly_finding
@@ -137,6 +144,23 @@ async def refresh_incidents(session: AsyncSession, graph: cc.CoolingGraph | None
             and tier in ("unit", "plant", "power")
         title, summary = device_summary(rnode.name if rnode else rdev, root["alarm_type"],
                                         g["members"], len(linked), air)
+        # The other air units of the same room that went down with it. Each
+        # is its own equipment condition and stays visible, but seven CRAHs
+        # stopping together are one event, and usually one cause (their
+        # feeder, their controls) that the incident should put side by side.
+        peers = [p for p in unit_alarms
+                 if p["device_id"] != rdev and rnode is not None
+                 and graph.nodes.get(p["device_id"]) is not None
+                 and graph.nodes[p["device_id"]].room_id == rnode.room_id
+                 and graph.nodes[p["device_id"]].tier == "unit"
+                 and abs(p["first_seen"].timestamp() - root["first_seen"].timestamp())
+                 <= cc.LEAD_S]
+        if peers:
+            n_units = len({p["device_id"] for p in peers}) + 1
+            title += f" and {n_units - 1} more cooling unit{'s' if n_units > 2 else ''}"
+            summary = (f"{n_units} cooling units in the room stopped or faulted within "
+                       f"{cc.LEAD_S // 60} min of each other; look for what they share "
+                       "(feeder, controls, chilled water) first. " + summary)
         evidence = {
             "v_l5": 1, "kind": "device",
             "root": {"alarm_id": root["id"], "alarm_type": root["alarm_type"],
@@ -149,10 +173,11 @@ async def refresh_incidents(session: AsyncSession, graph: cc.CoolingGraph | None
             "worst": _worst([m["severity"] for m in g["members"]] + [root["severity"]]),
             "air_side": "room" if air else None,
             "finding_ids": [f["id"] for f in linked],
+            "peer_alarm_ids": [p["id"] for p in peers],
         }
         key = f"device:{rdev}"
         seen_keys.add(key)
-        alarm_ids = list(g["roots"]) + [m["id"] for m in g["members"]]
+        alarm_ids = list(g["roots"]) + [p["id"] for p in peers] + [m["id"] for m in g["members"]]
         inc_id, created = await _upsert(
             session, key=key, tier=tier, root_device=rdev, root_alarm=root["id"],
             dc=rnode.datacenter_id if rnode else None, room=rnode.room_id if rnode else None,
@@ -308,7 +333,9 @@ async def get_incident(session: AsyncSession, incident_id: str) -> dict[str, Any
     out["alarms"] = []
     for a in alarms:
         a = dict(a)
+        peers = set((out.get("evidence") or {}).get("peer_alarm_ids") or [])
         a["role"] = ("root" if a["id"] == out["root_alarm_id"]
+                     else "peer" if a["id"] in peers
                      else "folded" if a["is_symptom"] else "member")
         a["tier"] = cc.device_tier(a["device_type"])
         out["alarms"].append(a)
