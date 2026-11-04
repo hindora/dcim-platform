@@ -1794,6 +1794,10 @@ export interface Alarm {
    *  way to ask for closed conditions until there was a lifecycle filter. */
   cleared_at?: string | null;
   is_symptom: boolean;
+  /** Set when the alarm belongs to a cooling incident: the tier of its cause
+   *  (plant, unit, power) and the cause's alarm. */
+  cause_tier?: string | null;
+  cause_alarm_id?: string | null;
   datacenter_code?: string | null;
   room_name?: string | null;
   rack_name?: string | null;
@@ -4427,7 +4431,11 @@ export interface AnomalyIncident {
   member_count: number;
   alarm_count: number;
   evidence: { kind?: 'device' | 'room'; worst?: string; folded?: number;
-              air_side?: 'room' | null; [k: string]: unknown };
+              air_side?: 'room' | null;
+              /** The cascade by room: each room has its own response. */
+              by_room?: { room_id: string | null; room_name: string | null; alarms: number;
+                          devices: number; worst: string }[];
+              [k: string]: unknown };
   opened_at: string;
   last_activity_at: string;
   resolved_at: string | null;

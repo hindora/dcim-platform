@@ -1332,6 +1332,30 @@ button.danger:disabled { color: inherit; border-color: var(--border); }
 .incident-title { font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
 .incident-meta { color: var(--text-muted); font-size: 12px; white-space: nowrap; }
 .incident-summary { grid-column: 1 / -1; color: var(--text-muted); font-size: 13px; }
+/* The cascade by room: each room's line is the way into that room's alarms,
+   folded ones included. The worst severity is in words as well as colour. */
+.incident-rooms { list-style: none; margin: 4px 0 0 3px; padding: 0; display: flex;
+                  flex-wrap: wrap; gap: 6px; }
+.incident-room {
+  display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px;
+  font: inherit; font-size: 12px; color: var(--text); cursor: pointer;
+  padding: 4px 8px; border: 1px solid var(--border); border-left: 3px solid var(--unknown);
+  border-radius: 4px; background: var(--bg-inset);
+}
+.incident-room:hover:not(:disabled) { border-color: var(--border-strong); }
+.incident-room:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.incident-room:disabled { cursor: default; opacity: 0.6; }
+.incident-room.sev-critical { border-left-color: var(--critical); }
+.incident-room.sev-major { border-left-color: var(--major); }
+.incident-room.sev-minor, .incident-room.sev-warning { border-left-color: var(--warn); }
+.incident-room-name { font-weight: 600; }
+.incident-room-count, .incident-room-sev { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.home-incidents:empty { display: none; }
+.home-incidents { margin: 12px 0 0; }
+/* An alarm that belongs to an incident, said beside its name: an IT alarm by
+   owner, a cooling one by cause. */
+.alarm-cause { margin-left: 8px; font-size: 11px; padding: 0 6px; border-radius: 3px;
+               border: 1px solid var(--cat-cool); color: var(--text); white-space: nowrap; }
 @media (max-width: 640px) {
   .incident { grid-template-columns: minmax(0, 1fr); }
   .incident-meta { white-space: normal; }

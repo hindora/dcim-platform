@@ -720,8 +720,10 @@ class AlarmService:
         other side. Neither adopts anything. By the next pass both trips are
         committed, and the load reads as dark.
 
-        Returns no actions: the adopted alarms change only in whether they are
-        shown, and the console re-reads that on its own poll.
+        The adopted alarms change only in whether they are shown, and the
+        console re-reads that on its own poll, so they make no actions. The
+        actions returned are the cooling cascades' common alarms (raised,
+        escalated, cleared), which notify like any other alarm.
         """
         adopted_total = 0
         touched: set[str] = set()
@@ -751,6 +753,7 @@ class AlarmService:
         # The cooling chain: a CRAH alarm that finished its dwell after the
         # rack probe it explains, and the end of the air-recovery hold. One
         # worker at a time; the other finds the lock taken and skips.
+        common: list[AlarmAction] = []
         if (await session.execute(text(
                 "SELECT pg_try_advisory_xact_lock(hashtext('dcim.cooling_correlation'))"))
                 ).scalar():
@@ -761,13 +764,16 @@ class AlarmService:
                     # The incident rows follow the marks just made. Imported
                     # here: the analytics package sits above the alarm layer.
                     from app.analytics import correlator
-                    await correlator.refresh_incidents(session)
+                    out = await correlator.refresh_incidents(session)
+                    # The cascade's common alarm goes out like any other: to
+                    # the console, the email rules and the ticket outbox.
+                    common = [AlarmAction(kind, alarm) for kind, alarm in out["actions"]]
             except Exception as exc:
                 log.error("cooling correlation sweep failed", error=str(exc), exc_info=True)
         if touched:
             await repo.refresh_device_alarm_state(session, sorted(touched))
             log.info("late-root sweep adopted alarms", count=adopted_total)
-        return []
+        return common
 
     async def sweep_dead_endpoints(self, session: AsyncSession) -> list[AlarmAction]:
         """Clear alarms whose endpoint has been retired or removed.

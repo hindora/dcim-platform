@@ -468,6 +468,11 @@ _ALARM_SELECT = """
            a.acknowledged_at, a.acknowledged_by, a.cleared_at,
            a.is_symptom, a.root_cause_alarm_id::text,
            a.category, a.detection, a.response_class,
+           -- The cooling incident this alarm belongs to, when it does: a server
+           -- at critical CPU under a stopped chiller plant is an IT alarm by
+           -- owner and a cooling one by cause, and the row should say both.
+           a.attributes->'l5'->>'tier' AS cause_tier,
+           a.attributes->'l5'->>'root' AS cause_alarm_id,
            -- Why this alarm is not on the console, for the one view that shows
            -- shelved rows. NULL on everything an operator sees by default.
            a.shelved_reason,

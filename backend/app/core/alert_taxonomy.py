@@ -184,6 +184,8 @@ DETECTION_BY_SOURCE: dict[str, str] = {
     "bacnet": STATE,
     "modbus": STATE,
     "analytics": DERIVED,
+    # The cooling correlator's common alarm for a cascade.
+    "correlation": DERIVED,
     "forecast": FORECAST,
     # A sweep compared what answered with what is recorded.
     "discovery": DERIVED,
@@ -468,6 +470,14 @@ BY_ALARM_TYPE: dict[str, str] = {
     "server_cpu_saturated": IT_EQUIPMENT,
     "cpu_temp_high": IT_EQUIPMENT,
     "cpu_temp_critical": IT_EQUIPMENT,
+    # A server's INLET is the air it breathes - the point ASHRAE's envelope is
+    # judged at - so it is the space's condition whichever device reports it.
+    # Filed by the reporting device's role it read as an IT fault: 180 servers
+    # at critical inlet under a stopped chiller plant, all in the IT column.
+    "inlet_temp_high": ENVIRONMENTAL,
+    "inlet_temp_critical": ENVIRONMENTAL,
+    # The common alarm a cooling cascade raises (analytics/correlator.py).
+    "cascade_incident": COOLING,
     "memory_high": IT_EQUIPMENT,
     "disk_high": IT_EQUIPMENT,
     "fan_failure": IT_EQUIPMENT,

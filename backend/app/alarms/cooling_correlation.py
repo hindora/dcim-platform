@@ -104,6 +104,7 @@ def device_tier(device_type: str) -> str | None:
 
 #: Cooling conditions that do not remove cooling. See the module docstring.
 NOT_A_CAPACITY_LOSS = frozenset({
+    "cascade_incident",       # the correlator's own common alarm (analytics/correlator.py)
     "crah_filter_dirty", "cooling_filter_dirty", "crah_low_delta_t",
     "chiller_low_delta_t", "crah_valve_hunting", "valve_hunting",
     "chiller_short_cycling", "cdu_condensation_risk", "tower_basin_imbalance",
@@ -306,7 +307,7 @@ def _ts(v: Any) -> float:
 def pick_root(graph: CoolingGraph, symptom: dict[str, Any],
               open_alarms: list[dict[str, Any]],
               fire_rooms: frozenset[str] = frozenset(),
-              representatives: dict[tuple[str, str], str] | None = None,
+              representatives: dict[tuple[str, str, str], str] | None = None,
               ) -> dict[str, Any] | None:
     """The alarm upstream of `symptom` that best explains it, or None.
 
@@ -351,14 +352,19 @@ def pick_root(graph: CoolingGraph, symptom: dict[str, Any],
     if best is None:
         return None
     _, root, at = best
+    # A consequence worse than its cause stays visible - ONE of each kind PER
+    # ROOM. Ninety servers at critical inlet in one hall are one condition
+    # asking one action of the people in that hall (restore its cooling, shed
+    # its load): the first says it and the rest fold under the cause. Per
+    # room, not per site: ISA-18.2 keeps a suppression group inside one area,
+    # and a site-wide plant failure that showed Hall B's critical servers only
+    # as "the same as Hall A's" told Hall B nothing (all-chillers, 2026-11-04).
+    #
+    # A cause that has CLEARED speaks for nothing: its consequences say it
+    # themselves, or a plant that is still down reads as no lines at all.
     worse = (SEVERITY_RANK.get(symptom["severity"], 9)
-             < SEVERITY_RANK.get(root["severity"], 9))
-    # A consequence worse than its cause stays visible - ONE of each kind.
-    # Ninety servers at critical inlet under one stopped hall are one
-    # condition asking for one action (restore the cooling, shed the hall's
-    # load): the first says it and the rest fold under the cause. hall-crahs
-    # left 90 critical lines on the console before this.
-    rep = (representatives or {}).get((root["id"], symptom["alarm_type"]))
+             < SEVERITY_RANK.get(root["severity"], 9)) or bool(root.get("cleared"))
+    rep = (representatives or {}).get(rep_key(root["id"], node.room_id, symptom["alarm_type"]))
     suppress = not worse or (rep is not None and rep != symptom["id"])
     return {**root, "tier": at, "suppress": suppress,
             "representative": worse and not suppress,
@@ -442,20 +448,26 @@ async def recent_roots(session: AsyncSession, devices: list[str] | None = None
     return [dict(r) for r in (await session.execute(text(q), p)).mappings().all()]
 
 
-#: The visible alarm already speaking for each kind of consequence of a root.
+#: The visible alarm already speaking for each kind of consequence of a root,
+#: in each room.
 _REPRESENTATIVES = """
-    SELECT attributes->'l5'->>'root' AS root, alarm_type, id::text AS id, first_seen
-      FROM alarm
-     WHERE state <> 'CLEARED' AND NOT is_symptom AND attributes ? 'l5'
-     ORDER BY first_seen
+    SELECT a.attributes->'l5'->>'root' AS root, a.alarm_type, a.id::text AS id,
+           d.room_id::text AS room_id, a.first_seen
+      FROM alarm a JOIN device d ON d.id = a.device_id
+     WHERE a.state <> 'CLEARED' AND NOT a.is_symptom AND a.attributes ? 'l5'
+     ORDER BY a.first_seen
 """
 
 
-async def representatives(session: AsyncSession) -> dict[tuple[str, str], str]:
+def rep_key(root_id: str, room_id: str | None, alarm_type: str) -> tuple[str, str, str]:
+    return (root_id, room_id or "", alarm_type)
+
+
+async def representatives(session: AsyncSession) -> dict[tuple[str, str, str], str]:
     rows = (await session.execute(text(_REPRESENTATIVES))).mappings().all()
-    out: dict[tuple[str, str], str] = {}
+    out: dict[tuple[str, str, str], str] = {}
     for r in rows:
-        out.setdefault((r["root"], r["alarm_type"]), r["id"])
+        out.setdefault(rep_key(r["root"], r["room_id"], r["alarm_type"]), r["id"])
     return out
 
 
@@ -557,12 +569,26 @@ async def sweep(session: AsyncSession) -> dict[str, int]:
          WHERE s.state <> 'CLEARED' AND s.attributes ? 'l5' AND r.state = 'CLEARED'
     """))).mappings().all()]
     moved = 0
+    spoken = 0
     for a in orphaned:
+        node = graph.nodes.get(a["device_id"])
+        room = node.room_id if node else None
         root = pick_root(graph, a, candidates, fires, reps)
         if root is None or root["id"] == a["old_root"]:
+            # Nothing open explains it any more: its cause cleared and nothing
+            # replaced it. One of each kind in each room comes back into view,
+            # so a plant still down is never a blank console.
+            key = rep_key(a["old_root"], room, a["alarm_type"])
+            if key not in reps:
+                reps[key] = a["id"]
+                await session.execute(text("""
+                    UPDATE alarm SET is_symptom = false, root_cause_alarm_id = NULL,
+                           attributes = jsonb_set(attributes, '{l5,suppressed}', 'false')
+                     WHERE id = CAST(:id AS uuid)"""), {"id": a["id"]})
+                spoken += 1
             continue
         if root["representative"]:
-            reps.setdefault((root["id"], a["alarm_type"]), a["id"])
+            reps.setdefault(rep_key(root["id"], room, a["alarm_type"]), a["id"])
         await session.execute(text("""
             UPDATE alarm SET is_symptom = false, root_cause_alarm_id = NULL
              WHERE id = CAST(:id AS uuid)"""), {"id": a["id"]})
@@ -582,7 +608,7 @@ async def sweep(session: AsyncSession) -> dict[str, int]:
         if root is None:
             continue
         if root["representative"]:
-            reps.setdefault((root["id"], a["alarm_type"]), a["id"])
+            reps.setdefault(rep_key(root["id"], node.room_id, a["alarm_type"]), a["id"])
             if a["id"] in tied:
                 continue                       # already tied, and still the visible one
         await mark(session, alarm_id=a["id"], root=root, now=now)
@@ -604,8 +630,8 @@ async def sweep(session: AsyncSession) -> dict[str, int]:
         RETURNING s.id::text AS id, s.device_id::text AS device_id,
                   s.severity::text AS severity, s.state::text AS state, r.id::text AS root
     """), {"hold": RESTORE_HOLD_S})).mappings().all()
-    if adopted or released or moved:
-        log.info("cooling correlation sweep", adopted=adopted, moved=moved,
+    if adopted or released or moved or spoken:
+        log.info("cooling correlation sweep", adopted=adopted, moved=moved, spoken=spoken,
                  released=sum(1 for r in released if r["state"] != "CLEARED"))
-    return {"adopted": adopted, "moved": moved, "released": len(released),
+    return {"adopted": adopted, "moved": moved, "spoken": spoken, "released": len(released),
             "released_open": sum(1 for r in released if r["state"] != "CLEARED")}

@@ -145,20 +145,28 @@ async def test_symptoms_are_held_while_the_air_recovers_then_released(session):
     root = await _raise(s, h["crah"], "plant_unit_stopped", ago_s=300)
     a = await _raise(s, h["probes"][0], "ambient_temp_high", ago_s=200,
                      category="environmental")
-    await cc.correlate(s, alarm=a, device_id=h["probes"][0], alarm_type="ambient_temp_high")
+    b = await _raise(s, h["probes"][1], "ambient_temp_high", ago_s=190,
+                     category="environmental")
+    for x, probe in ((a, h["probes"][0]), (b, h["probes"][1])):
+        await cc.correlate(s, alarm=x, device_id=probe, alarm_type="ambient_temp_high")
     # The root clears; the existing release leaves a cooling symptom to the hold.
     await s.execute(text("UPDATE alarm SET state = 'CLEARED', cleared_at = now() "
                          "WHERE id = CAST(:id AS uuid)"), {"id": root["id"]})
     assert await correlation.release_symptoms(s, root["id"]) == []
-    await cc.sweep(s)
-    assert (await _row(s, a["id"]))["is_symptom"]          # still inside the hold
+    out = await cc.sweep(s)
+    # Inside the hold, with its cause gone: one of the kind speaks for the
+    # room, the other stays folded. The room still says it is hot.
+    assert out["spoken"] == 1
+    seen = [(await _row(s, x["id"]))["is_symptom"] for x in (a, b)]
+    assert sorted(seen) == [False, True]
     await s.execute(text("UPDATE alarm SET cleared_at = now() - make_interval(secs => :h) "
                          "WHERE id = CAST(:id AS uuid)"),
                     {"id": root["id"], "h": cc.RESTORE_HOLD_S + 60})
     out = await cc.sweep(s)
-    assert out["released_open"] == 1
-    r = await _row(s, a["id"])
-    assert not r["is_symptom"] and r["l5"] is None
+    assert out["released_open"] == 2
+    for x in (a, b):
+        r = await _row(s, x["id"])
+        assert not r["is_symptom"] and r["l5"] is None
     await correlator.refresh_incidents(s)
     assert await correlator.list_incidents(s, states=["open"], device_id=None, limit=10) == []
 

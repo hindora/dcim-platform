@@ -174,9 +174,12 @@ def test_shared_alarm_types_resolve_by_role():
     assert tax.classify("power_draw_high", role="it",
                         metric_key="power_draw") == tax.IT_EQUIPMENT
 
-    # Same for intake air, which servers and rack sensors both report.
+    # Intake air is NOT shared that way: a server's inlet is the air it
+    # breathes, the point ASHRAE's envelope is judged at, so it is the space's
+    # condition whoever reports it. Filed by role it put 180 servers at
+    # critical inlet in the IT column under a stopped chiller plant.
     assert tax.classify("inlet_temp_high", role="it",
-                        metric_key="inlet_temperature") == tax.IT_EQUIPMENT
+                        metric_key="inlet_temperature") == tax.ENVIRONMENTAL
     assert tax.classify("inlet_temp_high", role="environment",
                         metric_key="inlet_temperature") == tax.ENVIRONMENTAL
 
@@ -290,11 +293,14 @@ NON_TRAP_ALARM_TYPES = frozenset({
     # docs/26 Phase 6 / Phase 7 (alarms/platform.py)
     "pool_below_min_members", "collector_outdated",
     "collector_misconfigured", "collector_duplicate",
+    # the cooling correlator's common alarm for a cascade (analytics/correlator.py)
+    "cascade_incident",
     # raised by discovery when what answers disagrees with inventory
     # (services/discovery_alarms.py)
     "discovery_unrecorded", "discovery_missing", "discovery_replaced",
     # threshold rules over polled telemetry
     "cpu_high", "cpu_saturated", "server_cpu_saturated", "cpu_temp_high",
+    "inlet_temp_high", "inlet_temp_critical",
     "memory_high", "disk_high", "if_errors_high", "if_discards_high",
     "ambient_temp_high", "ambient_temp_critical", "humidity_high",
     "humidity_low", "airflow_high", "airflow_low", "power_load_high",

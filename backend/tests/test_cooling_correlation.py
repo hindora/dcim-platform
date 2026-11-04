@@ -91,7 +91,8 @@ def test_only_the_first_worse_consequence_of_a_kind_stays_visible():
     root = alarm("r", "crah1", "crah_high_temp", "MAJOR")
     first = alarm("s1", "srv_air", "inlet_temp_critical", "CRITICAL", T0 + 60)
     again = alarm("s2", "srv_liq", "inlet_temp_critical", "CRITICAL", T0 + 90)
-    reps = {("r", "inlet_temp_critical"): "s1"}
+    # Keyed by root, ROOM and kind: srv_air and srv_liq share the hall.
+    reps = {("r", "hall", "inlet_temp_critical"): "s1"}
     assert cc.pick_root(g, first, [root], representatives=reps)["suppress"] is False
     got = cc.pick_root(g, again, [root], representatives=reps)
     assert got["suppress"] and not got["representative"]
@@ -215,3 +216,22 @@ def test_a_cause_cleared_inside_the_hold_still_explains_new_heat():
     live = alarm("o", "chiller", "plant_unit_stopped", t=T0 + 120)
     # An open cause of the same tier wins over a cleared one, though later.
     assert cc.pick_root(g, sym, [gone, live])["id"] == "o"
+
+
+def test_each_room_gets_its_own_voice():
+    """all-chillers 2026-11-04: one critical line for the whole site told the
+    people in the other hall nothing. One per room and kind."""
+    g = graph()
+    root = alarm("r", "chiller", "plant_unit_stopped", "MAJOR")
+    reps = {("r", "hall", "inlet_temp_critical"): "s1"}
+    other_room = alarm("s9", "netsrv", "inlet_temp_critical", "CRITICAL", T0 + 60)
+    got = cc.pick_root(g, other_room, [root], representatives=reps)
+    assert got["representative"] and not got["suppress"]
+
+
+def test_a_cleared_cause_speaks_for_nothing():
+    g = graph()
+    gone = {**alarm("c", "chiller", "plant_unit_stopped", "MAJOR"), "cleared": True}
+    warm = alarm("s", "probe", "ambient_temp_high", "WARNING", T0 + 60)
+    got = cc.pick_root(g, warm, [gone])
+    assert got["id"] == "c" and got["representative"]       # the first one is seen

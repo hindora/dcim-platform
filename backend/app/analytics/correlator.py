@@ -130,6 +130,10 @@ async def refresh_incidents(session: AsyncSession, graph: cc.CoolingGraph | None
 
     seen_keys: set[str] = set()
     opened = updated = 0
+    actions: list[tuple[str, dict[str, Any]]] = []
+    common_on: set[str] = set()
+    room_names = {r["id"]: r["name"] for r in (await session.execute(text(
+        "SELECT id::text AS id, name FROM room"))).mappings().all()}
     for rdev, g in groups.items():
         own = ([r for r in g["roots"].values() if r["device_id"] == rdev]
                or list(g["roots"].values()))
@@ -188,6 +192,7 @@ async def refresh_incidents(session: AsyncSession, graph: cc.CoolingGraph | None
             "air_side": "room" if air else None,
             "finding_ids": [f["id"] for f in linked],
             "peer_alarm_ids": [p["id"] for p in peers],
+            "by_room": _by_room(graph, g["members"], room_names),
         }
         key = f"device:{rdev}"
         seen_keys.add(key)
@@ -201,6 +206,19 @@ async def refresh_incidents(session: AsyncSession, graph: cc.CoolingGraph | None
             opened_at=root["first_seen"], now=now)
         opened += created
         updated += not created
+        # ISA-18.2 flood suppression: the consequences are folded, and in their
+        # place ONE common alarm carries the cascade at its worst member's
+        # severity - the alarm an email rule and a ticket follow. Only for a
+        # cascade (three devices or more): one hot rack under a CRAH alarm is
+        # already said by the CRAH alarm.
+        member_devs_all = {m["device_id"] for m in g["members"]}
+        if len(member_devs_all) >= CASCADE_MIN_DEVICES:
+            act = await _raise_common(session, rdev=rdev, tier=tier, title=title,
+                                      severity=evidence["worst"], incident_id=inc_id,
+                                      members=len(g["members"]), now=now)
+            if act:
+                actions.append(act)
+            common_on.add(rdev)
         if linked:
             await session.execute(text("""
                 UPDATE anomaly_finding SET incident_id = CAST(:inc AS uuid)
@@ -263,9 +281,71 @@ async def refresh_incidents(session: AsyncSession, graph: cc.CoolingGraph | None
          WHERE state = 'open' AND NOT (root_key = ANY(:keys))
         RETURNING id
     """), {"now": now, "keys": sorted(seen_keys)})).all()
+    stale = (await session.execute(text("""
+        SELECT device_id::text FROM alarm
+         WHERE alarm_type = 'cascade_incident' AND state <> 'CLEARED'
+    """))).scalars().all()
+    from app.repositories import alarms as alarm_repo
+    for dev in stale:
+        if dev in common_on:
+            continue
+        for row in await alarm_repo.clear_alarms(session, device_id=dev,
+                                                 alarm_types=["cascade_incident"],
+                                                 instance="", at=now, by="correlation"):
+            await alarm_repo.record_history(session, alarm_id=row["id"], device_id=dev,
+                                            action="cleared", severity=row["severity"],
+                                            actor="correlation")
+            actions.append(("alarm_cleared", row))
     if opened or resolved:
         log.info("incidents refreshed", opened=opened, updated=updated, resolved=len(resolved))
-    return {"opened": opened, "updated": updated, "resolved": len(resolved)}
+    return {"opened": opened, "updated": updated, "resolved": len(resolved),
+            "actions": actions}
+
+
+#: A cascade, for the common alarm: consequences on this many devices.
+CASCADE_MIN_DEVICES = 3
+
+#: The category of the common alarm, by the tier of its cause.
+_COMMON_CATEGORY = {"power": "power", "plant": "cooling", "loop": "cooling", "unit": "cooling"}
+
+
+def _by_room(graph: cc.CoolingGraph, members: list[dict[str, Any]],
+             names: dict[str, str]) -> list[dict[str, Any]]:
+    """The cascade by room: who is affected where, and how badly. Each room
+    has its own response (its own load to shed, its own doors to open)."""
+    rooms: dict[str, dict[str, Any]] = {}
+    for m in members:
+        node = graph.nodes.get(m["device_id"])
+        rid = (node.room_id if node else None) or ""
+        r = rooms.setdefault(rid, {"room_id": rid or None, "room_name": names.get(rid),
+                                   "alarms": 0, "devices": set(), "severities": []})
+        r["alarms"] += 1
+        r["devices"].add(m["device_id"])
+        r["severities"].append(m["severity"])
+    out = [{"room_id": r["room_id"], "room_name": r["room_name"], "alarms": r["alarms"],
+            "devices": len(r["devices"]), "worst": _worst(r["severities"])}
+           for r in rooms.values()]
+    return sorted(out, key=lambda r: (SEVERITY_RANK.get(r["worst"], 9), -r["alarms"]))
+
+
+async def _raise_common(session: AsyncSession, *, rdev: str, tier: str, title: str,
+                        severity: str, incident_id: str, members: int,
+                        now: datetime) -> tuple[str, dict[str, Any]] | None:
+    from app.repositories import alarms as alarm_repo
+    alarm = await alarm_repo.raise_alarm(
+        session, device_id=rdev, alarm_type="cascade_incident", instance="",
+        severity=severity, source="correlation", observed_at=now,
+        message=f"Cooling incident: {title} ({members} alarms downstream)",
+        category=_COMMON_CATEGORY.get(tier, "cooling"), response_class="alarm",
+        attributes={"incident_id": incident_id})
+    if alarm is None or alarm["change"] == "touched":
+        return None
+    await alarm_repo.record_history(session, alarm_id=alarm["id"], device_id=rdev,
+                                    action="raised" if alarm["change"] == "created"
+                                    else alarm["change"],
+                                    severity=alarm["severity"], actor="correlation",
+                                    detail={"incident_id": incident_id})
+    return ("alarm_created" if alarm["change"] == "created" else "alarm_updated", alarm)
 
 
 def _scope(graph: cc.CoolingGraph, rdev: str, g: dict[str, Any]) -> tuple[str, str] | None:

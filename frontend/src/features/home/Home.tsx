@@ -30,7 +30,7 @@
 
 import { useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   api,
   type AlarmCategory,
@@ -52,6 +52,7 @@ import { SiteDrawer } from './SiteDrawer';
 import { RoomDrawer } from './RoomDrawer';
 import { AlarmLegend } from './AlarmModals';
 import { AlarmPanel } from './AlarmPanel';
+import { IncidentStrip } from '../alarms/IncidentStrip';
 import { Pagination } from '../../components/Pagination';
 import { RailCards } from './RailCards';
 import { toCss } from '../../lib/zoom';
@@ -236,6 +237,7 @@ function IndicatorCells({ alarms, labels, scope, onOpen }: {
 }
 
 export function Home() {
+  const navigate = useNavigate();
   const [tab, setTab] = useState<Tab>('sites');
   const [search, setSearch] = useState('');
   const [drawerSite, setDrawerSite] = useState<SiteRow | null>(null);
@@ -404,6 +406,11 @@ export function Home() {
         })}
         {strip.tipEl}
       </section>
+
+      <div className="home-incidents">
+        <IncidentStrip onOpenAlarm={(id) => navigate(`/alarms/${id}`)}
+                       onRoom={(room) => navigate(`/alarms?room=${room}&symptoms=1`)} />
+      </div>
 
       <div className="home-body">
         <section className="sites-panel">

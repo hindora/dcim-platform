@@ -33,7 +33,8 @@ const DETECTIONS: { key: AlarmDetection; label: string }[] = [
 
 export function AlarmList() {
   const [severity, setSeverity] = useState('');
-  const [includeSymptoms, setIncludeSymptoms] = useState(false);
+  const [params0] = useSearchParams();
+  const [includeSymptoms, setIncludeSymptoms] = useState(params0.get('symptoms') === '1');
   // The selected alarm is the URL, not component state. A condition somebody
   // is looking at has to be something they can send to somebody else: a Jira
   // ticket's back-link, a line pasted into an incident channel, a refresh
@@ -157,8 +158,10 @@ export function AlarmList() {
       )}
 
       <IncidentStrip onOpenAlarm={openAlarm}
-                     onRoom={(room) => setParams((q) => { q.set('room', room); return q; },
-                                                 { replace: true })} />
+                     onRoom={(room) => {
+                       setIncludeSymptoms(true);
+                       setParams((q) => { q.set('room', room); return q; }, { replace: true });
+                     }} />
 
       <div className="toolbar">
         <select value={view} onChange={(e) => setView(e.target.value)}
@@ -216,7 +219,14 @@ export function AlarmList() {
                 <td><Link to={`/devices/${a.device_id}`} onClick={(e) => e.stopPropagation()}>
                   {a.device_name}
                 </Link></td>
-                <td>{humanise(a.alarm_type)}{a.instance ? <span className="muted"> · {a.instance}</span> : null}</td>
+                <td>
+                  {humanise(a.alarm_type)}{a.instance ? <span className="muted"> · {a.instance}</span> : null}
+                  {a.cause_tier && (
+                    <span className="alarm-cause" title="Part of an incident: its cause is upstream">
+                      {a.cause_tier === 'power' ? 'power cause' : 'cooling cause'}
+                    </span>
+                  )}
+                </td>
                 <td className="muted">{a.message}</td>
                 <td className="muted">
                   {[a.datacenter_code, a.room_name, a.rack_name].filter(Boolean).join(' · ') || '—'}
