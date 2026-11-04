@@ -5,8 +5,7 @@ import {
 } from 'react-router-dom';
 import { getToken, onAuthLost, setToken } from './api/client';
 import { Login } from './features/login/Login';
-import { AlarmList } from './features/alarms/AlarmList';
-import { AlarmRules } from './features/alarms/AlarmRules';
+import { AlarmRules } from './features/settings/AlarmRules';
 import { Analytics } from './features/analytics/Analytics';
 import { PlatformHealth } from './features/platform/PlatformHealth';
 import { Appearance } from './features/settings/Appearance';
@@ -84,6 +83,19 @@ const WorldMap = lazy(() => import('./features/world/WorldMap'));
 function SiteRedirect() {
   const { id = '' } = useParams();
   return <Navigate to={`/floorplan?site=${id}`} replace />;
+}
+
+/** /alarms/<id>: the alarm's own address, as tickets and emails carry it.
+ *  Opens the home page with that condition's detail on top. */
+function AlarmRedirect() {
+  const { id } = useParams();
+  return <Navigate to={`/?alarm=${id}`} replace />;
+}
+
+/** /alarms?room=&symptoms=: the old list's room filter, now the home drill. */
+function AlarmsRedirect() {
+  const { search } = useLocation();
+  return <Navigate to={`/${search}`} replace />;
 }
 
 /** The three ways of LOOKING at the estate, grouped under one entry: they
@@ -325,14 +337,12 @@ export default function App() {
           {/* The menu's own name, for a pasted or typed address. */}
           <Route path="/visualization" element={<Navigate to="/connectivity" replace />} />
           <Route path="/topology" element={<Navigate to="/connectivity" replace />} />
-          <Route path="/alarms" element={<Page><AlarmList /></Page>} />
-          {/* Ahead of /alarms/:id, which would take "rules" for an alarm id. */}
-          <Route path="/alarms/rules" element={<Page><AlarmRules /></Page>} />
-          {/* Same component: the id selects, it does not replace the
-              list. An alarm has to be addressable - a Jira back-link,
-              a line pasted into an incident channel - without costing
-              the triage view it was found in. */}
-          <Route path="/alarms/:id" element={<Page><AlarmList /></Page>} />
+          {/* The alarm list is the home page now: the counters open it, a
+              room's row opens the condition. The addresses stay, because a
+              ticket back-link, an email and a pasted line all carry them. */}
+          <Route path="/alarms" element={<AlarmsRedirect />} />
+          <Route path="/alarms/rules" element={<Navigate to="/settings/alarm-rules" replace />} />
+          <Route path="/alarms/:id" element={<AlarmRedirect />} />
           <Route path="/analytics" element={<Page><Analytics /></Page>} />
           <Route path="/platform" element={<Page><PlatformHealth /></Page>} />
           {/* One shell, one section today. A nested route rather than a flat
@@ -349,6 +359,7 @@ export default function App() {
             <Route path="releases" element={<Releases />} />
             <Route path="integrations" element={<Integrations />} />
             <Route path="anomaly-detectors" element={<AnomalyDetectors />} />
+            <Route path="alarm-rules" element={<AlarmRules />} />
             <Route path="notifications" element={<Notifications />} />
             <Route path="organisation" element={<Organisation />} />
             <Route path="appearance" element={<Appearance />} />

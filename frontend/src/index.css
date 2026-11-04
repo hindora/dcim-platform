@@ -1313,55 +1313,14 @@ button.danger:disabled { color: inherit; border-color: var(--border); }
    navigation per row turns that into back-forward-back. Below the breakpoint
    there is no room for both, so the detail takes the column and the list
    waits behind the browser's own back button. */
-/* Open cooling incidents above the alarm list. The left rule carries the
-   worst severity in the cascade; the title says it in words. */
-.incident-strip { margin-bottom: 16px; }
-.incident-strip h3 { margin: 0 0 8px; font-size: 14px; }
-.incident-strip ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
-.incident {
-  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 16px;
-  width: 100%; text-align: left; cursor: pointer; font: inherit; color: var(--text);
-  padding: 10px 12px; border: 1px solid var(--border); border-left: 3px solid var(--unknown);
-  border-radius: 6px; background: var(--bg-raised);
-}
-.incident:hover { background: var(--bg-inset); }
-.incident:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.incident.sev-critical { border-left-color: var(--critical); }
-.incident.sev-major { border-left-color: var(--major); }
-.incident.sev-minor, .incident.sev-warning { border-left-color: var(--warn); }
-.incident-title { font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
-.incident-meta { color: var(--text-muted); font-size: 12px; white-space: nowrap; }
-.incident-summary { grid-column: 1 / -1; color: var(--text-muted); font-size: 13px; }
-/* The cascade by room: each room's line is the way into that room's alarms,
-   folded ones included. The worst severity is in words as well as colour. */
-.incident-rooms { list-style: none; margin: 4px 0 0 3px; padding: 0; display: flex;
-                  flex-wrap: wrap; gap: 6px; }
-.incident-room {
-  display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px;
-  font: inherit; font-size: 12px; color: var(--text); cursor: pointer;
-  padding: 4px 8px; border: 1px solid var(--border); border-left: 3px solid var(--unknown);
-  border-radius: 4px; background: var(--bg-inset);
-}
-.incident-room:hover:not(:disabled) { border-color: var(--border-strong); }
-.incident-room:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.incident-room:disabled { cursor: default; opacity: 0.6; }
-.incident-room.sev-critical { border-left-color: var(--critical); }
-.incident-room.sev-major { border-left-color: var(--major); }
-.incident-room.sev-minor, .incident-room.sev-warning { border-left-color: var(--warn); }
-.incident-room-name { font-weight: 600; }
-.incident-room-count, .incident-room-sev { color: var(--text-muted); font-variant-numeric: tabular-nums; }
-.home-incidents:empty { display: none; }
-.home-incidents { margin: 12px 0 0; }
-/* An alarm that belongs to an incident, said beside its name: an IT alarm by
-   owner, a cooling one by cause. */
-/* The folded part of a room's count, beside the number it is part of. */
+/* The folded part of a room's count, beside the number it is part of, and
+   the room list's toggle for showing those conditions. */
 .qty + .folded, td .folded { display: inline-block; margin-left: 8px; font-size: 11px; color: var(--text-muted); white-space: nowrap; }
-.alarm-cause { margin-left: 8px; font-size: 11px; padding: 0 6px; border-radius: 3px;
-               border: 1px solid var(--cat-cool); color: var(--text); white-space: nowrap; }
-@media (max-width: 640px) {
-  .incident { grid-template-columns: minmax(0, 1fr); }
-  .incident-meta { white-space: normal; }
-}
+.sub-caption:has(.sub-folded) { display: flex; align-items: center; gap: 6px; }
+.sub-caption .sub-folded { margin-left: auto; display: inline-flex; align-items: center; gap: 6px;
+                           font-weight: 400; font-size: 12px; letter-spacing: 0; text-transform: none;
+                           color: var(--text-muted); cursor: pointer; }
+.sub-caption .sub-folded input { margin: 0; }
 
 /* The incident a device roots or sits in: alarm detail pane and 3D panel. */
 .incident-tree { margin-top: 16px; }
@@ -1375,23 +1334,8 @@ button.danger:disabled { color: inherit; border-color: var(--border); }
 .incident-tree-list li > a { overflow-wrap: anywhere; }
 .incident-tree-more { margin: 4px 0 0; font-size: 12px; }
 
-.alarm-split { display: grid; gap: 20px; align-items: start; }
-.alarm-split.with-detail { grid-template-columns: minmax(0, 1fr) 380px; }
-.alarm-master { min-width: 0; overflow-x: auto; }
-.alarm-detail {
-  border: 1px solid var(--border);
-  background: var(--bg-raised);
-  border-radius: 8px;
-  padding: 16px;
-  position: sticky;
-  top: 16px;
-}
-.alarm-detail h3 { margin: 0 0 12px; }
-tr.is-selected > td { background: var(--bg-inset); }
 
 @media (max-width: 1100px) {
-  .alarm-split.with-detail { grid-template-columns: minmax(0, 1fr); }
-  .alarm-split.with-detail .alarm-master { display: none; }
   .alarm-detail { position: static; }
 }
 

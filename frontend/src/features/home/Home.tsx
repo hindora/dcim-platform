@@ -28,9 +28,10 @@
  * an estate than either number alone.
  */
 
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
+import { AlarmDetailModal } from '../alarms/AlarmDetail';
 import {
   api,
   type AlarmCategory,
@@ -142,6 +143,8 @@ interface Selection {
   /** Opened from ALARMS or an ALM cell, so the panel is about what must be
    *  answered rather than about a domain. */
   alarmsOnly?: boolean;
+  /** Opened from an incident's room: the folded conditions are the point. */
+  showFolded?: boolean;
 }
 
 /** Counts within a selection. Categories are mutually exclusive, so summing
@@ -265,6 +268,22 @@ export function Home() {
   const org = useOrg();
   useOrgTitle();
 
+  // The old alarm list's addresses, answered here: ?alarm=<id> opens that
+  // condition's detail on top of the page (a ticket back-link, an email),
+  // ?room=<id> opens the room's drill, with its folded conditions when
+  // ?symptoms=1 (an incident's room row).
+  const [params, setParams] = useSearchParams();
+  const linkedAlarmId = params.get('alarm');
+  const linkedRoomId = params.get('room');
+  const linkedFolded = params.get('symptoms') === '1';
+  const linkedAlarm = useQuery({
+    queryKey: ['alarm', linkedAlarmId],
+    queryFn: () => api.alarm(linkedAlarmId!),
+    enabled: Boolean(linkedAlarmId),
+  });
+  const dropParams = (...keys: string[]) =>
+    setParams((q) => { keys.forEach((k) => q.delete(k)); return q; }, { replace: true });
+
   useTopics(['alarms']);
   useInvalidateOn(ALARM_EVENTS, [['sites-overview']]);
 
@@ -305,6 +324,18 @@ export function Home() {
 
   const sites = data?.sites ?? [];
   const rooms = useMemo(() => sites.flatMap((s) => s.rooms), [sites]);
+
+  useEffect(() => {
+    if (!linkedRoomId || !data) return;
+    const r = rooms.find((x) => x.id === linkedRoomId);
+    if (r) {
+      setDrill({ key: 'all', label: 'Alarms', categories: [...COLUMN_ORDER],
+                 scope: { kind: 'room', id: r.id, label: `${r.datacenter_code} ${r.name}` },
+                 showFolded: linkedFolded });
+    }
+    dropParams('room', 'symptoms');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linkedRoomId, data]);
 
   // Search only. Narrowing the table by category used to live on the counters;
   // the panel answers the same question better - it names the rooms, and it
@@ -581,7 +612,14 @@ export function Home() {
       {drill && (
         <AlarmPanel categories={drill.categories} title={drill.label}
                     scope={drill.scope} alarmsOnly={drill.alarmsOnly}
+                    showFolded={drill.showFolded}
                     onClose={() => setDrill(null)} />
+      )}
+      {linkedAlarmId && linkedAlarm.data && (
+        <AlarmDetailModal alarm={linkedAlarm.data} onClose={() => dropParams('alarm')} />
+      )}
+      {linkedAlarmId && linkedAlarm.isError && (
+        <Notice tone="warn">That alarm could not be found; the link may be old.</Notice>
       )}
     </>
   );

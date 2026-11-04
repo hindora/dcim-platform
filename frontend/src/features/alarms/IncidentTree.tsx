@@ -42,7 +42,7 @@ function Lines({ rows, label }: { rows: AnomalyIncidentAlarm[]; label: string })
         {rows.slice(0, SHOW).map((a) => (
           <li key={a.id}>
             <StatusChip status={a.severity} />
-            <Link to={`/alarms/${a.id}`}>{a.device_name}</Link>
+            <Link to={`/?alarm=${a.id}`}>{a.device_name}</Link>
             <span className="muted">{humanise(a.alarm_type)} · {relativeTime(a.first_seen)}</span>
           </li>
         ))}

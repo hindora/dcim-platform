@@ -5668,9 +5668,11 @@ export const api = {
    *  the server answers with the open ones (ACTIVE + ACKNOWLEDGED), which is
    *  what the roll-up counters are counting. */
   roomConditions: (roomId: string, categories: string[], states?: string[],
-                   offset = 0, facets?: { severity?: string[]; detection?: string[] }) =>
+                   offset = 0, facets?: { severity?: string[]; detection?: string[] },
+                   includeSymptoms = false) =>
     request<{ items: Alarm[] }>(
       `/alarms?limit=500&offset=${offset}&room=${encodeURIComponent(roomId)}`
+      + (includeSymptoms ? '&include_symptoms=true' : '')
       + categories.map((c) => `&category=${encodeURIComponent(c)}`).join('')
       + (states ?? []).map((s) => `&state=${encodeURIComponent(s)}`).join('')
       + (facets?.severity ?? []).map((s) => `&severity=${encodeURIComponent(s)}`).join('')
@@ -5682,11 +5684,13 @@ export const api = {
    *  is seen twice or skipped across the boundaries. */
   roomConditionsAll: async (roomId: string, categories: string[],
                             states?: string[],
-                            facets?: { severity?: string[]; detection?: string[] }) => {
+                            facets?: { severity?: string[]; detection?: string[] },
+                            includeSymptoms = false) => {
     const PAGE = 500;
     const items: Alarm[] = [];
     for (let offset = 0; ; offset += PAGE) {
-      const page = await api.roomConditions(roomId, categories, states, offset, facets);
+      const page = await api.roomConditions(roomId, categories, states, offset, facets,
+                                            includeSymptoms);
       items.push(...page.items);
       if (page.items.length < PAGE) break;
     }

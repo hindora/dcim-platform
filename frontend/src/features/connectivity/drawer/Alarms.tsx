@@ -97,7 +97,7 @@ export function Alarms({ open, openLoading, deviceIds, name, roomId, ctx }: {
         <Seg label="Which alarms" value={view} onChange={setView}
              options={[{ key: 'open', label: `Open ${openRoots}` },
                        { key: 'cleared', label: 'Cleared 24h' }]} />
-        <Link to="/alarms" className="k">All alarms →</Link>
+        <Link to="/" className="k">All alarms →</Link>
       </div>
 
       {loading && <Loading />}

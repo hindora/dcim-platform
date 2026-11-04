@@ -193,15 +193,19 @@ interface Facets { severity: string[]; detection: string[] }
 const NO_FACETS: Facets = { severity: [], detection: [] };
 const facetsActive = (f: Facets) => f.severity.length > 0 || f.detection.length > 0;
 
-function RoomConditions({ roomId, categories, span, tab, facets, onOpen }: {
+function RoomConditions({ roomId, categories, span, tab, facets, onOpen, foldedDefault }: {
   roomId: string; categories: AlarmCategory[]; span: number; tab: Tab;
-  facets: Facets; onOpen: (a: Alarm) => void;
+  facets: Facets; onOpen: (a: Alarm) => void; foldedDefault?: boolean;
 }) {
   const history = tab === 'history';
+  // Folded conditions - consequences listed under their cause - are hidden
+  // by default, as the row's count says how many there are; shown when the
+  // reader asks, or arrives from an incident's room.
+  const [folded, setFolded] = useState(Boolean(foldedDefault));
   const [page, setPage] = useState(0);
   const [size, setSize] = useState(SUB_PAGE);
   const { data, isLoading, error } = useQuery({
-    queryKey: ['room-conditions', roomId, tab, ...categories,
+    queryKey: ['room-conditions', roomId, tab, ...categories, folded ? 'folded' : 'roots',
                'sev', ...facets.severity, 'det', ...facets.detection],
     // Every condition, walked in pages of 500 until the end: the row above
     // counts them all, and an expansion that stopped at 500 disagreed with
@@ -209,7 +213,7 @@ function RoomConditions({ roomId, categories, span, tab, facets, onOpen }: {
     // the two keep agreeing.
     queryFn: () => api.roomConditionsAll(
       roomId, categories, history ? HISTORY_STATES : undefined,
-      facetsActive(facets) ? facets : undefined),
+      facetsActive(facets) ? facets : undefined, folded),
     staleTime: 15_000,
   });
 
@@ -252,6 +256,11 @@ function RoomConditions({ roomId, categories, span, tab, facets, onOpen }: {
               {alarms} alarm{alarms === 1 ? '' : 's'}
               {' · '}{alerts} alert{alerts === 1 ? '' : 's'}
               {history && <span className="muted">{' · '}open and closed</span>}
+              <label className="sub-folded">
+                <input type="checkbox" checked={folded}
+                       onChange={(e) => setFolded(e.target.checked)} />
+                show folded
+              </label>
             </div>
             <table className="sub-table">
               <thead>
@@ -293,6 +302,7 @@ function RoomConditions({ roomId, categories, span, tab, facets, onOpen }: {
                         {a.instance && !isUuid(a.instance) && (
                           <span className="on-instance"> on {a.instance}</span>
                         )}
+                        {a.is_symptom && <span className="folded">folded</span>}
                       </td>
                       <td>
                         {a.device_id
@@ -442,11 +452,14 @@ function toCsv(rows: AlarmDrillRow[], withAlerts: boolean) {
 
 export interface PanelScope { kind: 'site' | 'room'; id: string; label: string }
 
-export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
+export function AlarmPanel({ categories, title, scope, alarmsOnly, showFolded, onClose }: {
   categories: AlarmCategory[]; title: string; scope?: PanelScope;
   /** Opened from ALARMS or an ALM cell: the panel is about what must be
    *  answered, so the informational rows and the alert column are not in it. */
   alarmsOnly?: boolean;
+  /** Opened from an incident's room: each room's list starts with its
+   *  folded conditions shown. */
+  showFolded?: boolean;
   onClose: () => void;
 }) {
   const [search, setSearch] = useState('');
@@ -899,7 +912,7 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
                           <tr className="sub-row">
                             <RoomConditions roomId={r.room_id} categories={categories}
                                             span={span} tab={tab} facets={facets}
-                                            onOpen={setOpenAlarm} />
+                                            onOpen={setOpenAlarm} foldedDefault={showFolded} />
                           </tr>
                         )}
                         {trendOn && (

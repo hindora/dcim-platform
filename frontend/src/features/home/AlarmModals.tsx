@@ -20,7 +20,6 @@
  */
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
 import { api, type AlarmTaxonomy } from '../../api/client';
 import { Modal } from '../../components/estate';
 import { CategoryGlyph } from '../../components/CategoryGlyph';
@@ -202,8 +201,8 @@ export function AlarmLegend({ onClose }: { onClose: () => void }) {
           <p className="muted small" style={{ margin: '0 0 10px' }}>
             Operations standards separate the two by REQUIRED RESPONSE, not by
             how bad the number looks. This page counts the first kind only.
-            The second is classified and stored, and reachable from the{' '}
-            <Link to="/alarms?response_class=alert">alarm list</Link> — worth
+            The second is classified and stored, and reachable from each
+            domain's counter — worth
             knowing, because “0 cooling” here means nothing to act on tonight,
             not nothing at all.
           </p>
@@ -239,7 +238,7 @@ export function AlarmLegend({ onClose }: { onClose: () => void }) {
       <p className="muted small" style={{ marginTop: 18 }}>
         Acknowledged alarms are still counted. An acknowledged fault is a known
         fault, not a fixed one, and dropping it here is how it becomes a
-        forgotten one. <Link to="/alarms">Open the alarm list →</Link>
+        forgotten one.
       </p>
     </Modal>
   );

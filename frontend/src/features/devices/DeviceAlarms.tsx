@@ -122,7 +122,7 @@ export function DeviceAlarms({ deviceId, deviceName, compact = false, view = 'op
                   className={`dv-alarm sev-${a.severity.toLowerCase()}${a.is_symptom ? ' is-symptom' : ''}${cleared ? ' is-cleared' : ''}`}>
                 <span className="sev">{a.severity.toLowerCase()}</span>
                 <div className="body">
-                  <Link to={`/alarms/${a.id}`} className="type">{humanise(a.alarm_type)}</Link>
+                  <Link to={`/?alarm=${a.id}`} className="type">{humanise(a.alarm_type)}</Link>
                   {rackId && <>{' · '}<Link to={`/devices/${a.device_id}`} className="muted">{a.device_name}</Link></>}
                   {a.instance && <span className="muted"> · {a.instance}</span>}
                   <p className="msg">{a.message}</p>

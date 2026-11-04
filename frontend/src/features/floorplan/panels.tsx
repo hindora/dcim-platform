@@ -622,7 +622,7 @@ export function UnitAlarms({ deviceId, deviceName }: { deviceId: string; deviceN
           <li key={a.id} className={`vw-alarm sev-${a.severity.toLowerCase()}${a.is_symptom ? ' is-symptom' : ''}`}>
             <div className="vw-alarm-head">
               <span className="vw-sev">{a.severity.toLowerCase()}</span>
-              <Link to={`/alarms/${a.id}`} className="vw-alarm-type">{humanise(a.alarm_type)}</Link>
+              <Link to={`/?alarm=${a.id}`} className="vw-alarm-type">{humanise(a.alarm_type)}</Link>
               {a.instance && <span className="muted">{a.instance}</span>}
             </div>
             <p className="vw-alarm-msg">{a.message}</p>

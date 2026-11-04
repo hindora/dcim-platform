@@ -103,8 +103,8 @@ export function IncidentRail() {
     .slice(0, 6);
 
   const openOne = (i: AnomalyIncident) => {
-    if (i.root_alarm_id) navigate(`/alarms/${i.root_alarm_id}`);
-    else if (i.room_id) navigate(`/alarms?room=${i.room_id}&symptoms=1`);
+    if (i.root_alarm_id) navigate(`/?alarm=${i.root_alarm_id}`);
+    else if (i.room_id) navigate(`/?room=${i.room_id}&symptoms=1`);
   };
 
   return (
@@ -123,7 +123,7 @@ export function IncidentRail() {
         <ul className="inc-list">
           {openItems.map((i) => (
             <IncidentRow key={i.id} i={i} onOpen={() => openOne(i)}
-                         onRoom={(room) => navigate(`/alarms?room=${room}&symptoms=1`)} />
+                         onRoom={(room) => navigate(`/?room=${room}&symptoms=1`)} />
           ))}
         </ul>
       )}

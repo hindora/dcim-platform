@@ -1,6 +1,5 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
 import {
   ApiError, api, atLeast,
   type AlarmRule, type AlarmRuleNew, type AlarmRulePatch,
@@ -147,9 +146,6 @@ export function AlarmRules() {
 
       {editing && <RuleSheet rule={editing} onClose={() => setEditing(null)} />}
       {adding && <NewRuleSheet rules={all} onClose={() => setAdding(false)} />}
-      <p className="muted" style={{ marginTop: 16 }}>
-        <Link to="/alarms">Back to alarms</Link>
-      </p>
     </>
   );
 }
