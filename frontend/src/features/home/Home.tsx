@@ -143,8 +143,6 @@ interface Selection {
   /** Opened from ALARMS or an ALM cell, so the panel is about what must be
    *  answered rather than about a domain. */
   alarmsOnly?: boolean;
-  /** Opened from an incident's room: the folded conditions are the point. */
-  showFolded?: boolean;
 }
 
 /** Counts within a selection. Categories are mutually exclusive, so summing
@@ -270,12 +268,10 @@ export function Home() {
 
   // The old alarm list's addresses, answered here: ?alarm=<id> opens that
   // condition's detail on top of the page (a ticket back-link, an email),
-  // ?room=<id> opens the room's drill, with its folded conditions when
-  // ?symptoms=1 (an incident's room row).
+  // ?room=<id> opens the room's drill (an incident's room row).
   const [params, setParams] = useSearchParams();
   const linkedAlarmId = params.get('alarm');
   const linkedRoomId = params.get('room');
-  const linkedFolded = params.get('symptoms') === '1';
   const linkedAlarm = useQuery({
     queryKey: ['alarm', linkedAlarmId],
     queryFn: () => api.alarm(linkedAlarmId!),
@@ -330,8 +326,7 @@ export function Home() {
     const r = rooms.find((x) => x.id === linkedRoomId);
     if (r) {
       setDrill({ key: 'all', label: 'Alarms', categories: [...COLUMN_ORDER],
-                 scope: { kind: 'room', id: r.id, label: `${r.datacenter_code} ${r.name}` },
-                 showFolded: linkedFolded });
+                 scope: { kind: 'room', id: r.id, label: `${r.datacenter_code} ${r.name}` } });
     }
     dropParams('room', 'symptoms');
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -388,10 +383,6 @@ export function Home() {
           const answerable = !data || total ? 0
             : c.categories.reduce(
                 (t, k) => t + (data.totals.by_category_alarms?.[k] ?? 0), 0);
-          const folded = !data ? 0
-            : total ? (data.totals.folded ?? 0)
-              : c.categories.reduce(
-                  (t, k) => t + (data.totals.by_category_folded?.[k] ?? 0), 0);
           const empty = n === 0;
           return (
             <div key={total ? '__total' : c.key}
@@ -400,12 +391,10 @@ export function Home() {
                    ? <>Nothing open in {(total ? 'any category' : c.label.toLowerCase())}
                        {' '}— open for the history</>
                    : total
-                     ? <>Every open alarm, all categories — by room
-                         {folded > 0 && <>; <b>{folded}</b> folded under a cause</>}</>
+                     ? 'Every open alarm, all categories — by room'
                      : <>Everything open in {c.categories
                          .map((k) => (labels[k] ?? k).toLowerCase())
-                         .join(' and ')}, <b>{answerable}</b> needing a response
-                         {folded > 0 && <>, <b>{folded}</b> folded under a cause</>}</>)}>
+                         .join(' and ')}, <b>{answerable}</b> needing a response</>)}>
               {/* Clickable at zero on purpose: the panel carries the CLEARED
                   history, and a quiet counter is exactly when somebody asks
                   what happened overnight. */}
@@ -612,7 +601,6 @@ export function Home() {
       {drill && (
         <AlarmPanel categories={drill.categories} title={drill.label}
                     scope={drill.scope} alarmsOnly={drill.alarmsOnly}
-                    showFolded={drill.showFolded}
                     onClose={() => setDrill(null)} />
       )}
       {linkedAlarmId && linkedAlarm.data && (

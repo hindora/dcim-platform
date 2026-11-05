@@ -1313,15 +1313,6 @@ button.danger:disabled { color: inherit; border-color: var(--border); }
    navigation per row turns that into back-forward-back. Below the breakpoint
    there is no room for both, so the detail takes the column and the list
    waits behind the browser's own back button. */
-/* The folded part of a room's count, beside the number it is part of, and
-   the room list's toggle for showing those conditions. */
-.qty + .folded, td .folded { display: inline-block; margin-left: 8px; font-size: 11px; color: var(--text-muted); white-space: nowrap; }
-.sub-caption:has(.sub-folded) { display: flex; align-items: center; gap: 6px; }
-.sub-caption .sub-folded { margin-left: auto; display: inline-flex; align-items: center; gap: 6px;
-                           font-weight: 400; font-size: 12px; letter-spacing: 0; text-transform: none;
-                           color: var(--text-muted); cursor: pointer; }
-.sub-caption .sub-folded input { margin: 0; }
-
 /* The incident a device roots or sits in: alarm detail pane and 3D panel. */
 .incident-tree { margin-top: 16px; }
 .incident-tree h4 { margin: 0 0 6px; font-size: 13px; }

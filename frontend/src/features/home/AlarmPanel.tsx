@@ -193,27 +193,25 @@ interface Facets { severity: string[]; detection: string[] }
 const NO_FACETS: Facets = { severity: [], detection: [] };
 const facetsActive = (f: Facets) => f.severity.length > 0 || f.detection.length > 0;
 
-function RoomConditions({ roomId, categories, span, tab, facets, onOpen, foldedDefault }: {
+function RoomConditions({ roomId, categories, span, tab, facets, onOpen }: {
   roomId: string; categories: AlarmCategory[]; span: number; tab: Tab;
-  facets: Facets; onOpen: (a: Alarm) => void; foldedDefault?: boolean;
+  facets: Facets; onOpen: (a: Alarm) => void;
 }) {
   const history = tab === 'history';
-  // Folded conditions - consequences listed under their cause - are hidden
-  // by default, as the row's count says how many there are; shown when the
-  // reader asks, or arrives from an incident's room.
-  const [folded, setFolded] = useState(Boolean(foldedDefault));
   const [page, setPage] = useState(0);
   const [size, setSize] = useState(SUB_PAGE);
   const { data, isLoading, error } = useQuery({
-    queryKey: ['room-conditions', roomId, tab, ...categories, folded ? 'folded' : 'roots',
+    queryKey: ['room-conditions', roomId, tab, ...categories,
                'sev', ...facets.severity, 'det', ...facets.detection],
     // Every condition, walked in pages of 500 until the end: the row above
     // counts them all, and an expansion that stopped at 500 disagreed with
     // the number it sat under. Narrowed by the same chips as the row, so
     // the two keep agreeing.
+    // Every condition in the room, whatever it is a consequence of: the
+    // row's count counts them all, and so does this list.
     queryFn: () => api.roomConditionsAll(
       roomId, categories, history ? HISTORY_STATES : undefined,
-      facetsActive(facets) ? facets : undefined, folded),
+      facetsActive(facets) ? facets : undefined, true),
     staleTime: 15_000,
   });
 
@@ -256,11 +254,6 @@ function RoomConditions({ roomId, categories, span, tab, facets, onOpen, foldedD
               {alarms} alarm{alarms === 1 ? '' : 's'}
               {' · '}{alerts} alert{alerts === 1 ? '' : 's'}
               {history && <span className="muted">{' · '}open and closed</span>}
-              <label className="sub-folded">
-                <input type="checkbox" checked={folded}
-                       onChange={(e) => setFolded(e.target.checked)} />
-                show folded
-              </label>
             </div>
             <table className="sub-table">
               <thead>
@@ -302,7 +295,6 @@ function RoomConditions({ roomId, categories, span, tab, facets, onOpen, foldedD
                         {a.instance && !isUuid(a.instance) && (
                           <span className="on-instance"> on {a.instance}</span>
                         )}
-                        {a.is_symptom && <span className="folded">folded</span>}
                       </td>
                       <td>
                         {a.device_id
@@ -452,14 +444,11 @@ function toCsv(rows: AlarmDrillRow[], withAlerts: boolean) {
 
 export interface PanelScope { kind: 'site' | 'room'; id: string; label: string }
 
-export function AlarmPanel({ categories, title, scope, alarmsOnly, showFolded, onClose }: {
+export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
   categories: AlarmCategory[]; title: string; scope?: PanelScope;
   /** Opened from ALARMS or an ALM cell: the panel is about what must be
    *  answered, so the informational rows and the alert column are not in it. */
   alarmsOnly?: boolean;
-  /** Opened from an incident's room: each room's list starts with its
-   *  folded conditions shown. */
-  showFolded?: boolean;
   onClose: () => void;
 }) {
   const [search, setSearch] = useState('');
@@ -641,8 +630,7 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, showFolded, o
     : everything
       ? `Every open alarm ${where}, `
         + 'grouped by the room it is in and the kind of thing that is wrong. '
-        + 'Folded ones included: a consequence listed under its cause still '
-        + 'counts here, and the folded column says how many.'
+        + 'Every one of them, whatever it is a consequence of.'
       : definitions.map((c) => c.description).join(' ');
 
   function toggle(roomId: string) {
@@ -729,8 +717,6 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, showFolded, o
                     : alarms > 0
                       ? `${alarms} needing a response`
                       : 'none needing a response'}
-                  {!history && (data.folded ?? 0) > 0
-                    ? `, ${data.folded} folded under a cause` : ''}
                 </span>
               )}
             </h2>
@@ -865,15 +851,7 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, showFolded, o
                       </td>
                       <td className="muted">{r.site_code}</td>
                       <td className="mid muted">{r.floor ?? '—'}</td>
-                      <td className="num">
-                        <span className="qty">{r.qty}</span>
-                        {(r.folded ?? 0) > 0 && (
-                          <Tip tip={<><b>{r.folded}</b> of this room's conditions {r.folded === 1 ? 'is' : 'are'} folded
-                            under a cause elsewhere — answered by answering that</>}>
-                            <span className="folded">{r.folded} folded</span>
-                          </Tip>
-                        )}
-                      </td>
+                      <td className="num"><span className="qty">{r.qty}</span></td>
                       {/* Muted on purpose. It is here to say what else is
                           going on in this room, not to compete with the
                           number somebody is acting on. */}
@@ -912,7 +890,7 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, showFolded, o
                           <tr className="sub-row">
                             <RoomConditions roomId={r.room_id} categories={categories}
                                             span={span} tab={tab} facets={facets}
-                                            onOpen={setOpenAlarm} foldedDefault={showFolded} />
+                                            onOpen={setOpenAlarm} />
                           </tr>
                         )}
                         {trendOn && (

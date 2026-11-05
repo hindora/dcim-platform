@@ -38,7 +38,6 @@ function IncidentRow({ i, onOpen, onRoom }: {
 }) {
   const cause = CAUSE_TONE[i.tier] ?? CAUSE_TONE.unit;
   const worst = (i.evidence.worst ?? 'INFO').toLowerCase();
-  const folded = i.evidence.folded ?? 0;
   const rooms = i.evidence.by_room ?? [];
   return (
     <li className="inc">
@@ -49,7 +48,6 @@ function IncidentRow({ i, onOpen, onRoom }: {
           <span className="inc-title">{i.title}</span>
           <span className="inc-meta">
             {where(i)}{where(i) ? ' · ' : ''}{cause.word} · {worst} · since {relativeTime(i.opened_at)}
-            {folded > 0 ? ` · ${folded} folded` : ''}
           </span>
         </span>
         <span className={`ind on ${cause.tone} ${sevClass(i.evidence.worst)}`} aria-hidden>
@@ -63,7 +61,7 @@ function IncidentRow({ i, onOpen, onRoom }: {
             <li key={r.room_id ?? 'none'}>
               <button type="button" className="inc-room" disabled={!r.room_id}
                       onClick={() => r.room_id && onRoom(r.room_id)}
-                      title={r.room_id ? 'This room’s alarms, folded ones included' : undefined}>
+                      title={r.room_id ? 'This room’s alarms' : undefined}>
                 <span className="tick" aria-hidden />
                 <span className="inc-room-name">{r.room_name ?? 'No room'}</span>
                 <span className="inc-room-n">{r.devices} dev · {r.alarms} alarm{r.alarms === 1 ? '' : 's'}</span>
@@ -104,7 +102,7 @@ export function IncidentRail() {
 
   const openOne = (i: AnomalyIncident) => {
     if (i.root_alarm_id) navigate(`/?alarm=${i.root_alarm_id}`);
-    else if (i.room_id) navigate(`/?room=${i.room_id}&symptoms=1`);
+    else if (i.room_id) navigate(`/?room=${i.room_id}`);
   };
 
   return (
@@ -123,7 +121,7 @@ export function IncidentRail() {
         <ul className="inc-list">
           {openItems.map((i) => (
             <IncidentRow key={i.id} i={i} onOpen={() => openOne(i)}
-                         onRoom={(room) => navigate(`/?room=${room}&symptoms=1`)} />
+                         onRoom={(room) => navigate(`/?room=${room}`)} />
           ))}
         </ul>
       )}
