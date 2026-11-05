@@ -1640,7 +1640,11 @@ async def alarms(session: AsyncSession, *,
                  lifecycle: str = "open",
                  severities: list[str] | None = None,
                  detections: list[str] | None = None,
-                 device_types: list[str] | None = None) -> dict[str, Any]:
+                 device_types: list[str] | None = None,
+                 response_classes: list[str] | None = None,
+                 states: list[str] | None = None,
+                 standings: list[str] | None = None,
+                 alarm_types: list[str] | None = None) -> dict[str, Any]:
     """The drill-down behind one counter, by room.
 
     `lifecycle` is `open` for the counter's own population and `all` for the
@@ -1670,14 +1674,13 @@ async def alarms(session: AsyncSession, *,
     count - "880 alarms on 412 servers" is a different fact from "880 alarms
     on 2 servers", and only the second is a device to walk to.
     """
+    facets = {"severities": severities, "detections": detections,
+              "device_types": device_types, "response_classes": response_classes,
+              "states": states, "standings": standings, "alarm_types": alarm_types}
     rows = await repo.alarms_by_room(session, categories=categories,
-                                     lifecycle=lifecycle,
-                                     severities=severities, detections=detections,
-                                     device_types=device_types)
+                                     lifecycle=lifecycle, **facets)
     unlocated = await repo.unlocated_alarms_by_category(
-        session, categories=categories, lifecycle=lifecycle,
-        severities=severities, detections=detections,
-        device_types=device_types)
+        session, categories=categories, lifecycle=lifecycle, **facets)
 
     def _detect(r: dict[str, Any]) -> dict[str, int]:
         return {d: int(r.get(f"detected_{d}") or 0) for d in DETECTIONS}
@@ -1686,33 +1689,54 @@ async def alarms(session: AsyncSession, *,
         return {k: int(r.get(k) or 0)
                 for k in ("critical", "major", "minor", "warning")}
 
+    def _standing(r: dict[str, Any]) -> dict[str, int]:
+        return {x: int(r.get(f"standing_{x}") or 0) for x in repo.STANDINGS}
+
+    def _state(r: dict[str, Any]) -> dict[str, int]:
+        return {x: int(r.get(f"state_{x}") or 0) for x in STATES}
+
     # One element per alarm from the query; folded here per room, and once
-    # more across rooms below. A device is counted once per kind however
-    # many alarms it carries.
+    # more across rooms below, on two axes: what kind of device, and what
+    # condition. A device is counted once per kind however many alarms it
+    # carries, and once per condition likewise.
     labels: dict[str, str] = {}
     kind_alarms: Counter[str] = Counter()
     kind_devices: dict[str, set[str]] = defaultdict(set)
+    cond_alarms: Counter[str] = Counter()
+    cond_devices: dict[str, set[str]] = defaultdict(set)
 
-    def _kinds(r: dict[str, Any]) -> tuple[dict[str, int], dict[str, int]]:
+    def _fold(r: dict[str, Any]) -> tuple[dict[str, int], dict[str, int], dict[str, int]]:
         n: Counter[str] = Counter()
         seen: dict[str, set[str]] = defaultdict(set)
+        conds: Counter[str] = Counter()
+        cond_seen: dict[str, set[str]] = defaultdict(set)
         for e in r.get("alarm_devices") or []:
             t = e.get("t") or "unknown"
+            d = e.get("d") or ""
+            c = e.get("c") or "unknown"
             n[t] += 1
-            seen[t].add(e.get("d") or "")
+            seen[t].add(d)
+            conds[c] += 1
+            cond_seen[c].add(d)
             if e.get("l"):
                 labels.setdefault(t, e["l"])
         kind_alarms.update(n)
+        cond_alarms.update(conds)
         for t, ids in seen.items():
             kind_devices[t] |= ids
-        return dict(n), {t: len(ids) for t, ids in seen.items()}
+        for c, ids in cond_seen.items():
+            cond_devices[c] |= ids
+        return dict(n), {t: len(ids) for t, ids in seen.items()}, dict(conds)
+
+    def _worst_first(counter: Counter[str]) -> list[tuple[str, int]]:
+        return sorted(counter.items(), key=lambda kv: (-kv[1], kv[0]))
 
     def _label(t: str) -> str:
         return labels.get(t) or t.replace("_", " ").capitalize()
 
     out_rows = []
     for r in rows:
-        by_type, devices_by_type = _kinds(r)
+        by_type, devices_by_type, by_condition = _fold(r)
         out_rows.append({
             "room_id": r["room_id"], "room_name": r["room_name"],
             "floor": r["floor"], "site_id": r["datacenter_id"],
@@ -1731,6 +1755,14 @@ async def alarms(session: AsyncSession, *,
             # by device_type code; the labels live once, at the top level.
             "by_device_type": by_type,
             "devices_by_type": devices_by_type,
+            # The condition itself, keyed by alarm_type; the labels are the
+            # taxonomy's, which the panel already holds.
+            "by_condition": by_condition,
+            # Cause, consequence or alone - the live fold, so only the open
+            # population means anything here (see repo.STANDINGS).
+            "by_standing": _standing(r),
+            # Whether anybody has acknowledged it. `cleared` is for history.
+            "by_state": _state(r),
         })
 
     located_alarms = sum(int(r["qty"]) for r in rows)
@@ -1743,6 +1775,10 @@ async def alarms(session: AsyncSession, *,
         "severities": [s.upper() for s in (severities or [])],
         "detections": list(detections or []),
         "device_types": list(device_types or []),
+        "response_classes": list(response_classes or []),
+        "states": [x.upper() for x in (states or [])],
+        "standings": list(standings or []),
+        "alarm_types": list(alarm_types or []),
         "rows": out_rows,
         # What the counter shows: every open condition in this category, in a
         # room. Platform conditions are NOT in here and are not in the counter
@@ -1772,10 +1808,23 @@ async def alarms(session: AsyncSession, *,
         # the devices behind its alarms. No fixed vocabulary: see above.
         "by_device_type": [
             {"key": t, "label": _label(t), "n": n, "devices": len(kind_devices[t])}
-            for t, n in sorted(kind_alarms.items(), key=lambda kv: (-kv[1], kv[0]))
+            for t, n in _worst_first(kind_alarms)
         ],
+        "by_condition": [
+            {"key": c, "n": n, "devices": len(cond_devices[c])}
+            for c, n in _worst_first(cond_alarms)
+        ],
+        "by_standing": {
+            x: sum(row["by_standing"][x] for row in out_rows) for x in repo.STANDINGS
+        },
+        "by_state": {
+            x: sum(row["by_state"][x] for row in out_rows) for x in STATES
+        },
     }
 
+
+#: The handled axis, as the row and facet keys spell it.
+STATES = ("active", "acknowledged", "cleared")
 
 MAX_TREND_DAYS = 366
 

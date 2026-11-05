@@ -240,6 +240,7 @@ async def test_a_category_is_answered_from_the_stamped_column(monkeypatch):
 
     await estate_api.alarms(category=["cooling"], lifecycle="open",
                             severity=None, detection=None, device_type=None,
+                            response_class=None, state=None, standing=None, alarm_type=None,
                             session=_FakeSession())
 
     assert seen == {"categories": ["cooling"], "lifecycle": "open"}
@@ -270,6 +271,7 @@ async def test_pressed_chips_narrow_both_queries(monkeypatch):
     out = await estate_api.alarms(category=["power"], lifecycle="all",
                                   severity=["critical", "Major"],
                                   detection=["absence"], device_type=["ups"],
+                                  response_class=None, state=None, standing=None, alarm_type=None,
                                   session=_FakeSession())
 
     assert seen["rooms"] == (["CRITICAL", "MAJOR"], ["absence"], ["ups"])
@@ -320,6 +322,7 @@ async def test_history_asks_for_every_lifecycle(monkeypatch):
 
     out = await estate_api.alarms(category=["power"], lifecycle="all",
                                   severity=None, detection=None, device_type=None,
+                                  response_class=None, state=None, standing=None, alarm_type=None,
                                   session=_FakeSession())
 
     assert seen == {"rooms": "all", "unlocated": "all"}
@@ -346,6 +349,7 @@ async def test_a_grouped_counter_asks_once(monkeypatch):
 
     await estate_api.alarms(category=["cooling", "environmental", "cooling"],
                             severity=None, detection=None, device_type=None,
+                            response_class=None, state=None, standing=None, alarm_type=None,
                             session=_FakeSession())
 
     # Deduplicated, and in the order asked: a repeated parameter is a caller
@@ -506,7 +510,8 @@ async def test_an_unknown_category_is_rejected_rather_than_answered_empty(catego
     """
     with pytest.raises(HTTPException) as exc:
         await estate_api.alarms(category=[category], severity=None, detection=None,
-                                device_type=None, session=_FakeSession())
+                                device_type=None, response_class=None, state=None,
+                                standing=None, alarm_type=None, session=_FakeSession())
     assert exc.value.status_code == 400
 
 

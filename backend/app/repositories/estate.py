@@ -2155,18 +2155,36 @@ def _state_clause(lifecycle: str) -> str:
     return "a.state <> 'CLEARED' AND " if lifecycle == "open" else ""
 
 
+#: Where a condition stands in an incident. A CAUSE has open conditions
+#: folded under it; a CONSEQUENCE is folded under one; the rest stand ALONE.
+#: Derived from the live fold, so it is only meaningful for open conditions:
+#: clearing a consequence drops its mark (see cooling_correlation.sweep),
+#: and in history everything reads as standing alone.
+STANDINGS = ("cause", "consequence", "alone")
+_IS_CAUSE = ("EXISTS (SELECT 1 FROM alarm s WHERE s.root_cause_alarm_id = a.id "
+             "AND s.state <> 'CLEARED')")
+_STANDING = (f"CASE WHEN a.is_symptom THEN 'consequence' "
+             f"WHEN {_IS_CAUSE} THEN 'cause' ELSE 'alone' END")
+
+
 def _facet_clauses(severities: list[str] | None,
                    detections: list[str] | None,
                    params: dict[str, Any],
-                   device_types: list[str] | None = None) -> str:
+                   device_types: list[str] | None = None,
+                   response_classes: list[str] | None = None,
+                   states: list[str] | None = None,
+                   standings: list[str] | None = None,
+                   alarm_types: list[str] | None = None) -> str:
     """The facet filters, as SQL on the alarm row, binding their lists.
 
     Empty or absent means "no filter", never "match nothing": a chip row
     with nothing pressed shows everything, which is what the counts on the
     chips describe.
 
-    `device_types` is the third row of chips - what KIND of thing is
-    alarming - and reads the `dev` CTE, so a caller must have joined it.
+    `device_types` is what KIND of thing is alarming and reads the `dev`
+    CTE, so a caller must have joined it. `response_classes` is alarm or
+    alert; `states` is whether anybody has acknowledged it; `standings` is
+    cause, consequence or alone; `alarm_types` is the condition itself.
     """
     sql = ""
     if severities:
@@ -2178,6 +2196,18 @@ def _facet_clauses(severities: list[str] | None,
     if device_types:
         sql += " AND dev.device_type::text = ANY(:device_types)"
         params["device_types"] = device_types
+    if response_classes:
+        sql += " AND a.response_class = ANY(:response_classes)"
+        params["response_classes"] = response_classes
+    if states:
+        sql += " AND a.state::text = ANY(:states)"
+        params["states"] = [x.upper() for x in states]
+    if standings:
+        sql += f" AND ({_STANDING}) = ANY(:standings)"
+        params["standings"] = standings
+    if alarm_types:
+        sql += " AND a.alarm_type = ANY(:alarm_types)"
+        params["alarm_types"] = alarm_types
     return sql
 
 
@@ -2186,7 +2216,11 @@ async def alarms_by_room(session: AsyncSession, *,
                          lifecycle: str = "open",
                          severities: list[str] | None = None,
                          detections: list[str] | None = None,
-                         device_types: list[str] | None = None) -> list[dict[str, Any]]:
+                         device_types: list[str] | None = None,
+                         response_classes: list[str] | None = None,
+                         states: list[str] | None = None,
+                         standings: list[str] | None = None,
+                         alarm_types: list[str] | None = None) -> list[dict[str, Any]]:
     """Root alarms of one category, grouped by room - with the alerts beside them.
 
     `lifecycle` picks the population: `open` (the default, and what every
@@ -2199,9 +2233,11 @@ async def alarms_by_room(session: AsyncSession, *,
     splits) describes the same narrowed population and still adds up.
 
     `alarm_devices` is the alarm-side population once more, one element per
-    alarm carrying the device's type, the type's display name and the device
-    id, so the service can fold it into "880 alarms on 412 servers" without
-    a second query that could describe a different instant.
+    alarm carrying the device's type, the type's display name, the device id
+    and the condition, so the service can fold it into "880 alarms on 412
+    servers" and "cpu_temp_high 880" without a second query that could
+    describe a different instant. The two fixed-vocabulary rows - standing
+    and state - are plain FILTER counts beside the severities.
 
     The drill-down behind a counter. `qty` is alarms only, exactly the
     population the counter totals: a drill-down that disagrees with the number
@@ -2239,6 +2275,16 @@ async def alarms_by_room(session: AsyncSession, *,
         f"AND detection = '{d}') AS detected_{d}"
         for d in DETECTIONS
     )
+    standing_cols = ",\n               ".join(
+        f"count(*) FILTER (WHERE response_class = '{ALARM}' "
+        f"AND standing = '{x}') AS standing_{x}"
+        for x in STANDINGS
+    )
+    state_cols = ",\n               ".join(
+        f"count(*) FILTER (WHERE response_class = '{ALARM}' "
+        f"AND state = '{x}') AS state_{x.lower()}"
+        for x in ("ACTIVE", "ACKNOWLEDGED", "CLEARED")
+    )
 
     params: dict[str, Any] = {"categories": categories}
     rows = (await session.execute(text(f"""
@@ -2248,6 +2294,9 @@ async def alarms_by_room(session: AsyncSession, *,
                    a.device_id, a.detection AS detection,
                    a.category AS category, a.response_class AS response_class,
                    a.is_symptom AS is_symptom,
+                   a.state::text AS state,
+                   a.alarm_type AS alarm_type,
+                   ({_STANDING}) AS standing,
                    dev.device_type::text AS device_type,
                    dt.display_name AS type_label
             FROM alarm a
@@ -2258,7 +2307,8 @@ async def alarms_by_room(session: AsyncSession, *,
             -- says how much of each room's figure is answered by answering
             -- a cause elsewhere.
             WHERE {_state_clause(lifecycle)}a.shelved_reason IS NULL
-              {_facet_clauses(severities, detections, params, device_types)}
+              {_facet_clauses(severities, detections, params, device_types,
+                              response_classes, states, standings, alarm_types)}
         )
         SELECT rm.id::text            AS room_id,
                rm.name                AS room_name,
@@ -2279,12 +2329,14 @@ async def alarms_by_room(session: AsyncSession, *,
                count(*) FILTER (WHERE is_symptom)                  AS folded,
                {sev_cols},
                {facet_cols},
-               -- What kind of thing is alarming, one element per alarm.
-               -- Alarms only, like every other facet column: the chips
-               -- describe what must be answered.
+               {standing_cols},
+               {state_cols},
+               -- What kind of thing is alarming, and with what, one element
+               -- per alarm. Alarms only, like every other facet column: the
+               -- chips describe what must be answered.
                COALESCE(jsonb_agg(jsonb_build_object(
                    't', cat.device_type, 'l', cat.type_label,
-                   'd', cat.device_id::text))
+                   'd', cat.device_id::text, 'c', cat.alarm_type))
                    FILTER (WHERE response_class = '{ALARM}'), '[]'::jsonb)
                                                                   AS alarm_devices
         FROM cat
@@ -2368,7 +2420,11 @@ async def unlocated_alarms_by_category(session: AsyncSession, *,
                                        lifecycle: str = "open",
                                        severities: list[str] | None = None,
                                        detections: list[str] | None = None,
-                                       device_types: list[str] | None = None) -> dict[str, int]:
+                                       device_types: list[str] | None = None,
+                                       response_classes: list[str] | None = None,
+                                       states: list[str] | None = None,
+                                       standings: list[str] | None = None,
+                                       alarm_types: list[str] | None = None) -> dict[str, int]:
     """Alarms of a category that resolve to no room.
 
     Platform conditions hang off devices with no location. They are counted in
@@ -2384,7 +2440,8 @@ async def unlocated_alarms_by_category(session: AsyncSession, *,
             FROM alarm a
             LEFT JOIN dev ON dev.device_id = a.device_id
             WHERE {_state_clause(lifecycle)}a.shelved_reason IS NULL
-              {_facet_clauses(severities, detections, params, device_types)}
+              {_facet_clauses(severities, detections, params, device_types,
+                              response_classes, states, standings, alarm_types)}
         )
         SELECT count(*)                                       AS n,
                count(*) FILTER (WHERE response_class = '{ALARM}') AS alarms

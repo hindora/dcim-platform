@@ -182,6 +182,7 @@ async def test_an_unknown_response_class_is_rejected(bad):
         await alarms_api.list_alarms(state=None, severity=None, device_id=None,
                                      alarm_type=None, category=None,
                                      detection=None, response_class=[bad],
+                                     device_type=None, standing=None,
                                      include_symptoms=False, limit=10,
                                      session=_FakeSession())
     assert exc.value.status_code == 400

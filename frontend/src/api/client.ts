@@ -4088,6 +4088,21 @@ export interface AlarmDrillRow {
   by_device_type: Record<string, number>;
   /** Distinct devices behind each key of `by_device_type`. */
   devices_by_type: Record<string, number>;
+  /** Alarms per condition, keyed by alarm_type. Labels are the taxonomy's. */
+  by_condition: Record<string, number>;
+  /** Cause, consequence or alone. The live fold: only the open population
+   *  means anything here, since clearing a consequence drops its mark. */
+  by_standing: { cause: number; consequence: number; alone: number };
+  /** Acknowledged or not; `cleared` carries weight only in history. */
+  by_state: { active: number; acknowledged: number; cleared: number };
+}
+
+/** One condition alarming, as the drill lists them, worst first. */
+export interface AlarmDrillCondition {
+  /** alarm_type code - what `alarm_type=` takes back. */
+  key: string;
+  n: number;
+  devices: number;
 }
 
 /** The pressed chips on an alarm panel, as every endpoint behind it takes
@@ -4097,15 +4112,22 @@ export interface AlarmFacets {
   severity?: string[];
   detection?: string[];
   device_type?: string[];
+  /** alarm | alert */
+  response_class?: string[];
+  /** ACTIVE (unacknowledged) | ACKNOWLEDGED | CLEARED */
+  state?: string[];
+  /** cause | consequence | alone - the live fold, open population only. */
+  standing?: string[];
+  /** alarm_type codes: the condition itself. */
+  alarm_type?: string[];
 }
 
-/** The chips as query parameters. One place, so a fourth row later is one
- *  line here rather than one per endpoint. */
+/** The chips as query parameters. One place, so another row later is one
+ *  line here rather than one per endpoint. Every key is the parameter name. */
 function facetQuery(f?: AlarmFacets): string {
   if (!f) return '';
-  return (f.severity ?? []).map((s) => `&severity=${encodeURIComponent(s)}`).join('')
-    + (f.detection ?? []).map((d) => `&detection=${encodeURIComponent(d)}`).join('')
-    + (f.device_type ?? []).map((t) => `&device_type=${encodeURIComponent(t)}`).join('');
+  return (Object.keys(f) as (keyof AlarmFacets)[]).flatMap((k) =>
+    (f[k] ?? []).map((v) => `&${k}=${encodeURIComponent(v)}`)).join('');
 }
 
 /** One kind of device alarming, as the drill's third facet row lists it. */
@@ -4141,6 +4163,10 @@ export interface AlarmDrill {
   severities: string[];
   detections: AlarmDetection[];
   device_types: string[];
+  response_classes: string[];
+  states: string[];
+  standings: string[];
+  alarm_types: string[];
   rows: AlarmDrillRow[];
   /** Every open condition in the category, in a room - exactly what the rows
    *  add up to and exactly what the counter that opened the panel counts. */
@@ -4163,6 +4189,10 @@ export interface AlarmDrill {
   /** The kinds of device alarming, worst first - only those present, since
    *  an IT panel and a power panel share no vocabulary. */
   by_device_type: AlarmDrillKind[];
+  /** The conditions alarming, worst first - only those present. */
+  by_condition: AlarmDrillCondition[];
+  by_standing: { cause: number; consequence: number; alone: number };
+  by_state: { active: number; acknowledged: number; cleared: number };
 }
 
 export interface RoomKpi {

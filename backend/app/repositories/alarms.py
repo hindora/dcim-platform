@@ -540,11 +540,12 @@ _ALARM_SELECT = """
 async def list_alarms(session: AsyncSession, *, states: list[str] | None = None,
                       severities: list[str] | None = None,
                       device_id: str | None = None,
-                      alarm_type: str | None = None,
+                      alarm_type: str | list[str] | None = None,
                       categories: list[str] | None = None,
                       detections: list[str] | None = None,
                       response_classes: list[str] | None = None,
                       device_types: list[str] | None = None,
+                      standings: list[str] | None = None,
                       room_id: str | None = None,
                       rack_id: str | None = None,
                       include_symptoms: bool = False,
@@ -564,12 +565,22 @@ async def list_alarms(session: AsyncSession, *, states: list[str] | None = None,
         # and is rightly outside any such narrowing.
         where.append("d.device_type::text = ANY(:device_types)")
         params["device_types"] = device_types
+    if standings:
+        # Same expression the drill facets use, so the room list under a
+        # row narrows to the same conditions the row counted.
+        where.append("(CASE WHEN a.is_symptom THEN 'consequence' "
+                     "WHEN EXISTS (SELECT 1 FROM alarm s "
+                     "WHERE s.root_cause_alarm_id = a.id AND s.state <> 'CLEARED') "
+                     "THEN 'cause' ELSE 'alone' END) = ANY(:standings)")
+        params["standings"] = standings
     if device_id:
         where.append("a.device_id = CAST(:device_id AS uuid)")
         params["device_id"] = device_id
     if alarm_type:
-        where.append("a.alarm_type = :alarm_type")
-        params["alarm_type"] = alarm_type
+        # One or several: the panel's condition chips press more than one.
+        where.append("a.alarm_type = ANY(:alarm_types)")
+        params["alarm_types"] = ([alarm_type] if isinstance(alarm_type, str)
+                                 else list(alarm_type))
     # Category and detection are columns, not derivations: filtering them is an
     # index lookup, and it returns the same population the roll-up counted
     # because both read what was stamped at raise time.

@@ -21,6 +21,7 @@ from app.core.config import get_settings
 from app.core.security import Principal, current_principal, require_role
 from app.db.session import get_session
 from app.repositories import alarms as repo
+from app.repositories.estate import STANDINGS
 
 router = APIRouter(tags=["alarms"])
 
@@ -35,7 +36,9 @@ async def list_alarms(
         description="ACTIVE, ACKNOWLEDGED, CLEARED. Defaults to the open ones."),
     severity: list[str] | None = Query(None),
     device_id: str | None = None,
-    alarm_type: str | None = None,
+    alarm_type: list[str] | None = Query(None,
+        description="Only these conditions (alarm_type codes). Several "
+                    "combine as OR."),
     category: list[str] | None = Query(None,
         description="Domain of the failing thing: " + ", ".join(CATEGORIES)),
     detection: list[str] | None = Query(None,
@@ -50,6 +53,10 @@ async def list_alarms(
     device_type: list[str] | None = Query(None,
         description="Only conditions on devices of these kinds (device_type "
                     "codes, e.g. server, switch, ups). Several combine as OR."),
+    standing: list[str] | None = Query(None,
+        description="Where it stands in an incident: " + ", ".join(STANDINGS)
+                    + ". A cause has open conditions folded under it; a "
+                      "consequence is folded under one. Open population only."),
     room: str | None = Query(None,
         description="Only conditions in this room, resolved through the rack "
                     "or off the device - the same location the roll-up uses."),
@@ -68,7 +75,8 @@ async def list_alarms(
     for value, allowed, what in ((category, CATEGORIES, "category"),
                                  (detection, DETECTIONS, "detection"),
                                  (response_class, RESPONSE_CLASSES,
-                                  "response_class")):
+                                  "response_class"),
+                                 (standing, STANDINGS, "standing")):
         unknown = sorted(set(value or []) - set(allowed))
         if unknown:
             raise HTTPException(status.HTTP_400_BAD_REQUEST,
@@ -78,7 +86,7 @@ async def list_alarms(
         session, states=states, severities=severity, device_id=device_id,
         alarm_type=alarm_type, categories=category, detections=detection,
         response_classes=response_class, device_types=device_type,
-        room_id=room, rack_id=rack,
+        standings=standing, room_id=room, rack_id=rack,
         include_symptoms=include_symptoms, limit=limit, offset=offset)
     return {"items": items}
 

@@ -177,6 +177,17 @@ async def alarms(
         "Only alarms on devices of these kinds (device_type codes, as the "
         "response's `by_device_type` keys them). Several combine as OR; "
         "with the other facets, AND.")),
+    response_class: list[str] | None = Query(None, description=(
+        "Only this class: " + ", ".join(RESPONSE_CLASSES) + ".")),
+    state: list[str] | None = Query(None, description=(
+        "Only these states: ACTIVE (nobody has acknowledged it), "
+        "ACKNOWLEDGED, CLEARED (history only).")),
+    standing: list[str] | None = Query(None, description=(
+        "Where it stands in an incident: " + ", ".join(service.repo.STANDINGS)
+        + ". Live population only - a cleared consequence drops its mark.")),
+    alarm_type: list[str] | None = Query(None, description=(
+        "Only these conditions (alarm_type codes, as the response's "
+        "`by_condition` keys them).")),
     session: AsyncSession = Depends(get_session),
     _: Principal = Depends(current_principal),
 ) -> dict:
@@ -199,11 +210,28 @@ async def alarms(
     if bad:
         raise HTTPException(status.HTTP_400_BAD_REQUEST,
                             f"unknown detection: {', '.join(bad)}")
+    bad = sorted(set(response_class or []) - set(RESPONSE_CLASSES))
+    if bad:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            f"unknown response_class: {', '.join(bad)}")
+    states = [x.upper() for x in (state or [])]
+    bad = sorted(set(states) - {"ACTIVE", "ACKNOWLEDGED", "CLEARED"})
+    if bad:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            f"unknown state: {', '.join(bad)}")
+    bad = sorted(set(standing or []) - set(service.repo.STANDINGS))
+    if bad:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            f"unknown standing: {', '.join(bad)}")
     return await service.alarms(session, categories=list(dict.fromkeys(category)),
                                 lifecycle=lifecycle,
                                 severities=severities or None,
                                 detections=detection or None,
-                                device_types=device_type or None)
+                                device_types=device_type or None,
+                                response_classes=response_class or None,
+                                states=states or None,
+                                standings=standing or None,
+                                alarm_types=alarm_type or None)
 
 
 @router.get("/alarm-trend", summary="Conditions raised per day in a scope")

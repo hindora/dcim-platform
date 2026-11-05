@@ -448,6 +448,19 @@ button.facet.on {
    at the row's height. The count sits inside each cell in the faint ink
    until the cell is pressed; a severity dot precedes the word so the
    control keeps its own colour for "pressed". */
+/* Seven rows of chips is a wall. The short, fixed-vocabulary rows share a
+   line and wrap as the sheet narrows; a wide row (the open-vocabulary
+   ones) takes a line of its own. */
+.facet-rows {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px 28px;
+  margin: 0 0 14px;
+}
+.facet-rows .facet-row { margin: 0; }
+.facet-rows .facet-row.wide { flex-basis: 100%; }
+.facet-seg button.more {
+  color: var(--text-faint); letter-spacing: 0; font-weight: 500;
+}
+.facet-seg button.more:hover { color: var(--text); }
 .facet-row .facet-seg { height: 28px; }
 .facet-seg button {
   height: 28px; padding: 0 11px;

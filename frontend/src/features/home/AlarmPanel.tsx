@@ -188,11 +188,37 @@ const HISTORY_STATES = ['ACTIVE', 'ACKNOWLEDGED', 'CLEARED'];
  *  same range, rows-per-page, go-to and page numbers here as there. */
 const SUB_PAGE = 25;
 
-/** The pressed facet chips, as the API takes them. */
-interface Facets { severity: string[]; detection: string[]; device_type: string[] }
-const NO_FACETS: Facets = { severity: [], detection: [], device_type: [] };
-const facetsActive = (f: Facets) =>
-  f.severity.length > 0 || f.detection.length > 0 || f.device_type.length > 0;
+/** The pressed facet chips, as the API takes them - every key is the
+ *  query parameter it becomes. */
+interface Facets {
+  severity: string[]; detection: string[]; device_type: string[];
+  response_class: string[]; state: string[]; standing: string[]; alarm_type: string[];
+}
+const NO_FACETS: Facets = {
+  severity: [], detection: [], device_type: [],
+  response_class: [], state: [], standing: [], alarm_type: [],
+};
+const FACET_KEYS = Object.keys(NO_FACETS) as (keyof Facets)[];
+const facetsActive = (f: Facets) => FACET_KEYS.some((k) => f[k].length > 0);
+/** The chips as part of a query key, so a change to any row refetches. */
+const facetKey = (f: Facets) => FACET_KEYS.flatMap((k) => [k, ...f[k]]);
+
+/** The three fixed vocabularies, in the words the chips wear. */
+const STANDINGS = [
+  { key: 'cause', label: 'Cause',
+    tip: 'Has other conditions folded under it: answer this one first' },
+  { key: 'consequence', label: 'Consequence',
+    tip: 'Folded under a cause elsewhere: answered by answering that' },
+  { key: 'alone', label: 'Stands alone', tip: 'Neither a cause nor a consequence' },
+];
+const STATES = [
+  { key: 'active', label: 'Unacknowledged', tip: 'Nobody has acknowledged it yet' },
+  { key: 'acknowledged', label: 'Acknowledged', tip: 'Somebody has it' },
+  { key: 'cleared', label: 'Cleared', tip: 'Over; here for the record' },
+];
+/** Condition rows past this many chips hide behind "more": a bad day
+ *  raises thirty kinds of condition, and a row of thirty is a paragraph. */
+const CONDITION_CHIPS = 8;
 
 function RoomConditions({ roomId, categories, span, tab, facets, onOpen }: {
   roomId: string; categories: AlarmCategory[]; span: number; tab: Tab;
@@ -202,9 +228,7 @@ function RoomConditions({ roomId, categories, span, tab, facets, onOpen }: {
   const [page, setPage] = useState(0);
   const [size, setSize] = useState(SUB_PAGE);
   const { data, isLoading, error } = useQuery({
-    queryKey: ['room-conditions', roomId, tab, ...categories,
-               'sev', ...facets.severity, 'det', ...facets.detection,
-               'dev', ...facets.device_type],
+    queryKey: ['room-conditions', roomId, tab, ...categories, ...facetKey(facets)],
     // Every condition, walked in pages of 500 until the end: the row above
     // counts them all, and an expansion that stopped at 500 disagreed with
     // the number it sat under. Narrowed by the same chips as the row, so
@@ -363,20 +387,32 @@ type SortKey = 'room' | 'site' | 'qty' | 'alerts' | 'devices';
  *  be compared with its neighbours and un-pressed; the rows below are the
  *  narrowed one. Cells in one strip combine as OR, the two strips as AND,
  *  and the server does the arithmetic for both. */
-function Facets({ label, entries, on, onToggle, onClear, tip, hue }: {
+function Facets({ label, entries, on, onToggle, onClear, tip, hue, max, wide }: {
   label: string; entries: { key: string; label: string; n: number }[];
   on: string[]; onToggle: (key: string) => void; onClear: () => void;
   /** What a cell means, on hover - the taxonomy's own words. */
   tip?: (key: string) => string | undefined;
   /** Whether a cell carries a severity dot. */
   hue?: boolean;
+  /** Chips shown before the rest fold behind "more". A pressed chip is
+   *  always shown, wherever it ranks. */
+  max?: number;
+  /** A row that takes the whole line - the open-vocabulary ones. */
+  wide?: boolean;
 }) {
+  const [more, setMore] = useState(false);
   const shown = entries.filter((e) => e.n > 0);
   if (!shown.length) return null;
   const total = shown.reduce((t, e) => t + e.n, 0);
   const none = on.length === 0;
+  const isOn = (e: { key: string }) =>
+    on.some((k) => k.toLowerCase() === e.key.toLowerCase());
+  const visible = max && !more
+    ? shown.filter((e, i) => i < max || isOn(e))
+    : shown;
+  const hidden = shown.length - visible.length;
   return (
-    <div className="facet-row">
+    <div className={`facet-row${wide ? ' wide' : ''}`}>
       <span className="facet-label">{label}</span>
       <div className="seg facet-seg" role="group" aria-label={`${label} filter`}>
         <button type="button" className={none ? 'active' : ''}
@@ -384,8 +420,8 @@ function Facets({ label, entries, on, onToggle, onClear, tip, hue }: {
                 title={`Every ${label.toLowerCase()}`}>
           All<b>{total.toLocaleString()}</b>
         </button>
-        {shown.map((e) => {
-          const pressed = on.some((k) => k.toLowerCase() === e.key.toLowerCase());
+        {visible.map((e) => {
+          const pressed = isOn(e);
           return (
             <button key={e.key} type="button"
                     className={pressed ? 'active' : ''}
@@ -397,6 +433,19 @@ function Facets({ label, entries, on, onToggle, onClear, tip, hue }: {
             </button>
           );
         })}
+        {hidden > 0 && (
+          <button type="button" className="more" onClick={() => setMore(true)}
+                  aria-expanded={false}
+                  title={`${hidden} more ${label.toLowerCase()}${hidden === 1 ? '' : 's'}`}>
+            {hidden} more
+          </button>
+        )}
+        {max && more && shown.length > max && (
+          <button type="button" className="more" onClick={() => setMore(false)}
+                  aria-expanded={true}>
+            fewer
+          </button>
+        )}
       </div>
     </div>
   );
@@ -508,9 +557,7 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
   // And the narrowed one, only while something is pressed: the rows, the
   // headline and the device counts come from here then. The chips do not.
   const { data: narrowed, isFetching: narrowing } = useQuery({
-    queryKey: ['estate-alarms', tab, ...categories,
-               'sev', ...facets.severity, 'det', ...facets.detection,
-               'dev', ...facets.device_type],
+    queryKey: ['estate-alarms', tab, ...categories, ...facetKey(facets)],
     queryFn: () => api.estateAlarms(categories, history ? 'all' : 'open', facets),
     enabled: filtering,
     placeholderData: (prev) => prev,
@@ -615,6 +662,48 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
     return `${k.n.toLocaleString()} alarm${k.n === 1 ? '' : 's'} on `
       + `${k.devices.toLocaleString()} ${what}`;
   };
+  // The condition itself. Open vocabulary like the kinds; labelled from the
+  // taxonomy the panel already holds, which is where the legend's words are.
+  const conditionLabel = (key: string) =>
+    taxonomy?.conditions.find((c) => c.key === key)?.label
+      ?? key.replace(/_/g, ' ').replace(/^./, (ch) => ch.toUpperCase());
+  const conditions = (whole?.by_condition ?? []).map((c) => ({
+    key: c.key,
+    label: conditionLabel(c.key),
+    n: wholeRows.reduce((n, r) => n + (r.by_condition?.[c.key] ?? 0), 0),
+    devices: c.devices,
+  })).sort((a, b) => b.n - a.n || a.label.localeCompare(b.label));
+  const conditionTip = (key: string) => {
+    const c = conditions.find((x) => x.key === key);
+    const detail = taxonomy?.conditions.find((x) => x.key === key)?.detail;
+    if (!c) return detail;
+    const head = `${c.n.toLocaleString()} alarm${c.n === 1 ? '' : 's'} on `
+      + `${c.devices.toLocaleString()} device${c.devices === 1 ? '' : 's'}`;
+    return detail ? `${head}. ${detail}` : head;
+  };
+  // Alarm or alert: the two classes the row columns already keep apart.
+  // Not on an alarms-only panel, where there is nothing to choose.
+  const classes = (taxonomy?.response_classes ?? []).map((c) => ({
+    key: c.key,
+    label: c.label,
+    n: wholeRows.reduce((n, r) => n + (c.key === 'alarm' ? r.qty : r.alerts), 0),
+  }));
+  const classTip = (key: string) =>
+    taxonomy?.response_classes.find((c) => c.key === key)?.description;
+  // Where it stands in an incident, and whether anybody has it. Fixed
+  // vocabularies; the counts are the rows' own.
+  const standings = STANDINGS.map((s) => ({
+    ...s,
+    n: wholeRows.reduce((n, r) =>
+      n + (r.by_standing?.[s.key as keyof AlarmDrillRow['by_standing']] ?? 0), 0),
+  }));
+  const states = STATES.map((s) => ({
+    ...s,
+    n: wholeRows.reduce((n, r) =>
+      n + (r.by_state?.[s.key as keyof AlarmDrillRow['by_state']] ?? 0), 0),
+  }));
+  const fixedTip = (list: { key: string; tip: string }[]) => (key: string) =>
+    list.find((x) => x.key === key)?.tip;
 
   function toggleFacet(row: keyof Facets, key: string) {
     setFacets((f) => {
@@ -788,21 +877,52 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
                        onChange={(e) => { setSearch(e.target.value); setPage(0); }} />
               </label>
 
-              <Facets label="Severity" entries={severity} hue
-                      on={facets.severity}
-                      onToggle={(k) => toggleFacet('severity', k.toUpperCase())}
-                      onClear={() => clearFacet('severity')}
-                      tip={(k) => `Only ${k} conditions`} />
-              <Facets label="Found by" entries={detections}
-                      on={facets.detection}
-                      onToggle={(k) => toggleFacet('detection', k)}
-                      onClear={() => clearFacet('detection')}
-                      tip={detectionTip} />
-              <Facets label="Device" entries={kinds}
-                      on={facets.device_type}
-                      onToggle={(k) => toggleFacet('device_type', k)}
-                      onClear={() => clearFacet('device_type')}
-                      tip={kindTip} />
+              {/* The short, fixed rows share lines; the two open-vocabulary
+                  rows each take one. Standing is the live fold and means
+                  nothing in history, where a cleared consequence has
+                  already dropped its mark. */}
+              <div className="facet-rows">
+                <Facets label="Severity" entries={severity} hue
+                        on={facets.severity}
+                        onToggle={(k) => toggleFacet('severity', k.toUpperCase())}
+                        onClear={() => clearFacet('severity')}
+                        tip={(k) => `Only ${k} conditions`} />
+                {!alarmsOnly && (
+                  <Facets label="Class" entries={classes}
+                          on={facets.response_class}
+                          onToggle={(k) => toggleFacet('response_class', k)}
+                          onClear={() => clearFacet('response_class')}
+                          tip={classTip} />
+                )}
+                <Facets label="Handled" entries={states}
+                        on={facets.state}
+                        onToggle={(k) => toggleFacet('state', k)}
+                        onClear={() => clearFacet('state')}
+                        tip={fixedTip(STATES)} />
+                {!history && (
+                  <Facets label="Standing" entries={standings}
+                          on={facets.standing}
+                          onToggle={(k) => toggleFacet('standing', k)}
+                          onClear={() => clearFacet('standing')}
+                          tip={fixedTip(STANDINGS)} />
+                )}
+                <Facets label="Found by" entries={detections}
+                        on={facets.detection}
+                        onToggle={(k) => toggleFacet('detection', k)}
+                        onClear={() => clearFacet('detection')}
+                        tip={detectionTip} />
+                <Facets label="Device" entries={kinds} wide
+                        on={facets.device_type}
+                        onToggle={(k) => toggleFacet('device_type', k)}
+                        onClear={() => clearFacet('device_type')}
+                        tip={kindTip} />
+                <Facets label="Condition" entries={conditions} wide
+                        max={CONDITION_CHIPS}
+                        on={facets.alarm_type}
+                        onToggle={(k) => toggleFacet('alarm_type', k)}
+                        onClear={() => clearFacet('alarm_type')}
+                        tip={conditionTip} />
+              </div>
             </>
           )}
 

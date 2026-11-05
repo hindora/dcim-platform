@@ -230,6 +230,58 @@ async def test_the_kinds_of_device_alarming_are_folded_from_the_rows(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_condition_standing_and_state_fold_like_the_kinds_do(monkeypatch):
+    """The other three rows of chips, from the same rows.
+
+    Condition folds from the per-alarm elements (devices counted once per
+    condition); standing and state are plain counts the query did, summed
+    across rooms. Every one of them is alarms only, like the severities.
+    """
+    monkeypatch.setattr(estate.repo, "alarms_by_room", _returns([{
+        "room_id": "r1", "room_name": "Hall A", "floor": "1",
+        "datacenter_id": "dc1", "site_code": "DC1", "site_name": "DC1",
+        "qty": 3, "alerts": 1, "devices": 2, "critical": 0, "major": 3,
+        "standing_cause": 1, "standing_consequence": 2, "standing_alone": 0,
+        "state_active": 2, "state_acknowledged": 1, "state_cleared": 0,
+        "alarm_devices": [
+            {"t": "server", "l": "Server", "d": "s1", "c": "cpu_temp_high"},
+            {"t": "server", "l": "Server", "d": "s1", "c": "inlet_temp_high"},
+            {"t": "server", "l": "Server", "d": "s2", "c": "cpu_temp_high"},
+        ],
+    }, {
+        "room_id": "r2", "room_name": "Hall B", "floor": "1",
+        "datacenter_id": "dc1", "site_code": "DC1", "site_name": "DC1",
+        "qty": 1, "alerts": 0, "devices": 1, "critical": 1, "major": 0,
+        "standing_cause": 0, "standing_consequence": 0, "standing_alone": 1,
+        "state_active": 1, "state_acknowledged": 0, "state_cleared": 0,
+        "alarm_devices": [{"t": "chiller", "l": "Chiller", "d": "c1",
+                           "c": "plant_unit_stopped"}],
+    }]))
+    monkeypatch.setattr(estate.repo, "unlocated_alarms_by_category",
+                        _returns({"total": 0, "alarms": 0}))
+
+    out = await estate.alarms(_FakeSession(), categories=["cooling"],
+                              response_classes=["alarm"], states=["active"],
+                              standings=["cause"], alarm_types=["cpu_temp_high"])
+    row = out["rows"][0]
+    assert row["by_condition"] == {"cpu_temp_high": 2, "inlet_temp_high": 1}
+    assert row["by_standing"] == {"cause": 1, "consequence": 2, "alone": 0}
+    assert row["by_state"] == {"active": 2, "acknowledged": 1, "cleared": 0}
+    assert out["by_condition"] == [
+        {"key": "cpu_temp_high", "n": 2, "devices": 2},
+        {"key": "inlet_temp_high", "n": 1, "devices": 1},
+        {"key": "plant_unit_stopped", "n": 1, "devices": 1},
+    ]
+    assert out["by_standing"] == {"cause": 1, "consequence": 2, "alone": 1}
+    assert out["by_state"] == {"active": 3, "acknowledged": 1, "cleared": 0}
+    # Echoed, states upper-cased the way the API spells them.
+    assert out["response_classes"] == ["alarm"]
+    assert out["states"] == ["ACTIVE"]
+    assert out["standings"] == ["cause"]
+    assert out["alarm_types"] == ["cpu_temp_high"]
+
+
+@pytest.mark.asyncio
 async def test_a_kind_without_a_catalogue_label_still_gets_a_readable_one(monkeypatch):
     monkeypatch.setattr(estate.repo, "alarms_by_room", _returns([{
         "room_id": "r1", "room_name": "Hall A", "floor": "1",
