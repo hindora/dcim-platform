@@ -13,7 +13,7 @@ import { atLeast } from '../../api/client';
 import { humanise, metricLabel, relativeTime } from '../../lib/format';
 import { TicketChip } from './TicketChip';
 import { AnomalyEvidence, isDerivedAlarm } from './AnomalyEvidence';
-import { IncidentTree } from './IncidentTree';
+import { IncidentTree, useDeviceIncident } from './IncidentTree';
 
 /* One condition, in full: what and how bad, where, why, what was measured,
    what has happened to it, and what to do. Opened over the home page's
@@ -41,10 +41,9 @@ function historyLine(h: AlarmHistoryEntry): { what: string; by: string; more?: s
       more: d.value != null ? `reading ${d.value}${d.threshold != null ? `, limit ${d.threshold}` : ''}` : undefined };
     case 'escalated': return { what: `Escalated to ${(h.severity ?? '').toLowerCase()}`, by };
     case 'deescalated': return { what: `Lowered to ${(h.severity ?? '').toLowerCase()}`, by };
-    case 'suppressed': return { what: 'Folded under its cause', by,
+    case 'suppressed':
+    case 'correlated': return { what: 'Attributed to its cause', by,
       more: d.root_device ? `${d.root_device}${d.tier ? ` (${d.tier})` : ''}` : undefined };
-    case 'correlated': return { what: 'Tied to its cause, kept visible', by,
-      more: d.root_device ? String(d.root_device) : undefined };
     case 'released': return { what: 'Released: its cause cleared', by, more: d.reason ? String(d.reason) : undefined };
     case 'acknowledged': return { what: 'Acknowledged', by, more: d.note ? `“${d.note}”` : undefined };
     case 'cleared': return { what: 'Cleared', by, more: d.reason ? String(d.reason) : undefined };
@@ -146,6 +145,11 @@ export function AlarmDetailModal({ alarm: given, onClose, onOpenAlarm }: {
     queryFn: () => api.alarmContext(alarm.id),
     retry: false,
   });
+  // The cooling incident this alarm roots, if any: a cause's Cause section
+  // lists what it explains, and the incident is the fuller account of that.
+  const { belongs: inIncident } = useDeviceIncident(alarm.device_id, alarm.id);
+  const incident = inIncident === true;
+  const incidentKnown = inIncident !== undefined;
   const [note, setNote] = useState('');
   const [noting, setNoting] = useState(false);
 
@@ -277,9 +281,11 @@ export function AlarmDetailModal({ alarm: given, onClose, onOpenAlarm }: {
 
           <section className="ad-section">
             <h4>Cause</h4>
+            {/* A consequence names its cause and stops there. How the
+                correlator keeps or folds it is not the operator's concern. */}
             {ctx.data?.root && (
               <p className="ad-cause">
-                {alarm.is_symptom ? 'Folded under' : 'Tied to'}{' '}
+                Caused by{' '}
                 <button type="button" className="link-button" onClick={() => openOther(ctx.data!.root!.id)}>
                   {ctx.data.root.device_name ?? 'platform'}: {humanise(ctx.data.root.alarm_type)}
                 </button>
@@ -294,10 +300,15 @@ export function AlarmDetailModal({ alarm: given, onClose, onOpenAlarm }: {
                 {alarm.shelved_reason ? <span className="muted"> · {alarm.shelved_reason}</span> : null}
               </p>
             )}
-            {(ctx.data?.symptom_count ?? 0) > 0 && (
+            {/* A cause lists what it explains: the incident when it roots
+                one, else the alarms tied directly to it. */}
+            {!ctx.data?.root && incident && (
+              <IncidentTree deviceId={alarm.device_id} alarmId={alarm.id} heading={false} />
+            )}
+            {!ctx.data?.root && incidentKnown && !incident && (ctx.data?.symptom_count ?? 0) > 0 && (
               <>
                 <p className="ad-cause">
-                  Explains <b>{ctx.data!.symptom_count}</b> other {ctx.data!.symptom_count === 1 ? 'alarm' : 'alarms'}, folded under it:
+                  Explains <b>{ctx.data!.symptom_count}</b> other {ctx.data!.symptom_count === 1 ? 'alarm' : 'alarms'}:
                 </p>
                 <ul className="ad-related">
                   {ctx.data!.symptoms.map((s) => <Related key={s.id} a={s} onOpen={openOther} />)}
@@ -307,8 +318,7 @@ export function AlarmDetailModal({ alarm: given, onClose, onOpenAlarm }: {
                 )}
               </>
             )}
-            <IncidentTree deviceId={alarm.device_id} alarmId={alarm.id} heading={false} />
-            {ctx.data && !ctx.data.root && !ctx.data.symptom_count && !alarm.shelved_by_window && !alarm.cause_tier && (
+            {ctx.data && !ctx.data.root && incidentKnown && !incident && !ctx.data.symptom_count && !alarm.shelved_by_window && !alarm.cause_tier && (
               <p className="ad-note">Stands on its own: nothing upstream explains it, and it explains nothing else.</p>
             )}
           </section>

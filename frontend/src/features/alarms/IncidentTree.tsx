@@ -28,7 +28,14 @@ export function useDeviceIncident(deviceId: string, alarmId?: string) {
     refetchInterval: 60_000,
     retry: false,
   });
-  return { incident: pick, detail: detail.data };
+  // Whether THIS alarm is in the incident, not merely its device: a PDU
+  // alarm on a CRAH that is down for a chiller has nothing to do with it.
+  // Unknown (undefined) until the detail has been read.
+  const belongs: boolean | undefined = !pick ? false
+    : !alarmId ? true
+      : pick.root_alarm_id === alarmId ? true
+        : detail.data ? detail.data.alarms.some((a) => a.id === alarmId) : undefined;
+  return { incident: pick, detail: detail.data, belongs };
 }
 
 const SHOW = 6;
@@ -52,15 +59,18 @@ function Lines({ rows, label }: { rows: AnomalyIncidentAlarm[]; label: string })
   );
 }
 
-/** What the incident holds, by role: the cause, what is folded under it,
- *  and what is kept visible because it is worse than its cause. */
+/** What the incident holds: the cause, the cooling units down with it, and
+ *  its consequences. How the correlator keeps or folds each consequence is
+ *  its own bookkeeping and is not said here: an operator wants the cause and
+ *  what it explains. */
 export function IncidentTree({ deviceId, alarmId, heading = true }: {
   deviceId: string; alarmId?: string; heading?: boolean;
 }) {
-  const { incident, detail } = useDeviceIncident(deviceId, alarmId);
-  if (!incident) return null;
-  const alarms = detail?.alarms ?? [];
+  const { incident, detail, belongs } = useDeviceIncident(deviceId, alarmId);
+  if (!incident || belongs === false) return null;
+  const alarms = (detail?.alarms ?? []).filter((a) => a.id !== alarmId);
   const isRoot = incident.root_device_id === deviceId;
+  const consequences = alarms.filter((a) => a.role === 'member' || a.role === 'folded');
   return (
     <section className="incident-tree" aria-label="Cooling incident">
       {heading && (
@@ -76,9 +86,7 @@ export function IncidentTree({ deviceId, alarmId, heading = true }: {
           <Lines label="Cause" rows={alarms.filter((a) => a.role === 'root')} />
           <Lines label="Other cooling units down with it"
                  rows={alarms.filter((a) => a.role === 'peer')} />
-          <Lines label="Kept visible: worse than the cause, one of each kind"
-                 rows={alarms.filter((a) => a.role === 'member')} />
-          <Lines label="Folded under it" rows={alarms.filter((a) => a.role === 'folded')} />
+          <Lines label={`Consequences · ${consequences.length}`} rows={consequences} />
         </>
       )}
       {!!detail?.findings.length && (
