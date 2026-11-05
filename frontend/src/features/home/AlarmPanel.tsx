@@ -19,13 +19,14 @@
  */
 
 import { Fragment, useEffect, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQueries, useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import {
   api,
   type Alarm,
   type AlarmCategory,
   type AlarmDetection,
+  type AlarmDrill,
   type AlarmDrillRow,
   type AlarmTaxonomy,
 } from '../../api/client';
@@ -401,12 +402,14 @@ function Facets({ label, entries, on, onToggle, onClear, tip, hue, max, wide }: 
   wide?: boolean;
 }) {
   const [more, setMore] = useState(false);
-  const shown = entries.filter((e) => e.n > 0);
+  const isOn = (e: { key: string }) =>
+    on.some((k) => k.toLowerCase() === e.key.toLowerCase());
+  // A pressed chip stays even when the other rows have narrowed it to
+  // nothing: a filter the reader cannot see is a filter they cannot lift.
+  const shown = entries.filter((e) => e.n > 0 || isOn(e));
   if (!shown.length) return null;
   const total = shown.reduce((t, e) => t + e.n, 0);
   const none = on.length === 0;
-  const isOn = (e: { key: string }) =>
-    on.some((k) => k.toLowerCase() === e.key.toLowerCase());
   const visible = max && !more
     ? shown.filter((e, i) => i < max || isOn(e))
     : shown;
@@ -549,13 +552,14 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
   // is one device, and only the database can say so.
   // The tab is part of the key: live and history are two populations of the
   // same rooms, and the server does the arithmetic for whichever is asked.
-  // This one is UNFILTERED: it is what the chips count, whatever is pressed.
+  // This one is UNFILTERED: what a row's chips count while nothing else
+  // is pressed.
   const { data: whole, isLoading, error } = useQuery({
     queryKey: ['estate-alarms', tab, ...categories],
     queryFn: () => api.estateAlarms(categories, history ? 'all' : 'open'),
   });
   // And the narrowed one, only while something is pressed: the rows, the
-  // headline and the device counts come from here then. The chips do not.
+  // headline and the device counts come from here then.
   const { data: narrowed, isFetching: narrowing } = useQuery({
     queryKey: ['estate-alarms', tab, ...categories, ...facetKey(facets)],
     queryFn: () => api.estateAlarms(categories, history ? 'all' : 'open', facets),
@@ -563,6 +567,32 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
     placeholderData: (prev) => prev,
   });
   const data = filtering ? narrowed : whole;
+
+  // Each row's chips count every OTHER row's filter and never their own:
+  // press Server and the conditions narrow to what servers raise, while
+  // the Device row stays whole so Switch is still there to swap to. A row
+  // with nothing pressed reads the narrowed response, which IS "everything
+  // but this row". A pressed row needs its own question with its chips
+  // left out - one query per pressed row, and none while only one row is
+  // pressed, since "all but the only one" is the whole.
+  const pressedRows = FACET_KEYS.filter((k) => facets[k].length > 0);
+  const minusRows = pressedRows.length > 1 ? pressedRows : [];
+  const minus = useQueries({
+    queries: minusRows.map((row) => {
+      const others: Facets = { ...facets, [row]: [] };
+      return {
+        queryKey: ['estate-alarms', tab, ...categories, ...facetKey(others)],
+        queryFn: () => api.estateAlarms(categories, history ? 'all' : 'open', others),
+        placeholderData: (prev: AlarmDrill | undefined) => prev,
+      };
+    }),
+  });
+  const sourceFor = (row: keyof Facets): AlarmDrill | undefined => {
+    if (!filtering) return whole;
+    if (!facets[row].length) return narrowed ?? whole;
+    const i = minusRows.indexOf(row);
+    return i >= 0 ? (minus[i].data ?? whole) : whole;
+  };
 
   const { data: taxonomy } = useQuery<AlarmTaxonomy>({
     queryKey: ['alarm-taxonomy'],
@@ -627,33 +657,42 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
   const current = Math.min(page, pageCount - 1);
   const rows = sorted.slice(current * pageSize, current * pageSize + pageSize);
 
-  // Facet counts come from the WHOLE population, filtered by scope only -
-  // never by the chips themselves, or pressing one would erase the others.
-  const wholeRows: AlarmDrillRow[] = (whole?.rows ?? [])
+  // Facet counts are scoped like the rows, and come from whichever
+  // response answers "everything but this row" (see sourceFor).
+  const rowsOf = (d?: AlarmDrill): AlarmDrillRow[] => (d?.rows ?? [])
     .filter(inScope)
     .filter((r) => !alarmsOnly || r.qty > 0);
+  const rowsFor = (row: keyof Facets) => rowsOf(sourceFor(row));
+  const sevRows = rowsFor('severity');
   const severity = SEVERITIES.map((k) => ({
     key: k,
     label: k.toUpperCase(),
-    n: wholeRows.reduce((n, r) => n + (r.by_severity?.[k] ?? 0), 0),
+    n: sevRows.reduce((n, r) => n + (r.by_severity?.[k] ?? 0), 0),
   }));
+  const detRows = rowsFor('detection');
   const detections = (taxonomy?.detections ?? []).map((d) => ({
     key: d.key as AlarmDetection,
     label: d.label,
-    n: wholeRows.reduce((n, r) => n + (r.by_detection?.[d.key] ?? 0), 0),
+    n: detRows.reduce((n, r) => n + (r.by_detection?.[d.key] ?? 0), 0),
   }));
   const detectionTip = (key: string) =>
     taxonomy?.detections.find((d) => d.key === key)?.description;
   // What KIND of thing is alarming. No fixed vocabulary - an IT panel is
   // servers and switches, a power panel UPSs and PDUs - so the chips are
-  // whatever the rows hold, worst first, in the server's order. Counted
-  // from the scoped rows like the other two rows; labelled from the
-  // response, which carries each kind once.
-  const kinds = (whole?.by_device_type ?? []).map((k) => ({
-    key: k.key,
-    label: k.label,
-    n: wholeRows.reduce((n, r) => n + (r.by_device_type?.[k.key] ?? 0), 0),
-    devices: wholeRows.reduce((n, r) => n + (r.devices_by_type?.[k.key] ?? 0), 0),
+  // whatever the rows hold, worst first, plus whatever is pressed. Labelled
+  // from the whole response, which carries every kind once.
+  const kindLabel = (key: string) =>
+    whole?.by_device_type.find((k) => k.key === key)?.label
+      ?? key.replace(/_/g, ' ').replace(/^./, (ch) => ch.toUpperCase());
+  const kindSrc = sourceFor('device_type');
+  const kindRows = rowsOf(kindSrc);
+  const kindKeys = [...new Set([
+    ...(kindSrc?.by_device_type ?? []).map((k) => k.key), ...facets.device_type])];
+  const kinds = kindKeys.map((key) => ({
+    key,
+    label: kindLabel(key),
+    n: kindRows.reduce((n, r) => n + (r.by_device_type?.[key] ?? 0), 0),
+    devices: kindRows.reduce((n, r) => n + (r.devices_by_type?.[key] ?? 0), 0),
   })).sort((a, b) => b.n - a.n || a.label.localeCompare(b.label));
   const kindTip = (key: string) => {
     const k = kinds.find((x) => x.key === key);
@@ -667,11 +706,15 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
   const conditionLabel = (key: string) =>
     taxonomy?.conditions.find((c) => c.key === key)?.label
       ?? key.replace(/_/g, ' ').replace(/^./, (ch) => ch.toUpperCase());
-  const conditions = (whole?.by_condition ?? []).map((c) => ({
-    key: c.key,
-    label: conditionLabel(c.key),
-    n: wholeRows.reduce((n, r) => n + (r.by_condition?.[c.key] ?? 0), 0),
-    devices: c.devices,
+  const condSrc = sourceFor('alarm_type');
+  const condRows = rowsOf(condSrc);
+  const condKeys = [...new Set([
+    ...(condSrc?.by_condition ?? []).map((c) => c.key), ...facets.alarm_type])];
+  const conditions = condKeys.map((key) => ({
+    key,
+    label: conditionLabel(key),
+    n: condRows.reduce((n, r) => n + (r.by_condition?.[key] ?? 0), 0),
+    devices: condSrc?.by_condition.find((c) => c.key === key)?.devices ?? 0,
   })).sort((a, b) => b.n - a.n || a.label.localeCompare(b.label));
   const conditionTip = (key: string) => {
     const c = conditions.find((x) => x.key === key);
@@ -683,23 +726,26 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
   };
   // Alarm or alert: the two classes the row columns already keep apart.
   // Not on an alarms-only panel, where there is nothing to choose.
+  const classRows = rowsFor('response_class');
   const classes = (taxonomy?.response_classes ?? []).map((c) => ({
     key: c.key,
     label: c.label,
-    n: wholeRows.reduce((n, r) => n + (c.key === 'alarm' ? r.qty : r.alerts), 0),
+    n: classRows.reduce((n, r) => n + (c.key === 'alarm' ? r.qty : r.alerts), 0),
   }));
   const classTip = (key: string) =>
     taxonomy?.response_classes.find((c) => c.key === key)?.description;
   // Where it stands in an incident, and whether anybody has it. Fixed
   // vocabularies; the counts are the rows' own.
+  const standRows = rowsFor('standing');
   const standings = STANDINGS.map((s) => ({
     ...s,
-    n: wholeRows.reduce((n, r) =>
+    n: standRows.reduce((n, r) =>
       n + (r.by_standing?.[s.key as keyof AlarmDrillRow['by_standing']] ?? 0), 0),
   }));
+  const stateRows = rowsFor('state');
   const states = STATES.map((s) => ({
     ...s,
-    n: wholeRows.reduce((n, r) =>
+    n: stateRows.reduce((n, r) =>
       n + (r.by_state?.[s.key as keyof AlarmDrillRow['by_state']] ?? 0), 0),
   }));
   const fixedTip = (list: { key: string; tip: string }[]) => (key: string) =>
@@ -722,7 +768,7 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
   // would show with nothing pressed, so the two numbers are the same kind.
   const wholeTotal = !whole ? 0
     : scope
-      ? wholeRows.reduce((n, r) => n + r.qty + (alarmsOnly ? 0 : r.alerts), 0)
+      ? rowsOf(whole).reduce((n, r) => n + r.qty + (alarmsOnly ? 0 : r.alerts), 0)
       : (alarmsOnly ? whole.alarms : whole.total);
 
   // Every category at once. Concatenating seven definitions produced a
