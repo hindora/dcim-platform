@@ -21,6 +21,7 @@ Two rules run through the whole module:
 
 from __future__ import annotations
 
+from collections import Counter, defaultdict
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 
@@ -1638,7 +1639,8 @@ async def alarms(session: AsyncSession, *,
                  categories: list[str],
                  lifecycle: str = "open",
                  severities: list[str] | None = None,
-                 detections: list[str] | None = None) -> dict[str, Any]:
+                 detections: list[str] | None = None,
+                 device_types: list[str] | None = None) -> dict[str, Any]:
     """The drill-down behind one counter, by room.
 
     `lifecycle` is `open` for the counter's own population and `all` for the
@@ -1655,17 +1657,27 @@ async def alarms(session: AsyncSession, *,
     the same number. The two are reported side by side and never added,
     exactly as the row columns do it.
 
-    Every row carries its own severity and detection split. The facets are the
-    same population the row totals, computed in the one query that produced it:
-    a facet fetched separately can disagree with the row it sits under, and
-    then neither number is usable.
+    Every row carries its own severity, detection and device-type split. The
+    facets are the same population the row totals, computed in the one query
+    that produced it: a facet fetched separately can disagree with the row it
+    sits under, and then neither number is usable.
+
+    The device-type facet is the one axis with no fixed vocabulary: an IT
+    panel is servers and switches, a power panel is UPSs and PDUs, and a
+    fixed list would print zeros for the rest of the estate all day. So the
+    rows carry a map keyed by type, and the top level carries the kinds that
+    actually appear, labelled and worst-first, with the devices behind each
+    count - "880 alarms on 412 servers" is a different fact from "880 alarms
+    on 2 servers", and only the second is a device to walk to.
     """
     rows = await repo.alarms_by_room(session, categories=categories,
                                      lifecycle=lifecycle,
-                                     severities=severities, detections=detections)
+                                     severities=severities, detections=detections,
+                                     device_types=device_types)
     unlocated = await repo.unlocated_alarms_by_category(
         session, categories=categories, lifecycle=lifecycle,
-        severities=severities, detections=detections)
+        severities=severities, detections=detections,
+        device_types=device_types)
 
     def _detect(r: dict[str, Any]) -> dict[str, int]:
         return {d: int(r.get(f"detected_{d}") or 0) for d in DETECTIONS}
@@ -1674,21 +1686,52 @@ async def alarms(session: AsyncSession, *,
         return {k: int(r.get(k) or 0)
                 for k in ("critical", "major", "minor", "warning")}
 
-    out_rows = [{
-        "room_id": r["room_id"], "room_name": r["room_name"],
-        "floor": r["floor"], "site_id": r["datacenter_id"],
-        "site_code": r["site_code"], "site_name": r["site_name"],
-        "qty": int(r["qty"]), "devices": int(r["devices"]),
-        # Devices with anything open, for the panels that list both classes.
-        "devices_all": int(r.get("devices_all") or 0),
-        # The two classes, side by side and never summed into one number here.
-        "alerts": int(r.get("alerts") or 0),
-        # Of qty + alerts, what is folded under a cause.
-        "folded": int(r.get("folded") or 0),
-        "critical": int(r["critical"]), "major": int(r["major"]),
-        "by_severity": _sev(r),
-        "by_detection": _detect(r),
-    } for r in rows]
+    # One element per alarm from the query; folded here per room, and once
+    # more across rooms below. A device is counted once per kind however
+    # many alarms it carries.
+    labels: dict[str, str] = {}
+    kind_alarms: Counter[str] = Counter()
+    kind_devices: dict[str, set[str]] = defaultdict(set)
+
+    def _kinds(r: dict[str, Any]) -> tuple[dict[str, int], dict[str, int]]:
+        n: Counter[str] = Counter()
+        seen: dict[str, set[str]] = defaultdict(set)
+        for e in r.get("alarm_devices") or []:
+            t = e.get("t") or "unknown"
+            n[t] += 1
+            seen[t].add(e.get("d") or "")
+            if e.get("l"):
+                labels.setdefault(t, e["l"])
+        kind_alarms.update(n)
+        for t, ids in seen.items():
+            kind_devices[t] |= ids
+        return dict(n), {t: len(ids) for t, ids in seen.items()}
+
+    def _label(t: str) -> str:
+        return labels.get(t) or t.replace("_", " ").capitalize()
+
+    out_rows = []
+    for r in rows:
+        by_type, devices_by_type = _kinds(r)
+        out_rows.append({
+            "room_id": r["room_id"], "room_name": r["room_name"],
+            "floor": r["floor"], "site_id": r["datacenter_id"],
+            "site_code": r["site_code"], "site_name": r["site_name"],
+            "qty": int(r["qty"]), "devices": int(r["devices"]),
+            # Devices with anything open, for the panels that list both classes.
+            "devices_all": int(r.get("devices_all") or 0),
+            # The two classes, side by side and never summed into one number here.
+            "alerts": int(r.get("alerts") or 0),
+            # Of qty + alerts, what is folded under a cause.
+            "folded": int(r.get("folded") or 0),
+            "critical": int(r["critical"]), "major": int(r["major"]),
+            "by_severity": _sev(r),
+            "by_detection": _detect(r),
+            # Alarms per kind of device, and the devices behind them. Keyed
+            # by device_type code; the labels live once, at the top level.
+            "by_device_type": by_type,
+            "devices_by_type": devices_by_type,
+        })
 
     located_alarms = sum(int(r["qty"]) for r in rows)
     located_alerts = sum(int(r.get("alerts") or 0) for r in rows)
@@ -1699,6 +1742,7 @@ async def alarms(session: AsyncSession, *,
         # Echoed so a caller holding two responses can tell which is which.
         "severities": [s.upper() for s in (severities or [])],
         "detections": list(detections or []),
+        "device_types": list(device_types or []),
         "rows": out_rows,
         # What the counter shows: every open condition in this category, in a
         # room. Platform conditions are NOT in here and are not in the counter
@@ -1724,6 +1768,12 @@ async def alarms(session: AsyncSession, *,
         "by_detection": {
             d: sum(row["by_detection"][d] for row in out_rows) for d in DETECTIONS
         },
+        # Only the kinds that appear, worst first, each with its label and
+        # the devices behind its alarms. No fixed vocabulary: see above.
+        "by_device_type": [
+            {"key": t, "label": _label(t), "n": n, "devices": len(kind_devices[t])}
+            for t, n in sorted(kind_alarms.items(), key=lambda kv: (-kv[1], kv[0]))
+        ],
     }
 
 

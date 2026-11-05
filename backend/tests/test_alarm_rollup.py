@@ -239,7 +239,7 @@ async def test_a_category_is_answered_from_the_stamped_column(monkeypatch):
                         _returns({"total": 0, "alarms": 0}))
 
     await estate_api.alarms(category=["cooling"], lifecycle="open",
-                            severity=None, detection=None,
+                            severity=None, detection=None, device_type=None,
                             session=_FakeSession())
 
     assert seen == {"categories": ["cooling"], "lifecycle": "open"}
@@ -255,12 +255,12 @@ async def test_pressed_chips_narrow_both_queries(monkeypatch):
     """
     seen: dict = {}
 
-    async def _rooms(_session, *, severities, detections, **_kw):
-        seen["rooms"] = (severities, detections)
+    async def _rooms(_session, *, severities, detections, device_types, **_kw):
+        seen["rooms"] = (severities, detections, device_types)
         return []
 
-    async def _unlocated(_session, *, severities, detections, **_kw):
-        seen["unlocated"] = (severities, detections)
+    async def _unlocated(_session, *, severities, detections, device_types, **_kw):
+        seen["unlocated"] = (severities, detections, device_types)
         return {"total": 0, "alarms": 0}
 
     monkeypatch.setattr(estate_service.repo, "alarms_by_room", _rooms)
@@ -269,13 +269,14 @@ async def test_pressed_chips_narrow_both_queries(monkeypatch):
 
     out = await estate_api.alarms(category=["power"], lifecycle="all",
                                   severity=["critical", "Major"],
-                                  detection=["absence"],
+                                  detection=["absence"], device_type=["ups"],
                                   session=_FakeSession())
 
-    assert seen["rooms"] == (["CRITICAL", "MAJOR"], ["absence"])
-    assert seen["unlocated"] == (["CRITICAL", "MAJOR"], ["absence"])
+    assert seen["rooms"] == (["CRITICAL", "MAJOR"], ["absence"], ["ups"])
+    assert seen["unlocated"] == (["CRITICAL", "MAJOR"], ["absence"], ["ups"])
     assert out["severities"] == ["CRITICAL", "MAJOR"]
     assert out["detections"] == ["absence"]
+    assert out["device_types"] == ["ups"]
 
 
 @pytest.mark.parametrize("severity, detection, what", [
@@ -318,7 +319,7 @@ async def test_history_asks_for_every_lifecycle(monkeypatch):
                         _unlocated)
 
     out = await estate_api.alarms(category=["power"], lifecycle="all",
-                                  severity=None, detection=None,
+                                  severity=None, detection=None, device_type=None,
                                   session=_FakeSession())
 
     assert seen == {"rooms": "all", "unlocated": "all"}
@@ -344,7 +345,7 @@ async def test_a_grouped_counter_asks_once(monkeypatch):
                         _returns({"total": 0, "alarms": 0}))
 
     await estate_api.alarms(category=["cooling", "environmental", "cooling"],
-                            severity=None, detection=None,
+                            severity=None, detection=None, device_type=None,
                             session=_FakeSession())
 
     # Deduplicated, and in the order asked: a repeated parameter is a caller
@@ -504,7 +505,7 @@ async def test_an_unknown_category_is_rejected_rather_than_answered_empty(catego
     as "nothing wrong in this category".
     """
     with pytest.raises(HTTPException) as exc:
-        await estate_api.alarms(category=[category], severity=None, detection=None,
+        await estate_api.alarms(category=[category], severity=None, detection=None, device_type=None,
                                 session=_FakeSession())
     assert exc.value.status_code == 400
 

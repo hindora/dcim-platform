@@ -189,9 +189,10 @@ const HISTORY_STATES = ['ACTIVE', 'ACKNOWLEDGED', 'CLEARED'];
 const SUB_PAGE = 25;
 
 /** The pressed facet chips, as the API takes them. */
-interface Facets { severity: string[]; detection: string[] }
-const NO_FACETS: Facets = { severity: [], detection: [] };
-const facetsActive = (f: Facets) => f.severity.length > 0 || f.detection.length > 0;
+interface Facets { severity: string[]; detection: string[]; device_type: string[] }
+const NO_FACETS: Facets = { severity: [], detection: [], device_type: [] };
+const facetsActive = (f: Facets) =>
+  f.severity.length > 0 || f.detection.length > 0 || f.device_type.length > 0;
 
 function RoomConditions({ roomId, categories, span, tab, facets, onOpen }: {
   roomId: string; categories: AlarmCategory[]; span: number; tab: Tab;
@@ -202,7 +203,8 @@ function RoomConditions({ roomId, categories, span, tab, facets, onOpen }: {
   const [size, setSize] = useState(SUB_PAGE);
   const { data, isLoading, error } = useQuery({
     queryKey: ['room-conditions', roomId, tab, ...categories,
-               'sev', ...facets.severity, 'det', ...facets.detection],
+               'sev', ...facets.severity, 'det', ...facets.detection,
+               'dev', ...facets.device_type],
     // Every condition, walked in pages of 500 until the end: the row above
     // counts them all, and an expansion that stopped at 500 disagreed with
     // the number it sat under. Narrowed by the same chips as the row, so
@@ -507,7 +509,8 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
   // headline and the device counts come from here then. The chips do not.
   const { data: narrowed, isFetching: narrowing } = useQuery({
     queryKey: ['estate-alarms', tab, ...categories,
-               'sev', ...facets.severity, 'det', ...facets.detection],
+               'sev', ...facets.severity, 'det', ...facets.detection,
+               'dev', ...facets.device_type],
     queryFn: () => api.estateAlarms(categories, history ? 'all' : 'open', facets),
     enabled: filtering,
     placeholderData: (prev) => prev,
@@ -594,6 +597,24 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
   }));
   const detectionTip = (key: string) =>
     taxonomy?.detections.find((d) => d.key === key)?.description;
+  // What KIND of thing is alarming. No fixed vocabulary - an IT panel is
+  // servers and switches, a power panel UPSs and PDUs - so the chips are
+  // whatever the rows hold, worst first, in the server's order. Counted
+  // from the scoped rows like the other two rows; labelled from the
+  // response, which carries each kind once.
+  const kinds = (whole?.by_device_type ?? []).map((k) => ({
+    key: k.key,
+    label: k.label,
+    n: wholeRows.reduce((n, r) => n + (r.by_device_type?.[k.key] ?? 0), 0),
+    devices: wholeRows.reduce((n, r) => n + (r.devices_by_type?.[k.key] ?? 0), 0),
+  })).sort((a, b) => b.n - a.n || a.label.localeCompare(b.label));
+  const kindTip = (key: string) => {
+    const k = kinds.find((x) => x.key === key);
+    if (!k) return undefined;
+    const what = k.devices === 1 ? k.label.toLowerCase() : `${k.label.toLowerCase()}s`;
+    return `${k.n.toLocaleString()} alarm${k.n === 1 ? '' : 's'} on `
+      + `${k.devices.toLocaleString()} ${what}`;
+  };
 
   function toggleFacet(row: keyof Facets, key: string) {
     setFacets((f) => {
@@ -777,6 +798,11 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
                       onToggle={(k) => toggleFacet('detection', k)}
                       onClear={() => clearFacet('detection')}
                       tip={detectionTip} />
+              <Facets label="Device" entries={kinds}
+                      on={facets.device_type}
+                      onToggle={(k) => toggleFacet('device_type', k)}
+                      onClear={() => clearFacet('device_type')}
+                      tip={kindTip} />
             </>
           )}
 

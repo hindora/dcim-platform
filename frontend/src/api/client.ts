@@ -4083,6 +4083,39 @@ export interface AlarmDrillRow {
   major: number;
   by_severity: { critical: number; major: number; minor: number; warning: number };
   by_detection: Record<AlarmDetection, number>;
+  /** Alarms per kind of device, keyed by device_type code. Only the kinds
+   *  present; the labels are on the response's `by_device_type`. */
+  by_device_type: Record<string, number>;
+  /** Distinct devices behind each key of `by_device_type`. */
+  devices_by_type: Record<string, number>;
+}
+
+/** The pressed chips on an alarm panel, as every endpoint behind it takes
+ *  them: the drill, and the room list under each row, so the two keep
+ *  agreeing. */
+export interface AlarmFacets {
+  severity?: string[];
+  detection?: string[];
+  device_type?: string[];
+}
+
+/** The chips as query parameters. One place, so a fourth row later is one
+ *  line here rather than one per endpoint. */
+function facetQuery(f?: AlarmFacets): string {
+  if (!f) return '';
+  return (f.severity ?? []).map((s) => `&severity=${encodeURIComponent(s)}`).join('')
+    + (f.detection ?? []).map((d) => `&detection=${encodeURIComponent(d)}`).join('')
+    + (f.device_type ?? []).map((t) => `&device_type=${encodeURIComponent(t)}`).join('');
+}
+
+/** One kind of device alarming, as the drill's third facet row lists it. */
+export interface AlarmDrillKind {
+  /** device_type code - what `device_type=` takes back. */
+  key: string;
+  label: string;
+  /** Alarms on devices of this kind, and the devices behind them. */
+  n: number;
+  devices: number;
 }
 
 export interface AlarmTrend {
@@ -4107,6 +4140,7 @@ export interface AlarmDrill {
   /** The facet filters this response was narrowed by; empty when none. */
   severities: string[];
   detections: AlarmDetection[];
+  device_types: string[];
   rows: AlarmDrillRow[];
   /** Every open condition in the category, in a room - exactly what the rows
    *  add up to and exactly what the counter that opened the panel counts. */
@@ -4126,6 +4160,9 @@ export interface AlarmDrill {
    *  row to face against. */
   by_severity: { critical: number; major: number; minor: number; warning: number };
   by_detection: Record<AlarmDetection, number>;
+  /** The kinds of device alarming, worst first - only those present, since
+   *  an IT panel and a power panel share no vocabulary. */
+  by_device_type: AlarmDrillKind[];
 }
 
 export interface RoomKpi {
@@ -5626,11 +5663,10 @@ export const api = {
    *  is counting and `all` for the history behind the same rooms, cleared
    *  conditions included - one endpoint, one arithmetic, two populations. */
   estateAlarms: (categories: string[], lifecycle: 'open' | 'all' = 'open',
-                 facets?: { severity?: string[]; detection?: string[] }) =>
+                 facets?: AlarmFacets) =>
     request<AlarmDrill>(`/estate/alarms?lifecycle=${lifecycle}`
       + categories.map((c) => `&category=${encodeURIComponent(c)}`).join('')
-      + (facets?.severity ?? []).map((s) => `&severity=${encodeURIComponent(s)}`).join('')
-      + (facets?.detection ?? []).map((d) => `&detection=${encodeURIComponent(d)}`).join('')),
+      + facetQuery(facets)),
 
   alarmTaxonomy: () => request<AlarmTaxonomy>('/estate/alarm-categories'),
 
@@ -5710,15 +5746,14 @@ export const api = {
    *  the server answers with the open ones (ACTIVE + ACKNOWLEDGED), which is
    *  what the roll-up counters are counting. */
   roomConditions: (roomId: string, categories: string[], states?: string[],
-                   offset = 0, facets?: { severity?: string[]; detection?: string[] },
+                   offset = 0, facets?: AlarmFacets,
                    includeSymptoms = false) =>
     request<{ items: Alarm[] }>(
       `/alarms?limit=500&offset=${offset}&room=${encodeURIComponent(roomId)}`
       + (includeSymptoms ? '&include_symptoms=true' : '')
       + categories.map((c) => `&category=${encodeURIComponent(c)}`).join('')
       + (states ?? []).map((s) => `&state=${encodeURIComponent(s)}`).join('')
-      + (facets?.severity ?? []).map((s) => `&severity=${encodeURIComponent(s)}`).join('')
-      + (facets?.detection ?? []).map((d) => `&detection=${encodeURIComponent(d)}`).join('')),
+      + facetQuery(facets)),
 
   /** Every condition in one room, however many. The list endpoint hands
    *  out at most 500 a call; this walks it by offset until a short page
@@ -5726,7 +5761,7 @@ export const api = {
    *  is seen twice or skipped across the boundaries. */
   roomConditionsAll: async (roomId: string, categories: string[],
                             states?: string[],
-                            facets?: { severity?: string[]; detection?: string[] },
+                            facets?: AlarmFacets,
                             includeSymptoms = false) => {
     const PAGE = 500;
     const items: Alarm[] = [];

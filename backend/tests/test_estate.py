@@ -192,6 +192,61 @@ async def test_the_row_carries_a_device_count_for_each_population(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_the_kinds_of_device_alarming_are_folded_from_the_rows(monkeypatch):
+    """One element per alarm in; per-room maps and a labelled list out.
+
+    A device is counted once per kind however many alarms it carries, the
+    list holds only the kinds that appear (an IT panel is not asked to print
+    "UPS 0"), and it reads worst first. The label travels from the query so
+    no second lookup can describe a different instant.
+    """
+    monkeypatch.setattr(estate.repo, "alarms_by_room", _returns([{
+        "room_id": "r1", "room_name": "Hall A", "floor": "1",
+        "datacenter_id": "dc1", "site_code": "DC1", "site_name": "DC1",
+        "qty": 4, "alerts": 0, "devices": 3, "critical": 0, "major": 4,
+        "alarm_devices": [
+            {"t": "server", "l": "Server", "d": "s1"},
+            {"t": "server", "l": "Server", "d": "s1"},
+            {"t": "server", "l": "Server", "d": "s2"},
+            {"t": "load_balancer", "l": "Load balancer", "d": "lb1"},
+        ],
+    }, {
+        "room_id": "r2", "room_name": "Hall B", "floor": "1",
+        "datacenter_id": "dc1", "site_code": "DC1", "site_name": "DC1",
+        "qty": 1, "alerts": 0, "devices": 1, "critical": 1, "major": 0,
+        "alarm_devices": [{"t": "server", "l": "Server", "d": "s3"}],
+    }]))
+    monkeypatch.setattr(estate.repo, "unlocated_alarms_by_category",
+                        _returns({"total": 0, "alarms": 0}))
+
+    out = await estate.alarms(_FakeSession(), categories=["it_equipment"])
+    assert out["rows"][0]["by_device_type"] == {"server": 3, "load_balancer": 1}
+    assert out["rows"][0]["devices_by_type"] == {"server": 2, "load_balancer": 1}
+    assert out["by_device_type"] == [
+        {"key": "server", "label": "Server", "n": 4, "devices": 3},
+        {"key": "load_balancer", "label": "Load balancer", "n": 1, "devices": 1},
+    ]
+    assert out["device_types"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_kind_without_a_catalogue_label_still_gets_a_readable_one(monkeypatch):
+    monkeypatch.setattr(estate.repo, "alarms_by_room", _returns([{
+        "room_id": "r1", "room_name": "Hall A", "floor": "1",
+        "datacenter_id": "dc1", "site_code": "DC1", "site_name": "DC1",
+        "qty": 1, "alerts": 0, "devices": 1, "critical": 0, "major": 1,
+        "alarm_devices": [{"t": "modbus_gateway", "l": None, "d": "g1"}],
+    }]))
+    monkeypatch.setattr(estate.repo, "unlocated_alarms_by_category",
+                        _returns({"total": 0, "alarms": 0}))
+
+    out = await estate.alarms(_FakeSession(), categories=["visibility"],
+                              device_types=["modbus_gateway"])
+    assert out["by_device_type"][0]["label"] == "Modbus gateway"
+    assert out["device_types"] == ["modbus_gateway"]
+
+
+@pytest.mark.asyncio
 async def test_a_missing_device_count_reads_zero_not_absent(monkeypatch):
     """The key must always be there: the browser sorts on it."""
     monkeypatch.setattr(estate.repo, "alarms_by_room", _returns([{

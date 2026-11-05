@@ -544,6 +544,7 @@ async def list_alarms(session: AsyncSession, *, states: list[str] | None = None,
                       categories: list[str] | None = None,
                       detections: list[str] | None = None,
                       response_classes: list[str] | None = None,
+                      device_types: list[str] | None = None,
                       room_id: str | None = None,
                       rack_id: str | None = None,
                       include_symptoms: bool = False,
@@ -557,6 +558,12 @@ async def list_alarms(session: AsyncSession, *, states: list[str] | None = None,
     if severities:
         where.append("a.severity::text = ANY(:severities)")
         params["severities"] = severities
+    if device_types:
+        # The kind of thing alarming - the panel's third chip row. On the
+        # device, not the alarm: a platform alarm has no device and no kind,
+        # and is rightly outside any such narrowing.
+        where.append("d.device_type::text = ANY(:device_types)")
+        params["device_types"] = device_types
     if device_id:
         where.append("a.device_id = CAST(:device_id AS uuid)")
         params["device_id"] = device_id

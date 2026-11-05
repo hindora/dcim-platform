@@ -173,6 +173,10 @@ async def alarms(
     detection: list[str] | None = Query(None, description=(
         "Only these detection methods: " + ", ".join(DETECTIONS)
         + ". Several combine as OR; with `severity`, AND.")),
+    device_type: list[str] | None = Query(None, description=(
+        "Only alarms on devices of these kinds (device_type codes, as the "
+        "response's `by_device_type` keys them). Several combine as OR; "
+        "with the other facets, AND.")),
     session: AsyncSession = Depends(get_session),
     _: Principal = Depends(current_principal),
 ) -> dict:
@@ -198,7 +202,8 @@ async def alarms(
     return await service.alarms(session, categories=list(dict.fromkeys(category)),
                                 lifecycle=lifecycle,
                                 severities=severities or None,
-                                detections=detection or None)
+                                detections=detection or None,
+                                device_types=device_type or None)
 
 
 @router.get("/alarm-trend", summary="Conditions raised per day in a scope")

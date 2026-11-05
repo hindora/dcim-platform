@@ -29,6 +29,7 @@ from app.core.psu import psu_label
 _DEV_CTE = """
     dev AS (
         SELECT d.id                                          AS device_id,
+               d.device_type                                 AS device_type,
                COALESCE(rm.datacenter_id, rm2.datacenter_id) AS datacenter_id,
                COALESCE(rr.room_id, d.room_id)               AS room_id
         FROM device d
@@ -2156,12 +2157,16 @@ def _state_clause(lifecycle: str) -> str:
 
 def _facet_clauses(severities: list[str] | None,
                    detections: list[str] | None,
-                   params: dict[str, Any]) -> str:
+                   params: dict[str, Any],
+                   device_types: list[str] | None = None) -> str:
     """The facet filters, as SQL on the alarm row, binding their lists.
 
     Empty or absent means "no filter", never "match nothing": a chip row
     with nothing pressed shows everything, which is what the counts on the
     chips describe.
+
+    `device_types` is the third row of chips - what KIND of thing is
+    alarming - and reads the `dev` CTE, so a caller must have joined it.
     """
     sql = ""
     if severities:
@@ -2170,6 +2175,9 @@ def _facet_clauses(severities: list[str] | None,
     if detections:
         sql += " AND a.detection = ANY(:detections)"
         params["detections"] = detections
+    if device_types:
+        sql += " AND dev.device_type::text = ANY(:device_types)"
+        params["device_types"] = device_types
     return sql
 
 
@@ -2177,17 +2185,23 @@ async def alarms_by_room(session: AsyncSession, *,
                          categories: list[str],
                          lifecycle: str = "open",
                          severities: list[str] | None = None,
-                         detections: list[str] | None = None) -> list[dict[str, Any]]:
+                         detections: list[str] | None = None,
+                         device_types: list[str] | None = None) -> list[dict[str, Any]]:
     """Root alarms of one category, grouped by room - with the alerts beside them.
 
     `lifecycle` picks the population: `open` (the default, and what every
     counter totals) or `all`, which puts the cleared rows back so a room's
     row says what it has raised rather than what it is raising.
 
-    `severities` and `detections` narrow it further - the facet chips
-    pressed on the panel. Applied here, on the row, so every figure that
-    comes back (the room counts, the device counts, the per-row splits)
-    describes the same narrowed population and still adds up.
+    `severities`, `detections` and `device_types` narrow it further - the
+    facet chips pressed on the panel. Applied here, on the row, so every
+    figure that comes back (the room counts, the device counts, the per-row
+    splits) describes the same narrowed population and still adds up.
+
+    `alarm_devices` is the alarm-side population once more, one element per
+    alarm carrying the device's type, the type's display name and the device
+    id, so the service can fold it into "880 alarms on 412 servers" without
+    a second query that could describe a different instant.
 
     The drill-down behind a counter. `qty` is alarms only, exactly the
     population the counter totals: a drill-down that disagrees with the number
@@ -2233,15 +2247,18 @@ async def alarms_by_room(session: AsyncSession, *,
             SELECT dev.datacenter_id, dev.room_id, a.severity::text AS severity,
                    a.device_id, a.detection AS detection,
                    a.category AS category, a.response_class AS response_class,
-                   a.is_symptom AS is_symptom
+                   a.is_symptom AS is_symptom,
+                   dev.device_type::text AS device_type,
+                   dt.display_name AS type_label
             FROM alarm a
             JOIN dev ON dev.device_id = a.device_id
+            LEFT JOIN device_type dt ON dt.code = dev.device_type
             -- Folded conditions included: the counter that opens this panel
             -- counts the whole load, so the rows must add up to it. `folded`
             -- says how much of each room's figure is answered by answering
             -- a cause elsewhere.
             WHERE {_state_clause(lifecycle)}a.shelved_reason IS NULL
-              {_facet_clauses(severities, detections, params)}
+              {_facet_clauses(severities, detections, params, device_types)}
         )
         SELECT rm.id::text            AS room_id,
                rm.name                AS room_name,
@@ -2261,7 +2278,15 @@ async def alarms_by_room(session: AsyncSession, *,
                count(DISTINCT cat.device_id)                       AS devices_all,
                count(*) FILTER (WHERE is_symptom)                  AS folded,
                {sev_cols},
-               {facet_cols}
+               {facet_cols},
+               -- What kind of thing is alarming, one element per alarm.
+               -- Alarms only, like every other facet column: the chips
+               -- describe what must be answered.
+               COALESCE(jsonb_agg(jsonb_build_object(
+                   't', cat.device_type, 'l', cat.type_label,
+                   'd', cat.device_id::text))
+                   FILTER (WHERE response_class = '{ALARM}'), '[]'::jsonb)
+                                                                  AS alarm_devices
         FROM cat
         JOIN room rm       ON rm.id = cat.room_id
         JOIN datacenter dc ON dc.id = cat.datacenter_id
@@ -2342,7 +2367,8 @@ async def unlocated_alarms_by_category(session: AsyncSession, *,
                                        categories: list[str],
                                        lifecycle: str = "open",
                                        severities: list[str] | None = None,
-                                       detections: list[str] | None = None) -> dict[str, int]:
+                                       detections: list[str] | None = None,
+                                       device_types: list[str] | None = None) -> dict[str, int]:
     """Alarms of a category that resolve to no room.
 
     Platform conditions hang off devices with no location. They are counted in
@@ -2358,7 +2384,7 @@ async def unlocated_alarms_by_category(session: AsyncSession, *,
             FROM alarm a
             LEFT JOIN dev ON dev.device_id = a.device_id
             WHERE {_state_clause(lifecycle)}a.shelved_reason IS NULL
-              {_facet_clauses(severities, detections, params)}
+              {_facet_clauses(severities, detections, params, device_types)}
         )
         SELECT count(*)                                       AS n,
                count(*) FILTER (WHERE response_class = '{ALARM}') AS alarms
