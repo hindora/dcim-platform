@@ -505,8 +505,8 @@ async def test_an_unknown_category_is_rejected_rather_than_answered_empty(catego
     as "nothing wrong in this category".
     """
     with pytest.raises(HTTPException) as exc:
-        await estate_api.alarms(category=[category], severity=None, detection=None, device_type=None,
-                                session=_FakeSession())
+        await estate_api.alarms(category=[category], severity=None, detection=None,
+                                device_type=None, session=_FakeSession())
     assert exc.value.status_code == 400
 
 
