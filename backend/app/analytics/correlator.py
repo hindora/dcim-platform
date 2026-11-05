@@ -245,10 +245,26 @@ async def refresh_incidents(session: AsyncSession, graph: cc.CoolingGraph | None
            AND NOT (coalesce(a.attributes, '{}'::jsonb) ? 'l5')
            AND a.alarm_type = ANY(:types)
     """), {"types": sorted(cc.THERMAL_SYMPTOMS)})).mappings().all()]
+    # A recovering tail is not "no cooling alarm". Heat that appears within
+    # an hour of a cooling root above it clearing is that outage's: a 2U box
+    # whose CPU crosses its limit twenty minutes after the chillers restart
+    # is still hot from the outage (all-chillers, 2026-11-05: three such
+    # alarms in the network room opened "3 devices hot, no cooling alarm",
+    # pointing the operator at airflow). Those alarms do not count toward a
+    # room incident.
+    tail_roots = await cc.recent_roots(session, hold=cc.LAG_S)
+
+    def _in_tail(a: dict[str, Any]) -> bool:
+        anc = graph.ancestors(a["device_id"])
+        return any(r["device_id"] in anc
+                   and cc.root_eligible(r["alarm_type"], r.get("category"),
+                                        anc[r["device_id"]], r.get("instance") or "")
+                   for r in tail_roots)
+
     by_room: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for a in hot:
         node = graph.nodes.get(a["device_id"])
-        if node and node.room_id and node.tier in ("zone", "server"):
+        if node and node.room_id and node.tier in ("zone", "server") and not _in_tail(a):
             by_room[node.room_id].append(a)
     for room_id, alarms in by_room.items():
         alarms.sort(key=lambda a: a["first_seen"])

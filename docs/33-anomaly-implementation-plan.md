@@ -406,7 +406,8 @@ gate, MAJOR is allowed for the incident root only.
 >   root choice, marks), called on the alarm raise path next to the existing
 >   dependency check, so a folded symptom never reaches the email or ticket
 >   outbox. A once-a-minute pass in `sweep_late_roots` adopts symptoms whose
->   root arrived late and ends the hold. `app/analytics/correlator.py` turns
+>   root arrived late and drops the marks of symptoms that have cleared.
+>   `app/analytics/correlator.py` turns
 >   the marks into `anomaly_incident` rows. Findings are linked
 >   (`incident_id`), never folded: they are not alarms (0124).
 > - **Graph.** Plant to unit is the site's one CHW header (no loop entity in
@@ -419,8 +420,14 @@ gate, MAJOR is allowed for the incident root only.
 > - **Severity guard (new).** A symptom is folded only if no more severe than
 >   its root. A worse consequence (CPU critical under a MAJOR CRAH) stays
 >   visible as an incident member, because it asks for a different action.
-> - **Hold (new).** A cleared cooling root keeps its symptoms for 10 min while
->   the air recovers, then releases what is still open.
+> - **Attribution lasts (2026-11-05).** A symptom stays tied to its root until
+>   the symptom clears; fixing the cause does not change what caused it. The
+>   incident resolves, and its common alarm clears, when the last consequence
+>   clears. A root that cleared less than 10 min ago still adopts new heat
+>   (the water and air recover slowly).
+> - **Tails are not "no cooling alarm" (2026-11-05).** Heat raised within an
+>   hour of a cooling root above it clearing does not count toward a room
+>   incident.
 > - **Context.** Maintenance-shelved alarms are never roots; a cooling machine
 >   in a room with an open fire alarm is never a root; filter, delta-T,
 >   hunting-valve and condensation alarms explain nothing.

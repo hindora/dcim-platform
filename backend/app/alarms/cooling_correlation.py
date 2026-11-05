@@ -50,12 +50,19 @@ Past an hour the link is too weak to assert: a CRAH that has been down all
 morning with the room holding fine is not why one rack went hot at lunch.
 
 RELEASE
-A cleared cooling root does not release its symptoms at once. Air takes
-minutes to recover (stopped-CRAH discharge soaks with a time constant of
-about four minutes), so a rack probe still reads high for a while after the
-unit restarts. Releasing then would turn one restoration into a burst of
-fresh roots. They are held for `RESTORE_HOLD_S` and released by the sweep if
-still open.
+A symptom stays attributed to its root until the SYMPTOM clears. Fixing the
+cause does not change what caused the alarm: a CPU still at its limit twenty
+minutes after the chillers restarted is still hot because of the outage,
+and the incident is over when its last consequence is, not when its root
+is. (all-chillers, 2026-11-05: releasing what was still open ten minutes
+after the root cleared left three network-room CPU alarms standing "on
+their own", and the room correlator then opened "3 devices hot, no cooling
+alarm" for the outage's tail.) The mark is removed when the symptom clears.
+
+`RESTORE_HOLD_S` is the other direction: a root that cleared less than the
+hold ago still ADOPTS new heat, because the water and air take minutes to
+recover after a cause clears, and a rack probe that trips in that window
+is that cause's, not a fresh root.
 """
 
 from __future__ import annotations
@@ -183,7 +190,7 @@ def might_take_part(alarm_type: str, category: str | None,
 
 LEAD_S = 600          # a root may start this long after its symptom
 LAG_S = 3600          # ...and no more than this long before it
-RESTORE_HOLD_S = 600  # symptoms held after the root clears
+RESTORE_HOLD_S = 600  # a cleared root still adopts new heat for this long
 
 
 # --- the graph ----------------------------------------------------------------
@@ -439,10 +446,10 @@ _RECENT_ROOTS = """
 """
 
 
-async def recent_roots(session: AsyncSession, devices: list[str] | None = None
-                       ) -> list[dict[str, Any]]:
+async def recent_roots(session: AsyncSession, devices: list[str] | None = None,
+                       hold: int = RESTORE_HOLD_S) -> list[dict[str, Any]]:
     q = _RECENT_ROOTS + (" AND a.device_id = ANY(CAST(:devs AS uuid[]))" if devices else "")
-    p: dict[str, Any] = {"hold": RESTORE_HOLD_S}
+    p: dict[str, Any] = {"hold": hold}
     if devices:
         p["devs"] = devices
     return [dict(r) for r in (await session.execute(text(q), p)).mappings().all()]
@@ -542,12 +549,15 @@ async def correlate(session: AsyncSession, *, alarm: dict[str, Any], device_id: 
 
 
 async def sweep(session: AsyncSession) -> dict[str, int]:
-    """Late roots and the end of the hold, once a minute.
+    """Late roots, moved roots, and cleared symptoms, once a minute.
 
     Adoption at raise time misses a root that arrives after its symptom - a
     rack probe trips before the CRAH's own alarm has finished its dwell - so
-    every open, visible, eligible alarm is offered a root again here. And a
-    root that cleared more than the hold ago releases what it still holds.
+    every open, visible, eligible alarm is offered a root again here. A
+    symptom whose root has cleared is offered the open roots (the next
+    chiller the sequencer called), else one of its kind per room comes back
+    into view. A symptom keeps its mark until it clears; the mark is removed
+    then, so the incident's membership is what is still open.
     """
     graph = await load_graph(session)
     now = datetime.now(UTC)
@@ -615,6 +625,10 @@ async def sweep(session: AsyncSession) -> dict[str, int]:
         tied.add(a["id"])
         adopted += 1
 
+    # A symptom that has cleared is no longer anyone's consequence. Its mark
+    # goes with it, so an incident's members are what is still open and the
+    # incident resolves when the last of them clears. Nothing open is ever
+    # released here: its cause clearing does not change what caused it.
     released = (await session.execute(text("""
         UPDATE alarm s
            SET is_symptom = CASE WHEN (s.attributes->'l5'->>'suppressed')::boolean
@@ -622,16 +636,10 @@ async def sweep(session: AsyncSession) -> dict[str, int]:
                root_cause_alarm_id = CASE WHEN (s.attributes->'l5'->>'suppressed')::boolean
                                           THEN NULL ELSE s.root_cause_alarm_id END,
                attributes = s.attributes - 'l5'
-          FROM alarm r
-         WHERE s.attributes ? 'l5'
-           AND r.id = CAST(s.attributes->'l5'->>'root' AS uuid)
-           AND (s.state = 'CLEARED' OR (r.state = 'CLEARED'
-                AND r.cleared_at < now() - make_interval(secs => :hold)))
-        RETURNING s.id::text AS id, s.device_id::text AS device_id,
-                  s.severity::text AS severity, s.state::text AS state, r.id::text AS root
-    """), {"hold": RESTORE_HOLD_S})).mappings().all()
-    if adopted or released or moved or spoken:
+         WHERE s.attributes ? 'l5' AND s.state = 'CLEARED'
+        RETURNING s.id::text AS id
+    """))).all()
+    if adopted or moved or spoken:
         log.info("cooling correlation sweep", adopted=adopted, moved=moved, spoken=spoken,
-                 released=sum(1 for r in released if r["state"] != "CLEARED"))
-    return {"adopted": adopted, "moved": moved, "spoken": spoken, "released": len(released),
-            "released_open": sum(1 for r in released if r["state"] != "CLEARED")}
+                 cleared=len(released))
+    return {"adopted": adopted, "moved": moved, "spoken": spoken, "released": len(released)}

@@ -139,7 +139,10 @@ async def test_a_root_that_finishes_its_dwell_late_is_adopted_by_the_sweep(sessi
     assert r["is_symptom"] and r["root"] == root["id"]
 
 
-async def test_symptoms_are_held_while_the_air_recovers_then_released(session):
+async def test_a_symptom_stays_its_causes_until_the_symptom_clears(session):
+    """all-chillers, 2026-11-05: what was still open ten minutes after the
+    root cleared was cut loose, read "stands on its own", and opened a "no
+    cooling alarm" room incident for the outage's own tail."""
     s = session
     h = await _hall(s)
     root = await _raise(s, h["crah"], "plant_unit_stopped", ago_s=300)
@@ -149,26 +152,66 @@ async def test_symptoms_are_held_while_the_air_recovers_then_released(session):
                      category="environmental")
     for x, probe in ((a, h["probes"][0]), (b, h["probes"][1])):
         await cc.correlate(s, alarm=x, device_id=probe, alarm_type="ambient_temp_high")
-    # The root clears; the existing release leaves a cooling symptom to the hold.
+    await correlator.refresh_incidents(s)
+    assert len(await correlator.list_incidents(s, states=["open"], device_id=None,
+                                               limit=10)) == 1
+    # The root clears; the power-chain release leaves a cooling symptom alone.
     await s.execute(text("UPDATE alarm SET state = 'CLEARED', cleared_at = now() "
                          "WHERE id = CAST(:id AS uuid)"), {"id": root["id"]})
     assert await correlation.release_symptoms(s, root["id"]) == []
     out = await cc.sweep(s)
-    # Inside the hold, with its cause gone: one of the kind speaks for the
-    # room, the other stays folded. The room still says it is hot.
+    # With its cause gone: one of the kind speaks for the room, the other
+    # stays folded. Both are still the root's.
     assert out["spoken"] == 1
     seen = [(await _row(s, x["id"]))["is_symptom"] for x in (a, b)]
     assert sorted(seen) == [False, True]
+    # Long after the hold: still the root's, and the incident still open.
     await s.execute(text("UPDATE alarm SET cleared_at = now() - make_interval(secs => :h) "
                          "WHERE id = CAST(:id AS uuid)"),
                     {"id": root["id"], "h": cc.RESTORE_HOLD_S + 60})
     out = await cc.sweep(s)
-    assert out["released_open"] == 2
+    assert out["released"] == 0
     for x in (a, b):
-        r = await _row(s, x["id"])
-        assert not r["is_symptom"] and r["l5"] is None
+        assert (await _row(s, x["id"]))["l5"]["root"] == root["id"]
+    await correlator.refresh_incidents(s)
+    inc = await correlator.list_incidents(s, states=["open"], device_id=None, limit=10)
+    assert len(inc) == 1 and inc[0]["root_key"] == f"device:{h['crah']}"
+    # The consequences clear: the marks go with them, and the incident ends
+    # with the last one.
+    await s.execute(text("UPDATE alarm SET state = 'CLEARED', cleared_at = now() "
+                         "WHERE id = CAST(:id AS uuid)"), {"id": a["id"]})
+    out = await cc.sweep(s)
+    assert out["released"] == 1
+    assert (await _row(s, a["id"]))["l5"] is None
+    await correlator.refresh_incidents(s)
+    assert len(await correlator.list_incidents(s, states=["open"], device_id=None,
+                                               limit=10)) == 1
+    await s.execute(text("UPDATE alarm SET state = 'CLEARED', cleared_at = now() "
+                         "WHERE id = CAST(:id AS uuid)"), {"id": b["id"]})
+    await cc.sweep(s)
     await correlator.refresh_incidents(s)
     assert await correlator.list_incidents(s, states=["open"], device_id=None, limit=10) == []
+
+
+async def test_heat_in_the_hour_after_a_cooling_root_cleared_is_its_tail(session):
+    """Three CPUs crossing their limit twenty minutes after the chillers
+    restart are the outage's tail, not "no cooling alarm"."""
+    s = session
+    h = await _hall(s)
+    root = await _raise(s, h["crah"], "plant_unit_stopped", ago_s=3000)
+    await s.execute(text("UPDATE alarm SET state = 'CLEARED', "
+                         "cleared_at = now() - interval '20 minutes' "
+                         "WHERE id = CAST(:id AS uuid)"), {"id": root["id"]})
+    for i, probe in enumerate(h["probes"][:3]):
+        await _raise(s, probe, "ambient_temp_high", ago_s=900 + i, category="environmental")
+    await correlator.refresh_incidents(s)
+    assert await correlator.list_incidents(s, states=["open"], device_id=None, limit=10) == []
+    # Two hours on, the same heat has no outage to belong to.
+    await s.execute(text("UPDATE alarm SET cleared_at = now() - interval '2 hours' "
+                         "WHERE id = CAST(:id AS uuid)"), {"id": root["id"]})
+    await correlator.refresh_incidents(s)
+    inc = await correlator.list_incidents(s, states=["open"], device_id=None, limit=10)
+    assert len(inc) == 1 and inc[0]["tier"] == "room"
 
 
 async def test_heat_with_no_cooling_alarm_is_a_room_incident(session):
