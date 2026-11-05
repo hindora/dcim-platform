@@ -249,6 +249,9 @@ async def test_a_plant_failing_in_sequence_is_one_incident(session):
     a = await _raise(s, h["probes"][0], "ambient_temp_high", ago_s=300, category="environmental")
     got = await cc.correlate(s, alarm=a, device_id=h["probes"][0], alarm_type="ambient_temp_high")
     assert got and got["id"] == first["id"]
+    await correlator.refresh_incidents(s)
+    first_inc = await correlator.list_incidents(s, states=["open"], device_id=None, limit=10)
+    assert len(first_inc) == 1 and first_inc[0]["root_key"] == f"device:{chillers[0]}"
     # The sequencer moves on: CHL1's alarm clears, CHL2's opens.
     await s.execute(text("UPDATE alarm SET state = 'CLEARED', cleared_at = now() "
                          "WHERE id = CAST(:id AS uuid)"), {"id": first["id"]})
@@ -267,6 +270,7 @@ async def test_a_plant_failing_in_sequence_is_one_incident(session):
     assert len(inc) == 1 and inc[0]["tier"] == "plant"
     # The lead's incident, keyed on CHL1, keeps its identity now that the root
     # is CHL2's: one event, one id, one common alarm (2026-11-05).
+    assert inc[0]["id"] == first_inc[0]["id"]            # the same incident, not a new one
     assert inc[0]["root_key"] == f"device:{chillers[0]}"
     assert inc[0]["root_alarm_id"] == second["id"]
     common = (await s.execute(text("""
