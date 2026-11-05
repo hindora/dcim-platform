@@ -36,7 +36,7 @@ depends_on = None
 # name, alarm_type, metric, op, threshold, clear, dwell, clear_dwell, severity,
 # device_types, message
 RULES = [
-    ("dew-point-high", "dew_point_high", "dew_point", ">", 15, 14, 3, 3,
+    ("dew-point-high", "dew_point_high", "dew_point", ">", 15, 14, 2, 3,
      "WARNING", ["sensor", "pdu"],
      "Dew point {value} C above the ASHRAE recommended 15 C: condensation risk on cold surfaces"),
     ("dew-point-critical", "dew_point_critical", "dew_point", ">", 17, 16, 2, 3,
