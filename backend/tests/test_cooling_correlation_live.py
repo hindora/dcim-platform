@@ -265,3 +265,11 @@ async def test_a_plant_failing_in_sequence_is_one_incident(session):
     await correlator.refresh_incidents(s)
     inc = await correlator.list_incidents(s, states=["open"], device_id=None, limit=10)
     assert len(inc) == 1 and inc[0]["tier"] == "plant"
+    # The lead's incident, keyed on CHL1, keeps its identity now that the root
+    # is CHL2's: one event, one id, one common alarm (2026-11-05).
+    assert inc[0]["root_key"] == f"device:{chillers[0]}"
+    assert inc[0]["root_alarm_id"] == second["id"]
+    common = (await s.execute(text("""
+        SELECT count(*) FROM alarm WHERE alarm_type = 'cascade_incident' AND state <> 'CLEARED'
+    """))).scalar()
+    assert common <= 1

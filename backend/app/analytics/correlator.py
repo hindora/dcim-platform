@@ -112,8 +112,11 @@ async def refresh_incidents(session: AsyncSession, graph: cc.CoolingGraph | None
         m["tier_of_member"] = (node.tier if node else None) or "server"
         g["members"].append(m)
 
-    groups = _merge_by_scope(graph, groups, set((await session.execute(text(
-        "SELECT root_key FROM anomaly_incident WHERE state = 'open'"))).scalars().all()))
+    open_rows = (await session.execute(text("""
+        SELECT root_key, tier, datacenter_id::text AS datacenter_id, room_id::text AS room_id
+          FROM anomaly_incident WHERE state = 'open' AND root_key LIKE 'device:%'
+    """))).mappings().all()
+    groups = _merge_by_scope(graph, groups, [dict(r) for r in open_rows])
 
     # Open, visible cooling alarms on units: candidate peers of a unit root.
     unit_alarms = [dict(r) for r in (await session.execute(text(cc._OPEN_VISIBLE)))
@@ -135,10 +138,15 @@ async def refresh_incidents(session: AsyncSession, graph: cc.CoolingGraph | None
     room_names = {r["id"]: r["name"] for r in (await session.execute(text(
         "SELECT id::text AS id, name FROM room"))).mappings().all()}
     for rdev, g in groups.items():
-        own = ([r for r in g["roots"].values() if r["device_id"] == rdev]
-               or list(g["roots"].values()))
+        # The incident's identity is the anchor device (its key stays while
+        # the event lasts); its ROOT is the earliest alarm still open among
+        # the machines merged into it - the one a reader should see first.
+        open_roots = [r for r in g["roots"].values() if r["state"] != "CLEARED"]
+        own = ([r for r in open_roots if r["device_id"] == rdev]
+               or open_roots or list(g["roots"].values()))
         root = min(own, key=lambda r: (r["first_seen"], r["id"]))
         rnode = graph.nodes.get(rdev)
+        name_node = graph.nodes.get(root["device_id"]) or rnode
         anc_tier = None
         for m in g["members"]:
             anc_tier = graph.ancestors(m["device_id"]).get(rdev) or anc_tier
@@ -151,8 +159,8 @@ async def refresh_incidents(session: AsyncSession, graph: cc.CoolingGraph | None
                        or rdev in graph.ancestors(f["device_id"]))]
         air = any(m["tier_of_member"] in ("zone", "server") for m in g["members"]) \
             and tier in ("unit", "plant", "power")
-        title, summary = device_summary(rnode.name if rnode else rdev, root["alarm_type"],
-                                        g["members"], len(linked), air)
+        title, summary = device_summary(name_node.name if name_node else rdev,
+                                        root["alarm_type"], g["members"], len(linked), air)
         # The other air units of the same room that went down with it. Each
         # is its own equipment condition and stays visible, but seven CRAHs
         # stopping together are one event, and usually one cause (their
@@ -164,7 +172,8 @@ async def refresh_incidents(session: AsyncSession, graph: cc.CoolingGraph | None
                  and graph.nodes[p["device_id"]].tier == "unit"
                  and abs(p["first_seen"].timestamp() - root["first_seen"].timestamp())
                  <= cc.LEAD_S]
-        merged = [r for r in g["roots"].values() if r["device_id"] != rdev]
+        merged = [r for r in g["roots"].values()
+                  if r["id"] != root["id"] and r["device_id"] != root["device_id"]]
         if merged and tier in ("plant", "power"):
             n = len({r["device_id"] for r in merged}) + 1
             title += f" and {n - 1} more plant machine{'s' if n > 2 else ''}"
@@ -365,26 +374,39 @@ def _scope(graph: cc.CoolingGraph, rdev: str, g: dict[str, Any]) -> tuple[str, s
 
 
 def _merge_by_scope(graph: cc.CoolingGraph, groups: dict[str, dict[str, Any]],
-                    open_keys: set[str]) -> dict[str, dict[str, Any]]:
-    """One incident per plant, not per chiller.
+                    open_incidents: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """One incident per plant, not per chiller - and one identity for as long
+    as the event lasts.
 
     all-chillers (2026-11-04): the lead chiller stopped, the sequencer called
     the next, which was held off, then the next - each "unit stopped" alarm
     raised, then cleared as the unit fell back to standby. Rooted per device,
     one plant failure read as three incidents. Roots of the same tier and
-    scope are one event; the incident already open keeps its key, so the
-    console does not see it renamed every minute.
+    scope are one event.
+
+    all-chillers (2026-11-05): with the roots merged, the lead's alarm still
+    cleared first, its incident resolved for want of a root, and the next
+    chiller's opened as a new one - one event, two identities, two common
+    alarms. The incident already open in the same scope keeps its key, even
+    when the device it was keyed on no longer carries a root: the key is the
+    event's name, not the machine's.
     """
+    open_by_scope: dict[tuple[str, str], str] = {}
+    for inc in open_incidents:
+        dev = inc["root_key"].split(":", 1)[1]
+        if inc["tier"] in ("plant", "power", "loop") and inc.get("datacenter_id"):
+            open_by_scope.setdefault(("site", inc["datacenter_id"]), dev)
+        elif inc["tier"] == "unit" and inc.get("room_id"):
+            open_by_scope.setdefault(("room", inc["room_id"]), dev)
     buckets: dict[Any, list[str]] = {}
     for rdev, g in groups.items():
         buckets.setdefault(_scope(graph, rdev, g) or ("device", rdev), []).append(rdev)
     out: dict[str, dict[str, Any]] = {}
-    for devs in buckets.values():
-        if len(devs) == 1:
-            out[devs[0]] = groups[devs[0]]
-            continue
-        anchor = next((d for d in devs if f"device:{d}" in open_keys), None) or min(
-            devs, key=lambda d: min(r["first_seen"] for r in groups[d]["roots"].values()))
+    for scope, devs in buckets.items():
+        anchor = (open_by_scope.get(scope) if scope[0] != "device" else None)
+        if anchor is None:
+            anchor = min(devs, key=lambda d: min(r["first_seen"]
+                                                 for r in groups[d]["roots"].values()))
         merged = {"roots": {}, "members": []}
         for d in devs:
             merged["roots"].update(groups[d]["roots"])
