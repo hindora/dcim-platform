@@ -216,6 +216,8 @@ THRESHOLD_CROSSINGS: frozenset[str] = frozenset({
     # environment and host
     "ambient_temp_high", "ambient_temp_critical", "humidity_high",
     "humidity_critical", "humidity_low", "dew_point_alert",
+    "dew_point_high", "dew_point_critical", "dew_point_low",
+    "inlet_temp_low", "ambient_temp_low",
     "airflow_high", "airflow_low",
     # S3 instruments: a gas, a string, two tanks
     "hydrogen_high", "hydrogen_critical", "battery_temp_high", "battery_temp_critical",
@@ -427,6 +429,13 @@ BY_ALARM_TYPE: dict[str, str] = {
     "humidity_critical": ENVIRONMENTAL,
     "humidity_low": ENVIRONMENTAL,
     "dew_point_alert": ENVIRONMENTAL,
+    # The other half of the ASHRAE envelope (0132): moisture by dew point,
+    # and over-cooling. The space's conditions, whichever device measured.
+    "dew_point_high": ENVIRONMENTAL,
+    "dew_point_critical": ENVIRONMENTAL,
+    "dew_point_low": ENVIRONMENTAL,
+    "inlet_temp_low": ENVIRONMENTAL,
+    "ambient_temp_low": ENVIRONMENTAL,
     "airflow_high": ENVIRONMENTAL,
     "airflow_low": ENVIRONMENTAL,
     "water_leak": ENVIRONMENTAL,

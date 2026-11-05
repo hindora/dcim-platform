@@ -300,7 +300,8 @@ NON_TRAP_ALARM_TYPES = frozenset({
     "discovery_unrecorded", "discovery_missing", "discovery_replaced",
     # threshold rules over polled telemetry
     "cpu_high", "cpu_saturated", "server_cpu_saturated", "cpu_temp_high",
-    "inlet_temp_high", "inlet_temp_critical",
+    "inlet_temp_high", "inlet_temp_critical", "inlet_temp_low", "ambient_temp_low",
+    "dew_point_high", "dew_point_critical", "dew_point_low",
     "memory_high", "disk_high", "if_errors_high", "if_discards_high",
     "ambient_temp_high", "ambient_temp_critical", "humidity_high",
     "humidity_low", "airflow_high", "airflow_low", "power_load_high",

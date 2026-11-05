@@ -90,6 +90,21 @@ POWER_DRAW_METRIC = "power_draw"
 APPARENT_POWER_METRIC = "apparent_power"
 LOAD_PCT_METRIC = "load_pct"
 
+# Dew point, derived wherever a device reports temperature and humidity in
+# the same poll (migration 0132). ASHRAE bounds moisture by dew point and no
+# probe in this estate reports one.
+AMBIENT_TEMP_METRIC = "ambient_temperature"
+HUMIDITY_METRIC = "relative_humidity"
+DEW_POINT_METRIC = "dew_point"
+
+
+def dew_point_c(temp_c: float, rh_pct: float) -> float:
+    """Magnus formula (Sonntag constants), good to ~0.1 K over -40..60 C."""
+    import math
+    a, b = 17.62, 243.12
+    gamma = math.log(rh_pct / 100.0) + a * temp_c / (b + temp_c)
+    return round(b * gamma / (a - gamma), 2)
+
 # How often to look for endpoints that answer but say nothing. Well under
 # the smallest grace period, so an endpoint crosses its threshold and is
 # alarmed within about a minute of doing so.
@@ -945,6 +960,7 @@ class IngestWorker:
                     })
 
             self._derive_load_pct(sample_rows, rule_inputs, hot, ws_frames)
+            self._derive_dew_point(sample_rows, rule_inputs, hot, ws_frames)
 
             await writer.copy_samples(session, sample_rows)
             # Booleans: on change plus a heartbeat, decided in Redis so
@@ -1460,6 +1476,55 @@ class IngestWorker:
                     "device_id": row.device_id, "device_type": ctx.device_type,
                     "metric": LOAD_PCT_METRIC, "instance": row.instance,
                     "value": pct, "observed_at": row.ts, "endpoint_id": None,
+                })
+
+    def _derive_dew_point(self, sample_rows: list, rule_inputs: list[dict],
+                          hot: dict, ws_frames: list) -> None:
+        """The moisture figure ASHRAE actually bounds, from the two it is made of.
+
+        A probe reports temperature and relative humidity; the guideline's
+        limits are dew points (-9 C to 15 C recommended, 17 C A1 allowable).
+        A hall at 24 C and 55 % RH is inside every RH rule and already at a
+        14.5 C dew point. Derived here, per device and per probe instance,
+        only when both halves arrive in the same poll and the device does not
+        report a dew point of its own; a humidity of zero is a probe with no
+        hygrometer, not dry air, and yields nothing.
+        """
+        t_id = self.cache.metric_id(AMBIENT_TEMP_METRIC)
+        rh_id = self.cache.metric_id(HUMIDITY_METRIC)
+        dp_id = self.cache.metric_id(DEW_POINT_METRIC)
+        if t_id is None or rh_id is None or dp_id is None:
+            return
+        temps: dict[tuple[str, str], object] = {}
+        rhs: dict[tuple[str, str], object] = {}
+        own: set[tuple[str, str]] = set()
+        for row in sample_rows:
+            key = (row.device_id, row.instance)
+            if row.metric_id == t_id:
+                temps[key] = row
+            elif row.metric_id == rh_id:
+                rhs[key] = row
+            elif row.metric_id == dp_id:
+                own.add(key)
+        for key, t in temps.items():
+            rh = rhs.get(key)
+            if rh is None or key in own or not (0.0 < rh.value <= 100.0):
+                continue
+            ctx = self.cache.devices.get(t.device_id)
+            if ctx is None:
+                continue
+            dp = dew_point_c(float(t.value), float(rh.value))
+            # The pair is as good as its worse half.
+            quality = ("bad" if "bad" in (t.quality, rh.quality)
+                       else t.quality if t.quality == rh.quality else "suspect")
+            sample_rows.append(writer.SampleRow(
+                ts=t.ts, device_id=t.device_id, metric_id=dp_id,
+                instance=t.instance, value=dp, quality=quality))
+            if feeds_rules(quality):
+                rule_inputs.append({
+                    "device_id": t.device_id, "device_type": ctx.device_type,
+                    "metric": DEW_POINT_METRIC, "instance": t.instance,
+                    "value": dp, "observed_at": t.ts, "endpoint_id": None,
                 })
 
     # ------------------------------------------------------------- baselines
