@@ -433,6 +433,25 @@ gate, MAJOR is allowed for the incident root only.
 >   hunting-valve and condensation alarms explain nothing.
 > - **Room incidents.** Three or more hot devices in one room within 30 min
 >   with no cooling alarm behind them open a `room` incident (nothing folded).
+> - **Reading a cascade on the alarm panel (2026-11-05/06).** The panel
+>   behind each counter has seven rows of chips, each a count and a filter:
+>   Severity, Class (alarm/alert, domain panels only), Handled
+>   (unacknowledged/acknowledged, plus cleared in history), Standing
+>   (cause/consequence/stands alone, live tab only - a cleared consequence
+>   drops its mark), Found by, Device (the kind of equipment) and Condition
+>   (the `alarm_type`). The two open-vocabulary rows list only what is
+>   present, worst first; Condition shows eight and folds the rest. Every
+>   row's counts honour every *other* row's filter and never its own, so
+>   pressing Server narrows the conditions to what servers raise while
+>   Server's own row stays whole. Counts are alarms only, like the
+>   severities; the device figure in a tooltip is summed over the rooms in
+>   scope. `GET /estate/alarms` takes `severity`, `detection`,
+>   `device_type`, `response_class`, `state`, `standing` and `alarm_type`,
+>   repeatable, AND across rows and OR within one; the room list under each
+>   row (`GET /alarms`) takes the same, so headline, chips and expansions
+>   describe one population. On `all-chillers` run 4 (932 raised, 880 folded)
+>   Standing reads Cause 1 · Consequence 880, and pressing Cause leaves the
+>   chiller's own alarm.
 > - **Not built:** 2.4 escalation (`major_enabled`), 2.6 websocket frames (the
 >   UI polls), 2.8/2.9 campaigns. History has nothing to replay: in the 30
 >   days to 2026-11-03 no single-CRAH fault produced a heat alarm (seven
