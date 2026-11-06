@@ -4090,6 +4090,8 @@ export interface AlarmDrillRow {
   devices_by_type: Record<string, number>;
   /** Alarms per condition, keyed by alarm_type. Labels are the taxonomy's. */
   by_condition: Record<string, number>;
+  /** Distinct devices behind each key of `by_condition`, in this room. */
+  devices_by_condition: Record<string, number>;
   /** Cause, consequence or alone. The live fold: only the open population
    *  means anything here, since clearing a consequence drops its mark. */
   by_standing: { cause: number; consequence: number; alone: number };

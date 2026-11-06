@@ -265,6 +265,7 @@ async def test_condition_standing_and_state_fold_like_the_kinds_do(monkeypatch):
                               standings=["cause"], alarm_types=["cpu_temp_high"])
     row = out["rows"][0]
     assert row["by_condition"] == {"cpu_temp_high": 2, "inlet_temp_high": 1}
+    assert row["devices_by_condition"] == {"cpu_temp_high": 2, "inlet_temp_high": 1}
     assert row["by_standing"] == {"cause": 1, "consequence": 2, "alone": 0}
     assert row["by_state"] == {"active": 2, "acknowledged": 1, "cleared": 0}
     assert out["by_condition"] == [

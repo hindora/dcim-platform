@@ -714,7 +714,9 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
     key,
     label: conditionLabel(key),
     n: condRows.reduce((n, r) => n + (r.by_condition?.[key] ?? 0), 0),
-    devices: condSrc?.by_condition.find((c) => c.key === key)?.devices ?? 0,
+    // Summed over the scoped rooms, like the count beside it: a device
+    // stands in one room, so the room figures add without double counting.
+    devices: condRows.reduce((n, r) => n + (r.devices_by_condition?.[key] ?? 0), 0),
   })).sort((a, b) => b.n - a.n || a.label.localeCompare(b.label));
   const conditionTip = (key: string) => {
     const c = conditions.find((x) => x.key === key);

@@ -1705,7 +1705,8 @@ async def alarms(session: AsyncSession, *,
     cond_alarms: Counter[str] = Counter()
     cond_devices: dict[str, set[str]] = defaultdict(set)
 
-    def _fold(r: dict[str, Any]) -> tuple[dict[str, int], dict[str, int], dict[str, int]]:
+    def _fold(r: dict[str, Any]) -> tuple[dict[str, int], dict[str, int],
+                                          dict[str, int], dict[str, int]]:
         n: Counter[str] = Counter()
         seen: dict[str, set[str]] = defaultdict(set)
         conds: Counter[str] = Counter()
@@ -1726,7 +1727,8 @@ async def alarms(session: AsyncSession, *,
             kind_devices[t] |= ids
         for c, ids in cond_seen.items():
             cond_devices[c] |= ids
-        return dict(n), {t: len(ids) for t, ids in seen.items()}, dict(conds)
+        return (dict(n), {t: len(ids) for t, ids in seen.items()},
+                dict(conds), {c: len(ids) for c, ids in cond_seen.items()})
 
     def _worst_first(counter: Counter[str]) -> list[tuple[str, int]]:
         return sorted(counter.items(), key=lambda kv: (-kv[1], kv[0]))
@@ -1736,7 +1738,7 @@ async def alarms(session: AsyncSession, *,
 
     out_rows = []
     for r in rows:
-        by_type, devices_by_type, by_condition = _fold(r)
+        by_type, devices_by_type, by_condition, devices_by_condition = _fold(r)
         out_rows.append({
             "room_id": r["room_id"], "room_name": r["room_name"],
             "floor": r["floor"], "site_id": r["datacenter_id"],
@@ -1758,6 +1760,9 @@ async def alarms(session: AsyncSession, *,
             # The condition itself, keyed by alarm_type; the labels are the
             # taxonomy's, which the panel already holds.
             "by_condition": by_condition,
+            # Per room, so a panel opened on one site can sum the devices
+            # behind a condition for that site alone.
+            "devices_by_condition": devices_by_condition,
             # Cause, consequence or alone - the live fold, so only the open
             # population means anything here (see repo.STANDINGS).
             "by_standing": _standing(r),
