@@ -113,9 +113,11 @@ async def refresh_incidents(session: AsyncSession, graph: cc.CoolingGraph | None
         g["members"].append(m)
 
     open_rows = (await session.execute(text("""
-        SELECT root_key, tier, datacenter_id::text AS datacenter_id, room_id::text AS room_id
+        SELECT root_key, tier, datacenter_id::text AS datacenter_id, room_id::text AS room_id,
+               title
           FROM anomaly_incident WHERE state = 'open' AND root_key LIKE 'device:%'
     """))).mappings().all()
+    open_titles = {r["root_key"]: r["title"] for r in open_rows}
     groups = _merge_by_scope(graph, groups, [dict(r) for r in open_rows])
 
     # Open, visible cooling alarms on units: candidate peers of a unit root.
@@ -146,7 +148,17 @@ async def refresh_incidents(session: AsyncSession, graph: cc.CoolingGraph | None
                or open_roots or list(g["roots"].values()))
         root = min(own, key=lambda r: (r["first_seen"], r["id"]))
         rnode = graph.nodes.get(rdev)
-        name_node = graph.nodes.get(root["device_id"]) or rnode
+        # The TITLE names the anchor - the machine the common alarm stands on
+        # and the incident's identity - with the anchor's own condition. It
+        # used to name the root, which is re-picked every pass as the
+        # earliest alarm still open: all-chillers run 5 (2026-11-06) opened
+        # as CHL1 and, as the chillers recovered one by one, was titled for
+        # whichever was last to clear, with the common alarm still on CHL1.
+        # One event, one name. The root in the evidence stays the earliest
+        # open alarm, which is what a reader should look at first.
+        own_any = [r for r in g["roots"].values() if r["device_id"] == rdev]
+        named = min(own_any, key=lambda r: (r["first_seen"], r["id"])) if own_any else None
+        name_node = rnode or graph.nodes.get(root["device_id"])
         anc_tier = None
         for m in g["members"]:
             anc_tier = graph.ancestors(m["device_id"]).get(rdev) or anc_tier
@@ -160,7 +172,13 @@ async def refresh_incidents(session: AsyncSession, graph: cc.CoolingGraph | None
         air = any(m["tier_of_member"] in ("zone", "server") for m in g["members"]) \
             and tier in ("unit", "plant", "power")
         title, summary = device_summary(name_node.name if name_node else rdev,
-                                        root["alarm_type"], g["members"], len(linked), air)
+                                        (named or root)["alarm_type"], g["members"],
+                                        len(linked), air)
+        if named is None and f"device:{rdev}" in open_titles:
+            # The anchor no longer carries a root of its own (every condition
+            # that pointed at it has cleared or moved): keep the name the
+            # incident already has rather than borrowing another machine's.
+            title = open_titles[f"device:{rdev}"].split(" and ", 1)[0]
         # The other air units of the same room that went down with it. Each
         # is its own equipment condition and stays visible, but seven CRAHs
         # stopping together are one event, and usually one cause (their
@@ -172,8 +190,7 @@ async def refresh_incidents(session: AsyncSession, graph: cc.CoolingGraph | None
                  and graph.nodes[p["device_id"]].tier == "unit"
                  and abs(p["first_seen"].timestamp() - root["first_seen"].timestamp())
                  <= cc.LEAD_S]
-        merged = [r for r in g["roots"].values()
-                  if r["id"] != root["id"] and r["device_id"] != root["device_id"]]
+        merged = [r for r in g["roots"].values() if r["device_id"] != rdev]
         if merged and tier in ("plant", "power"):
             n = len({r["device_id"] for r in merged}) + 1
             title += f" and {n - 1} more plant machine{'s' if n > 2 else ''}"

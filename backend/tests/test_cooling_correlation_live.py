@@ -316,6 +316,14 @@ async def test_a_plant_failing_in_sequence_is_one_incident(session):
     assert inc[0]["id"] == first_inc[0]["id"]            # the same incident, not a new one
     assert inc[0]["root_key"] == f"device:{chillers[0]}"
     assert inc[0]["root_alarm_id"] == second["id"]
+    # And its NAME stays the lead's, the machine the common alarm stands on,
+    # even though the open root is now CHL2's (2026-11-06): one event, one
+    # name, however many machines fail in sequence under it.
+    lead = (await s.execute(text("SELECT name FROM device WHERE id = CAST(:d AS uuid)"),
+                            {"d": chillers[0]})).scalar()
+    assert inc[0]["title"].startswith(f"{lead}: ")
+    assert first_inc[0]["title"].split(" and ")[0] == inc[0]["title"].split(" and ")[0]
+    assert "1 more plant machine" in inc[0]["title"]
     common = (await s.execute(text("""
         SELECT count(*) FROM alarm WHERE alarm_type = 'cascade_incident' AND state <> 'CLEARED'
     """))).scalar()
