@@ -448,38 +448,86 @@ button.facet.on {
    at the row's height. The count sits inside each cell in the faint ink
    until the cell is pressed; a severity dot precedes the word so the
    control keeps its own colour for "pressed". */
-/* Seven rows of chips is a wall. The short, fixed-vocabulary rows share a
-   line and wrap as the sheet narrows; a wide row (the open-vocabulary
-   ones) takes a line of its own. */
-.facet-rows {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 10px 28px;
-  margin: 0 0 14px;
+/* --- the filter bar --------------------------------------------------------
+ *
+ * One line: a menu per axis, with what is pressed written on the button;
+ * open one and the values are a checklist with their counts, worst first.
+ * Seven rows of chips were half the sheet, and the table is what the sheet
+ * is for. */
+.facet-bar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  margin: 0 0 16px;
 }
-.facet-rows .facet-row { margin: 0; }
-.facet-rows .facet-row.wide { flex-basis: 100%; }
-.facet-seg button.more {
-  color: var(--text-faint); letter-spacing: 0; font-weight: 500;
+.facet-bar .facet-label { margin-right: 2px; }
+.facet-menu { position: relative; }
+.facet-menu > button {
+  display: inline-flex; align-items: center; gap: 7px; height: 30px;
+  padding: 0 10px 0 11px; max-width: 280px;
+  background: var(--bg-inset); border: 1px solid var(--border); border-radius: 4px;
+  color: var(--text-muted); font: inherit; font-size: 11px; font-weight: 600;
+  letter-spacing: .06em; cursor: pointer;
 }
-.facet-seg button.more:hover { color: var(--text); }
-.facet-row .facet-seg { height: 28px; }
-.facet-seg button {
-  height: 28px; padding: 0 11px;
-  display: inline-flex; align-items: center; gap: 7px;
-  font-size: 11px; letter-spacing: .06em;
+.facet-menu > button:hover,
+.facet-menu > button[aria-expanded="true"] { color: var(--text); border-color: var(--border-strong); }
+.facet-menu > button[aria-expanded="true"] { background: var(--bg-raised); }
+/* Something pressed: the same accent underline the tabs and chips wear. */
+.facet-menu.on > button { color: var(--text); box-shadow: inset 0 -2px 0 var(--accent); }
+.facet-menu .fm-value {
+  color: var(--text-faint); font-weight: 500; letter-spacing: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.facet-seg button b {
-  font-weight: 600; font-variant-numeric: tabular-nums;
-  color: var(--text-faint); letter-spacing: 0;
+.facet-menu.on .fm-value { color: var(--text); }
+.facet-menu .fm-caret {
+  flex: none; width: 0; height: 0; opacity: .7;
+  border-left: 4px solid transparent; border-right: 4px solid transparent;
+  border-top: 5px solid currentColor;
 }
-.facet-seg button.active b { color: var(--text); }
-.facet-seg .sw {
-  display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+.facet-pop {
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: 80;
+  min-width: 250px; max-width: 380px; padding: 6px;
+  background: var(--bg-raised); border: 1px solid var(--border-strong); border-radius: 6px;
+  box-shadow: 0 14px 34px color-mix(in srgb, var(--bg-inset) 70%, transparent);
+}
+.fp-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 8px 8px; font-size: 11px; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--text-faint);
+}
+.fp-head b {
+  margin-left: 7px; font-weight: 600; letter-spacing: 0;
+  color: var(--text-muted); font-variant-numeric: tabular-nums;
+}
+.fp-clear, .facet-clear-all {
+  background: none; border: none; padding: 0; cursor: pointer;
+  color: var(--accent); font: inherit; font-size: 11px; letter-spacing: 0;
+  text-transform: none;
+}
+.fp-clear:hover, .facet-clear-all:hover { text-decoration: underline; }
+.facet-clear-all { padding: 0 4px; }
+.fp-list { list-style: none; margin: 0; padding: 0; max-height: 320px; overflow-y: auto; }
+.fp-list label {
+  display: flex; align-items: center; gap: 9px; padding: 6px 8px;
+  border-radius: 4px; font-size: 12px; color: var(--text-muted); cursor: pointer;
+}
+.fp-list label:hover { background: var(--bg-inset); color: var(--text); }
+.fp-list label.on { color: var(--text); }
+.fp-list input { margin: 0; flex: none; accent-color: var(--accent); }
+.fp-list .fp-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fp-list b { font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text-faint); }
+.fp-list label.on b { color: var(--text); }
+.fp-list .sw {
+  display: inline-block; flex: none; width: 8px; height: 8px; border-radius: 50%;
   background: var(--text-faint);
 }
-.facet-seg .sw.critical { background: var(--critical); }
-.facet-seg .sw.major { background: var(--major); }
-.facet-seg .sw.warning { background: var(--warn); }
-.facet-seg .sw.minor { background: var(--text-faint); }
+.fp-list .sw.critical { background: var(--critical); }
+.fp-list .sw.major { background: var(--major); }
+.fp-list .sw.warning { background: var(--warn); }
+.fp-list .sw.minor { background: var(--text-faint); }
+/* The search ends the line, the same height as the menus. */
+.sheet-body .facet-bar .search { height: 30px; width: 240px; margin: 0 0 0 auto; padding: 0 11px; }
+@media (max-width: 760px) {
+  .sheet-body .facet-bar .search { width: 100%; margin-left: 0; }
+}
 
 /* "of 8,584 · filtered" is context, not a call to action: the muted ink,
    not the response colour the of-which span otherwise wears. */

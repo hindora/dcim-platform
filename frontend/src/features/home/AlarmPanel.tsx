@@ -18,7 +18,7 @@
  *  them exactly rather than approximately.
  */
 
-import { Fragment, useEffect, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { useQueries, useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import {
@@ -217,9 +217,7 @@ const STATES = [
   { key: 'acknowledged', label: 'Acknowledged', tip: 'Somebody has it' },
   { key: 'cleared', label: 'Cleared', tip: 'Over; here for the record' },
 ];
-/** Condition rows past this many chips hide behind "more": a bad day
- *  raises thirty kinds of condition, and a row of thirty is a paragraph. */
-const CONDITION_CHIPS = 8;
+
 
 function RoomConditions({ roomId, categories, span, tab, facets, onOpen }: {
   roomId: string; categories: AlarmCategory[]; span: number; tab: Tab;
@@ -388,68 +386,79 @@ type SortKey = 'room' | 'site' | 'qty' | 'alerts' | 'devices';
  *  be compared with its neighbours and un-pressed; the rows below are the
  *  narrowed one. Cells in one strip combine as OR, the two strips as AND,
  *  and the server does the arithmetic for both. */
-function Facets({ label, entries, on, onToggle, onClear, tip, hue, max, wide }: {
-  label: string; entries: { key: string; label: string; n: number }[];
+function FacetMenu({ id, label, entries, on, onToggle, onClear, tip, hue, open, onOpen }: {
+  id: string; label: string; entries: { key: string; label: string; n: number }[];
   on: string[]; onToggle: (key: string) => void; onClear: () => void;
-  /** What a cell means, on hover - the taxonomy's own words. */
+  /** What a value means, on hover - the taxonomy's own words. */
   tip?: (key: string) => string | undefined;
-  /** Whether a cell carries a severity dot. */
+  /** Whether a value carries a severity dot. */
   hue?: boolean;
-  /** Chips shown before the rest fold behind "more". A pressed chip is
-   *  always shown, wherever it ranks. */
-  max?: number;
-  /** A row that takes the whole line - the open-vocabulary ones. */
-  wide?: boolean;
+  open: boolean; onOpen: (open: boolean) => void;
 }) {
-  const [more, setMore] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
   const isOn = (e: { key: string }) =>
     on.some((k) => k.toLowerCase() === e.key.toLowerCase());
-  // A pressed chip stays even when the other rows have narrowed it to
-  // nothing: a filter the reader cannot see is a filter they cannot lift.
+  // A pressed value stays listed even when the other menus have narrowed
+  // it to nothing: a filter the reader cannot see is one they cannot lift.
   const shown = entries.filter((e) => e.n > 0 || isOn(e));
-  if (!shown.length) return null;
+  const pressed = shown.filter(isOn);
   const total = shown.reduce((t, e) => t + e.n, 0);
-  const none = on.length === 0;
-  const visible = max && !more
-    ? shown.filter((e, i) => i < max || isOn(e))
-    : shown;
-  const hidden = shown.length - visible.length;
+
+  // Outside click or Escape closes the open menu. Escape is caught on the
+  // way down so the sheet's own Escape does not take the whole panel with it.
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { e.stopPropagation(); onOpen(false); }
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey, true);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey, true);
+    };
+  }, [open, onOpen]);
+
+  if (!shown.length) return null;
+  // What the button says: the values pressed, or All. Three or more are
+  // counted rather than listed, or the bar would wrap on a bad day.
+  const summary = pressed.length === 0 ? 'All'
+    : pressed.length <= 2 ? pressed.map((e) => e.label).join(', ')
+      : `${pressed.length} picked`;
   return (
-    <div className={`facet-row${wide ? ' wide' : ''}`}>
-      <span className="facet-label">{label}</span>
-      <div className="seg facet-seg" role="group" aria-label={`${label} filter`}>
-        <button type="button" className={none ? 'active' : ''}
-                aria-pressed={none} onClick={onClear}
-                title={`Every ${label.toLowerCase()}`}>
-          All<b>{total.toLocaleString()}</b>
-        </button>
-        {visible.map((e) => {
-          const pressed = isOn(e);
-          return (
-            <button key={e.key} type="button"
-                    className={pressed ? 'active' : ''}
-                    aria-pressed={pressed}
-                    title={tip?.(e.key)}
-                    onClick={() => onToggle(e.key)}>
-              {hue && <i className={`sw ${e.key}`} aria-hidden />}
-              {e.label}<b>{e.n.toLocaleString()}</b>
-            </button>
-          );
-        })}
-        {hidden > 0 && (
-          <button type="button" className="more" onClick={() => setMore(true)}
-                  aria-expanded={false}
-                  title={`${hidden} more ${label.toLowerCase()}${hidden === 1 ? '' : 's'}`}>
-            {hidden} more
-          </button>
-        )}
-        {max && more && shown.length > max && (
-          <button type="button" className="more" onClick={() => setMore(false)}
-                  aria-expanded={true}>
-            fewer
-          </button>
-        )}
-      </div>
+    <div className={`facet-menu${pressed.length ? ' on' : ''}`} ref={ref}>
+      <button type="button" aria-haspopup="true" aria-expanded={open}
+              aria-controls={id} onClick={() => onOpen(!open)}>
+        <span className="fm-label">{label}</span>
+        <span className="fm-value">{summary}</span>
+        <span className="fm-caret" aria-hidden />
+      </button>
+      {open && (
+        <div className="facet-pop" id={id} role="group" aria-label={`${label} filter`}>
+          <div className="fp-head">
+            <span>{label}<b>{total.toLocaleString()}</b></span>
+            {pressed.length > 0 && (
+              <button type="button" className="fp-clear" onClick={onClear}>Clear</button>
+            )}
+          </div>
+          <ul className="fp-list">
+            {shown.map((e) => (
+              <li key={e.key}>
+                <label className={isOn(e) ? 'on' : ''} title={tip?.(e.key)}>
+                  <input type="checkbox" checked={isOn(e)}
+                         onChange={() => onToggle(e.key)} />
+                  {hue && <i className={`sw ${e.key}`} aria-hidden />}
+                  <span className="fp-name">{e.label}</span>
+                  <b>{e.n.toLocaleString()}</b>
+                </label>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }
@@ -526,6 +535,8 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
   // a filter chosen against the open population is not one the history
   // was asked for.
   const [facets, setFacets] = useState<Facets>(NO_FACETS);
+  // Which filter menu is open, if any. One at a time.
+  const [openFacet, setOpenFacet] = useState<keyof Facets | null>(null);
   // The condition somebody clicked. The panel already lists the estate's
   // alarms room by room, so the detail belongs on top of that view rather
   // than on a page that replaces it.
@@ -752,6 +763,19 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
   }));
   const fixedTip = (list: { key: string; tip: string }[]) => (key: string) =>
     list.find((x) => x.key === key)?.tip;
+  // One menu per axis. Severity keys travel upper-cased, as the API spells
+  // them; everything else as the response keyed it.
+  const menu = (row: keyof Facets, label: string,
+                entries: { key: string; label: string; n: number }[],
+                tip?: (key: string) => string | undefined, hue?: boolean) => (
+    <FacetMenu id={`facet-${row}`} label={label} entries={entries} hue={hue}
+               on={facets[row]}
+               onToggle={(k) => toggleFacet(row, row === 'severity' ? k.toUpperCase() : k)}
+               onClear={() => clearFacet(row)}
+               tip={tip}
+               open={openFacet === row}
+               onOpen={(o) => setOpenFacet(o ? row : null)} />
+  );
 
   function toggleFacet(row: keyof Facets, key: string) {
     setFacets((f) => {
@@ -817,6 +841,7 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
     setTrendOpen(new Set());
     setOverallTrend(false);
     setFacets(NO_FACETS);
+    setOpenFacet(null);
     setPage(0);
   }
 
@@ -917,61 +942,35 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
           <>
 
           {whole && (
-            <>
-              <label className="search wide">
+            /* One line: a menu per axis with what is pressed written on its
+               button, Clear all once anything is, and the search at the
+               end. Seven rows of chips were half the sheet, and the table
+               is what the sheet is for. Standing is the live fold and means
+               nothing in history, where a cleared consequence has already
+               dropped its mark; Class has nothing to choose on an
+               alarms-only panel. */
+            <div className="facet-bar">
+              <span className="facet-label">Filter</span>
+              {menu('severity', 'Severity', severity, (k) => `Only ${k} conditions`, true)}
+              {!alarmsOnly && menu('response_class', 'Class', classes, classTip)}
+              {menu('state', 'Handled', states, fixedTip(STATES))}
+              {!history && menu('standing', 'Standing', standings, fixedTip(STANDINGS))}
+              {menu('detection', 'Found by', detections, detectionTip)}
+              {menu('device_type', 'Device', kinds, kindTip)}
+              {menu('alarm_type', 'Condition', conditions, conditionTip)}
+              {filtering && (
+                <button type="button" className="facet-clear-all"
+                        onClick={() => { setFacets(NO_FACETS); setPage(0); }}>
+                  Clear all
+                </button>
+              )}
+              <label className="search">
                 <span className="glass" aria-hidden />
                 <input value={search} placeholder="SEARCH"
                        aria-label="Search rooms and sites"
                        onChange={(e) => { setSearch(e.target.value); setPage(0); }} />
               </label>
-
-              {/* The short, fixed rows share lines; the two open-vocabulary
-                  rows each take one. Standing is the live fold and means
-                  nothing in history, where a cleared consequence has
-                  already dropped its mark. */}
-              <div className="facet-rows">
-                <Facets label="Severity" entries={severity} hue
-                        on={facets.severity}
-                        onToggle={(k) => toggleFacet('severity', k.toUpperCase())}
-                        onClear={() => clearFacet('severity')}
-                        tip={(k) => `Only ${k} conditions`} />
-                {!alarmsOnly && (
-                  <Facets label="Class" entries={classes}
-                          on={facets.response_class}
-                          onToggle={(k) => toggleFacet('response_class', k)}
-                          onClear={() => clearFacet('response_class')}
-                          tip={classTip} />
-                )}
-                <Facets label="Handled" entries={states}
-                        on={facets.state}
-                        onToggle={(k) => toggleFacet('state', k)}
-                        onClear={() => clearFacet('state')}
-                        tip={fixedTip(STATES)} />
-                {!history && (
-                  <Facets label="Standing" entries={standings}
-                          on={facets.standing}
-                          onToggle={(k) => toggleFacet('standing', k)}
-                          onClear={() => clearFacet('standing')}
-                          tip={fixedTip(STANDINGS)} />
-                )}
-                <Facets label="Found by" entries={detections}
-                        on={facets.detection}
-                        onToggle={(k) => toggleFacet('detection', k)}
-                        onClear={() => clearFacet('detection')}
-                        tip={detectionTip} />
-                <Facets label="Device" entries={kinds} wide
-                        on={facets.device_type}
-                        onToggle={(k) => toggleFacet('device_type', k)}
-                        onClear={() => clearFacet('device_type')}
-                        tip={kindTip} />
-                <Facets label="Condition" entries={conditions} wide
-                        max={CONDITION_CHIPS}
-                        on={facets.alarm_type}
-                        onToggle={(k) => toggleFacet('alarm_type', k)}
-                        onClear={() => clearFacet('alarm_type')}
-                        tip={conditionTip} />
-              </div>
-            </>
+            </div>
           )}
 
           {data && sorted.length === 0 && (
