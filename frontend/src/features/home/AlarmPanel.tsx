@@ -1079,13 +1079,10 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
                         </td>
                       )}
                         </tr>
-                        {isOpen && (
-                          <tr className="sub-row">
-                            <RoomConditions roomId={r.room_id} categories={categories}
-                                            span={span} tab={tab} facets={facets}
-                                            onOpen={setOpenAlarm} />
-                          </tr>
-                        )}
+                        {/* The trend sits directly under its row, above the
+                            conditions: the button that opens it is on the row,
+                            and a chart that appears below nine thousand
+                            expanded conditions is a chart nobody finds. */}
                         {trendOn && (
                           <tr className="sub-row">
                             <td className="sub-cell" colSpan={span}>
@@ -1095,6 +1092,13 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
                                                      label: r.room_name }} />
                               </div>
                             </td>
+                          </tr>
+                        )}
+                        {isOpen && (
+                          <tr className="sub-row">
+                            <RoomConditions roomId={r.room_id} categories={categories}
+                                            span={span} tab={tab} facets={facets}
+                                            onOpen={setOpenAlarm} />
                           </tr>
                         )}
                       </Fragment>
