@@ -5786,32 +5786,24 @@ export const api = {
    *  what the roll-up counters are counting. */
   roomConditions: (roomId: string, categories: string[], states?: string[],
                    offset = 0, facets?: AlarmFacets,
-                   includeSymptoms = false, window?: TrendWindow) =>
-    request<{ items: Alarm[] }>(
-      `/alarms?limit=500&offset=${offset}&room=${encodeURIComponent(roomId)}`
+                   includeSymptoms = false, window?: TrendWindow,
+                   page?: {
+                     /** Rows per page; the server's cap is 500. */
+                     limit: number;
+                     /** The instant the walk started: rows raised after it are
+                      *  left out, so the pages never shift underneath. */
+                     before?: string;
+                     order: 'triage' | 'recent';
+                   }) =>
+    request<{ items: Alarm[]; total: number }>(
+      `/alarms?limit=${page?.limit ?? 500}&offset=${offset}&with_total=true`
+      + `&room=${encodeURIComponent(roomId)}`
+      + (page ? `&order=${page.order}` : '')
+      + (page?.before ? `&before=${encodeURIComponent(page.before)}` : '')
       + (includeSymptoms ? '&include_symptoms=true' : '')
       + categories.map((c) => `&category=${encodeURIComponent(c)}`).join('')
       + (states ?? []).map((s) => `&state=${encodeURIComponent(s)}`).join('')
       + facetQuery(facets) + windowQuery(window)),
-
-  /** Every condition in one room, however many. The list endpoint hands
-   *  out at most 500 a call; this walks it by offset until a short page
-   *  says the end was reached. The order is total server-side, so no row
-   *  is seen twice or skipped across the boundaries. */
-  roomConditionsAll: async (roomId: string, categories: string[],
-                            states?: string[],
-                            facets?: AlarmFacets,
-                            includeSymptoms = false, window?: TrendWindow) => {
-    const PAGE = 500;
-    const items: Alarm[] = [];
-    for (let offset = 0; ; offset += PAGE) {
-      const page = await api.roomConditions(roomId, categories, states, offset, facets,
-                                            includeSymptoms, window);
-      items.push(...page.items);
-      if (page.items.length < PAGE) break;
-    }
-    return { items };
-  },
 
   /** Who this instance belongs to. Unauthenticated on purpose: the shell needs
    *  a name before anybody has signed in. */

@@ -115,3 +115,38 @@ async def test_the_default_still_hides_symptoms():
     """One root cause with twenty symptoms is one incident, expanded or not."""
     session = await _run(room_id="11111111-1111-1111-1111-111111111111")
     assert "NOT a.is_symptom" in session.sql
+
+
+async def test_a_paged_walk_can_be_frozen_at_the_instant_it_started():
+    """Rows raised after `before` are left out, so a reader paging through
+    history while new conditions land cannot see one twice or miss one."""
+    from datetime import UTC, datetime
+
+    at = datetime(2026, 11, 6, 9, 30, tzinfo=UTC)
+    session = await _run(before=at)
+    assert "a.first_seen < :before" in session.sql
+    assert session.params["before"] == at
+
+
+@pytest.mark.parametrize("order, head", [
+    ("severity", "ORDER BY CASE a.severity"),
+    ("triage", "ORDER BY CASE a.response_class WHEN 'alarm' THEN 0 ELSE 1 END"),
+    ("recent", "ORDER BY COALESCE(a.cleared_at, a.last_seen) DESC, a.id"),
+])
+async def test_each_order_is_total_and_ends_on_the_id(order, head):
+    session = await _run(order=order)
+    assert head in session.sql
+    assert ", a.id LIMIT :limit OFFSET :offset" in session.sql.replace("\n", " ")
+
+
+async def test_an_unknown_order_is_refused():
+    with pytest.raises(ValueError):
+        await _run(order="random")
+
+
+async def test_the_total_rides_the_same_query_as_the_page():
+    session = await _run(with_total=True, limit=25, offset=50)
+    assert "SELECT count(*) OVER() AS total, a.id::text" in session.sql
+    assert session.params["limit"] == 25 and session.params["offset"] == 50
+    plain = await _run(limit=25)
+    assert "count(*) OVER()" not in plain.sql

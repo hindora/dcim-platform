@@ -19,7 +19,7 @@
  */
 
 import { Fragment, useEffect, useRef, useState } from 'react';
-import { useQueries, useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import {
   api,
@@ -43,11 +43,6 @@ import { humanise, relativeTime } from '../../lib/format';
 import { Notice } from '../../components/Notice';
 
 const SEVERITIES = ['critical', 'major', 'minor', 'warning'] as const;
-
-// Worst first, so an opened room reads its own headline on the first line.
-const SEV_RANK: Record<string, number> = {
-  CRITICAL: 0, MAJOR: 1, MINOR: 2, WARNING: 3, INFO: 4,
-};
 
 /** The words an operator uses for a condition.
  *
@@ -233,62 +228,77 @@ const STATES = [
 ];
 
 
-function RoomConditions({ roomId, categories, span, tab, facets, window, onOpen }: {
+/** How many pages past the one on screen are fetched ahead of a click. */
+const LOOKAHEAD = 2;
+
+function RoomConditions({ roomId, categories, span, tab, facets, window, counts, onOpen }: {
   roomId: string; categories: AlarmCategory[]; span: number; tab: Tab;
-  facets: Facets; window?: TrendWindow; onOpen: (a: Alarm) => void;
+  facets: Facets; window?: TrendWindow;
+  /** The row's own figures, which this list is a page of. */
+  counts: { alarms: number; alerts: number };
+  onOpen: (a: Alarm) => void;
 }) {
   const history = tab === 'history';
+  const qc = useQueryClient();
   const [page, setPage] = useState(0);
   const [size, setSize] = useState(SUB_PAGE);
+  // One page at a time, from the server, in the server's order; the row
+  // above says how many there are. A hall's history runs to thousands of
+  // conditions, and fetching them all to show twenty-five dragged the sheet.
+  // History is frozen at the instant the room was opened, so rows landing
+  // meanwhile cannot shift the pages underneath; the live list is not,
+  // because there a new condition is the point.
+  const [before] = useState(() => new Date().toISOString());
+  const order = history ? 'recent' as const : 'triage' as const;
+  const keyFor = (p: number, s: number) => [
+    'room-conditions', roomId, tab, ...categories, ...facetKey(facets),
+    window?.since ?? '', window?.until ?? '', history ? before : '', s, p];
+  const fetchPage = (p: number, s: number) => api.roomConditions(
+    roomId, categories, history ? HISTORY_STATES : undefined, p * s,
+    facetsActive(facets) ? facets : undefined, true, window,
+    { limit: s, before: history ? before : undefined, order });
   const { data, isLoading, error } = useQuery({
-    queryKey: ['room-conditions', roomId, tab, ...categories, ...facetKey(facets),
-               window?.since ?? '', window?.until ?? ''],
-    // Every condition, walked in pages of 500 until the end: the row above
-    // counts them all, and an expansion that stopped at 500 disagreed with
-    // the number it sat under. Narrowed by the same chips as the row, so
-    // the two keep agreeing.
-    // Every condition in the room, whatever it is a consequence of: the
-    // row's count counts them all, and so does this list.
-    queryFn: () => api.roomConditionsAll(
-      roomId, categories, history ? HISTORY_STATES : undefined,
-      facetsActive(facets) ? facets : undefined, true, window),
+    queryKey: keyFor(page, size),
+    queryFn: () => fetchPage(page, size),
     staleTime: 15_000,
+    // The old page stays up while the next loads: a list that blanks on
+    // every click reads as broken.
+    placeholderData: keepPreviousData,
   });
-
-  const items = [...(data?.items ?? [])].sort((a, b) => {
-    // History reads newest-first: once a condition is closed its severity is
-    // no longer a call to action, and "when" is the only ordering that helps.
-    if (history) {
-      return (b.cleared_at ?? b.last_seen).localeCompare(a.cleared_at ?? a.last_seen);
+  // The next two pages, fetched once this one has landed - after it, not
+  // beside it, so the page on screen is never queued behind lookahead -
+  // and not past the end. Click, and they are already there.
+  const total = data?.total ?? 0;
+  useEffect(() => {
+    if (!data) return;
+    for (let k = 1; k <= LOOKAHEAD; k++) {
+      const p = page + k;
+      if (p * size >= total) break;
+      void qc.prefetchQuery({
+        queryKey: keyFor(p, size), queryFn: () => fetchPage(p, size), staleTime: 15_000,
+      });
     }
-    const cls = (x: Alarm) => (x.response_class === 'alert' ? 1 : 0);
-    if (cls(a) !== cls(b)) return cls(a) - cls(b);
-    const ra = SEV_RANK[a.severity] ?? 9;
-    const rb = SEV_RANK[b.severity] ?? 9;
-    if (ra !== rb) return ra - rb;
-    return b.last_seen.localeCompare(a.last_seen);
-  });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, page, size, total]);
 
-  const alarms = items.filter((a) => a.response_class !== 'alert').length;
-  const alerts = items.length - alarms;
-
-  const pageCount = Math.max(1, Math.ceil(items.length / size));
+  const pageCount = Math.max(1, Math.ceil(total / size));
   const current = Math.min(page, pageCount - 1);
-  const shown = items.slice(current * size, current * size + size);
+  const shown = data?.items ?? [];
+  const { alarms, alerts } = counts;
 
   return (
     <td className="sub-cell" colSpan={span}>
       <div className="sub-wrap">
         {isLoading && <p className="muted small">Loading the conditions…</p>}
         {error && <p className="muted small">Could not load this room.</p>}
-        {data && !items.length && (
+        {data && total === 0 && (
           <p className="muted small">
             {history
               ? 'Nothing has been raised here in this domain.'
               : 'Nothing open here in this domain.'}
           </p>
         )}
-        {items.length > 0 && (
+        {shown.length > 0 && (
           <>
             <div className="sub-caption">
               {alarms} alarm{alarms === 1 ? '' : 's'}
@@ -369,9 +379,9 @@ function RoomConditions({ roomId, categories, span, tab, facets, window, onOpen 
                 })}
               </tbody>
             </table>
-            {items.length > SUB_PAGE && (
+            {total > SUB_PAGE && (
               <Pagination page={current + 1} pageSize={size} shown={shown.length}
-                          total={items.length} hasNext={current < pageCount - 1}
+                          total={total} hasNext={current < pageCount - 1}
                           onPage={(p) => setPage(p - 1)}
                           onSize={(n) => { setSize(n); setPage(0); }} />
             )}
@@ -1166,7 +1176,9 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
                           <tr className="sub-row">
                             <RoomConditions roomId={r.room_id} categories={categories}
                                             span={span} tab={tab} facets={facets}
-                                            window={win} onOpen={setOpenAlarm} />
+                                            window={win}
+                                            counts={{ alarms: r.qty, alerts: r.alerts }}
+                                            onOpen={setOpenAlarm} />
                           </tr>
                         )}
                       </Fragment>

@@ -458,6 +458,22 @@ async def latest_reading(session: AsyncSession, device_id: str, metric_key: str,
     return float(row["value"]) if row else None
 
 
+_SEVERITY_RANK = """CASE a.severity
+                   WHEN 'CRITICAL' THEN 0 WHEN 'MAJOR' THEN 1 WHEN 'MINOR' THEN 2
+                   WHEN 'WARNING' THEN 3 WHEN 'INFO' THEN 4 ELSE 5 END"""
+
+#: How a list page is ordered. Every one ends on `a.id`: a total order.
+LIST_ORDERS = {
+    "severity": f"{_SEVERITY_RANK}, a.last_seen DESC, a.id",
+    # What to look at first: anything demanding a response before the
+    # informational rows, worst first within each.
+    "triage": ("CASE a.response_class WHEN 'alarm' THEN 0 ELSE 1 END, "
+               f"{_SEVERITY_RANK}, a.last_seen DESC, a.id"),
+    # History's reading order: once a condition is closed its severity is no
+    # longer a call to action, and "when" is the only ordering that helps.
+    "recent": "COALESCE(a.cleared_at, a.last_seen) DESC, a.id",
+}
+
 _ALARM_SELECT = """
     SELECT a.id::text, a.device_id::text, d.name AS device_name, d.device_type,
            a.alarm_type, a.instance, a.severity::text AS severity,
@@ -552,9 +568,27 @@ async def list_alarms(session: AsyncSession, *, states: list[str] | None = None,
                       include_shelved: bool = False,
                       since: datetime | None = None,
                       until: datetime | None = None,
+                      before: datetime | None = None,
+                      order: str = "severity",
+                      with_total: bool = False,
                       limit: int = 100,
                       offset: int = 0) -> list[dict[str, Any]]:
+    """The alarm list, one page.
+
+    `before` freezes a paged walk: only conditions raised before that
+    instant, so a reader paging through history while new conditions land
+    at the top never sees a row twice or misses one. `order` is `severity`
+    (the default), `triage` (alarms before alerts, then severity) or
+    `recent` (newest closed or seen first - history's reading order).
+    `with_total` adds the count of the whole narrowed population to every
+    row (`total`), in the same query, so a pager needs no second count.
+    """
+    if order not in LIST_ORDERS:
+        raise ValueError(f"unknown order: {order}")
     where, params = [], {"limit": limit, "offset": offset}
+    if before is not None:
+        where.append("a.first_seen < :before")
+        params["before"] = before
     # The history window, on when the condition was raised; `until` is
     # exclusive, the instant after the last day. The panel's rows use the
     # same rule, so the list under a row holds what the row counted.
@@ -634,17 +668,17 @@ async def list_alarms(session: AsyncSession, *, states: list[str] | None = None,
         where.append(NOT_SHELVED)
 
     sql = _ALARM_SELECT
+    if with_total:
+        # A window function: counted over the narrowed population before
+        # LIMIT applies, so one query answers both the page and the total.
+        sql = sql.replace("SELECT a.id::text,", "SELECT count(*) OVER() AS total, a.id::text,", 1)
     if where:
         sql += " WHERE " + " AND ".join(where)
     # `a.id` last: the page boundary has to fall in the same place on every
     # request, and two conditions raised in the same tick share a last_seen.
     # Without a total order a caller walking the list by offset sees one row
     # twice and another not at all, and the table it builds is quietly wrong.
-    sql += """ ORDER BY CASE a.severity
-                   WHEN 'CRITICAL' THEN 0 WHEN 'MAJOR' THEN 1 WHEN 'MINOR' THEN 2
-                   WHEN 'WARNING' THEN 3 WHEN 'INFO' THEN 4 ELSE 5 END,
-               a.last_seen DESC, a.id
-               LIMIT :limit OFFSET :offset"""
+    sql += " ORDER BY " + LIST_ORDERS[order] + " LIMIT :limit OFFSET :offset"
     rows = (await session.execute(text(sql), params)).mappings().all()
     return [dict(r) for r in rows]
 

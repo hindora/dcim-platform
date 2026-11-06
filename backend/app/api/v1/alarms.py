@@ -71,6 +71,15 @@ async def list_alarms(
         "panel's history window; with `until`.")),
     until: date | None = Query(None, description=(
         "Only conditions raised on or before this day (inclusive).")),
+    before: datetime | None = Query(None, description=(
+        "Only conditions raised before this instant. A paged walk passes "
+        "the instant it started, so rows landing meanwhile cannot shift "
+        "the pages under it.")),
+    order: str = Query("severity", pattern="^(severity|triage|recent)$", description=(
+        "`severity` (default); `triage` puts alarms before alerts, then "
+        "severity; `recent` is newest closed-or-seen first, for history.")),
+    with_total: bool = Query(False, description=(
+        "Also return `total`: how many conditions match, whatever the page.")),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0, description=(
         "Rows to skip. The order is total, so walking the list in pages of "
@@ -98,8 +107,17 @@ async def list_alarms(
         include_symptoms=include_symptoms, limit=limit, offset=offset,
         since=None if since is None else datetime.combine(since, time.min, tzinfo=UTC),
         until=None if until is None
-        else datetime.combine(until + timedelta(days=1), time.min, tzinfo=UTC))
-    return {"items": items}
+        else datetime.combine(until + timedelta(days=1), time.min, tzinfo=UTC),
+        before=before, order=order, with_total=with_total)
+    if not with_total:
+        return {"items": items}
+    # The window count rides on every row; lifted off once. A page past the
+    # end has no rows to carry it and reads as nothing matching, which is
+    # also what a pager that asked for it should conclude.
+    total = int(items[0].pop("total")) if items else 0
+    for it in items[1:]:
+        it.pop("total", None)
+    return {"items": items, "total": total}
 
 
 @router.get("/alarms/summary", summary="Counts by severity and state")
