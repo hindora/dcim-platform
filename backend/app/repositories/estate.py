@@ -2320,6 +2320,12 @@ async def alarms_by_room(session: AsyncSession, *,
                    a.is_symptom AS is_symptom,
                    a.state::text AS state,
                    a.alarm_type AS alarm_type,
+                   -- When the room's list last changed shape: a raise, a
+                   -- clear or an acknowledgement. Not last_seen, which every
+                   -- poll moves and which changes no row's place.
+                   greatest(a.first_seen,
+                            COALESCE(a.cleared_at, a.first_seen),
+                            COALESCE(a.acknowledged_at, a.first_seen)) AS changed,
                    ({_STANDING}) AS standing,
                    dev.device_type::text AS device_type,
                    dt.display_name AS type_label
@@ -2351,6 +2357,10 @@ async def alarms_by_room(session: AsyncSession, *,
                -- than a deliberate one. The caller picks the figure that
                -- matches the columns it is showing.
                count(DISTINCT cat.device_id)                       AS devices_all,
+               -- The room's version, both classes: the instant its list of
+               -- conditions last changed. A reader holding a list fetched
+               -- at this version need not fetch it again.
+               max(cat.changed)                                    AS changed_at,
                count(*) FILTER (WHERE is_symptom)                  AS folded,
                {sev_cols},
                {facet_cols},

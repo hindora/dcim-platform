@@ -2497,3 +2497,26 @@ def test_a_site_sums_its_rooms_metered_loads_and_skips_empty_cabinets():
     (site,) = estate._fold_power_sites([hall, ups], {}, {})
     assert site["reporting"] == {"devices": 115, "reporting": 114}
     assert site["racks_with_loads"] == 18 and site["rack_count"] == 24
+
+
+@pytest.mark.asyncio
+async def test_a_room_row_carries_its_version(monkeypatch):
+    """`changed_at` rides the row as the query gave it, None when the room
+    has nothing: the panel keys a room's fetched list on it."""
+    at = datetime(2026, 11, 6, 10, 15, tzinfo=UTC)
+    monkeypatch.setattr(estate.repo, "alarms_by_room", _returns([{
+        "room_id": "r1", "room_name": "Hall A", "floor": "1",
+        "datacenter_id": "dc1", "site_code": "DC1", "site_name": "DC1",
+        "qty": 1, "alerts": 0, "devices": 1, "critical": 0, "major": 1,
+        "changed_at": at,
+    }, {
+        "room_id": "r2", "room_name": "Hall B", "floor": "1",
+        "datacenter_id": "dc1", "site_code": "DC1", "site_name": "DC1",
+        "qty": 0, "alerts": 0, "devices": 0, "critical": 0, "major": 0,
+    }]))
+    monkeypatch.setattr(estate.repo, "unlocated_alarms_by_category",
+                        _returns({"total": 0, "alarms": 0}))
+
+    rows = (await estate.alarms(_FakeSession(), categories=["power"]))["rows"]
+    assert rows[0]["changed_at"] == at
+    assert rows[1]["changed_at"] is None

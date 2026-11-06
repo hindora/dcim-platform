@@ -236,23 +236,31 @@ const LOOKAHEAD = 2;
  *  history runs to thousands of conditions, and fetching them all to show
  *  twenty-five dragged the sheet.
  *
- *  `before` freezes history at the instant the room was first reached, so
- *  rows landing meanwhile cannot shift the pages underneath; the live list
- *  is not frozen, because there a new condition is the point.
+ *  `version` is the row's `changed_at`: when the room's list last changed
+ *  shape. It is in the key, so re-opening an unchanged room reads the
+ *  cache and costs nothing, and a room that raised, cleared or
+ *  acknowledged something since is fetched afresh. On history it also
+ *  freezes the walk: pages are read as of that instant, so nothing landing
+ *  meanwhile can shift them, and a landing bumps the version instead. The
+ *  live list is not frozen, because there a new condition is the point.
  *
  *  One builder, used by the list and by the hover that primes it, so the
  *  two name the same cache entry. */
 interface SubList {
   roomId: string; categories: AlarmCategory[]; tab: Tab; facets: Facets;
-  window?: TrendWindow; before?: string;
+  window?: TrendWindow; version: string | null;
 }
+/** The instant just after a version, as the exclusive `before` bound: the
+ *  server keeps microseconds, the browser milliseconds, so a millisecond
+ *  past the truncated value is past the true one too. */
+const justAfter = (iso: string) => new Date(Date.parse(iso) + 1).toISOString();
 function subListQuery(q: SubList, p: number, s: number) {
   const history = q.tab === 'history';
-  const before = history ? q.before : undefined;
+  const before = history && q.version ? justAfter(q.version) : undefined;
   return {
     queryKey: [
       'room-conditions', q.roomId, q.tab, ...q.categories, ...facetKey(q.facets),
-      q.window?.since ?? '', q.window?.until ?? '', before ?? '', s, p],
+      q.window?.since ?? '', q.window?.until ?? '', q.version ?? '', s, p],
     queryFn: () => api.roomConditions(
       q.roomId, q.categories, history ? HISTORY_STATES : undefined, p * s,
       facetsActive(q.facets) ? q.facets : undefined, true, q.window,
@@ -261,11 +269,11 @@ function subListQuery(q: SubList, p: number, s: number) {
   };
 }
 
-function RoomConditions({ roomId, categories, span, tab, facets, window, before, counts, onOpen }: {
+function RoomConditions({ roomId, categories, span, tab, facets, window, version, counts, onOpen }: {
   roomId: string; categories: AlarmCategory[]; span: number; tab: Tab;
   facets: Facets; window?: TrendWindow;
-  /** The instant history was frozen at for this room (see subListQuery). */
-  before?: string;
+  /** The row's `changed_at` (see subListQuery). */
+  version: string | null;
   /** The row's own figures, which this list is a page of. */
   counts: { alarms: number; alerts: number };
   onOpen: (a: Alarm) => void;
@@ -274,7 +282,7 @@ function RoomConditions({ roomId, categories, span, tab, facets, window, before,
   const qc = useQueryClient();
   const [page, setPage] = useState(0);
   const [size, setSize] = useState(SUB_PAGE);
-  const q: SubList = { roomId, categories, tab, facets, window, before };
+  const q: SubList = { roomId, categories, tab, facets, window, version };
   const { data, isLoading, error } = useQuery({
     ...subListQuery(q, page, size),
     // The old page stays up while the next loads: a list that blanks on
@@ -607,6 +615,11 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
   // A window the server would refuse is not asked; the bar says why.
   const askable = !history || windowOk;
   const wkey = [win?.since ?? '', win?.until ?? ''];
+  // The live rooms refresh while the panel is up, so the counts move and
+  // each room's version moves with them - and only the rooms that changed
+  // have their open lists fetched again. History is a closed population
+  // and refreshes only when the window or a chip changes.
+  const refresh = history ? false : 30_000;
 
   // Escape closes. A surface that covers the page and can only be dismissed
   // with the mouse traps a keyboard user.
@@ -633,6 +646,7 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
     queryKey: ['estate-alarms', tab, ...categories, ...wkey],
     queryFn: () => api.estateAlarms(categories, history ? 'all' : 'open', undefined, win),
     enabled: askable,
+    refetchInterval: refresh,
     placeholderData: (prev) => prev,
   });
   // And the narrowed one, only while something is pressed: the rows, the
@@ -641,6 +655,7 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
     queryKey: ['estate-alarms', tab, ...categories, ...wkey, ...facetKey(facets)],
     queryFn: () => api.estateAlarms(categories, history ? 'all' : 'open', facets, win),
     enabled: filtering && askable,
+    refetchInterval: refresh,
     placeholderData: (prev) => prev,
   });
   const data = filtering ? narrowed : whole;
@@ -661,6 +676,7 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
         queryKey: ['estate-alarms', tab, ...categories, ...wkey, ...facetKey(others)],
         queryFn: () => api.estateAlarms(categories, history ? 'all' : 'open', others, win),
         enabled: askable,
+        refetchInterval: refresh,
         placeholderData: (prev: AlarmDrill | undefined) => prev,
       };
     }),
@@ -886,26 +902,20 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
     setOpen((prev) => {
       const next = new Set(prev);
       if (!next.delete(roomId)) next.add(roomId);
-      // Closed: the next opening freezes history afresh, at that instant.
-      else delete frozenAt.current[roomId];
       return next;
     });
   }
 
-  // When each room's history was frozen (see subListQuery): set the first
-  // time the room is reached - by hover or by opening - and kept while it
-  // is open, so the hover's prefetch and the list name one cache entry.
-  const frozenAt = useRef<Record<string, string>>({});
-  const frozen = (roomId: string) =>
-    (frozenAt.current[roomId] ??= new Date().toISOString());
   // The first page, fetched when the pointer reaches the button that would
   // open the room. The hand arrives a couple of hundred milliseconds before
   // the click, which is about what the page takes, so the room opens full
-  // rather than on "Loading the conditions…".
+  // rather than on "Loading the conditions…". Keyed on the row's version
+  // like the list itself, so a room already fetched at this version is
+  // not fetched again.
   const qc = useQueryClient();
-  const prime = (roomId: string) => {
+  const prime = (r: AlarmDrillRow) => {
     void qc.prefetchQuery(subListQuery(
-      { roomId, categories, tab, facets, window: win, before: frozen(roomId) },
+      { roomId: r.room_id, categories, tab, facets, window: win, version: r.changed_at },
       0, SUB_PAGE));
   };
 
@@ -1136,8 +1146,8 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
                       <td className="twist-col">
                         <button className={`twist ${isOpen ? 'on' : ''}`}
                                 onClick={() => toggle(r.room_id)}
-                                onMouseEnter={() => { if (!isOpen) prime(r.room_id); }}
-                                onFocus={() => { if (!isOpen) prime(r.room_id); }}
+                                onMouseEnter={() => { if (!isOpen) prime(r); }}
+                                onFocus={() => { if (!isOpen) prime(r); }}
                                 aria-expanded={isOpen}
                                 aria-label={`${isOpen ? 'Hide' : 'Show'} the`
                                             + ` conditions in ${r.room_name}`}>
@@ -1150,8 +1160,8 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
                             about. */}
                         <button className="name-cell as-link"
                                 onClick={() => toggle(r.room_id)}
-                                onMouseEnter={() => { if (!isOpen) prime(r.room_id); }}
-                                onFocus={() => { if (!isOpen) prime(r.room_id); }}>
+                                onMouseEnter={() => { if (!isOpen) prime(r); }}
+                                onFocus={() => { if (!isOpen) prime(r); }}>
                           <span className="n">{r.room_name}</span>
                         </button>
                       </td>
@@ -1213,7 +1223,7 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
                           <tr className="sub-row">
                             <RoomConditions roomId={r.room_id} categories={categories}
                                             span={span} tab={tab} facets={facets}
-                                            window={win} before={frozen(r.room_id)}
+                                            window={win} version={r.changed_at}
                                             counts={{ alarms: r.qty, alerts: r.alerts }}
                                             onOpen={setOpenAlarm} />
                           </tr>

@@ -1759,6 +1759,11 @@ async def alarms(session: AsyncSession, *,
             "alerts": int(r.get("alerts") or 0),
             # Of qty + alerts, what is folded under a cause.
             "folded": int(r.get("folded") or 0),
+            # The room's version: when its list of conditions last changed
+            # (raised, cleared or acknowledged). The panel keys a room's
+            # fetched list on it, so re-opening an unchanged room costs no
+            # request and a changed room is fetched afresh.
+            "changed_at": r.get("changed_at"),
             "critical": int(r["critical"]), "major": int(r["major"]),
             "by_severity": _sev(r),
             "by_detection": _detect(r),

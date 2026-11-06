@@ -4079,6 +4079,10 @@ export interface AlarmDrillRow {
   /** The same count over both classes, for a panel that lists both. One
    *  device faulting in two categories is still one device. */
   devices_all: number;
+  /** The room's version: when its list of conditions last changed shape
+   *  (a raise, a clear, an acknowledgement; not a poll). ISO instant, or
+   *  null for a row with nothing in it. */
+  changed_at: string | null;
   critical: number;
   major: number;
   by_severity: { critical: number; major: number; minor: number; warning: number };
