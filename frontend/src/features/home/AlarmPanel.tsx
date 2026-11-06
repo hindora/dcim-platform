@@ -231,9 +231,41 @@ const STATES = [
 /** How many pages past the one on screen are fetched ahead of a click. */
 const LOOKAHEAD = 2;
 
-function RoomConditions({ roomId, categories, span, tab, facets, window, counts, onOpen }: {
+/** What a room's list asks for. One page at a time, from the server, in
+ *  the server's order; the row above says how many there are. A hall's
+ *  history runs to thousands of conditions, and fetching them all to show
+ *  twenty-five dragged the sheet.
+ *
+ *  `before` freezes history at the instant the room was first reached, so
+ *  rows landing meanwhile cannot shift the pages underneath; the live list
+ *  is not frozen, because there a new condition is the point.
+ *
+ *  One builder, used by the list and by the hover that primes it, so the
+ *  two name the same cache entry. */
+interface SubList {
+  roomId: string; categories: AlarmCategory[]; tab: Tab; facets: Facets;
+  window?: TrendWindow; before?: string;
+}
+function subListQuery(q: SubList, p: number, s: number) {
+  const history = q.tab === 'history';
+  const before = history ? q.before : undefined;
+  return {
+    queryKey: [
+      'room-conditions', q.roomId, q.tab, ...q.categories, ...facetKey(q.facets),
+      q.window?.since ?? '', q.window?.until ?? '', before ?? '', s, p],
+    queryFn: () => api.roomConditions(
+      q.roomId, q.categories, history ? HISTORY_STATES : undefined, p * s,
+      facetsActive(q.facets) ? q.facets : undefined, true, q.window,
+      { limit: s, before, order: history ? 'recent' : 'triage' }),
+    staleTime: 15_000,
+  };
+}
+
+function RoomConditions({ roomId, categories, span, tab, facets, window, before, counts, onOpen }: {
   roomId: string; categories: AlarmCategory[]; span: number; tab: Tab;
   facets: Facets; window?: TrendWindow;
+  /** The instant history was frozen at for this room (see subListQuery). */
+  before?: string;
   /** The row's own figures, which this list is a page of. */
   counts: { alarms: number; alerts: number };
   onOpen: (a: Alarm) => void;
@@ -242,25 +274,9 @@ function RoomConditions({ roomId, categories, span, tab, facets, window, counts,
   const qc = useQueryClient();
   const [page, setPage] = useState(0);
   const [size, setSize] = useState(SUB_PAGE);
-  // One page at a time, from the server, in the server's order; the row
-  // above says how many there are. A hall's history runs to thousands of
-  // conditions, and fetching them all to show twenty-five dragged the sheet.
-  // History is frozen at the instant the room was opened, so rows landing
-  // meanwhile cannot shift the pages underneath; the live list is not,
-  // because there a new condition is the point.
-  const [before] = useState(() => new Date().toISOString());
-  const order = history ? 'recent' as const : 'triage' as const;
-  const keyFor = (p: number, s: number) => [
-    'room-conditions', roomId, tab, ...categories, ...facetKey(facets),
-    window?.since ?? '', window?.until ?? '', history ? before : '', s, p];
-  const fetchPage = (p: number, s: number) => api.roomConditions(
-    roomId, categories, history ? HISTORY_STATES : undefined, p * s,
-    facetsActive(facets) ? facets : undefined, true, window,
-    { limit: s, before: history ? before : undefined, order });
+  const q: SubList = { roomId, categories, tab, facets, window, before };
   const { data, isLoading, error } = useQuery({
-    queryKey: keyFor(page, size),
-    queryFn: () => fetchPage(page, size),
-    staleTime: 15_000,
+    ...subListQuery(q, page, size),
     // The old page stays up while the next loads: a list that blanks on
     // every click reads as broken.
     placeholderData: keepPreviousData,
@@ -274,9 +290,7 @@ function RoomConditions({ roomId, categories, span, tab, facets, window, counts,
     for (let k = 1; k <= LOOKAHEAD; k++) {
       const p = page + k;
       if (p * size >= total) break;
-      void qc.prefetchQuery({
-        queryKey: keyFor(p, size), queryFn: () => fetchPage(p, size), staleTime: 15_000,
-      });
+      void qc.prefetchQuery(subListQuery(q, p, size));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, page, size, total]);
@@ -872,9 +886,28 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
     setOpen((prev) => {
       const next = new Set(prev);
       if (!next.delete(roomId)) next.add(roomId);
+      // Closed: the next opening freezes history afresh, at that instant.
+      else delete frozenAt.current[roomId];
       return next;
     });
   }
+
+  // When each room's history was frozen (see subListQuery): set the first
+  // time the room is reached - by hover or by opening - and kept while it
+  // is open, so the hover's prefetch and the list name one cache entry.
+  const frozenAt = useRef<Record<string, string>>({});
+  const frozen = (roomId: string) =>
+    (frozenAt.current[roomId] ??= new Date().toISOString());
+  // The first page, fetched when the pointer reaches the button that would
+  // open the room. The hand arrives a couple of hundred milliseconds before
+  // the click, which is about what the page takes, so the room opens full
+  // rather than on "Loading the conditions…".
+  const qc = useQueryClient();
+  const prime = (roomId: string) => {
+    void qc.prefetchQuery(subListQuery(
+      { roomId, categories, tab, facets, window: win, before: frozen(roomId) },
+      0, SUB_PAGE));
+  };
 
   function toggleTrend(roomId: string) {
     setTrendOpen((prev) => {
@@ -1103,6 +1136,8 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
                       <td className="twist-col">
                         <button className={`twist ${isOpen ? 'on' : ''}`}
                                 onClick={() => toggle(r.room_id)}
+                                onMouseEnter={() => { if (!isOpen) prime(r.room_id); }}
+                                onFocus={() => { if (!isOpen) prime(r.room_id); }}
                                 aria-expanded={isOpen}
                                 aria-label={`${isOpen ? 'Hide' : 'Show'} the`
                                             + ` conditions in ${r.room_name}`}>
@@ -1114,7 +1149,9 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
                             small target for something the row is entirely
                             about. */}
                         <button className="name-cell as-link"
-                                onClick={() => toggle(r.room_id)}>
+                                onClick={() => toggle(r.room_id)}
+                                onMouseEnter={() => { if (!isOpen) prime(r.room_id); }}
+                                onFocus={() => { if (!isOpen) prime(r.room_id); }}>
                           <span className="n">{r.room_name}</span>
                         </button>
                       </td>
@@ -1176,7 +1213,7 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
                           <tr className="sub-row">
                             <RoomConditions roomId={r.room_id} categories={categories}
                                             span={span} tab={tab} facets={facets}
-                                            window={win}
+                                            window={win} before={frozen(r.room_id)}
                                             counts={{ alarms: r.qty, alerts: r.alerts }}
                                             onOpen={setOpenAlarm} />
                           </tr>
