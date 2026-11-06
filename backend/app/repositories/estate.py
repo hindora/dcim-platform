@@ -2167,6 +2167,24 @@ _STANDING = (f"CASE WHEN a.is_symptom THEN 'consequence' "
              f"WHEN {_IS_CAUSE} THEN 'cause' ELSE 'alone' END")
 
 
+def _window_clause(since: datetime | None, until: datetime | None,
+                   params: dict[str, Any]) -> str:
+    """The history window, on when the condition was RAISED.
+
+    `until` is exclusive - the instant after the last day - so a window
+    ending on the 7th holds all of the 7th. The same rule the trend chart
+    uses, so the rows under a chart add up to its bars.
+    """
+    sql = ""
+    if since is not None:
+        sql += " AND a.first_seen >= :since"
+        params["since"] = since
+    if until is not None:
+        sql += " AND a.first_seen < :until"
+        params["until"] = until
+    return sql
+
+
 def _facet_clauses(severities: list[str] | None,
                    detections: list[str] | None,
                    params: dict[str, Any],
@@ -2220,8 +2238,14 @@ async def alarms_by_room(session: AsyncSession, *,
                          response_classes: list[str] | None = None,
                          states: list[str] | None = None,
                          standings: list[str] | None = None,
-                         alarm_types: list[str] | None = None) -> list[dict[str, Any]]:
+                         alarm_types: list[str] | None = None,
+                         since: datetime | None = None,
+                         until: datetime | None = None) -> list[dict[str, Any]]:
     """Root alarms of one category, grouped by room - with the alerts beside them.
+
+    `since`/`until` bound WHEN the condition was raised - the history tab's
+    window. Open-population callers leave them unset: what is open is what
+    is open, whenever it started.
 
     `lifecycle` picks the population: `open` (the default, and what every
     counter totals) or `all`, which puts the cleared rows back so a room's
@@ -2309,6 +2333,7 @@ async def alarms_by_room(session: AsyncSession, *,
             WHERE {_state_clause(lifecycle)}a.shelved_reason IS NULL
               {_facet_clauses(severities, detections, params, device_types,
                               response_classes, states, standings, alarm_types)}
+              {_window_clause(since, until, params)}
         )
         SELECT rm.id::text            AS room_id,
                rm.name                AS room_name,
@@ -2361,8 +2386,21 @@ async def alarm_trend(session: AsyncSession, *,
                       until: datetime | None = None,
                       bucket: str = "day",
                       room_id: str | None = None,
-                      datacenter_id: str | None = None) -> list[dict[str, Any]]:
-    """Root conditions raised per UTC day (or ISO week) since `since`, in a scope.
+                      datacenter_id: str | None = None,
+                      severities: list[str] | None = None,
+                      detections: list[str] | None = None,
+                      device_types: list[str] | None = None,
+                      response_classes: list[str] | None = None,
+                      states: list[str] | None = None,
+                      standings: list[str] | None = None,
+                      alarm_types: list[str] | None = None) -> list[dict[str, Any]]:
+    """Conditions raised per UTC day (or ISO week) since `since`, in a scope.
+
+    Every condition, consequences included, narrowed by the same chips as
+    the panel's rows: the chart sits under the table and must count what
+    the table counts. It used to count roots only, which left a chart of
+    eleven under rows of nine hundred; roots only is now a chip (Standing =
+    Cause) rather than a second definition of "raised".
 
     `bucket` is `day` or `week`; a week is Postgres's `date_trunc('week')`,
     Monday-anchored, and the row's `day` is the bucket's first day. Chosen
@@ -2384,8 +2422,7 @@ async def alarm_trend(session: AsyncSession, *,
     """
     if bucket not in TREND_BUCKETS:
         raise ValueError(f"unknown bucket: {bucket}")
-    where = ["a.is_symptom = false",
-             "a.shelved_reason IS NULL",
+    where = ["a.shelved_reason IS NULL",
              "a.category = ANY(:categories)",
              "a.first_seen >= :since",
              "dev.room_id IS NOT NULL"]
@@ -2409,6 +2446,8 @@ async def alarm_trend(session: AsyncSession, *,
         FROM alarm a
         JOIN dev ON dev.device_id = a.device_id
         WHERE {" AND ".join(where)}
+              {_facet_clauses(severities, detections, params, device_types,
+                              response_classes, states, standings, alarm_types)}
         GROUP BY 1
         ORDER BY 1
     """), params)).mappings().all()
@@ -2424,7 +2463,9 @@ async def unlocated_alarms_by_category(session: AsyncSession, *,
                                        response_classes: list[str] | None = None,
                                        states: list[str] | None = None,
                                        standings: list[str] | None = None,
-                                       alarm_types: list[str] | None = None) -> dict[str, int]:
+                                       alarm_types: list[str] | None = None,
+                                       since: datetime | None = None,
+                                       until: datetime | None = None) -> dict[str, int]:
     """Alarms of a category that resolve to no room.
 
     Platform conditions hang off devices with no location. They are counted in
@@ -2442,6 +2483,7 @@ async def unlocated_alarms_by_category(session: AsyncSession, *,
             WHERE {_state_clause(lifecycle)}a.shelved_reason IS NULL
               {_facet_clauses(severities, detections, params, device_types,
                               response_classes, states, standings, alarm_types)}
+              {_window_clause(since, until, params)}
         )
         SELECT count(*)                                       AS n,
                count(*) FILTER (WHERE response_class = '{ALARM}') AS alarms

@@ -550,9 +550,20 @@ async def list_alarms(session: AsyncSession, *, states: list[str] | None = None,
                       rack_id: str | None = None,
                       include_symptoms: bool = False,
                       include_shelved: bool = False,
+                      since: datetime | None = None,
+                      until: datetime | None = None,
                       limit: int = 100,
                       offset: int = 0) -> list[dict[str, Any]]:
     where, params = [], {"limit": limit, "offset": offset}
+    # The history window, on when the condition was raised; `until` is
+    # exclusive, the instant after the last day. The panel's rows use the
+    # same rule, so the list under a row holds what the row counted.
+    if since is not None:
+        where.append("a.first_seen >= :since")
+        params["since"] = since
+    if until is not None:
+        where.append("a.first_seen < :until")
+        params["until"] = until
     if states:
         where.append("a.state::text = ANY(:states)")
         params["states"] = states

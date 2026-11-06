@@ -523,6 +523,27 @@ button.facet.on {
 .fp-list .sw.major { background: var(--major); }
 .fp-list .sw.warning { background: var(--warn); }
 .fp-list .sw.minor { background: var(--text-faint); }
+/* The history window leads the line: when, then what. Same height as the
+   menus; the asset trends' segmented control, two dates when CUSTOM. */
+.facet-window {
+  display: flex; align-items: center; gap: 8px; margin-right: 10px;
+  padding-right: 14px; border-right: 1px solid var(--border);
+}
+.facet-window .seg button { height: 30px; padding: 0 10px; }
+.facet-window label {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 11px; color: var(--text-muted);
+}
+.facet-window input[type="date"] {
+  height: 30px; padding: 0 8px; font: inherit; font-size: 12px;
+  background: var(--bg-inset); border: 1px solid var(--border); border-radius: 4px;
+  color: var(--text); color-scheme: dark;
+}
+:root[data-theme="light"] .facet-window input[type="date"] { color-scheme: light; }
+.facet-window .why { font-size: 11px; color: var(--warn); }
+@media (max-width: 760px) {
+  .facet-window { border-right: none; padding-right: 0; margin-right: 0; flex-wrap: wrap; }
+}
 /* The search ends the line, the same height as the menus. */
 .sheet-body .facet-bar .search { height: 30px; width: 240px; margin: 0 0 0 auto; padding: 0 11px; }
 @media (max-width: 760px) {

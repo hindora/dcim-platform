@@ -241,6 +241,7 @@ async def test_a_category_is_answered_from_the_stamped_column(monkeypatch):
     await estate_api.alarms(category=["cooling"], lifecycle="open",
                             severity=None, detection=None, device_type=None,
                             response_class=None, state=None, standing=None, alarm_type=None,
+                            since=None, until=None,
                             session=_FakeSession())
 
     assert seen == {"categories": ["cooling"], "lifecycle": "open"}
@@ -272,6 +273,7 @@ async def test_pressed_chips_narrow_both_queries(monkeypatch):
                                   severity=["critical", "Major"],
                                   detection=["absence"], device_type=["ups"],
                                   response_class=None, state=None, standing=None, alarm_type=None,
+                            since=None, until=None,
                                   session=_FakeSession())
 
     assert seen["rooms"] == (["CRITICAL", "MAJOR"], ["absence"], ["ups"])
@@ -323,6 +325,7 @@ async def test_history_asks_for_every_lifecycle(monkeypatch):
     out = await estate_api.alarms(category=["power"], lifecycle="all",
                                   severity=None, detection=None, device_type=None,
                                   response_class=None, state=None, standing=None, alarm_type=None,
+                            since=None, until=None,
                                   session=_FakeSession())
 
     assert seen == {"rooms": "all", "unlocated": "all"}
@@ -350,6 +353,7 @@ async def test_a_grouped_counter_asks_once(monkeypatch):
     await estate_api.alarms(category=["cooling", "environmental", "cooling"],
                             severity=None, detection=None, device_type=None,
                             response_class=None, state=None, standing=None, alarm_type=None,
+                            since=None, until=None,
                             session=_FakeSession())
 
     # Deduplicated, and in the order asked: a repeated parameter is a caller
@@ -370,7 +374,7 @@ async def test_the_trend_fills_every_day_of_the_window(monkeypatch):
     seen: dict = {}
 
     async def _trend(_session, *, categories, since, until, bucket, room_id,
-                     datacenter_id):
+                     datacenter_id, **_facets):
         seen.update(categories=categories, since=since, until=until,
                     bucket=bucket, room_id=room_id, datacenter_id=datacenter_id)
         return [{"day": today - timedelta(days=2), "n": 3},
@@ -382,6 +386,8 @@ async def test_the_trend_fills_every_day_of_the_window(monkeypatch):
     out = await estate_api.alarm_trend(category=["power"], days=5, bucket="day",
                                        since=None, until=None,
                                        room=room, site=None,
+        severity=None, detection=None, device_type=None, response_class=None,
+        state=None, standing=None, alarm_type=None,
                                        session=_FakeSession())
 
     assert seen["room_id"] == room and seen["datacenter_id"] is None
@@ -415,7 +421,9 @@ async def test_a_picked_window_is_honoured_to_the_day(monkeypatch):
     out = await estate_api.alarm_trend(
         category=["power"], days=30, bucket="day",
         since=date(2026, 8, 10), until=date(2026, 8, 14),
-        room=None, site=None, session=_FakeSession())
+        room=None, site=None,
+        severity=None, detection=None, device_type=None, response_class=None,
+        state=None, standing=None, alarm_type=None, session=_FakeSession())
 
     assert seen["since"].date() == date(2026, 8, 10)
     assert seen["since"].tzinfo == UTC
@@ -440,7 +448,9 @@ async def test_an_impossible_window_is_a_bad_request(monkeypatch, since, until, 
     with pytest.raises(HTTPException) as e:
         await estate_api.alarm_trend(category=["power"], days=30, bucket="day",
                                      since=since, until=until,
-                                     room=None, site=None, session=_FakeSession())
+                                     room=None, site=None,
+        severity=None, detection=None, device_type=None, response_class=None,
+        state=None, standing=None, alarm_type=None, session=_FakeSession())
     assert e.value.status_code == 400
     assert why in e.value.detail
 
@@ -468,6 +478,8 @@ async def test_a_weekly_trend_starts_on_a_monday_and_steps_by_seven(monkeypatch)
     out = await estate_api.alarm_trend(category=["power"], days=30, bucket="week",
                                        since=None, until=None,
                                        room=None, site=None,
+        severity=None, detection=None, device_type=None, response_class=None,
+        state=None, standing=None, alarm_type=None,
                                        session=_FakeSession())
 
     first = seen["since"].date()
@@ -495,6 +507,8 @@ async def test_a_malformed_trend_scope_is_a_bad_request_not_a_crash(monkeypatch,
         await estate_api.alarm_trend(category=["power"], days=14,
                                      since=None, until=None,
                                      room=scope.get("room"), site=scope.get("site"),
+        severity=None, detection=None, device_type=None, response_class=None,
+        state=None, standing=None, alarm_type=None,
                                      session=_FakeSession())
     assert e.value.status_code == 400
     assert "not a uuid" in e.value.detail
@@ -511,7 +525,8 @@ async def test_an_unknown_category_is_rejected_rather_than_answered_empty(catego
     with pytest.raises(HTTPException) as exc:
         await estate_api.alarms(category=[category], severity=None, detection=None,
                                 device_type=None, response_class=None, state=None,
-                                standing=None, alarm_type=None, session=_FakeSession())
+                                standing=None, alarm_type=None, since=None, until=None,
+                                session=_FakeSession())
     assert exc.value.status_code == 400
 
 

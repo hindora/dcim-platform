@@ -29,11 +29,13 @@ import {
   type AlarmDrill,
   type AlarmDrillRow,
   type AlarmTaxonomy,
+  type TrendWindow,
 } from '../../api/client';
 import { CategoryGlyph } from '../../components/CategoryGlyph';
 import { StatusChip } from '../../components/StatusChip';
 import { Tip } from '../../components/HoverTip';
-import { AlarmTrend, TrendGlyph, maxOpen } from './AlarmTrend';
+import { AlarmTrend, MAX_DAYS, TrendGlyph, daysBetween, isoDay, maxOpen } from './AlarmTrend';
+import { Seg } from '../../components/estate';
 import { AlarmDetailModal } from '../alarms/AlarmDetail';
 import { Pagination } from '../../components/Pagination';
 import { metaFor } from '../../components/alertMeta';
@@ -204,6 +206,18 @@ const facetsActive = (f: Facets) => FACET_KEYS.some((k) => f[k].length > 0);
 /** The chips as part of a query key, so a change to any row refetches. */
 const facetKey = (f: Facets) => FACET_KEYS.flatMap((k) => [k, ...f[k]]);
 
+/** How far back the history tab looks. Daily bars up to a quarter; past
+ *  that the chart draws weeks. CUSTOM is two dates the operator picks. */
+const WINDOWS = [
+  { label: '7D', days: 7, said: 'in the last 7 days' },
+  { label: '30D', days: 30, said: 'in the last 30 days' },
+  { label: '90D', days: 90, said: 'in the last 90 days' },
+  { label: '1Y', days: 365, said: 'in the last year' },
+] as const;
+const CUSTOM = 'CUSTOM';
+type Preset = typeof WINDOWS[number]['label'] | typeof CUSTOM;
+const shortDay = (iso: string) => iso.slice(5);
+
 /** The three fixed vocabularies, in the words the chips wear. */
 const STANDINGS = [
   { key: 'cause', label: 'Cause',
@@ -219,15 +233,16 @@ const STATES = [
 ];
 
 
-function RoomConditions({ roomId, categories, span, tab, facets, onOpen }: {
+function RoomConditions({ roomId, categories, span, tab, facets, window, onOpen }: {
   roomId: string; categories: AlarmCategory[]; span: number; tab: Tab;
-  facets: Facets; onOpen: (a: Alarm) => void;
+  facets: Facets; window?: TrendWindow; onOpen: (a: Alarm) => void;
 }) {
   const history = tab === 'history';
   const [page, setPage] = useState(0);
   const [size, setSize] = useState(SUB_PAGE);
   const { data, isLoading, error } = useQuery({
-    queryKey: ['room-conditions', roomId, tab, ...categories, ...facetKey(facets)],
+    queryKey: ['room-conditions', roomId, tab, ...categories, ...facetKey(facets),
+               window?.since ?? '', window?.until ?? ''],
     // Every condition, walked in pages of 500 until the end: the row above
     // counts them all, and an expansion that stopped at 500 disagreed with
     // the number it sat under. Narrowed by the same chips as the row, so
@@ -236,7 +251,7 @@ function RoomConditions({ roomId, categories, span, tab, facets, onOpen }: {
     // row's count counts them all, and so does this list.
     queryFn: () => api.roomConditionsAll(
       roomId, categories, history ? HISTORY_STATES : undefined,
-      facetsActive(facets) ? facets : undefined, true),
+      facetsActive(facets) ? facets : undefined, true, window),
     staleTime: 15_000,
   });
 
@@ -543,6 +558,31 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
   const [openAlarm, setOpenAlarm] = useState<Alarm | null>(null);
   const filtering = facetsActive(facets);
   const history = tab === 'history';
+  // The history window: one for the tab, read by the rows, the chips, the
+  // lists under the rows and every trend chart. Presets end today; CUSTOM
+  // is two dates. The live tab has no window - what is open is what is
+  // open, whenever it started.
+  const [preset, setPreset] = useState<Preset>('30D');
+  const [since, setSince] = useState(() => {
+    const d = new Date(); d.setDate(d.getDate() - 29); return isoDay(d);
+  });
+  const [until, setUntil] = useState(() => isoDay(new Date()));
+  const custom = preset === CUSTOM;
+  const spanDays = daysBetween(since, until);
+  const windowOk = !custom || (spanDays >= 1 && spanDays <= MAX_DAYS);
+  const win: TrendWindow | undefined = !history ? undefined
+    : custom ? { since, until }
+      : (() => {
+          const w = WINDOWS.find((x) => x.label === preset) ?? WINDOWS[1];
+          const d = new Date(); d.setDate(d.getDate() - (w.days - 1));
+          return { since: isoDay(d), until: isoDay(new Date()) };
+        })();
+  const said = !history ? ''
+    : custom ? `from ${shortDay(since)} to ${shortDay(until)}`
+      : (WINDOWS.find((x) => x.label === preset) ?? WINDOWS[1]).said;
+  // A window the server would refuse is not asked; the bar says why.
+  const askable = !history || windowOk;
+  const wkey = [win?.since ?? '', win?.until ?? ''];
 
   // Escape closes. A surface that covers the page and can only be dismissed
   // with the mouse traps a keyboard user.
@@ -566,15 +606,17 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
   // This one is UNFILTERED: what a row's chips count while nothing else
   // is pressed.
   const { data: whole, isLoading, error } = useQuery({
-    queryKey: ['estate-alarms', tab, ...categories],
-    queryFn: () => api.estateAlarms(categories, history ? 'all' : 'open'),
+    queryKey: ['estate-alarms', tab, ...categories, ...wkey],
+    queryFn: () => api.estateAlarms(categories, history ? 'all' : 'open', undefined, win),
+    enabled: askable,
+    placeholderData: (prev) => prev,
   });
   // And the narrowed one, only while something is pressed: the rows, the
   // headline and the device counts come from here then.
   const { data: narrowed, isFetching: narrowing } = useQuery({
-    queryKey: ['estate-alarms', tab, ...categories, ...facetKey(facets)],
-    queryFn: () => api.estateAlarms(categories, history ? 'all' : 'open', facets),
-    enabled: filtering,
+    queryKey: ['estate-alarms', tab, ...categories, ...wkey, ...facetKey(facets)],
+    queryFn: () => api.estateAlarms(categories, history ? 'all' : 'open', facets, win),
+    enabled: filtering && askable,
     placeholderData: (prev) => prev,
   });
   const data = filtering ? narrowed : whole;
@@ -592,8 +634,9 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
     queries: minusRows.map((row) => {
       const others: Facets = { ...facets, [row]: [] };
       return {
-        queryKey: ['estate-alarms', tab, ...categories, ...facetKey(others)],
-        queryFn: () => api.estateAlarms(categories, history ? 'all' : 'open', others),
+        queryKey: ['estate-alarms', tab, ...categories, ...wkey, ...facetKey(others)],
+        queryFn: () => api.estateAlarms(categories, history ? 'all' : 'open', others, win),
+        enabled: askable,
         placeholderData: (prev: AlarmDrill | undefined) => prev,
       };
     }),
@@ -805,7 +848,7 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
     (c) => categories.includes(c.key));
   const where = scope ? `in ${scope.label}` : 'on the estate';
   const blurb = history
-    ? `Everything ${where} that has been raised in this domain, open and `
+    ? `Everything ${where} raised in this domain ${said}, open and `
       + 'cleared alike, grouped by the room it is in. Open a room '
       + 'for its conditions; the trend button shows what it raised over '
       + 'time.'
@@ -935,7 +978,8 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
 
           {history && overallTrend && (
             <div className="panel-trend">
-              <AlarmTrend categories={categories} scope={scope} />
+              <AlarmTrend categories={categories} scope={scope} window={win}
+                          facets={filtering ? facets : undefined} />
             </div>
           )}
 
@@ -950,6 +994,28 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
                dropped its mark; Class has nothing to choose on an
                alarms-only panel. */
             <div className="facet-bar">
+              {history && (
+                <div className="facet-window">
+                  <Seg value={preset} label="How far back"
+                       options={[...WINDOWS.map((w) => ({ key: w.label as Preset, label: w.label })),
+                                 { key: CUSTOM as Preset, label: CUSTOM }]}
+                       onChange={(k) => { setPreset(k); setPage(0); }} />
+                  {custom && (
+                    <>
+                      <label>From <input type="date" value={since} max={until}
+                                         onChange={(e) => { setSince(e.target.value); setPage(0); }} /></label>
+                      <label>To <input type="date" value={until} min={since}
+                                       max={isoDay(new Date())}
+                                       onChange={(e) => { setUntil(e.target.value); setPage(0); }} /></label>
+                      {!windowOk && (
+                        <span className="why">
+                          {spanDays < 1 ? 'The end is before the start.' : `At most ${MAX_DAYS} days.`}
+                        </span>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
               <span className="facet-label">Filter</span>
               {menu('severity', 'Severity', severity, (k) => `Only ${k} conditions`, true)}
               {!alarmsOnly && menu('response_class', 'Class', classes, classTip)}
@@ -985,7 +1051,7 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
                 {history
                   ? `Nothing has been raised in ${title.toLowerCase()}`
                   : `Nothing open in ${title.toLowerCase()}`}
-                {scope ? ` in ${scope.label}` : ''}.
+                {scope ? ` in ${scope.label}` : ''}{history ? ` ${said}` : ''}.
                 {!history && ' Cleared conditions are under History.'}
               </p>
             )
@@ -1089,7 +1155,9 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
                               <div className="sub-wrap">
                                 <AlarmTrend categories={categories}
                                             scope={{ kind: 'room', id: r.room_id,
-                                                     label: r.room_name }} />
+                                                     label: r.room_name }}
+                                            window={win}
+                                            facets={filtering ? facets : undefined} />
                               </div>
                             </td>
                           </tr>
@@ -1098,7 +1166,7 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
                           <tr className="sub-row">
                             <RoomConditions roomId={r.room_id} categories={categories}
                                             span={span} tab={tab} facets={facets}
-                                            onOpen={setOpenAlarm} />
+                                            window={win} onOpen={setOpenAlarm} />
                           </tr>
                         )}
                       </Fragment>

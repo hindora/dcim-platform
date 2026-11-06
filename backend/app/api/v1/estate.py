@@ -158,6 +158,47 @@ async def alarm_categories(
     }
 
 
+def _facet_params(severity: list[str] | None, detection: list[str] | None,
+                  device_type: list[str] | None, response_class: list[str] | None,
+                  state: list[str] | None, standing: list[str] | None,
+                  alarm_type: list[str] | None) -> dict[str, list[str] | None]:
+    """The panel's chips, checked and shaped for the service.
+
+    One place for the drill and the trend: the same chip must mean the same
+    narrowing on the rows and on the bars, or the chart under the table
+    counts something else.
+    """
+    severities = [s.upper() for s in (severity or [])]
+    bad = sorted(set(severities) - set(SEVERITIES))
+    if bad:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            f"unknown severity: {', '.join(bad)}")
+    bad = sorted(set(detection or []) - set(DETECTIONS))
+    if bad:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            f"unknown detection: {', '.join(bad)}")
+    bad = sorted(set(response_class or []) - set(RESPONSE_CLASSES))
+    if bad:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            f"unknown response_class: {', '.join(bad)}")
+    states = [x.upper() for x in (state or [])]
+    bad = sorted(set(states) - {"ACTIVE", "ACKNOWLEDGED", "CLEARED"})
+    if bad:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            f"unknown state: {', '.join(bad)}")
+    bad = sorted(set(standing or []) - set(service.repo.STANDINGS))
+    if bad:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            f"unknown standing: {', '.join(bad)}")
+    return {"severities": severities or None,
+            "detections": detection or None,
+            "device_types": device_type or None,
+            "response_classes": response_class or None,
+            "states": states or None,
+            "standings": standing or None,
+            "alarm_types": alarm_type or None}
+
+
 @router.get("/alarms", summary="What is open in one or more categories, by room")
 async def alarms(
     category: list[str] = Query(..., description=(
@@ -188,6 +229,11 @@ async def alarms(
     alarm_type: list[str] | None = Query(None, description=(
         "Only these conditions (alarm_type codes, as the response's "
         "`by_condition` keys them).")),
+    since: date | None = Query(None, description=(
+        "History only: first day (inclusive) of the window a condition was "
+        "raised in. With `until`; at most 366 days apart.")),
+    until: date | None = Query(None, description=(
+        "History only: last day (inclusive) of the window.")),
     session: AsyncSession = Depends(get_session),
     _: Principal = Depends(current_principal),
 ) -> dict:
@@ -201,37 +247,14 @@ async def alarms(
     if unknown:
         raise HTTPException(status.HTTP_400_BAD_REQUEST,
                             f"unknown category: {', '.join(unknown)}")
-    severities = [s.upper() for s in (severity or [])]
-    bad = sorted(set(severities) - set(SEVERITIES))
-    if bad:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST,
-                            f"unknown severity: {', '.join(bad)}")
-    bad = sorted(set(detection or []) - set(DETECTIONS))
-    if bad:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST,
-                            f"unknown detection: {', '.join(bad)}")
-    bad = sorted(set(response_class or []) - set(RESPONSE_CLASSES))
-    if bad:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST,
-                            f"unknown response_class: {', '.join(bad)}")
-    states = [x.upper() for x in (state or [])]
-    bad = sorted(set(states) - {"ACTIVE", "ACKNOWLEDGED", "CLEARED"})
-    if bad:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST,
-                            f"unknown state: {', '.join(bad)}")
-    bad = sorted(set(standing or []) - set(service.repo.STANDINGS))
-    if bad:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST,
-                            f"unknown standing: {', '.join(bad)}")
-    return await service.alarms(session, categories=list(dict.fromkeys(category)),
-                                lifecycle=lifecycle,
-                                severities=severities or None,
-                                detections=detection or None,
-                                device_types=device_type or None,
-                                response_classes=response_class or None,
-                                states=states or None,
-                                standings=standing or None,
-                                alarm_types=alarm_type or None)
+    facets = _facet_params(severity, detection, device_type, response_class,
+                           state, standing, alarm_type)
+    try:
+        return await service.alarms(session, categories=list(dict.fromkeys(category)),
+                                    lifecycle=lifecycle, since=since, until=until,
+                                    **facets)
+    except ValueError as e:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)) from None
 
 
 @router.get("/alarm-trend", summary="Conditions raised per day in a scope")
@@ -249,10 +272,20 @@ async def alarm_trend(
         "Last day of a picked window (inclusive).")),
     room: str | None = Query(None, description="Only this room."),
     site: str | None = Query(None, description="Only this site (datacenter id)."),
+    severity: list[str] | None = Query(None, description="As for /alarms."),
+    detection: list[str] | None = Query(None, description="As for /alarms."),
+    device_type: list[str] | None = Query(None, description="As for /alarms."),
+    response_class: list[str] | None = Query(None, description="As for /alarms."),
+    state: list[str] | None = Query(None, description="As for /alarms."),
+    standing: list[str] | None = Query(None, description="As for /alarms."),
+    alarm_type: list[str] | None = Query(None, description="As for /alarms."),
     session: AsyncSession = Depends(get_session),
     _: Principal = Depends(current_principal),
 ) -> dict:
     """Whether now is normal: what this scope raised per day, zeros included.
+
+    Takes the panel's chips too, so the chart under a narrowed table counts
+    the narrowed population.
 
     Counted in the database. The alarm list is capped and ordered by
     severity, so a trend bucketed from it in the browser was a chart of the
@@ -273,11 +306,13 @@ async def alarm_trend(
         except ValueError:
             raise HTTPException(status.HTTP_400_BAD_REQUEST,
                                 f"{name} is not a uuid: {value}") from None
+    facets = _facet_params(severity, detection, device_type, response_class,
+                           state, standing, alarm_type)
     try:
         return await service.alarm_trend(
             session, categories=list(dict.fromkeys(category)), days=days,
             bucket=bucket, since=since, until=until,
-            room_id=room, datacenter_id=site)
+            room_id=room, datacenter_id=site, **facets)
     except ValueError as e:
         # A window that cannot be answered is the request's fault, not the
         # chart's: said as such rather than surfacing as a 500.

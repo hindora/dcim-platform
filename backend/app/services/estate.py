@@ -1644,8 +1644,15 @@ async def alarms(session: AsyncSession, *,
                  response_classes: list[str] | None = None,
                  states: list[str] | None = None,
                  standings: list[str] | None = None,
-                 alarm_types: list[str] | None = None) -> dict[str, Any]:
+                 alarm_types: list[str] | None = None,
+                 since: date | None = None,
+                 until: date | None = None) -> dict[str, Any]:
     """The drill-down behind one counter, by room.
+
+    `since`/`until` are the history tab's window, inclusive days, on when
+    a condition was raised - the trend chart's rule, so the rows add up to
+    its bars. At most MAX_TREND_DAYS apart, for the same reason the chart
+    is.
 
     `lifecycle` is `open` for the counter's own population and `all` for the
     history behind it: the same rows, the same arithmetic, with the cleared
@@ -1674,9 +1681,11 @@ async def alarms(session: AsyncSession, *,
     count - "880 alarms on 412 servers" is a different fact from "880 alarms
     on 2 servers", and only the second is a device to walk to.
     """
+    since_at, until_at = _window(since, until)
     facets = {"severities": severities, "detections": detections,
               "device_types": device_types, "response_classes": response_classes,
-              "states": states, "standings": standings, "alarm_types": alarm_types}
+              "states": states, "standings": standings, "alarm_types": alarm_types,
+              "since": since_at, "until": until_at}
     rows = await repo.alarms_by_room(session, categories=categories,
                                      lifecycle=lifecycle, **facets)
     unlocated = await repo.unlocated_alarms_by_category(
@@ -1784,6 +1793,7 @@ async def alarms(session: AsyncSession, *,
         "states": [x.upper() for x in (states or [])],
         "standings": list(standings or []),
         "alarm_types": list(alarm_types or []),
+        "since": since, "until": until,
         "rows": out_rows,
         # What the counter shows: every open condition in this category, in a
         # room. Platform conditions are NOT in here and are not in the counter
@@ -1834,12 +1844,35 @@ STATES = ("active", "acknowledged", "cleared")
 MAX_TREND_DAYS = 366
 
 
+def _window(since: date | None, until: date | None) -> tuple[datetime | None, datetime | None]:
+    """Inclusive days in, half-open instants out; both or neither.
+
+    `until` becomes the instant after its last day, so a window ending on
+    the 7th holds all of the 7th and none of the 8th.
+    """
+    if (since is None) != (until is None):
+        raise ValueError("since and until go together")
+    if since is None or until is None:
+        return None, None
+    if until < since:
+        raise ValueError("until is before since")
+    if (until - since).days + 1 > MAX_TREND_DAYS:
+        raise ValueError(f"a window is at most {MAX_TREND_DAYS} days")
+    return (datetime.combine(since, time.min, tzinfo=UTC),
+            datetime.combine(until + timedelta(days=1), time.min, tzinfo=UTC))
+
+
 async def alarm_trend(session: AsyncSession, *, categories: list[str],
                       days: int = 30, bucket: str = "day",
                       since: date | None = None, until: date | None = None,
                       room_id: str | None = None,
-                      datacenter_id: str | None = None) -> dict[str, Any]:
+                      datacenter_id: str | None = None,
+                      **facets: list[str] | None) -> dict[str, Any]:
     """Conditions raised per bucket over a window, in one scope.
+
+    `facets` are the panel's chips (severities, detections, device_types,
+    response_classes, states, standings, alarm_types), passed through to the
+    query so the chart counts what the rows under it count.
 
     The window is the last `days` ending today, or - when `since` and
     `until` are both given - exactly those dates, inclusive. A picked range
@@ -1882,7 +1915,7 @@ async def alarm_trend(session: AsyncSession, *, categories: list[str],
     rows = await repo.alarm_trend(session, categories=categories,
                                   since=since_at, until=until_at,
                                   bucket=bucket, room_id=room_id,
-                                  datacenter_id=datacenter_id)
+                                  datacenter_id=datacenter_id, **facets)
     raised = {str(r["day"]): int(r["n"]) for r in rows}
     starts: list[date] = []
     d = first

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -65,6 +66,11 @@ async def list_alarms(
     include_symptoms: bool = Query(
         False, description="Symptoms are hidden by default: one root cause with "
                            "twenty symptoms should read as one incident."),
+    since: date | None = Query(None, description=(
+        "Only conditions raised on or after this day (inclusive). The alarm "
+        "panel's history window; with `until`.")),
+    until: date | None = Query(None, description=(
+        "Only conditions raised on or before this day (inclusive).")),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0, description=(
         "Rows to skip. The order is total, so walking the list in pages of "
@@ -81,13 +87,18 @@ async def list_alarms(
         if unknown:
             raise HTTPException(status.HTTP_400_BAD_REQUEST,
                                 f"unknown {what}: {', '.join(unknown)}")
+    if since is not None and until is not None and until < since:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "until is before since")
     states = state or ["ACTIVE", "ACKNOWLEDGED"]
     items = await repo.list_alarms(
         session, states=states, severities=severity, device_id=device_id,
         alarm_type=alarm_type, categories=category, detections=detection,
         response_classes=response_class, device_types=device_type,
         standings=standing, room_id=room, rack_id=rack,
-        include_symptoms=include_symptoms, limit=limit, offset=offset)
+        include_symptoms=include_symptoms, limit=limit, offset=offset,
+        since=None if since is None else datetime.combine(since, time.min, tzinfo=UTC),
+        until=None if until is None
+        else datetime.combine(until + timedelta(days=1), time.min, tzinfo=UTC))
     return {"items": items}
 
 

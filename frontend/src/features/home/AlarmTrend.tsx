@@ -14,7 +14,10 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { api, type AlarmCategory, type AlarmTrend as TrendData } from '../../api/client';
+import {
+  api, type AlarmCategory, type AlarmFacets, type AlarmTrend as TrendData,
+  type TrendWindow,
+} from '../../api/client';
 import { Seg } from '../../components/estate';
 import { useHoverTip } from '../../components/HoverTip';
 import { MaxGlyph, MaxModal } from '../../components/MaxModal';
@@ -71,10 +74,10 @@ type Range = typeof RANGES[number];
 const CUSTOM = 'CUSTOM';
 /** Past this many picked days a bar is a week, as for the presets. */
 const WEEKLY_FROM_DAYS = 120;
-const MAX_DAYS = 366;
+export const MAX_DAYS = 366;
 
-const isoDay = (d: Date) => d.toISOString().slice(0, 10);
-const daysBetween = (a: string, b: string) =>
+export const isoDay = (d: Date) => d.toISOString().slice(0, 10);
+export const daysBetween = (a: string, b: string) =>
   Math.round((Date.parse(b) - Date.parse(a)) / 86_400_000) + 1;
 const shortDay = (iso: string) => iso.slice(5);
 
@@ -137,8 +140,14 @@ function TrendBars({ data, said }: { data: TrendData; said: string }) {
   );
 }
 
-export function AlarmTrend({ categories, scope }: {
+export function AlarmTrend({ categories, scope, window: given, facets }: {
   categories: AlarmCategory[]; scope?: TrendScope;
+  /** A window chosen elsewhere - the alarm panel's history bar. The chart
+   *  then draws exactly that and shows no picker of its own: one window on
+   *  the tab, read by the rows and the bars alike. */
+  window?: TrendWindow;
+  /** The panel's chips, so the bars count what the rows count. */
+  facets?: AlarmFacets;
 }) {
   const [range, setRange] = useState<Range>(RANGES[0]);
   // The full-window view. It renders the same head and the same bars from
@@ -148,11 +157,14 @@ export function AlarmTrend({ categories, scope }: {
   // The picked window. `custom` says which of the two the chart is
   // reading; the dates persist while a preset is chosen, so flipping back
   // to CUSTOM returns to the last window picked rather than to today.
-  const [custom, setCustom] = useState(false);
-  const [since, setSince] = useState(() => {
+  const [ownCustom, setCustom] = useState(false);
+  const [ownSince, setSince] = useState(() => {
     const d = new Date(); d.setDate(d.getDate() - 29); return isoDay(d);
   });
-  const [until, setUntil] = useState(() => isoDay(new Date()));
+  const [ownUntil, setUntil] = useState(() => isoDay(new Date()));
+  const custom = given ? true : ownCustom;
+  const since = given?.since ?? ownSince;
+  const until = given?.until ?? ownUntil;
   const span = daysBetween(since, until);
   const windowOk = span >= 1 && span <= MAX_DAYS;
   const bucket: 'day' | 'week' = custom
@@ -160,11 +172,12 @@ export function AlarmTrend({ categories, scope }: {
     : range.bucket;
   const { data, error } = useQuery({
     queryKey: ['alarm-trend', scope?.kind ?? '', scope?.id ?? '',
-               custom ? `${since}..${until}` : range.days, bucket, ...categories],
+               custom ? `${since}..${until}` : range.days, bucket, ...categories,
+               JSON.stringify(facets ?? {})],
     queryFn: () => api.alarmTrend(categories, {
       room: scope?.kind === 'room' ? scope.id : undefined,
       site: scope?.kind === 'site' ? scope.id : undefined,
-    }, range.days, bucket, custom ? { since, until } : undefined),
+    }, range.days, bucket, custom ? { since, until } : undefined, facets),
     // A window the server would refuse is not asked: the row under the
     // chips says what is wrong with it instead.
     enabled: !custom || windowOk,
@@ -177,7 +190,7 @@ export function AlarmTrend({ categories, scope }: {
   // The same segmented control the asset trend panels wear, on the title
   // row, right-aligned: a range is a slice of one series, not a filter on
   // its dimensions, and the Assets page settled what that looks like.
-  const picker = (
+  const picker = given ? null : (
     <Seg value={custom ? CUSTOM : range.label} label="How far back"
          options={[...RANGES.map((r) => ({ key: r.label, label: r.label })),
                    { key: CUSTOM, label: CUSTOM }]}
@@ -193,7 +206,7 @@ export function AlarmTrend({ categories, scope }: {
     set(e.target.value);
     setCustom(true);
   };
-  const dates = custom && (
+  const dates = custom && !given && (
     <div className="alarm-trend-dates">
       <label>From <input type="date" value={since} max={until} onChange={pick(setSince)} /></label>
       <label>To <input type="date" value={until} min={since} max={isoDay(new Date())}

@@ -4132,6 +4132,13 @@ function facetQuery(f?: AlarmFacets): string {
     (f[k] ?? []).map((v) => `&${k}=${encodeURIComponent(v)}`)).join('');
 }
 
+/** A window of days, inclusive, ISO `YYYY-MM-DD`: when a condition was
+ *  raised. The history tab's one window, read by its rows, the lists under
+ *  them and every trend chart on it. */
+export interface TrendWindow { since: string; until: string }
+const windowQuery = (w?: TrendWindow) =>
+  w ? `&since=${w.since}&until=${w.until}` : '';
+
 /** One kind of device alarming, as the drill's third facet row lists it. */
 export interface AlarmDrillKind {
   /** device_type code - what `device_type=` takes back. */
@@ -5695,10 +5702,10 @@ export const api = {
    *  is counting and `all` for the history behind the same rooms, cleared
    *  conditions included - one endpoint, one arithmetic, two populations. */
   estateAlarms: (categories: string[], lifecycle: 'open' | 'all' = 'open',
-                 facets?: AlarmFacets) =>
+                 facets?: AlarmFacets, window?: TrendWindow) =>
     request<AlarmDrill>(`/estate/alarms?lifecycle=${lifecycle}`
       + categories.map((c) => `&category=${encodeURIComponent(c)}`).join('')
-      + facetQuery(facets)),
+      + facetQuery(facets) + windowQuery(window)),
 
   alarmTaxonomy: () => request<AlarmTaxonomy>('/estate/alarm-categories'),
 
@@ -5757,12 +5764,12 @@ export const api = {
 
   alarmTrend: (categories: string[], scope?: { room?: string; site?: string },
                days = 30, bucket: 'day' | 'week' = 'day',
-               window?: { since: string; until: string }) =>
+               window?: TrendWindow, facets?: AlarmFacets) =>
     request<AlarmTrend>(`/estate/alarm-trend?days=${days}&bucket=${bucket}`
       + categories.map((c) => `&category=${encodeURIComponent(c)}`).join('')
       + (scope?.room ? `&room=${encodeURIComponent(scope.room)}` : '')
       + (scope?.site ? `&site=${encodeURIComponent(scope.site)}` : '')
-      + (window ? `&since=${window.since}&until=${window.until}` : '')),
+      + windowQuery(window) + facetQuery(facets)),
 
   /** The conditions behind one row of an alarm panel.
    *
@@ -5779,13 +5786,13 @@ export const api = {
    *  what the roll-up counters are counting. */
   roomConditions: (roomId: string, categories: string[], states?: string[],
                    offset = 0, facets?: AlarmFacets,
-                   includeSymptoms = false) =>
+                   includeSymptoms = false, window?: TrendWindow) =>
     request<{ items: Alarm[] }>(
       `/alarms?limit=500&offset=${offset}&room=${encodeURIComponent(roomId)}`
       + (includeSymptoms ? '&include_symptoms=true' : '')
       + categories.map((c) => `&category=${encodeURIComponent(c)}`).join('')
       + (states ?? []).map((s) => `&state=${encodeURIComponent(s)}`).join('')
-      + facetQuery(facets)),
+      + facetQuery(facets) + windowQuery(window)),
 
   /** Every condition in one room, however many. The list endpoint hands
    *  out at most 500 a call; this walks it by offset until a short page
@@ -5794,12 +5801,12 @@ export const api = {
   roomConditionsAll: async (roomId: string, categories: string[],
                             states?: string[],
                             facets?: AlarmFacets,
-                            includeSymptoms = false) => {
+                            includeSymptoms = false, window?: TrendWindow) => {
     const PAGE = 500;
     const items: Alarm[] = [];
     for (let offset = 0; ; offset += PAGE) {
       const page = await api.roomConditions(roomId, categories, states, offset, facets,
-                                            includeSymptoms);
+                                            includeSymptoms, window);
       items.push(...page.items);
       if (page.items.length < PAGE) break;
     }

@@ -283,6 +283,72 @@ async def test_condition_standing_and_state_fold_like_the_kinds_do(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_the_history_window_reaches_both_queries_as_half_open_instants(monkeypatch):
+    """Inclusive days in, half-open instants out, to the rows and the unlocated
+    count alike - the trend chart's rule, so the rows add up to its bars."""
+
+    seen: dict = {}
+
+    async def _rooms(_session, *, since, until, **_kw):
+        seen["rooms"] = (since, until)
+        return []
+
+    async def _unlocated(_session, *, since, until, **_kw):
+        seen["unlocated"] = (since, until)
+        return {"total": 0, "alarms": 0}
+
+    monkeypatch.setattr(estate.repo, "alarms_by_room", _rooms)
+    monkeypatch.setattr(estate.repo, "unlocated_alarms_by_category", _unlocated)
+
+    out = await estate.alarms(_FakeSession(), categories=["power"], lifecycle="all",
+                              since=date(2026, 11, 1), until=date(2026, 11, 5))
+    want = (datetime(2026, 11, 1, tzinfo=UTC), datetime(2026, 11, 6, tzinfo=UTC))
+    assert seen["rooms"] == want
+    assert seen["unlocated"] == want
+    assert out["since"] == date(2026, 11, 1)
+    assert out["until"] == date(2026, 11, 5)
+
+    # Open population: no window at all.
+    await estate.alarms(_FakeSession(), categories=["power"])
+    assert seen["rooms"] == (None, None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("since, until", [
+    (date(2026, 11, 5), date(2026, 11, 1)),
+    (date(2025, 1, 1), date(2026, 11, 1)),
+    (date(2026, 11, 1), None),
+])
+async def test_an_impossible_history_window_is_refused(monkeypatch, since, until):
+    async def _never(*_a, **_k):
+        raise AssertionError("must not query")
+
+    monkeypatch.setattr(estate.repo, "alarms_by_room", _never)
+    monkeypatch.setattr(estate.repo, "unlocated_alarms_by_category", _never)
+    with pytest.raises(ValueError):
+        await estate.alarms(_FakeSession(), categories=["power"], lifecycle="all",
+                            since=since, until=until)
+
+
+@pytest.mark.asyncio
+async def test_the_trend_takes_the_panels_chips(monkeypatch):
+    """The chart under a narrowed table counts the narrowed population."""
+    seen: dict = {}
+
+    async def _trend(_session, **kw):
+        seen.update(kw)
+        return []
+
+    monkeypatch.setattr(estate.repo, "alarm_trend", _trend)
+    await estate.alarm_trend(_FakeSession(), categories=["it_equipment"], days=7,
+                             device_types=["server"], alarm_types=["cpu_temp_high"],
+                             standings=["cause"])
+    assert seen["device_types"] == ["server"]
+    assert seen["alarm_types"] == ["cpu_temp_high"]
+    assert seen["standings"] == ["cause"]
+
+
+@pytest.mark.asyncio
 async def test_a_kind_without_a_catalogue_label_still_gets_a_readable_one(monkeypatch):
     monkeypatch.setattr(estate.repo, "alarms_by_room", _returns([{
         "room_id": "r1", "room_name": "Hall A", "floor": "1",
