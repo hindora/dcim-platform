@@ -48,16 +48,40 @@ export function useFrames(events: string[], onFrame: (f: Frame) => void): void {
   }, [key]);
 }
 
+/** The alarm frames the workers publish on the `alarms` topic. */
+export const ALARM_EVENTS = ['alarm_created', 'alarm_updated', 'alarm_cleared'];
+
+/** How long a doorbell waits for the crowd before it rings once. */
+const SETTLE_MS = 1_500;
+
 /**
  * Invalidate query keys when matching frames arrive.
  *
  * Deliberately a refetch rather than patching the cache from the frame: the
  * socket carries deltas with no replay, so after any gap the server's answer is
- * the only trustworthy one.
+ * the only trustworthy one. The frame says "something changed, go look";
+ * it never says what the number is.
+ *
+ * Rung at most once per `settle` window. A cascade raises nine hundred
+ * conditions in a minute, and nine hundred recounts of the heaviest query
+ * in the app is a load generator wearing a feature's clothes; thirty is
+ * the same picture to a reader. The first frame starts the clock, and the
+ * recount fires when it runs out, so nothing waits longer than `settle`.
  */
-export function useInvalidateOn(events: string[], queryKeys: string[][]): void {
+export function useInvalidateOn(events: string[], queryKeys: string[][],
+                                settle: number = SETTLE_MS): void {
   const qc = useQueryClient();
+  const pending = useRef<ReturnType<typeof setTimeout> | null>(null);
   useFrames(events, () => {
-    queryKeys.forEach((k) => qc.invalidateQueries({ queryKey: k }));
+    if (pending.current) return;
+    pending.current = setTimeout(() => {
+      pending.current = null;
+      queryKeys.forEach((k) => qc.invalidateQueries({ queryKey: k }));
+    }, settle);
   });
+  // A bell still wound up when the page goes should not ring into an
+  // unmounted cache.
+  useEffect(() => () => {
+    if (pending.current) clearTimeout(pending.current);
+  }, []);
 }

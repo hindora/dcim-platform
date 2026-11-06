@@ -48,7 +48,7 @@ import { isWhiteSpace } from '../estate/useEstateTable';
 import { useHoverTip } from '../../components/HoverTip';
 import { useColumnWidths } from '../../lib/useColumnWidths';
 import { useOrg, useOrgTitle } from '../../lib/useOrg';
-import { useInvalidateOn, useTopics } from '../../ws/useSocket';
+import { ALARM_EVENTS, useInvalidateOn, useTopics } from '../../ws/useSocket';
 import { SiteDrawer } from './SiteDrawer';
 import { RoomDrawer } from './RoomDrawer';
 import { AlarmLegend } from './AlarmModals';
@@ -58,7 +58,6 @@ import { IncidentRail } from './IncidentRail';
 import { toCss } from '../../lib/zoom';
 import { Notice } from '../../components/Notice';
 
-const ALARM_EVENTS = ['alarm_created', 'alarm_updated', 'alarm_cleared'];
 
 type Tab = 'sites' | 'rooms';
 

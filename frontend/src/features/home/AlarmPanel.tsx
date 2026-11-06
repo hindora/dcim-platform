@@ -36,6 +36,7 @@ import { StatusChip } from '../../components/StatusChip';
 import { Tip } from '../../components/HoverTip';
 import { AlarmTrend, MAX_DAYS, TrendGlyph, daysBetween, isoDay, maxOpen } from './AlarmTrend';
 import { Seg } from '../../components/estate';
+import { ALARM_EVENTS, useInvalidateOn, useTopics } from '../../ws/useSocket';
 import { AlarmDetailModal } from '../alarms/AlarmDetail';
 import { Pagination } from '../../components/Pagination';
 import { metaFor } from '../../components/alertMeta';
@@ -620,6 +621,13 @@ export function AlarmPanel({ categories, title, scope, alarmsOnly, onClose }: {
   // have their open lists fetched again. History is a closed population
   // and refreshes only when the window or a chip changes.
   const refresh = history ? false : 30_000;
+  // And they refresh the moment an alarm is raised or cleared anywhere, the
+  // way the tile that opened this panel does: the socket is the doorbell,
+  // the database is still the count, and the 30 s poll is the safety net
+  // for a frame that never arrived. Live tab only - history is a closed
+  // population, and refetching it on every raise would be work for nothing.
+  useTopics(history ? [] : ['alarms']);
+  useInvalidateOn(history ? [] : ALARM_EVENTS, [['estate-alarms']]);
 
   // Escape closes. A surface that covers the page and can only be dismissed
   // with the mouse traps a keyboard user.
