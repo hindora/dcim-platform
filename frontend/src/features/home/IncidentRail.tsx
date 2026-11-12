@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { api, type AnomalyIncident } from '../../api/client';
@@ -5,6 +6,10 @@ import { CategoryGlyph } from '../../components/CategoryGlyph';
 import { relativeTime } from '../../lib/format';
 
 const DAY_MS = 24 * 3600 * 1000;
+/** How far back the resolved list reaches, and how many of them show before
+ *  the reader asks for the rest. A week covers a handover across a weekend. */
+const RESOLVED_WINDOW_MS = 7 * DAY_MS;
+const RESOLVED_FOLDED = 6;
 
 /** The tone the site table gives a category tile, for the cause's domain. */
 const CAUSE_TONE: Record<string, { tone: string; glyph: 'cooling' | 'power'; word: string }> = {
@@ -75,11 +80,35 @@ function IncidentRow({ i, onOpen, onRoom }: {
   );
 }
 
+/** Three rows of the shape a real row has, so the panel stands at its
+ *  working height while the two queries are in flight. Without them the
+ *  panel is a bare 44 px head for the first few hundred milliseconds and
+ *  the whole rail jumps when the lists mount. */
+function IncidentSkeleton() {
+  return (
+    <ul className="inc-list inc-skel" aria-hidden>
+      {[0, 1, 2].map((n) => (
+        <li key={n} className="inc">
+          <div className="inc-head">
+            <span className="skel skel-site" />
+            <span className="inc-text">
+              <span className="skel skel-title" />
+              <span className="skel skel-meta" />
+            </span>
+            <span className="skel skel-tile" />
+          </div>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 /** The right rail of the home page: what is wrong now, as incidents, in the
  *  site table's own vocabulary - a raised panel, an uppercase head, rows
  *  keyed by site code, status as the same tinted tile, rooms nested under
- *  the row that reaches them. On a quiet day it holds what was resolved in
- *  the last 24 hours, so a handover can read the night without the history. */
+ *  the row that reaches them. Under the open ones it holds what was resolved
+ *  in the last seven days, a handful at a time, so a handover can read the
+ *  week without the history. */
 export function IncidentRail() {
   const navigate = useNavigate();
   const open = useQuery({
@@ -90,15 +119,22 @@ export function IncidentRail() {
   });
   const done = useQuery({
     queryKey: ['anomaly-incidents', 'resolved'],
-    queryFn: () => api.anomalyIncidents({ state: 'resolved', limit: '20' }),
+    queryFn: () => api.anomalyIncidents({ state: 'resolved', limit: '200' }),
     refetchInterval: 120_000,
     retry: false,
   });
   const openItems = [...(open.data?.items ?? [])].sort((a, b) =>
     (a.site_code ?? '').localeCompare(b.site_code ?? '') || a.opened_at.localeCompare(b.opened_at));
+  const [showAll, setShowAll] = useState(false);
+  const cutoff = Date.now() - RESOLVED_WINDOW_MS;
   const recent: AnomalyIncident[] = (done.data?.items ?? [])
-    .filter((i) => i.resolved_at && Date.now() - new Date(i.resolved_at).getTime() < DAY_MS)
-    .slice(0, 6);
+    .filter((i) => i.resolved_at && new Date(i.resolved_at).getTime() > cutoff)
+    .sort((a, b) => b.resolved_at!.localeCompare(a.resolved_at!));
+  const shown = showAll ? recent : recent.slice(0, RESOLVED_FOLDED);
+  const folded = recent.length - RESOLVED_FOLDED;
+  // One gate for both lists: the panel takes its working height once and
+  // the resolved section never lands a beat after the open one.
+  const loading = open.isLoading || done.isLoading;
 
   const openOne = (i: AnomalyIncident) => {
     if (i.root_alarm_id) navigate(`/?alarm=${i.root_alarm_id}`);
@@ -113,8 +149,9 @@ export function IncidentRail() {
           {open.isLoading ? '…' : `${openItems.length} open`}
         </span>
       </header>
+      {loading && <IncidentSkeleton />}
       {open.isError && <p className="inc-empty">Incidents could not be read.</p>}
-      {!open.isLoading && !open.isError && openItems.length === 0 && (
+      {!loading && !open.isError && openItems.length === 0 && (
         <p className="inc-empty">No open incidents. Every open alarm stands on its own.</p>
       )}
       {openItems.length > 0 && (
@@ -125,14 +162,14 @@ export function IncidentRail() {
           ))}
         </ul>
       )}
-      {recent.length > 0 && (
+      {!loading && recent.length > 0 && (
         <>
           <header className="inc-panel-head sub">
-            <span>Resolved, last 24 h</span>
+            <span>Resolved, last 7 days</span>
             <span className="inc-count">{recent.length}</span>
           </header>
           <ul className="inc-list done">
-            {recent.map((i) => (
+            {shown.map((i) => (
               <li key={i.id} className="inc">
                 <button type="button" className="inc-head" onClick={() => openOne(i)}
                         title="Open the alarm that caused it">
@@ -152,6 +189,12 @@ export function IncidentRail() {
               </li>
             ))}
           </ul>
+          {folded > 0 && (
+            <button type="button" className="inc-more" aria-expanded={showAll}
+                    onClick={() => setShowAll((v) => !v)}>
+              {showAll ? 'Show fewer' : `Show all ${recent.length}`}
+            </button>
+          )}
         </>
       )}
     </section>

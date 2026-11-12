@@ -815,6 +815,29 @@ button.ind:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px
 .inc-room-sev.sev-minor { color: var(--warn); }
 .inc-list.done .inc-head { padding-top: 8px; padding-bottom: 8px; }
 .inc-list.done .inc-title { font-weight: 500; color: var(--text-muted); }
+/* While the two queries are in flight the panel holds three rows of the
+   shape a real row has, so the rail stands at its working height from the
+   first paint instead of a bare head that jumps when the lists mount. The
+   blocks sit where the site code, the two lines and the tile will be. */
+.inc-skel .inc-head { cursor: default; }
+.inc-skel .inc-head:hover { background: none; }
+.skel { display: block; border-radius: 3px; background: var(--bg-inset); animation: inc-pulse 1.4s ease-in-out infinite; }
+.skel-site { width: 32px; height: 13px; }
+.skel-title { width: 72%; height: 13px; }
+.skel-meta { width: 88%; height: 11px; margin-top: 3px; }
+.skel-tile { width: 100%; height: 34px; }
+@keyframes inc-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
+@media (prefers-reduced-motion: reduce) { .skel { animation: none; } }
+/* The fold under the resolved list: one quiet row-height control that
+   says how many more there are, and then the way back. */
+.inc-more {
+  display: block; width: 100%; height: 36px; padding: 0 14px; text-align: left;
+  background: var(--bg-inset); border: none; border-top: 1px solid var(--border);
+  border-radius: 0 0 4px 4px; font: inherit; font-size: 12px; font-weight: 500;
+  color: var(--accent); cursor: pointer;
+}
+.inc-more:hover { text-decoration: underline; }
+.inc-more:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
 .rail-card {
   flex: 1; display: flex; flex-direction: column; text-decoration: none;
