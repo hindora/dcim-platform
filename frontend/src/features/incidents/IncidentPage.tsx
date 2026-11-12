@@ -483,14 +483,17 @@ function EvidenceCard({ inc, root }: { inc: AnomalyIncidentDetail; root: Anomaly
     retry: false,
   });
 
-  // The first four devices to go hot, one line each. The alarm rows carry
+  // The first four servers to go hot, one line each. The alarm rows carry
   // no room, so they are named by device, not placed in a room they might
   // not be in.
   const hot = useMemo(() => {
     const picks: { device_id: string; device_name: string; device_type: string }[] = [];
+    // Servers first: a server's inlet is the reading the ASHRAE band is
+    // about, and its history is the one kept at a minute's grain.
+    const isServer = (x: AnomalyIncidentAlarm) => /server/i.test(x.device_type) ? 0 : 1;
     for (const a of [...inc.alarms]
       .filter((x) => x.role !== 'root' && x.role !== 'peer' && /temp|inlet|ambient|hot|heat/i.test(x.alarm_type))
-      .sort((x, y) => x.first_seen.localeCompare(y.first_seen))) {
+      .sort((x, y) => isServer(x) - isServer(y) || x.first_seen.localeCompare(y.first_seen))) {
       if (picks.some((p) => p.device_id === a.device_id)) continue;
       picks.push({ device_id: a.device_id, device_name: a.device_name, device_type: a.device_type });
       if (picks.length >= 4) break;
