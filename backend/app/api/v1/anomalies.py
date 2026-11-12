@@ -208,21 +208,46 @@ async def get_finding(finding_id: str, session: AsyncSession = Depends(get_sessi
     return await _finding_detail(session, row)
 
 
+INCIDENT_TIERS = ("power", "plant", "loop", "unit", "zone", "server", "room")
+
+
 @router.get("/incidents", summary="Cooling incidents: one cascade, one row")
 async def list_incidents(
     state: list[str] | None = Query(None, description="open (default), resolved"),
     device_id: str | None = Query(None, description="incidents this device roots or is in"),
+    datacenter: str | None = Query(None, description="site code (DC1) or id"),
+    tier: str | None = Query(None, description="the cause's tier: " + ", ".join(INCIDENT_TIERS)),
+    q: str | None = Query(None, max_length=120,
+                          description="words over the title, root device and room"),
+    resolved_since: datetime | None = Query(None, description="resolved_at >= this"),
+    order: str = Query("recent", pattern="^(recent|longest|biggest)$", description=(
+        "open first in every order; then `recent` by last activity, `longest` "
+        "by how long it ran, `biggest` by alarms")),
+    with_total: bool = Query(False, description="also return `total`, for a pager"),
     limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0, description=(
+        "Rows to skip. The order is total, so walking the list in pages of "
+        "`limit` from offset 0 sees every row once.")),
     session: AsyncSession = Depends(get_session),
     _: Principal = Depends(require_role("viewer")),
 ) -> dict[str, Any]:
     # Not behind the anomaly flag: incidents are built from equipment alarms by
     # the alarm layer, and exist whether or not the analytics sweep runs.
     _check_enum(state, ("open", "resolved"), "state")
+    _check_enum([tier] if tier else None, INCIDENT_TIERS, "tier")
     _check_uuid(device_id, "device_id")
-    items = await correlator.list_incidents(session, states=state or ["open"],
-                                            device_id=device_id, limit=limit)
-    return {"items": jsonable_encoder(items)}
+    items = await correlator.list_incidents(
+        session, states=state or ["open"], device_id=device_id, datacenter=datacenter,
+        tier=tier, q=q, resolved_since=resolved_since, order=order,
+        limit=limit, offset=offset, with_total=with_total)
+    if not with_total:
+        return {"items": jsonable_encoder(items)}
+    # The window count rides on every row; lifted off once. A page past the
+    # end carries nothing and reads as nothing matching.
+    total = int(items[0].pop("total")) if items else 0
+    for it in items[1:]:
+        it.pop("total", None)
+    return {"items": jsonable_encoder(items), "total": total}
 
 
 @router.get("/incidents/{incident_id}", summary="One incident, with its alarms and findings")

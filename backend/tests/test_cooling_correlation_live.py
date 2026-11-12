@@ -328,3 +328,54 @@ async def test_a_plant_failing_in_sequence_is_one_incident(session):
         SELECT count(*) FROM alarm WHERE alarm_type = 'cascade_incident' AND state <> 'CLEARED'
     """))).scalar()
     assert common <= 1
+
+
+async def test_the_incident_list_pages_and_filters(session):
+    """The archive page walks the list in pages; the order is total, so no
+    row is seen twice or missed, and the filters are the words on the row."""
+    s = session
+    h = await _hall(s)
+    root = await _raise(s, h["crah"], "plant_unit_stopped", "MAJOR", ago_s=240)
+    for i, probe in enumerate(h["probes"][:2]):
+        a = await _raise(s, probe, "ambient_temp_high", "MAJOR", ago_s=120 - i,
+                         category="environmental")
+        assert (await cc.correlate(s, alarm=a, device_id=probe,
+                                   alarm_type="ambient_temp_high"))["id"] == root["id"]
+    await correlator.refresh_incidents(s)
+
+    both = ["open", "resolved"]
+    first = await correlator.list_incidents(s, states=both, device_id=None, limit=1,
+                                            offset=0, with_total=True)
+    assert len(first) == 1 and first[0]["state"] == "open"        # open leads
+    total = int(first[0]["total"])
+    assert total >= 1
+    # Walk every page: distinct ids, exactly `total` of them.
+    seen: list[str] = []
+    for off in range(0, total, 25):
+        page = await correlator.list_incidents(s, states=both, device_id=None, limit=25,
+                                               offset=off)
+        seen += [r["id"] for r in page]
+    assert len(seen) == total and len(set(seen)) == total
+    # Past the end is empty, not an error.
+    assert await correlator.list_incidents(s, states=both, device_id=None, limit=25,
+                                           offset=total) == []
+    # The words on the row find it; the tier and the site narrow to it.
+    me = first[0]
+    by_q = await correlator.list_incidents(s, states=["open"], device_id=None, limit=10,
+                                           q=h["crah_name"][:8])
+    assert me["id"] in {r["id"] for r in by_q}
+    by_tier = await correlator.list_incidents(s, states=["open"], device_id=None, limit=10,
+                                              tier="unit")
+    assert [r["id"] for r in by_tier] == [me["id"]]
+    assert await correlator.list_incidents(s, states=["open"], device_id=None, limit=10,
+                                           tier="power") == []
+    by_site = await correlator.list_incidents(s, states=["open"], device_id=None, limit=10,
+                                              datacenter=me["site_code"])
+    assert me["id"] in {r["id"] for r in by_site}
+    assert await correlator.list_incidents(s, states=["open"], device_id=None, limit=10,
+                                           datacenter="NOWHERE") == []
+    # Every order still leads with the open one.
+    for order in correlator.INCIDENT_ORDERS:
+        rows = await correlator.list_incidents(s, states=both, device_id=None, limit=3,
+                                               order=order)
+        assert rows and rows[0]["state"] == "open"

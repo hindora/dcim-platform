@@ -488,25 +488,58 @@ _INCIDENT_COLS = """
 """
 
 
+#: How the list can be ordered. Open incidents lead in every order: a
+#: reader paging the archive still sees what is wrong now first.
+INCIDENT_ORDERS = ("recent", "longest", "biggest")
+_ORDER_SQL = {
+    "recent": "i.last_activity_at DESC",
+    "longest": "(COALESCE(i.resolved_at, now()) - i.opened_at) DESC",
+    "biggest": "cardinality(i.member_alarm_ids) DESC",
+}
+
+
 async def list_incidents(session: AsyncSession, *, states: list[str], device_id: str | None,
-                         limit: int) -> list[dict[str, Any]]:
+                         limit: int, offset: int = 0, datacenter: str | None = None,
+                         tier: str | None = None, q: str | None = None,
+                         resolved_since: datetime | None = None,
+                         order: str = "recent",
+                         with_total: bool = False) -> list[dict[str, Any]]:
+    """Incidents, open first, then by `order`; a page of `limit` from
+    `offset`. The order is total (the id breaks every tie), so walking the
+    list in pages sees every row once. `with_total` rides the window count
+    on each row as `total`, for a pager; the caller lifts it off."""
     where = ["i.state = ANY(:states)"]
-    p: dict[str, Any] = {"states": states, "limit": limit}
+    p: dict[str, Any] = {"states": states, "limit": limit, "offset": offset}
     if device_id:
         # Root or member: the 3D panel asks "is this machine part of one?"
         where.append("""(i.root_device_id = CAST(:dev AS uuid) OR EXISTS (
             SELECT 1 FROM alarm a WHERE a.id = ANY(i.member_alarm_ids)
                AND a.device_id = CAST(:dev AS uuid)))""")
         p["dev"] = device_id
+    if datacenter:
+        # A code (DC1) or an id, as the alarm list takes it.
+        where.append("(dc.code = :dc OR i.datacenter_id::text = :dc)")
+        p["dc"] = datacenter
+    if tier:
+        where.append("i.tier = :tier")
+        p["tier"] = tier
+    if q:
+        # Words over what the row shows: the title, the root device, the room.
+        where.append("(i.title ILIKE :q OR d.name ILIKE :q OR r.name ILIKE :q)")
+        p["q"] = f"%{q}%"
+    if resolved_since is not None:
+        where.append("i.resolved_at >= :since")
+        p["since"] = resolved_since
+    total = ", count(*) OVER () AS total" if with_total else ""
     rows = (await session.execute(text(f"""
-        SELECT {_INCIDENT_COLS}
+        SELECT {_INCIDENT_COLS}{total}
           FROM anomaly_incident i
           LEFT JOIN device d ON d.id = i.root_device_id
           LEFT JOIN room r ON r.id = i.room_id
           LEFT JOIN datacenter dc ON dc.id = i.datacenter_id
          WHERE {' AND '.join(where)}
-         ORDER BY (i.state = 'open') DESC, i.last_activity_at DESC
-         LIMIT :limit
+         ORDER BY (i.state = 'open') DESC, {_ORDER_SQL.get(order, _ORDER_SQL["recent"])}, i.id
+         LIMIT :limit OFFSET :offset
     """), p)).mappings().all()
     return [dict(r) for r in rows]
 

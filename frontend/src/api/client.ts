@@ -5976,8 +5976,16 @@ export const api = {
       method: 'POST', body: JSON.stringify(body),
     }),
 
-  anomalyIncidents: (p: { state?: 'open' | 'resolved'; device_id?: string; limit?: string } = {}) =>
-    request<{ items: AnomalyIncident[] }>(`/anomalies/incidents${anomalyQs(p)}`),
+  /** Incidents, open first, a page at a time. `total` comes back only
+   *  with `with_total`; the order is total, so walking pages of `limit`
+   *  from offset 0 sees every row once. */
+  anomalyIncidents: (p: {
+    state?: 'open' | 'resolved' | ('open' | 'resolved')[]; device_id?: string;
+    datacenter?: string; tier?: string; q?: string; resolved_since?: string;
+    order?: 'recent' | 'longest' | 'biggest'; with_total?: 'true';
+    limit?: string; offset?: string;
+  } = {}) =>
+    request<{ items: AnomalyIncident[]; total?: number }>(`/anomalies/incidents${anomalyQs(p)}`),
 
   anomalyIncident: (id: string) =>
     request<AnomalyIncidentDetail>(`/anomalies/incidents/${id}`),

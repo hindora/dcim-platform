@@ -119,7 +119,11 @@ export function IncidentRail() {
   });
   const done = useQuery({
     queryKey: ['anomaly-incidents', 'resolved'],
-    queryFn: () => api.anomalyIncidents({ state: 'resolved', limit: '200' }),
+    // The server keeps the window: only what resolved inside it comes back.
+    queryFn: () => api.anomalyIncidents({
+      state: 'resolved', limit: '200',
+      resolved_since: new Date(Date.now() - RESOLVED_WINDOW_MS).toISOString(),
+    }),
     refetchInterval: 120_000,
     retry: false,
   });

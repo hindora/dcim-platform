@@ -438,3 +438,66 @@ def test_a_data_quality_check_cannot_raise_alarms(client):
 def test_only_an_admin_changes_a_lane(client):
     r = client.patch(f"{P}/detectors/CR-2", json={"lane": "advisory"}, headers=_tok("operator"))
     assert r.status_code == 403
+
+
+# ------------------------------------------------------- incidents, paged
+
+
+class _Incidents:
+    """The correlator's list, recorded: the endpoint's job is to pass the
+    page and the filters through and lift the window total off the rows."""
+
+    def __init__(self):
+        self.calls: list[dict] = []
+        self.rows: list[dict] = []
+
+    async def list_incidents(self, session, **kw):
+        self.calls.append(kw)
+        return [dict(r) for r in self.rows]
+
+
+@pytest.fixture
+def incidents(monkeypatch):
+    fake = _Incidents()
+    monkeypatch.setattr(api.correlator, "list_incidents", fake.list_incidents)
+    return fake
+
+
+def test_incidents_page_and_filters_pass_through(client, incidents):
+    incidents.rows = [{"id": "a", "total": 7}, {"id": "b", "total": 7}]
+    r = client.get(f"{P}/incidents", headers=_tok("viewer"), params={
+        "state": ["open", "resolved"], "datacenter": "DC1", "tier": "plant", "q": "CHL2",
+        "order": "biggest", "limit": 2, "offset": 4, "with_total": "true"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["total"] == 7
+    assert [i["id"] for i in body["items"]] == ["a", "b"]
+    assert all("total" not in i for i in body["items"])
+    call = incidents.calls[-1]
+    assert call["states"] == ["open", "resolved"] and call["datacenter"] == "DC1"
+    assert call["tier"] == "plant" and call["q"] == "CHL2" and call["order"] == "biggest"
+    assert call["limit"] == 2 and call["offset"] == 4 and call["with_total"] is True
+
+
+def test_incidents_default_is_open_without_a_total(client, incidents):
+    incidents.rows = [{"id": "a"}]
+    r = client.get(f"{P}/incidents", headers=_tok("viewer"))
+    assert r.status_code == 200
+    assert r.json() == {"items": [{"id": "a"}]}
+    call = incidents.calls[-1]
+    assert call["states"] == ["open"] and call["offset"] == 0 and call["with_total"] is False
+
+
+def test_incidents_past_the_end_reads_as_nothing(client, incidents):
+    incidents.rows = []
+    r = client.get(f"{P}/incidents", headers=_tok("viewer"),
+                   params={"with_total": "true", "offset": 900})
+    assert r.status_code == 200 and r.json() == {"items": [], "total": 0}
+
+
+def test_incidents_refuse_an_unknown_tier_or_order(client, incidents):
+    r = client.get(f"{P}/incidents", headers=_tok("viewer"), params={"tier": "attic"})
+    assert r.status_code == 400 and r.json()["detail"]["field"] == "tier"
+    r = client.get(f"{P}/incidents", headers=_tok("viewer"), params={"order": "loudest"})
+    assert r.status_code == 422
+    assert incidents.calls == []

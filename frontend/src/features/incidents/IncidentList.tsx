@@ -1,8 +1,7 @@
-import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api, type AnomalyIncident } from '../../api/client';
-import { usePaged } from '../../components/Pagination';
+import { Pagination } from '../../components/Pagination';
 import { Notice } from '../../components/Notice';
 import { relativeTime } from '../../lib/format';
 import '../devices/devices.css';
@@ -14,6 +13,8 @@ import './incidents.css';
  *  words. Filters narrow, the table pages, each row opens the page. */
 
 const DAY_MS = 24 * 3600 * 1000;
+const SIZES = [25, 50, 100, 200];
+const TIERS = ['power', 'plant', 'loop', 'unit', 'zone', 'server', 'room'];
 const SEV_RANK: Record<string, number> = { CRITICAL: 0, MAJOR: 1, MINOR: 2, WARNING: 3, INFO: 4 };
 const sevClass = (s?: string | null) => {
   const w = (s ?? '').toLowerCase();
@@ -51,52 +52,55 @@ export function IncidentList() {
   const cause = params.get('cause') ?? '';
   const text = params.get('q') ?? '';
   const sort = (['longest', 'biggest'].includes(params.get('sort') ?? '') ? params.get('sort') : 'recent') as Sort;
-  const set = (k: string, v: string) => setParams((p) => { if (v) p.set(k, v); else p.delete(k); return p; }, { replace: true });
+  const page = Math.max(1, Number(params.get('page') ?? '1') || 1);
+  const pageSize = SIZES.includes(Number(params.get('rows'))) ? Number(params.get('rows')) : SIZES[0];
+  const set = (k: string, v: string) => setParams((p) => {
+    if (v) p.set(k, v); else p.delete(k);
+    if (k !== 'page') p.delete('page');       // a new filter starts at page 1
+    return p;
+  }, { replace: true });
 
-  const open = useQuery({
-    queryKey: ['anomaly-incidents', 'open', 200],
-    queryFn: () => api.anomalyIncidents({ state: 'open', limit: '200' }),
+  // The page itself: the server filters, orders and pages, and says how
+  // many match, so a pager can reach any page without fetching the rest.
+  const states: ('open' | 'resolved')[] = state === 'all' ? ['open', 'resolved'] : [state];
+  const list = useQuery({
+    queryKey: ['anomaly-incidents', 'list', states.join(','), site, cause, text, sort, page, pageSize],
+    queryFn: () => api.anomalyIncidents({
+      state: states, datacenter: site || undefined, tier: cause || undefined, q: text || undefined,
+      order: sort, with_total: 'true', limit: String(pageSize), offset: String((page - 1) * pageSize),
+    }),
     refetchInterval: 30_000,
     retry: false,
+    placeholderData: (prev) => prev,
   });
-  const done = useQuery({
-    queryKey: ['anomaly-incidents', 'resolved', 200],
-    queryFn: () => api.anomalyIncidents({ state: 'resolved', limit: '200' }),
-    refetchInterval: 120_000,
+  // The band's four counts, each one page of one row with its total.
+  const now = Date.now();
+  const since7 = new Date(now - 7 * DAY_MS).toISOString().slice(0, 13);
+  const since30 = new Date(now - 30 * DAY_MS).toISOString().slice(0, 13);
+  const count = (key: string, p: Parameters<typeof api.anomalyIncidents>[0]) => useQuery({
+    queryKey: ['anomaly-incidents', 'count', key],
+    queryFn: async () => (await api.anomalyIncidents({ ...p, with_total: 'true', limit: '1' })).total ?? 0,
+    refetchInterval: 60_000,
     retry: false,
   });
-  const loading = open.isLoading || done.isLoading;
-  const all: AnomalyIncident[] = useMemo(
-    () => [...(open.data?.items ?? []), ...(done.data?.items ?? [])], [open.data, done.data]);
+  /* eslint-disable react-hooks/rules-of-hooks -- four fixed calls, never conditional */
+  const nOpenQ = count('open', { state: 'open' });
+  const in7Q = count(`r7-${since7}`, { state: 'resolved', resolved_since: `${since7}:00:00Z` });
+  const in30Q = count(`r30-${since30}`, { state: 'resolved', resolved_since: `${since30}:00:00Z` });
+  const allQ = count('all', { state: ['open', 'resolved'] });
+  /* eslint-enable react-hooks/rules-of-hooks */
+  const sites = useQuery({ queryKey: ['sites-overview'], queryFn: api.sitesOverview, staleTime: 300_000 });
 
-  const now = Date.now();
-  const sites = [...new Set(all.map((i) => i.site_code).filter((s): s is string => Boolean(s)))].sort();
-  const causes = [...new Set(all.map((i) => i.tier))].sort();
-
-  const items = useMemo(() => {
-    const t = text.toLowerCase();
-    const rows = all
-      .filter((i) => state === 'all' || i.state === state)
-      .filter((i) => !site || i.site_code === site)
-      .filter((i) => !cause || i.tier === cause)
-      .filter((i) => !t || i.title.toLowerCase().includes(t) || (i.root_device_name ?? '').toLowerCase().includes(t)
-        || (i.room_name ?? '').toLowerCase().includes(t));
-    const lasted = (i: AnomalyIncident) => (i.resolved_at ? ms(i.resolved_at) : now) - ms(i.opened_at);
-    return rows.sort((a, b) => {
-      if (a.state !== b.state) return a.state === 'open' ? -1 : 1;
-      if (sort === 'longest') return lasted(b) - lasted(a);
-      if (sort === 'biggest') return b.alarm_count - a.alarm_count;
-      return b.last_activity_at.localeCompare(a.last_activity_at);
-    });
-  }, [all, state, site, cause, text, sort, now]);
-  const { rows, foot } = usePaged(items, { noun: 'incidents', always: true });
-
-  const nOpen = (open.data?.items ?? []).length;
-  const resolved = done.data?.items ?? [];
-  const in7 = resolved.filter((i) => i.resolved_at && now - ms(i.resolved_at) < 7 * DAY_MS).length;
-  const in30 = resolved.filter((i) => i.resolved_at && now - ms(i.resolved_at) < 30 * DAY_MS).length;
-  const worstOpen = (open.data?.items ?? [])
-    .map((i) => i.evidence.worst ?? 'INFO').sort((a, b) => (SEV_RANK[a] ?? 9) - (SEV_RANK[b] ?? 9))[0];
+  const loading = list.isLoading;
+  const rows: AnomalyIncident[] = list.data?.items ?? [];
+  const total = list.data?.total ?? 0;
+  const pages = Math.max(1, Math.ceil(total / pageSize));
+  const worstOpen = rows.filter((i) => i.state === 'open')
+    .map((i) => i.evidence.worst ?? 'INFO').sort((x, y) => (SEV_RANK[x] ?? 9) - (SEV_RANK[y] ?? 9))[0];
+  const nOpen = nOpenQ.data ?? 0;
+  const siteCodes = (sites.data?.sites ?? []).map((r) => r.code).sort();
+  const tile = (q: { data?: number; isLoading: boolean }) =>
+    q.isLoading ? <span className="dv-skel">0</span> : (q.data ?? 0);
 
   return (
     <div className="dv-page il-page">
@@ -110,15 +114,15 @@ export function IncidentList() {
         </div>
         <div className="dv-band">
           <div className={`dv-tile no-glyph${nOpen > 0 && worstOpen ? ` tone-${sevClass(worstOpen)}` : ''}`}>
-            <b>{loading ? <span className="dv-skel">0</span> : nOpen}</b><span>open now</span>
+            <b>{tile(nOpenQ)}</b><span>open now</span>
           </div>
-          <div className="dv-tile no-glyph"><b>{loading ? <span className="dv-skel">0</span> : in7}</b><span>resolved, 7 d</span></div>
-          <div className="dv-tile no-glyph"><b>{loading ? <span className="dv-skel">0</span> : in30}</b><span>resolved, 30 d</span></div>
-          <div className="dv-tile no-glyph"><b>{loading ? <span className="dv-skel">0</span> : all.length}</b><span>on record</span></div>
+          <div className="dv-tile no-glyph"><b>{tile(in7Q)}</b><span>resolved, 7 d</span></div>
+          <div className="dv-tile no-glyph"><b>{tile(in30Q)}</b><span>resolved, 30 d</span></div>
+          <div className="dv-tile no-glyph"><b>{tile(allQ)}</b><span>on record</span></div>
         </div>
       </header>
 
-      {(open.isError || done.isError) && <Notice tone="error">Incidents could not be read.</Notice>}
+      {list.isError && <Notice tone="error">Incidents could not be read.</Notice>}
 
       <section className="dv-card">
         <div className="ip-filters">
@@ -129,12 +133,12 @@ export function IncidentList() {
           </label>
           <label>Site
             <select value={site} onChange={(e) => set('site', e.target.value)}>
-              <option value="">any</option>{sites.map((s) => <option key={s} value={s}>{s}</option>)}
+              <option value="">any</option>{siteCodes.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
           </label>
           <label>Cause
             <select value={cause} onChange={(e) => set('cause', e.target.value)}>
-              <option value="">any</option>{causes.map((c) => <option key={c} value={c}>{CAUSE_WORD[c] ?? c}</option>)}
+              <option value="">any</option>{TIERS.map((c) => <option key={c} value={c}>{CAUSE_WORD[c] ?? c}</option>)}
             </select>
           </label>
           <label>Order
@@ -153,8 +157,8 @@ export function IncidentList() {
               <tr key={n}><td colSpan={8}><span className="dv-skel">An incident title of the usual length, with its numbers after</span></td></tr>
             ))}
           </tbody></table></div>
-        ) : items.length === 0 ? (
-          <p className="dv-empty">{all.length === 0 ? 'No incident on record yet. Every alarm so far has stood on its own.' : 'No incident matches these filters.'}</p>
+        ) : rows.length === 0 ? (
+          <p className="dv-empty">{(allQ.data ?? 0) === 0 ? 'No incident on record yet. Every alarm so far has stood on its own.' : 'No incident matches these filters.'}</p>
         ) : (
           <div className="table-frame">
             <table className="ip-table il-table">
@@ -192,7 +196,12 @@ export function IncidentList() {
             </table>
           </div>
         )}
-        {!loading && foot}
+        {!loading && (
+          <Pagination page={Math.min(page, pages)} pageSize={pageSize} shown={rows.length} total={total}
+                      hasNext={page < pages} noun="incidents"
+                      onPage={(n) => set('page', n <= 1 ? '' : String(n))}
+                      onSize={(n) => set('rows', n === SIZES[0] ? '' : String(n))} />
+        )}
       </section>
     </div>
   );

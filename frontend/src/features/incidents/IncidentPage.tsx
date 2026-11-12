@@ -155,11 +155,13 @@ export function IncidentPage() {
 
   return (
     <div className="dv-page ip-page">
+      {/* The trail is where the PAGE lives, not where the machine stands:
+          an incident is one of the incidents, so Home, the list, this one.
+          The site and room are facts about it and go in the subtitle. */}
       <nav className="dv-crumb" aria-label="Where this is">
         <Link to="/">Home</Link>
-        {inc.site_code && (<><span aria-hidden>›</span><span title={inc.site_name ?? undefined}>{inc.site_code}</span></>)}
-        {inc.room_id && (<><span aria-hidden>›</span><Link to={`/?room=${inc.room_id}`}>{inc.room_name}</Link></>)}
         <span aria-hidden>›</span><Link to="/incidents">Incidents</Link>
+        <span aria-hidden>›</span><span>{inc.root_device_name ?? inc.room_name ?? 'This incident'}</span>
       </nav>
 
       <header className={`dv-head${open && worst ? ` sev-${sevWord(worst)}` : ''}`}>
@@ -171,6 +173,10 @@ export function IncidentPage() {
             </span>
           </h2>
           <p className="subtitle">
+            {inc.site_code && <span title={inc.site_name ?? undefined}>{inc.site_code}</span>}
+            {inc.site_code && inc.room_id ? ' · ' : ''}
+            {inc.room_id && <Link to={`/?room=${inc.room_id}`}>{inc.room_name}</Link>}
+            {inc.site_code || inc.room_id ? ' · ' : ''}
             {worst && <span className={`ip-sev ${sevClass(worst)}`}>{sevWord(worst)}</span>}
             {worst ? ' · ' : ''}{cause.word}
             {' · opened '}{stamp(inc.opened_at)}
@@ -242,7 +248,7 @@ export function IncidentPage() {
 function IncidentSkeleton() {
   return (
     <div className="dv-page ip-page" aria-busy>
-      <nav className="dv-crumb"><span className="dv-skel">Home › Incident</span></nav>
+      <nav className="dv-crumb"><span className="dv-skel">Home › Incidents › a device</span></nav>
       <header className="dv-head">
         <div className="dv-title">
           <h2><span className="dv-skel">An incident title of the usual length</span></h2>
