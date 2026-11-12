@@ -765,9 +765,14 @@ button.ind:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px
    same uppercase head on the inset background, rows keyed by site code, the
    same tinted tile for status, rooms nested under the row that reaches them.
    The rail is state, not navigation. */
+/* The rail is a flex column, so align-self here is the HORIZONTAL axis:
+   `start` shrink-wrapped the panel to its widest line, which is why it
+   opened at ~180px on the skeleton and jumped to the full column when the
+   titles arrived. Stretch fills the 400px column from the first paint; the
+   panel still takes only the height its rows need. */
 .inc-panel {
   background: var(--bg-raised); border: 1px solid var(--border); border-radius: 4px;
-  display: flex; flex-direction: column; min-width: 0; align-self: start;
+  display: flex; flex-direction: column; min-width: 0; align-self: stretch;
 }
 .inc-panel-head {
   display: flex; align-items: center; justify-content: space-between;
