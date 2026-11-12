@@ -483,7 +483,7 @@ function EvidenceCard({ inc, root }: { inc: AnomalyIncidentDetail; root: Anomaly
     const picks: { room: string; device_id: string; device_name: string }[] = [];
     for (const r of rooms) {
       const a = inc.alarms
-        .filter((x) => x.role !== 'root' && x.role !== 'peer' && /temp|inlet|hot|heat/i.test(x.alarm_type))
+        .filter((x) => x.role !== 'root' && x.role !== 'peer' && /temp|inlet|ambient|hot|heat/i.test(x.alarm_type))
         .sort((x, y) => x.first_seen.localeCompare(y.first_seen))
         .find((x) => !picks.some((p) => p.device_id === x.device_id));
       if (a) picks.push({ room: r.room_name ?? 'room', device_id: a.device_id, device_name: a.device_name });
@@ -494,7 +494,7 @@ function EvidenceCard({ inc, root }: { inc: AnomalyIncidentDetail; root: Anomaly
   const hotHist = useQuery({
     queryKey: ['incident-hot-history', inc.id, hot.map((h) => h.device_id).join(','), startIso.slice(0, 16), endIso.slice(0, 16)],
     queryFn: async () => Promise.all(hot.map(async (h) => ({
-      ...h, out: await api.history(h.device_id, ['inlet_temperature'], startIso, endIso),
+      ...h, out: await api.history(h.device_id, ['inlet_temperature', 'ambient_temperature'], startIso, endIso),
     }))),
     enabled: hot.length > 0,
     retry: false,
@@ -514,7 +514,9 @@ function EvidenceCard({ inc, root }: { inc: AnomalyIncidentDetail; root: Anomaly
       <h3>Evidence<span className="lead">{dayOf(startIso)} {clock(startIso).slice(0, 5)} to {inc.resolved_at ? clock(endIso).slice(0, 5) : 'now'}</span></h3>
       {root && (
         <div className="ip-chart">
-          <p className="ip-chart-cap">{root.device_name}: {rootSeries[0] ? humanise(rootSeries[0].metric) : humanise(rootMetricsList[0])}</p>
+          <p className="ip-chart-cap">{root.device_name}: {rootSeries.length
+            ? [...new Set(rootSeries.map((s) => humanise(s.metric)))].join(', ')
+            : humanise(rootMetricsList[0])}</p>
           {rootHist.isLoading && <p className="dv-empty">Reading…</p>}
           {!rootHist.isLoading && rootSeries.length === 0 && (
             <p className="dv-empty">No {humanise(rootMetricsList[0]).toLowerCase()} history for this window.</p>
@@ -553,88 +555,143 @@ function EvidenceCard({ inc, root }: { inc: AnomalyIncidentDetail; root: Anomaly
 
 // ------------------------------------------------------------- timeline
 
-type Ev = { t: number; kind: 'root' | 'peer' | 'member' | 'folded' | 'finding' | 'clear' | 'resolved';
-            title: string; sub?: string; severity?: string; alarmId?: string; deviceId?: string; n?: number };
+type EvKind = 'root' | 'peer' | 'member' | 'folded' | 'finding' | 'clear' | 'resolved';
+type Ev = { t: number; kind: EvKind; title: string; sub?: string; severity?: string;
+            alarmId?: string; deviceId?: string };
+/** A row of the spine: one event, or a wave of alike events. Seven hundred
+ *  PDUs saying "ambient high" inside two minutes is one thing happening,
+ *  and the reader wants it as one row that opens, not seven hundred. */
+type Row = { key: string; t: number; kind: EvKind; severity?: string; one?: Ev; wave?: Ev[]; sub?: string };
+
+const WAVE_GAP_MS = 180_000;
+const GROUPABLE = new Set<EvKind>(['member', 'folded', 'clear']);
+
+function buildRows(events: Ev[]): Row[] {
+  const out: Row[] = [];
+  const open = new Map<string, Row>();
+  for (const e of events) {
+    if (!GROUPABLE.has(e.kind)) {
+      out.push({ key: `${e.kind}-${e.alarmId ?? e.title}-${e.t}`, t: e.t, kind: e.kind, severity: e.severity, one: e });
+      continue;
+    }
+    const k = `${e.kind}|${e.sub ?? ''}|${e.severity ?? ''}`;
+    const g = open.get(k);
+    const last = g?.wave?.[g.wave.length - 1];
+    if (g && last && e.t - last.t <= WAVE_GAP_MS) { g.wave!.push(e); continue; }
+    const row: Row = { key: `${k}-${e.t}`, t: e.t, kind: e.kind, severity: e.severity, sub: e.sub, wave: [e] };
+    open.set(k, row);
+    out.push(row);
+  }
+  // A wave of one is just the event.
+  for (const r of out) if (r.wave && r.wave.length === 1) { r.one = r.wave[0]; delete r.wave; }
+  return out.sort((x, y) => x.t - y.t || (x.kind === 'root' ? -1 : y.kind === 'root' ? 1 : 0));
+}
 
 /** The spine. Every alarm as it was raised, in role, clears as they came,
- *  findings between them, the resolution at the end. Folded consequences
- *  collapse to one row at the time the first of them was raised, because
- *  two hundred symptoms say one thing. The lead between root and the first
- *  thing after it is labelled: that gap is the proof the root is right. */
+ *  findings between them, the resolution at the end. Alike consequences
+ *  inside a few minutes collapse to one wave row that opens. The lead
+ *  between the root and the first thing after it is labelled: that gap is
+ *  the proof the root is right. */
 function Timeline({ inc, root, onAlarm }: {
   inc: AnomalyIncidentDetail; root: AnomalyIncidentAlarm | null; onAlarm: (id: string) => void;
 }) {
-  const [showFolded, setShowFolded] = useState(false);
   const [showAll, setShowAll] = useState(false);
-  const events = useMemo(() => {
-    const out: Ev[] = [];
-    const foldedRows: Ev[] = [];
+  const [opened, setOpened] = useState<Set<string>>(() => new Set());
+  const rows = useMemo(() => {
+    const ev: Ev[] = [];
     for (const a of inc.alarms) {
-      const e: Ev = { t: ms(a.first_seen), kind: a.role, title: a.device_name,
-                      sub: humanise(a.alarm_type), severity: a.severity, alarmId: a.id, deviceId: a.device_id };
-      if (a.role === 'folded') foldedRows.push(e); else out.push(e);
-      if (a.cleared_at && a.role !== 'folded') {
-        out.push({ t: ms(a.cleared_at), kind: 'clear', title: a.device_name, sub: `${humanise(a.alarm_type)} cleared`, alarmId: a.id });
+      ev.push({ t: ms(a.first_seen), kind: a.role, title: a.device_name, sub: humanise(a.alarm_type),
+                severity: a.severity, alarmId: a.id, deviceId: a.device_id });
+      if (a.cleared_at) {
+        ev.push({ t: ms(a.cleared_at), kind: 'clear', title: a.device_name,
+                  sub: humanise(a.alarm_type), alarmId: a.id, deviceId: a.device_id });
       }
     }
-    if (foldedRows.length) {
-      if (showFolded) out.push(...foldedRows);
-      else out.push({ t: Math.min(...foldedRows.map((f) => f.t)), kind: 'folded',
-                      title: `${foldedRows.length} folded ${foldedRows.length === 1 ? 'consequence' : 'consequences'}`,
-                      sub: 'explained by the cause; not shown on the console', n: foldedRows.length });
-    }
     for (const f of inc.findings) {
-      out.push({ t: ms(f.first_seen), kind: 'finding', title: f.device_name, sub: `${f.detector_id} · ${f.summary}` });
+      ev.push({ t: ms(f.first_seen), kind: 'finding', title: f.device_name, sub: `${f.detector_id} · ${f.summary}` });
     }
-    if (inc.resolved_at) out.push({ t: ms(inc.resolved_at), kind: 'resolved', title: 'Resolved', sub: `after ${duration(ms(inc.opened_at), ms(inc.resolved_at))}` });
-    return out.sort((a, b) => a.t - b.t || (a.kind === 'root' ? -1 : 0));
-  }, [inc, showFolded]);
+    if (inc.resolved_at) {
+      ev.push({ t: ms(inc.resolved_at), kind: 'resolved', title: 'Resolved',
+                sub: `after ${duration(ms(inc.opened_at), ms(inc.resolved_at))}` });
+    }
+    ev.sort((x, y) => x.t - y.t);
+    return buildRows(ev);
+  }, [inc]);
 
   const LIMIT = 40;
-  const rows = showAll ? events : events.slice(0, LIMIT);
+  const shown = showAll ? rows : rows.slice(0, LIMIT);
   const rootT = root ? ms(root.first_seen) : NaN;
-  const firstAfter = root ? events.find((e) => e.t > rootT && e.kind !== 'clear' && e.kind !== 'resolved') : undefined;
-  const foldedTotal = inc.alarms.filter((a) => a.role === 'folded').length;
+  const firstAfter = root ? rows.find((r) => r.t > rootT && r.kind !== 'clear' && r.kind !== 'resolved') : undefined;
+  const toggle = (k: string) => setOpened((prev) => {
+    const n = new Set(prev);
+    if (n.has(k)) n.delete(k); else n.add(k);
+    return n;
+  });
+  const roleWord = (kind: EvKind, sev?: string) =>
+    (kind === 'clear' ? 'cleared' : kind === 'resolved' ? '' : kind) + (sev && kind !== 'clear' ? ` · ${sevWord(sev)}` : '');
 
   let lastDay = '';
   return (
     <aside className="dv-card ip-rail" aria-label="Timeline">
-      <h3>Timeline<span className="lead">{events.length} events</span></h3>
+      <h3>Timeline<span className="lead">{rows.length} {rows.length === 1 ? 'row' : 'rows'}, {inc.alarms.length} alarms</span></h3>
       <ol className="ip-tl">
-        {rows.map((e, i) => {
-          const day = dayOf(new Date(e.t).toISOString());
-          const dayRow = day !== lastDay; lastDay = day;
-          const leadHere = firstAfter && e === firstAfter;
+        {shown.map((r) => {
+          const iso = new Date(r.t).toISOString();
+          const day = dayOf(iso);
+          const dayRow = day !== lastDay;
+          lastDay = day;
+          const leadHere = firstAfter === r;
+          const isOpen = opened.has(r.key);
+          const one = r.one;
           return (
-            <li key={`${e.kind}-${e.alarmId ?? e.title}-${e.t}-${i}`} className={`ip-ev is-${e.kind}${e.severity ? ` sev-${sevWord(e.severity)}` : ''}`}>
+            <li key={r.key} className={`ip-ev is-${r.kind}${r.severity ? ` sev-${sevWord(r.severity)}` : ''}${r.wave ? ' is-wave' : ''}`}>
               {dayRow && <span className="ip-day">{day}</span>}
-              {leadHere && <span className="ip-lead">lead {duration(rootT, e.t)}</span>}
-              <span className="ip-ev-t">{clock(new Date(e.t).toISOString())}</span>
+              {leadHere && <span className="ip-lead">lead {duration(rootT, r.t)}</span>}
+              <span className="ip-ev-t">{clock(iso)}</span>
               <span className="ip-ev-dot" aria-hidden />
               <span className="ip-ev-body">
-                {e.kind === 'folded' ? (
-                  <button type="button" className="linklike ip-ev-title" aria-expanded={showFolded}
-                          onClick={() => setShowFolded(true)}>{e.title}</button>
-                ) : e.alarmId ? (
-                  <button type="button" className="linklike ip-ev-title" onClick={() => onAlarm(e.alarmId!)}>{e.title}</button>
-                ) : (
-                  <span className="ip-ev-title">{e.title}</span>
+                {r.wave ? (
+                  <>
+                    <button type="button" className="linklike ip-ev-title" aria-expanded={isOpen} onClick={() => toggle(r.key)}>
+                      {r.wave.length} devices{r.kind === 'clear' ? ' cleared' : ''}
+                      <span className="ip-ev-span"> over {duration(r.wave[0].t, r.wave[r.wave.length - 1].t)}</span>
+                    </button>
+                    {r.sub && <span className="ip-ev-sub">{r.sub}</span>}
+                    <span className="ip-ev-role">{roleWord(r.kind, r.severity)}</span>
+                    {isOpen && (
+                      <ul className="ip-wave">
+                        {r.wave.map((e) => (
+                          <li key={`${e.alarmId}-${e.t}`}>
+                            <span className="ip-ev-t">{clock(new Date(e.t).toISOString())}</span>
+                            {e.alarmId
+                              ? <button type="button" className="linklike" onClick={() => onAlarm(e.alarmId!)}>{e.title}</button>
+                              : <span>{e.title}</span>}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </>
+                ) : one && (
+                  <>
+                    {one.alarmId
+                      ? <button type="button" className="linklike ip-ev-title" onClick={() => onAlarm(one.alarmId!)}>{one.title}</button>
+                      : <span className="ip-ev-title">{one.title}</span>}
+                    {one.sub && <span className="ip-ev-sub">{one.sub}</span>}
+                    <span className="ip-ev-role">{roleWord(r.kind, r.severity)}</span>
+                  </>
                 )}
-                {e.sub && <span className="ip-ev-sub">{e.sub}</span>}
-                <span className="ip-ev-role">{e.kind === 'clear' ? 'cleared' : e.kind === 'resolved' ? '' : e.kind}{e.severity && e.kind !== 'clear' ? ` · ${sevWord(e.severity)}` : ''}</span>
               </span>
             </li>
           );
         })}
       </ol>
-      <div className="ip-tl-foot">
-        {events.length > LIMIT && !showAll && (
-          <button type="button" className="linklike" onClick={() => setShowAll(true)}>Show all {events.length}</button>
-        )}
-        {showFolded && foldedTotal > 0 && (
-          <button type="button" className="linklike" onClick={() => setShowFolded(false)}>Fold the {foldedTotal} consequences</button>
-        )}
-      </div>
+      {rows.length > LIMIT && (
+        <div className="ip-tl-foot">
+          <button type="button" className="linklike" onClick={() => setShowAll((v) => !v)}>
+            {showAll ? 'Show fewer' : `Show all ${rows.length} rows`}
+          </button>
+        </div>
+      )}
     </aside>
   );
 }
