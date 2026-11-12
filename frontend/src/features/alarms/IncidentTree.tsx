@@ -76,7 +76,9 @@ export function IncidentTree({ deviceId, alarmId, heading = true }: {
       {heading && (
         <h4>{isRoot ? 'Root of a cooling incident' : 'Part of a cooling incident'}</h4>
       )}
-      <p className="incident-tree-title">{incident.title}</p>
+      <p className="incident-tree-title">
+        <Link to={`/incidents/${incident.id}`} title="The incident page: cause, reach, timeline">{incident.title}</Link>
+      </p>
       {incident.summary && <p className="muted incident-tree-summary">{incident.summary}</p>}
       {incident.tier === 'room' ? (
         // No cause to name: heat with no cooling alarm behind it.

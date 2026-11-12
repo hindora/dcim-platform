@@ -47,7 +47,7 @@ function IncidentRow({ i, onOpen, onRoom }: {
   return (
     <li className="inc">
       <button type="button" className="inc-head" onClick={onOpen}
-              title={i.root_alarm_id ? 'Open the alarm that caused it' : 'Open this room’s alarms'}>
+              title="Open this incident">
         <span className="inc-site" title={i.site_name ?? undefined}>{i.site_code ?? '—'}</span>
         <span className="inc-text">
           <span className="inc-title">{i.title}</span>
@@ -136,10 +136,9 @@ export function IncidentRail() {
   // the resolved section never lands a beat after the open one.
   const loading = open.isLoading || done.isLoading;
 
-  const openOne = (i: AnomalyIncident) => {
-    if (i.root_alarm_id) navigate(`/?alarm=${i.root_alarm_id}`);
-    else if (i.room_id) navigate(`/?room=${i.room_id}`);
-  };
+  // The row opens the incident's own page: cause, reach, timeline. The
+  // alarm modal is one device saying one thing, and an incident is more.
+  const openOne = (i: AnomalyIncident) => navigate(`/incidents/${i.id}`);
 
   return (
     <section className="inc-panel" aria-label="Incidents">
@@ -172,7 +171,7 @@ export function IncidentRail() {
             {shown.map((i) => (
               <li key={i.id} className="inc">
                 <button type="button" className="inc-head" onClick={() => openOne(i)}
-                        title="Open the alarm that caused it">
+                        title="Open this incident">
                   <span className="inc-site" title={i.site_name ?? undefined}>{i.site_code ?? '—'}</span>
                   <span className="inc-text">
                     <span className="inc-title">{i.title}</span>
