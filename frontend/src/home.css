@@ -782,6 +782,12 @@ button.ind:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px
 }
 .inc-panel-head.sub { border-top: 1px solid var(--border); }
 .inc-count { font-variant-numeric: tabular-nums; }
+/* The way to the archive, beside the count: same small uppercase as the
+   head, the accent only on hover so the count stays the loud thing. */
+.inc-head-right { display: flex; align-items: center; gap: 14px; }
+.inc-all { color: var(--text-muted); text-decoration: none; }
+.inc-all:hover { color: var(--accent); text-decoration: none; }
+.inc-all:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .inc-count.on { color: var(--critical); }
 .inc-empty { margin: 0; padding: 16px 14px; font-size: 13px; color: var(--text-faint); font-style: italic; }
 .inc-list { list-style: none; margin: 0; padding: 0; }

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { api, type AnomalyIncident } from '../../api/client';
 import { CategoryGlyph } from '../../components/CategoryGlyph';
 import { relativeTime } from '../../lib/format';
@@ -144,8 +144,11 @@ export function IncidentRail() {
     <section className="inc-panel" aria-label="Incidents">
       <header className="inc-panel-head">
         <span>Incidents</span>
-        <span className={`inc-count${openItems.length ? ' on' : ''}`}>
-          {open.isLoading ? '…' : `${openItems.length} open`}
+        <span className="inc-head-right">
+          <span className={`inc-count${openItems.length ? ' on' : ''}`}>
+            {open.isLoading ? '…' : `${openItems.length} open`}
+          </span>
+          <Link className="inc-all" to="/incidents" title="Every incident on record">All</Link>
         </span>
       </header>
       {loading && <IncidentSkeleton />}

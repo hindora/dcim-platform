@@ -31,6 +31,7 @@ import { Utilization } from './features/estate/Utilization';
 import { DeviceDetail } from './features/devices/DeviceDetail';
 import { RackDetail } from './features/racks/RackDetail';
 import { IncidentPage } from './features/incidents/IncidentPage';
+import { IncidentList } from './features/incidents/IncidentList';
 import { RackList } from './features/racks/RackList';
 import { FloorPlanView } from './features/floorplan/FloorPlan';
 import { NavMenu, type NavMenuItem } from './components/NavMenu';
@@ -323,6 +324,7 @@ export default function App() {
           <Route path="/devices/:id" element={<Page><DeviceDetail /></Page>} />
           <Route path="/racks" element={<Page><RackList /></Page>} />
           <Route path="/racks/:id" element={<Page><RackDetail /></Page>} />
+          <Route path="/incidents" element={<Page><IncidentList /></Page>} />
           <Route path="/incidents/:id" element={<Page><IncidentPage /></Page>} />
           {/* Full-bleed like the network map: the room fills the window and
               carries its own chrome. */}

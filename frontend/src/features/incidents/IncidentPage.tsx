@@ -136,7 +136,7 @@ export function IncidentPage() {
       <div className="dv-page">
         <Notice tone="error" heading={gone ? 'This incident is no longer on record' : 'The incident could not be read'}>
           {gone ? 'It may have been superseded by a merge, or the link is old.' : String(q.error)}
-          {' '}<Link to="/">Back to the home page</Link>
+          {' '}<Link to="/incidents">All incidents</Link>
         </Notice>
       </div>
     );
@@ -159,7 +159,7 @@ export function IncidentPage() {
         <Link to="/">Home</Link>
         {inc.site_code && (<><span aria-hidden>›</span><span title={inc.site_name ?? undefined}>{inc.site_code}</span></>)}
         {inc.room_id && (<><span aria-hidden>›</span><Link to={`/?room=${inc.room_id}`}>{inc.room_name}</Link></>)}
-        <span aria-hidden>›</span><span>Incident</span>
+        <span aria-hidden>›</span><Link to="/incidents">Incidents</Link>
       </nav>
 
       <header className={`dv-head${open && worst ? ` sev-${sevWord(worst)}` : ''}`}>

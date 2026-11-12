@@ -207,6 +207,18 @@ button.ip-ev-title:hover { text-decoration: underline; }
 .ip-role.is-root { color: var(--text); font-weight: 700; }
 .ip-role.is-peer { color: var(--text); }
 
+/* -------------------------------------------------------------- list page */
+
+.il-table td { vertical-align: middle; }
+.il-site { font-weight: 700; font-size: 13px; letter-spacing: .02em; white-space: nowrap; }
+.il-title { min-width: 260px; }
+.il-title a { font-weight: 600; }
+.il-sub { display: block; font-size: 11.5px; color: var(--text-muted); margin-top: 1px; overflow-wrap: anywhere; }
+.il-table tr.is-done td { color: var(--text-muted); }
+.il-table tr.is-done .il-title a { color: var(--text); }
+.il-table tr.is-open .il-site { color: var(--text); }
+.il-table .ip-state { font-size: 11px; }
+
 /* -------------------------------------------------------------- skeleton */
 
 .ip-skel-card p { margin: 6px 0 0; }
