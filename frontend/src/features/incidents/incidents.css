@@ -184,6 +184,8 @@ button.ip-ev-title:hover { text-decoration: underline; }
 .ip-wave { list-style: none; margin: 6px 0 2px; padding: 0 0 0 8px; border-left: 1px solid var(--border); display: grid; gap: 2px; }
 .ip-wave li { display: flex; gap: 8px; align-items: baseline; font-size: 11.5px; }
 .ip-wave .ip-ev-t { text-align: left; }
+.ip-wave li { flex-wrap: wrap; }
+.ip-wave-sub { flex-basis: 100%; padding-left: 62px; color: var(--text-muted); overflow-wrap: anywhere; }
 
 /* ---------------------------------------------------------------- tables */
 

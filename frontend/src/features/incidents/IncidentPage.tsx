@@ -48,6 +48,13 @@ const CAUSE: Record<string, { glyph: 'cooling' | 'power'; word: string }> = {
   room: { glyph: 'cooling', word: 'airflow' },
 };
 
+/** The air a device breathes, by class: a PDU's probe is ambient, a
+ *  server's is its inlet. */
+function intakeMetric(deviceType: string | null | undefined): string {
+  const t = (deviceType ?? '').toLowerCase();
+  return t.includes('pdu') || t.includes('rpp') || t.includes('sensor') ? 'ambient_temperature' : 'inlet_temperature';
+}
+
 /** The one reading that says whether the root is doing its job, by class.
  *  A chiller is its chilled-water supply, a CRAH its supply air, a UPS its
  *  load, a PDU its current. Unknown classes fall back to intake air. */
@@ -476,26 +483,26 @@ function EvidenceCard({ inc, root }: { inc: AnomalyIncidentDetail; root: Anomaly
     retry: false,
   });
 
-  // One hot device per reached room: the earliest inlet / temperature
-  // alarm in it. Up to four rooms, four lines.
+  // The first four devices to go hot, one line each. The alarm rows carry
+  // no room, so they are named by device, not placed in a room they might
+  // not be in.
   const hot = useMemo(() => {
-    const rooms = inc.evidence.by_room ?? [];
-    const picks: { room: string; device_id: string; device_name: string }[] = [];
-    for (const r of rooms) {
-      const a = inc.alarms
-        .filter((x) => x.role !== 'root' && x.role !== 'peer' && /temp|inlet|ambient|hot|heat/i.test(x.alarm_type))
-        .sort((x, y) => x.first_seen.localeCompare(y.first_seen))
-        .find((x) => !picks.some((p) => p.device_id === x.device_id));
-      if (a) picks.push({ room: r.room_name ?? 'room', device_id: a.device_id, device_name: a.device_name });
+    const picks: { device_id: string; device_name: string; device_type: string }[] = [];
+    for (const a of [...inc.alarms]
+      .filter((x) => x.role !== 'root' && x.role !== 'peer' && /temp|inlet|ambient|hot|heat/i.test(x.alarm_type))
+      .sort((x, y) => x.first_seen.localeCompare(y.first_seen))) {
+      if (picks.some((p) => p.device_id === a.device_id)) continue;
+      picks.push({ device_id: a.device_id, device_name: a.device_name, device_type: a.device_type });
       if (picks.length >= 4) break;
     }
     return picks;
   }, [inc]);
   const hotHist = useQuery({
     queryKey: ['incident-hot-history', inc.id, hot.map((h) => h.device_id).join(','), startIso.slice(0, 16), endIso.slice(0, 16)],
-    queryFn: async () => Promise.all(hot.map(async (h) => ({
-      ...h, out: await api.history(h.device_id, ['inlet_temperature', 'ambient_temperature'], startIso, endIso),
-    }))),
+    queryFn: async () => {
+      const got = await Promise.allSettled(hot.map((h) => api.history(h.device_id, [intakeMetric(h.device_type)], startIso, endIso)));
+      return hot.map((h, i) => ({ ...h, out: got[i].status === 'fulfilled' ? got[i].value : null }));
+    },
     enabled: hot.length > 0,
     retry: false,
   });
@@ -506,7 +513,8 @@ function EvidenceCard({ inc, root }: { inc: AnomalyIncidentDetail; root: Anomaly
                    severity: a.severity, label: humanise(a.alarm_type) })) : [];
   const rootSeries = (rootHist.data?.series ?? []).filter((s) => s.points.length > 0);
   const hotSeries: Series[] = (hotHist.data ?? []).flatMap((h) =>
-    h.out.series.filter((s) => s.points.length > 0).map((s) => ({ ...s, instance: `${h.room} · ${h.device_name}` })));
+    (h.out?.series ?? []).filter((x) => x.points.length > 0).map((x) => ({ ...x, instance: h.device_name })));
+  const hotInterval = (hotHist.data ?? []).find((h) => h.out)?.out?.interval ?? '1m';
   const coolingRoot = root && /chiller|crah|crac|cdu|ahu|pump|cooling/i.test(root.device_type);
 
   return (
@@ -530,12 +538,12 @@ function EvidenceCard({ inc, root }: { inc: AnomalyIncidentDetail; root: Anomaly
       )}
       {hot.length > 0 && (
         <div className="ip-chart">
-          <p className="ip-chart-cap">Intake air, one hot device per room reached</p>
+          <p className="ip-chart-cap">Intake air at the first {hot.length === 1 ? 'device' : `${hot.length} devices`} to go hot</p>
           {hotHist.isLoading && <p className="dv-empty">Reading…</p>}
           {!hotHist.isLoading && hotSeries.length === 0 && <p className="dv-empty">No intake history for this window.</p>}
           {hotSeries.length > 0 && (
             <TimeChart series={hotSeries} unit={hotSeries[0].unit}
-                       bucketMs={BUCKET_MS[hotHist.data?.[0]?.out.interval ?? '1m'] ?? 60_000}
+                       bucketMs={BUCKET_MS[hotInterval] ?? 60_000}
                        marks={root ? [{ start: ms(root.first_seen), end: root.cleared_at ? ms(root.cleared_at) : null,
                                         severity: root.severity, label: `${root.device_name} ${humanise(root.alarm_type)}` }] : []}
                        window={[start, end]} />
@@ -557,14 +565,17 @@ function EvidenceCard({ inc, root }: { inc: AnomalyIncidentDetail; root: Anomaly
 
 type EvKind = 'root' | 'peer' | 'member' | 'folded' | 'finding' | 'clear' | 'resolved';
 type Ev = { t: number; kind: EvKind; title: string; sub?: string; severity?: string;
-            alarmId?: string; deviceId?: string };
+            alarmId?: string; deviceId?: string;
+            /** What alike events share, when it is not the sub itself: a
+             *  detector id, so thirty findings with thirty summaries fold. */
+            group?: string; label?: string };
 /** A row of the spine: one event, or a wave of alike events. Seven hundred
  *  PDUs saying "ambient high" inside two minutes is one thing happening,
  *  and the reader wants it as one row that opens, not seven hundred. */
 type Row = { key: string; t: number; kind: EvKind; severity?: string; one?: Ev; wave?: Ev[]; sub?: string };
 
 const WAVE_GAP_MS = 180_000;
-const GROUPABLE = new Set<EvKind>(['member', 'folded', 'clear']);
+const GROUPABLE = new Set<EvKind>(['member', 'folded', 'clear', 'finding']);
 
 function buildRows(events: Ev[]): Row[] {
   const out: Row[] = [];
@@ -574,11 +585,11 @@ function buildRows(events: Ev[]): Row[] {
       out.push({ key: `${e.kind}-${e.alarmId ?? e.title}-${e.t}`, t: e.t, kind: e.kind, severity: e.severity, one: e });
       continue;
     }
-    const k = `${e.kind}|${e.sub ?? ''}|${e.severity ?? ''}`;
+    const k = `${e.kind}|${e.group ?? e.sub ?? ''}|${e.severity ?? ''}`;
     const g = open.get(k);
     const last = g?.wave?.[g.wave.length - 1];
     if (g && last && e.t - last.t <= WAVE_GAP_MS) { g.wave!.push(e); continue; }
-    const row: Row = { key: `${k}-${e.t}`, t: e.t, kind: e.kind, severity: e.severity, sub: e.sub, wave: [e] };
+    const row: Row = { key: `${k}-${e.t}`, t: e.t, kind: e.kind, severity: e.severity, sub: e.label ?? e.sub, wave: [e] };
     open.set(k, row);
     out.push(row);
   }
@@ -608,7 +619,8 @@ function Timeline({ inc, root, onAlarm }: {
       }
     }
     for (const f of inc.findings) {
-      ev.push({ t: ms(f.first_seen), kind: 'finding', title: f.device_name, sub: `${f.detector_id} · ${f.summary}` });
+      ev.push({ t: ms(f.first_seen), kind: 'finding', title: f.device_name, sub: f.summary,
+                group: f.detector_id, label: `${f.detector_id} findings` });
     }
     if (inc.resolved_at) {
       ev.push({ t: ms(inc.resolved_at), kind: 'resolved', title: 'Resolved',
@@ -653,7 +665,7 @@ function Timeline({ inc, root, onAlarm }: {
                 {r.wave ? (
                   <>
                     <button type="button" className="linklike ip-ev-title" aria-expanded={isOpen} onClick={() => toggle(r.key)}>
-                      {r.wave.length} devices{r.kind === 'clear' ? ' cleared' : ''}
+                      {r.wave.length} {r.kind === 'finding' ? 'findings' : 'devices'}{r.kind === 'clear' ? ' cleared' : ''}
                       <span className="ip-ev-span"> over {duration(r.wave[0].t, r.wave[r.wave.length - 1].t)}</span>
                     </button>
                     {r.sub && <span className="ip-ev-sub">{r.sub}</span>}
@@ -666,6 +678,7 @@ function Timeline({ inc, root, onAlarm }: {
                             {e.alarmId
                               ? <button type="button" className="linklike" onClick={() => onAlarm(e.alarmId!)}>{e.title}</button>
                               : <span>{e.title}</span>}
+                            {e.group && e.sub && <span className="ip-wave-sub">{e.sub}</span>}
                           </li>
                         ))}
                       </ul>
